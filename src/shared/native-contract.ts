@@ -710,6 +710,8 @@ export const NATIVE_CUSTOM_PASSES_KEY = "customPasses";
 export const NATIVE_RENDER_KEY = "render";
 /** The `renderSettings` verb's version a receipt advertises as `renderSettingsApi`. */
 export const NATIVE_RENDER_SETTINGS_API_VERSION = 1;
+/** The `reloadAssets` verb's version a receipt advertises as `reloadAssetsApi`. */
+export const NATIVE_RELOAD_ASSETS_API_VERSION = 1;
 
 // ── Live's embedded frames (genex-frames, M5a) ─────────────────────────────────────────────
 
@@ -1162,6 +1164,8 @@ export interface NativeCapabilityReceipt {
   renderInputs?: RenderInput[];
   /** The `renderSettings` verb's version this game serves; absent: the game has no such verb. */
   renderSettingsApi?: number;
+  /** The `reloadAssets` verb's version this game serves; absent: a build that does not swap assets in place. */
+  reloadAssetsApi?: number;
 }
 
 /** The extension API versions a receipt serves: its list, or `[extensionApi]` for a receipt without one. */
@@ -1177,6 +1181,11 @@ export function receiptCustomPassApis(receipt: NativeCapabilityReceipt): number[
 /** Whether a receipt advertises the `renderSettings` verb (a C++ game and a pre-RQ0 Rust game do not). */
 export function receiptServesRenderSettings(receipt: NativeCapabilityReceipt | null | undefined): boolean {
   return (receipt?.renderSettingsApi ?? 0) >= NATIVE_RENDER_SETTINGS_API_VERSION;
+}
+
+/** Whether a receipt advertises the `reloadAssets` verb (a dev build that swaps changed assets in place). */
+export function receiptServesReloadAssets(receipt: NativeCapabilityReceipt | null | undefined): boolean {
+  return (receipt?.reloadAssetsApi ?? 0) >= NATIVE_RELOAD_ASSETS_API_VERSION;
 }
 
 /** One custom GPU pass in a v2 game's `state().volatile.customPasses`. */
@@ -1624,20 +1633,22 @@ function receiptRendererFields(
   extensionApi: number,
   customPassApi: number,
 ): Partial<NativeCapabilityReceipt> | null {
-  const { extensionApis, customPassApis, rendererFeatures, renderInputs, renderSettingsApi } = value;
+  const { extensionApis, customPassApis, rendererFeatures, renderInputs, renderSettingsApi, reloadAssetsApi } = value;
   const lists =
     isOptional(extensionApis, (list) => isApiList(list, extensionApi)) &&
     isOptional(customPassApis, (list) => isApiList(list, customPassApi));
   const named =
     isOptional(rendererFeatures, (list) => isDistinctList(list, isRendererFeature)) &&
     isOptional(renderInputs, (list) => isDistinctList(list, isRenderInput));
-  if (!lists || !named || !isOptional(renderSettingsApi, isApiVersion)) return null;
+  const versions = isOptional(renderSettingsApi, isApiVersion) && isOptional(reloadAssetsApi, isApiVersion);
+  if (!lists || !named || !versions) return null;
   const fields: Partial<NativeCapabilityReceipt> = {};
   if (Array.isArray(extensionApis)) fields.extensionApis = extensionApis.filter(isApiVersion);
   if (Array.isArray(customPassApis)) fields.customPassApis = customPassApis.filter(isApiVersion);
   if (Array.isArray(rendererFeatures)) fields.rendererFeatures = rendererFeatures.filter(isRendererFeature);
   if (Array.isArray(renderInputs)) fields.renderInputs = renderInputs.filter(isRenderInput);
   if (isApiVersion(renderSettingsApi)) fields.renderSettingsApi = renderSettingsApi;
+  if (isApiVersion(reloadAssetsApi)) fields.reloadAssetsApi = reloadAssetsApi;
   return fields;
 }
 

@@ -68,6 +68,8 @@ import {
   receiptCustomPassApis,
   receiptExtensionApis,
   receiptServesRenderSettings,
+  receiptServesReloadAssets,
+  NATIVE_RELOAD_ASSETS_API_VERSION,
   ringSizeFor,
   BakeKind,
   isBakeName,
@@ -933,6 +935,14 @@ const WIRE = JSON.parse(readFileSync(new URL("../fixtures/native-wire-v2.json", 
   customPasses: { key: string; example: unknown[] };
   receiptSingular: Record<string, unknown>;
   receiptRenderSettings: Record<string, unknown>;
+  reloadAssets: {
+    op: string;
+    filesMax: number;
+    refusals: string[];
+    receiptKey: string;
+    apiVersion: number;
+    answer: unknown;
+  };
   render: {
     op: string;
     stateKey: string;
@@ -1047,6 +1057,21 @@ describe("the renderer's quality on the wire (renderSettings, volatile.render, c
     assert.ok(fresh);
     assert.equal(receiptServesRenderSettings(fresh), true);
     assert.equal(receiptServesRenderSettings(null), false);
+  });
+
+  it("reads reloadAssetsApi and holds the reloadAssets names to the wire fixture", () => {
+    const block = WIRE.reloadAssets;
+    assert.equal(block.op, NativeOp.ReloadAssets);
+    assert.equal(block.filesMax, NATIVE_RELOAD_FILES_MAX);
+    assert.deepEqual(block.refusals, Object.values(ReloadRefusal));
+    assert.equal(block.apiVersion, NATIVE_RELOAD_ASSETS_API_VERSION);
+    const receipt = parseNativeCapabilityReceipt({
+      ...WIRE.receiptRenderSettings,
+      [block.receiptKey]: block.apiVersion,
+    });
+    assert.equal(receiptServesReloadAssets(receipt), true);
+    assert.equal(receiptServesReloadAssets(parseNativeCapabilityReceipt(WIRE.receiptRenderSettings)), false);
+    assert.equal(parseNativeCapabilityReceipt({ ...WIRE.receiptRenderSettings, reloadAssetsApi: 0 }), null);
   });
 
   it("refuses a receipt whose renderer fields are outside their shape", () => {

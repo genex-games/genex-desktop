@@ -27,6 +27,10 @@ game.on_reset(|sim, _seed, _rng, gfx| {
   (`use genex::{AnimationError, AssetBytes, AssetError, CharacterAsset, ModelTriangles, Skeleton};`).
 - A re-seed reuses what the first seed read and parsed; reading again costs nothing.
 - `state().assets` lists every path a reset read.
+- In a Studio dev run, a changed file is swapped in place (`reloadAssets`, sent by Studio, never
+  by a game): the renderer reads models, textures and environment maps again on the next frame.
+  Bytes a reset already read (`bytes`, `triangles`, `character`) stay in the world until the next
+  seed.
 
 Reads follow one rule on every destination (desktop, web, phones):
 

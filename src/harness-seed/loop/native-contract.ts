@@ -556,6 +556,8 @@ export const NATIVE_CUSTOM_PASSES_KEY = "customPasses";
 export const NATIVE_RENDER_KEY = "render";
 /** The `renderSettings` version a receipt advertises as `renderSettingsApi`. */
 export const NATIVE_RENDER_SETTINGS_API_VERSION = 1;
+/** The `reloadAssets` version a receipt advertises as `reloadAssetsApi`. */
+export const NATIVE_RELOAD_ASSETS_API_VERSION = 1;
 
 // ── the renderer's quality (shared/render-quality.ts) ─────────────────────────────────────
 

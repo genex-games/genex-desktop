@@ -79,6 +79,23 @@ game.on_update(|sim, _| {
   reverse; `sim.facets.get::<StreamColliders>().handles(cell)` lists their handles. Register it
   once.
 
+## Terrain tiles
+
+- `Streaming::grid(64.0).terrain(tiles)` streams one terrain tile per cell.
+  `TerrainTiles::procedural(129, |x, z| height)` samples a pure function (it runs on the stream
+  workers), quantized over `.with_height_range(min, max)` (default -512..512 m).
+  `TerrainTiles::authored(index, size, read)` takes the import's `terrain/terrain.json` and its
+  `terrain/<x>_<z>.r16` tiles; everything is checked first, and a bad file refuses
+  `terrain-heights-invalid` with nothing made.
+- A tile is 65, 129, 257 or 513 samples a side (`TERRAIN_TILE_SAMPLES`). Neighbours share their
+  border samples bit for bit.
+- `sim.stream.ground(x, z)` is the tile's `Terrain::height`: procedural tiles anywhere, authored
+  ones only inside a sim-active cell (`None` elsewhere).
+- With physics, `game.cell_content(tiles.colliders_content(64.0))` beside
+  `game.stream_colliders()` gives each sim-active tile one heightfield collider, inserted and
+  removed in canonical order; `.with_colliders(false)` turns them off. Neither happens on its own
+  with `.terrain(..)`.
+
 ## Kept cells and saves
 
 - `sim.stream.keep(cell)` keeps a cell in the simulated set wherever the anchors go (a cell the

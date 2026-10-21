@@ -76,8 +76,13 @@ frame.character_with(hero, at, &CharacterDraw::new().tint(Color::RED).material(&
 frame.skeleton_debug(hero, at);
 ```
 
-- `frame.character(..)` is one logical draw under the current tag. A missing file draws the
-  magenta checker.
+- `frame.character(..)` is one logical draw under the current tag. The presenter skins the GLB in
+  the animator's pose (every skinned primitive, each part with its own material). A missing file
+  draws the magenta checker; a file the renderer cannot skin draws its model in bind pose.
+- In Live a far character's pose is held between evaluations: every tick near the camera, every
+  2nd, 4th or 8th tick as its projected height (LOD's screen-size metric, from the game camera)
+  falls past 240, 120 and 60 pixels of a 1080-pixel view. A capture is always full rate. Drawing
+  never moves the animator or the simulation.
 - `frame.character_with(..)` takes a `CharacterDraw`: `.tint(..)`, and `.material(..)` to replace
   the GLB's materials.
 - `frame.skeleton_debug(..)` draws every bone as one line batch (one logical draw).

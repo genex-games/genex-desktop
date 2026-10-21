@@ -224,6 +224,20 @@ fn the_audio_block_is_the_fixtures() {
     assert_eq!(names(&pinned["refusals"]), AudioErrorCode::ALL.map(AudioErrorCode::as_str));
 }
 
+/// The profile block (PROF-5): the calls the profiling page teaches, `volatile.profile`'s key and
+/// fields, the engine scopes, the GPU sources and the node timing modes.
+#[test]
+fn the_profile_block_is_the_fixtures() {
+    use genex::profile::{EngineScope, GpuTimeSource, NodeTiming, PROFILE_CALLS, SUMMARY_FIELDS, VOLATILE_PROFILE_KEY};
+    let pinned = &fixture()["profile"];
+    assert_eq!(names(&pinned["calls"]), PROFILE_CALLS);
+    assert_eq!(pinned["volatileKey"], VOLATILE_PROFILE_KEY);
+    assert_eq!(names(&pinned["summaryFields"]), SUMMARY_FIELDS);
+    assert_eq!(names(&pinned["engineScopes"]), EngineScope::ALL.map(EngineScope::wire));
+    assert_eq!(names(&pinned["gpuSources"]), GpuTimeSource::ALL.iter().map(|source| source.wire()).collect::<Vec<_>>());
+    assert_eq!(names(&pinned["nodeTiming"]), NodeTiming::ALL.iter().map(|mode| mode.wire()).collect::<Vec<_>>());
+}
+
 #[test]
 fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};

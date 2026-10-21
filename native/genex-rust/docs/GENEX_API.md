@@ -34,20 +34,21 @@ needs Ctx and Drawing).
 
 | Topic | Page | What it covers |
 |-|-|-|
-| Ctx | `docs/api/ctx.md` | What a tick reads: input actions, keys, touches, pads, pointer, look, wheel, text, `ctx.rng`, `ctx.dt`, `ctx.tick` and saves. |
+| Ctx | `docs/api/ctx.md` | What a tick reads: actions, keys, touches, pads, pointer, look, wheel, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
 | UI | `docs/api/ui.md` | `on_ui`: the egui HUD and menus, a game's only UI path. |
 | Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
 | Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, its refusals and why the checksum stays the same everywhere. |
-| Streaming a large world | `docs/api/streaming.md` | A world in cells: anchors, the sim radius, cell builders, entered and left cells, holds and their refusals. |
+| Streaming a large world | `docs/api/streaming.md` | A world in cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
-| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones and occlusion, and checking sound through `volatile.audio` and `audioLevel`. |
+| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
+| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, crash records. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
 | Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
-| Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws and its style. |
+| Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
 | Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once and drawn as a group. |
 | Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
