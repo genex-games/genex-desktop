@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use genex_anim::AnimationError;
 use genex_anim::animator::{AnimSet, Animator as Rig};
+use genex_anim::retarget::retarget_clips;
 use serde_json::Value;
 
 use crate::frame::{Color, Material, Transform};
@@ -77,6 +78,18 @@ impl CharacterAsset {
         let set = self.set();
         let moved = AnimSet::with_root_motion(set.skeleton().clone(), set.clips().to_vec(), settings)?;
         Ok(self.with_set(moved))
+    }
+
+    /// The same character with `source`'s clips retargeted onto its skeleton, after its own (a
+    /// Quaternius UAL walk on a Meshy hero; genex-anim's `retarget`): each limb points where the
+    /// source's does and the hips' travel scales by leg length. Extract root motion after this.
+    /// Refused `animation-retarget-unmapped` when either character lacks a humanoid bone (the
+    /// toes are optional), naming the bone and the character.
+    pub fn with_retargeted_clips(&self, source: &CharacterAsset) -> Result<CharacterAsset, AnimationError> {
+        let (set, from) = (self.set(), source.set());
+        let mut clips = set.clips().to_vec();
+        clips.extend(retarget_clips(from.skeleton(), from.clips(), set.skeleton())?);
+        Ok(self.with_set(AnimSet::new(set.skeleton().clone(), clips)))
     }
 }
 

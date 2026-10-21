@@ -179,11 +179,12 @@ pub const FOG_CALLS: [&str; 8] =
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling): the rig, the
 /// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
 /// the animator, `frame.character` and its skeleton overlay).
-pub const ANIMATION_CALLS: [&str; 49] = [
+pub const ANIMATION_CALLS: [&str; 50] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
     "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", ".with_root_motion",
+    ".with_retargeted_clips",
     ".float", ".trigger", ".layer", ".state", ".transition", ".when", ".build", ".set_float", ".fire", ".update",
     ".probe", "frame.character", "frame.character_with", "frame.skeleton_debug", "CharacterDraw::new", ".tint",
     ".material",
