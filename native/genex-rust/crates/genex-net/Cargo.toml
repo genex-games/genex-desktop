@@ -28,6 +28,11 @@ serde_json = { workspace = true }
 libm = { workspace = true }
 genex-multiplayer = { workspace = true, optional = true }
 
+# On wasm32 the same optional dependency also turns on the crate's `web` half (the browser bridge,
+# `relay/web.rs`); its wasm-bindgen crates are already in the lock and the vendored tree.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+genex-multiplayer = { workspace = true, optional = true, features = ["web"] }
+
 [dev-dependencies]
 # Only the pure halves (interp, pose, protocol, types): the oracle dump records the vendored
 # interpolator, and the relay mapping rows build the crate's own events. No libcolyseus is linked.
