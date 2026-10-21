@@ -1,0 +1,94 @@
+{
+  "play": {
+    "checksum": "7e370d7fafd83ce0",
+    "answer": {
+      "ship": [
+        8.861865997314453,
+        -2.557586431503296
+      ],
+      "aim": [
+        0.8462220430374146,
+        -0.5328304171562195
+      ],
+      "hp": 3,
+      "score": 0,
+      "dashes": 1,
+      "shotsFired": 8,
+      "shots": 1,
+      "drones": 1,
+      "paused": false,
+      "over": false,
+      "ticks": 105
+    }
+  },
+  "rebind": {
+    "checksum": "c1cbc6008bc7365f",
+    "answer": {
+      "found": true,
+      "focusSteps": 11,
+      "dashLabel": "J",
+      "paused": false,
+      "spaceDashed": false,
+      "jDashed": true
+    }
+  },
+  "pad_glyphs": {
+    "checksum": "966774b7549aaf28",
+    "answer": {
+      "keyboardDash": "Space",
+      "device": "pad",
+      "dash": "Cross",
+      "fire": "R2",
+      "pause": "Options",
+      "dashes": 1
+    }
+  },
+  "touch": {
+    "checksum": "7f27bd897c44f6d0",
+    "answer": {
+      "ship": [
+        4.114286422729492,
+        -4.799999713897705
+      ],
+      "aim": [
+        0.0,
+        -1.0
+      ],
+      "hp": 3,
+      "score": 0,
+      "dashes": 1,
+      "shotsFired": 5,
+      "shots": 1,
+      "drones": 1,
+      "paused": false,
+      "over": false,
+      "ticks": 81,
+      "device": "touch"
+    }
+  },
+  "replay": {
+    "checksum": "c03cfef9547e2a97",
+    "answer": {
+      "ticks": 600,
+      "arena": {
+        "ship": [
+          -13.5,
+          -1.9929190874099731
+        ],
+        "aim": [
+          0.9852630496025085,
+          -0.17104607820510864
+        ],
+        "hp": 1,
+        "score": 0,
+        "dashes": 1,
+        "shotsFired": 33,
+        "shots": 1,
+        "drones": 4,
+        "paused": false,
+        "over": false,
+        "ticks": 569
+      }
+    }
+  }
+}

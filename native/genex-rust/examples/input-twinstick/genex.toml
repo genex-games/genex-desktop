@@ -1,0 +1,7 @@
+# input-twinstick's manifest: a procedural arena, no physics, no assets.
+[game]
+title = "Input twinstick"
+world_size = [960, 540]
+
+[physics]
+enabled = false

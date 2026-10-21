@@ -1832,6 +1832,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "input-twinstick"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-core",
+ "genex-platform-web",
+ "image",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "intl-memoizer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
