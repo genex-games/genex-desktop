@@ -947,3 +947,136 @@ describe("the seed's asset recipes (C-24)", () => {
       assert.ok(`${cc0.intent}\n${cc0.sketch}`.includes(word), `rust.cc0-assets names ${word}`);
   });
 });
+
+/**
+ * The seed's game-systems recipes (EP-R1): one Rust technique per area, and the pinned calls its
+ * sketch makes, each of which the reference teaches.
+ */
+const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
+  "rust.animated-characters": [
+    "gfx.character",
+    ".clip",
+    "Animator::simple",
+    ".play",
+    ".crossfade",
+    ".play_once",
+    ".update",
+    "Character::spawn",
+    ".drive",
+    "frame.character",
+    ".transform",
+    ".feet",
+  ],
+  "rust.nav-agents": [
+    "game.navigation",
+    ".nav_config",
+    "NavInput::new",
+    ".with_static_colliders",
+    "NavMesh::bake",
+    "nav.add_mesh",
+    "NavAgent::new",
+    "nav.add_agent",
+    "nav.move_to",
+    "nav.update",
+    "nav.desired_velocity",
+    "nav.set_position",
+    "nav.status",
+    "frame.nav_debug",
+    "NavDebug::mesh",
+    ".with_paths",
+    "nav.probe",
+  ],
+  "rust.streamed-world": [
+    "TerrainTiles::procedural",
+    "game.streaming",
+    "Streaming::grid",
+    ".sim_radius",
+    ".view_radius",
+    "game.cell_content",
+    "CellBuild::default",
+    ".thing",
+    "inputs.scatter",
+    ".group",
+    ".colliders_content",
+    "game.stream_colliders",
+    "sim.stream.set_anchor",
+    "sim.stream.entered",
+    "cell.cell",
+    "sim.stream.left",
+  ],
+  "rust.lod-impostors": [
+    "gfx.assets().compound",
+    ".with_impostor",
+    "Impostor::hemi",
+    ".not_before",
+    ".with_levels",
+    ".with_lod_bias",
+    ".lod_refusal",
+  ],
+};
+
+/**
+ * Names the game-systems sketches call that the reference shows no call of: Rust's own methods
+ * (`clone`, `count`, `is_err`, `is_none_or`) and `genex::math`'s, which the determinism rules name
+ * without calling (`round`, `sin`, `cos`).
+ */
+const SKETCH_STD_CALLS = new Set(["clone", "count", "is_err", "is_none_or", "round", "sin", "cos"]);
+
+describe("the seed's game-systems recipes (EP-R1)", () => {
+  it("ship as Rust techniques the library keeps whole", () => {
+    for (const id of Object.keys(GAME_SYSTEMS_RECIPES)) {
+      assert.ok(existsSync(path.join(RECIPES, `${id}.json`)), `${id} is in the seed`);
+      const recipe = seedRecipe(id);
+      assert.equal(recipe.id, id);
+      assert.equal(recipe.runtime, GameStack.RustWgpu, `${id} is a Rust recipe`);
+      assert.deepEqual([recipe.pack, recipe.kind, recipe.origin], ["rust", "technique", "seed"], id);
+      assert.ok(recipe.note.length <= RECIPE_NOTE_CHARS_MAX, `${id}'s note is ${recipe.note.length} characters`);
+      assert.ok(recipe.intent.length <= RECIPE_INTENT_CHARS_MAX, `${id}'s intent is ${recipe.intent.length}`);
+      assert.ok(
+        recipe.evidence.some(({ source }) => /GENEX_API\.md \(/.test(source)),
+        `${id} cites the reference`,
+      );
+    }
+  });
+
+  it("sketch each area's pinned calls, every one of which the reference teaches", () => {
+    const pinned = new Set(pinnedCallGroups().flatMap(([, calls]) => calls));
+    const text = api();
+    for (const [id, calls] of Object.entries(GAME_SYSTEMS_RECIPES)) {
+      const { sketch } = seedRecipe(id);
+      for (const call of calls) {
+        assert.ok(pinned.has(call), `${id}: ${call} is a pinned facade call`);
+        assert.ok(text.includes(`${call}(`), `${id}: the reference does not teach ${call}(..)`);
+        assert.ok(sketch.includes(`${call}(`), `${id}'s sketch does not call ${call}(..)`);
+      }
+    }
+  });
+
+  it("call nothing in their sketches the reference does not name", () => {
+    // A name the reference calls (`.x(`, `T::x(`) or writes as a builder step in prose (`` `with_speed(..)` ``).
+    const builderSteps = ticked(api()).flatMap((token) => /^([a-z_][a-z0-9_]*)\(/.exec(token)?.[1] ?? []);
+    const taught = new Set([...calledNames(api()), ...builderSteps]);
+    for (const id of Object.keys(GAME_SYSTEMS_RECIPES)) {
+      const sketch = seedRecipe(id).sketch;
+      const called = [...sketch.matchAll(/(?:\.|::)([a-z_][a-z0-9_]*)\s*\(/g)].map((match) => match[1] ?? "");
+      const unknown = [...new Set(called)].filter(
+        (name) => !taught.has(name) && !NOT_GAME_SYSTEMS_CALLS.has(name) && !SKETCH_STD_CALLS.has(name),
+      );
+      assert.deepEqual(unknown, [], `${id} calls names the reference never calls`);
+    }
+  });
+
+  it("sketch genex.toml rows the build accepts", () => {
+    const toml = seedRecipe("rust.lod-impostors").sketch.split(RUST_SKETCH_FILE)[0] ?? "";
+    assert.ok(toml.includes("lod_threshold_px") && toml.includes("far_density"), "the per-class LOD keys");
+    const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${toml.replace(/^#.*\n/, "")}`);
+    assert.ok(parsed.ok, JSON.stringify(parsed));
+  });
+
+  it("are what the template guide's Game systems rules point at", () => {
+    const rules = section(read("CLAUDE.md"), "Game systems");
+    assert.ok(rules.includes("docs/api/drawing.md"), "far things route to the Drawing page");
+    assert.ok(rules.includes(".with_impostor("), "the guide names impostors");
+    assert.match(rules, /by (?:its|their) feet/, "the guide says a character stands by its feet");
+  });
+});

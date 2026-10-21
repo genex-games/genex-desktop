@@ -454,7 +454,7 @@ mod metal {
             record(&format!("look {name}: compute {} + vertex {} instances", instances.compute, instances.vertex));
             captures.push(capture.bgra().to_vec());
         }
-        let differing = captures[0].chunks_exact(4).zip(captures[1].chunks_exact(4)).filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 1)).count();
+        let differing = captures[0].as_chunks::<4>().0.iter().zip(captures[1].as_chunks::<4>().0).filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 1)).count();
         record(&format!("capped vs all-compute at mobile-high: {differing} pixels differ by more than 1 level"));
         assert!(differing <= CAPPED_LOOK_PIXELS_MAX, "{differing} pixels differ");
     }

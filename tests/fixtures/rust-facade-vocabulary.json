@@ -85,9 +85,12 @@
       "InstanceGroup::models",
       "InstanceGroup::models_with",
       "group.update",
-      "frame.group"
+      "frame.group",
+      "group.with_far",
+      "Far::thin",
+      ".fading_out"
     ],
-    "refusals": ["too-many-instances", "range-out-of-group"]
+    "refusals": ["too-many-instances", "range-out-of-group", "far-invalid"]
   },
   "terrain": {
     "calls": [

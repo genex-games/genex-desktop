@@ -27,6 +27,8 @@ node scripts/toolchains/rust-env.ts -- cargo test -p net-driver --offline --test
 - `tests/online.rs` drives the facade's real `RelayBackend` with a scripted session (no socket).
   It covers the join, control results, local refusals, game events, host changes, reconnects and
   closes.
+- `scripts/netcode/rust-conformance.ts` runs genex-demo's bench conformance with this driver and
+  the crate's own driver (see `scripts/netcode/README.md`).
 
 ## What the facade does not show
 

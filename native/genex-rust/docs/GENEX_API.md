@@ -35,10 +35,11 @@ needs Ctx and Drawing).
 | Topic | Page | What it covers |
 |-|-|-|
 | Ctx | `docs/api/ctx.md` | What a tick reads: actions, keys, touches, pads, pointer, look, wheel, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
-| UI | `docs/api/ui.md` | `on_ui`: the egui HUD and menus, a game's only UI path. |
+| UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |
+| Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
-| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, its refusals and why the checksum stays the same everywhere. |
+| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, the stable checksum. |
 | Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
@@ -49,7 +50,7 @@ needs Ctx and Drawing).
 | Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
-| Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
+| Grading and the lens | `docs/api/grading.md` | Build order, grade, white balance, LUTs, depth of field, motion blur. |
 | Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
 | Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once and drawn as a group. |

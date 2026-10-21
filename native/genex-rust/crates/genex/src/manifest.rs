@@ -150,10 +150,20 @@ pub const LIGHT_CALLS: [&str; 7] =
     ["frame.point_light", "frame.spot_light", "frame.spot_light_with", "SpotLight::new", "Material::emissive", ".with_emissive", ".with_emissive_texture"];
 /// The retained instance group calls of the facade (renderer pass 2 A.0b), as agents call them:
 /// a group made once (`InstanceGroup::cubes(..)`, `::spheres(..)`, `::models(..)`,
-/// `::models_with(..)`), changed by range (`group.update(..)`) and drawn each frame
-/// (`frame.group(..)`).
-pub const INSTANCE_GROUP_CALLS: [&str; 6] =
-    ["InstanceGroup::cubes", "InstanceGroup::spheres", "InstanceGroup::models", "InstanceGroup::models_with", "group.update", "frame.group"];
+/// `::models_with(..)`), changed by range (`group.update(..)`), drawn each frame
+/// (`frame.group(..)`) and thinned far from the camera
+/// (`group.with_far(Far::thin(..).fading_out(..))`).
+pub const INSTANCE_GROUP_CALLS: [&str; 9] = [
+    "InstanceGroup::cubes",
+    "InstanceGroup::spheres",
+    "InstanceGroup::models",
+    "InstanceGroup::models_with",
+    "group.update",
+    "frame.group",
+    "group.with_far",
+    "Far::thin",
+    ".fading_out",
+];
 /// The particle calls of the facade (renderer pass 2 A.11), as agents call them: an emitter made
 /// once from a kind (`Particles::steam(..)`, `Particles::rain(..)`, `Particles::fountain(..)`),
 /// changed (`.with_rate(..)`, `.with_soft(..)`, `.with_sorted(..)`, `.with_collision(..)`,

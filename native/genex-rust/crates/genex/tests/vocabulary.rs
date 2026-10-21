@@ -135,7 +135,7 @@ fn the_instance_group_calls_and_refusals_are_the_fixtures() {
     use genex::InstanceGroupErrorCode;
     let pinned = fixture();
     assert_eq!(names(&pinned["instanceGroups"]["calls"]), genex::manifest::INSTANCE_GROUP_CALLS);
-    let refusals = [InstanceGroupErrorCode::TooManyInstances, InstanceGroupErrorCode::RangeOutOfGroup].map(InstanceGroupErrorCode::wire);
+    let refusals = [InstanceGroupErrorCode::TooManyInstances, InstanceGroupErrorCode::RangeOutOfGroup, InstanceGroupErrorCode::FarInvalid].map(InstanceGroupErrorCode::wire);
     assert_eq!(names(&pinned["instanceGroups"]["refusals"]), refusals);
 }
 

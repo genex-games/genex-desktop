@@ -83,3 +83,8 @@ game.on_update(|sim, ctx| {
   and delete slots through the dev `saves` verb; a load answers once it applied, with
   `checksumMatch`.
 - `ctx.save(file, bytes)` and `ctx.load(file)` stay for a game's own files beside the slots.
+
+`native/genex-rust/examples/menus-saves` saves and loads through slot lists in its menus (an
+overwrite asks first, Continue loads the newest slot, and the ring autosaves every minute of
+play). A check saves by key, loads, then reads `state().volatile.saves.lastLoad.checksumMatch`:
+its rows also pin one envelope that native, x86_64 and wasm32 write byte for byte.

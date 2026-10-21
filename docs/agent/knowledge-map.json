@@ -586,6 +586,8 @@
         "tests/conformance/rust-runtime.test.ts",
         "tests/conformance/rust-stream-determinism.test.ts",
         "tests/conformance/rust-vendored-multiplayer.test.ts",
+        "scripts/netcode/**",
+        "tests/conformance/rust-netcode-conformance.test.ts",
         "tests/fixtures/rust-protocol-game/**",
         "tests/conformance/rust-performance.test.ts",
         "tests/fixtures/bench-scene/**"
