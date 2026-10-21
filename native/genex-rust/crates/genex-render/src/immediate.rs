@@ -1328,8 +1328,8 @@ impl FrameRenderer {
             prepass: None,
             motion: None,
         };
-        let ran = crate::graph::run(&mut nodes, &mut encoder);
-        encoder.submit();
+        // Bracketed per graph step while per-node GPU timing is armed (PROF-5); a capture never is.
+        let ran = self.renderer.run_timed_frame(&mut nodes, &mut encoder);
         let (quad_draws, hud) = (nodes.quad_draws, nodes.hud);
         let done = nodes.world.finish();
         self.renderer.end_frame(prep, done);

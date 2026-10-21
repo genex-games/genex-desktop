@@ -1090,9 +1090,8 @@ mod metal {
         assert!(report["result"]["frames"].items().iter().all(|frame| frame["gpuMs"].as_f64() > 0.0 || !offers), "each frame's GPU time: {report:?}");
         let armed_summary = call(&mut studio, &mut run, "profile", r#"{"action":"summary"}"#);
         assert_eq!(armed_summary["result"]["nodes"].as_str(), "armed", "{armed_summary:?}");
-        // The per-node brackets themselves land only once genex-render's immediate frame path runs
-        // its graph through `node_timing::run_and_submit` (I3 T-core cross-lane note); until then
-        // `nodes` is empty here.
+        // The immediate frame's graph steps are bracketed on a device that offers timestamps.
+        assert!(!nodes.is_empty() || !offers, "armed nodes land in the report");
         let trace = call(&mut studio, &mut run, "profile", r#"{"action":"trace","frames":12}"#);
         assert_eq!(trace["result"]["seq"].as_f64(), 1.0, "{trace:?}");
         let written = std::fs::read(dir.join("profile").join("trace-1.json")).expect("state/profile/trace-1.json");

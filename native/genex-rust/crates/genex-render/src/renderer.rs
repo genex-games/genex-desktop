@@ -5111,6 +5111,13 @@ impl Renderer {
         Ok(())
     }
 
+    /// Run `nodes` as one frame and submit it, bracketed per graph step by the per-node timer while
+    /// it is armed and the frame is Live (the immediate frame's path, PROF-5; a capture disarms it).
+    pub(crate) fn run_timed_frame(&self, nodes: &mut dyn FrameNodes, frame: &mut FrameEncoder) -> Result<Vec<crate::graph::Step>, RenderError> {
+        let live = self.history_set == HistorySet::Live && !self.environment_settle;
+        node_timing::run_and_submit(nodes, frame, self.node_timer.borrow_mut().as_mut(), live)
+    }
+
     /// [`Renderer::render_staged`] with a custom stage whose `post-hdr` passes run at graph node 18
     /// on the HDR scene (before exposure and the tonemap; the resolved 1x scene is kept for them).
     pub(crate) fn render_custom(&mut self, gpu: &Gpu, scene: &Scene, path: CullPath, stage: &mut dyn CustomStage) -> Result<(), RenderError> {
