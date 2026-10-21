@@ -50,6 +50,15 @@ pub use genex_ui::text::catalog::{TEXT_FILE_BYTES_MAX, TEXT_KEYS_MAX, TextErrorC
 pub use genex_ui::text::locale::Locale;
 pub use genex_ui::text::pseudo::PSEUDO_LOCALE;
 
+/// Every call the reference's ui page teaches (the vocabulary fixture's `ui.calls`, UIS-10): the
+/// config, text lookup, the person layer's reads and the kit's widgets.
+pub const UI_CALLS: [&str; 23] = [
+    "game.ui", "UiConfig::new", ".locales", ".font", ".pseudo_locale", "genex::ui::tr", "genex::ui::tr_args",
+    "TextArgs::new", "genex::ui::locale", "genex::ui::reduced_motion", "genex::ui::safe_area", "Menu::new",
+    "Dialog::new", "ItemGrid::new", "ItemList::new", "Bar::new", "Toasts::push", "Toasts::show", ".item", ".back",
+    ".num", ".scale", "ui.ctx",
+];
+
 /// `state().volatile.ui`'s key.
 pub(crate) const VOLATILE_UI_KEY: &str = "ui";
 /// The folder under `assets/` a locale's text is read from (`lang/<locale>.ftl`).

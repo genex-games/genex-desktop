@@ -42,7 +42,7 @@ pub const VOLATILE_AUDIO_KEY: &str = "audio";
 
 /// Every audio call the reference's audio page teaches, in its order (the vocabulary fixture's
 /// `audio.calls`, AU-9).
-pub const AUDIO_CALLS: [&str; 22] = [
+pub const AUDIO_CALLS: [&str; 25] = [
     "gfx.sound",
     "gfx.music",
     "game.audio",
@@ -65,6 +65,9 @@ pub const AUDIO_CALLS: [&str; 22] = [
     "ctx.audio.add_zone",
     "ctx.audio.remove_zone",
     "PlayOpts::ui",
+    "sound.refusal",
+    "sound.is_missing",
+    "sound.seconds",
 ];
 
 /// The id a missing sound plays: never registered, so a play is refused `sound-missing`.

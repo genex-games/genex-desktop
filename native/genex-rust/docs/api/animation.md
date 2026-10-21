@@ -9,10 +9,10 @@ all of it.
 ## The simple animator (start here)
 
 ```rust
-// on_reset
-let hero = gfx.character("characters/hero.glb")?;          // animation-asset-invalid
+// on_reset (it returns nothing, so a refusal returns early; `assets.md` shows reading its code)
+let Ok(hero) = gfx.character("characters/hero.glb") else { return };   // animation-asset-invalid
 let (Some(idle), Some(walk), Some(slash)) = (hero.clip("Idle"), hero.clip("Walk"), hero.clip("Sword_Attack")) else { return };
-let mut animator = Animator::simple(&hero)?;
+let Ok(mut animator) = Animator::simple(&hero) else { return };
 animator.play(idle);
 sim.world.hero = Some(animator);
 
@@ -45,7 +45,7 @@ let step = hero.update(ctx.dt);
 ## The graph and the animator (on_reset)
 
 ```rust
-let hero = gfx.character("characters/hero.glb")?;          // animation-asset-invalid
+let Ok(hero) = gfx.character("characters/hero.glb") else { return };   // animation-asset-invalid
 let (Some(idle), Some(walk), Some(slash)) = (hero.clip("Idle"), hero.clip("Walk"), hero.clip("Sword_Attack")) else { return };
 let mut g = hero.graph();
 let speed = g.float("speed", 0.0);
@@ -62,7 +62,9 @@ let swing = g.state(upper, "slash", Motion::clip(slash).once());
 g.transition(none, swing).when(attack.fired()).crossfade(0.08);
 g.transition(swing, none).at_end().crossfade(0.15);
 let hit = g.event(slash, 0.3, "hit");
-sim.world.hero = Some(hero.animator(&g.build()?)?);       // animation-graph-invalid
+let Ok(graph) = g.build() else { return };                           // animation-graph-invalid
+let Ok(animator) = hero.animator(&graph) else { return };
+sim.world.hero = Some(animator);
 ```
 
 - `hero.clip("Walk")` is the clip of that glTF animation name, or `None`.

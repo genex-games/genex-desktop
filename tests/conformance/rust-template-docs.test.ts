@@ -291,6 +291,77 @@ function codeWords(text: string): Set<string> {
   return new Set(words);
 }
 
+/** The game systems' topic pages whose every call is pinned (the docs-to-fixture row). */
+const PINNED_CALL_PAGES = [
+  "animation",
+  "assets",
+  "audio",
+  "characters",
+  "navigation",
+  "net",
+  "profiling",
+  "saves",
+  "settings",
+  "streaming",
+  "ui",
+] as const;
+
+/**
+ * Names those pages call that are not the game systems' facade calls: Rust's and serde_json's own
+ * methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
+ * `frame.sphere`, `genex::render::settings_button`), egui's `ui.painter` and a game's own helper
+ * in the profiling example (`enemy.think`).
+ */
+const NOT_GAME_SYSTEMS_CALLS = new Set([
+  "any",
+  "as_bool",
+  "as_f64",
+  "as_i64",
+  "as_mut",
+  "as_ref",
+  "cloned",
+  "collect",
+  "contains",
+  "expect",
+  "extend",
+  "fold",
+  "from",
+  "from_xyz",
+  "into",
+  "into_iter",
+  "is_ok",
+  "iter",
+  "len",
+  "length",
+  "map",
+  "map_or",
+  "ok",
+  "ok_or",
+  "retain",
+  "take",
+  "to_owned",
+  "to_vec",
+  "unwrap_or",
+  "on_draw",
+  "on_reset",
+  "on_update",
+  "painter",
+  "settings_button",
+  "sphere",
+  "split",
+  "tag",
+  "think",
+  "unit",
+]);
+
+/** The method and function names `text` calls in its fenced Rust blocks and inline code (`.x(`, `T::x(`). */
+function calledNames(text: string): Set<string> {
+  const fenced = [...text.matchAll(/```rust\n([\s\S]*?)```/g)].map((match) => match[1] ?? "");
+  const inline = [...text.replace(/```[\s\S]*?```/g, "").matchAll(/`([^`\n]+)`/g)].map((match) => match[1] ?? "");
+  const calls = [...fenced, ...inline].flatMap((chunk) => [...chunk.matchAll(/(?:\.|::)([a-z_][a-z0-9_]*)\s*\(/g)]);
+  return new Set(calls.map((match) => match[1] ?? ""));
+}
+
 /** The words of `text`, split at whitespace. */
 const wordCount = (text: string): number => text.split(/\s+/).filter(Boolean).length;
 
@@ -488,6 +559,20 @@ describe("GENEX_API.md is the facade's reference", () => {
     assert.ok(names.size >= 6);
     for (const name of names) assert.ok(rules.includes(name), `the determinism rules do not name ${name}`);
     assert.ok(rules.includes("f32"), "the transcendental rule names f32's methods");
+  });
+});
+
+describe("the game systems' pages teach only pinned calls", () => {
+  it("pins every call the game systems' pages teach (docs to fixture)", () => {
+    const pinned = new Set(
+      pinnedCallGroups().flatMap(([, calls]) => calls.flatMap((call) => call.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])),
+    );
+    const unpinned = PINNED_CALL_PAGES.flatMap((page) =>
+      [...calledNames(read(`${API_PAGES}/${page}.md`))]
+        .filter((name) => !pinned.has(name) && !NOT_GAME_SYSTEMS_CALLS.has(name))
+        .map((name) => `${page}.md: ${name}(..)`),
+    );
+    assert.deepEqual(unpinned, []);
   });
 });
 

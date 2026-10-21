@@ -191,31 +191,40 @@ pub const FOG_CALLS: [&str; 8] =
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling): the rig, the
 /// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
-/// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26).
-pub const ANIMATION_CALLS: [&str; 57] = [
+/// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26; the
+/// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
+/// a ragdoll view's `.apply`, pinned at gate GI).
+pub const ANIMATION_CALLS: [&str; 81] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
-    "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", "Animator::simple", ".play",
-    ".crossfade", ".play_once", ".speed", ".playing_clip", ".build_simple", ".with_root_motion",
-    ".with_retargeted_clips",
-    ".float", ".trigger", ".layer", ".state", ".transition", ".when", ".build", ".set_float", ".fire", ".update",
-    ".probe", "frame.character", "frame.character_with", "frame.skeleton_debug", "CharacterDraw::new", ".tint",
-    ".material",
+    "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", "Animator::simple",
+    ".play", ".crossfade", ".play_once", ".speed", ".playing_clip", ".build_simple", ".with_root_motion",
+    ".with_retargeted_clips", ".float", ".trigger", ".layer", ".state", ".transition", ".when", ".build", ".set_float",
+    ".fire", ".update", ".probe", "frame.character", "frame.character_with", "frame.skeleton_debug",
+    "CharacterDraw::new", ".tint", ".material", "Motion::clip", ".once", ".above", ".below", ".at_end", ".synced",
+    ".inertialize", ".priority", ".interruptible", ".layer_mask", ".event", ".vec2", ".bool", ".set_vec2", ".set_bool",
+    ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
+    ".socket", ".apply",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
-/// terrain tiles, STR-23; cell groups and scatter, STR-20).
-pub const STREAM_CALLS: [&str; 34] = [
+/// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
+/// active set, the commit, scatter rules and the tiles' readers the page teaches, pinned at gate GI).
+pub const STREAM_CALLS: [&str; 53] = [
     "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
     "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
     "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
     ".model", "frame.cells_debug", "sim.stream.keep", "sim.stream.release", "sim.stream.snapshot", "sim.stream.restore",
     "TerrainTiles::procedural", "TerrainTiles::authored", ".with_height_range", ".with_colliders", ".terrain",
-    "sim.stream.ground", ".colliders_content", ".group", "inputs.scatter",
+    "sim.stream.ground", ".colliders_content", ".group", "inputs.scatter", "inputs.bounds", "inputs.rng", "cell.cell",
+    "cell.refused", "Scatter::new", ".with_scale", ".following_ground", "sim.stream.active", "sim.stream.is_active",
+    "sim.stream.kept", "game.stream_commit", ".cell_size", ".samples", ".is_procedural", ".authored_cells",
+    ".tile_heights", ".tile", ".collider", ".cell_colliders",
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
-/// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14).
-pub const NAV_CALLS: [&str; 53] = [
+/// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14; tiles, triangle input,
+/// custom areas, saved meshes, two-way links and streamed islands the page teaches, pinned at gate GI).
+pub const NAV_CALLS: [&str; 64] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
@@ -225,6 +234,8 @@ pub const NAV_CALLS: [&str; 53] = [
     "nav.closest_point", "nav.path", "nav.raycast", "nav.move_along", "nav.random_point", "nav.distance_to_wall",
     "nav.probe", "nav.snapshot", "nav.restore", ".with_colliders", ".with_static_colliders", "frame.nav_debug",
     "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths", "game.nav_bake",
+    "NavArea::custom", ".with_tile", ".with_triangles", "sim.nav.config", "mesh.to_bytes", "mesh.source",
+    "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
 ];
 /// The input calls of the facade (IN-11, IN-12).
 pub const INPUT_CALLS: [&str; 30] = [
@@ -235,13 +246,19 @@ pub const INPUT_CALLS: [&str; 30] = [
     "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
-/// refusal code's wire spelling.
-pub const ASSET_CALLS: [&str; 9] =
-    ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"];
+/// refusal code's wire spelling and `.triangle_count` counts a model's triangles.
+pub const ASSET_CALLS: [&str; 10] = [
+    "gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code",
+    ".detail", ".wire", ".triangle_count",
+];
 /// The sim-side asset read refusals: [`crate::AssetErrorCode::ALL`]'s wire spellings.
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
-/// The level-of-detail calls of the facade (LOD-07).
-pub const LOD_CALLS: [&str; 4] = [".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound"];
+/// The level-of-detail calls of the facade (LOD-07; a class's crossfade threshold, LOD-06, pinned at
+/// gate GI).
+pub const LOD_CALLS: [&str; 7] = [
+    ".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound", ".lod_at", "LodConfig::new",
+    ".threshold_px",
+];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
 pub const LOD_REFUSALS: [&str; 3] = ["levels-invalid", "levels-mismatch", "compound-invalid"];
 /// The settings menu's calls (UIS-11).

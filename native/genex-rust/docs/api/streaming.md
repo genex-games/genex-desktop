@@ -35,7 +35,8 @@ game.on_update(|sim, _| {
 });
 ```
 
-- `Streaming::grid(size)`: cells of `size` metres (8 to 1024) anchored at world (0, 0).
+- `Streaming::grid(size)`: cells of `size` metres (8 to 1024) anchored at world (0, 0);
+  `.cell_size()` reads the size back.
   `.sim_radius(cells)` (default 1, at most 8), `.hysteresis(cells)` (default 1, at most 4: a cell
   leaves only past `sim_radius + hysteresis`), `.prefetch(cells)` (default 1, at most 4: built ahead)
   and `.anchors(n)` (default 1, at most 8). Register it once with `game.streaming(..)`.
@@ -109,12 +110,17 @@ game.on_update(|sim, _| {
   `terrain-heights-invalid` with nothing made.
 - A tile is 65, 129, 257 or 513 samples a side (`TERRAIN_TILE_SAMPLES`). Neighbours share their
   border samples bit for bit.
+- `tiles.samples()`, `tiles.is_procedural()` and `tiles.authored_cells()` (ascending; none for
+  procedural tiles, which cover every cell) describe them. `tiles.tile(cell, size)` is a cell's
+  tile as a `Terrain` (with its layers) and `tiles.tile_heights(cell, size)` its `Heightfield`:
+  `None` for an authored world without that tile or a cell size its tiles were not written for.
 - `sim.stream.ground(x, z)` is the tile's `Terrain::height`: procedural tiles anywhere, authored
   ones only inside a sim-active cell (`None` elsewhere).
 - With physics, `game.cell_content(tiles.colliders_content(64.0))` beside
   `game.stream_colliders()` gives each sim-active tile one heightfield collider, inserted and
   removed in canonical order; `.with_colliders(false)` turns them off. Neither happens on its own
-  with `.terrain(..)`.
+  with `.terrain(..)`. `tiles.collider(cell, size)` is one tile's collider and
+  `tiles.cell_colliders(cell, size)` the `CellColliders` part that carries it.
 
 ## Kept cells and saves
 

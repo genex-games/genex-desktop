@@ -261,6 +261,12 @@ fn the_saves_block_is_the_fixtures() {
     assert_eq!(names(&pinned["slotOps"]), SlotOp::ALL.map(SlotOp::wire));
 }
 
+/// The ui block's calls (UIS-10): the calls the ui page teaches, held here as the other blocks are.
+#[test]
+fn the_ui_calls_are_the_fixtures() {
+    assert_eq!(names(&fixture()["ui"]["calls"]), genex::ui::UI_CALLS);
+}
+
 /// The audio block (AU-9): the calls the audio page teaches and genex-audio's refusals.
 #[test]
 fn the_audio_block_is_the_fixtures() {

@@ -18,8 +18,8 @@ game.on_reset(|sim, _seed, _rng, gfx| {
   `.json()` parses them (a `Value`, or `malformed`), `.as_str()` reads UTF-8 text and `.digest()`
   is their FNV-1a 64.
 - `gfx.assets().triangles(&model)` answers the model's `ModelTriangles` (`positions`,
-  `indices`, `min`, `max`): its default scene with node transforms applied, read by the renderer's
-  own glTF reader. Never a render level of detail.
+  `indices`, `min`, `max`; `.triangle_count()`): its default scene with node transforms applied,
+  read by the renderer's own glTF reader. Never a render level of detail.
 - `gfx.assets().info(path)` answers `AssetInfo` (`bytes`, `group`) without reading the file into
   the simulation, or `None` for an unsafe path or a file the build does not have.
 - Keep what a reset read in the world (`Arc`, owned values): update hooks never read files. A

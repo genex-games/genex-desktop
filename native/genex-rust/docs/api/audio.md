@@ -25,6 +25,8 @@ game.on_update(|sim, ctx| {
 - A refused file is a missing handle, never a panic: `sound.refusal()` names why (`not-at-reset`,
   `not-preloaded`, `unsafe-path`, `missing`, `needs-import` for Opus or AAC, `malformed`,
   `memory-limit` past 48 MiB of decoded sounds) and a play of it is refused `sound-missing`.
+  `sound.is_missing()` says whether it plays silence; `sound.seconds()` is its length at pitch 1
+  (0 when missing). Music handles answer the same three.
   `state().volatile.audio.issues` lists each refusal once.
 
 ## Playing

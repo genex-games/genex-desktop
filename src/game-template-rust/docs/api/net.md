@@ -25,7 +25,7 @@ game.on_update(|sim, ctx| {
     if sim.world.online && sim.net.status() == NetStatus::Offline {
         sim.net.connect(); // the commitment point: after the Play online click, never on boot
     }
-    if ctx.keys.down(Key::D) { sim.world.x += 0.1; } // move yourself locally, on the input tick
+    if ctx.keys.down(Key::KeyD) { sim.world.x += 0.1; } // move yourself locally, on the input tick
     sim.net.set_me(json!({ "x": sim.world.x })).ok();
     for event in sim.net.events() {
         if let NetEvent::Left { player } = event { sim.world.scores.remove(player.as_str()); }
