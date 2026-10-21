@@ -266,6 +266,13 @@ impl ImmediateFrame {
         self.tick
     }
 
+    /// The frame's level-of-detail crossfade band ([`crate::scene::Scene::lod_band`]; game systems
+    /// LOD-06: the presenter passes its quality's `lod.fade_band`, 0 draws hard switches).
+    pub fn set_lod_band(&mut self, band: f32) -> &mut Self {
+        self.scene.lod_band = band;
+        self
+    }
+
     /// How the following draws choose their levels (game systems LOD-02, LOD-07): the
     /// compound sphere their parts measure from and their bias ([`crate::scene::Scene::set_lod`]).
     pub fn set_lod(&mut self, lod: crate::lod_rows::DrawLod) -> &mut Self {

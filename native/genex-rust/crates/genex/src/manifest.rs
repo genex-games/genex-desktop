@@ -181,26 +181,27 @@ pub const FOG_CALLS: [&str; 8] =
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling): the rig, the
 /// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
-/// the animator, `frame.character` and its skeleton overlay).
-pub const ANIMATION_CALLS: [&str; 50] = [
+/// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26).
+pub const ANIMATION_CALLS: [&str; 57] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
-    "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", ".with_root_motion",
+    "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", "Animator::simple", ".play",
+    ".crossfade", ".play_once", ".speed", ".playing_clip", ".build_simple", ".with_root_motion",
     ".with_retargeted_clips",
     ".float", ".trigger", ".layer", ".state", ".transition", ".when", ".build", ".set_float", ".fire", ".update",
     ".probe", "frame.character", "frame.character_with", "frame.skeleton_debug", "CharacterDraw::new", ".tint",
     ".material",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
-/// terrain tiles, STR-23).
-pub const STREAM_CALLS: [&str; 32] = [
+/// terrain tiles, STR-23; cell groups and scatter, STR-20).
+pub const STREAM_CALLS: [&str; 34] = [
     "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
     "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
     "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
     ".model", "frame.cells_debug", "sim.stream.keep", "sim.stream.release", "sim.stream.snapshot", "sim.stream.restore",
     "TerrainTiles::procedural", "TerrainTiles::authored", ".with_height_range", ".with_colliders", ".terrain",
-    "sim.stream.ground", ".colliders_content",
+    "sim.stream.ground", ".colliders_content", ".group", "inputs.scatter",
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
 /// collider input, NAV-5; debug drawing, NAV-16).
@@ -229,10 +230,10 @@ pub const ASSET_CALLS: [&str; 9] =
     ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"];
 /// The sim-side asset read refusals: [`crate::AssetErrorCode::ALL`]'s wire spellings.
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
-/// The level-of-detail calls of the facade.
-pub const LOD_CALLS: [&str; 0] = [];
-/// The level-of-detail refusals (`__render.lodRefused` codes).
-pub const LOD_REFUSALS: [&str; 0] = [];
+/// The level-of-detail calls of the facade (LOD-07).
+pub const LOD_CALLS: [&str; 4] = [".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound"];
+/// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
+pub const LOD_REFUSALS: [&str; 3] = ["levels-invalid", "levels-mismatch", "compound-invalid"];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];

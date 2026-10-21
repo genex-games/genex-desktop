@@ -33,7 +33,10 @@ hooks, or without `game.ui`, `tr` answers the key. `genex::ui::locale()`,
 `genex::ui::reduced_motion()` and `genex::ui::safe_area(ui)` (the phone's insets as an egui margin)
 read the same layers. The locale is the person's saved choice, then the OS locale, then the first
 listed. A Genex run ignores the person's choice and the OS locale and has no safe area, so a check
-sees the defaults unless the session sets them.
+sees the defaults unless the session sets them. In a Studio run the `uiSettings` verb sets that
+session layer (locale, scale, safe area, text size) from the next tick; `xx-pseudo` shows pseudo
+text when `.pseudo_locale(true)` offers it. `textSize` is recorded and answered back; gameplay UI
+does not read it yet.
 
 The kit draws in one pass and moves by pad or keys: `Menu::new("pause").item("resume", &tr("resume")).back("resume").show(ui)`
 answers the picked item's key (its `back` key on B or Escape), and `Dialog::new("quit")`,

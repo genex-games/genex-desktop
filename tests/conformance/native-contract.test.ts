@@ -69,7 +69,11 @@ import {
   receiptExtensionApis,
   receiptServesRenderSettings,
   receiptServesReloadAssets,
+  receiptServesSaves,
+  receiptServesUiSettings,
   NATIVE_RELOAD_ASSETS_API_VERSION,
+  NATIVE_SAVES_API_VERSION,
+  NATIVE_UI_SETTINGS_API_VERSION,
   ringSizeFor,
   BakeKind,
   isBakeName,
@@ -943,6 +947,8 @@ const WIRE = JSON.parse(readFileSync(new URL("../fixtures/native-wire-v2.json", 
     apiVersion: number;
     answer: unknown;
   };
+  saves: { op: string; receiptKey: string; apiVersion: number };
+  uiSettings: { op: string; receiptKey: string; apiVersion: number };
   render: {
     op: string;
     stateKey: string;
@@ -1072,6 +1078,25 @@ describe("the renderer's quality on the wire (renderSettings, volatile.render, c
     assert.equal(receiptServesReloadAssets(receipt), true);
     assert.equal(receiptServesReloadAssets(parseNativeCapabilityReceipt(WIRE.receiptRenderSettings)), false);
     assert.equal(parseNativeCapabilityReceipt({ ...WIRE.receiptRenderSettings, reloadAssetsApi: 0 }), null);
+  });
+
+  it("reads savesApi and uiSettingsApi and holds their names to the wire fixture", () => {
+    const rows = [
+      [WIRE.saves, NativeOp.Saves, NATIVE_SAVES_API_VERSION, receiptServesSaves],
+      [WIRE.uiSettings, NativeOp.UiSettings, NATIVE_UI_SETTINGS_API_VERSION, receiptServesUiSettings],
+    ] as const;
+    for (const [block, op, version, serves] of rows) {
+      assert.equal(block.op, op);
+      assert.equal(block.apiVersion, version);
+      const receipt = parseNativeCapabilityReceipt({
+        ...WIRE.receiptRenderSettings,
+        [block.receiptKey]: block.apiVersion,
+      });
+      assert.equal(receipt?.[block.receiptKey as "savesApi" | "uiSettingsApi"], version, block.receiptKey);
+      assert.equal(serves(receipt), true, block.receiptKey);
+      assert.equal(serves(parseNativeCapabilityReceipt(WIRE.receiptRenderSettings)), false, block.receiptKey);
+      assert.equal(parseNativeCapabilityReceipt({ ...WIRE.receiptRenderSettings, [block.receiptKey]: 0 }), null);
+    }
   });
 
   it("refuses a receipt whose renderer fields are outside their shape", () => {

@@ -59,6 +59,26 @@ game.on_update(|sim, _| {
   still loading draws nothing and is never listed as a missing model; a refused one draws the
   missing-asset checker. A model the asset index lists with levels of detail loads its coarsest
   level first and draws that until the whole model arrives. Display only: never in the checksum.
+- `CellBuild::group(InstanceGroup)` draws a retained group while the cell is within the view
+  radius: its rows upload once, and stop when the cell leaves the view. A model group draws once
+  its model is resident (nothing while it loads). `inputs.scatter(&terrain, &rule)` is
+  `Terrain::scatter` over the cell's bounds; the scatters of neighbouring cells meet exactly (the
+  scatter of A plus the scatter of B is the scatter of A and B together). A cell whose groups hold
+  more than `STREAM_CELL_INSTANCES_MAX` (4096) instances together draws nothing.
+
+  ```rust
+  let forest = Scatter::new(0.8, &[0]).with_scale(0.6, 1.4).following_ground(0.5);
+  game.cell_content(move |_cell, inputs| {
+      let trees = inputs.scatter(&terrain, &forest);
+      CellBuild::<()>::default().group(InstanceGroup::models(&tree, trees).expect("under the cap"))
+  });
+  ```
+- Captures are settled. A Studio capture of a streaming game first waits (at most 6 s,
+  `STREAM_DRAIN_MAX_MS`) until every model and group its camera wants is resident or refused, so a
+  capture right after a teleport shows what a capture after 300 frames shows. Live frames never
+  wait. Past 6 s the capture is drawn with what is resident and `state().volatile.__stream.view`
+  (Studio runs: `groups`, `groupInstances`, `drainPasses`, `drainMs`, `drainTimeouts`) reads
+  `timeout: "stream-drain-timeout"` until a drain settles.
 - `frame.cells_debug()` outlines the view's cells on the ground. Green: drawn. Yellow: loading.
   Grey: building. Red: refused.
 - On the web, a pack's cells and terrain tiles and each named group's files arrive while playing

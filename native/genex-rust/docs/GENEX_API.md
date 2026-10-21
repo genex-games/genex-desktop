@@ -97,20 +97,16 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
 - **State keys.** `state()` owns `version`, `contractVersion`, `seed`, `frame`, `simulatedMs`,
   `running`, `fps`, `held`, `pointerLock`, `hud`, `camera`, `error`, `player`, `volatile`,
   `__render`, `assets` and `checksum`, `__stream` while `game.streaming` is registered and
-  `__input` while `game.input` is registered (display only and never in the checksum, so a probe
-  may be named `stream` or `input`). A streamed world
-  (`docs/api/streaming.md`) registers `Streaming::grid(64.0).sim_radius(1)` with
-  `game.streaming(..)` and builds cells with `game.cell_content(..)` (`CellBuild::default()`,
-  `.thing(..)`; `.hysteresis(..)`, `.prefetch(..)` and `.anchors(..)` tune it); the sim moves it
-  with `sim.stream.set_anchor(..)` and `sim.stream.clear_anchor(..)` and reads
-  `sim.stream.entered()` and `sim.stream.left()` each tick. `game.navigation(..)` registers a
-  walker and `sim.nav` holds its nav (`docs/api/navigation.md`); `frame.nav_debug` draws nothing
-  yet. `hud.items` lists
+  `__input` while `game.input` is registered, `__net` while the build links networking or
+  `game.net` is registered (display only and never in the checksum, so a probe may be named
+  `stream`, `input` or `net`). A streamed world registers `game.streaming(..)` and builds cells
+  with `game.cell_content(..)` (`docs/api/streaming.md`); `game.navigation(..)` registers a
+  walker and `sim.nav` holds its nav (`docs/api/navigation.md`). `hud.items` lists
   the label of every egui widget the last tick drew, in drawing order, so a check can find a
   widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long
   chain of inputs). Its driver offers `sim()`, `sim_mut()`, `inject(input)`, `advance_ms(ms)`
-  and `save(file, bytes)`, and the value it returns is the demo's answer (a check captures the
+  `save(file, bytes)` and `net()` (scripted remote players in the loopback room), and the value it returns is the demo's answer (a check captures the
   frame after the demo with the `capture` verb). The runtime
   is paused after a demo. Only a demo can advance time: `advance` inside `on_update` does not
   compile.
@@ -121,11 +117,11 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
-  `duplicate-audio`, `duplicate-saves`, `duplicate-ui` (each a second registration), `streaming-invalid` (the
+  `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second registration), `streaming-invalid` (the
   Streaming and Navigation pages say when), `input-invalid` (the Ctx page explains it),
   `audio-zone-limit` (more than 16 reverb zones),
   `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`
-  and `ui-locale-invalid`.
+  `ui-locale-invalid` and `net-config-invalid` (a `game.net` config outside its caps).
   `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
   pass name, or one pass over the cap.
 

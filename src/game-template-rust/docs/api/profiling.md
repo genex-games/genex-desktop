@@ -45,3 +45,7 @@ game.on_update(|sim, ctx| {
 - **Crash records.** When a panic happens, the record names the seed, the tick it happened on
   and the last summary, so an agent can replay it with `seed` and `step`. A desktop export writes
   its records under the save root's `genex-crash/` (the newest 16 are kept).
+
+What the renderer's features cost: on an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure
+costs about 0.1 ms, bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact shadows 0.15-0.3, TAA 0.2,
+EASU with RCAS under 0.3 and `ultra`'s sun shadows about 0.6.

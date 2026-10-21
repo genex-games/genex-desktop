@@ -110,6 +110,6 @@ for w in &mut sim.world.walkers {
 
 - **Drawing.** `frame.nav_debug(&sim.nav, NavDebug::mesh())` draws the walkable surface (every
   polygon edge, the borders and the tile seams, each once) as one logical draw;
-  `NavDebug::borders()` draws the outline only, `.with_links()` adds off-mesh links and
+  `NavDebug::borders()` draws the outline only (the borders and the tile seams), `.with_links()` adds off-mesh links and
   `.with_paths()` each agent's path to its target; `NavDebug::everything()` is all of them. The
   default draws nothing. Seams draw stitched after the update that follows a change.

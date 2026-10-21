@@ -1,9 +1,46 @@
 # Animation
 
-A rigged GLB animates in three steps. `on_reset` builds the character's graph and animator,
-`on_update` advances the animator by `ctx.dt`, and `on_draw` draws it. The types are in
-`genex::animation`, and `Animator` is also in the prelude. Animation needs no physics: a game
-with physics off keeps all of it.
+A rigged GLB animates in three steps. `on_reset` makes the character's animator, `on_update`
+advances it by `ctx.dt`, and `on_draw` draws it. Start with the simple animator; move to a graph
+when you need parameters, layers or blend spaces. The types are in `genex::animation`, and
+`Animator` is also in the prelude. Animation needs no physics: a game with physics off keeps
+all of it.
+
+## The simple animator (start here)
+
+```rust
+// on_reset
+let hero = gfx.character("characters/hero.glb")?;          // animation-asset-invalid
+let (Some(idle), Some(walk), Some(slash)) = (hero.clip("Idle"), hero.clip("Walk"), hero.clip("Sword_Attack")) else { return };
+let mut animator = Animator::simple(&hero)?;
+animator.play(idle);
+sim.world.hero = Some(animator);
+
+// on_update
+let Some(hero) = sim.world.hero.as_mut() else { return };
+if moving { hero.crossfade(walk, 0.25); } else { hero.crossfade(idle, 0.3); }
+if ctx.keys.pressed(Key::Space) { hero.play_once(slash); }
+hero.speed(1.0);
+let step = hero.update(ctx.dt);
+```
+
+- `Animator::simple(&hero)` shows the rest pose until the first call.
+- `.play(clip)` cuts to a looping clip. Playing the clip already looping changes nothing.
+- `.crossfade(clip, seconds)` blends into a looping clip from the next update. The seconds round
+  to the nearest step of `CROSSFADE_LADDER_SECONDS` (0.05 s steps up to 0.5 s, then up to 2 s);
+  0 cuts.
+- `.play_once(clip)` cuts to a clip played once. From the tick it ends, it blends back over 0.2 s
+  into the looping clip it interrupted. Started from the rest pose, it holds its last frame.
+  `.play(..)` or another `.play_once(..)` interrupts it; a `.crossfade(..)` meanwhile only
+  changes the clip it returns to, so calling `crossfade` every tick is fine.
+- `.speed(s)` scales every clip (1 is as authored).
+- `.playing_clip()` is the clip it plays or blends into.
+- Each verb returns false, and changes nothing, for a clip the character lacks or on a graph
+  animator. The last call before an update wins.
+- It is an ordinary animator underneath. `update`, root motion, events (declare them with
+  `hero.graph()`, `g.event(..)` and then `g.build_simple()`), `reach`, `look_at`, `socket`,
+  `probe`, `snapshot` and drawing all work as below. A character takes at most
+  `SIMPLE_CLIPS_MAX` (215) clips.
 
 ## The graph and the animator (on_reset)
 

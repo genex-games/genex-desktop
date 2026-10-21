@@ -2238,6 +2238,12 @@ export interface NativeCapabilityReceipt {
   renderInputs?: RenderInput[];
   /** The `renderSettings` verb's version this game serves; absent: the game has no such verb. */
   renderSettingsApi?: number;
+  /** The `reloadAssets` verb's version this game serves; absent: a build that does not swap assets in place. */
+  reloadAssetsApi?: number;
+  /** The `saves` verb's version this game serves; absent: a build without the verb. */
+  savesApi?: number;
+  /** The `uiSettings` verb's version this game serves; absent: a build without the verb. */
+  uiSettingsApi?: number;
 }
 // ↑ src/shared/native-contract.ts
 

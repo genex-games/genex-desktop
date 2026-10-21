@@ -264,8 +264,7 @@ fn build_level(physics: &mut PhysicsWorld) {
 
 /// A simple animator of `asset` playing `clip` (the facade's `Animator::simple` is this graph).
 fn simple(asset: &CharacterAsset, clip: ClipId) -> Animator {
-    let graph = asset.graph().build_simple().expect("the mannequin's simple graph");
-    let mut animator = asset.animator(&graph).expect("an animator of the mannequin");
+    let mut animator = Animator::simple(asset).expect("the mannequin's simple animator");
     animator.play(clip);
     animator
 }

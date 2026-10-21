@@ -274,5 +274,7 @@
     "receiptKey": "reloadAssetsApi",
     "apiVersion": 1,
     "answer": { "reloaded": ["textures/bark.png"], "refused": [{ "path": "../bark.png", "code": "unsafe-path" }], "pending": 0 }
-  }
+  },
+  "saves": { "op": "saves", "receiptKey": "savesApi", "apiVersion": 1 },
+  "uiSettings": { "op": "uiSettings", "receiptKey": "uiSettingsApi", "apiVersion": 1 }
 }

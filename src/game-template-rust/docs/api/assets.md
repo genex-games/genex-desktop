@@ -46,6 +46,11 @@ Reads follow one rule on every destination (desktop, web, phones):
 Each refusal is an `AssetError` with `.code()` (`AssetErrorCode`, its wire spelling from
 `.code().wire()`) and `.detail()` for a log line.
 
+On a phone the compiled table is read first, then the files the build ships beside the game: the
+app bundle's `assets/` on iOS, and the APK's `assets/` on Android (read by range through
+`AAssetManager`). A game whose assets outgrow the table keeps its files under `assets/`, and
+nothing in its code changes.
+
 ## Characters
 
 A rigged GLB loads at reset the same way, as a `CharacterAsset`: its skeleton, parsed once and

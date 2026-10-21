@@ -67,4 +67,7 @@ game.on_update(|sim, ctx| {
   `slots`, `lastSave {slot, tick, bytes}`, `lastLoad {slot, tick, checksumMatch}` and `issues`. It
   is the same on every destination and never in the checksum. In a Genex run a slot records no
   date.
+- **Studio.** In a Studio run the host can list, read, write (seed a fixture envelope), save, load
+  and delete slots through the dev `saves` verb; a load answers once it applied, with
+  `checksumMatch`.
 - `ctx.save(file, bytes)` and `ctx.load(file)` stay for a game's own files beside the slots.

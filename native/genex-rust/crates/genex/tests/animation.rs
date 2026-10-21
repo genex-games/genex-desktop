@@ -164,6 +164,45 @@ fn frame_character_counts_one_logical_draw_under_its_tag() {
     assert_eq!((*tint, material.clone()), (Color::RED, Some(Material::color(Color::BLUE))));
 }
 
+/// Two animators of the hero: the facade's simple one and the hand-built simple graph.
+#[derive(Default)]
+struct Pair {
+    simple: Option<Animator>,
+    built: Option<Animator>,
+}
+
+/// AN-26: `Animator::simple(&hero)` is the hidden one-layer graph a game would build itself, so
+/// scripted the same way it poses the same, and `frame.character` draws it as one logical draw.
+#[test]
+fn animator_simple_poses_as_the_hand_built_simple_graph_and_draws_once() {
+    let mut game = Game::new(Pair::default()).world_size(64, 64);
+    game.on_reset(|sim, _, _, gfx| {
+        let hero = gfx.character("hero.glb").expect("the hero loads");
+        let idle = hero.clip("Idle").expect("the hero has Idle");
+        let mut simple = Animator::simple(&hero).expect("a simple animator of the hero");
+        let mut built = hero.animator(&hero.graph().build_simple().expect("the simple graph")).expect("an animator of the hero");
+        assert!(simple.play(idle) && built.play(idle));
+        sim.world = Pair { simple: Some(simple), built: Some(built) };
+    });
+    game.on_update(|sim, ctx| {
+        for animator in [&mut sim.world.simple, &mut sim.world.built].into_iter().flatten() {
+            animator.update(ctx.dt);
+        }
+    });
+    game.on_draw(|sim, frame, _| {
+        let Some(simple) = &sim.world.simple else { return };
+        frame.tag("simple").character(simple, Transform::IDENTITY);
+    });
+    let mut runtime = Runtime::with_assets(game, Box::new(table())).expect("valid game");
+    runtime.step(30.0 * genex::FIXED_STEP_MS);
+    let world = &runtime.sim().world;
+    let digests = [&world.simple, &world.built].map(|animator| animator.as_ref().map(|animator| animator.pose_digest()));
+    assert!(digests[0].is_some());
+    assert_eq!(digests[0], digests[1], "the simple animator poses as the hand-built simple graph");
+    let frame = runtime.frame(View::Game).expect("the game view");
+    assert_eq!(frame.tags()["simple"], 1, "frame.character is one logical draw");
+}
+
 #[test]
 fn frame_skeleton_debug_draws_one_logical_line_batch_of_its_bones() {
     let mut runtime = Runtime::with_assets(scripted_game(true), Box::new(table())).expect("valid game");

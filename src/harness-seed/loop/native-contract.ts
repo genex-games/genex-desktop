@@ -558,6 +558,10 @@ export const NATIVE_RENDER_KEY = "render";
 export const NATIVE_RENDER_SETTINGS_API_VERSION = 1;
 /** The `reloadAssets` version a receipt advertises as `reloadAssetsApi`. */
 export const NATIVE_RELOAD_ASSETS_API_VERSION = 1;
+/** The `saves` version a receipt advertises as `savesApi` (G6 UIS-16). */
+export const NATIVE_SAVES_API_VERSION = 1;
+/** The `uiSettings` version a receipt advertises as `uiSettingsApi` (G6 UIS-16). */
+export const NATIVE_UI_SETTINGS_API_VERSION = 1;
 
 // ── the renderer's quality (shared/render-quality.ts) ─────────────────────────────────────
 

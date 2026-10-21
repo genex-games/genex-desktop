@@ -1903,6 +1903,8 @@ impl Presenter {
         immediate.set_seconds((tick as f64 * FIXED_STEP_MS / 1000.0) as f32);
         // The frame's water on the same clock (renderer pass 2 B.3).
         immediate.set_water(water_of(frame, tick));
+        // The quality's crossfade band between levels of detail (LOD-06; `lod-fade` off gives 0).
+        immediate.set_lod_band(self.resilient.renderer().renderer().quality().lod.fade_band);
         self.sync_passes(passes);
         immediate.set_tick(tick);
         // Each emitter as it is at the frame's tick (a refused one is skipped).

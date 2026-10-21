@@ -188,6 +188,8 @@ fn the_game_systems_blocks_are_the_fixtures() {
     let input = genex::actions::InputErrorCode::ALL.map(genex::actions::InputErrorCode::as_str);
     let assets = genex::AssetErrorCode::ALL.map(genex::AssetErrorCode::wire);
     assert_eq!(ASSET_REFUSALS, assets, "the manifest's asset refusals are AssetErrorCode's");
+    let lod = genex::LodRefusalCode::ALL.map(genex::LodRefusalCode::wire);
+    assert_eq!(LOD_REFUSALS, lod, "the manifest's lod refusals are LodRefusalCode's");
     let blocks: [(&str, &[&str], &[&str]); 6] = [
         ("animation", &ANIMATION_CALLS, &animation[..]),
         ("stream", &STREAM_CALLS, &stream),
@@ -200,6 +202,15 @@ fn the_game_systems_blocks_are_the_fixtures() {
         assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");
         assert_eq!(names(&pinned[key]["refusals"]), refusals, "{key} refusals");
     }
+}
+
+/// The net block (MP-4a): `sim.net`'s local refusals; its calls are pinned with the net page (MP-4b).
+#[test]
+fn the_net_block_is_the_fixtures() {
+    let pinned = &fixture()["net"];
+    let refusals: Vec<&str> = genex::net::NetErrorCode::ALL.iter().map(|code| code.wire()).collect();
+    assert_eq!(names(&pinned["refusals"]), refusals);
+    assert!(names(&pinned["calls"]).is_empty(), "the net calls are pinned with the net page");
 }
 
 /// The saves block (UIS-9): the calls the saves page teaches, genex-save's refusals, the volatile

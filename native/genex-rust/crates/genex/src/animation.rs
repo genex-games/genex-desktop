@@ -1,6 +1,8 @@
 //! Animation on the facade (AN-15), over genex-anim: a [`CharacterAsset`] from `gfx.character`
 //! builds its graph and its animators, a world holds each [`Animator`] and advances it in
 //! `on_update` with `animator.update(ctx.dt)`, and a draw hook draws it with `frame.character`.
+//! `Animator::simple(&hero)` is the short path: `play`, `crossfade`, `play_once` and `speed` on a
+//! hidden one-layer graph.
 //!
 //! The update rule is the facade's own: `update` takes `&mut self`, and every read hook (`on_draw`,
 //! `camera`, `probe`, ...) gets `&Sim`, so an animator only moves in the simulation, by the tick's
@@ -44,6 +46,7 @@ pub use genex_anim::ids::{ClipId, EventId, JointId, LayerId, StateId};
 pub use genex_anim::mask::{BodyPart, Mask};
 pub use genex_anim::params::{BoolParam, Condition, FloatParam, TriggerParam, Vec2Param};
 pub use genex_anim::root_motion::{MotionAxes, MotionSettings, RootMotion};
+pub use genex_anim::simple::{CROSSFADE_LADDER_SECONDS, SIMPLE_CLIPS_MAX};
 
 impl CharacterAsset {
     /// A graph builder over this character's skeleton and clips: parameters, layers, states,
@@ -104,6 +107,14 @@ pub struct Animator {
 }
 
 impl Animator {
+    /// A simple animator of `asset`: `play(clip)`, `crossfade(clip, seconds)`, `play_once(clip)`
+    /// and `speed(s)` on a hidden one-layer graph (genex-anim's `simple`), so probes, sockets, IK
+    /// and root motion work as on any animator. It shows the rest pose until the first call.
+    /// Refused `animation-graph-invalid` past [`SIMPLE_CLIPS_MAX`] clips.
+    pub fn simple(asset: &CharacterAsset) -> Result<Animator, AnimationError> {
+        asset.animator(&asset.graph().build_simple()?)
+    }
+
     /// The character it animates.
     pub fn asset(&self) -> &CharacterAsset {
         &self.asset

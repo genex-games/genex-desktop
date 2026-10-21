@@ -198,3 +198,21 @@ fn a_game_without_them_answers_unavailable_and_the_web_answers_unknown_op() {
         assert!(!reply["available"].items().iter().any(|listed| listed.as_str() == op), "the web never lists {op}");
     }
 }
+
+/// The receipt keys and versions the host reads (`native-wire-v2.json`'s `saves` and `uiSettings`
+/// blocks, held on the TS side by `native-contract.test.ts`).
+#[test]
+fn the_receipt_names_both_verbs_as_the_wire_fixture_does() {
+    let fixture = json::parse(include_bytes!("../../../../../tests/fixtures/native-wire-v2.json")).expect("the fixture is JSON");
+    let mut receipt = genex_studio::wire::Receipt::new(genex_studio::wire::Backend::Metal, "Apple M4 Max", Vec::new());
+    receipt.saves_api = Some(genex_studio::wire::SAVES_API_VERSION);
+    receipt.ui_settings_api = Some(genex_studio::wire::UI_SETTINGS_API_VERSION);
+    let value = receipt.to_value();
+    let rows = [("saves", Op::SAVES, genex_studio::wire::SAVES_API_VERSION), ("uiSettings", Op::UI_SETTINGS, genex_studio::wire::UI_SETTINGS_API_VERSION)];
+    for (key, op, version) in rows {
+        let block = &fixture[key];
+        assert_eq!(block["op"].as_str(), op);
+        assert_eq!(block["apiVersion"].as_f64(), f64::from(version), "{key}");
+        assert_eq!(value[block["receiptKey"].as_str()].as_f64(), f64::from(version), "{key}");
+    }
+}

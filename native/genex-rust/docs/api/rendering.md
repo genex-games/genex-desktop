@@ -59,17 +59,14 @@ Each feature has a switch; off is its cheaper variant, never a refusal:
 | `prepass` | depth, normals, motion for AO, contact shadows, TAA and Level-2/3 inputs | those fall back |
 | `meshlets`, `occlusion` | clustered big meshes, Hi-Z culling (off on every preset) | the instance path |
 | `texture-quality` | texture size classes above 256 texels (read at load) | 256 texels |
-
-On an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure costs about 0.1 ms,
-bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact shadows 0.15-0.3, TAA 0.2, EASU with RCAS under
-0.3 and `ultra`'s sun shadows about 0.6.
+| `lod-fade`, `impostors` | level crossfades, impostors past the last level | hard switches, the last level |
 
 Quality resolves in order, each layer overriding the one before it key by key: the class's preset
 table, the game's `[render]`, the person's choice in the settings panel (saved per device in the
 game's saves, never in the simulation), and the studio's `renderSettings` verb (this session only).
 
 ```toml
-[render]                    # all optional; a game that names nothing gets the device's defaults
+[render]                    # all optional: the device's defaults
 form_factors = ["desktop", "mobile"]
 preset = "auto"             # auto | low | medium | high | ultra
 
@@ -88,14 +85,14 @@ blend_band = 0.1            # of each cascade, 0..=0.5
 render_scale = 0.67         # 0.5..=1
 fps = 30                    # 30 | 60
 bloom = false               # any switch above
+lod_threshold_px = 3.0      # with lod_fade_band, far_density: see Drawing
 ```
 
 The build lane compiles `[render]` into every destination. In code,
 `game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` replaces `[render]`;
 `RenderConfig::from_build()` starts from it instead. Give the person the last word: call
 `genex::render::settings_panel(ui)` from `on_ui` (an options menu); it shows the detected class, a
-row of presets (none drawing less than the one below), the render scale and a
-switch per feature (Tab, Space). A preset change rebuilds the renderer for its anti-aliasing (a short
+row of presets (none drawing less than the one below), the render scale, a Detail distance slider and a switch per feature (Tab, Space). A preset change rebuilds the renderer for its anti-aliasing (a short
 hitch). A switch this build does not draw is reported off and listed `not-landed`.
 
 TAA jitters the camera by a fraction of a pixel and blends with last frame through motion vectors
