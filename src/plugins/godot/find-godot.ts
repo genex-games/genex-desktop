@@ -39,12 +39,13 @@ export type GodotVersion = { major: number; minor: number; patch: number; status
 /** One Godot found: the binary Genex runs (its real path), its app bundle if any, and its version. */
 export type GodotInstall = { binary: string; app: string | null; version: GodotVersion; supported: boolean };
 
-/** Where this Mac's Godot stands for making a game. Never rename a value. */
+/** Where this Mac's Godot stands for making a game; `Unsupported` off a Mac. Never rename a value. */
 export const GodotReadiness = {
   Ready: "ready",
   OlderOnly: "older-only",
   NewerOnly: "newer-only",
   None: "none",
+  Unsupported: "unsupported",
 } as const;
 export type GodotReadiness = (typeof GodotReadiness)[keyof typeof GodotReadiness];
 
@@ -162,9 +163,12 @@ function appOf(binary: string): string | null {
   return end < 0 ? null : binary.slice(0, end + 4);
 }
 
+/** Whether Genex builds Godot games on this platform: on a Mac only for now, where its sandbox runs Godot. */
+export const godotRunsOn = (platform: NodeJS.Platform): boolean => platform === "darwin";
+
 /** Every Godot on this computer, newest first, each once. Only macOS is searched: Genex runs Godot there. */
 export async function findGodots(env: GodotEnv): Promise<GodotInstall[]> {
-  if (env.platform !== "darwin") return [];
+  if (!godotRunsOn(env.platform)) return [];
   const found = await Promise.all((await macCandidates(env)).map((c) => asInstall(env, c)));
   const unique = new Map<string, GodotInstall>();
   for (const install of found) if (install && !unique.has(install.binary)) unique.set(install.binary, install);

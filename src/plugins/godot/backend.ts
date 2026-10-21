@@ -38,6 +38,7 @@ import {
   type GodotInstall,
   GodotReadiness,
   godotReadiness,
+  godotRunsOn,
   systemGodotEnv,
   usableGodot,
   versionName,
@@ -55,6 +56,7 @@ import {
 } from "./godot-run.ts";
 import { GAME_PROJECT_FOLDER, projectScene } from "./game-project.ts";
 import {
+  closedSetupCard,
   createGodotInstaller,
   type GodotInstallDeps,
   type GodotInstaller,
@@ -167,6 +169,10 @@ const NEW_GAME = "godot__new-game";
 const MESSAGE = {
   UnknownAction: (name: string) => `Unknown Godot action: ${name}`,
   UnknownTool: (name: string) => `Unknown Godot tool: ${name}`,
+  MacOnly:
+    "Genex builds Godot games on a Mac only for now, and this computer isn't one. Tell the person so in one line and offer to build the game for the web instead, which plays right here in Genex.",
+  MacOnlyNote:
+    "Genex builds Godot games on a Mac only for now, so Godot is no option on this computer: don't offer it. If the person asks for Godot, tell them so in one line and offer the web instead.",
   NoGodot:
     "Godot 4 isn't installed on this Mac. Call godot__show-steps: it puts the Godot setup card in the chat, where Genex installs Godot for the user (Do it for me). Say so in one line and end your reply; the chat tells you when Godot is ready.",
   StepsShown:
@@ -293,8 +299,9 @@ const storageOf = (context: PluginContext) => context.host(HostService.StorageRo
 const gameFolderOf = (context: PluginContext): string | undefined =>
   context.project && context.directory ? context.directory : undefined;
 
-/** The Godot Genex uses, or why there is none in the words an agent passes on. */
+/** The Godot Genex uses, or why there is none in the words an agent passes on (off a Mac, that Godot is Mac-only). */
 async function requireGodot(deps: GodotBackendDeps): Promise<GodotInstall> {
+  if (!godotRunsOn(deps.env.platform)) throw new Error(MESSAGE.MacOnly);
   const install = usableGodot(await findGodots(deps.env));
   if (!install) throw new Error(MESSAGE.NoGodot);
   return install;
@@ -311,8 +318,19 @@ function readinessNote(readiness: GodotReadiness, version: string | null): strin
   return `Offer "Godot ${version ?? "4"}: builds in the Godot editor on this computer"; when the answer (or the request) is Godot, call ${NEW_GAME} with a template (2d or 3d) and a name: it makes the game's Godot project in this folder's ${GAME_PROJECT_FOLDER}/; then build the game there with the Godot tools, never as a web page.`;
 }
 
-/** `engine-status`: whether a new Godot game can be made here, and the engine card's words. */
+/**
+ * `engine-status`: whether a new Godot game can be made here, and the engine card's words; off a Mac
+ * Godot is no option at all (`offered: false`), so the new game's question leaves it out.
+ */
 async function engineStatus(deps: GodotBackendDeps) {
+  if (!godotRunsOn(deps.env.platform))
+    return {
+      engine: GodotReadiness.Unsupported,
+      version: null,
+      ready: false,
+      offered: false,
+      note: MESSAGE.MacOnlyNote,
+    };
   const { readiness, version } = godotReadiness(await findGodots(deps.env));
   return {
     engine: readiness,
@@ -698,7 +716,7 @@ async function status(deps: GodotBackendDeps, context: PluginContext) {
   return {
     ...godotReadiness(installs),
     /** Whether this computer is a Mac, the only one Genex builds Godot games on for now. */
-    mac: deps.env.platform === "darwin",
+    mac: godotRunsOn(deps.env.platform),
     godot: install
       ? { version: versionName(install.version), binary: install.binary, mono: install.version.mono }
       : null,
@@ -852,8 +870,9 @@ async function skipFile(context: PluginContext): Promise<string> {
   return path.join(await storageOf(context), SKIPPED_FOLDER, encodeURIComponent(context.project));
 }
 
-/** Godot's setup card for this Mac now, the install under way, and the game's Don't use Godot. */
+/** Godot's setup card for this Mac now, the install under way, and the game's Don't use Godot; off a Mac, closed. */
 async function setupSteps(deps: GodotBackendDeps, installer: GodotInstaller, context: PluginContext) {
+  if (!godotRunsOn(deps.env.platform)) return closedSetupCard(MESSAGE.MacOnly);
   const install = usableGodot(await findGodots(deps.env));
   const skipped = await stat(await skipFile(context)).then(
     () => true,
@@ -862,8 +881,12 @@ async function setupSteps(deps: GodotBackendDeps, installer: GodotInstaller, con
   return godotSetupCard(install, installer.job(), skipped);
 }
 
-/** The agent's `show-steps`: Godot's setup card in the game's chat while Godot is missing; it takes back Don't use Godot. */
+/**
+ * The agent's `show-steps`: Godot's setup card in the game's chat while Godot is missing; it takes
+ * back Don't use Godot. Off a Mac there is no card: the agent is told Godot is Mac-only.
+ */
 async function showSteps(deps: GodotBackendDeps, installer: GodotInstaller, context: PluginContext): Promise<string> {
+  if (!godotRunsOn(deps.env.platform)) return MESSAGE.MacOnly;
   await rm(await skipFile(context), { force: true });
   if (!(await setupSteps(deps, installer, context)).open) return MESSAGE.StepsDone;
   return (await context.host(HostService.EngineSteps)) ? MESSAGE.StepsShown : MESSAGE.StepsNoChat;
@@ -903,7 +926,10 @@ export function createGodotBackend(deps: GodotBackendDeps): PluginActivation {
   };
   const actions: Record<GodotAction, Handler> = {
     [GodotAction.Steps]: async (_args, context) => setupSteps(deps, await installerOf(context), context),
-    [GodotAction.InstallGodot]: async (_args, context) => (await installerOf(context)).install(),
+    [GodotAction.InstallGodot]: async (_args, context) => {
+      if (!godotRunsOn(deps.env.platform)) throw new Error(MESSAGE.MacOnly);
+      (await installerOf(context)).install();
+    },
     [GodotAction.StopInstall]: async (_args, context) => (await installerOf(context)).stop(),
     [GodotAction.Skip]: async (_args, context) => skip(await installerOf(context), context),
     [GodotAction.Status]: (_args, context) => status(deps, context),

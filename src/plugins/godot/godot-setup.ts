@@ -130,6 +130,11 @@ export function godotSetupCard(
   };
 }
 
+/** The card closed, with nothing to do: what the agent is told instead (`doneSays`), as off a Mac. */
+export function closedSetupCard(says: string): PluginSetupCard {
+  return { title: WORDS.Title, intro: WORDS.Intro, open: false, steps: [], doneSays: says };
+}
+
 /** The newest stable Godot 4 Mac build in Godot's release answer: its version and download. */
 export function godotAsset(release: unknown): { version: string; url: string } | undefined {
   const assets = (release as { assets?: unknown })?.assets;
