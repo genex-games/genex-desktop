@@ -44,7 +44,12 @@ game.on_update(|sim, ctx| {
   project's CONTRACT.md lists each action. An agent reads these, and a game never calls them.
 - **Crash records.** When a panic happens, the record names the seed, the tick it happened on
   and the last summary, so an agent can replay it with `seed` and `step`. A desktop export writes
-  its records under the save root's `genex-crash/` (the newest 16 are kept).
+  its records under the save root's `genex-crash/` (the newest 16 are kept). A phone build writes
+  them as `genex-self-test/crash-<n>.json` beside its self-test records (the newest 16), and at the
+  next launch also records what the panic hook could not see, each once: on iOS every MetricKit
+  crash diagnostic (a native fault, or a memory kill as `out-of-memory`), on Android the last exit
+  when it was a native crash (with the tombstone's frames from Android 12) or a low-memory kill.
+  Their frames are image offsets, not symbols.
 
 What the renderer's features cost: on an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure
 costs about 0.1 ms, bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact shadows 0.15-0.3, TAA 0.2,

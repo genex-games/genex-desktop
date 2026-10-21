@@ -5,12 +5,21 @@
  * and playing, every NET_POLL_MS on a fake clock, and stops when asked.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { setImmediate as tick } from "node:timers/promises";
 import { describe, it } from "node:test";
 import { NET_STATE_KEY, NetMode, NetOffline, NetStatus, type NetView, netViewOf } from "../../src/shared/game-net.ts";
 import type { NativeTimers } from "../../src/shared/native-contract.ts";
 import { NET_POLL_MS, type NetRowApi, netRowView, startNetPoll } from "../../src/renderer/panels/stage/net-row.ts";
 import { NET_WORDS } from "../../src/renderer/words.ts";
+
+/** The facade vocabulary fixture's net block: genex-net's spellings, which tests/vocabulary.rs holds to the crate. */
+const PINNED = (
+  JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "fixtures", "rust-facade-vocabulary.json"), "utf8")) as {
+    net: { modes: string[]; statuses: string[]; offline: string[] };
+  }
+).net;
 
 /** A `__net` as the facade writes it (`net.rs` `runtime_key`). */
 const NET = {
@@ -71,6 +80,12 @@ describe("net row: what a [net] game's row says", () => {
     for (const mode of Object.values(NetMode)) assert.ok(NET_WORDS.mode[mode], mode);
     for (const status of Object.values(NetStatus)) assert.ok(NET_WORDS.status[status], status);
     for (const reason of Object.values(NetOffline)) assert.ok(NET_WORDS.reason[reason], reason);
+  });
+
+  it("restates genex-net's mode, status and reason spellings in their order", () => {
+    assert.deepEqual(Object.values(NetMode), PINNED.modes);
+    assert.deepEqual(Object.values(NetStatus), PINNED.statuses);
+    assert.deepEqual(Object.values(NetOffline), PINNED.offline);
   });
 });
 

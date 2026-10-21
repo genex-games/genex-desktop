@@ -126,6 +126,12 @@ frame.skeleton_debug(hero, at);
   stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
   skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the
   same picture as the compute pass, including the shadows and the motion vectors.
+- A character GLB with simplified levels (the Studio's import writes them on every primitive of a
+  model of 512 or more triangles, skinned ones included) skins only the level its distance picks,
+  with the screen-size metric and crossfades models use: the compute pass near, the vertex stage
+  far. During a crossfade both levels are skinned by the compute pass. Every level keeps the
+  joints and weights of the vertices it uses and poses with the same skeleton, so nothing changes
+  in the animator. A file whose parts' levels do not line up draws whole.
 - `frame.character_with(..)` takes a `CharacterDraw`: `.tint(..)`, and `.material(..)` to replace
   the GLB's materials.
 - `frame.skeleton_debug(..)` draws every bone as one line batch (one logical draw).

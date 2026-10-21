@@ -21,11 +21,11 @@ use genex_render::scene::{MeshId, ModelPart};
 use genex_render::texture::{TextureData, TextureId, TextureKind};
 use serde_json::{Value, json};
 
-/// The showcase's tree rule (`TreeLod::at`, `examples/showcase/game/src/layout.rs`): where its
-/// levels change, in metres from the camera, scaled by the tree's size.
+/// The showcase's former hand-picked tree rule (24 and 58 m, LOD-08 replaced it with authored
+/// levels): where its levels changed, in metres from the camera, scaled by the tree's size.
 const TREE_LOD_DISTANCES: [f32; 2] = [24.0, 58.0];
 
-/// `TreeLod::at(distance, scale).index()`.
+/// The former rule's level at `distance` for a tree of `scale`.
 fn tree_lod_at(distance: f32, scale: f32) -> usize {
     let [near, middle] = TREE_LOD_DISTANCES.map(|d| d * scale);
     if distance < near {
@@ -220,8 +220,9 @@ fn picked_at(part: &ModelPart, scale: f32, eye: [f32; 3], origin: [f32; 4]) -> u
 // ---------------------------------------------------------------------------------------------
 // Rows.
 
-/// New behaviour (LOD-07): authored levels pick the level the showcase's `TreeLod::at` picked, at
-/// the nominal view, for copies of scale 1 and 1.4, on both sides of each switch.
+/// New behaviour (LOD-07): authored levels pick the level the showcase's former hand-picked rule
+/// (24 and 58 m) picked, at the nominal view, for copies of scale 1 and 1.4, on both sides of each
+/// switch.
 #[test]
 fn authored_levels_pick_the_same_level_as_treelod_at_the_nominal_view() {
     let files = tree_files();

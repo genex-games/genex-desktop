@@ -584,6 +584,7 @@
         "tests/conformance/authoring-trial.test.ts",
         "tests/fixtures/authoring-trial/**",
         "tests/conformance/rust-runtime.test.ts",
+        "tests/conformance/rust-stream-determinism.test.ts",
         "tests/conformance/rust-vendored-multiplayer.test.ts",
         "tests/fixtures/rust-protocol-game/**",
         "tests/conformance/rust-performance.test.ts",
