@@ -226,6 +226,9 @@ impl Impostors {
             return;
         }
         renderer.remove_impostor_levels(&installed);
+        // The renderer's species stay in its arrays: reserve again when impostors come back on,
+        // or every job would find the arrays full.
+        self.reserved = None;
         for job in &mut self.jobs {
             job.state = JobState::Pending;
         }

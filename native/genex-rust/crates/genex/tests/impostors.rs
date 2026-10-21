@@ -11,6 +11,7 @@ use std::path::Path;
 
 use genex::present::{AssetCache, BakeTally, LodRefused, ModelSource, Presenter, Uploads, drawn_of};
 use genex::prelude::*;
+use genex::render::{RenderChange, RenderFeature};
 use genex::{Impostor, ImpostorLayout, LodRefusalCode, Runtime, View};
 use genex_render::RenderError;
 use genex_render::device_loss::ModelParts;
@@ -276,6 +277,29 @@ fn device_loss_rebakes_and_the_next_frame_matches() {
     assert_eq!(impostors_drawn(&presenter), 1);
     let differing = share_past(&before, &after, 1);
     assert_eq!(differing, 0.0, "the frame after the loss matches the one before (1 LSB)");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Red first (LOD-17's finding): impostors switched off and on again bake every species again and
+/// draw their cards. Before, switching off kept the renderer's arrays reserved, so each job found
+/// the arrays full when they came back on and stayed on its mesh (`OverCap`).
+#[test]
+fn impostors_off_then_on_bake_every_species_again() {
+    let files = tree_files(2);
+    let root = folder("toggle", &files_ref(&files));
+    let Some(mut presenter) = open_presenter(&root) else { return };
+    let mut rt = runtime(2, true);
+    let switch = |on: bool| RenderChange { features: vec![(RenderFeature::Impostors, on)], ..RenderChange::default() };
+    capture(&mut presenter, &mut rt, "toggle-on");
+    assert_eq!(impostors_drawn(&presenter), 2, "both trees draw as cards");
+    rt.render().borrow_mut().apply(&switch(false));
+    capture(&mut presenter, &mut rt, "toggle-off");
+    assert_eq!(impostors_drawn(&presenter), 0, "off: the last mesh levels stand");
+    rt.render().borrow_mut().apply(&switch(true));
+    capture(&mut presenter, &mut rt, "toggle-on-again");
+    let baked = presenter.render_settings().expect("attached").borrow().status().lod.impostors.len();
+    assert_eq!((baked, impostors_drawn(&presenter)), (2, 2), "on again: every species baked and drawn");
+    assert_eq!(presenter.impostor_bakes(), 4, "each species baked once per switch-on");
     let _ = std::fs::remove_dir_all(&root);
 }
 
