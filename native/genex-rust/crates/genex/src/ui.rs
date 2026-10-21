@@ -211,6 +211,7 @@ pub(crate) struct State {
     catalog: Option<Catalog>,
     pinned: bool,
     person_locale: Option<String>,
+    person: PersonLayer,
     os_locale: Option<String>,
     shell_safe_area: [f32; 4],
     output: OutputClass,
@@ -230,6 +231,7 @@ impl Default for State {
             catalog: None,
             pinned: false,
             person_locale: None,
+            person: PersonLayer::default(),
             os_locale: None,
             shell_safe_area: [0.0; 4],
             output: OutputClass::Desktop,
@@ -260,6 +262,14 @@ impl State {
         }
         self.pinned = pinned;
         self.person_locale = if pinned { None } else { saves.load(genex_ui::settings::store::SETTINGS_FILE).as_deref().and_then(person_locale) };
+        self.negotiate(setup);
+    }
+
+    /// The settings menu's person layer (UIS-11): its locale replaces the one `rebase` read, and
+    /// its scale and reduced motion sit below the session layer, from the next tick.
+    pub(crate) fn set_person(&mut self, setup: &Setup, person: PersonLayer) {
+        self.person_locale.clone_from(&person.locale);
+        self.person = person;
         self.negotiate(setup);
     }
 
@@ -356,7 +366,8 @@ impl State {
             return;
         }
         let offered = offered(setup);
-        let person = if self.pinned { None } else { self.person_locale.as_deref() };
+        // `rebase` reads no saved locale in a Genex run; one the menu set during the run applies.
+        let person = self.person_locale.as_deref();
         let os = if self.pinned { None } else { self.os_locale.as_deref() };
         let choice = self.session.locale.as_deref().or(person);
         let Some(answer) = negotiate(&offered, choice, os) else {
@@ -394,7 +405,7 @@ impl State {
     /// The UI scale egui runs at: the session's, else the game's, resolved for the output.
     pub(crate) fn scale(&self, setup: &Setup) -> f32 {
         let configured = setup.config().map_or(UiScale::Auto, |config| config.scale);
-        let scale = self.session.scale.map_or(configured, UiScale::Fixed);
+        let scale = self.session.scale.map_or(self.person.scale.unwrap_or(configured), UiScale::Fixed);
         scale.resolve(self.output, self.pinned)
     }
 
@@ -457,7 +468,7 @@ impl State {
         }
         let shared = Shared {
             catalog: self.catalog.take(),
-            reduced_motion: self.session.reduced_motion.unwrap_or(false),
+            reduced_motion: self.session.reduced_motion.unwrap_or(self.person.reduced_motion),
             safe_area: self.safe_area(),
             scale: self.scale(setup),
         };
@@ -522,6 +533,23 @@ fn offered(setup: &Setup) -> Vec<Locale> {
     locales
 }
 
+/// The locale tags `game.ui` offers, the pseudo-locale left out (the settings menu's Language).
+pub(crate) fn offered_tags(setup: &Setup) -> Vec<String> {
+    offered(setup).iter().filter(|locale| !locale.is_pseudo()).map(|locale| locale.tag().to_owned()).collect()
+}
+
+/// The settings menu's person layer (UIS-11): what the person chose on the Language &
+/// Accessibility tab (None: the game's own).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct PersonLayer {
+    /// An offered locale's tag.
+    pub(crate) locale: Option<String>,
+    /// A fixed UI scale.
+    pub(crate) scale: Option<UiScale>,
+    /// Reduced motion.
+    pub(crate) reduced_motion: bool,
+}
+
 /// `lang/<locale>.ftl`.
 fn text_path(locale: &Locale) -> String {
     format!("{TEXT_FOLDER}/{}.ftl", locale.tag())
@@ -558,6 +586,16 @@ pub fn tr(key: &str) -> String {
         Some(catalog) => catalog.tr(key),
         None => key.to_owned(),
     })
+}
+
+/// The text of `key` in the active locale when its catalog has it, else `fallback(key)`, with no
+/// `text-missing` issue (the settings menu's built-in words have English of their own).
+pub(crate) fn tr_or(key: &str, fallback: impl FnOnce(&str) -> String) -> String {
+    let found = SCOPE.with_borrow_mut(|slot| {
+        let catalog = slot.as_mut().and_then(|shared| shared.catalog.as_mut()).filter(|catalog| catalog.has(key))?;
+        Some(catalog.tr(key))
+    });
+    found.unwrap_or_else(|| fallback(key))
 }
 
 /// The text of `key` with `args` filled in (`TextArgs::new().num("n", 3).str("name", "Ada")`), as

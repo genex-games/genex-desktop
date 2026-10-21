@@ -21,7 +21,7 @@ pub(crate) struct G6Setup {
     pub(crate) saves: saves::Setup,
     /// `game.ui` (UIS-10).
     pub(crate) ui: ui::Setup,
-    /// `game.settings` (UIS-10).
+    /// `game.settings` (UIS-11).
     pub(crate) settings: settings::Setup,
     /// `game.net` (MP-4a).
     pub(crate) net: net::Setup,
@@ -87,5 +87,6 @@ impl G6 {
         self.net.runtime_key(&setup.net, state);
         self.saves.volatile_key(&setup.saves, state);
         self.profile.volatile_key(state);
+        self.settings.volatile_key(state);
     }
 }

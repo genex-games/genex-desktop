@@ -172,11 +172,14 @@ pub enum InstallErrorCode {
     /// A `game.net` config outside its caps: a publish rate outside `1..=NET_PUBLISH_HZ_MAX`,
     /// more than 6 decimals, or a smoothing delay outside `1..=30` ticks.
     NetConfigInvalid,
+    /// A second `game.settings`, a game option off the Game tab or with a reserved prefix, or a
+    /// preset that does not fit its tab's options.
+    SettingsInvalid,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 25] = [
+    pub const ALL: [InstallErrorCode; 26] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -202,6 +205,7 @@ impl InstallErrorCode {
         InstallErrorCode::UiLocaleInvalid,
         InstallErrorCode::DuplicateNet,
         InstallErrorCode::NetConfigInvalid,
+        InstallErrorCode::SettingsInvalid,
     ];
 
     /// The typed code's wire spelling.
@@ -232,6 +236,7 @@ impl InstallErrorCode {
             InstallErrorCode::UiLocaleInvalid => "ui-locale-invalid",
             InstallErrorCode::DuplicateNet => "duplicate-net",
             InstallErrorCode::NetConfigInvalid => "net-config-invalid",
+            InstallErrorCode::SettingsInvalid => "settings-invalid",
         }
     }
 }
@@ -433,6 +438,8 @@ impl<W: Default + 'static> Runtime<W> {
         runtime.core.g6.input.install(&runtime.game.g6.input, runtime.core.gfx.saves(), studio_run());
         // And the person's UI layer (locale), which a Genex run ignores (UIS-10).
         runtime.core.g6.ui.rebase(&runtime.game.g6.ui, runtime.core.gfx.saves(), studio_run());
+        // Then the settings menu's (UIS-11), which routes the person's volumes and UI layer.
+        runtime.core.g6.settings_rebase(&runtime.game.g6, runtime.core.gfx.saves(), studio_run());
         // The net backend the build links; a run Studio serves is always the loopback room (MP-4a).
         runtime.core.g6.net = crate::net::State::install(&runtime.game.g6.net, studio_run());
         runtime.seed(DEFAULT_SEED);
@@ -588,6 +595,7 @@ impl<W> Runtime<W> {
         self.core.gfx.set_saves(Saves::for_destination(Destination::Android, &env, game));
         self.core.g6.input.rebase(&self.game.g6.input, self.core.gfx.saves(), studio_run());
         self.core.g6.ui.rebase(&self.game.g6.ui, self.core.gfx.saves(), studio_run());
+        self.core.g6.settings_rebase(&self.game.g6, self.core.gfx.saves(), studio_run());
         let tick = self.core.tick;
         restart_journal(&self.game, &mut self.core, tick);
     }
@@ -602,6 +610,7 @@ impl<W> Runtime<W> {
         self.core.gfx.set_saves(Saves::for_destination(Destination::GenexRun, &env, game));
         self.core.g6.input.rebase(&self.game.g6.input, self.core.gfx.saves(), true);
         self.core.g6.ui.rebase(&self.game.g6.ui, self.core.gfx.saves(), true);
+        self.core.g6.settings_rebase(&self.game.g6, self.core.gfx.saves(), true);
         let tick = self.core.tick;
         restart_journal(&self.game, &mut self.core, tick);
     }
@@ -1357,6 +1366,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     };
     // `tr` and the person layer reach the update and UI hooks through the UI scope (UIS-10).
     let ui_scope = core.g6.ui.enter(&game.g6.ui);
+    // And the person's settings, which the settings menu changes (UIS-11).
+    let settings_scope = core.g6.settings.enter();
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
     }
@@ -1405,6 +1416,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         core.g6.input.save_if_changed(core.gfx.saves());
     }
     core.g6.ui.leave(ui_scope);
+    // The menu's changes route outside the Sim (audio buses now, the UI layer from the next tick).
+    core.g6.settings_leave(&game.g6, settings_scope, core.gfx.saves());
     core.g6.ui.note_pads(&input.core.pads);
     #[cfg(feature = "physics")]
     core.sim.physics.step();
@@ -1514,6 +1527,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_audio(game)?;
     crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
     crate::ui::check(&game.g6.ui).map_err(|(code, detail)| InstallError::new(code, detail))?;
+    crate::settings::check(&game.g6).map_err(|(code, detail)| InstallError::new(code, detail))?;
     game.g6.net.check().map_err(|(code, detail)| InstallError::new(code, detail))?;
     let mut facets = Set::default();
     for facet in &game.facets {

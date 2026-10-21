@@ -189,7 +189,8 @@ fn temp_dir(name: &str) -> String {
     text
 }
 
-const PERSON_FR: &[u8] = br#"{"format":1,"values":{"ui.language":"fr"}}"#;
+// A whole format-1 file (UIS-11: the settings store reads it, and refuses one without `presets`).
+const PERSON_FR: &[u8] = br#"{"format":1,"presets":{},"values":{"ui.language":"fr"}}"#;
 
 #[test]
 fn in_a_genex_run_the_persons_saved_locale_is_ignored() {

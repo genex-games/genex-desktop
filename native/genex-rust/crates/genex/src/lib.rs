@@ -43,7 +43,8 @@ pub mod net;
 pub mod profile;
 /// Save slots: `game.saves`, `game.save_section`, `game.save_world` and `ctx.slots()` (genex-save).
 pub mod saves;
-mod settings;
+/// The settings menu: `genex::settings::menu`, `game.settings` and the person's values (genex-ui).
+pub mod settings;
 /// Gameplay UI: `game.ui`, `tr` and `tr_args`, the menu, dialog, grid, list, bar and toast kit (genex-ui).
 pub mod ui;
 /// Animation (AN-15): a character's graph and animators over genex-anim, advanced in `on_update`
