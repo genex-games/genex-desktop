@@ -153,11 +153,12 @@ fn backdrop_fogged(radiance: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {
 
 @fragment
 fn fs_backdrop(in: BackdropOut) -> @location(0) vec4<f32> {
-    // A point on the near plane (1 under reverse-Z, 0 under standard Z): finite even with an
-    // infinite far plane.
-    let near = select(0.0, 1.0, frame.depth_reversed == 1u);
-    let world = frame.inv_view_proj * vec4<f32>(in.ndc, near, 1.0);
-    let dir = normalize(world.xyz / world.w - frame.camera_pos.xyz);
+    // A point on the far plane (0 under reverse-Z, 1 under standard Z), its w kept: with an
+    // infinite far plane w is 0 and xyz is the ray itself. A near-plane point sits 0.1 m from a
+    // camera kilometres out, where f32 spacing is about 1 mm, and its ray swam pixels at 8 km.
+    let far = select(1.0, 0.0, frame.depth_reversed == 1u);
+    let world = frame.inv_view_proj * vec4<f32>(in.ndc, far, 1.0);
+    let dir = normalize(world.xyz - frame.camera_pos.xyz * world.w);
     // The angle one pixel covers against one map texel's (2 pi / width radians at the equator).
     let pixel = max(max(length(dpdx(dir)), length(dpdy(dir))), BACKDROP_MIN_PIXEL_ANGLE);
     let texel = 2.0 * BACKDROP_PI / f32(textureDimensions(equirect).x);
