@@ -54,7 +54,8 @@ impl SkinnedModel {
         let inverse_bind = globals.iter().map(|global| global.inverse().to_cols_array()).collect();
         let skeleton = Skeleton { inverse_bind, ..rest };
         let animations = gltf.animations().map(|animation| read_animation(&animation, blob)).collect::<Result<_, _>>()?;
-        Ok(SkinnedModel { data: SkinnedMeshData { mesh, skin, skeleton, animations }, parts })
+        // A node-posed model draws whole: skinned levels (AN-25) are read from skinned primitives only.
+        Ok(SkinnedModel { data: SkinnedMeshData { mesh, skin, skeleton, animations }, parts, levels: Vec::new() })
     }
 }
 
