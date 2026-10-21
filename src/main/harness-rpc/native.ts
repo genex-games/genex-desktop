@@ -12,7 +12,6 @@
 import path from "node:path";
 import { CppBuildPurpose } from "../../shared/build-problem.ts";
 import { BuildTarget, destinationsOf, isBuildTarget, isCompiledStack, stackOf } from "../../shared/game-project.ts";
-import { type ProfileUnavailable, ProfileUnavailableReason, profileUnavailable } from "../../shared/frame-profile.ts";
 import { type HarnessHostHandlers, type HarnessParams, HostMethod } from "../../shared/harness-api.ts";
 import {
   NATIVE_MAC_EXECUTABLES,
@@ -192,12 +191,6 @@ async function stop(x: CoreInternals, p: HarnessParams<typeof HostMethod.NativeS
   return stopped;
 }
 
-/** `preview.frameProfile`: `no-run` for a handle that names no lease; no profile is read yet. */
-function frameProfile(x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewFrameProfile>): ProfileUnavailable {
-  const leased = Boolean(x.previewPool?.leaseOf(p.handle));
-  return profileUnavailable(leased ? ProfileUnavailableReason.NotServed : ProfileUnavailableReason.NoRun);
-}
-
 /** The `native.*` handlers, spread into `StudioCore.api()`. */
 export function nativeRpc(core: StudioCore, x: CoreInternals) {
   return {
@@ -205,6 +198,5 @@ export function nativeRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.NativeStatus]: async (p) => status(core, x, p),
     [HostMethod.NativeStop]: async (p) => stop(x, p),
     [HostMethod.GameCrashes]: async (p) => gameCrashes(core, x, p),
-    [HostMethod.PreviewFrameProfile]: async (p) => frameProfile(x, p),
   } satisfies Partial<HarnessHostHandlers>;
 }

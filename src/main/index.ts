@@ -1293,7 +1293,7 @@ function registerIpc(studio: StudioCore): void {
       });
   registerToolchainIpc(handle, studio, stackSetupOf(studio), phoneTools);
   // The person's device launch installs only the phone packages the exports admitted.
-  registerNativeIpc(handle, studio, { device: { packages: studio.phonePackages } });
+  registerNativeIpc(handle, studio, { device: { packages: studio.phonePackages }, livePreview: () => preview });
   registerSeedIpc(handle, seedRetakeDepsOf(studio));
   registerCratesIpc(handle, () => crateRequestsFor(studio));
   // Eject and the trust flag are the person's acts alone: no harness method reaches them.

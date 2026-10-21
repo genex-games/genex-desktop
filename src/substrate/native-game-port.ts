@@ -17,6 +17,12 @@ import { type BuildIdentity, type CaptureProvenance, renderProvenanceCopy } from
 import { type CrashRecordV1, isGameMadeRecord } from "../shared/crash-record.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import type { BuildTarget } from "../shared/game-project.ts";
+import {
+  type FrameProfileAnswer,
+  type FrameProfileRequest,
+  ProfileUnavailableReason,
+  profileUnavailable,
+} from "../shared/frame-profile.ts";
 import { checkSavesArg, checkUiSettingsArg, type GameArgCheck } from "../shared/game-saves.ts";
 import {
   NATIVE_CALL_TIMEOUT_MS,
@@ -61,6 +67,8 @@ import {
 import { NotARegularFileError, readRegularFile } from "./fsx.ts";
 import { computePixelStats } from "./pixel-stats.ts";
 import { planNativeInput } from "./native-input-plan.ts";
+import { NativeProfiler, readFrameProfile, SUMMARY_REQUEST } from "./native-profile.ts";
+import type { ProfileRequest } from "./preview-profiler.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PreviewPort } from "./preview-port.ts";
 import type { ReadySnapshot } from "./preview-ready.ts";
@@ -392,9 +400,19 @@ export class NativeGamePort implements PreviewPort {
   #lastCrash: CrashRecordV1 | null = null;
   /** The tick the game's last answered `state` named, for a host-made hang record; null before one. */
   #lastTick: number | null = null;
+  /** `preview.profile`'s sampler over this run's own ops (PROF-6). */
+  readonly #profiler: NativeProfiler;
 
   constructor(io: NativePortIo) {
     this.#io = io;
+    this.#profiler = new NativeProfiler({
+      ready: () => this.#readyEvent,
+      start: () => this.call(NativeOp.Start),
+      timing: () => this.call(NativeOp.Timing),
+      state: () => this.call(NativeOp.State),
+      summary: () => this.frameProfile(SUMMARY_REQUEST),
+      now: () => io.timers.now(),
+    });
     // Nobody may ever ask for the handshake (a run stopped while starting): its failure is no crash.
     this.#handshake.promise.catch(() => {});
     io.child.fd3.on("data", (chunk: Buffer) => this.#receive(chunk));
@@ -617,6 +635,8 @@ export class NativeGamePort implements PreviewPort {
 
   /** A page verb on its op (`PageMethod` names); `{__missing: true}` for anything else, as a page answers. */
   async studioCall(method: string, arg?: unknown): Promise<unknown> {
+    // As a page's: a verb sent during a profile window changes what the window measures.
+    this.#profiler.invalidate(`studio ${method} during sample`);
     const verb = Object.hasOwn(PAGE_CALLS, method) ? PAGE_CALLS[method] : undefined;
     if (!verb) return { __missing: true };
     return verb(this, arg);
@@ -700,6 +720,21 @@ export class NativeGamePort implements PreviewPort {
 
   /** The registry stops the run; the port itself holds nothing to release. */
   async dispose(): Promise<void> {}
+
+  /** `preview.profile` (the optimization stage's sample): begin, start, read or end a window on this run. */
+  profile(request: ProfileRequest): Promise<unknown> {
+    return this.#profiler.profile(request);
+  }
+
+  /** The open profile window no longer holds (an evaluation or a reload during it). */
+  async invalidateProfile(reason: string): Promise<void> {
+    this.#profiler.invalidate(reason);
+  }
+
+  /** The game's frame profile (`preview.frameProfile`, Live's strip): its `profile` op through the parser. */
+  frameProfile(request: FrameProfileRequest): Promise<FrameProfileAnswer> {
+    return readFrameProfile((checked) => this.call(NativeOp.Profile, checked), request);
+  }
 
   /** Pause a hidden, unobserved clock the game was running, and start only a clock the host paused. */
   #applySight(): void {
@@ -1214,6 +1249,20 @@ export class NativeLeasePort implements PreviewPort {
 
   async attachReport(): Promise<null> {
     return null;
+  }
+
+  profile(request: ProfileRequest): Promise<unknown> {
+    return this.#port().profile(request);
+  }
+
+  async invalidateProfile(reason: string): Promise<void> {
+    await this.#run?.port.invalidateProfile(reason);
+  }
+
+  /** The run's frame profile; `no-run` while the lease holds none. */
+  async frameProfile(request: FrameProfileRequest): Promise<FrameProfileAnswer> {
+    if (!this.#run) return profileUnavailable(ProfileUnavailableReason.NoRun);
+    return this.#run.port.frameProfile(request);
   }
 
   /** The lease is given back: its run ends (or stops starting), and it loads nothing more. */

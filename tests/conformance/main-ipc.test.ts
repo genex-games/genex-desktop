@@ -845,6 +845,11 @@ async function nativeIpc(
       asked.push({ call: "front", detail: project });
       return true;
     },
+    // The shown run's port answers its frame profile (PROF-6): here a fixed summary, by request.
+    portOf(project: string) {
+      const shown = project === game.name && options.running;
+      return shown ? { frameProfile: async (request: { action: string }) => ({ answeredFor: request.action }) } : null;
+    },
     onStatus: () => () => {},
   };
   const core = {
@@ -891,7 +896,7 @@ const NATIVE_CHANNELS = ["studio:native.run", "studio:native.stop", "studio:nati
 describe("a game's frame profile and crash records over IPC (PROF-0c)", () => {
   const PROFILE_AND_CRASHES = ["studio:native.profile", "studio:game.crashes"];
 
-  it("answers a profile unavailable until the host reads profiles, and a game's kept crash records, in a fixture too", async () => {
+  it("answers a profile from the shown run (no-run when none), and a game's kept crash records, in a fixture too", async () => {
     const running = nativeStatus("pong-mac", NativeRunState.Ready);
     for (const fixture of [false, true]) {
       const live = await nativeIpc({ fixture, running });
@@ -922,11 +927,12 @@ describe("a game's frame profile and crash records over IPC (PROF-0c)", () => {
         value?.records.map((entry) => [entry.crashId, entry.record.message]),
         [["0123456789ab-1", "boom"]],
       );
+      // PROF-6 flipped this from `unavailable not-served`: the shown run's port answers it now.
       assert.deepEqual(
         await live.invoke("studio:native.profile", { project: "pong-mac", request: { action: "summary" } }),
         {
           ok: true,
-          value: { state: "unavailable", reason: "not-served" },
+          value: { answeredFor: "summary" },
         },
       );
       const idle = await nativeIpc({ fixture });

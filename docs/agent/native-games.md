@@ -174,7 +174,14 @@ announces `game_crashed` once and answers `game.crashes` and `studio:game.crashe
 store's `genex-symbolicate` (built at the Mac prewarm beside `genex-naga-check`) under the sandbox, 20 s,
 reading only host-chosen files: the export's `<bin>.debug/<digest>/`, or a Live build's executable while it
 has the run's digest, its Mach-O debug map followed into `<bin>/target`. The slide comes from
-`genex_crash::frames::anchor`; a frame outside the image is `foreign`; a failure keeps it unsymbolicated. Captures carry
+`genex_crash::frames::anchor`; a frame outside the image is `foreign`; a failure keeps it unsymbolicated.
+Profiles ([`native-profile.ts`](../../src/substrate/native-profile.ts)): `preview.profile` on a native
+lease samples the run's own ops (frame time from `timing`'s frame counter over a host-timed window,
+draws and triangles from `state().__render`, CPU/GPU percentiles and hitches from the `profile`
+summary when served) as a schema-1 `native` sample; `preview.frameProfile` (a lease, native or Rust
+web page) and Live's `studio:native.profile` (the shown run, else Live's page of that game) hand on
+the `profile` verb's answer only through `parseProfileAnswer`, `unknown-op`/`unavailable` as
+`unavailable`. Captures carry
 provenance (seq, digest, camera, run, build, the `render` settings the game answered with and the
 capture's `outputSize`; null where the path did not know them), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
 
