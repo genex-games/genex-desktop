@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>__GAME_TITLE__</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="data:," /><!--__NET_BRIDGE__-->
     <!--
       The web shell of a rust-wgpu game: the studio's page around the browser build, index.html
       beside game.js and game_bg.wasm (the Rust lane's web branch, src/main/rust-build-web.ts,
@@ -26,6 +26,29 @@
       never more bytes than planned) and hands it to studio_assets_preload, which admits it only at
       the recorded length and digest. The loading screen counts the planned files, and
       window.GenexShell.adapter carries the facts. Each step is bound only when the module exports it.
+      Every fetch, before the first frame or while playing, is refused (asset-outside) when a
+      redirect lands it outside assets/ or on another origin; nothing it carried is admitted.
+
+      Streaming (game systems STR-14b): the plan holds only the map's boot and sim groups (a cell
+      pack's index, everything outside the streamed groups); a pack's cells and terrain tiles and
+      each named group's files are fetched while playing. Each frame, before the game's, the shell
+      hands the module the pieces fetched since (studio_assets_arrived, oldest first, at most
+      STREAM_HANDOFF_BYTES a frame but always one), then asks studio_assets_wanted for the pieces
+      the game wants now and fetches each with a Range request, at most ASSET_FETCHES at once. A
+      server that ignores Range answers the whole file, which is read up to the piece's end and
+      sliced. A piece over STREAM_FETCH_MAX_BYTES is refused unfetched (asset-too-large); a refused
+      fetch or a piece the module refuses is logged and the game plays on. Fetched bytes wait in the
+      page until handed over, so the module's memory (which never shrinks) holds only what it took.
+      window.GenexShell.streaming counts them: queued, open, held (heldBytes, heldMost), fetched and
+      refused.
+
+      Multiplayer (game systems MP-5a): a [net] game's game.js imports the relay client's bridge by
+      its bare name, @genex-ai/multiplayer/bridge. Only that build's page carries, in its head where
+      the build puts it, an import map resolving the name to ./mp/bridge.mjs (the template's shim)
+      and a classic script loading mp/bridge.global.js (the pinned bridge) before any module; both
+      are in the page's own folder, on its origin, outside assets/ and the asset map. Every other
+      build's page has neither. The pipeline dry boot's worker has no import map, so a [net] game's
+      dry boot is refused and its pipelines compile as the boot asks.
 
       A boot that fails after that (the module, its wasm, the saves preload, an asset or
       studio_boot throws) shows the "couldn't start" card with the typed code boot-failed, never an empty stage, and
@@ -494,8 +517,18 @@
       /** The build's asset map, and the folder the files it names are fetched from. */
       const ASSET_MAP = "assets.json";
       const ASSETS_DIR = "assets/";
-      /** How many asset files are fetched at once. */
+      /** How many asset files are fetched at once (before the first frame, and again while playing). */
       const ASSET_FETCHES = 6;
+      /**
+       * The most one fetch made while playing carries (rust-build-web.ts WEB_STREAM_LIMITS.fetchBytes):
+       * a bigger piece is refused unfetched, which bounds the module's memory at its pool plus one asset.
+       */
+      const STREAM_FETCH_MAX_BYTES = 64 * 1024 * 1024;
+      /**
+       * Fetched pieces handed to the module per frame, in bytes (always at least one piece): the rest
+       * wait in the page, since the module's memory never shrinks once grown.
+       */
+      const STREAM_HANDOFF_BYTES = 8 * 1024 * 1024;
       /** The WebGPU features of the compressed texture families, in the order the plan is told them. */
       const TEXTURE_FEATURES = ["texture-compression-bc", "texture-compression-astc", "texture-compression-etc2"];
       /** A screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
@@ -561,12 +594,18 @@
         deviceLost: false,
         gpuErrors: new Set(),
       };
+      /**
+       * The fetches made while playing: pieces the module wants and not yet asked for, how many are
+       * open, and the fetched ones waiting for the next frame (with the most bytes ever waiting).
+       */
+      const streaming = { queued: [], open: 0, held: [], heldBytes: 0, heldMost: 0, fetched: 0, refused: 0 };
       const shell = {
         status,
         module: null,
         world: null,
         progress: null,
         adapter: null,
+        streaming,
         flushSaves: async () => {},
         crash: takeGameCrash,
       };
@@ -1261,13 +1300,30 @@
         }
       }
 
+      /** Whether `url` is inside assets/ on the page's origin (`base`). */
+      function insideAssets(url, base) {
+        return url.origin === base.origin && url.pathname.startsWith(base.pathname);
+      }
+
+      /** The URL of `name` inside assets/, refused when it would leave it. */
+      function assetUrl(name, base) {
+        const url = new URL(String(name).split("/").map(encodeURIComponent).join("/"), base);
+        if (!insideAssets(url, base)) throw new Error(`${AssetFailure.Outside}: ${name}`);
+        return url;
+      }
+
+      /** A response for `name`, refused when a redirect took it outside assets/ on the page's origin. */
+      function landedInside(response, name, base) {
+        if (response.url && !insideAssets(new URL(response.url), base)) {
+          throw new Error(`${AssetFailure.Outside}: ${name} was redirected to ${new URL(response.url).origin}`);
+        }
+        return response;
+      }
+
       /** One planned file: fetched from inside assets/ only, at most its planned size, then handed to the module. */
       async function fetchAsset(game, base, [name, size]) {
-        const url = new URL(String(name).split("/").map(encodeURIComponent).join("/"), base);
-        if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
-          throw new Error(`${AssetFailure.Outside}: ${name}`);
-        }
-        const response = await fetch(url, { cache: "no-store" });
+        const url = assetUrl(name, base);
+        const response = landedInside(await fetch(url, { cache: "no-store" }), name, base);
         if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${response.status}`);
         const bytes = await boundedBytes(response, name, size);
         game.studio_assets_preload(name, bytes);
@@ -1303,6 +1359,103 @@
           }
         };
         await Promise.all(Array.from({ length: ASSET_FETCHES }, fetchNext));
+      }
+
+      // ── streaming: the pieces the game wants while playing, fetched by Range ──
+
+      /** The first `length` bytes of a body (the rest is never read). */
+      async function bodyPrefix(response, name, length) {
+        if (!response.body) throw new Error(`${AssetFailure.FetchFailed}: ${name} has no body`);
+        const reader = response.body.getReader();
+        const bytes = new Uint8Array(length);
+        let got = 0;
+        while (got < length) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const take = Math.min(value.length, length - got);
+          bytes.set(value.subarray(0, take), got);
+          got += take;
+        }
+        await reader.cancel().catch(() => {});
+        if (got < length) throw new Error(`${AssetFailure.FetchFailed}: ${name} ended after ${got} of ${length} bytes`);
+        return bytes;
+      }
+
+      /**
+       * One wanted piece, `size` bytes of `name` from `offset`: a Range request inside assets/ on the
+       * page's origin, the 206 body exactly that long; a server that ignores Range answers the whole
+       * file, which is read only up to the piece's end and sliced. Refused unfetched past
+       * STREAM_FETCH_MAX_BYTES; refused when a redirect leaves assets/ or the page's origin.
+       */
+      async function fetchPiece([name, offset, size]) {
+        const whole = Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(size) && size > 0;
+        if (!whole || size > STREAM_FETCH_MAX_BYTES) {
+          throw new Error(`${AssetFailure.TooLarge}: ${name} wants ${size} bytes (at most ${STREAM_FETCH_MAX_BYTES})`);
+        }
+        const base = new URL(ASSETS_DIR, location.href);
+        const range = `bytes=${offset}-${offset + size - 1}`;
+        const answered = await fetch(assetUrl(name, base), { cache: "no-store", headers: { Range: range } });
+        const response = landedInside(answered, name, base);
+        if (response.status === 206) {
+          const at = /^bytes (\d+)-/.exec(response.headers.get("content-range") ?? "");
+          if (at && Number(at[1]) !== offset) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered another range`);
+          const bytes = await boundedBytes(response, name, size);
+          if (bytes.length !== size) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${bytes.length} of ${size} bytes`);
+          return bytes;
+        }
+        if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${response.status}`);
+        return (await bodyPrefix(response, name, offset + size)).subarray(offset);
+      }
+
+      /** Hand the module the pieces fetched since, oldest first, up to STREAM_HANDOFF_BYTES (at least one). */
+      function handOverPieces(game) {
+        let budget = STREAM_HANDOFF_BYTES;
+        while (streaming.held.length > 0 && (budget === STREAM_HANDOFF_BYTES || streaming.held[0][1].length <= budget)) {
+          const [[name, offset], bytes] = streaming.held.shift();
+          streaming.heldBytes -= bytes.length;
+          budget -= bytes.length;
+          try {
+            game.studio_assets_arrived(name, offset, bytes);
+          } catch (error) {
+            // The module refused it (a size or digest it did not plan): nothing was admitted.
+            streaming.refused += 1;
+            console.warn(`genex: asset ${name} at ${offset} refused: ${error?.message ?? error}`);
+          }
+        }
+      }
+
+      /** Ask for queued pieces while fewer than ASSET_FETCHES are open; a fetched piece waits for the next frame. */
+      function startFetches() {
+        while (streaming.open < ASSET_FETCHES && streaming.queued.length > 0) {
+          const piece = streaming.queued.shift();
+          streaming.open += 1;
+          fetchPiece(piece)
+            .then((bytes) => {
+              streaming.held.push([piece, bytes]);
+              streaming.heldBytes += bytes.length;
+              streaming.heldMost = Math.max(streaming.heldMost, streaming.heldBytes);
+              streaming.fetched += 1;
+            })
+            .catch((error) => {
+              streaming.refused += 1;
+              console.warn(`genex: ${error?.message ?? error}`);
+            })
+            .finally(() => {
+              streaming.open -= 1;
+              startFetches();
+            });
+        }
+      }
+
+      /**
+       * Each frame, before the game's: the pieces fetched since go to the module, then the pieces it
+       * wants now are queued and fetched. Bound only when the module exports studio_assets_wanted.
+       */
+      function streamAssets(game) {
+        if (typeof game.studio_assets_wanted !== "function") return;
+        handOverPieces(game);
+        for (const piece of Array.from(game.studio_assets_wanted())) streaming.queued.push(Array.from(piece));
+        startFetches();
       }
 
       // ── crash reports: the game's records and the shell's own, kept in IndexedDB ──
@@ -1688,6 +1841,7 @@
           last = now;
           try {
             pollGamepads(game, input);
+            streamAssets(game);
             if (game.studio_frame(ms) > 0) input.ticked = true;
             // The first animation frame always draws and presents (the presenter's frame gate).
             if (first) awaitFirstLitFrame();
