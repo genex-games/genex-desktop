@@ -1833,3 +1833,44 @@ fn the_forward_fragment_stage_leaves_tier_a_its_storage_slots_and_every_stage_st
         }
     }
 }
+
+// Game systems AN-18: vertex-shader skinning reads two tables in the vertex stage (the skin rows
+// and the vertex skin table, as the grass reads its blades) and none in the fragment: the forward
+// fragment's storage and texture counts are unchanged, and each of its pipelines' layouts stays
+// within core's eight vertex-stage storage buffers.
+#[test]
+fn vertex_skinning_reads_two_vertex_tables_and_leaves_the_forward_fragment_unchanged() {
+    let core = wgpu::Limits::defaults();
+    let forward = parse("forward", shader("forward"));
+    let forward_info = validated("forward", &forward);
+    let skinned = parse("skin-vertex", shader("skin-vertex"));
+    let skinned_info = validated("skin-vertex", &skinned);
+    let (vertex, fragment) = genex_render::skin_vertex::FORWARD_ENTRIES;
+    let mut plain = storage_buffers_used(&forward, &forward_info, "vs_main");
+    plain.extend(["skin_vertex_rows".to_owned(), "skin_vertex_table".to_owned()]);
+    plain.retain(|name| name != "visible" && name != "slot_base" && name != "instances");
+    let mut used = storage_buffers_used(&skinned, &skinned_info, vertex);
+    used.retain(|name| name != "visible" && name != "slot_base" && name != "instances");
+    assert_eq!(used, plain, "the vertex stage reads the two tables, not the visible list");
+    let shaded = stage_counts_in(&skinned, &skinned_info, naga::ShaderStage::Fragment);
+    let before = stage_counts_in(&forward, &forward_info, naga::ShaderStage::Fragment);
+    assert_eq!((shaded.storage_buffers, shaded.sampled_textures), (before.storage_buffers, before.sampled_textures), "the fragment is fs_main's");
+    assert_eq!(shaded.storage_buffers, FORWARD_FRAGMENT_STORAGE_TODAY);
+    assert_eq!(fragment, "fs_main");
+    // The pipelines' layouts, counted the WebGPU way: the frame (or casters') group, the motion
+    // node's two tables on the motion prepass, and the two tables.
+    let frame = layout_storage_buffers(&genex_render::renderer::frame_layout_entries(), wgpu::ShaderStages::VERTEX);
+    for (name, others) in [("world", frame), ("motion prepass", frame + 2)] {
+        assert!(others + 2 <= core.max_storage_buffers_per_shader_stage, "{name}: {} vertex storage buffers", others + 2);
+    }
+    for (name, source, entry) in [
+        ("skin-vertex-prepass", shader("skin-vertex-prepass"), genex_render::skin_vertex::MOTION_ENTRIES.0),
+        ("skin-vertex-shadow", shader("skin-vertex-shadow"), genex_render::skin_vertex::SHADOW_VERTEX_ENTRY),
+    ] {
+        let module = parse(name, source);
+        let info = validated(name, &module);
+        let used = storage_buffers_used(&module, &info, entry);
+        assert!(used.contains(&"skin_vertex_rows".to_owned()) && used.contains(&"skin_vertex_table".to_owned()), "{name}: {used:?}");
+        assert!(used.len() as u32 <= core.max_storage_buffers_per_shader_stage, "{name}: {used:?}");
+    }
+}

@@ -334,6 +334,8 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("impostor-mip", crate::impostor::bake::IMPOSTOR_MIP),
     ("impostor-draw", crate::impostor::draw::IMPOSTOR_DRAW),
     ("skin-vertex", crate::skin_vertex::SKIN_VERTEX),
+    ("skin-vertex-prepass", crate::skin_vertex::SKIN_VERTEX_PREPASS),
+    ("skin-vertex-shadow", crate::skin_vertex::SKIN_VERTEX_SHADOW),
     ("vat", crate::vat::VAT),
 ];
 

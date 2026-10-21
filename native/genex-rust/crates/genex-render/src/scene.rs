@@ -941,6 +941,18 @@ pub struct GroupDraw {
     pub lod: DrawLod,
 }
 
+/// One part of a skinned draw skinned in the vertex stage (game systems AN-18): its draw (an index
+/// into [`Scene::skinned`]), its part and its material row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VertexSkinnedPart {
+    /// The draw, an index into [`Scene::skinned`].
+    pub draw: u32,
+    /// The part of its skin.
+    pub part: u32,
+    /// Its row in [`FramePlan::materials`].
+    pub material: u32,
+}
+
 /// One skinned draw: a skinned mesh posed by its joint matrices.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkinnedDraw {
@@ -1256,6 +1268,9 @@ pub struct FramePlan {
     pub spot_shadows: Vec<crate::spot_shadow::SpotShadow>,
     /// Skinning jobs, one per skinned draw.
     pub skin_jobs: Vec<GpuSkinJob>,
+    /// The parts of the skinned draws skinned in the vertex stage (game systems AN-18), in draw
+    /// then part order: no job, no output and no row of theirs is above.
+    pub vertex_skinned: Vec<VertexSkinnedPart>,
     /// The joint table: every skinned draw's matrices, in job order.
     pub joints: Vec<[f32; 16]>,
     /// Vertices the skinning jobs write.
@@ -1697,6 +1712,19 @@ struct SkinnedFrame {
     uses: Vec<std::ops::Range<usize>>,
 }
 
+/// The parts of the skinned draws `vertex` marks, in draw then part order, each with its material
+/// row (game systems AN-18).
+fn vertex_skinned_parts(scene: &Scene, vertex: &[bool], materials: &mut Materials) -> Vec<VertexSkinnedPart> {
+    let mut parts = Vec::new();
+    for (at, draw) in scene.skinned.iter().enumerate().filter(|(at, _)| vertex.get(*at).copied().unwrap_or(false)) {
+        for part in 0..draw.skin.parts {
+            let material = materials.row(&draw.part_material(part as usize));
+            parts.push(VertexSkinnedPart { draw: at as u32, part, material });
+        }
+    }
+    parts
+}
+
 /// LOD's screen-size metric (game systems AN-17; STR-19 and the skinned paths read it too): the
 /// pixels the diameter of the world sphere `sphere` (centre xyz, radius) covers at the nominal
 /// output height ([`LOD_NOMINAL_HEIGHT`]) from `camera`, on the cull's own scale (the LOD view's w,
@@ -1781,7 +1809,10 @@ fn check_skin_parts(mesh: &MeshData, parts: &[SkinPart]) -> Result<(), RenderErr
 /// unknown mesh, a joint count that differs from its skin's, or a material count that differs
 /// from its parts'. A draw posing the same skin with a bit-identical palette as an earlier draw
 /// takes that draw's jobs, so its rows draw the same skinned output (AN-16b).
-fn skinned_parts(scene: &Scene, library: &MeshLibrary) -> Result<SkinnedFrame, RenderError> {
+/// A draw `vertex` marks (game systems AN-18) is validated as every draw is, then takes no job and
+/// no row: it skins in the vertex stage (`crate::skin_vertex`), and no other draw shares its pose.
+fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool]) -> Result<SkinnedFrame, RenderError> {
+    let skins_in_vertex = |at: usize| vertex.get(at).copied().unwrap_or(false);
     let mut frame = SkinnedFrame { parts: Vec::with_capacity(scene.skinned.len()), joints: Vec::new(), uses: Vec::with_capacity(scene.skinned.len()) };
     let mut dst_base = 0u32;
     for (at, draw) in scene.skinned.iter().enumerate() {
@@ -1798,7 +1829,11 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary) -> Result<SkinnedFrame, R
                 format!("{} materials for a skin of {} parts", draw.part_materials.len(), draw.skin.parts),
             ));
         }
-        let shared = scene.skinned[..at].iter().position(|earlier| earlier.skin == draw.skin && same_palette(&earlier.joints, &draw.joints));
+        if skins_in_vertex(at) {
+            frame.uses.push(frame.parts.len()..frame.parts.len());
+            continue;
+        }
+        let shared = scene.skinned[..at].iter().enumerate().position(|(k, earlier)| !skins_in_vertex(k) && earlier.skin == draw.skin && same_palette(&earlier.joints, &draw.joints));
         if let Some(earlier) = shared {
             frame.uses.push(frame.uses[earlier].clone());
             continue;
@@ -1865,8 +1900,16 @@ impl FramePlan {
     /// [`FramePlan::build_with`] with its rows' identities ([`FramePlan::motion`]) only when the
     /// frame writes motion (`motion`); without, `motion` is empty and no key is made.
     pub fn build_with_motion(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, motion: bool) -> Result<FramePlan, RenderError> {
+        FramePlan::build_with_skin_paths(scene, library, aspect, options, motion, &[])
+    }
+
+    /// [`FramePlan::build_with_motion`] with the skinned draws `vertex` marks skinned in the vertex
+    /// stage (game systems AN-18, [`crate::skin_vertex::vertex_skinned_draws`]): they take no
+    /// skinning job, no skinned output and no row; their parts' material rows are in
+    /// [`FramePlan::vertex_skinned`].
+    pub fn build_with_skin_paths(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, motion: bool, vertex: &[bool]) -> Result<FramePlan, RenderError> {
         let depth_reversed = options.depth_reversed;
-        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library)?;
+        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, vertex)?;
         let mut materials = Materials::default();
         let mut keys = DrawKeys { keys: motion.then(MotionKeys::default) };
         // Opaque draws by variant and mesh as indices into the scene's draws (and, with motion,
@@ -1947,6 +1990,7 @@ impl FramePlan {
             }
         }
         skinned_rows.sort_by_key(|row| (row.variant, row.part));
+        let vertex_skinned = vertex_skinned_parts(scene, vertex, &mut materials);
         rows.push_skinned_variant(scene, &parts, &skinned_rows, DrawVariant::PLAIN.index(), &mut materials);
         let plain_batches = rows.batches.len() as u32;
         let mut variants = Vec::new();
@@ -2037,6 +2081,7 @@ impl FramePlan {
             fade_slots,
             far_rules,
             impostor_batches,
+            vertex_skinned,
         })
     }
 

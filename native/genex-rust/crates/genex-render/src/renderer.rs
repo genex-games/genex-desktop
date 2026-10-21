@@ -121,6 +121,7 @@ mod froxel_fog;
 mod lens;
 mod probe_capture;
 mod grass_draw;
+mod skin_vertex_draw;
 mod impostor_draw;
 mod shadow_cache_draw;
 mod ssr_draw;
@@ -897,6 +898,8 @@ pub struct Renderer {
     grass: Option<crate::foliage::gpu::GrassGpu>,
     grass_pipelines: grass_draw::GrassPipelines,
     grass_time: grass_draw::GrassTime,
+    /// Vertex-shader skinning's tables, draws and pipelines (game systems AN-18).
+    skin_vertex: skin_vertex_draw::SkinVertexGpu,
     /// The impostors its pipelines stage baked (game systems LOD-13): the baker, the class's atlas
     /// arrays and each species' row ([`Renderer::bake_impostor`]).
     impostors: crate::impostor::bake::ImpostorStage,
@@ -2524,6 +2527,8 @@ impl<'a> WorldNodes<'a> {
                 // The terrain (A.7), after the opaque batches, then its grass (A.8).
                 renderer.draw_terrain(pass, &groups.frame, &groups.pass);
                 renderer.draw_grass(pass, &groups.frame, &groups.pass);
+                // The vertex-skinned characters (AN-18), drawn whatever the batches.
+                renderer.draw_skin_vertex(pass, &groups.frame, &groups.pass);
                 // The impostors (LOD-14), after the terrain and its grass.
                 renderer.draw_impostors(pass, &groups);
                 if !plan.lines.is_empty() {
@@ -2789,6 +2794,7 @@ impl Renderer {
             grass: None,
             grass_pipelines: grass_draw::GrassPipelines::default(),
             grass_time: grass_draw::GrassTime::default(),
+            skin_vertex: skin_vertex_draw::SkinVertexGpu::default(),
             impostors: crate::impostor::bake::ImpostorStage::default(),
             impostor_draw: None,
             impostors_placed: Vec::new(),
@@ -3728,7 +3734,10 @@ impl Renderer {
         let sun = self.ground_sun(scene, environment_sun);
         let options = PlanOptions { shadows, depth_reversed: scene_path.depth_reversed, sun };
         // Rows' identities across frames only for a frame that writes motion vectors.
-        let mut plan = FramePlan::build_with_motion(scene, &self.library, aspect, &options, temporal.motion)?;
+        // Far plain skinned draws skin in the vertex stage (AN-18): no job, output or row of theirs.
+        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws(scene, &self.library, self.skin_vertex.policy);
+        let mut plan = FramePlan::build_with_skin_paths(scene, &self.library, aspect, &options, temporal.motion, &vertex_skinned)?;
+        self.prepare_skin_vertex_frame(scene, &plan, temporal.set, temporal.reset)?;
         // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
         // no instance to another level.
         // At the quality's threshold and far density (game systems LOD-06; 1 px and every copy on
@@ -4202,6 +4211,7 @@ impl Renderer {
         // grass's (A.8).
         self.draw_terrain_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         self.draw_grass_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
+        self.draw_skin_vertex_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         self.draw_impostors_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         if let Some((group, motion_pipelines, _, _)) = motion {
             // T-03: the camera's motion wherever no geometry drew (the sky, its sun disc, the fog
@@ -4585,6 +4595,7 @@ impl Renderer {
         self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_grass(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_skin_vertex(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.place_plan_impostors(&plan)?;
         self.prepare_impostors(&scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
@@ -4993,6 +5004,11 @@ impl Renderer {
         let grass = self.grass_bytes();
         if grass > 0 {
             ledger.register(Buffers, crate::foliage::GRASS_LEDGER_LABEL, grass);
+        }
+        // The vertex-skinned characters' records and palettes (AN-18).
+        let skin_vertex = self.skin_vertex.bytes();
+        if skin_vertex > 0 {
+            ledger.register(Buffers, skin_vertex_draw::SKIN_VERTEX_LEDGER_LABEL, skin_vertex);
         }
         // The placed impostors' species rows and instances (LOD-14).
         let impostors = self.impostor_draw_bytes();
@@ -5574,6 +5590,7 @@ impl Renderer {
         // own groups).
         self.draw_terrain_casters(&mut pass, prep, cascade);
         self.draw_grass_casters(&mut pass, prep, cascade);
+        self.draw_skin_vertex_casters(&mut pass, prep, cascade);
         if plan.batches.is_empty() {
             return;
         }

@@ -17,6 +17,7 @@ use genex_render::mesh::{MeshData, Vertex};
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshLibrary, Scene, scaled, translation};
 use genex_render::settings::{AntiAliasing, Quality, SceneFormat};
 use genex_render::skin::{Skeleton, SkeletonNode, SkinnedMeshData, Trs};
+use genex_render::skin_vertex::SkinVertexPolicy;
 use genex_render::tables::{SKINNED_GROWTH_GRANULE_BYTES, VERTEX_STRIDE, skinned_growth};
 use genex_render::{BUFFER_MAX_BYTES, CullPath, Gpu, RenderOptions, Renderer};
 
@@ -163,6 +164,9 @@ fn motion_renderer(gpu: &Gpu) -> Renderer {
     renderer.set_scene_format(SceneFormat::Rgba16Float);
     renderer.set_quality(&quality);
     renderer.set_depth_readback(true);
+    // These rows measure compute skinning: small far characters would skin in the vertex stage
+    // under the default policy (game systems AN-18, tests/skin_vertex.rs).
+    renderer.set_skin_vertex_policy(SkinVertexPolicy::Compute);
     renderer
 }
 
