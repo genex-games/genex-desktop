@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><!-- STUDIO_PANEL_FONTS --><style>
+:root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--ok:#7cd194;--warn:#efbe72;color-scheme:dark;
+  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));
+  /* Genex's engine panels group what belongs together in outlined blocks: an edge, a fill one step above the page, a foot a half step. */
+  --edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));
+  /* A secondary action: the accent's soft tint with its edge, as Play's people buttons wear it. */
+  --tint:color-mix(in srgb,var(--accent) 16%,transparent);--tint-hover:color-mix(in srgb,var(--accent) 24%,transparent);--tint-edge:color-mix(in srgb,var(--accent) 55%,transparent);
+  --sans:"Zalando Sans SemiExpanded",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E")}
+/* Chosen for at least 4.5:1 on every light theme's background; light themes keep their edges soft. */
+:root[data-scheme="light"]{--ok:#1d7f46;--warn:#95570b;--edge:color-mix(in srgb,var(--fg) 9%,var(--bg));--tint:color-mix(in srgb,var(--accent) 12%,transparent);--tint-hover:color-mix(in srgb,var(--accent) 18%,transparent);--tint-edge:color-mix(in srgb,var(--accent) 40%,transparent);color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
+@media (max-width:480px){body{padding:16px}}
+main,.stack{display:grid;gap:12px;min-width:0}
+h2{margin:0;font-size:17px;line-height:24px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+h2:focus{outline:none}
+p{margin:0;text-wrap:pretty}
+.quiet{color:var(--quiet)}
+.small{font-size:13px;line-height:18px}
+.intro{display:grid;gap:4px;min-width:0}
+/* The game's own picture, as its store shows it. */
+.banner{display:block;width:100%;aspect-ratio:460/215;object-fit:cover;border-radius:12px;outline:1px solid var(--line);outline-offset:-1px;background:var(--field)}
+.block{min-width:0;background:var(--block);border:1px solid var(--edge);border-radius:14px;overflow:hidden}
+.block > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line)}
+/* A fact: a mark, its name, and its value at the end in mono; an action beside it is underlined text. */
+.fact{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px}
+.fact .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fact .v{flex:none;font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
+.mark{width:20px;height:20px;flex:none;border-radius:50%;display:grid;place-items:center;color:var(--fg)}
+.mark::before{content:"";width:12px;height:12px;background:currentColor;-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
+.mark.not{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg))}
+.mark.not::before{content:none}
+.foot{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 16px 12px 12px;background:var(--foot)}
+/* Sibling buttons share one width. */
+.pair{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(132px,1fr);gap:8px}
+.foot .end{margin-inline-start:auto}
+/* Genex's buttons: 32px, a rounded fill and no border, the label in Geist Mono. */
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:0 14px;font-family:var(--mono);font-size:14px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;color:inherit;background:var(--field);border:0;border-radius:11px;cursor:pointer;transition:scale 120ms,background 120ms;-webkit-tap-highlight-color:transparent}
+button:active:not(:disabled){scale:.96}
+button.primary{background:var(--accent-fill);color:var(--accent-text)}
+button.primary:hover{background:var(--accent-hover)}
+button.tint{background:var(--tint);box-shadow:inset 0 0 0 1px var(--tint-edge)}
+button.tint:hover{background:var(--tint-hover)}
+button:disabled{cursor:default;opacity:.6;scale:none}
+/* An action with no fill is underlined text, never a bare ghost button. */
+button.text{min-height:auto;padding:0;background:none;font-family:var(--sans);font-size:13px;line-height:18px;letter-spacing:0;color:var(--quiet);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;text-decoration-color:color-mix(in srgb,currentColor 45%,transparent)}
+button.text:hover{color:var(--fg)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.error{color:var(--warn);overflow-wrap:anywhere}
+.error:empty{display:none}
+/* Loading: real-size placeholders with a soft shimmer. */
+.skeleton{display:grid;gap:12px}
+.bone{border-radius:12px;background:linear-gradient(90deg,var(--field) 0%,var(--hover) 50%,var(--field) 100%);background-size:200% 100%;animation:shimmer 1.6s ease-in-out infinite}
+.bone.banner-bone{aspect-ratio:460/215}
+.bone.line{height:20px;width:40%;border-radius:6px}
+.bone.card{height:133px;border-radius:14px}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@media (prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){scale:none}.bone{animation:none}}
+:root[data-surface="card"] body{padding:4px}
+[hidden]{display:none}
+</style></head><body>
+<main id="app" aria-busy="true">
+  <div id="loading" class="skeleton" aria-hidden="true"><div class="bone banner-bone"></div><div class="bone line"></div><div class="bone card"></div></div>
+
+  <section id="none" class="intro" hidden aria-labelledby="none-title">
+    <div class="intro" data-panel-head><h2 id="none-title" tabindex="-1">Game mods</h2></div>
+    <p class="quiet">Ask in a new game's chat for a change to a game you have, like “mod Factorio: make the assemblers twice as fast”.</p>
+  </section>
+
+  <section id="gone" class="intro" hidden aria-labelledby="gone-title">
+    <div class="intro" data-panel-head><h2 id="gone-title" tabindex="-1">Game not installed</h2></div>
+    <p class="quiet">Install it again from its store, and this mod works with it again.</p>
+  </section>
+
+  <section id="mod" class="stack" hidden aria-labelledby="game-name">
+    <img id="banner" class="banner" alt="" hidden>
+    <div class="intro" data-panel-head><h2 id="game-name" tabindex="-1">Game</h2><p id="game-about" class="quiet small"></p></div>
+    <div class="block">
+      <div class="fact"><span id="in-mark" class="mark" aria-hidden="true"></span><span id="in-game" class="k"></span><span id="files" class="v"></span></div>
+      <div id="saves-fact" class="fact" hidden><span class="mark" aria-hidden="true"></span><span class="k">Saves copied aside</span><span id="saves-at" class="v"></span></div>
+      <div class="foot">
+        <div class="pair"><button type="button" id="play" class="primary"></button><button type="button" id="remove" class="tint">Remove mod</button></div>
+        <div class="end"><button type="button" id="restore" class="text" hidden>Put back saves</button></div>
+      </div>
+    </div>
+    <div><button type="button" id="folder" class="text">Show game folder</button></div>
+  </section>
+
+  <p id="error" class="error" role="alert"></p>
+</main>
+<!-- STUDIO_PANEL_SDK -->
+<script>
+const api = window.studioPlugin;
+const $ = (id) => document.getElementById(id);
+/** How often the panel asks again while it is shown: the chat may install or remove the mod meanwhile. */
+const REFRESH_MS = 4000;
+const QUIET_SHARE_MIN = 64;
+const TEXT_CONTRAST_MIN = 4.5;
+const Action = { Status: "status", Play: "play", Remove: "remove", RestoreSaves: "restore-saves", OpenFolder: "open-folder" };
+const View = { None: "none", Gone: "gone", Mod: "mod" };
+const WORDS = {
+  about: (g) => [g.store, g.builtWith].filter(Boolean).join(" · "),
+  inGame: "In the game",
+  notInGame: "Not in the game yet",
+  files: (n) => `${n} file${n === 1 ? "" : "s"}`,
+  play: (name) => `Play ${name}`,
+  gone: (name) => `${name} isn't installed on this computer now`,
+  day: (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+};
+
+let closed = false;
+let busy = false;
+let refreshing = false;
+
+function show(view) {
+  $("loading").hidden = true;
+  $("app").removeAttribute("aria-busy");
+  for (const id of Object.values(View)) $(id).hidden = id !== view;
+}
+
+function renderMod(s) {
+  const g = s.game;
+  $("banner").hidden = !g.picture;
+  if (g.picture && $("banner").src !== g.picture) $("banner").src = g.picture;
+  $("game-name").textContent = g.name;
+  $("game-name").title = g.name;
+  $("game-about").textContent = WORDS.about(g);
+  $("in-mark").classList.toggle("not", !s.files);
+  $("in-game").textContent = s.files ? WORDS.inGame : WORDS.notInGame;
+  $("files").textContent = s.files ? WORDS.files(s.files) : "";
+  $("saves-fact").hidden = !s.savesAt;
+  $("saves-at").textContent = s.savesAt ? WORDS.day(s.savesAt) : "";
+  $("play").textContent = WORDS.play(g.name);
+  // A control that can't act yet is hidden, not greyed out.
+  $("play").hidden = !s.canPlay;
+  $("remove").hidden = !s.files;
+  $("restore").hidden = !s.savesAt;
+  show(View.Mod);
+}
+
+function render(s) {
+  if (!s.linked) return show(View.None);
+  if (s.gone) {
+    $("gone-title").textContent = WORDS.gone(s.name);
+    return show(View.Gone);
+  }
+  renderMod(s);
+}
+
+function showError(e) {
+  $("error").textContent = e ? String(e.message ?? e).replace(/^Error:\s*/, "") : "";
+}
+
+async function refresh() {
+  if (refreshing || closed || busy) return;
+  refreshing = true;
+  try {
+    const s = await api.call("action", Action.Status, {});
+    if (!closed) render(s);
+  } catch (e) {
+    if (!closed) showError(e);
+  } finally {
+    refreshing = false;
+  }
+}
+
+/** Runs an action with its button waiting, then reads where the mod stands again. */
+async function act(button, name, args) {
+  showError(null);
+  busy = true;
+  button.disabled = true;
+  try {
+    await api.call("action", name, args ?? {});
+  } catch (e) {
+    showError(e);
+  } finally {
+    busy = false;
+    button.disabled = false;
+    void refresh();
+  }
+}
+
+$("play").onclick = () => void act($("play"), Action.Play);
+$("remove").onclick = () => void act($("remove"), Action.Remove);
+$("restore").onclick = () => void act($("restore"), Action.RestoreSaves);
+$("folder").onclick = () => void act($("folder"), Action.OpenFolder, { which: "game" });
+
+/** A CSS colour as sRGB channels 0–255, read through a canvas so any CSS spelling works; black if unreadable. */
+function channels(colour) {
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.fillStyle = colour;
+  const hex = /^#(..)(..)(..)$/.exec(probe.fillStyle);
+  return hex ? hex.slice(1).map((x) => Number.parseInt(x, 16)) : [0, 0, 0];
+}
+
+/** WCAG relative luminance of sRGB channels 0–255. */
+function luminance(rgb) {
+  const [r, g, b] = rgb.map((c) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const hexOf = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+const mix = (fg, bg, share) => fg.map((c, i) => Math.round((c * share) / 100 + (bg[i] * (100 - share)) / 100));
+
+/** The quiet text colour: the least share of the text colour, from 64%, that still reads at 4.5:1 on the background. */
+function quietColour(fg, bg) {
+  for (let share = QUIET_SHARE_MIN; share < 100; share++) {
+    const quiet = mix(fg, bg, share);
+    if (contrast(quiet, bg) >= TEXT_CONTRAST_MIN) return hexOf(quiet);
+  }
+  return hexOf(fg);
+}
+
+/** The host's theme colours; the quiet text follows its background. */
+function applyTheme(c) {
+  const root = document.documentElement;
+  root.style.setProperty("--bg", c.theme.background);
+  root.style.setProperty("--fg", c.theme.foreground);
+  root.style.setProperty("--accent", c.theme.accent);
+  if (c.theme.accentFill) root.style.setProperty("--accent-fill", c.theme.accentFill);
+  if (c.theme.accentForeground) root.style.setProperty("--accent-text", c.theme.accentForeground);
+  if (c.theme.accentHover) root.style.setProperty("--accent-hover", c.theme.accentHover);
+  const bg = channels(c.theme.background);
+  root.style.setProperty("--quiet", quietColour(channels(c.theme.foreground), bg));
+  const [r, g, b] = bg.map((x) => x / 255);
+  root.dataset.scheme = 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark";
+}
+
+const readContext = () =>
+  api
+    .call("context")
+    .then(applyTheme)
+    .catch(() => {});
+void readContext();
+api.onContextChanged?.(() => {
+  void readContext();
+  void refresh();
+});
+void refresh();
+const timer = setInterval(() => {
+  if (document.visibilityState === "visible") void refresh();
+}, REFRESH_MS);
+window.addEventListener("pagehide", () => {
+  closed = true;
+  clearInterval(timer);
+});
+</script></body></html>

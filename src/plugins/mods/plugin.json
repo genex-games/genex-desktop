@@ -1,0 +1,164 @@
+{
+  "apiVersion": 3,
+  "id": "mods",
+  "version": "0.1.0",
+  "icon": "icon.svg",
+  "name": "Game mods",
+  "publisher": "Genex",
+  "description": "Make mods for games you own: ask for a change to a game installed on this computer, and agents build the mod with the game's own modding tools, put it in the game and test it. Remove mod puts the game back as it was. No online games or games with anti-cheat.",
+  "backend": "backend.mjs",
+  "capabilities": [],
+  "detect": [{ "fact": "game-mod", "files": ["genex-mod.json"] }],
+  "tools": [
+    {
+      "name": "find-games",
+      "description": "List the games installed on this computer by Steam, the Epic Games Launcher or the Minecraft Launcher, each with the id mods__use-game takes, what it was made with, and whether Genex can make mods for it (never for online games or games that ship anti-cheat). Use it when the person asks to mod, change or add something to a game they have (\"mod Factorio\", \"add a weapon to Terraria\"), before anything else. Reads only; changes nothing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Part of the game's name the person used, to list only those games. Left out: every installed game."
+          }
+        }
+      }
+    },
+    {
+      "name": "use-game",
+      "description": "Make this Genex project a mod of an installed game, by the id mods__find-games listed: Genex remembers the game, writes genex-mod.json at the project's root (the game, its folders and the community's route to mod it), and from then on mods__install, mods__play and mods__remove work on that game. Use it once, in a project for that mod (a new game from home is right; a web game the person already built is not). Refuses online games and games that ship anti-cheat.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "game": {
+            "type": "string",
+            "description": "The game's id exactly as mods__find-games listed it, such as steam:427520 or minecraft."
+          }
+        },
+        "required": ["game"]
+      },
+      "makes": ["game-mod"]
+    },
+    {
+      "name": "install",
+      "description": "Copy a file or folder of this project into the game, after the person approves it on a card: into its mods folder (when Genex knows it) or into the game's own folder (a loader's files, a mod for a game Genex knows no mods folder for). Genex keeps every game file it replaces and copies the game's saves aside before the first install, so mods__remove puts the game back. Call it after the mod builds, and again after each change. Never copy the game's own files, decompiled code or anything you didn't make into the project for this.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The file or folder in this project to copy, with / between folders, such as mods/faster-assemblers_1.0.0. A folder goes in as a folder of the same name."
+          },
+          "into": {
+            "type": "string",
+            "enum": ["mods", "game"],
+            "description": "mods: the folder the game loads mods from. game: the game's own folder. Left out: mods when Genex knows that folder, else game."
+          },
+          "to": {
+            "type": "string",
+            "description": "A folder below that place to copy into, with / between folders, such as BepInEx/plugins; made when missing. Left out: the place itself."
+          },
+          "contents": {
+            "type": "boolean",
+            "description": "true copies what is inside the from folder (a loader's files that sit beside the game) instead of the folder itself."
+          }
+        },
+        "required": ["from"]
+      },
+      "facts": ["game-mod"],
+      "confirmation": "Copy this mod into the game? Genex keeps every file it replaces, and Remove mod puts the game back as it was."
+    },
+    {
+      "name": "remove",
+      "description": "Take everything this project put in the game out again and put back each game file it replaced; the game's saves stay as they are. Use it when the person wants the game back as it was, or to start the mod's install over.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "facts": ["game-mod"],
+      "confirmation": "Take this mod out of the game and put back the game's own files?"
+    },
+    {
+      "name": "play",
+      "description": "Open the game the way its store's Play button does (Steam, the Epic Games Launcher or the Minecraft Launcher), to try the mod. Tell the person in a line before you open it. Then look at its window with app_look, saving a picture as shots/game.jpg so Live and reviewers see it, and play it with the computer tool when computer control is on.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "facts": ["game-mod"]
+    },
+    {
+      "name": "game-shots",
+      "audience": "harness",
+      "description": "The newest pictures of the game the agents kept in the project's shots folder, for a run's reviewer.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "skills": [
+    {
+      "name": "game-mods",
+      "facts": ["game-mod"],
+      "summary": "How to make a mod of a game the person owns: the safe loop (find the route, build in this project, install, test in the game), the rules (offline only, no game files shared) and routes for well-known games.",
+      "file": "skills/game-mods.md"
+    }
+  ],
+  "panels": [
+    {
+      "id": "game",
+      "title": "Game mods",
+      "file": "panel.html",
+      "placement": "settings"
+    }
+  ],
+  "settings": [],
+  "actions": [
+    { "name": "status", "label": "Where the mod stands" },
+    { "name": "stage-status", "label": "The mod on the Live stage" },
+    { "name": "toolbar-status", "label": "Mod status" },
+    { "name": "play", "label": "Play", "native": true },
+    {
+      "name": "remove",
+      "label": "Remove mod",
+      "confirmation": "Take this mod out of the game and put back the game's own files? Your saves stay as they are.",
+      "native": true
+    },
+    {
+      "name": "restore-saves",
+      "label": "Put back saves",
+      "confirmation": "Put back the saves Genex copied aside before the mod's first install? Today's saves are copied aside first.",
+      "native": true
+    },
+    { "name": "open-folder", "label": "Show game folder", "native": true }
+  ],
+  "toolbar": [
+    {
+      "id": "mod",
+      "label": "Mod",
+      "ariaLabel": "Game mod",
+      "facts": ["game-mod"],
+      "target": { "kind": "panel", "id": "game" },
+      "status": "toolbar-status"
+    }
+  ],
+  "workspace": { "facts": ["game-mod"], "ignore": ["decompiled/", "extracted/"] },
+  "observers": [
+    {
+      "id": "game",
+      "facts": ["game-mod"],
+      "tool": "game-shots",
+      "live": "card",
+      "status": "stage-status"
+    }
+  ],
+  "scaffolds": [
+    {
+      "id": "mod",
+      "label": "Mod",
+      "tool": "use-game",
+      "game": false,
+      "facts": [{ "fact": "game-mod", "files": ["genex-mod.json"] }]
+    }
+  ]
+}

@@ -1121,13 +1121,15 @@ export class StudioCore {
       return shape.build ? path.join(binding.directory, "public") : binding.directory;
     };
     // The Unreal, Unity, Godot and Roblox Studio plugins are bundled and off until the user turns
-    // them on: each needs its editor, and Roblox an account for people 18 and over.
+    // them on: each needs its editor, and Roblox an account for people 18 and over. Game mods is off
+    // too: it writes into games the person installed, so they turn it on from its card or page.
     this.plugins.seedEnabled = {
       blender: this.#settings.blender,
       unreal: false,
       unity: false,
       godot: false,
       roblox: false,
+      mods: false,
     };
     // The Genex account is the app's: Genex off takes the agent's tools, never the sign-in or Publish.
     this.plugins.appAccount = { id: GENEX_PLUGIN_ID, actions: GENEX_ACCOUNT_ACTIONS };
