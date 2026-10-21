@@ -263,6 +263,15 @@ impl SimCells {
         prefetch_ring(&self.grid, anchors, self.radii, &self.active)
     }
 
+    /// Makes `next` the set (a commit that also follows kept cells or a restore, STR-12) and
+    /// returns what entered and left. Cells outside the world are dropped.
+    pub fn replace(&mut self, next: BTreeSet<CellId>) -> CellDiff {
+        let next: BTreeSet<CellId> = next.into_iter().filter(|cell| self.grid.contains(*cell)).collect();
+        let moved = diff(&self.active, &next);
+        self.active = next;
+        moved
+    }
+
     /// Empties the set (a reset); every active cell is returned as left, descending.
     pub fn clear(&mut self) -> CellDiff {
         let moved = diff(&self.active, &BTreeSet::new());

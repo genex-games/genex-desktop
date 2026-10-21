@@ -184,12 +184,12 @@ pub const ANIMATION_CALLS: [&str; 27] = [
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
     "RagdollProfile::humanoid", ".with_mass",
 ];
-/// The streaming calls of the facade (STR-9; the view set, STR-16).
-pub const STREAM_CALLS: [&str; 21] = [
+/// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12).
+pub const STREAM_CALLS: [&str; 25] = [
     "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
     "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
     "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
-    ".model", "frame.cells_debug",
+    ".model", "frame.cells_debug", "sim.stream.keep", "sim.stream.release", "sim.stream.snapshot", "sim.stream.restore",
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12).
 pub const NAV_CALLS: [&str; 44] = [
