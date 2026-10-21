@@ -12,6 +12,7 @@ import path from "node:path";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerPreviewIpc } from "../../src/main/ipc/preview.ts";
 import { BUILD_SETTLE_MS, buildFinished } from "../../src/main/core/live-gate.ts";
+import { WebBuildLoad } from "../../src/shared/live-behind.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
 import { gitFile } from "../helpers/git.ts";
 import { makeFakePreview } from "../helpers/studio-rig.ts";
@@ -28,7 +29,10 @@ function fakePort() {
     disposed: false,
     /** The next load fails, as a page that never arrived does. */
     failNext: false,
+    /** While set, a load waits for it: a page still loading. */
+    hold: null as Promise<void> | null,
     async load(project: string, entry: string, root?: string) {
+      if (port.hold) await port.hold;
       if (port.failNext) {
         port.failNext = false;
         throw new Error("the page did not load");
@@ -284,6 +288,66 @@ describe("an engine's web build in Live", () => {
     await offer();
     assert.equal(live.entries.length, 3, "a change to the project alone leaves Live as it is");
     assert.equal(behind.at(-1)?.reason, "changed", "and waits for Reload");
+  });
+
+  it("the Web game tab loads a finished build Live lacks, once; never one still written, a build the person views, or a stopped game", async () => {
+    const { lite, live, dir } = await unityGame();
+    for (const rel of UNITY_BUILD) await put(dir, rel, `${rel}\n`);
+    assert.equal(
+      await lite.core.loadWebBuild("arena"),
+      WebBuildLoad.Unfinished,
+      "a build written a moment ago may still be writing",
+    );
+    assert.equal(live.entries.length, 1);
+
+    await settle(dir, UNITY_BUILD);
+    // A checkpoint's offer and the tab ask at once: one of them loads it.
+    await Promise.all([lite.core.offerLive({ project: "arena", root: null }), lite.core.loadWebBuild("arena")]);
+    assert.deepEqual(live.entries.slice(1), ["web/index.html"], "loaded once, whoever asked first");
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Kept, "Live already has it");
+    assert.equal(await lite.core.loadWebBuild("pong"), WebBuildLoad.Kept, "a game Live does not hold");
+
+    await lite.core.stopLive();
+    await put(dir, "web/Build/web.wasm", "the arena, built again\n");
+    await settle(dir, ["web/Build/web.wasm"]);
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Kept, "a stopped game stays stopped");
+    await lite.core.playLive();
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Loaded, "Play lets the new build in");
+    assert.equal(live.entries.length, 3);
+
+    const review = path.join(lite.core.layout.scratch, "review-arena");
+    await mkdir(review, { recursive: true });
+    await lite.core.loadPreview({ project: "arena", root: review });
+    await put(dir, "web/Build/web.data", "the arena's data, again\n");
+    await settle(dir, ["web/Build/web.data"]);
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Kept, "a build the person chose to view stays");
+    assert.deepEqual(live.loads.at(-1), { project: "arena", root: await realpath(review) });
+  });
+
+  it("an offer with no web build to bring never waits behind a load under way", async () => {
+    const { lite, live, behind, dir } = await unityGame();
+    let release = () => {};
+    live.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loading = lite.core.loadPreview({ project: "arena" });
+    await put(dir, "unity/Assets/Enemy.cs", "class Enemy {}\n");
+    await lite.core.offerLive({ project: "arena", root: null, note: "a new enemy" });
+    assert.equal(behind.at(-1)?.note, "a new enemy", "Reload lit while the load still runs");
+    live.hold = null;
+    release();
+    await loading;
+  });
+
+  it("a load that fails still starts a stopped game again: its web build comes in", async () => {
+    const { lite, live, dir } = await unityGame();
+    await lite.core.stopLive();
+    live.failNext = true;
+    await assert.rejects(lite.core.loadPreview({ project: "arena" }));
+    for (const rel of UNITY_BUILD) await put(dir, rel, `${rel}\n`);
+    await settle(dir, UNITY_BUILD);
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Loaded);
+    assert.equal(live.entries.at(-1), "web/index.html");
   });
 
   it("a web build Live fails to load is still offered to Reload", async () => {

@@ -14,6 +14,17 @@ export const LiveBehindReason = {
 } as const;
 export type LiveBehindReason = (typeof LiveBehindReason)[keyof typeof LiveBehindReason];
 
+/** What Live did when the stage asked for the game's web build (`loadWebBuild`). Wire values: never rename one. */
+export const WebBuildLoad = {
+  /** Live loaded the finished build. */
+  Loaded: "loaded",
+  /** The build is still being written: ask again once it has settled. */
+  Unfinished: "unfinished",
+  /** Live is left as it is: it has the build, holds another game or a chosen build, the game is stopped, or the load failed. */
+  Kept: "kept",
+} as const;
+export type WebBuildLoad = (typeof WebBuildLoad)[keyof typeof WebBuildLoad];
+
 /**
  * The `live.behind` UI event, and what the stage reads on mount (`liveBehind`): what main is holding
  * for Live's Reload (`reason: null` once Live is current), and the build Live shows. Main sends it

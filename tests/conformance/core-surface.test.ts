@@ -55,6 +55,7 @@ const METHODS = [
   "listAllEvents",
   "liveState",
   "loadPreview",
+  "loadWebBuild",
   // Home's Make your own writes a live background on the model the user picked (backdrop-generation.ts).
   "makeBackdrop",
   "messageImages",

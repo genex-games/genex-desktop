@@ -6,6 +6,9 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
+import { WebBuildLoad } from "../../../shared/live-behind.ts";
+import type { GameKind } from "../../../shared/project-facts.ts";
+import { webFolderOf } from "../../../shared/project-workspace.ts";
 import { gameStartedSince, type StageGameKind, StageView } from "../../stage.ts";
 
 /** While a page loads behind the loader the stage asks often; otherwise once a second is enough. */
@@ -17,6 +20,9 @@ const LIVE_QUIET_MS = 300;
 const LIVE_SETTLE_MAX_MS = 3 * SECOND_MS;
 /** Never keep the game hidden longer than this, whatever the page is doing. */
 const LIVE_LOAD_MAX_MS = 45 * SECOND_MS;
+/** How long the stage waits before asking again for a web build still being written, and how often it asks. */
+const WEB_BUILD_RETRY_MS = 2 * SECOND_MS;
+const WEB_BUILD_ASKS = 15;
 
 /** A load Live is waiting on: for which game, whether the stage is still starting it, and since when. */
 export type LiveLoad = { project: string; pending: boolean; since: number };
@@ -78,6 +84,44 @@ export function useLoadOnceStarted(
     void loadLive(project, () => window.studio.loadPreview(project)).catch(() => {});
   }, [project, pending, noPage, loadLive]);
   return pending;
+}
+
+/**
+ * While the Web game tab is on screen, Live is asked to load the game's web build in a folder
+ * (`webFolderOf`: a Godot or Unity export in `web/`) whenever the game, the folder or the tab
+ * changes, and again while main answers that the build is still being written. Main decides
+ * (`loadWebBuild`): only a finished build Live lacks, never into a stopped game or a build the
+ * person chose to view. A load it made is awaited like the stage's own until the page settles; the
+ * loader is not shown while main only decides, which would hide a running game every time.
+ */
+export function useWebGamePage(
+  stage: { project: string | null; game: GameKind | null; onWebGame: boolean },
+  live: Pick<ReturnType<typeof useLiveLoad>, "stopped" | "setLiveLoad">,
+): void {
+  const { project, game, onWebGame } = stage;
+  const { stopped, setLiveLoad } = live;
+  const folder = game ? webFolderOf(game) : null;
+  useEffect(() => {
+    if (!onWebGame || stopped || !project || !folder) return;
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const ask = (asksLeft: number): void => {
+      void window.studio
+        .loadWebBuild(project)
+        .then((answer) => {
+          if (cancelled) return;
+          if (answer === WebBuildLoad.Loaded) setLiveLoad({ project, pending: false, since: Date.now() });
+          if (answer === WebBuildLoad.Unfinished && asksLeft > 1)
+            retry = setTimeout(() => ask(asksLeft - 1), WEB_BUILD_RETRY_MS);
+        })
+        .catch(() => {});
+    };
+    ask(WEB_BUILD_ASKS);
+    return () => {
+      cancelled = true;
+      if (retry) clearTimeout(retry);
+    };
+  }, [project, folder, onWebGame, stopped, setLiveLoad]);
 }
 
 /** How one page load is settling, tracked across probes. */

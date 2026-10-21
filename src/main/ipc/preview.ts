@@ -39,6 +39,8 @@ export function registerPreviewIpc(
     if (!view) throw new Error(MESSAGE.noGameView);
     return view;
   };
+  // The page names a game; the core checks Live holds that game's folder before loading anything.
+  handle("studio:preview.web-build", async (payload) => core.loadWebBuild(String(payload.project)));
   handle("studio:preview.load", async (payload) => {
     await core.games.touch(payload.project).catch(() => {});
     // A game with no kind yet has no page: Live shows its first-idea state and loads nothing.

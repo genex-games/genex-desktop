@@ -234,6 +234,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:rollback": "rollback",
   "studio:selfchange.undo": "undoChange",
   "studio:preview.load": "loadPreview",
+  "studio:preview.web-build": "loadWebBuild",
   "studio:build.preview": "buildPreview",
   "studio:preview.screens": "agentScreens",
   "studio:run.still": "readRunStill",
@@ -493,6 +494,7 @@ export interface StudioInvokePayloads {
   "studio:rollback": { snapshotId: string };
   "studio:selfchange.undo": { snapshotId: string };
   "studio:preview.load": { project: string };
+  "studio:preview.web-build": { project: string };
   "studio:build.preview": Arg<"buildPreview", 0>;
   "studio:preview.screens": undefined;
   "studio:run.still": { file: string; maxPx?: number };

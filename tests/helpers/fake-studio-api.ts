@@ -209,6 +209,7 @@ const METHODS = [
   "rollback",
   "undoChange",
   "loadPreview",
+  "loadWebBuild",
   "buildPreview",
   "agentScreens",
   "readRunStill",

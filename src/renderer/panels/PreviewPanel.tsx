@@ -25,6 +25,7 @@ import { canBuildWith } from "../../shared/engine-descriptor.ts";
 import { ObserverLive } from "../../shared/observers.ts";
 import type { ConversationRecord, EventEnvelope } from "../../shared/event-log.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
+import type { GameKind } from "../../shared/project-facts.ts";
 import { buildHistory, projectBuildGraph, replyTarget, stageRunGraph, workerThreadsOf } from "../build-progress.ts";
 import type { BesideTarget } from "../open-beside.ts";
 import { OPEN_BUILD_EVENT } from "../open-build.ts";
@@ -58,7 +59,7 @@ import type { BuildTabs } from "./run-graph/chrome.tsx";
 import type { Reply } from "./RunInspector.tsx";
 import { useLiveBehind } from "./stage/live-behind.ts";
 import { BuildTrouble, useBuildProblem } from "./stage/build-problem.tsx";
-import { useLiveLoad, useLiveProbe, useLoadOnceStarted } from "./stage/live-load.ts";
+import { useLiveLoad, useLiveProbe, useLoadOnceStarted, useWebGamePage } from "./stage/live-load.ts";
 import { useStageControls } from "./stage/live-run.ts";
 import { useNativeViewBounds } from "./stage/native-bounds.ts";
 import { PluginCardStage } from "./stage/PluginCardStage.tsx";
@@ -611,17 +612,20 @@ function useStageSurface({
 }: {
   view: StageView;
   visible: boolean;
-  stage: Omit<Parameters<typeof useStageRun>[0], "buildsVisible">;
+  /** The stage's run inputs, and the game on the stage as the studio describes it. */
+  stage: Omit<Parameters<typeof useStageRun>[0], "buildsVisible"> & { game: GameKind | null };
   beside: BesideTarget | null;
   liveView: ObserverLive;
   pending: boolean;
   live: ReturnType<typeof useLiveLoad>;
 }) {
   const shownView = useDeferredValue(view);
-  const run = useStageRun({ ...stage, buildsVisible: visible && shownView === StageView.Builds });
+  const { game, ...runStage } = stage;
+  const run = useStageRun({ ...runStage, buildsVisible: visible && shownView === StageView.Builds });
   const { graph, planning } = run;
   const { project } = stage;
   const flags = stageFlags({ view: shownView, beside, graph, planning, project, liveView, pending, live });
+  useWebGamePage({ project, game, onWebGame: visible && flags.previewOnStage }, live);
   const has = { beside: Boolean(beside), builds: graph !== null || planning, project: Boolean(project) };
   return { run, flags, pressedView: resolveStageView(view, has) };
 }
@@ -651,7 +655,7 @@ export function PreviewPanel({
   const { run, flags, pressedView } = useStageSurface({
     view,
     visible,
-    stage: { project, threadId, runsRoot, status, onView },
+    stage: { project, threadId, runsRoot, status, onView, game: loaded },
     beside,
     liveView: liveView.live,
     pending,

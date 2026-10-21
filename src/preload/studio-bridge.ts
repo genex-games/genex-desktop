@@ -426,6 +426,7 @@ function previewCalls(bridge: BridgeCalls) {
   const { invoke } = bridge;
   return {
     loadPreview: (project) => invoke("studio:preview.load", { project }),
+    loadWebBuild: (project) => invoke("studio:preview.web-build", { project }),
     buildPreview: (request) => invoke("studio:build.preview", request),
     agentScreens: () => invoke("studio:preview.screens"),
     previewBounds: (bounds) => invoke("studio:preview.bounds", bounds),

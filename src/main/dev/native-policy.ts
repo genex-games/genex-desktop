@@ -219,6 +219,8 @@ const FIXTURE_SAFE = [
   // The count on Studio's own Dock icon; it reaches nothing outside this app.
   "studio:badge",
   "studio:preview.load",
+  // Loads a game's own web build into its own Live, as opening the game does: nothing outside the app.
+  "studio:preview.web-build",
   "studio:preview.screens",
   "studio:preview.bounds",
   // A picture of the app's own game view for its own stage: nothing outside the app is reached.
