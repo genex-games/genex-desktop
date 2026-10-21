@@ -2241,6 +2241,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nav-crowd"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-platform-web",
+ "image",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
