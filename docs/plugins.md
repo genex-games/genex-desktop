@@ -159,7 +159,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[]` | 1 | `{name, description, parameters}`; scalar properties only; agent-invoked as `<id>__<name>` |
 | `tools[].confirmation` | 2 | 1–300 characters. The tool needs the user's consent before it runs; see the consent model below |
 | `tools[].confirmationInput` | 3 | `{parameter, label}`, with `confirmation`: one of the tool's string parameters the person may edit on the card, under a one-line label of at most 60 characters; see the consent model below |
-| `tools[].confirmationCard` | 3 | `true`, with `confirmation`: the backend's `card(name, args)` words each call's card; see the consent model below |
+| `tools[].confirmationCard` | 3 | `true`, with `confirmation`, honoured for bundled plugins only: the backend's read-only `card(name, args)` words each call's card; see the consent model below |
 | `tools[].host` | 3 | A program Studio runs for the tool instead of the backend; reserved for the bundled Genex plugin (see [First-party privileges](#first-party-privileges)) |
 | `tools[].facts`, `tools[].makes` | 3 | The facts of the games whose sessions get the tool, and (agent tools) the facts it makes in a game's folder; see [Scope by facts](#scope-by-facts) |
 | `skills[]` | 1 | Guidance for agents while the plugin is enabled: inline `{name, text}`, or (API 3) a file skill `{name, summary, file, references?}`, either (API 3) with `facts` (or the older `engines`) and `tools`; see [Skills](#skills) |
@@ -1662,11 +1662,14 @@ the set-up with the link. The host — never the plugin, never the agent — ask
   chat folds onto one ASK card with Approve and Decline. The card's own channel,
   `studio:plugins.consent`, is Studio-UI only: it keeps the main-frame guard and the core's RPC
   table has no equivalent method, so nothing an agent can call answers a card.
-- A tool that declares `confirmationCard` (API 3) asks with the words its backend's `card(name,
-  args, context)` gives this call (read only, within 10 s; Game mods names the game and the game
-  files an install replaces). The host takes one plain line of 1–300 characters with no control
-  or reordering character (`confirmationCardText`); a late, failed or unusable answer asks the
-  manifest's `confirmation` instead. Each call asks again: no earlier yes answers it.
+- A bundled plugin's tool that declares `confirmationCard` (API 3) asks with the words its
+  backend's `card(name, args, context)` gives this call, within 10 s (Game mods names the game and
+  the game files an install replaces). `card` must stay read only: it runs before the person has
+  answered, so it may look at what the call would change but never change it. The host takes one
+  plain line of 1–300 characters with no control or reordering character (`confirmationCardText`);
+  a late, failed or unusable answer asks the manifest's `confirmation` instead. Any plugin that
+  isn't Studio's own (local, GitHub, catalog) always asks its manifest's `confirmation`, so no
+  outside code words a card per call. Each call asks again: no earlier yes answers it.
 - A card with a field (`confirmationInput`, API 3) shows the agent's value for that parameter under
   its question, in a field with the declared label. The person's own Allow sends what the field
   holds (`studio:plugins.consent {input}`), and the call runs with it as that parameter when it is
@@ -2878,7 +2881,9 @@ card names the game and how many of the game's own files the call replaces
 (`confirmationCard`, worded from a dry run of the same checks). Every check runs before anything is
 written (`planInstall`): a link in the copied files, a link or file on the way to any destination,
 a link where a file lands, or a file another mod project of the same game placed (the game's
-claims, `games/<hash>/claims.json`) refuses the whole install. A mods folder the game hasn't made
+claims, `games/<hash>/claims.json`) refuses the whole install. Installs and removals of one game
+run one at a time in the backend (`withGame`), and an install claims every file it will write
+before writing the first, so two projects never both take a file. A mods folder the game hasn't made
 is made only when its parent, the game's own data folder, is there. Each file lands under a
 temporary name opened without following links and is renamed into place; its source must still be
 the file the check saw (device and inode), and a failure while writing undoes the install. Every

@@ -2060,13 +2060,15 @@ export class PluginRegistry {
     return this.#consented(id, name, declaration, shown, binding, signal);
   }
   /**
-   * A tool that declares `confirmationCard` asks with the words its backend's `card` gives this call
-   * (read only, within {@link CARD_TIMEOUT_MS}); its own `confirmation` stands whenever the answer is
-   * late, fails or isn't one plain line of at most 300 characters.
+   * A tool of a bundled plugin that declares `confirmationCard` asks with the words its backend's
+   * `card` gives this call (read only, within {@link CARD_TIMEOUT_MS}); its own `confirmation` stands
+   * whenever the answer is late, fails or isn't one plain line of at most 300 characters. Any other
+   * plugin's card always asks its manifest's question: only Studio's own code words a card per call.
    */
   async #cardWords(id: string, asked: ConsentAsk): Promise<PluginManifestTool> {
-    const { declaration, args, binding, signal } = asked;
-    if (!declaration.confirmationCard || !declaration.confirmation) return declaration;
+    const { p, declaration, args, binding, signal } = asked;
+    const worded = declaration.confirmationCard && declaration.confirmation && p.source === PluginSourceKind.Bundled;
+    if (!worded) return declaration;
     const answer: unknown = await this.#process(id)
       .call("card", declaration.name, args, binding, signal, CARD_TIMEOUT_MS)
       .catch(() => null);

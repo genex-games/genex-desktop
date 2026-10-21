@@ -18,7 +18,7 @@ import { lstat, mkdir, readdir, readFile, realpath, rm, rmdir, unlink } from "no
 import path from "node:path";
 import { assertRelativePath, containedReal, isInside } from "../../substrate/paths.ts";
 import { atomicWriteText } from "../../substrate/fsx.ts";
-import { type Claims, claimKey, readClaims, updateClaims } from "./claims.ts";
+import { type Claims, claimKey, readClaims, updateClaims, withGame } from "./claims.ts";
 import { copyInto, digestOf, type FileId, FolderState, folderState, SourceChanged } from "./files.ts";
 
 /** Where in the game an install goes: the folder it loads mods from, or its own folder (a loader's files). Wire values. */
@@ -459,6 +459,11 @@ async function undoWriting(writing: Writing): Promise<number> {
 
 /** Writes a checked plan, undoing it all when a step fails; the record and the claims are saved either way. */
 async function writePlan(places: InstallPlaces, plan: InstallPlan, record: InstallRecord): Promise<{ folder: string }> {
+  // Every file this install will write is claimed before the first is: the check in the plan and
+  // this claim run in one turn of the game's queue.
+  await updateClaims(places.claims, (claims) => {
+    for (const file of plan.files) claims[claimKey(plan.into, file.rel)] = places.owner;
+  });
   const root = plan.makeRoot ? await ensureBelow(plan.root, [plan.makeRoot], []) : plan.root;
   const writing: Writing = { places, plan, root, record, made: [], steps: [] };
   try {
@@ -476,13 +481,18 @@ async function writePlan(places: InstallPlaces, plan: InstallPlan, record: Insta
   } finally {
     await rm(path.join(places.kept, UNDO_FOLDER), { recursive: true, force: true });
     await writeRecord(places.kept, record);
-    await updateClaims(places.claims, (claims) => claimAll(claims, places.owner, record));
+    await updateClaims(places.claims, (claims) => settleClaims(claims, places.owner, plan, record));
   }
 }
 
-/** Marks every file the record holds as this project's in the game's claims. */
-function claimAll(claims: Claims, owner: string, record: InstallRecord): void {
-  for (const file of record.files) claims[claimKey(file.root, file.path)] = owner;
+/** After an install: every file the record holds is this project's; a planned one it undid is let go. */
+function settleClaims(claims: Claims, owner: string, plan: InstallPlan, record: InstallRecord): void {
+  const held = new Set(record.files.map((file) => claimKey(file.root, file.path)));
+  for (const file of plan.files) {
+    const key = claimKey(plan.into, file.rel);
+    if (!held.has(key) && claims[key] === owner) delete claims[key];
+  }
+  for (const key of held) claims[key] = owner;
 }
 
 /** A copy of saves under way: how much it copied, and how much it may. */
@@ -528,9 +538,14 @@ async function keepSaves(places: InstallPlaces, name: string): Promise<SavesKept
  * again and written; the saves are copied aside before the project's first install; a failure while
  * writing undoes this install.
  */
-export async function installMod(places: InstallPlaces, game: string, ask: InstallAsk): Promise<InstallDone> {
+export function installMod(places: InstallPlaces, game: string, ask: InstallAsk): Promise<InstallDone> {
+  return withGame(places.claims, () => installNow(places, game, ask));
+}
+
+/** An install, its game's queue held: checks, the claims taken for every file it will write, then the writes. */
+async function installNow(places: InstallPlaces, game: string, ask: InstallAsk): Promise<InstallDone> {
   let plan = await planInstall(places, game, ask);
-  const before = ask.replace ? await removeMod(places, game) : undefined;
+  const before = ask.replace ? await removeNow(places, game) : undefined;
   if (before)
     plan = await planInstall(places, game, ask).catch((error: unknown) => {
       throw new InstallUndone(error, 0, before);
@@ -613,7 +628,12 @@ async function removeFolders(record: InstallRecord, roots: Record<InstallRoot, s
  * can't reach safely (a link on the way) stays recorded with its kept original, for a later Remove
  * mod. The saves stay as they are.
  */
-export async function removeMod(places: InstallPlaces, game: string): Promise<RemoveDone> {
+export function removeMod(places: InstallPlaces, game: string): Promise<RemoveDone> {
+  return withGame(places.claims, () => removeNow(places, game));
+}
+
+/** A removal, its game's queue held. */
+async function removeNow(places: InstallPlaces, game: string): Promise<RemoveDone> {
   const record = await readRecord(places.kept, game);
   const done: RemoveDone = { removed: 0, restored: 0, skipped: 0, changed: 0 };
   const roots = {

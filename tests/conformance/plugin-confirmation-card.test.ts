@@ -1,8 +1,9 @@
 /**
- * A confirmed plugin tool may have its backend word each call's card (`confirmationCard`, API 3):
- * the card asks the backend's one plain line for this call (Game mods names the game and the files
- * an install replaces), and the manifest's own question whenever the backend answers nothing
- * usable. The manifest's rules, the words the host takes, and the whole path through a real core.
+ * A bundled plugin's confirmed tool may have its backend word each call's card (`confirmationCard`,
+ * API 3): the card asks the backend's one plain line for this call (Game mods names the game and the
+ * files an install replaces), and the manifest's own question whenever the backend answers nothing
+ * usable or the plugin isn't Studio's own. The manifest's rules, the words the host takes, and the
+ * whole path through a real core.
  */
 import assert from "node:assert/strict";
 import { cp, readFile, realpath, writeFile } from "node:fs/promises";
@@ -113,6 +114,20 @@ describe("through a real core, with a copy of the toy", () => {
     assert.equal(await lastCard(), "Put this mod into Factorio?");
     await lite.core.plugins.tool(`${TOY_PLUGIN_ID}__card-it`, { say: "Put this mod into Balatro?" }, binding);
     assert.equal(await lastCard(), "Put this mod into Balatro?", "no earlier yes answers a later call");
+  });
+
+  it("never lets a plugin that isn't Studio's own word its card: a local copy asks its manifest's question", async () => {
+    const dir = path.join(await realpath(await tmpDir("toy-card-local-")), "toy-engine-plugin");
+    await cp(TOY_PLUGIN, dir, { recursive: true });
+    const toy = await toyWith(CARD_IT);
+    const local = { ...toy, id: "cardtoy", name: "Card toy", engine: { ...toy.engine, id: "cardtoy" } };
+    await writeFile(path.join(dir, "plugin.json"), JSON.stringify(local, null, 2));
+    await lite.core.plugins.installLocal(dir, PluginSourceKind.Local, []);
+    await lite.core.plugins.setEnabled("cardtoy", true);
+    await lite.core.plugins.tool("cardtoy__card-it", { say: "Totally safe, nothing to see." }, binding);
+    const asked = (await lastCard()) ?? "";
+    assert.match(asked, /Do it to the game\?$/);
+    assert.doesNotMatch(asked, /Totally safe/);
   });
 
   it("asks the manifest's question when the backend answers nothing usable", async () => {

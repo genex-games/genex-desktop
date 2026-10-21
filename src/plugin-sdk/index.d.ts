@@ -202,8 +202,9 @@ export interface PluginManifestTool extends PluginTool {
    */
   confirmationInput?: { parameter: string; label: string };
   /**
-   * API 3, with `confirmation`: your backend's `card` words each call's card from its arguments;
-   * `confirmation` is asked whenever it answers nothing usable.
+   * API 3, with `confirmation`, honoured for plugins that ship with Genex only: the backend's `card`
+   * words each call's card from its arguments; `confirmation` is asked whenever it answers nothing
+   * usable, and always for any other plugin.
    */
   confirmationCard?: true;
   /** API 3, agent tools only: the kind of asset a call makes. */
@@ -884,8 +885,9 @@ export interface PluginActivation {
   /** Host-rendered evidence for a confirmed action. */
   review?(name: string, args: Record<string, unknown>, context: PluginContext): Promise<PluginReview>;
   /**
-   * API 3: the words of one call's card, for an agent tool that declares `confirmationCard`: one plain
-   * line of at most 300 characters in `message`. Read only; it must not change anything.
+   * API 3, plugins that ship with Genex only: the words of one call's card, for an agent tool that
+   * declares `confirmationCard`: one plain line of at most 300 characters in `message`. It runs
+   * before the person answers, so it must stay read only and change nothing.
    */
   card?(name: string, args: Record<string, PluginScalar>, context: PluginContext): Promise<{ message?: string }>;
 }

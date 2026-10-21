@@ -285,9 +285,10 @@ export interface PluginManifestTool extends PluginTool {
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
   /**
-   * API 3, with `confirmation`: the backend's `card` words each call's card from its arguments (the
-   * game and the files a call would change), within the confirmation's limits; `confirmation` is
-   * asked whenever it answers nothing usable.
+   * API 3, with `confirmation`, honoured for bundled plugins only: the backend's read-only `card`
+   * words each call's card from its arguments (the game and the files a call would change), within
+   * the confirmation's limits; `confirmation` is asked whenever it answers nothing usable, and
+   * always for any other plugin.
    */
   confirmationCard?: true;
 }

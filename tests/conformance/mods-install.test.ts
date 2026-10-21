@@ -28,8 +28,11 @@ import { ON_WINDOWS, writeTree } from "../helpers/mods-computer.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const GAME = "steam:427520";
-/** Making links needs Developer Mode on Windows; those cases run elsewhere. */
-const LINKS = { skip: ON_WINDOWS && "making links needs Developer Mode on Windows" };
+/**
+ * A link to a folder: on Windows a junction, which needs no Developer Mode and which Genex must
+ * refuse as it refuses a link; elsewhere a symbolic link.
+ */
+const folderLink = (target: string, at: string) => symlink(target, at, ON_WINDOWS ? "junction" : "dir");
 
 /** A project with a mod in it, a game folder, a mods folder that doesn't exist yet, and saves. */
 async function setUp() {
@@ -144,14 +147,14 @@ describe("installing a mod", () => {
       assert.deepEqual(await tree(s.root), before);
     });
 
-  it("refuses files that hold a link, writing nothing", LINKS, async () => {
+  it("refuses files that hold a link, writing nothing", async () => {
     const s = await setUp();
-    const secret = path.join(s.root, "secret.txt");
-    await writeFile(secret, "private");
-    await symlink(secret, path.join(s.project, "mod", "graphics", "key.txt"));
+    const secrets = path.join(s.root, "secrets");
+    await writeTree(secrets, ["key.txt"]);
+    await folderLink(secrets, path.join(s.project, "mod", "graphics", "keys"));
     await assert.rejects(installMod(s.places, GAME, { from: "mod", into: InstallRoot.Mods }), InstallRefused);
     assert.deepEqual(await tree(s.mods), []);
-    await symlink(path.join(s.project, "mod"), path.join(s.project, "alias"));
+    await folderLink(path.join(s.project, "mod"), path.join(s.project, "alias"));
     await assert.rejects(installMod(s.places, GAME, { from: "alias", into: InstallRoot.Game }), InstallRefused);
     assert.deepEqual(await tree(s.game), [
       "Game.app/",
@@ -162,11 +165,11 @@ describe("installing a mod", () => {
     ]);
   });
 
-  it("refuses a link on the way into the game before writing anything, even far down the list", LINKS, async () => {
+  it("refuses a link on the way into the game before writing anything, even far down the list", async () => {
     const s = await setUp();
     const elsewhere = path.join(s.root, "elsewhere");
     await mkdir(elsewhere);
-    await symlink(elsewhere, path.join(s.game, "graphics"));
+    await folderLink(elsewhere, path.join(s.game, "graphics"));
     const before = await tree(s.game);
     await assert.rejects(
       installMod(s.places, GAME, { from: "mod", into: InstallRoot.Game, contents: true }),
@@ -176,13 +179,14 @@ describe("installing a mod", () => {
     assert.deepEqual(await tree(elsewhere), []);
   });
 
-  it("refuses a link where a file would land, leaving what it points at alone", LINKS, async () => {
+  it("refuses a link where a file would land, leaving what it points at alone", async () => {
     const s = await setUp();
-    const target = path.join(s.root, "target.txt");
-    await writeFile(target, "untouched");
-    await symlink(target, path.join(s.game, "data.lua"));
+    const target = path.join(s.root, "target");
+    await writeTree(target, ["inside.txt"]);
+    await folderLink(target, path.join(s.game, "data.lua"));
     await assert.rejects(installMod(s.places, GAME, { from: "mod/data.lua", into: InstallRoot.Game }), InstallRefused);
-    assert.equal(await readFile(target, "utf8"), "untouched");
+    assert.deepEqual(await tree(target), ["inside.txt"]);
+    assert.equal(await readFile(path.join(target, "inside.txt"), "utf8"), "inside.txt");
   });
 
   it("refuses the mods folder of a game Genex knows none for", async () => {
@@ -226,6 +230,22 @@ describe("installing a mod", () => {
     await removeMod(s.places, GAME);
     await installMod(other, GAME, { from: "mod", into: InstallRoot.Mods });
     assert.deepEqual(await tree(s.mods), MOD_TREE, "once the first project took its mod out, the file is free");
+  });
+
+  it("lets only one of two projects installing the same file at once have it", async () => {
+    const s = await setUp();
+    const other = { ...s.places, kept: path.join(s.storage, "installs", "q"), owner: "q" };
+    const ask = { from: "mod", into: InstallRoot.Mods };
+    const results = await Promise.allSettled([installMod(s.places, GAME, ask), installMod(other, GAME, ask)]);
+    assert.deepEqual(
+      results.map((result) => result.status),
+      ["fulfilled", "rejected"],
+    );
+    const refusal = results[1]?.status === "rejected" ? results[1].reason : null;
+    assert.ok(refusal instanceof InstallRefused && refusal.problem === InstallProblem.OtherMod);
+    const claims = JSON.parse(await readFile(s.places.claims, "utf8"));
+    assert.deepEqual(new Set(Object.values(claims)), new Set(["p"]));
+    assert.deepEqual((await readRecord(other.kept, GAME)).files, []);
   });
 
   it("plans the card's words with nothing written: how many of the game's files it replaces", async () => {
@@ -286,28 +306,24 @@ describe("removing a mod", () => {
     assert.deepEqual(await tree(s.mods), ["mod/", "mod/notes.txt"]);
   });
 
-  it(
-    "never deletes through a link on the way, and keeps that file and its original for a later try",
-    LINKS,
-    async () => {
-      const s = await setUp();
-      await writeTree(s.game, ["sub/liblovely.dylib"]);
-      await writeFile(path.join(s.game, "sub", "liblovely.dylib"), "the game's own, below");
-      await installMod(s.places, GAME, { from: "loader/liblovely.dylib", into: InstallRoot.Game, to: "sub" });
-      const real = path.join(s.root, "real-sub");
-      await rename(path.join(s.game, "sub"), real);
-      await symlink(real, path.join(s.game, "sub"));
-      const first = await removeMod(s.places, GAME);
-      assert.deepEqual(first, { removed: 0, restored: 0, skipped: 1, changed: 0 });
-      assert.equal(await readFile(path.join(real, "liblovely.dylib"), "utf8"), "loader/liblovely.dylib");
-      assert.equal((await readRecord(s.kept, GAME)).files.length, 1, "the file stays recorded");
-      await rm(path.join(s.game, "sub"));
-      await rename(real, path.join(s.game, "sub"));
-      const second = await removeMod(s.places, GAME);
-      assert.deepEqual(second, { removed: 0, restored: 1, skipped: 0, changed: 0 });
-      assert.equal(await readFile(path.join(s.game, "sub", "liblovely.dylib"), "utf8"), "the game's own, below");
-    },
-  );
+  it("never deletes through a link on the way, and keeps that file and its original for a later try", async () => {
+    const s = await setUp();
+    await writeTree(s.game, ["sub/liblovely.dylib"]);
+    await writeFile(path.join(s.game, "sub", "liblovely.dylib"), "the game's own, below");
+    await installMod(s.places, GAME, { from: "loader/liblovely.dylib", into: InstallRoot.Game, to: "sub" });
+    const real = path.join(s.root, "real-sub");
+    await rename(path.join(s.game, "sub"), real);
+    await folderLink(real, path.join(s.game, "sub"));
+    const first = await removeMod(s.places, GAME);
+    assert.deepEqual(first, { removed: 0, restored: 0, skipped: 1, changed: 0 });
+    assert.equal(await readFile(path.join(real, "liblovely.dylib"), "utf8"), "loader/liblovely.dylib");
+    assert.equal((await readRecord(s.kept, GAME)).files.length, 1, "the file stays recorded");
+    await rm(path.join(s.game, "sub"));
+    await rename(real, path.join(s.game, "sub"));
+    const second = await removeMod(s.places, GAME);
+    assert.deepEqual(second, { removed: 0, restored: 1, skipped: 0, changed: 0 });
+    assert.equal(await readFile(path.join(s.game, "sub", "liblovely.dylib"), "utf8"), "the game's own, below");
+  });
 });
 
 describe("putting back saves", () => {
