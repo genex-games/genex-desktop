@@ -749,6 +749,7 @@ fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
             crate::GroupShape::Model(model) => model.path(),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
         },
+        Shape::Character { animator, .. } => Some(animator.asset().path()),
         Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
     });
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
@@ -761,7 +762,7 @@ fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
 /// Every texture path the draws' materials name, with the array kind its slot samples.
 fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
     let materials = frame.draws().iter().filter_map(|draw| match &draw.shape {
-        Shape::Model { material, .. } => material.as_ref(),
+        Shape::Model { material, .. } | Shape::Character { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
         Shape::Group { group } => group.material(),
         Shape::Line { .. } | Shape::Lines { .. } => None,
@@ -844,6 +845,7 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
 fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = &str> {
     frame.draws().iter().filter_map(|draw| match &draw.shape {
         Shape::Model { model, material: None, .. } => model.path(),
+        Shape::Character { animator, material: None, .. } => Some(animator.asset().path()),
         Shape::Group { group } if group.material().is_none() => match group.shape() {
             crate::GroupShape::Model(model) => model.path(),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
@@ -2616,6 +2618,12 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             0
         }
         Shape::Group { group } => push_group(sink, assets, missing, group),
+        // AN-15: a character draws its GLB as the model of the same path (bind pose) until the
+        // presenter evaluates and skins it (AN-17); a missing file draws the checker.
+        Shape::Character { animator, transform, tint, material } => {
+            let model = Shape::Model { model: animator.model(), transform: *transform, tint: *tint, material: material.clone() };
+            push_shape(sink, assets, missing, &model)
+        }
     }
 }
 

@@ -34,14 +34,15 @@ needs Ctx and Drawing).
 
 | Topic | Page | What it covers |
 |-|-|-|
-| Ctx | `docs/api/ctx.md` | What a tick reads: input actions, keys, touches, pads, the pointer, look, wheel and text, `ctx.rng`, `ctx.dt`, `ctx.tick` and the game's own saves. |
+| Ctx | `docs/api/ctx.md` | What a tick reads: input actions, keys, touches, pads, pointer, look, wheel, text, `ctx.rng`, `ctx.dt`, `ctx.tick` and saves. |
 | UI | `docs/api/ui.md` | `on_ui`: the egui HUD and menus, a game's only UI path. |
 | Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
 | Reading assets | `docs/api/assets.md` | What a reset may read from `assets/` (a level's JSON, a model's triangles), its refusals and why the checksum stays the same everywhere. |
 | Streaming a large world | `docs/api/streaming.md` | A world in cells: anchors, the sim radius, cell builders, entered and left cells, holds and their refusals. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
-| Lighting, materials and environment | `docs/api/lighting.md` | The sun, ambient, point and spot lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
+| Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
+| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
 | Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
 | Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws and its style. |

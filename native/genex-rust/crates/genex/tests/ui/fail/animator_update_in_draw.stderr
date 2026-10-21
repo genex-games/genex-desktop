@@ -1,0 +1,5 @@
+error[E0596]: cannot borrow `*hero` as mutable, as it is behind a `&` reference
+  --> tests/ui/fail/animator_update_in_draw.rs:13:13
+   |
+13 |             hero.update(1.0 / 60.0);
+   |             ^^^^ `hero` is a `&` reference, so it cannot be borrowed as mutable

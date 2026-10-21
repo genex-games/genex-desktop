@@ -177,12 +177,16 @@ pub const FOG_CALLS: [&str; 8] =
 /// Game systems (EP-0a1): the call and refusal blocks of the five areas, empty until each area's
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
 /// The animation calls of the facade (`.wire` is a refusal code's wire spelling): the rig, the
-/// character controller (AN-19) and ragdolls (AN-20).
-pub const ANIMATION_CALLS: [&str; 27] = [
+/// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
+/// the animator, `frame.character` and its skeleton overlay).
+pub const ANIMATION_CALLS: [&str; 49] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
-    "RagdollProfile::humanoid", ".with_mass",
+    "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", ".with_root_motion",
+    ".float", ".trigger", ".layer", ".state", ".transition", ".when", ".build", ".set_float", ".fire", ".update",
+    ".probe", "frame.character", "frame.character_with", "frame.skeleton_debug", "CharacterDraw::new", ".tint",
+    ".material",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16).
 pub const STREAM_CALLS: [&str; 21] = [

@@ -36,6 +36,8 @@ pub const DEFAULT_SPOT_OUTER_DEGREES: f32 = 30.0;
 
 /// The tag draws carry before a draw hook names one.
 pub const DEFAULT_TAG: &str = "world";
+/// The colour `frame.skeleton_debug` draws bones in.
+const SKELETON_DEBUG_COLOR: Color = Color::rgb(255, 214, 10);
 
 /// An sRGB colour with straight alpha, 8 bits per channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -577,6 +579,19 @@ pub enum Shape {
         /// The group.
         group: crate::group::InstanceGroup,
     },
+    /// An animated character (`frame.character`, AN-15): its animator's state as drawn, its
+    /// GLB from the animator's asset (the magenta checker when the file is missing).
+    #[non_exhaustive]
+    Character {
+        /// The animator, cloned when drawn.
+        animator: Arc<crate::animation::Animator>,
+        /// Where the character stands.
+        transform: Transform,
+        /// Multiplied into its base colour.
+        tint: Color,
+        /// Replaces the materials its GLB names; `None` keeps them.
+        material: Option<Material>,
+    },
 }
 
 /// The mesh a custom material draws: a model from the game's assets, or a built-in shape.
@@ -941,6 +956,24 @@ impl Frame {
     pub fn nav_debug(&mut self, nav: &crate::nav::Nav, debug: crate::nav::NavDebug) -> &mut Self {
         let points: Vec<Vec3> = genex_nav::debug::segments(nav, debug).into_iter().flatten().collect();
         self.lines(&points, Color::GREEN)
+    }
+
+    /// Draw an animated character at `transform` in its animator's current pose: one logical
+    /// draw under the current tag. The draw reads the animator and never moves it.
+    pub fn character(&mut self, animator: &crate::animation::Animator, transform: Transform) -> &mut Self {
+        self.character_with(animator, transform, &crate::animation::CharacterDraw::new())
+    }
+
+    /// [`Frame::character`] with a tint or a replacing material (`CharacterDraw`).
+    pub fn character_with(&mut self, animator: &crate::animation::Animator, transform: Transform, draw: &crate::animation::CharacterDraw) -> &mut Self {
+        let animator = Arc::new(animator.clone());
+        self.push(Shape::Character { animator, transform, tint: draw.tint_or_white(), material: draw.replacing().cloned() })
+    }
+
+    /// Draw `animator`'s skeleton at `transform` as line segments, each bone from its parent
+    /// joint to itself: one [`Frame::lines`] batch (one logical draw), in yellow. Debug only.
+    pub fn skeleton_debug(&mut self, animator: &crate::animation::Animator, transform: Transform) -> &mut Self {
+        self.lines(&animator.bone_segments(transform), SKELETON_DEBUG_COLOR)
     }
 
     /// Draw the streamed view set's cells as outlines on the ground (y = 0), one batch per state:

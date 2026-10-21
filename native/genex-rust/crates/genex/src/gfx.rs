@@ -22,12 +22,15 @@
 //!
 //! `gfx.character(path)` reads a rigged GLB the same way and hands it to genex-anim's importer
 //! (behind genex-core's GLB guard); the rig is kept in an `Arc` cache across seeds, so a re-seed
-//! neither reads nor parses again. Every refusal, the read's included, is
+//! neither reads nor parses again. Its clips are imported with it (AN-15: `asset.graph()`,
+//! `asset.animator(&graph)`, see `animation.rs`). Every refusal, the read's included, is
 //! `animation-asset-invalid`.
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
+use genex_anim::animator::AnimSet;
+use genex_anim::clip::import_clips;
 use genex_anim::import::{Rig, import_rig};
 use genex_anim::skeleton::Skeleton;
 use genex_anim::AnimationError;
@@ -338,15 +341,32 @@ impl AssetSource for AssetTable {
     }
 }
 
+/// A character GLB's rig, then its clips on that rig (no root motion until the game asks).
+fn import_character(bytes: &[u8]) -> Result<Imported, AnimationError> {
+    let rig = import_rig(bytes)?;
+    let clips = import_clips(bytes, &rig)?;
+    let set = AnimSet::new(rig.skeleton().clone(), clips);
+    Ok((Arc::new(rig), Arc::new(set)))
+}
+
 /// A game with no assets compiled in and none on disk (a test's runtime).
 pub(crate) const NO_ASSETS: AssetTable = &[];
 
 /// A rigged GLB loaded at reset (`gfx.character(path)`): genex-anim's rig of its first skinned
-/// mesh node, shared by `Arc` (cloning is cheap; every seed gets the one parse).
-#[derive(Clone, Debug, PartialEq)]
+/// mesh node and the file's clips on it, shared by `Arc` (cloning is cheap; every seed gets the
+/// one parse).
+#[derive(Clone, Debug)]
 pub struct CharacterAsset {
     path: Arc<str>,
     rig: Arc<Rig>,
+    set: Arc<AnimSet>,
+}
+
+impl PartialEq for CharacterAsset {
+    /// The same file's rig: its clips come from the same bytes.
+    fn eq(&self, other: &CharacterAsset) -> bool {
+        self.path == other.path && self.rig == other.rig
+    }
 }
 
 impl CharacterAsset {
@@ -364,7 +384,20 @@ impl CharacterAsset {
     pub fn skeleton(&self) -> &Skeleton {
         self.rig.skeleton()
     }
+
+    /// The skeleton and clips its animators share (`animation.rs` builds on it).
+    pub(crate) fn set(&self) -> &Arc<AnimSet> {
+        &self.set
+    }
+
+    /// The same file with another clip set (root motion extracted, `animation.rs`).
+    pub(crate) fn with_set(&self, set: AnimSet) -> CharacterAsset {
+        CharacterAsset { path: Arc::clone(&self.path), rig: Arc::clone(&self.rig), set: Arc::new(set) }
+    }
 }
+
+/// A character file as imported: its rig and the clip set on it.
+type Imported = (Arc<Rig>, Arc<AnimSet>);
 
 /// What the asset folder remembers across seeds: each read's bytes, each model's triangles and
 /// each character's rig (or why it was refused), so a re-seed never reads or parses again (they
@@ -373,7 +406,7 @@ impl CharacterAsset {
 struct Reads {
     bytes: Map<String, AssetBytes>,
     triangles: Map<String, Arc<ModelTriangles>>,
-    rigs: Map<String, Result<Arc<Rig>, AnimationError>>,
+    rigs: Map<String, Result<Imported, AnimationError>>,
 }
 
 /// The game's `assets/` folder.
@@ -465,16 +498,17 @@ impl Assets {
         Ok(triangles)
     }
 
-    /// The rig of the GLB at `assets/<path>`, read as [`Assets::bytes`] reads (in `on_reset`, boot
-    /// and sim groups only) and imported once per build file, its refusal included.
-    fn rig(&self, path: &str) -> Result<Arc<Rig>, AnimationError> {
+    /// The rig and clips of the GLB at `assets/<path>`, read as [`Assets::bytes`] reads (in
+    /// `on_reset`, boot and sim groups only) and imported once per build file, its refusal
+    /// included.
+    fn rig(&self, path: &str) -> Result<Imported, AnimationError> {
         let bytes = self.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path}: {error}")))?;
         if let Some(known) = self.reads.borrow().rigs.get(path) {
             return known.clone();
         }
-        let rig = import_rig(&bytes).map(Arc::new).map_err(|error| AnimationError { code: error.code, detail: format!("{path}: {}", error.detail) });
-        self.reads.borrow_mut().rigs.insert(path.to_owned(), rig.clone());
-        rig
+        let imported = import_character(&bytes).map_err(|error| AnimationError { code: error.code, detail: format!("{path}: {}", error.detail) });
+        self.reads.borrow_mut().rigs.insert(path.to_owned(), imported.clone());
+        imported
     }
 
     /// What the build records for `assets/<path>` (its size and group), without reading it into
@@ -550,8 +584,8 @@ impl Gfx {
     /// mesh node, more than 256 joints, a broken node tree, a non-finite transform). A refusal
     /// never crashes; the model handle of the same path draws the checker.
     pub fn character(&self, path: &str) -> Result<CharacterAsset, AnimationError> {
-        let rig = self.assets.rig(path)?;
-        Ok(CharacterAsset { path: Arc::from(path), rig })
+        let (rig, set) = self.assets.rig(path)?;
+        Ok(CharacterAsset { path: Arc::from(path), rig, set })
     }
 
     /// A texture handle for a v2 material or post pass (`gfx.texture(path)`, [`Assets::texture`]).

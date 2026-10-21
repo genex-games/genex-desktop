@@ -40,7 +40,9 @@ mod profile;
 mod saves;
 mod settings;
 mod ui;
-mod animation;
+/// Animation (AN-15): a character's graph and animators over genex-anim, advanced in `on_update`
+/// and drawn with `frame.character`.
+pub mod animation;
 mod camera;
 mod character;
 mod ctx;
@@ -114,6 +116,9 @@ pub use gfx::{
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;
 pub use genex_anim::{AnimationError, AnimationErrorCode};
+/// The animator a world holds and how `frame.character_with` draws it (the rest of the surface is
+/// in [`animation`]).
+pub use animation::{Animator, CharacterDraw};
 /// The character controller (genex-anim, AN-19): `Character::spawn` / `drive` through
 /// `sim.physics`, `Character::on_ground` / `drive_on` over a height function in any build.
 pub use character::{
@@ -197,7 +202,7 @@ pub mod prelude {
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
-    pub use crate::{Character, CharacterMotion, CharacterNav};
+    pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.
