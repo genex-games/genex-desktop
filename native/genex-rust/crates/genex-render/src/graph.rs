@@ -295,7 +295,18 @@ pub const fn feature_landed(feature: RenderFeature) -> bool {
         RenderFeature::Upscaler => crate::post::fsr::LANDED,
         RenderFeature::Clustered => crate::cluster::LANDED,
         RenderFeature::SpotShadows => crate::spot_shadow::LANDED,
-        _ => matches!(feature, RenderFeature::Hdr | RenderFeature::Tonemap | RenderFeature::Exposure | RenderFeature::Shadows | RenderFeature::TextureQuality),
+        // Game systems LOD-06: the fade twins draw since LOD-04 and impostors since LOD-15; the
+        // threshold and band come from the quality (`Quality::lod`).
+        _ => matches!(
+            feature,
+            RenderFeature::Hdr
+                | RenderFeature::Tonemap
+                | RenderFeature::Exposure
+                | RenderFeature::Shadows
+                | RenderFeature::TextureQuality
+                | RenderFeature::LodFade
+                | RenderFeature::Impostors
+        ),
     }
 }
 

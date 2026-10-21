@@ -88,6 +88,9 @@
 //! render_scale = 0.67       # 0.5..=1
 //! fps = 30                  # 30 | 60
 //! bloom = false             # a feature switch
+//! lod_threshold_px = 2.5    # the error a level may show, output pixels, 0.5..=8 (held to 0.5x..2x the preset's)
+//! lod_fade_band = 0.15      # the LOD crossfade band, a share of the threshold, 0..=0.5 (0: hard switches)
+//! far_density = 0.35        # the share of far-field copies kept, 0.1..=1
 //! ```
 //!
 //! The `[render]` vocabulary is the host's `src/shared/render-quality.ts`, held equal through
@@ -274,6 +277,16 @@ pub const SHADOW_DISTANCE_MIN: i64 = genex_render::settings::SHADOW_DISTANCE_MIN
 pub const SHADOW_DISTANCE_MAX: i64 = genex_render::settings::SHADOW_DISTANCE_MAX_M as i64;
 /// The widest `[render.shadows] blend_band` (the renderer's `SHADOW_BLEND_BAND_MAX`).
 pub const SHADOW_BLEND_BAND_MAX: f64 = genex_render::settings::SHADOW_BLEND_BAND_MAX as f64;
+/// The finest `lod_threshold_px` a class table may name, output pixels (the renderer's
+/// `LOD_THRESHOLD_PX_MIN`).
+pub const LOD_THRESHOLD_PX_MIN: f64 = genex_render::settings::LOD_THRESHOLD_PX_MIN as f64;
+/// The coarsest `lod_threshold_px` (the renderer's `LOD_THRESHOLD_PX_MAX`).
+pub const LOD_THRESHOLD_PX_MAX: f64 = genex_render::settings::LOD_THRESHOLD_PX_MAX as f64;
+/// The widest `lod_fade_band` (the renderer's `LOD_FADE_BAND_MAX`).
+pub const LOD_FADE_BAND_MAX: f64 = genex_render::settings::LOD_FADE_BAND_MAX as f64;
+/// The smallest `far_density` (the renderer's `FAR_DENSITY_MIN`, written as the decimal the file
+/// spells: the renderer's `f32` widens to a different `f64`).
+pub const FAR_DENSITY_MIN: f64 = 0.1;
 /// The smallest `[web] wasm_budget_mb` (the host's `WEB_WASM_BUDGET_MIN_MB`).
 pub const WEB_WASM_BUDGET_MIN_MB: i64 = 1;
 /// The largest `[web] wasm_budget_mb`: the host's hard ceiling on a browser build's gzip size
@@ -420,6 +433,10 @@ vocabulary! {
         TextureQuality => "texture-quality",
         /// Shadow maps for spot lights that ask for one.
         SpotShadows => "spot-shadows",
+        /// The crossfade between levels of detail.
+        LodFade => "lod-fade",
+        /// Impostors past a model's last mesh level.
+        Impostors => "impostors",
     }
 }
 
@@ -827,6 +844,16 @@ pub struct ClassSection {
     /// The frame-rate target, one of [`RENDER_FPS_TARGETS`].
     #[serde(default)]
     pub fps: Option<i64>,
+    /// The error a drawn level of detail may show, output pixels
+    /// ([`LOD_THRESHOLD_PX_MIN`]..=[`LOD_THRESHOLD_PX_MAX`]).
+    #[serde(default)]
+    pub lod_threshold_px: Option<f64>,
+    /// The LOD crossfade band, a share of the threshold (0..=[`LOD_FADE_BAND_MAX`]; 0: hard switches).
+    #[serde(default)]
+    pub lod_fade_band: Option<f64>,
+    /// The share of far-field copies kept ([`FAR_DENSITY_MIN`]..=1).
+    #[serde(default)]
+    pub far_density: Option<f64>,
     /// Every other key: a feature switch, by `RenderFeature` spelling.
     #[serde(flatten)]
     pub switches: Map<String, bool>,
@@ -1026,6 +1053,8 @@ pub enum ManifestErrorCode {
     InvalidRenderLook,
     /// A `[render.shadows]` value outside its range.
     InvalidRenderShadows,
+    /// A class table's LOD key outside its range (`lod_threshold_px`, `lod_fade_band`, `far_density`).
+    InvalidRenderLod,
     /// A `[render.loading]` value that breaks its rule (a colour not `#rrggbb`, a logo outside `assets/`).
     InvalidRenderLoading,
     /// A `[web] wasm_budget_mb` outside [`WEB_WASM_BUDGET_MIN_MB`]..=[`WEB_WASM_CEILING_MB`].
@@ -1066,6 +1095,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::UnknownRenderFeature => "unknown-render-feature",
             ManifestErrorCode::InvalidRenderLook => "invalid-render-look",
             ManifestErrorCode::InvalidRenderShadows => "invalid-render-shadows",
+            ManifestErrorCode::InvalidRenderLod => "invalid-render-lod",
             ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
             ManifestErrorCode::InvalidTextureUsage => "invalid-texture-usage",
@@ -1533,10 +1563,25 @@ fn check_class(name: &str, class: &ClassSection) -> Result<(), ManifestError> {
         let detail = format!("render.class.{name}.fps {:?}", class.fps);
         return Err(ManifestError::new(ManifestErrorCode::InvalidRenderFps, detail));
     }
+    check_class_lod(name, class)?;
     match class.switches.keys().find(|key| RenderFeature::from_wire(key).is_none()) {
         Some(key) => {
             Err(ManifestError::new(ManifestErrorCode::UnknownRenderFeature, format!("render.class.{name}.{key}")))
         }
+        None => Ok(()),
+    }
+}
+
+/// A class table's LOD keys (game systems LOD-06), each within its range; written so a NaN (TOML's
+/// `nan`) is refused too.
+fn check_class_lod(name: &str, class: &ClassSection) -> Result<(), ManifestError> {
+    let keys = [
+        ("lod_threshold_px", class.lod_threshold_px, LOD_THRESHOLD_PX_MIN, LOD_THRESHOLD_PX_MAX),
+        ("lod_fade_band", class.lod_fade_band, 0.0, LOD_FADE_BAND_MAX),
+        ("far_density", class.far_density, FAR_DENSITY_MIN, 1.0),
+    ];
+    match keys.into_iter().find(|(_, value, low, high)| value.is_some_and(|v| !(v >= *low && v <= *high))) {
+        Some((key, value, _, _)) => Err(ManifestError::new(ManifestErrorCode::InvalidRenderLod, format!("render.class.{name}.{key} {value:?}"))),
         None => Ok(()),
     }
 }

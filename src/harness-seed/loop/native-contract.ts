@@ -620,6 +620,8 @@ export const RenderFeature = {
   Prepass: "prepass",
   TextureQuality: "texture-quality",
   SpotShadows: "spot-shadows",
+  LodFade: "lod-fade",
+  Impostors: "impostors",
 } as const;
 export type RenderFeature = (typeof RenderFeature)[keyof typeof RenderFeature];
 

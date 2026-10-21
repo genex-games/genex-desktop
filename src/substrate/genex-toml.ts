@@ -48,6 +48,9 @@
  * render_scale = 0.67       # 0.5..=1
  * fps = 30                  # 30 | 60
  * bloom = false             # a `RenderFeature` switch
+ * lod_threshold_px = 2.5    # the error a level may show, output pixels, 0.5..=8 (held to 0.5x..2x the preset's)
+ * lod_fade_band = 0.15      # the LOD crossfade band, a share of the threshold, 0..=0.5 (0: hard switches)
+ * far_density = 0.35        # the share of far-field copies kept, 0.1..=1
  *
  * [gpu]                     # optional native-enhanced features; a game that names any has no web build
  * native_features = ["subgroup"]
@@ -129,6 +132,9 @@ import {
   isMetering,
   isQualityPreset,
   isRenderFeature,
+  isFarDensity,
+  isLodFadeBand,
+  isLodThreshold,
   isRenderScale,
   isShadowBlendBand,
   isShadowDistance,
@@ -204,6 +210,12 @@ export const GenexTomlCode = {
   InvalidRenderLook: "invalid-render-look",
   /** A `[render.shadows]` value outside its range (`SHADOW_DISTANCE_MIN..=SHADOW_DISTANCE_MAX`, `0..=SHADOW_BLEND_BAND_MAX`). */
   InvalidRenderShadows: "invalid-render-shadows",
+  /**
+   * A class table's LOD key outside its range (`lod_threshold_px` within
+   * `LOD_THRESHOLD_PX_MIN..=LOD_THRESHOLD_PX_MAX`, `lod_fade_band` within `0..=LOD_FADE_BAND_MAX`,
+   * `far_density` within `FAR_DENSITY_MIN..=1`).
+   */
+  InvalidRenderLod: "invalid-render-lod",
   /** A `[render.loading]` value that breaks its rule (`shared/loading-style.ts`). */
   InvalidRenderLoading: "invalid-render-loading",
   /** A `[web] wasm_budget_mb` outside `WEB_WASM_BUDGET_MIN_MB..=WEB_WASM_CEILING_MB`. */
@@ -642,6 +654,9 @@ interface RawClass {
   preset: string | null;
   renderScale: number | null;
   fps: number | null;
+  lodThresholdPx: number | null;
+  lodFadeBand: number | null;
+  farDensity: number | null;
   /** Every other key, each a boolean, in file order. */
   switches: Array<[string, boolean]>;
 }
@@ -899,6 +914,11 @@ function renderLook(value: TomlValue | undefined): RawLook {
   return raw;
 }
 
+/** `value` as a decimal, or null when the table leaves the key out. */
+function optionalDecimal(value: TomlValue | undefined, where: string): number | null {
+  return value === undefined ? null : decimal(value, where);
+}
+
 /** Every `[render.class.<class>]`, in file order. */
 function renderClasses(classes: TomlTable): RawClass[] {
   return Object.keys(classes).map((name) => {
@@ -916,6 +936,9 @@ function renderClasses(classes: TomlTable): RawClass[] {
       preset: row.preset === undefined ? null : string(row.preset, `${where}.preset`),
       renderScale: row.render_scale === undefined ? null : decimal(row.render_scale, `${where}.render_scale`),
       fps: row.fps === undefined ? null : integer(row.fps, `${where}.fps`),
+      lodThresholdPx: optionalDecimal(row.lod_threshold_px, `${where}.lod_threshold_px`),
+      lodFadeBand: optionalDecimal(row.lod_fade_band, `${where}.lod_fade_band`),
+      farDensity: optionalDecimal(row.far_density, `${where}.far_density`),
       switches,
     };
   });
@@ -1328,6 +1351,7 @@ function classOf(row: RawClass): RenderClassOverride {
     quality.fps = isFpsTarget(row.fps)
       ? row.fps
       : renderRefused(GenexTomlCode.InvalidRenderFps, `${where}.fps ${row.fps}`);
+  Object.assign(quality, lodOf(row));
   for (const [name, on] of row.switches) {
     const feature: RenderFeature = isRenderFeature(name)
       ? name
@@ -1335,6 +1359,23 @@ function classOf(row: RawClass): RenderClassOverride {
     quality.features[feature] = on;
   }
   return quality;
+}
+
+/** A class table's LOD keys (game systems LOD-06), each refused outside its range. */
+function lodOf(row: RawClass): Pick<RenderClassOverride, "lodThresholdPx" | "lodFadeBand" | "farDensity"> {
+  const where = `render.class.${row.name}`;
+  const bad = (key: string, value: number): never =>
+    renderRefused(GenexTomlCode.InvalidRenderLod, `${where}.${key} ${value}`);
+  const lod: Pick<RenderClassOverride, "lodThresholdPx" | "lodFadeBand" | "farDensity"> = {};
+  if (row.lodThresholdPx !== null)
+    lod.lodThresholdPx = isLodThreshold(row.lodThresholdPx)
+      ? row.lodThresholdPx
+      : bad(QualityKey.LodThresholdPx, row.lodThresholdPx);
+  if (row.lodFadeBand !== null)
+    lod.lodFadeBand = isLodFadeBand(row.lodFadeBand) ? row.lodFadeBand : bad(QualityKey.LodFadeBand, row.lodFadeBand);
+  if (row.farDensity !== null)
+    lod.farDensity = isFarDensity(row.farDensity) ? row.farDensity : bad(QualityKey.FarDensity, row.farDensity);
+  return lod;
 }
 
 function checkEngine(manifest: GenexToml): GenexTomlRefusal | null {
@@ -1377,6 +1418,9 @@ function classLines(name: DeviceClass, quality: RenderClassOverride): string[] {
     [QualityKey.Preset, quality.preset === undefined ? undefined : tomlString(quality.preset)],
     [QualityKey.RenderScale, quality.renderScale === undefined ? undefined : tomlFloat(quality.renderScale)],
     [QualityKey.Fps, quality.fps === undefined ? undefined : String(quality.fps)],
+    [QualityKey.LodThresholdPx, quality.lodThresholdPx === undefined ? undefined : tomlFloat(quality.lodThresholdPx)],
+    [QualityKey.LodFadeBand, quality.lodFadeBand === undefined ? undefined : tomlFloat(quality.lodFadeBand)],
+    [QualityKey.FarDensity, quality.farDensity === undefined ? undefined : tomlFloat(quality.farDensity)],
   ];
   const switches = Object.entries(quality.features).map(([feature, on]) => `${feature} = ${String(on)}`);
   return [`[render.${RenderTomlKey.Class}.${name}]`, ...assignments(keys), ...switches];

@@ -11,7 +11,7 @@ use genex_render::budget::{
 };
 use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs, WebHints};
 use genex_render::presets::{
-    ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
+    ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, LodOverride, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
     SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
     on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits, STREAM_POOL_DESKTOP_BYTES, STREAM_POOL_PHONE_BYTES,
     STREAM_POOL_PRESSURE_PERCENT, stream_pool_bytes,
@@ -19,8 +19,8 @@ use genex_render::presets::{
 use genex_gpu_memory::{MemoryFacts, TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_RUNNING_MODERATE};
 use genex_render::graph::{feature_landed, not_landed};
 use genex_render::settings::{
-    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, PresetChoice, Quality, QualityKnob, QualityPreset, RenderFeature, RenderSettings,
-    SceneFormat, ShadowFilter, ShadowFormat, Upscaler,
+    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, LOD_FADE_BAND_SWITCHED_ON, LodQuality, PresetChoice, Quality, QualityKnob, QualityPreset,
+    RenderFeature, RenderSettings, SceneFormat, ShadowFilter, ShadowFormat, Upscaler,
 };
 use wgpu::{Backend, DeviceType, Features};
 
@@ -1140,6 +1140,10 @@ fn knob_differs(knob: QualityKnob, a: &Quality, b: &Quality) -> bool {
         QualityKnob::Meshlets => a.meshlets != b.meshlets,
         QualityKnob::Occlusion => a.occlusion != b.occlusion,
         QualityKnob::SpecularAa => a.specular_aa != b.specular_aa,
+        QualityKnob::LodThreshold => a.lod.threshold_px != b.lod.threshold_px,
+        QualityKnob::LodFade => a.lod.fade_band != b.lod.fade_band,
+        QualityKnob::Impostors => a.lod.impostors != b.lod.impostors,
+        QualityKnob::FarDensity => a.lod.far_density != b.lod.far_density,
         _ => panic!("{knob:?} needs a row here"),
     }
 }
@@ -1182,6 +1186,9 @@ fn accounted_by(knob: QualityKnob) -> &'static [&'static str] {
         QualityKnob::Meshlets | QualityKnob::Occlusion => &[],
         // RQ2.4 draws geometric specular AA on the HDR scene (the surface chunk's constant).
         QualityKnob::SpecularAa => &[],
+        // Game systems LOD-06: the cull reads the threshold (the LOD view) and the far density (the
+        // far rules), the fade twins draw since LOD-04 and impostors since LOD-15.
+        QualityKnob::LodThreshold | QualityKnob::LodFade | QualityKnob::Impostors | QualityKnob::FarDensity => &[],
         _ => panic!("{knob:?} needs a row here"),
     }
 }
@@ -1248,7 +1255,10 @@ fn the_hdr_tonemap_exposure_and_shadow_switches_have_landed_and_a_switched_off_f
             RenderFeature::Occlusion,
             RenderFeature::Prepass,
             RenderFeature::TextureQuality,
-            RenderFeature::SpotShadows
+            RenderFeature::SpotShadows,
+            // Game systems LOD-06 flipped (named in the integrate record): the two LOD switches.
+            RenderFeature::LodFade,
+            RenderFeature::Impostors
         ]
     );
     let mut quality = preset_quality(QualityPreset::Ultra, class("desktop-ultra"));
@@ -1606,4 +1616,148 @@ fn tier_index(tier: PerformanceTier) -> usize {
         PerformanceTier::Low => 3,
         _ => panic!("a new tier needs a pool row"),
     }
+}
+
+/// Game systems LOD-06 (owner call L6; new behaviour): each preset sets its LOD threshold, band and
+/// far-field density, desktop high and ultra at 1 px; a phone takes its tier's floor (2, 2.5, 3 px
+/// and fewer far copies) whatever the preset, and keeps the preset's band. The legacy renderer
+/// keeps today's 1 px hard switch without impostors.
+#[test]
+fn presets_set_the_lod_threshold_and_band_per_class() {
+    let desktop = [
+        (QualityPreset::Low, 2.0, 0.15, 0.5),
+        (QualityPreset::Medium, 1.5, 0.2, 0.75),
+        (QualityPreset::High, 1.0, 0.15, 1.0),
+        (QualityPreset::Ultra, 1.0, 0.15, 1.0),
+    ];
+    for wire in ["desktop-ultra", "desktop-high", "desktop-mid", "desktop-low"] {
+        for (preset, threshold, band, far) in desktop {
+            let lod = preset_quality(preset, class(wire)).lod;
+            assert_eq!((lod.threshold_px, lod.fade_band, lod.impostors, lod.far_density), (threshold, band, true, far), "{wire} {preset:?}");
+        }
+    }
+    let phones = [("mobile-high", 2.0, 0.5), ("mobile-mid", 2.5, 0.35), ("mobile-low", 3.0, 0.35)];
+    for (wire, floor, far) in phones {
+        for (preset, threshold, band, preset_far) in desktop {
+            let lod = preset_quality(preset, class(wire)).lod;
+            let expected = (f32::max(threshold, floor), band, true, f32::min(preset_far, far));
+            assert_eq!((lod.threshold_px, lod.fade_band, lod.impostors, lod.far_density), expected, "{wire} {preset:?}");
+        }
+    }
+    assert_eq!(Quality::off().lod, LodQuality::LEGACY);
+    assert_eq!((LodQuality::LEGACY.threshold_px, LodQuality::LEGACY.fade_band, LodQuality::LEGACY.impostors), (1.0, 0.0, false));
+}
+
+/// Game systems LOD-06 (D19; new behaviour): the `lod-fade` switch turns the crossfade off and
+/// nothing else, on every class and preset, from the game's table or the person's choice; turned
+/// back on it returns the preset's band. The `impostors` switch likewise.
+#[test]
+fn the_person_can_turn_the_crossfade_off_alone() {
+    let facts = mac();
+    for class in DeviceClass::ALL {
+        for preset in QualityPreset::ALL {
+            let chosen = ClassOverride { preset: Some(preset), ..ClassOverride::default() };
+            let base = profile(&facts, class, &RenderOverrides::default(), Some(&chosen)).quality;
+            let off = ClassOverride { switches: vec![(RenderFeature::LodFade, false)], ..chosen.clone() };
+            let faded_off = profile(&facts, class, &RenderOverrides::default(), Some(&off)).quality;
+            let mut expected = base;
+            expected.lod.fade_band = 0.0;
+            assert_eq!(faded_off, expected, "{} {preset:?}: only the band moves", class.wire());
+            assert!(!faded_off.feature(RenderFeature::LodFade));
+            let game = RenderOverrides { classes: vec![(class, off.clone())], ..RenderOverrides::default() };
+            assert_eq!(profile(&facts, class, &game, Some(&chosen)).quality, expected, "{} {preset:?}: from the game's table", class.wire());
+            // The panel keeps one entry per switch (the last state the person chose).
+            let back = ClassOverride { switches: vec![(RenderFeature::LodFade, true)], ..chosen.clone() };
+            assert_eq!(profile(&facts, class, &RenderOverrides::default(), Some(&back)).quality, base, "{} {preset:?}: back on", class.wire());
+            let no_impostors = ClassOverride { switches: vec![(RenderFeature::Impostors, false)], ..chosen.clone() };
+            let mut expected = base;
+            expected.lod.impostors = false;
+            assert_eq!(profile(&facts, class, &RenderOverrides::default(), Some(&no_impostors)).quality, expected, "{} {preset:?}", class.wire());
+        }
+    }
+    let mut legacy = Quality::off();
+    legacy.set_feature(RenderFeature::LodFade, true);
+    assert_eq!(legacy.lod.fade_band, LOD_FADE_BAND_SWITCHED_ON, "a quality without a band is granted high's");
+}
+
+/// Game systems LOD-06 (new behaviour): LOD choices layer the game's class table under the
+/// person's key by key, each held to its range, the threshold also to half..twice the preset's and
+/// then to the phone floor; the switch still wins over a band asked for.
+#[test]
+fn lod_choices_layer_game_then_person_and_are_held_to_their_ranges() {
+    let facts = mac();
+    let high = class("desktop-high");
+    let game = RenderOverrides {
+        classes: vec![(high, ClassOverride { lod: LodOverride::new().threshold_px(1.5).far_density(0.6), ..ClassOverride::default() })],
+        ..RenderOverrides::default()
+    };
+    let person = ClassOverride { lod: LodOverride::new().threshold_px(0.8), ..ClassOverride::default() };
+    let lod = profile(&facts, high, &game, Some(&person)).quality.lod;
+    assert_eq!((lod.threshold_px, lod.far_density, lod.fade_band), (0.8, 0.6, 0.15), "the person's threshold over the game's, the game's density kept");
+    let wild = |lod: LodOverride, class: DeviceClass| profile(&facts, class, &RenderOverrides::default(), Some(&ClassOverride { lod, ..ClassOverride::default() })).quality.lod;
+    assert_eq!(wild(LodOverride::new().threshold_px(0.1), high).threshold_px, 0.5, "half the preset's at the finest");
+    assert_eq!(wild(LodOverride::new().threshold_px(9.0), high).threshold_px, 2.0, "twice the preset's at the coarsest");
+    assert_eq!(wild(LodOverride::new().threshold_px(f32::NAN), high).threshold_px, 1.0, "a NaN keeps the preset's");
+    assert_eq!(wild(LodOverride::new().fade_band(0.9), high).fade_band, 0.5);
+    assert_eq!(wild(LodOverride::new().far_density(0.0), high).far_density, 0.1);
+    let phone = class("mobile-low");
+    assert_eq!(wild(LodOverride::new().threshold_px(0.5), phone).threshold_px, 3.0, "a phone never draws finer than its floor");
+    assert_eq!(wild(LodOverride::new().far_density(1.0), phone).far_density, 0.35, "nor keeps more far copies");
+    let banded_off = ClassOverride { lod: LodOverride::new().fade_band(0.3), switches: vec![(RenderFeature::LodFade, false)], ..ClassOverride::default() };
+    assert_eq!(profile(&facts, high, &RenderOverrides::default(), Some(&banded_off)).quality.lod.fade_band, 0.0, "the switch wins");
+}
+
+/// Game systems LOD-06 (new behaviour): the quality's threshold reaches the cull through
+/// `FramePlan::set_lod_view` (1 px is `set_lod_height` bit for bit, so desktop high and ultra draw
+/// what they drew) and a coarser threshold holds each level proportionally nearer: at 2 px a copy
+/// at `d` draws what 1 px draws at `2d`. The far density thins every far rule's kept share, 1 none.
+#[test]
+fn the_lod_threshold_and_far_density_reach_the_plan() {
+    use genex_render::lod_rows::{DrawLod, GpuFarRule};
+    use genex_render::mesh::{LOD_FADE_TAG, LodChain, LodLevel, MeshData};
+    use genex_render::scene::{CameraDesc, FramePlan, Material, MeshLibrary, ModelPart, Scene, translation};
+    const HEIGHT: u32 = 360;
+    let mesh = MeshData::sphere();
+    let triangles = mesh.indices.len() / 3;
+    let level = |share: usize, error: f32| LodLevel { indices: mesh.indices[..triangles / share * 3].to_vec(), error };
+    let lods = LodChain { levels: vec![level(2, 0.02), level(4, 0.08)] };
+    let mut library = MeshLibrary::new();
+    let sphere = library.add_part(ModelPart { mesh, meshlets: None, lods: Some(lods) }).expect("part");
+    let mut camera = CameraDesc::look_at([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
+    camera.far = 10_000.0;
+    let plan_at = |distance: f32| {
+        let mut scene = Scene::new(camera, [0; 4]);
+        scene.set_lod(DrawLod { origin: Some([0.0; 4]), ..DrawLod::OWN });
+        scene.draw(sphere, translation(0.0, 0.0, -distance), Material::color([200, 200, 200, 255]));
+        FramePlan::build(&scene, &library, 16.0 / 9.0).expect("plan")
+    };
+    let level_of = |plan: &FramePlan| {
+        let cull = plan.cpu_cull();
+        let drawn = plan.batches.iter().zip(&cull.counts).find(|(batch, count)| **count > 0 && batch.lod[0] & LOD_FADE_TAG == 0);
+        drawn.map(|(batch, _)| batch.lod[0] & 0xF).expect("drawn")
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for step in 0..200 {
+        let distance = 4.0 * libm::powf(500.0, step as f32 / 199.0);
+        let (mut default, mut one) = (plan_at(distance), plan_at(distance));
+        default.set_lod_height(HEIGHT);
+        one.set_lod_view(HEIGHT, LodQuality::HIGH.threshold_px);
+        assert_eq!(one.cull_views.lod, default.cull_views.lod, "1 px is today's view bit for bit");
+        let mut far = plan_at(distance * 2.0);
+        far.set_lod_view(HEIGHT, 1.0);
+        let mut coarse = plan_at(distance);
+        coarse.set_lod_view(HEIGHT, 2.0);
+        assert_eq!(level_of(&coarse), level_of(&far), "2 px at {distance} m draws what 1 px draws at {} m", distance * 2.0);
+        assert!(level_of(&coarse) >= level_of(&one), "a coarser threshold is never finer");
+        seen.insert(level_of(&one));
+    }
+    assert_eq!(seen.len(), 3, "the sweep crosses every level: {seen:?}");
+    let mut scene = Scene::new(camera, [0; 4]);
+    scene.far_rules = vec![GpuFarRule { start: 10.0, end: 100.0, keep: 0.8, fade_out: 20.0 }];
+    let mut thinned = FramePlan::build(&scene, &library, 1.0).expect("plan");
+    let untouched = thinned.far_rules.clone();
+    thinned.thin_far_rules(1.0);
+    assert_eq!(thinned.far_rules, untouched, "a density of 1 keeps the scene's rules");
+    thinned.thin_far_rules(LodQuality::MEDIUM.far_density);
+    assert_eq!(thinned.far_rules[0].keep, 0.8 * 0.75, "medium keeps three quarters of what each rule kept");
 }

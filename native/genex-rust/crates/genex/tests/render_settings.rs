@@ -698,6 +698,25 @@ fn the_persons_choice_is_saved_per_device_and_read_back_at_the_next_boot() {
     assert_eq!(elsewhere.person(), &ClassOverride::default());
 }
 
+/// Game systems LOD-06: the person's "Detail distance" (a LOD threshold) is saved per device and
+/// read back, and a reset is saved too: the next boot has no threshold of the person's.
+#[test]
+fn the_persons_detail_distance_is_saved_and_a_reset_clears_it_at_the_next_boot() {
+    let dir = scratch("detail");
+    let mut first = control(RenderConfig::new());
+    first.load_saved(&saves(&dir));
+    first.set_person(ClassOverride { lod: genex::render::LodConfig::new().threshold_px(0.75), ..ClassOverride::default() });
+    assert!(first.save(&saves(&dir)), "written");
+    let mut next = control(RenderConfig::new());
+    next.load_saved(&saves(&dir));
+    assert_eq!(next.person().lod.threshold_px, Some(0.75), "the saved threshold is back");
+    next.set_person(ClassOverride::default());
+    assert!(next.save(&saves(&dir)), "the reset is written");
+    let mut after = control(RenderConfig::new());
+    after.load_saved(&saves(&dir));
+    assert_eq!(after.person(), &ClassOverride::default(), "nothing of the person's is left");
+}
+
 // ---------------------------------------------------------------------------------------------
 // The settings panel never moves the checksum (CPU)
 

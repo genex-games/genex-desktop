@@ -7,6 +7,11 @@
       "text": "[render]\nform_factors = [\"desktop\", \"mobile\"]\npreset = \"auto\"\n\n[render.look]\ntonemapper = \"agx\"\nexposure = \"auto\"\nmetering = \"center\"\nev_compensation = -0.5\nbloom_intensity = 0.04\n\n[render.class.mobile-mid]\npreset = \"low\"\nrender_scale = 0.67\nfps = 30\nbloom = false\nao = false\n\n[render.class.desktop-ultra]\ntaa = true\ncontact-shadows = true\n"
     },
     { "name": "an empty [render]", "text": "[render]\n" },
+    {
+      "name": "the LOD keys and switches of a class table",
+      "text": "[render.class.desktop-high]\nlod_threshold_px = 1.5\nlod_fade_band = 0.2\nfar_density = 0.75\nimpostors = false\nlod-fade = true\n"
+    },
+    { "name": "the edges of the LOD ranges", "text": "[render.class.mobile-low]\nlod_threshold_px = 8\nlod_fade_band = 0\nfar_density = 1\n\n[render.class.desktop-ultra]\nlod_threshold_px = 0.5\nlod_fade_band = 0.5\nfar_density = 0.1\n" },
     { "name": "the sun's shadows on every preset", "text": "[render.shadows]\ndistance = 80\nblend_band = 0.1\n" },
     { "name": "the edges of the shadow ranges", "text": "[render.shadows]\ndistance = 10\nblend_band = 0\n\n[render]\npreset = \"high\"\n" },
     { "name": "a widest blend band and a longest distance", "text": "[render.shadows]\ndistance = 400\nblend_band = 0.5\n" },
@@ -37,6 +42,12 @@
     { "name": "an unknown device class", "text": "[render.class.watch]\npreset = \"low\"\n", "code": "unknown-device-class" },
     { "name": "a render scale of 3", "text": "[render.class.desktop-high]\nrender_scale = 3\n", "code": "invalid-render-scale" },
     { "name": "a render scale below the floor", "text": "[render.class.mobile-low]\nrender_scale = 0.25\n", "code": "invalid-render-scale" },
+    { "name": "a LOD threshold finer than half a pixel", "text": "[render.class.desktop-high]\nlod_threshold_px = 0.25\n", "code": "invalid-render-lod" },
+    { "name": "a LOD threshold past 8 px", "text": "[render.class.mobile-low]\nlod_threshold_px = 9\n", "code": "invalid-render-lod" },
+    { "name": "a negative LOD fade band", "text": "[render.class.desktop-high]\nlod_fade_band = -0.1\n", "code": "invalid-render-lod" },
+    { "name": "a LOD fade band past half the threshold", "text": "[render.class.desktop-high]\nlod_fade_band = 0.6\n", "code": "invalid-render-lod" },
+    { "name": "no far copies kept", "text": "[render.class.mobile-mid]\nfar_density = 0\n", "code": "invalid-render-lod" },
+    { "name": "more far copies than there are", "text": "[render.class.mobile-mid]\nfar_density = 1.5\n", "code": "invalid-render-lod" },
     { "name": "fps 1000", "text": "[render.class.desktop-ultra]\nfps = 1000\n", "code": "invalid-render-fps" },
     { "name": "a negative fps", "text": "[render.class.desktop-ultra]\nfps = -60\n", "code": "invalid-render-fps" },
     { "name": "an unknown feature switch", "text": "[render.class.desktop-high]\nraytracing = true\n", "code": "unknown-render-feature" },

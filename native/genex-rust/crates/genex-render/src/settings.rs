@@ -1755,6 +1755,100 @@ impl TextureQuality {
     pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false };
 }
 
+/// The finest LOD error threshold anything may ask for, in output pixels (game systems LOD-06).
+pub const LOD_THRESHOLD_PX_MIN: f32 = 0.5;
+/// The coarsest LOD error threshold anything may ask for, in output pixels.
+pub const LOD_THRESHOLD_PX_MAX: f32 = 8.0;
+/// The widest LOD crossfade band, as a share of the threshold (0 is the hard switch).
+pub const LOD_FADE_BAND_MAX: f32 = 0.5;
+/// The band the `lod-fade` switch grants where the quality had none (high's band).
+pub const LOD_FADE_BAND_SWITCHED_ON: f32 = 0.15;
+/// The smallest share of far-field copies a quality keeps.
+pub const FAR_DENSITY_MIN: f32 = 0.1;
+
+/// Level-of-detail quality (game systems LOD-06, owner calls D19 and L6): the error a drawn level
+/// may show, the crossfade band, whether impostors draw and the share of far-field copies kept.
+/// Uniforms and plan choices only: the threshold and the far density are resource knobs, and the
+/// two switches pick variants that compile off the frame thread.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodQuality {
+    /// The error a drawn level may show, in output pixels
+    /// ([`LOD_THRESHOLD_PX_MIN`]..=[`LOD_THRESHOLD_PX_MAX`]; 1.0 on desktop high and ultra).
+    pub threshold_px: f32,
+    /// The crossfade band as a share of the threshold (0..=[`LOD_FADE_BAND_MAX`]; 0: hard switches).
+    pub fade_band: f32,
+    /// Whether models with an impostor draw it past their last mesh level (off: the last mesh
+    /// level stays).
+    pub impostors: bool,
+    /// The share of far-field copies kept ([`FAR_DENSITY_MIN`]..=1; multiplies every group's far
+    /// rule).
+    pub far_density: f32,
+}
+
+impl LodQuality {
+    /// The legacy renderer: today's 1 px threshold, hard switches, no impostors, every copy.
+    pub const LEGACY: LodQuality = LodQuality { threshold_px: 1.0, fade_band: 0.0, impostors: false, far_density: 1.0 };
+    /// Desktop `high` and `ultra` (owner call L6: goldens unchanged at 1 px).
+    pub const HIGH: LodQuality = LodQuality { threshold_px: 1.0, fade_band: 0.15, impostors: true, far_density: 1.0 };
+    /// Desktop `medium`.
+    pub const MEDIUM: LodQuality = LodQuality { threshold_px: 1.5, fade_band: 0.2, impostors: true, far_density: 0.75 };
+    /// Desktop `low`.
+    pub const LOW: LodQuality = LodQuality { threshold_px: 2.0, fade_band: 0.15, impostors: true, far_density: 0.5 };
+    /// The high phones' floor: no finer than 2 px, at most half the far copies.
+    pub const MOBILE_HIGH: LodQuality = LodQuality { threshold_px: 2.0, fade_band: 0.15, impostors: true, far_density: 0.5 };
+    /// The mid phones' floor.
+    pub const MOBILE_MID: LodQuality = LodQuality { threshold_px: 2.5, fade_band: 0.15, impostors: true, far_density: 0.35 };
+    /// The low phones' floor.
+    pub const MOBILE_LOW: LodQuality = LodQuality { threshold_px: 3.0, fade_band: 0.15, impostors: true, far_density: 0.35 };
+
+    /// This quality with a threshold of `pixels`, held to its range (a NaN keeps the threshold).
+    pub fn with_threshold_px(mut self, pixels: f32) -> LodQuality {
+        if !pixels.is_nan() {
+            self.threshold_px = pixels.clamp(LOD_THRESHOLD_PX_MIN, LOD_THRESHOLD_PX_MAX);
+        }
+        self
+    }
+
+    /// This quality with a crossfade band of `band`, held to its range (a NaN keeps the band).
+    pub fn with_fade_band(mut self, band: f32) -> LodQuality {
+        if !band.is_nan() {
+            self.fade_band = band.clamp(0.0, LOD_FADE_BAND_MAX);
+        }
+        self
+    }
+
+    /// This quality with impostors on or off.
+    pub const fn with_impostors(mut self, on: bool) -> LodQuality {
+        self.impostors = on;
+        self
+    }
+
+    /// This quality keeping `density` of the far-field copies, held to its range (a NaN keeps it).
+    pub fn with_far_density(mut self, density: f32) -> LodQuality {
+        if !density.is_nan() {
+            self.far_density = density.clamp(FAR_DENSITY_MIN, 1.0);
+        }
+        self
+    }
+}
+
+impl Default for LodQuality {
+    fn default() -> Self {
+        LodQuality::LEGACY
+    }
+}
+
+/// `band` with the `lod-fade` switch `on`: off is the hard switch; on keeps a band that is on, else
+/// grants [`LOD_FADE_BAND_SWITCHED_ON`].
+fn fade_band_switched(band: f32, on: bool) -> f32 {
+    match (on, band > 0.0) {
+        (false, _) => 0.0,
+        (true, true) => band,
+        (true, false) => LOD_FADE_BAND_SWITCHED_ON,
+    }
+}
+
 /// Shadowed spots the `spot-shadows` switch grants where the preset had none (high's count).
 pub const SPOT_SHADOWS_SWITCHED_ON: u8 = 2;
 
@@ -1860,6 +1954,9 @@ pub struct Quality {
     /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
     /// renderer.
     pub grass: crate::foliage::GrassQuality,
+    /// Levels of detail (game systems LOD-06): the threshold, the crossfade band, impostors and the
+    /// far-field density. Resource knobs; the presets set them per class (owner call L6).
+    pub lod: LodQuality,
 }
 
 impl Quality {
@@ -1925,6 +2022,7 @@ impl Quality {
             ssr: crate::ssr::SsrQuality::OFF,
             taau: false,
             grass: crate::foliage::GrassQuality::OFF,
+            lod: LodQuality::LEGACY,
         }
     }
 
@@ -1949,6 +2047,8 @@ impl Quality {
             RenderFeature::Prepass => self.prepass,
             RenderFeature::TextureQuality => self.textures != TextureQuality::OFF,
             RenderFeature::SpotShadows => self.lights.shadowed_spots > 0,
+            RenderFeature::LodFade => self.lod.fade_band > 0.0,
+            RenderFeature::Impostors => self.lod.impostors,
         }
     }
 
@@ -1956,7 +2056,9 @@ impl Quality {
     /// Turning AO on picks half resolution; turning TAA off returns to MSAA 4x; turning texture
     /// quality on keeps the preset's classes, or holds sources up to [`TextureClass::S1024`] with
     /// Toksvig mips where it was off; turning spot shadows on keeps the preset's slots, or grants
-    /// [`SPOT_SHADOWS_SWITCHED_ON`] where it had none (the device class's caps apply after).
+    /// [`SPOT_SHADOWS_SWITCHED_ON`] where it had none (the device class's caps apply after);
+    /// turning the LOD crossfade on keeps the quality's band, or grants
+    /// [`LOD_FADE_BAND_SWITCHED_ON`] where it had none.
     pub fn set_feature(&mut self, feature: RenderFeature, on: bool) {
         match feature {
             RenderFeature::Hdr => self.hdr = on,
@@ -1977,6 +2079,8 @@ impl Quality {
             RenderFeature::Prepass => self.prepass = on,
             RenderFeature::TextureQuality => self.textures = textures_switched(self.textures, on),
             RenderFeature::SpotShadows => self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on),
+            RenderFeature::LodFade => self.lod.fade_band = fade_band_switched(self.lod.fade_band, on),
+            RenderFeature::Impostors => self.lod.impostors = on,
         }
     }
 
@@ -2106,11 +2210,15 @@ pub enum RenderFeature {
     TextureQuality,
     /// Shadow maps for spot lights that ask for one (RQ6.5).
     SpotShadows,
+    /// The crossfade between levels of detail (game systems LOD-06; off: hard switches).
+    LodFade,
+    /// Impostors past a model's last mesh level (game systems LOD-06; off: the last level stays).
+    Impostors,
 }
 
 impl RenderFeature {
     /// Every feature switch, in wire order.
-    pub const ALL: [RenderFeature; 18] = [
+    pub const ALL: [RenderFeature; 20] = [
         RenderFeature::Hdr,
         RenderFeature::Tonemap,
         RenderFeature::Exposure,
@@ -2129,6 +2237,8 @@ impl RenderFeature {
         RenderFeature::Prepass,
         RenderFeature::TextureQuality,
         RenderFeature::SpotShadows,
+        RenderFeature::LodFade,
+        RenderFeature::Impostors,
     ];
 
     /// The wire spelling.
@@ -2152,6 +2262,8 @@ impl RenderFeature {
             RenderFeature::Prepass => "prepass",
             RenderFeature::TextureQuality => "texture-quality",
             RenderFeature::SpotShadows => "spot-shadows",
+            RenderFeature::LodFade => "lod-fade",
+            RenderFeature::Impostors => "impostors",
         }
     }
 
@@ -2259,11 +2371,19 @@ pub enum QualityKnob {
     Occlusion,
     /// [`Quality::specular_aa`].
     SpecularAa,
+    /// [`LodQuality::threshold_px`].
+    LodThreshold,
+    /// [`LodQuality::fade_band`].
+    LodFade,
+    /// [`LodQuality::impostors`].
+    Impostors,
+    /// [`LodQuality::far_density`].
+    FarDensity,
 }
 
 impl QualityKnob {
     /// Every knob.
-    pub const ALL: [QualityKnob; 42] = [
+    pub const ALL: [QualityKnob; 46] = [
         QualityKnob::Hdr,
         QualityKnob::Tonemap,
         QualityKnob::Exposure,
@@ -2306,10 +2426,16 @@ impl QualityKnob {
         QualityKnob::Meshlets,
         QualityKnob::Occlusion,
         QualityKnob::SpecularAa,
+        QualityKnob::LodThreshold,
+        QualityKnob::LodFade,
+        QualityKnob::Impostors,
+        QualityKnob::FarDensity,
     ];
 
     /// When the knob may change. Shadow, bloom and AO on/off and the AO resolution are resource
-    /// knobs (plan §2.5's degrade order steps them at runtime); a feature whose pipelines differ
+    /// knobs (plan §2.5's degrade order steps them at runtime), and so are the LOD knobs (game
+    /// systems LOD-06: uniforms and plan choices; the faded and impostor variants compile off the
+    /// frame thread, so switching them never waits for a loading point); a feature whose pipelines differ
     /// when on (TAA, HDR, filters, override constants) is a pipeline knob.
     pub const fn kind(self) -> KnobKind {
         match self {
@@ -2334,7 +2460,11 @@ impl QualityKnob {
             | QualityKnob::SkyCadence
             | QualityKnob::LightCap
             | QualityKnob::LightTile
-            | QualityKnob::ShadowedSpots => KnobKind::Resource,
+            | QualityKnob::ShadowedSpots
+            | QualityKnob::LodThreshold
+            | QualityKnob::LodFade
+            | QualityKnob::Impostors
+            | QualityKnob::FarDensity => KnobKind::Resource,
             _ => KnobKind::Pipeline,
         }
     }
@@ -2528,7 +2658,9 @@ mod tests {
         // resource knobs too (16 -> 19); RQ3 review: the shadow distance, split, blend band and end
         // fade (19 -> 23). P2-0.13 flipped (named in the log): bloom's mips and half-resolution start
         // are one knob, its chain's resolution (23 -> 22).
-        assert_eq!(QualityKnob::ALL.iter().filter(|k| k.kind() == KnobKind::Resource).count(), 22);
+        // Game systems LOD-06 flipped (named in the integrate record): the four LOD knobs are
+        // resource knobs (22 -> 26).
+        assert_eq!(QualityKnob::ALL.iter().filter(|k| k.kind() == KnobKind::Resource).count(), 26);
         let mut reach = off;
         (reach.shadows.distance, reach.shadows.split_percent, reach.shadows.blend_percent, reach.shadows.fade_percent) = (120, 80, 10, 10);
         assert!(off.resource_change_only(&reach), "the shadows' reach never changes pipelines");

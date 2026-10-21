@@ -2047,6 +2047,31 @@ impl FramePlan {
         self.cull_views.lod[3] = self.lod_per_height * height as f32;
     }
 
+    /// Choose levels of detail for an output `height` pixels tall at an error threshold of
+    /// `threshold_px` output pixels (game systems LOD-06, the quality's
+    /// [`crate::settings::LodQuality::threshold_px`]): a coarser threshold lets every level reach
+    /// proportionally nearer. [`LOD_THRESHOLD_PX`] (or a threshold that is not finite and positive)
+    /// is [`FramePlan::set_lod_height`] bit for bit.
+    pub fn set_lod_view(&mut self, height: u32, threshold_px: f32) {
+        self.set_lod_height(height);
+        let usable = threshold_px.is_finite() && threshold_px > 0.0;
+        if usable && threshold_px != LOD_THRESHOLD_PX {
+            self.cull_views.lod[3] = self.cull_views.lod[3] * LOD_THRESHOLD_PX / threshold_px;
+        }
+    }
+
+    /// Thin the frame's far rules by the quality's far density (game systems LOD-06,
+    /// [`crate::settings::LodQuality::far_density`], in (0, 1]): each rule keeps `density` of what
+    /// it kept at its end. 1 (or a density outside (0, 1)) leaves the rules as the scene set them.
+    pub fn thin_far_rules(&mut self, density: f32) {
+        if !(density > 0.0 && density < 1.0) {
+            return;
+        }
+        for rule in &mut self.far_rules {
+            rule.keep *= density;
+        }
+    }
+
     /// The reference cull of the camera view: the compute pass's test, on the CPU, in the same order.
     pub fn cpu_cull(&self) -> CpuCull {
         self.cpu_cull_view(0)

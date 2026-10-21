@@ -126,7 +126,9 @@
       "occlusion",
       "prepass",
       "texture-quality",
-      "spot-shadows"
+      "spot-shadows",
+      "lod-fade",
+      "impostors"
     ],
     "degradeReasons": [
       "custom-pass-v1-in-world",
@@ -164,11 +166,14 @@
       "fog_aerial_perspective",
       "contact_shadow_length"
     ],
-    "qualityKeys": ["preset", "render_scale", "fps"],
+    "qualityKeys": ["preset", "render_scale", "fps", "lod_threshold_px", "lod_fade_band", "far_density"],
     "renderKeys": ["form_factors", "preset", "look", "class", "shadows", "loading"],
     "shadowKeys": ["distance", "blend_band"],
     "shadowDistance": { "min": 10, "max": 400 },
     "shadowBlendBandMax": 0.5,
+    "lodThresholdPx": { "min": 0.5, "max": 8 },
+    "lodFadeBandMax": 0.5,
+    "farDensityMin": 0.1,
     "settingsSources": ["toml", "reference-class", "verb"],
     "captureExposure": ["instant"],
     "rendererFeatures": [

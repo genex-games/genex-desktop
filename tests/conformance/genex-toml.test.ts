@@ -41,11 +41,15 @@ import {
   FOG_DENSITY_MAX,
   FOG_DISTANCE_LIMIT,
   FOG_HEIGHT_FALLOFF_MAX,
+  FAR_DENSITY_MIN,
   FormFactor,
   LookKey,
+  LOD_FADE_BAND_MAX,
   LOD_MAX_LEVELS,
   LOD_MIN_TRIANGLES,
   LOD_SCHEMA_VERSION,
+  LOD_THRESHOLD_PX_MAX,
+  LOD_THRESHOLD_PX_MIN,
   LodExtrasKey,
   LodFault,
   LodLevelKey,
@@ -675,6 +679,25 @@ describe("genex.toml: the [render] table and [[wgsl]] api (rows shared with mani
     assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same look");
   });
 
+  it("reads a class table's LOD keys and switches (LOD-06) and writes them back into the fragment the facade reads", () => {
+    const table =
+      "[render.class.mobile-mid]\nlod_threshold_px = 3\nlod_fade_band = 0\nfar_density = 0.5\nlod-fade = false\nimpostors = true\n";
+    const manifest = accepted(`${RENDER_ROWS.game}${table}`);
+    assert.deepEqual(manifest.render?.classes, {
+      [DeviceClass.MobileMid]: {
+        lodThresholdPx: 3,
+        lodFadeBand: 0,
+        farDensity: 0.5,
+        features: { [RenderFeature.LodFade]: false, [RenderFeature.Impostors]: true },
+      },
+    });
+    assert.ok(manifest.render);
+    const fragment = renderTomlFragment(manifest.render);
+    assert.match(fragment, /^lod_threshold_px = 3\.0$/m, "a whole threshold stays a float");
+    const back = accepted(`${RENDER_ROWS.game}${fragment}`);
+    assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same LOD choices");
+  });
+
   const rq4Hostile: ReadonlyArray<readonly [string, string]> = [
     ["a negative bloom threshold", "bloom_threshold = -1"],
     ["a bloom threshold past its limit", `bloom_threshold = ${BLOOM_THRESHOLD_MAX + 1}`],
@@ -761,6 +784,9 @@ describe("genex.toml: the render vocabulary is the wire's", () => {
     assert.deepEqual(values(ShadowTomlKey), WIRE_RENDER.shadowKeys);
     assert.deepEqual({ min: SHADOW_DISTANCE_MIN, max: SHADOW_DISTANCE_MAX }, WIRE_RENDER.shadowDistance);
     assert.equal(SHADOW_BLEND_BAND_MAX, WIRE_RENDER.shadowBlendBandMax);
+    assert.deepEqual({ min: LOD_THRESHOLD_PX_MIN, max: LOD_THRESHOLD_PX_MAX }, WIRE_RENDER.lodThresholdPx);
+    assert.equal(LOD_FADE_BAND_MAX, WIRE_RENDER.lodFadeBandMax);
+    assert.equal(FAR_DENSITY_MIN, WIRE_RENDER.farDensityMin);
     assert.deepEqual(values(SettingsSource), WIRE_RENDER.settingsSources);
     assert.deepEqual(values(CaptureExposure), WIRE_RENDER.captureExposure);
     assert.deepEqual(values(RendererFeature), WIRE_RENDER.rendererFeatures);
