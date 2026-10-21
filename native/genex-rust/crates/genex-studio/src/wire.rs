@@ -99,8 +99,36 @@ pub const OP_RELEASE: &str = "release";
 /// game systems C-18 serves it, `unavailable` until then).
 pub const OP_RELOAD_ASSETS: &str = "reloadAssets";
 /// The dev-flavour verb the build lane's bake step sends a headless session, kind `nav` or
-/// `impostor` (`NativeOp.BakeAssets`; NAV-14 and LOD-23 serve it, `unavailable` until then).
+/// `impostor` (`NativeOp.BakeAssets`; NAV-14 serves `nav`, LOD-23 `impostor`).
 pub const OP_BAKE_ASSETS: &str = "bakeAssets";
+
+/// What a `bakeAssets` bakes: the game's registered bake of that kind (`BakeKind`). Wire values:
+/// never rename one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BakeKind {
+    /// A navmesh (`game.nav_bake`), loaded with `NavMesh::from_bytes_for`.
+    Nav,
+    /// An impostor atlas of a model that opted in.
+    Impostor,
+}
+
+impl BakeKind {
+    /// Every kind, in the host's order.
+    pub const ALL: [BakeKind; 2] = [BakeKind::Nav, BakeKind::Impostor];
+
+    /// The wire spelling, which is also the bake's folder under `state/bakes/`.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            BakeKind::Nav => "nav",
+            BakeKind::Impostor => "impostor",
+        }
+    }
+
+    /// The kind spelled `text`; None for any other spelling.
+    pub fn from_wire(text: &str) -> Option<BakeKind> {
+        BakeKind::ALL.into_iter().find(|kind| kind.wire() == text)
+    }
+}
 /// The dev-flavour verb that reads the game's frame profile (`NativeOp.Profile`, game systems PROF-4):
 /// `{action, frames?, mode?}` ([`parse_profile`]); a game that serves no profiles answers `unavailable`.
 pub const OP_PROFILE: &str = "profile";
@@ -478,6 +506,9 @@ pub struct Receipt {
     pub saves_api: Option<u32>,
     /// The `uiSettings` version served; None for a build without the verb.
     pub ui_settings_api: Option<u32>,
+    /// The bakes the game registered (`game.nav_bake`), which the build's bake step sends
+    /// `bakeAssets` for after a dev build (NAV-14); empty, and absent on the wire, without any.
+    pub bakes: Vec<(BakeKind, String)>,
 }
 
 /// `text` cut to at most `units` UTF-16 code units, never inside a character.
@@ -509,12 +540,13 @@ impl Receipt {
             reload_assets_api: None,
             saves_api: None,
             ui_settings_api: None,
+            bakes: Vec::new(),
         }
     }
 
     /// The receipt as the wire's object: `{tier, backend, adapter, nativeEnhanced, extensionApi,
     /// customPassApi, extensionApis, customPassApis, rendererFeatures, renderInputs,
-    /// renderSettingsApi?, reloadAssetsApi?, savesApi?, uiSettingsApi?}`, the adapter cut to [`ADAPTER_MAX_CHARS`] and each name listed once.
+    /// renderSettingsApi?, reloadAssetsApi?, savesApi?, uiSettingsApi?, bakes?}`, the adapter cut to [`ADAPTER_MAX_CHARS`] and each name listed once.
     pub fn to_value(&self) -> Value {
         let adapter = cut_utf16(&self.adapter, ADAPTER_MAX_CHARS);
         let mut receipt = Value::object();
@@ -539,6 +571,16 @@ impl Receipt {
         }
         if let Some(version) = self.ui_settings_api {
             receipt.set("uiSettingsApi", Value::from(version));
+        }
+        if !self.bakes.is_empty() {
+            let mut bakes = Value::array();
+            for (kind, name) in &self.bakes {
+                let mut bake = Value::object();
+                bake.set("kind", Value::from(kind.wire()));
+                bake.set("name", Value::from(name.as_str()));
+                bakes.push(bake);
+            }
+            receipt.set("bakes", bakes);
         }
         receipt
     }
@@ -581,6 +623,8 @@ impl Receipt {
             reload_assets_api,
             saves_api,
             ui_settings_api,
+            // The host reads the bakes from the dev build's receipt; nothing parses them back.
+            bakes: Vec::new(),
         })
     }
 

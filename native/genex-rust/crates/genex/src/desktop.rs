@@ -301,6 +301,18 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
         self.shell_surface = None;
     }
 
+    fn closing(&mut self) {
+        // The window is closing: the autosave ring's oldest slot is written now (UIS-12); a refusal
+        // is the slot's volatile issue, and the process ends either way.
+        if let Some(Err(error)) = self.runtime.suspend_save() {
+            eprintln!("genex: the suspend autosave was not written: {error}");
+        }
+    }
+
+    fn os_locale(&mut self, tag: Option<&str>) {
+        self.runtime.set_os_locale(tag);
+    }
+
     fn frame(&mut self, frame: ShellFrame) -> FrameControl {
         if self.presenter.resilient.is_lost() {
             self.recover();

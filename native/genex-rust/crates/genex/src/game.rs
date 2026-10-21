@@ -75,6 +75,8 @@ pub struct Game<W> {
     pub(crate) g6: crate::g6::G6Setup,
     /// `game.save_section` and `game.save_world`, in registration order (UIS-9).
     pub(crate) save_sections: crate::saves::Sections<W>,
+    /// `game.nav_bake` registrations, in registration order (NAV-14).
+    pub(crate) nav_bakes: crate::nav_bake::NavBakes,
 }
 
 /// The handle `game.camera(..)` returns; `.camera_override()` lets this camera replace an
@@ -136,6 +138,7 @@ impl<W: Default + 'static> Game<W> {
             wgsl: crate::extend::WgslSetup::default(),
             g6: crate::g6::G6Setup::default(),
             save_sections: crate::saves::Sections::default(),
+            nav_bakes: crate::nav_bake::NavBakes::default(),
         }
     }
 

@@ -84,6 +84,14 @@ pub trait GameHandle {
     fn output_muted(&self) -> bool;
     /// `audioLevel`: the game's own mix, the last 2048 frames before the mute.
     fn audio_level(&self) -> AudioLevel;
+    /// The app is being suspended, closed or hidden: write the autosave ring's oldest slot now,
+    /// between ticks ([`Runtime::suspend_save`], UIS-12). None when the game has no ring to write.
+    fn suspend_save(&mut self) -> Option<Result<genex::saves::SlotInfo, genex::saves::SaveError>>;
+    /// The screen's safe area, `[left, top, right, bottom]` in world pixels, for
+    /// `genex::ui::safe_area` (a Genex run ignores it).
+    fn set_ui_safe_area(&mut self, insets: [f32; 4]);
+    /// The OS locale the shell read, below the person's choice (a Genex run ignores it).
+    fn set_os_locale(&mut self, tag: Option<&str>);
     /// Open `device` on the game's audio queue (once: a run a person sees) and report it to
     /// `state().volatile.audio.device`; an open device's last fault is reported again each call.
     fn follow_device(&mut self, device: &mut Device);
@@ -229,6 +237,18 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
 
     fn audio_level(&self) -> AudioLevel {
         Runtime::audio_level(self)
+    }
+
+    fn suspend_save(&mut self) -> Option<Result<genex::saves::SlotInfo, genex::saves::SaveError>> {
+        Runtime::suspend_save(self)
+    }
+
+    fn set_ui_safe_area(&mut self, insets: [f32; 4]) {
+        Runtime::set_ui_safe_area(self, insets);
+    }
+
+    fn set_os_locale(&mut self, tag: Option<&str>) {
+        Runtime::set_os_locale(self, tag);
     }
 
     fn follow_device(&mut self, device: &mut Device) {

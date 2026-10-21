@@ -13,9 +13,12 @@
 //!   run fails with its typed code and no refusal screen. The platform's audio is asked for
 //!   ([`AudioPlatform`]).
 //! - `suspended`: the surface is dropped (the GPU and the game stay), the audio given back, and the
-//!   soft keyboard counted as hidden (it comes back on resume while a text field has focus).
+//!   soft keyboard counted as hidden (it comes back on resume while a text field has focus). A
+//!   resumed app's game first writes its autosave ring's oldest slot ([`suspend`], G6 UIS-12),
+//!   logged as `suspend-save`, since the phone may end the process unannounced from here.
 //! - the game is presented inside the safe area ([`Presentation`], [`SafePresenter`]), which is
-//!   logged on every resize; a rotation is a resize (one world size in both orientations, Q5),
+//!   logged on every resize with what of the drawn world the insets cover, in world pixels
+//!   ([`world_safe_area`], handed to `genex::ui::safe_area`); a rotation is a resize (one world size in both orientations, Q5),
 //!   logged with how much of the safe area the world fills ([`orientation`]); every finger reaches
 //!   `ctx.touches` with its id ([`TouchTracker`]) through that same presentation.
 //! - every drawn frame first takes in the platform's news: audio interruptions and focus
@@ -33,6 +36,7 @@
 //!   per tick; the display is asked for [`MOBILE_PREFERRED_HZ`] ([`preferred_rate`]: a display-link
 //!   frame-rate range on iOS, `ANativeWindow_setFrameRate` on Android 11+), logged as a
 //!   `frame-rate` event, and the frames rendered and repeated are logged on `suspended`.
+//! - the OS locale (sys-locale) is handed to the game once before the first frame.
 //! - the first frame presented on each surface is logged (`frame-presented`, [`frame_presented_event`]):
 //!   an admitted adapter is not a drawn frame, so a CI smoke waits for this one before it captures.
 //!
@@ -188,6 +192,57 @@ fn log_refusal(line: &str) {
 /// Whether the platform's thermal state asks the class to hold its sustained frame rate.
 fn thermal_load(state: Thermal) -> bool {
     matches!(state, Thermal::Serious | Thermal::Critical)
+}
+
+/// The longest OS locale tag passed to the game, in bytes (BCP 47 tags stay far below it).
+const LOCALE_TAG_MAX: usize = 64;
+
+/// What a suspend did: whether a live surface must be dropped, and the suspend autosave a resumed
+/// app wrote (None when it was not resumed, or the game has no autosave ring).
+#[derive(Debug)]
+pub struct Suspension {
+    /// Whether a live surface must now be dropped.
+    pub dropped: bool,
+    /// The autosave written, or why it was refused.
+    pub saved: Option<Result<genex::saves::SlotInfo, genex::saves::SaveError>>,
+}
+
+/// The app went to the background: the lifecycle moves to suspended and, when it was resumed, the
+/// game writes its suspend autosave once, between frames (G6 UIS-12). The phone may end the
+/// process at any time after this without another call.
+pub fn suspend(lifecycle: &mut Lifecycle, game: &mut dyn GameHandle) -> Suspension {
+    let was_resumed = lifecycle.phase() == Phase::Resumed;
+    let dropped = lifecycle.suspended();
+    let saved = if was_resumed { game.suspend_save() } else { None };
+    Suspension { dropped, saved }
+}
+
+/// The safe area as `genex::ui::safe_area` reads it, `[left, top, right, bottom]` in world pixels
+/// (G6 UIS-12): how far each unsafe band of a `window` with `insets` reaches into the world image
+/// `presentation` draws, scaled through its letterbox. Zero on every edge when the world is
+/// presented inside the safe area, and for an empty window or world.
+pub fn world_safe_area(presentation: &Presentation, window: (u32, u32), insets: SafeArea) -> [f32; 4] {
+    let view = presentation.viewport();
+    let (world_width, world_height) = presentation.world();
+    if view.width == 0 || view.height == 0 {
+        return [0.0; 4];
+    }
+    let (right_edge, bottom_edge) = (view.x + view.width, view.y + view.height);
+    // `covered` window pixels of an `extent`-pixel image side, in world pixels of a `world` side.
+    let reach = |covered: u32, extent: u32, world: u32| covered.min(extent) as f32 * world as f32 / extent as f32;
+    let left = reach(insets.left.saturating_sub(view.x), view.width, world_width);
+    let top = reach(insets.top.saturating_sub(view.y), view.height, world_height);
+    let right = reach(right_edge.saturating_sub(window.0.saturating_sub(insets.right)), view.width, world_width);
+    let bottom = reach(bottom_edge.saturating_sub(window.1.saturating_sub(insets.bottom)), view.height, world_height);
+    [left, top, right, bottom]
+}
+
+/// The OS locale as a BCP 47 tag (`fr-FR`), through sys-locale; None when the OS names none or a
+/// tag that is not plain. A shell call with no file access.
+fn os_locale() -> Option<String> {
+    let tag = sys_locale::get_locale()?;
+    let plain = !tag.is_empty() && tag.len() <= LOCALE_TAG_MAX && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    plain.then_some(tag)
 }
 
 struct App {
@@ -653,11 +708,15 @@ impl App {
         let [width, height] = self.game.world_size();
         let presentation = Presentation::new((size.width, size.height), insets, (width, height));
         let view = presentation.viewport();
+        // What of the drawn world the insets cover, for `genex::ui::safe_area` (UIS-12).
+        let world_insets = world_safe_area(&presentation, (size.width, size.height), area);
+        self.game.set_ui_safe_area(world_insets);
         self.presentation = Some(presentation);
         self.log(json!({
             "event": "safe-area",
             "window": [size.width, size.height],
             "insets": { "top": area.top, "left": area.left, "bottom": area.bottom, "right": area.right },
+            "worldInsets": world_insets,
             "presentedInside": copyable || area.is_empty(),
             "viewport": [view.x, view.y, view.width, view.height],
             "orientation": self.rotation.current().map(|orientation| orientation.wire()),
@@ -919,9 +978,16 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        let dropped = self.lifecycle.suspended();
+        let Suspension { dropped, saved } = suspend(&mut self.lifecycle, self.game.as_mut());
         self.live = None;
         self.log(json!({ "event": "suspended", "surfaceDropped": dropped }));
+        if let Some(saved) = saved {
+            let (slot, code) = match &saved {
+                Ok(info) => (Some(info.name.as_str().to_owned()), None),
+                Err(error) => (None, Some(error.code.wire())),
+            };
+            self.log(json!({ "event": "suspend-save", "slot": slot, "code": code }));
+        }
         let tally = self.gate.tally();
         self.log(json!({ "event": "frames", "rendered": tally.rendered, "repeated": tally.repeated }));
         (self.config.audio.release)();
@@ -993,6 +1059,8 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         loading: None,
         outcome: ShellOutcome::Ran,
     };
+    // The OS locale once, before the first frame (UIS-12; a Genex run ignores it).
+    app.game.set_os_locale(os_locale().as_deref());
     if let Err(error) = event_loop.run_app(&mut app) {
         return ShellOutcome::Failed("event-loop-failed", error.to_string());
     }
@@ -1158,6 +1226,87 @@ mod preferred_rate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// iPhone 15 portrait (Dynamic Island, home indicator) and landscape, with a world of the
+    /// screen's own shape, so the letterbox covers the insets when presented whole.
+    const PORTRAIT: (u32, u32) = (1179, 2556);
+    const PORTRAIT_INSETS: SafeArea = SafeArea { top: 177, left: 0, bottom: 102, right: 0 };
+    const PORTRAIT_WORLD: (u32, u32) = (360, 780);
+    const LANDSCAPE: (u32, u32) = (2556, 1179);
+    const LANDSCAPE_INSETS: SafeArea = SafeArea { top: 0, left: 177, bottom: 63, right: 177 };
+    const LANDSCAPE_WORLD: (u32, u32) = (780, 360);
+
+    fn close(got: [f32; 4], want: [f32; 4]) -> bool {
+        got.iter().zip(want).all(|(got, want)| (got - want).abs() < 1e-3)
+    }
+
+    /// G6 UIS-12, new behaviour: the safe area reaches `genex::ui::safe_area` in world pixels,
+    /// through the letterbox: what of the drawn world image the unsafe bands cover.
+    #[test]
+    fn the_safe_area_maps_physical_to_world_pixels_through_the_letterbox() {
+        // Presented whole (a surface that cannot take the safe-area copy): the world is letterboxed
+        // over the full window, 1179x2554 at y 1, so the island covers 176 px of it, the
+        // indicator 101.
+        let whole = Presentation::new(PORTRAIT, SafeArea::default(), PORTRAIT_WORLD);
+        let portrait = world_safe_area(&whole, PORTRAIT, PORTRAIT_INSETS);
+        assert!(close(portrait, [0.0, 176.0 * 780.0 / 2554.0, 0.0, 101.0 * 780.0 / 2554.0]), "{portrait:?}");
+        // Landscape: 2554x1179 at x 1; the notch side and the far side cover 176 px each, the
+        // indicator 63.
+        let whole = Presentation::new(LANDSCAPE, SafeArea::default(), LANDSCAPE_WORLD);
+        let landscape = world_safe_area(&whole, LANDSCAPE, LANDSCAPE_INSETS);
+        let side = 176.0 * 780.0 / 2554.0;
+        assert!(close(landscape, [side, 0.0, side, 63.0 * 360.0 / 1179.0]), "{landscape:?}");
+        // Presented inside the safe area (the usual case): nothing of the world is covered.
+        let inside = Presentation::new(PORTRAIT, PORTRAIT_INSETS, PORTRAIT_WORLD);
+        assert_eq!(world_safe_area(&inside, PORTRAIT, PORTRAIT_INSETS), [0.0; 4]);
+        let inside = Presentation::new(LANDSCAPE, LANDSCAPE_INSETS, LANDSCAPE_WORLD);
+        assert_eq!(world_safe_area(&inside, LANDSCAPE, LANDSCAPE_INSETS), [0.0; 4]);
+        // A wide world in a portrait window sits between bars far from the island: no inset.
+        let barred = Presentation::new(PORTRAIT, SafeArea::default(), (960, 540));
+        assert_eq!(world_safe_area(&barred, PORTRAIT, PORTRAIT_INSETS), [0.0; 4]);
+        // Nonsense: an empty window or world answers zero insets, never NaN.
+        let empty = Presentation::new((0, 0), SafeArea::default(), PORTRAIT_WORLD);
+        assert_eq!(world_safe_area(&empty, (0, 0), PORTRAIT_INSETS), [0.0; 4]);
+    }
+
+    /// The camp a lifecycle double suspends: an autosave ring of two, its world one section.
+    fn camp() -> Box<dyn GameHandle> {
+        let mut game = genex::Game::new(0_u32).title("Camp").world_size(320, 240);
+        game.saves(genex::saves::SaveConfig::schema(1).autosave(10_000, 2));
+        game.save_section("camp", |sim| json!(sim.world), |sim, value, _gfx| {
+            sim.world = value.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("not a u32")?;
+            Ok(())
+        });
+        game.on_update(|sim, _ctx| sim.world += 1);
+        let mut runtime = genex::Runtime::new(game).expect("the camp installs");
+        let dir = std::env::temp_dir().join(format!("genex-ios-suspend-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp folder");
+        runtime.use_studio_saves(&format!("{}/", dir.display()));
+        runtime.seed(1);
+        Box::new(runtime)
+    }
+
+    /// G6 UIS-12, new behaviour: a lifecycle double. Suspending a resumed app writes exactly one
+    /// autosave; a second `suspended` without a resume in between, or one before the first
+    /// resume, writes none.
+    #[test]
+    fn a_suspended_app_writes_exactly_one_autosave() {
+        let mut game = camp();
+        let mut life = Lifecycle::default();
+        assert!(suspend(&mut life, game.as_mut()).saved.is_none(), "never resumed: nothing to save");
+        life.resumed();
+        game.step(genex::FIXED_STEP_MS * 3.0);
+        let first = suspend(&mut life, game.as_mut());
+        let written = first.saved.expect("a resumed app saves").expect("written");
+        assert_eq!(written.name.as_str(), "autosave-0");
+        assert_eq!(life.phase(), Phase::Suspended);
+        assert!(suspend(&mut life, game.as_mut()).saved.is_none(), "already suspended");
+        life.resumed();
+        game.step(genex::FIXED_STEP_MS);
+        let again = suspend(&mut life, game.as_mut()).saved.expect("resumed again").expect("written");
+        assert_eq!(again.name.as_str(), "autosave-1", "the ring's oldest slot");
+    }
 
     #[test]
     fn the_refusal_screen_event_names_the_record_s_code_and_the_colours_a_capture_must_show() {

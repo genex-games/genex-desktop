@@ -10,7 +10,7 @@
 //! (RQ0.12): a 120 or 144 Hz display re-presents the last picture between ticks. The first frame,
 //! a resize and a resume draw at once.
 
-use crate::core::{FrameControl, ShellCore, ShellEvent, ShellGame};
+use crate::core::{FrameControl, ShellCore, ShellEvent, ShellGame, os_locale};
 use crate::gamepad::{GamepadPolicy, Gamepads};
 use crate::headless::{ShellClock, ShellExit, SystemClock};
 use crate::letterbox::Letterbox;
@@ -310,6 +310,8 @@ pub fn run_windowed<G: ShellGame>(game: G, options: WindowedOptions) -> Result<(
         options,
         error: None,
     };
+    // The OS locale once, before the first frame (G6 UIS-12; a Genex run ignores it).
+    app.core.report_os_locale(os_locale().as_deref());
     let ran = event_loop.run_app(&mut app);
     ran.map_err(|error| ShellError::new(ShellErrorCode::EventLoopFailed, error))?;
     if let Some(error) = app.error {

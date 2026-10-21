@@ -371,6 +371,11 @@ impl State {
         self.root = None;
     }
 
+    /// Time a load's hold on `clock` (milliseconds) instead of the process clock (tests).
+    pub(crate) fn use_clock(&mut self, clock: Box<dyn FnMut() -> u64>) {
+        self.clock = clock;
+    }
+
     /// `ctx.slots()` for this tick.
     pub(crate) fn slots(&self) -> Slots<'_> {
         Slots { driver: self.driver.as_ref() }
@@ -645,6 +650,16 @@ pub(crate) fn end_of_tick<W>(game: &Game<W>, state: &mut State, view: &SaveView<
     state.ensure(config, save_name(game), view.gfx.saves());
     let Some(driver) = state.driver.as_mut() else { return };
     driver.end_tick(&mut Store(view.gfx.saves()), view.tick, &mut || snapshot(game, view));
+}
+
+/// Between ticks, as the app is suspended or closed: write the autosave ring's oldest slot now
+/// (UIS-12), read hooks only, so it is safe out of the tick. None without `game.saves`, without an
+/// autosave ring, or with `autosave_on_suspend(false)`.
+pub(crate) fn suspend_save<W>(game: &Game<W>, state: &mut State, view: &SaveView<'_, W>) -> Option<Result<SlotInfo, SaveError>> {
+    let config = game.g6.saves.configs.first()?;
+    state.ensure(config, save_name(game), view.gfx.saves());
+    let driver = state.driver.as_mut()?;
+    driver.suspend_save(&mut Store(view.gfx.saves()), &mut || snapshot(game, view))
 }
 
 /// The running game as a slot reads it: read hooks only, so the checksum never moves.

@@ -37,7 +37,7 @@ pub use mobile::present::{Presentation, SafePresenter};
 pub use mobile::records::Records;
 pub use mobile::refusal::{PixelLayout, RefusalImage};
 pub use mobile::safe_area::SafeArea;
-pub use mobile::shell::{PlatformHooks, SharedAssets, ShellConfig, ShellOutcome};
+pub use mobile::shell::{PlatformHooks, SharedAssets, ShellConfig, ShellOutcome, Suspension, suspend, world_safe_area};
 pub use mobile::thermal::{Pacer, Thermal, ThermalWatch};
 pub use mobile::touch::{TouchEvent, TouchTracker};
 

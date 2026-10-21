@@ -159,6 +159,14 @@ impl ShellGame for Recorder {
         self.log.push(format!("focus {focused}"));
     }
 
+    fn closing(&mut self) {
+        self.log.push("closing".to_owned());
+    }
+
+    fn os_locale(&mut self, tag: Option<&str>) {
+        self.log.push(format!("locale {tag:?}"));
+    }
+
     fn frame(&mut self, frame: ShellFrame) -> FrameControl {
         self.frames += 1;
         self.log.push(format!("frame {} present={} headless={}", frame.frame_ms, frame.present, frame.headless));
@@ -211,6 +219,34 @@ fn close_and_a_game_exit_end_the_loop() {
     assert_eq!(core.handle(ShellEvent::Redraw { sample: FrameSample::default(), frame_ms: 1.0 }), FrameControl::Exit);
     let mut closing = ShellCore::new(Recorder::default());
     assert_eq!(closing.handle(ShellEvent::CloseRequested), FrameControl::Exit);
+}
+
+/// G6 UIS-12, new behaviour: a close asks the game for its suspend autosave exactly once, before
+/// the loop ends; a suspend or a frame never does.
+#[test]
+fn a_close_asks_the_game_for_its_suspend_autosave_once_before_the_loop_ends() {
+    let mut core = ShellCore::new(Recorder::default());
+    core.handle(ShellEvent::Resumed(fake_surface([640, 480])));
+    core.handle(ShellEvent::Redraw { sample: FrameSample::default(), frame_ms: 16.0 });
+    core.handle(ShellEvent::Suspended);
+    assert!(!core.game().log.iter().any(|line| line == "closing"), "a suspend is not a close");
+    assert_eq!(core.handle(ShellEvent::CloseRequested), FrameControl::Exit);
+    assert_eq!(core.handle(ShellEvent::CloseRequested), FrameControl::Exit, "a second close still ends the loop");
+    let log = &core.game().log;
+    assert_eq!(log.iter().filter(|line| *line == "closing").count(), 1, "{log:?}");
+    assert_eq!(log.last().map(String::as_str), Some("closing"));
+}
+
+/// G6 UIS-12, new behaviour: the windowed shell reports the OS locale (sys-locale) once; the tag
+/// is a BCP 47 spelling or none.
+#[test]
+fn the_os_locale_is_a_bcp47_tag_or_none() {
+    let tag = genex_platform_desktop::os_locale();
+    let well_formed = |tag: &str| !tag.is_empty() && tag.len() <= 64 && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    assert!(tag.as_deref().is_none_or(well_formed), "{tag:?}");
+    let mut core = ShellCore::new(Recorder::default());
+    core.report_os_locale(Some("fr-FR"));
+    assert_eq!(core.game().log, ["locale Some(\"fr-FR\")"]);
 }
 
 /// A clock the test drives: each idle wait advances it by what was asked.

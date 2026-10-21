@@ -20,6 +20,8 @@ raw-window-handle = { workspace = true }
 gilrs = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }
+# The OS locale the windowed shell reports to the game (G6 UIS-12; MIT OR Apache-2.0).
+sys-locale = { workspace = true }
 
 # Q1 (plan "Open questions"): one binary with a runtime headless mode. The spike binary is the
 # evidence the shell tests spawn; games get their own binary from the lane.

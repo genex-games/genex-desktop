@@ -23,7 +23,9 @@
 //! set (game systems STR-25): passes until every model it wants is resident or refused, at most
 //! `STREAM_DRAIN_MAX_MS`, with `stream-drain-timeout` in `volatile.__stream.view` past it; Live
 //! frames never wait. The dev flavour also serves `saves` and `uiSettings` (G6 UIS-16) through
-//! `Runtime::host_saves` and the UI session layer, and its receipt advertises both.
+//! `Runtime::host_saves` and the UI session layer, and its receipt advertises both. It serves
+//! `bakeAssets` kind `nav` (game systems NAV-14) through `Runtime::bake_nav`, and its receipt lists
+//! the game's `game.nav_bake` names as `bakes`.
 //! At boot the device is probed and, when no hint is cached in the saves, calibrated
 //! once; the host may name the adapter's reference class in `GENEX_RENDER_REFERENCE_CLASS`. A
 //! settings change is warmed off the loop (`Presenter::set_off_thread_changes`): Live keeps the
@@ -55,12 +57,12 @@ use genex_core::protocol::{BootProgress, BootStage};
 use genex_core::session::{AudioLevel, FrameTiming, StepResult, Timings};
 use genex_render::{GpuCounters, RenderCode, RenderError};
 use genex_studio::verbs::{
-    ReloadFile, ReloadOutcome, ReloadRefusal, SavesRequest, SpelledAnswer, SpelledChange, UiMember, UiSettingsChange, capture_provenance_value,
+    BakeRequest, ReloadFile, ReloadOutcome, ReloadRefusal, SavesRequest, SpelledAnswer, SpelledChange, UiMember, UiSettingsChange, capture_provenance_value,
     render_answer_value, render_status_value, spell_change,
 };
 use genex_studio::wire::{self, Backend, GpuRefusal, NativeEnhanced, Receipt, RenderSettingsChange, RenderSettingsRefusal, SurfaceArgs};
 use genex_studio::{
-    CaptureFault, FatalReason, Injection, Pixels, ReadyInfo, RingFault, Studio, StudioGame, Transport,
+    CaptureFault, FatalReason, Injection, Pixels, ReadyInfo, RingFault, Studio, StudioGame, Transport, VerbRefusal,
     from_environment, report_panics,
 };
 use crate::present::{DrainClock, Presenter, ReloadMiss, STREAM_DRAIN_MAX_MS, WallDrainClock, drain_blocking};
@@ -328,7 +330,11 @@ impl<W: Default + 'static> StudioRun<'_, W> {
 
     fn ready_info(&self) -> ReadyInfo {
         let gpu = self.presenter.gpu();
-        let receipt = receipt_of(gpu);
+        let mut receipt = receipt_of(gpu);
+        // The bakes the build's bake step sends `bakeAssets` for (NAV-14).
+        if let Some(receipt) = receipt.as_mut() {
+            receipt.bakes = self.game.nav_bakes().into_iter().map(|name| (wire::BakeKind::Nav, name)).collect();
+        }
         let backend_api = receipt.as_ref().map_or(BACKEND_UNKNOWN, |r| r.backend.wire()).to_owned();
         ReadyInfo {
             build: format!("genex-rust/{}/headless", os_name()),
@@ -570,6 +576,16 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
             None => handle.borrow().answer(),
         };
         answer_value(&answer).ok_or(RenderSettingsRefusal::Unavailable)
+    }
+    fn bake_assets(&mut self, request: &BakeRequest) -> Result<Vec<u8>, &'static str> {
+        match request.kind {
+            wire::BakeKind::Nav => match self.game.bake_nav(&request.name) {
+                Some(baked) => baked.map_err(|error| error.code.wire()),
+                None => Err(VerbRefusal::UNKNOWN_BAKE),
+            },
+            // Impostor atlases are LOD-23's.
+            wire::BakeKind::Impostor => Err(VerbRefusal::UNAVAILABLE),
+        }
     }
     fn saves(&mut self, request: &SavesRequest) -> Result<Value, &'static str> {
         let answer = self.game.host_saves(host_call(request)).map_err(|error| error.code.wire())?;
