@@ -1,0 +1,218 @@
+{
+  "solo": {
+    "checksum": "87248764d3ce54d6",
+    "answer": {
+      "mode": "bots",
+      "status": "offline",
+      "phase": "playing",
+      "me": null,
+      "host": null,
+      "players": 0,
+      "connected": 0,
+      "teams": null,
+      "score": {
+        "red": 0,
+        "blue": 1
+      },
+      "tagOwner": null,
+      "tag": [
+        1.7138338088989258,
+        -7.237796783447266
+      ],
+      "claimsAccepted": 0,
+      "notice": null
+    }
+  },
+  "two_players": {
+    "checksum": "ba1fdeb444b1cd4a",
+    "answer": {
+      "mode": "online",
+      "status": "joined",
+      "phase": "playing",
+      "me": "me",
+      "host": "me",
+      "players": 2,
+      "connected": 2,
+      "teams": {
+        "me": "red",
+        "remote-1": "blue"
+      },
+      "score": {
+        "red": 0,
+        "blue": 1
+      },
+      "tagOwner": "me",
+      "tag": [
+        1.7138338088989258,
+        -7.237796783447266
+      ],
+      "claimsAccepted": 1,
+      "notice": null
+    }
+  },
+  "host_leaves": {
+    "checksum": "e270c00e58523abe",
+    "answer": {
+      "before": {
+        "mode": "online",
+        "status": "joined",
+        "phase": "playing",
+        "me": "me",
+        "host": "remote-1",
+        "players": 2,
+        "connected": 2,
+        "teams": {
+          "me": "red",
+          "remote-1": "blue"
+        },
+        "score": {
+          "red": 0,
+          "blue": 0
+        },
+        "tagOwner": "remote-1",
+        "tag": [
+          3.0,
+          -2.0
+        ],
+        "claimsAccepted": 1,
+        "notice": null
+      },
+      "after": {
+        "mode": "online",
+        "status": "joined",
+        "phase": "waiting",
+        "me": "me",
+        "host": "me",
+        "players": 1,
+        "connected": 1,
+        "teams": {
+          "me": "red"
+        },
+        "score": {
+          "red": 0,
+          "blue": 0
+        },
+        "tagOwner": "me",
+        "tag": [
+          3.0,
+          -2.0
+        ],
+        "claimsAccepted": 2,
+        "notice": null
+      }
+    }
+  },
+  "reconnect": {
+    "checksum": "7e6a0baf4e4adcf1",
+    "answer": {
+      "before": {
+        "mode": "online",
+        "status": "joined",
+        "phase": "playing",
+        "me": "me",
+        "host": "me",
+        "players": 2,
+        "connected": 2,
+        "teams": {
+          "me": "red",
+          "remote-1": "blue"
+        },
+        "score": {
+          "red": 0,
+          "blue": 0
+        },
+        "tagOwner": "me",
+        "tag": [
+          0.0,
+          0.0
+        ],
+        "claimsAccepted": 1,
+        "notice": null
+      },
+      "during": {
+        "mode": "online",
+        "status": "reconnecting",
+        "phase": "playing",
+        "me": "me",
+        "host": "me",
+        "players": 2,
+        "connected": 2,
+        "teams": {
+          "me": "red",
+          "remote-1": "blue"
+        },
+        "score": {
+          "red": 0,
+          "blue": 0
+        },
+        "tagOwner": "me",
+        "tag": [
+          0.0,
+          0.0
+        ],
+        "claimsAccepted": 1,
+        "notice": null
+      },
+      "after": {
+        "mode": "online",
+        "status": "joined",
+        "phase": "playing",
+        "me": "me",
+        "host": "me",
+        "players": 2,
+        "connected": 2,
+        "teams": {
+          "me": "red",
+          "remote-1": "blue"
+        },
+        "score": {
+          "red": 0,
+          "blue": 0
+        },
+        "tagOwner": "me",
+        "tag": [
+          0.0,
+          0.0
+        ],
+        "claimsAccepted": 1,
+        "notice": null
+      }
+    }
+  },
+  "match_quorum": {
+    "checksum": "db28b5981d2bc3bc",
+    "answer": {
+      "phases": [
+        "waiting",
+        "playing",
+        "waiting",
+        "playing"
+      ],
+      "end": {
+        "mode": "online",
+        "status": "joined",
+        "phase": "playing",
+        "me": "me",
+        "host": "me",
+        "players": 3,
+        "connected": 2,
+        "teams": {
+          "me": "red",
+          "remote-1": "blue",
+          "remote-2": "red"
+        },
+        "score": {
+          "red": 0,
+          "blue": 0
+        },
+        "tagOwner": "me",
+        "tag": [
+          0.0,
+          0.0
+        ],
+        "claimsAccepted": 1,
+        "notice": null
+      }
+    }
+  }
+}

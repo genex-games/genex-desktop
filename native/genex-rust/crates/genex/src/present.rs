@@ -1386,6 +1386,8 @@ pub struct Presenter {
     /// The last Live frame's HUD, painted over the window after the upscale at every present
     /// (its texture changes wait in `hud_unsent`); None after a capture, whose world carries its own.
     live_hud: Option<HudPaint>,
+    /// The player profile overlay (PROF-8): painted over window presents only, never a capture.
+    pub profile_overlay: genex_hud::ProfileOverlay,
     /// Device pixels per HUD point of the last window present: what the next Live HUD is
     /// tessellated at.
     window_pixels_per_point: f32,
@@ -1565,6 +1567,7 @@ impl Presenter {
             hud_unsent: TexturesDelta::default(),
             hud_history: TexturesDelta::default(),
             live_hud: None,
+            profile_overlay: genex_hud::ProfileOverlay::default(),
             window_pixels_per_point: WORLD_PIXELS_PER_POINT,
             window: None,
             capture_size: None,
@@ -2025,6 +2028,7 @@ impl Presenter {
         self.set_window_size(window);
         let Some(mut paint) = self.live_hud.take() else {
             self.resilient.present(target, format, window);
+            self.paint_profile_overlay(target, format, window);
             return;
         };
         paint.textures_delta = std::mem::take(&mut self.hud_unsent);
@@ -2036,6 +2040,13 @@ impl Presenter {
         // What the painter did not take (a lost device paints nothing) waits for the next one.
         self.hud_unsent = std::mem::take(&mut paint.textures_delta);
         self.live_hud = Some(paint);
+        self.paint_profile_overlay(target, format, window);
+    }
+
+    /// The profile overlay over the presented window, after the HUD (PROF-8).
+    fn paint_profile_overlay(&mut self, target: &wgpu::TextureView, format: wgpu::TextureFormat, window: (u32, u32)) {
+        let gpu = self.resilient.gpu();
+        self.profile_overlay.paint(&gpu.device, &gpu.queue, target, format, [window.0, window.1]);
     }
 
     /// Hand the pass registry this frame's render size and the renderer's pipeline-shaping facts;
@@ -2068,6 +2079,15 @@ impl Presenter {
         let pixels_per_point = if self.capturing { capture_ppp } else { self.window_pixels_per_point };
         let mut hud = runtime.hud_paint(pixels_per_point);
         let live = !self.capturing;
+        if live {
+            // PROF-8: the dev flavour's Ctrl+Shift+P, and the numbers a shown overlay reads.
+            if cfg!(feature = "studio") {
+                self.profile_overlay.note_keys(&runtime.held());
+            }
+            if self.profile_overlay.shown() {
+                self.profile_overlay.set_view(runtime.profiling().summary_json().as_deref().and_then(genex_hud::ProfileView::from_summary));
+            }
+        }
         // The frame's Level-2 extensions first: a v1 material it brings keeps it on the legacy LDR
         // scene, which `apply` reads to choose the anti-aliasing, so the first frame that draws one
         // chooses as every later frame does (pass-1 gate: two captures of one frame differed).

@@ -1,0 +1,11 @@
+error[E0596]: cannot borrow `sim.net` as mutable, as it is behind a `&` reference
+  --> tests/ui/fail/net_write_in_draw.rs:11:9
+   |
+11 |         sim.net.connect();
+   |         ^^^^^^^ `sim` is a `&` reference, so it cannot be borrowed as mutable
+
+error[E0596]: cannot borrow `sim.net` as mutable, as it is behind a `&` reference
+  --> tests/ui/fail/net_write_in_draw.rs:12:17
+   |
+12 |         let _ = sim.net.set_me(json!({ "x": 1 }));
+   |                 ^^^^^^^ `sim` is a `&` reference, so it cannot be borrowed as mutable

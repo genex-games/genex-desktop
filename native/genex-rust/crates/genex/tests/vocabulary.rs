@@ -204,13 +204,44 @@ fn the_game_systems_blocks_are_the_fixtures() {
     }
 }
 
-/// The net block (MP-4a): `sim.net`'s local refusals; its calls are pinned with the net page (MP-4b).
+/// The net block: the calls the net page teaches (MP-4b) and `sim.net`'s local refusals (MP-4a).
 #[test]
 fn the_net_block_is_the_fixtures() {
     let pinned = &fixture()["net"];
     let refusals: Vec<&str> = genex::net::NetErrorCode::ALL.iter().map(|code| code.wire()).collect();
     assert_eq!(names(&pinned["refusals"]), refusals);
-    assert!(names(&pinned["calls"]).is_empty(), "the net calls are pinned with the net page");
+    assert_eq!(names(&pinned["calls"]), genex::net::NET_CALLS);
+    // Every pinned name is a real call, written as the net page teaches it.
+    let mut game = genex::Game::new(());
+    game.net(genex::net::NetConfig::new().publish_hz(15).decimals(3).interp_delay_ticks(6));
+    game.on_update(|sim, _| {
+        let net = &mut sim.net;
+        let seated = (net.status(), net.me().is_some(), net.players().count(), net.remotes().count(), net.connected());
+        let host = (net.host().is_some(), net.is_host(), net.events().len(), net.shared("teams").is_some());
+        let raw = net.object("tag").map(|tag| tag.state_raw().clone());
+        assert!(seated.0 == genex::net::NetStatus::Offline && !host.1 && raw.is_none());
+        net.connect();
+        net.matchmake();
+        net.cancel();
+        net.leave();
+        let refused = [
+            net.set_me(genex::json!({ "x": 1 })),
+            net.snap_me(genex::json!({ "x": 1 })),
+            net.claim("tag").map(drop),
+            net.claim_as_host("tag").map(drop),
+            net.set_object("tag", genex::json!({})),
+            net.set_shared("teams", genex::json!({})),
+            net.send("hello", genex::json!({})),
+            net.send_to_host(genex::json!({})),
+            net.chat("hi"),
+        ];
+        assert!(refused.iter().all(Result::is_err), "offline, every write refuses");
+    });
+    game.demo("remotes", |driver| genex::json!(driver.net().join("Bea").as_str()));
+    let mut runtime = genex::Runtime::new(game).expect("installs");
+    runtime.set_net_mode(genex::net::NetMode::Off);
+    runtime.step(genex::FIXED_STEP_MS);
+    assert_eq!(runtime.demo("remotes").expect("the demo"), genex::json!(""), "outside the loopback room nobody is seated");
 }
 
 /// The saves block (UIS-9): the calls the saves page teaches, genex-save's refusals, the volatile

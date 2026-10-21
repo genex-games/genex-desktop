@@ -36,6 +36,42 @@ pub use genex_net::vocab::{
 };
 pub use genex_net::writes::MatchReport;
 
+/// The calls the net page (`docs/api/net.md`) teaches, pinned in the vocabulary fixture's `net`
+/// block (MP-4b): registration, the commitment points, the reads a gameplay rule needs and the
+/// writes, and the demo driver's scripted room.
+pub const NET_CALLS: [&str; 30] = [
+    "game.net",
+    "NetConfig::new",
+    ".publish_hz",
+    ".decimals",
+    ".interp_delay_ticks",
+    "sim.net.connect",
+    "sim.net.matchmake",
+    "sim.net.cancel",
+    "sim.net.leave",
+    "sim.net.status",
+    "sim.net.me",
+    "sim.net.players",
+    "sim.net.remotes",
+    "sim.net.connected",
+    "sim.net.host",
+    "sim.net.is_host",
+    "sim.net.events",
+    "sim.net.object",
+    "sim.net.shared",
+    "sim.net.set_me",
+    "sim.net.snap_me",
+    "sim.net.claim",
+    "sim.net.claim_as_host",
+    "sim.net.set_object",
+    "sim.net.set_shared",
+    "sim.net.send",
+    "sim.net.send_to_host",
+    "sim.net.chat",
+    ".state_raw",
+    "driver.net",
+];
+
 /// The journal's byte cap on this destination: a phone's or the web's is smaller.
 #[cfg(any(target_os = "ios", target_os = "android", target_arch = "wasm32"))]
 const JOURNAL_BYTES: usize = NET_JOURNAL_BYTES_PHONE;

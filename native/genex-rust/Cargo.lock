@@ -2296,6 +2296,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "net-tag"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-net",
+ "genex-platform-web",
+ "image",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
