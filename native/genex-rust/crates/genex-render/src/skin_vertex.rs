@@ -19,7 +19,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::instance::instance_row;
 use crate::motion::DrawId;
-use crate::scene::{DrawVariant, FramePlan, MeshLibrary, Scene, SkinnedDraw, screen_height_px};
+use crate::scene::{DrawVariant, FramePlan, MeshId, MeshLibrary, Scene, SkinnedDraw, screen_height_px};
 use crate::skin::skinned_bounds;
 
 /// The world pass's entry module: the forward module's sources (`shaders::FORWARD`), the shared
@@ -163,12 +163,21 @@ struct Drawn {
     joints: Vec<[f32; 16]>,
 }
 
-/// The path's history: each identified draw's last model and palette, by (id, ordinal among
-/// that id's skinned draws). A draw with no id, or new, has none (its motion is the camera's
-/// alone and TAA takes its current sample).
+/// Whose history a vertex-skinned draw reads: its id, or, without one, its mesh (as compute
+/// skinning's motion keys an id-less row by its mesh and draw order).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum HistoryScope {
+    Id(DrawId),
+    Mesh(MeshId),
+}
+
+/// The path's history: each draw's last model and palette, by (id, ordinal among that id's
+/// vertex-skinned draws) or, for a draw with no id, by (mesh, ordinal among that mesh's id-less
+/// skinned draws on either path, so a draw keeps its key when it changes path). A new draw has
+/// none (its motion is the camera's alone and TAA takes its current sample).
 #[derive(Clone, Debug, Default)]
 pub struct SkinVertexHistory {
-    last: BTreeMap<(DrawId, u32), Drawn>,
+    last: BTreeMap<(HistoryScope, u32), Drawn>,
 }
 
 impl SkinVertexHistory {
@@ -236,7 +245,8 @@ pub fn build_frame(scene: &Scene, library: &MeshLibrary, plan: &FramePlan, histo
     let records = plan.vertex_skinned.len() * RECORD_MATRICES;
     let mut frame = SkinVertexFrame { draws: Vec::with_capacity(plan.vertex_skinned.len()), table: vec![[0.0; 16]; records] };
     let mut seen: BTreeMap<DrawId, u32> = BTreeMap::new();
-    let mut now: BTreeMap<(DrawId, u32), Drawn> = BTreeMap::new();
+    let mesh_ordinals = id_less_ordinals(scene);
+    let mut now: BTreeMap<(HistoryScope, u32), Drawn> = BTreeMap::new();
     // Each draw's palettes (this frame's, last frame's): appended once per draw.
     let mut palettes: BTreeMap<u32, (u32, u32, Option<[f32; 16]>)> = BTreeMap::new();
     for (at, part) in plan.vertex_skinned.iter().enumerate() {
@@ -246,11 +256,14 @@ pub fn build_frame(scene: &Scene, library: &MeshLibrary, plan: &FramePlan, histo
         let (joint_base, prev_joint_base, prev_model) = *palettes.entry(part.draw).or_insert_with(|| {
             let joint_base = frame.table.len() as u32;
             frame.table.extend_from_slice(&draw.joints);
-            let key = draw.id.map(|id| {
-                let ordinal = seen.entry(id).or_insert(0);
-                *ordinal += 1;
-                (id, *ordinal - 1)
-            });
+            let key = match draw.id {
+                Some(id) => {
+                    let ordinal = seen.entry(id).or_insert(0);
+                    *ordinal += 1;
+                    Some((HistoryScope::Id(id), *ordinal - 1))
+                }
+                None => mesh_ordinals.get(part.draw as usize).map(|ordinal| (HistoryScope::Mesh(draw.skin.mesh()), *ordinal)),
+            };
             let before = key.and_then(|key| history.last.get(&key)).filter(|drawn| drawn.joints.len() == draw.joints.len());
             let (prev_joint_base, prev_model) = match before {
                 Some(drawn) => {
@@ -273,6 +286,21 @@ pub fn build_frame(scene: &Scene, library: &MeshLibrary, plan: &FramePlan, histo
     }
     history.last = now;
     frame
+}
+
+/// Each skinned draw's ordinal among the id-less skinned draws of its mesh, in draw order (0 for a
+/// draw with an id, which keys its history by the id instead).
+fn id_less_ordinals(scene: &Scene) -> Vec<u32> {
+    let mut counts: BTreeMap<MeshId, u32> = BTreeMap::new();
+    let ordinal = |draw: &SkinnedDraw| {
+        if draw.id.is_some() {
+            return 0;
+        }
+        let count = counts.entry(draw.skin.mesh()).or_insert(0);
+        *count += 1;
+        *count - 1
+    };
+    scene.skinned.iter().map(ordinal).collect()
 }
 
 /// The skinned bytes compute skinning holds for `vertices` skinned vertices on a motion frame:

@@ -20,7 +20,7 @@ use genex_render::presets::preset_quality;
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshLibrary, PlanOptions, Scene, translation};
 use genex_render::settings::{AntiAliasing, Quality, QualityPreset, SceneFormat};
 use genex_render::skin::{Skeleton, SkeletonNode, SkinId, SkinnedMeshData, Trs};
-use genex_render::skin_vertex::{SKIN_VERTEX_BELOW_PX, SkinVertexPolicy, vertex_skinned_draws};
+use genex_render::skin_vertex::{RECORD_MATRICES, SKIN_VERTEX_BELOW_PX, SkinVertexHistory, SkinVertexPolicy, build_frame, vertex_skinned_draws};
 use genex_render::{CullPath, Gpu, RenderOptions, Renderer};
 
 /// The vertex path's skinned memory may be at most this share of the all-compute figure (AN-18).
@@ -125,6 +125,34 @@ fn far_plain_draws_take_the_vertex_path_and_no_job_output_or_row() {
     assert_eq!(plan.vertex_skinned.len(), 180);
     assert!(plan.vertex_skinned.iter().all(|part| part.material == plan.vertex_skinned[0].material), "one material row");
     assert_eq!(plan.motion.len(), plan.instances.len());
+}
+
+/// The flags word of each vertex-skinned record of a frame of three far strips bent by `angle`,
+/// drawn with no id (as `frame.character` draws a walker without `frame.id`).
+fn id_less_flags(library: &MeshLibrary, skin: SkinId, angle: f32, history: &mut SkinVertexHistory) -> Vec<u32> {
+    let mut scene = crowd(skin, &[], angle);
+    scene.set_id(None);
+    for [x, z] in &places(0)[..3] {
+        scene.draw_skinned(skin, translation(*x, 0.0, *z), bent(angle), orange());
+    }
+    let vertex = vertex_skinned_draws(&scene, library, SkinVertexPolicy::Auto);
+    let options = PlanOptions { shadows: None, depth_reversed: false, sun: None };
+    let plan = FramePlan::build_with_skin_paths(&scene, library, 1.0, &options, true, &vertex).expect("plan");
+    let frame = build_frame(&scene, library, &plan, history);
+    (0..frame.draws.len()).map(|at| frame.table[at * RECORD_MATRICES + 3][4].to_bits()).collect()
+}
+
+/// A far character drawn without an id keeps its motion on the vertex path, as compute skinning
+/// keeps it (by mesh and draw order): TAA reprojects it instead of smearing it (GI visual row).
+#[test]
+fn an_id_less_far_draw_keeps_its_motion_history_on_the_vertex_path() {
+    let mut library = MeshLibrary::new();
+    let skin = library.add_skinned(&bending_strip(4, 8)).expect("skinned");
+    let mut history = SkinVertexHistory::default();
+    let first = id_less_flags(&library, skin, 0.4, &mut history);
+    assert_eq!(first, [1, 1, 1], "a first frame has no history");
+    let second = id_less_flags(&library, skin, 0.5, &mut history);
+    assert_eq!(second, [0, 0, 0], "the next frame has each draw's last palette and model");
 }
 
 #[test]
