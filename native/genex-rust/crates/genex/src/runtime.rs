@@ -81,7 +81,7 @@ const BUILD_IDENTITY: GameIdentity<'static> = GameIdentity {
 const INPUT_SNAPSHOT_FORMAT: &str = "genex-input-snapshot/1";
 
 /// The keys `state()` owns; a probe may never use one as its name.
-pub const RUNTIME_KEYS: [&str; 19] = [
+pub const RUNTIME_KEYS: [&str; 20] = [
     "version",
     "contractVersion",
     "seed",
@@ -101,6 +101,8 @@ pub const RUNTIME_KEYS: [&str; 19] = [
     "__stream",
     // Display only, and only while `game.input` is registered: never in the checksum.
     "__input",
+    // Display only, and only while the build links networking or `game.net` is registered (MP-4a).
+    "__net",
     "assets",
     "checksum",
 ];
@@ -165,11 +167,16 @@ pub enum InstallErrorCode {
     DuplicateUi,
     /// A `game.ui` locale that is not BCP-47, or a font named for a locale it does not list.
     UiLocaleInvalid,
+    /// A second `game.net`.
+    DuplicateNet,
+    /// A `game.net` config outside its caps: a publish rate outside `1..=NET_PUBLISH_HZ_MAX`,
+    /// more than 6 decimals, or a smoothing delay outside `1..=30` ticks.
+    NetConfigInvalid,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 23] = [
+    pub const ALL: [InstallErrorCode; 25] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -193,6 +200,8 @@ impl InstallErrorCode {
         InstallErrorCode::DuplicateSaves,
         InstallErrorCode::DuplicateUi,
         InstallErrorCode::UiLocaleInvalid,
+        InstallErrorCode::DuplicateNet,
+        InstallErrorCode::NetConfigInvalid,
     ];
 
     /// The typed code's wire spelling.
@@ -221,6 +230,8 @@ impl InstallErrorCode {
             InstallErrorCode::DuplicateSaves => "duplicate-saves",
             InstallErrorCode::DuplicateUi => "duplicate-ui",
             InstallErrorCode::UiLocaleInvalid => "ui-locale-invalid",
+            InstallErrorCode::DuplicateNet => "duplicate-net",
+            InstallErrorCode::NetConfigInvalid => "net-config-invalid",
         }
     }
 }
@@ -368,6 +379,13 @@ impl<W> DemoDriver<'_, W> {
     pub fn advance_ms(&mut self, ms: u32) -> StepResult {
         step(self.game, self.core, f64::from(ms))
     }
+
+    /// Scripted remote players for the loopback room (MP-4a): joins, states, messages, claims,
+    /// latency, reconnects and closes, deterministic from the seed and the script. Outside the
+    /// loopback room every call does nothing and is counted in `__net.scriptIgnored`.
+    pub fn net(&mut self) -> crate::net::NetScript<'_> {
+        self.core.g6.net.script()
+    }
 }
 
 impl<W: Default> DemoDriver<'_, W> {
@@ -415,6 +433,8 @@ impl<W: Default + 'static> Runtime<W> {
         runtime.core.g6.input.install(&runtime.game.g6.input, runtime.core.gfx.saves(), studio_run());
         // And the person's UI layer (locale), which a Genex run ignores (UIS-10).
         runtime.core.g6.ui.rebase(&runtime.game.g6.ui, runtime.core.gfx.saves(), studio_run());
+        // The net backend the build links; a run Studio serves is always the loopback room (MP-4a).
+        runtime.core.g6.net = crate::net::State::install(&runtime.game.g6.net, studio_run());
         runtime.seed(DEFAULT_SEED);
         Ok(runtime)
     }
@@ -502,6 +522,9 @@ impl<W> Runtime<W> {
     /// paused), carrying the remainder on genex-core's [`FrameClock`]; a frame counts at most
     /// 250 ms, which is 15 ticks.
     pub fn advance_live(&mut self, frame_ms: f64) -> u32 {
+        // Every shell frame moves the net along, paused or not, so a seat stays alive; what it
+        // brings lands in the next tick's frame (MP-4a).
+        self.core.g6.net.pump();
         if !self.core.running {
             return 0;
         }
@@ -857,6 +880,34 @@ impl<W> Runtime<W> {
         self.core.g6.audio.class()
     }
 
+    /// Run the net on a fresh `mode` backend from the next tick on, `sim.net` back to no frame
+    /// (tests: a loopback room without the `net-loopback` feature; MP-4a).
+    #[doc(hidden)]
+    pub fn set_net_mode(&mut self, mode: crate::net::NetMode) {
+        self.core.g6.net = crate::net::State::with_mode(mode, &self.game.g6.net.config());
+        self.core.sim.net = self.core.g6.net.fresh(&self.game.g6.net);
+    }
+
+    /// Run the net on `backend` from the next tick on, `sim.net` back to no frame (tests: a
+    /// recorded session, a counting stand-in).
+    #[doc(hidden)]
+    pub fn set_net_backend(&mut self, backend: Box<dyn genex_net::backend::NetBackend>) {
+        self.core.g6.net.set_backend(backend);
+        self.core.sim.net = self.core.g6.net.fresh(&self.game.g6.net);
+    }
+
+    /// Which backend the net runs on.
+    #[doc(hidden)]
+    pub fn net_mode(&self) -> crate::net::NetMode {
+        self.core.g6.net.mode()
+    }
+
+    /// How many times the net was pumped (every `advance_live`, paused or not).
+    #[doc(hidden)]
+    pub fn net_pumps(&self) -> u64 {
+        self.core.g6.net.pumps()
+    }
+
     /// `audio({muted})` and a phone's audio gate: silence the device output; the mix, the meter
     /// and the simulation go on.
     #[doc(hidden)]
@@ -1144,6 +1195,7 @@ fn seed_core<W: Default>(game: &Game<W>, core: &mut Core<W>, seed: u32) {
     core.pointer_lock = false;
     core.hud.reset();
     core.g6.reset(&game.g6);
+    core.sim.net = core.g6.net.fresh(&game.g6.net);
     core.g6.crash.seeded(seed);
     start_journal(game, core);
     core.gfx.assets().clear();
@@ -1199,7 +1251,7 @@ pub(crate) fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
         facets: FacetState::fresh(&game.facets),
         nav: crate::nav::fresh(game.navigation.as_ref()),
         stream: crate::stream_tick::StreamState::fresh(game.streaming.first()),
-        net: crate::net::SimNet,
+        net: crate::net::Net::fresh(crate::net::build_mode(studio_run()), &game.g6.net.config()),
     }
 }
 
@@ -1266,7 +1318,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     let (touch, free) = core.g6.touch.step(&game.g6.touch, game.world_size, &input);
     core.g6.input.evaluate(&input.core, keys_taken, &touch, free);
     core.g6.journal.record(core.tick, &input.core);
-    core.g6.net.cut(&game.g6.net, &mut core.sim.net);
+    core.g6.net.cut(&game.g6.net, &mut core.sim.net, core.tick);
     // The HUD runs for UI hooks, and for touch controls (painted, and items a script can aim at).
     let hud_runs = !game.uis.is_empty() || game.g6.touch.layout().is_some();
     let controls = if hud_runs { core.g6.input.enter_panel(&input.core) } else { None };
@@ -1341,7 +1393,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     core.g6.ui.note_pads(&input.core.pads);
     #[cfg(feature = "physics")]
     core.sim.physics.step();
-    core.g6.net.flush(&game.g6.net, &mut core.sim.net);
+    core.g6.net.flush(&game.g6.net, &mut core.sim.net, core.tick);
     core.stream.prefetch(&core.sim);
     // Audio after physics (occlusion sees this tick's bodies), with the game's own camera as the
     // ears, before `g6_tick_end` writes a pending save (AU-7).
@@ -1447,6 +1499,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_audio(game)?;
     crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
     crate::ui::check(&game.g6.ui).map_err(|(code, detail)| InstallError::new(code, detail))?;
+    game.g6.net.check().map_err(|(code, detail)| InstallError::new(code, detail))?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {

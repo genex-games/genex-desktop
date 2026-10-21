@@ -19,9 +19,10 @@ pub struct Sim<W> {
     /// The streamed world's sim set: anchors, active cells and what this tick's commit moved
     /// (empty without `game.streaming`; the runtime commits it at the start of every tick).
     pub stream: crate::stream_tick::StreamState,
-    /// The tick's net frame, owned by the runtime like `nav` (G6 contract stub until MP-4a makes it
-    /// game API).
-    pub(crate) net: crate::net::SimNet,
+    /// The net frame this tick consumed and the writes it queues (multiplayer MP-4a), owned by the
+    /// runtime like `nav`: reads answer from the frame cut before the update hooks, writes leave
+    /// after the tick and their effects arrive in a later frame. Never saved or checksummed.
+    pub net: crate::net::Net,
 }
 
 impl<W> Sim<W> {

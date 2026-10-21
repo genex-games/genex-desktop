@@ -36,7 +36,8 @@ mod actions_touch;
 pub mod audio;
 mod crash;
 mod g6;
-mod net;
+/// Multiplayer (`sim.net`, `game.net`, `DemoDriver::net`): genex-net through the facade (MP-4a).
+pub mod net;
 /// Profiling: `genex::profile_scope!` and `genex::profile::counter` (genex-profile), summarized in
 /// `state().volatile.profile` when a shell profiles.
 pub mod profile;

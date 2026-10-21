@@ -22,6 +22,12 @@ studio = ["dep:genex-studio", "dep:genex-frames"]
 # The area crates' Rapier parts (characters, ragdolls, collider nav input, streamed colliders)
 # follow it.
 physics = ["dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-stream/physics"]
+# Multiplayer (G6 MP-4a), chosen by the build for a game with `[net]` in its genex.toml: `net` links
+# the relay (exports and the web draft; a run Studio serves still uses the loopback room),
+# `net-loopback` the in-process room only (Live, dev, judge and device-launch builds). Neither:
+# `sim.net` compiles and stays offline (`net-disabled`).
+net = ["genex-net/relay"]
+net-loopback = ["genex-net/loopback"]
 
 [dependencies]
 # The clock, rng, input merger, state() snapshot and checksum, and saves are genex-core's
@@ -60,6 +66,8 @@ genex-ui = { workspace = true }
 genex-profile = { workspace = true }
 # Crash reports (G6 crash): the process's crash context, the chained panic hook and its sinks.
 genex-crash = { workspace = true }
+# Multiplayer (G6 MP): the network as an input stream; its relay half only with the `net` feature.
+genex-net = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 genex-studio = { workspace = true, optional = true }
