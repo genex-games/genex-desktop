@@ -22,6 +22,9 @@
 //!   nothing starves;
 //! - the policy then evicts unreferenced models, oldest release first, while the pool is over; an
 //!   evicted model's meshes leave the renderer's arena.
+//! - a built cell's retained groups (`CellBuild::group`, STR-20, `present_stream/groups.rs`) are
+//!   drawn while the cell stays wanted, a model group once its model is resident; a cell leaving
+//!   the view drops them, so their rows stop uploading.
 //!
 //! What is drawn: every model of a built, wanted cell that is resident (else its resident
 //! stand-in), and the missing-asset checker for a model that was refused (listed in
@@ -37,6 +40,10 @@
 
 mod drain;
 mod groups;
+
+pub use drain::{DrainClock, DrainReport, DrainStep, Drain, STREAM_DRAIN_MAX_MS, STREAM_DRAIN_POLL, drain_blocking};
+#[cfg(not(target_arch = "wasm32"))]
+pub use drain::WallDrainClock;
 mod meshes;
 mod textures;
 
@@ -57,10 +64,12 @@ use glam::{Vec2, Vec3};
 use crate::camera::Camera;
 use crate::frame::{Color, Frame};
 use crate::gfx::Model;
+use crate::group::InstanceGroup;
 use crate::present::{AssetCache, ModelSource, Uploads};
 use crate::runtime::Runtime;
 use crate::stream::{CellContent, CellModel, Streaming};
 use crate::stream_source::{AsyncSource, StreamBytes, StreamRequest};
+use groups::{CellGroups, ViewGroup};
 use meshes::CoarsePlan;
 
 /// The most models one cell may draw; a cell past it is refused and draws nothing.
@@ -175,14 +184,25 @@ pub struct ViewStats {
     pub finish_ms: f64,
     /// Read bytes the last frame uploaded.
     pub upload_bytes: u64,
-    /// Model draws of built cells left out of the last frame because the model was loading.
+    /// Model draws and model groups of built cells left out of the last frame because the model
+    /// was loading.
     pub loading_draws: u32,
+    /// Retained groups of built cells the last frame drew (STR-20).
+    pub groups: u32,
+    /// Their instances together.
+    pub group_instances: u64,
+    /// How the last settled capture's drain ended (STR-25).
+    pub drain: DrainReport,
+    /// Drains that ran out of time since the start.
+    pub drain_timeouts: u64,
 }
 
 impl ViewStats {
     /// `state().volatile.__stream.view`: `{residentBytes, heldBytes, inFlight, queued, evicted,
-    /// refused, cells, cellsBuilt, cellsRefused, finished, finishMs, uploadBytes, loading}`.
-    /// Display only, never in the checksum.
+    /// refused, cells, cellsBuilt, cellsRefused, finished, finishMs, uploadBytes, loading, groups,
+    /// groupInstances, drainPasses, drainMs, drainTimeouts}`, plus `timeout:
+    /// "stream-drain-timeout"` while the last drain ran out of time. Display only, never in the
+    /// checksum.
     pub fn volatile_value(&self) -> CoreValue {
         let r = &self.residency;
         let mut value = CoreValue::object();
@@ -199,10 +219,18 @@ impl ViewStats {
             ("finished", u64::from(self.finished)),
             ("uploadBytes", self.upload_bytes),
             ("loading", u64::from(self.loading_draws)),
+            ("groups", u64::from(self.groups)),
+            ("groupInstances", self.group_instances),
+            ("drainPasses", u64::from(self.drain.passes)),
+            ("drainTimeouts", self.drain_timeouts),
         ] {
             value.set(key, CoreValue::from(number));
         }
         value.set("finishMs", CoreValue::from(self.finish_ms));
+        value.set("drainMs", CoreValue::from(self.drain.ms));
+        if self.drain.timed_out {
+            value.set("timeout", CoreValue::from(genex_stream::StreamErrorCode::DrainTimeout.wire()));
+        }
         value
     }
 }
@@ -221,9 +249,13 @@ pub struct ViewIo<'a> {
     pub log: &'a mut dyn FnMut(&str),
 }
 
-/// A cell of the view set: building, built (its models) or refused.
+/// What a cell's view build draws: its models and its groups, in build order.
+type CellView = (Vec<CellModel>, Vec<InstanceGroup>);
+
+/// A cell of the view set: building, built (its models; its groups are in [`CellGroups`]) or
+/// refused.
 enum ViewCell {
-    Building(Job<Result<Vec<CellModel>, usize>>),
+    Building(Job<Result<CellView, usize>>),
     Built(Vec<ViewModel>),
     Refused,
 }
@@ -262,6 +294,8 @@ pub struct StreamView {
     limits: ViewLimits,
     residency: Residency<u32>,
     cells: BTreeMap<CellId, ViewCell>,
+    /// The built cells' retained groups (STR-20, `groups.rs`).
+    groups: CellGroups,
     /// Model paths by key, and keys by path.
     paths: Vec<Arc<str>>,
     keys: BTreeMap<Arc<str>, u32>,
@@ -282,6 +316,9 @@ pub struct StreamView {
     /// The dearest finish seen, in milliseconds: what the next one is expected to cost.
     dearest_ms: f64,
     cells_refused: u64,
+    /// The last drain, and the drains that ran out of time (STR-25).
+    drain: DrainReport,
+    drain_timeouts: u64,
     last: ViewStats,
 }
 
@@ -298,6 +335,7 @@ impl StreamView {
             limits,
             residency: Residency::new(limits.residency),
             cells: BTreeMap::new(),
+            groups: CellGroups::default(),
             paths: Vec::new(),
             keys: BTreeMap::new(),
             sizes: BTreeMap::new(),
@@ -311,6 +349,8 @@ impl StreamView {
             cell_size: None,
             dearest_ms: 0.0,
             cells_refused: 0,
+            drain: DrainReport::default(),
+            drain_timeouts: 0,
             last: ViewStats::default(),
         }
     }
@@ -345,7 +385,43 @@ impl StreamView {
     /// What the view set holds now, with the last frame's work.
     pub fn stats(&self) -> ViewStats {
         let built = self.cells.values().filter(|cell| !matches!(cell, ViewCell::Building(_))).count();
-        ViewStats { residency: self.residency.stats(), cells_built: built as u32, cells_refused: self.cells_refused, ..self.last }
+        ViewStats {
+            residency: self.residency.stats(),
+            cells_built: built as u32,
+            cells_refused: self.cells_refused,
+            drain: self.drain,
+            drain_timeouts: self.drain_timeouts,
+            ..self.last
+        }
+    }
+
+    /// Whether a settled capture may be drawn (STR-25, `drain.rs`): no cell building, no read in
+    /// flight or waiting to be finished, no load the policy could still start, and nothing a built
+    /// cell draws still loading.
+    pub fn settled(&self) -> bool {
+        let building = self.cells.values().any(|cell| matches!(cell, ViewCell::Building(_)));
+        let reading = !self.reads.is_empty() || !self.coarse_reads.is_empty() || !self.answered.is_empty();
+        let residency = self.residency.stats();
+        // A queued load the pool has no room for stays queued: as settled as the view gets.
+        let startable = residency.queued > residency.waiting_for_room;
+        if building || reading || startable || residency.in_flight > 0 {
+            return false;
+        }
+        let loading = |key: u32| matches!(self.residency.state(key), Some(EntryState::Loading));
+        let models_loading = self.cells.values().any(|cell| match cell {
+            ViewCell::Built(models) => models.iter().filter_map(|entry| entry.key).any(loading),
+            ViewCell::Building(_) | ViewCell::Refused => false,
+        });
+        !models_loading && !self.groups.any_waiting(loading)
+    }
+
+    /// Record how a settled capture's drain ended: `volatile.__stream.view` names its passes and
+    /// milliseconds, and `timeout` while it ran out of time (STR-25).
+    pub fn note_drain(&mut self, report: DrainReport) {
+        self.drain = report;
+        if report.timed_out {
+            self.drain_timeouts += 1;
+        }
     }
 
     /// One frame of the view set for `runtime` seen from `camera` (module doc). Nothing without
@@ -392,7 +468,14 @@ impl StreamView {
                 frame.model(model, entry.draw.transform);
             }
         }
-        self.last.loading_draws = loading;
+        let residency = &self.residency;
+        let groups = self.groups.draw_into(frame, |key| matches!(residency.state(key), None | Some(EntryState::Resident | EntryState::Refused)));
+        if groups.groups > 0 && !drew_any {
+            frame.tag(STREAM_TAG);
+        }
+        self.last.loading_draws = loading + groups.loading;
+        self.last.groups = groups.groups;
+        self.last.group_instances = groups.instances;
         if frame.wants_cells_debug() {
             self.draw_overlay(frame);
         }
@@ -462,8 +545,8 @@ impl StreamView {
             self.cells.iter().filter_map(|(cell, view)| matches!(view, ViewCell::Building(job) if job.is_ready()).then_some(*cell)).collect();
         for cell in ready {
             let Some(ViewCell::Building(job)) = self.cells.remove(&cell) else { continue };
-            let models = match job.into_result() {
-                Ok(Ok(models)) => models,
+            let (models, groups) = match job.into_result() {
+                Ok(Ok(view)) => view,
                 Ok(Err(_)) | Err(_) => {
                     self.cells_refused += 1;
                     self.cells.insert(cell, ViewCell::Refused);
@@ -472,6 +555,8 @@ impl StreamView {
             };
             let priority_px = cell_priority(cell, ground, cell_size);
             let keyed = models.into_iter().map(|draw| self.request_model(draw, priority_px)).collect();
+            let keyed_groups = groups.into_iter().map(|group| self.request_group(group, priority_px)).collect();
+            self.groups.insert(cell, keyed_groups);
             self.cells.insert(cell, ViewCell::Built(keyed));
         }
     }
@@ -497,6 +582,16 @@ impl StreamView {
         };
         self.residency.request(key, Requester::View, want);
         ViewModel { draw, key: Some(key), coarse }
+    }
+
+    /// A built cell's model group takes a `View` reference on its model (STR-20); cubes and spheres
+    /// never wait.
+    fn request_group(&mut self, group: InstanceGroup, priority_px: f32) -> ViewGroup {
+        let Some(path) = groups::model_path(&group).map(str::to_owned) else { return ViewGroup { group, key: None } };
+        let key = self.key_of(&path);
+        let estimate = self.sizes.get(&key).copied().unwrap_or(self.limits.estimate_bytes);
+        self.residency.request(key, Requester::View, Want::new(priority_px, estimate));
+        ViewGroup { group, key: Some(key) }
     }
 
     /// Start the loads the policy lets go: an async read each (a coarse stand-in's by its ranges),
@@ -658,6 +753,9 @@ impl StreamView {
             }
             Some(ViewCell::Refused) | None => {}
         }
+        for key in self.groups.remove(cell) {
+            self.residency.release(key, Requester::View);
+        }
     }
 
     /// A new seed: every cell is dropped (builds read the seed); resident models stay until evicted.
@@ -736,13 +834,22 @@ fn wanted_cells(inputs: &ViewInputs, ground: Vec2) -> Vec<CellId> {
 }
 
 /// Run every builder on `cell` (on a worker) and keep what it draws, in registration then build
-/// order; past [`STREAM_VIEW_CELL_MODELS_MAX`] the cell is refused (the count it reached).
-fn build_view(contents: &[CellContent], cell: CellId, seed: u32, cell_size: f32) -> Result<Vec<CellModel>, usize> {
-    let models: Vec<CellModel> = contents.iter().flat_map(|content| (content.run)(cell, seed, cell_size).views).collect();
+/// order; past [`STREAM_VIEW_CELL_MODELS_MAX`] models, or groups past the cell's instance cap, the
+/// cell is refused (the count it reached).
+fn build_view(contents: &[CellContent], cell: CellId, seed: u32, cell_size: f32) -> Result<CellView, usize> {
+    let (mut models, mut groups) = (Vec::new(), Vec::new());
+    for content in contents {
+        let build = (content.run)(cell, seed, cell_size);
+        models.extend(build.views);
+        groups.extend(build.groups);
+    }
     if models.len() > STREAM_VIEW_CELL_MODELS_MAX {
         return Err(models.len());
     }
-    Ok(models)
+    if groups::over_cap(&groups) {
+        return Err(groups.iter().map(InstanceGroup::len).sum());
+    }
+    Ok((models, groups))
 }
 
 /// The load priority of a cell's models: the screen-space error of a cell-sized error at the

@@ -57,6 +57,12 @@ pub trait GameHandle {
     /// custom passes inside the frame, the HUD over it, the triangles noted for `state()`. None for
     /// a view the game does not have.
     fn draw(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Option<Result<Drawn, RenderError>>;
+    /// One pass of a settled capture's drain from `view` ([`Presenter::drain_pass`], STR-25):
+    /// whether everything the streamed view set wants is resident or refused (true for a view the
+    /// game does not have).
+    fn drain_pass(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Result<bool, RenderError>;
+    /// Record how a capture's drain ended ([`Presenter::note_drain`]).
+    fn note_drain(&mut self, presenter: &mut Presenter, report: genex::present::DrainReport);
     /// Register the game's custom GPU passes on `presenter`'s device; answers the refused ones by
     /// name (a refused pass stays out of every frame).
     fn install_passes(&mut self, presenter: &mut Presenter) -> Vec<(String, RenderError)>;
@@ -182,6 +188,15 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
     fn draw(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Option<Result<Drawn, RenderError>> {
         let view = resolve(self, view)?;
         presenter.draw_view(self, view)
+    }
+
+    fn drain_pass(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Result<bool, RenderError> {
+        let Some(view) = resolve(self, view) else { return Ok(true) };
+        presenter.drain_pass(self, view)
+    }
+
+    fn note_drain(&mut self, presenter: &mut Presenter, report: genex::present::DrainReport) {
+        presenter.note_drain(report);
     }
 
     fn install_passes(&mut self, presenter: &mut Presenter) -> Vec<(String, RenderError)> {

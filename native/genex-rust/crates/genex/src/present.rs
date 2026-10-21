@@ -128,6 +128,10 @@ pub use crate::present_stream::{
     STREAM_LOADS_DESKTOP, STREAM_LOADS_PHONE, STREAM_LOADS_WEB, STREAM_VIEW_CELL_MODELS_MAX, STREAM_VIEW_MODEL_ESTIMATE_BYTES, StreamView, ViewIo,
     ViewLimits, ViewStats,
 };
+/// Settled captures drain the view set first (STR-25).
+pub use crate::present_stream::{Drain, DrainClock, DrainReport, DrainStep, STREAM_DRAIN_MAX_MS, STREAM_DRAIN_POLL, drain_blocking};
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::present_stream::WallDrainClock;
 
 /// The renderer's planes for a facade camera, which carries none.
 const NEAR_PLANE: f32 = 0.1;
@@ -1919,6 +1923,13 @@ impl Presenter {
     /// The streamed view set's part of a frame (STR-16): its limits follow the drawn class, then it
     /// updates from the camera and appends its draws to `frame`. Nothing without `game.streaming`.
     fn stream_frame<W>(&mut self, runtime: &Runtime<W>, handle: &RenderHandle, camera: &Camera, frame: &mut Frame) -> Result<(), RenderError> {
+        self.stream_update(runtime, handle, camera)?;
+        self.stream.draw_into(frame);
+        Ok(())
+    }
+
+    /// The view set's update for a frame drawn from `camera` (Live's or the capture class's limits).
+    fn stream_update<W>(&mut self, runtime: &Runtime<W>, handle: &RenderHandle, camera: &Camera) -> Result<(), RenderError> {
         let (class, os) = {
             let control = handle.borrow();
             let class = if self.capturing { control.capture_class() } else { control.live_class() };
@@ -1930,9 +1941,28 @@ impl Presenter {
         }
         let log = self.log;
         let io = ViewIo { assets: &mut self.assets, source: &*self.source, uploads: &mut self.resilient, clock: &self.clock, log: &mut |line| log(line) };
-        self.stream.update(runtime, camera, io)?;
-        self.stream.draw_into(frame);
-        Ok(())
+        self.stream.update(runtime, camera, io)
+    }
+
+    /// One pass of a settled capture's drain (STR-25, `present_stream/drain.rs`): the view set
+    /// updates as the capture draws it (the capture class, the drawn camera; no tick, no draw) and
+    /// answers whether everything it wants is resident or refused. True at once without
+    /// `game.streaming` or for a view the game lacks.
+    pub fn drain_pass<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Result<bool, RenderError> {
+        let Some(camera) = runtime.camera(view) else { return Ok(true) };
+        if runtime.stream_view().is_none() {
+            return Ok(true);
+        }
+        let handle = self.attach(runtime);
+        let capturing = std::mem::replace(&mut self.capturing, true);
+        let updated = self.stream_update(runtime, &handle, &camera);
+        self.capturing = capturing;
+        updated.map(|()| self.stream.settled())
+    }
+
+    /// Record how a settled capture's drain ended (`volatile.__stream.view`, STR-25).
+    pub fn note_drain(&mut self, report: DrainReport) {
+        self.stream.note_drain(report);
     }
 
     /// What the streamed view set holds and did in the last frame (STR-16).
