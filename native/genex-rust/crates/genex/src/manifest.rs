@@ -45,6 +45,16 @@
 //! [assets.web]              # one destination's budget: web, ios, android or desktop
 //! budget_mb = 64            # defaults web 64, ios 200, android 200, desktop 2048; at most web 512, phones 4096
 //!
+//! [net]                     # optional: multiplayer (G6); the host picks the facade's `net-loopback` or `net`
+//! enabled = true            # required in the table
+//!
+//! [net.matchmaking]         # optional: what `matchmake()` asks Genex's relay for, carried by the draft
+//! preset = "open"           # open | duel | arena | teams | private
+//! win_condition = "firstToScore"  # optional
+//!
+//! [net.matchmaking.config]  # optional: the preset's numeric knobs, in Genex's camelCase spelling
+//! maxPlayers = 8
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -204,8 +214,8 @@ pub const STREAM_CALLS: [&str; 34] = [
     "sim.stream.ground", ".colliders_content", ".group", "inputs.scatter",
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
-/// collider input, NAV-5; debug drawing, NAV-16).
-pub const NAV_CALLS: [&str; 52] = [
+/// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14).
+pub const NAV_CALLS: [&str; 53] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
@@ -214,7 +224,7 @@ pub const NAV_CALLS: [&str; 52] = [
     "nav.add_link", "nav.remove_link", "nav.set_link_open", "nav.add_body", "nav.set_body", "nav.remove_body",
     "nav.closest_point", "nav.path", "nav.raycast", "nav.move_along", "nav.random_point", "nav.distance_to_wall",
     "nav.probe", "nav.snapshot", "nav.restore", ".with_colliders", ".with_static_colliders", "frame.nav_debug",
-    "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths",
+    "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths", "game.nav_bake",
 ];
 /// The input calls of the facade (IN-11, IN-12).
 pub const INPUT_CALLS: [&str; 30] = [
@@ -234,6 +244,12 @@ pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "m
 pub const LOD_CALLS: [&str; 4] = [".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound"];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
 pub const LOD_REFUSALS: [&str; 3] = ["levels-invalid", "levels-mismatch", "compound-invalid"];
+/// The settings menu's calls (UIS-11).
+pub const SETTINGS_CALLS: [&str; 12] = [
+    "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",
+    "SettingDef::choice", "genex::settings::menu", "genex::settings::menu_answer", "genex::settings::value",
+    "genex::settings::number", "genex::settings::flag",
+];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];
@@ -528,6 +544,36 @@ pub struct GenexToml {
     /// The package's budgets and a phone's texture cap, read by the host's package step (C-17).
     #[serde(default)]
     pub assets: AssetsSection,
+    /// Multiplayer (G6 MP-5b): read here so a networked game's genex.toml is not refused; the host
+    /// checks its values (`invalid-net`) and chooses the facade's network feature from it.
+    #[serde(default)]
+    pub net: Option<NetSection>,
+}
+
+/// `[net]`: whether the game is built with networking, and the draft's matchmaking (G6 MP-5b).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NetSection {
+    /// True links the in-process room in Studio's builds and the relay in an export.
+    pub enabled: bool,
+    /// What `matchmake()` asks Genex's relay for; none: Genex's `duel`.
+    #[serde(default)]
+    pub matchmaking: Option<NetMatchmakingSection>,
+}
+
+/// `[net.matchmaking]`: a preset, an optional win condition and the preset's numeric knobs, in
+/// Genex's own spelling (the host checks the vocabulary and the caps).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NetMatchmakingSection {
+    /// open, duel, arena, teams or private.
+    pub preset: String,
+    /// lastStanding, firstToScore, highScoreInTime or firstToFinish.
+    #[serde(default)]
+    pub win_condition: Option<String>,
+    /// Knobs by Genex's camelCase name (`maxPlayers`).
+    #[serde(default)]
+    pub config: Map<String, f64>,
 }
 
 impl GenexToml {

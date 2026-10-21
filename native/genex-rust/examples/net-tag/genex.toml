@@ -11,4 +11,11 @@ enabled = false
 
 [net]
 enabled = true
-matchmaking = { preset = "open", win_condition = "firstToScore", config = { maxPlayers = 8, minPlayers = 2 } }
+
+[net.matchmaking]
+preset = "open"
+win_condition = "firstToScore"
+
+[net.matchmaking.config]
+maxPlayers = 8
+minPlayers = 2

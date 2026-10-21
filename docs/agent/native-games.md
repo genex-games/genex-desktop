@@ -59,7 +59,20 @@ by `rustTargetBuilders`, build on a Mac (Android also on Linux);
 Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register once
 the Rust recipe pins their cross components, else `target-unbuilt`. Live and judging builds of a desktop
 destination link the facade's dev flavour (`studio` feature: the game serves fd 3, contract v2);
-an export and every web build never do (`RustFlavour`, `rust-manifest.ts`). Non-export builds and
+an export and every web build never do (`RustFlavour`, `rust-manifest.ts`). A `[net] enabled = true`
+game (G6 MP-5b) links the facade's `net-loopback` (the in-process room) in Live, judging and the
+Simulator build a device launch installs, and `net` (the relay) in every other export
+(`rustNetFeatureOf`, `RustNetFeature` in [`rust-manifest.ts`](../../src/main/rust-manifest.ts)); a
+game without networking gets the same manifest as before. Only a networked export bakes in
+`GENEX_GAME_SLUG`: the slug of the game's Genex draft (`genexDraftSlug` in
+[`core/genex-publish.ts`](../../src/main/core/genex-publish.ts), the plugin's publish workspace),
+and only when it is one plain segment (`bakeableGameSlug`); its web export also serves the store's
+`genex-mp-bridge` (MP-5a), refused `mp-bridge-refused` when the component is not installed.
+Publishing (MP-5c): `assertPublishable` admits a Rust game by its web build and refuses
+`no-web-export` when Browser is not a destination or genex.toml declares native features;
+`publicCopyFiles` is the lane's web export; `readGenexGameManifest` carries `[net.matchmaking]` as
+`genex.matchmaking`; `plugins.preflightMultiplayer` answers `RustNoWeb`, then the account and the
+draft route (`RustReady`), never Genex's npm packages. Non-export builds and
 prewarms optimize dependencies (`RUST_DEV_PROFILE_SETTINGS`). Mac embedded and
 headless runs use only lane-admitted bytes (receipt digests); window runs and desktop
 exports stay `lane-missing`. Rust creation ([`stack-gate.ts`](../../src/main/core/stack-gate.ts),

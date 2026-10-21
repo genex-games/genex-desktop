@@ -176,7 +176,9 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
 
 #[test]
 fn the_game_systems_blocks_are_the_fixtures() {
-    use genex::manifest::{ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, STREAM_CALLS};
+    use genex::manifest::{
+        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS, STREAM_CALLS,
+    };
     let pinned = fixture();
     let animation: Vec<&str> = genex_anim::AnimationErrorCode::ALL
         .map(genex_anim::AnimationErrorCode::wire)
@@ -190,13 +192,15 @@ fn the_game_systems_blocks_are_the_fixtures() {
     assert_eq!(ASSET_REFUSALS, assets, "the manifest's asset refusals are AssetErrorCode's");
     let lod = genex::LodRefusalCode::ALL.map(genex::LodRefusalCode::wire);
     assert_eq!(LOD_REFUSALS, lod, "the manifest's lod refusals are LodRefusalCode's");
-    let blocks: [(&str, &[&str], &[&str]); 6] = [
+    let settings: Vec<&str> = genex::settings::SettingsErrorCode::ALL.iter().map(|code| code.wire()).collect();
+    let blocks: [(&str, &[&str], &[&str]); 7] = [
         ("animation", &ANIMATION_CALLS, &animation[..]),
         ("stream", &STREAM_CALLS, &stream),
         ("nav", &NAV_CALLS, &nav),
         ("input", &INPUT_CALLS, &input),
         ("assets", &ASSET_CALLS, &ASSET_REFUSALS),
         ("lod", &LOD_CALLS, &LOD_REFUSALS),
+        ("settings", &SETTINGS_CALLS, &settings),
     ];
     for (key, calls, refusals) in blocks {
         assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");

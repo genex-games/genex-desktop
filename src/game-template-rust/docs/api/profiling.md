@@ -49,3 +49,11 @@ game.on_update(|sim, ctx| {
 What the renderer's features cost: on an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure
 costs about 0.1 ms, bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact shadows 0.15-0.3, TAA 0.2,
 EASU with RCAS under 0.3 and `ultra`'s sun shadows about 0.6.
+
+## The player overlay
+
+In the dev flavour (Live, a Studio run) Ctrl+Shift+P shows a small panel in the window's top-right
+corner: CPU and GPU frame times, hitches, the heaviest scopes (the game's in blue) and the game's
+counters. It is painted over the window after the HUD and outside the tick, so it is never in a
+capture, never in `state().hud.items`, and showing it changes nothing a tick sees. Exports do not
+offer the chord.

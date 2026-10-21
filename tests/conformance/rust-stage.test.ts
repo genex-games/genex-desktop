@@ -23,7 +23,9 @@ import {
   RUST_ENV_MACRO_NAMES,
   RUST_FIXED_ENV,
   RUST_GAME_BIN,
+  RustFlavour,
   RustManifestCode,
+  RustNetFeature,
 } from "../../src/main/rust-manifest.ts";
 import { RustStageCode, type StageResult, stageRustGame } from "../../src/main/rust-stage.ts";
 import { BuildTarget } from "../../src/shared/game-project.ts";
@@ -542,6 +544,48 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
       await stageRustGame({ source: await makeGame(), stage: await stagePath(), target: BuildTarget.Web, pins }),
     );
     assert.match(withPhysics.cargoLock ?? "", /\nname = "rapier3d"\n/, "a game that says nothing keeps physics");
+  });
+
+  // G6 MP-5b: the lane says what a [net] game links in this build; the stage writes it beside the
+  // flavour's own feature, and a game without networking is staged as before whatever the lane says.
+  it("links a [net] game's room in a Live build and its relay in an export; a game without [net] neither", async () => {
+    const pins = { genexVersion: GENEX_VERSION, baseLock: null };
+    const net = await makeGame({ "genex.toml": '[game]\ntitle = "Tag"\n\n[net]\nenabled = true\n' });
+    const live = staged(
+      await stageRustGame({
+        source: net,
+        stage: await stagePath(),
+        target: BuildTarget.Mac,
+        pins,
+        flavour: RustFlavour.Dev,
+        net: RustNetFeature.Loopback,
+      }),
+    );
+    assert.match(live.cargoToml, /\ngenex = \{ version = "=0\.1\.0", features = \["studio", "net-loopback"\] \}\n/);
+    assert.equal(live.manifest.net?.enabled, true);
+    const web = staged(
+      await stageRustGame({
+        source: net,
+        stage: await stagePath(),
+        target: BuildTarget.Web,
+        pins,
+        net: RustNetFeature.Relay,
+      }),
+    );
+    assert.match(
+      web.cargoToml,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", features = \["net"\] \}\n/,
+    );
+    const plain = staged(
+      await stageRustGame({
+        source: await makeGame(),
+        stage: await stagePath(),
+        target: BuildTarget.Mac,
+        pins,
+        net: RustNetFeature.Relay,
+      }),
+    );
+    assert.match(plain.cargoToml, /\ngenex = "=0\.1\.0"\n/);
   });
 
   it("refuses a lock line without the pinned genex or an allowlisted crate", () => {

@@ -11,9 +11,9 @@ never send. The types live in `genex::net`: `use genex::net::{NetConfig, NetEven
   Live, captures, checks and demos: nothing reaches the network, `sim.net.connect()` seats you as
   the host of a room of one, your writes echo on the next tick, and a demo's `driver.net()` adds
   scripted remote players. Only exports and the published draft reach the relay.
-- `genex.toml` has no networking switch yet, so every build Studio makes today is offline:
-  `sim.net.status()` is `offline` with the reason `net-disabled`, writes refuse `net-not-joined`
-  and `driver.net()` calls are ignored (counted in `__net.scriptIgnored`). Write the game so its
+- `[net] enabled = true` in `genex.toml` (`docs/api/genex-toml.md`) builds the game with
+  networking. Without it every build is offline: `sim.net.status()` is `offline` with the reason
+  `net-disabled`, writes refuse `net-not-joined` and `driver.net()` calls are ignored (counted in `__net.scriptIgnored`). Write the game so its
   local mode plays without the network.
 - Online play is proved only on the published draft opened in two windows with two identities (a
   normal and a private window). A loopback demo, a capture or one window is not that proof: until

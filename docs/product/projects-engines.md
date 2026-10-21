@@ -26,7 +26,7 @@ moments never ask.
 ## Loops in place
 
 Any folder but a web game at its root (Blender files beside it allowed), Blender alone included:
-the chat's session leads the Loop in place, on Claude Code, Codex or OpenCode (others refuse). The lead keeps save points,
+the chat's session leads the Loop in place, on Claude Code, Codex or OpenCode (others refuse). The lead keeps save points (one row in Builds),
 starts workers (of its plugins' types, if any) and claims finish; a reviewer checks (three no's
 stop it). Plugins add steps at Genex's moments, reviewer pictures and locks: while you work in a
 plugin's editor, agents wait.

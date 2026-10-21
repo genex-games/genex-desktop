@@ -120,6 +120,10 @@ frame.skeleton_debug(hero, at);
   2nd, 4th or 8th tick as its projected height (LOD's screen-size metric, from the game camera)
   falls past 240, 120 and 60 pixels of a 1080-pixel view. A capture is always full rate. Drawing
   never moves the animator or the simulation.
+- A character under 240 pixels whose materials are all plain and opaque is skinned in the vertex
+  stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
+  skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the
+  same picture as the compute pass, including the shadows and the motion vectors.
 - `frame.character_with(..)` takes a `CharacterDraw`: `.tint(..)`, and `.material(..)` to replace
   the GLB's materials.
 - `frame.skeleton_debug(..)` draws every bone as one line batch (one logical draw).

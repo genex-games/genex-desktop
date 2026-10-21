@@ -150,7 +150,7 @@ import { nameFromIdea, nameGame } from "./core/game-naming.ts";
 import { makeBackdropShader } from "./core/backdrop-generation.ts";
 import { GENEX_PLUGIN_ID, GenexCliService, genexHostPreflight, genexHostTool } from "./core/genex-cli.ts";
 import { GenexPackageService } from "./core/genex-package.ts";
-import { assertPublishable } from "./core/genex-publish.ts";
+import { assertPublishable, genexDraftSlug } from "./core/genex-publish.ts";
 import { GameThreadService } from "./core/game-threads.ts";
 import {
   type CoreInternals,
@@ -1334,6 +1334,8 @@ export class StudioCore {
       trust: (game) => engineTrustFor(this).trustOf(game),
       // The person's eject (M7.1), as the profile records it: a game's own `[engine]` row links no fork.
       ejection: (project) => engineEjectionsFor(this).ejectedFrom(project),
+      // A networked export's relay joins the game's own Genex draft (G6 MP-5b): the slug of its binding.
+      gameSlug: (project) => genexDraftSlug(this.pluginServices.root(GENEX_PLUGIN_ID), project),
       // Every destination's executable passes its policy and the transport scan before it is out/ (M3.5).
       admit: storeRustAdmit(this.layout.toolchains),
       // The import step over each build's stage (C-2): sandboxed per-file jobs in the profile's

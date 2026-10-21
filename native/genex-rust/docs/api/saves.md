@@ -30,7 +30,11 @@ game.on_update(|sim, ctx| {
   `from` to `from + 1`; an older slot runs every step up to `n` when it loads. `.autosave(ticks,
   ring)` writes `autosave-0` and on every `ticks` simulated ticks into a ring of 1 to 8 slots.
   `.autosave_on_suspend(on)` sets whether a suspend or close should also write the ring's oldest
-  slot (default on). No shell writes that save yet. `.slots_max(n)` caps named slots at 1 to 32 (default 16); autosaves do not count.
+  slot (default on). Every shell writes it: a phone when the app is suspended (once per suspend
+  of a resumed app), a desktop window when it closes, a web page when it is hidden or left
+  (`visibilitychange` to hidden, `pagehide`; once per hide), always between ticks and through
+  read hooks only. `.slots_max(n)` caps named slots at 1 to 32 (default 16); autosaves do not
+  count.
 - **Sections.** `game.save_world()` is the section `world`. `game.save_section(name, save, load)`
   adds any other: `save` reads the `Sim` and returns JSON, `load` writes it back onto the restored
   `Sim`. Physics bodies, facet state and anything outside `sim.world` need their own section. With
@@ -43,9 +47,11 @@ game.on_update(|sim, ctx| {
 - **Loading.** `slots.load(slot)` restores before the next tick. The runtime builds a fresh `Sim`,
   runs the reset hooks with the slot's seed, restores `genex.nav`, `genex.stream` and then the
   game's sections in registration order, and sets the tick and `ctx.rng`. A streamed world's cells
-  and their colliders are rebuilt by the next tick's commit. Only then does it replace the running game,
-  so a refused load leaves it untouched. On the web a slot's body may still be loading: the game
-  then runs no tick until it arrives (at most 6 s, else `save-load-timeout`).
+  and their colliders are rebuilt by the next tick's commit. Only then does it replace the running
+  game, so a refused load leaves it untouched. On the web only a slot's index is loaded at boot;
+  its body is read when a load asks for it, and the game runs no tick until it arrives (at most
+  6 s, else `save-load-timeout`; a body the browser's store no longer has is `save-slot-missing`
+  at once). The replay after it is the same as when the body was already there.
 - **Replay.** A load then the same input replays bit for bit, on every destination. It equals the
   run that never stopped when every state the probes read is in a section. The runtime compares
   the checksum it recomputes after a load with the saved one: a difference is the issue
@@ -67,10 +73,11 @@ game.on_update(|sim, ctx| {
   a migration gap, a ring or slot cap out of range, too many sections), `save-section-reserved` (a
   `genex.` name), `duplicate-save-section` and `duplicate-saves`.
 - **State.** While `game.saves` is registered, `state().volatile.saves` shows `store` (`files` or
-  `indexeddb`), `files`, `bytes`, `quota`, `persistent`, `pending`, `inFlight`, `lazy`, `error`,
-  `slots`, `lastSave {slot, tick, bytes}`, `lastLoad {slot, tick, checksumMatch}` and `issues`. It
-  is the same on every destination and never in the checksum. In a Genex run a slot records no
-  date.
+  `indexeddb`), `files`, `bytes`, `quota`, `persistent` (on the web, whether the browser granted
+  persistent storage to the page; files on disk always persist), `pending`, `inFlight`, `lazy`,
+  `error`, `slots`, `lastSave {slot, tick, bytes}`, `lastLoad {slot, tick, checksumMatch}` and
+  `issues`. It is the same on every destination and never in the checksum. In a Genex run a slot
+  records no date.
 - **Studio.** In a Studio run the host can list, read, write (seed a fixture envelope), save, load
   and delete slots through the dev `saves` verb; a load answers once it applied, with
   `checksumMatch`.

@@ -19,8 +19,7 @@ Live. Files and images opened from chat get closable tabs.
 
 **Live** plays the browser game in a native view; unwatched previews pause. The strip
 holds Live/Builds/Assets, Play/Stop, Reload, the sound switch (⌥⌘M; only a shown Live is heard),
-Full screen (hold Esc) and plugin actions (Publish). Stop halts it until Play
-or Reload. An empty scaffold shows “Ready for your first idea”, or
+Full screen (hold Esc) and plugin actions (Publish). An empty scaffold shows “Ready for your first idea”, or
 “Building your game” with Watch progress, then Play latest; the first healthy build shows itself.
 Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
 hidden). A newer healthy build, a changed game folder (checkpoint, landing, rewind), a chat's show
@@ -32,14 +31,14 @@ preview reaches only public library CDNs; Open Game names other hosts. Other fol
 **Compiled games** (C++ · raylib; Rust · wgpu on Apple-silicon Macs or Linux x64) build per
 destination, sandboxed; **Web | Native** shows the Mac build in Live. Rust needs WebGPU. Only your
 **On a device** press installs a phone build ([feature map](../agent/feature-map.md)).
+Rust `[net]` multiplayer is a Live loopback room; test it on the Genex draft in two windows.
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
 hangs below. Tries a pause cut off show Paused until added. An eye opens the reviewers'
 notes. A new build is “Checking it starts…” until it has run. A working node shows its agent's
 screen; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
-Earlier builds open from chat cards. A Loop in place draws the lead's save points on one row
-(no eye). A Loop's lead, workers and jobs make a tree ending in the finish check (Checking, Not
+Earlier builds open from chat cards. A Loop's lead, workers and jobs make a tree ending in the finish check (Checking, Not
 yet, Done or Stopped; [feature map](../agent/feature-map.md)); a chat message's workers get a graph.
 
 Agents test in hidden windows, never Live; chat frames never certify a build. A finished

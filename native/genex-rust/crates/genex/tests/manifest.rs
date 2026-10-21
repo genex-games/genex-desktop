@@ -39,6 +39,24 @@ fn a_full_manifest_parses() {
     assert!(parsed.needs_native_features());
 }
 
+/// G6 MP-5b: a networked game's genex.toml parses, so the runtime's own read (WGSL extensions)
+/// never refuses it; the host owns the value checks (`invalid-net`).
+#[test]
+fn a_net_table_and_its_matchmaking_parse() {
+    let text = "[game]\ntitle = \"Tag\"\n\n[net]\nenabled = true\n\n[net.matchmaking]\npreset = \"arena\"\n\
+                win_condition = \"firstToScore\"\n\n[net.matchmaking.config]\nmaxPlayers = 8\nfill = 0.5\n";
+    let parsed = manifest::parse(text).expect("a [net] table parses");
+    let net = parsed.net.expect("the [net] table");
+    assert!(net.enabled);
+    let matchmaking = net.matchmaking.expect("the matchmaking table");
+    assert_eq!(matchmaking.preset, "arena");
+    assert_eq!(matchmaking.win_condition.as_deref(), Some("firstToScore"));
+    assert_eq!(matchmaking.config.get("maxPlayers"), Some(&8.0));
+    assert!(manifest::parse("[game]\ntitle = \"Tag\"\n").expect("no [net]").net.is_none());
+    let unknown = manifest::parse("[game]\ntitle = \"Tag\"\n\n[net]\nenabled = true\nrelay = \"x\"\n");
+    assert_eq!(unknown.map_err(|error| error.code()), Err(ManifestErrorCode::Syntax));
+}
+
 #[test]
 fn a_minimal_manifest_takes_the_defaults() {
     let parsed = manifest::parse("[game]\ntitle = \"Tiny\"\n").expect("valid");

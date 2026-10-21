@@ -13,6 +13,8 @@ elsewhere; mouse buttons and touches stay the game's. On a phone keep tap target
 of the screen edges. The HUD's fonts are text fonts only (letters, digits, punctuation): an emoji
 or icon glyph draws as a box, so draw icons with shapes (`ui.painter()`), and open the settings
 panel with `genex::render::settings_button(ui, "Settings")`, a drawn gear beside its label.
+The whole settings menu (graphics, audio, controls, language and accessibility, the game's own
+options) is `genex::settings::menu(ui)` (`docs/api/settings.md`).
 
 ## Text, locales and the kit (`game.ui`)
 
@@ -30,9 +32,11 @@ Inside `on_update` and `on_ui`, `genex::ui::tr("resume")` answers the text of a 
 the locale lacks draws as itself and records `text-missing`; a broken file records `text-invalid`,
 an oversized one `text-too-large`, a font that is not an asset `text-font-missing`. Outside those
 hooks, or without `game.ui`, `tr` answers the key. `genex::ui::locale()`,
-`genex::ui::reduced_motion()` and `genex::ui::safe_area(ui)` (the phone's insets as an egui margin)
-read the same layers. The locale is the person's saved choice, then the OS locale, then the first
-listed. A Genex run ignores the person's choice and the OS locale and has no safe area, so a check
+`genex::ui::reduced_motion()` and `genex::ui::safe_area(ui)` (what of the drawn world a phone's
+notch, island or home indicator covers, as an egui margin; zero while the world is presented
+inside the safe area) read the same layers. The locale is the person's saved choice, then the OS
+locale, which the desktop window and the phone shells read from the OS once at start, then the
+first listed. A Genex run ignores the person's choice and the OS locale and has no safe area, so a check
 sees the defaults unless the session sets them. In a Studio run the `uiSettings` verb sets that
 session layer (locale, scale, safe area, text size) from the next tick; `xx-pseudo` shows pseudo
 text when `.pseudo_locale(true)` offers it. `textSize` is recorded and answered back; gameplay UI

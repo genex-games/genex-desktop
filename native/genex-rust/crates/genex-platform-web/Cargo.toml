@@ -22,6 +22,10 @@ workspace = true
 [features]
 default = ["physics"]
 physics = ["genex/physics"]
+# Multiplayer (G6 MP-5b): the host writes a `[net]` game's web line with one of these, as it writes
+# the native facade's: the in-process room for Live, the relay (the page's JS bridge) for an export.
+net = ["genex/net"]
+net-loopback = ["genex/net-loopback"]
 
 [dependencies]
 genex = { workspace = true }

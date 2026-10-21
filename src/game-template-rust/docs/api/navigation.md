@@ -34,6 +34,12 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   one process is free (a memo of at most 32 MiB). `mesh.to_bytes()` writes `.navmesh` bytes.
   `NavMesh::from_bytes_for(&input, &config, bytes)` uses them when they were baked from this
   input and config; otherwise it bakes again and `mesh.source()` is `NavMeshSource::Rebaked`.
+  `game.nav_bake("market", |gfx| input)` registers an offline bake (a name of lowercase letters,
+  digits, `-` and `_`, at most 64; install refuses another name or a repeated one with
+  `invalid-name`). After a dev build Studio runs it once with `game.navigation`'s config, reading
+  assets as a reset does, and keeps the `.navmesh` bytes in the build's stage, never in the game
+  folder. Load them with `NavMesh::from_bytes_for`, which bakes again when the input or config
+  changed since, so a stale bake is slower, never wrong.
 - **Tiles.** Tiles sit on a grid anchored at world (0, 0), keyed by `CellId`
   (`config.tile_of(point)`). `nav.add_tile(&tile)` adds one, `nav.remove_tile(cell)` removes one,
   and `nav.tiles()` and `nav.digest()` read them.

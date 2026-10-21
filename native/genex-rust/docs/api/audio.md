@@ -45,7 +45,7 @@ From `on_update` and the UI hooks:
 
 Commands apply after the hooks and the physics step, in call order, with the game's own camera as
 the ears (never an observer or debug camera). `PlayOpts::ui()` plays menu sounds on the UI bus.
-The buses are `music`, `sfx`, `ui`, `voice` and `ambience`; the settings menu's Audio tab sets the
+The buses are `music`, `sfx`, `ui`, `voice` and `ambience`; the settings menu's Audio tab (`docs/api/settings.md`) sets the
 person's volume for each, outside the simulation.
 
 ## Setup

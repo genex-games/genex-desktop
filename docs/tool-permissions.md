@@ -759,7 +759,13 @@ game file or `genex.toml` key reaches it, so an agent can only suggest it in cha
   twice at the same paths and laid out only when both builds are byte-equal. A Windows export
   may import `WS2_32.dll` and `CRYPT32.dll` only when it is a `[net]` game's
   (`RUST_WINDOWS_NET_DLLS`); an Android manifest asks for
-  `android.permission.INTERNET` only then, and the package check holds it to exactly that.
+  `android.permission.INTERNET` only then, and the package check holds it to exactly that. Only an
+  export links the relay: Live, judging, captures and the iPhone Simulator build a device launch
+  installs link the in-process room (`net-loopback`), so no game Studio starts reaches the
+  network. An Android export is the person's to ship and links the relay, so a device launch of a
+  networked Android package does reach the network. The slug an export bakes in is read from the
+  Genex plugin's publish workspace by realpath inside it, for a plain project name only, and baked
+  only when it is one plain segment.
 - **Conformance gate.** Live's run, an agent's run and every export of an ejected game wait for
   a green `conformance_run` on the build they would use (`conformance-required`); the suite's own
   runs (`check_conformance`) are the only ones the gate lets through. Only the host writes a

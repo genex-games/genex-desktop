@@ -66,6 +66,7 @@ import {
   type RustFacadePackage,
   RustFlavour,
   type RustManifestCode,
+  type RustNetFeature,
   type RustPins,
 } from "./rust-manifest.ts";
 
@@ -137,6 +138,8 @@ export interface StageInput {
   pins: RustPins;
   /** The facade the build links: the dev flavour serves the studio over fd 3 (default: an export's). */
   flavour?: RustFlavour;
+  /** What a game with `[net] enabled = true` links in this build (G6 MP-5b); absent: nothing. */
+  net?: RustNetFeature;
   /** The store's vendored crate set: an ejected game's forked crates take their `Cargo.toml` from it. */
   engineVendor?: string | null;
   /**
@@ -175,7 +178,12 @@ interface EngineInput {
   ejectedFrom: string | null;
 }
 /** The store's pins with the facade flavour and package the build links, and an ejected game's fork. */
-type StagePins = RustPins & { flavour: RustFlavour; facade: RustFacadePackage; fork?: EngineFork | null };
+type StagePins = RustPins & {
+  flavour: RustFlavour;
+  facade: RustFacadePackage;
+  fork?: EngineFork | null;
+  net?: RustNetFeature | null;
+};
 /** A forked crate's files the host writes (or leaves out) instead of the game's copy. */
 const ENGINE_HOST_FILES: readonly string[] = ["Cargo.toml", "Cargo.toml.orig"];
 /** The most of a vendored crate's `Cargo.toml` the host reads. */
@@ -198,7 +206,7 @@ export async function stageRustGame(input: StageInput): Promise<StageResult> {
     const flavour = input.flavour ?? RustFlavour.Export;
     const walk: Walk = { source, part, files: [], hooks: input.hooks ?? {} };
     const facade = facadePackageFor(input.target);
-    const pins = { ...input.pins, flavour, facade };
+    const pins = { ...input.pins, flavour, facade, net: input.net ?? null };
     const engine = { vendor: input.engineVendor ?? null, ejectedFrom: input.ejectedFrom ?? null };
     const filled = await fillStage(walk, parsed.manifest, pins, engine);
     if (!filled.ok) return await clearStage(input.stage, filled);
@@ -309,7 +317,7 @@ async function writeCargoFiles(
   files: string[],
 ): Promise<StageResult> {
   const fork = pins.fork ?? null;
-  const cargoToml = cargoManifest(manifest, pins.genexVersion, pins.flavour, pins.facade, fork);
+  const cargoToml = cargoManifest(manifest, pins.genexVersion, pins.flavour, pins.facade, fork, pins.net ?? null);
   await writeFile(path.join(part, CARGO_TOML), cargoToml, { flag: "wx" });
   files.push(CARGO_TOML);
   let cargoLock: string | null = null;

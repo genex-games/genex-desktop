@@ -15,10 +15,7 @@
         "blue": 1
       },
       "tagOwner": null,
-      "tag": [
-        1.7138338088989258,
-        -7.237796783447266
-      ],
+      "tag": [1.7138338088989258, -7.237796783447266],
       "claimsAccepted": 0,
       "notice": null
     }
@@ -42,10 +39,7 @@
         "blue": 1
       },
       "tagOwner": "me",
-      "tag": [
-        1.7138338088989258,
-        -7.237796783447266
-      ],
+      "tag": [1.7138338088989258, -7.237796783447266],
       "claimsAccepted": 1,
       "notice": null
     }
@@ -70,10 +64,7 @@
           "blue": 0
         },
         "tagOwner": "remote-1",
-        "tag": [
-          3.0,
-          -2.0
-        ],
+        "tag": [3.0, -2.0],
         "claimsAccepted": 1,
         "notice": null
       },
@@ -93,10 +84,7 @@
           "blue": 0
         },
         "tagOwner": "me",
-        "tag": [
-          3.0,
-          -2.0
-        ],
+        "tag": [3.0, -2.0],
         "claimsAccepted": 2,
         "notice": null
       }
@@ -122,10 +110,7 @@
           "blue": 0
         },
         "tagOwner": "me",
-        "tag": [
-          0.0,
-          0.0
-        ],
+        "tag": [0.0, 0.0],
         "claimsAccepted": 1,
         "notice": null
       },
@@ -146,10 +131,7 @@
           "blue": 0
         },
         "tagOwner": "me",
-        "tag": [
-          0.0,
-          0.0
-        ],
+        "tag": [0.0, 0.0],
         "claimsAccepted": 1,
         "notice": null
       },
@@ -170,10 +152,7 @@
           "blue": 0
         },
         "tagOwner": "me",
-        "tag": [
-          0.0,
-          0.0
-        ],
+        "tag": [0.0, 0.0],
         "claimsAccepted": 1,
         "notice": null
       }
@@ -182,12 +161,7 @@
   "match_quorum": {
     "checksum": "db28b5981d2bc3bc",
     "answer": {
-      "phases": [
-        "waiting",
-        "playing",
-        "waiting",
-        "playing"
-      ],
+      "phases": ["waiting", "playing", "waiting", "playing"],
       "end": {
         "mode": "online",
         "status": "joined",
@@ -206,10 +180,7 @@
           "blue": 0
         },
         "tagOwner": "me",
-        "tag": [
-          0.0,
-          0.0
-        ],
+        "tag": [0.0, 0.0],
         "claimsAccepted": 1,
         "notice": null
       }
