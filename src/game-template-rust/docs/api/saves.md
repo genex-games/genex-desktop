@@ -46,18 +46,19 @@ game.on_update(|sim, ctx| {
   `[a-z0-9-]` with no leading dash; `autosave-*` is the ring's. A label is at most 64 characters.
 - **Loading.** `slots.load(slot)` restores before the next tick. The runtime builds a fresh `Sim`,
   runs the reset hooks with the slot's seed, restores `genex.nav`, `genex.stream` and then the
-  game's sections in registration order, and sets the tick and `ctx.rng`. A streamed world's cells
-  and their colliders are rebuilt by the next tick's commit. Only then does it replace the running
-  game, so a refused load leaves it untouched. On the web only a slot's index is loaded at boot;
+  game's sections in registration order, and sets the tick and `ctx.rng`. Only then does it
+  replace the running game, so a refused load leaves it untouched. A streamed world's slot cells
+  and their colliders are rebuilt through the commit hooks before the next tick's commit, which
+  moves them to the anchors; that tick's `sim.stream.entered()` lists every cell the game rebuilds
+  its own content from. On the web only a slot's index is loaded at boot;
   its body is read when a load asks for it, and the game runs no tick until it arrives (at most
   6 s, else `save-load-timeout`; a body the browser's store no longer has is `save-slot-missing`
   at once). The replay after it is the same as when the body was already there.
 - **Replay.** A load then the same input replays bit for bit, on every destination. It equals the
   run that never stopped when every state the probes read is in a section. The runtime compares
   the checksum it recomputes after a load with the saved one: a difference is the issue
-  `save-restore-diverged`, and the load still applies. In a streamed world that checksum is taken
-  before the commit rebuilds the cells, so a probe that reads streamed cells or their colliders
-  reports `save-restore-diverged` even when the replay matches.
+  `save-restore-diverged`, and the load still applies. In a streamed world it is taken once the
+  slot's cells are rebuilt, their colliders in scene queries too, so probes that read them agree.
 - **Listing.** `slots.list()` is every slot, sorted by name, and `slots.get(slot)` one of them:
   `SlotInfo { name, label, schema, tick, play_ms, bytes, autosave, state, saved_at_ms }`. `state`
   is `ready`, `needs-migration`, `newer` (a later build's) or `corrupt`. `slots.delete(slot)` removes

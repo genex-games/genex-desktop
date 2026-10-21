@@ -115,10 +115,21 @@ pub struct StreamState {
     kept: BTreeSet<CellId>,
     /// A restored active set the next commit starts from instead of the current one (STR-12).
     restored: Option<BTreeSet<CellId>>,
+    /// A slot load's rebuild the next commit reports from: what it entered and the set before it.
+    carried: Option<Carried>,
     entered: Vec<EnteredCell>,
     left: Vec<CellId>,
     /// The streamed terrain tiles (STR-23).
     terrain: Option<crate::TerrainTiles>,
+}
+
+/// The cells a slot load's rebuild entered ahead of the tick's commit ([`StreamTick::rebuild_restored`]),
+/// and the active set before it: the commit reports `entered` and `left` against that set, so the
+/// update hooks see the lists a commit straight from it would give.
+#[derive(Debug, Default)]
+struct Carried {
+    before: BTreeSet<CellId>,
+    entered: Vec<EnteredCell>,
 }
 
 impl StreamState {
@@ -269,6 +280,19 @@ impl StreamState {
         let moved = grid::diff(cells.active(), &next);
         Some((next, moved))
     }
+}
+
+/// Report a commit that follows a slot load's rebuild against the set before the load: `entered`
+/// is every cell of `next` that set lacked (the rebuild's and the commit's, ascending) and `left`
+/// every cell of it `next` lacks (descending), as a commit straight from it would list them.
+fn report_from(stream: &mut StreamState, carried: Carried, next: &BTreeSet<CellId>) {
+    let Carried { before, entered } = carried;
+    let mut all: Vec<EnteredCell> = entered.into_iter().filter(|cell| next.contains(&cell.cell)).collect();
+    all.append(&mut stream.entered);
+    all.retain(|cell| !before.contains(&cell.cell));
+    all.sort_by_key(|cell| cell.cell);
+    stream.entered = all;
+    stream.left = grid::diff(&before, next).left;
 }
 
 fn not_registered() -> StreamError {
@@ -442,6 +466,7 @@ impl StreamTick {
         }
         sim.stream.left = moved.left;
         sim.stream.restored = None;
+        let carried = sim.stream.carried.take().map(|carried| (carried, next.clone()));
         if let Some(cells) = sim.stream.cells.as_mut() {
             cells.replace(next);
         }
@@ -452,7 +477,58 @@ impl StreamTick {
             }
         }
         sim.stream.entered = entered;
+        if let Some((carried, next)) = carried {
+            report_from(&mut sim.stream, carried, &next);
+        }
         Ok(())
+    }
+
+    /// A slot load's rebuild, before the tick's commit: enter exactly the restored active set
+    /// through the commit hooks (waiting, within `budget`, for its builds), so the world a probe
+    /// reads is the one the slot was saved from and the load's checksum self-check can run. The
+    /// commit that follows moves the set to the anchors and reports `entered` and `left` against
+    /// the set before the load. `Ok(false)` with nothing to rebuild; `Err(Held)`, with nothing
+    /// changed, while a build is still building.
+    pub(crate) fn rebuild_restored<W>(
+        &mut self,
+        sim: &mut Sim<W>,
+        hooks: &[Box<dyn StreamCommit<W>>],
+        assets: &Assets,
+        budget: &mut HoldBudget,
+    ) -> Result<bool, Held> {
+        let Some(restored) = sim.stream.restored.clone() else { return Ok(false) };
+        let Some(before) = sim.stream.cells.as_ref().map(|cells| cells.active().clone()) else { return Ok(false) };
+        let moved = grid::diff(&before, &restored);
+        for cell in &moved.entered {
+            self.ensure(*cell, Priority::Sim);
+        }
+        self.wait(&moved.entered, budget)?;
+        sim.stream.entered.clear();
+        sim.stream.left.clear();
+        for cell in &moved.left {
+            for hook in hooks.iter().rev() {
+                hook.leave(sim, *cell);
+            }
+            if let Some(job) = self.builds.remove(cell) {
+                job.cancel();
+            }
+        }
+        if let Some(cells) = sim.stream.cells.as_mut() {
+            cells.replace(restored);
+        }
+        sim.stream.restored = None;
+        let entered: Vec<EnteredCell> = moved.entered.iter().map(|cell| self.take_entered(*cell, assets)).collect();
+        for cell in &entered {
+            for hook in hooks {
+                hook.enter(sim, cell);
+            }
+        }
+        // Scene queries (a probe's ray down to the ground) see the rebuilt colliders, as the step
+        // that ended the saved tick left them; Rapier refreshes them only in a step otherwise.
+        #[cfg(feature = "physics")]
+        sim.physics.detect_collisions(&(), &());
+        sim.stream.carried = Some(Carried { before, entered });
+        Ok(true)
     }
 
     /// Wait until every cell of `cells` is built, within `budget` (a `step(ms)` call's is

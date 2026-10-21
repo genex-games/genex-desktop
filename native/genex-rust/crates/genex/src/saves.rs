@@ -10,10 +10,12 @@
 //!   and the game's sections restore in registration order, and the tick and rng are set. Only
 //!   then is the new `Sim` swapped in, so a refusal at any step leaves the running game untouched.
 //!   The checksum is recomputed and compared with the saved one (`lastLoad.checksumMatch`); a
-//!   difference is the volatile issue `save-restore-diverged`, and the load still applies.
+//!   difference is the volatile issue `save-restore-diverged`, and the load still applies. A
+//!   streamed world's comparison waits for its slot cells to be rebuilt (`cells_rebuilt`).
 //! - `genex.stream` (when `game.streaming` is registered) holds `sim.stream.snapshot()`: the
-//!   anchors, kept cells and active cells. A load restores it after `genex.nav`, so the next tick's
-//!   commit rebuilds the streamed cells through the commit hooks (STR-12, owner call S5).
+//!   anchors, kept cells and active cells. A load restores it after `genex.nav`; before the next
+//!   tick's commit the runtime rebuilds the slot's active cells through the commit hooks
+//!   (`StreamTick::rebuild_restored`) and the commit moves them to the anchors (STR-12, owner call S5).
 //! - Without `game.saves`, `state()` and every checksum are what they were: the slot calls refuse
 //!   `save-not-configured` and nothing is read or written.
 
@@ -314,11 +316,14 @@ pub(crate) struct State {
     saves: Option<Saves>,
     /// Milliseconds on the hold clock (a load waiting for its body).
     clock: Box<dyn FnMut() -> u64>,
+    /// A streamed world's load swapped in, its self-check waiting for the restored cells to be
+    /// rebuilt ([`cells_rebuilt`]).
+    awaiting_cells: bool,
 }
 
 impl Default for State {
     fn default() -> State {
-        State { driver: None, root: None, saves: None, clock: hold_clock() }
+        State { driver: None, root: None, saves: None, clock: hold_clock(), awaiting_cells: false }
     }
 }
 
@@ -578,9 +583,32 @@ pub(crate) fn swap_in<W>(game: &Game<W>, state: &mut State, running: Running<'_,
         Step::Restore(restore) => {
             let result = restore_into(game, restore.envelope, running);
             let restored = result.is_ok();
-            driver.restored(result);
+            // A streamed world's checksum is compared once its cells are rebuilt: the probes may
+            // read streamed colliders or the active set, which the slot does not hold.
+            if restored && !game.streaming.is_empty() {
+                state.awaiting_cells = true;
+            } else {
+                driver.restored(result);
+            }
             if restored { Swap::Restored } else { Swap::Run }
         }
+    }
+}
+
+/// Whether a streamed world's load waits for its cells to be rebuilt before its self-check.
+pub(crate) fn awaiting_cells(state: &State) -> bool {
+    state.awaiting_cells
+}
+
+/// A streamed world's load has its cells rebuilt (the slot's active set entered through the
+/// commit hooks): recompute the checksum and compare it with the saved one (`lastLoad`, and
+/// `save-restore-diverged` when they differ). Nothing without such a load.
+pub(crate) fn cells_rebuilt<W>(game: &Game<W>, state: &mut State, sim: &Sim<W>, seed: u32, tick: u64) {
+    if !std::mem::take(&mut state.awaiting_cells) {
+        return;
+    }
+    if let Some(driver) = state.driver.as_mut() {
+        driver.restored(Ok(checksum_of(game, sim, seed, tick)));
     }
 }
 
@@ -838,7 +866,14 @@ fn load_now<W>(game: &Game<W>, state: &mut State, running: Running<'_, W>, slot:
         let error = refused.and_then(|event| event.result.clone().err());
         return Err(error.unwrap_or_else(|| SaveError::new(SaveErrorCode::LoadTimeout, format!("{slot}'s body did not arrive"))));
     }
-    let checksum = genex_core::digest::hex64(checksum_of(game, sim, *seed, *tick));
-    let checksum_match = driver.last_load().is_some_and(|last| last.checksum_match);
-    Ok(HostAnswer { value: json!({ "tick": *tick, "checksum": checksum, "checksumMatch": checksum_match }), restored: true })
+    Ok(HostAnswer { value: load_answer(game, state, sim, *seed, *tick), restored: true })
+}
+
+/// A host load's answer, `{tick, checksum, checksumMatch}`: `checksumMatch` is null while a
+/// streamed world's cells are still building (its self-check then runs at the next tick).
+pub(crate) fn load_answer<W>(game: &Game<W>, state: &State, sim: &Sim<W>, seed: u32, tick: u64) -> Value {
+    let checksum = genex_core::digest::hex64(checksum_of(game, sim, seed, tick));
+    let last = state.driver.as_ref().and_then(SlotDriver::last_load);
+    let checksum_match = if state.awaiting_cells { Value::Null } else { Value::Bool(last.is_some_and(|last| last.checksum_match)) };
+    json!({ "tick": tick, "checksum": checksum, "checksumMatch": checksum_match })
 }

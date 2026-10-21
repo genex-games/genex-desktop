@@ -624,8 +624,14 @@ impl<W> Runtime<W> {
         let core = &mut self.core;
         let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
         let answer = crate::saves::host_call(&self.game, &mut core.g6.saves, running, call)?;
-        if answer.restored {
-            restored(&self.game, core);
+        if !answer.restored {
+            return Ok(answer.value);
+        }
+        restored(&self.game, core);
+        // A streamed world answers once its cells are rebuilt and checked (null while they build).
+        if crate::saves::awaiting_cells(&core.g6.saves) {
+            rebuild_loaded_cells(&self.game, core, &mut crate::stream_tick::HoldBudget::step());
+            return Ok(crate::saves::load_answer(&self.game, &core.g6.saves, &core.sim, core.seed, core.tick));
         }
         Ok(answer.value)
     }
@@ -1360,6 +1366,10 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         crate::saves::Swap::Restored => restored(game, core),
         crate::saves::Swap::Run => {}
     }
+    // A streamed world's load rebuilds the slot's cells before its self-check and the commit.
+    if !rebuild_loaded_cells(game, core, hold) {
+        return false;
+    }
     // Then, so a held commit leaves the tick untouched: no input consumed, no hook run.
     if core.stream.commit(&mut core.sim, &game.stream_commits, core.gfx.assets(), hold).is_err() {
         return false;
@@ -1492,6 +1502,22 @@ fn restored<W>(game: &Game<W>, core: &mut Core<W>) {
     core.stream.reset(core.seed);
     core.stream.prefetch(&core.sim);
     restart_journal(game, core, core.tick);
+}
+
+/// After a streamed world's slot load: enter the slot's active cells through the commit hooks
+/// (within `hold`), then run the load's checksum self-check. False while their builds are still
+/// building (the tick must not run); true otherwise, or without such a load.
+fn rebuild_loaded_cells<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::HoldBudget) -> bool {
+    if !crate::saves::awaiting_cells(&core.g6.saves) {
+        return true;
+    }
+    match core.stream.rebuild_restored(&mut core.sim, &game.stream_commits, core.gfx.assets(), hold) {
+        Err(crate::stream_tick::Held) => false,
+        Ok(_) => {
+            crate::saves::cells_rebuilt(game, &mut core.g6.saves, &core.sim, core.seed, core.tick);
+            true
+        }
+    }
 }
 
 /// One `state().hud.widgets` entry: `{role, label, key, rect, focused}` (key null when unkeyed).

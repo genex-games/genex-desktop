@@ -241,6 +241,11 @@ fn a_slot_holds_genex_stream_and_a_load_replays_the_uninterrupted_run() {
     println!("lastLoad {last}");
     assert_eq!(last["slot"], json!(SLOT));
     assert_eq!(last["tick"], json!(SAVE_TICK));
+    // The self-check runs once the commit has rebuilt the slot's cells, so a probe that reads
+    // streamed colliders or the active set agrees with the saved checksum (GI determinism row).
+    assert_eq!(last["checksumMatch"], json!(true), "the restored world's checksum is the saved one");
+    let issues = &rt.state()["volatile"]["saves"]["issues"];
+    assert!(!issues.as_array().is_some_and(|all| all.iter().any(|issue| issue == genex::saves::SAVE_RESTORE_DIVERGED)), "no divergence: {issues}");
 }
 
 #[test]
