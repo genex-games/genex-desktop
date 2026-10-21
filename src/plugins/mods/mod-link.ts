@@ -99,9 +99,12 @@ export async function modTarget(env: GamesEnv, game: InstalledGame): Promise<Mod
   };
 }
 
-/** The installed game with this id, as a mod sees it; null when no store lists it on this computer now. */
-export async function findTarget(env: GamesEnv, id: string): Promise<ModTarget | null> {
-  const game = (await findGames(env)).find((g) => g.id === id);
+/**
+ * The installed game with this id, as a mod sees it; null when no store lists it on this computer
+ * now. `listed` stands in for a fresh read of the stores (a status poll's recent one).
+ */
+export async function findTarget(env: GamesEnv, id: string, listed?: InstalledGame[]): Promise<ModTarget | null> {
+  const game = (listed ?? (await findGames(env))).find((g) => g.id === id);
   return game ? modTarget(env, game) : null;
 }
 

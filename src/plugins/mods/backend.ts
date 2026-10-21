@@ -11,7 +11,8 @@ import path from "node:path";
 import type { Activate, PluginActivation, PluginContext } from "../../plugin-sdk/index.d.ts";
 import { atomicWriteText, readRegularFile } from "../../substrate/fsx.ts";
 import { HOOK_IMAGE_MAX_BYTES, type HookAnswer } from "../../shared/plugin-hooks.ts";
-import { findGames, type GamesEnv, systemGamesEnv } from "./find-games.ts";
+import { findGames, type GamesEnv, type InstalledGame, systemGamesEnv } from "./find-games.ts";
+import { SECOND_MS } from "../../shared/duration.ts";
 import {
   hasInstalled,
   type InstallPlaces,
@@ -77,10 +78,29 @@ const SHOT_FILE = /\.(jpe?g|png)$/i;
 /** The plugin's storage folder of each project's installs. */
 const INSTALLS_FOLDER = "installs";
 
-/** What the backend works with; tests hand in a made-up computer and record what would open. */
+/** How long the panel's, the toolbar's and Live's polls reuse one read of the stores; tools always read afresh. */
+const STATUS_GAMES_MS = 10 * SECOND_MS;
+
+/** What the backend works with; tests hand in a made-up computer, a clock, and record what would open. */
 export interface ModsDeps {
   env: GamesEnv;
   open(launch: Launch): Promise<void>;
+  now?: () => number;
+}
+
+/** The backend's own state beside its deps: the stores' listing the status polls share. */
+interface ModsBackend extends ModsDeps {
+  recentGames(): Promise<InstalledGame[]>;
+}
+
+/** A listing of the installed games that the status polls reuse for {@link STATUS_GAMES_MS}. */
+function recentGamesOf(deps: ModsDeps): () => Promise<InstalledGame[]> {
+  const now = deps.now ?? Date.now;
+  let read: { at: number; games: Promise<InstalledGame[]> } | null = null;
+  return () => {
+    if (!read || now() - read.at >= STATUS_GAMES_MS) read = { at: now(), games: findGames(deps.env) };
+    return read.games;
+  };
 }
 
 type Handler = (args: Record<string, unknown>, context: PluginContext) => Promise<unknown>;
@@ -223,13 +243,13 @@ type ModStatus =
   | { linked: true; gone: true; name: string }
   | { linked: true; gone: false; game: PanelGame; files: number; savesAt: string | null; canPlay: boolean };
 
-/** Where this project's mod stands. */
-async function status(deps: ModsDeps, context: PluginContext): Promise<ModStatus> {
+/** Where this project's mod stands; with `picture`, the game's own picture too (the panel's, never a poll's). */
+async function status(deps: ModsBackend, context: PluginContext, picture = false): Promise<ModStatus> {
   if (!context.project) return { linked: false };
   const storage = await storageOf(context);
   const link = await readLink(storage, context.project);
   if (!link) return { linked: false };
-  const target = await findTarget(deps.env, link.id);
+  const target = await findTarget(deps.env, link.id, await deps.recentGames());
   if (!target) return { linked: true, gone: true, name: link.name };
   const kept = path.join(storage, INSTALLS_FOLDER, projectKey(context.project));
   const game: PanelGame = {
@@ -238,7 +258,7 @@ async function status(deps: ModsDeps, context: PluginContext): Promise<ModStatus
     builtWith: PERSON.BuiltWith(target.builtWith),
     folder: target.folder,
     mods: target.mods,
-    picture: await steamPicture(deps.env, target),
+    picture: picture ? await steamPicture(deps.env, target) : null,
   };
   const files = (await readRecord(kept, target.id)).files.length;
   const savesAt = await keptSavesAt(kept, target.id);
@@ -250,7 +270,7 @@ const standing = (game: PanelGame, files: number) =>
   files ? PERSON.InGame(game.name, files) : PERSON.NotInGame(game.name);
 
 /** Live's card: where the mod stands in one line, and Play. */
-async function stageStatus(deps: ModsDeps, context: PluginContext) {
+async function stageStatus(deps: ModsBackend, context: PluginContext) {
   const s = await status(deps, context);
   if (!s.linked) return { line: PERSON.Lost };
   if (s.gone) return { line: PERSON.Gone(s.name) };
@@ -259,7 +279,7 @@ async function stageStatus(deps: ModsDeps, context: PluginContext) {
 }
 
 /** The toolbar button: the mod's standing in its tooltip, a green dot while the mod is in the game. */
-async function toolbarStatus(deps: ModsDeps, context: PluginContext) {
+async function toolbarStatus(deps: ModsBackend, context: PluginContext) {
   const s = await status(deps, context);
   if (!s.linked || s.gone) return {};
   return { title: standing(s.game, s.files), ...(s.files ? { tone: "ok", dot: true } : {}) };
@@ -281,7 +301,8 @@ async function putBackSaves(deps: ModsDeps, context: PluginContext) {
 }
 
 /** The backend over the computer it is given; tests hand in a made-up one. */
-export function createModsBackend(deps: ModsDeps): PluginActivation {
+export function createModsBackend(given: ModsDeps): PluginActivation {
+  const deps: ModsBackend = { ...given, recentGames: recentGamesOf(given) };
   const tools: Record<ModsTool, Handler> = {
     [ModsTool.FindGames]: (args) => findGamesTool(deps, args),
     [ModsTool.UseGame]: (args, context) => useGame(deps, args, context),
@@ -291,7 +312,7 @@ export function createModsBackend(deps: ModsDeps): PluginActivation {
     [ModsTool.GameShots]: (_args, context) => gameShots(context),
   };
   const actions: Record<ModsAction, Handler> = {
-    [ModsAction.Status]: (_args, context) => status(deps, context),
+    [ModsAction.Status]: (_args, context) => status(deps, context, true),
     [ModsAction.StageStatus]: (_args, context) => stageStatus(deps, context),
     [ModsAction.ToolbarStatus]: (_args, context) => toolbarStatus(deps, context),
     [ModsAction.Play]: (_args, context) => play(deps, context),

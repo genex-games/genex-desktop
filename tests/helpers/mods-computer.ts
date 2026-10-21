@@ -90,7 +90,11 @@ export async function fakeComputer(
 }
 
 /** The Game mods backend on a made-up computer, in an open game (`valley`) whose folder is real. */
-export async function modsBackend(computer: Awaited<ReturnType<typeof fakeComputer>>, game = "valley") {
+export async function modsBackend(
+  computer: Awaited<ReturnType<typeof fakeComputer>>,
+  game = "valley",
+  now?: () => number,
+) {
   const storage = path.join(computer.root, "storage");
   const gameDir = path.join(computer.root, "games", game);
   await mkdir(storage, { recursive: true });
@@ -101,6 +105,7 @@ export async function modsBackend(computer: Awaited<ReturnType<typeof fakeComput
     open: async (launch) => {
       launches.push(launch);
     },
+    ...(now ? { now } : {}),
   });
   const host = (async (method: string) => {
     if (method === "storage.root") return storage;

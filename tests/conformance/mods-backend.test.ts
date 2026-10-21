@@ -6,7 +6,7 @@
  * pictures the agent kept. Every destination comes from the linked game, never from the project.
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { ModsAction, ModsTool, SHOTS_FOLDER } from "../../src/plugins/mods/backend.ts";
@@ -119,6 +119,29 @@ describe("the mod in the game", () => {
     assert.equal(status.files, 2);
     assert.equal(typeof status.savesAt, "string");
     assert.equal(status.canPlay, true);
+  });
+});
+
+describe("the status polls", () => {
+  it("share one read of the stores for ten seconds, while a tool always reads afresh", async () => {
+    const computer = await fakeComputer({ steam: [FACTORIO] });
+    let clock = 0;
+    const { tool, act } = await modsBackend(computer, "valley", () => clock);
+    await tool(ModsTool.UseGame, { game: "steam:427520" });
+    assert.match(JSON.stringify(await act(ModsAction.StageStatus)), /Mod for Factorio/);
+    await rm(computer.steamGame("Factorio"), { recursive: true });
+    assert.match(
+      JSON.stringify(await act(ModsAction.StageStatus)),
+      /Mod for Factorio/,
+      "within ten seconds the poll keeps its read",
+    );
+    clock += 10_000;
+    assert.match(JSON.stringify(await act(ModsAction.StageStatus)), /isn't installed on this computer now/);
+    assert.match(
+      String(await tool(ModsTool.Play).catch((e) => e.message)),
+      /not installed on this computer anymore/,
+      "a tool reads afresh",
+    );
   });
 });
 
