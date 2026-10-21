@@ -34,20 +34,24 @@ game.on_update(|sim, ctx| {
 - **Sections.** `game.save_world()` is the section `world`. `game.save_section(name, save, load)`
   adds any other: `save` reads the `Sim` and returns JSON, `load` writes it back onto the restored
   `Sim`. Physics bodies, facet state and anything outside `sim.world` need their own section. With
-  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot). A slot holds at most 62
-  game sections; names are at most 48 characters.
+  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot), and with `game.streaming`
+  it adds `genex.stream` (`sim.stream.snapshot()`: anchors, kept cells and active cells). A slot
+  holds at most 62 game sections; names are at most 48 characters.
 - **Saving.** `slots.save(slot, label)` queues a save written at the end of the tick, after
   physics. A save only reads, so it never changes the checksum. A slot name is 1 to 32 of
   `[a-z0-9-]` with no leading dash; `autosave-*` is the ring's. A label is at most 64 characters.
 - **Loading.** `slots.load(slot)` restores before the next tick. The runtime builds a fresh `Sim`,
-  runs the reset hooks with the slot's seed, restores `genex.nav` and then the game's sections in
-  registration order, and sets the tick and `ctx.rng`. Only then does it replace the running game,
+  runs the reset hooks with the slot's seed, restores `genex.nav`, `genex.stream` and then the
+  game's sections in registration order, and sets the tick and `ctx.rng`. A streamed world's cells
+  and their colliders are rebuilt by the next tick's commit. Only then does it replace the running game,
   so a refused load leaves it untouched. On the web a slot's body may still be loading: the game
   then runs no tick until it arrives (at most 6 s, else `save-load-timeout`).
 - **Replay.** A load then the same input replays bit for bit, on every destination. It equals the
   run that never stopped when every state the probes read is in a section. The runtime compares
   the checksum it recomputes after a load with the saved one: a difference is the issue
-  `save-restore-diverged`, and the load still applies.
+  `save-restore-diverged`, and the load still applies. In a streamed world that checksum is taken
+  before the commit rebuilds the cells, so a probe that reads streamed cells or their colliders
+  reports `save-restore-diverged` even when the replay matches.
 - **Listing.** `slots.list()` is every slot, sorted by name, and `slots.get(slot)` one of them:
   `SlotInfo { name, label, schema, tick, play_ms, bytes, autosave, state, saved_at_ms }`. `state`
   is `ready`, `needs-migration`, `newer` (a later build's) or `corrupt`. `slots.delete(slot)` removes

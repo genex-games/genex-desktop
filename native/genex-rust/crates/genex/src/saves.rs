@@ -11,8 +11,9 @@
 //!   then is the new `Sim` swapped in, so a refusal at any step leaves the running game untouched.
 //!   The checksum is recomputed and compared with the saved one (`lastLoad.checksumMatch`); a
 //!   difference is the volatile issue `save-restore-diverged`, and the load still applies.
-//! - `genex.stream` joins the built-in sections behind `game.streaming` when STR-12's stream
-//!   snapshot lands (UIS-13); until then a streamed world restores what its reset hooks anchor.
+//! - `genex.stream` (when `game.streaming` is registered) holds `sim.stream.snapshot()`: the
+//!   anchors, kept cells and active cells. A load restores it after `genex.nav`, so the next tick's
+//!   commit rebuilds the streamed cells through the commit hooks (STR-12, owner call S5).
 //! - Without `game.saves`, `state()` and every checksum are what they were: the slot calls refuse
 //!   `save-not-configured` and nothing is read or written.
 
@@ -46,6 +47,9 @@ pub use genex_save::slot::{AUTOSAVE_RING_MAX, SLOT_NAME_MAX, SlotName};
 /// The built-in section holding `sim.nav` (NAV-12's snapshot), written while `game.navigation` is
 /// registered.
 pub const NAV_SECTION: &str = "genex.nav";
+/// The built-in section holding `sim.stream` (STR-12's snapshot), written while `game.streaming`
+/// is registered.
+pub const STREAM_SECTION: &str = "genex.stream";
 /// The section `game.save_world` registers.
 pub const WORLD_SECTION: &str = "world";
 /// The save calls the reference's saves page teaches, as the facade vocabulary's `saves` block
@@ -70,8 +74,8 @@ pub const SAVE_CALLS: [&str; 16] = [
 ];
 /// The locale a slot records until gameplay UI (UIS-10) names the running one.
 const SAVE_LOCALE: &str = "en";
-/// Built-in sections a slot may hold beside the game's (`genex.nav`, and `genex.stream` with
-/// UIS-13), counted against [`SECTIONS_MAX`] at install.
+/// Built-in sections a slot may hold beside the game's (`genex.nav` and `genex.stream`), counted
+/// against [`SECTIONS_MAX`] at install.
 const BUILTIN_SECTIONS_MAX: usize = 2;
 /// Simulated ticks a second (genex-core's `FIXED_STEP_MS` is 1000/60): a slot's play time.
 const TICKS_PER_SECOND: u64 = 60;
@@ -606,6 +610,10 @@ fn restore_sections<W>(game: &Game<W>, sim: &mut Sim<W>, sections: &Map<String, 
         let snapshot = CoreValue::from(section(sections, NAV_SECTION)?);
         sim.nav.restore(&snapshot).map_err(|error| SaveError::section_invalid(format!("{NAV_SECTION}: {error}")))?;
     }
+    if !game.streaming.is_empty() {
+        let snapshot = section(sections, STREAM_SECTION)?;
+        sim.stream.restore(snapshot).map_err(|error| SaveError::section_invalid(format!("{STREAM_SECTION}: {}", error.detail)))?;
+    }
     for entry in &game.save_sections.list {
         let value = section(sections, &entry.name)?;
         (entry.load)(sim, value, gfx).map_err(|detail| SaveError::section_invalid(format!("{}: {detail}", entry.name)))?;
@@ -644,6 +652,9 @@ fn snapshot<W>(game: &Game<W>, view: &SaveView<'_, W>) -> Result<Snapshot, SaveE
     let mut sections = Map::new();
     if game.navigation.is_some() {
         sections.insert(NAV_SECTION.to_owned(), Value::from(&view.sim.nav.snapshot()));
+    }
+    if !game.streaming.is_empty() {
+        sections.insert(STREAM_SECTION.to_owned(), view.sim.stream.snapshot());
     }
     for entry in &game.save_sections.list {
         let value = (entry.save)(view.sim).map_err(|detail| SaveError::section_invalid(format!("{}: {detail}", entry.name)))?;
