@@ -2143,6 +2143,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "menus-saves"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-core",
+ "genex-platform-web",
+ "image",
+ "serde",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "minicov"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

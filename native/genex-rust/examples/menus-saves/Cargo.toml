@@ -1,0 +1,52 @@
+# The menus-saves example (G6 UIS-18): a small coin-collecting game built around the gameplay UI
+# and save slots. A title menu, a pause menu, the facade settings menu with a Game tab of its own,
+# an inventory grid, save and load slot lists with an autosave ring, toasts, and its text in
+# Fluent files (English, French and the `xx-pseudo` locale that catches overflow). Everything moves
+# by pad or keys. One crate serves every destination, as the pond does: the `menus-saves` binary is
+# the native build and the library is also a `cdylib` for the web shell. The text files are its
+# only assets; the scene is procedural.
+[package]
+name = "menus-saves"
+description = "The menus-saves example game (G6 UIS-18)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `menus_saves`: on wasm32 the library and the binary would both be `menus-saves.wasm`.
+name = "menus_saves_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "menus-saves"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true }
+genex-platform-web = { workspace = true }
+serde = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/menus.rs injects a standard pad through genex-core's `input` verb parser, as the facade's
+# own UI rows do; tests/captures.rs writes the settled captures as PNG evidence on the host GPU.
+[dev-dependencies]
+genex-core = { workspace = true }
+image = { workspace = true }
+
+# src/parity.rs runs under `wasm-bindgen-test-runner` (Node) on wasm32.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
