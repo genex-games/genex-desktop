@@ -64,10 +64,16 @@ import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { BuildTarget, GameStack } from "../shared/game-project.ts";
 import { hostOf, STACK_HOST_MATRIX } from "../shared/game-targets.ts";
-import type { ToolchainLock } from "../shared/toolchain.ts";
+import { MULTIPLAYER_BRIDGE_PIN, type ToolchainLock } from "../shared/toolchain.ts";
 import type { UiEventMap } from "../shared/ui-events.ts";
 import { atomicWriteText, openNoFollow, readRegularFile } from "../substrate/fsx.ts";
-import { type AssetGroupRow, type AssetsToml, assetBudgetOf } from "../substrate/genex-toml.ts";
+import {
+  type AssetGroupRow,
+  type AssetsToml,
+  assetBudgetOf,
+  type NetToml,
+  netEnabled,
+} from "../substrate/genex-toml.ts";
 import { isInside, toPosixRelative } from "../substrate/paths.ts";
 import { literalGlob, ProcessSandbox, type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
 import type { CrateRefusal } from "../shared/crate-requests.ts";
@@ -92,10 +98,13 @@ import {
   RUST_WEB_EXPORT_PROFILE_SETTINGS,
   RUST_WEB_STEP_TIMEOUT_MS,
   WEB_FILES,
+  type WebNetBridge,
   type WebReceipt,
   type WebTools,
   writeWebAssetMap,
 } from "./rust-build-web.ts";
+import { MobileBuild, RUST_MOBILE_BUILDERS } from "./rust-build-mobile.ts";
+import { MP_BRIDGE_SHIM } from "./mp-bridge-shim.ts";
 import type { RustStageImport, StagedImportReport } from "./rust-assets.ts";
 import { colyseusBuildEnv } from "./rust-colyseus.ts";
 import {
@@ -107,7 +116,7 @@ import {
 } from "./rust-package-assets.ts";
 import { AssetLockState, readAssetLock } from "./asset-db.ts";
 import type { AssetLockEntry } from "../shared/asset-db.ts";
-import { RUST_ENGINE_FOLDER, RustFlavour } from "./rust-manifest.ts";
+import { RUST_ENGINE_FOLDER, RustFlavour, RustNetFeature } from "./rust-manifest.ts";
 import { type GameTrust, ownBuildScripts, UNTRUSTED } from "./rust-trust.ts";
 import { ExtensionRefusal } from "../shared/game-conformance.ts";
 import type { RustOutputAdmission } from "../substrate/native-cross-admission.ts";
@@ -198,6 +207,21 @@ const NATIVE_FEATURES_ENV = "GENEX_NATIVE_FEATURES";
 const RENDER_TOML_ENV = "GENEX_RENDER_TOML";
 /** The variable the facade reads at compile time for the game's `[[wgsl]]` rows (`genex::extend`). */
 const WGSL_TOML_ENV = "GENEX_WGSL_TOML";
+/** The variable genex-net's relay reads at compile time for the game's Genex slug (G6 MP-5b; unset: `net-no-slug`). */
+const GAME_SLUG_ENV = "GENEX_GAME_SLUG";
+/**
+ * A slug the lane bakes in: a letter or digit, then letters, digits, `_` and `-`, 128 at most. No
+ * path, dot, space, control or shell character ever reaches the build's environment.
+ */
+const BAKEABLE_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+/**
+ * Triples built only for a device launch from Studio (the iPhone Simulator lane): a `[net]` game's
+ * build there links the in-process room, so no game Studio starts reaches the network (owner call
+ * MP-O2). Every other export is the person's to ship and links the relay.
+ */
+const DEVICE_LAUNCH_TRIPLES: ReadonlySet<string> = new Set([RUST_MOBILE_BUILDERS[MobileBuild.IosSimulator].triple]);
+/** Where a web export of a `[net]` game looks for the bridge when the store pins no component: never created. */
+const MP_BRIDGE_ABSENT_FOLDER = "mp-bridge-not-pinned";
 /** The facade every game depends on. */
 const FACADE_CRATE = "genex";
 /** The vendored registry's name in the host's source replacement. */
@@ -281,6 +305,8 @@ export interface RustToolchain {
   web?: WebTools;
   /** The store's `colyseus` component folder (installed or not) a native build names its libcolyseus folder in; absent: none pinned here. */
   colyseus?: string;
+  /** The store's `genex-mp-bridge` component folder a `[net]` game's web export copies the bridge from; absent: none pinned here. */
+  mpBridge?: string;
 }
 
 /**
@@ -331,6 +357,8 @@ export type RustStaged =
       assetGroups?: readonly AssetGroupRow[];
       /** `[assets]`, checked: the package's budget and a phone's texture cap (C-17); null or absent: the defaults. */
       assets?: AssetsToml | null;
+      /** `[net]`, checked (G6 MP-5b); null or absent: no networking. */
+      net?: NetToml | null;
     }
   | { ok: false; code: string; detail: string };
 
@@ -351,6 +379,8 @@ export type RustStage = (
   vendor?: string,
   /** The release the person ejected the game's engine from, as the profile records it; null or absent: not ejected. */
   ejectedFrom?: string | null,
+  /** What a game with networking on links in this build ({@link rustNetFeatureOf}); a game without links nothing. */
+  net?: RustNetFeature,
 ) => Promise<RustStaged>;
 
 /**
@@ -459,6 +489,11 @@ export interface RustBuildsOptions {
   currentLock: () => Promise<ToolchainLock | null>;
   /** Stages a game and writes its manifest (M2.2). */
   stage: RustStage;
+  /**
+   * The game's Genex slug from its binding (the draft Genex holds for it), which a `[net]` game's
+   * export bakes in for the relay (G6 MP-5b); null or absent: none, and the relay stays offline.
+   */
+  gameSlug?: (project: string) => Promise<string | null>;
   emit: (progress: UiEventMap["build.progress"]) => void;
   platform: NodeJS.Platform;
   /** Caps concurrent builds and `build.jobs`. */
@@ -652,6 +687,12 @@ interface Plan extends Pending {
   assets: StagedImportReport | null;
   /** How an export keeps its debug files (CRASH-7a); null for every other build, set once the compiler is known. */
   debug: ExportDebug | null;
+  /** The game's `[net]`, as staged; null: no networking. */
+  net: NetToml | null;
+  /** What a game with networking on links in this build. */
+  netFeature: RustNetFeature;
+  /** The slug a networked export bakes in; null for every other build or when the binding gives none fit to bake. */
+  gameSlug: string | null;
 }
 
 /** An export's debug files: how they are kept, and the toolchain's `llvm-objcopy` for a kind that strips. */
@@ -881,6 +922,9 @@ export class RustBuilds implements GameBuildLane {
         ejectedFrom: await this.#ejectedFrom(pending),
         assets: null,
         debug: null,
+        net: null,
+        netFeature: rustNetFeatureOf(pending.purpose, pending.builder.triple),
+        gameSlug: null,
       };
       return await this.#steps(plan, signal, lastGood);
     } catch (error) {
@@ -905,6 +949,7 @@ export class RustBuilds implements GameBuildLane {
       plan.lock,
       plan.storeVendor,
       plan.ejectedFrom,
+      plan.netFeature,
     );
     if (!staged.ok) {
       const lines = [`${staged.code}: ${staged.detail}`];
@@ -923,6 +968,7 @@ export class RustBuilds implements GameBuildLane {
       });
     }
     adoptStaged(plan, staged);
+    plan.gameSlug = await this.#gameSlug(plan);
     const outside = staged.dependencies.filter(
       (name) => name !== FACADE_CRATE && !Object.hasOwn(RUST_CRATE_ALLOWLIST, name) && !plan.grant.names.includes(name),
     );
@@ -947,6 +993,12 @@ export class RustBuilds implements GameBuildLane {
     const build = await this.#step(plan, RustBuildStep.Build, buildCommand(plan, this.#jobs()), timeout, signal);
     if (!succeeded(build)) return this.#failed(plan, build, signal, lastGood);
     return await this.#admit(plan, build, compiler, lastGood, signal);
+  }
+
+  /** The slug a networked export bakes in: the binding's, when it is one fit to bake; null for every other build. */
+  async #gameSlug(plan: Plan): Promise<string | null> {
+    if (!relaysOnline(plan) || !this.options.gameSlug) return null;
+    return bakeableGameSlug(await this.options.gameSlug(plan.game.project).catch(() => null));
   }
 
   /**
@@ -1193,6 +1245,7 @@ export class RustBuilds implements GameBuildLane {
         ? { symbolMap: path.join(plan.bin, DEBUG_STAGE_DIR, WEB_SYMBOL_MAP_FILE) }
         : {}),
       ...(plan.wasmBudgetMb === null ? {} : { budgetMb: plan.wasmBudgetMb }),
+      ...(relaysOnline(plan) ? { net: webNetBridge(plan) } : {}),
       tools,
       run: async (line, step) => {
         const result = await plan.sandbox.run({
@@ -1447,6 +1500,32 @@ function webRefused(lines: string[], rust: RustBuildRefusal): WebPackaged {
 /** The destinations whose dev builds a studio runs over fd 3: the desktops (never the browser or a phone). */
 const STUDIO_SERVED: ReadonlySet<BuildTarget> = new Set([BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux]);
 
+/**
+ * What a game with networking on links in a build (G6 MP-5b): the relay only in an export the
+ * person ships; the in-process room in Live, judging and the Simulator build a device launch
+ * installs (owner call MP-O2), so no game process Studio starts reaches the network.
+ */
+export function rustNetFeatureOf(purpose: CppBuildPurpose, triple: string): RustNetFeature {
+  const ships = purpose === CppBuildPurpose.Export && !DEVICE_LAUNCH_TRIPLES.has(triple);
+  return ships ? RustNetFeature.Relay : RustNetFeature.Loopback;
+}
+
+/** `slug` when a build may bake it in ({@link BAKEABLE_SLUG}); null for anything else, a path or a climb included. */
+export function bakeableGameSlug(slug: string | null): string | null {
+  return slug !== null && BAKEABLE_SLUG.test(slug) ? slug : null;
+}
+
+/** Whether this build of the game reaches the relay: networking on, and an export that ships. */
+function relaysOnline(plan: Plan): boolean {
+  return plan.netFeature === RustNetFeature.Relay && netEnabled(plan);
+}
+
+/** The relay bridge a networked web export serves: the store's pinned file, or a never-created path that refuses. */
+function webNetBridge(plan: Plan): WebNetBridge {
+  const folder = plan.toolchain.mpBridge ?? path.join(plan.bin, MP_BRIDGE_ABSENT_FOLDER);
+  return { bridge: path.join(folder, ...MULTIPLAYER_BRIDGE_PIN.file.split("/")), shim: MP_BRIDGE_SHIM };
+}
+
 /** The facade a build links: the dev flavour for a desktop game's Live and judging builds, an export's otherwise. */
 export function rustFlavourOf(purpose: CppBuildPurpose, target: BuildTarget): RustFlavour {
   const servesStudio = purpose !== CppBuildPurpose.Export && STUDIO_SERVED.has(target);
@@ -1580,6 +1659,8 @@ function buildEnv(plan: Plan): Record<string, string> {
   // The game's [render] and [[wgsl]] reach every destination, which has no game folder to read them from.
   if (plan.renderToml !== null) env[RENDER_TOML_ENV] = plan.renderToml;
   if (plan.wgslToml !== null) env[WGSL_TOML_ENV] = plan.wgslToml;
+  // A networked export's relay joins the game's own Genex draft; no other build carries a slug.
+  if (plan.gameSlug !== null) env[GAME_SLUG_ENV] = plan.gameSlug;
   // The relay client's build script downloads libcolyseus when no folder is named: every native build names one (MP-1a).
   Object.assign(env, colyseusBuildEnv(plan.toolchain.colyseus ?? null, plan.bin, plan.builder.triple));
   return env;
@@ -1795,6 +1876,7 @@ function adoptStaged(plan: Plan, staged: Extract<RustStaged, { ok: true }>): voi
   plan.loading = staged.loading ?? null;
   plan.assetGroups = staged.assetGroups ?? [];
   plan.assetBudgets = staged.assets ?? null;
+  plan.net = staged.net ?? null;
 }
 
 /** What writing `<bin>.out` came to: the admitted files and the package, or the admission's refusal (nothing replaced). */

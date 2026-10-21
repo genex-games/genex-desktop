@@ -29,6 +29,7 @@ import { BuildTarget } from "../shared/game-project.ts";
 import type { GenexToml } from "../substrate/genex-toml.ts";
 import {
   isTable,
+  netEnabled,
   parseTomlDocument,
   RUST_ENGINE_FOLDER,
   type TomlTable,
@@ -74,6 +75,15 @@ export type RustFlavour = (typeof RustFlavour)[keyof typeof RustFlavour];
 
 /** The facade feature the dev flavour turns on. */
 const STUDIO_FEATURE = "studio";
+
+/**
+ * The facade feature a `[net]` game links (G6 MP-5b): the in-process room (`net-loopback`) in
+ * every build Studio starts, so no game process Studio runs reaches the network (owner call
+ * MP-O2), and the relay (`net`) in an export. A game without networking links neither. Wire values:
+ * the facade's cargo feature names.
+ */
+export const RustNetFeature = { Loopback: "net-loopback", Relay: "net" } as const;
+export type RustNetFeature = (typeof RustNetFeature)[keyof typeof RustNetFeature];
 /**
  * The crate the facade's default `physics` feature links (genex's and genex-platform-web's): a
  * game with `[physics] enabled = false` links the facade without default features, and its lock
@@ -204,7 +214,8 @@ export const RUST_FIXED_ENV: Readonly<Record<string, string>> = Object.freeze({
 /**
  * The game's `Cargo.toml`, from its checked `genex.toml` and the pinned genex release, linking the
  * facade in `flavour` (an export's, unless the build is a dev one). An ejected game's `fork` pins
- * its own release instead and patches every forked crate to `engine/<crate>`.
+ * its own release instead and patches every forked crate to `engine/<crate>`. `net` is what this
+ * build links for a game with networking on (none for any other game).
  */
 export function cargoManifest(
   manifest: GenexToml,
@@ -212,14 +223,16 @@ export function cargoManifest(
   flavour: RustFlavour = RustFlavour.Export,
   facade: RustFacadePackage = RustFacadePackage.Native,
   fork: EngineFork | null = null,
+  net: RustNetFeature | null = null,
 ): string {
   const version = fork?.version ?? genexVersion;
   pinnedGenex(version);
   const genex = { name: FACADE_NAME, version: `=${version}` };
   const dependencies = [genex, ...manifest.crates].sort((a, b) => compareText(a.name, b.name));
+  const linked = netEnabled(manifest) ? net : null;
   const line = (dependency: { name: string; version: string }) =>
     dependency === genex
-      ? facadeLine(genex.version, flavour, facade, manifest.physics ?? true)
+      ? facadeLine(genex.version, { flavour, facade, physics: manifest.physics ?? true, net: linked })
       : `${dependency.name} = ${quote(dependency.version)}`;
   return [
     "# Written by Genex from genex.toml before every build: a game folder holds no cargo manifest.",
@@ -254,19 +267,30 @@ function forkPatch(fork: EngineFork | null): string[] {
   return ["[patch.crates-io]", ...crates.map(row), ""];
 }
 
+/** How the facade is linked: its flavour and package, whether physics stays, and the network feature (null: none). */
+interface FacadeLink {
+  flavour: RustFlavour;
+  facade: RustFacadePackage;
+  physics: boolean;
+  net: RustNetFeature | null;
+}
+
 /**
  * The `genex = …` line: the facade at the pinned version, with its `studio` feature in the dev
- * flavour, or the web shell's crate under the facade's name for a web build.
+ * flavour, or the web shell's crate under the facade's name for a web build; then a networked
+ * game's feature. A line with nothing but the version stays the bare requirement.
  */
-function facadeLine(version: string, flavour: RustFlavour, facade: RustFacadePackage, physics: boolean): string {
-  const noDefaults = physics ? "" : ", default-features = false";
-  if (facade !== RustFacadePackage.Native)
-    return `${FACADE_NAME} = { package = ${quote(facade)}, version = ${quote(version)}${noDefaults} }`;
-  if (flavour === RustFlavour.Dev)
-    return `${FACADE_NAME} = { version = ${quote(version)}${noDefaults}, features = [${quote(STUDIO_FEATURE)}] }`;
-  return physics
-    ? `${FACADE_NAME} = ${quote(version)}`
-    : `${FACADE_NAME} = { version = ${quote(version)}${noDefaults} }`;
+function facadeLine(version: string, link: FacadeLink): string {
+  const studio = link.facade === RustFacadePackage.Native && link.flavour === RustFlavour.Dev;
+  const features = [...(studio ? [STUDIO_FEATURE] : []), ...(link.net === null ? [] : [link.net])];
+  const fields = [
+    ...(link.facade === RustFacadePackage.Native ? [] : [`package = ${quote(link.facade)}`]),
+    `version = ${quote(version)}`,
+    ...(link.physics ? [] : ["default-features = false"]),
+    ...(features.length === 0 ? [] : [`features = [${features.map(quote).join(", ")}]`]),
+  ];
+  if (fields.length === 1) return `${FACADE_NAME} = ${quote(version)}`;
+  return `${FACADE_NAME} = { ${fields.join(", ")} }`;
 }
 
 /**

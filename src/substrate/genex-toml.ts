@@ -77,6 +77,17 @@
  * budget_mb = 64            # defaults web 64, ios 200, android 200, desktop 2048; at most the destination's
  *                           # hard cap (web 512, the shell's; phones 4096), past which a build is refused
  *
+ * [net]                     # optional: multiplayer (G6); absent, the game is built with no networking
+ * enabled = true            # required in the table: Live links the in-process room, an export the relay
+ *
+ * [net.matchmaking]         # optional: what `matchmake()` asks Genex's relay for, carried by the draft
+ * preset = "open"           # open | duel | arena | teams | private
+ * win_condition = "firstToScore"  # optional: lastStanding | firstToScore | highScoreInTime | firstToFinish
+ *
+ * [net.matchmaking.config]  # optional: the preset's numeric knobs, in Genex's own camelCase spelling
+ * maxPlayers = 8            # at most 16 knobs, each 0..=1000000
+ * minPlayers = 2
+ *
  * [engine]                  # written by the host alone when the person ejects the engine (level 5)
  * ejected_from = "0.1.0"    # the genex release copied into `engine/`; the build links that fork
  * ```
@@ -239,6 +250,13 @@ export const GenexTomlCode = {
   AssetBudgetOutOfRange: "asset-budget-out-of-range",
   /** An `[assets] phone_max_texture_px` that is not a power of two from {@link PHONE_TEXTURE_CAP_MIN_PX} to {@link PHONE_TEXTURE_CAP_MAX_PX}. */
   InvalidTextureCap: "invalid-texture-cap",
+  /**
+   * A `[net]` table that breaks its rule (G6 MP-5b): `enabled` missing or not a boolean, an unknown
+   * key, a matchmaking preset or win condition outside {@link MatchmakingPreset} and
+   * {@link MatchWinCondition}, or a knob that is not a camelCase name with a number from 0 to
+   * {@link NET_MATCH_KNOB_MAX} (at most {@link NET_MATCH_CONFIG_MAX_KEYS}).
+   */
+  InvalidNet: "invalid-net",
 } as const;
 export type GenexTomlCode = (typeof GenexTomlCode)[keyof typeof GenexTomlCode];
 
@@ -322,6 +340,35 @@ const ASSET_DESTINATION_OF = Object.freeze({
 } as const satisfies Record<BuildTarget, AssetDestination>);
 const ASSET_DESTINATIONS: readonly AssetDestination[] = Object.values(AssetDestination);
 
+/**
+ * The matchmaking presets Genex's relay runs (`genex.matchmaking.preset` in a draft's package.json).
+ * Wire values: Genex's own spelling, never renamed.
+ */
+export const MatchmakingPreset = {
+  Open: "open",
+  Duel: "duel",
+  Arena: "arena",
+  Teams: "teams",
+  Private: "private",
+} as const;
+export type MatchmakingPreset = (typeof MatchmakingPreset)[keyof typeof MatchmakingPreset];
+
+/** How a batteries-included preset ends a round (`genex.matchmaking.winCondition`). Wire values: Genex's spelling. */
+export const MatchWinCondition = {
+  LastStanding: "lastStanding",
+  FirstToScore: "firstToScore",
+  HighScoreInTime: "highScoreInTime",
+  FirstToFinish: "firstToFinish",
+} as const;
+export type MatchWinCondition = (typeof MatchWinCondition)[keyof typeof MatchWinCondition];
+
+/** The most knobs a `[net.matchmaking.config]` table names. */
+export const NET_MATCH_CONFIG_MAX_KEYS = 16;
+/** The largest value one matchmaking knob takes (Genex clamps each to its own range). */
+export const NET_MATCH_KNOB_MAX = 1_000_000;
+/** A knob's name: Genex's camelCase spelling, a lower-case letter then letters and digits, 32 at most. */
+const NET_MATCH_KNOB_NAME = /^[a-z][A-Za-z0-9]{0,31}$/;
+
 /** The world target when `world_size` is absent. */
 const DEFAULT_WORLD_SIZE = [960, 540] as const;
 /** genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`. */
@@ -397,6 +444,23 @@ export interface AssetBudget {
   ceilingBytes: number | null;
 }
 
+/** `[net.matchmaking]`, checked: what `matchmake()` asks Genex's relay for on the draft. */
+export interface NetMatchmaking {
+  preset: MatchmakingPreset;
+  /** Null when the table names none (the preset's own, or none for `open`). */
+  winCondition: MatchWinCondition | null;
+  /** The preset's numeric knobs by Genex's name (`maxPlayers`), in file order; empty when none. */
+  config: Readonly<Record<string, number>>;
+}
+
+/** `[net]`, checked (G6 MP-5b). */
+export interface NetToml {
+  /** Whether the game is built with networking: Live links the in-process room, an export the relay. */
+  enabled: boolean;
+  /** `[net.matchmaking]`, or null when the file has none (`matchmake()` then gets Genex's `duel`). */
+  matchmaking: NetMatchmaking | null;
+}
+
 /** A parsed, checked `genex.toml`. */
 export interface GenexToml {
   title: string;
@@ -425,6 +489,8 @@ export interface GenexToml {
   assetGroups?: readonly AssetGroupRow[];
   /** `[assets]`, or null when the file has none (absent from a manifest built by hand): every default. */
   assets?: AssetsToml | null;
+  /** `[net]`, or null when the file has none (absent from a manifest built by hand): no networking. */
+  net?: NetToml | null;
 }
 
 /** A refusal with its typed code and a short detail naming the offending value (never a host path). */
@@ -467,6 +533,8 @@ export function parseGenexToml(text: string): GenexTomlResult {
   }
   const shaped = shapeManifest(document);
   if (!shaped.ok) return shaped;
+  const net = netTable(document[NET_TABLE]);
+  if (!net.ok) return net;
   const checked =
     checkGame(shaped.manifest) ??
     checkCrates(shaped.manifest) ??
@@ -480,11 +548,39 @@ export function parseGenexToml(text: string): GenexTomlResult {
   if (!textures.ok) return textures;
   const groups = checkAssetGroups(shaped.assetGroups);
   if (groups) return groups;
-  const checkedRows = { ...shaped.manifest, textures: textures.rows, assetGroups: shaped.assetGroups };
+  const checkedRows = { ...shaped.manifest, textures: textures.rows, assetGroups: shaped.assetGroups, net: net.net };
   const featured = checkFeatures(checkedRows, shaped.featureNames);
   if (!featured.ok || shaped.render === null) return featured;
   const render = checkRender(shaped.render);
   return render.ok ? { ok: true, manifest: { ...featured.manifest, render: render.render } } : render;
+}
+
+/** Whether the game is built with networking: a `[net]` table with `enabled = true`. */
+export function netEnabled(manifest: Pick<GenexToml, "net">): boolean {
+  return manifest.net?.enabled === true;
+}
+
+/** The `genex.matchmaking` block a draft's package.json carries, in Genex's spelling. */
+export interface GenexMatchmakingBlock {
+  preset: MatchmakingPreset;
+  winCondition?: MatchWinCondition;
+  config?: Readonly<Record<string, number>>;
+}
+
+/**
+ * The matchmaking block a networked game's draft carries to Genex (`genex.matchmaking` in its
+ * package.json, MP-5c): its preset, and its win condition and knobs when it names them. Null for a
+ * game without networking or without `[net.matchmaking]`.
+ */
+export function genexMatchmakingBlock(manifest: Pick<GenexToml, "net">): GenexMatchmakingBlock | null {
+  const matchmaking = manifest.net?.enabled === true ? manifest.net.matchmaking : null;
+  if (!matchmaking) return null;
+  const { preset, winCondition, config } = matchmaking;
+  return {
+    preset,
+    ...(winCondition === null ? {} : { winCondition }),
+    ...(Object.keys(config).length === 0 ? {} : { config: { ...config } }),
+  };
 }
 
 /** Whether a game may be built for `target`: a game that declares any native feature has no web build. */
@@ -585,6 +681,7 @@ const TOP_KEYS = [
   "texture",
   "asset_group",
   "assets",
+  "net",
 ] as const;
 const ENGINE_KEYS = ["ejected_from"] as const;
 /** The `[engine]` section header the host writes and removes. */
@@ -609,6 +706,17 @@ const WebKey = { WasmBudgetMb: "wasm_budget_mb" } as const;
 const WEB_KEYS: readonly string[] = Object.values(WebKey);
 const PhysicsKey = { Enabled: "enabled" } as const;
 const PHYSICS_KEYS: readonly string[] = Object.values(PhysicsKey);
+/** The `[net]` table's name, and its keys (genex's `NetSection`). */
+const NET_TABLE = "net";
+const NetKey = { Enabled: "enabled", Matchmaking: "matchmaking" } as const;
+const NET_KEYS: readonly string[] = Object.values(NetKey);
+/** `[net.matchmaking]`'s keys. */
+const MatchmakingKey = { Preset: "preset", WinCondition: "win_condition", Config: "config" } as const;
+const MATCHMAKING_KEYS: readonly string[] = Object.values(MatchmakingKey);
+const MATCHMAKING_PRESETS: readonly string[] = Object.values(MatchmakingPreset);
+const WIN_CONDITIONS: readonly string[] = Object.values(MatchWinCondition);
+const isMatchmakingPreset = (value: string): value is MatchmakingPreset => MATCHMAKING_PRESETS.includes(value);
+const isWinCondition = (value: string): value is MatchWinCondition => WIN_CONDITIONS.includes(value);
 /** A `[[texture]]` row's keys (genex's `TextureRow`). */
 const TextureKey = { Path: "path", Usage: "usage" } as const;
 const TEXTURE_KEYS: readonly string[] = Object.values(TextureKey);
@@ -995,6 +1103,64 @@ function physicsEnabled(value: TomlValue | undefined): boolean {
   if (enabled === undefined) return true;
   if (typeof enabled !== "boolean") throw new ShapeError(`physics.${PhysicsKey.Enabled} must be true or false`);
   return enabled;
+}
+
+/** What a `[net]` check answers: the checked table (null when the file has none), or the refusal. */
+type NetChecked<T> = { ok: true; value: T } | GenexTomlRefusal;
+const netRefused = (detail: string): GenexTomlRefusal => refuse(GenexTomlCode.InvalidNet, detail);
+const unknownKeyOf = (found: TomlTable, allowed: readonly string[]) =>
+  Object.keys(found).find((key) => !allowed.includes(key));
+
+/**
+ * `[net]` checked (G6 MP-5b): every fault of its shape or values is `invalid-net`, so the person
+ * reads one code for the one table. `enabled` is required in the table.
+ */
+function netTable(value: TomlValue | undefined): { ok: true; net: NetToml | null } | GenexTomlRefusal {
+  if (value === undefined) return { ok: true, net: null };
+  if (!isTable(value)) return netRefused("[net] must be a table");
+  const unknown = unknownKeyOf(value, NET_KEYS);
+  if (unknown !== undefined) return netRefused(`unknown key "${unknown}" in [net]`);
+  const enabled = value[NetKey.Enabled];
+  if (typeof enabled !== "boolean") return netRefused(`net.${NetKey.Enabled} must be true or false`);
+  const raw = value[NetKey.Matchmaking];
+  if (raw === undefined) return { ok: true, net: { enabled, matchmaking: null } };
+  const matchmaking = matchmakingOf(raw);
+  return matchmaking.ok ? { ok: true, net: { enabled, matchmaking: matchmaking.value } } : matchmaking;
+}
+
+/** `[net.matchmaking]`: a preset of the vocabulary, an optional win condition, optional knobs. */
+function matchmakingOf(value: TomlValue): NetChecked<NetMatchmaking> {
+  const where = `[${NET_TABLE}.${NetKey.Matchmaking}]`;
+  if (!isTable(value)) return netRefused(`${where} must be a table`);
+  const unknown = unknownKeyOf(value, MATCHMAKING_KEYS);
+  if (unknown !== undefined) return netRefused(`unknown key "${unknown}" in ${where}`);
+  const preset = value[MatchmakingKey.Preset];
+  if (typeof preset !== "string" || !isMatchmakingPreset(preset))
+    return netRefused(`${where} ${MatchmakingKey.Preset} ${JSON.stringify(preset ?? null)}`);
+  const win = value[MatchmakingKey.WinCondition];
+  const winKnown = win === undefined || (typeof win === "string" && isWinCondition(win));
+  if (!winKnown) return netRefused(`${where} ${MatchmakingKey.WinCondition} ${JSON.stringify(win)}`);
+  const config = knobsOf(value[MatchmakingKey.Config]);
+  if (!config.ok) return config;
+  return { ok: true, value: { preset, winCondition: win ?? null, config: config.value } };
+}
+
+/** `[net.matchmaking.config]`: at most the cap of camelCase knobs, each a number from 0 to the cap. */
+function knobsOf(value: TomlValue | undefined): NetChecked<Record<string, number>> {
+  const where = `[${NET_TABLE}.${NetKey.Matchmaking}.${MatchmakingKey.Config}]`;
+  if (value === undefined) return { ok: true, value: {} };
+  if (!isTable(value)) return netRefused(`${where} must be a table`);
+  const names = Object.keys(value);
+  if (names.length > NET_MATCH_CONFIG_MAX_KEYS) return netRefused(`${where} names ${names.length} knobs`);
+  const knobs: Record<string, number> = {};
+  for (const name of names) {
+    const raw = value[name];
+    const number = raw instanceof TomlFloat ? raw.value : raw;
+    const fits = typeof number === "number" && Number.isFinite(number) && number >= 0 && number <= NET_MATCH_KNOB_MAX;
+    if (!NET_MATCH_KNOB_NAME.test(name) || !fits) return netRefused(`${where} ${JSON.stringify(name)}`);
+    knobs[name] = number;
+  }
+  return { ok: true, value: knobs };
 }
 
 function gpuFeatures(value: TomlValue | undefined): readonly string[] {
