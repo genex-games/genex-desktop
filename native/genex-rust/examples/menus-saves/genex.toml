@@ -1,0 +1,8 @@
+# menus-saves's manifest: a menu and saves game with no physics (`[physics] enabled = false`
+# keeps Rapier out of its build).
+[game]
+title = "Menus and saves"
+world_size = [1280, 720]
+
+[physics]
+enabled = false
