@@ -3747,7 +3747,10 @@ impl Renderer {
         let options = PlanOptions { shadows, depth_reversed: scene_path.depth_reversed, sun };
         // Rows' identities across frames only for a frame that writes motion vectors.
         // Far plain skinned draws skin in the vertex stage (AN-18): no job, output or row of theirs.
-        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws(scene, &self.library, self.skin_vertex.policy);
+        // Past the class's compute cap the smallest skin in the vertex stage too (AN-23).
+        let compute_max = self.skinned_compute_max();
+        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws_within(scene, &self.library, self.skin_vertex.policy, compute_max.unwrap_or(u32::MAX));
+        self.skin_vertex.instances = crate::skin_vertex::SkinnedInstances::of(scene.skinned.len(), &vertex_skinned, compute_max);
         // Skinned levels (AN-25) are picked for the LOD view `set_lod_view` sets below.
         let target = LodTarget { height: self.height, threshold_px: self.quality.lod.threshold_px };
         let mut plan = FramePlan::build_with_skin_levels(scene, &self.library, aspect, &options, (temporal.motion, &vertex_skinned), target)?;

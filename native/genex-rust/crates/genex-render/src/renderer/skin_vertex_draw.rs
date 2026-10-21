@@ -53,6 +53,8 @@ struct PrepassKey {
 pub(super) struct SkinVertexGpu {
     /// Which draws take the path.
     pub(super) policy: SkinVertexPolicy,
+    /// What the last frame skinned on each path, and its compute cap (AN-23).
+    pub(super) instances: crate::skin_vertex::SkinnedInstances,
     /// Live's and a settled capture's history (their motion).
     history: [SkinVertexHistory; 2],
     layouts: Option<(BindGroupLayout, BindGroupLayout, BindGroup)>,
@@ -103,6 +105,18 @@ impl Renderer {
     /// The direct draws the last frame skinned in the vertex stage.
     pub fn last_vertex_skinned_draws(&self) -> usize {
         self.skin_vertex.draws.len()
+    }
+
+    /// The skinned instances the last frame skinned by compute and in the vertex stage, and the
+    /// device class's compute cap it held them to (game systems AN-23).
+    pub fn last_skinned_instances(&self) -> crate::skin_vertex::SkinnedInstances {
+        self.skin_vertex.instances
+    }
+
+    /// The most skinned instances a frame skins by compute on this renderer's device class
+    /// ([`crate::presets::skinned_compute_instances_max`]); None (no cap) before a class is set.
+    pub fn skinned_compute_max(&self) -> Option<u32> {
+        self.class.map(|class| crate::presets::skinned_compute_instances_max(class, crate::device_class::TargetOs::current()))
     }
 
     /// This frame's vertex skin table for `plan` over `scene` (its history set `set`, from scratch

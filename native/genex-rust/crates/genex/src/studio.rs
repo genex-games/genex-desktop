@@ -236,6 +236,8 @@ fn status_value(status: &RenderStatus) -> Option<Value> {
     )?;
     // Game systems LOD-16: the level-of-detail quality and the impostors baked.
     value.set("lod", Value::from(&status.lod.to_json()));
+    // Game systems AN-23: the characters and how they were skinned.
+    value.set("characters", Value::from(&status.characters.to_json()));
     Some(value)
 }
 

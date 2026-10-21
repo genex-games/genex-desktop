@@ -3681,6 +3681,7 @@ dependencies = [
  "genex",
  "genex-platform-web",
  "genex-render",
+ "glam 0.33.12",
  "image",
  "wgpu",
 ]

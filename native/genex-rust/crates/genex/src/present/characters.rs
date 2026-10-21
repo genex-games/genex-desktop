@@ -351,4 +351,19 @@ impl Presenter {
     pub fn character_stats(&self) -> CharacterStats {
         self.assets.character_stats()
     }
+
+    /// `volatile.render.characters` for the last drawn frame (game systems AN-23): its characters'
+    /// poses and the renderer's skinned instances on each path under the class's compute cap.
+    pub fn characters_status(&self) -> crate::render::CharactersStatus {
+        let stats = self.assets.character_stats();
+        let skinned = self.resilient.renderer().renderer().last_skinned_instances();
+        crate::render::CharactersStatus {
+            drawn: stats.drawn,
+            evaluated: stats.evaluated,
+            held: stats.held,
+            compute_skinned: skinned.compute,
+            vertex_skinned: skinned.vertex,
+            compute_max: skinned.compute_max,
+        }
+    }
 }

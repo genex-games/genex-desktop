@@ -1112,6 +1112,34 @@ pub fn profile(facts: &DeviceFacts, class: DeviceClass, game: &RenderOverrides, 
     }
 }
 
+/// The most compute-skinned instances a desktop frame keeps, by tier: ultra, high, mid, low (game
+/// systems AN-23). Desktop-high holds its budget of 100 full-rate characters on compute.
+pub const SKINNED_COMPUTE_DESKTOP: [u32; 4] = [128, 100, 64, 32];
+/// The most compute-skinned instances a phone frame keeps, by tier: high (and ultra), mid, low.
+/// Each holds two output copies of its vertices (48 B each), so 16 characters of 20,000 vertices
+/// take 30.7 MB of mobile-high's 48 MB skinned cap, 8 take 15.4 MB of mobile-low's 16 MB.
+pub const SKINNED_COMPUTE_PHONE: [u32; 3] = [16, 12, 8];
+/// The most compute-skinned instances a browser frame keeps, whatever its class (the web's budget
+/// of 40 characters).
+pub const SKINNED_COMPUTE_WEB_MAX: u32 = 40;
+
+/// The most skinned instances `class` on `os` skins by compute in one frame (game systems AN-23):
+/// past it the smallest on screen skin in the vertex stage (AN-18's path), which holds no skinned
+/// output. The class's row ([`SKINNED_COMPUTE_DESKTOP`], [`SKINNED_COMPUTE_PHONE`]); a browser at
+/// most [`SKINNED_COMPUTE_WEB_MAX`]. `mobile-ultra` takes `mobile-high`'s.
+pub fn skinned_compute_instances_max(class: DeviceClass, os: TargetOs) -> u32 {
+    let row = match (class.form, class.tier) {
+        (FormFactor::Desktop, PerformanceTier::Ultra) => SKINNED_COMPUTE_DESKTOP[0],
+        (FormFactor::Desktop, PerformanceTier::High) => SKINNED_COMPUTE_DESKTOP[1],
+        (FormFactor::Desktop, PerformanceTier::Mid) => SKINNED_COMPUTE_DESKTOP[2],
+        (FormFactor::Desktop, PerformanceTier::Low) => SKINNED_COMPUTE_DESKTOP[3],
+        (FormFactor::Mobile, PerformanceTier::Ultra | PerformanceTier::High) => SKINNED_COMPUTE_PHONE[0],
+        (FormFactor::Mobile, PerformanceTier::Mid) => SKINNED_COMPUTE_PHONE[1],
+        (FormFactor::Mobile, PerformanceTier::Low) => SKINNED_COMPUTE_PHONE[2],
+    };
+    if os == TargetOs::Web { row.min(SKINNED_COMPUTE_WEB_MAX) } else { row }
+}
+
 /// Numeric per-class ceilings of the work model (`budget::work_model`) at the class's reference
 /// resolution and nominal scale.
 #[non_exhaustive]

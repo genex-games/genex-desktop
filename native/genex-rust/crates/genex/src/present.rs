@@ -2153,6 +2153,8 @@ impl Presenter {
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
         // The impostors baked on the renderer in use (LOD-16, `volatile.render.lod`).
         handle.borrow_mut().note_impostors(self.assets.impostors.stats());
+        // What the frame's characters did and how the renderer skinned them (AN-23).
+        handle.borrow_mut().note_characters(self.characters_status());
         if let Ok(drawn) = &drawn {
             runtime.note_triangles(drawn.triangles, &drawn.by_tag);
             runtime.note_missing_models(&drawn.missing_models);
