@@ -6,13 +6,14 @@
  * keeps its mods and saves on a Mac and on Windows.
  */
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { findGames, GameStore, systemGamesEnv } from "../../src/plugins/mods/find-games.ts";
 import { BuiltWith, fingerprint } from "../../src/plugins/mods/fingerprint.ts";
 import { KNOWN_GAMES, placeFolder } from "../../src/plugins/mods/known-games.ts";
 import { findTarget, ModRefusal } from "../../src/plugins/mods/mod-link.ts";
+import { steamPicture } from "../../src/plugins/mods/pictures.ts";
 import { MAX_VDF_CHARS, parseVdf } from "../../src/plugins/mods/vdf.ts";
 import { fakeComputer, writeTree } from "../helpers/mods-computer.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -178,4 +179,34 @@ describe("where a known game keeps mods and saves", () => {
       assert.equal(placeFolder(pair, mac), onMac);
       assert.equal(placeFolder(pair, win), onWindows);
     });
+});
+
+describe("a game's own picture", () => {
+  it("reads Steam's cached header in either layout, and nothing for another store", async () => {
+    const computer = await fakeComputer({
+      steam: [
+        { id: "646570", name: "SlayTheSpire" },
+        { id: "1794680", name: "Vampire Survivors" },
+      ],
+      minecraft: true,
+    });
+    const cache = path.join(computer.steam, "appcache", "librarycache");
+    await mkdir(path.join(cache, "1794680"), { recursive: true });
+    await writeFile(path.join(cache, "646570_header.jpg"), "old layout");
+    await writeFile(path.join(cache, "1794680", "library_header.jpg"), "new layout");
+    const games = await findGames(computer.env);
+    const picture = async (id: string) => {
+      const game = games.find((g) => g.id === id);
+      return game ? steamPicture(computer.env, game) : undefined;
+    };
+    assert.equal(
+      await picture("steam:646570"),
+      `data:image/jpeg;base64,${Buffer.from("old layout").toString("base64")}`,
+    );
+    assert.equal(
+      await picture("steam:1794680"),
+      `data:image/jpeg;base64,${Buffer.from("new layout").toString("base64")}`,
+    );
+    assert.equal(await picture("minecraft"), null);
+  });
 });

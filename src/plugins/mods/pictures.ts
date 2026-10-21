@@ -1,8 +1,8 @@
 /**
  * A game's own picture for the panel: the header Steam keeps in its library cache for each game the
  * person has, read from disk (Genex fetches nothing). Steam has kept it as `<id>_header.jpg` and,
- * newer, as `<id>/header.jpg` (sometimes one folder further down); none is fine, the panel then
- * shows the game's name alone.
+ * newer, as `<id>/header.jpg` or `<id>/library_header.jpg` (sometimes one folder further down); none
+ * is fine, the panel then shows the game's name alone.
  */
 import { readdir } from "node:fs/promises";
 import { readRegularFile } from "../../substrate/fsx.ts";
@@ -11,8 +11,9 @@ import type { InstalledGame } from "./find-games.ts";
 
 /** The largest picture read: Steam's headers are tens of kilobytes. */
 const MAX_PICTURE_BYTES = 1024 * 1024;
-/** The picture's name in each of Steam's cache layouts. */
+/** The picture's names in Steam's cache layouts, the store's header first. */
 const HEADER = "header.jpg";
+const LIBRARY_HEADER = "library_header.jpg";
 /** A Steam app id, as a cache file name may carry it. */
 const APP_ID = /^\d{1,12}$/;
 
@@ -23,7 +24,7 @@ async function headerPlaces(env: GamesEnv, appId: string): Promise<string[]> {
   const own = p.join(cache, appId);
   const below = await readdir(own, { withFileTypes: true }).catch(() => []);
   const nested = below.filter((e) => e.isDirectory()).map((e) => p.join(own, e.name, HEADER));
-  return [p.join(cache, `${appId}_${HEADER}`), p.join(own, HEADER), ...nested];
+  return [p.join(cache, `${appId}_${HEADER}`), p.join(own, HEADER), p.join(own, LIBRARY_HEADER), ...nested];
 }
 
 /** The game's Steam header as a data URL, or null when Steam keeps none (or the game isn't Steam's). */
