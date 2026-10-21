@@ -73,7 +73,7 @@
     },
     {
       "name": "remove",
-      "description": "Take everything this project put in the game out again and put back each game file it replaced; the game's saves stay as they are. Use it when the person wants the game back as it was, or to start the mod's install over.",
+      "description": "Take everything this project put in the game out again and put back each game file it replaced; the game's saves stay as they are. Use it only when the person wants the game back as it was. For a new version of the mod, call mods__install with replace: true instead: one card, not two.",
       "parameters": {
         "type": "object",
         "properties": {}
