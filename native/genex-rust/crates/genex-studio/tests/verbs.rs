@@ -203,7 +203,7 @@ fn names(value: &Value) -> Vec<String> {
 /// genex-core's dispatcher with every op this studio answers, each answering `{}`.
 fn core_dispatcher() -> Dispatcher {
     let mut calls = Dispatcher::default();
-    for op in Op::ALL.iter().chain(&Op::DEV_TOOLS) {
+    for op in Op::ALL.iter().chain(&Op::DEV_TOOLS).chain(&Op::GAME_DATA) {
         calls.on(op, |_| Answer::Result(Value::object()));
     }
     calls
@@ -248,8 +248,8 @@ fn an_unknown_op_names_every_op_sorted() {
     let reply = reply(&mut studio, &mut game, r#"{"id":3,"op":"surface"}"#);
     assert_eq!(reply["error"].as_str(), "unknown-op");
     // Game systems GF flipped: a native (dev) run also lists the asset tools it knows; I1 PROF-4
-    // flipped it again: and `profile`.
-    let mut sorted: Vec<String> = Op::ALL.iter().chain(&Op::DEV_TOOLS).map(|op| (*op).to_owned()).collect();
+    // flipped it again: and `profile`; I4 UIS-16 flipped it again: and `saves`, `uiSettings`.
+    let mut sorted: Vec<String> = Op::ALL.iter().chain(&Op::DEV_TOOLS).chain(&Op::GAME_DATA).map(|op| (*op).to_owned()).collect();
     sorted.sort();
     assert_eq!(names(&reply["available"]), sorted);
 }

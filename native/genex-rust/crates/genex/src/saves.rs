@@ -669,3 +669,150 @@ fn checksum_of<W>(game: &Game<W>, sim: &Sim<W>, seed: u32, tick: u64) -> u64 {
     let hex = session::checksum(seed, tick, &CoreValue::from(&Value::Object(leaves)));
     u64::from_str_radix(&hex, 16).unwrap_or_default()
 }
+
+/// The most bytes of JSON one envelope a host call carries (a `write`) or answers (a `read`):
+/// `NATIVE_SAVES_ENVELOPE_MAX_BYTES` in `shared/game-saves.ts` (a 1 MiB line, less room for its
+/// own members).
+pub const HOST_ENVELOPE_MAX_BYTES: usize = 1024 * 1024 - 4 * 1024;
+
+/// One Studio `saves` call (UIS-16, the dev flavour's `saves` verb), its argument already checked
+/// by genex-studio: what the host asks of the game's slots between ticks.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostSavesCall {
+    /// `{slots, bytes, quota}`.
+    List,
+    /// One slot's envelope as stored (its canonical document), or `{tooLarge, bytes, digest}`
+    /// past [`HOST_ENVELOPE_MAX_BYTES`].
+    Read(String),
+    /// Seed a named slot with an envelope document (JSON bytes): refused with its code, and
+    /// nothing written, unless it decodes as a save of this game that its migrations take.
+    Write(String, Vec<u8>),
+    /// Save the running game into a named slot now, with a label.
+    Save(String, String),
+    /// Load a slot now: answered once applied, `{tick, checksum, checksumMatch}`.
+    Load(String),
+    /// Delete a slot now.
+    Delete(String),
+}
+
+/// What a host call did: its answer, and whether a load replaced the running game (the runtime
+/// then starts the HUD, streaming and the journal over, as after a tick's restore).
+pub(crate) struct HostAnswer {
+    pub(crate) value: Value,
+    pub(crate) restored: bool,
+}
+
+fn not_configured() -> SaveError {
+    SaveError::new(SaveErrorCode::NotConfigured, "the game registers no game.saves")
+}
+
+/// Serve a Studio `saves` call between ticks (UIS-16): the same driver, store and checks as
+/// `ctx.slots()`, run at once instead of at the tick's end (a save, a delete) or the next tick's
+/// start (a load).
+pub(crate) fn host_call<W>(game: &Game<W>, state: &mut State, running: Running<'_, W>, call: HostSavesCall) -> Result<HostAnswer, SaveError> {
+    let config = game.g6.saves.configs.first().ok_or_else(not_configured)?;
+    let saves = running.gfx.saves().clone();
+    state.ensure(config, save_name(game), &saves);
+    let driver = state.driver.as_mut().ok_or_else(not_configured)?;
+    driver.refresh(&Store(&saves));
+    let plain = |value: Value| Ok(HostAnswer { value, restored: false });
+    match call {
+        HostSavesCall::List => {
+            let slots: Vec<Value> = driver.list().iter().map(slot_value).collect();
+            plain(json!({ "slots": slots, "bytes": saves.bytes_used(), "quota": MAX_TOTAL_SAVE_BYTES }))
+        }
+        HostSavesCall::Read(slot) => plain(read_envelope(driver, &saves, &slot)?),
+        HostSavesCall::Write(slot, document) => {
+            let info = write_envelope(game, config, driver, &saves, &slot, document)?;
+            plain(slot_value(&info))
+        }
+        HostSavesCall::Save(slot, label) => {
+            driver.request_save(&slot, &label)?;
+            let info = run_queued(game, driver, &saves, &running, &slot)?;
+            plain(slot_value(&info))
+        }
+        HostSavesCall::Delete(slot) => {
+            driver.request_delete(&slot)?;
+            run_queued(game, driver, &saves, &running, &slot)?;
+            plain(json!({ "deleted": slot }))
+        }
+        HostSavesCall::Load(slot) => {
+            driver.request_load(&slot)?;
+            load_now(game, state, running, &slot)
+        }
+    }
+}
+
+/// A slot's stored envelope, decoded and checked, as its canonical document.
+fn read_envelope(driver: &SlotDriver, saves: &Saves, slot: &str) -> Result<Value, SaveError> {
+    let slot = SlotName::lookup(slot)?;
+    if driver.get(slot.as_str()).is_none() {
+        return Err(SaveError::new(SaveErrorCode::SlotMissing, format!("no slot {slot}")));
+    }
+    let body = saves.load(&slot.body_file()).ok_or_else(|| SaveError::new(SaveErrorCode::SlotMissing, format!("{slot}'s body is gone")))?;
+    decode(&body)?;
+    let document = genex_save::codec::unpack(&body)?;
+    if document.len() > HOST_ENVELOPE_MAX_BYTES {
+        let digest = genex_core::digest::hex64(genex_core::digest::fnv1a64(&document));
+        return Ok(json!({ "tooLarge": true, "bytes": document.len(), "digest": digest }));
+    }
+    serde_json::from_slice(&document).map_err(|error| SaveError::corrupt(format!("not JSON: {error}")))
+}
+
+/// Seed a named slot with `document` once it decodes as a save of this game that the schema's
+/// migrations take: the body, then its sidecar; refused with its code, nothing written, otherwise.
+fn write_envelope<W>(game: &Game<W>, config: &SaveConfig, driver: &mut SlotDriver, saves: &Saves, slot: &str, document: Vec<u8>) -> Result<SlotInfo, SaveError> {
+    let slot = SlotName::new(slot)?;
+    if document.len() > HOST_ENVELOPE_MAX_BYTES {
+        return Err(SaveError::new(SaveErrorCode::TooLarge, format!("{} bytes of envelope (max {HOST_ENVELOPE_MAX_BYTES})", document.len())));
+    }
+    let body = genex_save::codec::pack(document)?;
+    let envelope = decode(&body)?;
+    if envelope.game != save_name(game) {
+        return Err(SaveError::corrupt(format!("the envelope was saved by {:?}", envelope.game)));
+    }
+    let meta = genex_save::index::SlotMeta::for_body(&slot, &envelope, &body);
+    config.migrations().migrate(envelope)?;
+    let mut store = Store(saves);
+    store.write(&slot.body_file(), &body)?;
+    if let Err(error) = store.write(&slot.meta_file(), &meta.to_bytes()) {
+        store.remove(&slot.body_file());
+        return Err(error);
+    }
+    driver.refresh(&store);
+    driver.get(slot.as_str()).cloned().ok_or_else(|| SaveError::corrupt(format!("{slot} was written and is not listed")))
+}
+
+/// Run the save or delete just queued now, as a tick's end would (the running game read through
+/// read hooks only), and answer the slot as listed after it, or why it refused.
+fn run_queued<W>(game: &Game<W>, driver: &mut SlotDriver, saves: &Saves, running: &Running<'_, W>, slot: &str) -> Result<SlotInfo, SaveError> {
+    let view = SaveView { sim: &*running.sim, seed: *running.seed, tick: *running.tick, rng: running.rng, gfx: running.gfx };
+    driver.end_tick(&mut Store(saves), view.tick, &mut || snapshot(game, &view));
+    // The event is published at the next tick's start; begin it now (nothing is pending).
+    let Step::Run = driver.begin_tick(&mut Store(saves), 0) else { return Err(SaveError::new(SaveErrorCode::Busy, "a load is pending")) };
+    let event = driver.events().iter().rev().find(|event| event.slot.as_str() == slot);
+    let result = event.map(|event| event.result.clone());
+    result.unwrap_or_else(|| Err(SaveError::new(SaveErrorCode::Busy, format!("{slot} was not written"))))
+}
+
+/// Restore the load just queued now: the slot's game swapped in, answered `{tick, checksum,
+/// checksumMatch}`, or the load's refusal with the running game untouched.
+fn load_now<W>(game: &Game<W>, state: &mut State, running: Running<'_, W>, slot: &str) -> Result<HostAnswer, SaveError> {
+    let saves = running.gfx.saves().clone();
+    if let Some(driver) = state.driver.as_mut() {
+        // A tick's end turns the queued load into the pending one; nothing else is queued.
+        let view = SaveView { sim: &*running.sim, seed: *running.seed, tick: *running.tick, rng: running.rng, gfx: running.gfx };
+        driver.end_tick(&mut Store(&saves), view.tick, &mut || snapshot(game, &view));
+    }
+    let Running { sim, seed, tick, rng, gfx } = running;
+    let swap = swap_in(game, state, Running { sim: &mut *sim, seed: &mut *seed, tick: &mut *tick, rng, gfx });
+    let driver = state.driver.as_ref().ok_or_else(not_configured)?;
+    if swap != Swap::Restored {
+        let refused = driver.events().iter().rev().find(|event| event.op == SlotOp::Load && event.slot.as_str() == slot);
+        let error = refused.and_then(|event| event.result.clone().err());
+        return Err(error.unwrap_or_else(|| SaveError::new(SaveErrorCode::LoadTimeout, format!("{slot}'s body did not arrive"))));
+    }
+    let checksum = genex_core::digest::hex64(checksum_of(game, sim, *seed, *tick));
+    let checksum_match = driver.last_load().is_some_and(|last| last.checksum_match);
+    Ok(HostAnswer { value: json!({ "tick": *tick, "checksum": checksum, "checksumMatch": checksum_match }), restored: true })
+}

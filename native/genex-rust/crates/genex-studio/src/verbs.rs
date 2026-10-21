@@ -14,6 +14,10 @@
 //! ([`wire::parse_profile`]) and hands the game a typed request ([`StudioGame::profile`],
 //! `unavailable` by default); a `trace` answer is written by the studio into the run's
 //! `state/profile/trace-<seq>.json` with its size and digest, as captures are.
+//! The dev flavour's `saves` and `uiSettings` verbs (G6 UIS-16) check their arguments as the host
+//! does (`shared/game-saves.ts`: [`parse_saves`], [`parse_ui_settings`]; anything else refuses
+//! `bad-argument` and the game is never asked) and hand the game a typed request
+//! ([`StudioGame::saves`], [`StudioGame::ui_settings`], `unavailable` by default).
 //! [`spell_change`], [`render_answer_value`], [`render_status_value`] and
 //! [`capture_provenance_value`] carry the renderer's values across by their wire spellings, so a
 //! game's runtime (native or web) never re-declares the wire's shapes.
@@ -90,6 +94,13 @@ impl Op {
     pub const RELOAD_ASSETS: &'static str = wire::OP_RELOAD_ASSETS;
     /// Read the game's frame profile (dev flavour; PROF-5 serves it, `unavailable` until then).
     pub const PROFILE: &'static str = wire::OP_PROFILE;
+    /// List, read, write, save, load or delete the game's save slots (dev flavour, UIS-16).
+    pub const SAVES: &'static str = "saves";
+    /// A session layer over the gameplay UI's settings (dev flavour, UIS-16).
+    pub const UI_SETTINGS: &'static str = "uiSettings";
+    /// The game-data ops only a native run serves (UIS-16): the web flavour, which an export
+    /// serves too, answers each `unknown-op` and never lists it.
+    pub const GAME_DATA: [&'static str; 2] = [Op::SAVES, Op::UI_SETTINGS];
     /// The asset tools a native run (only the dev flavour links the studio natively) knows (a game
     /// that does not serve one answers `unavailable`); the web flavour, which an export serves too,
     /// answers them `unknown-op` and never lists them (CONTRACT.md).
@@ -476,6 +487,185 @@ pub trait StudioGame {
     fn profile(&mut self, _request: &ProfileRequest) -> Result<ProfileAnswer, &'static str> {
         Err(VerbRefusal::UNAVAILABLE)
     }
+    /// `saves` (dev flavour, UIS-16): serve `request` (checked by [`parse_saves`]) between ticks
+    /// and answer its result, or refuse it with a wire code (`save-*`). A load answers once it
+    /// applied. A game that serves no saves answers `unavailable`.
+    fn saves(&mut self, _request: &SavesRequest) -> Result<Value, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+    /// `uiSettings` (dev flavour, UIS-16): apply `change` (checked by [`parse_ui_settings`]) as the
+    /// session layer from the next tick and answer the layer in force, or refuse it with a wire
+    /// code (`text-locale-unknown`, `bad-argument`). A game that serves none answers `unavailable`.
+    fn ui_settings(&mut self, _change: &UiSettingsChange) -> Result<Value, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+}
+
+/// The longest slot name a `saves` call names (`SAVE_SLOT_NAME_MAX`, genex-save's `SLOT_NAME_MAX`).
+pub const SAVE_SLOT_NAME_MAX: usize = 32;
+/// The most characters a slot's label holds (`SAVE_LABEL_CHARS_MAX`).
+pub const SAVE_LABEL_CHARS_MAX: usize = 64;
+/// The most bytes of JSON an envelope a `saves` call carries or answers
+/// (`NATIVE_SAVES_ENVELOPE_MAX_BYTES`: a 1 MiB line, less room for its own members).
+pub const SAVES_ENVELOPE_MAX_BYTES: usize = 1024 * 1024 - 4 * 1024;
+/// The longest locale tag (`UI_LOCALE_TAG_CHARS_MAX`).
+pub const UI_LOCALE_TAG_CHARS_MAX: usize = 35;
+/// The smallest UI scale and text size (`UI_SCALE_MIN`).
+pub const UI_SCALE_MIN: f64 = 0.5;
+/// The largest UI scale and text size (`UI_SCALE_MAX`).
+pub const UI_SCALE_MAX: f64 = 3.0;
+/// The largest safe-area inset, in world pixels (`UI_SAFE_AREA_MAX_PX`).
+pub const UI_SAFE_AREA_MAX_PX: f64 = 4096.0;
+
+/// What a `saves` call does (`SaveOp`). Wire values: never rename one.
+#[derive(Clone, Copy, Debug)]
+pub struct SaveOp;
+
+impl SaveOp {
+    /// The slots, their bytes and the quota.
+    pub const LIST: &'static str = "list";
+    /// One slot's envelope, or `{tooLarge, bytes, digest}`.
+    pub const READ: &'static str = "read";
+    /// Seed a slot with a fixture envelope.
+    pub const WRITE: &'static str = "write";
+    /// Save the running game into a slot.
+    pub const SAVE: &'static str = "save";
+    /// Load a slot, answered once applied.
+    pub const LOAD: &'static str = "load";
+    /// Delete a slot.
+    pub const DELETE: &'static str = "delete";
+}
+
+/// A checked `saves` argument ([`parse_saves`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SavesRequest {
+    /// `{op: "list"}`.
+    List,
+    /// `{op: "read", slot}`.
+    Read(String),
+    /// `{op: "write", slot, envelope}`: the envelope as JSON bytes.
+    Write(String, Vec<u8>),
+    /// `{op: "save", slot, label?}`.
+    Save(String, String),
+    /// `{op: "load", slot}`.
+    Load(String),
+    /// `{op: "delete", slot}`.
+    Delete(String),
+}
+
+/// Whether `slot` has a slot name's shape: lowercase letters, digits and dashes, not starting
+/// with a dash, at most [`SAVE_SLOT_NAME_MAX`] bytes (the game refuses reserved names itself).
+fn is_slot_name(slot: &str) -> bool {
+    let shaped = slot.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    shaped && slot.len() <= SAVE_SLOT_NAME_MAX && !slot.is_empty() && !slot.starts_with('-')
+}
+
+/// `saves`' argument checked as `checkSavesArg` checks it: a known op, a slot name of a safe shape,
+/// a label within its cap, a `write`'s envelope an object a line can carry; unknown members are
+/// ignored.
+pub fn parse_saves(arg: &Value) -> Result<SavesRequest, wire::BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let Some(Value::String(_)) = arg.get("op") else { return Err(wire::BadField("op")) };
+    let op = arg["op"].as_str();
+    if op == SaveOp::LIST {
+        return Ok(SavesRequest::List);
+    }
+    let slot = match arg.get("slot") {
+        Some(Value::String(_)) if is_slot_name(arg["slot"].as_str()) => arg["slot"].as_str().to_owned(),
+        _ => return Err(wire::BadField("slot")),
+    };
+    match op {
+        SaveOp::READ => Ok(SavesRequest::Read(slot)),
+        SaveOp::LOAD => Ok(SavesRequest::Load(slot)),
+        SaveOp::DELETE => Ok(SavesRequest::Delete(slot)),
+        SaveOp::SAVE => match arg.get("label") {
+            None => Ok(SavesRequest::Save(slot, String::new())),
+            Some(Value::String(_)) if arg["label"].as_str().chars().count() <= SAVE_LABEL_CHARS_MAX => Ok(SavesRequest::Save(slot, arg["label"].as_str().to_owned())),
+            Some(_) => Err(wire::BadField("label")),
+        },
+        SaveOp::WRITE => {
+            let Some(envelope @ Value::Object(_)) = arg.get("envelope") else { return Err(wire::BadField("envelope")) };
+            let bytes = envelope.dump();
+            if bytes.len() > SAVES_ENVELOPE_MAX_BYTES {
+                return Err(wire::BadField("envelope"));
+            }
+            Ok(SavesRequest::Write(slot, bytes))
+        }
+        _ => Err(wire::BadField("op")),
+    }
+}
+
+/// One member of a `uiSettings` change: left out (kept), null (the game's own back), or a value.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum UiMember<T> {
+    /// Left out: the layer keeps what it had.
+    #[default]
+    Keep,
+    /// `null`: the game's own value again.
+    Reset,
+    /// A new value.
+    Set(T),
+}
+
+/// A checked `uiSettings` argument ([`parse_ui_settings`]): no member at all reads the layer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UiSettingsChange {
+    /// A locale tag (the game refuses one it does not offer).
+    pub locale: UiMember<String>,
+    /// A UI scale in [`UI_SCALE_MIN`]..=[`UI_SCALE_MAX`].
+    pub scale: UiMember<f64>,
+    /// Safe-area insets `[left, top, right, bottom]` in world pixels.
+    pub safe_area: UiMember<[f64; 4]>,
+    /// A text size multiplier in [`UI_SCALE_MIN`]..=[`UI_SCALE_MAX`].
+    pub text_size: UiMember<f64>,
+}
+
+/// Whether `tag` has a locale tag's shape: a 2 to 8 letter language subtag, then subtags of 1 to
+/// 8 letters or digits joined by `-` or `_`, at most [`UI_LOCALE_TAG_CHARS_MAX`].
+fn is_locale_tag(tag: &str) -> bool {
+    let mut parts = tag.split(['-', '_']);
+    let language = parts.next().unwrap_or_default();
+    let first = (2..=8).contains(&language.len()) && language.bytes().all(|b| b.is_ascii_alphabetic());
+    let rest = parts.all(|part| (1..=8).contains(&part.len()) && part.bytes().all(|b| b.is_ascii_alphanumeric()));
+    tag.len() <= UI_LOCALE_TAG_CHARS_MAX && first && rest
+}
+
+/// A finite number within `range`.
+fn number_within(value: &Value, range: std::ops::RangeInclusive<f64>) -> Option<f64> {
+    let Value::Number(n) = value else { return None };
+    (n.is_finite() && range.contains(n)).then_some(*n)
+}
+
+/// One `uiSettings` member: absent keeps, null resets, else `read` checks it.
+fn ui_member<T>(arg: &Value, key: &'static str, read: impl Fn(&Value) -> Option<T>) -> Result<UiMember<T>, wire::BadField> {
+    match arg.get(key) {
+        None => Ok(UiMember::Keep),
+        Some(Value::Null) => Ok(UiMember::Reset),
+        Some(value) => read(value).map(UiMember::Set).ok_or(wire::BadField(key)),
+    }
+}
+
+/// `uiSettings`' argument checked as `checkUiSettingsArg` checks it: none (or null) reads the
+/// layer; otherwise each member given is null or in its shape and range.
+pub fn parse_ui_settings(arg: &Value) -> Result<UiSettingsChange, wire::BadField> {
+    if arg.is_null() {
+        return Ok(UiSettingsChange::default());
+    }
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let scale_range = UI_SCALE_MIN..=UI_SCALE_MAX;
+    let locale = ui_member(arg, "locale", |value| matches!(value, Value::String(_)).then(|| value.as_str()).filter(|tag| is_locale_tag(tag)).map(str::to_owned))?;
+    let scale = ui_member(arg, "scale", |value| number_within(value, scale_range.clone()))?;
+    let text_size = ui_member(arg, "textSize", |value| number_within(value, scale_range.clone()))?;
+    let safe_area = ui_member(arg, "safeArea", |value| {
+        let insets: Vec<f64> = value.items().iter().filter_map(|inset| number_within(inset, 0.0..=UI_SAFE_AREA_MAX_PX)).collect();
+        let whole = matches!(value, Value::Array(_)) && value.items().len() == 4;
+        whole.then(|| <[f64; 4]>::try_from(insets).ok()).flatten()
+    })?;
+    Ok(UiSettingsChange { locale, scale, safe_area, text_size })
 }
 
 /// What `capture`'s `lens` argument asks of the look (`NativeCaptureLens`): neither by default.
@@ -1068,6 +1258,7 @@ impl Studio {
         }
         if self.files {
             ops.extend(Op::DEV_TOOLS);
+            ops.extend(Op::GAME_DATA);
         }
         ops
     }
@@ -1101,6 +1292,8 @@ impl Studio {
             Op::BAKE_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
             Op::RELOAD_ASSETS => Studio::reload_assets(game, arg),
             Op::PROFILE => self.profile(game, arg),
+            Op::SAVES => Studio::saves(game, arg),
+            Op::UI_SETTINGS => Studio::ui_settings(game, arg),
             // `handle` routes only the ops in this flavour's set here.
             _ => refuse(Refusal::UNKNOWN_OP),
         }
@@ -1137,6 +1330,27 @@ impl Studio {
             refused.push(object([("path", Value::from(path)), ("code", Value::from(code.wire()))]));
         }
         Answer::Result(object([("reloaded", names(outcome.reloaded)), ("refused", refused), ("pending", Value::from(outcome.pending))]))
+    }
+
+    /// `saves`: the argument checked here, the slots the game's; refused while it ticks or draws.
+    fn saves<G: StudioGame>(game: &mut G, arg: &Value) -> Answer {
+        let Ok(request) = parse_saves(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        if game.busy() {
+            return refuse(VerbRefusal::BUSY);
+        }
+        match game.saves(&request) {
+            Ok(result) => Answer::Result(result),
+            Err(code) => refuse(code),
+        }
+    }
+
+    /// `uiSettings`: the argument checked here, the layer the game's.
+    fn ui_settings<G: StudioGame>(game: &mut G, arg: &Value) -> Answer {
+        let Ok(change) = parse_ui_settings(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        match game.ui_settings(&change) {
+            Ok(result) => Answer::Result(result),
+            Err(code) => refuse(code),
+        }
     }
 
     /// `profile`: the argument checked here, the answer the game's; a trace is written here.

@@ -70,6 +70,11 @@ pub const RENDER_SETTINGS_API_VERSION: u32 = 1;
 /// The `reloadAssets` verb's version a receipt advertises (`reloadAssetsApi`): a dev build that
 /// swaps changed assets in place (game systems C-18); an older one has no member.
 pub const RELOAD_ASSETS_API_VERSION: u32 = 1;
+/// The `saves` verb's version a receipt advertises (`savesApi`, G6 UIS-16); an older build has no
+/// member.
+pub const SAVES_API_VERSION: u32 = 1;
+/// The `uiSettings` verb's version a receipt advertises (`uiSettingsApi`, G6 UIS-16).
+pub const UI_SETTINGS_API_VERSION: u32 = 1;
 /// The lowest render scale (of the output size) a lock may name (`RENDER_SCALE_MIN`).
 pub const RENDER_SCALE_MIN: f64 = 0.5;
 /// The highest render scale (`RENDER_SCALE_MAX`).
@@ -465,6 +470,10 @@ pub struct Receipt {
     pub render_settings_api: Option<u32>,
     /// The `reloadAssets` version served; None for a build that does not swap assets in place.
     pub reload_assets_api: Option<u32>,
+    /// The `saves` version served; None for a build without the verb.
+    pub saves_api: Option<u32>,
+    /// The `uiSettings` version served; None for a build without the verb.
+    pub ui_settings_api: Option<u32>,
 }
 
 /// `text` cut to at most `units` UTF-16 code units, never inside a character.
@@ -494,12 +503,14 @@ impl Receipt {
             render_inputs: Vec::new(),
             render_settings_api: None,
             reload_assets_api: None,
+            saves_api: None,
+            ui_settings_api: None,
         }
     }
 
     /// The receipt as the wire's object: `{tier, backend, adapter, nativeEnhanced, extensionApi,
     /// customPassApi, extensionApis, customPassApis, rendererFeatures, renderInputs,
-    /// renderSettingsApi?, reloadAssetsApi?}`, the adapter cut to [`ADAPTER_MAX_CHARS`] and each name listed once.
+    /// renderSettingsApi?, reloadAssetsApi?, savesApi?, uiSettingsApi?}`, the adapter cut to [`ADAPTER_MAX_CHARS`] and each name listed once.
     pub fn to_value(&self) -> Value {
         let adapter = cut_utf16(&self.adapter, ADAPTER_MAX_CHARS);
         let mut receipt = Value::object();
@@ -518,6 +529,12 @@ impl Receipt {
         }
         if let Some(version) = self.reload_assets_api {
             receipt.set("reloadAssetsApi", Value::from(version));
+        }
+        if let Some(version) = self.saves_api {
+            receipt.set("savesApi", Value::from(version));
+        }
+        if let Some(version) = self.ui_settings_api {
+            receipt.set("uiSettingsApi", Value::from(version));
         }
         receipt
     }
@@ -539,10 +556,13 @@ impl Receipt {
             None => None,
             Some(_) => Some(whole(value, "renderSettingsApi", u32::MAX)?),
         };
-        let reload_assets_api = match value.get("reloadAssetsApi") {
-            None => None,
-            Some(_) => Some(whole(value, "reloadAssetsApi", u32::MAX)?),
+        let optional_api = |key: &'static str| match value.get(key) {
+            None => Ok(None),
+            Some(_) => whole(value, key, u32::MAX).map(Some),
         };
+        let reload_assets_api = optional_api("reloadAssetsApi")?;
+        let saves_api = optional_api("savesApi")?;
+        let ui_settings_api = optional_api("uiSettingsApi")?;
         Ok(Receipt {
             backend,
             adapter,
@@ -555,6 +575,8 @@ impl Receipt {
             render_inputs: names(value, "renderInputs", RenderInput::from_wire)?.unwrap_or_default(),
             render_settings_api,
             reload_assets_api,
+            saves_api,
+            ui_settings_api,
         })
     }
 
@@ -1279,6 +1301,8 @@ mod tests {
             render_inputs: RenderInput::ALL.to_vec(),
             render_settings_api: Some(u32::MAX),
             reload_assets_api: Some(u32::MAX),
+            saves_api: Some(u32::MAX),
+            ui_settings_api: Some(u32::MAX),
             ..Receipt::new(Backend::WebGpu, adapter, all)
         };
         let bytes = receipt.to_json();
