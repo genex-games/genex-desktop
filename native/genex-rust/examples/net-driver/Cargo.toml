@@ -1,0 +1,35 @@
+# The facade netcode-bench driver (multiplayer MP-6b): DRIVER.md contract 1 over `genex::net`, so
+# the bench's conformance fixtures and feel gates test the facade's wiring (a headless Runtime in
+# Relay mode: the cut, the journal, the write queue and the relay mapping) and not only the
+# vendored crate, whose own driver is `crates/genex-multiplayer/examples/driver.rs`. Host tooling,
+# not a game: it reads the wall clock and runs a stdin reader thread (see its clippy.toml).
+[package]
+name = "net-driver"
+description = "The netcode-bench driver over genex::net (multiplayer MP-6b)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "net_driver"
+path = "src/lib.rs"
+
+[[bin]]
+name = "net-driver"
+path = "src/main.rs"
+
+# `genex/net` is the export flavour's relay; the backend the driver installs is the facade's own
+# `RelayBackend`, opened with the bench's endpoint, game id, name and token instead of the baked
+# slug. genex-multiplayer is named only for its `Session` type behind the connector and its test
+# clock seam (`stamp`, the `skew` capability), as the crate's driver uses it.
+[dependencies]
+genex = { workspace = true, features = ["net"] }
+genex-net = { workspace = true, features = ["relay"] }
+genex-multiplayer = { workspace = true, features = ["native"] }
+serde_json = { workspace = true }

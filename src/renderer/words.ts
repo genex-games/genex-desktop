@@ -54,6 +54,7 @@ import {
 import { sizeWords } from "../shared/byte-size.ts";
 import { CrashKind } from "../shared/crash-record.ts";
 import { ProfileUnavailableReason } from "../shared/frame-profile.ts";
+import { NetMode, NetOffline, NetStatus } from "../shared/game-net.ts";
 import { freeableBytes, StorageKind, type StorageFreed, type StorageSpace } from "../shared/storage-space.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
@@ -4575,4 +4576,37 @@ export const PROFILE_WORDS = {
       [tick === null ? null : `tick ${tick}`, seed === null ? null : `seed ${seed}`].filter(Boolean).join(" · "),
     repeat: (count: number) => (count > 1 ? `${count} times` : ""),
   },
+} as const;
+
+/** Live's net row for a Rust game built with `[net]` (game-systems MP-7): the game's seat, in words. */
+export const NET_WORDS = {
+  heading: "Multiplayer",
+  /** The backend the build chose. */
+  mode: {
+    [NetMode.Off]: "Off",
+    [NetMode.Loopback]: "Local test room",
+    [NetMode.Relay]: "Online",
+    [NetMode.Replay]: "Replay",
+  },
+  /** Where the seat stands. */
+  status: {
+    [NetStatus.Offline]: "Offline",
+    [NetStatus.Connecting]: "Connecting…",
+    [NetStatus.Searching]: "Finding a match…",
+    [NetStatus.Waiting]: "Waiting for players",
+    [NetStatus.Joined]: "Joined",
+    [NetStatus.Reconnecting]: "Reconnecting…",
+    [NetStatus.Closed]: "Closed",
+  },
+  /** Why the seat is offline. */
+  reason: {
+    [NetOffline.Disabled]: "This build has no multiplayer: add [net] to genex.toml.",
+    [NetOffline.NoSlug]: "This build has no game id to find its room with.",
+    [NetOffline.NoIdentity]: "This page has no player identity to join with.",
+    [NetOffline.Unsupported]: "This destination can’t reach the network.",
+    [NetOffline.LocalTest]: "Studio plays a local test room; publish a draft to play online.",
+  },
+  /** The room's players, and how many of them are connected when some are not. */
+  players: (players: number, connected: number) =>
+    connected < players ? `${plural(players, "player")} · ${connected} connected` : plural(players, "player"),
 } as const;
