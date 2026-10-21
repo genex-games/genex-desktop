@@ -255,12 +255,13 @@ pub const ASSET_CALLS: [&str; 10] = [
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
 /// The level-of-detail calls of the facade (LOD-07; a class's crossfade threshold, LOD-06, pinned at
 /// gate GI).
-pub const LOD_CALLS: [&str; 12] = [
+pub const LOD_CALLS: [&str; 13] = [
     ".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound", ".lod_at", "LodConfig::new",
     ".threshold_px", ".with_impostor", ".impostor", "Impostor::hemi", "Impostor::sphere", ".not_before",
+    "game.impostor_bake",
 ];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
-pub const LOD_REFUSALS: [&str; 4] = ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid"];
+pub const LOD_REFUSALS: [&str; 5] = ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid", "impostor-not-baked"];
 /// The settings menu's calls (UIS-11).
 pub const SETTINGS_CALLS: [&str; 12] = [
     "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",

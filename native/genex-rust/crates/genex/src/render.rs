@@ -903,13 +903,14 @@ pub struct LodStatus {
 
 impl LodStatus {
     /// The wire object: `{thresholdPx, fadeBand, impostorsOn, species, speciesCap, impostors:
-    /// [{model, layout, frames, framePx, bytes, bakeMs}]}`.
+    /// [{model, layout, frames, framePx, bytes, bakeMs, prebaked}]}` (`prebaked`: loaded from a
+    /// build-time atlas, LOD-23).
     pub fn to_json(&self) -> serde_json::Value {
         let impostors: Vec<serde_json::Value> = self
             .impostors
             .iter()
             .map(|stat| {
-                serde_json::json!({ "model": stat.model, "layout": stat.layout.wire(), "frames": stat.frames, "framePx": stat.frame_px, "bytes": stat.bytes, "bakeMs": stat.bake_ms })
+                serde_json::json!({ "model": stat.model, "layout": stat.layout.wire(), "frames": stat.frames, "framePx": stat.frame_px, "bytes": stat.bytes, "bakeMs": stat.bake_ms, "prebaked": stat.prebaked })
             })
             .collect();
         serde_json::json!({

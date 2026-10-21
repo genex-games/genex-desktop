@@ -41,6 +41,10 @@ pub enum LodRefusalCode {
     LevelsMismatch,
     /// No members, a missing member, or a member that is a compound itself.
     CompoundInvalid,
+    /// A streamed model's impostor with no build-time atlas (game systems LOD-23): a streamed
+    /// species never bakes mid-game, so it draws its coarsest mesh to the horizon. Register it
+    /// with `game.impostor_bake` so the dev build bakes its atlas.
+    ImpostorNotBaked,
     /// An impostor on an empty model (a missing model, or a GLB with no triangles to bake, game
     /// systems LOD-16): the model draws whole, its last mesh level to the horizon.
     ImpostorInvalid,
@@ -48,7 +52,8 @@ pub enum LodRefusalCode {
 
 impl LodRefusalCode {
     /// Every code, in declaration order.
-    pub const ALL: [LodRefusalCode; 4] = [LodRefusalCode::LevelsInvalid, LodRefusalCode::LevelsMismatch, LodRefusalCode::CompoundInvalid, LodRefusalCode::ImpostorInvalid];
+    pub const ALL: [LodRefusalCode; 5] =
+        [LodRefusalCode::LevelsInvalid, LodRefusalCode::LevelsMismatch, LodRefusalCode::CompoundInvalid, LodRefusalCode::ImpostorInvalid, LodRefusalCode::ImpostorNotBaked];
 
     /// The wire spelling.
     pub const fn wire(self) -> &'static str {
@@ -57,6 +62,7 @@ impl LodRefusalCode {
             LodRefusalCode::LevelsMismatch => "levels-mismatch",
             LodRefusalCode::CompoundInvalid => "compound-invalid",
             LodRefusalCode::ImpostorInvalid => "impostor-invalid",
+            LodRefusalCode::ImpostorNotBaked => "impostor-not-baked",
         }
     }
 }
@@ -242,4 +248,67 @@ pub(crate) fn switch_error(metres: f32) -> f32 {
     let half_fov = (LOD_NOMINAL_FOV_DEGREES * 0.5).to_radians();
     let pixels_per_unit = genex_render::mesh::LOD_NOMINAL_HEIGHT as f32 * 0.5 / libm::tanf(half_fov);
     metres * genex_render::mesh::LOD_THRESHOLD_PX / pixels_per_unit
+}
+
+// ---------------------------------------------------------------------------------------------
+// Build-time impostor atlases (game systems LOD-23).
+
+/// Where a dev build's impostor atlases are served from, under `assets/` (the build's stage
+/// `assets/baked/impostor/<name>`, never the game folder).
+pub const BAKED_IMPOSTOR_FOLDER: &str = "baked/impostor";
+
+/// The hook a registered impostor bake runs: the model whose atlases the dev build bakes.
+type ModelHook = Box<dyn Fn(&crate::gfx::Gfx) -> Model>;
+
+/// `game.impostor_bake` registrations, in registration order (the `Game` field `impostor_bakes`).
+#[derive(Default)]
+pub(crate) struct ImpostorBakes {
+    list: Vec<ModelHook>,
+}
+
+impl std::fmt::Debug for ImpostorBakes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImpostorBakes").field("registered", &self.list.len()).finish()
+    }
+}
+
+impl<W: Default + 'static> crate::Game<W> {
+    /// Bake `model`'s impostor atlases when the game is built (game systems LOD-23): the hook
+    /// returns a model drawn with `Model::with_impostor` (it may read assets, as a reset does).
+    /// The dev build bakes one atlas per device-class row into its stage; a run that draws the
+    /// same model (the same files, layout and class) loads it instead of baking on the GPU. A
+    /// changed model, or one never registered, bakes at runtime as before, except a streamed
+    /// model, which never bakes mid-game: it draws its coarsest mesh and
+    /// `state().__render.lodRefused` names it `impostor-not-baked`. A model without an impostor
+    /// is skipped.
+    pub fn impostor_bake(&mut self, model: impl Fn(&crate::gfx::Gfx) -> Model + 'static) -> &mut Self {
+        self.impostor_bakes.list.push(Box::new(model));
+        self
+    }
+}
+
+/// The bake name of `key`'s atlas at `class`: the FNV-1a 64 of the cache key in hex and the class
+/// row (`isBakeName`: one segment, lowercase, never a dot), the file under [`BAKED_IMPOSTOR_FOLDER`].
+pub fn impostor_bake_name(key: &str, class: genex_render::impostor::ImpostorClass) -> String {
+    format!("{:016x}-{}", genex_core::digest::fnv1a64(key.as_bytes()), genex_render::impostor::bake::class_wire(class))
+}
+
+/// Every registered model that has an impostor to bake, with its bake name at each class row, in
+/// registration order (models repeated by key are listed once).
+pub(crate) fn impostor_bakes(bakes: &ImpostorBakes, gfx: &crate::gfx::Gfx) -> Vec<(String, Model, genex_render::impostor::ImpostorClass)> {
+    gfx.assets().set_at_reset(true);
+    let models: Vec<Model> = bakes.list.iter().map(|hook| hook(gfx)).collect();
+    gfx.assets().set_at_reset(false);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for model in models {
+        let Some(key) = model.key().map(str::to_owned) else { continue };
+        if model.impostor().is_none() || !seen.insert(key.clone()) {
+            continue;
+        }
+        for class in genex_render::impostor::ImpostorClass::ALL {
+            out.push((impostor_bake_name(&key, class), model.clone(), class));
+        }
+    }
+    out
 }

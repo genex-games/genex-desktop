@@ -297,6 +297,24 @@ describe("rust-bake: a session bakes into the stage and the cache", () => {
   });
 });
 
+describe("rust-bake: impostor atlases (LOD-23)", () => {
+  it("a game that registers only an impostor bake opens a session; its atlas lands in out/assets/baked/impostor", async () => {
+    const source =
+      'fn main() { game.impostor_bake(|gfx| gfx.assets().model("oak.glb").with_impostor(Impostor::hemi())); }\n';
+    const { parent, out, stage, cache, input } = await layout(source);
+    const atlas: NativeBakeRef = { kind: BakeKind.Impostor, name: "edde49b302d8b9e8-high" };
+    const session = fakeSession(parent, [atlas]);
+    const report = await bakeInSession({ out, stage, input, cache, open: session.open });
+    assert.equal(session.log.opened, 1, "the registration scan sees impostor_bake");
+    assert.deepEqual(report.refused, []);
+    assert.deepEqual(
+      report.baked.map(({ kind, name }) => ({ kind, name })),
+      [atlas],
+    );
+    assert.deepEqual(await readFile(path.join(out, "assets", BAKED_ASSETS_FOLDER, "impostor", atlas.name)), NAVMESH);
+  });
+});
+
 describe("rust-bake: hostile names and folders write nothing", () => {
   const HOSTILE_NAMES = ["..", "../escape", "/etc/passwd", "a\\b", "a\u0000b", ".hidden", "Market", "", "a".repeat(65)];
 

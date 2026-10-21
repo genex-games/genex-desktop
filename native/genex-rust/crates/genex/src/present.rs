@@ -138,6 +138,8 @@ pub use crate::present_stream::{
 pub use crate::present_stream::{Drain, DrainClock, DrainReport, DrainStep, STREAM_DRAIN_MAX_MS, STREAM_DRAIN_POLL, drain_blocking};
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::present_stream::WallDrainClock;
+/// Where build-time impostor atlases are served from and each one's name (game systems LOD-23).
+pub use crate::lod::{BAKED_IMPOSTOR_FOLDER, impostor_bake_name};
 
 /// The renderer's planes for a facade camera, which carries none.
 const NEAR_PLANE: f32 = 0.1;
@@ -823,7 +825,7 @@ impl AssetCache {
         self.posed.load(frame, source, uploads, log)?;
         // LOD-16: a model with an impostor whose parts are loaded becomes a bake job.
         let mut impostors = std::mem::take(&mut self.impostors);
-        impostors.queue(frame, self);
+        impostors.queue(frame, self, source);
         self.impostors = impostors;
         // A file used as several kinds (a base colour that is also a mask) is read once, and its
         // family files are looked for once.
@@ -2324,8 +2326,29 @@ impl Presenter {
         let enabled = self.resilient.renderer().renderer().quality().lod.impostors;
         let clock = Arc::clone(&self.clock);
         let (gpu, renderer) = self.resilient.parts_mut();
-        self.assets.impostors.bake((gpu, renderer.renderer_mut()), class, enabled, (budget, &clock))?;
+        self.assets.impostors.bake((gpu, renderer.renderer_mut()), class, enabled, (budget, &clock, &*self.source))?;
         Ok(())
+    }
+
+    /// Bake `model`'s impostor alone at `class` and answer it as a build-time atlas file (LOD-23:
+    /// the dev build's `bakeAssets` kind `impostor`): the model is loaded first, as a frame
+    /// drawing it would load it; the impostors drawn before bake (or load) again at the next
+    /// frame. Refused `impostor-invalid` for a model with no impostor or nothing to bake, and with
+    /// a render error's code (`device-lost` included).
+    pub fn bake_impostor_atlas(&mut self, model: &Model, class: genex_render::impostor::ImpostorClass) -> Result<Vec<u8>, &'static str> {
+        let invalid = crate::lod::LodRefusalCode::ImpostorInvalid.wire();
+        let Some(key) = model.key().filter(|_| model.impostor().is_some()).map(str::to_owned) else { return Err(invalid) };
+        let mut frame = Frame::default();
+        frame.model(model, crate::frame::Transform::IDENTITY);
+        self.load(&frame).map_err(|error| error.code().wire())?;
+        let (gpu, renderer) = self.resilient.parts_mut();
+        let atlas = self.assets.impostors.bake_atlas((gpu, renderer.renderer_mut()), &key, class).map_err(|error| error.code().wire())?;
+        atlas.map(|atlas| atlas.to_ktx2()).ok_or(invalid)
+    }
+
+    /// Build-time impostor atlases loaded since the presenter opened, in place of a bake (LOD-23).
+    pub fn impostor_loads(&self) -> u32 {
+        self.assets.impostors.loads()
     }
 
     /// How far the impostor bakes are (LOD-16): the boot's `pipelines` stage counts them

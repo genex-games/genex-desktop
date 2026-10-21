@@ -445,5 +445,5 @@ fn lod_refused_is_listed_only_while_some_are() {
 #[test]
 fn lod_refusal_codes_keep_their_wire_spellings() {
     let wire: Vec<&str> = LodRefusalCode::ALL.iter().map(|code| code.wire()).collect();
-    assert_eq!(wire, ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid"]);
+    assert_eq!(wire, ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid", "impostor-not-baked"]);
 }

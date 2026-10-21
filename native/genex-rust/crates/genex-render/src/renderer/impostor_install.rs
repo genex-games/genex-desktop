@@ -12,7 +12,7 @@ use wgpu::BufferUsages;
 use super::Renderer;
 use crate::error::RenderError;
 use crate::gpu::Gpu;
-use crate::impostor::bake::{BakeMaterials, BakeMesh, BakePart};
+use crate::impostor::bake::{BakeMaterials, BakeMesh, BakePart, BakedAtlas};
 use crate::impostor::{GpuImpostor, ImpostorBounds, ImpostorClass, ImpostorLayout};
 use crate::layout::{GpuMaterial, GpuMaterialExt};
 use crate::mesh::{LOD_IMPOSTOR_MESH_LEVELS, impostor_level_error};
@@ -74,13 +74,40 @@ impl Renderer {
         let bake_materials = BakeMaterials { materials: &materials, material_ext: &material_ext, arrays: [c256, d256, c512, d512, c1024, d1024, c2048, d2048], sampler: &self.texture_sampler };
         let mesh = BakeMesh { vertices: &self.meshes.vertices, indices: &self.meshes.indices, parts: &parts };
         let Some(row) = self.impostors.bake(&gpu.device, &gpu.queue, install.class, &mesh, &bake_materials, &bounds, install.layout)? else { return Ok(None) };
-        let error = self.impostor_error(install, row.frame_px);
         let meshes: Vec<MeshId> = entries.iter().map(|(mesh, _, _)| *mesh).collect();
+        self.end_chains(install, &meshes, row)?;
+        Ok(Some(row))
+    }
+
+    /// Install `atlas`, baked at build time (game systems LOD-23), as the next species for
+    /// `install`'s parts and end their chains with its level, with no GPU bake. None, and no level
+    /// set, when the atlas is not for `install`'s class and layout, past the reserved species, or
+    /// when no part is in the library.
+    pub fn install_baked_impostor(&mut self, gpu: &Gpu, install: &ImpostorInstall<'_>, atlas: &BakedAtlas) -> Result<Option<GpuImpostor>, RenderError> {
+        if atlas.class != install.class || atlas.layout != install.layout {
+            return Ok(None);
+        }
+        let meshes: Vec<MeshId> = install.parts.iter().map(|(mesh, _)| *mesh).filter(|mesh| self.library.entry(*mesh).is_some()).collect();
+        let Some(bounds) = ImpostorBounds::of_spheres(meshes.iter().filter_map(|mesh| self.library.entry(*mesh)).map(|entry| (entry.center, entry.radius))) else { return Ok(None) };
+        let Some(row) = self.impostors.install_baked(&gpu.device, &gpu.queue, atlas, &bounds) else { return Ok(None) };
+        self.end_chains(install, &meshes, row)?;
+        Ok(Some(row))
+    }
+
+    /// The species in layer `layer` read back as a build-time atlas carrying `digest` (LOD-23);
+    /// None when no species is baked there.
+    pub fn read_impostor_species(&self, gpu: &Gpu, layer: u32, digest: u64) -> Result<Option<BakedAtlas>, RenderError> {
+        self.impostors.read_species(gpu, layer, digest)
+    }
+
+    /// End each of `meshes`' chains with species `row`'s level: the first draws the card.
+    fn end_chains(&mut self, install: &ImpostorInstall<'_>, meshes: &[MeshId], row: GpuImpostor) -> Result<(), RenderError> {
+        let error = self.impostor_error(install, row.frame_px);
         for (at, mesh) in meshes.iter().enumerate() {
             let level = if at == 0 { MeshImpostor::lead(row.layer, error) } else { MeshImpostor::part(error) };
             self.library.set_impostor(*mesh, Some(level))?;
         }
-        Ok(Some(row))
+        Ok(())
     }
 
     /// The impostor level's error over the LOD sphere's radius: one atlas texel a pixel, never

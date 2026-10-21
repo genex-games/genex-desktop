@@ -60,8 +60,16 @@ a lost device bakes again. A quality with impostors off keeps the last mesh leve
 is refused `impostor-invalid` (a missing model at once, a GLB with no triangles at load) and
 draws whole; `model.impostor()` answers the impostor in force. `state().volatile.render.lod`
 shows the Live threshold, band, `species` against the class's `speciesCap` and the baked
-impostors (`model`, `layout`, `frames`, `framePx`, `bytes`, `bakeMs`); it is never part of the
-checksum.
+impostors (`model`, `layout`, `frames`, `framePx`, `bytes`, `bakeMs`, `prebaked`); it is never
+part of the checksum.
+
+`game.impostor_bake(|gfx| gfx.assets().model("oak.glb").with_impostor(Impostor::hemi()))` bakes
+that model's impostor when the game is built: the dev build bakes one atlas per device-class row
+into its own output (never the game folder), and a run that draws the same model (the same files
+and layout) loads it instead of baking, so a relaunch or a page load runs no bake (`prebaked`).
+A changed model bakes at runtime until the next build. A model drawn by world streaming never
+bakes mid-game: register it, or it keeps its last mesh level and is named `impostor-not-baked` in
+`__render.lodRefused`.
 
 The threshold and the crossfade band follow the quality preset: 2 px (band 0.15, half the
 far-field copies) on `low`, 1.5 px (0.2, three quarters of them) on `medium`, 1 px (0.15, all) on

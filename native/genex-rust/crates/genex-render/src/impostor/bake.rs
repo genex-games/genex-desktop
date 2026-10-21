@@ -590,3 +590,276 @@ impl ImpostorStage {
         self.atlases.as_ref().map_or(0, ImpostorAtlases::bytes)
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Build-time atlases (game systems LOD-23): a species read back from its layer and written as
+// an RGBA8 KTX 2.0 file, three array layers (atlas A, B and C) with the class's mip chain, and
+// read into a layer again at runtime instead of baking it.
+
+/// The key of the KTX2 key/value entry naming a baked atlas: `format=<n>;class=<row>;layout=<l>;digest=<hex>`.
+pub const BAKED_ATLAS_KEY: &str = "genex.impostor";
+/// The baked atlas format; another is not loaded (the runtime bakes instead).
+pub const BAKED_ATLAS_FORMAT: u32 = 1;
+/// The most key/value bytes a baked atlas is read with.
+const BAKED_KVD_MAX_BYTES: usize = 4096;
+
+/// One species of one class as a build-time file holds it: its class row and layout, the digest
+/// of what it was baked from (the model's bytes and the bake parameters, [`baked_atlas_digest`]),
+/// and each mip level's texels, largest first: atlas A's rows, then B's, then C's, tightly packed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BakedAtlas {
+    /// The class row it was baked at.
+    pub class: ImpostorClass,
+    /// Its directions.
+    pub layout: ImpostorLayout,
+    /// The digest a runtime matches before it loads it.
+    pub digest: u64,
+    /// The mip levels, largest first, each the three atlases' texels in order.
+    pub levels: Vec<Vec<u8>>,
+}
+
+/// The wire spelling of a class row (a baked file's name and key/value entry). Never rename one.
+pub const fn class_wire(class: ImpostorClass) -> &'static str {
+    match class {
+        ImpostorClass::Ultra => "ultra",
+        ImpostorClass::High => "high",
+        ImpostorClass::Mid => "mid",
+        ImpostorClass::Low => "low",
+        ImpostorClass::Mobile => "mobile",
+    }
+}
+
+/// The class row spelled `text`, if any.
+pub fn class_from_wire(text: &str) -> Option<ImpostorClass> {
+    ImpostorClass::ALL.into_iter().find(|class| class_wire(*class) == text)
+}
+
+const fn layout_wire(layout: ImpostorLayout) -> &'static str {
+    match layout {
+        ImpostorLayout::Hemi => "hemi",
+        ImpostorLayout::Sphere => "sphere",
+    }
+}
+
+/// The digest a baked atlas of `model` (the FNV-1a 64 of the model's own inputs) at `class` with
+/// `layout` carries: the model folded with the format, the class's frames and texels, the
+/// supersampling and the layout, so a change to any of them is a miss.
+pub fn baked_atlas_digest(model: u64, class: ImpostorClass, layout: ImpostorLayout) -> u64 {
+    let spec = class.spec();
+    let params = format!("genex-impostor {BAKED_ATLAS_FORMAT} {} {} {} {BAKE_SUPERSAMPLE} {}", class_wire(class), spec.frames, spec.frame_px, layout_wire(layout));
+    genex_core::digest::fnv1a64_from(params.as_bytes(), model)
+}
+
+/// The bytes one mip level of a species holds (three atlases).
+fn level_bytes(spec: &ImpostorSpec, level: u32) -> usize {
+    let side = (spec.atlas_side() >> level).max(1) as usize;
+    side * side * 4 * ATLASES_PER_SPECIES_USIZE
+}
+
+const ATLASES_PER_SPECIES_USIZE: usize = super::ATLASES_PER_SPECIES as usize;
+
+impl BakedAtlas {
+    /// The atlas as an RGBA8 KTX 2.0 file: three layers, the class's mips (stored smallest first,
+    /// as the format orders them), a basic DFD and the [`BAKED_ATLAS_KEY`] entry.
+    pub fn to_ktx2(&self) -> Vec<u8> {
+        let spec = self.class.spec();
+        let side = spec.atlas_side();
+        let level_count = self.levels.len() as u32;
+        let dfd_block = match ktx2::dfd::Basic::from_format(ktx2::Format::R8G8B8A8_UNORM) {
+            Ok((basic, _)) => ktx2::dfd::Block::Basic(basic).to_vec(),
+            Err(_) => Vec::new(),
+        };
+        let mut dfd = ((dfd_block.len() + 4) as u32).to_le_bytes().to_vec();
+        dfd.extend(&dfd_block);
+        let identity = format!("format={BAKED_ATLAS_FORMAT};class={};layout={};digest={:016x}", class_wire(self.class), layout_wire(self.layout), self.digest);
+        let entry_len = BAKED_ATLAS_KEY.len() + 1 + identity.len() + 1;
+        let mut kvd = (entry_len as u32).to_le_bytes().to_vec();
+        kvd.extend(BAKED_ATLAS_KEY.as_bytes());
+        kvd.push(0);
+        kvd.extend(identity.as_bytes());
+        kvd.push(0);
+        while !kvd.len().is_multiple_of(4) {
+            kvd.push(0);
+        }
+        let index_end = ktx2::Header::LENGTH + ktx2::LevelIndex::LENGTH * self.levels.len();
+        let dfd_offset = index_end;
+        let kvd_offset = dfd_offset + dfd.len();
+        let mut data_at = (kvd_offset + kvd.len()).next_multiple_of(4);
+        // Smallest level first in the file; the index lists the largest first.
+        let mut offsets = vec![0usize; self.levels.len()];
+        for (level, bytes) in self.levels.iter().enumerate().rev() {
+            offsets[level] = data_at;
+            data_at = (data_at + bytes.len()).next_multiple_of(4);
+        }
+        let header = ktx2::Header {
+            format: Some(ktx2::Format::R8G8B8A8_UNORM),
+            type_size: 1,
+            pixel_width: side,
+            pixel_height: side,
+            pixel_depth: 0,
+            layer_count: super::ATLASES_PER_SPECIES as u32,
+            face_count: 1,
+            level_count,
+            supercompression_scheme: None,
+            index: ktx2::Index {
+                dfd_byte_offset: dfd_offset as u32,
+                dfd_byte_length: dfd.len() as u32,
+                kvd_byte_offset: kvd_offset as u32,
+                kvd_byte_length: kvd.len() as u32,
+                sgd_byte_offset: 0,
+                sgd_byte_length: 0,
+            },
+        };
+        let mut out = vec![0u8; data_at];
+        out[..ktx2::Header::LENGTH].copy_from_slice(&header.as_bytes());
+        for (level, bytes) in self.levels.iter().enumerate() {
+            let row = ktx2::LevelIndex { byte_offset: offsets[level] as u64, byte_length: bytes.len() as u64, uncompressed_byte_length: bytes.len() as u64 };
+            out[ktx2::Header::LENGTH + level * ktx2::LevelIndex::LENGTH..][..ktx2::LevelIndex::LENGTH].copy_from_slice(&row.as_bytes());
+            out[offsets[level]..][..bytes.len()].copy_from_slice(bytes);
+        }
+        out[dfd_offset..][..dfd.len()].copy_from_slice(&dfd);
+        out[kvd_offset..][..kvd.len()].copy_from_slice(&kvd);
+        out
+    }
+
+    /// The atlas a [`BakedAtlas::to_ktx2`] file holds; refused `texture-invalid` for anything
+    /// else (another format, size, layer or level count than its class's, a missing or foreign
+    /// [`BAKED_ATLAS_KEY`] entry, a level of the wrong size).
+    pub fn from_ktx2(bytes: &[u8]) -> Result<BakedAtlas, RenderError> {
+        let invalid = |detail: &str| RenderError::refused(crate::error::RenderCode::TextureInvalid, format!("baked impostor atlas: {detail}"));
+        let reader = ktx2::Reader::new(bytes).map_err(|error| invalid(&format!("not a KTX2 file: {error}")))?;
+        let header = reader.header();
+        let (class, layout, digest) = identity_of(bytes, &header.index).ok_or_else(|| invalid("no genex.impostor entry"))?;
+        let spec = class.spec();
+        let shaped = header.format == Some(ktx2::Format::R8G8B8A8_UNORM)
+            && header.supercompression_scheme.is_none()
+            && header.pixel_width == spec.atlas_side()
+            && header.pixel_height == spec.atlas_side()
+            && header.layer_count == super::ATLASES_PER_SPECIES as u32
+            && header.face_count == 1
+            && header.level_count == spec.mip_levels();
+        if !shaped {
+            return Err(invalid("its format, size, layers or levels are not its class's"));
+        }
+        let mut levels = Vec::with_capacity(spec.mip_levels() as usize);
+        for (level, data) in reader.levels().enumerate() {
+            if data.data.len() != level_bytes(&spec, level as u32) {
+                return Err(invalid(&format!("level {level} holds {} bytes", data.data.len())));
+            }
+            levels.push(data.data.to_vec());
+        }
+        Ok(BakedAtlas { class, layout, digest, levels })
+    }
+}
+
+/// The class, layout and digest the file's [`BAKED_ATLAS_KEY`] entry names (read here, bounded,
+/// rather than through the crate's iterator, which loops on a malformed entry).
+fn identity_of(bytes: &[u8], index: &ktx2::Index) -> Option<(ImpostorClass, ImpostorLayout, u64)> {
+    let start = index.kvd_byte_offset as usize;
+    let length = (index.kvd_byte_length as usize).min(BAKED_KVD_MAX_BYTES);
+    let mut kvd = bytes.get(start..start.checked_add(length)?)?;
+    while kvd.len() >= 4 {
+        let entry = u32::from_le_bytes(kvd[..4].try_into().ok()?) as usize;
+        let body = kvd.get(4..4usize.checked_add(entry)?)?;
+        let (key, value) = body.split_at(body.iter().position(|&b| b == 0)?);
+        if key == BAKED_ATLAS_KEY.as_bytes() {
+            let text = std::str::from_utf8(value.get(1..)?).ok()?.trim_end_matches('\0');
+            return parse_identity(text);
+        }
+        kvd = kvd.get((4 + entry).next_multiple_of(4)..)?;
+    }
+    None
+}
+
+fn parse_identity(text: &str) -> Option<(ImpostorClass, ImpostorLayout, u64)> {
+    let (mut format, mut class, mut layout, mut digest) = (None, None, None, None);
+    for field in text.split(';') {
+        let (key, value) = field.split_once('=')?;
+        match key {
+            "format" => format = value.parse::<u32>().ok(),
+            "class" => class = class_from_wire(value),
+            "layout" => layout = [ImpostorLayout::Hemi, ImpostorLayout::Sphere].into_iter().find(|known| layout_wire(*known) == value),
+            "digest" => digest = u64::from_str_radix(value, 16).ok().filter(|_| value.len() == 16),
+            _ => {}
+        }
+    }
+    (format? == BAKED_ATLAS_FORMAT).then_some(())?;
+    Some((class?, layout?, digest?))
+}
+
+impl ImpostorAtlases {
+    /// Read layer `layer` back: each mip level, largest first, atlas A then B then C, tightly
+    /// packed (native only: a web page never blocks on a readback).
+    pub fn read_layer(&self, gpu: &crate::gpu::Gpu, layer: u32) -> Result<Vec<Vec<u8>>, RenderError> {
+        let side = self.spec.atlas_side();
+        let mut levels = Vec::with_capacity(self.spec.mip_levels() as usize);
+        for level in 0..self.spec.mip_levels() {
+            let extent = (side >> level).max(1);
+            let tight = extent * 4;
+            let padded = tight.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+            let one = u64::from(padded) * u64::from(extent);
+            let staging = crate::tables::buffer(&gpu.device, "impostor-readback", one * 3, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST)?;
+            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("impostor-readback") });
+            for (at, texture) in self.textures.iter().enumerate() {
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo { texture, mip_level: level, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &staging,
+                        layout: wgpu::TexelCopyBufferLayout { offset: one * at as u64, bytes_per_row: Some(padded), rows_per_image: Some(extent) },
+                    },
+                    wgpu::Extent3d { width: extent, height: extent, depth_or_array_layers: 1 },
+                );
+            }
+            gpu.queue.submit([encoder.finish()]);
+            let data = crate::readback::map_read_blocking(gpu, &staging, one * 3)?;
+            levels.push(data.chunks(padded as usize).flat_map(|row| row[..tight as usize].to_vec()).collect());
+        }
+        Ok(levels)
+    }
+
+    /// Write `levels` (as [`ImpostorAtlases::read_layer`] answers them) into layer `layer`.
+    pub fn write_layer(&self, queue: &Queue, layer: u32, levels: &[Vec<u8>]) {
+        let side = self.spec.atlas_side();
+        for (level, bytes) in levels.iter().enumerate().take(self.spec.mip_levels() as usize) {
+            let extent = (side >> level).max(1);
+            let one = (extent * extent * 4) as usize;
+            for (at, texture) in self.textures.iter().enumerate() {
+                let Some(texels) = bytes.get(one * at..one * (at + 1)) else { continue };
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { texture, mip_level: level as u32, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
+                    texels,
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(extent * 4), rows_per_image: Some(extent) },
+                    wgpu::Extent3d { width: extent, height: extent, depth_or_array_layers: 1 },
+                );
+            }
+        }
+    }
+}
+
+impl ImpostorStage {
+    /// Install `atlas` (baked at build time) into the next layer of its class's arrays round
+    /// `bounds`, with no bake: its row, or None past the layers reserved (as [`ImpostorStage::bake`]).
+    pub fn install_baked(&mut self, device: &Device, queue: &Queue, atlas: &BakedAtlas, bounds: &ImpostorBounds) -> Option<GpuImpostor> {
+        let spec = atlas.class.spec();
+        if self.atlases.as_ref().is_none_or(|atlases| atlases.spec != spec) {
+            self.atlases = Some(ImpostorAtlases::new(device, spec, spec.species_cap));
+            self.species.clear();
+        }
+        let layer = self.species.len() as u32;
+        let atlases = self.atlases.as_ref().filter(|atlases| layer < atlases.layers)?;
+        atlases.write_layer(queue, layer, &atlas.levels);
+        let row = GpuImpostor::new(&spec, atlas.layout, bounds, layer);
+        self.species.push(row);
+        Some(row)
+    }
+
+    /// Read the species in layer `layer` back as a [`BakedAtlas`] carrying `digest`; None when
+    /// no species is baked there.
+    pub fn read_species(&self, gpu: &crate::gpu::Gpu, layer: u32, digest: u64) -> Result<Option<BakedAtlas>, RenderError> {
+        let (Some(atlases), Some(row)) = (self.atlases.as_ref(), self.species.get(layer as usize)) else { return Ok(None) };
+        let class = ImpostorClass::ALL.into_iter().find(|class| class.spec() == atlases.spec);
+        let Some(class) = class else { return Ok(None) };
+        let layout = if row.hemi == 1 { ImpostorLayout::Hemi } else { ImpostorLayout::Sphere };
+        Ok(Some(BakedAtlas { class, layout, digest, levels: atlases.read_layer(gpu, layer)? }))
+    }
+}

@@ -25,7 +25,10 @@
 //! frames never wait. The dev flavour also serves `saves` and `uiSettings` (G6 UIS-16) through
 //! `Runtime::host_saves` and the UI session layer, and its receipt advertises both. It serves
 //! `bakeAssets` kind `nav` (game systems NAV-14) through `Runtime::bake_nav`, and its receipt lists
-//! the game's `game.nav_bake` names as `bakes`.
+//! the game's `game.nav_bake` names as `bakes`. Kind `impostor` (LOD-23) bakes one model's atlas at
+//! one class row on this GPU through `Presenter::bake_impostor_atlas` and answers it as an RGBA8
+//! KTX2 file; the receipt lists each `game.impostor_bake` model at every row
+//! (`crate::lod::impostor_bake_name`), which a run loads instead of baking.
 //! At boot the device is probed and, when no hint is cached in the saves, calibrated
 //! once; the host may name the adapter's reference class in `GENEX_RENDER_REFERENCE_CLASS`. A
 //! settings change is warmed off the loop (`Presenter::set_off_thread_changes`): Live keeps the
@@ -334,9 +337,11 @@ impl<W: Default + 'static> StudioRun<'_, W> {
     fn ready_info(&self) -> ReadyInfo {
         let gpu = self.presenter.gpu();
         let mut receipt = receipt_of(gpu);
-        // The bakes the build's bake step sends `bakeAssets` for (NAV-14).
+        // The bakes the build's bake step sends `bakeAssets` for (NAV-14, LOD-23).
         if let Some(receipt) = receipt.as_mut() {
-            receipt.bakes = self.game.nav_bakes().into_iter().map(|name| (wire::BakeKind::Nav, name)).collect();
+            let nav = self.game.nav_bakes().into_iter().map(|name| (wire::BakeKind::Nav, name));
+            let impostors = self.game.impostor_bakes().into_iter().map(|(name, _, _)| (wire::BakeKind::Impostor, name));
+            receipt.bakes = nav.chain(impostors).collect();
         }
         let backend_api = receipt.as_ref().map_or(BACKEND_UNKNOWN, |r| r.backend.wire()).to_owned();
         ReadyInfo {
@@ -586,8 +591,11 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
                 Some(baked) => baked.map_err(|error| error.code.wire()),
                 None => Err(VerbRefusal::UNKNOWN_BAKE),
             },
-            // Impostor atlases are LOD-23's.
-            wire::BakeKind::Impostor => Err(VerbRefusal::UNAVAILABLE),
+            wire::BakeKind::Impostor => {
+                let bakes = self.game.impostor_bakes();
+                let Some((_, model, class)) = bakes.into_iter().find(|(name, _, _)| *name == request.name) else { return Err(VerbRefusal::UNKNOWN_BAKE) };
+                self.presenter.bake_impostor_atlas(&model, class)
+            }
         }
     }
     fn saves(&mut self, request: &SavesRequest) -> Result<Value, &'static str> {
@@ -1458,5 +1466,46 @@ mod metal {
         assert!(after["result"]["rms"].as_f64() > 0.05, "the meter reads the mix under the mute: {after:?}");
         let state = call(&mut studio, &mut run, "state", "{}");
         assert_eq!(state["result"]["volatile"]["audio"]["device"]["muted"], json::Value::Bool(true), "{state:?}");
+    }
+
+    /// LOD-23: the build's bake step over the wire. The receipt advertises a `game.impostor_bake`
+    /// model at every class row; `bakeAssets {kind: impostor, name}` writes that row's atlas to
+    /// `state/bakes/impostor/<name>` as the RGBA8 KTX2 a run loads, and a name the game did not
+    /// register answers `unknown-bake` with nothing written.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_bake_assets_impostor_writes_each_advertised_rows_atlas() {
+        let root = scratch("impostor-assets");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/asset-import/lods-sphere.glb");
+        std::fs::copy(fixture, root.join("sphere.glb")).expect("the sphere fixture");
+        let presenter = match Presenter::open_with_root([96, 64], &[], Some(root.clone())) {
+            Ok(presenter) => presenter,
+            Err(error) if required() => panic!("GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}"),
+            Err(_) => return,
+        };
+        let mut game = game(Projection::Perspective, 6.0);
+        game.impostor_bake(|gfx| gfx.assets().model("sphere.glb").with_impostor(crate::Impostor::sphere()));
+        let runtime = Box::leak(Box::new(Runtime::new(game).expect("installs")));
+        let mut run = studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {});
+        let receipt = run.ready_info().receipt.expect("a receipt");
+        let names: Vec<String> = receipt.bakes.iter().filter(|(kind, _)| *kind == wire::BakeKind::Impostor).map(|(_, name)| name.clone()).collect();
+        assert_eq!(names.len(), genex_render::impostor::ImpostorClass::ALL.len(), "{names:?}");
+        let state = scratch("impostor-state");
+        // A run's state root ends in its separator, as `paths::save_root` answers it.
+        let mut studio = Studio::native(&format!("{}/", state.display()));
+        studio.mark_ready();
+        for name in &names {
+            let reply = call(&mut studio, &mut run, "bakeAssets", &format!(r#"{{"kind": "impostor", "name": "{name}"}}"#));
+            assert_eq!(reply["ok"], json::Value::Bool(true), "{name}: {reply:?}");
+            let bytes = std::fs::read(state.join("bakes").join("impostor").join(name)).expect("the atlas file");
+            assert_eq!(reply["result"]["bytes"].as_f64(), bytes.len() as f64);
+            let atlas = genex_render::impostor::bake::BakedAtlas::from_ktx2(&bytes).expect("a baked atlas");
+            assert!(name.ends_with(genex_render::impostor::bake::class_wire(atlas.class)), "{name} holds the {:?} row", atlas.class);
+        }
+        let unknown = call(&mut studio, &mut run, "bakeAssets", r#"{"kind": "impostor", "name": "0000000000000000-high"}"#);
+        assert_eq!(unknown["error"].as_str(), "unknown-bake", "{unknown:?}");
+        assert!(!state.join("bakes").join("impostor").join("0000000000000000-high").exists());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&state);
     }
 }

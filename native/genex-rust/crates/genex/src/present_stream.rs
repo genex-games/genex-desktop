@@ -86,7 +86,7 @@ pub const STREAM_LOADS_WEB: u32 = 6;
 /// Pixels per world unit the load priority reads (nearer cells first; only the order matters).
 const PRIORITY_PIXELS_PER_UNIT: f32 = 1000.0;
 /// The tag the view set's draws count under (`state().__render.tags`).
-const STREAM_TAG: &str = "stream";
+pub(crate) const STREAM_TAG: &str = "stream";
 /// The height the cell overlay is drawn at.
 const OVERLAY_Y: f32 = 0.0;
 

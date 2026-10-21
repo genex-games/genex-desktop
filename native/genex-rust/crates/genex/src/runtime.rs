@@ -663,6 +663,14 @@ impl<W> Runtime<W> {
         crate::nav_bake::bake(&self.game, &self.core.gfx, name)
     }
 
+    /// The impostor atlases the game registered (`game.impostor_bake`, LOD-23): each model's bake
+    /// name at every class row, with the model and the row, in registration order. The hooks run
+    /// as a reset runs them (asset reads allowed); the simulation is untouched.
+    #[doc(hidden)]
+    pub fn impostor_bakes(&self) -> Vec<(String, crate::Model, genex_render::impostor::ImpostorClass)> {
+        crate::lod::impostor_bakes(&self.game.impostor_bakes, &self.core.gfx)
+    }
+
     /// Rebase the saves onto the web's in-memory mirror (`genex_core::saves::mirror`), as a web
     /// page's are: for tests and tools that stand in for one off wasm32.
     #[doc(hidden)]

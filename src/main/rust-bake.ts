@@ -1,7 +1,8 @@
 /**
  * The Rust build lane's bake step (game systems NAV-14b): the outputs of the bakes a game registers
- * (`game.nav_bake`, kind `nav`; LOD-23 adds kind `impostor`), made once per input at build time and
- * served from the build's stage, never the game folder (owner call C3).
+ * (`game.nav_bake`, kind `nav`; `game.impostor_bake`, kind `impostor`: one RGBA8 KTX2 atlas per
+ * model and device-class row, LOD-23), made once per input at build time and served from the
+ * build's stage, never the game folder (owner call C3).
  *
  * A bake's input is everything a game could read while baking: its staged sources and assets
  * (`bakeInputDigest`, before the import step rewrites any asset for a destination, without the
@@ -24,7 +25,9 @@
  * Every name is checked by `isBakeName` (one path segment, never a dot) and every folder written
  * or read below the stage, the cache and the run's state must be a real folder: a hostile name or a
  * linked folder refuses that bake with nothing written. A bake that fails never fails the build:
- * the game's `NavMesh::from_bytes_for` bakes again at reset when no output, or a stale one, is there.
+ * the game's `NavMesh::from_bytes_for` bakes again at reset when no output, or a stale one, is there,
+ * and an impostor whose atlas is missing or stale bakes on the GPU at runtime (a streamed one keeps
+ * its coarsest mesh, `impostor-not-baked`).
  */
 import { createHash } from "node:crypto";
 import { constants as FS } from "node:fs";
@@ -84,7 +87,10 @@ const PROJECT_FOLDER_HEX = 32;
  * The call a game's source makes to register a bake of each kind; a game whose staged `src/`
  * names none of them is not started to ask. A prefilter only: a game the scan misses bakes at reset.
  */
-const BAKE_REGISTRATIONS = { [BakeKind.Nav]: "nav_bake" } as const satisfies Partial<Record<BakeKind, string>>;
+const BAKE_REGISTRATIONS = {
+  [BakeKind.Nav]: "nav_bake",
+  [BakeKind.Impostor]: "impostor_bake",
+} as const satisfies Record<BakeKind, string>;
 
 /** Where a run's bakes came from. Wire values: never rename one. */
 export const BakeSource = {
