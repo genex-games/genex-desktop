@@ -59,6 +59,7 @@ mod group;
 mod gfx;
 pub mod gpu;
 mod input;
+mod lod;
 #[doc(hidden)]
 pub mod loading;
 pub mod manifest;
@@ -120,6 +121,9 @@ pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
 };
+/// A model's levels of detail (game systems LOD-07): `Model::with_levels`, `Model::with_lod_bias`,
+/// `Assets::compound` and their refusals (`state().__render.lodRefused`).
+pub use lod::{LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
 /// Why `gfx.character` refused (`error.code.wire()`, `error.detail`) and the skeleton a
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;

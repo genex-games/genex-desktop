@@ -54,6 +54,8 @@ const MAX_NAME_CHARS: usize = 64;
 const DEFAULT_CAMERA: &str = "default";
 /// `state().__render`'s list of the models drawn as the missing-asset checker.
 const MISSING_MODELS_KEY: &str = "missingModels";
+/// `state().__render`'s models drawn whole because a level-of-detail option was refused (LOD-07).
+const LOD_REFUSED_KEY: &str = "lodRefused";
 /// `state().__render`'s textures the last frame bound, by path (C-11).
 const TEXTURES_KEY: &str = "textures";
 /// `state().__render`'s asset issues of the last frame (C-11).
@@ -300,6 +302,8 @@ struct Tally {
     textures: Vec<TextureFact>,
     /// What those textures tell an agent to fix (C-11).
     asset_issues: Vec<AssetIssue>,
+    /// Models drawn whole because a level-of-detail option was refused (LOD-07).
+    lod_refused: Vec<crate::present::LodRefused>,
 }
 
 /// The simulation and clock state the hooks run against.
@@ -916,6 +920,15 @@ impl<W> Runtime<W> {
             let missing = tally.missing_models.iter().map(|path| CoreValue::from(path.as_str())).collect();
             render.set(MISSING_MODELS_KEY, CoreValue::Array(missing));
         }
+        if !tally.lod_refused.is_empty() {
+            let refused = tally.lod_refused.iter().map(|refused| {
+                let mut entry = CoreValue::object();
+                entry.set("model", CoreValue::from(refused.model.as_str()));
+                entry.set("code", CoreValue::from(refused.code.wire()));
+                entry
+            });
+            render.set(LOD_REFUSED_KEY, CoreValue::Array(refused.collect()));
+        }
         if !tally.textures.is_empty() {
             let mut textures = CoreValue::object();
             for fact in &tally.textures {
@@ -954,6 +967,12 @@ impl<W> Runtime<W> {
     /// the game's assets, or refused): `state().__render.missingModels`, absent when empty.
     pub fn note_missing_models(&mut self, paths: &[String]) {
         self.core.tally.missing_models = paths.to_vec();
+    }
+
+    /// The models the frame last drawn drew whole because a level-of-detail option was refused
+    /// (LOD-07): `state().__render.lodRefused` (`[{model, code}]`), absent when empty.
+    pub fn note_lod_refused(&mut self, refused: &[crate::present::LodRefused]) {
+        self.core.tally.lod_refused = refused.to_vec();
     }
 
     /// The textures the renderer bound in the frame last drawn and the issues they raise (C-11):

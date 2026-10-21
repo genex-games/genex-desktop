@@ -39,6 +39,9 @@ use genex_core::saves::Saves;
 use serde_json::Value;
 
 use crate::extend::{CustomMaterial, ExtensionRefusal, Extensions, PostPass, WgslSetup};
+use crate::lod::{LOD_BIAS_DEFAULT, LOD_BIAS_MAX, LOD_BIAS_MIN, LodRefusalCode, ModelLod};
+#[cfg(doc)]
+use crate::lod::LOD_LEVELS_MAX;
 use crate::map::Map;
 use crate::math::Vec3;
 
@@ -79,10 +82,13 @@ fn is_texture_path(path: &str) -> bool {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Model {
     path: Option<Arc<str>>,
+    /// Its level-of-detail options (game systems LOD-07); `None` for a plain model.
+    lod: Option<Arc<ModelLod>>,
 }
 
 impl Model {
-    /// The path under `assets/`, or `None` for a missing model.
+    /// The path under `assets/`, or `None` for a missing model. A compound's is its first
+    /// member's.
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
@@ -92,6 +98,70 @@ impl Model {
         self.path.is_none()
     }
 
+    /// Authored levels, coarser and coarser: `(level, metres)` draws `level`'s parts in place of
+    /// this model's from `metres` from the camera (to the nearest point of the model's bounding
+    /// sphere) for a copy of scale 1 at the nominal view (1080 rows, 60° fov, the one-pixel
+    /// threshold); a bigger copy, a sharper view or a stricter quality preset switches later, a
+    /// coarser preset sooner. Level k's part i draws with part i's material; at most
+    /// [`LOD_LEVELS_MAX`] levels, each a GLB with this model's part count.
+    ///
+    /// Refused `levels-invalid` (no levels, too many, a distance that is not finite, positive and
+    /// increasing, a missing level, a level with levels of its own, or a model that already has
+    /// levels or is a compound) and, at load, `levels-mismatch` (a level with another part
+    /// count): the model draws whole and `state().__render.lodRefused` names it. Never a crash.
+    pub fn with_levels(self, levels: &[(Model, f32)]) -> Model {
+        let Some(path) = self.path.clone() else { return self };
+        let mut lod = self.lod_options().cloned().unwrap_or_default();
+        if let Some(code) = crate::lod::levels_refusal(&self, levels) {
+            // Drawn whole: its own parts (a compound's members), no levels.
+            lod.refused = Some(code);
+            lod.levels.clear();
+            if lod.members.is_empty() {
+                lod.key = None;
+            }
+            return Model { path: self.path, lod: Some(Arc::new(lod)) };
+        }
+        lod.levels = levels.iter().map(|(level, metres)| (level.clone(), metres.to_bits())).collect();
+        lod.key = Some(crate::lod::levels_key(&path, levels));
+        Model { path: self.path, lod: Some(Arc::new(lod)) }
+    }
+
+    /// How long this model keeps its detail: 2.0 holds each level twice as far, 0.5 half
+    /// (Godot's `lod_bias` sense), clamped to [`LOD_BIAS_MIN`]..=[`LOD_BIAS_MAX`]; a bias that
+    /// is not a number keeps the default 1.0. It applies to the model's own levels, imported or
+    /// authored, and to every part of a compound.
+    pub fn with_lod_bias(self, bias: f32) -> Model {
+        let bias = if bias.is_nan() { LOD_BIAS_DEFAULT } else { bias.clamp(LOD_BIAS_MIN, LOD_BIAS_MAX) };
+        let mut lod = self.lod_options().cloned().unwrap_or_default();
+        lod.bias = bias.to_bits();
+        Model { path: self.path, lod: Some(Arc::new(lod)) }
+    }
+
+    /// Why one of this model's level-of-detail options was refused (it then draws whole), or
+    /// `None`. A `levels-mismatch` is found at load and only reported in `__render.lodRefused`.
+    pub fn lod_refusal(&self) -> Option<LodRefusalCode> {
+        self.lod.as_ref().and_then(|lod| lod.refused)
+    }
+
+    /// Its level-of-detail options, if it has any.
+    pub(crate) fn lod_options(&self) -> Option<&ModelLod> {
+        self.lod.as_deref()
+    }
+
+    /// The presenter's cache key: the path for a model drawn from its GLB alone, a derived key
+    /// for one with authored levels or a compound; `None` for a missing model.
+    pub(crate) fn key(&self) -> Option<&str> {
+        self.lod.as_ref().and_then(|lod| lod.key.as_deref()).or(self.path.as_deref())
+    }
+
+    /// The models whose parts draw for this one: a compound's members, else itself.
+    pub(crate) fn drawn_members(&self) -> &[Model] {
+        match self.lod.as_deref() {
+            Some(lod) if !lod.members.is_empty() => &lod.members,
+            _ => std::slice::from_ref(self),
+        }
+    }
+
     /// A handle for `assets/<path>` that nothing has recorded yet: a streamed cell's builder makes
     /// it on a worker, and the commit slot records its path in cell order (STR-9). A missing model
     /// for a path that is not a plain relative path.
@@ -99,7 +169,7 @@ impl Model {
         if !is_safe_asset_path(path) {
             return Model::default();
         }
-        Model { path: Some(Arc::from(path)) }
+        Model { path: Some(Arc::from(path)), lod: None }
     }
 }
 
@@ -448,7 +518,26 @@ impl Assets {
             return Model::default();
         }
         self.note(path);
-        Model { path: Some(Arc::from(path)) }
+        Model { path: Some(Arc::from(path)), lod: None }
+    }
+
+    /// Several models drawn as one (a tree's wood and foliage GLBs): one transform, one level
+    /// choice for all of their parts (each part measured from the compound's bounding sphere, so
+    /// they switch together) and one bias. Members keep their own levels and materials; a
+    /// material given to the draw applies to every part.
+    ///
+    /// Refused `compound-invalid` (no members, a missing member or a member that is a compound):
+    /// it then draws its first member whole (the checker with none) and
+    /// `state().__render.lodRefused` names it.
+    pub fn compound(&self, members: &[&Model]) -> Model {
+        let first = members.first().map(|member| (*member).clone()).unwrap_or_default();
+        if let Some(code) = crate::lod::compound_refusal(members) {
+            let lod = ModelLod { refused: Some(code), ..ModelLod::default() };
+            let path = first.path.clone();
+            return Model { path, lod: Some(Arc::new(lod)) };
+        }
+        let lod = ModelLod { members: members.iter().map(|member| (*member).clone()).collect(), key: Some(crate::lod::compound_key(members)), ..ModelLod::default() };
+        Model { path: first.path, lod: Some(Arc::new(lod)) }
     }
 
     /// A texture at `assets/<path>` ([`GAME_TEXTURE_FORMATS`]); a missing texture when the path is

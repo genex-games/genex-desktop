@@ -95,7 +95,8 @@ use crate::camera::{Camera, Projection};
 use crate::render::{CaptureRender, FrameChoice, RenderHandle, WebHints};
 use crate::extend::{ExtensionRefusal, GpuKey, GpuParts};
 use crate::frame::{Color, CustomMesh, DEFAULT_METALLIC, DEFAULT_ROUGHNESS, Frame, Lights, Shape};
-use crate::gfx::AssetTable;
+use crate::gfx::{AssetTable, Model};
+use crate::lod::{LodRefusalCode, ModelLod};
 use genex_core::paths::is_safe_asset_path;
 use crate::runtime::{FIXED_STEP_MS, Runtime, View};
 use genex_hud::egui::epaint::textures::TexturesDelta;
@@ -115,6 +116,7 @@ use genex_render::letterbox::{letterbox, output_for_window};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
 use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
+use genex_render::lod_rows::DrawLod;
 use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
@@ -158,8 +160,20 @@ pub struct Drawn {
     pub textures: Vec<TextureFact>,
     /// What those textures tell an agent to fix ([`texture_facts`], C-11).
     pub asset_issues: Vec<AssetIssue>,
+    /// The models drawn whole because a level-of-detail option was refused, once per model and
+    /// code in first-draw order (`state().__render.lodRefused`, game systems LOD-07).
+    pub lod_refused: Vec<LodRefused>,
     /// What the GPU encoded for the frame (`state().volatile.gpu`), never compared.
     pub gpu: GpuCounters,
+}
+
+/// A model drawn whole because a level-of-detail option was refused (game systems LOD-07).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LodRefused {
+    /// The model's path (a compound's first member's; empty for a compound with no members).
+    pub model: String,
+    /// Why.
+    pub code: LodRefusalCode,
 }
 
 /// Where a bound texture's texels came from (`__render.textures[path].family`, C-11).
@@ -296,6 +310,9 @@ pub struct LoadedModel {
     pub textures: Vec<ModelTexture>,
     /// A normal-mapped primitive had no TANGENT, so its tangents were generated at load (C-9).
     pub runtime_tangents: bool,
+    /// The model-space sphere around every part's mesh (centre xyz, radius; 0 when unknown): a
+    /// compound's parts measure their levels from its members' spheres together (LOD-07).
+    pub sphere: [f32; 4],
 }
 
 /// One GLB image a [`LoadedModel`] uploaded (C-11, C-14).
@@ -513,6 +530,18 @@ pub struct AssetCache {
     family_chosen: bool,
     /// The characters' skinned models and poses (AN-17).
     characters: characters::Characters,
+    /// What became of the authored levels of each model loaded with them (LOD-07), by cache key:
+    /// every GLB it read (a change to any reloads it) and the load's refusal.
+    leveled: Vec<Leveled>,
+}
+
+/// A model loaded with authored levels (LOD-07): its cache key, the GLBs it read and the load's
+/// refusal (`levels-mismatch`, or `levels-invalid` for a level not in the game's assets).
+#[derive(Clone, Debug, PartialEq)]
+struct Leveled {
+    key: String,
+    files: Vec<String>,
+    refused: Option<LodRefusalCode>,
 }
 
 /// One texture an [`AssetCache`] tried: its path and kind, its id (`None`: refused) and where it
@@ -633,11 +662,16 @@ impl AssetCache {
         self.models.iter().any(|(known, _)| known == path)
     }
 
+    /// Why the authored levels of the model loaded under `key` were refused at load (LOD-07).
+    fn lod_refusal(&self, key: &str) -> Option<LodRefusalCode> {
+        self.leveled.iter().find(|leveled| leveled.key == key).and_then(|leveled| leveled.refused)
+    }
+
     /// Record `path` as one mesh with no material of its own (`None`: refused), unless it was
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4] });
             self.models.push((path.to_owned(), loaded));
         }
     }
@@ -669,14 +703,17 @@ impl AssetCache {
         let mut dropped = Invalidated::default();
         let touched = |path: &str, rule: fn(&str, &str) -> bool| changed.iter().any(|changed| rule(path, changed));
         let mut kept = Vec::with_capacity(self.models.len());
+        let leveled_touched = |key: &str| self.leveled.iter().any(|leveled| leveled.key == key && leveled.files.iter().any(|file| touched(file, touches_model)));
         for (path, loaded) in std::mem::take(&mut self.models) {
-            if !touched(&path, touches_model) {
+            if !touched(&path, touches_model) && !leveled_touched(&path) {
                 kept.push((path, loaded));
                 continue;
             }
             dropped.models.extend(loaded);
         }
         self.models = kept;
+        let models = &self.models;
+        self.leveled.retain(|leveled| models.iter().any(|(key, _)| *key == leveled.key));
         self.characters.forget(|path| touched(path, touches_model));
         self.textures.retain(|cached| !touched(&cached.path, touches_texture));
         let environments = self.environments.len();
@@ -726,6 +763,22 @@ impl AssetCache {
         models
     }
 
+    /// Load the model at `path` with its authored levels (LOD-07) under `key`, remembering the
+    /// files it read and the load's refusal; a refused chain loads the model whole.
+    fn load_leveled(&mut self, key: &str, path: &str, lod: &ModelLod, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+        let files: Vec<String> = std::iter::once(path).chain(lod.levels.iter().filter_map(|(level, _)| level.path())).map(str::to_owned).collect();
+        let (levels, refused) = match level_parts(lod, source) {
+            Ok(levels) => (levels, None),
+            Err(code) => (Vec::new(), Some(code)),
+        };
+        let (loaded, refused) = load_model_levels(path, source, uploads, log, (levels, refused))?;
+        if let Some(code) = refused {
+            log(&format!("model {path:?}: its levels were refused ({}); drawing it whole", code.wire()));
+        }
+        self.leveled.push(Leveled { key: key.to_owned(), files, refused });
+        Ok(loaded)
+    }
+
     /// Load every model and material texture `frame` draws that was never tried: bytes from
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
@@ -738,12 +791,16 @@ impl AssetCache {
                 self.family_chosen = true;
             }
         }
-        for path in model_paths(frame) {
-            if self.tried(path) {
+        for (key, model) in model_keys(frame) {
+            if self.tried(key) {
                 continue;
             }
-            let loaded = load_model(path, source, uploads, log)?;
-            self.models.push((path.to_owned(), loaded));
+            let chained = model.and_then(|model| Some((model.path()?, model.lod_options().filter(|lod| lod.chained())?)));
+            let loaded = match chained {
+                Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log)?,
+                None => load_model(key, source, uploads, log)?,
+            };
+            self.models.push((key.to_owned(), loaded));
         }
         self.characters.load(frame, source, uploads, log)?;
         // A file used as several kinds (a base colour that is also a mask) is read once, and its
@@ -819,22 +876,74 @@ fn read_environment(path: &str, source: &dyn ModelSource, log: &mut dyn FnMut(&s
     genex_render::hdri::decode(&bytes).map_err(|refusal| log(&format!("environment map {path:?} refused: {refusal}"))).ok()
 }
 
-/// Every model path `frame` draws: its shapes', then its custom draws', in draw order.
+/// Every model path `frame` draws: its shapes', then its custom draws', in draw order (a
+/// compound's members' in its place).
 fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
-    let shapes = frame.draws().iter().filter_map(|draw| match &draw.shape {
-        Shape::Model { model, .. } => model.path(),
+    model_keys(frame).filter_map(|(key, model)| match model {
+        Some(model) => model.path(),
+        None => Some(key),
+    })
+}
+
+/// The model a shape or custom draw names, if it names one (a character's is not a [`Model`]).
+fn shape_model(shape: &Shape) -> Option<&Model> {
+    match shape {
+        Shape::Model { model, .. } => Some(model),
         Shape::Group { group } => match group.shape() {
-            crate::GroupShape::Model(model) => model.path(),
+            crate::GroupShape::Model(model) => Some(model),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
         },
-        Shape::Character { animator, .. } => Some(animator.asset().path()),
-        Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
-    });
+        Shape::Character { .. } | Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
+    }
+}
+
+/// Every model `frame` draws as its own [`Model`] handle: its shapes', then its custom draws', in
+/// draw order, a compound as itself.
+fn drawn_models(frame: &Frame) -> impl Iterator<Item = &Model> {
+    let shapes = frame.draws().iter().filter_map(|draw| shape_model(&draw.shape));
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
-        CustomMesh::Model(model) => model.path(),
+        CustomMesh::Model(model) => Some(model),
         CustomMesh::Cube | CustomMesh::Sphere => None,
     });
     shapes.chain(custom)
+}
+
+/// The asset-cache key of every model `frame` draws, with its handle (none for a character's
+/// GLB, keyed by its path): its shapes', then its custom draws', in draw order, a compound's
+/// members in its place (LOD-07). A plain model's key is its path.
+fn model_keys(frame: &Frame) -> impl Iterator<Item = (&str, Option<&Model>)> {
+    let shapes = frame.draws().iter().flat_map(|draw| {
+        let (models, character): (&[Model], Option<&str>) = match &draw.shape {
+            Shape::Character { animator, .. } => (&[], Some(animator.asset().path())),
+            shape => (shape_model(shape).map_or(&[][..], Model::drawn_members), None),
+        };
+        let models = models.iter().filter_map(|model| Some((model.key()?, Some(model))));
+        character.map(|path| (path, None)).into_iter().chain(models)
+    });
+    let custom = frame.custom_draws().iter().flat_map(|draw| match &draw.mesh {
+        CustomMesh::Model(model) => model.drawn_members(),
+        CustomMesh::Cube | CustomMesh::Sphere => &[],
+    });
+    shapes.chain(custom.filter_map(|model| Some((model.key()?, Some(model)))))
+}
+
+/// Every model `frame` draws whole because a level-of-detail option was refused (LOD-07), once
+/// per model and code in first-draw order: the handle's own refusal, a member's, or its load's.
+fn lod_refusals(frame: &Frame, assets: &AssetCache) -> Vec<LodRefused> {
+    let mut refused: Vec<LodRefused> = Vec::new();
+    for model in drawn_models(frame) {
+        let members = model.drawn_members().iter().filter(|member| *member != model);
+        let member_codes = members.filter_map(|member| member.lod_refusal().map(|code| (member, code)));
+        let loads = model.drawn_members().iter().filter_map(|member| Some((member, assets.lod_refusal(member.key()?)?)));
+        let own = model.lod_refusal().map(|code| (model, code));
+        for (named, code) in own.into_iter().chain(member_codes).chain(loads) {
+            let entry = LodRefused { model: named.path().unwrap_or_default().to_owned(), code };
+            if !refused.contains(&entry) {
+                refused.push(entry);
+            }
+        }
+    }
+    refused
 }
 
 /// Every texture path the draws' materials name, with the array kind its slot samples.
@@ -888,12 +997,12 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
         }
     }
     let mut models: Vec<&str> = Vec::new();
-    for path in models_with_own_materials(frame) {
-        if models.contains(&path) {
+    for (key, path) in models_with_own_materials(frame) {
+        if models.contains(&key) {
             continue;
         }
-        models.push(path);
-        let Some(loaded) = assets.model(path) else { continue };
+        models.push(key);
+        let Some(loaded) = assets.model(key) else { continue };
         for texture in &loaded.textures {
             let key = format!("{path}#{}", texture.image);
             // An image bound in two usages is one fact (its first) but each usage's issue counts.
@@ -909,8 +1018,9 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
     }
     // Every model drawn whose tangents were generated at load (C-9), once, in first-draw order.
     let mut named: Vec<&str> = Vec::new();
-    for path in model_paths(frame) {
-        if named.contains(&path) || !assets.model(path).is_some_and(|loaded| loaded.runtime_tangents) {
+    for (key, model) in model_keys(frame) {
+        let path = model.and_then(Model::path).unwrap_or(key);
+        if named.contains(&path) || !assets.model(key).is_some_and(|loaded| loaded.runtime_tangents) {
             continue;
         }
         named.push(path);
@@ -919,16 +1029,21 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
     (facts, issues)
 }
 
-/// The paths of the models `frame` draws with the materials their GLBs name (no material given).
-fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = &str> {
-    frame.draws().iter().filter_map(|draw| match &draw.shape {
-        Shape::Model { model, material: None, .. } => model.path(),
-        Shape::Character { animator, material: None, .. } => Some(animator.asset().path()),
-        Shape::Group { group } if group.material().is_none() => match group.shape() {
-            crate::GroupShape::Model(model) => model.path(),
-            crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
-        },
-        _ => None,
+/// The cache keys and paths of the models `frame` draws with the materials their GLBs name (no
+/// material given), a compound's members in its place.
+fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = (&str, &str)> {
+    frame.draws().iter().flat_map(|draw| {
+        let (models, character): (&[Model], Option<&str>) = match &draw.shape {
+            Shape::Model { model, material: None, .. } => (model.drawn_members(), None),
+            Shape::Character { animator, material: None, .. } => (&[], Some(animator.asset().path())),
+            Shape::Group { group } if group.material().is_none() => match group.shape() {
+                crate::GroupShape::Model(model) => (model.drawn_members(), None),
+                crate::GroupShape::Cube | crate::GroupShape::Sphere => (&[], None),
+            },
+            _ => (&[], None),
+        };
+        let models = models.iter().filter_map(|model| Some((model.key()?, model.path()?)));
+        character.map(|path| (path, path)).into_iter().chain(models)
     })
 }
 
@@ -1009,16 +1124,92 @@ fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &
 /// Load one model: every part's mesh and the textures its materials sample. A missing or
 /// malformed file, or a refused mesh, refuses the model (logged); a refused texture only its slot.
 pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+    Ok(load_model_levels(path, source, uploads, log, (Vec::new(), None))?.0)
+}
+
+/// Each authored level's parts with its switch distance (LOD-07), read from the game's assets:
+/// `levels-invalid` for a level the game does not ship, `levels-mismatch` for one that does not
+/// open as a GLB with triangles.
+fn level_parts(lod: &ModelLod, source: &dyn ModelSource) -> Result<Vec<(ModelParts, f32)>, LodRefusalCode> {
+    let mut levels = Vec::with_capacity(lod.levels.len());
+    for ((level, _), metres) in lod.levels.iter().zip(lod.distances()) {
+        let bytes = level.path().and_then(|path| source.model_bytes(path)).ok_or(LodRefusalCode::LevelsInvalid)?;
+        let parts = GlbModel::parts_from_glb(&bytes).map_err(|_| LodRefusalCode::LevelsMismatch)?;
+        levels.push((parts, metres));
+    }
+    Ok(levels)
+}
+
+/// `parts` with authored `levels` as each part's chain (LOD-07): level k's part i appended to
+/// part i's vertices, its triangles over them, its switch distance as the error the renderer's
+/// rule switches at ([`crate::lod::switch_error`]). Replaces any imported chain.
+fn with_authored_levels(parts: ModelParts, levels: &[(ModelParts, f32)]) -> ModelParts {
+    let mut parts = parts;
+    for (at, part) in parts.iter_mut().enumerate() {
+        let mut chain = genex_render::mesh::LodChain::default();
+        for (level_parts, metres) in levels {
+            let level = &level_parts[at].mesh;
+            let base = part.mesh.vertices.len() as u32;
+            part.mesh.vertices.extend_from_slice(&level.vertices);
+            let indices = level.indices.iter().map(|index| base + index).collect();
+            chain.levels.push(genex_render::mesh::LodLevel { indices, error: crate::lod::switch_error(*metres) });
+        }
+        part.lods = Some(chain);
+    }
+    parts
+}
+
+/// The smallest sphere around two (centre xyz, radius); a radius that is not positive is none.
+fn union_sphere(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let positive = |radius: f32| radius > 0.0;
+    if !positive(a[3]) {
+        return b;
+    }
+    if !positive(b[3]) {
+        return a;
+    }
+    let offset = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt();
+    if distance + b[3] <= a[3] {
+        return a;
+    }
+    if distance + a[3] <= b[3] {
+        return b;
+    }
+    let radius = (distance + a[3] + b[3]) * 0.5;
+    let t = (radius - a[3]) / distance;
+    [a[0] + offset[0] * t, a[1] + offset[1] * t, a[2] + offset[2] * t, radius]
+}
+
+/// The sphere around every part's mesh.
+fn parts_sphere(parts: &ModelParts) -> [f32; 4] {
+    parts.iter().fold([0.0; 4], |sphere, part| {
+        let ([x, y, z], radius) = part.mesh.bounds();
+        union_sphere(sphere, [x, y, z, radius])
+    })
+}
+
+/// [`load_model`] with authored `levels` (LOD-07; none for a plain model) and the refusal they
+/// already met: a level with another part count than the model's refuses them
+/// `levels-mismatch`, and a refused chain loads the model whole. Answers the load and the chain's
+/// refusal.
+fn load_model_levels(
+    path: &str,
+    source: &dyn ModelSource,
+    uploads: &mut dyn Uploads,
+    log: &mut dyn FnMut(&str),
+    (levels, refused): (Vec<(ModelParts, f32)>, Option<LodRefusalCode>),
+) -> Result<(Option<LoadedModel>, Option<LodRefusalCode>), RenderError> {
     let Some(bytes) = source.model_bytes(path) else {
         log(&format!("model {path:?} is not in the game's assets: drawing the missing-asset checker"));
-        return Ok(None);
+        return Ok((None, refused));
     };
     // Images are decoded only when their sidecar does not load (C-14).
     let glb = match GlbModel::from_glb_undecoded(&bytes) {
         Ok(glb) => glb,
         Err(error) => {
             log(&format!("model {path:?} refused: {error}"));
-            return Ok(None);
+            return Ok((None, refused));
         }
     };
     if let GlbSidecars::Malformed(detail) = glb.sidecars() {
@@ -1031,8 +1222,13 @@ pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
     let model_parts: ModelParts = glb.model_parts();
+    let sphere = parts_sphere(&model_parts);
+    let mismatch = levels.iter().any(|(level, _)| level.len() != model_parts.len());
+    let refused = refused.or(mismatch.then_some(LodRefusalCode::LevelsMismatch));
     let still = source.static_bytes(path);
     let added = match still {
+        // Authored levels (LOD-07) upload merged parts, which a replay keeps as they are.
+        _ if refused.is_none() && !levels.is_empty() => uploads.add_model_parts(with_authored_levels(model_parts, &levels)),
         Some(bytes) => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes))),
         None => uploads.add_model_parts(model_parts),
     };
@@ -1041,7 +1237,7 @@ pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn
         Err(error) if error.code() == RenderCode::DeviceLost => return Err(error),
         Err(error) => {
             log(&format!("model {path:?} refused: {error}"));
-            return Ok(None);
+            return Ok((None, refused));
         }
     };
     for (part, mesh) in glb.parts().iter().zip(meshes) {
@@ -1058,7 +1254,7 @@ pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn
     }
     let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
     let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
-    Ok(Some(LoadedModel { parts, triangles, textures, runtime_tangents }))
+    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere }), refused))
 }
 
 /// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
@@ -1911,6 +2107,7 @@ impl Presenter {
         if let Ok(drawn) = &drawn {
             runtime.note_triangles(drawn.triangles, &drawn.by_tag);
             runtime.note_missing_models(&drawn.missing_models);
+            runtime.note_lod_refused(&drawn.lod_refused);
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
         }
         Some(drawn)
@@ -2311,14 +2508,17 @@ impl Presenter {
         let (meshes, triangles) = match &draw.mesh {
             CustomMesh::Cube => (vec![MeshId::CUBE], CUBE_TRIANGLES),
             CustomMesh::Sphere => (vec![MeshId::SPHERE], SPHERE_TRIANGLES),
-            CustomMesh::Model(model) => match model.path().and_then(|path| self.assets.model(path)) {
-                Some(loaded) => (loaded.parts.iter().map(|part| part.mesh).collect(), loaded.triangles),
-                None => {
-                    note_missing(&mut drawn.missing_models, model.path());
-                    immediate.mesh(MeshId::CUBE, matrix, Material::missing());
-                    return CUBE_TRIANGLES;
+            CustomMesh::Model(model) => {
+                let loaded: Option<Vec<&LoadedModel>> = model.drawn_members().iter().map(|member| self.assets.model(member.key()?)).collect();
+                match loaded {
+                    Some(loaded) => (loaded.iter().flat_map(|model| model.parts.iter().map(|part| part.mesh)).collect(), loaded.iter().map(|model| model.triangles).sum()),
+                    None => {
+                        note_missing(&mut drawn.missing_models, model.path());
+                        immediate.mesh(MeshId::CUBE, matrix, Material::missing());
+                        return CUBE_TRIANGLES;
+                    }
                 }
-            },
+            }
         };
         let id = self.material_id(draw.material.gpu_key());
         for mesh in meshes {
@@ -2660,6 +2860,8 @@ trait WorldSink: characters::SkinSink {
     /// Line segments as one logical draw (NAV-15): each pair of vertices one segment.
     fn lines(&mut self, vertices: &[LineVertex]);
     fn lighting(&mut self) -> &mut Lighting;
+    /// How the following meshes choose their levels (LOD-07): a bias and a compound's sphere.
+    fn lod(&mut self, lod: DrawLod);
 }
 
 impl WorldSink for Scene {
@@ -2687,6 +2889,10 @@ impl WorldSink for Scene {
 
     fn lighting(&mut self) -> &mut Lighting {
         &mut self.lighting
+    }
+
+    fn lod(&mut self, lod: DrawLod) {
+        self.set_lod(lod);
     }
 }
 
@@ -2720,6 +2926,10 @@ impl WorldSink for ImmediateFrame {
     fn lighting(&mut self) -> &mut Lighting {
         self.lighting_mut()
     }
+
+    fn lod(&mut self, lod: DrawLod) {
+        self.set_lod(lod);
+    }
 }
 
 /// Write `frame`'s lights and shapes into `sink` with what `assets` loaded, in draw order, and
@@ -2741,20 +2951,33 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
     match shape {
         Shape::Model { model, transform, tint, material } => {
             let matrix = transform.to_cols_array();
-            let Some(loaded) = model.path().and_then(|path| assets.model(path)) else {
-                sink.mesh(MeshId::CUBE, matrix, Material::missing());
-                note_missing(missing, model.path());
-                return CUBE_TRIANGLES;
-            };
-            for part in &loaded.parts {
-                let drawn_with = match (material, &part.material) {
-                    (Some(material), _) => surface(material, *tint, assets),
-                    (None, Some(glb)) => glb.to_material(rgba(*tint)),
-                    (None, None) => surface(&crate::Material::color(*tint), Color::WHITE, assets),
-                };
-                sink.mesh(part.mesh, matrix, drawn_with);
+            // LOD-07: a bias, and a compound's one sphere every part measures from.
+            let lod = draw_lod(model, assets);
+            if let Some(lod) = lod {
+                sink.lod(lod);
             }
-            loaded.triangles
+            let mut triangles = 0u32;
+            for member in model.drawn_members() {
+                let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
+                    sink.mesh(MeshId::CUBE, matrix, Material::missing());
+                    note_missing(missing, member.path());
+                    triangles = triangles.saturating_add(CUBE_TRIANGLES);
+                    continue;
+                };
+                for part in &loaded.parts {
+                    let drawn_with = match (material, &part.material) {
+                        (Some(material), _) => surface(material, *tint, assets),
+                        (None, Some(glb)) => glb.to_material(rgba(*tint)),
+                        (None, None) => surface(&crate::Material::color(*tint), Color::WHITE, assets),
+                    };
+                    sink.mesh(part.mesh, matrix, drawn_with);
+                }
+                triangles = triangles.saturating_add(loaded.triangles);
+            }
+            if lod.is_some() {
+                sink.lod(DrawLod::OWN);
+            }
+            triangles
         }
         Shape::Cube { transform, material } => {
             sink.mesh(MeshId::CUBE, transform.to_cols_array(), surface(material, Color::WHITE, assets));
@@ -2783,6 +3006,19 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
     }
 }
 
+/// How `model`'s draw chooses its levels (LOD-07), when it differs from each part measuring from
+/// its own bounds at bias 1: its bias, and for a compound the sphere around its members' loaded
+/// meshes, so every part switches at the same distance.
+fn draw_lod(model: &Model, assets: &AssetCache) -> Option<DrawLod> {
+    let lod = model.lod_options()?;
+    let compound = !lod.members.is_empty();
+    let sphere = lod.members.iter().filter_map(|member| assets.model(member.key()?)).fold([0.0; 4], |sphere, loaded| union_sphere(sphere, loaded.sphere));
+    let origin = (compound && sphere[3] > 0.0).then_some(sphere);
+    let bias = lod.bias();
+    let differs = origin.is_some() || bias != crate::lod::LOD_BIAS_DEFAULT;
+    differs.then_some(DrawLod { origin, bias, ..DrawLod::OWN })
+}
+
 /// Add one retained instance group to `sink` (renderer pass 2 A.0b): the renderer's group of
 /// each mesh it draws, with the material the matching single draw would take; answers its
 /// triangles (every transform's).
@@ -2800,19 +3036,32 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             SPHERE_TRIANGLES.saturating_mul(count)
         }
         crate::GroupShape::Model(model) => {
-            let Some(loaded) = model.path().and_then(|path| assets.model(path)) else {
-                sink.group(&group.render_group(MeshId::CUBE), Material::missing());
-                note_missing(missing, model.path());
-                return CUBE_TRIANGLES.saturating_mul(count);
-            };
-            for part in &loaded.parts {
-                let drawn_with = match (group.material(), &part.material) {
-                    (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
-                    _ => own(),
-                };
-                sink.group(&group.render_group(part.mesh), drawn_with);
+            // LOD-07: the model's bias and a compound's sphere hold for every copy.
+            let lod = draw_lod(model, assets);
+            if let Some(lod) = lod {
+                sink.lod(lod);
             }
-            loaded.triangles.saturating_mul(count)
+            let mut triangles = 0u32;
+            for member in model.drawn_members() {
+                let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
+                    sink.group(&group.render_group(MeshId::CUBE), Material::missing());
+                    note_missing(missing, member.path());
+                    triangles = triangles.saturating_add(CUBE_TRIANGLES.saturating_mul(count));
+                    continue;
+                };
+                for part in &loaded.parts {
+                    let drawn_with = match (group.material(), &part.material) {
+                        (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
+                        _ => own(),
+                    };
+                    sink.group(&group.render_group(part.mesh), drawn_with);
+                }
+                triangles = triangles.saturating_add(loaded.triangles.saturating_mul(count));
+            }
+            if lod.is_some() {
+                sink.lod(DrawLod::OWN);
+            }
+            triangles
         }
     }
 }
@@ -2873,7 +3122,8 @@ fn world_frame(frame: &Frame, camera: &Camera, assets: &AssetCache) -> (Immediat
         immediate.camera_cut();
     }
     let (textures, asset_issues) = texture_facts(frame, assets);
-    let mut drawn = Drawn { draw_calls: frame.draw_calls(), textures, asset_issues, ..Drawn::default() };
+    let lod_refused = lod_refusals(frame, assets);
+    let mut drawn = Drawn { draw_calls: frame.draw_calls(), textures, asset_issues, lod_refused, ..Drawn::default() };
     write_world(&mut immediate, frame, assets, &mut drawn);
     (immediate, drawn)
 }

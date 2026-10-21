@@ -266,6 +266,13 @@ impl ImmediateFrame {
         self.tick
     }
 
+    /// How the following draws choose their levels (game systems LOD-02, LOD-07): the
+    /// compound sphere their parts measure from and their bias ([`crate::scene::Scene::set_lod`]).
+    pub fn set_lod(&mut self, lod: crate::lod_rows::DrawLod) -> &mut Self {
+        self.scene.set_lod(lod);
+        self
+    }
+
     /// The draw id the following draws carry (`frame.id(key)` in the facade), or none: under TAA
     /// a moving object keeps its motion history by its id while other draws come and go
     /// ([`Scene::set_id`]).
