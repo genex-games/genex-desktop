@@ -1,0 +1,28 @@
+{
+  "name": "facade-parity",
+  "description": "Two clients in one room of a localhost bench relay: presence, host, raw state, a contested claim, an owned object, a shared key, a game event, chat and a leave. Run with two crate drivers, then two facade drivers; the replies and events must be equal once sids, uids, request ids and instants are masked.",
+  "protocol": ["3.3", "5.4", "6.1", "6.2", "6.3", "7.2", "7.3", "12"],
+  "steps": [
+    { "client": "A", "cmd": "listen", "args": { "type": "hit" } },
+    { "client": "B", "cmd": "listen", "args": { "type": "hit" } },
+    { "client": "A", "cmd": "connect", "name": "alice" },
+    { "await": "A", "snapshot": { "host": "$A", "isHost": true } },
+    { "client": "B", "cmd": "connect", "name": "bob" },
+    { "await": "B", "snapshot": { "playerCount": 2, "host": "$A", "isHost": false } },
+    { "await": "A", "snapshot": { "playerCount": 2, "players.$B.connected": true } },
+    { "client": "A", "cmd": "setState", "args": { "data": { "x": 1.5, "hp": 3 } } },
+    { "await": "B", "snapshot": { "players.$A.data": { "x": 1.5, "hp": 3 } } },
+    { "client": "A", "cmd": "claim", "args": { "id": "ball" } },
+    { "client": "B", "cmd": "claim", "args": { "id": "ball" } },
+    { "client": "A", "cmd": "setObject", "args": { "id": "ball", "d": { "x": 7 } } },
+    { "await": "B", "snapshot": { "objects.ball.owner": "$A", "objects.ball.d": { "x": 7 } } },
+    { "client": "A", "cmd": "setShared", "args": { "key": "round", "value": 3 } },
+    { "await": "B", "snapshot": { "shared.round": 3 } },
+    { "client": "A", "cmd": "send", "args": { "type": "hit", "data": { "dmg": 3 } } },
+    { "client": "A", "cmd": "chat", "args": { "text": "hi" } },
+    { "sleep": 400 },
+    { "client": "B", "cmd": "sampleSmoothed", "args": { "object": "ball" } },
+    { "client": "B", "cmd": "leave" },
+    { "await": "A", "snapshot": { "playerCount": 1 } }
+  ]
+}

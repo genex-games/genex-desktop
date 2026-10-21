@@ -1,0 +1,9 @@
+# net-driver is host tooling for the netcode bench, not a simulation: it paces its loop on the
+# wall clock (`Instant`) and reads stdin on its own thread, as the crate's driver does. This file
+# replaces the lane's game rules (../../clippy.toml) for this crate and keeps only the ordering
+# rule, so every map the driver prints iterates in one order on every run.
+
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use BTreeMap" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use BTreeSet" },
+]

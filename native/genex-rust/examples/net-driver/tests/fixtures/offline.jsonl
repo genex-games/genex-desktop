@@ -1,0 +1,26 @@
+{"cmdId":1,"cmd":"snapshot"}
+{"cmdId":2,"cmd":"listen","type":"hit"}
+{"cmdId":3,"cmd":"skew","ms":250}
+{"cmdId":4,"cmd":"clock"}
+{"cmdId":5,"cmd":"setState","data":{"x":1}}
+{"cmdId":6,"cmd":"setState","data":{"x":2},"snap":true}
+{"cmdId":7,"cmd":"setShared","key":"round","value":3}
+{"cmdId":8,"cmd":"claim","id":"ball"}
+{"cmdId":9,"cmd":"claim","id":"ball","authority":"host"}
+{"cmdId":10,"cmd":"release","id":"ball"}
+{"cmdId":11,"cmd":"destroy","id":"ball"}
+{"cmdId":12,"cmd":"setObject","id":"ball","d":{"x":1}}
+{"cmdId":13,"cmd":"send","type":"hit","data":{"dmg":3}}
+{"cmdId":14,"cmd":"send","type":"__evil","data":1}
+{"cmdId":15,"cmd":"chat","text":"hi"}
+{"cmdId":16,"cmd":"sampleSmoothed","sid":"nobody"}
+{"cmdId":17,"cmd":"sampleSmoothed","object":"ball"}
+{"cmdId":18,"cmd":"sampleSmoothed"}
+{"cmdId":19,"cmd":"bogus"}
+{"cmdId":20}
+this line is not JSON
+[1,2,3]
+{"cmdId":21,"cmd":"connect"}
+{"cmdId":22,"cmd":"leave"}
+{"cmdId":23,"cmd":"snapshot"}
+{"cmdId":24,"cmd":"quit"}

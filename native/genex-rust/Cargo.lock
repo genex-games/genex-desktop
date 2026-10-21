@@ -2298,6 +2298,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "net-driver"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-multiplayer",
+ "genex-net",
+ "serde_json",
+]
+
+[[package]]
 name = "net-tag"
 version = "0.1.0"
 dependencies = [
