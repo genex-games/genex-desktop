@@ -110,6 +110,7 @@ const NATIVE_OPS = [
   NativeOp.RenderSettings,
   NativeOp.AudioLevel,
   NativeOp.Timing,
+  NativeOp.Profile,
   NativeOp.Quit,
   NativeOp.Front,
   NativeOp.Visible,
