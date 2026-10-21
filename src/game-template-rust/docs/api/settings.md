@@ -2,7 +2,8 @@
 
 `genex::settings::menu(ui)` draws the whole settings menu from `on_ui`: a row of tabs over the open
 tab. RB and LB (Tab and Shift+Tab) switch tabs, up and down move along the rows, left and right
-change the focused row, A activates, and B backs out. `menu` answers whether something changed;
+change the focused row, A activates, and B backs out. The pointer moving onto a row focuses it,
+so one row is outlined at a time. `menu` answers whether something changed;
 `genex::settings::menu_answer(ui)` also answers the tab drawn and `back`, so a pause menu can close
 it.
 
@@ -36,7 +37,8 @@ max, step, default)` or `SettingDef::choice(key, label, &options, default)`. The
 on the Game tab and take no reserved prefix (`audio.`, `ui.`, `input.`, `graphics.`); a preset may
 set any tab's options. Install refuses a second `game.settings`, an option off the Game tab or with
 a reserved prefix, and a preset that does not fit (`settings-invalid`). Labels and option names are
-text keys looked up in the game's catalog; the built-in ones fall back to English.
+text keys looked up in the game's catalog; the built-in ones fall back to English. A row shows a
+0-to-1 slider as a whole percent and any other slider as its number.
 
 The person's choices are saved as `genex-settings.json` in the game's saves (a preset per tab plus
 only what the person moved), never per slot. A file that is not a format-1 settings file within the

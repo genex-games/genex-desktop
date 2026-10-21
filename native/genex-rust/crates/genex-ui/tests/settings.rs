@@ -294,6 +294,13 @@ fn node_key(update: &TreeUpdate, id: NodeId) -> Option<String> {
     update.nodes.iter().find(|(node_id, _)| *node_id == id).and_then(|(_, node)| node.author_id().map(str::to_owned))
 }
 
+/// The centre of the node keyed `key`, in points.
+fn centre_of(update: &TreeUpdate, key: &str) -> Option<Pos2> {
+    let (_, node) = update.nodes.iter().find(|(_, node)| node.author_id() == Some(key))?;
+    let bounds = node.bounds()?;
+    Some(Pos2::new(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32))
+}
+
 fn label_of(update: &TreeUpdate, key: &str) -> Option<String> {
     update
         .nodes
@@ -353,6 +360,30 @@ impl Walk {
     }
 }
 
+/// One ring at a time (GI visual row): the pointer moving onto a row gives it the focus, so a
+/// hovered row and a focused one are never outlined at once; a pointer that rests does not take
+/// the focus back from the pad.
+#[test]
+fn the_pointer_moving_onto_a_row_takes_the_focus_and_a_resting_one_leaves_the_pad_its_walk() {
+    let mut walk = Walk::new();
+    walk.step(Vec::new());
+    walk.step(Vec::new());
+    let (_, focus, update) = walk.press(NavButton::Next);
+    assert_eq!(focus.as_deref(), Some("settings.audio.preset"));
+    let sfx = centre_of(&update, "settings.opt.audio.sfx").expect("the effects row");
+    // The HUD sends the pointer every tick, resting or not: first beside the menu, then onto a row.
+    walk.step(vec![egui::Event::PointerMoved(Pos2::new(900.0, 600.0))]);
+    walk.step(vec![egui::Event::PointerMoved(Pos2::new(900.0, 600.0))]);
+    walk.step(vec![egui::Event::PointerMoved(sfx)]);
+    let (_, focus, _) = walk.step(Vec::new());
+    assert_eq!(focus.as_deref(), Some("settings.opt.audio.sfx"), "the row the pointer moved onto");
+    let mut resting = press(NavButton::Up);
+    resting.push(egui::Event::PointerMoved(sfx));
+    walk.step(resting);
+    let (_, focus, _) = walk.step(vec![egui::Event::PointerMoved(sfx)]);
+    assert_eq!(focus.as_deref(), Some("settings.opt.audio.music"), "the pad walks on under a resting pointer");
+}
+
 #[test]
 fn a_pad_alone_walks_every_tab_and_changes_options() {
     let mut walk = Walk::new();
@@ -371,7 +402,8 @@ fn a_pad_alone_walks_every_tab_and_changes_options() {
     let (_, focus, update) = walk.press(NavButton::Next);
     assert_eq!(focus.as_deref(), Some("settings.audio.preset"));
     assert_eq!(label_of(&update, "settings.audio.preset").as_deref(), Some("Preset: Custom"));
-    assert_eq!(label_of(&update, "settings.opt.audio.music").as_deref(), Some("settings-audio-music: 0.8"));
+    // A 0-to-1 slider reads as a percent (GI visual row; was the raw "0.8").
+    assert_eq!(label_of(&update, "settings.opt.audio.music").as_deref(), Some("settings-audio-music: 80%"));
     // Right on the preset row picks the first preset.
     let (answer, _, update) = walk.press(NavButton::Right);
     assert!(answer.changed, "choosing a preset is a change");
