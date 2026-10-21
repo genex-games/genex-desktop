@@ -251,8 +251,9 @@ pub fn build_frame(scene: &Scene, library: &MeshLibrary, plan: &FramePlan, histo
     let mut palettes: BTreeMap<u32, (u32, u32, Option<[f32; 16]>)> = BTreeMap::new();
     for (at, part) in plan.vertex_skinned.iter().enumerate() {
         let Some(draw) = scene.skinned.get(part.draw as usize) else { continue };
-        let Some(entry) = library.entry(draw.skin.mesh()) else { continue };
-        let Some(skin_part) = library.skin_parts(draw.skin).get(part.part as usize) else { continue };
+        // The level the plan picked (game systems AN-25): its geometry, the draw's palette.
+        let Some(entry) = library.entry(part.skin.mesh()) else { continue };
+        let Some(skin_part) = library.skin_parts(part.skin).get(part.part as usize) else { continue };
         let (joint_base, prev_joint_base, prev_model) = *palettes.entry(part.draw).or_insert_with(|| {
             let joint_base = frame.table.len() as u32;
             frame.table.extend_from_slice(&draw.joints);
@@ -279,7 +280,7 @@ pub fn build_frame(scene: &Scene, library: &MeshLibrary, plan: &FramePlan, histo
             (joint_base, prev_joint_base, prev_model)
         });
         // The skin row of library vertex v is `skin_base + (v - base_vertex)`: the offset wraps.
-        let skin_offset = draw.skin.skin_base.wrapping_sub(entry.base_vertex as u32);
+        let skin_offset = part.skin.skin_base.wrapping_sub(entry.base_vertex as u32);
         let matrices = record(draw, skin_offset, part.material, (joint_base, prev_joint_base), prev_model);
         frame.table[at * RECORD_MATRICES..(at + 1) * RECORD_MATRICES].copy_from_slice(&matrices);
         frame.draws.push(SkinVertexDraw { first_index: entry.first_index + skin_part.first_index, index_count: skin_part.index_count, base_vertex: entry.base_vertex, record: at as u32 });

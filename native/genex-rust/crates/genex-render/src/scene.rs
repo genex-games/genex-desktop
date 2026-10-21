@@ -32,6 +32,7 @@ use crate::retained::{InstanceGroup, RetainedSpan};
 use crate::settings::{Meshlets, ShadowSettings};
 use crate::shadow::{Cascades, camera_forward, fit};
 use crate::skin::{MAX_JOINTS, SkinId, SkinPart, SkinnedMeshData, skinned_bounds};
+use crate::skinned_lod::{SkinLods, SkinnedLevel, SkinnedLodInput, SkinnedPick, pick_level};
 use crate::transparent::back_to_front;
 
 pub use crate::cull::{CpuCull, frustum_planes, frustum_planes_for, in_frustum};
@@ -262,6 +263,8 @@ pub struct MeshLibrary {
     skin: Vec<GpuSkinVertex>,
     /// Every skinned mesh's parts (AN-16a), each mesh's a run named by its [`SkinId`].
     skin_parts: Vec<SkinPart>,
+    /// The levels of skinned meshes (game systems AN-25), by the base mesh's entry.
+    skin_lods: BTreeMap<u32, SkinLods>,
     meshlet_setting: Meshlets,
     meshlets: MeshletLibrary,
     /// Per entry: how it draws on the meshlet path.
@@ -314,6 +317,7 @@ impl MeshLibrary {
             entries: Vec::new(),
             skin: Vec::new(),
             skin_parts: Vec::new(),
+            skin_lods: BTreeMap::new(),
             meshlet_setting: setting,
             meshlets: MeshletLibrary::default(),
             meshlet_states: Vec::new(),
@@ -685,6 +689,47 @@ impl MeshLibrary {
         self.skin_parts.get(start..start + skin.parts as usize).unwrap_or(&[])
     }
 
+    /// Give skinned mesh `base` (added from `data`) its simplified `levels` (game systems AN-25,
+    /// [`crate::skinned_lod::skinned_levels`]): each is added as a skinned mesh over the same
+    /// skeleton, and a draw of `base` then skins the level its distance picks. Refused
+    /// `mesh-invalid`, nothing added, when `base` is not this library's, already has levels, a level
+    /// has another number of parts than `base`, more than [`crate::mesh::LOD_MAX_LEVELS`] levels
+    /// are given, their errors are not finite and rising, or a level is refused as
+    /// [`MeshLibrary::add_skinned_parts`] refuses.
+    pub fn add_skinned_levels(&mut self, base: SkinId, data: &SkinnedMeshData, levels: &[SkinnedLevel]) -> Result<(), RenderError> {
+        let refuse = |detail: &str| Err(RenderError::refused(RenderCode::MeshInvalid, format!("skinned levels of mesh {}: {detail}", base.mesh.raw())));
+        if !self.is_live(base.mesh) || self.skin_parts(base).len() != base.parts as usize || self.skin_lods.contains_key(&base.mesh.index) {
+            return refuse("the mesh is not this library's skinned mesh, or already has levels");
+        }
+        if levels.len() > crate::mesh::LOD_MAX_LEVELS as usize || levels.iter().any(|level| level.parts.len() != base.parts as usize) {
+            return refuse("too many levels, or a level's parts are not the mesh's");
+        }
+        let rising = levels.iter().try_fold(0.0_f32, |floor, level| (level.error.is_finite() && level.error >= floor).then_some(level.error));
+        if rising.is_none() {
+            return refuse("the levels' errors are not finite and rising");
+        }
+        for level in levels {
+            let skinned = SkinnedMeshData { mesh: level.mesh.clone(), skin: level.skin.clone(), skeleton: data.skeleton.clone(), animations: Vec::new() };
+            MeshLibrary::check_mesh(&skinned.mesh)?;
+            check_skin_parts(&skinned.mesh, &level.parts)?;
+        }
+        let mut lods = SkinLods::default();
+        for level in levels {
+            let skinned = SkinnedMeshData { mesh: level.mesh.clone(), skin: level.skin.clone(), skeleton: data.skeleton.clone(), animations: Vec::new() };
+            lods.levels.push(self.add_skinned_parts(&skinned, &level.parts)?);
+            lods.errors.push(level.error);
+        }
+        if !lods.levels.is_empty() {
+            self.skin_lods.insert(base.mesh.index, lods);
+        }
+        Ok(())
+    }
+
+    /// The levels of skinned mesh `skin` (game systems AN-25), if it has any.
+    pub fn skin_lods(&self, skin: SkinId) -> Option<&SkinLods> {
+        self.skin_lods.get(&skin.mesh.index).filter(|_| self.is_live(skin.mesh))
+    }
+
     /// Remove mesh `id` and its levels of detail (game systems STR-2): their rows go back to the
     /// allocators for the next mesh that fits, their slots move to the next generation (so `id`
     /// and its levels' ids name nothing from now on) and are reused smallest first. Answers every
@@ -951,6 +996,8 @@ pub struct VertexSkinnedPart {
     pub part: u32,
     /// Its row in [`FramePlan::materials`].
     pub material: u32,
+    /// The skin it draws: the draw's own, or the level its distance picks (game systems AN-25).
+    pub skin: SkinId,
 }
 
 /// One skinned draw: a skinned mesh posed by its joint matrices.
@@ -1190,6 +1237,30 @@ pub struct DrawSource {
     pub index_count: u32,
     /// Base vertex in its vertex buffer.
     pub base_vertex: i32,
+}
+
+/// The output a plan's levels of detail are chosen for (game systems AN-25): its height and the
+/// quality's error threshold, as [`FramePlan::set_lod_view`] takes them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodTarget {
+    /// The output's height in pixels.
+    pub height: u32,
+    /// The error threshold in output pixels ([`crate::settings::LodQuality::threshold_px`]).
+    pub threshold_px: f32,
+}
+
+impl LodTarget {
+    /// The view a plan holds until [`FramePlan::set_lod_view`]: the nominal height at 1 px.
+    pub const NOMINAL: LodTarget = LodTarget { height: LOD_NOMINAL_HEIGHT, threshold_px: LOD_THRESHOLD_PX };
+
+    /// The cull's LOD view scale (`GpuCullViews::lod.w`) for a camera of `lod_per_height`: the
+    /// output's pixels a world unit at distance 1, over the threshold when it is finite, positive
+    /// and not [`LOD_THRESHOLD_PX`] (then the height's alone, bit for bit).
+    pub fn view_w(self, lod_per_height: f32) -> f32 {
+        let w = lod_per_height * self.height as f32;
+        let usable = self.threshold_px.is_finite() && self.threshold_px > 0.0;
+        if usable && self.threshold_px != LOD_THRESHOLD_PX { w * LOD_THRESHOLD_PX / self.threshold_px } else { w }
+    }
 }
 
 /// How a frame is planned besides its scene (RQ3.0).
@@ -1579,8 +1650,9 @@ impl Rows {
     /// rule; per variant a run of each such mesh's level batches again (the mesh itself for one
     /// without levels), tagged [`crate::mesh::LOD_FADE_TAG`], with slots of their own over the
     /// mesh's rows, their slot bases in `fade_slots` (laid out as `slot_base`).
-    fn push_fade_twins(&mut self, library: &MeshLibrary, banded: bool) -> Result<(Vec<VariantRun>, Vec<u32>), RenderError> {
-        if !self.lod_meshes.iter().any(|lod_mesh| banded || lod_mesh.far) {
+    fn push_fade_twins(&mut self, library: &MeshLibrary, banded: bool, skinned: (&Scene, &[SkinnedPart], &[SkinnedRow]), materials: &mut Materials) -> Result<(Vec<VariantRun>, Vec<u32>), RenderError> {
+        let (scene, parts, fade_rows) = skinned;
+        if fade_rows.is_empty() && !self.lod_meshes.iter().any(|lod_mesh| banded || lod_mesh.far) {
             return Ok((Vec::new(), Vec::new()));
         }
         // A twin's slots are not its rows: the cull looks each slot's batch up.
@@ -1611,9 +1683,11 @@ impl Rows {
                     self.slots += lod_mesh.count as u32;
                 }
             }
+            let skinned_from = self.batches.len() as u32;
+            self.push_skinned_fades(scene, parts, fade_rows, variant.index(), (&mut fade_slots, materials));
             let end = self.batches.len() as u32;
             if end > first {
-                runs.push(VariantRun { variant, batches: first..end, skinned_from: end });
+                runs.push(VariantRun { variant, batches: first..end, skinned_from });
             }
         }
         self.impostor_batches.extend(impostor_twins);
@@ -1673,6 +1747,30 @@ impl Rows {
         }
     }
 
+    /// The fade batches of `variant`'s skinned levels crossfading in a band (game systems AN-25;
+    /// rows sorted by variant, then part): one per part, its rows its own, its slot base in
+    /// `fade_slots` (the region a faded draw finds its rows through).
+    fn push_skinned_fades(&mut self, scene: &Scene, parts: &[SkinnedPart], rows: &[SkinnedRow], variant: usize, (fade_slots, materials): (&mut [u32], &mut Materials)) {
+        let first = rows.partition_point(|row| row.variant < variant);
+        let mine = &rows[first..first + rows[first..].partition_point(|row| row.variant == variant)];
+        for same_part in mine.chunk_by(|a, b| a.part == b.part) {
+            let part = &parts[same_part[0].part];
+            fade_slots[variant * self.slot_count + part.job.slot as usize] = self.slots;
+            let mut fades = batch(self.slots as usize, same_part.len(), part.source.first_index, part.source.index_count, part.source.base_vertex);
+            fades.first_row = self.instances.len() as u32;
+            fades.lod = part.lod;
+            self.batches.push(fades);
+            self.slots += same_part.len() as u32;
+            for skinned_row in same_part {
+                let draw = &scene.skinned[skinned_row.draw];
+                let row = instance_row(&draw.model, part.center, part.radius, materials.row(&skinned_row.material));
+                self.lod_rows.push(lod_row(&draw.model, row.bounds, &DrawLod::OWN));
+                self.instances.push(row);
+                self.motion.extend(skinned_row.key);
+            }
+        }
+    }
+
     /// The batches of `variant`'s opaque skinned rows (sorted by variant, then part): one per
     /// part drawn, its rows together.
     fn push_skinned_variant(&mut self, scene: &Scene, parts: &[SkinnedPart], rows: &[SkinnedRow], variant: usize, materials: &mut Materials) {
@@ -1691,6 +1789,18 @@ struct SkinnedPart {
     source: DrawSource,
     center: [f32; 3],
     radius: f32,
+    /// Its batch's LOD row (game systems AN-25): `[0; 3]` but for a level crossfading in a band,
+    /// whose batch is a fade batch drawn with the fade twins.
+    lod: [u32; 3],
+    /// The mesh it skins: the draw's own, or a level's.
+    mesh: MeshId,
+}
+
+impl SkinnedPart {
+    /// Whether it draws through a fade batch (a level crossfading in a band).
+    fn fades(&self) -> bool {
+        self.lod[0] & crate::mesh::LOD_FADE_TAG != 0
+    }
 }
 
 /// One opaque instance row of a skinned part: its draw, its material and draw variant, and its
@@ -1714,15 +1824,35 @@ struct SkinnedFrame {
 
 /// The parts of the skinned draws `vertex` marks, in draw then part order, each with its material
 /// row (game systems AN-18).
-fn vertex_skinned_parts(scene: &Scene, vertex: &[bool], materials: &mut Materials) -> Vec<VertexSkinnedPart> {
+/// A draw's skin is the level `picks` gives it (game systems AN-25; a vertex-path draw is never in a
+/// band, so it draws one level whole).
+fn vertex_skinned_parts(scene: &Scene, library: &MeshLibrary, (vertex, picks): (&[bool], &[SkinnedPick]), materials: &mut Materials) -> Vec<VertexSkinnedPart> {
     let mut parts = Vec::new();
     for (at, draw) in scene.skinned.iter().enumerate().filter(|(at, _)| vertex.get(*at).copied().unwrap_or(false)) {
+        let level = picks.get(at).map_or(0, |pick| *pick.levels().start());
+        let skin = library.skin_lods(draw.skin).map_or(draw.skin, |lods| lods.skin(draw.skin, level));
         for part in 0..draw.skin.parts {
             let material = materials.row(&draw.part_material(part as usize));
-            parts.push(VertexSkinnedPart { draw: at as u32, part, material });
+            parts.push(VertexSkinnedPart { draw: at as u32, part, material, skin });
         }
     }
     parts
+}
+
+/// The level each skinned draw of `scene` skins (game systems AN-25): the cull's own choice under
+/// the LOD view `view` and fade band `band`, measured from the draw's posed base sphere; the base
+/// whole for a skin without levels or a draw the plan refuses.
+fn skinned_picks(scene: &Scene, library: &MeshLibrary, view: [f32; 4], band: f32) -> Vec<SkinnedPick> {
+    let pick = |draw: &SkinnedDraw| {
+        let Some(lods) = library.skin_lods(draw.skin) else { return SkinnedPick::BASE };
+        let Some(entry) = library.entry(draw.skin.mesh) else { return SkinnedPick::BASE };
+        let (center, radius) = skinned_bounds(entry.center, entry.radius, &draw.joints);
+        let bounds = instance_row(&draw.model, center, radius, 0).bounds;
+        let row = lod_row(&draw.model, bounds, &DrawLod::OWN);
+        let input = SkinnedLodInput { bounds, origin: row.origin, bias: row.bias, view, band };
+        pick_level(&lods.errors, entry.radius, &input)
+    };
+    scene.skinned.iter().map(pick).collect()
 }
 
 /// LOD's screen-size metric (game systems AN-17; STR-19 and the skinned paths read it too): the
@@ -1811,8 +1941,9 @@ fn check_skin_parts(mesh: &MeshData, parts: &[SkinPart]) -> Result<(), RenderErr
 /// takes that draw's jobs, so its rows draw the same skinned output (AN-16b).
 /// A draw `vertex` marks (game systems AN-18) is validated as every draw is, then takes no job and
 /// no row: it skins in the vertex stage (`crate::skin_vertex`), and no other draw shares its pose.
-fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool]) -> Result<SkinnedFrame, RenderError> {
+fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool], picks: &[SkinnedPick]) -> Result<SkinnedFrame, RenderError> {
     let skins_in_vertex = |at: usize| vertex.get(at).copied().unwrap_or(false);
+    let pick_of = |at: usize| picks.get(at).copied().unwrap_or(SkinnedPick::BASE);
     let mut frame = SkinnedFrame { parts: Vec::with_capacity(scene.skinned.len()), joints: Vec::new(), uses: Vec::with_capacity(scene.skinned.len()) };
     let mut dst_base = 0u32;
     for (at, draw) in scene.skinned.iter().enumerate() {
@@ -1829,38 +1960,49 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool]) -> Resul
                 format!("{} materials for a skin of {} parts", draw.part_materials.len(), draw.skin.parts),
             ));
         }
+        if library.skin_parts(draw.skin).len() != draw.skin.parts as usize {
+            return Err(RenderError::refused(RenderCode::MeshInvalid, format!("skin of mesh {} is not this library's", draw.skin.mesh.raw())));
+        }
         if skins_in_vertex(at) {
             frame.uses.push(frame.parts.len()..frame.parts.len());
             continue;
         }
-        let shared = scene.skinned[..at].iter().enumerate().position(|(k, earlier)| !skins_in_vertex(k) && earlier.skin == draw.skin && same_palette(&earlier.joints, &draw.joints));
+        let pick = pick_of(at);
+        let shared = scene.skinned[..at]
+            .iter()
+            .enumerate()
+            .position(|(k, earlier)| !skins_in_vertex(k) && earlier.skin == draw.skin && pick_of(k) == pick && same_palette(&earlier.joints, &draw.joints));
         if let Some(earlier) = shared {
             frame.uses.push(frame.uses[earlier].clone());
             continue;
         }
+        // Every level's rows measure from the posed sphere of the base mesh (AN-25).
         let (center, radius) = skinned_bounds(entry.center, entry.radius, &draw.joints);
         let joint_base = frame.joints.len() as u32;
         frame.joints.extend_from_slice(&draw.joints);
-        let skin_parts = library.skin_parts(draw.skin);
-        if skin_parts.len() != draw.skin.parts as usize {
-            return Err(RenderError::refused(RenderCode::MeshInvalid, format!("skin of mesh {} is not this library's", draw.skin.mesh.raw())));
-        }
         let first = frame.parts.len();
-        for part in skin_parts {
-            let job = GpuSkinJob {
-                src_base: entry.base_vertex as u32 + part.first_vertex,
-                count: part.vertex_count,
-                dst_base,
-                joint_base,
-                skin_base: draw.skin.skin_base + part.first_vertex,
-                slot: (library.len() + frame.parts.len()) as u32,
-                pad: [0; 2],
-            };
-            // The part's indices name mesh vertices from its first: shifted onto its own output.
-            let base_vertex = dst_base as i32 - part.first_vertex as i32;
-            let source = DrawSource { skinned: true, first_index: entry.first_index + part.first_index, index_count: part.index_count, base_vertex };
-            dst_base += part.vertex_count;
-            frame.parts.push(SkinnedPart { job, source, center, radius });
+        let lods = library.skin_lods(draw.skin);
+        let errors = lods.map_or(&[][..], |lods| &lods.errors[..]);
+        for level in pick.levels() {
+            let skin = lods.map_or(draw.skin, |lods| lods.skin(draw.skin, level));
+            let level_entry = mesh_entry(library, skin.mesh)?;
+            let lod = pick.batch_lod(level, errors, entry.radius);
+            for part in library.skin_parts(skin) {
+                let job = GpuSkinJob {
+                    src_base: level_entry.base_vertex as u32 + part.first_vertex,
+                    count: part.vertex_count,
+                    dst_base,
+                    joint_base,
+                    skin_base: skin.skin_base + part.first_vertex,
+                    slot: (library.len() + frame.parts.len()) as u32,
+                    pad: [0; 2],
+                };
+                // The part's indices name mesh vertices from its first: shifted onto its own output.
+                let base_vertex = dst_base as i32 - part.first_vertex as i32;
+                let source = DrawSource { skinned: true, first_index: level_entry.first_index + part.first_index, index_count: part.index_count, base_vertex };
+                dst_base += part.vertex_count;
+                frame.parts.push(SkinnedPart { job, source, center, radius, lod, mesh: skin.mesh });
+            }
         }
         frame.uses.push(first..frame.parts.len());
     }
@@ -1903,13 +2045,30 @@ impl FramePlan {
         FramePlan::build_with_skin_paths(scene, library, aspect, options, motion, &[])
     }
 
+    /// [`FramePlan::build_with_skin_levels`] for a plan whose LOD view stays at
+    /// [`LodTarget::NOMINAL`] (or is set later with [`FramePlan::set_lod_view`]; skinned levels
+    /// are then picked for the nominal view).
+    pub fn build_with_skin_paths(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, motion: bool, vertex: &[bool]) -> Result<FramePlan, RenderError> {
+        FramePlan::build_with_skin_levels(scene, library, aspect, options, (motion, vertex), LodTarget::NOMINAL)
+    }
+
     /// [`FramePlan::build_with_motion`] with the skinned draws `vertex` marks skinned in the vertex
     /// stage (game systems AN-18, [`crate::skin_vertex::vertex_skinned_draws`]): they take no
     /// skinning job, no skinned output and no row; their parts' material rows are in
     /// [`FramePlan::vertex_skinned`].
-    pub fn build_with_skin_paths(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, motion: bool, vertex: &[bool]) -> Result<FramePlan, RenderError> {
+    ///
+    /// Skinned draws with levels (game systems AN-25) skin the level the cull keeps under the LOD
+    /// view of an output `target` (the view [`FramePlan::set_lod_view`] then sets): one level whole,
+    /// or in the fade band the two levels it crossfades, both skinned by compute (a marked draw in a
+    /// band leaves the vertex path for that frame).
+    pub fn build_with_skin_levels(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, (motion, vertex): (bool, &[bool]), target: LodTarget) -> Result<FramePlan, RenderError> {
         let depth_reversed = options.depth_reversed;
-        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, vertex)?;
+        let band = fade_band(scene.lod_band);
+        let lod_per_height = lod_per_height(&scene.camera);
+        let eye = scene.camera.eye;
+        let picks = skinned_picks(scene, library, [eye[0], eye[1], eye[2], target.view_w(lod_per_height)], band);
+        let vertex: Vec<bool> = vertex.iter().enumerate().map(|(at, marked)| *marked && !picks.get(at).is_some_and(|pick| pick.is_band())).collect();
+        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, &vertex, &picks)?;
         let mut materials = Materials::default();
         let mut keys = DrawKeys { keys: motion.then(MotionKeys::default) };
         // Opaque draws by variant and mesh as indices into the scene's draws (and, with motion,
@@ -1955,7 +2114,7 @@ impl FramePlan {
             }
         }
         let slot_count = library.len() + parts.len();
-        let varied_skin = scene.skinned.iter().zip(&uses).any(|(draw, used)| (0..used.len()).any(|k| varied_material(&draw.part_material(k))));
+        let varied_skin = scene.skinned.iter().zip(&uses).any(|(draw, used)| (0..used.len()).any(|k| varied_material(&draw.part_material(k % draw.skin.parts.max(1) as usize))));
         let varied = varied_skin || by_mesh.keys().any(|(variant, _)| *variant > 0);
         let instances = scene.mesh_instances() + uses.iter().map(ExactSizeIterator::len).sum::<usize>();
         let mut rows = Rows {
@@ -1977,20 +2136,29 @@ impl FramePlan {
         // order): the transparent ones to the glass, the opaque ones batched by variant and part,
         // the plain ones now and the other variants after the plain batches.
         let mut skinned_rows = Vec::new();
+        // A level crossfading in a band (AN-25) draws through a fade batch with the fade twins.
+        let mut fade_skinned_rows = Vec::new();
         for (at, draw) in scene.skinned.iter().enumerate() {
+            let part_count = draw.skin.parts.max(1) as usize;
             for (k, part) in uses[at].clone().enumerate() {
-                let material = draw.part_material(k);
-                let key = keys.row(draw.id, draw.skin.mesh, RowKind::Skinned, Some(parts[part].job.dst_base));
+                let material = draw.part_material(k % part_count);
+                // Glass is not culled: in a band only the finer level draws it (a named deviation).
+                if material.is_transparent() && k >= part_count {
+                    continue;
+                }
+                let key = keys.row(draw.id, parts[part].mesh, RowKind::Skinned, Some(parts[part].job.dst_base));
                 if material.is_transparent() {
                     let row = instance_row(&draw.model, parts[part].center, parts[part].radius, materials.row(&material));
                     glass.push(Glass { row, source: parts[part].source, motion: key });
                     continue;
                 }
-                skinned_rows.push(SkinnedRow { part, draw: at, variant: material.draw_variant().index(), material, key });
+                let row = SkinnedRow { part, draw: at, variant: material.draw_variant().index(), material, key };
+                if parts[part].fades() { fade_skinned_rows.push(row) } else { skinned_rows.push(row) }
             }
         }
         skinned_rows.sort_by_key(|row| (row.variant, row.part));
-        let vertex_skinned = vertex_skinned_parts(scene, vertex, &mut materials);
+        fade_skinned_rows.sort_by_key(|row| (row.variant, row.part));
+        let vertex_skinned = vertex_skinned_parts(scene, library, (&vertex, &picks), &mut materials);
         rows.push_skinned_variant(scene, &parts, &skinned_rows, DrawVariant::PLAIN.index(), &mut materials);
         let plain_batches = rows.batches.len() as u32;
         let mut variants = Vec::new();
@@ -2004,8 +2172,7 @@ impl FramePlan {
                 variants.push(VariantRun { variant, batches: first..end, skinned_from });
             }
         }
-        let band = fade_band(scene.lod_band);
-        let (fade_runs, fade_slots) = rows.push_fade_twins(library, band > 0.0)?;
+        let (fade_runs, fade_slots) = rows.push_fade_twins(library, band > 0.0, (scene, &parts, &fade_skinned_rows), &mut materials)?;
         let far_rules: Vec<GpuFarRule> = scene.far_rules.iter().take(FAR_RULES_MAX).map(|rule| if far_rule_usable(rule) { *rule } else { GpuFarRule::default() }).collect();
         let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, lod_rows, impostor_batches, .. } = rows;
         let opaque_instances = instances.len() as u32;
@@ -2029,9 +2196,7 @@ impl FramePlan {
             frame.sun_dir[3] = settings.sun_angular_radius;
         }
         frame.counts = [lights.len() as u32, batches.len() as u32, views, visible_slots];
-        let lod_per_height = lod_per_height(&scene.camera);
         let mut cull_views = GpuCullViews { params: [visible_slots, batches.len() as u32, views, 0], ..GpuCullViews::default() };
-        let eye = scene.camera.eye;
         cull_views.lod = [eye[0], eye[1], eye[2], lod_per_height * LOD_NOMINAL_HEIGHT as f32];
         cull_views.lod_params[0] = u32::from(lod_batches);
         cull_views.lod_params[1] = band.to_bits();
@@ -2098,11 +2263,7 @@ impl FramePlan {
     /// proportionally nearer. [`LOD_THRESHOLD_PX`] (or a threshold that is not finite and positive)
     /// is [`FramePlan::set_lod_height`] bit for bit.
     pub fn set_lod_view(&mut self, height: u32, threshold_px: f32) {
-        self.set_lod_height(height);
-        let usable = threshold_px.is_finite() && threshold_px > 0.0;
-        if usable && threshold_px != LOD_THRESHOLD_PX {
-            self.cull_views.lod[3] = self.cull_views.lod[3] * LOD_THRESHOLD_PX / threshold_px;
-        }
+        self.cull_views.lod[3] = LodTarget { height, threshold_px }.view_w(self.lod_per_height);
     }
 
     /// Thin the frame's far rules by the quality's far density (game systems LOD-06,
