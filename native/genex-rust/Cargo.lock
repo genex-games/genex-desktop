@@ -3875,6 +3875,7 @@ dependencies = [
  "genex-stream",
  "image",
  "wasm-bindgen",
+ "wgpu",
 ]
 
 [[package]]

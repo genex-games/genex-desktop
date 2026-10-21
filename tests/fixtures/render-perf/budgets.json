@@ -1,6 +1,6 @@
 {
  "format": "genex-render-perf-budgets/1",
- "about": "Feature GPU cost budgets (plan 2.10's table, whole, and renderer pass 2's Stage A features at the plan's section 4 budgets, owner decision D17), Apple M4 Max, 1920x1080. A budget applies to a profile row when every feature it lists is switched on and wired for that row, in the shapes it names (applied.featureShapes) if any. A Stage A entry charges a feature's steady cost per frame (probe and volume shading, not their time-sliced captures and bakes).",
+ "about": "Feature GPU cost budgets (plan 2.10's table, whole, and renderer pass 2's Stage A features at the plan's section 4 budgets, owner decision D17), Apple M4 Max, 1920x1080. A budget applies to a profile row when every feature it lists is switched on and wired for that row, in the shapes it names (applied.featureShapes) if any. A Stage A entry charges a feature's steady cost per frame (probe and volume shading, not their time-sliced captures and bakes). The stream entries (game systems STR-26b) are the frame thread's per-frame streaming budgets, not GPU features: `stream-finish-<class>` the view set's milliseconds of decoding and uploading (`budgetMs`, main-thread time), `stream-upload-<class>` and `stream-upload-web` the read bytes it uploads (`budgetBytes`; a browser takes the smaller of its class's row and the web cap). No profile row switches their features on, so they never charge a renderer feature's cost; the stream-valley fly-through rows read them and hold them equal to genex-render's `stream_budget`.",
  "resolution": [
   1920,
   1080
@@ -282,6 +282,111 @@
     "clouds"
    ],
    "budgetMs": 1.0
+  },
+  {
+   "id": "stream-finish-desktop-low",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 2.0
+  },
+  {
+   "id": "stream-finish-desktop-mid",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 2.0
+  },
+  {
+   "id": "stream-finish-desktop-high",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 2.0
+  },
+  {
+   "id": "stream-finish-desktop-ultra",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 2.0
+  },
+  {
+   "id": "stream-finish-mobile-low",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 1.0
+  },
+  {
+   "id": "stream-finish-mobile-mid",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 1.0
+  },
+  {
+   "id": "stream-finish-mobile-high",
+   "features": [
+    "stream-finish"
+   ],
+   "budgetMs": 1.0
+  },
+  {
+   "id": "stream-upload-desktop-low",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 6291456
+  },
+  {
+   "id": "stream-upload-desktop-mid",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 8388608
+  },
+  {
+   "id": "stream-upload-desktop-high",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 16777216
+  },
+  {
+   "id": "stream-upload-desktop-ultra",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 25165824
+  },
+  {
+   "id": "stream-upload-mobile-low",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 2097152
+  },
+  {
+   "id": "stream-upload-mobile-mid",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 3145728
+  },
+  {
+   "id": "stream-upload-mobile-high",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 4194304
+  },
+  {
+   "id": "stream-upload-web",
+   "features": [
+    "stream-upload"
+   ],
+   "budgetBytes": 8388608
   }
  ]
 }
