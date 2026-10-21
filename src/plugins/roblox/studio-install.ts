@@ -23,6 +23,7 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { windowsPowerShellEnv } from "../../substrate/child-env.ts";
 import { envValue } from "../../substrate/toolchain.ts";
 import { type LaunchDeps, openLaunch } from "./studio-launch.ts";
 import { isWindowsPath, locateStudio, type StudioInstall, studioRunning } from "./studio-locate.ts";
@@ -483,11 +484,12 @@ export async function afterInstall(
 /**
  * Runs a program with execFile (no shell) to its end within its limit: a non-zero exit is an
  * answer, with whatever it printed; a program that can't start rejects. Only Roblox's installer
- * shows a window on Windows.
+ * shows a window on Windows. No program gets an inherited PowerShell module path: the signature
+ * check's Windows PowerShell would lose its cmdlets to one from PowerShell 7.
  */
 export const systemInstallRun: InstallRun = (file, args, options) =>
   new Promise((resolve, reject) => {
-    const env = options.env ? { ...process.env, ...options.env } : process.env;
+    const env = windowsPowerShellEnv({ ...process.env, ...options.env });
     const exec = { timeout: options.timeoutMs, windowsHide: !options.visible, env, maxBuffer: 1024 * 1024 };
     execFile(file, [...args], exec, (error, stdout, stderr) => {
       if (!error) return resolve({ code: 0, stdout: String(stdout), stderr: String(stderr) });

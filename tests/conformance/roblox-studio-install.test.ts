@@ -29,6 +29,7 @@ import {
   MAX_INSTALLER_BYTES,
   SIGN_IN_WAIT_MS,
   signedByRoblox,
+  systemInstallRun,
 } from "../../src/plugins/roblox/studio-install.ts";
 import { shippedHelper } from "../helpers/roblox-helper.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -637,5 +638,31 @@ describe("the installer's temporary folder", () => {
     assert.deepEqual(await readdir(tempRoot), []);
     await writeFile(path.join(tempRoot, "kept.txt"), "the root itself is the caller's");
     assert.deepEqual(await readdir(tempRoot), ["kept.txt"]);
+  });
+});
+
+describe("the programs the install runs", () => {
+  it("start without an inherited PowerShell module path, so the Windows signature check keeps its cmdlets", async () => {
+    // Genex started from a PowerShell 7 terminal inherits pwsh's module path; Windows PowerShell
+    // 5.1 handed it loses Get-AuthenticodeSignature and ConvertTo-Json, and every installer
+    // reads as unsigned (R12).
+    const inherited = process.env.PSModulePath;
+    process.env.PSModulePath = "C:\\Program Files\\PowerShell\\7\\Modules";
+    try {
+      const script = "process.stdout.write(JSON.stringify(process.env))";
+      const ran = await systemInstallRun(process.execPath, ["-e", script], {
+        timeoutMs: 30_000,
+        env: { GENEX_ROBLOX_INSTALLER: "setup.exe" },
+      });
+      const seen: Record<string, string> = JSON.parse(ran.stdout);
+      assert.deepEqual(
+        Object.keys(seen).filter((name) => name.toUpperCase() === "PSMODULEPATH"),
+        [],
+      );
+      assert.equal(seen.GENEX_ROBLOX_INSTALLER, "setup.exe", "the variables the caller sets still arrive");
+    } finally {
+      if (inherited === undefined) delete process.env.PSModulePath;
+      else process.env.PSModulePath = inherited;
+    }
   });
 });
