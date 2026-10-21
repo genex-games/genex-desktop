@@ -49,13 +49,20 @@ use genex_core::paths::process_env;
 use genex_core::protocol::{BootProgress, BootStage};
 use genex_core::session::{AudioLevel, FrameTiming, StepResult, Timings};
 use genex_render::{GpuCounters, RenderCode, RenderError};
-use genex_studio::verbs::{SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value, spell_change};
+use genex_studio::verbs::{
+    ReloadFile, ReloadOutcome, ReloadRefusal, SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value,
+    spell_change,
+};
 use genex_studio::wire::{self, Backend, GpuRefusal, NativeEnhanced, Receipt, RenderSettingsChange, RenderSettingsRefusal, SurfaceArgs};
 use genex_studio::{
     CaptureFault, FatalReason, Injection, Pixels, ReadyInfo, RingFault, Studio, StudioGame, Transport,
     from_environment, report_panics,
 };
-use crate::present::Presenter;
+use crate::present::{Presenter, ReloadMiss};
+use crate::profile::EngineScope;
+use genex_profile::GpuTimeSource;
+use genex_studio::verbs::ProfileAnswer;
+use genex_studio::wire::{GpuTimingMode, ProfileAction, ProfileRequest};
 use live::{Live, Presented};
 use pace::{DueFrame, StudioPace};
 
@@ -104,6 +111,7 @@ fn receipt_of(gpu: &genex_render::Gpu) -> Option<Receipt> {
     let features = facts.native_enhanced.iter().filter_map(|name| NativeEnhanced::from_wire(name)).collect();
     let mut receipt = Receipt::new(backend, facts.adapter.clone(), features);
     receipt.render_settings_api = Some(wire::RENDER_SETTINGS_API_VERSION);
+    receipt.reload_assets_api = Some(wire::RELOAD_ASSETS_API_VERSION);
     receipt.render_inputs = produced_inputs();
     Some(receipt)
 }
@@ -188,6 +196,32 @@ fn fatal_reason(error: &RenderError) -> &'static str {
     }
 }
 
+/// The destination a desktop run's profile reports and crash records name.
+fn destination() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "mac"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+/// A profile answer's JSON bytes as the studio's value; `unavailable` before the recorder started.
+fn profile_value(json: Option<Vec<u8>>) -> Result<ProfileAnswer, &'static str> {
+    let json = json.ok_or(genex_studio::VerbRefusal::UNAVAILABLE)?;
+    let value = genex_core::json::parse(&json).map_err(|_| genex_studio::VerbRefusal::UNAVAILABLE)?;
+    Ok(ProfileAnswer::Value(value))
+}
+
+/// A reload miss in the wire's vocabulary.
+fn reload_refusal(miss: ReloadMiss) -> ReloadRefusal {
+    match miss {
+        ReloadMiss::Missing => ReloadRefusal::Missing,
+        ReloadMiss::DigestMismatch => ReloadRefusal::DigestMismatch,
+    }
+}
+
 /// What `capture` answers for a frame that could not be drawn, or a readback that failed.
 fn capture_fault(error: &RenderError) -> CaptureFault {
     match error.code() {
@@ -225,20 +259,45 @@ impl<W: Default + 'static> StudioRun<'_, W> {
     }
 
     /// One live frame: the ticks its paced time is worth, then a draw when the world moved; the
-    /// timings keep the frame's wall-clock interval.
+    /// timings keep the frame's wall-clock interval. The frame is one profiler frame (PROF-5): its
+    /// `frame` scope holds the ticks and the draw, the GPU time that landed is attached and, while
+    /// per-node timing is armed, the frame's graph steps are bracketed.
     fn live_frame(&mut self, frame: DueFrame) {
         self.fps.frame(self.born.elapsed().as_secs_f64() * 1000.0);
+        let armed = self.game.profiling().armed().then(|| self.game.profiling().frame_index());
+        self.presenter.set_node_frame(armed);
+        let scope = crate::profile::engine_scope(EngineScope::Frame);
         let ticked_from = Instant::now();
         let ticks = self.game.advance_live(frame.fed_ms);
         let ticked = Instant::now();
         if ticks > 0 {
+            let _draw = crate::profile::engine_scope(EngineScope::Draw);
             self.render();
         }
+        drop(scope);
         let update_ms = (ticked - ticked_from).as_secs_f64() * 1000.0;
         self.timing.record(frame.interval_ms, update_ms, ticked.elapsed().as_secs_f64() * 1000.0);
+        self.close_profile_frame(frame.interval_ms);
         if self.audio.is_open() {
             self.game.note_audio_device(true, self.audio.fault());
         }
+    }
+
+    /// Close the profiler's frame: the GPU time the settings last measured and the per-node samples
+    /// that landed.
+    fn close_profile_frame(&mut self, interval_ms: f64) {
+        let source = if self.presenter.gpu().device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            GpuTimeSource::Timestamps
+        } else {
+            GpuTimeSource::None
+        };
+        let gpu_ms = self.game.render().borrow().status().gpu_ms;
+        let samples = self.presenter.take_node_samples();
+        let profiling = self.game.profiling();
+        profiling.set_gpu_source(source);
+        profiling.record_nodes(&samples);
+        let index = profiling.frame_index();
+        profiling.new_frame(interval_ms, gpu_ms.map(|ms| (index, f64::from(ms))));
     }
 
     /// After a device loss, between the studio's requests: a new device, every mesh replayed, the
@@ -433,6 +492,50 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
     fn release_slot(&mut self, generation: u32, slot: u32) {
         self.live.release(generation, slot);
     }
+    /// `profile` (PROF-5): the summary, a report of the last frames (with the hitches kept and,
+    /// while armed, each frame's GPU nodes), arming per-node GPU timing, or a Chrome trace the
+    /// studio writes into `state/profile/`.
+    fn profile(&mut self, request: &ProfileRequest) -> Result<ProfileAnswer, &'static str> {
+        let class = self.game.render().borrow().status().device_class.wire();
+        let frames = request.frames as usize;
+        let profiling = self.game.profiling();
+        match request.action {
+            ProfileAction::Summary => profile_value(profiling.summary_json()),
+            ProfileAction::Report => profile_value(profiling.report_json(frames, destination(), &class)),
+            ProfileAction::Arm => {
+                let nodes = request.mode == Some(GpuTimingMode::Nodes);
+                profiling.arm(nodes);
+                let mode = if nodes { GpuTimingMode::Nodes } else { GpuTimingMode::Frame };
+                let mut answer = Value::object();
+                answer.set("mode", Value::from(mode.wire()));
+                Ok(ProfileAnswer::Value(answer))
+            }
+            ProfileAction::Trace => profiling.trace_json(frames, destination(), &class).map(ProfileAnswer::Trace).ok_or(genex_studio::VerbRefusal::UNAVAILABLE),
+        }
+    }
+    /// `reloadAssets` (C-18): the files whose new bytes match are dropped from the presenter and
+    /// the frame is drawn again at once, running or paused, so the next capture (settled or not)
+    /// is drawn wholly from the new bytes; `busy` while an earlier reload is still pending (a lost
+    /// device kept it from loading).
+    fn reload_assets(&mut self, files: &[ReloadFile]) -> Result<ReloadOutcome, &'static str> {
+        if self.presenter.reload_pending() > 0 {
+            return Err(genex_studio::VerbRefusal::BUSY);
+        }
+        let asked: Vec<(&str, u64)> = files.iter().map(|file| (file.path.as_str(), file.digest)).collect();
+        let answers = self.presenter.reload_assets(&asked);
+        let mut outcome = ReloadOutcome::default();
+        for (file, answer) in files.iter().zip(answers) {
+            match answer {
+                Ok(()) => outcome.reloaded.push(file.path.clone()),
+                Err(miss) => outcome.refused.push((file.path.clone(), reload_refusal(miss))),
+            }
+        }
+        if !outcome.reloaded.is_empty() {
+            self.render();
+        }
+        outcome.pending = self.presenter.reload_pending();
+        Ok(outcome)
+    }
 }
 
 /// The live loop: serve the studio, re-create a lost device, run the frame when its deadline came
@@ -523,6 +626,9 @@ pub(crate) fn serve<W: Default + 'static>(runtime: &mut Runtime<W>, assets: Asse
     let link = Arc::new(from_environment(&env)?);
     report_panics(Arc::clone(&link));
     let mut studio = Studio::for_run(&env);
+    // Live profiles by default (scopes on, owner call P1); crash records name this build.
+    runtime.profiling().start(true);
+    crate::crash::set_identity(destination(), true, &format!("genex-rust/{}/headless", os_name()), u64::from(wire::CONTRACT_VERSION_V2));
     let mut presenter = match Presenter::open(runtime.world_size(), assets) {
         Ok(presenter) => presenter,
         Err(error) => {
@@ -943,6 +1049,185 @@ mod metal {
         assert_eq!(passes.items(), [expected], "{state:?}");
         let shot = call(&mut studio, &mut run, "capture", "{}");
         assert_eq!(shot["ok"], json::Value::Bool(true), "{shot:?}");
+    }
+
+    /// PROF-5: Live frames are profiler frames; `profile` answers the summary, arms per-node GPU
+    /// timing (a report then lists each frame's graph steps) and writes a trace into
+    /// `state/profile/trace-1.json` whose digest it answers.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_profile_summary_nodes_and_trace_through_the_verb() {
+        use genex_core::digest::{fnv1a64, hex64};
+        let Some(mut run) = run_of(game(Projection::Perspective, 6.0)) else { return };
+        run.game.profiling().start(true);
+        let dir = scratch("profile");
+        // A run's save root ends in its separator (`GENEX_STATE_DIR`), as the trace folder expects.
+        let mut studio = Studio::native(&format!("{}/", dir.to_str().expect("utf-8 path")));
+        studio.mark_ready();
+        for _ in 0..130 {
+            run.live_frame(one_frame());
+        }
+        let state = call(&mut studio, &mut run, "state", "{}");
+        let profile = &state["result"]["volatile"]["profile"];
+        assert_eq!(profile["on"], json::Value::Bool(true), "{profile:?}");
+        assert!(profile["cpu"]["p50"].as_f64() > 0.0, "{profile:?}");
+        let top: Vec<&str> = profile["top"].items().iter().map(|row| row["scope"].as_str()).collect();
+        assert!(top.contains(&"frame") || top.contains(&"tick"), "{top:?}");
+        let summary = call(&mut studio, &mut run, "profile", r#"{"action":"summary"}"#);
+        assert_eq!(summary["result"]["v"].as_f64(), 1.0, "{summary:?}");
+        let armed = call(&mut studio, &mut run, "profile", r#"{"action":"arm","mode":"nodes"}"#);
+        assert_eq!(armed["result"]["mode"].as_str(), "nodes", "{armed:?}");
+        let offers = run.presenter.gpu().device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        for _ in 0..12 {
+            run.live_frame(one_frame());
+            let _ = run.presenter.gpu().device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        let report = call(&mut studio, &mut run, "profile", r#"{"action":"report","frames":12}"#);
+        assert_eq!(report["result"]["v"].as_f64(), 2.0, "{report:?}");
+        let nodes: Vec<&str> = report["result"]["frames"].items().iter().flat_map(|frame| frame["gpu"].items().iter().map(|node| node["node"].as_str())).collect();
+        eprintln!("prof5 report: {} frames, gpu nodes {:?}, timestamps offered {offers}", report["result"]["frames"].items().len(), nodes);
+        assert_eq!(report["result"]["frames"].items().len(), 12, "the report's window");
+        assert!(report["result"]["frames"].items().iter().all(|frame| frame["gpuMs"].as_f64() > 0.0 || !offers), "each frame's GPU time: {report:?}");
+        let armed_summary = call(&mut studio, &mut run, "profile", r#"{"action":"summary"}"#);
+        assert_eq!(armed_summary["result"]["nodes"].as_str(), "armed", "{armed_summary:?}");
+        // The per-node brackets themselves land only once genex-render's immediate frame path runs
+        // its graph through `node_timing::run_and_submit` (I3 T-core cross-lane note); until then
+        // `nodes` is empty here.
+        let trace = call(&mut studio, &mut run, "profile", r#"{"action":"trace","frames":12}"#);
+        assert_eq!(trace["result"]["seq"].as_f64(), 1.0, "{trace:?}");
+        let written = std::fs::read(dir.join("profile").join("trace-1.json")).expect("state/profile/trace-1.json");
+        assert_eq!(trace["result"]["digest"].as_str(), hex64(fnv1a64(&written)), "the answered digest is the file's");
+        assert!(serde_json::from_slice::<serde_json::Value>(&written).is_ok(), "a Chrome trace is JSON");
+    }
+
+    /// C-18: `reloadAssets` through the verb swaps a changed texture into the running game and the
+    /// capture in the same tick shows only the new bytes; a stale digest, a missing file and an
+    /// unsafe path are refused per file; a reload still pending behind a lost device answers `busy`.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_reload_assets_swaps_a_changed_texture_into_the_next_capture() {
+        use genex_core::digest::{fnv1a64, hex64};
+        let png = |rgb: [u8; 3]| {
+            let mut image = Vec::new();
+            {
+                let mut encoder = png_writer(&mut image);
+                encoder.write(rgb);
+            }
+            image
+        };
+        let dir = scratch("reload");
+        let assets = dir.join("assets");
+        std::fs::create_dir_all(assets.join("textures")).expect("assets folder");
+        let bark = assets.join("textures").join("bark.png");
+        std::fs::write(&bark, png([220, 30, 30])).expect("red bark");
+        let mut game = Game::new(World::default()).world_size(96, 64);
+        game.camera(|_| Camera::look_at(vec3(0.0, 0.0, 1.6), Vec3::ZERO));
+        game.on_draw(|_, frame, _| {
+            frame.cube_with(Transform::IDENTITY, &Material::color(Color::WHITE).with_base_texture("textures/bark.png"));
+        });
+        let presenter = match Presenter::open_with_root([96, 64], &[], Some(assets.clone())) {
+            Ok(presenter) => presenter,
+            Err(error) if required() => panic!("GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}"),
+            Err(_) => return,
+        };
+        let runtime = Box::leak(Box::new(Runtime::new(game).expect("installs")));
+        let mut run = studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {});
+        let mut studio = studio(&dir.join("state"));
+        call(&mut studio, &mut run, "pause", "{}");
+        let red = call(&mut studio, &mut run, "capture", "{}");
+        let blue = png([30, 30, 220]);
+        std::fs::write(&bark, &blue).expect("blue bark");
+        let digest = hex64(fnv1a64(&blue));
+        let arg = format!(
+            r#"{{"files":[{{"path":"textures/bark.png","digest":"{digest}"}},{{"path":"textures/bark.png","digest":"0000000000000000"}},{{"path":"textures/none.png","digest":"{digest}"}},{{"path":"../bark.png","digest":"{digest}"}}]}}"#
+        );
+        let reloaded = call(&mut studio, &mut run, "reloadAssets", &arg);
+        assert_eq!(reloaded["ok"], json::Value::Bool(true), "{reloaded:?}");
+        let result = &reloaded["result"];
+        let paths: Vec<&str> = result["reloaded"].items().iter().map(json::Value::as_str).collect();
+        assert_eq!(paths, ["textures/bark.png"]);
+        let refused: Vec<(&str, &str)> = result["refused"].items().iter().map(|r| (r["path"].as_str(), r["code"].as_str())).collect();
+        assert_eq!(refused, [("../bark.png", "unsafe-path"), ("textures/bark.png", "digest-mismatch"), ("textures/none.png", "missing")]);
+        assert_eq!(result["pending"].as_f64(), 0.0, "drawn at once, paused or not");
+        let swapped = call(&mut studio, &mut run, "capture", "{}");
+        assert_ne!(swapped["result"]["digest"], red["result"]["digest"], "the next capture shows the new bytes: {swapped:?}");
+        // The same capture as a fresh run on the blue bark: nothing of the red one is left.
+        let fresh_dir = scratch("reload-fresh");
+        let fresh_assets = fresh_dir.join("assets");
+        std::fs::create_dir_all(fresh_assets.join("textures")).expect("assets folder");
+        std::fs::write(fresh_assets.join("textures").join("bark.png"), &blue).expect("blue bark");
+        let mut fresh_game = Game::new(World::default()).world_size(96, 64);
+        fresh_game.camera(|_| Camera::look_at(vec3(0.0, 0.0, 1.6), Vec3::ZERO));
+        fresh_game.on_draw(|_, frame, _| {
+            frame.cube_with(Transform::IDENTITY, &Material::color(Color::WHITE).with_base_texture("textures/bark.png"));
+        });
+        let fresh_presenter = Presenter::open_with_root([96, 64], &[], Some(fresh_assets)).expect("a second presenter");
+        let fresh_runtime = Box::leak(Box::new(Runtime::new(fresh_game).expect("installs")));
+        let mut fresh = studio_run(fresh_runtime, fresh_presenter, Live::from_env(&|_| None), &|_| {});
+        let mut fresh_studio = self::studio(&fresh_dir.join("state"));
+        call(&mut fresh_studio, &mut fresh, "pause", "{}");
+        let expected = call(&mut fresh_studio, &mut fresh, "capture", "{}");
+        assert_eq!(swapped["result"]["digest"], expected["result"]["digest"], "not a mix of old and new");
+        // Behind a lost device the reload stays pending, and another answers busy until it loads.
+        run.presenter.resilient.force_device_loss();
+        let lost = call(&mut studio, &mut run, "reloadAssets", &format!(r#"{{"files":[{{"path":"textures/bark.png","digest":"{digest}"}}]}}"#));
+        assert_eq!(lost["result"]["pending"].as_f64(), 1.0, "{lost:?}");
+        let busy = call(&mut studio, &mut run, "reloadAssets", &format!(r#"{{"files":[{{"path":"textures/bark.png","digest":"{digest}"}}]}}"#));
+        assert_eq!(busy["error"].as_str(), "busy", "{busy:?}");
+        assert!(run.recover(), "the device is re-created");
+        let after = call(&mut studio, &mut run, "capture", "{}");
+        assert_eq!(after["result"]["digest"], expected["result"]["digest"], "{after:?}");
+        let again = call(&mut studio, &mut run, "reloadAssets", &format!(r#"{{"files":[{{"path":"textures/bark.png","digest":"{digest}"}}]}}"#));
+        assert_eq!(again["ok"], json::Value::Bool(true), "pending again 0 after the recovery's frame: {again:?}");
+    }
+
+    /// A one-colour 8 x 8 PNG writer (stored deflate) for the reload row.
+    struct PngWriter<'a> {
+        out: &'a mut Vec<u8>,
+    }
+
+    fn png_writer(out: &mut Vec<u8>) -> PngWriter<'_> {
+        PngWriter { out }
+    }
+
+    impl PngWriter<'_> {
+        fn write(&mut self, rgb: [u8; 3]) {
+            const SIDE: u32 = 8;
+            let crc = |bytes: &[u8]| {
+                let mut crc = 0xffff_ffffu32;
+                for byte in bytes {
+                    crc ^= u32::from(*byte);
+                    for _ in 0..8 {
+                        crc = if crc & 1 == 1 { 0xedb8_8320 ^ (crc >> 1) } else { crc >> 1 };
+                    }
+                }
+                !crc
+            };
+            let row: Vec<u8> = std::iter::once(0).chain([rgb[0], rgb[1], rgb[2], 255].repeat(SIDE as usize)).collect();
+            let raw = row.repeat(SIDE as usize);
+            let (mut a, mut b) = (1u32, 0u32);
+            for byte in &raw {
+                a = (a + u32::from(*byte)) % 65_521;
+                b = (b + a) % 65_521;
+            }
+            let mut zlib = vec![0x78, 0x01, 1];
+            zlib.extend((raw.len() as u16).to_le_bytes());
+            zlib.extend((!(raw.len() as u16)).to_le_bytes());
+            zlib.extend(&raw);
+            zlib.extend(((b << 16) | a).to_be_bytes());
+            let mut header = Vec::new();
+            header.extend(SIDE.to_be_bytes());
+            header.extend(SIDE.to_be_bytes());
+            header.extend([8, 6, 0, 0, 0]);
+            self.out.extend([0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+            for (kind, data) in [(b"IHDR", header), (b"IDAT", zlib), (b"IEND", Vec::new())] {
+                self.out.extend((data.len() as u32).to_be_bytes());
+                let mut body = kind.to_vec();
+                body.extend(&data);
+                self.out.extend(&body);
+                self.out.extend(crc(&body).to_be_bytes());
+            }
+        }
     }
 
     /// AU-7: `audioLevel` answers the Rust game's own mix (the tone it plays), not the silence

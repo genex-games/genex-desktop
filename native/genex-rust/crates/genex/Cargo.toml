@@ -56,6 +56,10 @@ genex-save = { workspace = true }
 # Gameplay UI (G6 gameplay UI): the widget kit, focus and controller navigation, Fluent text and
 # the locale; the HUD already links it (UIS-10).
 genex-ui = { workspace = true }
+# Profiling (G6 profile): typed scopes over puffin, the frame summary, hitches, reports, traces.
+genex-profile = { workspace = true }
+# Crash reports (G6 crash): the process's crash context, the chained panic hook and its sinks.
+genex-crash = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 genex-studio = { workspace = true, optional = true }

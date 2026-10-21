@@ -1,0 +1,15 @@
+error[E0080]: evaluation panicked: a scope name is 1..=48 bytes of a-z, 0-9, '_', '.' and '-'
+ --> tests/ui/fail/profile_scope_name.rs:5:5
+  |
+5 |     genex::profile_scope!("Enemy AI");
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `update::SITE` failed inside this call
+  |
+note: inside `ScopeName::new`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: $WORKSPACE/crates/genex-profile/src/scope.rs
+  |
+  |         assert!(is_scope_name(name), "a scope name is 1..=48 bytes of a-z, 0-9, '_', '.' and '-'");
+  |         ------------------------------------------------------------------------------------------ in this macro invocation

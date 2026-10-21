@@ -80,11 +80,12 @@ impl G6 {
         self.profile.frame_end(tick);
     }
 
-    /// The G6 runtime keys (`__input`, `__net`) and `volatile.saves`, each only while its area is
-    /// registered.
+    /// The G6 runtime keys (`__input`, `__net`), `volatile.saves` and `volatile.profile`, each only
+    /// while its area is registered (the profile once a shell started its recorder).
     pub(crate) fn runtime_keys(&self, setup: &G6Setup, state: &mut CoreValue) {
         self.input.runtime_key(&setup.input, state);
         self.net.runtime_key(&setup.net, state);
         self.saves.volatile_key(&setup.saves, state);
+        self.profile.volatile_key(state);
     }
 }

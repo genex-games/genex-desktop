@@ -44,7 +44,8 @@
 //! A model is loaded once per path ([`AssetCache`]) as one mesh per material its GLB names, with
 //! the textures those materials sample; a draw's own [`crate::Material`] replaces them, and its
 //! textures load once per path and kind. A texture that cannot load leaves its slot untextured
-//! (neutral), never the checker.
+//! (neutral), never the checker. A dev build's `reloadAssets` ([`Presenter::reload_assets`]) has
+//! the files it names read again by the next frame, once their new bytes match the host's digest.
 //!
 //! Every frame draws through the game's render settings ([`crate::render::RenderControl`], owned
 //! by the runtime and attached on the first draw, probed with this device's facts). A **Live**
@@ -458,9 +459,46 @@ impl Uploads for Resilient {
     }
 }
 
+/// What [`AssetCache::invalidate`] dropped: the models (their meshes are the renderer's to free)
+/// and whether the environment map was among the paths (the presenter uploads it again).
+#[derive(Debug, Default, PartialEq)]
+pub struct Invalidated {
+    /// The models dropped that had loaded (a refused one had nothing on the device).
+    pub models: Vec<LoadedModel>,
+    /// Whether an environment map was dropped.
+    pub environment: bool,
+}
+
+/// Why [`Presenter::reload_assets`] left a file as it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReloadMiss {
+    /// The game's source has no such file.
+    Missing,
+    /// The bytes the source serves now are not the digest the host named.
+    DigestMismatch,
+}
+
+/// Whether a change to `changed` touches what was loaded for the texture `path`: the file itself
+/// or one of its family files (`<stem>.<family>.ktx2`).
+fn touches_texture(path: &str, changed: &str) -> bool {
+    path == changed || TextureFamily::ALL.into_iter().any(|family| family_file(path, family) == changed)
+}
+
+/// Whether a change to `changed` touches the model loaded from `path`: the GLB itself, or a family
+/// file in its folder, which may be one of its image sidecars (C-14; the stems its GLB names are
+/// not kept, so any family file there reloads it).
+fn touches_model(path: &str, changed: &str) -> bool {
+    if path == changed {
+        return true;
+    }
+    let folder = |file: &str| file.rfind('/').map_or("", |at| &file[..=at]).to_owned();
+    changed.ends_with(".ktx2") && folder(path) == folder(changed)
+}
+
 /// The models and textures a renderer holds for a game, by asset path. Each is tried once: a
 /// refusal is kept (a model then draws the checker, a texture leaves its slot untextured) and
-/// never retried; only a lost device leaves it to be tried again.
+/// never retried; only a lost device leaves it to be tried again, and a dev build's
+/// `reloadAssets` ([`AssetCache::invalidate`]) has the paths it names tried again.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AssetCache {
     models: Vec<(String, Option<LoadedModel>)>,
@@ -618,6 +656,31 @@ impl AssetCache {
     pub(crate) fn take_model(&mut self, path: &str) -> Option<LoadedModel> {
         let at = self.models.iter().position(|(known, _)| known == path)?;
         self.models.remove(at).1
+    }
+
+    /// Forget what was loaded from each of `changed` (game systems C-18): a texture loaded from
+    /// the file or one of its family files, a model loaded from the GLB or with a family file in
+    /// its folder, an environment map; the next load reads them again, a refused one included.
+    /// Answers the dropped models, whose meshes the caller frees, and whether an environment map
+    /// was dropped. Textures already on the device stay there until the device is re-created (a
+    /// texture array slot is never freed); what the sim read (`gfx.assets().bytes`) is untouched.
+    pub fn invalidate(&mut self, changed: &[&str]) -> Invalidated {
+        let mut dropped = Invalidated::default();
+        let touched = |path: &str, rule: fn(&str, &str) -> bool| changed.iter().any(|changed| rule(path, changed));
+        let mut kept = Vec::with_capacity(self.models.len());
+        for (path, loaded) in std::mem::take(&mut self.models) {
+            if !touched(&path, touches_model) {
+                kept.push((path, loaded));
+                continue;
+            }
+            dropped.models.extend(loaded);
+        }
+        self.models = kept;
+        self.textures.retain(|cached| !touched(&cached.path, touches_texture));
+        let environments = self.environments.len();
+        self.environments.retain(|(path, _)| !changed.contains(&path.as_str()));
+        dropped.environment = self.environments.len() != environments;
+        dropped
     }
 
     /// The texture loaded for `path` as `kind`; `None` when it was refused or never tried.
@@ -1135,6 +1198,13 @@ pub struct Presenter {
     last_output: Option<(u32, u32)>,
     source: Box<dyn ModelSource>,
     assets: AssetCache,
+    /// The paths a `reloadAssets` dropped that no frame has loaded again yet (C-18).
+    reloading: Vec<String>,
+    /// The profiler's frame index the next Live frame's graph steps are bracketed as, while
+    /// per-node GPU timing is armed (PROF-5); None while it is not.
+    node_frame: Option<u64>,
+    /// Per-node GPU samples that landed since they were last taken.
+    node_samples: Vec<genex_profile::GpuNodeSample>,
     /// The streamed view set (STR-16): idle unless the game registered `game.streaming`; its
     /// limits follow the drawn class.
     stream: crate::present_stream::StreamView,
@@ -1300,6 +1370,9 @@ impl Presenter {
             last_output: None,
             source,
             assets: AssetCache::default(),
+            reloading: Vec::new(),
+            node_frame: None,
+            node_samples: Vec::new(),
             stream: crate::present_stream::StreamView::new(crate::present_stream::ViewLimits::for_class(
                 DeviceClass::new(FormFactor::Desktop, PerformanceTier::High),
                 TargetOs::current(),
@@ -1876,6 +1949,10 @@ impl Presenter {
     /// frame.
     fn begin_live(&mut self) -> LiveTiming {
         let queue = self.resilient.gpu().queue.clone();
+        if let Some(frame) = self.node_frame {
+            let nodes = self.resilient.renderer_mut().renderer_mut().arm_node_timer(&queue, frame);
+            self.node_samples.extend(nodes.into_iter().flatten().flat_map(|landed| landed.nodes));
+        }
         let landed = self.resilient.renderer_mut().renderer_mut().arm_frame_timer(&queue);
         let now = (self.clock)();
         let since_last = self.last_live.map_or(0.0, |last| now.saturating_sub(last).as_secs_f32() * 1000.0);
@@ -1965,7 +2042,65 @@ impl Presenter {
     /// again.
     fn load(&mut self, frame: &Frame) -> Result<(), RenderError> {
         let log = self.log;
-        self.assets.load(frame, &*self.source, &mut self.resilient, &mut |line| log(line))
+        self.assets.load(frame, &*self.source, &mut self.resilient, &mut |line| log(line))?;
+        // Every dropped path the frame draws was read again; one it does not draw has nothing left
+        // to load.
+        self.reloading.clear();
+        Ok(())
+    }
+
+    /// `reloadAssets` (game systems C-18): for each `(path, digest)` (a path already under the
+    /// asset-path rule), check the bytes the game's source serves now against the FNV-1a 64 the
+    /// host named, then drop what the renderer holds of every file that matched (its models'
+    /// meshes freed, an environment map uploaded again), so the next frame reads them; one answer
+    /// per file, in order. A missing file or a stale digest changes nothing.
+    pub fn reload_assets(&mut self, files: &[(&str, u64)]) -> Vec<Result<(), ReloadMiss>> {
+        let answers: Vec<Result<(), ReloadMiss>> = files
+            .iter()
+            .map(|(path, digest)| match self.source.model_bytes(path) {
+                None => Err(ReloadMiss::Missing),
+                Some(bytes) if genex_core::digest::fnv1a64(&bytes) != *digest => Err(ReloadMiss::DigestMismatch),
+                Some(_) => Ok(()),
+            })
+            .collect();
+        let changed: Vec<&str> = files.iter().zip(&answers).filter(|(_, answer)| answer.is_ok()).map(|((path, _), _)| *path).collect();
+        if changed.is_empty() {
+            return answers;
+        }
+        let dropped = self.assets.invalidate(&changed);
+        for model in dropped.models {
+            for part in model.parts {
+                if let Err(error) = self.resilient.remove_mesh(part.mesh) {
+                    (self.log)(&format!("a reloaded model's mesh was not removed: {error}"));
+                }
+            }
+        }
+        if dropped.environment {
+            self.environment_map = None;
+        }
+        for path in changed {
+            if !self.reloading.iter().any(|known| known == path) {
+                self.reloading.push(path.to_owned());
+            }
+        }
+        answers
+    }
+
+    /// Bracket the next Live frames' graph steps on the GPU as the profiler's frame `frame` (per-node
+    /// timing armed, PROF-5), or stop (None). Captures are never bracketed.
+    pub fn set_node_frame(&mut self, frame: Option<u64>) {
+        self.node_frame = frame;
+    }
+
+    /// The per-node GPU samples that landed since the last take, in schedule order per frame.
+    pub fn take_node_samples(&mut self) -> Vec<genex_profile::GpuNodeSample> {
+        std::mem::take(&mut self.node_samples)
+    }
+
+    /// The paths a `reloadAssets` dropped that no frame has loaded again yet: 0 once a frame
+    /// drew (a lost device keeps them pending).
+    pub fn reload_pending(&self) -> u32 {
+        u32::try_from(self.reloading.len()).unwrap_or(u32::MAX)
     }
 
     /// Hand the renderer the environment `frame` lights with ([`environment_of`]), uploading an
