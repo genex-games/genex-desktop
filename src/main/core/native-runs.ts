@@ -40,6 +40,7 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import type { CrashRecordV1 } from "../../shared/crash-record.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { type BuildTarget, isCompiledStack } from "../../shared/game-project.ts";
+import type { ToolchainLock } from "../../shared/toolchain.ts";
 import {
   type GameBoxProblem,
   NATIVE_GAME_MEMORY_MAX_BYTES,
@@ -64,7 +65,7 @@ import {
 } from "../../shared/native-contract.ts";
 import { UiEvent, uiEvent } from "../../shared/ui-events.ts";
 import { openNoFollow, readRegularFile } from "../../substrate/fsx.ts";
-import { removeRunDir } from "../../substrate/native-bundle.ts";
+import { type AdmittedOutputFile, removeRunDir } from "../../substrate/native-bundle.ts";
 import {
   type NativeGamePort,
   NativeExitError,
@@ -152,6 +153,19 @@ export interface NativeStartRequest {
    * caller's params): the conformance gate it feeds does not hold it back.
    */
   conformance?: boolean;
+  /**
+   * The build lane's bake step (NAV-14b, `rust-bake.ts`, set by the host, never from a caller's
+   * params): the admitted output of the build in flight, which prepare assembles without asking
+   * the lane again (that build is the one waiting on this run).
+   */
+  prebuilt?: NativePrebuilt;
+}
+
+/** An admitted Rust build a run starts from without building: its `out/`, lock and admitted digests. */
+export interface NativePrebuilt {
+  output: string;
+  lock: ToolchainLock;
+  admittedFiles: readonly AdmittedOutputFile[];
 }
 
 /** The ring an embedded run's canvas asks for: device pixels (`ringSizeFor`) and the screen's device-pixel ratio. */

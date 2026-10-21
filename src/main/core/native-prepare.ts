@@ -196,6 +196,11 @@ async function nativeGame(deps: NativePrepareDeps, request: NativePrepareRequest
 
 /** The lane's build of the run's destination; a failure is `build-failed` with the lane's problem. */
 async function build(deps: NativePrepareDeps, request: NativePrepareRequest, game: GameProject, signal: AbortSignal) {
+  // A bake session's run (NAV-14b): the build in flight already admitted this output.
+  if (request.prebuilt) {
+    const { output, lock, admittedFiles } = request.prebuilt;
+    return { output, lock, admittedFiles };
+  }
   const stack = stackOf(game.shape);
   // A Rust game's own retained lock, so Live builds it on the toolchain it was made with.
   const lock = isCompiledStack(stack) ? await deps.toolchains.currentLock(stack, request.project) : null;

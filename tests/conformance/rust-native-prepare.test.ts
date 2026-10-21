@@ -199,6 +199,19 @@ describe("a Rust game's Mac run, prepared through the wgpu admission and assembl
     });
   }
 
+  it("a bake session's prebuilt headless run (NAV-14b) never asks the lane and assembles its admitted output", async (t) => {
+    const r = await rig();
+    const admittedFiles = (await admittedReport(r.out)).receipt?.outputs ?? [];
+    const prebuilt = { output: r.out, lock: RUST_LOCK, admittedFiles };
+    const asked = { ...request(NativeRunMode.Headless), prebuilt };
+    const prepared = await prepareNativeRun(r.deps, asked, new AbortController().signal);
+    t.after(() => removeRunDir(prepared.runDir));
+    assert.deepEqual(r.builds, [], "the build in flight, which waits on this run, is not asked again");
+    assert.deepEqual(r.locks, [], "the prebuilt output's own lock");
+    assert.deepEqual(await readFile(prepared.exe), await readFile(path.join(r.out, HEADLESS_EXE)));
+    assert.equal(prepared.build?.lock, RUST_LOCK.digest);
+  });
+
   it("a Window run is lane-missing before any build: the studio mode serves headless, so no window would show", async () => {
     const r = await rig();
     assert.equal(

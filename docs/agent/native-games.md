@@ -154,7 +154,20 @@ iOS and Android 200 MB, desktop 2 GB unless `[assets]` names another): past it a
 `packageCeilingRefusal` refuses the build `assets-over-ceiling`. `[assets] phone_max_texture_px`
 replaces the phone mip cap. A game file at that name is
 refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
-`out/`. An export keeps line tables outside it ([`rust-debug-files.ts`](../../src/substrate/rust-debug-files.ts)):
+`out/`. The bake step (NAV-14b, [`rust-bake.ts`](../../src/main/rust-bake.ts), `RustBuildsOptions.bakes`)
+keys a game's bakes by `bakeInputDigest` (the staged sources and assets before the import step, less
+the host-written manifest and lock, plus the toolchain lock): every build places the profile cache's
+entry for that input into `out/assets/baked/<kind>/<name>` before the web map and the admission,
+and a dev Mac build that misses it asks a headless run of its admitted `out/` for each bake its
+receipt's `bakes` advertises (`bakeAssets`, never an agent). That run goes through the native run
+registry under the game profile (`nativeBakeSessions`); its `prebuilt` start skips the lane, whose
+build is waiting on it. Other destinations take the cache only. The cache is
+`<asset-cache>/bakes/<project digest>/<input>/` (`bakeCacheFolder`). The step reads each output from the
+run's `state/bakes/` without following a link, checks its size and FNV-1a 64, writes it into the
+cache and `out/` (admitted again) and records lock `derived` rows; an unchanged rebuild spawns
+nothing, a game whose `src/` names no `nav_bake` is never started to ask, and a hostile name or a
+linked folder refuses that bake with nothing written. Outputs never reach the game folder, and a
+failed bake never fails the build (`NavMesh::from_bytes_for` bakes at reset). An export keeps line tables outside it ([`rust-debug-files.ts`](../../src/substrate/rust-debug-files.ts)):
 a dSYM (Apple, debug map stripped), the unstripped executable (ELF/PE, shipped through
 `llvm-objcopy --strip-debug`) or the web `wasm-opt --symbolmap` map, in `<bin>.debug/<digest>/` by
 the shipped file's SHA-256, four builds kept. Exports carry `rust-notices.ts` notices, phone exports
