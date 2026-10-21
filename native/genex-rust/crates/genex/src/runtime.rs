@@ -159,11 +159,15 @@ pub enum InstallErrorCode {
     DuplicateSaveSection,
     /// A second `game.saves`.
     DuplicateSaves,
+    /// A second `game.ui`.
+    DuplicateUi,
+    /// A `game.ui` locale that is not BCP-47, or a font named for a locale it does not list.
+    UiLocaleInvalid,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 21] = [
+    pub const ALL: [InstallErrorCode; 23] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -185,6 +189,8 @@ impl InstallErrorCode {
         InstallErrorCode::SaveSectionReserved,
         InstallErrorCode::DuplicateSaveSection,
         InstallErrorCode::DuplicateSaves,
+        InstallErrorCode::DuplicateUi,
+        InstallErrorCode::UiLocaleInvalid,
     ];
 
     /// The typed code's wire spelling.
@@ -211,6 +217,8 @@ impl InstallErrorCode {
             InstallErrorCode::SaveSectionReserved => "save-section-reserved",
             InstallErrorCode::DuplicateSaveSection => "duplicate-save-section",
             InstallErrorCode::DuplicateSaves => "duplicate-saves",
+            InstallErrorCode::DuplicateUi => "duplicate-ui",
+            InstallErrorCode::UiLocaleInvalid => "ui-locale-invalid",
         }
     }
 }
@@ -401,6 +409,8 @@ impl<W: Default + 'static> Runtime<W> {
         let mut runtime = Runtime { game, core };
         // The player's bindings are read once, before the first seed (IN-11).
         runtime.core.g6.input.install(&runtime.game.g6.input, runtime.core.gfx.saves(), studio_run());
+        // And the person's UI layer (locale), which a Genex run ignores (UIS-10).
+        runtime.core.g6.ui.rebase(&runtime.game.g6.ui, runtime.core.gfx.saves(), studio_run());
         runtime.seed(DEFAULT_SEED);
         Ok(runtime)
     }
@@ -550,6 +560,7 @@ impl<W> Runtime<W> {
         let game = paths::identity_of(self.game.save_name.as_deref().unwrap_or(""), "", BUILD_IDENTITY);
         self.core.gfx.set_saves(Saves::for_destination(Destination::Android, &env, game));
         self.core.g6.input.rebase(&self.game.g6.input, self.core.gfx.saves(), studio_run());
+        self.core.g6.ui.rebase(&self.game.g6.ui, self.core.gfx.saves(), studio_run());
         let tick = self.core.tick;
         restart_journal(&self.game, &mut self.core, tick);
     }
@@ -563,6 +574,7 @@ impl<W> Runtime<W> {
         let game = paths::identity_of(self.game.save_name.as_deref().unwrap_or(""), "", BUILD_IDENTITY);
         self.core.gfx.set_saves(Saves::for_destination(Destination::GenexRun, &env, game));
         self.core.g6.input.rebase(&self.game.g6.input, self.core.gfx.saves(), true);
+        self.core.g6.ui.rebase(&self.game.g6.ui, self.core.gfx.saves(), true);
         let tick = self.core.tick;
         restart_journal(&self.game, &mut self.core, tick);
     }
@@ -672,6 +684,11 @@ impl<W> Runtime<W> {
             volatile.set(crate::audio::VOLATILE_AUDIO_KEY, audio);
             state.set(session::VOLATILE_KEY, volatile);
         }
+        if let Some(ui) = core.g6.ui.volatile_value(&self.game.g6.ui) {
+            let mut volatile = state[session::VOLATILE_KEY].clone();
+            volatile.set(crate::ui::VOLATILE_UI_KEY, ui);
+            state.set(session::VOLATILE_KEY, volatile);
+        }
         if core.g6.input.registered() {
             let mut input = state[crate::actions::RUNTIME_KEY].clone();
             input.set("journal", CoreValue::from(&core.g6.journal.runtime_value()));
@@ -684,7 +701,9 @@ impl<W> Runtime<W> {
         state
     }
 
-    /// `state().hud`: `{items, crosshair, flash}`, the widgets the last tick's UI drew by label.
+    /// `state().hud`: `{items, crosshair, flash, widgets, focus}`: the widgets the last tick's UI
+    /// drew by label, then each with its role, key, rect and focus (UIS-10), and the focused one's
+    /// key (else its label, else null).
     fn hud_value(&self) -> CoreValue {
         let summary = self.core.hud.summary();
         let items: Vec<CoreValue> = summary.items.into_iter().map(CoreValue::from).collect();
@@ -692,6 +711,11 @@ impl<W> Runtime<W> {
         hud.set("items", CoreValue::Array(items));
         hud.set("crosshair", CoreValue::Bool(summary.crosshair));
         hud.set("flash", CoreValue::from(f64::from(summary.flash)));
+        let widgets = self.core.hud.widgets();
+        hud.set("widgets", CoreValue::Array(widgets.iter().map(widget_value).collect()));
+        let focused = widgets.iter().find(|widget| widget.focused);
+        let focus = focused.map(|widget| widget.key.as_deref().unwrap_or(&widget.label));
+        hud.set("focus", focus.map_or(CoreValue::Null, CoreValue::from));
         hud
     }
 
@@ -712,6 +736,39 @@ impl<W> Runtime<W> {
     /// A phone shell raises its keyboard while this holds. Display only: it moves no checksum.
     pub fn keyboard_wanted(&self) -> bool {
         genex_hud::keyboard_wanted(self.core.hud.context())
+    }
+
+    /// Queue a Studio session's UI layer (`uiSettings`: locale, scale, safe area, reduced
+    /// motion), applied at the next tick boundary and kept across seeds (UIS-10). Refused
+    /// `bad-argument` without `game.ui` or out of range, `text-locale-unknown` for a locale the
+    /// game does not offer.
+    pub fn ui_session(&mut self, session: crate::ui::UiSession) -> Result<(), crate::ui::UiSessionCode> {
+        self.core.g6.ui.queue_session(&self.game.g6.ui, session)
+    }
+
+    /// The OS locale a shell read (`sys-locale`), below the person's choice; a Genex run ignores
+    /// it (UIS-10).
+    pub fn set_os_locale(&mut self, tag: Option<&str>) {
+        self.core.g6.ui.set_os_locale(&self.game.g6.ui, tag);
+    }
+
+    /// The safe area a phone shell reports, `[left, top, right, bottom]` in world pixels, for
+    /// `genex::ui::safe_area`; a Genex run ignores it (UIS-10).
+    pub fn set_ui_safe_area(&mut self, insets: [f32; 4]) {
+        self.core.g6.ui.set_shell_safe_area(insets);
+    }
+
+    /// The output's logical size, which picks `UiScale::Auto`'s phone or desktop scale in an
+    /// export (UIS-10).
+    pub fn set_ui_output_size(&mut self, size: [f32; 2]) {
+        self.core.g6.ui.set_output(genex_ui::settings::scale::OutputClass::of(size));
+    }
+
+    /// Replace where `game.ui`'s navigation buttons come from (the INPUT seam, UIS-10): by
+    /// default `genex::ui::default_buttons`.
+    #[doc(hidden)]
+    pub fn set_ui_nav_source(&mut self, source: crate::ui::UiNavSource) {
+        self.core.g6.ui.set_nav_source(source);
     }
 
     /// The input journal since the seed or the last input restore (IN-12): host glue for crash
@@ -862,14 +919,17 @@ impl<W> Runtime<W> {
             }
             render.set(TEXTURES_KEY, textures);
         }
-        if !tally.asset_issues.is_empty() {
-            let issues = tally.asset_issues.iter().map(|issue| {
-                let mut entry = CoreValue::object();
-                entry.set("path", CoreValue::from(issue.path.as_str()));
-                entry.set("code", CoreValue::from(issue.code.wire()));
-                entry
-            });
-            render.set(ASSET_ISSUES_KEY, CoreValue::Array(issues.collect()));
+        let issue = |path: &str, code: &str| {
+            let mut entry = CoreValue::object();
+            entry.set("path", CoreValue::from(path));
+            entry.set("code", CoreValue::from(code));
+            entry
+        };
+        let mut issues: Vec<CoreValue> = tally.asset_issues.iter().map(|asset| issue(&asset.path, asset.code.wire())).collect();
+        // game.ui's text files (UIS-10): a missing file, a key a locale lacks, a broken entry.
+        issues.extend(self.core.g6.ui.file_issues().iter().map(|(path, code)| issue(path, code)));
+        if !issues.is_empty() {
+            render.set(ASSET_ISSUES_KEY, CoreValue::Array(issues));
         }
         render
     }
@@ -1064,6 +1124,9 @@ fn seed_core<W: Default>(game: &Game<W>, core: &mut Core<W>, seed: u32) {
     core.stream.reset(seed);
     let mut rng = Pcg32::seeded(u64::from(seed));
     core.gfx.assets().set_at_reset(true);
+    // The UI's text and fonts are boot assets, read in the reset window like the hooks' (UIS-10).
+    core.g6.ui.load(&game.g6.ui, core.gfx.assets());
+    apply_locale_fonts(core);
     for hook in &game.resets {
         hook(&mut core.sim, seed, &mut rng, &core.gfx);
     }
@@ -1157,6 +1220,9 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         return false;
     }
     core.g6.tick_begin(&game.g6, core.tick);
+    // A Studio session's UI layer queued since the last tick applies now (UIS-10).
+    core.g6.ui.begin_tick(&game.g6.ui);
+    apply_locale_fonts(core);
     let input = match core.rows.pop_front() {
         Some(row) => TickInput::from_core(row, game.world_size),
         None => core.merger.next_tick(game.world_size),
@@ -1168,6 +1234,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     let keys_taken = genex_hud::keys_taken(core.hud.context());
     let taken = keys_taken.then(|| input.keys.mouse_buttons_only());
     let text = if taken.is_some() { "" } else { input.text.as_str() };
+    // With game.ui the pad buttons and stick navigation consumes are the focused widget's too.
+    let gated_pads = (keys_taken && game.g6.ui.registered()).then(|| crate::ctx::Pads::from_core(core.g6.ui.gated_pads(&input.core.pads)));
     let (touch, free) = core.g6.touch.step(&game.g6.touch, game.world_size, &input);
     core.g6.input.evaluate(&input.core, keys_taken, &touch, free);
     core.g6.journal.record(core.tick, &input.core);
@@ -1178,7 +1246,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     let ctx = Ctx {
         keys: taken.as_ref().unwrap_or(&input.keys),
         touches: &input.touches,
-        pads: &input.pads,
+        pads: gated_pads.as_ref().unwrap_or(&input.pads),
         pointer: input.pointer,
         look: input.look,
         wheel: input.wheel,
@@ -1193,6 +1261,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         audio: core.g6.audio.ctx(),
         slots: core.g6.saves.slots(),
     };
+    // `tr` and the person layer reach the update and UI hooks through the UI scope (UIS-10).
+    let ui_scope = core.g6.ui.enter(&game.g6.ui);
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
     }
@@ -1205,6 +1275,17 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
                 hud.pressed_keys = crate::actions::without_nav_keys(&hud.pressed_keys);
             }
             hud.extra_events = navigation;
+        } else if game.g6.ui.registered() {
+            // game.ui's navigation source (pads and keys, repeated on ticks) replaces the raw
+            // navigation keys; a focused text field keeps them and navigates by pad only.
+            let text_field = genex_hud::keyboard_wanted(core.hud.context());
+            if !text_field {
+                hud.pressed_keys = crate::actions::without_nav_keys(&hud.pressed_keys);
+            }
+            hud.extra_events = core.g6.ui.navigation(input.core.pads.states(), &input.keys.held, !text_field);
+        }
+        if game.g6.ui.registered() {
+            hud.ui_scale = core.g6.ui.scale(&game.g6.ui);
         }
         let shown = crate::actions_touch::State::shown(&game.g6.touch, ctx.actions.device());
         let (sim, touch) = (&mut core.sim, &core.g6.touch);
@@ -1218,6 +1299,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
             }
         });
         drop(panel);
+        core.g6.ui.note_key_issues(&genex_ui::keyed::ui_issues(core.hud.context()));
         let digest = core.g6.input.map().digest();
         core.g6.input.leave_panel(controls);
         if core.g6.input.map().digest() != digest {
@@ -1228,6 +1310,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         core.render.borrow_mut().save(core.gfx.saves());
         core.g6.input.save_if_changed(core.gfx.saves());
     }
+    core.g6.ui.leave(ui_scope);
+    core.g6.ui.note_pads(&input.core.pads);
     #[cfg(feature = "physics")]
     core.sim.physics.step();
     core.g6.net.flush(&game.g6.net, &mut core.sim.net);
@@ -1243,6 +1327,15 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     true
 }
 
+/// The HUD's fallback fonts for a locale `game.ui` just switched to (UIS-10); a refused font
+/// leaves the text fonts and is reported as `text-font-missing`.
+fn apply_locale_fonts<W>(core: &mut Core<W>) {
+    let Some(fonts) = core.g6.ui.take_fonts() else { return };
+    if let Err(refusal) = core.hud.set_locale_fonts(&fonts) {
+        core.g6.ui.font_refused(&format!("{refusal:?}"));
+    }
+}
+
 /// After a load swapped in (UIS-9): the HUD's memory, the streaming engine and the journal start
 /// over from the restored tick, as a seed's do.
 fn restored<W>(game: &Game<W>, core: &mut Core<W>) {
@@ -1250,6 +1343,17 @@ fn restored<W>(game: &Game<W>, core: &mut Core<W>) {
     core.stream.reset(core.seed);
     core.stream.prefetch(&core.sim);
     restart_journal(game, core, core.tick);
+}
+
+/// One `state().hud.widgets` entry: `{role, label, key, rect, focused}` (key null when unkeyed).
+fn widget_value(widget: &genex_hud::HudWidget) -> CoreValue {
+    let mut entry = CoreValue::object();
+    entry.set("role", CoreValue::from(widget.role.as_str()));
+    entry.set("label", CoreValue::from(widget.label.chars().take(genex_hud::MAX_ITEM_NAME).collect::<String>()));
+    entry.set("key", widget.key.as_deref().map_or(CoreValue::Null, CoreValue::from));
+    entry.set("rect", CoreValue::Array(widget.rect.iter().map(|side| CoreValue::from(f64::from(*side))).collect()));
+    entry.set("focused", CoreValue::Bool(widget.focused));
+    entry
 }
 
 /// What the HUD reads from one tick's merged input: the pointer as a fraction of the world,
@@ -1315,6 +1419,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_input(game)?;
     check_audio(game)?;
     crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
+    crate::ui::check(&game.g6.ui).map_err(|(code, detail)| InstallError::new(code, detail))?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {

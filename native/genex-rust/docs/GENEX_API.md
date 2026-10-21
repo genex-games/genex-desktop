@@ -119,11 +119,11 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
-  `duplicate-audio`, `duplicate-saves` (each a second registration), `streaming-invalid` (a cell
-  size outside 8..=1024 metres, a radius or anchor count outside its range, a registration past
-  the simulated cells' memory cap, or, with `game.navigation`, a stream cell that is not a whole
-  number of nav tiles), `input-invalid`, `audio-zone-limit` (the Ctx page explains these),
-  `save-schema-invalid`, `save-section-reserved` (a `genex.` name) and `duplicate-save-section`.
+  `duplicate-audio`, `duplicate-saves`, `duplicate-ui` (each a second registration), `streaming-invalid` (the
+  Streaming and Navigation pages say when), `input-invalid` (the Ctx page explains it),
+  `audio-zone-limit` (more than 16 reverb zones),
+  `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`
+  and `ui-locale-invalid`.
   `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
   pass name, or one pass over the cap.
 
