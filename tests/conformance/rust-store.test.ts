@@ -68,6 +68,7 @@ import {
   rustSysroot,
   rustTargetFolder,
   rustToolsFolder,
+  SYMBOLICATE_TOOL,
 } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import {
   cloneRustTarget,
@@ -81,6 +82,7 @@ import {
   recordRustSizes,
   rustPrewarmPlan,
   rustPrewarmPolicy,
+  SYMBOLICATE_MAIN_RS,
   validateWgsl,
 } from "../../src/substrate/toolchain-store/rust-prewarm.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -595,6 +597,47 @@ describe("rust store: prewarm per (lock, destination)", () => {
     });
     assert.deepEqual(rustPrewarmPlan(ToolchainHost.WindowsX64), { eager: [], lazy: [] });
     assert.deepEqual(rustPrewarmPlan(null), { eager: [], lazy: [] });
+  });
+
+  it("a tools prewarm also builds the naga validator and the crash symbolicator offline, staging both in the tools folder", async () => {
+    const { root, store, lock } = await withBase();
+    const calls: RunRequest[] = [];
+    const sources: Record<string, string> = {};
+    const warm = cargoRun(calls);
+    const tools: ReadonlySet<string> = new Set([
+      RustPrewarmStep.NagaLockfile,
+      RustPrewarmStep.NagaBuild,
+      RustPrewarmStep.SymbolicateLockfile,
+      RustPrewarmStep.SymbolicateBuild,
+    ]);
+    const run = async (request: RunRequest): Promise<RunResult> => {
+      if (!tools.has(request.label ?? "")) return warm(request);
+      calls.push(request);
+      const manifest = /--manifest-path (\S+)/.exec(plain(request.command))?.[1] ?? "";
+      const name = path.basename(path.dirname(manifest));
+      sources[name] = await readFile(path.join(path.dirname(manifest), "src", "main.rs"), "utf8");
+      if (!plain(request.command).includes(" build ")) return ok("");
+      const exe = path.join(request.env?.CARGO_TARGET_DIR ?? "", "release", name);
+      await mkdir(path.dirname(exe), { recursive: true });
+      await writeFile(exe, "#!/bin/sh\n");
+      const message = { reason: CargoReason.CompilerArtifact, package_id: `path+file:///t#${name}@0.0.0` };
+      return ok(json({ ...message, target: { kind: ["bin"], name }, filenames: [exe], executable: exe, fresh: false }));
+    };
+    await prewarmRust(store, lock, BuildTarget.Mac, WARM, prewarmDeps(root, run, { tools: true }));
+    assert.deepEqual(
+      calls.map((call) => call.label),
+      [RustPrewarmStep.Check, RustPrewarmStep.Build, ...tools],
+    );
+    for (const call of calls.filter((call) => tools.has(call.label ?? ""))) {
+      assert.match(plain(call.command), /--offline/);
+      assert.deepEqual(call.policy?.allowedDomains, []);
+      if (plain(call.command).includes(" build ")) assert.match(plain(call.command), /--locked/);
+    }
+    assert.equal(sources[SYMBOLICATE_TOOL], SYMBOLICATE_MAIN_RS);
+    const located = await locateRust(store, lock, BuildTarget.Mac);
+    assert.ok(located.ok, JSON.stringify(located));
+    assert.equal(located.located.symbolicate, path.join(rustToolsFolder(store, lock), SYMBOLICATE_TOOL));
+    assert.ok(located.located.nagaCheck);
   });
 
   it("builds the dependency closure offline and locked under the sandbox, locating artifacts through Cargo's JSON", async () => {

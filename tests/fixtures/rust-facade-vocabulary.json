@@ -38,7 +38,11 @@
     "input-invalid",
     "duplicate-touch-controls",
     "duplicate-audio",
-    "audio-zone-limit"
+    "audio-zone-limit",
+    "save-schema-invalid",
+    "save-section-reserved",
+    "duplicate-save-section",
+    "duplicate-saves"
   ],
   "registrationRefusals": ["gpu-pass-invalid"],
   "levelTwoCalls": [

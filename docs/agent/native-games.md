@@ -169,7 +169,12 @@ crashed names its record in its status (`crash`): the game's own last `crash` re
 kind or writer is `reply-invalid`), else a host-made `hang` (killed `unresponsive` or `gpu-hang`) or
 `process-exit`. [`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps it in the game's
 `.studio/crashes/` by the host's own name (one file per signature, with `repeat`; at most 32),
-announces `game_crashed` once and answers `game.crashes` and `studio:game.crashes`. Captures carry
+announces `game_crashed` once and answers `game.crashes` and `studio:game.crashes`. Before it is kept,
+[`crash-symbolicate.ts`](../../src/main/core/crash-symbolicate.ts) names its frames (`symbols`) with the
+store's `genex-symbolicate` (built at the Mac prewarm beside `genex-naga-check`) under the sandbox, 20 s,
+reading only host-chosen files: the export's `<bin>.debug/<digest>/`, or a Live build's executable while it
+has the run's digest, its Mach-O debug map followed into `<bin>/target`. The slide comes from
+`genex_crash::frames::anchor`; a frame outside the image is `foreign`; a failure keeps it unsymbolicated. Captures carry
 provenance (seq, digest, camera, run, build, the `render` settings the game answered with and the
 capture's `outputSize`; null where the path did not know them), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
 

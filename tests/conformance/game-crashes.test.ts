@@ -43,6 +43,7 @@ import {
   hostCrashRecord,
   readGameCrashes,
 } from "../../src/main/core/game-crashes.ts";
+import type { CrashBuild } from "../../src/main/core/crash-symbolicate.ts";
 import { refuseHostRecords } from "../../src/main/core/harness-events.ts";
 import { NativeRuns } from "../../src/main/core/native-runs.ts";
 import { gameCrashes } from "../../src/main/harness-rpc/game-crashes.ts";
@@ -424,14 +425,16 @@ function memoryGame(request: GameSpawnRequest, silent: boolean) {
 }
 
 /** A registry over one game, its records kept by a real store in a temp game folder. */
-async function runsRig(options: { silent?: boolean; store?: boolean } = {}) {
+async function runsRig(options: { silent?: boolean; store?: boolean; crashBuild?: CrashBuild } = {}) {
   const r = await storeRig();
   const clock = fakeClock();
   const games: Array<ReturnType<typeof memoryGame>> = [];
   const statuses: NativeRunStatus[] = [];
   const kept: Array<Promise<unknown>> = [];
+  const keptRuns: Array<Parameters<GameCrashStore["keep"]>[0]> = [];
   const store: GameCrashStore = {
     keep: (run, record) => {
+      keptRuns.push(run);
       const keeping = r.store.keep(run, record);
       kept.push(keeping);
       return keeping;
@@ -450,6 +453,7 @@ async function runsRig(options: { silent?: boolean; store?: boolean } = {}) {
         bundle: runDir,
         state: path.join(runDir, "state"),
         bundleId: null,
+        ...(options.crashBuild ? { crashBuild: options.crashBuild } : {}),
       };
     },
     spawn: async (request) => {
@@ -481,7 +485,7 @@ async function runsRig(options: { silent?: boolean; store?: boolean } = {}) {
     await Promise.all(kept);
     return statuses.at(-1);
   };
-  return { ...r, runs, clock, proc, statuses, kept, ended, startRun };
+  return { ...r, runs, clock, proc, statuses, kept, keptRuns, ended, startRun };
 }
 
 describe("a run's crash as it ends (native-runs and the port)", () => {
@@ -497,6 +501,20 @@ describe("a run's crash as it ends (native-runs and the port)", () => {
     assert.deepEqual(await readdir(r.crashes), [`${crashIdOf(runId)}.json`]);
     assert.equal(r.announced.length, 1, "game_crashed lands once");
     assert.equal((await readGameCrashes(r.game, {})).records[0]?.record.kind, CrashKind.Panic);
+  });
+
+  it("a crashed run hands the store the build it prepared, so the record is named from that build (CRASH-7b)", async () => {
+    const crashBuild = { output: "/builds/pong/mac-1.out", exe: "game", digest: "c".repeat(64) };
+    const r = await runsRig({ crashBuild });
+    r.proc.send({ event: "crash", record: panicWire() });
+    await r.clock.settle();
+    r.proc.reap({ code: 101, signal: null });
+    const last = await r.ended();
+    assert.deepEqual(r.keptRuns, [{ project: "pong", runId: last?.runId, build: crashBuild }]);
+    const bare = await runsRig();
+    bare.proc.reap({ code: 134, signal: null });
+    await bare.ended();
+    assert.equal(bare.keptRuns[0]?.build, null, "a run whose prepare named no build hands none");
   });
 
   it("a run killed for a call timeout gets one hang record", async () => {

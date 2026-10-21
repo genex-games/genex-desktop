@@ -34,7 +34,7 @@ use wgpu::{Device, Queue, Texture, TextureView};
 // KTX2 and the compressed families (A6.4) live beside the arrays they fill.
 #[path = "texture_ktx2.rs"]
 mod texture_ktx2;
-pub use texture_ktx2::{CompressedTexture, TextureFamily, family_file, read_ktx2};
+pub use texture_ktx2::{CompressedTexture, KTX2_PREFIX_BYTES, Ktx2Index, TextureFamily, family_file, read_ktx2};
 
 use crate::budget::MaterialClass;
 use crate::caps::check_texture;

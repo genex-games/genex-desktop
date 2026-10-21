@@ -188,7 +188,7 @@ export interface CrashRecordV1 {
   replay: CrashReplay | null;
   profile: ProfileSummaryV1 | null;
   hitches: number[];
-  /** The host's symbolication; always null in what a game sends. */
+  /** Always null in what a game sends; the host's symbolication is the kept entry's `symbols`. */
   symbols: null;
   trimmed: CrashTrimmed[];
 }
@@ -203,6 +203,25 @@ export interface GameCrashEntry {
   repeat: number;
   symbolicated: boolean;
   record: CrashRecordV1;
+  /** The host's names for the record's frames, when it symbolicated them (`symbolicated`). */
+  symbols?: CrashSymbols;
+}
+
+/** One function a symbolicated frame names: its demangled path and its place, each null when unknown. */
+export interface CrashSymbolFunction {
+  function: string | null;
+  file: string | null;
+  line: number | null;
+  column: number | null;
+}
+
+/** A frame named by the host: inside the game's image (inlined functions first, its own last), or `foreign`. */
+export type CrashSymbolFrame = { foreign: true } | { foreign: false; functions: CrashSymbolFunction[] };
+
+/** The host's symbolication of a record: one entry per record frame, in order, and the web trap's functions. */
+export interface CrashSymbols {
+  frames: CrashSymbolFrame[];
+  wasm: Array<{ func: number; name: string | null }>;
 }
 
 /** What `game.crashes` and `studio:game.crashes` answer once the host keeps records. */

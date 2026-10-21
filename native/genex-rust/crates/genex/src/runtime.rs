@@ -150,11 +150,20 @@ pub enum InstallErrorCode {
     DuplicateAudio,
     /// More than `REVERB_ZONES_MAX` (16) reverb zones in `game.audio`.
     AudioZoneLimit,
+    /// A save schema of 0, a migration chain with a gap or a step at or above the schema, an
+    /// autosave ring or slot cap outside its range, or more game sections than a slot holds.
+    SaveSchemaInvalid,
+    /// A save section named `genex.*` (the runtime's built-in sections).
+    SaveSectionReserved,
+    /// Two save sections share a name (`game.save_world` is the section `world`).
+    DuplicateSaveSection,
+    /// A second `game.saves`.
+    DuplicateSaves,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 17] = [
+    pub const ALL: [InstallErrorCode; 21] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -172,6 +181,10 @@ impl InstallErrorCode {
         InstallErrorCode::DuplicateTouchControls,
         InstallErrorCode::DuplicateAudio,
         InstallErrorCode::AudioZoneLimit,
+        InstallErrorCode::SaveSchemaInvalid,
+        InstallErrorCode::SaveSectionReserved,
+        InstallErrorCode::DuplicateSaveSection,
+        InstallErrorCode::DuplicateSaves,
     ];
 
     /// The typed code's wire spelling.
@@ -194,6 +207,10 @@ impl InstallErrorCode {
             InstallErrorCode::DuplicateTouchControls => "duplicate-touch-controls",
             InstallErrorCode::DuplicateAudio => "duplicate-audio",
             InstallErrorCode::AudioZoneLimit => "audio-zone-limit",
+            InstallErrorCode::SaveSchemaInvalid => "save-schema-invalid",
+            InstallErrorCode::SaveSectionReserved => "save-section-reserved",
+            InstallErrorCode::DuplicateSaveSection => "duplicate-save-section",
+            InstallErrorCode::DuplicateSaves => "duplicate-saves",
         }
     }
 }
@@ -1084,7 +1101,8 @@ fn studio_run() -> bool {
     paths::destination_of(&paths::process_env) == Destination::GenexRun
 }
 
-fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
+/// The simulation a seed (or a load, UIS-9) starts from, before the reset hooks.
+pub(crate) fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
     Sim {
         world,
         physics: fresh_physics(),
@@ -1127,7 +1145,14 @@ fn step<W>(game: &Game<W>, core: &mut Core<W>, ms: f64) -> StepResult {
 /// `g6_tick_end`. False, with nothing changed, when the commit is held past `hold` waiting on a
 /// cell build.
 fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::HoldBudget) -> bool {
-    // First, so a held commit leaves the tick untouched: no input consumed, no hook run.
+    // A load the last tick asked for swaps in first (UIS-9); one whose body is not resident holds.
+    let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
+    match crate::saves::swap_in(game, &mut core.g6.saves, running) {
+        crate::saves::Swap::Hold => return false,
+        crate::saves::Swap::Restored => restored(game, core),
+        crate::saves::Swap::Run => {}
+    }
+    // Then, so a held commit leaves the tick untouched: no input consumed, no hook run.
     if core.stream.commit(&mut core.sim, &game.stream_commits, core.gfx.assets(), hold).is_err() {
         return false;
     }
@@ -1166,6 +1191,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         saves: core.gfx.saves(),
         actions: core.g6.input.ctx(),
         audio: core.g6.audio.ctx(),
+        slots: core.g6.saves.slots(),
     };
     for hook in &game.updates {
         hook(&mut core.sim, &ctx);
@@ -1212,7 +1238,18 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     core.g6.audio.step(camera, &core.sim);
     core.g6.tick_end(&game.g6, core.tick);
     core.tick += 1;
+    let view = crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx };
+    crate::saves::end_of_tick(game, &mut core.g6.saves, &view);
     true
+}
+
+/// After a load swapped in (UIS-9): the HUD's memory, the streaming engine and the journal start
+/// over from the restored tick, as a seed's do.
+fn restored<W>(game: &Game<W>, core: &mut Core<W>) {
+    core.hud.reset();
+    core.stream.reset(core.seed);
+    core.stream.prefetch(&core.sim);
+    restart_journal(game, core, core.tick);
 }
 
 /// What the HUD reads from one tick's merged input: the pointer as a fraction of the world,
@@ -1277,6 +1314,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
     check_input(game)?;
     check_audio(game)?;
+    crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {

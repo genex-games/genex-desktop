@@ -9,11 +9,18 @@
 //! zstd decoder. Which family a device loads is the destination table's
 //! (`genex-assets` `compression_for`); the features each family needs are renderer-owned
 //! (`floor::RENDERER_FEATURES`).
+//!
+//! A file can also be read in byte ranges (STR-18, [`Ktx2Index`]): KTX2 stores level data smallest
+//! first, so the first [`KTX2_PREFIX_BYTES`] (the header and the level index) give the exact range
+//! of the smallest k levels, a tail-first read that grows only at its end, and the levels cut from
+//! the fetched ranges are bit-equal to [`read_ktx2`] on the whole file.
+
+use std::ops::Range;
 
 use ktx2::Format;
 use wgpu::{Features, TextureFormat};
 
-use crate::caps::check_texture;
+use crate::caps::{TEXTURE_MAX_BYTES, check_texture};
 use crate::error::{RenderCode, RenderError};
 use crate::texture::{TextureKind, mip_level_count};
 
@@ -23,6 +30,13 @@ const BLOCK_SIDE: u32 = 4;
 const BLOCK_BYTES: u32 = 16;
 /// Bytes of one RGBA8 texel.
 const RGBA8_BYTES: u32 = 4;
+/// The widest square texture the cap takes ([`TEXTURE_MAX_BYTES`] of RGBA8).
+const KTX2_SIDE_MAX: u64 = (TEXTURE_MAX_BYTES / RGBA8_BYTES as u64).isqrt();
+/// Levels of that texture's whole chain: the most a material KTX2 lists.
+const KTX2_LEVELS_MAX: usize = KTX2_SIDE_MAX.ilog2() as usize + 1;
+/// Bytes of a KTX2 prefix that holds the header and the level index of any material texture the
+/// cap takes: the first range a streamed texture fetches.
+pub const KTX2_PREFIX_BYTES: usize = ktx2::Header::LENGTH + ktx2::LevelIndex::LENGTH * KTX2_LEVELS_MAX;
 
 /// A GPU texture family a material array is stored in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -231,4 +245,187 @@ pub fn read_ktx2(bytes: &[u8]) -> Result<CompressedTexture, RenderError> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(CompressedTexture { family, srgb, side, levels })
+}
+
+/// Where one level's bytes sit in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LevelSpan {
+    offset: u64,
+    length: u64,
+}
+
+impl LevelSpan {
+    fn end(self) -> u64 {
+        self.offset + self.length
+    }
+}
+
+/// A KTX2 file's header and level index read from a prefix (STR-18): the byte range of the
+/// smallest k levels, and those levels cut from fetched ranges. Parsing checks what [`read_ktx2`]
+/// checks of the header and the level sizes, and that the levels lie smallest first, in the file,
+/// after the index and without overlap; anything else is `texture-invalid`. The data format
+/// descriptor is not read: the header's `vkFormat` names the family.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ktx2Index {
+    family: TextureFamily,
+    srgb: bool,
+    side: u32,
+    /// Level 0 first.
+    levels: Vec<LevelSpan>,
+}
+
+impl Ktx2Index {
+    /// How many bytes of the file hold its header and level index, read from its first 80 bytes:
+    /// refused when they are not a KTX2 header or list more levels than any material texture has.
+    pub fn prefix_len(header: &[u8]) -> Result<usize, RenderError> {
+        let header = parse_header(header)?;
+        index_end(&header)
+    }
+
+    /// The index of a file `file_len` bytes long from its first bytes (at least
+    /// [`Ktx2Index::prefix_len`] of them; [`KTX2_PREFIX_BYTES`] always suffices).
+    pub fn parse(prefix: &[u8], file_len: u64) -> Result<Ktx2Index, RenderError> {
+        let header = parse_header(prefix)?;
+        let end = index_end(&header)?;
+        let (family, srgb) = check_header(&header)?;
+        check_sections(&header.index, file_len)?;
+        let side = header.pixel_width;
+        if header.level_count != mip_level_count(side) {
+            return Err(invalid(format!("{} levels where a {side} texture has {}: every mip down to 1 x 1", header.level_count, mip_level_count(side))));
+        }
+        let entries = prefix.get(ktx2::Header::LENGTH..end).ok_or_else(|| invalid(format!("the prefix holds {} of the index's {end} bytes", prefix.len())))?;
+        let (entries, _) = entries.as_chunks::<{ ktx2::LevelIndex::LENGTH }>();
+        let levels = entries
+            .iter()
+            .enumerate()
+            .map(|(level, entry)| level_span(family, side, level, entry, file_len))
+            .collect::<Result<Vec<_>, _>>()?;
+        check_order(&levels, end as u64)?;
+        Ok(Ktx2Index { family, srgb, side, levels })
+    }
+
+    /// Its family.
+    pub fn family(&self) -> TextureFamily {
+        self.family
+    }
+
+    /// Level 0's side in texels.
+    pub fn side(&self) -> u32 {
+        self.side
+    }
+
+    /// Levels in the file, down to 1 x 1.
+    pub fn level_count(&self) -> u32 {
+        self.levels.len() as u32
+    }
+
+    /// The bytes holding the smallest `k` levels (1 to [`Ktx2Index::level_count`]): one range that
+    /// starts where the 1 x 1 level does, so a larger `k` only extends its end.
+    pub fn smallest(&self, k: u32) -> Result<Range<u64>, RenderError> {
+        let first = self.first_level(k)?;
+        let tail = self.levels[self.levels.len() - 1];
+        Ok(tail.offset..self.levels[first].end())
+    }
+
+    /// The range of the levels from the one `side` texels wide down (a size class's chain), or
+    /// `None` when no level is that wide.
+    pub fn chain(&self, side: u32) -> Option<Range<u64>> {
+        let level = (0..self.levels.len()).find(|&level| self.side >> level == side)?;
+        self.smallest((self.levels.len() - level) as u32).ok()
+    }
+
+    /// The smallest `k` levels cut from `chunks` (each its file offset and the bytes fetched
+    /// there), bit-equal to the same levels of [`read_ktx2`] on the whole file. Refused when a
+    /// level's bytes are not all inside the chunks.
+    pub fn assemble(&self, k: u32, chunks: &[(u64, &[u8])]) -> Result<CompressedTexture, RenderError> {
+        let first = self.first_level(k)?;
+        let levels = self.levels[first..]
+            .iter()
+            .enumerate()
+            .map(|(at, span)| cut(*span, chunks).ok_or_else(|| invalid(format!("level {} is not inside the fetched ranges", first + at))))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CompressedTexture { family: self.family, srgb: self.srgb, side: self.side >> first, levels })
+    }
+
+    /// The level the smallest `k` start at, or why `k` is outside 1 to the level count.
+    fn first_level(&self, k: u32) -> Result<usize, RenderError> {
+        let count = self.levels.len();
+        let k = k as usize;
+        if k == 0 || k > count {
+            return Err(invalid(format!("{k} levels of a texture with {count}")));
+        }
+        Ok(count - k)
+    }
+}
+
+/// The header in the first 80 bytes of `prefix`.
+fn parse_header(prefix: &[u8]) -> Result<ktx2::Header, RenderError> {
+    let bytes: &[u8; ktx2::Header::LENGTH] = prefix
+        .get(..ktx2::Header::LENGTH)
+        .and_then(|head| head.try_into().ok())
+        .ok_or_else(|| invalid(format!("{} bytes hold no KTX2 header", prefix.len())))?;
+    ktx2::Header::from_bytes(bytes).map_err(|error| invalid(format!("not a KTX2 file: {error}")))
+}
+
+/// Where the level index ends, for a header that lists at most [`KTX2_LEVELS_MAX`] levels.
+fn index_end(header: &ktx2::Header) -> Result<usize, RenderError> {
+    let count = header.level_count.max(1) as usize;
+    if count > KTX2_LEVELS_MAX {
+        return Err(invalid(format!("{count} levels: a material texture has at most {KTX2_LEVELS_MAX}")));
+    }
+    Ok(ktx2::Header::LENGTH + ktx2::LevelIndex::LENGTH * count)
+}
+
+/// The header's data format, key/value and supercompression sections lie inside the file, as the
+/// whole-file reader requires.
+fn check_sections(index: &ktx2::Index, file_len: u64) -> Result<(), RenderError> {
+    let dfd_start = u64::from(index.dfd_byte_offset) + 4;
+    let dfd_end = u64::from(index.dfd_byte_offset) + u64::from(index.dfd_byte_length);
+    let kvd_end = u64::from(index.kvd_byte_offset) + u64::from(index.kvd_byte_length);
+    let sgd_end = index.sgd_byte_offset.checked_add(index.sgd_byte_length);
+    let inside = dfd_end >= dfd_start && dfd_end < file_len && kvd_end < file_len && sgd_end.is_some_and(|end| end < file_len);
+    if inside { Ok(()) } else { Err(invalid("a header section lies outside the file")) }
+}
+
+/// Level `level`'s entry, checked: its exact size for a `side` texture, stored plain, inside a file
+/// `file_len` bytes long.
+fn level_span(family: TextureFamily, side: u32, level: usize, entry: &[u8; ktx2::LevelIndex::LENGTH], file_len: u64) -> Result<LevelSpan, RenderError> {
+    let entry = ktx2::LevelIndex::from_bytes(entry);
+    let px = (side >> level).max(1);
+    let expected = family.level_bytes(px, px);
+    if entry.byte_length != expected || entry.uncompressed_byte_length != expected {
+        return Err(invalid(format!("level {level} lists {} bytes ({} uncompressed), not {expected}", entry.byte_length, entry.uncompressed_byte_length)));
+    }
+    let end = entry.byte_offset.checked_add(entry.byte_length).filter(|&end| end <= file_len);
+    if end.is_none() {
+        return Err(invalid(format!("level {level} at {} runs past the file's {file_len} bytes", entry.byte_offset)));
+    }
+    Ok(LevelSpan { offset: entry.byte_offset, length: entry.byte_length })
+}
+
+/// The levels lie smallest first after the index (`index_end`), none overlapping the next.
+fn check_order(levels: &[LevelSpan], index_end: u64) -> Result<(), RenderError> {
+    let mut floor = index_end;
+    for (level, span) in levels.iter().enumerate().rev() {
+        if span.offset < floor {
+            return Err(invalid(format!("level {level} at {} overlaps the index or a smaller level (ends at {floor})", span.offset)));
+        }
+        floor = span.end();
+    }
+    Ok(())
+}
+
+/// The bytes of `span` from `chunks`, which may split it across adjacent fetches; `None` when a
+/// byte of it was not fetched.
+fn cut(span: LevelSpan, chunks: &[(u64, &[u8])]) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(usize::try_from(span.length).ok()?);
+    let mut at = span.offset;
+    while at < span.end() {
+        let (start, data) = chunks.iter().find(|(start, data)| *start <= at && at < start.saturating_add(data.len() as u64))?;
+        let from = usize::try_from(at - start).ok()?;
+        let take = usize::try_from((span.end() - at).min((data.len() - from) as u64)).ok()?;
+        bytes.extend_from_slice(&data[from..from + take]);
+        at += take as u64;
+    }
+    Some(bytes)
 }

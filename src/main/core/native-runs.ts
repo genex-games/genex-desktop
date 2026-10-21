@@ -75,6 +75,7 @@ import { descendants as processDescendants } from "../../substrate/plugins/nativ
 import type { GameChild, GameExit, GameSpawnRequest } from "../../substrate/spawn.ts";
 import type { FramesSlot, NativeFramesHost } from "../native-frames.ts";
 import { processStartedAt } from "../native-supervisor-logic.ts";
+import type { CrashBuild } from "./crash-symbolicate.ts";
 import { crashIdOf, type GameCrashStore, hostCrashRecord } from "./game-crashes.ts";
 
 const run = promisify(execFile);
@@ -185,6 +186,8 @@ export interface PreparedRun {
   bundleId: string | null;
   /** The admitted build, carried in every capture's provenance; absent or null where prepare did not say. */
   build?: BuildIdentity | null;
+  /** Where the admitted build's debug files are, for a crash record's symbolication; absent or null: none. */
+  crashBuild?: CrashBuild | null;
 }
 
 /** What the registry tells the supervisor utility process, which kills every registered group if the app dies. */
@@ -347,6 +350,8 @@ interface RunEntry {
   log: { lines: string[]; truncated: boolean; windowLines: number };
   /** Embedded runs: Live's canvas and the frames channel; null for every other run. */
   readonly embed: EmbedState | null;
+  /** The build a crash record is symbolicated against, once prepared. */
+  crashBuild: CrashBuild | null;
 }
 
 /** An embedded run's side of Live: the size it is asked for, its ring, its channel and its sight. */
@@ -781,6 +786,7 @@ export class NativeRuns implements NativeRunsHost {
       timers: { heartbeat: null, silent: null, memory: null, flush: null },
       log: { lines: [], truncated: false, windowLines: 0 },
       embed: request.mode === NativeRunMode.Embedded && request.surface ? embedState(request.surface) : null,
+      crashBuild: null,
     };
     this.#runs.set(runId, entry);
     this.#linkAbort(entry);
@@ -809,6 +815,7 @@ export class NativeRuns implements NativeRunsHost {
         entry.controller.signal,
       );
       entry.controller.signal.throwIfAborted();
+      entry.crashBuild = prepared.crashBuild ?? null;
       this.#set(entry, { state: NativeRunState.Starting });
       const nonce = randomBytes(NONCE_BYTES).toString("hex");
       const { runDir, exe, bundle, state } = prepared;
@@ -1167,7 +1174,10 @@ export class NativeRuns implements NativeRunsHost {
     this.#closeFrames(entry);
     if (entry.child) this.#options.supervisor?.forget(entry.status.runId);
     // The record is in memory (the port's or the host's): it never needs the run dir removed next.
-    if (crash) void this.#options.crashes?.keep({ project: entry.request.project, runId: entry.status.runId }, crash);
+    if (crash) {
+      const run = { project: entry.request.project, runId: entry.status.runId, build: entry.crashBuild };
+      void this.#options.crashes?.keep(run, crash);
+    }
     // The bundle is read-only to the game: `removeRunDir` gives its folders their write bit back first.
     void removeRunDir(entry.runDir)
       .catch((error: unknown) => this.#log(MESSAGE.sweep(entry.runDir, errorMessage(error))))

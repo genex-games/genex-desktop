@@ -51,6 +51,8 @@ genex-input = { workspace = true, features = ["panel"] }
 # Sounds, music and spatial audio (G6 audio): the logical Director, the deviceless kira mixer, the
 # symphonia decoders and the device queue a shell's output drains.
 genex-audio = { workspace = true }
+# Save slots (G6 saves): the envelope, migrations, the slot index, autosave and the slot driver.
+genex-save = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 genex-studio = { workspace = true, optional = true }

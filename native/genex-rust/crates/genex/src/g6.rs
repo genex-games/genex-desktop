@@ -65,25 +65,26 @@ impl G6 {
         self.net.reset(&setup.net);
     }
 
-    /// `g6_tick_begin`: before the tick's input, swap in a pending load, then name the tick for a
-    /// crash record and open its profile frame.
-    pub(crate) fn tick_begin(&mut self, setup: &G6Setup, tick: u64) {
-        self.saves.swap_in(&setup.saves);
+    /// `g6_tick_begin`: before the tick's input, name the tick for a crash record and open its
+    /// profile frame. A pending load swapped in before the streaming commit (`saves::swap_in`).
+    pub(crate) fn tick_begin(&mut self, _setup: &G6Setup, tick: u64) {
         self.crash.enter_tick(tick);
         self.profile.frame_begin(tick);
     }
 
-    /// `g6_tick_end`: after the physics step and the net flush, apply the tick's audio, write a
-    /// pending save, then close the profile frame.
+    /// `g6_tick_end`: after the physics step and the net flush, apply the tick's audio, then close
+    /// the profile frame. The tick's saves are written once the tick has counted
+    /// (`saves::end_of_tick`).
     pub(crate) fn tick_end(&mut self, setup: &G6Setup, tick: u64) {
         self.audio.apply(&setup.audio);
-        self.saves.end_of_tick(&setup.saves);
         self.profile.frame_end(tick);
     }
 
-    /// The G6 runtime keys (`__input`, `__net`), each only while its area is registered.
+    /// The G6 runtime keys (`__input`, `__net`) and `volatile.saves`, each only while its area is
+    /// registered.
     pub(crate) fn runtime_keys(&self, setup: &G6Setup, state: &mut CoreValue) {
         self.input.runtime_key(&setup.input, state);
         self.net.runtime_key(&setup.net, state);
+        self.saves.volatile_key(&setup.saves, state);
     }
 }

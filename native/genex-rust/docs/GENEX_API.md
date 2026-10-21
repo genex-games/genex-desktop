@@ -117,13 +117,14 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   anything runs: `duplicate-camera`, `duplicate-player`, `duplicate-probe`, `reserved-probe`
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
-  `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`), `streaming-invalid`
-  (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, a
-  registration past the simulated cells' memory cap, or, with `game.navigation`, a stream cell
-  that is not a whole number of nav tiles), `duplicate-input`, `input-invalid`,
-  `duplicate-touch-controls`, `duplicate-audio` and `audio-zone-limit` (the Ctx page explains
-  these five). `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong
-  or repeated pass name, or one pass over the cap.
+  `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
+  `duplicate-audio`, `duplicate-saves` (each a second registration), `streaming-invalid` (a cell
+  size outside 8..=1024 metres, a radius or anchor count outside its range, a registration past
+  the simulated cells' memory cap, or, with `game.navigation`, a stream cell that is not a whole
+  number of nav tiles), `input-invalid`, `audio-zone-limit` (the Ctx page explains these),
+  `save-schema-invalid`, `save-section-reserved` (a `genex.` name) and `duplicate-save-section`.
+  `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
+  pass name, or one pass over the cap.
 
 ## Verbs
 
