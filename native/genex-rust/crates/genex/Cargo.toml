@@ -53,6 +53,9 @@ genex-input = { workspace = true, features = ["panel"] }
 genex-audio = { workspace = true }
 # Save slots (G6 saves): the envelope, migrations, the slot index, autosave and the slot driver.
 genex-save = { workspace = true }
+# Gameplay UI (G6 gameplay UI): the widget kit, focus and controller navigation, Fluent text and
+# the locale; the HUD already links it (UIS-10).
+genex-ui = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 genex-studio = { workspace = true, optional = true }

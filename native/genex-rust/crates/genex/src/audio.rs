@@ -40,6 +40,33 @@ pub use genex_audio::{
 /// The `state().volatile` key audio reports under.
 pub const VOLATILE_AUDIO_KEY: &str = "audio";
 
+/// Every audio call the reference's audio page teaches, in its order (the vocabulary fixture's
+/// `audio.calls`, AU-9).
+pub const AUDIO_CALLS: [&str; 22] = [
+    "gfx.sound",
+    "gfx.music",
+    "game.audio",
+    "ctx.audio.play",
+    "ctx.audio.play_with",
+    "ctx.audio.play_at",
+    "ctx.audio.stop",
+    "ctx.audio.stop_bus",
+    "ctx.audio.set_position",
+    "ctx.audio.teleport",
+    "ctx.audio.set_volume",
+    "ctx.audio.set_pitch",
+    "ctx.audio.playing",
+    "ctx.audio.position_s",
+    "ctx.audio.bus_volume",
+    "ctx.audio.master_volume",
+    "ctx.audio.music",
+    "ctx.audio.stop_music",
+    "ctx.audio.listener",
+    "ctx.audio.add_zone",
+    "ctx.audio.remove_zone",
+    "PlayOpts::ui",
+];
+
 /// The id a missing sound plays: never registered, so a play is refused `sound-missing`.
 const MISSING_SOUND: SoundId = SoundId(u32::MAX);
 /// The id missing music plays: never registered, so the Director refuses it.

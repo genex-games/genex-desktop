@@ -41,7 +41,8 @@ mod profile;
 /// Save slots: `game.saves`, `game.save_section`, `game.save_world` and `ctx.slots()` (genex-save).
 pub mod saves;
 mod settings;
-mod ui;
+/// Gameplay UI: `game.ui`, `tr` and `tr_args`, the menu, dialog, grid, list, bar and toast kit (genex-ui).
+pub mod ui;
 /// Animation (AN-15): a character's graph and animators over genex-anim, advanced in `on_update`
 /// and drawn with `frame.character`.
 pub mod animation;
@@ -205,6 +206,7 @@ pub mod physics {
 pub mod prelude {
     pub use crate::actions::{ActionId, ActionMap, Binding, Condition, Context, ContextId, PadButton, Stick, TouchControls};
     pub use crate::audio::{AudioSetup, Bus, Duck, Listener, Music, MusicOpts, PlayOpts, ReverbPreset, ReverbZone, Sound, Spatial, Voice, ZoneShape};
+    pub use crate::ui::{TextArgs, UiConfig, UiScale};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,

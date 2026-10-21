@@ -1137,6 +1137,7 @@ dependencies = [
  "genex-save",
  "genex-stream",
  "genex-studio",
+ "genex-ui",
  "glam 0.33.12",
  "indexmap",
  "libm",

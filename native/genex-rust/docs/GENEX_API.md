@@ -42,6 +42,7 @@ needs Ctx and Drawing).
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
+| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones and occlusion, and checking sound through `volatile.audio` and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
@@ -119,11 +120,11 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
-  `duplicate-audio`, `duplicate-saves` (each a second registration), `streaming-invalid` (a cell
-  size outside 8..=1024 metres, a radius or anchor count outside its range, a registration past
-  the simulated cells' memory cap, or, with `game.navigation`, a stream cell that is not a whole
-  number of nav tiles), `input-invalid`, `audio-zone-limit` (the Ctx page explains these),
-  `save-schema-invalid`, `save-section-reserved` (a `genex.` name) and `duplicate-save-section`.
+  `duplicate-audio`, `duplicate-saves`, `duplicate-ui` (each a second registration), `streaming-invalid` (the
+  Streaming and Navigation pages say when), `input-invalid` (the Ctx page explains it),
+  `audio-zone-limit` (more than 16 reverb zones),
+  `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`
+  and `ui-locale-invalid`.
   `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
   pass name, or one pass over the cap.
 

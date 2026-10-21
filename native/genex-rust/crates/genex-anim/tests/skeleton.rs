@@ -334,5 +334,5 @@ fn local_to_model_is_the_parent_chain_product() {
 
 #[test]
 fn the_asset_refusal_has_its_wire_spelling() {
-    assert_eq!(AnimationErrorCode::ALL.map(AnimationErrorCode::wire), ["animation-asset-invalid", "animation-graph-invalid", "ragdoll-profile-invalid"]);
+    assert_eq!(AnimationErrorCode::ALL.map(AnimationErrorCode::wire), ["animation-asset-invalid", "animation-graph-invalid", "ragdoll-profile-invalid", "animation-retarget-unmapped"]);
 }

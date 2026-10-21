@@ -49,8 +49,8 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `eyes` | The registered eye names. |
 | `demos` | The registered demo names. |
 | `demo` | Run a demo by name and answer its value; the runtime is paused afterwards. |
-| `audio` | Mute or unmute the game's sound with `{muted}`. |
-| `audioLevel` | The loudness and brightness of what the game plays (`rms`, `centroid`), measured natively. |
+| `audio` | Mute or unmute the game's sound with `{muted}`. Only the device goes quiet: the mix, its level and the simulation go on. |
+| `audioLevel` | The loudness and brightness of what the game plays (`rms`, `centroid`), measured natively over the game's own mix before the mute, so a headless run measures it too. |
 | `timing` | Frame, update and draw milliseconds, and the frames they cover. |
 | `quit` | End the game cleanly. |
 | `front` | Raise the game's window (a headless run answers `fronted: false`). |
@@ -97,7 +97,7 @@ the preview. Each forwards to the host verb of its name, except the page shapes 
 | `demos` | As the host verb. |
 | `demo` | As the host verb. |
 | `player` | The `player` hook's value, from `state()`. |
-| `audio` | Mute with `{muted}`; the web build does not measure a level. |
+| `audio` | Mute with `{muted}`. With no argument, the game's level as `{available, rms, centroid}`: the web build's own mix before the mute, measured before the first click opens the device too. `available` is false for a build made before the level probe or a level the page could not read; its numbers then read 0 and are never judged. |
 | `renderSettings` | As the host verb; a refusal comes back as `{__refused: code}`, which the studio reads as the host verb's refusal. |
 | `profile` | The host `profile` verb through the page; a refusal comes back as `{__refused: code}` (the web build answers `unknown-op`). |
 | `crashes` | The page's crash records, newest first (a promise): the game's `genex-crash/1` records (a panic, a lost device) and the shell's own (`wasm-trap` for a trap with no panic, `device-lost` when the game wrote none, `gpu-validation` for an uncaptured GPU error, not fatal), at most 16, kept in the browser's IndexedDB `genex-crashes:<game>` across reloads. Bound on every page, a failed boot's too. After a fatal crash the shell never calls the game's module again. |

@@ -39,6 +39,9 @@ sim.world.hero = Some(hero.animator(&g.build()?)?);       // animation-graph-inv
   another character.
 - `hero.with_root_motion(&MotionSettings::DEFAULT)` extracts the clips' root motion. Without it,
   clips play in place.
+- `hero.with_retargeted_clips(&ual)?` adds another humanoid's clips, retargeted onto this
+  skeleton (a UAL walk on a Meshy hero). Each limb points where the source's does, and the hips'
+  travel scales by leg length. Call `.with_root_motion(..)` after it.
 
 ## Advancing (on_update)
 
@@ -86,4 +89,6 @@ frame.skeleton_debug(hero, at);
 - `animation-graph-invalid`: a graph that cannot run (no layer, a layer without a state, a
   transition across layers, a duplicate name, a NaN or negative time), or one built over another
   character.
+- `animation-retarget-unmapped`: a retarget where either character lacks a humanoid bone (the
+  toes are optional). It names the bone and the character.
 - `ragdoll-profile-invalid` and `character-shape-invalid`: see `docs/api/characters.md`.
