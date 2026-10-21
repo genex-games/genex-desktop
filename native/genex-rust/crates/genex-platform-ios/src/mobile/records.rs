@@ -18,6 +18,12 @@ pub const GPU_UNSUPPORTED_FORMAT: &str = "genex-gpu-unsupported/1";
 pub const GPU_UNSUPPORTED_FILE: &str = "gpu-unsupported.json";
 /// The lifecycle log's file name.
 pub const LIFECYCLE_FILE: &str = "lifecycle.ndjson";
+/// A crash record's file name: `crash-<n>.json`, `n` rising (game systems CRASH-4).
+pub const CRASH_FILE_PREFIX: &str = "crash-";
+/// A crash record's file suffix.
+pub const CRASH_FILE_SUFFIX: &str = ".json";
+/// The crash records' `format` line (genex-crash's record, the host's `parseCrashRecord`).
+pub use genex_crash::CRASH_FORMAT;
 
 /// Where the shell writes its records.
 #[derive(Clone, Debug, PartialEq, Eq)]

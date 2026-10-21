@@ -81,8 +81,9 @@ pub enum TreeKind {
     Golden,
 }
 
-/// How finely a tree is drawn: its level of detail by its distance from the camera. Every level
-/// keeps the crown's shape (the tree meshes share their skeleton and leaf clusters).
+/// How finely a tree is drawn: one of its levels of detail, which the renderer chooses by the
+/// tree's size on screen ([`tree_level_metres`]). Every level keeps the crown's shape (the tree
+/// meshes share their skeleton and leaf clusters).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeLod {
     /// Every twig and leaf.
@@ -93,24 +94,42 @@ pub enum TreeLod {
     Far,
 }
 
-/// Where the levels change, in metres from the camera (scaled by the tree's size).
+/// Where the levels change at the showcase's own view ([`TREE_VIEW_ROWS`] and
+/// [`TREE_VIEW_FOVY_DEGREES`], the one-pixel threshold), in metres from the camera to the tree's
+/// base, for a tree of scale 1: where the hand-picked levels switched before the renderer chose
+/// them (a bigger tree switches later, a sharper view or a stricter preset later, a coarser
+/// preset sooner).
 pub const TREE_LOD_DISTANCES: [f32; 2] = [24.0, 58.0];
+/// The radius of the tree meshes' bounding spheres at scale 1, about (4.1 to 5.3 m measured): the
+/// renderer measures a level's distance to the nearest point of the sphere, the base distances
+/// [`TREE_LOD_DISTANCES`] less this.
+pub const TREE_BOUNDS_RADIUS: f32 = 4.5;
+/// The height of the tree meshes' bounding spheres' centres over the base at scale 1, about.
+pub const TREE_BOUNDS_HEIGHT: f32 = 3.5;
+/// The rows of the view [`TREE_LOD_DISTANCES`] hold at: the showcase's world height, which the
+/// Studio's captures draw at.
+pub const TREE_VIEW_ROWS: f32 = crate::showcase::WORLD_SIZE[1] as f32;
+/// The vertical field of view, degrees, [`TREE_LOD_DISTANCES`] hold at: the free camera's.
+pub const TREE_VIEW_FOVY_DEGREES: f32 = 50.0;
+/// The rows of the view `Model::with_levels` distances are given at (with
+/// [`genex::LOD_NOMINAL_FOV_DEGREES`]).
+const NOMINAL_ROWS: f32 = 1080.0;
+
+/// The authored levels' switch distances (`Model::with_levels`, at the nominal view):
+/// [`TREE_LOD_DISTANCES`] measured to the bounding sphere and carried from the showcase's view to
+/// the nominal one (by the ratio of their pixels per metre at distance 1), so a tree at the
+/// showcase's view switches where its base distance did. At its 720 rows and 50 degrees a metre
+/// covers 0.83 of the nominal view's pixels: given at the nominal view unconverted, every tree
+/// switched 17% sooner and the forest shot's middle broadleaf drew its coarser level.
+pub fn tree_level_metres() -> [f32; 2] {
+    let pixels_per_metre = |rows: f32, fovy_degrees: f32| rows * 0.5 / math::tan((fovy_degrees * 0.5).to_radians());
+    let ratio = pixels_per_metre(TREE_VIEW_ROWS, TREE_VIEW_FOVY_DEGREES) / pixels_per_metre(NOMINAL_ROWS, genex::LOD_NOMINAL_FOV_DEGREES);
+    TREE_LOD_DISTANCES.map(|distance| (distance - TREE_BOUNDS_RADIUS) / ratio)
+}
 
 impl TreeLod {
     /// Every level, nearest first.
     pub const ALL: [TreeLod; 3] = [TreeLod::Near, TreeLod::Middle, TreeLod::Far];
-
-    /// The level of a tree of `scale` seen from `distance` metres.
-    pub fn at(distance: f32, scale: f32) -> TreeLod {
-        let [near, middle] = TREE_LOD_DISTANCES.map(|d| d * scale);
-        if distance < near {
-            TreeLod::Near
-        } else if distance < middle {
-            TreeLod::Middle
-        } else {
-            TreeLod::Far
-        }
-    }
 
     /// Its index in [`TreeLod::ALL`].
     pub const fn index(self) -> usize {

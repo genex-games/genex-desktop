@@ -73,6 +73,20 @@ character runs no skinning and its rows read last frame's vertices equal to this
 motion). The skinned output, its slots and last frame's copy grow to the need, then by quarter
 steps rounded to 64 KiB (`tables::skinned_growth`), not to the next power of two.
 
+Skinned levels of detail (`skinned_lod`, game systems AN-25): when every skinned primitive carries
+`extras.genex_lods`, `from_glb` turns the chain into `SkinnedModel::levels`, each a skinned mesh of
+its own over the base skeleton (the vertices its triangles use, their `JOINTS_0`/`WEIGHTS_0` rows
+unchanged, one part per base part). `add_skinned_model` adds them with
+`MeshLibrary::add_skinned_levels`, which refuses `mesh-invalid` with nothing added (another part
+count, more than `LOD_MAX_LEVELS`, errors not finite and rising, a second chain); a refused or
+partial chain leaves the mesh drawing whole. Each frame `pick_level` asks the cull's own keep rule
+(`lod_row_keep`, measured from the base mesh's posed sphere under the output's LOD view) which
+level a draw keeps, and the plan skins only that one: by compute near, in the vertex stage far
+(AN-18). Inside the fade band the two crossfading levels are both skinned by compute and drawn
+through the LOD-03 fade batches, so a dolly through a switch neither pops nor draws a character
+twice. Every level poses with the base palette (one joint table entry per draw); a band's glass
+part is drawn by the finer level only.
+
 ## Ambient occlusion: horizons, the visibility bitmask, screen-space GI
 
 Node 10 (`post::ao`) runs one horizon search, `shaders/post/gtao.wgsl`, in one of three methods

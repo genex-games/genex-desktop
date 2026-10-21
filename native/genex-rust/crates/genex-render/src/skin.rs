@@ -22,8 +22,9 @@ use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 
 use crate::error::RenderError;
 use crate::layout::{GpuSkinJob, GpuSkinVertex};
-use crate::mesh::{MeshData, Vertex, check_attribute_layout, invalid, open_glb, read_primitive};
+use crate::mesh::{LodChain, LodLevel, LodMerge, MeshData, Vertex, check_attribute_layout, invalid, open_glb, read_lod_extras, read_primitive};
 use crate::scene::MeshId;
+use crate::skinned_lod::{SkinnedLevel, skinned_levels};
 
 /// Joints one skin may have (the joint table holds every skinned draw's matrices).
 pub const MAX_JOINTS: usize = 256;
@@ -283,6 +284,9 @@ pub struct SkinnedModel {
     pub data: SkinnedMeshData,
     /// Its parts, tiling its vertices and indices in order.
     pub parts: Vec<SkinPart>,
+    /// Its simplified levels (game systems AN-25), from every skinned primitive's
+    /// `extras.genex_lods`; empty when a part has none (it then draws whole).
+    pub levels: Vec<SkinnedLevel>,
 }
 
 impl SkinnedModel {
@@ -312,10 +316,11 @@ impl SkinnedModel {
         // over several nodes (glTF ignores a skinned node's own transform, so they share space).
         let skinned_meshes: Vec<gltf::Mesh<'_>> =
             gltf.nodes().filter(|n| n.skin().is_some_and(|s| s.index() == skin.index())).filter_map(|n| n.mesh()).collect();
-        let (mesh, skin_rows, parts) = read_skinned_parts(&skinned_meshes, blob, joints.len())?;
+        let (mesh, skin_rows, parts, chains) = read_skinned_parts(&gltf, &skinned_meshes, joints.len())?;
+        let levels = skinned_levels(&mesh, &skin_rows, &parts, &chains);
         let skeleton = Skeleton { nodes: skeleton_nodes(&gltf)?, joints, inverse_bind, mesh_node: Some(node.index()) };
         let animations = gltf.animations().map(|a| read_animation(&a, blob)).collect::<Result<_, _>>()?;
-        Ok(SkinnedModel { data: SkinnedMeshData { mesh, skin: skin_rows, skeleton, animations }, parts })
+        Ok(SkinnedModel { data: SkinnedMeshData { mesh, skin: skin_rows, skeleton, animations }, parts, levels })
     }
 }
 
@@ -325,26 +330,38 @@ struct PartGroup {
     material: Option<usize>,
     mesh: MeshData,
     skin: Vec<GpuSkinVertex>,
+    /// Its primitives' levels (AN-25), over the group's vertices.
+    lods: LodMerge,
 }
+
+/// One part's chain (AN-25), its indices moved from the part's own vertices onto the mesh's.
+fn rebased_chain(chain: LodChain, first_vertex: u32) -> LodChain {
+    let levels = chain.levels.into_iter().map(|level| LodLevel { indices: level.indices.iter().map(|index| first_vertex + index).collect(), error: level.error });
+    LodChain { levels: levels.collect() }
+}
+
+/// A skinned GLB's merged mesh, its skin rows, its parts and each part's chain of levels.
+type SkinnedParts = (MeshData, Vec<GpuSkinVertex>, Vec<SkinPart>, Vec<Option<LodChain>>);
 
 /// The primitives of `meshes`, grouped by material in first-use order and laid out group after
 /// group: the merged mesh, its skin rows and one part per group with triangles.
-fn read_skinned_parts(meshes: &[gltf::Mesh<'_>], blob: Option<&[u8]>, joint_count: usize) -> Result<(MeshData, Vec<GpuSkinVertex>, Vec<SkinPart>), RenderError> {
+fn read_skinned_parts(gltf: &gltf::Gltf, meshes: &[gltf::Mesh<'_>], joint_count: usize) -> Result<SkinnedParts, RenderError> {
     let mut groups: Vec<PartGroup> = Vec::new();
     for primitive in meshes.iter().flat_map(gltf::Mesh::primitives) {
         let key = primitive.material().index();
         let at = match groups.iter().position(|group| group.material == key) {
             Some(at) => at,
             None => {
-                groups.push(PartGroup { material: key, mesh: MeshData::default(), skin: Vec::new() });
+                groups.push(PartGroup { material: key, mesh: MeshData::default(), skin: Vec::new(), lods: LodMerge::default() });
                 groups.len() - 1
             }
         };
-        read_skinned_primitive(&primitive, blob, joint_count, &mut groups[at])?;
+        read_skinned_primitive(gltf, &primitive, joint_count, &mut groups[at])?;
     }
     let mut mesh = MeshData::default();
     let mut skin = Vec::new();
     let mut parts = Vec::new();
+    let mut chains = Vec::new();
     for group in groups.into_iter().filter(|group| !group.mesh.indices.is_empty()) {
         let first_vertex = u32::try_from(mesh.vertices.len()).map_err(|_| invalid("too many vertices"))?;
         let first_index = u32::try_from(mesh.indices.len()).map_err(|_| invalid("too many indices"))?;
@@ -358,15 +375,17 @@ fn read_skinned_parts(meshes: &[gltf::Mesh<'_>], blob: Option<&[u8]>, joint_coun
         mesh.indices.extend(group.mesh.indices.iter().map(|i| first_vertex + i));
         mesh.vertices.extend(group.mesh.vertices);
         skin.extend(group.skin);
+        chains.push(group.lods.finish().0.map(|chain| rebased_chain(chain, first_vertex)));
     }
     if mesh.indices.is_empty() {
         return Err(invalid("the skinned mesh has no triangles"));
     }
-    Ok((mesh, skin, parts))
+    Ok((mesh, skin, parts, chains))
 }
 
 /// Append one skinned primitive's vertices, triangles and skin rows to `group`.
-fn read_skinned_primitive(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>, joint_count: usize, group: &mut PartGroup) -> Result<(), RenderError> {
+fn read_skinned_primitive(gltf: &gltf::Gltf, primitive: &gltf::Primitive<'_>, joint_count: usize, group: &mut PartGroup) -> Result<(), RenderError> {
+    let blob = gltf.blob.as_deref();
     let (vertices, indices) = read_primitive(primitive, blob)?;
     for semantic in [gltf::Semantic::Joints(0), gltf::Semantic::Weights(0)] {
         check_attribute_layout(primitive, &semantic)?;
@@ -381,6 +400,9 @@ fn read_skinned_primitive(primitive: &gltf::Primitive<'_>, blob: Option<&[u8]>, 
         return Err(invalid(format!("a joint index is past the skin's {joint_count} joints")));
     }
     let base = u32::try_from(group.mesh.vertices.len()).map_err(|_| invalid("too many vertices"))?;
+    // Levels keep JOINTS_0/WEIGHTS_0: they are triangles over these vertices (glTF ignores a
+    // skinned node's transform, so they are placed as the mesh is).
+    group.lods.visit(read_lod_extras(gltf, primitive, blob, vertices.len() as u32), Mat4::IDENTITY, base);
     group.skin.extend(joints.iter().zip(&weights).map(|(j, w)| skin_row(*j, *w)));
     group.mesh.vertices.extend(vertices);
     group.mesh.indices.extend(indices.iter().map(|i| base + i));

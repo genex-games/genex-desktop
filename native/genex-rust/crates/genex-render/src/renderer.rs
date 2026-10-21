@@ -171,7 +171,7 @@ use crate::post::taau::{GpuTaauParams, TaauInput};
 use crate::post::tonemap::{MsaaResolve, ResolveNode, TonemapNode, TonemapPass, TonemapSource, f16_to_f32};
 use crate::prepass::{ExtensionDemand, GpuPrepassDraw, PrepassConsumers, PrepassDraw, PrepassInfo};
 use crate::readback::{map_read, map_read_blocking, stage_buffer};
-use crate::scene::{FramePlan, LineVertex, MeshId, MeshLibrary, ModelPart, PlanOptions, Scene, SunLight};
+use crate::scene::{FramePlan, LineVertex, LodTarget, MeshId, MeshLibrary, ModelPart, PlanOptions, Scene, SunLight};
 use crate::shadow::{CascadeDraws, CascadeHistory, CasterDepth, CasterSpec, ShadowMapDesc, ShadowMaps, caster_pipeline};
 use crate::settings::{
     AntiAliasing, Environment, ExposureMode, FrameConfig, LdrReason, Look, Meshlets, Quality, RenderFeature, RenderSettings, SceneFormat, ShadowFilter,
@@ -3568,9 +3568,19 @@ impl Renderer {
     }
 
     /// Add a skinned GLB's mesh with its parts (AN-16a, [`SkinnedModel::from_glb`]): each part
-    /// draws with its own material ([`Scene::draw_skinned_parts`]).
+    /// draws with its own material ([`Scene::draw_skinned_parts`]). Its levels (game systems AN-25,
+    /// [`SkinnedModel::levels`]) come with it: a draw skins the level its distance picks.
     pub fn add_skinned_model(&mut self, gpu: &Gpu, model: &SkinnedModel) -> Result<SkinId, RenderError> {
-        self.add_skinned_parts(gpu, &model.data, &model.parts)
+        let id = self.library.add_skinned_parts(&model.data, &model.parts)?;
+        // Levels the library refuses leave the mesh drawing whole, as refused GLB levels do.
+        if !model.levels.is_empty()
+            && let Err(error) = self.library.add_skinned_levels(id, &model.data, &model.levels)
+        {
+            log::warn!("skinned levels refused ({error}); the mesh draws whole");
+        }
+        self.sync_meshes(&gpu.device, &gpu.queue)?;
+        self.reset_meshlet_history();
+        Ok(id)
     }
 
     /// Add a skinned mesh with `parts` ([`MeshLibrary::add_skinned_parts`]) and upload its rows.
@@ -3738,7 +3748,9 @@ impl Renderer {
         // Rows' identities across frames only for a frame that writes motion vectors.
         // Far plain skinned draws skin in the vertex stage (AN-18): no job, output or row of theirs.
         let vertex_skinned = crate::skin_vertex::vertex_skinned_draws(scene, &self.library, self.skin_vertex.policy);
-        let mut plan = FramePlan::build_with_skin_paths(scene, &self.library, aspect, &options, temporal.motion, &vertex_skinned)?;
+        // Skinned levels (AN-25) are picked for the LOD view `set_lod_view` sets below.
+        let target = LodTarget { height: self.height, threshold_px: self.quality.lod.threshold_px };
+        let mut plan = FramePlan::build_with_skin_levels(scene, &self.library, aspect, &options, (temporal.motion, &vertex_skinned), target)?;
         self.prepare_skin_vertex_frame(scene, &plan, temporal.set, temporal.reset)?;
         // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
         // no instance to another level.

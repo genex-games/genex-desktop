@@ -15,7 +15,7 @@ use genex::render::{ReflectionProbe, SpotLight, Water};
 use genex::{Assets, InstanceGroup, Model, Scatter, Subsurface, Terrain};
 
 use crate::layout::{
-    CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, LAKE_CENTER, LAKE_RADII, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix,
+    CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, LAKE_CENTER, LAKE_RADII, Rock, TREE_BOUNDS_HEIGHT, TREE_BOUNDS_RADIUS, Tree, TreeKind, WATER_LEVEL, height, layout, mix,
     smoothstep,
 };
 use crate::world::{TreeMeshes, World};
@@ -485,22 +485,47 @@ fn trees(world: &World, frame: &mut Frame, eye: Vec3, t: f32) {
     for (i, tree) in layout().trees.iter().enumerate() {
         let sway = 0.018 * math::sin(t * 1.1 + i as f32 * 0.73) + 0.008 * math::sin(t * 2.3 + i as f32 * 1.9);
         let lean = Quat::from_rotation_x(sway) * Quat::from_rotation_z(sway * 0.6);
-        let lod = TreeLod::at(tree.base.distance(eye), tree.scale);
-        tree_model(frame, world, tree, lean, lod);
+        let bias = world.lod_eye.map(|frozen| frozen_bias(tree, eye, frozen));
+        tree_model(frame, world, tree, lean, bias);
     }
 }
 
-fn tree_model(frame: &mut Frame, world: &World, tree: &Tree, lean: Quat, lod: TreeLod) {
+/// The level-of-detail bias that holds `tree` at the level it has from `frozen` while the camera
+/// stands at `eye` (the motion rows' frozen-levels run): a level's projected error falls with the
+/// distance to the tree's bounding sphere and the bias scales it, so a bias of the distances'
+/// ratio keeps it where it was. The sphere is the meshes' at about [`TREE_BOUNDS_HEIGHT`] and
+/// [`TREE_BOUNDS_RADIUS`]; the facade clamps the bias (0.25..=4), past which the level may move.
+fn frozen_bias(tree: &Tree, eye: Vec3, frozen: Vec3) -> f32 {
+    let center = tree.base + Vec3::Y * TREE_BOUNDS_HEIGHT * tree.scale;
+    let to_sphere = |from: Vec3| (from.distance(center) - TREE_BOUNDS_RADIUS * tree.scale).max(FROZEN_DISTANCE_MIN);
+    to_sphere(eye) / to_sphere(frozen)
+}
+
+/// The least distance [`frozen_bias`] divides by, metres: inside the sphere the renderer draws
+/// the finest level anyway.
+const FROZEN_DISTANCE_MIN: f32 = 0.1;
+
+/// One tree: its wood and its foliage, each choosing its level on the renderer (with `bias`, the
+/// frozen-levels run's, when given).
+fn tree_model(frame: &mut Frame, world: &World, tree: &Tree, lean: Quat, bias: Option<f32>) {
     let models = &world.models;
     let surfaces = &models.surfaces;
     let transform = Transform { translation: tree.base, rotation: lean * Quat::from_rotation_y(tree.yaw), scale: Vec3::splat(tree.scale) };
     let (meshes, bark, foliage): (&TreeMeshes, &Material, &Material) = match tree.kind {
-        TreeKind::Pine => (&models.pine[tree.variant as usize % models.pine.len()][lod.index()], &surfaces.pine_bark, pick_in(&surfaces.needles, tree.tint)),
-        TreeKind::Round => (&models.broadleaf[tree.variant as usize % models.broadleaf.len()][lod.index()], &surfaces.bark, pick_in(&surfaces.leaves, tree.tint)),
-        TreeKind::Golden => (&models.broadleaf[tree.variant as usize % models.broadleaf.len()][lod.index()], &surfaces.bark, pick_in(&surfaces.golden, tree.tint)),
+        TreeKind::Pine => (&models.pine[tree.variant as usize % models.pine.len()], &surfaces.pine_bark, pick_in(&surfaces.needles, tree.tint)),
+        TreeKind::Round => (&models.broadleaf[tree.variant as usize % models.broadleaf.len()], &surfaces.bark, pick_in(&surfaces.leaves, tree.tint)),
+        TreeKind::Golden => (&models.broadleaf[tree.variant as usize % models.broadleaf.len()], &surfaces.bark, pick_in(&surfaces.golden, tree.tint)),
     };
-    frame.model_with(&meshes.wood, transform, bark);
-    frame.model_with(&meshes.foliage, transform, foliage);
+    match bias {
+        Some(bias) => {
+            frame.model_with(&meshes.wood.clone().with_lod_bias(bias), transform, bark);
+            frame.model_with(&meshes.foliage.clone().with_lod_bias(bias), transform, foliage);
+        }
+        None => {
+            frame.model_with(&meshes.wood, transform, bark);
+            frame.model_with(&meshes.foliage, transform, foliage);
+        }
+    }
 }
 
 fn rocks(world: &World, frame: &mut Frame) {
