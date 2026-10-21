@@ -30,6 +30,8 @@ import { StudioPlatform } from "../../src/shared/boot.ts";
 import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import { type CreateOptions, GameWorkspaces, ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
 import { registerNativeIpc } from "../../src/main/ipc/native.ts";
+import { createGameCrashStore } from "../../src/main/core/game-crashes.ts";
+import { type GameCrashesAnswer, parseCrashRecord } from "../../src/shared/crash-record.ts";
 import { fixtureNativeRuns } from "../../src/main/dev/fixture-native.ts";
 import { FixtureName } from "../../src/main/dev/fixture-kit.ts";
 import { FIXTURE_CPP_GAMES } from "../../src/main/dev/fixture-toolchains.ts";
@@ -843,6 +845,11 @@ async function nativeIpc(
       asked.push({ call: "front", detail: project });
       return true;
     },
+    // The shown run's port answers its frame profile (PROF-6): here a fixed summary, by request.
+    portOf(project: string) {
+      const shown = project === game.name && options.running;
+      return shown ? { frameProfile: async (request: { action: string }) => ({ answeredFor: request.action }) } : null;
+    },
     onStatus: () => () => {},
   };
   const core = {
@@ -889,19 +896,43 @@ const NATIVE_CHANNELS = ["studio:native.run", "studio:native.stop", "studio:nati
 describe("a game's frame profile and crash records over IPC (PROF-0c)", () => {
   const PROFILE_AND_CRASHES = ["studio:native.profile", "studio:game.crashes"];
 
-  it("answers unavailable until the host reads profiles and keeps crash records, in a fixture too", async () => {
+  it("answers a profile from the shown run (no-run when none), and a game's kept crash records, in a fixture too", async () => {
     const running = nativeStatus("pong-mac", NativeRunState.Ready);
     for (const fixture of [false, true]) {
       const live = await nativeIpc({ fixture, running });
+      // CRASH-5 flipped this from `unavailable not-served`: the host keeps records now.
       assert.deepEqual(await live.invoke("studio:game.crashes", { project: "pong-mac" }), {
         ok: true,
-        value: { state: "unavailable", reason: "not-served" },
+        value: { records: [] },
       });
+      const store = createGameCrashStore({
+        gameDir: async () => live.game.dir,
+        announce: async () => {},
+        now: () => Date.parse("2026-10-01T05:00:00.000Z"),
+      });
+      const panic = parseCrashRecord({
+        format: "genex-crash/1",
+        kind: "panic",
+        source: "game",
+        fatal: true,
+        handled: false,
+        message: "boom",
+      });
+      assert.ok(panic);
+      await store.keep({ project: "pong-mac", runId: "0123456789ab" }, panic);
+      const listed = await live.invoke("studio:game.crashes", { project: "pong-mac" });
+      assert.equal(listed.ok, true);
+      const value = listed.ok ? (listed.value as GameCrashesAnswer) : null;
+      assert.deepEqual(
+        value?.records.map((entry) => [entry.crashId, entry.record.message]),
+        [["0123456789ab-1", "boom"]],
+      );
+      // PROF-6 flipped this from `unavailable not-served`: the shown run's port answers it now.
       assert.deepEqual(
         await live.invoke("studio:native.profile", { project: "pong-mac", request: { action: "summary" } }),
         {
           ok: true,
-          value: { state: "unavailable", reason: "not-served" },
+          value: { answeredFor: "summary" },
         },
       );
       const idle = await nativeIpc({ fixture });

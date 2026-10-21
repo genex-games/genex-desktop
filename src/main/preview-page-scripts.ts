@@ -3,7 +3,8 @@
  * and saw (trusted input, the attach report, WebGL errors), the page-side capture and the bounded
  * read of `__studio.state()`. Each is an expression string for `webContents.executeJavaScript`.
  */
-import { NativeError, NativeRefusal } from "../shared/native-contract.ts";
+import { checkSavesArg, checkUiSettingsArg, type GameArgCheck } from "../shared/game-saves.ts";
+import { NativeError, NativeOp, NativeOpError, NativeRefusal } from "../shared/native-contract.ts";
 import { ElidedKind, StateShape, keepPathsOf } from "../shared/studio-state-shape.ts";
 import { NativeOpRefusedError } from "../substrate/native-game-port.ts";
 
@@ -188,6 +189,25 @@ export const GL_PROBE = `(() => {
   window.__studioGl = { errors: () => { drain(); return seen.slice(); } };
   return true;
 })()`;
+
+/** The page verbs whose argument the host checks before the page is asked, as a native run's port checks it. */
+const CHECKED_PAGE_VERBS: Readonly<Record<string, (arg: unknown) => GameArgCheck<unknown>>> = {
+  [NativeOp.Saves]: checkSavesArg,
+  [NativeOp.UiSettings]: checkUiSettingsArg,
+};
+
+/**
+ * The argument a page verb is sent with: `saves` and `uiSettings` checked as a native run checks
+ * them (members a game ignores dropped, `uiSettings()` a read), and refused `bad-argument` before
+ * the page is asked when out of shape; any other verb's argument as given.
+ */
+export function pageVerbArgument(method: string, arg: unknown): unknown {
+  const check = Object.hasOwn(CHECKED_PAGE_VERBS, method) ? CHECKED_PAGE_VERBS[method] : undefined;
+  if (!check) return arg;
+  const checked = check(arg);
+  if (!checked.ok) throw new NativeOpRefusedError(method, NativeOpError.BadArgument);
+  return checked.arg;
+}
 
 /**
  * One page-contract verb (`window.__studio.<method>(argument)`), or `MissingVerb`. A Rust web shell

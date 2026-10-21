@@ -57,6 +57,24 @@ impl Gates {
         changed
     }
 
+    /// The shut areas' type indices, in the order they shut.
+    pub fn shut_areas(&self) -> impl Iterator<Item = usize> + '_ {
+        self.shut_areas.iter().copied()
+    }
+
+    /// The closed links, in the order they closed.
+    pub fn closed_links(&self) -> impl Iterator<Item = AnimationLinkId> + '_ {
+        self.closed_links.iter().copied()
+    }
+
+    /// Exactly these areas shut and links closed, as a restored save had them; nothing counts as
+    /// newly shut (the corridors restored with them already avoid what is shut).
+    pub(crate) fn restore(&mut self, shut_areas: impl IntoIterator<Item = usize>, closed_links: impl IntoIterator<Item = AnimationLinkId>) {
+        self.shut_areas = shut_areas.into_iter().collect();
+        self.closed_links = closed_links.into_iter().collect();
+        self.newly_shut = false;
+    }
+
     /// Forgets a removed link.
     pub(crate) fn forget_link(&mut self, link: AnimationLinkId) {
         self.closed_links.shift_remove(&link);

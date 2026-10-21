@@ -168,3 +168,46 @@ fn only_a_verb_that_can_change_the_picture_makes_the_next_frame_redraw() {
         assert!(verb_changes_frame(op, &parse(arg)), "{op} {arg} may change the picture");
     }
 }
+
+const TONE: &[u8] = include_bytes!("../../../../../tests/fixtures/asset-import/tone.wav");
+static TONE_TABLE: genex::AssetTable = &[("sfx/tone.wav", TONE)];
+
+/// A game that plays the tone on its first tick through `ctx.audio`.
+fn tone_runtime() -> Runtime<Option<genex::audio::Sound>> {
+    let mut game = Game::new(None::<genex::audio::Sound>).world_size(64, 64);
+    game.on_reset(|sim, _, _, gfx| sim.world = Some(gfx.sound("sfx/tone.wav")));
+    game.on_update(|sim, ctx| {
+        if let (0, Some(sound)) = (ctx.tick, sim.world.as_ref()) {
+            ctx.audio.play(sound);
+        }
+    });
+    Runtime::with_assets(game, Box::new(TONE_TABLE)).expect("a valid game")
+}
+
+/// AU-8 red row: the page's `audio()` answers `{available: true}` with the tone game's own level
+/// (rms > 0; the web build answered `{available: false}`), and the page's `audio({muted})` verb
+/// mutes only the device: `volatile.audio.device.muted` turns true and the level stays.
+#[test]
+fn the_page_audio_probe_reads_the_tone_and_its_mute_leaves_the_level() {
+    use genex_platform_web::audio::level_answer;
+    let (mut studio, mut painter) = (Studio::web(), Counting::default());
+    studio.mark_ready();
+    let mut game = tone_runtime();
+    let mut adapter_call = |game: &mut Runtime<Option<genex::audio::Sound>>, op: &str, arg: &str| {
+        let (mut view, mut draws) = (None, 0);
+        let mut adapter = HandleGame { game, painter: &mut painter, view: &mut view, draws: &mut draws };
+        let arg = json::parse(arg.as_bytes()).expect("an argument");
+        json::parse(&studio.call(&mut adapter, op, &arg)).expect("a JSON reply")
+    };
+    adapter_call(&mut game, Op::STEP, r#"{"ms":167}"#);
+    let probe = level_answer(GameHandle::audio_level(&game));
+    assert_eq!(probe["available"], serde_json::json!(true), "{probe}");
+    let rms = probe["rms"].as_f64().unwrap_or_default();
+    assert!(rms > 0.05, "the tone's level, not silence: {probe}");
+    let muted = adapter_call(&mut game, Op::AUDIO, r#"{"muted":true}"#);
+    assert_eq!(muted["result"]["muted"], Value::Bool(true));
+    assert!(GameHandle::output_muted(&game));
+    assert_eq!(level_answer(GameHandle::audio_level(&game)), probe, "the mute leaves the meter");
+    let state = GameHandle::state(&game);
+    assert_eq!(state["volatile"]["audio"]["device"]["muted"], serde_json::json!(true), "{state}");
+}

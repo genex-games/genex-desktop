@@ -18,8 +18,8 @@ game.on_reset(|sim, _seed, _rng, gfx| {
   `.json()` parses them (a `Value`, or `malformed`), `.as_str()` reads UTF-8 text and `.digest()`
   is their FNV-1a 64.
 - `gfx.assets().triangles(&model)` answers the model's `ModelTriangles` (`positions`,
-  `indices`, `min`, `max`): its default scene with node transforms applied, read by the renderer's
-  own glTF reader. Never a render level of detail.
+  `indices`, `min`, `max`; `.triangle_count()`): its default scene with node transforms applied,
+  read by the renderer's own glTF reader. Never a render level of detail.
 - `gfx.assets().info(path)` answers `AssetInfo` (`bytes`, `group`) without reading the file into
   the simulation, or `None` for an unsafe path or a file the build does not have.
 - Keep what a reset read in the world (`Arc`, owned values): update hooks never read files. A
@@ -27,6 +27,10 @@ game.on_reset(|sim, _seed, _rng, gfx| {
   (`use genex::{AnimationError, AssetBytes, AssetError, CharacterAsset, ModelTriangles, Skeleton};`).
 - A re-seed reuses what the first seed read and parsed; reading again costs nothing.
 - `state().assets` lists every path a reset read.
+- In a Studio dev run, a changed file is swapped in place (`reloadAssets`, sent by Studio, never
+  by a game): the renderer reads models, textures and environment maps again on the next frame.
+  Bytes a reset already read (`bytes`, `triangles`, `character`) stay in the world until the next
+  seed.
 
 Reads follow one rule on every destination (desktop, web, phones):
 
@@ -41,6 +45,11 @@ Reads follow one rule on every destination (desktop, web, phones):
 
 Each refusal is an `AssetError` with `.code()` (`AssetErrorCode`, its wire spelling from
 `.code().wire()`) and `.detail()` for a log line.
+
+On a phone the compiled table is read first, then the files the build ships beside the game: the
+app bundle's `assets/` on iOS, and the APK's `assets/` on Android (read by range through
+`AAssetManager`). A game whose assets outgrow the table keeps its files under `assets/`, and
+nothing in its code changes.
 
 ## Characters
 

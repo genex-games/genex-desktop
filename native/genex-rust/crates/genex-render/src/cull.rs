@@ -29,6 +29,12 @@
 //! fade times the far share and its slot's grow the far field's, so the faded draws dither it and
 //! grow it about its origin ([`crate::mesh::lod_row_keep_far`]).
 //!
+//! Impostors (game systems LOD-15): an impostor is the last level of its mesh's chain, kept by
+//! the same rule. Its error is measured over the LOD row's radius, so every part of a compound
+//! switches together, and in a shadow view (every view but the camera; option A) the band at
+//! the impostor level reads as the last mesh level whole, so the casters never change shape at
+//! the mesh-to-impostor switch ([`cpu_cull_view`]).
+//!
 //! The HDR path draws camera views with reverse-Z (RQ1.1): [`frustum_planes_for`] takes the
 //! reversed (and possibly infinite) projection and answers the same six inward planes, so the
 //! compute and CPU culls keep one test.
@@ -173,7 +179,15 @@ pub fn in_frustum(planes: &[[f32; 4]; 6], bounds: [f32; 4]) -> bool {
 /// The reference cull of `batches` over `instances` against one view's `planes`, a level's batch
 /// keeping only the instances `lod` gives its level, and a fade batch those fading in or out of
 /// it, with their fades ([`crate::mesh::lod_row_keep`]; renderer pass 2 A6.9, game systems LOD-03).
+/// The camera's cull: [`cpu_cull_view`] with `caster` false.
 pub fn cpu_cull(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize) -> CpuCull {
+    cpu_cull_view(planes, lod, batches, instances, slots, false)
+}
+
+/// [`cpu_cull`] of the camera (`caster` false) or of a shadow view (game systems LOD-15 option A:
+/// a chain ended by an impostor casts its last mesh level where the camera draws the impostor,
+/// [`crate::mesh::lod_row_keep_view`]); the compute pass's `caster` is every view but the camera.
+pub fn cpu_cull_view(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize, caster: bool) -> CpuCull {
     let mut visible = vec![0; slots];
     let mut fades = vec![[INSTANCE_FADE_WHOLE; 2]; slots];
     let mut counts = Vec::with_capacity(batches.len());
@@ -183,7 +197,7 @@ pub fn cpu_cull(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch],
         for i in batch.first_row..batch.first_row + batch.instance_count {
             let bounds = instances[i as usize].bounds;
             let (origin, bias, far) = lod.of(i as usize, bounds);
-            let kept = crate::mesh::lod_row_keep_far(batch.lod, bounds, origin, lod.view, (bias, lod.band), far).filter(|_| in_frustum(planes, bounds));
+            let kept = crate::mesh::lod_row_keep_view(batch.lod, bounds, origin, lod.view, (bias, lod.band), far, caster).filter(|_| in_frustum(planes, bounds));
             let Some(fade) = kept else { continue };
             let slot = (batch.first_instance + written) as usize;
             visible[slot] = i;

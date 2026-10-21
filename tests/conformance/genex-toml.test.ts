@@ -41,11 +41,15 @@ import {
   FOG_DENSITY_MAX,
   FOG_DISTANCE_LIMIT,
   FOG_HEIGHT_FALLOFF_MAX,
+  FAR_DENSITY_MIN,
   FormFactor,
   LookKey,
+  LOD_FADE_BAND_MAX,
   LOD_MAX_LEVELS,
   LOD_MIN_TRIANGLES,
   LOD_SCHEMA_VERSION,
+  LOD_THRESHOLD_PX_MAX,
+  LOD_THRESHOLD_PX_MIN,
   LodExtrasKey,
   LodFault,
   LodLevelKey,
@@ -88,6 +92,11 @@ import {
   checkWgslFiles,
   GAME_CRATE_ALLOWLIST,
   GenexTomlCode,
+  genexMatchmakingBlock,
+  MatchmakingPreset,
+  MatchWinCondition,
+  NET_MATCH_CONFIG_MAX_KEYS,
+  netEnabled,
   parseGenexToml,
   readGenexToml,
   renderTomlFragment,
@@ -675,6 +684,25 @@ describe("genex.toml: the [render] table and [[wgsl]] api (rows shared with mani
     assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same look");
   });
 
+  it("reads a class table's LOD keys and switches (LOD-06) and writes them back into the fragment the facade reads", () => {
+    const table =
+      "[render.class.mobile-mid]\nlod_threshold_px = 3\nlod_fade_band = 0\nfar_density = 0.5\nlod-fade = false\nimpostors = true\n";
+    const manifest = accepted(`${RENDER_ROWS.game}${table}`);
+    assert.deepEqual(manifest.render?.classes, {
+      [DeviceClass.MobileMid]: {
+        lodThresholdPx: 3,
+        lodFadeBand: 0,
+        farDensity: 0.5,
+        features: { [RenderFeature.LodFade]: false, [RenderFeature.Impostors]: true },
+      },
+    });
+    assert.ok(manifest.render);
+    const fragment = renderTomlFragment(manifest.render);
+    assert.match(fragment, /^lod_threshold_px = 3\.0$/m, "a whole threshold stays a float");
+    const back = accepted(`${RENDER_ROWS.game}${fragment}`);
+    assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same LOD choices");
+  });
+
   const rq4Hostile: ReadonlyArray<readonly [string, string]> = [
     ["a negative bloom threshold", "bloom_threshold = -1"],
     ["a bloom threshold past its limit", `bloom_threshold = ${BLOOM_THRESHOLD_MAX + 1}`],
@@ -761,6 +789,9 @@ describe("genex.toml: the render vocabulary is the wire's", () => {
     assert.deepEqual(values(ShadowTomlKey), WIRE_RENDER.shadowKeys);
     assert.deepEqual({ min: SHADOW_DISTANCE_MIN, max: SHADOW_DISTANCE_MAX }, WIRE_RENDER.shadowDistance);
     assert.equal(SHADOW_BLEND_BAND_MAX, WIRE_RENDER.shadowBlendBandMax);
+    assert.deepEqual({ min: LOD_THRESHOLD_PX_MIN, max: LOD_THRESHOLD_PX_MAX }, WIRE_RENDER.lodThresholdPx);
+    assert.equal(LOD_FADE_BAND_MAX, WIRE_RENDER.lodFadeBandMax);
+    assert.equal(FAR_DENSITY_MIN, WIRE_RENDER.farDensityMin);
     assert.deepEqual(values(SettingsSource), WIRE_RENDER.settingsSources);
     assert.deepEqual(values(CaptureExposure), WIRE_RENDER.captureExposure);
     assert.deepEqual(values(RendererFeature), WIRE_RENDER.rendererFeatures);
@@ -932,5 +963,106 @@ describe("the genex_textures glTF extras schema is the importer's", () => {
       kinds: Object.values(TextureUsage),
       stemMaxChars: GLB_TEXTURE_STEM_MAX_CHARS,
     });
+  });
+});
+
+/** A `[net]` table (G6 MP-5b) after the `[game]` table, with its matchmaking sub-tables when given. */
+const netToml = (net: string, matchmaking = "", config = "") =>
+  `${GAME}[net]\n${net}${matchmaking && `[net.matchmaking]\n${matchmaking}`}${config && `[net.matchmaking.config]\n${config}`}`;
+
+describe("genex.toml: [net] turns multiplayer on and carries the draft's matchmaking (G6 MP-5b)", () => {
+  it("reads [net] enabled and its matchmaking preset, win condition and numeric knobs", () => {
+    const manifest = accepted(
+      netToml(
+        "enabled = true\n",
+        'preset = "arena"\nwin_condition = "firstToScore"\n',
+        "maxPlayers = 8\nscoreTarget = 20\nfill = 0.5\n",
+      ),
+    );
+    assert.deepEqual(manifest.net, {
+      enabled: true,
+      matchmaking: {
+        preset: MatchmakingPreset.Arena,
+        winCondition: MatchWinCondition.FirstToScore,
+        config: { maxPlayers: 8, scoreTarget: 20, fill: 0.5 },
+      },
+    });
+    assert.equal(netEnabled(manifest), true);
+  });
+
+  it("has no networking without [net], or with enabled = false", () => {
+    const plain = accepted(GAME);
+    assert.equal(plain.net, null);
+    assert.equal(netEnabled(plain), false);
+    const off = accepted(netToml("enabled = false\n"));
+    assert.deepEqual(off.net, { enabled: false, matchmaking: null });
+    assert.equal(netEnabled(off), false);
+  });
+
+  it("writes the matchmaking block the draft's package.json carries, in Genex's spelling, and none without one", () => {
+    const manifest = accepted(netToml("enabled = true\n", 'preset = "open"\n', "maxPlayers = 10\nminPlayers = 2\n"));
+    assert.deepEqual(genexMatchmakingBlock(manifest), { preset: "open", config: { maxPlayers: 10, minPlayers: 2 } });
+    const duel = accepted(netToml("enabled = true\n", 'preset = "duel"\nwin_condition = "lastStanding"\n'));
+    assert.deepEqual(genexMatchmakingBlock(duel), { preset: "duel", winCondition: "lastStanding" });
+    assert.equal(genexMatchmakingBlock(accepted(netToml("enabled = true\n"))), null);
+    // A game with networking off sends no block, whatever its table says.
+    assert.equal(genexMatchmakingBlock(accepted(netToml("enabled = false\n", 'preset = "open"\n'))), null);
+    assert.equal(genexMatchmakingBlock(accepted(GAME)), null);
+  });
+
+  it("names every preset and win condition Genex's relay knows", () => {
+    assert.deepEqual(Object.values(MatchmakingPreset), ["open", "duel", "arena", "teams", "private"]);
+    assert.deepEqual(Object.values(MatchWinCondition), [
+      "lastStanding",
+      "firstToScore",
+      "highScoreInTime",
+      "firstToFinish",
+    ]);
+  });
+
+  const tooMany = Array.from({ length: NET_MATCH_CONFIG_MAX_KEYS + 1 }, (_, at) => `knob${at} = 1\n`).join("");
+  const refusedNet: Array<[string, string]> = [
+    ['enabled = "yes"', netToml('enabled = "yes"\n')],
+    ["no enabled key", netToml('matchmaking_note = "x"\n')],
+    ["an [net] without enabled", `${GAME}[net]\n`],
+    ["an unknown key in [net]", netToml('enabled = true\nrelay_url = "wss://elsewhere.example"\n')],
+    ["a preset outside open|duel|arena|teams|private", netToml("enabled = true\n", 'preset = "battle-royale"\n')],
+    ["a matchmaking table without a preset", netToml("enabled = true\n", 'win_condition = "firstToScore"\n')],
+    ["an unknown win condition", netToml("enabled = true\n", 'preset = "arena"\nwin_condition = "mostKills"\n')],
+    ["an unknown key in [net.matchmaking]", netToml("enabled = true\n", 'preset = "open"\nregion = "eu"\n')],
+    ["matchmaking as a string", netToml('enabled = true\nmatchmaking = "open"\n')],
+    ["a knob that is not a number", netToml("enabled = true\n", 'preset = "open"\n', 'maxPlayers = "8"\n')],
+    ["a negative knob", netToml("enabled = true\n", 'preset = "open"\n', "maxPlayers = -1\n")],
+    ["a knob past the cap", netToml("enabled = true\n", 'preset = "open"\n', "maxPlayers = 10000001\n")],
+    [
+      "a knob name that is not camelCase letters",
+      netToml("enabled = true\n", 'preset = "open"\n', '"max players" = 8\n'),
+    ],
+    ["a knob named __proto__", netToml("enabled = true\n", 'preset = "open"\n', "__proto__ = 8\n")],
+    [
+      "a knob table under a knob",
+      netToml("enabled = true\n", 'preset = "open"\n', "[net.matchmaking.config.deep]\nx = 1\n"),
+    ],
+    [`more than ${NET_MATCH_CONFIG_MAX_KEYS} knobs`, netToml("enabled = true\n", 'preset = "open"\n', tooMany)],
+  ];
+  for (const [name, text] of refusedNet) {
+    it(`refuses ${name} with ${GenexTomlCode.InvalidNet}`, () => {
+      assert.equal(refusedCode(parseGenexToml(text)), GenexTomlCode.InvalidNet);
+    });
+  }
+
+  it("refuses the inline-table form as a malformed file: genex.toml spells matchmaking as [net.matchmaking]", () => {
+    const text = `${GAME}[net]\nenabled = true\nmatchmaking = { preset = "open" }\n`;
+    assert.equal(refusedCode(parseGenexToml(text)), GenexTomlCode.Syntax);
+  });
+
+  it("keeps a [net] table through an eject and an un-eject, byte for byte", () => {
+    const text = netToml("enabled = true\n", 'preset = "teams"\n', "maxPlayers = 8\n");
+    const ejected = withEngineRow(text, "0.1.0");
+    assert.ok(ejected.ok);
+    assert.deepEqual(ejected.manifest.net, accepted(text).net);
+    const back = withEngineRow(ejected.text, null);
+    assert.ok(back.ok);
+    assert.equal(back.text, text);
   });
 });

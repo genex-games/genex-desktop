@@ -830,6 +830,8 @@ fn metal_the_water_costs_at_most_one_millisecond_at_1080p() {
     const DRAWS: u32 = 8;
     const SAMPLES: usize = 15;
     const WARM_UP: usize = 5;
+    // Runs allowed past warm-up while unusable timestamp pairs are retried.
+    const MAX_RUNS: usize = WARM_UP + SAMPLES * 4;
     let Some(gpu) = gpu() else { return };
     if !gpu.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
         eprintln!("skipped: no timestamps");
@@ -842,7 +844,11 @@ fn metal_the_water_costs_at_most_one_millisecond_at_1080p() {
     let set = gpu.device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("water cost"), ty: wgpu::QueryType::Timestamp, count: 2 });
     let resolve = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 16, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
     let mut times = Vec::new();
-    for run in 0..WARM_UP + SAMPLES {
+    let mut unusable = 0;
+    for run in 0..MAX_RUNS {
+        if times.len() == SAMPLES {
+            break;
+        }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = colour_pass(&mut encoder, &view, &scene.world_depth, Some(&set));
@@ -850,10 +856,13 @@ fn metal_the_water_costs_at_most_one_millisecond_at_1080p() {
                 scene.node.draw_colour(&mut pass);
             }
         }
-        encoder.resolve_query_set(&set, 0..2, &resolve, 0);
         gpu.queue.submit([encoder.finish()]);
+        gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        // Resolved after the pass completed: Metal's counters can read stale (or zero) when they
+        // are resolved in the pass's own command buffer, which left every pair unusable.
         let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 16, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut copy = gpu.device.create_command_encoder(&Default::default());
+        copy.resolve_query_set(&set, 0..2, &resolve, 0);
         copy.copy_buffer_to_buffer(&resolve, 0, &staging, 0, 16);
         gpu.queue.submit([copy.finish()]);
         let slice = staging.slice(..);
@@ -863,10 +872,18 @@ fn metal_the_water_costs_at_most_one_millisecond_at_1080p() {
             let data = slice.get_mapped_range().expect("mapped");
             (0..2).map(|i| u64::from_le_bytes(data[i * 8..i * 8 + 8].try_into().expect("8 bytes"))).collect()
         };
-        if let (true, Some(ms)) = (run >= WARM_UP, genex_render::timing::span_ms(ticks[0], ticks[1], gpu.queue.get_timestamp_period())) {
-            times.push(ms / DRAWS as f32);
+        if run < WARM_UP {
+            continue;
+        }
+        match genex_render::timing::span_ms(ticks[0], ticks[1], gpu.queue.get_timestamp_period()) {
+            Some(ms) => times.push(ms / DRAWS as f32),
+            None => {
+                unusable += 1;
+                eprintln!("water cost: unusable stamps {ticks:?}");
+            }
         }
     }
+    assert_eq!(times.len(), SAMPLES, "the water cost row needs {SAMPLES} usable timestamp samples; {unusable} pairs were unusable in {MAX_RUNS} runs");
     times.sort_by(f32::total_cmp);
     let median = times[times.len() / 2];
     let row = format!("{{\"row\":\"water-1080p\",\"size\":[1920,1080],\"median_ms\":{median:.4},\"budget_ms\":{WATER_MS_MAX}}}");

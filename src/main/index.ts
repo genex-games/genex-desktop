@@ -122,6 +122,7 @@ import { hostMobileToolchain, registerToolchainIpc } from "./ipc/toolchain.ts";
 import { execHost } from "./core/toolchains.ts";
 import { stackSetupOf } from "./core/stack-setup-status.ts";
 import { developmentStacksOpen } from "./core/stack-gate.ts";
+import { registerLiveAssetsIpc } from "./ipc/live-assets.ts";
 import { registerNativeIpc } from "./ipc/native.ts";
 import { registerSeedIpc, seedRetakeDepsOf } from "./ipc/seed.ts";
 import { registerCratesIpc } from "./ipc/crates.ts";
@@ -1293,7 +1294,8 @@ function registerIpc(studio: StudioCore): void {
       });
   registerToolchainIpc(handle, studio, stackSetupOf(studio), phoneTools);
   // The person's device launch installs only the phone packages the exports admitted.
-  registerNativeIpc(handle, studio, { device: { packages: studio.phonePackages } });
+  registerNativeIpc(handle, studio, { device: { packages: studio.phonePackages }, livePreview: () => preview });
+  registerLiveAssetsIpc(handle, studio);
   registerSeedIpc(handle, seedRetakeDepsOf(studio));
   registerCratesIpc(handle, () => crateRequestsFor(studio));
   // Eject and the trust flag are the person's acts alone: no harness method reaches them.

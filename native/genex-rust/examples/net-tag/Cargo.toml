@@ -1,0 +1,49 @@
+# The net-tag example (multiplayer MP-6a): a small team tag game on `sim.net`. A menu comes before
+# any network contact (Play online or Bots), the host reconciles teams in a shared key, and a
+# claimed `tag` object scores for the team that touches it; when the host leaves, the new host
+# re-claims the tag from its last raw state. One crate serves every destination, as the pond does:
+# the `net-tag` binary is the native build and the library is also a `cdylib` for the web shell.
+# No assets: the scene is procedural.
+[package]
+name = "net-tag"
+description = "The net-tag example game (multiplayer MP-6a)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `net_tag`: on wasm32 the library and the binary would both be `net-tag.wasm`.
+name = "net_tag_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "net-tag"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install` and plays in the loopback room, as a
+# Live build of a `[net]` game does (`net-loopback`). The export flavour is built with
+# `--no-default-features --features net`: it links the relay and never genex-studio.
+[features]
+default = ["studio", "net-loopback"]
+studio = ["genex/studio"]
+net-loopback = ["genex/net-loopback"]
+net = ["genex/net"]
+
+[dependencies]
+genex = { workspace = true }
+genex-platform-web = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/captures.rs writes the settled captures as PNG evidence on the host GPU; tests/budget.rs
+# times the loopback room's cut and apply directly.
+[dev-dependencies]
+genex-net = { workspace = true }
+image = { workspace = true }

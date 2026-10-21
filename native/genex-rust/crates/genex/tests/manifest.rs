@@ -39,6 +39,24 @@ fn a_full_manifest_parses() {
     assert!(parsed.needs_native_features());
 }
 
+/// G6 MP-5b: a networked game's genex.toml parses, so the runtime's own read (WGSL extensions)
+/// never refuses it; the host owns the value checks (`invalid-net`).
+#[test]
+fn a_net_table_and_its_matchmaking_parse() {
+    let text = "[game]\ntitle = \"Tag\"\n\n[net]\nenabled = true\n\n[net.matchmaking]\npreset = \"arena\"\n\
+                win_condition = \"firstToScore\"\n\n[net.matchmaking.config]\nmaxPlayers = 8\nfill = 0.5\n";
+    let parsed = manifest::parse(text).expect("a [net] table parses");
+    let net = parsed.net.expect("the [net] table");
+    assert!(net.enabled);
+    let matchmaking = net.matchmaking.expect("the matchmaking table");
+    assert_eq!(matchmaking.preset, "arena");
+    assert_eq!(matchmaking.win_condition.as_deref(), Some("firstToScore"));
+    assert_eq!(matchmaking.config.get("maxPlayers"), Some(&8.0));
+    assert!(manifest::parse("[game]\ntitle = \"Tag\"\n").expect("no [net]").net.is_none());
+    let unknown = manifest::parse("[game]\ntitle = \"Tag\"\n\n[net]\nenabled = true\nrelay = \"x\"\n");
+    assert_eq!(unknown.map_err(|error| error.code()), Err(ManifestErrorCode::Syntax));
+}
+
 #[test]
 fn a_minimal_manifest_takes_the_defaults() {
     let parsed = manifest::parse("[game]\ntitle = \"Tiny\"\n").expect("valid");
@@ -248,6 +266,12 @@ fn the_render_vocabulary_is_the_wires() {
     assert_eq!(wire["shadowDistance"]["min"].as_i64(), Some(manifest::SHADOW_DISTANCE_MIN));
     assert_eq!(wire["shadowDistance"]["max"].as_i64(), Some(manifest::SHADOW_DISTANCE_MAX));
     assert_eq!(wire["shadowBlendBandMax"].as_f64(), Some(manifest::SHADOW_BLEND_BAND_MAX));
+    // Game systems LOD-06: the class tables' LOD ranges.
+    assert_eq!(wire["lodThresholdPx"]["min"].as_f64(), Some(manifest::LOD_THRESHOLD_PX_MIN));
+    assert_eq!(wire["lodThresholdPx"]["max"].as_f64(), Some(manifest::LOD_THRESHOLD_PX_MAX));
+    assert_eq!(wire["lodFadeBandMax"].as_f64(), Some(manifest::LOD_FADE_BAND_MAX));
+    assert_eq!(wire["farDensityMin"].as_f64(), Some(manifest::FAR_DENSITY_MIN));
+    assert_eq!(manifest::FAR_DENSITY_MIN as f32, genex_render::settings::FAR_DENSITY_MIN, "the file's floor is the renderer's");
     assert_eq!(wire["exposureEvLimit"].as_f64(), Some(manifest::EXPOSURE_EV_LIMIT));
     assert_eq!(wire["adaptationSpeedMax"].as_f64(), Some(manifest::ADAPTATION_SPEED_MAX));
     // RQ4.0: bloom, GTAO, fog and contact-shadow limits.

@@ -8,6 +8,7 @@ use crate::record::{self, HudWidget};
 use egui::epaint::textures::TexturesDelta;
 use egui::emath::TSTransform;
 use egui::epaint::{ClippedPrimitive, ClippedShape, Shape};
+use genex_ui::nav::{NavButton, NavButtons, nav_events};
 use std::num::NonZeroUsize;
 
 /// The most entries `state().hud.items` lists: legacy items first, then egui widgets.
@@ -87,6 +88,15 @@ impl Hud {
             ui_scale: 1.0,
             locale_fonts: Vec::new(),
         }
+    }
+
+    /// The navigation events of the `ui_*` input actions that fired on a tick (G6 input, IN-11):
+    /// `fired` answers by button name (`"up"`, `"accept"`, the action's name after `ui_`). A game
+    /// with input actions puts these in [`HudInput::extra_events`] while its `ui` context is on,
+    /// in place of the raw navigation keys, so the player's rebinds move them.
+    pub fn ui_action_events(fired: impl Fn(&str) -> bool) -> Vec<egui::Event> {
+        let buttons = NavButton::ALL.into_iter().fold(NavButtons::NONE, |buttons, button| buttons.with(button, fired(button.as_str())));
+        nav_events(buttons)
     }
 
     /// `seed`: forget egui's memory (focus, open headers, scroll, animations) and the legacy HUD.

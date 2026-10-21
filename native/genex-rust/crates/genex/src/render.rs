@@ -75,6 +75,11 @@ pub use genex_render::presets::{ClassDefaults, ClassOverride, RenderOverrides, R
 /// A game's or a person's choices for the sun's shadows (cascades, map size, filter): see
 /// [`RenderConfig::shadows_at`].
 pub use genex_render::presets::ShadowOverride as ShadowConfig;
+/// A game's or a person's level-of-detail choices (game systems LOD-06: the error threshold, the
+/// crossfade band, impostors, the far-field density): see [`RenderConfig::lod_at`].
+pub use genex_render::presets::LodOverride as LodConfig;
+/// The level-of-detail quality a frame draws with (`quality.lod`).
+pub use genex_render::settings::LodQuality;
 pub use genex_render::settings::{
     AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, ExposureMode, LdrReason, LightQuality, Look, Meshlets, Metering,
     PresetChoice, Quality, QualityPreset, RenderFeature, RenderSettings, SceneFormat, ShadowFilter, ShadowFormat, ShadowQuality,
@@ -209,6 +214,8 @@ pub fn feature_label(feature: RenderFeature) -> &'static str {
         RenderFeature::Prepass => "Depth prepass",
         RenderFeature::TextureQuality => "Texture quality",
         RenderFeature::SpotShadows => "Spot light shadows",
+        RenderFeature::LodFade => "Detail crossfade",
+        RenderFeature::Impostors => "Impostors",
         _ => "Feature",
     }
 }
@@ -611,6 +618,19 @@ impl RenderConfig {
         self
     }
 
+    /// The config with `lod` on `class` (game systems LOD-06), kept beside the rest of that class's
+    /// table: `.lod_at(DeviceClass::new(FormFactor::Mobile, PerformanceTier::Low), LodConfig::new().threshold_px(4.0))`
+    /// lets the low phones' levels switch nearer. Each key is held to its range, the threshold also
+    /// to half..twice the preset's, then to the class's floor (a phone never draws finer than its
+    /// tier's 2, 2.5 or 3 px); a later call for the same class wins key by key.
+    pub fn lod_at(mut self, class: DeviceClass, lod: LodConfig) -> RenderConfig {
+        match self.quality.classes.iter_mut().find(|(named, _)| *named == class) {
+            Some((_, table)) => table.lod = table.lod.over(lod),
+            None => self.quality.classes.push((class, ClassOverride { lod, ..ClassOverride::default() })),
+        }
+        self
+    }
+
     /// The config with `quality` on `class` (replacing that class's table).
     pub fn class(mut self, class: DeviceClass, quality: ClassOverride) -> RenderConfig {
         self.quality.classes.retain(|(named, _)| *named != class);
@@ -705,9 +725,25 @@ fn class_table(class: &str, table: &manifest::ClassSection) -> Option<(DeviceCla
         render_scale: table.render_scale.map(|scale| scale as f32),
         fps: table.fps.and_then(|fps| u32::try_from(fps).ok()),
         switches: switches.collect(),
+        lod: class_lod(table),
         ..ClassOverride::default()
     };
     Some((class, quality))
+}
+
+/// A class table's LOD keys (game systems LOD-06; a checked table holds them in range).
+fn class_lod(table: &manifest::ClassSection) -> LodConfig {
+    let mut lod = LodConfig::new();
+    if let Some(pixels) = table.lod_threshold_px {
+        lod = lod.threshold_px(pixels as f32);
+    }
+    if let Some(band) = table.lod_fade_band {
+        lod = lod.fade_band(band as f32);
+    }
+    if let Some(density) = table.far_density {
+        lod = lod.far_density(density as f32);
+    }
+    lod
 }
 
 impl<W: Default + 'static> Game<W> {
@@ -1693,7 +1729,7 @@ impl RenderControl {
         }
         let person = person_value(&self.person);
         let entry = self.entry_mut();
-        for key in ["preset", "renderScale", "features"] {
+        for key in ["preset", "renderScale", "features", PERSON_LOD_THRESHOLD_KEY] {
             entry.remove(key);
         }
         if let Value::Object(person) = person {
@@ -1724,6 +1760,9 @@ fn person_value(person: &ClassOverride) -> Value {
         let features: JsonMap<String, Value> = person.switches.iter().map(|(feature, on)| (feature.wire().to_owned(), json!(on))).collect();
         value.insert("features".to_owned(), Value::Object(features));
     }
+    if let Some(pixels) = person.lod.threshold_px {
+        value.insert(PERSON_LOD_THRESHOLD_KEY.to_owned(), json!(pixels));
+    }
     Value::Object(value)
 }
 
@@ -1740,7 +1779,20 @@ fn person_from(entry: &Value) -> ClassOverride {
         render_scale: entry["renderScale"].as_f64().map(|scale| (scale as f32).clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0)),
         fps: None,
         switches,
+        lod: person_lod(entry),
         ..ClassOverride::default()
+    }
+}
+
+/// The save entry's member holding the person's LOD threshold ("Detail distance").
+const PERSON_LOD_THRESHOLD_KEY: &str = "lodThresholdPx";
+
+/// The person's LOD choice from a save entry: the threshold the panel's "Detail distance" set
+/// (held to its range and the preset's when applied).
+fn person_lod(entry: &Value) -> LodConfig {
+    match entry[PERSON_LOD_THRESHOLD_KEY].as_f64() {
+        Some(pixels) => LodConfig::new().threshold_px(pixels as f32),
+        None => LodConfig::new(),
     }
 }
 
@@ -1778,6 +1830,22 @@ fn panel_index(preset: Option<QualityPreset>, offered: &[QualityPreset]) -> usiz
 struct PanelShown {
     presets: Vec<QualityPreset>,
     features: Vec<(RenderFeature, bool)>,
+    /// The LOD threshold of the preset in force, before the person's "Detail distance".
+    preset_threshold: f32,
+}
+
+/// The "Detail distance" row's range: half to twice the preset's (the threshold's
+/// [`genex_render::presets::LOD_THRESHOLD_SCALE_MIN`]..=`MAX`, inverted: more detail is a finer threshold).
+const DETAIL_RANGE: (f32, f32) = (genex_render::presets::LOD_THRESHOLD_SCALE_MIN, genex_render::presets::LOD_THRESHOLD_SCALE_MAX);
+
+/// The "Detail distance" a threshold of `threshold` px shows against the preset's `preset` px.
+fn detail_of(preset: f32, threshold: f32) -> f32 {
+    if threshold > 0.0 { (preset / threshold).clamp(DETAIL_RANGE.0, DETAIL_RANGE.1) } else { 1.0 }
+}
+
+/// The threshold a "Detail distance" of `detail` asks for against the preset's `preset` px.
+fn threshold_for_detail(preset: f32, detail: f32) -> f32 {
+    preset / detail.clamp(DETAIL_RANGE.0, DETAIL_RANGE.1)
 }
 
 /// The person's layer after one panel change, against what the panel showed.
@@ -1786,9 +1854,11 @@ fn person_after(control: &RenderControl, change: genex_hud::PanelChange, shown: 
     match change {
         genex_hud::PanelChange::Preset(index) => {
             person.preset = index.checked_sub(1).and_then(|index| shown.presets.get(index).copied());
-            // A new preset brings its own switches; the person's earlier ones would mask it.
+            // A new preset brings its own switches and threshold; the person's earlier ones would mask it.
             person.switches.clear();
+            person.lod = LodConfig::new();
         }
+        genex_hud::PanelChange::Detail(detail) => person.lod = person.lod.threshold_px(threshold_for_detail(shown.preset_threshold, detail)),
         genex_hud::PanelChange::RenderScale(scale) => person.render_scale = Some(quantized(scale)),
         genex_hud::PanelChange::Feature(index, on) => {
             if let Some((feature, _)) = shown.features.get(index) {
@@ -1847,6 +1917,7 @@ pub fn settings_panel(ui: &mut egui::Ui) -> bool {
     let defaults = class_defaults(answer.device_class);
     let offered = control.panel_offered();
     let presets = panel_presets(answer.preset, control.person.preset, &offered);
+    let preset_threshold = preset_quality(answer.preset, answer.device_class).lod.threshold_px;
     let panel = genex_hud::SettingsPanel {
         presets: &presets,
         preset: panel_index(control.person.preset, &offered),
@@ -1855,9 +1926,10 @@ pub fn settings_panel(ui: &mut egui::Ui) -> bool {
         features: &labels,
         detected: &detected,
         emulated: (answer.device_class != answer.detected_class).then_some(class.as_str()),
+        detail: Some((detail_of(preset_threshold, control.live.quality.lod.threshold_px), DETAIL_RANGE)),
     };
     let changes = genex_hud::settings_panel(ui, &panel);
-    let shown = PanelShown { presets: offered, features };
+    let shown = PanelShown { presets: offered, features, preset_threshold };
     for change in &changes {
         let person = person_after(&control, *change, &shown);
         control.set_person(person);
@@ -1880,6 +1952,32 @@ mod tests {
         assert_eq!(table.switches, vec![(RenderFeature::Bloom, false)]);
         let error = RenderConfig::from_toml("[render]\npreset = \"epic\"\n").expect_err("an unknown preset");
         assert_eq!(error.code().as_str(), "invalid-render-preset");
+    }
+
+    /// Game systems LOD-06 (new behaviour): a class table's LOD keys and switches reach its
+    /// override, `lod_at` merges into a class's table key by key, and the person's "Detail
+    /// distance" survives the save file and maps to a threshold against the preset's.
+    #[test]
+    fn the_lod_keys_lod_at_and_the_detail_distance_reach_the_quality() {
+        let toml = "[render.class.mobile-mid]\nlod_threshold_px = 3\nlod_fade_band = 0.1\nfar_density = 0.2\nimpostors = false\n";
+        let config = RenderConfig::from_toml(toml).expect("a fragment");
+        let mid = DeviceClass::from_wire("mobile-mid").expect("class");
+        let table = config.quality.class(mid).expect("the class table");
+        assert_eq!(table.lod, LodConfig::new().threshold_px(3.0).fade_band(0.1).far_density(0.2));
+        assert_eq!(table.switches, vec![(RenderFeature::Impostors, false)]);
+        let refused = RenderConfig::from_toml("[render.class.mobile-mid]\nfar_density = 2\n").expect_err("out of range");
+        assert_eq!(refused.code().as_str(), "invalid-render-lod");
+        let merged = config.lod_at(mid, LodConfig::new().threshold_px(4.0)).lod_at(REFERENCE_CLASS, LodConfig::new().fade_band(0.0));
+        assert_eq!(merged.quality.class(mid).expect("kept").lod, LodConfig::new().threshold_px(4.0).fade_band(0.1).far_density(0.2));
+        assert_eq!(merged.quality.class(mid).expect("kept").switches, vec![(RenderFeature::Impostors, false)], "the rest of the table stays");
+        assert_eq!(merged.quality.class(REFERENCE_CLASS).expect("added").lod, LodConfig::new().fade_band(0.0));
+        let person = ClassOverride { lod: LodConfig::new().threshold_px(0.75), ..ClassOverride::default() };
+        assert_eq!(person_from(&person_value(&person)), person, "the threshold survives the save file");
+        assert_eq!(detail_of(1.0, 0.5), 2.0, "half the preset's threshold is twice the detail distance");
+        assert_eq!(threshold_for_detail(2.5, 0.5), 5.0);
+        assert_eq!(threshold_for_detail(1.0, 9.0), 0.5, "held to the row's range");
+        assert_eq!(feature_label(RenderFeature::LodFade), "Detail crossfade");
+        assert_eq!(feature_label(RenderFeature::Impostors), "Impostors");
     }
 
     #[test]

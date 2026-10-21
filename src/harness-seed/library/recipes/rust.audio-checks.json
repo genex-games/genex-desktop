@@ -1,0 +1,44 @@
+{
+  "id": "rust.audio-checks",
+  "runtime": "rust-wgpu",
+  "title": "Sounds a check can prove played, through volatile.audio and the level, in Rust",
+  "tags": [
+    "audio",
+    "sound",
+    "music",
+    "sfx",
+    "footsteps",
+    "volume",
+    "spatial",
+    "probe",
+    "events",
+    "level",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "probe",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Load sounds in on_reset with gfx.sound, play them through ctx.audio, and prove they played from state().volatile.audio.events and the audio level, never by ear.",
+  "intent": "Nobody listens to a judged run, so a sound counts only when the state says it played. Load every sound in on_reset with gfx.sound(path) and music with gfx.music(path) (a refused file is a missing handle: sound.refusal() names why and volatile.audio.issues lists it). Play from on_update or the UI hooks with ctx.audio.play(&sound), ctx.audio.play_at(&sound, position) for a sound in the world, and ctx.audio.music(&music, opts) for music; menu sounds use PlayOpts::ui(). To verify a sound: step past the tick that plays it and read state().volatile.audio.events for its played event (and counts.played), or a refused event with its code. The level, audioLevel on a native run and the page's audio() answer on the web, is the game's own mix before the mute: rms above 0 means something sounded; the page's answer counts only when available is true. Audio never enters the checksum, and a headless run never opens a device, so a muted or silent machine still measures.",
+  "sketch": "// src/facets/footsteps.rs — the facet's own module; src/main.rs adds its two FACET WIRING lines.\nuse super::World;\nuse genex::prelude::*;\n\n#[derive(Default)]\npub struct Footsteps { step: Option<Sound>, steps: u32 }\n\npub fn wire(game: &mut Game<World>) {\n    game.facet_state::<Footsteps>();\n    game.on_reset(|sim, _, _, gfx| sim.facets.get_mut::<Footsteps>().step = Some(gfx.sound(\"sfx/step.wav\")));\n    game.on_update(|sim, ctx| {\n        let at = sim.world.player;\n        let feet = sim.facets.get_mut::<Footsteps>();\n        let Some(step) = &feet.step else { return };\n        if ctx.tick % 20 == 0 && ctx.keys.down(Key::KeyW) {\n            ctx.audio.play_at(step, at); // decided in the tick, the same on every destination\n            feet.steps += 1;\n        }\n    });\n    game.probe(\"steps\", |sim| json!(sim.facets.get::<Footsteps>().steps));\n}\n",
+  "port": "The facet that owns a sound loads and plays it; another facet reads what played from volatile.audio, never from a second copy of the sound.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/audio.md (Checking sound)",
+      "note": "volatile.audio.events lists played, refused and the rest with their tick; audioLevel and the page's audio() answer the game's own mix before the mute."
+    },
+    {
+      "source": "src/game-template-rust/docs/CONTRACT.md (Page verbs)",
+      "note": "The page's audio() answers {available, rms, centroid}; available false is never judged."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

@@ -59,7 +59,20 @@ by `rustTargetBuilders`, build on a Mac (Android also on Linux);
 Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register once
 the Rust recipe pins their cross components, else `target-unbuilt`. Live and judging builds of a desktop
 destination link the facade's dev flavour (`studio` feature: the game serves fd 3, contract v2);
-an export and every web build never do (`RustFlavour`, `rust-manifest.ts`). Non-export builds and
+an export and every web build never do (`RustFlavour`, `rust-manifest.ts`). A `[net] enabled = true`
+game (G6 MP-5b) links the facade's `net-loopback` (the in-process room) in Live, judging and the
+Simulator build a device launch installs, and `net` (the relay) in every other export
+(`rustNetFeatureOf`, `RustNetFeature` in [`rust-manifest.ts`](../../src/main/rust-manifest.ts)); a
+game without networking gets the same manifest as before. Only a networked export bakes in
+`GENEX_GAME_SLUG`: the slug of the game's Genex draft (`genexDraftSlug` in
+[`core/genex-publish.ts`](../../src/main/core/genex-publish.ts), the plugin's publish workspace),
+and only when it is one plain segment (`bakeableGameSlug`); its web export also serves the store's
+`genex-mp-bridge` (MP-5a), refused `mp-bridge-refused` when the component is not installed.
+Publishing (MP-5c): `assertPublishable` admits a Rust game by its web build and refuses
+`no-web-export` when Browser is not a destination or genex.toml declares native features;
+`publicCopyFiles` is the lane's web export; `readGenexGameManifest` carries `[net.matchmaking]` as
+`genex.matchmaking`; `plugins.preflightMultiplayer` answers `RustNoWeb`, then the account and the
+draft route (`RustReady`), never Genex's npm packages. Non-export builds and
 prewarms optimize dependencies (`RUST_DEV_PROFILE_SETTINGS`). Mac embedded and
 headless runs use only lane-admitted bytes (receipt digests); window runs and desktop
 exports stay `lane-missing`. Rust creation ([`stack-gate.ts`](../../src/main/core/stack-gate.ts),
@@ -85,7 +98,10 @@ and its duplicate or unreferenced accessors and materials dropped
 a vertex), a normal-mapped primitive without `TANGENT` gets MikkTSpace tangents, a mirrored UV
 seam's vertices split ([`tangents.ts`](../../src/substrate/asset-import/tangents.ts)), every
 triangle list is put in vertex cache and fetch order before its meshlets and LODs
-([`reorder.ts`](../../src/substrate/asset-import/reorder.ts)), and a Basis KTX2 gets its
+([`reorder.ts`](../../src/substrate/asset-import/reorder.ts)), a GLB whose nodes carry `MSFT_lod` gets
+the authored levels as `genex_lods` instead of simplified ones, each level's screen coverage
+converted to the error the runtime switches at ([`lod-authored.ts`](../../src/substrate/asset-import/lod-authored.ts)),
+and a Basis KTX2 gets its
 per-family files. The receipt carries each written GLB's counts
 and bytes (`sizes`, [`inspect.ts`](../../src/substrate/asset-import/inspect.ts)).
 A PNG or JPEG whose usage resolved (a `[[texture]]` row or a model's material slot; never its name)
@@ -126,7 +142,7 @@ table `tests/fixtures/humanoid-aliases.json`); the host checks both in the recei
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
 families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
 `assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
-family, `deps`, `boot`), and the receipt's `package` gives the bytes. On the web, `webAssetMap` ([`rust-build-web.ts`](../../src/main/rust-build-web.ts)) writes `assets.json` v2: each family file carries its `family` and the texture it is `of`, so the module plans only the family the shell's adapter samples (`studio_assets_plan(map, {features, mobile})`); the image is tagged `source`, and left out, only when the runtime never falls back to it (every shipped family, none RGBA8, each at least 512 px). Streaming reads only the
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. On the web, `webAssetMap` ([`rust-build-web.ts`](../../src/main/rust-build-web.ts)) writes `assets.json` v2: each family file carries its `family` and the texture it is `of`, so the module plans only the family the shell's adapter samples (`studio_assets_plan(map, {features, mobile})`); the image is tagged `source`, and left out, only when the runtime never falls back to it (every shipped family, none RGBA8, each at least 512 px). Map v2 also puts each file in its fetch group (STR-14b): a cell pack's `world.json` and terrain index in `sim`, its cells and terrain tiles in `stream`, each `[[asset_group]]`'s files in `named` with the group's name, and a streamed KTX2's head and levels as smallest-first `ranges`. The shell preloads only the boot and sim groups and fetches the rest while playing by `Range`, at most six at once (`WEB_STREAM_LIMITS`: 64 MiB before the first frame, 64 MiB per streamed fetch); a redirect off the page's origin or out of `assets/` is refused. A `[net]` game's web build (MP-5a) also serves the pinned `@genex-ai/multiplayer` bridge (`MULTIPLAYER_BRIDGE_PIN`, store component `genex-mp-bridge`) and its ESM shim (`MP_BRIDGE_SHIM`) under `mp/`; only that page carries the import map and script tag, and the receipt records `mpBridgeBytes` and `mpBridgeGzip`. Streaming reads only the
 index ([`stream-facts.ts`](../../src/substrate/asset-import/stream-facts.ts)): a GLB's `mesh`
 lists its levels coarse first with their byte ranges, the head and vertex ranges every level
 needs, and its UV texel density; a KTX2 file's `levels` run smallest first with their ranges.
@@ -138,7 +154,10 @@ iOS and Android 200 MB, desktop 2 GB unless `[assets]` names another): past it a
 `packageCeilingRefusal` refuses the build `assets-over-ceiling`. `[assets] phone_max_texture_px`
 replaces the phone mip cap. A game file at that name is
 refused `reserved-asset-name`. Every lane output passes `admitRustOutput` before
-`out/`, exports carry `rust-notices.ts` notices, phone exports
+`out/`. An export keeps line tables outside it ([`rust-debug-files.ts`](../../src/substrate/rust-debug-files.ts)):
+a dSYM (Apple, debug map stripped), the unstripped executable (ELF/PE, shipped through
+`llvm-objcopy --strip-debug`) or the web `wasm-opt --symbolmap` map, in `<bin>.debug/<digest>/` by
+the shipped file's SHA-256, four builds kept. Exports carry `rust-notices.ts` notices, phone exports
 ([`mobile-export-deps.ts`](../../src/main/core/mobile-export-deps.ts)) are signed by `mobile-sign.ts`, and a compiled-stack session builds with its lock's tools, never writing the store. The template is checked by
 `rust-template.test.ts`; the vendored set by `rust-vendor.ts`, cargo-deny and cargo-vet
 (`.github/workflows/rust-toolchain.yml`); person-approved crates join a per-profile overlay
@@ -158,7 +177,24 @@ Desktop exports stage privately at the current lock; certificate signing uses it
 Mac Play, agent runs and embedding use `NativeRuns`: prepare, `spawnGame`, nonce `ready`,
 `NativeGamePort`. Stop requests quit, then TERM/KILL; boot sweeps orphans; app death kills registered
 groups. A v2 game that misses a step or capture deadline, or goes silent owing one, is killed
-`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. Captures carry
+`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. A run that ends
+crashed names its record in its status (`crash`): the game's own last `crash` record (a forged host
+kind or writer is `reply-invalid`), else a host-made `hang` (killed `unresponsive` or `gpu-hang`) or
+`process-exit`. [`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps it in the game's
+`.studio/crashes/` by the host's own name (one file per signature, with `repeat`; at most 32),
+announces `game_crashed` once and answers `game.crashes` and `studio:game.crashes`. Before it is kept,
+[`crash-symbolicate.ts`](../../src/main/core/crash-symbolicate.ts) names its frames (`symbols`) with the
+store's `genex-symbolicate` (built at the Mac prewarm beside `genex-naga-check`) under the sandbox, 20 s,
+reading only host-chosen files: the export's `<bin>.debug/<digest>/`, or a Live build's executable while it
+has the run's digest, its Mach-O debug map followed into `<bin>/target`. The slide comes from
+`genex_crash::frames::anchor`; a frame outside the image is `foreign`; a failure keeps it unsymbolicated.
+Profiles ([`native-profile.ts`](../../src/substrate/native-profile.ts)): `preview.profile` on a native
+lease samples the run's own ops (frame time from `timing`'s frame counter over a host-timed window,
+draws and triangles from `state().__render`, CPU/GPU percentiles and hitches from the `profile`
+summary when served) as a schema-1 `native` sample; `preview.frameProfile` (a lease, native or Rust
+web page) and Live's `studio:native.profile` (the shown run, else Live's page of that game) hand on
+the `profile` verb's answer only through `parseProfileAnswer`, `unknown-op`/`unavailable` as
+`unavailable`. Captures carry
 provenance (seq, digest, camera, run, build, the `render` settings the game answered with and the
 capture's `outputSize`; null where the path did not know them), saved as `<label>.provenance.json`; builder captures add `c<N>_<camera>.manifest.json` (run, worker, commit, build); a failed one `c<N>.refused.json`; links refused (`confinedCaptureDir`). Sessions clone Emscripten caches under `<scratch>/cpp-sessions/<game>/`.
 

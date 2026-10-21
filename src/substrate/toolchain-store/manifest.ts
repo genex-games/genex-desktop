@@ -89,6 +89,8 @@ export const RELEASE_URL_PREFIXES = {
     "https://ziglang.org/download/0.15.2/",
     "https://github.com/zigcc/zig-msgpack/archive/",
   ],
+  // The npm registry's tarballs of @genex-ai/multiplayer, the browser's relay bridge (MP-5a).
+  [ToolchainId.MultiplayerBridge]: ["https://registry.npmjs.org/@genex-ai/multiplayer/-/"],
 } as const satisfies Record<ToolchainId, readonly string[]>;
 
 /**

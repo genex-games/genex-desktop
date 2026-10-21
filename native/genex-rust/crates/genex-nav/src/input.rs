@@ -75,6 +75,11 @@ impl NavArea {
     pub const fn raw(self) -> u8 {
         self.0
     }
+
+    /// The area a mesh polygon's type index names (agents and queries report it).
+    pub(crate) const fn from_raw(raw: u8) -> NavArea {
+        NavArea(raw)
+    }
 }
 
 /// A terrain's height samples: a regular grid of `samples` (x, z) starting at `origin` (world x,

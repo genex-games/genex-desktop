@@ -10,6 +10,14 @@
 //! history never resets) and its reply carries their `render` provenance
 //! ([`StudioGame::capture_provenance`]: preset, class, source, scale, `settleFrames`,
 //! `historyReset`, `exposure`).
+//! The dev flavour's `profile` verb (game systems PROF-4) checks its argument
+//! ([`wire::parse_profile`]) and hands the game a typed request ([`StudioGame::profile`],
+//! `unavailable` by default); a `trace` answer is written by the studio into the run's
+//! `state/profile/trace-<seq>.json` with its size and digest, as captures are.
+//! The dev flavour's `saves` and `uiSettings` verbs (G6 UIS-16) check their arguments as the host
+//! does (`shared/game-saves.ts`: [`parse_saves`], [`parse_ui_settings`]; anything else refuses
+//! `bad-argument` and the game is never asked) and hand the game a typed request
+//! ([`StudioGame::saves`], [`StudioGame::ui_settings`], `unavailable` by default).
 //! [`spell_change`], [`render_answer_value`], [`render_status_value`] and
 //! [`capture_provenance_value`] carry the renderer's values across by their wire spellings, so a
 //! game's runtime (native or web) never re-declares the wire's shapes.
@@ -28,9 +36,9 @@ use genex_core::session::{AudioLevel, CONTRACT_VERSION, StepResult, Timings};
 use crate::transport::Transport;
 use crate::wire::{
     self, CONTRACT_VERSION_V2, CaptureExposure, CaptureProvenance, Degrade, DegradeReason, DeviceClass, Lifecycle,
-    PROTOCOL_VERSION as PROTOCOL_V2, QualityPreset, Receipt, RenderFeature, RenderSettingsAnswer, RenderSettingsChange,
+    PROTOCOL_VERSION as PROTOCOL_V2, ProfileRequest, QualityPreset, Receipt, RenderFeature, RenderSettingsAnswer, RenderSettingsChange,
     RenderSettingsRefusal, RenderStatus, SafeArea, SettingsArgError, SettingsSource, SurfaceArgs, parse_release,
-    parse_render_settings, parse_surface, ring_point_to_world,
+    parse_profile, parse_render_settings, parse_surface, ring_point_to_world,
 };
 
 /// The ops this runtime answers. Wire values shared with the host: never rename one.
@@ -82,12 +90,25 @@ impl Op {
     pub const RENDER_SETTINGS: &'static str = wire::OP_RENDER_SETTINGS;
     /// Run one bake the game registered (dev flavour; NAV-14 and LOD-23 serve it).
     pub const BAKE_ASSETS: &'static str = wire::OP_BAKE_ASSETS;
-    /// Swap changed asset files in a running dev game (dev flavour; C-18 serves it).
+    /// Swap changed asset files in a running dev game (dev flavour; [`StudioGame::reload_assets`]).
     pub const RELOAD_ASSETS: &'static str = wire::OP_RELOAD_ASSETS;
-    /// The asset tools a native run (only the dev flavour links the studio natively) knows and
-    /// answers `unavailable` until their runtime lands; the web flavour, which an export serves too,
+    /// Read the game's frame profile (dev flavour; PROF-5 serves it, `unavailable` until then).
+    pub const PROFILE: &'static str = wire::OP_PROFILE;
+    /// List, read, write, save, load or delete the game's save slots (dev flavour, UIS-16).
+    pub const SAVES: &'static str = "saves";
+    /// A session layer over the gameplay UI's settings (dev flavour, UIS-16).
+    pub const UI_SETTINGS: &'static str = "uiSettings";
+    /// The game-data ops only a native run serves (UIS-16): the web flavour, which an export
+    /// serves too, answers each `unknown-op` and never lists it.
+    pub const GAME_DATA: [&'static str; 2] = [Op::SAVES, Op::UI_SETTINGS];
+    /// The asset tools a native run (only the dev flavour links the studio natively) knows (a game
+    /// that does not serve one answers `unavailable`); the web flavour, which an export serves too,
     /// answers them `unknown-op` and never lists them (CONTRACT.md).
     pub const ASSET_TOOLS: [&'static str; 2] = [Op::BAKE_ASSETS, Op::RELOAD_ASSETS];
+    /// Every op only a native run serves on top of [`Op::ALL`] (the dev flavour: an export never
+    /// links the studio natively): the asset tools, then `profile`. The web flavour, which an
+    /// export serves too, answers each `unknown-op` and never lists it.
+    pub const DEV_TOOLS: [&'static str; 3] = [Op::BAKE_ASSETS, Op::RELOAD_ASSETS, Op::PROFILE];
     /// The ops only a game that can embed in Live serves; any other answers them `unknown-op`
     /// and never lists them, which the host reads as a game made before embedding.
     pub const EMBEDDING: [&'static str; 2] = [Op::SURFACE, Op::RELEASE];
@@ -166,6 +187,10 @@ impl VerbRefusal {
     /// A verb the game knows but this build cannot serve yet ([`Op::ASSET_TOOLS`] before their
     /// runtime lands); the spelling `renderSettings` shares.
     pub const UNAVAILABLE: &'static str = RenderSettingsRefusal::Unavailable.wire();
+    /// `bakeAssets` named a bake the game did not register for that kind: nothing written.
+    pub const UNKNOWN_BAKE: &'static str = "unknown-bake";
+    /// A bake's output past [`BAKE_MAX_BYTES`] (`NATIVE_BAKE_MAX_BYTES`): nothing written.
+    pub const BAKE_TOO_LARGE: &'static str = "bake-too-large";
 }
 
 /// Why a game could not make the ring `surface` asked for.
@@ -198,6 +223,13 @@ pub const CAPTURES_KEPT: u32 = 8;
 pub const CAPTURE_MAX_PX: u32 = 4096;
 /// The most bytes one capture file may hold (`NATIVE_CAPTURE_MAX_BYTES`).
 pub const CAPTURE_MAX_BYTES: u64 = CAPTURE_MAX_PX as u64 * CAPTURE_MAX_PX as u64 * 4;
+/// Trace files a run keeps under `state/profile/`: the host copies each when its answer arrives and
+/// never deletes in `state/` while the game runs, so the game drops the oldest (as captures).
+pub const TRACES_KEPT: u32 = 8;
+/// The folder under the state root traces go in, and a trace file's name around its sequence number.
+const PROFILE_DIR: &str = "profile";
+const TRACE_PREFIX: &str = "trace-";
+const TRACE_EXTENSION: &str = ".json";
 /// The camera name that gives the view back to the game.
 pub const DEFAULT_CAMERA: &str = "default";
 /// The value range `seed(n)` takes, as JavaScript's `n >>> 0` does.
@@ -227,6 +259,146 @@ pub enum CaptureFault {
     /// (`device-lost` while the device is re-created, `upload-budget`, `mesh-invalid`, ...), which
     /// the `capture` verb answers as is.
     Refused(&'static str),
+}
+
+/// What a game answers a `profile` request with ([`StudioGame::profile`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileAnswer {
+    /// The answer as is: the summary, the `ProfileReport` v2, or the arm's `{mode}`.
+    Value(Value),
+    /// A trace's Chrome trace JSON, which the studio writes into `state/profile/` and answers with
+    /// its sequence number, size and digest.
+    Trace(Vec<u8>),
+}
+
+/// The most files one `reloadAssets` names (`NATIVE_RELOAD_FILES_MAX`); a longer list is refused
+/// `bad-argument` before any file is looked at.
+pub const RELOAD_FILES_MAX: usize = 256;
+/// A `reloadAssets` digest's spelling: FNV-1a 64 as 16 lowercase hex digits.
+const RELOAD_DIGEST_HEX_DIGITS: usize = 16;
+
+/// Why `reloadAssets` refused one file (its answer's `refused[].code`, `ReloadRefusal`). Wire
+/// values: never rename one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReloadRefusal {
+    /// The path breaks the asset-path rule (refused by the studio; the game never reads it).
+    UnsafePath,
+    /// The bytes the game's source serves now do not have the digest the host named.
+    DigestMismatch,
+    /// Nothing is there.
+    Missing,
+}
+
+impl ReloadRefusal {
+    /// Every refusal, in the host's order.
+    pub const ALL: [ReloadRefusal; 3] = [ReloadRefusal::UnsafePath, ReloadRefusal::DigestMismatch, ReloadRefusal::Missing];
+
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ReloadRefusal::UnsafePath => "unsafe-path",
+            ReloadRefusal::DigestMismatch => "digest-mismatch",
+            ReloadRefusal::Missing => "missing",
+        }
+    }
+}
+
+/// One file a `reloadAssets` names: its asset path and the FNV-1a 64 of the new bytes the host
+/// wrote there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReloadFile {
+    /// The `/`-separated path under `assets/`.
+    pub path: String,
+    /// The FNV-1a 64 of its new bytes.
+    pub digest: u64,
+}
+
+/// What a game did with the files of a `reloadAssets` ([`StudioGame::reload_assets`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReloadOutcome {
+    /// The paths dropped from the renderer to be read again, in request order.
+    pub reloaded: Vec<String>,
+    /// The paths left as they were, with why.
+    pub refused: Vec<(String, ReloadRefusal)>,
+    /// Reloads not finished yet (a frame has not loaded them); a settled capture waits for 0.
+    pub pending: u32,
+}
+
+/// 16 lowercase hex digits as a u64.
+fn reload_digest(text: &str) -> Option<u64> {
+    let hex = text.len() == RELOAD_DIGEST_HEX_DIGITS && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !hex {
+        return None;
+    }
+    u64::from_str_radix(text, 16).ok()
+}
+
+/// A `reloadAssets` argument: `{files: [{path, digest}]}`, at most [`RELOAD_FILES_MAX`] files, each
+/// path a string and each digest 16 lowercase hex digits, in request order. A path's safety is
+/// not judged here (the studio refuses an unsafe one per file); unknown members are ignored.
+pub fn parse_reload(arg: &Value) -> Result<Vec<ReloadFile>, wire::BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let Some(files @ Value::Array(_)) = arg.get("files") else { return Err(wire::BadField("files")) };
+    if files.items().len() > RELOAD_FILES_MAX {
+        return Err(wire::BadField("files"));
+    }
+    files
+        .items()
+        .iter()
+        .map(|file| {
+            let (Some(Value::String(_)), Some(Value::String(_))) = (file.get("path"), file.get("digest")) else {
+                return Err(wire::BadField("files"));
+            };
+            let digest = reload_digest(file["digest"].as_str()).ok_or(wire::BadField("digest"))?;
+            Ok(ReloadFile { path: file["path"].as_str().to_owned(), digest })
+        })
+        .collect()
+}
+
+/// The longest bake name (`isBakeName` in `shared/native-contract.ts`).
+pub const BAKE_NAME_MAX: usize = 64;
+/// The most bytes one bake's output may hold (`NATIVE_BAKE_MAX_BYTES`).
+pub const BAKE_MAX_BYTES: usize = 256 * 1024 * 1024;
+/// The folder under the state root bakes go in, one folder per kind below it.
+const BAKES_DIR: &str = "bakes";
+/// The suffix of a bake's staging file, renamed onto the bake once whole.
+const BAKE_STAGING_SUFFIX: &str = ".partial";
+
+/// One `bakeAssets` request: the kind and the registered name of the bake to run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BakeRequest {
+    /// What is baked.
+    pub kind: wire::BakeKind,
+    /// The name the game registered it under ([`is_bake_name`]).
+    pub name: String,
+}
+
+/// Whether `name` is a bake name: one path segment of lowercase ASCII letters, digits, `-` and
+/// `_`, starting with a letter or digit, at most [`BAKE_NAME_MAX`] (never a dot, a separator or a
+/// control character), so `state/bakes/<kind>/<name>` can never climb out.
+pub fn is_bake_name(name: &str) -> bool {
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
+    let leads = name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    leads && name.len() <= BAKE_NAME_MAX && name.chars().all(allowed)
+}
+
+/// A `bakeAssets` argument: `{kind, name}` with a known kind and a bake name ([`is_bake_name`]);
+/// unknown members are ignored.
+pub fn parse_bake(arg: &Value) -> Result<BakeRequest, wire::BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let (Some(Value::String(_)), Some(Value::String(_))) = (arg.get("kind"), arg.get("name")) else {
+        return Err(wire::BadField("arg"));
+    };
+    let kind = wire::BakeKind::from_wire(arg["kind"].as_str()).ok_or(wire::BadField("kind"))?;
+    let name = arg["name"].as_str();
+    if !is_bake_name(name) {
+        return Err(wire::BadField("name"));
+    }
+    Ok(BakeRequest { kind, name: name.to_owned() })
 }
 
 /// What the studio drives: the runtime behind a game (the facade's `Runtime`, a shell, a test
@@ -327,6 +499,21 @@ pub trait StudioGame {
     fn render_settings(&mut self, _change: Option<&RenderSettingsChange>) -> Result<Value, RenderSettingsRefusal> {
         Err(RenderSettingsRefusal::Unavailable)
     }
+    /// `reloadAssets`: re-read each of `files` (every path already under the asset-path rule) from
+    /// the game's source, refuse one that is missing or whose bytes are not its digest, drop what
+    /// the renderer holds of the rest and draw again, answering what is still pending. A game still
+    /// applying an earlier reload answers `busy`; one that does not serve the verb `unavailable`.
+    fn reload_assets(&mut self, _files: &[ReloadFile]) -> Result<ReloadOutcome, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+    /// `bakeAssets` (dev flavour, NAV-14): run the bake `request` names (checked: a known kind and
+    /// a bake name) and answer its output bytes, which the studio writes into
+    /// `state/bakes/<kind>/<name>`; or refuse it with a wire code (`unknown-bake` for a name the
+    /// game did not register, the bake's own typed code). A game that serves no bakes of that kind
+    /// answers `unavailable`.
+    fn bake_assets(&mut self, _request: &BakeRequest) -> Result<Vec<u8>, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
     /// Draw the frame `capture` reads: a game with render settings draws its pinned capture
     /// profile (no person override, no dynamic resolution) as a settled capture, K re-renders on
     /// a capture-owned history that leave Live's history as it was; by default the Live frame.
@@ -350,6 +537,191 @@ pub trait StudioGame {
     fn set_capture_lens(&mut self, lens: CaptureLens) -> bool {
         lens == CaptureLens::default()
     }
+    /// `profile` (dev flavour): answer `request` (checked: a known action, frames clamped, `arm`
+    /// with a mode), or refuse it with a wire code. A game that serves no profiles answers
+    /// `unavailable`. Display only: nothing a tick computes depends on what this answers.
+    fn profile(&mut self, _request: &ProfileRequest) -> Result<ProfileAnswer, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+    /// `saves` (dev flavour, UIS-16): serve `request` (checked by [`parse_saves`]) between ticks
+    /// and answer its result, or refuse it with a wire code (`save-*`). A load answers once it
+    /// applied. A game that serves no saves answers `unavailable`.
+    fn saves(&mut self, _request: &SavesRequest) -> Result<Value, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+    /// `uiSettings` (dev flavour, UIS-16): apply `change` (checked by [`parse_ui_settings`]) as the
+    /// session layer from the next tick and answer the layer in force, or refuse it with a wire
+    /// code (`text-locale-unknown`, `bad-argument`). A game that serves none answers `unavailable`.
+    fn ui_settings(&mut self, _change: &UiSettingsChange) -> Result<Value, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+}
+
+/// The longest slot name a `saves` call names (`SAVE_SLOT_NAME_MAX`, genex-save's `SLOT_NAME_MAX`).
+pub const SAVE_SLOT_NAME_MAX: usize = 32;
+/// The most characters a slot's label holds (`SAVE_LABEL_CHARS_MAX`).
+pub const SAVE_LABEL_CHARS_MAX: usize = 64;
+/// The most bytes of JSON an envelope a `saves` call carries or answers
+/// (`NATIVE_SAVES_ENVELOPE_MAX_BYTES`: a 1 MiB line, less room for its own members).
+pub const SAVES_ENVELOPE_MAX_BYTES: usize = 1024 * 1024 - 4 * 1024;
+/// The longest locale tag (`UI_LOCALE_TAG_CHARS_MAX`).
+pub const UI_LOCALE_TAG_CHARS_MAX: usize = 35;
+/// The smallest UI scale and text size (`UI_SCALE_MIN`).
+pub const UI_SCALE_MIN: f64 = 0.5;
+/// The largest UI scale and text size (`UI_SCALE_MAX`).
+pub const UI_SCALE_MAX: f64 = 3.0;
+/// The largest safe-area inset, in world pixels (`UI_SAFE_AREA_MAX_PX`).
+pub const UI_SAFE_AREA_MAX_PX: f64 = 4096.0;
+
+/// What a `saves` call does (`SaveOp`). Wire values: never rename one.
+#[derive(Clone, Copy, Debug)]
+pub struct SaveOp;
+
+impl SaveOp {
+    /// The slots, their bytes and the quota.
+    pub const LIST: &'static str = "list";
+    /// One slot's envelope, or `{tooLarge, bytes, digest}`.
+    pub const READ: &'static str = "read";
+    /// Seed a slot with a fixture envelope.
+    pub const WRITE: &'static str = "write";
+    /// Save the running game into a slot.
+    pub const SAVE: &'static str = "save";
+    /// Load a slot, answered once applied.
+    pub const LOAD: &'static str = "load";
+    /// Delete a slot.
+    pub const DELETE: &'static str = "delete";
+}
+
+/// A checked `saves` argument ([`parse_saves`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SavesRequest {
+    /// `{op: "list"}`.
+    List,
+    /// `{op: "read", slot}`.
+    Read(String),
+    /// `{op: "write", slot, envelope}`: the envelope as JSON bytes.
+    Write(String, Vec<u8>),
+    /// `{op: "save", slot, label?}`.
+    Save(String, String),
+    /// `{op: "load", slot}`.
+    Load(String),
+    /// `{op: "delete", slot}`.
+    Delete(String),
+}
+
+/// Whether `slot` has a slot name's shape: lowercase letters, digits and dashes, not starting
+/// with a dash, at most [`SAVE_SLOT_NAME_MAX`] bytes (the game refuses reserved names itself).
+fn is_slot_name(slot: &str) -> bool {
+    let shaped = slot.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    shaped && slot.len() <= SAVE_SLOT_NAME_MAX && !slot.is_empty() && !slot.starts_with('-')
+}
+
+/// `saves`' argument checked as `checkSavesArg` checks it: a known op, a slot name of a safe shape,
+/// a label within its cap, a `write`'s envelope an object a line can carry; unknown members are
+/// ignored.
+pub fn parse_saves(arg: &Value) -> Result<SavesRequest, wire::BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let Some(Value::String(_)) = arg.get("op") else { return Err(wire::BadField("op")) };
+    let op = arg["op"].as_str();
+    if op == SaveOp::LIST {
+        return Ok(SavesRequest::List);
+    }
+    let slot = match arg.get("slot") {
+        Some(Value::String(_)) if is_slot_name(arg["slot"].as_str()) => arg["slot"].as_str().to_owned(),
+        _ => return Err(wire::BadField("slot")),
+    };
+    match op {
+        SaveOp::READ => Ok(SavesRequest::Read(slot)),
+        SaveOp::LOAD => Ok(SavesRequest::Load(slot)),
+        SaveOp::DELETE => Ok(SavesRequest::Delete(slot)),
+        SaveOp::SAVE => match arg.get("label") {
+            None => Ok(SavesRequest::Save(slot, String::new())),
+            Some(Value::String(_)) if arg["label"].as_str().chars().count() <= SAVE_LABEL_CHARS_MAX => Ok(SavesRequest::Save(slot, arg["label"].as_str().to_owned())),
+            Some(_) => Err(wire::BadField("label")),
+        },
+        SaveOp::WRITE => {
+            let Some(envelope @ Value::Object(_)) = arg.get("envelope") else { return Err(wire::BadField("envelope")) };
+            let bytes = envelope.dump();
+            if bytes.len() > SAVES_ENVELOPE_MAX_BYTES {
+                return Err(wire::BadField("envelope"));
+            }
+            Ok(SavesRequest::Write(slot, bytes))
+        }
+        _ => Err(wire::BadField("op")),
+    }
+}
+
+/// One member of a `uiSettings` change: left out (kept), null (the game's own back), or a value.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum UiMember<T> {
+    /// Left out: the layer keeps what it had.
+    #[default]
+    Keep,
+    /// `null`: the game's own value again.
+    Reset,
+    /// A new value.
+    Set(T),
+}
+
+/// A checked `uiSettings` argument ([`parse_ui_settings`]): no member at all reads the layer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UiSettingsChange {
+    /// A locale tag (the game refuses one it does not offer).
+    pub locale: UiMember<String>,
+    /// A UI scale in [`UI_SCALE_MIN`]..=[`UI_SCALE_MAX`].
+    pub scale: UiMember<f64>,
+    /// Safe-area insets `[left, top, right, bottom]` in world pixels.
+    pub safe_area: UiMember<[f64; 4]>,
+    /// A text size multiplier in [`UI_SCALE_MIN`]..=[`UI_SCALE_MAX`].
+    pub text_size: UiMember<f64>,
+}
+
+/// Whether `tag` has a locale tag's shape: a 2 to 8 letter language subtag, then subtags of 1 to
+/// 8 letters or digits joined by `-` or `_`, at most [`UI_LOCALE_TAG_CHARS_MAX`].
+fn is_locale_tag(tag: &str) -> bool {
+    let mut parts = tag.split(['-', '_']);
+    let language = parts.next().unwrap_or_default();
+    let first = (2..=8).contains(&language.len()) && language.bytes().all(|b| b.is_ascii_alphabetic());
+    let rest = parts.all(|part| (1..=8).contains(&part.len()) && part.bytes().all(|b| b.is_ascii_alphanumeric()));
+    tag.len() <= UI_LOCALE_TAG_CHARS_MAX && first && rest
+}
+
+/// A finite number within `range`.
+fn number_within(value: &Value, range: std::ops::RangeInclusive<f64>) -> Option<f64> {
+    let Value::Number(n) = value else { return None };
+    (n.is_finite() && range.contains(n)).then_some(*n)
+}
+
+/// One `uiSettings` member: absent keeps, null resets, else `read` checks it.
+fn ui_member<T>(arg: &Value, key: &'static str, read: impl Fn(&Value) -> Option<T>) -> Result<UiMember<T>, wire::BadField> {
+    match arg.get(key) {
+        None => Ok(UiMember::Keep),
+        Some(Value::Null) => Ok(UiMember::Reset),
+        Some(value) => read(value).map(UiMember::Set).ok_or(wire::BadField(key)),
+    }
+}
+
+/// `uiSettings`' argument checked as `checkUiSettingsArg` checks it: none (or null) reads the
+/// layer; otherwise each member given is null or in its shape and range.
+pub fn parse_ui_settings(arg: &Value) -> Result<UiSettingsChange, wire::BadField> {
+    if arg.is_null() {
+        return Ok(UiSettingsChange::default());
+    }
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let scale_range = UI_SCALE_MIN..=UI_SCALE_MAX;
+    let locale = ui_member(arg, "locale", |value| matches!(value, Value::String(_)).then(|| value.as_str()).filter(|tag| is_locale_tag(tag)).map(str::to_owned))?;
+    let scale = ui_member(arg, "scale", |value| number_within(value, scale_range.clone()))?;
+    let text_size = ui_member(arg, "textSize", |value| number_within(value, scale_range.clone()))?;
+    let safe_area = ui_member(arg, "safeArea", |value| {
+        let insets: Vec<f64> = value.items().iter().filter_map(|inset| number_within(inset, 0.0..=UI_SAFE_AREA_MAX_PX)).collect();
+        let whole = matches!(value, Value::Array(_)) && value.items().len() == 4;
+        whole.then(|| <[f64; 4]>::try_from(insets).ok()).flatten()
+    })?;
+    Ok(UiSettingsChange { locale, scale, safe_area, text_size })
 }
 
 /// What `capture`'s `lens` argument asks of the look (`NativeCaptureLens`): neither by default.
@@ -555,6 +927,8 @@ pub struct Studio {
     ready: bool,
     closing: bool,
     captures: u32,
+    /// Traces written under `state/profile/`.
+    traces: u32,
     camera: String,
     muted: bool,
     /// The protocol `ready` stated: 1, or 2 with the receipt.
@@ -616,6 +990,20 @@ fn names(list: impl IntoIterator<Item = String>) -> Value {
         out.push(Value::from(name));
     }
     out
+}
+
+/// Write `bytes` as `<folder><name>` whole: into a staging file beside it, then renamed onto it, so
+/// the host never reads half a file; the staging file is removed when either step fails.
+fn write_whole(folder: &str, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    fs::create_dir_all(folder)?;
+    let target = format!("{folder}{name}");
+    let staging = format!("{target}{BAKE_STAGING_SUFFIX}");
+    let written = fs::write(&staging, bytes).and_then(|()| fs::rename(&staging, &target));
+    if written.is_err() {
+        // Nothing else reads the staging file; a failed removal leaves only it behind.
+        let _ = fs::remove_file(&staging);
+    }
+    written
 }
 
 fn object(members: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
@@ -723,6 +1111,7 @@ impl Studio {
             ready: false,
             closing: false,
             captures: 0,
+            traces: 0,
             camera: DEFAULT_CAMERA.to_owned(),
             muted: false,
             protocol: PROTOCOL_VERSION,
@@ -938,7 +1327,8 @@ impl Studio {
             ops.extend(Op::EMBEDDING);
         }
         if self.files {
-            ops.extend(Op::ASSET_TOOLS);
+            ops.extend(Op::DEV_TOOLS);
+            ops.extend(Op::GAME_DATA);
         }
         ops
     }
@@ -969,7 +1359,11 @@ impl Studio {
                 Answer::Result(object([("visible", Value::from(visible))]))
             }
             Op::RENDER_SETTINGS => Studio::render_settings(game, arg),
-            Op::BAKE_ASSETS | Op::RELOAD_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
+            Op::BAKE_ASSETS => self.bake_assets(game, arg),
+            Op::RELOAD_ASSETS => Studio::reload_assets(game, arg),
+            Op::PROFILE => self.profile(game, arg),
+            Op::SAVES => Studio::saves(game, arg),
+            Op::UI_SETTINGS => Studio::ui_settings(game, arg),
             // `handle` routes only the ops in this flavour's set here.
             _ => refuse(Refusal::UNKNOWN_OP),
         }
@@ -986,6 +1380,131 @@ impl Studio {
             Ok(answer) => Answer::Result(answer),
             Err(refusal) => refuse(refusal.wire()),
         }
+    }
+
+    /// `reloadAssets`: the argument checked here and every unsafe path refused here (the game
+    /// never reads one), the rest the game's to re-read; refusals in request order.
+    fn reload_assets<G: StudioGame>(game: &mut G, arg: &Value) -> Answer {
+        let Ok(files) = parse_reload(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        if game.busy() {
+            return refuse(VerbRefusal::BUSY);
+        }
+        let (safe, unsafe_paths): (Vec<ReloadFile>, Vec<ReloadFile>) = files.into_iter().partition(|file| paths::is_safe_asset_path(&file.path));
+        let outcome = match game.reload_assets(&safe) {
+            Ok(outcome) => outcome,
+            Err(code) => return refuse(code),
+        };
+        let unsafe_refusals = unsafe_paths.into_iter().map(|file| (file.path, ReloadRefusal::UnsafePath));
+        let mut refused = Value::array();
+        for (path, code) in unsafe_refusals.chain(outcome.refused) {
+            refused.push(object([("path", Value::from(path)), ("code", Value::from(code.wire()))]));
+        }
+        Answer::Result(object([("reloaded", names(outcome.reloaded)), ("refused", refused), ("pending", Value::from(outcome.pending))]))
+    }
+
+    /// `bakeAssets`: the argument checked here, the bake the game's; its output is written here
+    /// into `<state>/bakes/<kind>/<name>` (a staging file renamed onto it) and answered with its
+    /// size and digest. Refused while the game ticks or draws.
+    fn bake_assets<G: StudioGame>(&mut self, game: &mut G, arg: &Value) -> Answer {
+        let Ok(request) = parse_bake(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        if game.busy() {
+            return refuse(VerbRefusal::BUSY);
+        }
+        let bytes = match game.bake_assets(&request) {
+            Ok(bytes) => bytes,
+            Err(code) => return refuse(code),
+        };
+        if bytes.len() > BAKE_MAX_BYTES {
+            return refuse(VerbRefusal::BAKE_TOO_LARGE);
+        }
+        let folder = self.bake_folder(request.kind);
+        if folder.is_empty() || write_whole(&folder, &request.name, &bytes).is_err() {
+            return refuse(VerbRefusal::NO_STATE_DIR);
+        }
+        Answer::Result(object([
+            ("kind", Value::from(request.kind.wire())),
+            ("name", Value::from(request.name)),
+            ("bytes", Value::from(bytes.len() as f64)),
+            ("digest", Value::from(hex64(fnv1a64(&bytes)))),
+        ]))
+    }
+
+    /// `<state>/bakes/<kind>/`, beside `captures/`; "" where captures have nowhere to go either.
+    fn bake_folder(&self, kind: wire::BakeKind) -> String {
+        let captures = paths::capture_folder(&self.save_root);
+        if captures.is_empty() {
+            return String::new();
+        }
+        // `capture_folder` ends in the platform's separator (one ASCII byte); the bake folder does too.
+        let separator = &captures[captures.len() - 1..];
+        format!("{}{BAKES_DIR}{separator}{}{separator}", self.save_root, kind.wire())
+    }
+
+    /// `saves`: the argument checked here, the slots the game's; refused while it ticks or draws.
+    fn saves<G: StudioGame>(game: &mut G, arg: &Value) -> Answer {
+        let Ok(request) = parse_saves(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        if game.busy() {
+            return refuse(VerbRefusal::BUSY);
+        }
+        match game.saves(&request) {
+            Ok(result) => Answer::Result(result),
+            Err(code) => refuse(code),
+        }
+    }
+
+    /// `uiSettings`: the argument checked here, the layer the game's.
+    fn ui_settings<G: StudioGame>(game: &mut G, arg: &Value) -> Answer {
+        let Ok(change) = parse_ui_settings(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        match game.ui_settings(&change) {
+            Ok(result) => Answer::Result(result),
+            Err(code) => refuse(code),
+        }
+    }
+
+    /// `profile`: the argument checked here, the answer the game's; a trace is written here.
+    fn profile<G: StudioGame>(&mut self, game: &mut G, arg: &Value) -> Answer {
+        let Ok(request) = parse_profile(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        let folder = self.profile_folder();
+        // A trace with nowhere to go is refused before the game builds it.
+        if request.action == wire::ProfileAction::Trace && folder.is_empty() {
+            return refuse(VerbRefusal::NO_STATE_DIR);
+        }
+        match game.profile(&request) {
+            Ok(ProfileAnswer::Value(value)) => Answer::Result(value),
+            Ok(ProfileAnswer::Trace(bytes)) => self.trace_file(&folder, &bytes),
+            Err(code) => refuse(code),
+        }
+    }
+
+    /// `<state>/profile/`, beside `captures/`; "" where captures have nowhere to go either.
+    fn profile_folder(&self) -> String {
+        let captures = paths::capture_folder(&self.save_root);
+        if captures.is_empty() {
+            return String::new();
+        }
+        // `capture_folder` ends in the platform's separator (one ASCII byte); the trace folder does too.
+        let separator = &captures[captures.len() - 1..];
+        format!("{}{PROFILE_DIR}{separator}", self.save_root)
+    }
+
+    /// Write a trace into `<state>/profile/trace-<seq>.json` and answer its seq, size and digest;
+    /// a failed write takes no sequence number and answers `no-state-dir`.
+    fn trace_file(&mut self, folder: &str, bytes: &[u8]) -> Answer {
+        let seq = self.traces + 1;
+        let path = |n: u32| format!("{folder}{TRACE_PREFIX}{n}{TRACE_EXTENSION}");
+        if fs::create_dir_all(folder).is_err() || fs::write(path(seq), bytes).is_err() {
+            return refuse(VerbRefusal::NO_STATE_DIR);
+        }
+        self.traces = seq;
+        if seq > TRACES_KEPT {
+            // Already gone is fine: the host never deletes there, and nothing else reads it.
+            let _ = fs::remove_file(path(seq - TRACES_KEPT));
+        }
+        Answer::Result(object([
+            ("seq", Value::from(seq)),
+            ("bytes", Value::from(bytes.len() as f64)),
+            ("digest", Value::from(hex64(fnv1a64(bytes)))),
+        ]))
     }
 
     fn camera_names<G: StudioGame>(&self, game: &G) -> Vec<String> {

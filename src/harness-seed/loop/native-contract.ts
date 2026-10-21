@@ -2,7 +2,8 @@
  * The harness's copy of the C++ · raylib contract: stacks, destinations, the phone artifacts the
  * harness may export and the judging target,
  * the native run protocol's vocabularies, ops and reply checks (the renderer's quality vocabulary of
- * `renderSettings`, `volatile.render` and capture provenance included), which checks a raylib game can
+ * `renderSettings`, `volatile.render` and capture provenance included; the `saves` and `uiSettings`
+ * codes and arguments of `shared/game-saves.ts` too), which checks a raylib game can
  * measure per stack, and the `SERVES_NATIVE` and `SERVES_RUST` marks a raylib or Rust night needs
  * from every part it runs. The app
  * keeps the same in `shared/game-project.ts`, `shared/game-targets.ts`,
@@ -303,6 +304,10 @@ export const NativeOp = {
   ReloadAssets: "reloadAssets",
   /** Read a dev game's frame profile (`{action, frames?, mode?}`): summary, report, arm or trace. */
   Profile: "profile",
+  /** List, read, write, save, load or delete the game's save slots (`{op, slot?, label?, envelope?}`). */
+  Saves: "saves",
+  /** A session layer over the gameplay UI's settings (`{locale?, scale?, safeArea?, textSize?}`); no member reads. */
+  UiSettings: "uiSettings",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
 
@@ -551,6 +556,12 @@ export const NATIVE_CUSTOM_PASSES_KEY = "customPasses";
 export const NATIVE_RENDER_KEY = "render";
 /** The `renderSettings` version a receipt advertises as `renderSettingsApi`. */
 export const NATIVE_RENDER_SETTINGS_API_VERSION = 1;
+/** The `reloadAssets` version a receipt advertises as `reloadAssetsApi`. */
+export const NATIVE_RELOAD_ASSETS_API_VERSION = 1;
+/** The `saves` version a receipt advertises as `savesApi` (G6 UIS-16). */
+export const NATIVE_SAVES_API_VERSION = 1;
+/** The `uiSettings` version a receipt advertises as `uiSettingsApi` (G6 UIS-16). */
+export const NATIVE_UI_SETTINGS_API_VERSION = 1;
 
 // ── the renderer's quality (shared/render-quality.ts) ─────────────────────────────────────
 
@@ -613,6 +624,8 @@ export const RenderFeature = {
   Prepass: "prepass",
   TextureQuality: "texture-quality",
   SpotShadows: "spot-shadows",
+  LodFade: "lod-fade",
+  Impostors: "impostors",
 } as const;
 export type RenderFeature = (typeof RenderFeature)[keyof typeof RenderFeature];
 
@@ -728,6 +741,84 @@ export interface CaptureProvenance {
   exposure: CaptureExposure;
 }
 
+// ── saves and the gameplay UI's settings (shared/game-saves.ts) ───────────────────────────
+
+/** What a `saves` call does. Wire values: never rename one. */
+export const SaveOp = {
+  List: "list",
+  Read: "read",
+  Write: "write",
+  Save: "save",
+  Load: "load",
+  Delete: "delete",
+} as const;
+export type SaveOp = (typeof SaveOp)[keyof typeof SaveOp];
+
+/** Why a game refused a save, load or delete; nothing changed. Wire values: never rename one. */
+export const SaveErrorCode = {
+  SlotInvalid: "save-slot-invalid",
+  SlotMissing: "save-slot-missing",
+  SlotsFull: "save-slots-full",
+  TooLarge: "save-too-large",
+  Quota: "save-quota",
+  Unavailable: "save-unavailable",
+  Corrupt: "save-corrupt",
+  FormatUnknown: "save-format-unknown",
+  Newer: "save-newer",
+  MigrationMissing: "save-migration-missing",
+  MigrationFailed: "save-migration-failed",
+  SectionInvalid: "save-section-invalid",
+  SectionMissing: "save-section-missing",
+  Busy: "save-busy",
+  LoadTimeout: "save-load-timeout",
+  NotConfigured: "save-not-configured",
+} as const satisfies Record<string, `save-${string}`>;
+export type SaveErrorCode = (typeof SaveErrorCode)[keyof typeof SaveErrorCode];
+
+/** The volatile issue of a load that applied but whose recomputed checksum differs from the saved one. */
+export const SAVE_RESTORE_DIVERGED = "save-restore-diverged";
+
+/** Why a game's text could not be shown as asked. Wire values. */
+export const TextErrorCode = {
+  Missing: "text-missing",
+  Invalid: "text-invalid",
+  TooLarge: "text-too-large",
+  LocaleUnknown: "text-locale-unknown",
+  FontMissing: "text-font-missing",
+} as const satisfies Record<string, `text-${string}`>;
+export type TextErrorCode = (typeof TextErrorCode)[keyof typeof TextErrorCode];
+
+/** The most bytes a slot name holds; the most characters a label holds. */
+export const SAVE_SLOT_NAME_MAX = 32;
+export const SAVE_LABEL_CHARS_MAX = 64;
+/** The most bytes of JSON an envelope a `saves` call carries or answers may hold. */
+export const NATIVE_SAVES_ENVELOPE_MAX_BYTES = 1024 * 1024 - 4 * 1024;
+/** The longest locale tag; the UI scale and text size range; the largest safe-area inset (world px). */
+export const UI_LOCALE_TAG_CHARS_MAX = 35;
+export const UI_SCALE_MIN = 0.5;
+export const UI_SCALE_MAX = 3.0;
+export const UI_TEXT_SIZE_MIN = UI_SCALE_MIN;
+export const UI_TEXT_SIZE_MAX = UI_SCALE_MAX;
+export const UI_SAFE_AREA_MAX_PX = 4096;
+
+/** A `saves` argument; the host refuses anything else `bad-argument` before it is sent. */
+export type SavesArg =
+  | { op: typeof SaveOp.List }
+  | { op: typeof SaveOp.Read | typeof SaveOp.Load | typeof SaveOp.Delete; slot: string }
+  | { op: typeof SaveOp.Save; slot: string; label?: string }
+  | { op: typeof SaveOp.Write; slot: string; envelope: Record<string, unknown> };
+
+/** The UI's left, top, right and bottom safe-area insets, in world pixels. */
+export type UiSafeArea = [left: number, top: number, right: number, bottom: number];
+
+/** A `uiSettings` change: a member left out stays, null gives the game's own back, none reads. */
+export interface UiSettingsArg {
+  locale?: string | null;
+  scale?: number | null;
+  safeArea?: UiSafeArea | null;
+  textSize?: number | null;
+}
+
 /** A pad's state as the Gamepad API reports it. */
 export interface NativeGamepadAction {
   type: typeof NativeInputKind.Gamepad;
@@ -820,6 +911,8 @@ export interface NativeOpArgs {
   [NativeOp.BakeAssets]: { kind: BakeKind; name: string };
   [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
   [NativeOp.Profile]: { action: FrameProfileAction; frames?: number; mode?: GpuTimingMode };
+  [NativeOp.Saves]: SavesArg;
+  [NativeOp.UiSettings]: UiSettingsArg;
 }
 
 /** Per-op results, as the host checks every reply against them. Fields beyond these are ignored. */
@@ -849,6 +942,10 @@ export interface NativeOpResults {
   [NativeOp.ReloadAssets]: NativeReloadAnswer;
   /** Checked by shape only (summary `v: 1`, report `v: 2`, `{mode}` or `{bytes, digest}`); read it field by field. */
   [NativeOp.Profile]: Record<string, unknown>;
+  /** An object (a list, an envelope or its `tooLarge` stand-in, a slot, a load's checksum); read the members asked for. */
+  [NativeOp.Saves]: Record<string, unknown>;
+  /** The settings in force after the call. */
+  [NativeOp.UiSettings]: Record<string, unknown>;
 }
 
 /** Names a list answer may carry, and how long each may be. */
@@ -871,6 +968,29 @@ const isOptional = (value: unknown, check: (value: unknown) => boolean): boolean
 const isText = (value: unknown): value is string => typeof value === "string" && value.length <= NAME_MAX_CHARS;
 const hasFlag = (value: unknown, field: string): boolean => isRecord(value) && typeof value[field] === "boolean";
 const hasNames = (value: unknown, field: string): boolean => isRecord(value) && isNames(value[field]);
+
+/**
+ * What a compiled game's web page answers to `audio()` with no argument (`PageMethod.Audio`; a
+ * native run answers `audioLevel` instead): the game's own mix before the mute, as `rms` and
+ * spectral `centroid`. `available` is false when the build exports no level or the level could not
+ * be read; its numbers then read 0 and are never judged.
+ */
+export interface NativeAudioAnswer {
+  available: boolean;
+  rms: number;
+  centroid: number;
+}
+
+/** Whether `value` is a page `audio()` answer: `available` a flag, the level finite and not negative. */
+export function isNativeAudioAnswer(value: unknown): value is NativeAudioAnswer {
+  const level = (n: unknown) => isFiniteNumber(n) && n >= 0;
+  return isRecord(value) && typeof value.available === "boolean" && level(value.rms) && level(value.centroid);
+}
+
+/** Whether a page `audio()` answer measured the game's level: a well-formed answer that says `available`. */
+export function isNativeAudioMeasured(value: unknown): value is NativeAudioAnswer & { available: true } {
+  return isNativeAudioAnswer(value) && value.available;
+}
 /** A ring generation is a uint32 the host chose, from 1; a slot side is at most `NATIVE_FRAME_SIDE_MAX`. */
 const GENERATION_MAX = 0xffff_ffff;
 const isGeneration = (value: unknown): boolean =>
@@ -992,6 +1112,8 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.BakeAssets]: isBakeReply,
   [NativeOp.ReloadAssets]: isReloadAnswer,
   [NativeOp.Profile]: isProfileReply,
+  [NativeOp.Saves]: isRecord,
+  [NativeOp.UiSettings]: isRecord,
 };
 
 const LIFECYCLES: ReadonlySet<string> = new Set<NativeLifecycle>(Object.values(NativeLifecycle));
@@ -1104,6 +1226,11 @@ export type NativeProbe = (typeof NativeProbe)[keyof typeof NativeProbe];
 
 /** Probes with no counterpart on a raylib web build: reported `unmeasured` by name, never pass. */
 export const RAYLIB_WEB_UNMEASURED: readonly NativeProbe[] = [NativeProbe.Audio, NativeProbe.Profiler];
+/**
+ * Probes a Rust · wgpu web build never measures. Its sound is measured when the page's `audio()`
+ * answers `available` ({@link isNativeAudioMeasured}), and named unmeasured otherwise.
+ */
+export const RUST_WEB_UNMEASURED: readonly NativeProbe[] = [NativeProbe.Profiler];
 /** Probes with no counterpart on a native run (frame similarity until it is measured). */
 export const RAYLIB_NATIVE_UNMEASURED: readonly NativeProbe[] = [
   NativeProbe.GpuErrors,

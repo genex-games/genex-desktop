@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>__GAME_TITLE__</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="data:," /><!--__NET_BRIDGE__-->
     <!--
       The web shell of a rust-wgpu game: the studio's page around the browser build, index.html
       beside game.js and game_bg.wasm (the Rust lane's web branch, src/main/rust-build-web.ts,
@@ -26,6 +26,29 @@
       never more bytes than planned) and hands it to studio_assets_preload, which admits it only at
       the recorded length and digest. The loading screen counts the planned files, and
       window.GenexShell.adapter carries the facts. Each step is bound only when the module exports it.
+      Every fetch, before the first frame or while playing, is refused (asset-outside) when a
+      redirect lands it outside assets/ or on another origin; nothing it carried is admitted.
+
+      Streaming (game systems STR-14b): the plan holds only the map's boot and sim groups (a cell
+      pack's index, everything outside the streamed groups); a pack's cells and terrain tiles and
+      each named group's files are fetched while playing. Each frame, before the game's, the shell
+      hands the module the pieces fetched since (studio_assets_arrived, oldest first, at most
+      STREAM_HANDOFF_BYTES a frame but always one), then asks studio_assets_wanted for the pieces
+      the game wants now and fetches each with a Range request, at most ASSET_FETCHES at once. A
+      server that ignores Range answers the whole file, which is read up to the piece's end and
+      sliced. A piece over STREAM_FETCH_MAX_BYTES is refused unfetched (asset-too-large); a refused
+      fetch or a piece the module refuses is logged and the game plays on. Fetched bytes wait in the
+      page until handed over, so the module's memory (which never shrinks) holds only what it took.
+      window.GenexShell.streaming counts them: queued, open, held (heldBytes, heldMost), fetched and
+      refused.
+
+      Multiplayer (game systems MP-5a): a [net] game's game.js imports the relay client's bridge by
+      its bare name, @genex-ai/multiplayer/bridge. Only that build's page carries, in its head where
+      the build puts it, an import map resolving the name to ./mp/bridge.mjs (the build's shim)
+      and a classic script loading mp/bridge.global.js (the pinned bridge) before any module; both
+      are in the page's own folder, on its origin, outside assets/ and the asset map. Every other
+      build's page has neither. The pipeline dry boot's worker has no import map, so a [net] game's
+      dry boot is refused and its pipelines compile as the boot asks.
 
       A boot that fails after that (the module, its wasm, the saves preload, an asset or
       studio_boot throws) shows the "couldn't start" card with the typed code boot-failed, never an empty stage, and
@@ -38,12 +61,22 @@
       from them (a desktop or a phone class, and its memory budget); a page that sends none is
       read as a phone.
 
-      Saves: the game's synchronous save/load go to an in-memory mirror inside the module. Before
-      studio_boot starts the game (its first reset), the shell fills the mirror from the game's
-      IndexedDB database; files saved since are written back write-behind when the page is idle,
-      hidden or left (GenexShell.flushSaves() forces one). A write the browser refuses stays
-      pending, state().error says save-quota (or save-unavailable without IndexedDB) and the page
-      shows a notice.
+      Saves: the game's synchronous save/load go to an in-memory mirror inside the module. The
+      game's IndexedDB database (version 2) keeps each file's bytes in the store "files" and its
+      byte length in "sizes"; a version-1 database (files only) gains the sizes in its upgrade
+      transaction. Before studio_boot starts the game (its first reset), the shell fills the mirror
+      from it. A module that keeps slot bodies lazily (it exports studio_saves_index) gets every
+      file but the .sav ones whole and the .sav ones by name and size only; after each frame the
+      shell reads the bodies a load asked for (studio_saves_requests) and hands them over
+      (studio_saves_provide, undefined for a file the store does not keep). Files saved since are
+      written back write-behind, with their sizes, when the page is idle, hidden or left
+      (GenexShell.flushSaves() forces one); files the module removed (studio_saves_take_removed)
+      are deleted from both stores in the same transaction. When the page is hidden or left, a
+      module that exports studio_suspend_save writes its suspend autosave first, once per hide. A
+      write the browser refuses stays pending, state().error says save-quota (or save-unavailable
+      without IndexedDB) and the page shows a notice. After the preload the shell asks for
+      persistent storage (navigator.storage.persist()) and tells the module whether it got it
+      (studio_saves_persistent; refused, rejected or no IndexedDB is false).
 
       Page contract: window.__studio (version 1) as the C++ web shell's. Every verb goes through the
       one studio_call export (genex-studio's Studio::web(): the {id:null, ok, op, result} envelope
@@ -81,6 +114,24 @@
       jittery time, so the sim's 60 Hz ticks land on every second refresh of a 120 Hz display. A
       frame the module refuses with device-lost (the browser reset its GPU) flushes the saves and
       shows a card with that code (status failed); any other refusal is frame-failed.
+
+      Crash reports (game systems CRASH-3): a Rust panic goes through genex-crash's hook, which hands
+      the shell one genex-crash/1 record (GenexShell.crash), then logs the console text it always
+      logged; the trap that ends the panic is not recorded again. A WebAssembly trap with no panic
+      before it (from a frame, a verb, window.onerror or an unhandled rejection) is the shell's own
+      wasm-trap record with the engine's wasm-function frames; the game's device lost (any reason
+      but destroyed) is a device-lost record beside the device-lost card, and an uncaptured GPU
+      error a gpu-validation record that is not fatal (at most GPU_ERROR_RECORDS_MAX distinct ones).
+      Records are kept in the game's IndexedDB database genex-crashes:<game> (the module names it,
+      studio_crash_database), CRASH_RECORDS_KEPT at most, the oldest pruned, and survive a reload;
+      window.__studio.crashes() answers them newest first (a promise), on every page contract, the
+      failed and unsupported ones too. After a fatal crash the module is never called again (its
+      state is mid-frame). window.__studio.profile(request) is the dev profile verb through
+      studio_call, a refusal answered {__refused: code} as renderSettings (the web answers
+      unknown-op: an export serves the same page). window.__studio.reloadAssets({files}) is Live's
+      asset swap, bound only when the module exports studio_assets_replace: it fetches again only
+      the files named, swaps each into the module (which checks the host's FNV-1a 64), then sends
+      the reloadAssets op.
 
       Input: keys while the canvas has focus, all released at once when the canvas, the window or
       the page loses it (their keyups would go elsewhere); Mouse1 held from pointerdown to pointerup
@@ -434,13 +485,47 @@
       const PHASE_FOLLOW = 1 / 32;
       /** Why a frame stopped the game: the module's typed code on its error, else frame-failed. Wire values. */
       const FrameFailure = { DeviceLost: "device-lost", Failed: "frame-failed" };
+      /** A crash record's format and the kinds, sources and classes the shell writes (src/shared/crash-record.ts). Wire values. */
+      const CRASH_FORMAT = "genex-crash/1";
+      const CrashKind = { Panic: "panic", GpuValidation: "gpu-validation", DeviceLost: "device-lost", WasmTrap: "wasm-trap" };
+      const CrashSource = { Game: "game", Shell: "shell" };
+      const WasmTrapKind = { Unreachable: "unreachable", Memory: "memory", Stack: "stack", Other: "other" };
+      const GpuErrorClass = { Validation: "validation", OutOfMemory: "out-of-memory", Internal: "internal" };
+      /**
+       * What a trap was, from the engine's RuntimeError text: WebAssembly gives a trap no typed code,
+       * so the texts V8, SpiderMonkey and JavaScriptCore use are the only signal (lower case).
+       */
+      const TRAP_TEXTS = [
+        [WasmTrapKind.Unreachable, ["unreachable"]],
+        [WasmTrapKind.Memory, ["memory access out of bounds", "index out of bounds", "out of bounds memory access"]],
+        [WasmTrapKind.Stack, ["call stack", "too much recursion"]],
+      ];
+      /** One engine stack frame inside the module (`wasm-function[N]:0xOFF`). */
+      const WASM_FRAME = /wasm-function\[(\d+)\]:0x([0-9a-f]+)/gi;
+      /** The destination a web record names. */
+      const WEB_DESTINATION = "web";
+      /** The lost reason of a device the page destroyed on purpose: not a crash. */
+      const LOST_DESTROYED = "destroyed";
+      /** The IndexedDB object store crash records are kept in (keys count up), and how many stay. */
+      const CRASHES_STORE = "records";
+      const CRASHES_DB_VERSION = 1;
+      const CRASH_RECORDS_KEPT = 16;
+      /** The record caps the shell keeps to (genex-crash's): its JSON, its message and its frames. */
+      const CRASH_RECORD_MAX_BYTES = 64 * 1024;
+      const CRASH_MESSAGE_MAX_CHARS = 2048;
+      const CRASH_FRAMES_MAX = 128;
+      /** Distinct uncaptured GPU errors one page records (a browser may report one every frame). */
+      const GPU_ERROR_RECORDS_MAX = 4;
       /** The mouse button a page pointer is (the protocol's key name). */
       const MOUSE1 = "Mouse1";
       /** One wheel line in pixels (WheelEvent.DOM_DELTA_LINE), as the desktop shell counts a notch. */
       const WHEEL_LINE_PX = 100;
-      /** The IndexedDB object store a game's saves are kept in, keyed by save name. */
-      const SAVES_STORE = "files";
-      const SAVES_DB_VERSION = 1;
+      /** The IndexedDB object stores a game's saves are kept in, keyed by save name: each file's bytes and its byte length. */
+      const SavesStore = { Files: "files", Sizes: "sizes" };
+      /** The saves database's version: 2 added the sizes store (a version-1 database gains it on open). */
+      const SAVES_DB_VERSION = 2;
+      /** The suffix of a saved file a lazy module keeps by name and size only (genex-core's mirror::LAZY_SUFFIX): a slot body. */
+      const LAZY_SAVE_SUFFIX = ".sav";
       /** An idle flush waits at most this long for the browser to be idle. */
       const SAVE_IDLE_TIMEOUT_MS = 2000;
       /** After a refused flush, the next idle one waits this long (a hidden or left page flushes at once). */
@@ -448,8 +533,27 @@
       /** The build's asset map, and the folder the files it names are fetched from. */
       const ASSET_MAP = "assets.json";
       const ASSETS_DIR = "assets/";
-      /** How many asset files are fetched at once. */
+      /** How many asset files are fetched at once (before the first frame, and again while playing). */
       const ASSET_FETCHES = 6;
+      /** The most files one `reloadAssets` names (native-contract NATIVE_RELOAD_FILES_MAX), and one file's cap (the plan's per-file cap). */
+      const RELOAD_FILES_MAX = 256;
+      const RELOAD_FILE_MAX_BYTES = 256 * 1024 * 1024;
+      /** Why the page refused a changed file before the op (the op's `refused[].code`), by the module's refusal code. */
+      const RELOAD_REFUSALS = {
+        "asset-unsafe-path": "unsafe-path",
+        "asset-outside": "unsafe-path",
+        "asset-digest-mismatch": "digest-mismatch",
+      };
+      /**
+       * The most one fetch made while playing carries (rust-build-web.ts WEB_STREAM_LIMITS.fetchBytes):
+       * a bigger piece is refused unfetched, which bounds the module's memory at its pool plus one asset.
+       */
+      const STREAM_FETCH_MAX_BYTES = 64 * 1024 * 1024;
+      /**
+       * Fetched pieces handed to the module per frame, in bytes (always at least one piece): the rest
+       * wait in the page, since the module's memory never shrinks once grown.
+       */
+      const STREAM_HANDOFF_BYTES = 8 * 1024 * 1024;
       /** The WebGPU features of the compressed texture families, in the order the plan is told them. */
       const TEXTURE_FEATURES = ["texture-compression-bc", "texture-compression-astc", "texture-compression-etc2"];
       /** A screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
@@ -502,10 +606,46 @@
       const notice = document.getElementById("save-notice");
       const loader = document.getElementById("loading");
       /** The loading state: its stall watch, the bar's fill so far, and what the boot staged for the dry boot. */
-      const loading = { watchdog: null, fill: 0, staged: { saves: [], map: null, assets: [] } };
+      const loading = { watchdog: null, fill: 0, staged: { saves: [], savesIndex: [], map: null, assets: [] } };
       const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
-      const saves = { db: null, flushing: Promise.resolve(), scheduled: false, retryAt: 0 };
-      const shell = { status, module: null, world: null, progress: null, adapter: null, flushSaves: async () => {} };
+      /**
+       * The saves store: its database, the flush and lazy-body reads in progress (each runs after the
+       * last), whether an idle flush is scheduled and when a refused one may retry, and whether the
+       * module wrote its suspend autosave for the page's current hide.
+       */
+      const saves = {
+        db: null,
+        flushing: Promise.resolve(),
+        reading: Promise.resolve(),
+        scheduled: false,
+        retryAt: 0,
+        suspended: false,
+      };
+      /** The crash records: the database, those taken before it opened, and whether the module is dead. */
+      const crashes = {
+        db: null,
+        taken: [],
+        writing: Promise.resolve(),
+        fatal: false,
+        panicked: false,
+        deviceLost: false,
+        gpuErrors: new Set(),
+      };
+      /**
+       * The fetches made while playing: pieces the module wants and not yet asked for, how many are
+       * open, and the fetched ones waiting for the next frame (with the most bytes ever waiting).
+       */
+      const streaming = { queued: [], open: 0, held: [], heldBytes: 0, heldMost: 0, fetched: 0, refused: 0 };
+      const shell = {
+        status,
+        module: null,
+        world: null,
+        progress: null,
+        adapter: null,
+        streaming,
+        flushSaves: async () => {},
+        crash: takeGameCrash,
+      };
       window.GenexShell = shell;
 
       function firstLimitBelowCore(limits) {
@@ -609,6 +749,7 @@
         window.__studio = {
           version: 1,
           state: () => ({ version: 1, error: status.code, volatile: { gpu: { ...refusal } } }),
+          crashes: readCrashes,
         };
         console.error(`genex: ${status.code} (${[status.reason, status.limit].filter(Boolean).join(": ")})`);
       }
@@ -639,6 +780,7 @@
         window.__studio ??= {
           version: 1,
           state: () => ({ version: 1, error: status.code, volatile: { boot: { reason: status.reason } } }),
+          crashes: readCrashes,
         };
         console.error(error);
       }
@@ -728,6 +870,7 @@
         window.__studio ??= {
           version: 1,
           state: () => ({ version: 1, error: status.code, volatile: { boot: { reason: status.reason } } }),
+          crashes: readCrashes,
         };
         console.error(`genex: ${BOOT_TIMEOUT} (${status.reason})`);
       }
@@ -831,6 +974,7 @@
           const opened = await requestDevice.apply(this, args);
           if (gpuHooks.device === null) {
             gpuHooks.device = opened;
+            watchDeviceCrashes(opened);
             if (gpuHooks.plan) await prewarm(opened, gpuHooks.plan).catch((error) => console.warn(error));
           }
           return opened;
@@ -935,6 +1079,7 @@
             const game = await import(source);
             await game.default({ module_or_path: data.module });
             if (typeof game.studio_saves_preload === "function") game.studio_saves_preload(data.saves);
+            if (typeof game.studio_saves_index === "function") game.studio_saves_index(data.savesIndex);
             if (data.map !== null && typeof game.studio_assets_plan === "function") {
               game.studio_assets_plan(data.map, data.adapter);
               for (const [name, bytes] of data.assets) game.studio_assets_preload(name, bytes);
@@ -960,7 +1105,7 @@
         const code = `(${dryBoot.toString()})();`;
         const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
         const worker = new Worker(url, { type: "module" });
-        const { saves, map, assets } = loading.staged;
+        const { saves, savesIndex, map, assets } = loading.staged;
         const answer = new Promise((resolve) => {
           worker.onmessage = ({ data }) => resolve(data);
           worker.onerror = (event) => resolve({ error: String(event.message ?? "worker error") });
@@ -968,9 +1113,10 @@
         });
         const transfer = assets.map(([, bytes]) => bytes.buffer);
         const size = [canvas.width, canvas.height];
-        const message = { source, module, saves, map, assets, adapter: adapterJson(), hints: deviceHints(), size };
+        const hints = deviceHints();
+        const message = { source, module, saves, savesIndex, map, assets, adapter: adapterJson(), hints, size };
         worker.postMessage(message, [...new Set(transfer)]);
-        loading.staged = { saves: [], map: null, assets: [] };
+        loading.staged = { saves: [], savesIndex: [], map: null, assets: [] };
         const result = await answer;
         worker.terminate();
         URL.revokeObjectURL(url);
@@ -1062,31 +1208,73 @@
         });
       }
 
-      /** The game's saves database, or null when this browser keeps none. */
+      /** The game's saves database at version 2, or null when this browser keeps none. */
       async function openSavesDb(name) {
         if (!("indexedDB" in window) || !window.indexedDB) return null;
         const request = indexedDB.open(name, SAVES_DB_VERSION);
-        request.onupgradeneeded = () => {
-          if (!request.result.objectStoreNames.contains(SAVES_STORE)) request.result.createObjectStore(SAVES_STORE);
-        };
+        request.onupgradeneeded = () => upgradeSavesDb(request.result, request.transaction);
         return settled(request);
       }
 
-      /** Every saved file, [[name, Uint8Array], …]. */
+      /**
+       * The upgrade, in its one versionchange transaction: a new database gets both stores, and a
+       * version-1 one (files only) gains the sizes store filled from every file it holds, so none is
+       * lost and a failed upgrade leaves version 1 as it was.
+       */
+      function upgradeSavesDb(db, transaction) {
+        if (!db.objectStoreNames.contains(SavesStore.Files)) db.createObjectStore(SavesStore.Files);
+        if (db.objectStoreNames.contains(SavesStore.Sizes)) return;
+        const sizes = db.createObjectStore(SavesStore.Sizes);
+        const cursor = transaction.objectStore(SavesStore.Files).openCursor();
+        cursor.onsuccess = () => {
+          const at = cursor.result;
+          if (!at) return;
+          sizes.put(at.value?.byteLength ?? 0, at.key);
+          at.continue();
+        };
+      }
+
+      /** Every saved file whole, [[name, Uint8Array], …], for a module that keeps no file lazily. */
       async function readAllSaves(db) {
-        const store = db.transaction(SAVES_STORE, "readonly").objectStore(SAVES_STORE);
+        const store = db.transaction(SavesStore.Files, "readonly").objectStore(SavesStore.Files);
         const [names, values] = await Promise.all([settled(store.getAllKeys()), settled(store.getAll())]);
-        return names.map((name, i) => [String(name), new Uint8Array(values[i])]);
+        return { entries: names.map((name, i) => [String(name), new Uint8Array(values[i])]), index: [] };
+      }
+
+      /**
+       * For a module that keeps slot bodies lazily: every file but the .sav ones whole, and the .sav
+       * ones by name and size only ([[name, size], …]), their bodies left in the store. A .sav file
+       * with no size recorded is read whole (the module keeps it by its length).
+       */
+      async function readSavesIndex(db) {
+        const transaction = db.transaction([SavesStore.Files, SavesStore.Sizes], "readonly");
+        const files = transaction.objectStore(SavesStore.Files);
+        const sizes = transaction.objectStore(SavesStore.Sizes);
+        const [names, sized, lengths] = await Promise.all([
+          settled(files.getAllKeys()),
+          settled(sizes.getAllKeys()),
+          settled(sizes.getAll()),
+        ]);
+        const sizeOf = new Map(sized.map((name, i) => [String(name), lengths[i]]));
+        const indexed = (name) => name.endsWith(LAZY_SAVE_SUFFIX) && Number.isSafeInteger(sizeOf.get(name));
+        const index = names.map(String).filter(indexed).map((name) => [name, sizeOf.get(name)]);
+        const whole = names.filter((name) => !indexed(String(name)));
+        const bodies = await Promise.all(whole.map((name) => settled(files.get(name))));
+        return { entries: whole.map((name, i) => [String(name), new Uint8Array(bodies[i])]), index };
       }
 
       /** The mirror filled before the first reset; without IndexedDB the game saves for this page only. */
       async function preloadSaves(game) {
+        const lazy = typeof game.studio_saves_index === "function";
         try {
           saves.db = await openSavesDb(game.studio_saves_database());
-          const entries = saves.db ? await readAllSaves(saves.db) : [];
+          const read = lazy ? readSavesIndex : readAllSaves;
+          const { entries, index } = saves.db ? await read(saves.db) : { entries: [], index: [] };
           // The dry boot's first reset reads the same files (it gets copies; the mirror keeps its own).
           loading.staged.saves = entries.map(([name, bytes]) => [name, bytes.slice()]);
+          loading.staged.savesIndex = index;
           game.studio_saves_preload(entries);
+          if (lazy) game.studio_saves_index(index);
           if (!saves.db) game.studio_saves_unavailable();
         } catch (error) {
           console.warn(`genex: saves: ${error?.name ?? error}`);
@@ -1095,6 +1283,21 @@
           game.studio_saves_unavailable();
         }
         showSaveNotice(game);
+        reportPersistence(game).catch((error) => console.warn(`genex: saves: ${error?.name ?? error}`));
+      }
+
+      /** Whether the browser keeps the game's storage under pressure: asked once; refused, failed or unasked is false. */
+      async function storagePersistence() {
+        const storage = navigator.storage;
+        if (!saves.db || typeof storage?.persist !== "function") return false;
+        if (await storage.persisted?.().catch(() => false)) return true;
+        return (await storage.persist().catch(() => false)) === true;
+      }
+
+      /** Ask for persistent storage, then tell a module that takes it whether the browser granted it. */
+      async function reportPersistence(game) {
+        const persistent = await storagePersistence();
+        if (typeof game.studio_saves_persistent === "function" && !crashes.fatal) game.studio_saves_persistent(persistent);
       }
 
       /** The typed code of a storage failure. */
@@ -1102,18 +1305,29 @@
         return error?.name === "QuotaExceededError" ? SaveError.Quota : SaveError.Unavailable;
       }
 
-      /** Write the files the mirror took in one transaction; resolves with null or the typed code. */
-      async function writeSaves(entries) {
+      /**
+       * Write the files the mirror took (each one's bytes and size) and delete the files it removed
+       * from both stores, in one transaction; resolves with null or the typed code.
+       */
+      async function writeSaves(entries, removed) {
         if (!saves.db) return SaveError.Unavailable;
         try {
-          const transaction = saves.db.transaction(SAVES_STORE, "readwrite");
+          const transaction = saves.db.transaction([SavesStore.Files, SavesStore.Sizes], "readwrite");
           const done = new Promise((resolve) => {
             transaction.oncomplete = () => resolve(null);
             transaction.onerror = () => resolve(saveErrorOf(transaction.error));
             transaction.onabort = () => resolve(saveErrorOf(transaction.error));
           });
-          const store = transaction.objectStore(SAVES_STORE);
-          for (const [name, bytes] of entries) store.put(bytes, name);
+          const files = transaction.objectStore(SavesStore.Files);
+          const sizes = transaction.objectStore(SavesStore.Sizes);
+          for (const [name, bytes] of entries) {
+            files.put(bytes, name);
+            sizes.put(bytes.byteLength, name);
+          }
+          for (const name of removed) {
+            files.delete(name);
+            sizes.delete(name);
+          }
           return await done;
         } catch (error) {
           return saveErrorOf(error);
@@ -1129,11 +1343,17 @@
         else delete notice.dataset.genexCode;
       }
 
-      /** One flush: take the mirror's dirty files, write them, answer how it went. */
+      /** The files the module removed since the last take (none from a module that keeps no such list). */
+      function takeRemovedSaves(game) {
+        return typeof game.studio_saves_take_removed === "function" ? Array.from(game.studio_saves_take_removed()) : [];
+      }
+
+      /** One flush: take the mirror's dirty and removed files, write them, answer how it went. */
       async function flushOnce(game) {
         const entries = game.studio_saves_take();
-        if (entries.length === 0) return;
-        const error = await writeSaves(entries);
+        const removed = takeRemovedSaves(game);
+        if (entries.length === 0 && removed.length === 0) return;
+        const error = await writeSaves(entries, removed);
         game.studio_saves_flushed(
           error,
           entries.map(([name]) => name),
@@ -1163,12 +1383,62 @@
         }
       }
 
+      /** The stored bodies of `names`, [[name, Uint8Array | undefined], …]: undefined for a file the store does not keep. */
+      async function readSaveBodies(names) {
+        const missing = () => names.map((name) => [name, undefined]);
+        if (!saves.db) return missing();
+        try {
+          const files = saves.db.transaction(SavesStore.Files, "readonly").objectStore(SavesStore.Files);
+          const bodies = await Promise.all(names.map((name) => settled(files.get(name))));
+          return names.map((name, i) => [name, bodies[i] === undefined ? undefined : new Uint8Array(bodies[i])]);
+        } catch (error) {
+          console.warn(`genex: saves: ${error?.name ?? error}`);
+          return missing();
+        }
+      }
+
+      /** Hand the module the lazy bodies it asked for, once read (a dead module gets none). */
+      async function provideSaves(game, names) {
+        const bodies = await readSaveBodies(names);
+        if (crashes.fatal) return;
+        for (const [name, bytes] of bodies) game.studio_saves_provide(name, bytes);
+      }
+
+      /** After a frame: the lazy bodies a load asked for are read from the store, after any read before them. */
+      function serveSaveRequests(game) {
+        if (typeof game.studio_saves_requests !== "function") return;
+        const names = Array.from(game.studio_saves_requests(), String);
+        if (names.length === 0) return;
+        saves.reading = saves.reading.then(() => provideSaves(game, names)).catch((error) => console.warn(error));
+      }
+
+      /**
+       * The page is hidden or left: the module writes its suspend autosave (once per hide, so a hide
+       * followed by pagehide writes one), then the flush writes it to the store.
+       */
+      function suspendSaves(game) {
+        const writes = !saves.suspended && !crashes.fatal && typeof game.studio_suspend_save === "function";
+        if (writes) {
+          saves.suspended = true;
+          try {
+            game.studio_suspend_save();
+          } catch (error) {
+            console.warn(`genex: saves: suspend: ${error?.message ?? error}`);
+          }
+        }
+        return flushSaves(game);
+      }
+
       function listenForSaves(game) {
         shell.flushSaves = () => flushSaves(game);
         document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") flushSaves(game);
+          if (document.visibilityState === "hidden") suspendSaves(game);
+          else saves.suspended = false;
         });
-        window.addEventListener("pagehide", () => flushSaves(game));
+        window.addEventListener("pagehide", () => suspendSaves(game));
+        window.addEventListener("pageshow", () => {
+          saves.suspended = false;
+        });
       }
 
       // ── assets: the files the build staged, fetched before the first frame ──
@@ -1193,13 +1463,30 @@
         }
       }
 
+      /** Whether `url` is inside assets/ on the page's origin (`base`). */
+      function insideAssets(url, base) {
+        return url.origin === base.origin && url.pathname.startsWith(base.pathname);
+      }
+
+      /** The URL of `name` inside assets/, refused when it would leave it. */
+      function assetUrl(name, base) {
+        const url = new URL(String(name).split("/").map(encodeURIComponent).join("/"), base);
+        if (!insideAssets(url, base)) throw new Error(`${AssetFailure.Outside}: ${name}`);
+        return url;
+      }
+
+      /** A response for `name`, refused when a redirect took it outside assets/ on the page's origin. */
+      function landedInside(response, name, base) {
+        if (response.url && !insideAssets(new URL(response.url), base)) {
+          throw new Error(`${AssetFailure.Outside}: ${name} was redirected to ${new URL(response.url).origin}`);
+        }
+        return response;
+      }
+
       /** One planned file: fetched from inside assets/ only, at most its planned size, then handed to the module. */
       async function fetchAsset(game, base, [name, size]) {
-        const url = new URL(String(name).split("/").map(encodeURIComponent).join("/"), base);
-        if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
-          throw new Error(`${AssetFailure.Outside}: ${name}`);
-        }
-        const response = await fetch(url, { cache: "no-store" });
+        const url = assetUrl(name, base);
+        const response = landedInside(await fetch(url, { cache: "no-store" }), name, base);
         if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${response.status}`);
         const bytes = await boundedBytes(response, name, size);
         game.studio_assets_preload(name, bytes);
@@ -1235,6 +1522,341 @@
           }
         };
         await Promise.all(Array.from({ length: ASSET_FETCHES }, fetchNext));
+      }
+
+      // ── streaming: the pieces the game wants while playing, fetched by Range ──
+
+      /** The first `length` bytes of a body (the rest is never read). */
+      async function bodyPrefix(response, name, length) {
+        if (!response.body) throw new Error(`${AssetFailure.FetchFailed}: ${name} has no body`);
+        const reader = response.body.getReader();
+        const bytes = new Uint8Array(length);
+        let got = 0;
+        while (got < length) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const take = Math.min(value.length, length - got);
+          bytes.set(value.subarray(0, take), got);
+          got += take;
+        }
+        await reader.cancel().catch(() => {});
+        if (got < length) throw new Error(`${AssetFailure.FetchFailed}: ${name} ended after ${got} of ${length} bytes`);
+        return bytes;
+      }
+
+      /**
+       * One wanted piece, `size` bytes of `name` from `offset`: a Range request inside assets/ on the
+       * page's origin, the 206 body exactly that long; a server that ignores Range answers the whole
+       * file, which is read only up to the piece's end and sliced. Refused unfetched past
+       * STREAM_FETCH_MAX_BYTES; refused when a redirect leaves assets/ or the page's origin.
+       */
+      async function fetchPiece([name, offset, size]) {
+        const whole = Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(size) && size > 0;
+        if (!whole || size > STREAM_FETCH_MAX_BYTES) {
+          throw new Error(`${AssetFailure.TooLarge}: ${name} wants ${size} bytes (at most ${STREAM_FETCH_MAX_BYTES})`);
+        }
+        const base = new URL(ASSETS_DIR, location.href);
+        const range = `bytes=${offset}-${offset + size - 1}`;
+        const answered = await fetch(assetUrl(name, base), { cache: "no-store", headers: { Range: range } });
+        const response = landedInside(answered, name, base);
+        if (response.status === 206) {
+          const at = /^bytes (\d+)-/.exec(response.headers.get("content-range") ?? "");
+          if (at && Number(at[1]) !== offset) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered another range`);
+          const bytes = await boundedBytes(response, name, size);
+          if (bytes.length !== size) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${bytes.length} of ${size} bytes`);
+          return bytes;
+        }
+        if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${response.status}`);
+        return (await bodyPrefix(response, name, offset + size)).subarray(offset);
+      }
+
+      /** Hand the module the pieces fetched since, oldest first, up to STREAM_HANDOFF_BYTES (at least one). */
+      function handOverPieces(game) {
+        let budget = STREAM_HANDOFF_BYTES;
+        while (streaming.held.length > 0 && (budget === STREAM_HANDOFF_BYTES || streaming.held[0][1].length <= budget)) {
+          const [[name, offset], bytes] = streaming.held.shift();
+          streaming.heldBytes -= bytes.length;
+          budget -= bytes.length;
+          try {
+            game.studio_assets_arrived(name, offset, bytes);
+          } catch (error) {
+            // The module refused it (a size or digest it did not plan): nothing was admitted.
+            streaming.refused += 1;
+            console.warn(`genex: asset ${name} at ${offset} refused: ${error?.message ?? error}`);
+          }
+        }
+      }
+
+      // ── reload: Live's asset swap fetches only the files that changed (game systems C-19a) ──
+
+      /** The module's refusal code at the head of an error's message (`asset-…: detail`), or null. */
+      function refusalCode(error) {
+        const head = /^([a-z][a-z0-9-]*)[: ]/.exec(String(error?.message ?? error ?? ""));
+        return head ? head[1] : null;
+      }
+
+      /** One changed file fetched again from inside assets/ and handed to the module in place of its old bytes; a refusal code, or null. */
+      async function replaceAsset(game, base, { path, digest }) {
+        try {
+          const response = landedInside(await fetch(assetUrl(path, base), { cache: "no-store" }), path, base);
+          if (!response.ok) return "missing";
+          game.studio_assets_replace(path, await boundedBytes(response, path, RELOAD_FILE_MAX_BYTES), digest);
+          return null;
+        } catch (error) {
+          return RELOAD_REFUSALS[refusalCode(error)] ?? "missing";
+        }
+      }
+
+      /**
+       * `reloadAssets({files: [{path, digest}]})`: each named file fetched again (nothing else), its
+       * new bytes swapped into the module (which checks the host's FNV-1a 64), then the op, so the
+       * next frame draws them. A file the page could not swap is answered refused with its code; a
+       * whole refusal answers `{__refused: code}`, as renderSettings.
+       */
+      async function reloadAssets(game, arg) {
+        if (crashes.fatal) return { [REFUSED]: FrameFailure.Failed };
+        const files = Array.isArray(arg?.files) ? arg.files : null;
+        const named = (file) => typeof file?.path === "string" && typeof file?.digest === "string";
+        if (!files || files.length > RELOAD_FILES_MAX || !files.every(named)) return { [REFUSED]: "bad-argument" };
+        const base = new URL(ASSETS_DIR, location.href);
+        const refused = [];
+        const swapped = [];
+        for (const file of files) {
+          const code = await replaceAsset(game, base, file);
+          if (code) refused.push({ path: file.path, code });
+          else swapped.push({ path: file.path, digest: file.digest });
+        }
+        if (swapped.length === 0) return { reloaded: [], refused, pending: 0 };
+        const reply = JSON.parse(game.studio_call("reloadAssets", JSON.stringify({ files: swapped })));
+        if (reply?.ok !== true) return { [REFUSED]: String(reply?.error ?? "") };
+        return { ...reply.result, refused: [...refused, ...(reply.result?.refused ?? [])] };
+      }
+
+      /** Ask for queued pieces while fewer than ASSET_FETCHES are open; a fetched piece waits for the next frame. */
+      function startFetches() {
+        while (streaming.open < ASSET_FETCHES && streaming.queued.length > 0) {
+          const piece = streaming.queued.shift();
+          streaming.open += 1;
+          fetchPiece(piece)
+            .then((bytes) => {
+              streaming.held.push([piece, bytes]);
+              streaming.heldBytes += bytes.length;
+              streaming.heldMost = Math.max(streaming.heldMost, streaming.heldBytes);
+              streaming.fetched += 1;
+            })
+            .catch((error) => {
+              streaming.refused += 1;
+              console.warn(`genex: ${error?.message ?? error}`);
+            })
+            .finally(() => {
+              streaming.open -= 1;
+              startFetches();
+            });
+        }
+      }
+
+      /**
+       * Each frame, before the game's: the pieces fetched since go to the module, then the pieces it
+       * wants now are queued and fetched. Bound only when the module exports studio_assets_wanted.
+       */
+      function streamAssets(game) {
+        if (typeof game.studio_assets_wanted !== "function") return;
+        handOverPieces(game);
+        for (const piece of Array.from(game.studio_assets_wanted())) streaming.queued.push(Array.from(piece));
+        startFetches();
+      }
+
+      // ── crash reports: the game's records and the shell's own, kept in IndexedDB ──
+
+      /** A record's JSON within the cap, or null (a record over it is not kept). */
+      function fittingJson(record) {
+        const json = JSON.stringify(record);
+        return json.length <= CRASH_RECORD_MAX_BYTES ? json : null;
+      }
+
+      /** Keep one record: in the database when it is open, else until it opens. */
+      function keepCrash(record) {
+        if (!record.context || typeof record.context !== "object") record.context = {};
+        record.context.destination ??= WEB_DESTINATION;
+        if (fittingJson(record) === null) return;
+        crashes.taken.push(record);
+        if (crashes.db) writeCrashes();
+      }
+
+      /** Write the records taken so far, one after another, pruning the oldest past CRASH_RECORDS_KEPT. */
+      function writeCrashes() {
+        crashes.writing = crashes.writing.then(async () => {
+          const records = crashes.taken.splice(0);
+          if (!crashes.db || records.length === 0) return;
+          const transaction = crashes.db.transaction(CRASHES_STORE, "readwrite");
+          const done = new Promise((resolve) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => resolve();
+            transaction.onabort = () => resolve();
+          });
+          const store = transaction.objectStore(CRASHES_STORE);
+          for (const record of records) store.add(record);
+          const keys = await settled(store.getAllKeys());
+          for (const key of keys.slice(0, Math.max(0, keys.length - CRASH_RECORDS_KEPT))) store.delete(key);
+          await done;
+        });
+        crashes.writing = crashes.writing.catch((error) => console.warn(`genex: crashes: ${error?.name ?? error}`));
+        return crashes.writing;
+      }
+
+      /** The game's crash database (named by the module), opened before studio_boot; none without IndexedDB or the export. */
+      async function openCrashes(game) {
+        try {
+          if (typeof game.studio_crash_database !== "function" || !window.indexedDB) return;
+          const request = indexedDB.open(game.studio_crash_database(), CRASHES_DB_VERSION);
+          request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains(CRASHES_STORE)) {
+              request.result.createObjectStore(CRASHES_STORE, { autoIncrement: true });
+            }
+          };
+          crashes.db = await settled(request);
+          await writeCrashes();
+        } catch (error) {
+          console.warn(`genex: crashes: ${error?.name ?? error}`);
+          crashes.db = null;
+        }
+      }
+
+      /** Every kept record, newest first (`window.__studio.crashes()`): the database's, or this page's without one. */
+      async function readCrashes() {
+        await crashes.writing;
+        if (!crashes.db) return [...crashes.taken].reverse();
+        const store = crashes.db.transaction(CRASHES_STORE, "readonly").objectStore(CRASHES_STORE);
+        const kept = await settled(store.getAll());
+        return [...kept, ...crashes.taken].reverse();
+      }
+
+      /**
+       * The module's crash hook hands a record here (`GenexShell.crash(json)`, from inside the panic
+       * hook: it never throws). A fatal one means the module is dead: the trap that follows is not
+       * recorded again, and nothing calls the module any more. A dead module's later records are dropped.
+       */
+      function takeGameCrash(json) {
+        try {
+          if (crashes.fatal) return;
+          const record = JSON.parse(json);
+          if (record?.format !== CRASH_FORMAT) return;
+          if (record.fatal === true) Object.assign(crashes, { fatal: true, panicked: true });
+          if (record.kind === CrashKind.DeviceLost) crashes.deviceLost = true;
+          keepCrash(record);
+        } catch {
+          /* a record the shell cannot read is dropped: the panic's console text still follows */
+        }
+      }
+
+      /** A shell-made record of `kind` with its message and sides (the fields genex-crash/1 requires). */
+      function shellRecord(kind, fatal, message, sides = {}) {
+        return {
+          format: CRASH_FORMAT,
+          kind,
+          source: CrashSource.Shell,
+          fatal,
+          handled: false,
+          message: String(message ?? "").slice(0, CRASH_MESSAGE_MAX_CHARS),
+          location: null,
+          thread: null,
+          frames: [],
+          anchor: null,
+          images: [],
+          gpu: null,
+          wasm: null,
+          context: {},
+          replay: null,
+          profile: null,
+          hitches: [],
+          symbols: null,
+          ...sides,
+        };
+      }
+
+      /** Whether `error` is a WebAssembly trap (a RuntimeError, or a stack overflow inside the module). */
+      function isTrap(error) {
+        if (globalThis.WebAssembly?.RuntimeError && error instanceof WebAssembly.RuntimeError) return true;
+        return error instanceof RangeError && String(error.stack ?? "").includes("wasm-function[");
+      }
+
+      /** What a trap was, by the engine's text (TRAP_TEXTS); a stack overflow outside a RuntimeError is `stack`. */
+      function trapKind(error) {
+        const text = String(error?.message ?? "").toLowerCase();
+        for (const [kind, texts] of TRAP_TEXTS) if (texts.some((known) => text.includes(known))) return kind;
+        return error instanceof RangeError ? WasmTrapKind.Stack : WasmTrapKind.Other;
+      }
+
+      /** The engine's `wasm-function[N]:0xOFF` frames of a trap, top first. */
+      function wasmFrames(error) {
+        const frames = [];
+        for (const match of String(error?.stack ?? "").matchAll(WASM_FRAME)) {
+          if (frames.length >= CRASH_FRAMES_MAX) break;
+          frames.push({ func: Number(match[1]), offset: Number.parseInt(match[2], 16) });
+        }
+        return frames;
+      }
+
+      /**
+       * A trap that reached the shell: the shell's own fatal `wasm-trap` record, unless a panic's
+       * record came first (a panic ends in a trap) or the module was already dead. Answers whether
+       * it was a trap.
+       */
+      function noteTrap(error) {
+        if (!isTrap(error)) return false;
+        if (!crashes.fatal) {
+          const wasm = { trap: trapKind(error), stack: wasmFrames(error) };
+          keepCrash(shellRecord(CrashKind.WasmTrap, true, error.message, { wasm }));
+        }
+        crashes.fatal = true;
+        return true;
+      }
+
+      /** The class of an uncaptured GPU error, by its type. */
+      function gpuErrorClass(error) {
+        if (globalThis.GPUOutOfMemoryError && error instanceof GPUOutOfMemoryError) return GpuErrorClass.OutOfMemory;
+        if (globalThis.GPUInternalError && error instanceof GPUInternalError) return GpuErrorClass.Internal;
+        return GpuErrorClass.Validation;
+      }
+
+      /** The GPU side of a shell record (genex-crash/1 `gpu`). */
+      function gpuSide(fields) {
+        const adapter = shell.adapter?.name ?? null;
+        return { class: null, reason: null, backend: "webgpu", adapter, ...fields };
+      }
+
+      /**
+       * The game's device, watched for crashes: a loss (any reason but destroyed) is the game's own
+       * `device-lost` record (its renderer's lost callback, which runs after this one), else, a turn
+       * later, the shell's fatal one (the web re-creates a device only by reloading); each distinct
+       * uncaptured error is a `gpu-validation` record that is not fatal, up to GPU_ERROR_RECORDS_MAX.
+       */
+      function watchDeviceCrashes(device) {
+        Promise.resolve(device.lost)
+          .then((info) => {
+            if (!info || info.reason === LOST_DESTROYED) return;
+            setTimeout(() => {
+              if (crashes.deviceLost) return;
+              const description = String(info.message ?? "");
+              const gpu = gpuSide({ reason: String(info.reason ?? "unknown"), description });
+              keepCrash(shellRecord(CrashKind.DeviceLost, true, description, { gpu }));
+            }, 0);
+          })
+          .catch(() => {});
+        device.addEventListener?.("uncapturederror", (event) => {
+          const description = String(event?.error?.message ?? "").slice(0, CRASH_MESSAGE_MAX_CHARS);
+          const seen = crashes.gpuErrors;
+          if (seen.has(description) || seen.size >= GPU_ERROR_RECORDS_MAX) return;
+          seen.add(description);
+          const gpu = gpuSide({ class: gpuErrorClass(event?.error), description });
+          keepCrash(shellRecord(CrashKind.GpuValidation, false, description, { gpu }));
+        });
+      }
+
+      /** Traps no caller caught: a frame's own are caught in run(); these are the page's leftovers. */
+      function listenForTraps() {
+        window.addEventListener("error", (event) => noteTrap(event.error));
+        window.addEventListener("unhandledrejection", (event) => noteTrap(event.reason));
       }
 
       // ── the page contract ──
@@ -1274,7 +1896,15 @@
 
       /** One op through studio_call: the argument goes in as JSON and the envelope comes back as JSON. */
       function call(game, op, arg) {
-        const reply = JSON.parse(game.studio_call(op, JSON.stringify(arg ?? null)));
+        // A dead module is never called again: its state stopped mid-frame.
+        if (crashes.fatal) return undefined;
+        let reply;
+        try {
+          reply = JSON.parse(game.studio_call(op, JSON.stringify(arg ?? null)));
+        } catch (error) {
+          noteTrap(error);
+          throw error;
+        }
         if (reply?.ok === true) return reply.result;
         console.warn(`${op}: ${reply?.error}`);
         return undefined;
@@ -1312,10 +1942,18 @@
           return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
         };
         api.player = () => api.state()?.player ?? null;
-        /** `audio({muted})` mutes; `audio()` is the level probe, which the web build does not measure. */
+        /**
+         * `audio({muted})` mutes the device; `audio()` is the level probe: the game's own mix before
+         * the mute (`studio_audio_level`), whether or not the first gesture opened the device yet.
+         */
         api.audio = (arg) => {
-          if (typeof arg?.muted !== "boolean") return { available: false, rms: 0, centroid: 0 };
-          return call(game, "audio", { muted: arg.muted });
+          if (typeof arg?.muted === "boolean") return call(game, "audio", { muted: arg.muted });
+          if (typeof game.studio_audio_level !== "function") return { available: false, rms: 0, centroid: 0 };
+          try {
+            return JSON.parse(game.studio_audio_level());
+          } catch {
+            return { available: false, rms: 0, centroid: 0 };
+          }
         };
         // Bound only when the module exports its capture, as the C++ shell binds each verb.
         if (typeof game.studio_capture !== "function") return;
@@ -1350,7 +1988,17 @@
             };
           }
           bindPageShapes(game, api);
+          /** The dev profile verb (`{action, frames?, mode?}`); a refusal answers `{__refused: code}`, as renderSettings. */
+          api.profile = (request) => {
+            if (crashes.fatal) return { [REFUSED]: FrameFailure.Failed };
+            const reply = JSON.parse(game.studio_call("profile", JSON.stringify(request ?? {})));
+            return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
+          };
+          // Bound only when the module can swap a file's bytes: Studio asks for the verb before it
+          // places anything, and a page without it is reloaded instead.
+          if (typeof game.studio_assets_replace === "function") api.reloadAssets = (arg) => reloadAssets(game, arg);
         }
+        api.crashes = readCrashes;
         window.__studio = api;
         shell.hex = hex;
       }
@@ -1403,20 +2051,28 @@
         let first = true;
         const pacer = { samples: [], refresh: null, owed: 0, phase: 0 };
         const frame = (now) => {
+          // A crash ended the module (in a verb, or a frame of its own): no frame calls it again.
+          if (crashes.fatal) {
+            if (status.state === State.Running) Object.assign(status, { state: State.Failed, code: FrameFailure.Failed });
+            return;
+          }
           const ms = pacedFrameMs(pacer, Math.min(MAX_FRAME_MS, Math.max(0, now - last)));
           last = now;
           try {
             pollGamepads(game, input);
+            streamAssets(game);
             if (game.studio_frame(ms) > 0) input.ticked = true;
             // The first animation frame always draws and presents (the presenter's frame gate).
             if (first) awaitFirstLitFrame();
             first = false;
             scheduleIdleFlush(game);
+            serveSaveRequests(game);
           } catch (error) {
             if (error?.code === FrameFailure.DeviceLost) {
               showDeviceLost(game, error);
               return;
             }
+            noteTrap(error);
             Object.assign(status, { state: State.Failed, code: FrameFailure.Failed, reason: String(error?.message ?? error) });
             return;
           }
@@ -1586,6 +2242,8 @@
         const module = await fetchWasm();
         await game.default(module ? { module_or_path: module } : undefined);
         shell.module = game;
+        // The crash records' database first: a panic in the boot below is kept too.
+        await openCrashes(game);
         // The saves and the assets first: studio_boot starts the game, and its first reset reads them.
         await preloadSaves(game);
         await preloadAssets(game);
@@ -1613,7 +2271,9 @@
       }
 
       watchPageGpu();
+      listenForTraps();
       boot().catch((error) => {
+        noteTrap(error);
         if (status.state === State.Starting) showFailed(error);
       });
     </script>

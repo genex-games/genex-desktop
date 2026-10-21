@@ -17,7 +17,7 @@ import path from "node:path";
 import { type BuildTarget, GameStack } from "../../shared/game-project.ts";
 import { ToolchainId, type ToolchainLock, toolchainHostOf } from "../../shared/toolchain.ts";
 import { readRegularFile } from "../../substrate/fsx.ts";
-import { renderTomlFragment, wgslTomlFragment } from "../../substrate/genex-toml.ts";
+import { type GenexToml, renderTomlFragment, wgslTomlFragment } from "../../substrate/genex-toml.ts";
 import { admitRustOutput } from "../../substrate/native-cross-admission.ts";
 import {
   NoticeRefusal,
@@ -37,8 +37,11 @@ import {
   type RustLocateResult,
   type RustOutputAdmit,
   type RustStage,
+  type RustStaged,
 } from "../rust-build.ts";
 import { colyseusComponentFolder } from "../rust-colyseus.ts";
+import { componentFolder } from "../../substrate/toolchain-store/locate.ts";
+import { entrySha12, manifestEntry } from "../../substrate/toolchain-store/manifest.ts";
 import { genexReleaseOf, RUST_GAME_PACKAGE, RustManifestCode } from "../rust-manifest.ts";
 import { stageRustGame } from "../rust-stage.ts";
 
@@ -151,12 +154,14 @@ export function storeRustLocate(store: string, payload: string): RustBuildsOptio
     const { sysroot, vendor, webTools } = found.located;
     const reads = [await realpath(store), await realpath(payload)];
     const colyseus = colyseusComponentFolder(store, toolchainHostOf(process.platform, process.arch));
+    const mpBridge = mpBridgeComponentFolder(store);
     const toolchain = {
       bin: path.join(sysroot, "bin"),
       vendor,
       clippyConf: payload,
       reads,
       ...(colyseus && { colyseus }),
+      ...(mpBridge && { mpBridge }),
     };
     return { ok: true, toolchain: webTools ? { ...toolchain, web: webTools } : toolchain };
   };
@@ -193,7 +198,7 @@ export function genexReleaseOfLock(lock: ToolchainLock | undefined): string | nu
  * (`ejectedFrom`) names the release its `[engine]` row does.
  */
 export function shippedRustStage(payload: string): RustStage {
-  return async (game, into, target, flavour, lock, vendor, ejectedFrom) => {
+  return async (game, into, target, flavour, lock, vendor, ejectedFrom, net) => {
     const genexVersion = genexReleaseOfLock(lock) ?? (await shippedGenexRelease(payload));
     if (!genexVersion) {
       const detail = MESSAGE.noRelease(path.join(...RUST_PAYLOAD_DIR, RUST_LOCK_LINE_FILE));
@@ -209,26 +214,38 @@ export function shippedRustStage(payload: string): RustStage {
       flavour,
       engineVendor,
       ejectedFrom: ejectedFrom ?? null,
+      ...(net === undefined ? {} : { net }),
     });
     if (!staged.ok) return { ok: false, code: staged.code, detail: staged.detail };
-    const dependencies = [FACADE_CRATE, ...staged.manifest.crates.map((crate) => crate.name)];
-    const { title, nativeFeatures, render, wgsl, wasmBudgetMb, assetGroups, assets } = staged.manifest;
-    const renderToml = render ? renderTomlFragment(render) : null;
-    const wgslToml = wgslTomlFragment(wgsl);
-    const loading = render?.loading ?? null;
-    return {
-      ok: true,
-      dependencies,
-      title,
-      nativeFeatures,
-      renderToml,
-      wgslToml,
-      wasmBudgetMb: wasmBudgetMb ?? null,
-      loading,
-      assetGroups: assetGroups ?? [],
-      assets: assets ?? null,
-    };
+    return stagedAnswer(staged.manifest);
   };
+}
+
+/** What the lane is told of a staged game: the facade and its crates, and the checked tables it compiles in or packages by. */
+function stagedAnswer(manifest: GenexToml): RustStaged {
+  const dependencies = [FACADE_CRATE, ...manifest.crates.map((crate) => crate.name)];
+  const { title, nativeFeatures, render, wgsl, wasmBudgetMb, assetGroups, assets } = manifest;
+  return {
+    ok: true,
+    dependencies,
+    title,
+    nativeFeatures,
+    renderToml: render ? renderTomlFragment(render) : null,
+    wgslToml: wgslTomlFragment(wgsl),
+    wasmBudgetMb: wasmBudgetMb ?? null,
+    loading: render?.loading ?? null,
+    assetGroups: assetGroups ?? [],
+    assets: assets ?? null,
+    net: manifest.net ?? null,
+  };
+}
+
+/** The store folder of this host's `genex-mp-bridge` component (installed or not), or null when the manifest pins none. */
+function mpBridgeComponentFolder(store: string): string | null {
+  const host = toolchainHostOf(process.platform, process.arch);
+  const entry = host === null ? null : manifestEntry(ToolchainId.MultiplayerBridge, host);
+  if (entry === null) return null;
+  return componentFolder(store, ToolchainId.MultiplayerBridge, { version: entry.version, sha12: entrySha12(entry) });
 }
 
 /** What the core hands its Rust lane besides the store and the payload. */

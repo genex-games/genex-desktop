@@ -176,24 +176,118 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
 
 #[test]
 fn the_game_systems_blocks_are_the_fixtures() {
-    use genex::manifest::{ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, STREAM_CALLS};
+    use genex::manifest::{
+        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS, STREAM_CALLS,
+    };
     let pinned = fixture();
-    let animation = genex_anim::AnimationErrorCode::ALL.map(genex_anim::AnimationErrorCode::wire);
+    let animation: Vec<&str> = genex_anim::AnimationErrorCode::ALL
+        .map(genex_anim::AnimationErrorCode::wire)
+        .into_iter()
+        .chain(genex::CharacterErrorCode::ALL.map(genex::CharacterErrorCode::wire))
+        .collect();
     let stream = genex::StreamErrorCode::ALL.map(genex::StreamErrorCode::wire);
     let nav = genex::nav::NavErrorCode::ALL.map(genex::nav::NavErrorCode::wire);
+    let input = genex::actions::InputErrorCode::ALL.map(genex::actions::InputErrorCode::as_str);
     let assets = genex::AssetErrorCode::ALL.map(genex::AssetErrorCode::wire);
     assert_eq!(ASSET_REFUSALS, assets, "the manifest's asset refusals are AssetErrorCode's");
-    let blocks: [(&str, &[&str], &[&str]); 5] = [
-        ("animation", &ANIMATION_CALLS, &animation),
+    let lod = genex::LodRefusalCode::ALL.map(genex::LodRefusalCode::wire);
+    assert_eq!(LOD_REFUSALS, lod, "the manifest's lod refusals are LodRefusalCode's");
+    let settings: Vec<&str> = genex::settings::SettingsErrorCode::ALL.iter().map(|code| code.wire()).collect();
+    let blocks: [(&str, &[&str], &[&str]); 7] = [
+        ("animation", &ANIMATION_CALLS, &animation[..]),
         ("stream", &STREAM_CALLS, &stream),
         ("nav", &NAV_CALLS, &nav),
+        ("input", &INPUT_CALLS, &input),
         ("assets", &ASSET_CALLS, &ASSET_REFUSALS),
         ("lod", &LOD_CALLS, &LOD_REFUSALS),
+        ("settings", &SETTINGS_CALLS, &settings),
     ];
     for (key, calls, refusals) in blocks {
         assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");
         assert_eq!(names(&pinned[key]["refusals"]), refusals, "{key} refusals");
     }
+}
+
+/// The net block: the calls the net page teaches (MP-4b) and `sim.net`'s local refusals (MP-4a).
+#[test]
+fn the_net_block_is_the_fixtures() {
+    let pinned = &fixture()["net"];
+    let refusals: Vec<&str> = genex::net::NetErrorCode::ALL.iter().map(|code| code.wire()).collect();
+    assert_eq!(names(&pinned["refusals"]), refusals);
+    assert_eq!(names(&pinned["calls"]), genex::net::NET_CALLS);
+    // Every pinned name is a real call, written as the net page teaches it.
+    let mut game = genex::Game::new(());
+    game.net(genex::net::NetConfig::new().publish_hz(15).decimals(3).interp_delay_ticks(6));
+    game.on_update(|sim, _| {
+        let net = &mut sim.net;
+        let seated = (net.status(), net.me().is_some(), net.players().count(), net.remotes().count(), net.connected());
+        let host = (net.host().is_some(), net.is_host(), net.events().len(), net.shared("teams").is_some());
+        let raw = net.object("tag").map(|tag| tag.state_raw().clone());
+        assert!(seated.0 == genex::net::NetStatus::Offline && !host.1 && raw.is_none());
+        net.connect();
+        net.matchmake();
+        net.cancel();
+        net.leave();
+        let refused = [
+            net.set_me(genex::json!({ "x": 1 })),
+            net.snap_me(genex::json!({ "x": 1 })),
+            net.claim("tag").map(drop),
+            net.claim_as_host("tag").map(drop),
+            net.set_object("tag", genex::json!({})),
+            net.set_shared("teams", genex::json!({})),
+            net.send("hello", genex::json!({})),
+            net.send_to_host(genex::json!({})),
+            net.chat("hi"),
+        ];
+        assert!(refused.iter().all(Result::is_err), "offline, every write refuses");
+    });
+    game.demo("remotes", |driver| genex::json!(driver.net().join("Bea").as_str()));
+    let mut runtime = genex::Runtime::new(game).expect("installs");
+    runtime.set_net_mode(genex::net::NetMode::Off);
+    runtime.step(genex::FIXED_STEP_MS);
+    assert_eq!(runtime.demo("remotes").expect("the demo"), genex::json!(""), "outside the loopback room nobody is seated");
+}
+
+/// The saves block (UIS-9): the calls the saves page teaches, genex-save's refusals, the volatile
+/// issue, the slot states and the slot ops.
+#[test]
+fn the_saves_block_is_the_fixtures() {
+    use genex::saves::{SAVE_CALLS, SAVE_RESTORE_DIVERGED, SaveErrorCode, SlotOp, SlotState};
+    let pinned = &fixture()["saves"];
+    assert_eq!(names(&pinned["calls"]), SAVE_CALLS);
+    assert_eq!(names(&pinned["refusals"]), SaveErrorCode::ALL.map(SaveErrorCode::wire));
+    assert_eq!(names(&pinned["issues"]), [SAVE_RESTORE_DIVERGED]);
+    assert_eq!(names(&pinned["slotStates"]), SlotState::ALL.map(SlotState::wire));
+    assert_eq!(names(&pinned["slotOps"]), SlotOp::ALL.map(SlotOp::wire));
+}
+
+/// The ui block's calls (UIS-10): the calls the ui page teaches, held here as the other blocks are.
+#[test]
+fn the_ui_calls_are_the_fixtures() {
+    assert_eq!(names(&fixture()["ui"]["calls"]), genex::ui::UI_CALLS);
+}
+
+/// The audio block (AU-9): the calls the audio page teaches and genex-audio's refusals.
+#[test]
+fn the_audio_block_is_the_fixtures() {
+    use genex::audio::{AUDIO_CALLS, AudioErrorCode};
+    let pinned = &fixture()["audio"];
+    assert_eq!(names(&pinned["calls"]), AUDIO_CALLS);
+    assert_eq!(names(&pinned["refusals"]), AudioErrorCode::ALL.map(AudioErrorCode::as_str));
+}
+
+/// The profile block (PROF-5): the calls the profiling page teaches, `volatile.profile`'s key and
+/// fields, the engine scopes, the GPU sources and the node timing modes.
+#[test]
+fn the_profile_block_is_the_fixtures() {
+    use genex::profile::{EngineScope, GpuTimeSource, NodeTiming, PROFILE_CALLS, SUMMARY_FIELDS, VOLATILE_PROFILE_KEY};
+    let pinned = &fixture()["profile"];
+    assert_eq!(names(&pinned["calls"]), PROFILE_CALLS);
+    assert_eq!(pinned["volatileKey"], VOLATILE_PROFILE_KEY);
+    assert_eq!(names(&pinned["summaryFields"]), SUMMARY_FIELDS);
+    assert_eq!(names(&pinned["engineScopes"]), EngineScope::ALL.map(EngineScope::wire));
+    assert_eq!(names(&pinned["gpuSources"]), GpuTimeSource::ALL.iter().map(|source| source.wire()).collect::<Vec<_>>());
+    assert_eq!(names(&pinned["nodeTiming"]), NodeTiming::ALL.iter().map(|mode| mode.wire()).collect::<Vec<_>>());
 }
 
 #[test]

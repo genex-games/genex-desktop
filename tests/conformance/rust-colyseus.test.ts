@@ -500,13 +500,13 @@ describe("the lane names each native triple's store folder", () => {
 
   it("Live builds of a [net] game need no Colyseus component; only a [net] export does", () => {
     const live = STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu];
-    const netIds: readonly string[] = [ToolchainId.Colyseus, ToolchainId.ColyseusSource];
+    const netIds: readonly string[] = [ToolchainId.Colyseus, ToolchainId.ColyseusSource, ToolchainId.MultiplayerBridge];
     for (const ids of Object.values(live))
       assert.equal(
         ids.some((id: string) => netIds.includes(id)),
         false,
       );
-    assert.deepEqual(RUST_NET_COMPONENTS.web, []);
+    assert.deepEqual(RUST_NET_COMPONENTS.web, [ToolchainId.MultiplayerBridge]);
     assert.deepEqual(RUST_NET_COMPONENTS.android, [ToolchainId.ColyseusSource]);
     for (const target of ["macos", "ios", "windows", "linux"] as const) {
       assert.deepEqual(RUST_NET_COMPONENTS[target], [ToolchainId.Colyseus]);

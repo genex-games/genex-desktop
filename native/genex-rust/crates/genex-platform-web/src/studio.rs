@@ -23,7 +23,7 @@ use genex::render::{RenderAnswer, RenderChange, RenderStatus, requested_spelling
 use genex::{Input, Key};
 use genex_core::clock::FpsMeter;
 use genex_core::json::{self, Value};
-use genex_core::session::StepResult;
+use genex_core::session::{AudioLevel, StepResult};
 use genex_render::{GpuCounters, RenderCode};
 use genex_studio::verbs::{SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value, spell_change};
 use genex_studio::wire::{self, RenderSettingsChange, RenderSettingsRefusal};
@@ -466,6 +466,15 @@ impl<P: Painter> StudioGame for HandleGame<'_, P> {
     }
     fn render_settings(&mut self, change: Option<&RenderSettingsChange>) -> Result<Value, RenderSettingsRefusal> {
         self.painter.render_settings(change)
+    }
+    /// `audio({muted})`: the game's device output (the meter still reads the mix).
+    fn set_muted(&mut self, muted: bool) {
+        self.game.set_output_muted(muted);
+    }
+    /// `audioLevel` (and the page's `audio()` probe): the game's own mix, before the mute.
+    fn audio_level(&self) -> AudioLevel {
+        let level = self.game.audio_level();
+        AudioLevel { rms: level.rms, centroid: level.centroid }
     }
 }
 

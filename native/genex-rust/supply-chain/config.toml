@@ -1460,6 +1460,10 @@ criteria = "safe-to-deploy"
 version = "3.0.6"
 criteria = "safe-to-deploy"
 
+[[exemptions.sys-locale]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.target-tuple]]
 version = "1.0.2"
 criteria = "safe-to-run"

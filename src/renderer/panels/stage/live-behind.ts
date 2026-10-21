@@ -6,6 +6,7 @@
  * healthy build at once: it has no game to lose.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LiveAssetsOutcome } from "../../../shared/live-assets.ts";
 import type { LiveBehindEvent } from "../../../shared/live-behind.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
 import { type RunGraph as RunGraphModel, runBuilding } from "../../run-graph.ts";
@@ -16,6 +17,7 @@ import {
   type LiveBehind,
   liveBehindOf,
   newBuildOffer,
+  reloadSwapsAssets,
   type StageWatch,
   StageView,
 } from "../../stage.ts";
@@ -152,29 +154,26 @@ export function useLiveBehind(input: LiveBehindInput): {
   }, [shownBroken, onNotice]);
   const behind = useMemo(() => liveBehindOf({ waiting: held, offer, shownBroken }), [held, offer, shownBroken]);
 
+  const swapOrReload = useSwapOrReload(project, intoLive);
+
   /** Bring in what waits (or reload what is there), exactly as Reload does. */
   const apply = useCallback(
     (what: LiveBehind | null): Promise<void> => {
-      if (what?.held)
+      if (!what || reloadSwapsAssets(what)) return swapOrReload(what ? failed : () => {});
+      if (what.held)
         return intoLive(
           () => window.studio.reloadPreview(),
           () => {},
           failed,
         );
-      if (what?.head) return showMergedBuild(what.head, false);
-      if (what)
-        return intoLive(
-          () => window.studio.loadPreview(project ?? ""),
-          () => {},
-          failed,
-        );
+      if (what.head) return showMergedBuild(what.head, false);
       return intoLive(
-        () => window.studio.reloadPreview(),
+        () => window.studio.loadPreview(project ?? ""),
         () => {},
-        () => {},
+        failed,
       );
     },
-    [project, intoLive, showMergedBuild, failed],
+    [project, intoLive, showMergedBuild, failed, swapOrReload],
   );
   const behindRef = useRef(behind);
   behindRef.current = behind;
@@ -186,6 +185,29 @@ export function useLiveBehind(input: LiveBehindInput): {
 
   const showBuild = useCallback((head: string): Promise<void> => showMergedBuild(head, true), [showMergedBuild]);
   return { shownBuild, behind, showBuild, reload };
+}
+
+/**
+ * Reload of the game folder: its changed assets swapped into the running game when that is all
+ * that changed (it keeps playing, owner call C10), otherwise the reload it always was. A swap that
+ * fails reloads.
+ */
+function useSwapOrReload(
+  project: string | null,
+  intoLive: (load: () => Promise<unknown>, after: () => void, onError: (err: unknown) => void) => Promise<void>,
+): (onError: (err: unknown) => void) => Promise<void> {
+  return useCallback(
+    (onError: (err: unknown) => void): Promise<void> =>
+      intoLive(
+        async () => {
+          const swap = await window.studio.reloadLiveAssets(project ?? "").catch(() => null);
+          if (swap?.outcome !== LiveAssetsOutcome.Swapped) await window.studio.reloadPreview();
+        },
+        () => {},
+        onError,
+      ),
+    [project, intoLive],
+  );
 }
 
 /** What of the input says whether someone watches the web game in Live. */

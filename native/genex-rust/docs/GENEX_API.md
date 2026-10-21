@@ -34,21 +34,28 @@ needs Ctx and Drawing).
 
 | Topic | Page | What it covers |
 |-|-|-|
-| Ctx | `docs/api/ctx.md` | What a tick reads: keys, touches, pads, the pointer, look, wheel and text, `ctx.rng`, `ctx.dt`, `ctx.tick` and the game's own saves. |
+| Ctx | `docs/api/ctx.md` | What a tick reads: actions, keys, touches, pads, pointer, look, wheel, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
 | UI | `docs/api/ui.md` | `on_ui`: the egui HUD and menus, a game's only UI path. |
+| Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
-| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/` (a level's JSON, a model's triangles), its refusals and why the checksum stays the same everywhere. |
-| Streaming a large world | `docs/api/streaming.md` | A world in cells: anchors, the sim radius, cell builders, entered and left cells, holds and their refusals. |
-| Navigation | `docs/api/navigation.md` | The walker, nav input, baking and `.navmesh` bytes, tiles, area costs, carved obstacles and refusals. |
-| Lighting, materials and environment | `docs/api/lighting.md` | The sun, ambient, point and spot lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
-| Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
+| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, its refusals and why the checksum stays the same everywhere. |
+| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
+| Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
+| Characters | `docs/api/characters.md` | The character controller and ragdolls. |
+| Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
+| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
+| Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
+| Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
+| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
+| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
+| Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
 | Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
-| Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws and its style. |
+| Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
-| Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape (a forest, rocks, buildings) made once and drawn as a group. |
+| Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once and drawn as a group. |
 | Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
-| Particles | `docs/api/particles.md` | Emitters (steam, rain, sparks) drawn as a pure function of the tick. |
-| Water | `docs/api/water.md` | Lakes, ponds and flooded quarries: `frame.water`, one flat level the ground hides. |
+| Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
+| Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
 | Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
 | genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: the game, physics, crates, WGSL sources, native features and the web. |
@@ -91,20 +98,15 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   the checksum (use it for anything that is not a function of the seed and the input).
 - **State keys.** `state()` owns `version`, `contractVersion`, `seed`, `frame`, `simulatedMs`,
   `running`, `fps`, `held`, `pointerLock`, `hud`, `camera`, `error`, `player`, `volatile`,
-  `__render`, `assets` and `checksum`, and `__stream` while `game.streaming` is registered
-  (display only and never in the checksum, so a probe may be named `stream`). A streamed world
-  (`docs/api/streaming.md`) registers `Streaming::grid(64.0).sim_radius(1)` with
-  `game.streaming(..)` and builds cells with `game.cell_content(..)` (`CellBuild::default()`,
-  `.thing(..)`; `.hysteresis(..)`, `.prefetch(..)` and `.anchors(..)` tune it); the sim moves it
-  with `sim.stream.set_anchor(..)` and `sim.stream.clear_anchor(..)` and reads
-  `sim.stream.entered()` and `sim.stream.left()` each tick. `game.navigation(..)` registers a
-  walker and `sim.nav` holds its nav (`docs/api/navigation.md`); `frame.nav_debug` draws nothing
-  yet. `hud.items` lists
+  `__render`, `assets` and `checksum`, `__stream` while `game.streaming` is registered and
+  `__input` while `game.input` is registered, `__net` while the build links networking or
+  `game.net` is registered (display only and never in the checksum, so a probe may be named
+  `stream`, `input` or `net`). `hud.items` lists
   the label of every egui widget the last tick drew, in drawing order, so a check can find a
   widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long
-  chain of inputs). Its driver offers `sim()`, `sim_mut()`, `inject(input)`, `advance_ms(ms)`
-  and `save(file, bytes)`, and the value it returns is the demo's answer (a check captures the
+  chain of inputs). Its driver offers `sim()`, `sim_mut()`, `inject(input)`, `advance_ms(ms)`,
+  `save(file, bytes)` and `net()` (scripted remote players in the loopback room), and the value it returns is the demo's answer (a check captures the
   frame after the demo with the `capture` verb). The runtime
   is paused after a demo. Only a demo can advance time: `advance` inside `on_update` does not
   compile.
@@ -114,11 +116,14 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   anything runs: `duplicate-camera`, `duplicate-player`, `duplicate-probe`, `reserved-probe`
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
-  `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`) and `streaming-invalid`
-  (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, a
-  registration past the simulated cells' memory cap, or, with `game.navigation`, a stream cell
-  that is not a whole number of nav tiles). `game.gpu_pass` panics `gpu-pass-invalid` as it is
-  registered: an empty, overlong or repeated pass name, or one pass over the cap.
+  `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
+  `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second registration), `streaming-invalid` (the
+  Streaming and Navigation pages say when), `input-invalid` (the Ctx page explains it),
+  `audio-zone-limit` (more than 16 reverb zones),
+  `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`,
+  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps) and `settings-invalid`.
+  `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
+  pass name, or one pass over the cap.
 
 ## Verbs
 

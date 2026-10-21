@@ -71,8 +71,21 @@ const RUST_CASE_ID = "touch-physics";
 /** Words a user's brief never uses and the eval case must not name: the stack is the product's choice. */
 const STACK_WORDS = /\b(rust|wgpu|webgpu|genex|rapier|egui|cargo)\b/i;
 
-/** The `window.__studio` names the web shell adds beside the harness's `PageMethod` verbs (the page shapes of the C++ shell). */
-const PAGE_ONLY_VERBS = ["version", "state", "input", "injectInput", "eye", "player", "capture"] as const;
+/**
+ * The `window.__studio` names the web shell adds beside the harness's `PageMethod` verbs (the page
+ * shapes of the C++ shell), and the frame profile and crash records it binds (PROF-4, CRASH-3).
+ */
+const PAGE_ONLY_VERBS = [
+  "version",
+  "state",
+  "input",
+  "injectInput",
+  "eye",
+  "player",
+  "capture",
+  "profile",
+  "crashes",
+] as const;
 
 /** The refusals a Rust game's run, page or probe can meet; the contract page must name each. */
 const GAME_REFUSALS = [
@@ -104,6 +117,7 @@ const FACADE = JSON.parse(
   instanceGroups: { calls: string[]; refusals: string[] };
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
+  audio: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
   probes: { calls: string[] };
   decals: { calls: string[] };
@@ -144,11 +158,28 @@ const GUIDE_WORLD_LOOK_WORDS_MAX = 320;
 
 /**
  * What the seed's Rust recipes must sketch, as calls, so a facet that fails a look check is
- * handed the built-in that fixes it: rooms lit by their own probe and volume, and the air and grade.
+ * handed the built-in that fixes it: rooms lit by their own probe and volume, and the air and grade;
+ * and a facet whose sound a check cannot prove played is handed the audio calls (AU-9).
  */
 const RECIPE_SKETCH_CALLS = [
   ["frame.reflection_probe", "frame.irradiance_volume"],
   ["Fog::default", ".with_moon", ".grading", ".exposure_curve"],
+  ["gfx.sound", "ctx.audio.play_at"],
+] as const;
+
+/** The topic pages of the game systems (stage 2), each of which the template guide routes an agent to. */
+const GAME_SYSTEMS_PAGES = [
+  "ctx",
+  "ui",
+  "settings",
+  "streaming",
+  "navigation",
+  "characters",
+  "animation",
+  "audio",
+  "saves",
+  "net",
+  "profiling",
 ] as const;
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -275,6 +306,77 @@ function codeWords(text: string): Set<string> {
   const inline = [...text.replace(/```[\s\S]*?```/g, "").matchAll(/`([^`\n]+)`/g)].map((match) => match[1] ?? "");
   const words = [...fenced, ...inline].flatMap((chunk) => chunk.match(/[A-Za-z][A-Za-z0-9_-]*/g) ?? []);
   return new Set(words);
+}
+
+/** The game systems' topic pages whose every call is pinned (the docs-to-fixture row). */
+const PINNED_CALL_PAGES = [
+  "animation",
+  "assets",
+  "audio",
+  "characters",
+  "navigation",
+  "net",
+  "profiling",
+  "saves",
+  "settings",
+  "streaming",
+  "ui",
+] as const;
+
+/**
+ * Names those pages call that are not the game systems' facade calls: Rust's and serde_json's own
+ * methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
+ * `frame.sphere`, `genex::render::settings_button`), egui's `ui.painter` and a game's own helper
+ * in the profiling example (`enemy.think`).
+ */
+const NOT_GAME_SYSTEMS_CALLS = new Set([
+  "any",
+  "as_bool",
+  "as_f64",
+  "as_i64",
+  "as_mut",
+  "as_ref",
+  "cloned",
+  "collect",
+  "contains",
+  "expect",
+  "extend",
+  "fold",
+  "from",
+  "from_xyz",
+  "into",
+  "into_iter",
+  "is_ok",
+  "iter",
+  "len",
+  "length",
+  "map",
+  "map_or",
+  "ok",
+  "ok_or",
+  "retain",
+  "take",
+  "to_owned",
+  "to_vec",
+  "unwrap_or",
+  "on_draw",
+  "on_reset",
+  "on_update",
+  "painter",
+  "settings_button",
+  "sphere",
+  "split",
+  "tag",
+  "think",
+  "unit",
+]);
+
+/** The method and function names `text` calls in its fenced Rust blocks and inline code (`.x(`, `T::x(`). */
+function calledNames(text: string): Set<string> {
+  const fenced = [...text.matchAll(/```rust\n([\s\S]*?)```/g)].map((match) => match[1] ?? "");
+  const inline = [...text.replace(/```[\s\S]*?```/g, "").matchAll(/`([^`\n]+)`/g)].map((match) => match[1] ?? "");
+  const calls = [...fenced, ...inline].flatMap((chunk) => [...chunk.matchAll(/(?:\.|::)([a-z_][a-z0-9_]*)\s*\(/g)]);
+  return new Set(calls.map((match) => match[1] ?? ""));
 }
 
 /** The words of `text`, split at whitespace. */
@@ -428,6 +530,13 @@ describe("GENEX_API.md is the facade's reference", () => {
     for (const refusal of FACADE.particles.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
   });
 
+  it("teaches every audio call and refusal on the Audio page the index lists (AU-9)", () => {
+    const page = read(pageOf("Audio"));
+    for (const call of FACADE.audio.calls) assert.ok(page.includes(`${call}(`), `audio.md teaches ${call}(..)`);
+    for (const refusal of FACADE.audio.refusals)
+      assert.ok(page.includes(`\`${refusal}\``), `audio.md names ${refusal}`);
+  });
+
   it("teaches every fog call, the volumetric opt-out among them", () => {
     const text = api();
     for (const call of FACADE.fog.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
@@ -467,6 +576,20 @@ describe("GENEX_API.md is the facade's reference", () => {
     assert.ok(names.size >= 6);
     for (const name of names) assert.ok(rules.includes(name), `the determinism rules do not name ${name}`);
     assert.ok(rules.includes("f32"), "the transcendental rule names f32's methods");
+  });
+});
+
+describe("the game systems' pages teach only pinned calls", () => {
+  it("pins every call the game systems' pages teach (docs to fixture)", () => {
+    const pinned = new Set(
+      pinnedCallGroups().flatMap(([, calls]) => calls.flatMap((call) => call.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])),
+    );
+    const unpinned = PINNED_CALL_PAGES.flatMap((page) =>
+      [...calledNames(read(`${API_PAGES}/${page}.md`))]
+        .filter((name) => !pinned.has(name) && !NOT_GAME_SYSTEMS_CALLS.has(name))
+        .map((name) => `${page}.md: ${name}(..)`),
+    );
+    assert.deepEqual(unpinned, []);
   });
 });
 
@@ -695,6 +818,15 @@ describe("the agent-facing files agree with each other and the folder", () => {
       assert.ok(text.includes(target), `CLAUDE.md does not name ${target}`);
   });
 
+  it("CLAUDE.md routes to every game-systems page and names the action map as an input source", () => {
+    const text = read("CLAUDE.md");
+    for (const page of GAME_SYSTEMS_PAGES)
+      assert.ok(text.includes(`docs/api/${page}.md`), `CLAUDE.md does not route to docs/api/${page}.md`);
+    assert.ok(section(text, "Game systems"), "CLAUDE.md has a Game systems section");
+    const inputRule = text.slice(text.indexOf("4. **"), text.indexOf("5. **"));
+    assert.ok(inputRule.includes("ctx.actions"), "rule 4 lists ctx.actions among the input sources");
+  });
+
   it("CLAUDE.md carries the rules the lane enforces: probes, demos, touch, the HUD and determinism", () => {
     const text = read("CLAUDE.md");
     for (const word of ["probe", "demo", "ctx.touches", "on_ui", "ctx.rng", "genex::math", "genex::Map"])
@@ -729,5 +861,89 @@ describe("the Rust eval case", () => {
     assert.ok(rustCase);
     const asked = `${rustCase.brief}\n${rustCase.acceptance.map((item) => item.text).join("\n")}`;
     for (const axis of [/touch|tap|flick/i, /physic|topple|knock/i, /score|count/i]) assert.match(asked, axis);
+  });
+});
+
+/** The seed's asset recipes (C-24): the Rust techniques an agent retrieves for asset work. */
+const ASSET_RECIPES = ["rust.cc0-assets", "rust.texture-usage", "rust.asset-budgets"] as const;
+/** The most words the template guide's `## Assets` rules may take: rules, with the reference holding the how. */
+const GUIDE_ASSETS_WORDS_MAX = 300;
+/** What a seed recipe's menu note and intent may take (`harness-seed/loop/library.ts` clips past these). */
+const RECIPE_NOTE_CHARS_MAX = 160;
+const RECIPE_INTENT_CHARS_MAX = 1200;
+
+interface SeedRecipe {
+  id: string;
+  runtime: string;
+  pack: string;
+  kind: string;
+  origin: string;
+  note: string;
+  intent: string;
+  sketch: string;
+  evidence: Array<{ source: string }>;
+}
+const seedRecipe = (id: string): SeedRecipe =>
+  JSON.parse(readFileSync(path.join(RECIPES, `${id}.json`), "utf8")) as SeedRecipe;
+
+describe("the template guide's Assets rules (C-24)", () => {
+  const rules = () => section(read("CLAUDE.md"), "Assets");
+
+  it(`stay rules: at most ${GUIDE_ASSETS_WORDS_MAX} words, and the reference holds the how`, () => {
+    assert.ok(wordCount(rules()) <= GUIDE_ASSETS_WORDS_MAX, `${wordCount(rules())} words`);
+    for (const page of ["docs/api/assets.md", "docs/api/drawing.md", "docs/api/genex-toml.md"])
+      assert.ok(rules().includes(page), `the Assets rules point at ${page}`);
+  });
+
+  it("name the CC0 tools, the texture row, the budgets and the keys a capture shows", () => {
+    for (const word of [
+      "cc0__search",
+      "cc0__fetch",
+      "genex-assets.lock",
+      "[[texture]]",
+      "budget_mb",
+      "[[asset_group]]",
+      "assets-over-ceiling",
+      "texture-uncompressed",
+      "missingModels",
+    ])
+      assert.ok(rules().includes(word), `the Assets rules name ${word}`);
+  });
+});
+
+describe("the seed's asset recipes (C-24)", () => {
+  it("ship as Rust techniques the library keeps whole, citing sections the reference has", () => {
+    const sections = new Set(chapterTitles());
+    for (const id of ASSET_RECIPES) {
+      assert.ok(existsSync(path.join(RECIPES, `${id}.json`)), `${id} is in the seed`);
+      const recipe = seedRecipe(id);
+      assert.equal(recipe.id, id);
+      assert.equal(recipe.runtime, GameStack.RustWgpu, `${id} is a Rust recipe`);
+      assert.deepEqual([recipe.pack, recipe.kind, recipe.origin], ["rust", "technique", "seed"], id);
+      assert.ok(recipe.note.length <= RECIPE_NOTE_CHARS_MAX, `${id}'s note is ${recipe.note.length} characters`);
+      assert.ok(recipe.intent.length <= RECIPE_INTENT_CHARS_MAX, `${id}'s intent is ${recipe.intent.length}`);
+      const cited = recipe.evidence.flatMap(({ source }) => /GENEX_API\.md \(([^)]+)\)/.exec(source)?.[1] ?? []);
+      assert.ok(cited.length > 0, `${id} cites the reference`);
+      for (const heading of cited) assert.ok(sections.has(heading), `${id} cites "${heading}"`);
+    }
+  });
+
+  it("sketch genex.toml rows the build accepts", () => {
+    for (const id of ["rust.texture-usage", "rust.asset-budgets"]) {
+      const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${seedRecipe(id).sketch.replace("# genex.toml\n", "")}`);
+      assert.ok(parsed.ok, `${id}: ${JSON.stringify(parsed)}`);
+    }
+  });
+
+  it("teach the codes the import and the renderer answer with", () => {
+    const texture = seedRecipe("rust.texture-usage").intent;
+    for (const code of ["texture-uncompressed", "texture-family-refused", "tangents-runtime"])
+      assert.ok(texture.includes(code), `rust.texture-usage names ${code}`);
+    const budgets = seedRecipe("rust.asset-budgets").intent;
+    for (const code of ["assets-over-budget", "assets-over-ceiling", "triangles-over-budget", "not-preloaded"])
+      assert.ok(budgets.includes(code), `rust.asset-budgets names ${code}`);
+    const cc0 = seedRecipe("rust.cc0-assets");
+    for (const word of ["cc0__search", "cc0__fetch", "missingModels", "gfx.assets().model"])
+      assert.ok(`${cc0.intent}\n${cc0.sketch}`.includes(word), `rust.cc0-assets names ${word}`);
   });
 });

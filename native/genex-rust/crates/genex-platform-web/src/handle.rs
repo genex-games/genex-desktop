@@ -3,6 +3,7 @@
 //! game through genex's shared presenter ([`GameHandle::draw`]), which binds the game's custom GPU
 //! passes to its simulation, as a native run does.
 
+use genex::audio::{AudioLevel, Device};
 use genex::gpu::PassStage;
 use genex::present::{Drawn, Presenter};
 use genex::{Camera, Frame, Input, Runtime, StepResult, UnknownName, Value, View};
@@ -56,6 +57,12 @@ pub trait GameHandle {
     /// custom passes inside the frame, the HUD over it, the triangles noted for `state()`. None for
     /// a view the game does not have.
     fn draw(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Option<Result<Drawn, RenderError>>;
+    /// One pass of a settled capture's drain from `view` ([`Presenter::drain_pass`], STR-25):
+    /// whether everything the streamed view set wants is resident or refused (true for a view the
+    /// game does not have).
+    fn drain_pass(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Result<bool, RenderError>;
+    /// Record how a capture's drain ended ([`Presenter::note_drain`]).
+    fn note_drain(&mut self, presenter: &mut Presenter, report: genex::present::DrainReport);
     /// Register the game's custom GPU passes on `presenter`'s device; answers the refused ones by
     /// name (a refused pass stays out of every frame).
     fn install_passes(&mut self, presenter: &mut Presenter) -> Vec<(String, RenderError)>;
@@ -70,6 +77,24 @@ pub trait GameHandle {
     fn warm_boot(&mut self, presenter: &mut Presenter);
     /// The game's title (`genex.toml`), which its loading screen names.
     fn title(&self) -> String;
+    /// `audio({muted})` and a phone's audio gate: silence the device output; the mix, the meter
+    /// and the simulation go on (AU-8).
+    fn set_output_muted(&mut self, muted: bool);
+    /// Whether the device output is muted.
+    fn output_muted(&self) -> bool;
+    /// `audioLevel`: the game's own mix, the last 2048 frames before the mute.
+    fn audio_level(&self) -> AudioLevel;
+    /// The app is being suspended, closed or hidden: write the autosave ring's oldest slot now,
+    /// between ticks ([`Runtime::suspend_save`], UIS-12). None when the game has no ring to write.
+    fn suspend_save(&mut self) -> Option<Result<genex::saves::SlotInfo, genex::saves::SaveError>>;
+    /// The screen's safe area, `[left, top, right, bottom]` in world pixels, for
+    /// `genex::ui::safe_area` (a Genex run ignores it).
+    fn set_ui_safe_area(&mut self, insets: [f32; 4]);
+    /// The OS locale the shell read, below the person's choice (a Genex run ignores it).
+    fn set_os_locale(&mut self, tag: Option<&str>);
+    /// Open `device` on the game's audio queue (once: a run a person sees) and report it to
+    /// `state().volatile.audio.device`; an open device's last fault is reported again each call.
+    fn follow_device(&mut self, device: &mut Device);
 }
 
 /// The facade view a studio camera name resolves to: the game's own for None, a named camera, or
@@ -173,6 +198,15 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
         presenter.draw_view(self, view)
     }
 
+    fn drain_pass(&mut self, presenter: &mut Presenter, view: Option<&str>) -> Result<bool, RenderError> {
+        let Some(view) = resolve(self, view) else { return Ok(true) };
+        presenter.drain_pass(self, view)
+    }
+
+    fn note_drain(&mut self, presenter: &mut Presenter, report: genex::present::DrainReport) {
+        presenter.note_drain(report);
+    }
+
     fn install_passes(&mut self, presenter: &mut Presenter) -> Vec<(String, RenderError)> {
         presenter.install_for(self)
     }
@@ -191,5 +225,37 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
 
     fn title(&self) -> String {
         Runtime::title(self).to_owned()
+    }
+
+    fn set_output_muted(&mut self, muted: bool) {
+        Runtime::set_output_muted(self, muted);
+    }
+
+    fn output_muted(&self) -> bool {
+        Runtime::output_muted(self)
+    }
+
+    fn audio_level(&self) -> AudioLevel {
+        Runtime::audio_level(self)
+    }
+
+    fn suspend_save(&mut self) -> Option<Result<genex::saves::SlotInfo, genex::saves::SaveError>> {
+        Runtime::suspend_save(self)
+    }
+
+    fn set_ui_safe_area(&mut self, insets: [f32; 4]) {
+        Runtime::set_ui_safe_area(self, insets);
+    }
+
+    fn set_os_locale(&mut self, tag: Option<&str>) {
+        Runtime::set_os_locale(self, tag);
+    }
+
+    fn follow_device(&mut self, device: &mut Device) {
+        if device.tried() {
+            self.note_audio_device(device.is_open(), device.fault());
+            return;
+        }
+        device.open_for(self);
     }
 }

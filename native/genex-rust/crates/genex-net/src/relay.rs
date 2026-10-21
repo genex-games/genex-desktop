@@ -1,5 +1,5 @@
-//! The Relay backend over the vendored genex-multiplayer Session (native libcolyseus; the web
-//! bridge in MP-3b).
+//! The Relay backend over the vendored genex-multiplayer Session (native libcolyseus in
+//! `relay/native.rs`; the browser bridge in `relay/web.rs`).
 //!
 //! `pump` polls the session every shell frame and keeps what it reports; `cut` maps those events
 //! (by exhaustive match over the crate's `Event`, no `_` arm: an upstream variant fails the build)
@@ -27,6 +27,7 @@ use crate::writes::{MatchReport, NetRequest, NetSession, NetWrites, StateWrite};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+pub mod web;
 
 /// The reason the crate gives a control request it settled itself after its timeout.
 pub const CONTROL_REASON_TIMEOUT: &str = "timeout";

@@ -819,10 +819,26 @@ the reconstructed surface's depth (`frag_depth`); below, the quad's flat depth k
 testing for tile GPUs. A fade cuts whole pixels with the meshes' dither. The forward frame group
 holds all of WebGPU core's 16 sampled textures, so the impostor pipelines bind group 0 without its
 eight material arrays (`renderer::impostor_frame_layout_entries`) and group 2 their own (species
-rows, instances, atlases). Impostors cast no shadow yet (LOD-15: the coarsest mesh casts).
-`tests/impostor_draw.rs` holds a cube's impostor to its mesh: silhouette IoU at least 0.95 at
-the switch, mean luminance within TAA's 0.04 accumulation floor under the sun, the sky and fog,
-and motion within a tenth of a pixel of the mesh's on a pan.
+rows, instances, atlases). `tests/impostor_draw.rs` holds a cube's impostor to its mesh:
+silhouette IoU at least 0.95 at the switch, mean luminance within TAA's 0.04 accumulation floor
+under the sun, the sky and fog, and motion within a tenth of a pixel of the mesh's on a pan.
+
+An impostor is also the last level of its mesh's chain in the cull (game systems LOD-15):
+`MeshLibrary::set_impostor` (or `Renderer::set_impostor`) ends a chain with an impostor level
+(`MeshImpostor::lead(species, error)` on the part that draws the quad, `MeshImpostor::part(error)`
+on a compound's other parts), and the chain keeps at most three mesh levels
+(`mesh::LOD_IMPOSTOR_MESH_LEVELS`). The impostor level's error (`mesh::impostor_level_error`: one
+atlas texel a pixel, never below the last mesh level) is measured over the LOD row's radius, not
+the part's, so every part of a compound drawn with one LOD sphere switches to it at the same
+distance and each copy is drawn as meshes or as the impostor (or crossfades between them in the
+band), never both. The lead part's impostor batch draws no mesh indices; its camera survivors
+are listed in `FramePlan::impostor_batches`. Shadows take option A: in every view but the camera
+a band at the impostor level reads as the last mesh level whole (`cpu_cull_view` with `caster`,
+`gx_cull_lod_fade`'s `caster`), so the casters keep the mesh's shape across the switch
+(`tests/impostor.rs`: zero shadow pixels change on a dolly through the band). Each frame the
+impostor draw draws the placed impostors and the camera's survivors of the impostor batches
+(`FramePlan::impostor_instances`: the cull's CPU twin over those batches only, equal to the GPU
+cull slot for slot), a crossfading copy with its fade twin's signed share.
 
 ### `genex_textures` in glTF
 

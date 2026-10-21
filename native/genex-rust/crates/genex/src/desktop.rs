@@ -36,6 +36,9 @@ use genex_render::capture::{Capture, check_capture_size};
 use genex_render::{Gpu, RenderCode, RenderError};
 use serde_json::Value;
 
+/// The game contract's version crash records name (the studio's contract v2).
+const CRASH_CONTRACT_VERSION: u32 = 2;
+
 /// The exit code when the shell could not run (no window, no event loop) or the GPU did not open.
 const EXIT_SHELL_FAILED: i32 = 1;
 /// The swapchain format a window is configured with when the surface offers it (the renderer's
@@ -65,6 +68,8 @@ pub(crate) struct DesktopGame<W> {
     presented: u64,
     /// The loading screen while the boot's warm-up compiles (a window only).
     loading: Option<Loading>,
+    /// The audio device a windowed run opens on its first frame (AU-8); never a headless one.
+    audio: crate::audio::Device,
 }
 
 /// The loading screen a window shows, its look, and the compile pool's counts when the boot began.
@@ -100,7 +105,7 @@ impl<W: Default + 'static> DesktopGame<W> {
         }
         presenter.set_off_thread_changes(true);
         runtime.start();
-        DesktopGame { runtime, presenter, window: None, shell_surface: None, surface_requests: 0, drawn: 0, presented: 0, loading: None }
+        DesktopGame { runtime, presenter, window: None, shell_surface: None, surface_requests: 0, drawn: 0, presented: 0, loading: None, audio: crate::audio::Device::default() }
     }
 
     fn configure(&mut self, surface: wgpu::Surface<'static>, size: [u32; 2]) {
@@ -232,6 +237,16 @@ impl<W: Default + 'static> DesktopGame<W> {
         read_texture(self.presenter.gpu(), &texture, size)
     }
 
+    /// A windowed frame opens the audio device once (a person sees and hears the run); a headless
+    /// one never does. Each frame then reports the device to `volatile.audio.device`.
+    fn follow_audio(&mut self, frame: &ShellFrame) {
+        if !self.audio.tried() && crate::audio::may_open_device(frame.headless, false) {
+            self.audio.open_for(&mut self.runtime);
+        } else if self.audio.is_open() {
+            self.runtime.note_audio_device(true, self.audio.fault());
+        }
+    }
+
     /// After a device loss: a new device, every mesh and pass rebuilt, and the window's surface
     /// made again on it from the kept window (review F3: a desktop's winit sends `resumed` once, at
     /// start-up, so a surface left for the next one never came back and the window froze).
@@ -286,6 +301,18 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
         self.shell_surface = None;
     }
 
+    fn closing(&mut self) {
+        // The window is closing: the autosave ring's oldest slot is written now (UIS-12); a refusal
+        // is the slot's volatile issue, and the process ends either way.
+        if let Some(Err(error)) = self.runtime.suspend_save() {
+            eprintln!("genex: the suspend autosave was not written: {error}");
+        }
+    }
+
+    fn os_locale(&mut self, tag: Option<&str>) {
+        self.runtime.set_os_locale(tag);
+    }
+
     fn frame(&mut self, frame: ShellFrame) -> FrameControl {
         if self.presenter.resilient.is_lost() {
             self.recover();
@@ -301,6 +328,9 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
             }
             self.loading = None;
         }
+        self.follow_audio(&frame);
+        // One profiler frame per shell frame (PROF-5): the ticks, the draw and the present.
+        let scope = crate::profile::engine_scope(crate::profile::EngineScope::Frame);
         self.runtime.sample_input(&core_sample(&frame.sample));
         let ticks = self.runtime.advance_live(frame.frame_ms);
         // The first frame draws even before a tick: the window never shows an empty target.
@@ -315,9 +345,23 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
             }
         }
         if frame.present {
+            let _present = crate::profile::engine_scope(crate::profile::EngineScope::Present);
             self.present();
         }
+        drop(scope);
+        self.runtime.profiling().new_frame(frame.frame_ms, None);
         FrameControl::Continue
+    }
+}
+
+/// The destination a desktop run's crash records name.
+fn destination() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "mac"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
     }
 }
 
@@ -329,7 +373,13 @@ pub(crate) fn open<W: Default + 'static>(runtime: Runtime<W>, assets: AssetTable
 
 /// Run the game in this process's mode until its window closes; exits the process with an error
 /// code when the GPU or the window could not be opened.
-pub(crate) fn run<W: Default + 'static>(runtime: Runtime<W>, assets: AssetTable) {
+pub(crate) fn run<W: Default + 'static>(mut runtime: Runtime<W>, assets: AssetTable) {
+    // A crash is written under the save root's `genex-crash/` (a person's export, or a dev build
+    // run outside the studio); a dev build profiles with scopes on, an export with them off.
+    let dev = cfg!(feature = "studio");
+    crate::crash::set_identity(destination(), dev, &format!("genex-rust/{}/desktop", destination()), u64::from(CRASH_CONTRACT_VERSION));
+    crate::crash::install_file_sink(runtime.saves());
+    runtime.profiling().start(dev);
     let game = open(runtime, assets).unwrap_or_else(|error| {
         eprintln!("genex: {error}");
         std::process::exit(EXIT_SHELL_FAILED);

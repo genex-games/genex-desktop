@@ -85,7 +85,14 @@ lists its patches. The FNV-pinned traces live in `tests/runtime_stitch.rs` and
 
 `src/runtime/detour.rs` (NAV-9) ports Detour's raycast, moveAlongSurface,
 findRandomPointAroundCircle and findDistanceToWall (Zlib, altered; changes in the file header;
-pinned digest in `tests/detour.rs`).
+pinned digest in `tests/detour.rs`). NAV-12: the random point draws from any genex-core
+`GameRng` (a reset's `Pcg32` or a tick's `ctx.rng`), with the same draws.
+
+NAV-12 changes to the landmass port: the archipelago's avoidance also steers around the nav's
+avoid obstacles (zero-velocity bodies whose keys sit past every character's), and its agents,
+characters and search queue are crate-visible so `Nav::snapshot`/`restore` (`src/agents_api.rs`)
+can save and rebuild them with their arena layout (`Arena::layout`/`from_layout`), keeping every
+id and the order later ids come out in.
 
 ## Carving (`src/carve.rs`, NAV-10)
 

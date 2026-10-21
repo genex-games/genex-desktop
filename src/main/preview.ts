@@ -65,6 +65,7 @@ import {
   PAGE_CAPTURE,
   PAGE_CAPTURE_TIMEOUT_MS,
   type PageCaptureInfo,
+  pageVerbArgument,
   readStudioCall,
   STATE_MAX_CHARS,
   studioCallScript,
@@ -1287,7 +1288,8 @@ export class GamePreview {
     await this.#profiler.invalidate(`studio ${method} during sample`);
     // The method name is interpolated into page JS: only a plain identifier may travel.
     if (!/^[A-Za-z_$][\w$]*$/.test(method)) throw new Error(MESSAGE.notMethodName(method));
-    const argument = arg === undefined ? "" : JSON.stringify(arg);
+    const checked = pageVerbArgument(method, arg);
+    const argument = checked === undefined ? "" : JSON.stringify(checked);
     return readStudioCall(await this.evaluate(studioCallScript(method, argument)), method);
   }
 

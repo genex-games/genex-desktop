@@ -31,6 +31,12 @@ pub use files::StreamFiles;
 pub struct StreamRequest(u64);
 
 impl StreamRequest {
+    /// The id numbered `raw`: what a source outside this crate (the web's fetches, a test's)
+    /// hands back from [`AsyncSource::request`], counting its own requests.
+    pub fn from_raw(raw: u64) -> StreamRequest {
+        StreamRequest(raw)
+    }
+
     /// The number behind the id (requests count up from 0 per source).
     pub fn raw(self) -> u64 {
         self.0

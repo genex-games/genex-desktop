@@ -36,7 +36,7 @@ mod surface;
 mod touch;
 mod windowed;
 
-pub use crate::core::{FrameControl, ShellCore, ShellEvent, ShellFrame, ShellGame};
+pub use crate::core::{FrameControl, ShellCore, ShellEvent, ShellFrame, ShellGame, os_locale};
 pub use gamepad::{GamepadPolicy, Gamepads, PadEvent, PadSlots, standard_axis, standard_button};
 pub use headless::{HEADLESS_FRAME_MS, HeadlessOptions, ShellClock, ShellExit, SystemClock, run_headless};
 pub use letterbox::Letterbox;

@@ -13,9 +13,12 @@
 //!   run fails with its typed code and no refusal screen. The platform's audio is asked for
 //!   ([`AudioPlatform`]).
 //! - `suspended`: the surface is dropped (the GPU and the game stay), the audio given back, and the
-//!   soft keyboard counted as hidden (it comes back on resume while a text field has focus).
+//!   soft keyboard counted as hidden (it comes back on resume while a text field has focus). A
+//!   resumed app's game first writes its autosave ring's oldest slot ([`suspend`], G6 UIS-12),
+//!   logged as `suspend-save`, since the phone may end the process unannounced from here.
 //! - the game is presented inside the safe area ([`Presentation`], [`SafePresenter`]), which is
-//!   logged on every resize; a rotation is a resize (one world size in both orientations, Q5),
+//!   logged on every resize with what of the drawn world the insets cover, in world pixels
+//!   ([`world_safe_area`], handed to `genex::ui::safe_area`); a rotation is a resize (one world size in both orientations, Q5),
 //!   logged with how much of the safe area the world fills ([`orientation`]); every finger reaches
 //!   `ctx.touches` with its id ([`TouchTracker`]) through that same presentation.
 //! - every drawn frame first takes in the platform's news: audio interruptions and focus
@@ -33,8 +36,15 @@
 //!   per tick; the display is asked for [`MOBILE_PREFERRED_HZ`] ([`preferred_rate`]: a display-link
 //!   frame-rate range on iOS, `ANativeWindow_setFrameRate` on Android 11+), logged as a
 //!   `frame-rate` event, and the frames rendered and repeated are logged on `suspended`.
+//! - the OS locale (sys-locale) is handed to the game once before the first frame.
 //! - the first frame presented on each surface is logged (`frame-presented`, [`frame_presented_event`]):
 //!   an admitted adapter is not a drawn frame, so a CI smoke waits for this one before it captures.
+//!
+//! - assets past the compiled table (game systems STR-15, owner call S10): a shell hands its
+//!   file-backed source in [`ShellConfig::files`] (iOS: the bundle's `assets/` through genex's
+//!   `AssetFiles`; Android: the APK's through `AAssetManager`), and every device the shell opens
+//!   draws models from it, the table first. A game with no file-backed assets (`files: None`)
+//!   draws from its table as before.
 //!
 //! The loop is plain winit + wgpu, so it builds and is linted on the host as well; `run` in
 //! genex-platform-ios and genex-platform-android are the entries. Saves live under the platform's
@@ -44,7 +54,7 @@
 //! [`orientation`]: crate::mobile::orientation
 
 use crate::mobile::admit::{Admission, ShellAdapter, admit};
-use crate::mobile::audio::{AudioGate, AudioPlatform};
+use crate::mobile::audio::{AudioGate, AudioPlatform, follow_gate};
 use crate::mobile::frame_time::FrameTimes;
 use crate::mobile::gamepad::{PadChange, PhoneButton, PhonePads, controller_id};
 use crate::mobile::keyboard::{KeyNews, TypingFeed, key_news};
@@ -58,7 +68,12 @@ use crate::mobile::safe_area::SafeArea;
 use crate::mobile::selftest::{self, run_and_record};
 use crate::mobile::thermal::{Pacer, Thermal, ThermalWatch};
 use crate::mobile::touch::{TouchEvent, TouchTracker};
-use genex::present::Presenter;
+use genex::present::{ModelSource, Presenter};
+use genex::{ASSET_READ_MAX_BYTES, AssetError, AssetErrorCode, AssetSource};
+use genex_core::paths::is_safe_asset_path;
+use std::io::{Read, Seek, SeekFrom};
+use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 use genex::{Input, json};
 use genex_hud::{ImeBridge, KeyboardCall, LoadingLook, LoadingScreen, TextAction};
 use genex_platform_web::selftest::SelfTestPlan;
@@ -113,6 +128,8 @@ pub struct ShellConfig {
     pub plan: SelfTestPlan,
     /// The game's compiled-in assets.
     pub assets: AssetTable,
+    /// The game's assets past the table, table first (STR-15; `None`: the table only, as before).
+    pub files: Option<SharedAssets>,
     /// Where records go (`None`: nowhere to write, the self-test is skipped).
     pub records: Option<Records>,
     /// The platform's safe area for a window.
@@ -177,6 +194,57 @@ fn thermal_load(state: Thermal) -> bool {
     matches!(state, Thermal::Serious | Thermal::Critical)
 }
 
+/// The longest OS locale tag passed to the game, in bytes (BCP 47 tags stay far below it).
+const LOCALE_TAG_MAX: usize = 64;
+
+/// What a suspend did: whether a live surface must be dropped, and the suspend autosave a resumed
+/// app wrote (None when it was not resumed, or the game has no autosave ring).
+#[derive(Debug)]
+pub struct Suspension {
+    /// Whether a live surface must now be dropped.
+    pub dropped: bool,
+    /// The autosave written, or why it was refused.
+    pub saved: Option<Result<genex::saves::SlotInfo, genex::saves::SaveError>>,
+}
+
+/// The app went to the background: the lifecycle moves to suspended and, when it was resumed, the
+/// game writes its suspend autosave once, between frames (G6 UIS-12). The phone may end the
+/// process at any time after this without another call.
+pub fn suspend(lifecycle: &mut Lifecycle, game: &mut dyn GameHandle) -> Suspension {
+    let was_resumed = lifecycle.phase() == Phase::Resumed;
+    let dropped = lifecycle.suspended();
+    let saved = if was_resumed { game.suspend_save() } else { None };
+    Suspension { dropped, saved }
+}
+
+/// The safe area as `genex::ui::safe_area` reads it, `[left, top, right, bottom]` in world pixels
+/// (G6 UIS-12): how far each unsafe band of a `window` with `insets` reaches into the world image
+/// `presentation` draws, scaled through its letterbox. Zero on every edge when the world is
+/// presented inside the safe area, and for an empty window or world.
+pub fn world_safe_area(presentation: &Presentation, window: (u32, u32), insets: SafeArea) -> [f32; 4] {
+    let view = presentation.viewport();
+    let (world_width, world_height) = presentation.world();
+    if view.width == 0 || view.height == 0 {
+        return [0.0; 4];
+    }
+    let (right_edge, bottom_edge) = (view.x + view.width, view.y + view.height);
+    // `covered` window pixels of an `extent`-pixel image side, in world pixels of a `world` side.
+    let reach = |covered: u32, extent: u32, world: u32| covered.min(extent) as f32 * world as f32 / extent as f32;
+    let left = reach(insets.left.saturating_sub(view.x), view.width, world_width);
+    let top = reach(insets.top.saturating_sub(view.y), view.height, world_height);
+    let right = reach(right_edge.saturating_sub(window.0.saturating_sub(insets.right)), view.width, world_width);
+    let bottom = reach(bottom_edge.saturating_sub(window.1.saturating_sub(insets.bottom)), view.height, world_height);
+    [left, top, right, bottom]
+}
+
+/// The OS locale as a BCP 47 tag (`fr-FR`), through sys-locale; None when the OS names none or a
+/// tag that is not plain. A shell call with no file access.
+fn os_locale() -> Option<String> {
+    let tag = sys_locale::get_locale()?;
+    let plain = !tag.is_empty() && tag.len() <= LOCALE_TAG_MAX && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    plain.then_some(tag)
+}
+
 struct App {
     config: ShellConfig,
     game: Box<dyn GameHandle>,
@@ -184,6 +252,8 @@ struct App {
     lifecycle: Lifecycle,
     touches: TouchTracker,
     audio: AudioGate,
+    /// The audio device, opened the first time the gate lets the game be heard (AU-8).
+    sound: genex::audio::Device,
     pads: PhonePads,
     pad_changes: Vec<(u64, PadChange)>,
     ime: ImeBridge,
@@ -273,13 +343,146 @@ pub fn frame_presented_event(rendered: u64, window: (u32, u32)) -> serde_json::V
     json!({ "event": "frame-presented", "rendered": rendered, "window": [window.0, window.1] })
 }
 
-/// genex's presenter on an admitted GPU, its models from the game's compiled `assets`; after a
-/// loss it opens a new device from `instance` ([`reopen`]).
-fn device_on(gpu: Gpu, world: [u32; 2], assets: AssetTable, instance: &wgpu::Instance) -> Result<Device, RenderError> {
+/// A phone's assets past its compiled table, shared by every device the shell opens (STR-15): the
+/// table first, then the bundle's or the APK's files.
+pub type SharedAssets = Arc<dyn ModelSource + Send + Sync>;
+
+/// Bundled asset files a phone opens by name: Android's `AAssetManager` over the APK's `assets/`
+/// (STR-15), or a test's fake.
+pub trait BundleOpen: Send + Sync {
+    /// An opened file.
+    type File: std::io::Read + std::io::Seek;
+
+    /// The file at `path` (relative to the bundle's `assets/`, already held to the asset-path rule)
+    /// and its length in bytes, if the bundle has one.
+    fn open(&self, path: &str) -> Option<(Self::File, u64)>;
+}
+
+/// A phone's assets: the compiled table first, then the files a [`BundleOpen`] holds, read whole
+/// or by range (STR-15, owner call S10). A path outside the asset-path rule is refused before
+/// anything is opened; a range is checked against the file's length, and a read is held to
+/// [`ASSET_READ_MAX_BYTES`].
+pub struct BundleAssets<O> {
+    table: AssetTable,
+    bundle: Option<O>,
+    opened: AtomicU64,
+}
+
+impl<O: BundleOpen> BundleAssets<O> {
+    /// The table, then `bundle` (None: the table only).
+    pub fn new(table: AssetTable, bundle: Option<O>) -> BundleAssets<O> {
+        BundleAssets { table, bundle, opened: AtomicU64::new(0) }
+    }
+
+    /// Files opened so far (a refused path opens none).
+    pub fn opened(&self) -> u64 {
+        self.opened.load(Ordering::Relaxed)
+    }
+
+    fn table_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.table.iter().find(|(known, _)| *known == path).map(|(_, bytes)| *bytes)
+    }
+
+    /// The bundle's file at `path` and its length, refusing an unsafe path before opening it.
+    fn open(&self, path: &str) -> Result<(O::File, u64), AssetError> {
+        if !is_safe_asset_path(path) {
+            return Err(AssetError::new(AssetErrorCode::UnsafePath, format!("{path}: not a plain path under assets/")));
+        }
+        let Some(bundle) = self.bundle.as_ref() else {
+            return Err(AssetError::new(AssetErrorCode::Missing, format!("{path}: no bundled assets")));
+        };
+        let opened = bundle.open(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, path.to_owned()))?;
+        self.opened.fetch_add(1, Ordering::Relaxed);
+        Ok(opened)
+    }
+
+    /// Bytes `range` of `path` (None: all of it): the table's, else the bundle's file.
+    pub fn read_range(&self, path: &str, range: Option<Range<u64>>) -> Result<Arc<[u8]>, AssetError> {
+        if let Some(bytes) = self.table_bytes(path) {
+            let range = bundle_range(path, range, bytes.len() as u64)?;
+            let (start, end) = (usize::try_from(range.start).unwrap_or(usize::MAX), usize::try_from(range.end).unwrap_or(usize::MAX));
+            return Ok(Arc::from(bytes.get(start..end).unwrap_or_default()));
+        }
+        let (mut file, length) = self.open(path)?;
+        let range = bundle_range(path, range, length)?;
+        let mut bytes = vec![0; usize::try_from(range.end - range.start).unwrap_or(0)];
+        let read = file.seek(SeekFrom::Start(range.start)).and_then(|_| file.read_exact(&mut bytes));
+        read.map_err(|error| AssetError::new(AssetErrorCode::Missing, format!("{path}: {error}")))?;
+        Ok(Arc::from(bytes))
+    }
+}
+
+/// `range` (None: all of it) of an asset of `size` bytes: refused `malformed` when reversed or past
+/// the end, `too-large` past [`ASSET_READ_MAX_BYTES`].
+fn bundle_range(path: &str, range: Option<Range<u64>>, size: u64) -> Result<Range<u64>, AssetError> {
+    let range = range.unwrap_or(0..size);
+    if range.start > range.end || range.end > size {
+        let detail = format!("{path}: bytes {}..{} of a {size}-byte asset", range.start, range.end);
+        return Err(AssetError::new(AssetErrorCode::Malformed, detail));
+    }
+    if range.end - range.start > ASSET_READ_MAX_BYTES {
+        return Err(AssetError::new(AssetErrorCode::TooLarge, format!("{path}: {} bytes in one read", range.end - range.start)));
+    }
+    Ok(range)
+}
+
+impl<O: BundleOpen> AssetSource for BundleAssets<O> {
+    fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
+        self.read_range(path, None)
+    }
+
+    fn size(&self, path: &str) -> Result<u64, AssetError> {
+        match self.table_bytes(path) {
+            Some(bytes) => Ok(bytes.len() as u64),
+            None => self.open(path).map(|(_, length)| length),
+        }
+    }
+}
+
+impl<O: BundleOpen> ModelSource for BundleAssets<O> {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.read(path).ok().map(|bytes| bytes.to_vec())
+    }
+
+    /// The table's bytes only: a bundled file's decoded upload is kept.
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.table_bytes(path)
+    }
+}
+
+/// One device's view of [`SharedAssets`].
+struct SharedModels(SharedAssets);
+
+impl ModelSource for SharedModels {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.0.model_bytes(path)
+    }
+
+    fn has_asset(&self, path: &str) -> bool {
+        self.0.has_asset(path)
+    }
+
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        self.0.static_bytes(path)
+    }
+}
+
+/// Where a device's models come from: the shared file-backed source when the shell has one, else
+/// the compiled table alone (a game with no file-backed assets, as before STR-15).
+pub fn models_for(assets: AssetTable, files: Option<&SharedAssets>) -> Box<dyn ModelSource> {
+    match files {
+        Some(files) => Box::new(SharedModels(Arc::clone(files))),
+        None => Box::new(assets),
+    }
+}
+
+/// genex's presenter on an admitted GPU, its models from `models` ([`models_for`]); after a loss
+/// it opens a new device from `instance` ([`reopen`]).
+fn device_on(gpu: Gpu, world: [u32; 2], models: Box<dyn ModelSource>, instance: &wgpu::Instance) -> Result<Device, RenderError> {
     let declared = genex::gpu::declared_native_features()?;
     let instance = instance.clone();
     let open = move || reopen(&instance);
-    let presenter = Presenter::with_gpu(gpu, world, declared, Box::new(open), Box::new(assets), log_refusal)?;
+    let presenter = Presenter::with_gpu(gpu, world, declared, Box::new(open), models, log_refusal)?;
     Ok(Device { presenter })
 }
 
@@ -459,7 +662,10 @@ impl App {
         };
         if self.device.is_none() {
             let opened = match open_gpu(&self.instance, &surface) {
-                Admission::Play(gpu) => device_on(gpu, self.game.world_size(), self.config.assets, &self.instance),
+                Admission::Play(gpu) => {
+                    let models = models_for(self.config.assets, self.config.files.as_ref());
+                    device_on(gpu, self.game.world_size(), models, &self.instance)
+                }
                 Admission::RefusalScreen(error) | Admission::Failed(error) => Err(error),
             };
             match opened {
@@ -502,11 +708,15 @@ impl App {
         let [width, height] = self.game.world_size();
         let presentation = Presentation::new((size.width, size.height), insets, (width, height));
         let view = presentation.viewport();
+        // What of the drawn world the insets cover, for `genex::ui::safe_area` (UIS-12).
+        let world_insets = world_safe_area(&presentation, (size.width, size.height), area);
+        self.game.set_ui_safe_area(world_insets);
         self.presentation = Some(presentation);
         self.log(json!({
             "event": "safe-area",
             "window": [size.width, size.height],
             "insets": { "top": area.top, "left": area.left, "bottom": area.bottom, "right": area.right },
+            "worldInsets": world_insets,
             "presentedInside": copyable || area.is_empty(),
             "viewport": [view.x, view.y, view.width, view.height],
             "orientation": self.rotation.current().map(|orientation| orientation.wire()),
@@ -583,6 +793,8 @@ impl App {
                 self.log(self.audio.event());
             }
         }
+        // The output follows the gate; an open device's faults reach `volatile.audio.device`.
+        follow_gate(&self.audio, self.game.as_mut(), &mut self.sound);
         (self.config.hooks.pads)(&mut self.pad_changes);
         for (pad, change) in self.pad_changes.drain(..) {
             self.pads.apply(pad, change);
@@ -751,6 +963,7 @@ impl ApplicationHandler for App {
         self.log(json!({ "event": "resumed", "resumes": self.lifecycle.resumes() }));
         self.audio.resumed((self.config.audio.acquire)());
         self.log(self.audio.event());
+        follow_gate(&self.audio, self.game.as_mut(), &mut self.sound);
         self.frame_times.reset();
         self.refresh_read = None;
         self.pacer.reset();
@@ -765,14 +978,22 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        let dropped = self.lifecycle.suspended();
+        let Suspension { dropped, saved } = suspend(&mut self.lifecycle, self.game.as_mut());
         self.live = None;
         self.log(json!({ "event": "suspended", "surfaceDropped": dropped }));
+        if let Some(saved) = saved {
+            let (slot, code) = match &saved {
+                Ok(info) => (Some(info.name.as_str().to_owned()), None),
+                Err(error) => (None, Some(error.code.wire())),
+            };
+            self.log(json!({ "event": "suspend-save", "slot": slot, "code": code }));
+        }
         let tally = self.gate.tally();
         self.log(json!({ "event": "frames", "rendered": tally.rendered, "repeated": tally.repeated }));
         (self.config.audio.release)();
         self.audio.suspended();
         self.log(self.audio.event());
+        follow_gate(&self.audio, self.game.as_mut(), &mut self.sound);
         // The system hides the keyboard with the app; it comes back on resume while a field has focus.
         self.ime.hidden_by_platform();
     }
@@ -813,6 +1034,7 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         lifecycle: Lifecycle::default(),
         touches: TouchTracker::default(),
         audio: AudioGate::default(),
+        sound: genex::audio::Device::default(),
         pads: PhonePads::default(),
         pad_changes: Vec::new(),
         ime: ImeBridge::default(),
@@ -837,6 +1059,8 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         loading: None,
         outcome: ShellOutcome::Ran,
     };
+    // The OS locale once, before the first frame (UIS-12; a Genex run ignores it).
+    app.game.set_os_locale(os_locale().as_deref());
     if let Err(error) = event_loop.run_app(&mut app) {
         return ShellOutcome::Failed("event-loop-failed", error.to_string());
     }
@@ -1003,6 +1227,87 @@ mod preferred_rate {
 mod tests {
     use super::*;
 
+    /// iPhone 15 portrait (Dynamic Island, home indicator) and landscape, with a world of the
+    /// screen's own shape, so the letterbox covers the insets when presented whole.
+    const PORTRAIT: (u32, u32) = (1179, 2556);
+    const PORTRAIT_INSETS: SafeArea = SafeArea { top: 177, left: 0, bottom: 102, right: 0 };
+    const PORTRAIT_WORLD: (u32, u32) = (360, 780);
+    const LANDSCAPE: (u32, u32) = (2556, 1179);
+    const LANDSCAPE_INSETS: SafeArea = SafeArea { top: 0, left: 177, bottom: 63, right: 177 };
+    const LANDSCAPE_WORLD: (u32, u32) = (780, 360);
+
+    fn close(got: [f32; 4], want: [f32; 4]) -> bool {
+        got.iter().zip(want).all(|(got, want)| (got - want).abs() < 1e-3)
+    }
+
+    /// G6 UIS-12, new behaviour: the safe area reaches `genex::ui::safe_area` in world pixels,
+    /// through the letterbox: what of the drawn world image the unsafe bands cover.
+    #[test]
+    fn the_safe_area_maps_physical_to_world_pixels_through_the_letterbox() {
+        // Presented whole (a surface that cannot take the safe-area copy): the world is letterboxed
+        // over the full window, 1179x2554 at y 1, so the island covers 176 px of it, the
+        // indicator 101.
+        let whole = Presentation::new(PORTRAIT, SafeArea::default(), PORTRAIT_WORLD);
+        let portrait = world_safe_area(&whole, PORTRAIT, PORTRAIT_INSETS);
+        assert!(close(portrait, [0.0, 176.0 * 780.0 / 2554.0, 0.0, 101.0 * 780.0 / 2554.0]), "{portrait:?}");
+        // Landscape: 2554x1179 at x 1; the notch side and the far side cover 176 px each, the
+        // indicator 63.
+        let whole = Presentation::new(LANDSCAPE, SafeArea::default(), LANDSCAPE_WORLD);
+        let landscape = world_safe_area(&whole, LANDSCAPE, LANDSCAPE_INSETS);
+        let side = 176.0 * 780.0 / 2554.0;
+        assert!(close(landscape, [side, 0.0, side, 63.0 * 360.0 / 1179.0]), "{landscape:?}");
+        // Presented inside the safe area (the usual case): nothing of the world is covered.
+        let inside = Presentation::new(PORTRAIT, PORTRAIT_INSETS, PORTRAIT_WORLD);
+        assert_eq!(world_safe_area(&inside, PORTRAIT, PORTRAIT_INSETS), [0.0; 4]);
+        let inside = Presentation::new(LANDSCAPE, LANDSCAPE_INSETS, LANDSCAPE_WORLD);
+        assert_eq!(world_safe_area(&inside, LANDSCAPE, LANDSCAPE_INSETS), [0.0; 4]);
+        // A wide world in a portrait window sits between bars far from the island: no inset.
+        let barred = Presentation::new(PORTRAIT, SafeArea::default(), (960, 540));
+        assert_eq!(world_safe_area(&barred, PORTRAIT, PORTRAIT_INSETS), [0.0; 4]);
+        // Nonsense: an empty window or world answers zero insets, never NaN.
+        let empty = Presentation::new((0, 0), SafeArea::default(), PORTRAIT_WORLD);
+        assert_eq!(world_safe_area(&empty, (0, 0), PORTRAIT_INSETS), [0.0; 4]);
+    }
+
+    /// The camp a lifecycle double suspends: an autosave ring of two, its world one section.
+    fn camp() -> Box<dyn GameHandle> {
+        let mut game = genex::Game::new(0_u32).title("Camp").world_size(320, 240);
+        game.saves(genex::saves::SaveConfig::schema(1).autosave(10_000, 2));
+        game.save_section("camp", |sim| json!(sim.world), |sim, value, _gfx| {
+            sim.world = value.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("not a u32")?;
+            Ok(())
+        });
+        game.on_update(|sim, _ctx| sim.world += 1);
+        let mut runtime = genex::Runtime::new(game).expect("the camp installs");
+        let dir = std::env::temp_dir().join(format!("genex-ios-suspend-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp folder");
+        runtime.use_studio_saves(&format!("{}/", dir.display()));
+        runtime.seed(1);
+        Box::new(runtime)
+    }
+
+    /// G6 UIS-12, new behaviour: a lifecycle double. Suspending a resumed app writes exactly one
+    /// autosave; a second `suspended` without a resume in between, or one before the first
+    /// resume, writes none.
+    #[test]
+    fn a_suspended_app_writes_exactly_one_autosave() {
+        let mut game = camp();
+        let mut life = Lifecycle::default();
+        assert!(suspend(&mut life, game.as_mut()).saved.is_none(), "never resumed: nothing to save");
+        life.resumed();
+        game.step(genex::FIXED_STEP_MS * 3.0);
+        let first = suspend(&mut life, game.as_mut());
+        let written = first.saved.expect("a resumed app saves").expect("written");
+        assert_eq!(written.name.as_str(), "autosave-0");
+        assert_eq!(life.phase(), Phase::Suspended);
+        assert!(suspend(&mut life, game.as_mut()).saved.is_none(), "already suspended");
+        life.resumed();
+        game.step(genex::FIXED_STEP_MS);
+        let again = suspend(&mut life, game.as_mut()).saved.expect("resumed again").expect("written");
+        assert_eq!(again.name.as_str(), "autosave-1", "the ring's oldest slot");
+    }
+
     #[test]
     fn the_refusal_screen_event_names_the_record_s_code_and_the_colours_a_capture_must_show() {
         let rgb = |[red, green, blue, _]: [u8; 4]| json!([red, green, blue]);
@@ -1048,7 +1353,7 @@ mod tests {
             frame.cube(Transform::IDENTITY, Color::RED);
         });
         let mut runtime: Box<dyn GameHandle> = Box::new(genex::Runtime::new(game).expect("installs"));
-        let mut device = device_on(gpu, runtime.world_size(), &[], &core_instance()).expect("a presenter");
+        let mut device = device_on(gpu, runtime.world_size(), models_for(&[], None), &core_instance()).expect("a presenter");
         runtime.start();
         runtime.advance_live(1000.0 / 60.0);
         assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Ok(_))), "the first frame draws");
@@ -1058,6 +1363,123 @@ mod tests {
         assert_eq!(runtime.recover(&mut device.presenter).map_err(|error| error.to_string()), Ok(true), "a new device");
         assert!(matches!(runtime.draw(&mut device.presenter, None), Some(Ok(_))), "the frame after draws again");
         assert_eq!(runtime.tick(), tick, "the game is where it was");
+    }
+
+    /// A fresh folder of `files` under the temp directory, for one test.
+    fn bundle(name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("genex-phone-bundle-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (path, bytes) in files {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().expect("a parent")).expect("folder");
+            std::fs::write(file, bytes).expect("file");
+        }
+        root
+    }
+
+    const MODEL: &[u8] = b"glTF-the-same-bytes-in-the-table-and-the-bundle";
+    const TABLE: AssetTable = &[("models/tree.glb", MODEL)];
+
+    /// Game systems STR-15 (new behaviour): a phone with file-backed assets draws models from its
+    /// bundle past the table, the table first; without them it draws from the table as before.
+    #[test]
+    fn a_phone_draws_from_its_bundle_past_the_table_and_without_one_from_the_table_alone() {
+        let root = bundle("models", &[("models/rock.glb", b"rock"), ("models/tree.glb", b"not the table's")]);
+        let files: SharedAssets = Arc::new(genex::AssetFiles::new(TABLE, Some(root.clone())));
+        let models = models_for(TABLE, Some(&files));
+        assert_eq!(models.model_bytes("models/rock.glb").as_deref(), Some(&b"rock"[..]), "the bundle's file");
+        assert_eq!(models.model_bytes("models/tree.glb").as_deref(), Some(MODEL), "the table first");
+        assert_eq!(models.static_bytes("models/tree.glb"), Some(MODEL), "the table's bytes stay static");
+        assert_eq!(models.static_bytes("models/rock.glb"), None, "a bundle file's upload is kept");
+        let table_only = models_for(TABLE, None);
+        assert_eq!(table_only.model_bytes("models/rock.glb"), None, "no bundle: the table alone");
+        assert_eq!(table_only.model_bytes("models/tree.glb").as_deref(), Some(MODEL));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Game systems STR-15: the bundle source refuses every hostile path without opening a file,
+    /// and a range of a bundle file equals the same range of the table's bytes.
+    #[test]
+    fn the_bundle_source_refuses_a_hostile_path_table_opening_nothing_and_reads_ranges_as_the_table() {
+        use genex::{AssetErrorCode, AsyncSource, StreamFiles};
+        use genex_render::jobs::Priority;
+        let root = bundle("hostile", &[("models/tree.glb", MODEL), ("models/dir/inner.bin", b"x")]);
+        let outside = root.with_extension("outside");
+        std::fs::write(&outside, b"secret").expect("outside file");
+        std::os::unix::fs::symlink(&outside, root.join("models/link.glb")).expect("link");
+        let mut stream = StreamFiles::new(genex::AssetFiles::new(&[], Some(root.clone())));
+        let hostile = [
+            ("../genex-phone-bundle.outside", AssetErrorCode::UnsafePath),
+            ("/etc/passwd", AssetErrorCode::UnsafePath),
+            ("models//tree.glb", AssetErrorCode::UnsafePath),
+            ("models/./tree.glb", AssetErrorCode::UnsafePath),
+            ("models\\tree.glb", AssetErrorCode::UnsafePath),
+            ("models/link.glb", AssetErrorCode::UnsafePath),
+            ("models/dir", AssetErrorCode::Missing),
+            ("models/absent.glb", AssetErrorCode::Missing),
+        ];
+        let requests: Vec<_> = hostile.iter().map(|(path, _)| stream.request(path, None, Priority::Visible)).collect();
+        let mut answers = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while answers.len() < requests.len() && Instant::now() < deadline {
+            answers.extend(stream.poll());
+            std::thread::yield_now();
+        }
+        for (request, (path, code)) in requests.iter().zip(hostile) {
+            let answer = answers.iter().find(|(id, _)| id == request).map(|(_, answer)| answer.as_ref().map(|bytes| bytes.to_vec()));
+            let refused = answer.and_then(|answer| answer.err().map(genex::AssetError::code));
+            assert_eq!(refused, Some(code), "{path}");
+        }
+        assert_eq!(stream.opened(), 0, "no hostile path opened a file");
+        let range = 5..19_u64;
+        let request = stream.request("models/tree.glb", Some(range.clone()), Priority::Visible);
+        let mut read = None;
+        while read.is_none() && Instant::now() < deadline {
+            read = stream.poll().into_iter().find(|(id, _)| *id == request).map(|(_, answer)| answer.expect("read").to_vec());
+            std::thread::yield_now();
+        }
+        assert_eq!(read.as_deref(), Some(&MODEL[5..19]), "a bundle range equals the table's bytes");
+        assert_eq!(stream.opened(), 1, "the range opened its one file");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(outside);
+    }
+
+    /// A bundle of in-memory files that counts what it opens (Android's `AAssetManager` on the host).
+    struct FakeBundle(Vec<(&'static str, &'static [u8])>);
+
+    impl BundleOpen for FakeBundle {
+        type File = std::io::Cursor<&'static [u8]>;
+
+        fn open(&self, path: &str) -> Option<(Self::File, u64)> {
+            self.0.iter().find(|(known, _)| *known == path).map(|(_, bytes)| (std::io::Cursor::new(*bytes), bytes.len() as u64))
+        }
+    }
+
+    /// Game systems STR-15 (new behaviour): the APK-style source refuses a hostile path table
+    /// before opening anything, reads a range equal to the table's bytes, keeps the table first and
+    /// checks every range against the file.
+    #[test]
+    fn a_bundle_source_refuses_hostile_paths_unopened_and_reads_ranges_as_the_table() {
+        let assets = BundleAssets::new(TABLE, Some(FakeBundle(vec![("models/rock.glb", MODEL), ("../escape.glb", b"no")])));
+        let hostile = ["../escape.glb", "/models/rock.glb", "models//rock.glb", "models/../rock.glb", "models\\rock.glb", "C:/rock.glb", "", "models/rock.glb\0"];
+        for path in hostile {
+            assert_eq!(assets.read(path).map(|bytes| bytes.len()).map_err(|error| error.code()), Err(AssetErrorCode::UnsafePath), "{path:?}");
+            assert_eq!(assets.size(path).map_err(|error| error.code()), Err(AssetErrorCode::UnsafePath), "{path:?}");
+        }
+        assert_eq!(assets.opened(), 0, "no hostile path opened a file");
+        let range = 5..19_u64;
+        let bundled = assets.read_range("models/rock.glb", Some(range.clone())).expect("a bundled range");
+        let tabled = assets.read_range("models/tree.glb", Some(range)).expect("a table range");
+        assert_eq!(&bundled[..], &MODEL[5..19], "a bundle range equals the table's bytes");
+        assert_eq!(bundled, tabled);
+        assert_eq!(assets.opened(), 1, "the table's file opened nothing");
+        let past = assets.read_range("models/rock.glb", Some(10..999)).map(|_| ()).map_err(|error| error.code());
+        assert_eq!(past, Err(AssetErrorCode::Malformed), "a range past the end");
+        assert_eq!(assets.read("models/absent.glb").map(|_| ()).map_err(|error| error.code()), Err(AssetErrorCode::Missing));
+        assert_eq!(assets.static_bytes("models/rock.glb"), None, "a bundled file's upload is kept");
+        assert_eq!(assets.static_bytes("models/tree.glb"), Some(MODEL));
+        let table_only: BundleAssets<FakeBundle> = BundleAssets::new(TABLE, None);
+        assert_eq!(table_only.read("models/rock.glb").map(|_| ()).map_err(|error| error.code()), Err(AssetErrorCode::Missing), "no bundle: the table alone");
     }
 
     #[test]

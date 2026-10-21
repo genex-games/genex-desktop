@@ -22,6 +22,9 @@
 //!   ([`RenderStatus`]) and a capture's `render` provenance ([`CaptureProvenance`]). The receipt
 //!   lists every extension API version served, the renderer's own optional features, the inputs a
 //!   v2 extension really gets and, once served, the verb's version ([`RENDER_SETTINGS_API_VERSION`]).
+//! - The dev-flavour `profile` verb (game systems PROF-4, `src/shared/frame-profile.ts`): its
+//!   [`ProfileAction`] and [`GpuTimingMode`] vocabularies and [`parse_profile`], which clamps a
+//!   report's frames to [`PROFILE_REPORT_FRAMES_MAX`].
 //!
 //! `verbs.rs` sends [`ready_fields`]' receipt and protocol 2 in `ready` and adds
 //! [`set_state_v2`]'s fields to every state snapshot.
@@ -64,6 +67,14 @@ pub const RING_SIDE_MAX: u32 = 4096;
 pub const RING_DPR_MAX: f64 = 4.0;
 /// The `renderSettings` verb's version a receipt advertises (`renderSettingsApi`).
 pub const RENDER_SETTINGS_API_VERSION: u32 = 1;
+/// The `reloadAssets` verb's version a receipt advertises (`reloadAssetsApi`): a dev build that
+/// swaps changed assets in place (game systems C-18); an older one has no member.
+pub const RELOAD_ASSETS_API_VERSION: u32 = 1;
+/// The `saves` verb's version a receipt advertises (`savesApi`, G6 UIS-16); an older build has no
+/// member.
+pub const SAVES_API_VERSION: u32 = 1;
+/// The `uiSettings` verb's version a receipt advertises (`uiSettingsApi`, G6 UIS-16).
+pub const UI_SETTINGS_API_VERSION: u32 = 1;
 /// The lowest render scale (of the output size) a lock may name (`RENDER_SCALE_MIN`).
 pub const RENDER_SCALE_MIN: f64 = 0.5;
 /// The highest render scale (`RENDER_SCALE_MAX`).
@@ -88,8 +99,43 @@ pub const OP_RELEASE: &str = "release";
 /// game systems C-18 serves it, `unavailable` until then).
 pub const OP_RELOAD_ASSETS: &str = "reloadAssets";
 /// The dev-flavour verb the build lane's bake step sends a headless session, kind `nav` or
-/// `impostor` (`NativeOp.BakeAssets`; NAV-14 and LOD-23 serve it, `unavailable` until then).
+/// `impostor` (`NativeOp.BakeAssets`; NAV-14 serves `nav`, LOD-23 `impostor`).
 pub const OP_BAKE_ASSETS: &str = "bakeAssets";
+
+/// What a `bakeAssets` bakes: the game's registered bake of that kind (`BakeKind`). Wire values:
+/// never rename one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BakeKind {
+    /// A navmesh (`game.nav_bake`), loaded with `NavMesh::from_bytes_for`.
+    Nav,
+    /// An impostor atlas of a model that opted in.
+    Impostor,
+}
+
+impl BakeKind {
+    /// Every kind, in the host's order.
+    pub const ALL: [BakeKind; 2] = [BakeKind::Nav, BakeKind::Impostor];
+
+    /// The wire spelling, which is also the bake's folder under `state/bakes/`.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            BakeKind::Nav => "nav",
+            BakeKind::Impostor => "impostor",
+        }
+    }
+
+    /// The kind spelled `text`; None for any other spelling.
+    pub fn from_wire(text: &str) -> Option<BakeKind> {
+        BakeKind::ALL.into_iter().find(|kind| kind.wire() == text)
+    }
+}
+/// The dev-flavour verb that reads the game's frame profile (`NativeOp.Profile`, game systems PROF-4):
+/// `{action, frames?, mode?}` ([`parse_profile`]); a game that serves no profiles answers `unavailable`.
+pub const OP_PROFILE: &str = "profile";
+/// The frames a `profile` `report` covers when it names none (`PROFILE_REPORT_FRAMES_DEFAULT`).
+pub const PROFILE_REPORT_FRAMES_DEFAULT: u32 = 120;
+/// The most frames a `profile` request covers; more are clamped to it (`PROFILE_REPORT_FRAMES_MAX`).
+pub const PROFILE_REPORT_FRAMES_MAX: u32 = 240;
 /// `ready`'s receipt member.
 pub const READY_RECEIPT: &str = "receipt";
 /// `state()`'s lifecycle member.
@@ -330,6 +376,10 @@ vocabulary! {
         TextureQuality => "texture-quality",
         /// Shadow maps for spot lights that ask for one.
         SpotShadows => "spot-shadows",
+        /// The crossfade between levels of detail.
+        LodFade => "lod-fade",
+        /// Impostors past a model's last mesh level.
+        Impostors => "impostors",
     }
 }
 
@@ -450,6 +500,15 @@ pub struct Receipt {
     pub render_inputs: Vec<RenderInput>,
     /// The `renderSettings` version served; None until the game serves the verb.
     pub render_settings_api: Option<u32>,
+    /// The `reloadAssets` version served; None for a build that does not swap assets in place.
+    pub reload_assets_api: Option<u32>,
+    /// The `saves` version served; None for a build without the verb.
+    pub saves_api: Option<u32>,
+    /// The `uiSettings` version served; None for a build without the verb.
+    pub ui_settings_api: Option<u32>,
+    /// The bakes the game registered (`game.nav_bake`), which the build's bake step sends
+    /// `bakeAssets` for after a dev build (NAV-14); empty, and absent on the wire, without any.
+    pub bakes: Vec<(BakeKind, String)>,
 }
 
 /// `text` cut to at most `units` UTF-16 code units, never inside a character.
@@ -478,12 +537,16 @@ impl Receipt {
             renderer_features: Vec::new(),
             render_inputs: Vec::new(),
             render_settings_api: None,
+            reload_assets_api: None,
+            saves_api: None,
+            ui_settings_api: None,
+            bakes: Vec::new(),
         }
     }
 
     /// The receipt as the wire's object: `{tier, backend, adapter, nativeEnhanced, extensionApi,
     /// customPassApi, extensionApis, customPassApis, rendererFeatures, renderInputs,
-    /// renderSettingsApi?}`, the adapter cut to [`ADAPTER_MAX_CHARS`] and each name listed once.
+    /// renderSettingsApi?, reloadAssetsApi?, savesApi?, uiSettingsApi?, bakes?}`, the adapter cut to [`ADAPTER_MAX_CHARS`] and each name listed once.
     pub fn to_value(&self) -> Value {
         let adapter = cut_utf16(&self.adapter, ADAPTER_MAX_CHARS);
         let mut receipt = Value::object();
@@ -499,6 +562,25 @@ impl Receipt {
         receipt.set("renderInputs", distinct(&self.render_inputs, |input| input.wire()));
         if let Some(version) = self.render_settings_api {
             receipt.set("renderSettingsApi", Value::from(version));
+        }
+        if let Some(version) = self.reload_assets_api {
+            receipt.set("reloadAssetsApi", Value::from(version));
+        }
+        if let Some(version) = self.saves_api {
+            receipt.set("savesApi", Value::from(version));
+        }
+        if let Some(version) = self.ui_settings_api {
+            receipt.set("uiSettingsApi", Value::from(version));
+        }
+        if !self.bakes.is_empty() {
+            let mut bakes = Value::array();
+            for (kind, name) in &self.bakes {
+                let mut bake = Value::object();
+                bake.set("kind", Value::from(kind.wire()));
+                bake.set("name", Value::from(name.as_str()));
+                bakes.push(bake);
+            }
+            receipt.set("bakes", bakes);
         }
         receipt
     }
@@ -520,6 +602,13 @@ impl Receipt {
             None => None,
             Some(_) => Some(whole(value, "renderSettingsApi", u32::MAX)?),
         };
+        let optional_api = |key: &'static str| match value.get(key) {
+            None => Ok(None),
+            Some(_) => whole(value, key, u32::MAX).map(Some),
+        };
+        let reload_assets_api = optional_api("reloadAssetsApi")?;
+        let saves_api = optional_api("savesApi")?;
+        let ui_settings_api = optional_api("uiSettingsApi")?;
         Ok(Receipt {
             backend,
             adapter,
@@ -531,6 +620,11 @@ impl Receipt {
             renderer_features: names(value, "rendererFeatures", RendererFeature::from_wire)?.unwrap_or_default(),
             render_inputs: names(value, "renderInputs", RenderInput::from_wire)?.unwrap_or_default(),
             render_settings_api,
+            reload_assets_api,
+            saves_api,
+            ui_settings_api,
+            // The host reads the bakes from the dev build's receipt; nothing parses them back.
+            bakes: Vec::new(),
         })
     }
 
@@ -800,6 +894,71 @@ pub fn parse_release(arg: &Value) -> Result<ReleaseArgs, BadField> {
         return Err(BadField("generation"));
     }
     Ok(ReleaseArgs { slot, generation })
+}
+
+vocabulary! {
+    /// What a `profile` request asks for (`FrameProfileAction`).
+    ProfileAction {
+        /// The `volatile.profile` summary.
+        Summary => "summary",
+        /// `ProfileReport` v2 for the last `frames` frames, plus every kept hitch.
+        Report => "report",
+        /// Switch GPU timing to `mode`.
+        Arm => "arm",
+        /// A Chrome trace of the report window, written into the run's `state/profile/`.
+        Trace => "trace",
+    }
+}
+
+vocabulary! {
+    /// How the GPU is timed (`GpuTimingMode`): the whole frame (Live's default) or each frame-graph node.
+    GpuTimingMode {
+        /// One span per frame.
+        Frame => "frame",
+        /// One span per frame-graph node, until `frame` again or the arm's frames pass.
+        Nodes => "nodes",
+    }
+}
+
+/// A `profile` request as the studio hands it to the game ([`parse_profile`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileRequest {
+    /// What is asked for.
+    pub action: ProfileAction,
+    /// The frames a report or trace covers: [`PROFILE_REPORT_FRAMES_DEFAULT`] when absent, at most
+    /// [`PROFILE_REPORT_FRAMES_MAX`] (a larger number is clamped).
+    pub frames: u32,
+    /// The GPU timing mode: always present for `arm`, which needs one; absent otherwise unless given.
+    pub mode: Option<GpuTimingMode>,
+}
+
+/// A `profile` argument: an object with a known `action`, `frames` a whole number of at least 1
+/// (clamped to [`PROFILE_REPORT_FRAMES_MAX`]) when present, and `mode` a known [`GpuTimingMode`]
+/// when present (required by `arm`). Unknown members are ignored.
+pub fn parse_profile(arg: &Value) -> Result<ProfileRequest, BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(BadField("arg"));
+    }
+    let action = ProfileAction::from_wire(text(arg, "action")?).ok_or(BadField("action"))?;
+    let frames = match arg.get("frames") {
+        None => PROFILE_REPORT_FRAMES_DEFAULT,
+        Some(_) => {
+            let asked = number(arg, "frames")?;
+            if asked.fract() != 0.0 || asked < 1.0 {
+                return Err(BadField("frames"));
+            }
+            // At least 1 and clamped to the cap, so the conversion is exact.
+            asked.min(f64::from(PROFILE_REPORT_FRAMES_MAX)) as u32
+        }
+    };
+    let mode = match arg.get("mode") {
+        None => None,
+        Some(_) => Some(GpuTimingMode::from_wire(text(arg, "mode")?).ok_or(BadField("mode"))?),
+    };
+    if action == ProfileAction::Arm && mode.is_none() {
+        return Err(BadField("mode"));
+    }
+    Ok(ProfileRequest { action, frames, mode })
 }
 
 /// Where a pointer Live sends in ring pixels (`px: true`) lands in the world: the world is drawn
@@ -1189,6 +1348,9 @@ mod tests {
             renderer_features: RendererFeature::ALL.iter().chain(RendererFeature::ALL.iter()).copied().collect(),
             render_inputs: RenderInput::ALL.to_vec(),
             render_settings_api: Some(u32::MAX),
+            reload_assets_api: Some(u32::MAX),
+            saves_api: Some(u32::MAX),
+            ui_settings_api: Some(u32::MAX),
             ..Receipt::new(Backend::WebGpu, adapter, all)
         };
         let bytes = receipt.to_json();

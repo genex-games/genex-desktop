@@ -491,6 +491,8 @@ describe("the Rust stack's pins", () => {
     // The relay client's libcolyseus (MP-1a), installed only for a [net] game's exports.
     ToolchainId.Colyseus,
     ToolchainId.ColyseusSource,
+    // The browser's relay bridge (MP-5a), installed only for a [net] game's web export.
+    ToolchainId.MultiplayerBridge,
   ];
 
   /** The spike's verified pins table (`scripts/spike/rust-wgpu/pins.md`): url → sha256. */

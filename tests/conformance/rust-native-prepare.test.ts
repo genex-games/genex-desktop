@@ -10,6 +10,7 @@
  * commands and no code, so they run on every platform.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -188,6 +189,13 @@ describe("a Rust game's Mac run, prepared through the wgpu admission and assembl
       assert.ok((await lstat(path.join(prepared.state, "captures"))).isDirectory());
       assert.equal(await mode(prepared.state), 0o700, "state/ is the game's only writable folder");
       assert.deepEqual(r.signed, [[CODESIGN, "--force", "-s", "-", "--timestamp=none", path.dirname(contents)]]);
+      // A crash record of this run is named from the admitted output's executable (CRASH-7b).
+      const crashExe = prepared.crashBuild?.exe ?? "";
+      const crashDigest = createHash("sha256")
+        .update(await readFile(path.join(r.out, crashExe)))
+        .digest("hex");
+      assert.deepEqual(prepared.crashBuild, { output: r.out, exe: crashExe, digest: crashDigest });
+      assert.equal(prepared.build?.digest, crashDigest);
     });
   }
 

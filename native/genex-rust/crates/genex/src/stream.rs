@@ -17,10 +17,13 @@ use genex_core::json::Value as CoreValue;
 use genex_stream::grid::SimRadii;
 use glam::Vec2;
 
+use crate::frame::Transform;
 use crate::gfx::Model;
+use crate::group::InstanceGroup;
 use crate::rng::Pcg32;
+use crate::terrain::{Scatter, Terrain};
 
-pub use genex_stream::grid::{STREAM_ANCHORS_MAX, STREAM_RING_MAX, STREAM_SIM_RADIUS_MAX, STREAM_WORLD_EXTENT_MAX};
+pub use genex_stream::grid::{STREAM_ANCHORS_MAX, STREAM_RING_MAX, STREAM_SIM_RADIUS_MAX, STREAM_VIEW_CELLS_MAX, STREAM_WORLD_EXTENT_MAX};
 pub use genex_stream::{StreamError, StreamErrorCode, StreamTicket};
 
 /// The smallest cell side, in metres.
@@ -40,6 +43,8 @@ pub const STREAM_SIM_BYTES_MAX: u64 = 128 * 1024 * 1024;
 const COLLIDER_BYTES: u64 = 1024;
 /// The bytes the sim cap counts for one group instance at its cap.
 const INSTANCE_BYTES: u64 = 64;
+/// The view radius a registration draws without `view_radius`, in cells.
+pub const STREAM_VIEW_RADIUS_DEFAULT_CELLS: f32 = 4.0;
 /// The `state()` key streaming adds while it is registered (display only).
 pub(crate) const RUNTIME_KEY: &str = "__stream";
 
@@ -50,6 +55,9 @@ pub struct Streaming {
     cell_size: f32,
     radii: SimRadii,
     anchors: usize,
+    view_radius: Option<f32>,
+    /// The streamed terrain tiles (STR-23).
+    terrain: Option<crate::TerrainTiles>,
 }
 
 impl Streaming {
@@ -57,7 +65,7 @@ impl Streaming {
     /// [`STREAM_CELL_SIZE_MIN`]..=[`STREAM_CELL_SIZE_MAX`] (`install` refuses others
     /// `streaming-invalid`): sim radius 1, hysteresis 1, prefetch 1, one anchor.
     pub fn grid(cell_size: f32) -> Streaming {
-        Streaming { cell_size, radii: SimRadii::default(), anchors: 1 }
+        Streaming { cell_size, radii: SimRadii::default(), anchors: 1, view_radius: None, terrain: None }
     }
 
     /// Cells within `cells` of an anchor are simulated (at most [`STREAM_SIM_RADIUS_MAX`]).
@@ -86,9 +94,34 @@ impl Streaming {
         self
     }
 
+    /// Cells within `metres` of the drawn camera are drawn (display only, never the checksum):
+    /// at most [`STREAM_VIEW_CELLS_MAX`] cells; [`STREAM_VIEW_RADIUS_DEFAULT_CELLS`] cells without it.
+    pub fn view_radius(mut self, metres: f32) -> Streaming {
+        self.view_radius = Some(metres);
+        self
+    }
+
+    /// Stream `tiles`, one per cell (STR-23): `sim.stream.ground` reads them. With physics,
+    /// `game.cell_content(tiles.colliders_content(cell))` beside `game.stream_colliders()` streams
+    /// each sim-active tile's collider.
+    pub fn terrain(mut self, tiles: crate::TerrainTiles) -> Streaming {
+        self.terrain = Some(tiles);
+        self
+    }
+
+    /// The streamed terrain tiles, when registered.
+    pub(crate) fn tiles(&self) -> Option<&crate::TerrainTiles> {
+        self.terrain.as_ref()
+    }
+
     /// The cell side, in metres.
     pub fn cell_size(&self) -> f32 {
         self.cell_size
+    }
+
+    /// The view radius in metres (the default when none was given).
+    pub(crate) fn view_metres(&self) -> f32 {
+        self.view_radius.unwrap_or(self.cell_size * STREAM_VIEW_RADIUS_DEFAULT_CELLS)
     }
 
     /// The sim radii.
@@ -114,6 +147,10 @@ impl Streaming {
         }
         if !(1..=STREAM_ANCHORS_MAX).contains(&self.anchors) {
             return Some(format!("{} anchors (1..={STREAM_ANCHORS_MAX})", self.anchors));
+        }
+        let view_cap = self.cell_size * STREAM_VIEW_CELLS_MAX as f32;
+        if !(0.0..=view_cap).contains(&self.view_metres()) {
+            return Some(format!("view radius {} m (0..={view_cap})", self.view_metres()));
         }
         let bytes = self.sim_bytes(thing_bytes);
         (bytes > STREAM_SIM_BYTES_MAX).then(|| format!("the sim set holds up to {bytes} bytes at its caps (max {STREAM_SIM_BYTES_MAX})"))
@@ -181,6 +218,14 @@ impl CellInputs {
         model
     }
 
+    /// `rule`'s instances on `terrain` within this cell's bounds (STR-20): `Terrain::scatter` is
+    /// place-deterministic, so the cells' scatters together are the scatter of their union and
+    /// neighbouring cells meet exactly. Hand them to [`CellBuild::group`].
+    pub fn scatter(&self, terrain: &Terrain, rule: &Scatter) -> Vec<Transform> {
+        let (min, max) = self.bounds();
+        terrain.scatter(rule, min, max)
+    }
+
     fn take_models(&self) -> Vec<String> {
         self.models.take()
     }
@@ -205,17 +250,31 @@ pub trait CellPart: Any + Send + Sync {
 pub struct CellBuild<T> {
     things: Vec<T>,
     parts: Vec<Box<dyn CellPart>>,
+    models: Vec<CellModel>,
+    groups: Vec<InstanceGroup>,
 }
 
 impl<T> Default for CellBuild<T> {
     fn default() -> Self {
-        CellBuild { things: Vec::new(), parts: Vec::new() }
+        CellBuild { things: Vec::new(), parts: Vec::new(), models: Vec::new(), groups: Vec::new() }
     }
+}
+
+/// One model a cell draws while it is in the view set (`CellBuild::model`): display only.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CellModel {
+    pub model: Model,
+    pub transform: Transform,
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for CellBuild<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CellBuild").field("things", &self.things).field("parts", &self.parts.len()).finish()
+        f.debug_struct("CellBuild")
+            .field("things", &self.things)
+            .field("parts", &self.parts.len())
+            .field("models", &self.models.len())
+            .field("groups", &self.groups.len())
+            .finish()
     }
 }
 
@@ -232,6 +291,22 @@ impl<T> CellBuild<T> {
         self
     }
 
+    /// Draw `model` at `transform` while the cell is within the view radius of the drawn camera
+    /// (display only: the presenter streams it in, and nothing draws while it loads).
+    pub fn model(mut self, model: &Model, transform: Transform) -> CellBuild<T> {
+        self.models.push(CellModel { model: model.clone(), transform });
+        self
+    }
+
+    /// Draw `group` (rocks, a forest's trees: [`CellInputs::scatter`] places them) while the cell is
+    /// within the view radius of the drawn camera (display only, STR-20). Its rows upload once and
+    /// stop when the cell leaves the view; a model group draws once its model is resident. A cell
+    /// whose groups hold more than [`STREAM_CELL_INSTANCES_MAX`] instances together draws nothing.
+    pub fn group(mut self, group: InstanceGroup) -> CellBuild<T> {
+        self.groups.push(group);
+        self
+    }
+
     /// The things, in the order they were added.
     pub fn things(&self) -> &[T] {
         &self.things
@@ -245,6 +320,10 @@ pub(crate) struct ContentBuild {
     pub count: usize,
     pub parts: Vec<Box<dyn CellPart>>,
     pub models: Vec<String>,
+    /// What the cell draws in the view set, in build order.
+    pub views: Vec<CellModel>,
+    /// The groups the cell draws in the view set, in build order (STR-20).
+    pub groups: Vec<InstanceGroup>,
 }
 
 type Runner = dyn Fn(CellId, u32, f32) -> ContentBuild + Send + Sync;
@@ -271,6 +350,8 @@ impl CellContent {
                 things: Box::new(build.things),
                 parts: build.parts,
                 models: inputs.take_models(),
+                views: build.models,
+                groups: build.groups,
             }
         };
         CellContent { run: Arc::new(run), thing_bytes: std::mem::size_of::<T>() }

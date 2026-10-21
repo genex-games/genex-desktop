@@ -28,6 +28,7 @@ use genex_core::cell::CellId;
 use genex_core::json::Value as CoreValue;
 use genex_render::jobs::{Job, Pool, Priority};
 use genex_stream::grid::{self, Grid, SimCells};
+use genex_stream::snapshot::{STREAM_KEPT_MAX, StreamSnapshot};
 use glam::{Vec2, Vec3};
 
 use crate::gfx::Assets;
@@ -103,22 +104,40 @@ pub trait StreamCommit<W> {
     fn enter(&self, sim: &mut Sim<W>, cell: &EnteredCell);
 }
 
-/// The sim's view of streaming (`sim.stream`): anchors, the active cells and what the last commit
-/// moved. Empty, and every call refused `stream-not-registered`, without `game.streaming`.
+/// The sim's view of streaming (`sim.stream`): anchors, kept cells, the active cells and what the
+/// last commit moved. Empty, and every call refused `stream-not-registered`, without
+/// `game.streaming`.
 #[derive(Debug, Default)]
 pub struct StreamState {
     cells: Option<SimCells>,
     max_anchors: usize,
     anchors: BTreeMap<String, CellId>,
+    kept: BTreeSet<CellId>,
+    /// A restored active set the next commit starts from instead of the current one (STR-12).
+    restored: Option<BTreeSet<CellId>>,
+    /// A slot load's rebuild the next commit reports from: what it entered and the set before it.
+    carried: Option<Carried>,
     entered: Vec<EnteredCell>,
     left: Vec<CellId>,
+    /// The streamed terrain tiles (STR-23).
+    terrain: Option<crate::TerrainTiles>,
+}
+
+/// The cells a slot load's rebuild entered ahead of the tick's commit ([`StreamTick::rebuild_restored`]),
+/// and the active set before it: the commit reports `entered` and `left` against that set, so the
+/// update hooks see the lists a commit straight from it would give.
+#[derive(Debug, Default)]
+struct Carried {
+    before: BTreeSet<CellId>,
+    entered: Vec<EnteredCell>,
 }
 
 impl StreamState {
     /// The state a seed starts from: no anchors, nothing active.
     pub(crate) fn fresh(streaming: Option<&Streaming>) -> StreamState {
         let cells = streaming.and_then(|s| Grid::new(s.cell_size()).and_then(|grid| SimCells::new(grid, s.radii())).ok());
-        StreamState { cells, max_anchors: streaming.map_or(0, Streaming::max_anchors), ..StreamState::default() }
+        let terrain = streaming.and_then(Streaming::tiles).cloned();
+        StreamState { cells, max_anchors: streaming.map_or(0, Streaming::max_anchors), terrain, ..StreamState::default() }
     }
 
     /// Whether the game registered `game.streaming`.
@@ -157,6 +176,66 @@ impl StreamState {
         self.anchors.iter().map(|(name, cell)| (name.as_str(), *cell))
     }
 
+    /// Keep `cell` in the sim set wherever the anchors go (a cell the game changed and still
+    /// simulates); it takes effect at the next tick's commit and holds until [`StreamState::release`]
+    /// or a reseed. Refuses `stream-not-registered`, `stream-out-of-world` and `stream-invalid`
+    /// (a new cell past the 64 kept, `STREAM_KEPT_MAX` in genex-stream); a refusal changes nothing.
+    pub fn keep(&mut self, cell: CellId) -> Result<(), StreamError> {
+        let Some(cells) = &self.cells else {
+            return Err(not_registered());
+        };
+        if !cells.grid().contains(cell) {
+            return Err(StreamError::new(StreamErrorCode::OutOfWorld, format!("cell ({}, {})", cell.x, cell.z)));
+        }
+        if !self.kept.contains(&cell) && self.kept.len() >= STREAM_KEPT_MAX {
+            return Err(StreamError::new(StreamErrorCode::Invalid, format!("{} cells kept (max {STREAM_KEPT_MAX})", self.kept.len())));
+        }
+        self.kept.insert(cell);
+        Ok(())
+    }
+
+    /// Stop keeping `cell` (nothing when it is not kept): from the next commit it stays only while
+    /// an anchor is within the sim radius plus hysteresis.
+    pub fn release(&mut self, cell: CellId) {
+        self.kept.remove(&cell);
+    }
+
+    /// The kept cells, ascending.
+    pub fn kept(&self) -> impl Iterator<Item = CellId> + '_ {
+        self.kept.iter().copied()
+    }
+
+    /// The streaming state a save holds (`null` without `game.streaming`): the anchors, the kept
+    /// cells and the active cells (the ones the next commit starts from). Cell content is not in
+    /// it: a restore rebuilds it.
+    pub fn snapshot(&self) -> serde_json::Value {
+        let Some(cells) = &self.cells else { return serde_json::Value::Null };
+        let active = self.restored.as_ref().unwrap_or(cells.active()).clone();
+        let snapshot = StreamSnapshot { anchors: self.anchors.clone(), kept: self.kept.clone(), active };
+        serde_json::Value::from(&snapshot.to_value(cells.grid()))
+    }
+
+    /// Restore a [`StreamState::snapshot`]: its anchors and kept cells now, and its active cells as
+    /// the base of the next tick's commit, which leaves the cells it does not hold (descending)
+    /// and enters the ones it does (ascending) through the commit hooks, so streamed colliders and
+    /// nav islands are rebuilt in canonical order (owner call S5). Two restores of one snapshot
+    /// replay equal; a scene of static colliders and kinematic characters replays equal to the run
+    /// that never restored, a scene with dynamic bodies need not (Rapier's arena generations,
+    /// contacts and sleep state are not saved). Refuses `stream-not-registered` and
+    /// `stream-snapshot-invalid` (another version or cell size, a field missing or of the wrong
+    /// kind, a cell outside the world, more anchors, kept or active cells than this registration
+    /// holds); a refusal changes nothing.
+    pub fn restore(&mut self, snapshot: &serde_json::Value) -> Result<(), StreamError> {
+        let Some(cells) = &self.cells else {
+            return Err(not_registered());
+        };
+        let restored = StreamSnapshot::from_value(&CoreValue::from(snapshot), cells.grid(), cells.radii(), self.max_anchors)?;
+        self.anchors = restored.anchors;
+        self.kept = restored.kept;
+        self.restored = Some(restored.active);
+        Ok(())
+    }
+
     /// The active cells, ascending.
     pub fn active(&self) -> impl Iterator<Item = CellId> + '_ {
         self.cells.iter().flat_map(|cells| cells.active().iter().copied())
@@ -165,6 +244,14 @@ impl StreamState {
     /// Whether `cell` is active.
     pub fn is_active(&self, cell: CellId) -> bool {
         self.cells.as_ref().is_some_and(|cells| cells.active().contains(&cell))
+    }
+
+    /// The ground's height at world (`x`, `z`) on the streamed terrain tiles (STR-23), a tile's
+    /// `Terrain::height` bit for bit: procedural tiles anywhere in the world, authored ones only
+    /// inside a sim-active cell. None without tiles or outside them.
+    pub fn ground(&self, x: f32, z: f32) -> Option<f32> {
+        let cells = self.cells.as_ref()?;
+        self.terrain.as_ref()?.ground(x, z, cells.grid().cell_size(), |cell| self.is_active(cell))
     }
 
     /// The cells that entered at this tick's commit, ascending.
@@ -181,15 +268,31 @@ impl StreamState {
         self.anchors.values().copied().collect()
     }
 
-    /// The sim set the next commit makes from the anchors held now, and what it moves.
+    /// The sim set the next commit makes from the anchors and kept cells held now (and a restored
+    /// active set, when there is one), and what it moves.
     fn next(&self) -> Option<(BTreeSet<CellId>, grid::CellDiff)> {
         let cells = self.cells.as_ref()?;
+        let base = self.restored.as_ref().unwrap_or(cells.active());
         // The anchors were checked when they were set, so this never refuses; a refusal would keep
         // the set as it is.
-        let next = grid::wanted_sim(cells.grid(), &self.anchor_cells(), cells.radii(), cells.active()).unwrap_or_else(|_| cells.active().clone());
+        let mut next = grid::wanted_sim(cells.grid(), &self.anchor_cells(), cells.radii(), base).unwrap_or_else(|_| base.clone());
+        next.extend(self.kept.iter().copied());
         let moved = grid::diff(cells.active(), &next);
         Some((next, moved))
     }
+}
+
+/// Report a commit that follows a slot load's rebuild against the set before the load: `entered`
+/// is every cell of `next` that set lacked (the rebuild's and the commit's, ascending) and `left`
+/// every cell of it `next` lacks (descending), as a commit straight from it would list them.
+fn report_from(stream: &mut StreamState, carried: Carried, next: &BTreeSet<CellId>) {
+    let Carried { before, entered } = carried;
+    let mut all: Vec<EnteredCell> = entered.into_iter().filter(|cell| next.contains(&cell.cell)).collect();
+    all.append(&mut stream.entered);
+    all.retain(|cell| !before.contains(&cell.cell));
+    all.sort_by_key(|cell| cell.cell);
+    stream.entered = all;
+    stream.left = grid::diff(&before, next).left;
 }
 
 fn not_registered() -> StreamError {
@@ -362,10 +465,10 @@ impl StreamTick {
             }
         }
         sim.stream.left = moved.left;
+        sim.stream.restored = None;
+        let carried = sim.stream.carried.take().map(|carried| (carried, next.clone()));
         if let Some(cells) = sim.stream.cells.as_mut() {
-            let anchors: Vec<CellId> = sim.stream.anchors.values().copied().collect();
-            let _ = cells.update(&anchors);
-            debug_assert_eq!(cells.active(), &next, "the commit's set is the one it waited for");
+            cells.replace(next);
         }
         let entered: Vec<EnteredCell> = moved.entered.iter().map(|cell| self.take_entered(*cell, assets)).collect();
         for cell in &entered {
@@ -374,7 +477,58 @@ impl StreamTick {
             }
         }
         sim.stream.entered = entered;
+        if let Some((carried, next)) = carried {
+            report_from(&mut sim.stream, carried, &next);
+        }
         Ok(())
+    }
+
+    /// A slot load's rebuild, before the tick's commit: enter exactly the restored active set
+    /// through the commit hooks (waiting, within `budget`, for its builds), so the world a probe
+    /// reads is the one the slot was saved from and the load's checksum self-check can run. The
+    /// commit that follows moves the set to the anchors and reports `entered` and `left` against
+    /// the set before the load. `Ok(false)` with nothing to rebuild; `Err(Held)`, with nothing
+    /// changed, while a build is still building.
+    pub(crate) fn rebuild_restored<W>(
+        &mut self,
+        sim: &mut Sim<W>,
+        hooks: &[Box<dyn StreamCommit<W>>],
+        assets: &Assets,
+        budget: &mut HoldBudget,
+    ) -> Result<bool, Held> {
+        let Some(restored) = sim.stream.restored.clone() else { return Ok(false) };
+        let Some(before) = sim.stream.cells.as_ref().map(|cells| cells.active().clone()) else { return Ok(false) };
+        let moved = grid::diff(&before, &restored);
+        for cell in &moved.entered {
+            self.ensure(*cell, Priority::Sim);
+        }
+        self.wait(&moved.entered, budget)?;
+        sim.stream.entered.clear();
+        sim.stream.left.clear();
+        for cell in &moved.left {
+            for hook in hooks.iter().rev() {
+                hook.leave(sim, *cell);
+            }
+            if let Some(job) = self.builds.remove(cell) {
+                job.cancel();
+            }
+        }
+        if let Some(cells) = sim.stream.cells.as_mut() {
+            cells.replace(restored);
+        }
+        sim.stream.restored = None;
+        let entered: Vec<EnteredCell> = moved.entered.iter().map(|cell| self.take_entered(*cell, assets)).collect();
+        for cell in &entered {
+            for hook in hooks {
+                hook.enter(sim, cell);
+            }
+        }
+        // Scene queries (a probe's ray down to the ground) see the rebuilt colliders, as the step
+        // that ended the saved tick left them; Rapier refreshes them only in a step otherwise.
+        #[cfg(feature = "physics")]
+        sim.physics.detect_collisions(&(), &());
+        sim.stream.carried = Some(Carried { before, entered });
+        Ok(true)
     }
 
     /// Wait until every cell of `cells` is built, within `budget` (a `step(ms)` call's is

@@ -38,8 +38,10 @@ import {
   type NativeAdmissionFacts,
   NativeProbe,
   NativeRefusal,
+  isNativeAudioMeasured,
   RAYLIB_NATIVE_UNMEASURED,
   RAYLIB_WEB_UNMEASURED,
+  RUST_WEB_UNMEASURED,
   runRefusal,
   TargetRefusal,
   leasedJudging,
@@ -202,6 +204,7 @@ const HOST_NAME = {
 /** What the gate says, in its own words. */
 const MESSAGE = {
   similarity: "frame similarity is unmeasured until PX10 sets its threshold",
+  webUnheard: "the web build did not answer its sound level",
   notRunHere: (target: string) => `not built or run on this host: ${target} runs only on its own OS`,
   noGameBox: (target: string) => `this host has no game box for ${target}`,
   macNeedsAMac: "Mac builds need a Mac",
@@ -1051,7 +1054,7 @@ const WEB_UNMEASURED = {
     reason: "a C++ · raylib web build has no counterpart for this probe",
   },
   [GameStack.RustWgpu]: {
-    probes: RAYLIB_WEB_UNMEASURED,
+    probes: RUST_WEB_UNMEASURED,
     reason: "a Rust · wgpu web build has no counterpart for this probe",
   },
 } as const satisfies Record<CompiledStack, { probes: readonly NativeProbe[]; reason: string }>;
@@ -1092,7 +1095,12 @@ export async function withParity(
     ...(evidence.unmeasured ?? {}),
     ...Object.fromEntries(probes.map((probe) => [probe, reason])),
   };
-  evidence.audio = null;
+  // A page's level counts only when its `audio()` answered `available`; anything else is named.
+  const heard = !probes.includes(NativeProbe.Audio) && isNativeAudioMeasured(evidence.audio);
+  if (!heard) {
+    evidence.audio = null;
+    evidence.unmeasured[NativeProbe.Audio] ??= MESSAGE.webUnheard;
+  }
   const destinations = leased?.destinations ?? (await destinationsOf(ctx, options.run.project));
   if (!destinations) return evidence;
   const capacity = leased?.capacity.host ? leased.capacity : await hostCapacity(ctx);

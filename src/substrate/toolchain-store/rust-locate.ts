@@ -84,6 +84,8 @@ export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze(['prof
 export const RUST_WARM_LOCK_FILE = "Cargo.lock";
 /** The host-made naga validator (`rust-prewarm.ts`), in the tools folder. */
 export const NAGA_CHECK_TOOL = "genex-naga-check";
+/** The host-made crash symbolicator (`rust-prewarm.ts`), in the tools folder. */
+export const SYMBOLICATE_TOOL = "genex-symbolicate";
 const RECORD_SCHEMA = 1;
 
 /** `rust-base.json`. */
@@ -284,6 +286,8 @@ export interface LocatedRust {
   record: RustPrewarmRecord | null;
   /** The naga validator, or null when this lock's prewarm built none. */
   nagaCheck: string | null;
+  /** The crash symbolicator, or null when this lock's prewarm built none. */
+  symbolicate: string | null;
   /** The web branch's tools (wasm-bindgen, binaryen's wasm-opt) when the destination required them; else null. */
   webTools: { wasmBindgen: string; wasmOpt: string } | null;
 }
@@ -407,6 +411,7 @@ async function locatedParts(
   const sysroot = rustSysroot(root, lock);
   const bin = path.join(sysroot, "bin");
   const naga = path.join(rustToolsFolder(root, lock), exe(NAGA_CHECK_TOOL, process.platform));
+  const symbolicate = path.join(rustToolsFolder(root, lock), exe(SYMBOLICATE_TOOL, process.platform));
   const located: LocatedRust = {
     lock,
     target,
@@ -419,6 +424,7 @@ async function locatedParts(
     targetDir: null,
     record: null,
     nagaCheck: (await exists(naga)) ? naga : null,
+    symbolicate: (await exists(symbolicate)) ? symbolicate : null,
     webTools,
   };
   return located;

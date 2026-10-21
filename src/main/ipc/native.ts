@@ -16,9 +16,8 @@
  * Stop the person asked for. An error crossing IPC keeps only its sentence, and the card already
  * says how the run ended.
  */
-import { gameCrashesUnavailable } from "../../shared/crash-record.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
-import { ProfileUnavailableReason, parseFrameProfileRequest, profileUnavailable } from "../../shared/frame-profile.ts";
+import { parseFrameProfileRequest } from "../../shared/frame-profile.ts";
 import type { DeviceLaunchResult } from "../../shared/device-launch.ts";
 import { BuildTarget, type GameProject } from "../../shared/game-project.ts";
 import {
@@ -42,6 +41,8 @@ import {
 } from "../core/device-launch.ts";
 import type { NativeSurfaceSize } from "../core/native-runs.ts";
 import type { StudioCore } from "../studio-core.ts";
+import { listedGameCrashes } from "./game-crashes.ts";
+import { answerNativeProfile, type LiveProfilePage } from "./native-profile.ts";
 import type { IpcHandle } from "./registrar.ts";
 
 /** Why a native request is refused before the registry is asked. */
@@ -66,6 +67,8 @@ export interface NativeIpcOptions {
   now?: () => number;
   /** The device launch's host, tools and admitted phone packages (tests stand them in). */
   device?: { host?: NodeJS.Platform; tools?: DeviceTools; packages?: AdmittedPackages | null };
+  /** The window's live web page, for the frame profile of a Rust web game Live shows (absent: native runs only). */
+  livePreview?: () => LiveProfilePage | null;
 }
 
 /** How a start that ran no game ended, in a status's own fields. */
@@ -256,32 +259,24 @@ export function registerNativeIpc(handle: IpcHandle, core: NativeIpcCore, option
     core.nativeRuns.state(await listedGame(core, payload), NativeRunMode.Window),
   );
   handle("studio:native.front", async (payload) => core.nativeRuns.front(await listedGame(core, payload)));
-  registerProfileAndCrashesIpc(handle, core);
+  registerProfileAndCrashesIpc(handle, core, options);
   registerDeviceLaunchIpc(handle, core, { ...options, iso });
   registerEmbedIpc(handle, core, iso);
 }
 
-/** The run of `project` Live or its window shows, embedded first; null when none runs. */
-function shownRun(core: NativeIpcCore, project: string): NativeRunStatus | null {
-  return core.nativeRuns.state(project, NativeRunMode.Embedded) ?? core.nativeRuns.state(project, NativeRunMode.Window);
-}
-
 /**
  * A game's frame profile and crash records, both fixture-safe reads. The game and the request are
- * checked first; until the host reads profiles (PROF-6) and keeps records (CRASH-5) each answers
- * `unavailable`: a profile `no-run` when no run is shown, else `not-served`.
+ * checked first; the profile is read from what Live shows of the game (`ipc/native-profile.ts`),
+ * and a game's crash records from its own `.studio/crashes/` (CRASH-5).
  */
-function registerProfileAndCrashesIpc(handle: IpcHandle, core: NativeIpcCore): void {
+function registerProfileAndCrashesIpc(handle: IpcHandle, core: NativeIpcCore, options: NativeIpcOptions): void {
   handle("studio:native.profile", async (payload) => {
     const project = await listedGame(core, payload);
-    if (!parseFrameProfileRequest(field(payload, "request"))) throw new Error(MESSAGE.badProfile);
-    const reason = shownRun(core, project) ? ProfileUnavailableReason.NotServed : ProfileUnavailableReason.NoRun;
-    return profileUnavailable(reason);
+    const request = parseFrameProfileRequest(field(payload, "request"));
+    if (!request) throw new Error(MESSAGE.badProfile);
+    return answerNativeProfile({ nativeRuns: core.nativeRuns, livePreview: options.livePreview }, project, request);
   });
-  handle("studio:game.crashes", async (payload) => {
-    await listedGame(core, payload);
-    return gameCrashesUnavailable();
-  });
+  handle("studio:game.crashes", async (payload) => listedGameCrashes(await listedProject(core, payload)));
 }
 
 /**

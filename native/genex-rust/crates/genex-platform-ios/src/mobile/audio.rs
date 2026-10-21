@@ -8,10 +8,15 @@
 //! [`AudioGate`] keeps whether the game should be heard: only in the foreground, with the
 //! platform's audio granted and no interruption under way.
 //!
-//! The shell has no audio output of its own yet: the gate's `audio` events in the lifecycle log
-//! are what M5.7 checks. TODO(M5-F3): the facade's mixer follows [`AudioGate::muted`].
+//! The game follows the gate ([`follow_gate`], game systems AU-8): its device output is muted
+//! while [`AudioGate::muted`] is true, and the device (cpal's CoreAudio or AAudio output over the
+//! runtime's queue) opens the first time the game may be heard. The simulation and the meter go
+//! on either way, so `audioLevel` and `state()` never depend on the gate. The gate's `audio`
+//! events in the lifecycle log are what M5.7 checks.
 
+use genex::audio::Device;
 use genex::{Value, json};
+use genex_platform_web::GameHandle;
 
 /// Whether the platform granted the app its audio.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,6 +129,16 @@ impl AudioGate {
     }
 }
 
+/// Make `game` follow `gate`: mute its device output while the gate is muted, and open `device`
+/// on its queue the first time the game may be heard (later calls report the device's faults).
+pub fn follow_gate(gate: &AudioGate, game: &mut dyn GameHandle, device: &mut Device) {
+    let muted = gate.muted();
+    game.set_output_muted(muted);
+    if !muted || device.tried() {
+        game.follow_device(device);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +196,87 @@ mod tests {
         assert!(gate.muted());
         gate.resumed(true);
         assert!(!gate.muted() && !gate.interrupted(), "a resume starts clean");
+    }
+
+    /// The waveform of the asset-import fixture `tone.wav` (FFmpeg's 440 Hz sine, mono, 48 kHz,
+    /// 0.5 s, peak 4095) as a 16-bit PCM WAV: a forked engine crate's sources may not include a
+    /// file outside the crate (the eject stage refuses `include-escape`).
+    fn tone_wav() -> &'static [u8] {
+        const RATE: u32 = 48_000;
+        const FRAMES: u32 = RATE / 2;
+        const PEAK: f64 = 4095.0;
+        let data_bytes = FRAMES * 2;
+        let mut bytes = Vec::with_capacity(44 + data_bytes as usize);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&RATE.to_le_bytes());
+        bytes.extend_from_slice(&(RATE * 2).to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_bytes.to_le_bytes());
+        for frame in 0..FRAMES {
+            let phase = 2.0 * std::f64::consts::PI * 440.0 * f64::from(frame) / f64::from(RATE);
+            let sample = (phase.sin() * PEAK).round() as i16;
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        Box::leak(bytes.into_boxed_slice())
+    }
+    const STEP_MS: f64 = 1000.0 / 60.0;
+
+    /// A game that plays the tone on its first tick.
+    fn tone_game() -> genex::Runtime<Option<genex::audio::Sound>> {
+        let table: genex::AssetTable = Box::leak(Box::new([("sfx/tone.wav", tone_wav())]));
+        let mut game = genex::Game::new(None::<genex::audio::Sound>);
+        game.on_reset(|sim, _, _, gfx| sim.world = Some(gfx.sound("sfx/tone.wav")));
+        game.on_update(|sim, ctx| {
+            if let (0, Some(sound)) = (ctx.tick, sim.world.as_ref()) {
+                ctx.audio.play(sound);
+            }
+        });
+        genex::Runtime::with_assets(game, Box::new(table)).expect("installs")
+    }
+
+    /// AU-8 red row (closes M5-F3): a muted gate mutes the device output, shown in
+    /// `volatile.audio.device.muted`, while `audioLevel` reads the same mix as an unmuted run; no
+    /// device opens until the game may be heard.
+    #[test]
+    fn a_muted_gate_mutes_the_device_and_leaves_the_level() {
+        let mut heard: Box<dyn GameHandle> = Box::new(tone_game());
+        let mut muted: Box<dyn GameHandle> = Box::new(tone_game());
+        let mut device = Device::default();
+        follow_gate(&AudioGate::default(), muted.as_mut(), &mut device);
+        assert!(!device.tried(), "no device while the gate is muted");
+        for game in [&mut heard, &mut muted] {
+            game.step(10.0 * STEP_MS);
+        }
+        assert!(muted.output_muted() && !heard.output_muted());
+        let state = muted.state();
+        assert_eq!(state["volatile"]["audio"]["device"]["muted"], json!(true), "{state}");
+        let bits = |game: &dyn GameHandle| (game.audio_level().rms.to_bits(), game.audio_level().centroid.to_bits());
+        assert_eq!(bits(muted.as_ref()), bits(heard.as_ref()), "the meter reads the mix under the mute");
+        assert!(muted.audio_level().rms > 0.05, "the tone, not silence");
+        assert_eq!(muted.checksum(), heard.checksum(), "the gate never reaches the simulation");
+    }
+
+    /// AU-8: once resumed with its audio granted the game is unmuted and the device is asked for
+    /// once (a test process, marked `GENEX_NO_WINDOW=1`, opens none); a suspend mutes it again.
+    #[test]
+    fn a_granted_gate_unmutes_and_asks_for_the_device_once() {
+        let mut game: Box<dyn GameHandle> = Box::new(tone_game());
+        let mut device = Device::default();
+        let mut gate = AudioGate::default();
+        gate.resumed((AudioPlatform::NONE.acquire)());
+        follow_gate(&gate, game.as_mut(), &mut device);
+        assert!(!game.output_muted() && device.tried());
+        gate.suspended();
+        follow_gate(&gate, game.as_mut(), &mut device);
+        assert!(game.output_muted());
+        game.step(STEP_MS);
+        assert_eq!(game.state()["volatile"]["audio"]["device"]["muted"], json!(true));
     }
 }

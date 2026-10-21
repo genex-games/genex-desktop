@@ -45,6 +45,16 @@
 //! [assets.web]              # one destination's budget: web, ios, android or desktop
 //! budget_mb = 64            # defaults web 64, ios 200, android 200, desktop 2048; at most web 512, phones 4096
 //!
+//! [net]                     # optional: multiplayer (G6); the host picks the facade's `net-loopback` or `net`
+//! enabled = true            # required in the table
+//!
+//! [net.matchmaking]         # optional: what `matchmake()` asks Genex's relay for, carried by the draft
+//! preset = "open"           # open | duel | arena | teams | private
+//! win_condition = "firstToScore"  # optional
+//!
+//! [net.matchmaking.config]  # optional: the preset's numeric knobs, in Genex's camelCase spelling
+//! maxPlayers = 8
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -88,6 +98,9 @@
 //! render_scale = 0.67       # 0.5..=1
 //! fps = 30                  # 30 | 60
 //! bloom = false             # a feature switch
+//! lod_threshold_px = 2.5    # the error a level may show, output pixels, 0.5..=8 (held to 0.5x..2x the preset's)
+//! lod_fade_band = 0.15      # the LOD crossfade band, a share of the threshold, 0..=0.5 (0: hard switches)
+//! far_density = 0.35        # the share of far-field copies kept, 0.1..=1
 //! ```
 //!
 //! The `[render]` vocabulary is the host's `src/shared/render-quality.ts`, held equal through
@@ -176,32 +189,84 @@ pub const FOG_CALLS: [&str; 8] =
     [".fog", "Fog::default", ".with_density", ".with_height", ".with_range", ".with_color", ".with_aerial_perspective", ".with_volumetric"];
 /// Game systems (EP-0a1): the call and refusal blocks of the five areas, empty until each area's
 /// work package pins what works (`tests/fixtures/rust-facade-vocabulary.json` holds the same).
-/// The animation calls of the facade (`.wire` is a refusal code's wire spelling).
-pub const ANIMATION_CALLS: [&str; 5] = ["gfx.character", ".joint_count", ".skeleton", ".path", ".wire"];
-/// The streaming calls of the facade (STR-9).
-pub const STREAM_CALLS: [&str; 18] = [
-    "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming",
-    "game.cell_content", "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor",
-    "sim.stream.entered", "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders",
-    ".handles",
+/// The animation calls of the facade (`.wire` is a refusal code's wire spelling): the rig, the
+/// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
+/// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26; the
+/// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
+/// a ragdoll view's `.apply`, pinned at gate GI).
+pub const ANIMATION_CALLS: [&str; 81] = [
+    "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
+    ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
+    ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
+    "RagdollProfile::humanoid", ".with_mass", ".graph", ".clip", ".clip_names", ".animator", "Animator::simple",
+    ".play", ".crossfade", ".play_once", ".speed", ".playing_clip", ".build_simple", ".with_root_motion",
+    ".with_retargeted_clips", ".float", ".trigger", ".layer", ".state", ".transition", ".when", ".build", ".set_float",
+    ".fire", ".update", ".probe", "frame.character", "frame.character_with", "frame.skeleton_debug",
+    "CharacterDraw::new", ".tint", ".material", "Motion::clip", ".once", ".above", ".below", ".at_end", ".synced",
+    ".inertialize", ".priority", ".interruptible", ".layer_mask", ".event", ".vec2", ".bool", ".set_vec2", ".set_bool",
+    ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
+    ".socket", ".apply",
 ];
-/// The navigation calls of the facade (NAV-11).
-pub const NAV_CALLS: [&str; 17] = [
+/// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
+/// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
+/// active set, the commit, scatter rules and the tiles' readers the page teaches, pinned at gate GI).
+pub const STREAM_CALLS: [&str; 53] = [
+    "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
+    "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
+    "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
+    ".model", "frame.cells_debug", "sim.stream.keep", "sim.stream.release", "sim.stream.snapshot", "sim.stream.restore",
+    "TerrainTiles::procedural", "TerrainTiles::authored", ".with_height_range", ".with_colliders", ".terrain",
+    "sim.stream.ground", ".colliders_content", ".group", "inputs.scatter", "inputs.bounds", "inputs.rng", "cell.cell",
+    "cell.refused", "Scatter::new", ".with_scale", ".following_ground", "sim.stream.active", "sim.stream.is_active",
+    "sim.stream.kept", "game.stream_commit", ".cell_size", ".samples", ".is_procedural", ".authored_cells",
+    ".tile_heights", ".tile", ".collider", ".cell_colliders",
+];
+/// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
+/// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14; tiles, triangle input,
+/// custom areas, saved meshes, two-way links and streamed islands the page teaches, pinned at gate GI).
+pub const NAV_CALLS: [&str; 64] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
-    "nav.update",
+    "nav.update", "NavAgent::new", "NavLink::between", "nav.add_agent", "nav.remove_agent", "nav.move_to", "nav.stop",
+    "nav.set_position", "nav.desired_velocity", "nav.status", "nav.next_corner", "nav.take_link", "nav.finish_link",
+    "nav.add_link", "nav.remove_link", "nav.set_link_open", "nav.add_body", "nav.set_body", "nav.remove_body",
+    "nav.closest_point", "nav.path", "nav.raycast", "nav.move_along", "nav.random_point", "nav.distance_to_wall",
+    "nav.probe", "nav.snapshot", "nav.restore", ".with_colliders", ".with_static_colliders", "frame.nav_debug",
+    "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths", "game.nav_bake",
+    "NavArea::custom", ".with_tile", ".with_triangles", "sim.nav.config", "mesh.to_bytes", "mesh.source",
+    "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
+];
+/// The input calls of the facade (IN-11, IN-12).
+pub const INPUT_CALLS: [&str; 30] = [
+    "game.input", "game.touch_controls", "ActionMap::new", ".context", "Context::new", ".button", ".axis1", ".axis2",
+    ".when", ".modify", ".pass_through", ".starts_off", "ctx.actions.down", "ctx.actions.pressed",
+    "ctx.actions.released", "ctx.actions.fired", "ctx.actions.value", "ctx.actions.axis2", "ctx.actions.held_ticks",
+    "ctx.actions.device", "ctx.actions.glyph", "ctx.actions.is_on", "ctx.actions.enable", "ctx.actions.disable",
+    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
-/// refusal code's wire spelling.
-pub const ASSET_CALLS: [&str; 9] =
-    ["gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code", ".detail", ".wire"];
+/// refusal code's wire spelling and `.triangle_count` counts a model's triangles.
+pub const ASSET_CALLS: [&str; 10] = [
+    "gfx.assets().bytes", "gfx.assets().triangles", "gfx.assets().info", ".json", ".digest", ".as_str", ".code",
+    ".detail", ".wire", ".triangle_count",
+];
 /// The sim-side asset read refusals: [`crate::AssetErrorCode::ALL`]'s wire spellings.
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
-/// The level-of-detail calls of the facade.
-pub const LOD_CALLS: [&str; 0] = [];
-/// The level-of-detail refusals (`__render.lodRefused` codes).
-pub const LOD_REFUSALS: [&str; 0] = [];
+/// The level-of-detail calls of the facade (LOD-07; a class's crossfade threshold, LOD-06, pinned at
+/// gate GI).
+pub const LOD_CALLS: [&str; 7] = [
+    ".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound", ".lod_at", "LodConfig::new",
+    ".threshold_px",
+];
+/// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
+pub const LOD_REFUSALS: [&str; 3] = ["levels-invalid", "levels-mismatch", "compound-invalid"];
+/// The settings menu's calls (UIS-11).
+pub const SETTINGS_CALLS: [&str; 12] = [
+    "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",
+    "SettingDef::choice", "genex::settings::menu", "genex::settings::menu_answer", "genex::settings::value",
+    "genex::settings::number", "genex::settings::flag",
+];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];
@@ -246,6 +311,16 @@ pub const SHADOW_DISTANCE_MIN: i64 = genex_render::settings::SHADOW_DISTANCE_MIN
 pub const SHADOW_DISTANCE_MAX: i64 = genex_render::settings::SHADOW_DISTANCE_MAX_M as i64;
 /// The widest `[render.shadows] blend_band` (the renderer's `SHADOW_BLEND_BAND_MAX`).
 pub const SHADOW_BLEND_BAND_MAX: f64 = genex_render::settings::SHADOW_BLEND_BAND_MAX as f64;
+/// The finest `lod_threshold_px` a class table may name, output pixels (the renderer's
+/// `LOD_THRESHOLD_PX_MIN`).
+pub const LOD_THRESHOLD_PX_MIN: f64 = genex_render::settings::LOD_THRESHOLD_PX_MIN as f64;
+/// The coarsest `lod_threshold_px` (the renderer's `LOD_THRESHOLD_PX_MAX`).
+pub const LOD_THRESHOLD_PX_MAX: f64 = genex_render::settings::LOD_THRESHOLD_PX_MAX as f64;
+/// The widest `lod_fade_band` (the renderer's `LOD_FADE_BAND_MAX`).
+pub const LOD_FADE_BAND_MAX: f64 = genex_render::settings::LOD_FADE_BAND_MAX as f64;
+/// The smallest `far_density` (the renderer's `FAR_DENSITY_MIN`, written as the decimal the file
+/// spells: the renderer's `f32` widens to a different `f64`).
+pub const FAR_DENSITY_MIN: f64 = 0.1;
 /// The smallest `[web] wasm_budget_mb` (the host's `WEB_WASM_BUDGET_MIN_MB`).
 pub const WEB_WASM_BUDGET_MIN_MB: i64 = 1;
 /// The largest `[web] wasm_budget_mb`: the host's hard ceiling on a browser build's gzip size
@@ -392,6 +467,10 @@ vocabulary! {
         TextureQuality => "texture-quality",
         /// Shadow maps for spot lights that ask for one.
         SpotShadows => "spot-shadows",
+        /// The crossfade between levels of detail.
+        LodFade => "lod-fade",
+        /// Impostors past a model's last mesh level.
+        Impostors => "impostors",
     }
 }
 
@@ -482,6 +561,36 @@ pub struct GenexToml {
     /// The package's budgets and a phone's texture cap, read by the host's package step (C-17).
     #[serde(default)]
     pub assets: AssetsSection,
+    /// Multiplayer (G6 MP-5b): read here so a networked game's genex.toml is not refused; the host
+    /// checks its values (`invalid-net`) and chooses the facade's network feature from it.
+    #[serde(default)]
+    pub net: Option<NetSection>,
+}
+
+/// `[net]`: whether the game is built with networking, and the draft's matchmaking (G6 MP-5b).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NetSection {
+    /// True links the in-process room in Studio's builds and the relay in an export.
+    pub enabled: bool,
+    /// What `matchmake()` asks Genex's relay for; none: Genex's `duel`.
+    #[serde(default)]
+    pub matchmaking: Option<NetMatchmakingSection>,
+}
+
+/// `[net.matchmaking]`: a preset, an optional win condition and the preset's numeric knobs, in
+/// Genex's own spelling (the host checks the vocabulary and the caps).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NetMatchmakingSection {
+    /// open, duel, arena, teams or private.
+    pub preset: String,
+    /// lastStanding, firstToScore, highScoreInTime or firstToFinish.
+    #[serde(default)]
+    pub win_condition: Option<String>,
+    /// Knobs by Genex's camelCase name (`maxPlayers`).
+    #[serde(default)]
+    pub config: Map<String, f64>,
 }
 
 impl GenexToml {
@@ -799,6 +908,16 @@ pub struct ClassSection {
     /// The frame-rate target, one of [`RENDER_FPS_TARGETS`].
     #[serde(default)]
     pub fps: Option<i64>,
+    /// The error a drawn level of detail may show, output pixels
+    /// ([`LOD_THRESHOLD_PX_MIN`]..=[`LOD_THRESHOLD_PX_MAX`]).
+    #[serde(default)]
+    pub lod_threshold_px: Option<f64>,
+    /// The LOD crossfade band, a share of the threshold (0..=[`LOD_FADE_BAND_MAX`]; 0: hard switches).
+    #[serde(default)]
+    pub lod_fade_band: Option<f64>,
+    /// The share of far-field copies kept ([`FAR_DENSITY_MIN`]..=1).
+    #[serde(default)]
+    pub far_density: Option<f64>,
     /// Every other key: a feature switch, by `RenderFeature` spelling.
     #[serde(flatten)]
     pub switches: Map<String, bool>,
@@ -998,6 +1117,8 @@ pub enum ManifestErrorCode {
     InvalidRenderLook,
     /// A `[render.shadows]` value outside its range.
     InvalidRenderShadows,
+    /// A class table's LOD key outside its range (`lod_threshold_px`, `lod_fade_band`, `far_density`).
+    InvalidRenderLod,
     /// A `[render.loading]` value that breaks its rule (a colour not `#rrggbb`, a logo outside `assets/`).
     InvalidRenderLoading,
     /// A `[web] wasm_budget_mb` outside [`WEB_WASM_BUDGET_MIN_MB`]..=[`WEB_WASM_CEILING_MB`].
@@ -1038,6 +1159,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::UnknownRenderFeature => "unknown-render-feature",
             ManifestErrorCode::InvalidRenderLook => "invalid-render-look",
             ManifestErrorCode::InvalidRenderShadows => "invalid-render-shadows",
+            ManifestErrorCode::InvalidRenderLod => "invalid-render-lod",
             ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
             ManifestErrorCode::InvalidTextureUsage => "invalid-texture-usage",
@@ -1505,10 +1627,25 @@ fn check_class(name: &str, class: &ClassSection) -> Result<(), ManifestError> {
         let detail = format!("render.class.{name}.fps {:?}", class.fps);
         return Err(ManifestError::new(ManifestErrorCode::InvalidRenderFps, detail));
     }
+    check_class_lod(name, class)?;
     match class.switches.keys().find(|key| RenderFeature::from_wire(key).is_none()) {
         Some(key) => {
             Err(ManifestError::new(ManifestErrorCode::UnknownRenderFeature, format!("render.class.{name}.{key}")))
         }
+        None => Ok(()),
+    }
+}
+
+/// A class table's LOD keys (game systems LOD-06), each within its range; written so a NaN (TOML's
+/// `nan`) is refused too.
+fn check_class_lod(name: &str, class: &ClassSection) -> Result<(), ManifestError> {
+    let keys = [
+        ("lod_threshold_px", class.lod_threshold_px, LOD_THRESHOLD_PX_MIN, LOD_THRESHOLD_PX_MAX),
+        ("lod_fade_band", class.lod_fade_band, 0.0, LOD_FADE_BAND_MAX),
+        ("far_density", class.far_density, FAR_DENSITY_MIN, 1.0),
+    ];
+    match keys.into_iter().find(|(_, value, low, high)| value.is_some_and(|v| !(v >= *low && v <= *high))) {
+        Some((key, value, _, _)) => Err(ManifestError::new(ManifestErrorCode::InvalidRenderLod, format!("render.class.{name}.{key} {value:?}"))),
         None => Ok(()),
     }
 }

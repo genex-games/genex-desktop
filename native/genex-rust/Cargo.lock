@@ -468,6 +468,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "characters"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-platform-web",
+ "genex-render",
+ "image",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -528,16 +539,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
-]
-
-[[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1136,14 +1137,21 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "genex-anim",
+ "genex-audio",
  "genex-core",
+ "genex-crash",
  "genex-frames",
  "genex-hud",
+ "genex-input",
  "genex-nav",
+ "genex-net",
  "genex-platform-desktop",
+ "genex-profile",
  "genex-render",
+ "genex-save",
  "genex-stream",
  "genex-studio",
+ "genex-ui",
  "glam 0.33.12",
  "indexmap",
  "libm",
@@ -1279,6 +1287,7 @@ name = "genex-nav"
 version = "0.1.0"
 dependencies = [
  "genex-core",
+ "genex-stream",
  "glam 0.33.12",
  "rapier3d",
 ]
@@ -1320,6 +1329,7 @@ dependencies = [
  "log",
  "pollster",
  "raw-window-handle",
+ "sys-locale",
  "winit",
 ]
 
@@ -1340,6 +1350,7 @@ dependencies = [
  "pollster",
  "pond",
  "serde_json",
+ "sys-locale",
  "wgpu",
  "winit",
 ]
@@ -1348,9 +1359,9 @@ dependencies = [
 name = "genex-platform-web"
 version = "0.1.0"
 dependencies = [
- "console_error_panic_hook",
  "genex",
  "genex-core",
+ "genex-crash",
  "genex-hud",
  "genex-render",
  "genex-studio",
@@ -2247,6 +2258,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nav-crowd"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-platform-web",
+ "image",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2274,6 +2295,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "net-tag"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-net",
+ "genex-platform-web",
+ "image",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3701,6 +3733,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "slice"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-platform-web",
+ "genex-render",
+ "image",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3820,6 +3863,19 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stream-valley"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-core",
+ "genex-platform-web",
+ "genex-render",
+ "genex-stream",
+ "image",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "strict-num"
@@ -3970,6 +4026,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

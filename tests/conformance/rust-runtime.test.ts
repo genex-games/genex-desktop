@@ -110,6 +110,7 @@ const NATIVE_OPS = [
   NativeOp.RenderSettings,
   NativeOp.AudioLevel,
   NativeOp.Timing,
+  NativeOp.Profile,
   NativeOp.Quit,
   NativeOp.Front,
   NativeOp.Visible,
@@ -117,6 +118,8 @@ const NATIVE_OPS = [
 const EMBED_OPS = process.platform === "darwin" ? [NativeOp.Surface, NativeOp.Release] : [];
 /** The asset tools a native run knows and answers `unavailable` until their runtime lands (`Op::ASSET_TOOLS`). */
 const ASSET_TOOL_OPS = [NativeOp.BakeAssets, NativeOp.ReloadAssets] as const;
+/** The game-data verbs a native dev run serves (`Op::GAME_DATA`, G6 UIS-16); the web answers `unknown-op`. */
+const GAME_DATA_OPS = [NativeOp.Saves, NativeOp.UiSettings] as const;
 
 function needsGame(): { skip?: string } {
   if (process.platform === "win32") return { skip: "not run: fd 3 and process groups are POSIX" };
@@ -369,7 +372,7 @@ describe("the Rust runtime over fd 3: the HUD and custom passes", { ...NEEDS, ti
     await run.port.ready();
     await run.port.call(NativeOp.Seed, { seed: 3 });
     const plain = await run.port.call(NativeOp.Capture, {});
-    assert.deepEqual((await stateOf(run)).hud, { items: [], crosshair: false, flash: 0 });
+    assert.deepEqual((await stateOf(run)).hud, { items: [], crosshair: false, flash: 0, widgets: [], focus: null });
     await run.port.call(NativeOp.Input, { actions: [{ type: "down", keys: ["KeyH"] }] });
     await run.port.call(NativeOp.Step, { ms: TICK_MS });
     const hud = (await stateOf(run)).hud as { items: string[] };
@@ -486,7 +489,7 @@ describe("the Rust runtime over fd 3: verbs", { ...NEEDS, timeout: SUITE_TIMEOUT
     const run = await startRaw();
     const reply = await run.ask({ op: "teleport" });
     assert.equal(reply.error, NativeOpError.UnknownOp);
-    assert.deepEqual(reply.available, [...NATIVE_OPS, ...EMBED_OPS, ...ASSET_TOOL_OPS].sort());
+    assert.deepEqual(reply.available, [...NATIVE_OPS, ...EMBED_OPS, ...ASSET_TOOL_OPS, ...GAME_DATA_OPS].sort());
     const timed = await run.ask({ op: NativeOp.Input, arg: { actions: [{ type: "hold", keys: ["KeyD"], ms: 100 }] } });
     assert.deepEqual(timed.result, { held: [], ignored: 1 }, "a timed action is the host's to expand");
   });

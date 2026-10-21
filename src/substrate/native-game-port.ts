@@ -14,8 +14,16 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { type BuildIdentity, type CaptureProvenance, renderProvenanceCopy } from "../shared/build-preview.ts";
+import { type CrashRecordV1, isGameMadeRecord } from "../shared/crash-record.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import type { BuildTarget } from "../shared/game-project.ts";
+import {
+  type FrameProfileAnswer,
+  type FrameProfileRequest,
+  ProfileUnavailableReason,
+  profileUnavailable,
+} from "../shared/frame-profile.ts";
+import { checkSavesArg, checkUiSettingsArg, type GameArgCheck } from "../shared/game-saves.ts";
 import {
   NATIVE_CALL_TIMEOUT_MS,
   NATIVE_LINE_MAX_BYTES,
@@ -31,6 +39,7 @@ import {
   type NativeEventMessage,
   NativeInputKind,
   NativeOp,
+  NativeOpError,
   checkRenderSettingsArg,
   type NativeOpArgs,
   type NativeOpResults,
@@ -58,6 +67,8 @@ import {
 import { NotARegularFileError, readRegularFile } from "./fsx.ts";
 import { computePixelStats } from "./pixel-stats.ts";
 import { planNativeInput } from "./native-input-plan.ts";
+import { NativeProfiler, readFrameProfile, SUMMARY_REQUEST } from "./native-profile.ts";
+import type { ProfileRequest } from "./preview-profiler.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PreviewPort } from "./preview-port.ts";
 import type { ReadySnapshot } from "./preview-ready.ts";
@@ -295,6 +306,16 @@ const textArg = (arg: unknown, key: string): string | null => {
   return isRecord(arg) && typeof arg[key] === "string" ? arg[key] : null;
 };
 
+/** `op` with an argument checked before it is sent: one out of shape is refused `bad-argument`, nothing sent. */
+function checkedCall<K extends typeof NativeOp.Saves | typeof NativeOp.UiSettings>(
+  port: NativeGamePort,
+  op: K,
+  checked: GameArgCheck<OpArg<K>>,
+): Promise<unknown> {
+  if (!checked.ok) return Promise.reject(new NativeOpRefusedError(op, NativeOpError.BadArgument));
+  return port.call(op, checked.arg);
+}
+
 /**
  * The page verbs (`PageMethod` in the seed: the same names as their ops) and how each argument is
  * carried. `audio({muted})` mutes; `audio()` is the level probe, as the web shell has it.
@@ -322,6 +343,9 @@ const PAGE_CALLS: Readonly<Record<string, PageCall>> = {
     if (!checked.ok) return Promise.reject(new NativeOpRefusedError(NativeOp.RenderSettings, checked.error));
     return port.call(NativeOp.RenderSettings, checked.arg);
   },
+  /** Saves and the UI's session settings: a slot name, envelope or setting out of shape never reaches the game. */
+  [NativeOp.Saves]: (port, arg) => checkedCall(port, NativeOp.Saves, checkSavesArg(arg)),
+  [NativeOp.UiSettings]: (port, arg) => checkedCall(port, NativeOp.UiSettings, checkUiSettingsArg(arg)),
 };
 
 /** What a native run's `input` takes: the preview's actions and contract v2's `touch`. */
@@ -372,9 +396,23 @@ export class NativeGamePort implements PreviewPort {
   #observed = false;
   /** The camera the last answered `debugCamera` left the game on. */
   #camera: string = DEFAULT_CAMERA;
+  /** The last crash record the game sent (CRASH-5): the registry hands it to the crash store as the run ends. */
+  #lastCrash: CrashRecordV1 | null = null;
+  /** The tick the game's last answered `state` named, for a host-made hang record; null before one. */
+  #lastTick: number | null = null;
+  /** `preview.profile`'s sampler over this run's own ops (PROF-6). */
+  readonly #profiler: NativeProfiler;
 
   constructor(io: NativePortIo) {
     this.#io = io;
+    this.#profiler = new NativeProfiler({
+      ready: () => this.#readyEvent,
+      start: () => this.call(NativeOp.Start),
+      timing: () => this.call(NativeOp.Timing),
+      state: () => this.call(NativeOp.State),
+      summary: () => this.frameProfile(SUMMARY_REQUEST),
+      now: () => io.timers.now(),
+    });
     // Nobody may ever ask for the handshake (a run stopped while starting): its failure is no crash.
     this.#handshake.promise.catch(() => {});
     io.child.fd3.on("data", (chunk: Buffer) => this.#receive(chunk));
@@ -436,6 +474,16 @@ export class NativeGamePort implements PreviewPort {
   /** How the game ended, once it was reaped; null while it runs. */
   get exit(): { code: number | null; signal: string | null } | null {
     return this.#exit;
+  }
+
+  /** The last crash record the game sent this run, or null. */
+  get lastCrash(): CrashRecordV1 | null {
+    return this.#lastCrash;
+  }
+
+  /** The tick the game's last answered `state` named, or null. */
+  get lastTick(): number | null {
+    return this.#lastTick;
   }
 
   /** Ends the game for `refusal` (SIGKILL to its group); every waiting call rejects with it. Idempotent. */
@@ -587,6 +635,8 @@ export class NativeGamePort implements PreviewPort {
 
   /** A page verb on its op (`PageMethod` names); `{__missing: true}` for anything else, as a page answers. */
   async studioCall(method: string, arg?: unknown): Promise<unknown> {
+    // As a page's: a verb sent during a profile window changes what the window measures.
+    this.#profiler.invalidate(`studio ${method} during sample`);
     const verb = Object.hasOwn(PAGE_CALLS, method) ? PAGE_CALLS[method] : undefined;
     if (!verb) return { __missing: true };
     return verb(this, arg);
@@ -671,6 +721,21 @@ export class NativeGamePort implements PreviewPort {
   /** The registry stops the run; the port itself holds nothing to release. */
   async dispose(): Promise<void> {}
 
+  /** `preview.profile` (the optimization stage's sample): begin, start, read or end a window on this run. */
+  profile(request: ProfileRequest): Promise<unknown> {
+    return this.#profiler.profile(request);
+  }
+
+  /** The open profile window no longer holds (an evaluation or a reload during it). */
+  async invalidateProfile(reason: string): Promise<void> {
+    this.#profiler.invalidate(reason);
+  }
+
+  /** The game's frame profile (`preview.frameProfile`, Live's strip): its `profile` op through the parser. */
+  frameProfile(request: FrameProfileRequest): Promise<FrameProfileAnswer> {
+    return readFrameProfile((checked) => this.call(NativeOp.Profile, checked), request);
+  }
+
   /** Pause a hidden, unobserved clock the game was running, and start only a clock the host paused. */
   #applySight(): void {
     const seen = this.#visible || this.#observed;
@@ -689,6 +754,7 @@ export class NativeGamePort implements PreviewPort {
   #noteClock(op: NativeOp, result: unknown): void {
     if (!isRecord(result)) return;
     if (op === NativeOp.Seed) this.#running = false;
+    if (op === NativeOp.State && Number.isSafeInteger(result.tick)) this.#lastTick = Number(result.tick);
     const clockOp = op === NativeOp.Start || op === NativeOp.Pause;
     if (clockOp && typeof result.running === "boolean") this.#running = result.running;
   }
@@ -794,8 +860,22 @@ export class NativeGamePort implements PreviewPort {
       if (event.progress) for (const listener of this.#listeners) listener(event);
       return;
     }
+    if (event.event === NativeEvent.Crash && !this.#keepCrash(event.record)) return;
     if (event.event === NativeEvent.Fatal) this.#note(ConsoleLevel.Error, event.reason);
     for (const listener of this.#listeners) listener(event);
+  }
+
+  /**
+   * A game's own record is kept as the run's last; one naming a kind or writer only the host, the
+   * shell or a platform reader makes (a forged `hang`, a `source: "host"`) ends the game `reply-invalid`.
+   */
+  #keepCrash(record: CrashRecordV1): boolean {
+    if (!isGameMadeRecord(record)) {
+      this.kill(NativeRefusal.ReplyInvalid, MESSAGE.replyInvalid);
+      return false;
+    }
+    this.#lastCrash = record;
+    return true;
   }
 
   /** The one `ready`: this run's nonce and protocol, or the game ends `bad-handshake`. A second is a violation. */
@@ -1169,6 +1249,20 @@ export class NativeLeasePort implements PreviewPort {
 
   async attachReport(): Promise<null> {
     return null;
+  }
+
+  profile(request: ProfileRequest): Promise<unknown> {
+    return this.#port().profile(request);
+  }
+
+  async invalidateProfile(reason: string): Promise<void> {
+    await this.#run?.port.invalidateProfile(reason);
+  }
+
+  /** The run's frame profile; `no-run` while the lease holds none. */
+  async frameProfile(request: FrameProfileRequest): Promise<FrameProfileAnswer> {
+    if (!this.#run) return profileUnavailable(ProfileUnavailableReason.NoRun);
+    return this.#run.port.frameProfile(request);
   }
 
   /** The lease is given back: its run ends (or stops starting), and it loads nothing more. */

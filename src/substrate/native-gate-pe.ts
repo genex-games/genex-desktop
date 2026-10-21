@@ -598,8 +598,9 @@ const WINDOWS_SYSTEM_DLLS: ReadonlySet<string> = new Set(
  * of winit, wgpu (D3D12 through FXC), cpal, gilrs and std imports
  * (`tests/fixtures/rust-bundles/m2-binaries.json`), plus D3D12 and the shader compiler wgpu loads
  * and the few their other paths may link, and COM's `combase.dll` (gilrs reads gamepads through
- * Windows.Gaming.Input, which the template's M4.1 build imports). No network, no desktop OpenGL, no
- * other CRT than the UCRT (through the API sets). A new DLL is a reviewed change to this list,
+ * Windows.Gaming.Input, which the template's M4.1 build imports) and `mmdevapi.dll` (cpal's WASAPI
+ * output activates its audio client with `ActivateAudioInterfaceAsync`, AU-5). No network, no
+ * desktop OpenGL, no other CRT than the UCRT (through the API sets). A new DLL is a reviewed change to this list,
  * never a pass.
  */
 export const RUST_WINDOWS_DLLS: ReadonlySet<string> = new Set(
@@ -620,6 +621,7 @@ export const RUST_WINDOWS_DLLS: ReadonlySet<string> = new Set(
     "imm32",
     "kernel32",
     "kernelbase",
+    "mmdevapi",
     "ntdll",
     "ole32",
     "oleaut32",

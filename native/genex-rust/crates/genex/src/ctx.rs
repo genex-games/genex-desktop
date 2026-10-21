@@ -292,12 +292,14 @@ pub struct Ctx<'a> {
     pub world_size: [u32; 2],
     /// The game's save folder.
     pub saves: &'a Saves,
-    /// The tick's evaluated actions (G6 contract stub until IN-11 makes it game API).
-    #[expect(dead_code, reason = "IN-11 makes ctx.actions game API")]
-    pub(crate) actions: crate::actions::CtxActions<'a>,
-    /// What the tick's hooks play through (G6 contract stub until AU-7 makes it game API).
-    #[expect(dead_code, reason = "AU-7 makes ctx.audio game API")]
-    pub(crate) audio: crate::audio::CtxAudio<'a>,
+    /// The tick's evaluated input actions (`game.input`): `ctx.actions.pressed(JUMP)`. Without
+    /// `game.input` every action reads false.
+    pub actions: &'a crate::actions::Actions,
+    /// What the tick's hooks play through (`game.audio`, `gfx.sound`): `ctx.audio.play(&step)`.
+    /// Commands apply after the hooks and the physics step, in call order.
+    pub audio: crate::audio::CtxAudio<'a>,
+    /// The save slots as of this tick's start (`game.saves`).
+    pub(crate) slots: crate::saves::Slots<'a>,
 }
 
 impl Ctx<'_> {
@@ -312,9 +314,9 @@ impl Ctx<'_> {
         self.saves.load(file)
     }
 
-    /// The save slots (G6 contract stub until UIS-9 makes it game API).
-    #[expect(dead_code, reason = "UIS-9 makes ctx.slots() game API")]
-    pub(crate) fn slots(&self) -> crate::saves::CtxSlots<'_> {
-        crate::saves::CtxSlots(std::marker::PhantomData)
+    /// The save slots (`game.saves`): list them, and queue a save (written after this tick), a
+    /// load (restored before the next one) or a delete.
+    pub fn slots(&self) -> crate::saves::Slots<'_> {
+        self.slots
     }
 }

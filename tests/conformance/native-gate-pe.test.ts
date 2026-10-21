@@ -1158,3 +1158,32 @@ describe("Rust · wgpu PE admission for Windows (M3.5)", () => {
     });
   }
 });
+
+describe("Rust · wgpu PE admission of cpal's WASAPI output (AU-5)", () => {
+  const verdict = (bytes: Uint8Array) => {
+    const admission = admitRustPe(bytes);
+    return admission.ok ? "admitted" : `${admission.refusal}/${admission.problem}`;
+  };
+  const foreign = `${NativeRefusal.ForeignImport}/${RustAdmissionProblem.ForeignImport}`;
+
+  it("admits mmdevapi.dll, through which cpal activates its audio client, linked or delay-loaded", () => {
+    assert.equal(verdict(windowsBinary({ imports: [...M2.windows.imports, "MMDevAPI.dll", "avrt.dll"] })), "admitted");
+    assert.equal(verdict(windowsBinary({ delayImports: ["mmdevapi"] })), "admitted");
+  });
+
+  const hostile: Array<[string, Uint8Array]> = [
+    [
+      "mmdevapi.dll by a path",
+      windowsBinary({ imports: [...M2.windows.imports, "C:\\Windows\\System32\\mmdevapi.dll"] }),
+    ],
+    [
+      "a look-alike beside it (mmdevapi32.dll)",
+      windowsBinary({ imports: [...M2.windows.imports, "mmdevapi.dll", "mmdevapi32.dll"] }),
+    ],
+  ];
+  for (const [label, bytes] of hostile) {
+    it(`refuses ${label}, typed`, () => {
+      assert.equal(verdict(bytes), foreign);
+    });
+  }
+});

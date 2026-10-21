@@ -68,7 +68,7 @@ use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, SceneP
 use crate::settings::{LdrReason, Look, Quality, TextureClass};
 use crate::settle::{ExposureHistories, FrameHistory, HistoryKey, HistoryReset, HistorySet, LiveFrame, LiveHistory, SettleFrame, SettleHooks};
 use crate::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, Scene, scaled};
-use crate::skin::{SkinId, SkinnedMeshData};
+use crate::skin::{SkinId, SkinnedMeshData, SkinnedModel};
 use crate::tables::{CullPath, buffer, entry, pipeline_layout, uniform};
 use crate::texture::{TextureData, TextureId, TextureKind};
 use crate::mesh::MeshData;
@@ -266,6 +266,20 @@ impl ImmediateFrame {
         self.tick
     }
 
+    /// The frame's level-of-detail crossfade band ([`crate::scene::Scene::lod_band`]; game systems
+    /// LOD-06: the presenter passes its quality's `lod.fade_band`, 0 draws hard switches).
+    pub fn set_lod_band(&mut self, band: f32) -> &mut Self {
+        self.scene.lod_band = band;
+        self
+    }
+
+    /// How the following draws choose their levels (game systems LOD-02, LOD-07): the
+    /// compound sphere their parts measure from and their bias ([`crate::scene::Scene::set_lod`]).
+    pub fn set_lod(&mut self, lod: crate::lod_rows::DrawLod) -> &mut Self {
+        self.scene.set_lod(lod);
+        self
+    }
+
     /// The draw id the following draws carry (`frame.id(key)` in the facade), or none: under TAA
     /// a moving object keeps its motion history by its id while other draws come and go
     /// ([`Scene::set_id`]).
@@ -299,6 +313,14 @@ impl ImmediateFrame {
     /// Draw a skinned mesh posed by `joints`.
     pub fn skinned(&mut self, skin: SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, material: Material) -> &mut Self {
         self.scene.draw_skinned(skin, model, joints, material);
+        self.counter.count();
+        self
+    }
+
+    /// Draw a skinned mesh posed by `joints`, each part with its own material
+    /// ([`Scene::draw_skinned_parts`], game systems AN-17).
+    pub fn skinned_parts(&mut self, skin: SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, materials: Vec<Material>) -> &mut Self {
+        self.scene.draw_skinned_parts(skin, model, joints, materials);
         self.counter.count();
         self
     }
@@ -1081,6 +1103,11 @@ impl FrameRenderer {
         self.renderer.add_skinned_mesh(gpu, data)
     }
 
+    /// Add a skinned GLB's mesh with its parts ([`Renderer::add_skinned_model`], game systems AN-17).
+    pub fn add_skinned_model(&mut self, gpu: &Gpu, model: &SkinnedModel) -> Result<SkinId, RenderError> {
+        self.renderer.add_skinned_model(gpu, model)
+    }
+
     /// Add a texture.
     pub fn add_texture(&mut self, gpu: &Gpu, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
         self.renderer.add_texture(gpu, data, kind)
@@ -1315,8 +1342,8 @@ impl FrameRenderer {
             prepass: None,
             motion: None,
         };
-        let ran = crate::graph::run(&mut nodes, &mut encoder);
-        encoder.submit();
+        // Bracketed per graph step while per-node GPU timing is armed (PROF-5); a capture never is.
+        let ran = self.renderer.run_timed_frame(&mut nodes, &mut encoder);
         let (quad_draws, hud) = (nodes.quad_draws, nodes.hud);
         let done = nodes.world.finish();
         self.renderer.end_frame(prep, done);

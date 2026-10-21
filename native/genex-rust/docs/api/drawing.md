@@ -34,6 +34,33 @@ the GPU's vertex cache; at runtime an attribute
 stored in any other layout than core glTF's is refused, never misread. A
 model of 512 or more triangles gets simplified levels at import, and each drawn copy far from the
 camera draws a coarser one, in its shadows too.
+
+A game names its own levels with `model.with_levels(&[(lod1, 24.0), (lod2, 58.0)])` (each level a
+GLB with the model's part count, its parts drawn with the model's parts' materials, at most
+`LOD_LEVELS_MAX` = 3): a copy of scale 1 switches to `lod1` 24 m from the camera (to the nearest
+point of its bounding sphere) at the nominal view (1080 rows, 60° fov, the one-pixel threshold),
+a bigger copy or a sharper view later, a coarser quality preset sooner, with the renderer's
+crossfades and shadows. `model.with_lod_bias(2.0)` holds every level twice as far (0.25..=4).
+`gfx.assets().compound(&[&wood, &foliage])` draws several models as one: one transform, and every
+part measures its level from the compound's one sphere, so a tree's wood and foliage switch
+together; members keep their own levels and materials. A refused option draws the model whole and
+is named in `state().__render.lodRefused` (`[{model, code}]`, absent while empty):
+`levels-invalid` (no levels, too many, distances not finite, positive and increasing, a missing
+or unsafe level, a level with levels of its own, a model that already has levels),
+`levels-mismatch` (a level with another part count) and `compound-invalid` (no members, a missing
+member, a nested compound); `model.lod_refusal()` answers the first and last at once.
+
+The threshold and the crossfade band follow the quality preset: 2 px (band 0.15, half the
+far-field copies) on `low`, 1.5 px (0.2, three quarters of them) on `medium`, 1 px (0.15, all) on
+`high` and `ultra`. Phones
+draw no finer than 2, 2.5 and 3 px (`mobile-high`, `-mid`, `-low`) and keep half, then a third, of
+the far-field copies. A class's `[render.class.<class>]` may set `lod_threshold_px` (0.5..=8 px,
+held to half..twice the preset's), `lod_fade_band` (0..=0.5 of the threshold; 0 is hard switches)
+and `far_density` (0.1..=1, the far-field copies kept); in code
+`.lod_at(class, LodConfig::new().threshold_px(4.0))`. A value outside its range is refused
+`invalid-render-lod`. The settings panel's Detail distance slider moves the threshold from half to
+twice the preset's.
+
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`
 draws it orthographic, `fovy` then being the view's height in world units (a 2D or isometric

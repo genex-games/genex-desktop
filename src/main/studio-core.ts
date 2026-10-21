@@ -45,6 +45,7 @@ import { assetKind, isAudioFile, stackAcceptsAsset, type AssetDeliveredPayload }
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
 import type { NativeTimers } from "../shared/native-contract.ts";
+import type { LiveAssetsAnswer } from "../shared/live-assets.ts";
 import { hostOf } from "../shared/game-targets.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import {
@@ -142,12 +143,14 @@ import { ConnectionService } from "./core/connections.ts";
 import { developmentStacksOpen } from "./core/stack-gate.ts";
 import { ConversationService } from "./core/conversation.ts";
 import { DelegationService } from "./core/delegation.ts";
+import { createCrashSymbolicator, storeSymbolicateTool } from "./core/crash-symbolicate.ts";
+import { createGameCrashStore } from "./core/game-crashes.ts";
 import { GameFileService } from "./core/game-files.ts";
 import { nameFromIdea, nameGame } from "./core/game-naming.ts";
 import { makeBackdropShader } from "./core/backdrop-generation.ts";
 import { GENEX_PLUGIN_ID, GenexCliService, genexHostPreflight, genexHostTool } from "./core/genex-cli.ts";
 import { GenexPackageService } from "./core/genex-package.ts";
-import { assertPublishable } from "./core/genex-publish.ts";
+import { assertPublishable, genexDraftSlug } from "./core/genex-publish.ts";
 import { GameThreadService } from "./core/game-threads.ts";
 import {
   type CoreInternals,
@@ -248,6 +251,7 @@ import {
   rustStageImporter,
 } from "./rust-assets.ts";
 import { type AssetCache, cachedImporter, openAssetCache } from "./asset-cache.ts";
+import { LiveAssets, shownLiveGame } from "./asset-watch.ts";
 import { IMPORTER_TOOLS_RESOURCES_FOLDER } from "../substrate/asset-import/decoders.ts";
 import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
 import { webExportWarnings } from "./rust-build-web.ts";
@@ -625,6 +629,8 @@ export class StudioCore {
   readonly #x: CoreInternals;
   readonly #connections: ConnectionService;
   readonly #previews: PreviewService;
+  /** Live's asset watcher and swap (`asset-watch.ts`), made on first use. */
+  #liveAssets: LiveAssets | null = null;
   readonly #delegation: DelegationService;
   readonly #recovery: RecoveryService;
   /** Resumes a paused build on its own once its limit resets or its loop runs again. */
@@ -1328,6 +1334,8 @@ export class StudioCore {
       trust: (game) => engineTrustFor(this).trustOf(game),
       // The person's eject (M7.1), as the profile records it: a game's own `[engine]` row links no fork.
       ejection: (project) => engineEjectionsFor(this).ejectedFrom(project),
+      // A networked export's relay joins the game's own Genex draft (G6 MP-5b): the slug of its binding.
+      gameSlug: (project) => genexDraftSlug(this.pluginServices.root(GENEX_PLUGIN_ID), project),
       // Every destination's executable passes its policy and the transport scan before it is out/ (M3.5).
       admit: storeRustAdmit(this.layout.toolchains),
       // The import step over each build's stage (C-2): sandboxed per-file jobs in the profile's
@@ -1353,6 +1361,24 @@ export class StudioCore {
       timers: this.#x.nativeTimers,
       ...(this.options.nativeSupervisor ? { supervisor: this.options.nativeSupervisor } : {}),
       frames: this.options.nativeFrames ?? null,
+      // A crashed run's record goes to its game's `.studio/crashes/` and is announced on the main thread (CRASH-5).
+      crashes: createGameCrashStore({
+        gameDir: async (project) => {
+          const dir = this.games.dirFor(project);
+          await this.assertProjectAllowed(dir);
+          return dir;
+        },
+        announce: (payload) => this.append([customEventData(CustomEvent.GameCrashed, { ...payload })]),
+        now: () => Date.now(),
+        // Named from the build's own debug files by the store's tool, under the sandbox (CRASH-7b).
+        symbolicate: createCrashSymbolicator({
+          tool: async (project) => {
+            const lock = await this.toolchains.currentLock(GameStack.RustWgpu, project).catch(() => null);
+            return lock ? storeSymbolicateTool(this.layout.toolchains, lock) : null;
+          },
+          run: (request) => this.sandbox.run(request),
+        }),
+      }),
     };
     return this.options.createNativeRuns ? this.options.createNativeRuns(options) : new NativeRuns(options);
   }
@@ -1875,6 +1901,7 @@ export class StudioCore {
 
   async stop(): Promise<void> {
     this.#planReviews?.stop();
+    this.#liveAssets?.dispose();
     // No compiled build outlives the studio; they run in the sandbox disposed below.
     this.#gameBuilds.cancelAll();
     // Nor a delivery's import (C-5): its job ends, so no importer outlives the core.
@@ -2871,6 +2898,39 @@ export class StudioCore {
   /** The person's Reload on the stage: what waits for Live, else what is on disk now (`live-gate.ts`). */
   reloadLive(p: { retry?: boolean } = {}): Promise<void> {
     return this.#previews.reloadLive(p);
+  }
+
+  /**
+   * Reload's asset swap (`studio:live.reloadAssets`, `asset-watch.ts`): the game's changed assets
+   * into the build Live shows, with no rebuild; `rebuild` with why when anything else changed.
+   */
+  reloadLiveAssets(project: string): Promise<LiveAssetsAnswer> {
+    return this.#liveAssetsService().reload(project);
+  }
+
+  /** A load the person made reached Live: the game's folder is watched for asset changes from a clean slate. */
+  liveAssetsLoaded(project: string): void {
+    this.#liveAssetsService().liveLoaded(project);
+  }
+
+  /** The asset watcher and swap for the game Live shows, made on first use. */
+  #liveAssetsService(): LiveAssets {
+    this.#liveAssets ??= new LiveAssets({
+      gameDir: (project) => this.games.dirFor(project),
+      shown: (project) =>
+        shownLiveGame(
+          {
+            nativeRuns: this.nativeRuns,
+            nativeRunsRoot: this.layout.nativeRuns,
+            livePage: (name) => this.#previews.liveAssetsPage(name),
+          },
+          project,
+        ),
+      offer: (project) => void this.#previews.offerLive({ project, root: null }).catch(() => {}),
+      caughtUp: (project) => this.#previews.liveAssetsSwapped(project),
+      timers: this.#x.nativeTimers,
+    });
+    return this.#liveAssets;
   }
 
   /** The stage's Stop: Live's game stops running until Play. */

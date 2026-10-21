@@ -33,6 +33,8 @@ pub use mesh_lod::{
 };
 // The LOD fade band (game systems LOD-01).
 pub use mesh_lod::{LOD_FADE_TAG, LodBand, fade_batch_lod, lod_band, lod_band_keep, lod_row_keep, lod_row_keep_far};
+// The impostor as a chain level (game systems LOD-15).
+pub use mesh_lod::{LOD_IMPOSTOR_MESH_LEVELS, LOD_IMPOSTOR_TAG, impostor_batch_lod, impostor_level_error, lod_row_keep_view};
 
 /// One vertex as the vertex buffer holds it (`MeshVertex` in the skinning shader).
 #[repr(C)]

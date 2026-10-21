@@ -3,9 +3,12 @@
  * `export.stage`. The plugin runs the CLI in its own copy of the game, which has no package.json,
  * so without this the CLI never told Genex the game uses sign-in and players saw "this game didn't
  * finish starting". Only the Genex SDK versions and the `genex` settings leave the game folder.
+ * A Rust · wgpu game has no package.json of its own: its matchmaking comes from genex.toml's
+ * `[net.matchmaking]` (G6 MP-5c), carried the same way.
  */
 import { readFile, stat } from "node:fs/promises";
 import { GENEX_GAME_PACKAGES, type GenexGameManifest, type GenexGamePackage } from "../shared/genex.ts";
+import { genexMatchmakingBlock, readGenexToml } from "./genex-toml.ts";
 import { containedReal } from "./paths.ts";
 
 /** A package.json larger than this is not read. */
@@ -58,6 +61,11 @@ export function genexGameManifest(pkg: unknown): GenexGameManifest | undefined {
  * the game (a link out of it is not followed) and is small; undefined when there is none to read.
  */
 export async function readGenexGameManifest(dir: string): Promise<GenexGameManifest | undefined> {
+  return (await packageManifest(dir)) ?? (await rustGameManifest(dir));
+}
+
+/** What `dir/package.json` tells Genex; undefined when there is none to read or it names nothing. */
+async function packageManifest(dir: string): Promise<GenexGameManifest | undefined> {
   try {
     const file = await containedReal(dir, "package.json");
     const info = await stat(file);
@@ -66,4 +74,14 @@ export async function readGenexGameManifest(dir: string): Promise<GenexGameManif
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A networked Rust game's matchmaking from its plain `genex.toml` (never through a link): the
+ * block `genexMatchmakingBlock` writes; undefined for a game without one or a file that is refused.
+ */
+async function rustGameManifest(dir: string): Promise<GenexGameManifest | undefined> {
+  const parsed = await readGenexToml(dir).catch(() => null);
+  const matchmaking = parsed?.ok ? genexMatchmakingBlock(parsed.manifest) : null;
+  return matchmaking ? { dependencies: {}, genex: { matchmaking: { ...matchmaking } } } : undefined;
 }

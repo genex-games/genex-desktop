@@ -55,7 +55,7 @@ use crate::particles::{EmitterDesc, EmitterId, ParticleAtlas, ParticleAtlasId};
 use crate::renderer::RenderOptions;
 use crate::settings::Meshlets;
 use crate::scene::{MeshId, ModelPart};
-use crate::skin::{SkinId, SkinnedMeshData};
+use crate::skin::{SkinId, SkinnedMeshData, SkinnedModel};
 use crate::tables::CullPath;
 use crate::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind};
 
@@ -149,6 +149,8 @@ enum Upload {
     /// [`Upload::Meshes`] decoded again from its source at each replay.
     MeshesFrom(PartsSource),
     Skinned(SkinnedMeshData),
+    /// A skinned GLB with its parts (game systems AN-17), kept.
+    SkinnedModel(Box<SkinnedModel>),
     Texture(TextureData, TextureKind),
     /// [`Upload::Texture`] decoded again from its source at each replay.
     TextureFrom(TextureSource, TextureKind),
@@ -216,6 +218,7 @@ impl Upload {
             Upload::Mesh(mesh) => mesh_bytes(mesh),
             Upload::Meshes(parts) => parts.iter().map(part_bytes).sum(),
             Upload::Skinned(data) => mesh_bytes(&data.mesh) + std::mem::size_of_val(data.skin.as_slice()) as u64,
+            Upload::SkinnedModel(model) => mesh_bytes(&model.data.mesh) + std::mem::size_of_val(model.data.skin.as_slice()) as u64,
             Upload::Texture(data, _) => texture_bytes(data),
             Upload::Material(kept) | Upload::PostPass(_, kept) => kept.bytes(),
             Upload::Emitter(_) => std::mem::size_of::<EmitterDesc>() as u64,
@@ -234,6 +237,7 @@ impl std::fmt::Debug for Upload {
             Upload::Meshes(parts) => f.debug_tuple("Meshes").field(&parts.len()).finish(),
             Upload::MeshesFrom(_) => f.write_str("MeshesFrom"),
             Upload::Skinned(_) => f.write_str("Skinned"),
+            Upload::SkinnedModel(model) => f.debug_tuple("SkinnedModel").field(&model.parts.len()).finish(),
             Upload::Texture(data, kind) => f.debug_tuple("Texture").field(&(data.width(), data.height())).field(kind).finish(),
             Upload::TextureFrom(_, kind) => f.debug_tuple("TextureFrom").field(kind).finish(),
             Upload::Compressed(texture, kind) => f.debug_tuple("Compressed").field(&(texture.family(), texture.side())).field(kind).finish(),
@@ -535,6 +539,11 @@ impl Resilient {
     /// Add a skinned mesh (kept for replay).
     pub fn add_skinned_mesh(&mut self, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
         self.upload(Upload::Skinned(data.clone()), |r, gpu| r.add_skinned_mesh(gpu, data))
+    }
+
+    /// Add a skinned GLB's mesh with its parts (game systems AN-17, kept for replay).
+    pub fn add_skinned_model(&mut self, model: &SkinnedModel) -> Result<SkinId, RenderError> {
+        self.upload(Upload::SkinnedModel(Box::new(model.clone())), |r, gpu| r.add_skinned_model(gpu, model))
     }
 
     /// Add a texture (kept for replay).
@@ -867,6 +876,7 @@ fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<()
         Upload::Meshes(parts) => renderer.add_model_parts(gpu, parts.clone()).map(drop),
         Upload::MeshesFrom(source) => renderer.add_model_parts(gpu, source()?).map(drop),
         Upload::Skinned(data) => renderer.add_skinned_mesh(gpu, data).map(drop),
+        Upload::SkinnedModel(model) => renderer.add_skinned_model(gpu, model).map(drop),
         Upload::Texture(data, kind) => renderer.add_texture(gpu, data, *kind).map(drop),
         Upload::TextureFrom(source, kind) => renderer.add_texture(gpu, &source()?, *kind).map(drop),
         Upload::Compressed(texture, kind) => renderer.add_compressed_texture(gpu, texture, *kind).map(drop),

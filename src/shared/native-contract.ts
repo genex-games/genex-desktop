@@ -23,6 +23,7 @@ import {
   PROFILE_REPORT_VERSION,
   PROFILE_SUMMARY_VERSION,
 } from "./frame-profile.ts";
+import type { SavesArg, UiSettingsArg } from "./game-saves.ts";
 import { DestinationBadge, TargetRefusal } from "./game-targets.ts";
 import { type PreviewInputAction, type PreviewTouchAction, TouchPhase } from "./preview-contract.ts";
 import {
@@ -117,6 +118,19 @@ export const NativeOp = {
    * `unknown-op`, a game that serves no profiles yet `unavailable`.
    */
   Profile: "profile",
+  /**
+   * List, read, write, save, load or delete the game's save slots (`{op, slot?, label?,
+   * envelope?}`, `shared/game-saves.ts`); a load answers once it applied. Checked before it is
+   * sent (`checkSavesArg`); a game made before the verb answers `unknown-op`, one that registered
+   * no saves `save-not-configured`.
+   */
+  Saves: "saves",
+  /**
+   * A session layer over the gameplay UI's settings (`{locale?, scale?, safeArea?, textSize?}`,
+   * `shared/game-saves.ts`), applied at the next tick; no member reads them. Checked before it is
+   * sent (`checkUiSettingsArg`); a game made before the verb answers `unknown-op`.
+   */
+  UiSettings: "uiSettings",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
 
@@ -173,6 +187,16 @@ export interface NativeReloadAnswer {
  * asked with `parseProfileAnswer` (`shared/frame-profile.ts`) and refuses what is out of shape there.
  */
 export type NativeProfileReply = Record<string, unknown>;
+
+/**
+ * A `saves` reply as the port checks it: an object (a list, an envelope or its `tooLarge` stand-in,
+ * a slot's info, a load's `{tick, checksum, checksumMatch}`). The caller asked with the op and
+ * reads the members it named.
+ */
+export type NativeSavesReply = Record<string, unknown>;
+
+/** A `uiSettings` reply as the port checks it: an object, the settings in force after the call. */
+export type NativeUiSettingsReply = Record<string, unknown>;
 
 /** What `bakeAssets` answers: the bake it ran, and the size and digest of the file it wrote. */
 export interface NativeBakeReply {
@@ -686,6 +710,12 @@ export const NATIVE_CUSTOM_PASSES_KEY = "customPasses";
 export const NATIVE_RENDER_KEY = "render";
 /** The `renderSettings` verb's version a receipt advertises as `renderSettingsApi`. */
 export const NATIVE_RENDER_SETTINGS_API_VERSION = 1;
+/** The `reloadAssets` verb's version a receipt advertises as `reloadAssetsApi`. */
+export const NATIVE_RELOAD_ASSETS_API_VERSION = 1;
+/** The `saves` verb's version a receipt advertises as `savesApi` (G6 UIS-16). */
+export const NATIVE_SAVES_API_VERSION = 1;
+/** The `uiSettings` verb's version a receipt advertises as `uiSettingsApi` (G6 UIS-16). */
+export const NATIVE_UI_SETTINGS_API_VERSION = 1;
 
 // ── Live's embedded frames (genex-frames, M5a) ─────────────────────────────────────────────
 
@@ -1138,6 +1168,12 @@ export interface NativeCapabilityReceipt {
   renderInputs?: RenderInput[];
   /** The `renderSettings` verb's version this game serves; absent: the game has no such verb. */
   renderSettingsApi?: number;
+  /** The `reloadAssets` verb's version this game serves; absent: a build that does not swap assets in place. */
+  reloadAssetsApi?: number;
+  /** The `saves` verb's version this game serves; absent: a build without the verb. */
+  savesApi?: number;
+  /** The `uiSettings` verb's version this game serves; absent: a build without the verb. */
+  uiSettingsApi?: number;
 }
 
 /** The extension API versions a receipt serves: its list, or `[extensionApi]` for a receipt without one. */
@@ -1153,6 +1189,21 @@ export function receiptCustomPassApis(receipt: NativeCapabilityReceipt): number[
 /** Whether a receipt advertises the `renderSettings` verb (a C++ game and a pre-RQ0 Rust game do not). */
 export function receiptServesRenderSettings(receipt: NativeCapabilityReceipt | null | undefined): boolean {
   return (receipt?.renderSettingsApi ?? 0) >= NATIVE_RENDER_SETTINGS_API_VERSION;
+}
+
+/** Whether a receipt advertises the `reloadAssets` verb (a dev build that swaps changed assets in place). */
+export function receiptServesReloadAssets(receipt: NativeCapabilityReceipt | null | undefined): boolean {
+  return (receipt?.reloadAssetsApi ?? 0) >= NATIVE_RELOAD_ASSETS_API_VERSION;
+}
+
+/** Whether a receipt advertises the `saves` verb (a dev build of a Rust game, UIS-16). */
+export function receiptServesSaves(receipt: NativeCapabilityReceipt | null | undefined): boolean {
+  return (receipt?.savesApi ?? 0) >= NATIVE_SAVES_API_VERSION;
+}
+
+/** Whether a receipt advertises the `uiSettings` verb (a dev build of a Rust game, UIS-16). */
+export function receiptServesUiSettings(receipt: NativeCapabilityReceipt | null | undefined): boolean {
+  return (receipt?.uiSettingsApi ?? 0) >= NATIVE_UI_SETTINGS_API_VERSION;
 }
 
 /** One custom GPU pass in a v2 game's `state().volatile.customPasses`. */
@@ -1320,6 +1371,10 @@ export interface NativeOpArgs {
   [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
   /** `frames` 1..=240 for a report; `mode` for an arm. */
   [NativeOp.Profile]: { action: FrameProfileAction; frames?: number; mode?: GpuTimingMode };
+  /** Checked by `checkSavesArg`: a slot name of a safe shape, an envelope a line can carry. */
+  [NativeOp.Saves]: SavesArg;
+  /** Checked by `checkUiSettingsArg`: no member reads, null gives the game's own back. */
+  [NativeOp.UiSettings]: UiSettingsArg;
 }
 
 /**
@@ -1353,12 +1408,37 @@ export interface NativeOpResults {
   [NativeOp.BakeAssets]: NativeBakeReply;
   [NativeOp.ReloadAssets]: NativeReloadAnswer;
   [NativeOp.Profile]: NativeProfileReply;
+  [NativeOp.Saves]: NativeSavesReply;
+  [NativeOp.UiSettings]: NativeUiSettingsReply;
 }
 
 // Every op has a result shape: an op added without one fails here.
 type UncheckedOp = Exclude<NativeOp, keyof NativeOpResults>;
 const everyOpHasAResult: [UncheckedOp] extends [never] ? true : { unchecked: UncheckedOp } = true;
 void everyOpHasAResult;
+
+/**
+ * What a compiled game's web page answers to `audio()` with no argument (the page verb; a native
+ * run answers `audioLevel` instead): the game's own mix before the mute, as `rms` and spectral
+ * `centroid`. `available` is false when the build exports no level or the level could not be read;
+ * its numbers then read 0 and are never judged.
+ */
+export interface NativeAudioAnswer {
+  available: boolean;
+  rms: number;
+  centroid: number;
+}
+
+/** Whether `value` is a page `audio()` answer: `available` a flag, the level finite and not negative. */
+export function isNativeAudioAnswer(value: unknown): value is NativeAudioAnswer {
+  const level = (n: unknown) => isFiniteNumber(n) && n >= 0;
+  return isRecord(value) && typeof value.available === "boolean" && level(value.rms) && level(value.centroid);
+}
+
+/** Whether a page `audio()` answer measured the game's level: a well-formed answer that says `available`. */
+export function isNativeAudioMeasured(value: unknown): value is NativeAudioAnswer & { available: true } {
+  return isNativeAudioAnswer(value) && value.available;
+}
 
 /**
  * A `starting` event, with the boot's progress when it names a known stage (counts out of shape,
@@ -1571,22 +1651,29 @@ function receiptRendererFields(
   extensionApi: number,
   customPassApi: number,
 ): Partial<NativeCapabilityReceipt> | null {
-  const { extensionApis, customPassApis, rendererFeatures, renderInputs, renderSettingsApi } = value;
+  const { extensionApis, customPassApis, rendererFeatures, renderInputs } = value;
   const lists =
     isOptional(extensionApis, (list) => isApiList(list, extensionApi)) &&
     isOptional(customPassApis, (list) => isApiList(list, customPassApi));
   const named =
     isOptional(rendererFeatures, (list) => isDistinctList(list, isRendererFeature)) &&
     isOptional(renderInputs, (list) => isDistinctList(list, isRenderInput));
-  if (!lists || !named || !isOptional(renderSettingsApi, isApiVersion)) return null;
+  const versions = RECEIPT_VERB_VERSIONS.every((key) => isOptional(value[key], isApiVersion));
+  if (!lists || !named || !versions) return null;
   const fields: Partial<NativeCapabilityReceipt> = {};
   if (Array.isArray(extensionApis)) fields.extensionApis = extensionApis.filter(isApiVersion);
   if (Array.isArray(customPassApis)) fields.customPassApis = customPassApis.filter(isApiVersion);
   if (Array.isArray(rendererFeatures)) fields.rendererFeatures = rendererFeatures.filter(isRendererFeature);
   if (Array.isArray(renderInputs)) fields.renderInputs = renderInputs.filter(isRenderInput);
-  if (isApiVersion(renderSettingsApi)) fields.renderSettingsApi = renderSettingsApi;
+  for (const key of RECEIPT_VERB_VERSIONS) {
+    const version = value[key];
+    if (isApiVersion(version)) fields[key] = version;
+  }
   return fields;
 }
+
+/** The receipt's optional verb versions, each copied only when it is a version. */
+const RECEIPT_VERB_VERSIONS = ["renderSettingsApi", "reloadAssetsApi", "savesApi", "uiSettingsApi"] as const;
 
 /** Versions served, ascending and distinct, the highest being the receipt's singular field. */
 function isApiList(value: unknown, highest: number): boolean {
@@ -1783,6 +1870,8 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.BakeAssets]: isBakeAssetsResult,
   [NativeOp.ReloadAssets]: isReloadAssetsResult,
   [NativeOp.Profile]: isProfileResult,
+  [NativeOp.Saves]: isRecord,
+  [NativeOp.UiSettings]: isRecord,
 };
 
 /** What protocol 2 adds to an op's check; ops absent here are checked as in protocol 1. */

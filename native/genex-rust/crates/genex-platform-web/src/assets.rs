@@ -28,6 +28,9 @@
 //! A refusal (`asset-range-invalid`, `asset-group-invalid` for the v2 members) changes nothing:
 //! a refused entry is left out with its reason, refused bytes never load, a refused release keeps
 //! the file.
+//!
+//! A dev page swaps a changed whole file in place with [`WebAssets::replace`] (game systems C-18):
+//! only bytes with the digest the host named are taken, and the plan then records them.
 
 use crate::draw::{AssetSource, AssetTable};
 use genex::{AssetGroup, AssetGroups};
@@ -403,6 +406,46 @@ impl WebAssets {
             self.loaded.push((path.to_owned(), bytes));
         } else {
             self.pieces.push((path.to_owned(), offset, bytes));
+        }
+        Ok(())
+    }
+
+    /// Swap a planned whole file's bytes for its new version (game systems C-18, a dev page's
+    /// `reloadAssets`): `digest` is the FNV-1a 64 the host read from the new bytes, as 16 lowercase
+    /// hex digits, and the bytes must have it. The plan records the new length and digest, so the
+    /// old bytes are refused from then on. A path outside the asset-path rule
+    /// (`asset-unsafe-path`), not planned (`asset-not-planned`), fetched by ranges
+    /// (`asset-range-invalid`), over [`MAX_ASSET_BYTES`] or the whole set's cap (`asset-too-large`,
+    /// `asset-over-budget`) or with another digest (`asset-digest-mismatch`) changes nothing.
+    pub fn replace(&mut self, path: &str, bytes: Vec<u8>, digest: &str) -> Result<(), AssetError> {
+        let refused = |code: AssetRefusal| Err(AssetError::new(code, format!("{path:?}")));
+        if !genex_core::paths::is_safe_asset_path(path) {
+            return refused(AssetRefusal::UnsafePath);
+        }
+        let planned = self.find(path)?;
+        if !planned.ranges.is_empty() {
+            return refused(AssetRefusal::RangeInvalid);
+        }
+        let length = bytes.len() as u64;
+        if length > MAX_ASSET_BYTES {
+            return refused(AssetRefusal::TooLarge);
+        }
+        let others: u64 = self.planned.iter().filter(|asset| asset.path != path).map(|asset| asset.bytes).sum();
+        if others.saturating_add(length) > MAX_ASSETS_TOTAL_BYTES {
+            return refused(AssetRefusal::OverBudget);
+        }
+        let new_digest = fnv1a64(&bytes);
+        if hex_digest(digest) != Some(new_digest) {
+            return refused(AssetRefusal::DigestMismatch);
+        }
+        if let Some(asset) = self.planned.iter_mut().find(|asset| asset.path == path) {
+            asset.bytes = length;
+            asset.digest = new_digest;
+        }
+        self.wanted.retain(|fetch| fetch.path != path);
+        match self.loaded.iter_mut().find(|(known, _)| known == path) {
+            Some(entry) => entry.1 = bytes,
+            None => self.loaded.push((path.to_owned(), bytes)),
         }
         Ok(())
     }

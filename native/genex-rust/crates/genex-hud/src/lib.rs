@@ -23,6 +23,9 @@
 //!   [`PanelChange`]s; `genex::render::settings_panel` fills it and applies them outside the Sim.
 //! - The loading screen ([`LoadingScreen`], renderer pass 2 D11): what a native window shows
 //!   from its first frame until the game's first lit frame, in the game's `[render.loading]` look.
+//! - The player profile overlay ([`ProfileOverlay`], PROF-8): the profiler's numbers in the
+//!   window's corner, its own egui context and painter, painted over window presents only (never
+//!   in a capture or `hud.items`), toggled with Ctrl+Shift+P in the dev flavour.
 //! - The soft-keyboard bridge ([`ImeBridge`], M5.3): a phone keyboard's typing becomes the
 //!   tick's committed text and editing keys, bounded by [`NATIVE_TEXT_MAX_UNITS`], and the
 //!   keyboard is up while a text field has egui's focus ([`keyboard_wanted`]).
@@ -37,6 +40,7 @@ mod input;
 mod legacy;
 mod loading;
 mod paint;
+mod profile_overlay;
 mod record;
 mod settings_panel;
 
@@ -49,6 +53,7 @@ pub use input::{HudInput, raw_input};
 pub use legacy::Color;
 pub use loading::{LoadingLook, LoadingProgress, LoadingScreen, parse_hex_color};
 pub use paint::{HudPainter, pixels_per_point};
+pub use profile_overlay::{PROFILE_OVERLAY_COUNTER_ROWS, PROFILE_OVERLAY_TOP_ROWS, ProfileOverlay, ProfileView};
 pub use record::{HudWidget, WidgetRole};
 pub use settings_panel::{PanelChange, PanelWords, SettingsPanel, settings_panel, settings_panel_with_words};
 

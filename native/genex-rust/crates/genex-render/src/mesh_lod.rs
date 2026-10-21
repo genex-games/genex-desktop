@@ -50,6 +50,16 @@ const LOD_TAG: u32 = 1 << 31;
 /// The bit of a batch's LOD tag marking a fade batch: the twin of a level's batch that holds the
 /// instances fading in or out of that level ([`fade_batch_lod`], [`lod_band_keep`]).
 pub const LOD_FADE_TAG: u32 = 1 << 30;
+/// The bit of a batch's LOD tag marking a chain whose last level is an impostor (game systems
+/// LOD-15): that level's error is measured over the radius of the draw's LOD sphere (every part
+/// of a compound then switches to it together), and a shadow view casts the last mesh level in
+/// its place ([`lod_row_keep_view`] with `caster`).
+pub const LOD_IMPOSTOR_TAG: u32 = 1 << 29;
+/// The mesh levels past the mesh itself a chain keeps when an impostor ends it (game systems
+/// LOD-15): [`LOD_MAX_LEVELS`] is three mesh levels plus the impostor.
+pub const LOD_IMPOSTOR_MESH_LEVELS: usize = 3;
+/// Atlas texels a pixel at the impostor's switch (design LOD 3.6, `c`).
+const IMPOSTOR_TEXELS_PER_PIXEL: f32 = 1.0;
 /// The fade value of an instance drawn whole (the per-slot fade table's convention).
 const WHOLE: f32 = 1.0;
 /// A band's share is a whole number of these steps (`gx_lod_band` spells it out as 1024.0): exact
@@ -281,27 +291,67 @@ pub fn fade_batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
     [tag | LOD_FADE_TAG, low, high]
 }
 
+/// The impostor level's error over the radius of the LOD sphere it is measured from (game
+/// systems LOD-15, design LOD 3.6): one atlas texel a pixel at the switch, `2 / frame_px` for a
+/// frame `frame_px` texels wide, and never below the last mesh level's error over that radius
+/// (`last_mesh_error`), so the chain stays monotone. A frame of 0 texels gives the last level's.
+pub fn impostor_level_error(frame_px: u32, last_mesh_error: f32) -> f32 {
+    let texel = if frame_px == 0 { 0.0 } else { IMPOSTOR_TEXELS_PER_PIXEL * 2.0 / frame_px as f32 };
+    texel.max(last_mesh_error)
+}
+
+/// The LOD row of a batch of a chain ended by an impostor (game systems LOD-15): level `level`
+/// of the mesh's own levels with `mesh_errors` (at most [`LOD_IMPOSTOR_MESH_LEVELS`] are kept;
+/// object space, over the mesh's bounding radius `radius` as [`batch_lod`]), then the impostor
+/// level (the last, `mesh levels + 1`) with `impostor_error` over the LOD sphere's radius
+/// ([`impostor_level_error`]), tagged [`LOD_IMPOSTOR_TAG`]; `fade` tags it a fade twin.
+pub fn impostor_batch_lod(level: u32, mesh_errors: &[f32], radius: f32, impostor_error: f32, fade: bool) -> [u32; 3] {
+    let kept = mesh_errors.len().min(LOD_IMPOSTOR_MESH_LEVELS);
+    let relative = |error: f32| if radius > 0.0 { error / radius } else { 0.0 };
+    let mut halves = [0u16; LOD_MAX_LEVELS as usize];
+    for (at, error) in mesh_errors.iter().take(kept).enumerate() {
+        halves[at] = f16_bits(relative(*error));
+    }
+    halves[kept] = f16_bits(impostor_error);
+    let levels = kept as u32 + 1;
+    let fade_tag = if fade { LOD_FADE_TAG } else { 0 };
+    let tag = LOD_TAG | LOD_IMPOSTOR_TAG | fade_tag | levels << LOD_LEVELS_SHIFT | (level & LOD_LEVEL_MASK);
+    [tag, u32::from(halves[0]) | u32::from(halves[1]) << 16, u32::from(halves[2]) | u32::from(halves[3]) << 16]
+}
+
 /// A chain's errors scaled by an instance's radius (its row's `bounds`), the chain's length and
 /// the distance from the camera to the sphere `origin` its levels are measured from (the bounds
 /// themselves unless its LOD row names another, game systems LOD-02): what [`lod_keeps`] and
-/// [`lod_row_keep`] measure.
+/// [`lod_row_keep`] measure. An impostor's level (the last of a chain tagged
+/// [`LOD_IMPOSTOR_TAG`], game systems LOD-15) is scaled by the origin's radius instead, so the
+/// parts of a compound, which share the origin, switch to it at the same distance.
 fn instance_chain(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4]) -> ([f32; 4], usize, f32) {
     let levels = ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize;
     let halves = [lod[1] & 0xFFFF, lod[1] >> 16, lod[2] & 0xFFFF, lod[2] >> 16];
-    let errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
+    let mut errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
+    if lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0 {
+        errors[levels - 1] = f16_value(halves[levels - 1] as u16) * origin[3];
+    }
     let offset = [origin[0] - view[0], origin[1] - view[1], origin[2] - view[2]];
     let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt() - origin[3];
     (errors, levels, distance)
 }
 
 /// An instance's band from the camera; levels off (`view.w` not positive) or a radius that is
-/// not positive draw the mesh itself whole.
-fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> LodBand {
+/// not positive draw the mesh itself whole. In a shadow view (`caster`, game systems LOD-15
+/// option A) a band at an impostor level reads as the last mesh level whole: the casters keep
+/// the mesh's shape where the camera draws the impostor or crossfades to it.
+fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: bool) -> LodBand {
     if !positive(view[3]) || !positive(bounds[3]) {
         return LodBand::MESH;
     }
     let (errors, levels, distance) = instance_chain(lod, bounds, origin, view);
-    lod_band(&errors[..levels], distance, view[3], 1.0, bias, beta)
+    let band = lod_band(&errors[..levels], distance, view[3], 1.0, bias, beta);
+    let casts_mesh = caster && lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0 && band.level as usize >= levels;
+    if casts_mesh {
+        return LodBand { level: levels as u32 - 1, share: WHOLE };
+    }
+    band
 }
 
 /// [`lod_keeps`] under a fade band of `beta` with the row's `bias`: whether the cull keeps an
@@ -321,12 +371,18 @@ pub fn lod_band_keep(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32,
 /// scaled by its own `bounds`' radius. The cull's keep rule (`gx_cull_lod_fade` in
 /// `shaders/cull.wgsl`, expression for expression; game systems LOD-03).
 pub fn lod_row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> Option<f32> {
+    row_keep(lod, bounds, origin, view, (bias, beta), false)
+}
+
+/// [`lod_row_keep`] in a camera view, or in a shadow view (`caster`): there a band at an
+/// impostor level reads as the last mesh level whole (game systems LOD-15 option A).
+fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: bool) -> Option<f32> {
     if lod[0] & LOD_TAG == 0 {
         return Some(WHOLE);
     }
     let level = lod[0] & LOD_LEVEL_MASK;
     let fade = lod[0] & LOD_FADE_TAG != 0;
-    let band = instance_band(lod, bounds, origin, view, bias, beta);
+    let band = instance_band(lod, bounds, origin, view, (bias, beta), caster);
     if band.share >= WHOLE {
         return (!fade && level == band.level).then_some(WHOLE);
     }
@@ -345,16 +401,25 @@ pub fn lod_row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f3
 /// batch and drawn by its fade batches only: the level it is whole at with the far share as its
 /// fade, or its two crossfading levels with their fades times the far share; a share of 0 drops
 /// it everywhere. The cull's twin is `gx_cull_lod_fade` in `shaders/cull.wgsl`.
-pub fn lod_row_keep_far(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField) -> Option<[f32; 2]> {
+pub fn lod_row_keep_far(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], band: (f32, f32), far: crate::lod_rows::FarField) -> Option<[f32; 2]> {
+    lod_row_keep_view(lod, bounds, origin, view, band, far, false)
+}
+
+/// [`lod_row_keep_far`] in the camera view (`caster` false) or a shadow view (game systems
+/// LOD-15 option A): in a shadow view a chain ended by an impostor ([`LOD_IMPOSTOR_TAG`]) never
+/// keeps its impostor level, and an instance the camera draws as the impostor, or crossfades to
+/// it, casts its last mesh level whole. The cull's twin is `gx_cull_lod_fade` in
+/// `shaders/cull.wgsl` (its `caster` argument: every view but the camera).
+pub fn lod_row_keep_view(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField, caster: bool) -> Option<[f32; 2]> {
     if !far.thinned {
-        return lod_row_keep(lod, bounds, origin, view, bias, beta).map(|fade| [fade, WHOLE]);
+        return row_keep(lod, bounds, origin, view, (bias, beta), caster).map(|fade| [fade, WHOLE]);
     }
     let fade_batch = lod[0] & LOD_TAG != 0 && lod[0] & LOD_FADE_TAG != 0;
     if !fade_batch || far.share.is_nan() || far.share <= 0.0 {
         return None;
     }
     let level = lod[0] & LOD_LEVEL_MASK;
-    let band = instance_band(lod, bounds, origin, view, bias, beta);
+    let band = instance_band(lod, bounds, origin, view, (bias, beta), caster);
     let fade = if band.share >= WHOLE {
         (level == band.level).then_some(far.share)
     } else if level == band.level {

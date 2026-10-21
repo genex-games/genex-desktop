@@ -22,6 +22,10 @@ workspace = true
 [features]
 default = ["physics"]
 physics = ["genex/physics"]
+# Multiplayer (G6 MP-5b): the host writes a `[net]` game's web line with one of these, as it writes
+# the native facade's: the in-process room for Live, the relay (the page's JS bridge) for an export.
+net = ["genex/net"]
+net-loopback = ["genex/net-loopback"]
 
 [dependencies]
 genex = { workspace = true }
@@ -34,6 +38,9 @@ genex-studio = { workspace = true }
 genex-hud = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The crash hook the page's panics go through (game systems CRASH-3): one `genex-crash/1` record to
+# the shell's IndexedDB, then the console text console_error_panic_hook logged (`src/crash.rs`).
+genex-crash = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true }
@@ -41,7 +48,6 @@ wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 js-sys = { workspace = true }
 web-sys = { workspace = true }
-console_error_panic_hook = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = { workspace = true }
@@ -49,4 +55,10 @@ wasm-bindgen-test = { workspace = true }
 # The saves sample `tests/conformance/rust-web.test.ts` packages for the browser (empty off wasm32).
 [[example]]
 name = "web_saves"
+crate-type = ["cdylib"]
+
+# The crash sample `tests/conformance/rust-web-crash.test.ts` packages for the browser: a panic and a
+# trap with no panic, on a key each (empty off wasm32).
+[[example]]
+name = "web_crash"
 crate-type = ["cdylib"]

@@ -8,7 +8,12 @@
 //! The game starts in [`studio_boot`], not when the module is instantiated: [`install`] keeps the
 //! game, so the shell can fill the saves mirror from IndexedDB ([`studio_saves_preload`]) before
 //! the first reset reads it. [`studio_saves_take`] and [`studio_saves_flushed`] are the shell's
-//! write-behind: the files saved since, and how their IndexedDB write went.
+//! write-behind: the files saved since, and how their IndexedDB write went. Slot bodies stay lazy
+//! (G6 UIS-12): [`studio_saves_index`] names them with their sizes, [`studio_saves_requests`] and
+//! [`studio_saves_provide`] fetch the one a load asked for (the load holds the tick meanwhile),
+//! [`studio_saves_take_removed`] names deleted files, [`studio_saves_persistent`] takes the
+//! browser's persistent-storage answer, and [`studio_suspend_save`] writes the autosave ring's
+//! oldest slot when the page is hidden, before the flush.
 //!
 //! Before `studio_boot` the shell also hands over the game's staged assets: [`studio_assets_plan`]
 //! reads the build's asset map (with the adapter's features, so one family file per texture is
@@ -56,19 +61,24 @@
 //! `debugCamera` placed, else the game's own) into the world target, copies it
 //! (through the renderer's nearest-texel present at world size, which keeps the bytes) into a
 //! mappable buffer and resolves once the browser has mapped it, with top-down BGRA and its
-//! FNV-1a-64 digest. The shell awaits it instead of reading the canvas in the same turn.
+//! FNV-1a-64 digest. The shell awaits it instead of reading the canvas in the same turn. A
+//! streaming game's capture first drains its view set (game systems STR-25): a pass, then the
+//! page's turn (a zero-delay timeout, so the fetches land), until every model it wants is resident
+//! or refused or `STREAM_DRAIN_MAX_MS` passed; Live frames never wait.
 //!
 //! Two diagnostic exports serve the web parity row: [`studio_custom_passes`] draws without the
 //! game's passes (the A/B), and [`studio_pipeline_check`] creates every renderer pipeline variant
 //! on the browser's device under error scopes and answers what each reported.
 
 use crate::assets::WebAssets;
+use crate::audio::{UNLOCK_EVENTS, Unlock, level_answer};
+use genex::audio::Device;
 use crate::draw::AssetTable;
 use crate::handle::GameHandle;
 use crate::saves::{SAVES_DATABASE_PREFIX, saves_state};
 use crate::selftest::{self, CaptureDigest, SelfTestPlan};
 use crate::studio::{HandleGame, Held, Painter, Screen, WebSource, verb_changes_frame};
-use genex::present::Presenter;
+use genex::present::{Drain, DrainStep, Presenter, STREAM_DRAIN_MAX_MS};
 use genex::{Game, Runtime, Value, json};
 use genex_core::saves::mirror::{self, MirrorError};
 use genex_hud::HudPainter;
@@ -150,12 +160,19 @@ struct Shell {
     /// a Live frame drawn while it awaits its scopes or its readback would rebuild the renderer for
     /// Live's settings and overwrite the world target the capture reads.
     captures_in_flight: u32,
+    /// The page's audio device: opened by the first gesture after boot (AU-8, autoplay policy).
+    audio: Device,
+    /// Whether that gesture came (and the unlock listeners are gone).
+    unlock: Unlock,
 }
 
 thread_local! {
     static SHELL: RefCell<Option<Shell>> = const { RefCell::new(None) };
     /// The page verbs' studio: ready once `studio_boot` succeeded.
     static STUDIO: RefCell<Studio> = RefCell::new(Studio::web());
+    /// The listener the unlock events share; kept for the page's life, since it is removed from
+    /// inside its own call.
+    static UNLOCK_LISTENER: RefCell<Option<Closure<dyn FnMut()>>> = const { RefCell::new(None) };
 }
 
 /// Hand a game to the web shell under `name` (its saves database's): a game's `genex::install` in a
@@ -163,7 +180,8 @@ thread_local! {
 /// `studio_boot`, after the shell preloaded its saves: there its registrations are checked as
 /// `genex::install` does (a refusal panics with the typed code) and its first reset runs.
 pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: AssetTable) {
-    console_error_panic_hook::set_once();
+    // A panic gives the shell one crash record, then the console text it always logged (CRASH-3).
+    crate::crash::install(name);
     let start: StartGame = Box::new(move |source| {
         let runtime = Runtime::with_assets(game, source).unwrap_or_else(|error| panic!("genex::install: {error}"));
         Box::new(runtime)
@@ -179,6 +197,8 @@ pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: As
         draws: 0,
         gate: FrameGate::default(),
         captures_in_flight: 0,
+        audio: Device::default(),
+        unlock: Unlock::default(),
     };
     SHELL.with_borrow_mut(|slot| *slot = Some(shell));
 }
@@ -402,6 +422,58 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
         STUDIO.with_borrow_mut(Studio::mark_ready);
         Ok(json!({ "ok": true, "receipt": receipt, "world": world }).to_string())
     })
+    .inspect(|_| listen_for_unlock())
+}
+
+/// Call `target[method](event, listener, true)` (a capturing listener) through reflection, so
+/// the shell needs no web-sys event features; a page without the method is left alone.
+fn call_listener_method(target: &JsValue, method: &str, event: &str, listener: &js_sys::Function) {
+    let Ok(function) = js_sys::Reflect::get(target, &JsValue::from_str(method)) else { return };
+    let Ok(function) = function.dyn_into::<js_sys::Function>() else { return };
+    // The page's own listener methods do not throw for a valid event name.
+    let _ = function.call3(target, &JsValue::from_str(event), listener, &JsValue::TRUE);
+}
+
+/// Add (or remove) the unlock listener for every [`UNLOCK_EVENTS`] name on the window.
+fn unlock_listeners(method: &str) {
+    let Some(window) = web_sys::window() else { return };
+    UNLOCK_LISTENER.with_borrow(|listener| {
+        let Some(listener) = listener.as_ref() else { return };
+        for event in UNLOCK_EVENTS {
+            call_listener_method(&window, method, event, listener.as_ref().unchecked_ref());
+        }
+    });
+}
+
+/// After boot: the first `pointerdown`, `keydown` or `touchend` opens the audio device inside the
+/// gesture (an `AudioContext` made there may play) and removes the listeners (AU-8).
+fn listen_for_unlock() {
+    let already = UNLOCK_LISTENER.with_borrow(Option::is_some);
+    if already {
+        return;
+    }
+    let listener = Closure::<dyn FnMut()>::new(|| {
+        let opened = with_shell(|shell| {
+            if !shell.unlock.gesture() {
+                return Ok(false);
+            }
+            let Shell { game, audio, .. } = shell;
+            started(game)?.follow_device(audio);
+            Ok(true)
+        });
+        if opened.is_ok() {
+            unlock_listeners("removeEventListener");
+        }
+    });
+    UNLOCK_LISTENER.with_borrow_mut(|slot| *slot = Some(listener));
+    unlock_listeners("addEventListener");
+}
+
+/// The page's `audio()` probe (AU-8): `{available: true, rms, centroid}` from the game's own mix,
+/// before the mute and whether or not the device opened yet; `not-booted` before `studio_boot`.
+#[wasm_bindgen]
+pub fn studio_audio_level() -> Result<String, JsValue> {
+    with_shell(|shell| Ok(level_answer(started(&mut shell.game)?.audio_level()).to_string()))
 }
 
 /// Draw the current view (a placed camera or eye, or the game's own) into the world target.
@@ -488,6 +560,10 @@ pub fn studio_frame(frame_ms: f64) -> Result<u32, JsValue> {
             return Ok(0);
         }
         let ticks = started(&mut shell.game)?.advance_live(frame_ms);
+        if shell.audio.tried() {
+            let Shell { game, audio, .. } = shell;
+            started(game)?.follow_device(audio);
+        }
         let action = shell.gate.frame(ticks);
         // Dynamic resolution reads display intervals, drawn or not (tickless frames are skipped).
         graphics(shell)?.screen.presenter.note_display_frame(frame_ms);
@@ -1088,8 +1164,51 @@ async fn capture_now() -> Result<(Capture, u64), JsValue> {
     captured
 }
 
-/// [`capture_now`]'s draws and readback, with animation frames held off.
+/// One drain pass for the current view (STR-25): whether the streamed view set settled.
+fn drain_pass(shell: &mut Shell) -> Result<bool, JsValue> {
+    let Shell { game, graphics, view, .. } = shell;
+    let graphics = graphics.as_mut().ok_or_else(|| refusal(NOT_BOOTED, "studio_boot has not succeeded"))?;
+    started(game)?.drain_pass(&mut graphics.screen.presenter, view.as_deref()).map_err(|error| render_refusal(&error))
+}
+
+/// Milliseconds on the page's clock.
+fn page_ms() -> f64 {
+    page_clock()().as_secs_f64() * 1000.0
+}
+
+/// Give the page its turn (a zero-delay timeout): the fetches a drain waits for land meanwhile.
+async fn yield_to_page() -> Result<(), JsValue> {
+    let window = web_sys::window().ok_or_else(|| refusal("capture-failed", "no window"))?;
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        let _ = window.set_timeout_with_callback(&resolve);
+    });
+    JsFuture::from(promise).await.map(|_| ())
+}
+
+/// Drain the streamed view set before a settled capture (STR-25): a pass, then the page's turn,
+/// until everything wanted is resident or refused or `STREAM_DRAIN_MAX_MS` passed (the capture is
+/// then drawn with what is resident and `volatile.__stream.view.timeout` says so).
+async fn drain_for_capture() -> Result<(), JsValue> {
+    let mut drain = Drain::start(page_ms(), STREAM_DRAIN_MAX_MS);
+    loop {
+        let settled = with_shell(drain_pass)?;
+        if drain.after_pass(settled, page_ms()) != DrainStep::Again {
+            break;
+        }
+        yield_to_page().await?;
+    }
+    let report = drain.report();
+    with_shell(|shell| {
+        let Shell { game, graphics, .. } = shell;
+        let graphics = graphics.as_mut().ok_or_else(|| refusal(NOT_BOOTED, "studio_boot has not succeeded"))?;
+        started(game)?.note_drain(&mut graphics.screen.presenter, report);
+        Ok(())
+    })
+}
+
+/// [`capture_now`]'s drain, draws and readback, with animation frames held off.
 async fn draw_and_read_capture() -> Result<(Capture, u64), JsValue> {
+    drain_for_capture().await?;
     with_shell(render_capture)?;
     if settle_shell_scopes().await? {
         with_shell(render_capture)?;
@@ -1201,10 +1320,67 @@ pub fn studio_saves_pending() -> u32 {
     u32::try_from(mirror::status().pending).unwrap_or(u32::MAX)
 }
 
-/// The mirror's account as JSON, `{store, files, pending, inFlight, error}`.
+/// The mirror's account as JSON, `{store, files, bytes, pending, inFlight, lazy, persistent, error}`.
 #[wasm_bindgen]
 pub fn studio_saves_status() -> String {
     saves_state(&mirror::status()).to_string()
+}
+
+/// One `[name, size]` pair of the shell's slot-body index; None for any other shape.
+fn indexed_entry(entry: &JsValue) -> Option<(String, u64)> {
+    let pair = entry.dyn_ref::<js_sys::Array>()?;
+    let name = pair.get(0).as_string()?;
+    let size = pair.get(1).as_f64().filter(|size| size.is_finite() && *size >= 0.0)?;
+    // A size past u64 cannot pass the mirror's cap anyway; `as` saturates.
+    Some((name, size as u64))
+}
+
+/// The slot bodies IndexedDB keeps, `[[name, size], …]`, by name and size only (after
+/// `studio_saves_preload`): a body is read only when a load asks for it (UIS-12). Entries of another
+/// shape, an unsafe name or too large a size are skipped. Exporting this tells the shell to keep
+/// `.sav` bodies lazy.
+#[wasm_bindgen]
+pub fn studio_saves_index(entries: js_sys::Array) {
+    mirror::preload_index(entries.iter().filter_map(|entry| indexed_entry(&entry)).collect());
+}
+
+/// The lazy bodies a load asked for since the last call, for the shell to read from IndexedDB and
+/// hand over with `studio_saves_provide`; each is asked once until it is provided.
+#[wasm_bindgen]
+pub fn studio_saves_requests() -> js_sys::Array {
+    mirror::take_requests().into_iter().map(|name| JsValue::from_str(&name)).collect()
+}
+
+/// The shell's answer to a request: the body's bytes, or undefined for a body the store does not
+/// keep (the held load then refuses `save-slot-missing` at once). A name the mirror is not waiting
+/// for changes nothing.
+#[wasm_bindgen]
+pub fn studio_saves_provide(name: &str, bytes: Option<js_sys::Uint8Array>) {
+    crate::saves::provide(name, bytes.map(|bytes| bytes.to_vec()));
+}
+
+/// The files the game removed since the last take, for the shell to delete from IndexedDB with its
+/// next flush.
+#[wasm_bindgen]
+pub fn studio_saves_take_removed() -> js_sys::Array {
+    mirror::take_removed().into_iter().map(|name| JsValue::from_str(&name)).collect()
+}
+
+/// Whether the browser granted persistent storage (`navigator.storage.persist()`), for
+/// `state().volatile.saves.persistent`.
+#[wasm_bindgen]
+pub fn studio_saves_persistent(persistent: bool) {
+    crate::saves::set_persistent(persistent);
+}
+
+/// The page is hidden or left (`visibilitychange` → hidden, `pagehide`): the game writes its
+/// autosave ring's oldest slot now, between frames, and the shell's flush that follows stores it.
+/// Nothing for a game without an autosave ring, or before `studio_boot` started it.
+#[wasm_bindgen]
+pub fn studio_suspend_save() {
+    // A refused suspend save is the slot's event in the next tick (and its volatile issue); the
+    // page has nothing to add.
+    let _ = with_shell(|shell| Ok(started(&mut shell.game)?.suspend_save()));
 }
 
 /// The WebGPU feature names (`GPUAdapter.features`) of the compressed texture families.

@@ -1,0 +1,21 @@
+# net-tag's manifest. `[net] enabled = true` marks the game networked: a Live, dev or judge build
+# plays in the loopback room (`net-loopback`), an export links the relay (`net`). The matchmaking
+# preset is carried to the relay with the published draft; net-tag connects to its shared room and
+# keeps the preset for a Find match button.
+[game]
+title = "Net tag"
+world_size = [960, 540]
+
+[physics]
+enabled = false
+
+[net]
+enabled = true
+
+[net.matchmaking]
+preset = "open"
+win_condition = "firstToScore"
+
+[net.matchmaking.config]
+maxPlayers = 8
+minPlayers = 2

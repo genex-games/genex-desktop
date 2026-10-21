@@ -24,6 +24,12 @@ use crate::settings::store::SettingsStore;
 pub const SETTINGS_ROW_MIN: egui::Vec2 = egui::vec2(320.0, 40.0);
 /// Where a menu keeps its open tab.
 const OPEN_TAB_SALT: &str = "genex-ui.settings-tab";
+/// The egui memory a pass's pointer check keeps ([`pointer_moved`]).
+const POINTER_SALT: &str = "genex-ui.settings-pointer";
+/// Pixels the pointer must travel between passes to count as moved (rounding of a resting one).
+const POINTER_MOVE_MIN_PX: f32 = 0.5;
+/// A 0-to-1 slider's value times this is the percent its row shows.
+const PERCENT: f32 = 100.0;
 
 /// The text keys the shell itself draws.
 pub const SHELL_KEYS: [&str; 5] = ["settings-preset", "settings-custom", "settings-reset", "settings-on", "settings-off"];
@@ -201,9 +207,46 @@ fn preset_row(
 }
 
 /// One row: a keyed button at least [`SETTINGS_ROW_MIN`] large. Its egui id comes from its key,
-/// so a row of another tab drawn at the same place never inherits its focus.
+/// so a row of another tab drawn at the same place never inherits its focus. One row is outlined
+/// at a time, the focused one: a hovered row looks like a resting one, and the pointer moving onto
+/// a row gives it the focus; a resting pointer leaves the pad its walk.
 fn row(ui: &mut egui::Ui, text: String, key: &str) -> Response {
-    ui.push_id(key, |ui| ui.add(egui::Button::new(text).min_size(SETTINGS_ROW_MIN))).inner.key(ui, key)
+    let button = |ui: &mut egui::Ui| {
+        let resting = ui.visuals().widgets.inactive;
+        ui.visuals_mut().widgets.hovered = resting;
+        ui.add(egui::Button::new(text).min_size(SETTINGS_ROW_MIN))
+    };
+    let response = ui.push_id(key, button).inner.key(ui, key);
+    // Checked on every pass, hovered or not, so the next pass compares with this one.
+    let moved = pointer_moved(ui.ctx());
+    if moved && response.hovered() && !response.has_focus() {
+        response.request_focus();
+    }
+    response
+}
+
+/// Whether the pointer moved on the screen since the last pass. The HUD sends the pointer every
+/// tick, and a UI scale change moves a resting pointer in points, so the position compared is in
+/// pixels; each pass decides once, on its first row.
+fn pointer_moved(ctx: &egui::Context) -> bool {
+    let pass = ctx.cumulative_pass_nr();
+    let id = Id::new(POINTER_SALT);
+    let last = ctx.data(|data| data.get_temp::<PointerSeen>(id));
+    if let Some(seen) = last.filter(|seen| seen.pass == pass) {
+        return seen.moved;
+    }
+    let pixels = ctx.input(|input| input.pointer.latest_pos().map(|pos| pos.to_vec2() * input.pixels_per_point));
+    let moved = matches!((last.and_then(|seen| seen.pixels), pixels), (Some(before), Some(now)) if (now - before).length() > POINTER_MOVE_MIN_PX);
+    ctx.data_mut(|data| data.insert_temp(id, PointerSeen { pass, pixels, moved }));
+    moved
+}
+
+/// The pointer as the last pass saw it: its pass, its position in pixels and whether it moved.
+#[derive(Clone, Copy, Debug)]
+struct PointerSeen {
+    pass: u64,
+    pixels: Option<egui::Vec2>,
+    moved: bool,
 }
 
 /// How a row moves its value on this pass: left or right while it has focus, or a click (a tap on
@@ -219,9 +262,13 @@ fn row_direction(ui: &egui::Ui, response: &Response, flip: bool) -> i32 {
     i32::from(pressed(ui.ctx(), NavButton::Right)) - i32::from(pressed(ui.ctx(), NavButton::Left))
 }
 
-/// A value as a row shows it: On or Off, the number, the option's text.
+/// A value as a row shows it: On or Off, a 0-to-1 slider as a whole percent (a volume), another
+/// slider's number, the option's text.
 fn value_text(def: &SettingDef, value: SettingValue, tr: &dyn Fn(&str) -> String) -> String {
     match (def.kind(), value) {
+        (SettingKind::Slider { min, max, .. }, SettingValue::Number(number)) if is_unit_range(*min, *max) => {
+            format!("{}%", (number * PERCENT).round())
+        }
         (_, SettingValue::Bool(true)) => tr("settings-on"),
         (_, SettingValue::Bool(false)) => tr("settings-off"),
         (SettingKind::Choice { options }, SettingValue::Choice(index)) => {
@@ -230,6 +277,11 @@ fn value_text(def: &SettingDef, value: SettingValue, tr: &dyn Fn(&str) -> String
         (_, SettingValue::Number(number)) => format!("{number}"),
         (_, SettingValue::Choice(index)) => index.to_string(),
     }
+}
+
+/// Whether a slider runs from 0 to 1 (shown as a percent).
+fn is_unit_range(min: f32, max: f32) -> bool {
+    min.abs() < f32::EPSILON && (max - 1.0).abs() < f32::EPSILON
 }
 
 /// `at` moved by `step` within `count`, wrapping.

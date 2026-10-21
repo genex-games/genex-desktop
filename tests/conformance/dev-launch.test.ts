@@ -470,6 +470,59 @@ test("game.renderSettings reaches the open game's native run: a read, and a fram
     assert.throws(() => request({ surface: "native", set }), JSON.stringify(set));
 });
 
+// UIS-17: dev-control reaches a game's saves and its UI's session settings, classified native.
+test("game.saves and game.uiSettings reach the open game's native run with what the game reads", async (t) => {
+  const { performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { rt, asked } = nativeSurface(root);
+  const json = (method: string, params: unknown) =>
+    devOperation(["ui", "--profile", "p", "--json", JSON.stringify({ method, params })]);
+  await performNative(rt, json("game.saves", { surface: "native", op: "list" }));
+  await performNative(rt, json("game.saves", { surface: "native", op: "save", slot: "chapter-2", label: "Bridge" }));
+  await performNative(rt, json("game.uiSettings", { surface: "native", locale: "xx-pseudo", scale: 1.5 }));
+  await performNative(rt, json("game.uiSettings", { surface: "native" }));
+  assert.deepEqual(
+    asked.filter((entry) => entry.startsWith(NativeOp.Saves) || entry.startsWith(NativeOp.UiSettings)),
+    [
+      `saves ${JSON.stringify({ op: "list" })}`,
+      `saves ${JSON.stringify({ op: "save", slot: "chapter-2", label: "Bridge" })}`,
+      `uiSettings ${JSON.stringify({ locale: "xx-pseudo", scale: 1.5 })}`,
+      "uiSettings {}",
+    ],
+  );
+});
+
+test("a hostile game.saves or game.uiSettings request is refused before any game is asked", () => {
+  const request = (method: string, params: unknown) => operationSchema.safeParse({ method, params }).success;
+  for (const params of [
+    { op: "load", slot: "../world" },
+    { op: "save", slot: "Slot" },
+    { op: "write", slot: "s", envelope: { blob: "x".repeat(2 * 1024 * 1024) } },
+    { op: "format" },
+    { op: "load" },
+    { op: "list", warp: true },
+  ])
+    assert.equal(request(DevMethod.GameSaves, params), false, JSON.stringify(params).slice(0, 60));
+  for (const params of [{ scale: Number.NaN }, { scale: 9 }, { safeArea: [0, 0] }, { locale: "en US" }, { warp: 1 }])
+    assert.equal(request(DevMethod.GameUiSettings, params), false, JSON.stringify(params));
+  assert.equal(request(DevMethod.GameSaves, { op: "read", slot: "autosave-0" }), true);
+  assert.equal(request(DevMethod.GameUiSettings, { locale: null, textSize: 1.25 }), true);
+});
+
+test("game.saves and game.uiSettings are native steps: a fixture profile refuses them, a live one runs them", async () => {
+  const { DEV_NATIVE_STEPS, refuseFixtureStep } = await runtimeModule();
+  const { classifyChannel, ChannelClass } = await import("../../src/main/dev/native-policy.ts");
+  assert.deepEqual(Object.keys(DEV_NATIVE_STEPS).sort(), [DevMethod.GameSaves, DevMethod.GameUiSettings].sort());
+  for (const [method, step] of Object.entries(DEV_NATIVE_STEPS)) {
+    assert.equal(classifyChannel(step ?? ""), ChannelClass.Native, `${method} is classified native`);
+    assert.throws(() => refuseFixtureStep(true, method as DevMethod), /^Error: unsupported-in-fixture/, method);
+    assert.doesNotThrow(() => refuseFixtureStep(false, method as DevMethod), method);
+  }
+  for (const method of [DevMethod.GameState, DevMethod.GameRenderSettings, DevMethod.GameInput])
+    assert.doesNotThrow(() => refuseFixtureStep(true, method), method);
+});
+
 test("--surface native logs page the run's console, redacted and within the log budget", async (t) => {
   const { performNative } = await runtimeModule();
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));

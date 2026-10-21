@@ -10,6 +10,10 @@
  *   PT_LOAD of a native library to be 16 KB aligned, and an NDK before r28 links at 4 KB. The link
  *   arguments are rustflags: cargo ignores `target.<triple>.rustflags` whenever `RUSTFLAGS` is
  *   set, which the lane always sets (`-F unsafe_code`), so they are appended to it.
+ * - An export keeps its debug files outside `out/` (CRASH-7a, `substrate/rust-debug-files.ts`):
+ *   iOS packs a dSYM beside the executable and ships it with the debug map stripped; Android keeps
+ *   the unstripped `game` and ships the copy the toolchain's `llvm-objcopy --strip-debug` wrote
+ *   (the APK's `libmain.so` is that copy), both in `<bin>.debug/<digest>/`.
  * - The facts (LC_BUILD_VERSION platform and minos, every PT_LOAD's alignment, DT_NEEDED) are only
  *   read here; admission's policies over them are M3.5's gates (`native-bundle.ts`,
  *   `native-gate-elf.ts`), which these readers sit on for the parse itself.

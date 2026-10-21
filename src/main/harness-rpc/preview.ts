@@ -11,6 +11,12 @@ import {
 } from "../../shared/game-project.ts";
 import { hostOf } from "../../shared/game-targets.ts";
 import {
+  type FrameProfileAnswer,
+  ProfileUnavailableReason,
+  parseFrameProfileRequest,
+  profileUnavailable,
+} from "../../shared/frame-profile.ts";
+import {
   type CameraPoseResult,
   type EmptySceneResult,
   HostMethod,
@@ -32,6 +38,7 @@ import { keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { availableMemory } from "../../substrate/hardware.ts";
 import type { CaptureSurface, PreviewPort } from "../../substrate/preview-port.ts";
 import { touchPort } from "../../substrate/native-game-port.ts";
+import { previewFrameProfile } from "../../substrate/native-profile.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture } from "../../substrate/preview-ready.ts";
 import { observeBuild } from "../../substrate/build-probe.ts";
@@ -62,6 +69,7 @@ const MESSAGE = {
   noProfiler: "preview has no profiling capability",
   profileSourceMismatch: "profile source/revision mismatch",
   profileRunMismatch: "profile run mismatch",
+  badFrameProfile: "preview.frameProfile: frames must be 1..240 and mode a GPU timing mode",
   otherPreviewsActive: "other studio previews are active",
   pairNeedsTwoImages: "preview.pair needs two images",
   harnessRestarted: "the harness that asked for this preview window has restarted",
@@ -243,6 +251,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
         return url;
       }),
     [HostMethod.PreviewProfile]: async (p) => profile(core, x, p),
+    [HostMethod.PreviewFrameProfile]: async (p) => frameProfile(x, p),
     [HostMethod.PreviewReload]: async (p) =>
       inHarnessWindow(x, p?.handle, { mirror: true }, async (handle) => {
         const reloaded = await x.previews.reloadPreview(withHandle(p, handle));
@@ -405,6 +414,22 @@ async function profile(core: StudioCore, x: CoreInternals, p: HarnessParams<type
     if (pool.leaseCount + pool.nativeLeaseCount > 1) return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
   }
   return port.profile(p);
+}
+
+/**
+ * `preview.frameProfile`: the frame profile of the game a lease holds, by its handle alone (a native
+ * run's `profile` op, a Rust web page's `__studio.profile`), never the person's live view; `no-run`
+ * for a handle that names no lease.
+ */
+async function frameProfile(
+  x: CoreInternals,
+  p: HarnessParams<typeof HostMethod.PreviewFrameProfile>,
+): Promise<FrameProfileAnswer> {
+  const pool = x.previewPool;
+  if (!pool?.leaseOf(p.handle)) return profileUnavailable(ProfileUnavailableReason.NoRun);
+  const request = parseFrameProfileRequest(p);
+  if (!request) throw new Error(MESSAGE.badFrameProfile);
+  return previewFrameProfile(pool.port(p.handle), request);
 }
 
 async function screenshot(core: StudioCore, x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewScreenshot>) {

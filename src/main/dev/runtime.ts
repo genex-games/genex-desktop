@@ -53,8 +53,10 @@ import { errorMessage } from "../../shared/errors.ts";
 import { secretRedactor } from "../../shared/redact.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { HarnessState } from "../../shared/protocol.ts";
-import { NativeCanvasPhase, NativeOp } from "../../shared/native-contract.ts";
+import { NativeCanvasPhase, NativeOp, type NativeOpArgs } from "../../shared/native-contract.ts";
 import type { RenderSettingsChange } from "../../shared/render-quality.ts";
+import { checkSavesArg, checkUiSettingsArg, type GameArgCheck } from "../../shared/game-saves.ts";
+import { assertNativeActionAllowed, type NativeStep } from "./native-policy.ts";
 
 /** Why the developer runtime cannot start, or cannot reach a native run. */
 const MESSAGE = {
@@ -66,6 +68,7 @@ const MESSAGE = {
   frameNotNative: "--frame names a native capture's frame; use it with --surface native",
   sizeNotNative: "--size draws a native run's pinned capture at that size; use it with --surface native",
   sizeNotLive: "--size draws the pinned capture; Live's view is the window's own size (drop --frame live)",
+  badGameArgument: "bad-argument: the game's verb was asked with an argument out of shape",
 } as const;
 /** JPEG quality of a native surface capture. */
 const NATIVE_CAPTURE_QUALITY = 90;
@@ -340,6 +343,8 @@ export function asksNative(op: Operation): boolean {
 const NATIVE_METHODS: ReadonlySet<DevMethod> = new Set([
   DevMethod.GameState,
   DevMethod.GameRenderSettings,
+  DevMethod.GameSaves,
+  DevMethod.GameUiSettings,
   DevMethod.GameInput,
   DevMethod.Capture,
   DevMethod.Logs,
@@ -358,7 +363,47 @@ export type NativeSurfacePort = Pick<
 > & {
   /** The run's `renderSettings` op (a read without `set`). */
   call(op: typeof NativeOp.RenderSettings, arg: { set?: RenderSettingsChange }): Promise<unknown>;
+  /** The run's `saves` and `uiSettings` ops, with arguments the host already checked. */
+  call<K extends typeof NativeOp.Saves | typeof NativeOp.UiSettings>(op: K, arg: NativeOpArgs[K]): Promise<unknown>;
 };
+
+/**
+ * The dev-control methods that reach a game's saves or its UI's session settings, and the native
+ * step each is classified as in `native-policy.ts`: a fixture profile refuses them before anything
+ * is asked.
+ */
+export const DEV_NATIVE_STEPS: Readonly<Partial<Record<DevMethod, NativeStep>>> = {
+  [DevMethod.GameSaves]: "studio:dev.game.saves",
+  [DevMethod.GameUiSettings]: "studio:dev.game.uiSettings",
+};
+
+/** Refuses, in a fixture profile, a method classified as a native step (`unsupported-in-fixture`). */
+export function refuseFixtureStep(fixture: boolean, method: DevMethod): void {
+  const step = DEV_NATIVE_STEPS[method];
+  if (step) assertNativeActionAllowed(fixture, step);
+}
+
+type GameSavesParams = Extract<Operation, { method: typeof DevMethod.GameSaves }>["params"];
+type GameUiSettingsParams = Extract<Operation, { method: typeof DevMethod.GameUiSettings }>["params"];
+
+/** A checked argument, or the request's refusal (the schema already refused it; this keeps the types honest). */
+function checkedArg<T>(checked: GameArgCheck<T>): T {
+  if (!checked.ok) throw new DevError(DevErrorCode.InvalidRequest, MESSAGE.badGameArgument);
+  return checked.arg;
+}
+
+/** A `game.saves` request's `saves` argument: its params without the surface, as the port checks them. */
+export function savesArgOf({ surface: _, ...arg }: GameSavesParams): NativeOpArgs[typeof NativeOp.Saves] {
+  return checkedArg(checkSavesArg(arg));
+}
+
+/** A `game.uiSettings` request's `uiSettings` change: its params without the surface. */
+export function uiSettingsArgOf({
+  surface: _,
+  ...arg
+}: GameUiSettingsParams): NativeOpArgs[typeof NativeOp.UiSettings] {
+  return checkedArg(checkUiSettingsArg(arg));
+}
 
 /** What a `--surface native` operation reaches: the open game, the registry's ports, the evidence folder and the redactor. */
 export interface NativeSurfaceRuntime {
@@ -391,6 +436,10 @@ export async function performNative(rt: NativeSurfaceRuntime, op: Operation) {
       return port.studioState();
     case DevMethod.GameRenderSettings:
       return port.call(NativeOp.RenderSettings, op.params.set ? { set: op.params.set } : {});
+    case DevMethod.GameSaves:
+      return port.call(NativeOp.Saves, savesArgOf(op.params));
+    case DevMethod.GameUiSettings:
+      return port.call(NativeOp.UiSettings, uiSettingsArgOf(op.params));
     case DevMethod.GameInput:
       return port.input(op.params.actions);
     case DevMethod.Capture:
@@ -507,6 +556,7 @@ async function perform(rt: Runtime, op: Operation) {
   if (op.method === DevMethod.Stop) return requestStop(rt);
   if (op.method === DevMethod.Runs) return listRuns(rt.core.store, { activeThread: await activeThread(rt) });
   assertActionable(rt, op);
+  refuseFixtureStep(rt.ctx.fixture, op.method);
   if (asksNative(op)) return performNative(rt, op);
   const { diagnostics } = rt;
   switch (op.method) {
@@ -518,6 +568,12 @@ async function perform(rt: Runtime, op: Operation) {
     case DevMethod.GameRenderSettings:
       surfaceContents(rt, DevSurface.Game);
       return rt.preview.studioCall(NativeOp.RenderSettings, op.params.set ? { set: op.params.set } : {});
+    case DevMethod.GameSaves:
+      surfaceContents(rt, DevSurface.Game);
+      return rt.preview.studioCall(NativeOp.Saves, savesArgOf(op.params));
+    case DevMethod.GameUiSettings:
+      surfaceContents(rt, DevSurface.Game);
+      return rt.preview.studioCall(NativeOp.UiSettings, uiSettingsArgOf(op.params));
     case DevMethod.GameInput:
       surfaceContents(rt, DevSurface.Game);
       return rt.preview.input(op.params.actions);

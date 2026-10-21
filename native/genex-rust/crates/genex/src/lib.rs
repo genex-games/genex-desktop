@@ -28,20 +28,29 @@
 //! `docs/GENEX_API.md` and its topic pages in `docs/api/` are the full contract.
 
 // G6 facade contracts (UIS-0): module stubs each area's facade work package fills.
-mod actions;
+/// Input actions: `game.input`, `ctx.actions`, touch controls, rebinding and prompts (genex-input).
+pub mod actions;
 mod actions_journal;
 mod actions_touch;
-mod audio;
+/// Sounds, music and spatial audio: `gfx.sound`, `gfx.music`, `ctx.audio`, `game.audio` (genex-audio).
+pub mod audio;
 mod crash;
 mod g6;
-mod net;
-mod profile;
-mod saves;
-mod settings;
-mod ui;
-mod animation;
+/// Multiplayer (`sim.net`, `game.net`, `DemoDriver::net`): genex-net through the facade (MP-4a).
+pub mod net;
+/// Profiling: `genex::profile_scope!` and `genex::profile::counter` (genex-profile), summarized in
+/// `state().volatile.profile` when a shell profiles.
+pub mod profile;
+/// Save slots: `game.saves`, `game.save_section`, `game.save_world` and `ctx.slots()` (genex-save).
+pub mod saves;
+/// The settings menu: `genex::settings::menu`, `game.settings` and the person's values (genex-ui).
+pub mod settings;
+/// Gameplay UI: `game.ui`, `tr` and `tr_args`, the menu, dialog, grid, list, bar and toast kit (genex-ui).
+pub mod ui;
+/// Animation (AN-15): a character's graph and animators over genex-anim, advanced in `on_update`
+/// and drawn with `frame.character`.
+pub mod animation;
 mod camera;
-#[cfg(feature = "physics")]
 mod character;
 mod ctx;
 mod decal;
@@ -52,6 +61,7 @@ mod group;
 mod gfx;
 pub mod gpu;
 mod input;
+mod lod;
 #[doc(hidden)]
 pub mod loading;
 pub mod manifest;
@@ -89,6 +99,9 @@ mod present_files;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod desktop;
 
+/// Time the rest of the enclosing block under a name checked when the game compiles
+/// (`genex::profile_scope!("enemy_ai")`); write-only, never in the checksum.
+pub use genex_profile::profile_scope;
 pub use camera::{Camera, Projection};
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use decal::Decal;
@@ -110,10 +123,29 @@ pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
 };
+/// A model's levels of detail (game systems LOD-07): `Model::with_levels`, `Model::with_lod_bias`,
+/// `Assets::compound` and their refusals (`state().__render.lodRefused`).
+pub use lod::{LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
 /// Why `gfx.character` refused (`error.code.wire()`, `error.detail`) and the skeleton a
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;
 pub use genex_anim::{AnimationError, AnimationErrorCode};
+/// The animator a world holds and how `frame.character_with` draws it (the rest of the surface is
+/// in [`animation`]).
+pub use animation::{Animator, CharacterDraw};
+/// The character controller (genex-anim, AN-19): `Character::spawn` / `drive` through
+/// `sim.physics`, `Character::on_ground` / `drive_on` over a height function in any build.
+pub use character::{
+    CHARACTER_SKIN, Character, CharacterError, CharacterErrorCode, CharacterMotion, CharacterNav, CharacterParams, CharacterStep, GroundHit, NavFit, RootMotion,
+    TERMINAL_FALL_SPEED,
+};
+/// Humanoid ragdolls (genex-anim, AN-20; physics only): `Ragdoll::build` / `follow` / `go_limp` /
+/// `power` / `recover` / `view` over `sim.physics`.
+#[cfg(feature = "physics")]
+pub use ragdoll::{
+    HumanoidBone, RAGDOLL_DEFAULT_MASS, RAGDOLL_GROUP, RAGDOLL_LIMP_DAMPING, RAGDOLL_MOTOR_DAMPING, RAGDOLL_MOTOR_STIFFNESS, RAGDOLL_PARTS_MAX, Ragdoll, RagdollBody,
+    RagdollJoint, RagdollMode, RagdollPart, RagdollProfile, RagdollView,
+};
 /// A native destination's asset files (the compiled table, then `assets/` by real path): host glue.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -135,6 +167,13 @@ pub use stream::{
     CellBuild, CellInputs, CellPart, STREAM_ANCHORS_MAX, STREAM_CELL_COLLIDERS_MAX, STREAM_CELL_INSTANCES_MAX, STREAM_CELL_SIZE_MAX,
     STREAM_CELL_SIZE_MIN, STREAM_CELL_THINGS_MAX, STREAM_RING_MAX, STREAM_SIM_BYTES_MAX, STREAM_SIM_RADIUS_MAX, STREAM_WORLD_EXTENT_MAX,
     StreamError, StreamErrorCode, StreamTicket, Streaming,
+};
+/// The view set's radius bounds (STR-16): `Streaming::view_radius` defaults to 4 cells, at most 64.
+pub use stream::{STREAM_VIEW_CELLS_MAX, STREAM_VIEW_RADIUS_DEFAULT_CELLS};
+/// Streamed terrain tiles (STR-23): procedural or authored, their ground and colliders.
+pub use terrain_tiles::{
+    TERRAIN_HEIGHT_RANGE_DEFAULT, TERRAIN_INDEX_BYTES_MAX, TERRAIN_TILE_BYTES_MAX, TERRAIN_TILE_SAMPLES, TERRAIN_TILES_FORMAT, TERRAIN_TILES_MAX,
+    TERRAIN_TILES_VERSION, TerrainTiles,
 };
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 #[cfg(feature = "physics")]
@@ -176,11 +215,15 @@ pub mod physics {
 
 /// Everything a game file needs: `use genex::prelude::*;`.
 pub mod prelude {
+    pub use crate::actions::{ActionId, ActionMap, Binding, Condition, Context, ContextId, PadButton, Stick, TouchControls};
+    pub use crate::audio::{AudioSetup, Bus, Duck, Listener, Music, MusicOpts, PlayOpts, ReverbPreset, ReverbZone, Sound, Spatial, Voice, ZoneShape};
+    pub use crate::ui::{TextArgs, UiConfig, UiScale};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
+    pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.

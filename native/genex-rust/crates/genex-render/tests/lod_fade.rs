@@ -367,7 +367,8 @@ fn quad_scene(mesh: MeshId, distance: f32, bias: f32, band: f32) -> Scene {
 
 fn plan_of(scene: &Scene, renderer: &FrameRenderer) -> FramePlan {
     let mut plan = FramePlan::build(scene, renderer.renderer().library(), WIDTH as f32 / HEIGHT as f32).expect("plan");
-    plan.set_lod_height(HEIGHT);
+    // At the renderer's quality threshold, as its frames choose levels (game systems LOD-06).
+    plan.set_lod_view(HEIGHT, renderer.renderer().quality().lod.threshold_px);
     plan
 }
 

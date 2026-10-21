@@ -109,6 +109,9 @@
     "generic-array-0.14.7": {
       "buildScript": "build.rs"
     },
+    "genex-0.1.0": {
+      "nonSource": ["tests/goldens/characters/bind-pose.bgra", "tests/goldens/characters/walk-t0.5.bgra"]
+    },
     "genex-audio-0.1.0": {
       "nonSource": ["tests/fixtures/music-10s.ogg", "tests/fixtures/silence-3min.ogg", "tests/fixtures/tone-44k.ogg"]
     },
@@ -698,9 +701,9 @@
   "release": {
     "genex": "0.1.0",
     "tree": {
-      "sha256": "ace44839d80bf7c43a5c4acd24cee0341ba7805781a5a7cf8528dee2b12c1c9b",
-      "files": 26097,
-      "bytes": 693128545
+      "sha256": "a60403712446f1b17f1044ed6dd60913b68eb683fb538b93716753222e868631",
+      "files": 26169,
+      "bytes": 694916348
     }
   }
 }

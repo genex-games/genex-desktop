@@ -690,3 +690,395 @@ fn the_renderer_bakes_species_from_its_library_and_refuses_them_past_the_cap() {
     assert_eq!(renderer.bake_impostor(&gpu, &[(MeshId::CUBE, 0)], ImpostorLayout::Hemi, class).expect("bake"), None, "past the reserve");
     assert_eq!(renderer.impostors().bytes(), 2 * class.spec().species_bytes());
 }
+
+// ---------------------------------------------------------------------------------------------
+// The impostor as a chain level (game systems LOD-15): one more level of the mesh's chain in the
+// existing cull, decided from the draw's LOD sphere so every part of a compound switches
+// together; the lead part's impostor batch holds the camera's survivors for the impostor draw,
+// and the shadow views (option A) cast the last mesh level where the camera draws the impostor.
+//
+//   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p genex-render \
+//     --offline --locked --test impostor -- --include-ignored chain_level
+
+mod chain_level {
+    use std::collections::BTreeMap;
+
+    use genex_render::layout::{GpuBatch, NO_BATCH};
+    use genex_render::lod_rows::DrawLod;
+    use genex_render::mesh::{LOD_FADE_TAG, LOD_IMPOSTOR_MESH_LEVELS, LodChain, LodLevel, MeshData, impostor_level_error};
+    use genex_render::scene::{CameraDesc, CpuCull, FramePlan, Material, MeshId, MeshImpostor, MeshLibrary, ModelPart, Scene, translation};
+    use genex_render::{CullPath, Renderer};
+
+    /// The output height every row plans for (the renderer's own in the GPU rows).
+    const HEIGHT: u32 = 360;
+    const WIDTH: u32 = 640;
+    /// The mesh levels' object-space errors (a unit sphere): switches near 1.7, 3.5, 7 and 14 m
+    /// at 360 rows under a 45-degree camera.
+    const MESH_ERRORS: [f32; 4] = [0.004, 0.008, 0.016, 0.032];
+    /// The impostor level's error over the LOD sphere's radius: a switch near 30 m.
+    const IMPOSTOR_ERROR: f32 = 0.07;
+    /// The dolly's impostor error: a switch near 8.7 m, where the caster is about 50 pixels tall
+    /// and its shadow on the ground is easy to see.
+    const DOLLY_IMPOSTOR_ERROR: f32 = 0.02;
+    /// The fade band the banded rows use.
+    const BAND: f32 = 0.15;
+    /// The LOD sphere every part measures from (model space).
+    const MODEL_SPHERE: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    /// Shares may differ from 1 by this (a band step is 1/1024).
+    const SHARE_TOLERANCE: f32 = 1.0e-6;
+    /// The level bits of a batch's LOD tag.
+    const LEVEL_MASK: u32 = 0xF;
+
+    /// `mesh` with `levels` coarser levels at [`MESH_ERRORS`].
+    fn chained(mesh: MeshData, levels: usize) -> ModelPart {
+        let triangles = mesh.indices.len() / 3;
+        let level = |k: usize| LodLevel { indices: mesh.indices[..(triangles >> (k + 1)).max(1) * 3].to_vec(), error: MESH_ERRORS[k] };
+        let lods = LodChain { levels: (0..levels).map(level).collect() };
+        ModelPart { mesh, meshlets: None, lods: Some(lods) }
+    }
+
+    /// A two-part compound (a sphere leading, a cube beside it), each with four coarser levels.
+    fn compound(library: &mut MeshLibrary, impostor: bool) -> [MeshId; 2] {
+        let lead = library.add_part(chained(MeshData::sphere(), 4)).expect("lead");
+        let other = library.add_part(chained(MeshData::cube(), 4)).expect("part");
+        if impostor {
+            library.set_impostor(lead, Some(MeshImpostor::lead(0, IMPOSTOR_ERROR))).expect("lead impostor");
+            library.set_impostor(other, Some(MeshImpostor::part(IMPOSTOR_ERROR))).expect("part impostor");
+        }
+        [lead, other]
+    }
+
+    /// `copies` copies of the compound from 4 m to 64 m in front of the camera, both parts drawn
+    /// under one model each and measured from [`MODEL_SPHERE`].
+    fn row_scene(parts: [MeshId; 2], copies: usize, band: f32, shadows: bool) -> Scene {
+        let mut scene = Scene::new(CameraDesc::look_at([0.0, 1.0, 0.0], [0.0, 1.0, -1.0]), [20, 24, 30, 255]);
+        scene.lod_band = band;
+        scene.lighting.shadows = shadows;
+        scene.lighting.shadow_distance = 120.0;
+        scene.set_lod(DrawLod { origin: Some(MODEL_SPHERE), ..DrawLod::OWN });
+        for k in 0..copies {
+            let depth = 4.0 + 60.0 * k as f32 / copies as f32;
+            let model = translation(((k % 7) as f32 - 3.0) * 0.05 * depth, 1.0, -depth);
+            for part in parts {
+                scene.draw(part, model, Material::color([90, 120, 70, 255]));
+            }
+        }
+        scene
+    }
+
+    fn plan_of(scene: &Scene, library: &MeshLibrary) -> FramePlan {
+        let mut plan = FramePlan::build(scene, library, WIDTH as f32 / HEIGHT as f32).expect("plan");
+        plan.set_lod_height(HEIGHT);
+        plan
+    }
+
+    /// What one view draws of each copy (keyed by its LOD sphere's bits): the share of its
+    /// pixels each part's mesh levels draw, and the impostor's, from the batches' survivors.
+    #[derive(Debug, Default)]
+    struct Drawn {
+        mesh: [f32; 2],
+        impostor: f32,
+        /// The levels each part's survivors were kept at, `(level, fade batch)`.
+        levels: [Vec<(u32, bool)>; 2],
+    }
+
+    fn drawn(plan: &FramePlan, cull: &CpuCull, parts: [MeshId; 2]) -> BTreeMap<[u32; 4], Drawn> {
+        let impostor_batches: Vec<u32> = plan.impostor_batches.iter().map(|impostor| impostor.batch).collect();
+        let part_of_row = |row: u32| -> usize {
+            // The lead's rows come first (its mesh id is lower), the other part's after them.
+            let lead_batch = plan.batches.iter().find(|batch| batch.first_instance == plan.slot_base[parts[0].raw() as usize]).expect("lead batch");
+            usize::from(row >= lead_batch.first_row + lead_batch.instance_count)
+        };
+        let mut out: BTreeMap<[u32; 4], Drawn> = BTreeMap::new();
+        for (at, (batch, count)) in plan.batches.iter().zip(&cull.counts).enumerate() {
+            let fade_batch = batch.lod[0] & LOD_FADE_TAG != 0;
+            for slot in batch.first_instance..batch.first_instance + count {
+                let row = cull.visible[slot as usize];
+                let share = if fade_batch { cull.fades[slot as usize][0].abs() } else { 1.0 };
+                let key = plan.lod_rows[row as usize].origin.map(f32::to_bits);
+                let entry = out.entry(key).or_default();
+                if impostor_batches.contains(&(at as u32)) {
+                    entry.impostor += share;
+                } else {
+                    let part = part_of_row(row);
+                    entry.mesh[part] += share;
+                    entry.levels[part].push((batch.lod[0] & LEVEL_MASK, fade_batch));
+                }
+            }
+        }
+        out
+    }
+
+    fn mesh_batches(plan: &FramePlan, first_row: u32) -> impl Iterator<Item = &GpuBatch> {
+        plan.batches.iter().filter(move |batch| batch.first_row == first_row && batch.lod[0] & LOD_FADE_TAG == 0)
+    }
+
+    #[test]
+    fn a_compound_with_an_impostor_draws_exactly_one_representation_per_instance() {
+        let mut library = MeshLibrary::new();
+        let parts = compound(&mut library, true);
+        for band in [0.0, BAND] {
+            let plan = plan_of(&row_scene(parts, 600, band, false), &library);
+            assert!(!plan.impostor_batches.is_empty(), "band {band}: the lead part has an impostor batch");
+            let views = drawn(&plan, &plan.cpu_cull(), parts);
+            let (mut whole_impostor, mut crossfading, mut whole_mesh) = (0, 0, 0);
+            for (key, copy) in &views {
+                for part in 0..2 {
+                    let total = copy.impostor + copy.mesh[part];
+                    assert!((total - 1.0).abs() <= SHARE_TOLERANCE, "band {band}, copy {key:?}: part {part} draws {} as meshes and the impostor {}", copy.mesh[part], copy.impostor);
+                }
+                match copy.impostor {
+                    share if share >= 1.0 => whole_impostor += 1,
+                    share if share > 0.0 => crossfading += 1,
+                    _ => whole_mesh += 1,
+                }
+            }
+            eprintln!("band {band}: {} copies: {whole_mesh} meshes, {crossfading} crossfading, {whole_impostor} impostors", views.len());
+            assert_eq!(views.len(), 600, "band {band}: every copy is in view");
+            assert!(whole_impostor > 50 && whole_mesh > 50, "band {band}: the copies cross the switch");
+            assert_eq!(crossfading > 10, band > 0.0, "band {band}: a band crossfades the switch, the hard switch never");
+            // The impostor draw gets each copy the camera keeps at the impostor level once: whole, or
+            // fading in (kansei's signed share).
+            let instances = plan.impostor_instances();
+            assert_eq!(instances.len(), whole_impostor + crossfading, "band {band}: one impostor instance a copy drawn as the impostor");
+            assert_eq!(instances.iter().filter(|instance| instance.fade < 0.0).count(), crossfading, "band {band}: the crossfading ones fade in");
+            assert!(instances.iter().all(|instance| instance.species == 0 && instance.fade != 0.0), "band {band}: the lead's species");
+        }
+    }
+
+    #[test]
+    fn shadow_views_draw_the_coarsest_mesh_where_the_camera_draws_the_impostor() {
+        let mut library = MeshLibrary::new();
+        let parts = compound(&mut library, true);
+        for band in [0.0, BAND] {
+            let plan = plan_of(&row_scene(parts, 600, band, true), &library);
+            assert!(plan.views > 1, "band {band}: the sun's cascades are culled");
+            let camera = drawn(&plan, &plan.cpu_cull(), parts);
+            let last = LOD_IMPOSTOR_MESH_LEVELS as u32;
+            let mut cast = 0;
+            for view in 1..plan.views as usize {
+                for (key, copy) in drawn(&plan, &plan.cpu_cull_view(view), parts) {
+                    assert_eq!(copy.impostor, 0.0, "band {band}, view {view}, copy {key:?}: a shadow view never keeps the impostor batch");
+                    // A part outside this view's frustum casts nothing here; one inside casts once.
+                    for part in 0..2 {
+                        let once = (copy.mesh[part] - 1.0).abs() <= SHARE_TOLERANCE || copy.mesh[part] == 0.0;
+                        assert!(once, "band {band}, view {view}, copy {key:?}: part {part} casts {}", copy.mesh[part]);
+                    }
+                    if camera[&key].impostor > 0.0 {
+                        cast += 1;
+                        for part in 0..2 {
+                            let expected = if copy.mesh[part] > 0.0 { vec![(last, false)] } else { Vec::new() };
+                            assert_eq!(copy.levels[part], expected, "band {band}, view {view}, copy {key:?}: part {part}'s last mesh level casts whole where the camera draws the impostor");
+                        }
+                    }
+                }
+            }
+            eprintln!("band {band}: {cast} cascade survivors cast the last mesh level for an impostor");
+            assert!(cast > 50, "band {band}: impostors reach the cascades");
+        }
+    }
+
+    #[test]
+    fn mesh_chain_is_cut_to_three_levels_when_an_impostor_exists() {
+        for impostor in [false, true] {
+            let mut library = MeshLibrary::new();
+            let parts = compound(&mut library, impostor);
+            let plan = plan_of(&row_scene(parts, 8, 0.0, false), &library);
+            let lods = library.lods(parts[0]).expect("lead levels").clone();
+            let lead_first_row = plan.batches[plan.batches.iter().position(|batch| batch.first_instance == plan.slot_base[parts[0].raw() as usize]).expect("lead")].first_row;
+            let levels: Vec<u32> = mesh_batches(&plan, lead_first_row).map(|batch| batch.lod[0] & LEVEL_MASK).collect();
+            let chain_length: Vec<u32> = mesh_batches(&plan, lead_first_row).map(|batch| (batch.lod[0] >> 4) & LEVEL_MASK).collect();
+            if impostor {
+                assert_eq!(levels, vec![0, 1, 2, 3, 4], "three mesh levels past the mesh, then the impostor");
+                assert!(chain_length.iter().all(|length| *length == 4), "3 mesh levels plus the impostor: {chain_length:?}");
+                assert_eq!(plan.slot_base[lods.levels[3].raw() as usize], NO_BATCH, "the fourth mesh level is never drawn");
+                assert_eq!(plan.impostor_batches.len(), 1, "one impostor batch, the lead's");
+                let impostor_batch = plan.batches[plan.impostor_batches[0].batch as usize];
+                assert_eq!((impostor_batch.lod[0] & LEVEL_MASK, impostor_batch.index_count), (4, 0), "the impostor level draws no mesh indices");
+                let other_first_row = plan.batches[plan.batches.iter().position(|batch| batch.first_instance == plan.slot_base[parts[1].raw() as usize]).expect("other")].first_row;
+                let other: Vec<u32> = mesh_batches(&plan, other_first_row).map(|batch| batch.lod[0] & LEVEL_MASK).collect();
+                assert_eq!(other, vec![0, 1, 2, 3], "another part stops at its last mesh level");
+            } else {
+                assert_eq!(levels, vec![0, 1, 2, 3, 4], "the mesh and its four levels");
+                assert!(chain_length.iter().all(|length| *length == 4));
+                assert_ne!(plan.slot_base[lods.levels[3].raw() as usize], NO_BATCH, "the fourth level draws");
+                assert!(plan.impostor_batches.is_empty());
+            }
+        }
+        assert_eq!(LOD_IMPOSTOR_MESH_LEVELS, 3);
+        assert_eq!(impostor_level_error(64, 0.01), 2.0 / 64.0, "one atlas texel a pixel at the threshold (c = 1)");
+        assert_eq!(impostor_level_error(64, 0.05), 0.05, "never finer than the last mesh level");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // GPU
+
+    fn gpu() -> Option<genex_render::Gpu> {
+        super::gpu()
+    }
+
+    /// The plan's acceptance: the GPU cull keeps what the CPU keeps for compounds crossing the
+    /// impostor switch, in the camera and every cascade, slot for slot with the same fades.
+    #[test]
+    #[ignore = "needs a GPU: run with --ignored metal"]
+    fn metal_the_gpu_cull_keeps_the_cpus_impostor_levels_in_every_view() {
+        let Some(gpu) = gpu() else { return };
+        let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+        let meshes = renderer.add_model_parts(&gpu, vec![chained(MeshData::sphere(), 4), chained(MeshData::cube(), 4)]).expect("added");
+        let parts = [meshes[0], meshes[1]];
+        renderer.set_impostor(parts[0], Some(MeshImpostor::lead(0, IMPOSTOR_ERROR))).expect("lead");
+        renderer.set_impostor(parts[1], Some(MeshImpostor::part(IMPOSTOR_ERROR))).expect("part");
+        for band in [0.0, BAND] {
+            let mut scene = row_scene(parts, 2_000, band, true);
+            scene.set_lod(DrawLod::OWN);
+            scene.draw(MeshId::CUBE, genex_render::scene::scaled([0.0, -0.5, -40.0], [200.0, 1.0, 200.0]), Material::color([110, 100, 80, 255]));
+            renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+            let plan = plan_of(&scene, renderer.library());
+            assert!(plan.views > 1, "the cascades are culled too");
+            let mut fade_survivors = 0;
+            for view in 0..plan.views {
+                let cpu = plan.cpu_cull_view(view as usize);
+                let counts: Vec<u32> = renderer.read_view_args(&gpu, view).expect("args").iter().map(|a| a.instance_count).collect();
+                assert_eq!(counts, cpu.counts, "band {band}, view {view}'s survivors per batch");
+                let visible = renderer.read_view_visible(&gpu, view).expect("visible");
+                let fades = renderer.read_view_fades(&gpu, view).expect("fades");
+                for (batch, count) in plan.batches.iter().zip(&cpu.counts) {
+                    let range = batch.first_instance as usize..(batch.first_instance + count) as usize;
+                    assert_eq!(visible[range.clone()], cpu.visible[range.clone()], "band {band}, view {view} from slot {}", batch.first_instance);
+                    if batch.lod[0] & LOD_FADE_TAG != 0 {
+                        assert_eq!(fades[range.clone()], cpu.fades[range.clone()], "band {band}, view {view}: the fades from slot {}", batch.first_instance);
+                        fade_survivors += range.len();
+                    }
+                }
+            }
+            let impostors: u32 = plan.impostor_batches.iter().map(|impostor| plan.cpu_cull().counts[impostor.batch as usize]).sum();
+            eprintln!("band {band}: {} batches over {} views equal slot for slot; {impostors} camera impostor survivors, {fade_survivors} fade survivors", plan.batches.len(), plan.views);
+            assert!(impostors > 100, "the camera keeps impostors");
+        }
+    }
+
+    /// The dolly's scene at `distance`: a ground, and the compound unless `with_compound` is false.
+    fn dolly_scene(distance: f32, parts: [MeshId; 2], with_compound: bool) -> Scene {
+        let eye = [0.0, 3.0, distance];
+        let mut scene = Scene::new(CameraDesc::look_at(eye, [-1.5, 0.5, 0.0]), [20, 24, 30, 255]);
+        scene.lod_band = BAND;
+        scene.lighting.shadows = true;
+        scene.lighting.shadow_distance = 120.0;
+        // A low sun from the side: the shadow falls well away from the caster.
+        scene.lighting.sun_dir = [1.0, 0.35, 0.0];
+        scene.draw(MeshId::CUBE, genex_render::scene::scaled([0.0, -0.5, 0.0], [80.0, 1.0, 80.0]), Material::color([150, 150, 150, 255]));
+        if with_compound {
+            scene.set_lod(DrawLod { origin: Some(MODEL_SPHERE), ..DrawLod::OWN });
+            for part in parts {
+                scene.draw(part, translation(0.0, 1.0, 0.0), Material::color([90, 120, 70, 255]));
+            }
+        }
+        scene
+    }
+
+    /// D9 acceptance: across the mesh-to-impostor band on a dolly the sun's shadow does not
+    /// change, and the camera never loses the copy. Every frame of a dolly through the band is
+    /// drawn with the impostor (its species baked from both parts), with the same chain of three
+    /// levels and no impostor, and with no compound at all. Outside the caster's own pixels (its
+    /// screen box and a margin) the first two are equal byte for byte, so the shadow it casts never
+    /// pops; inside, the impostor run differs from the empty ground on every frame, so the copy is
+    /// drawn as meshes, crossfading or as the impostor all along.
+    #[test]
+    #[ignore = "needs a GPU: run with --ignored metal"]
+    fn metal_zero_shadow_pops_across_the_mesh_to_impostor_band_on_a_dolly() {
+        let Some(gpu) = gpu() else { return };
+        let frames: Vec<f32> = (0..32).map(|k| 6.0 + 0.25 * k as f32).collect();
+        let mut captures = [Vec::new(), Vec::new(), Vec::new()];
+        let mut boxes = Vec::new();
+        for (run, (impostor, with_compound)) in [(false, true), (true, true), (false, false)].into_iter().enumerate() {
+            let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+            let meshes = renderer.add_model_parts(&gpu, vec![chained(MeshData::sphere(), 3), chained(MeshData::cube(), 3)]).expect("added");
+            let parts = [meshes[0], meshes[1]];
+            if impostor {
+                // One frame uploads the material table; the species bakes both parts in their material.
+                let first = dolly_scene(frames[0], parts, true);
+                renderer.render(&gpu, &first, CullPath::Gpu).expect("frame");
+                let plan = plan_of(&first, renderer.library());
+                let material = plan.instances[plan.batches[plan.slot_base[parts[0].raw() as usize] as usize].first_row as usize].material;
+                let species = renderer.bake_impostor(&gpu, &[(parts[0], material), (parts[1], material)], genex_render::impostor::ImpostorLayout::Hemi, genex_render::impostor::ImpostorClass::High).expect("bake").expect("species");
+                renderer.set_impostor(parts[0], Some(MeshImpostor::lead(species.layer, DOLLY_IMPOSTOR_ERROR))).expect("lead");
+                renderer.set_impostor(parts[1], Some(MeshImpostor::part(DOLLY_IMPOSTOR_ERROR))).expect("part");
+            }
+            for distance in &frames {
+                let scene = dolly_scene(*distance, parts, with_compound);
+                renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+                let capture = renderer.capture(&gpu).expect("capture");
+                if run == 1 {
+                    let plan = plan_of(&scene, renderer.library());
+                    let camera = plan.cpu_cull();
+                    let impostor_drawn: u32 = plan.impostor_batches.iter().map(|batch| camera.counts[batch.batch as usize]).sum();
+                    assert_eq!(plan.impostor_instances().len() as u32, impostor_drawn, "the impostor draw gets the camera's survivors");
+                    boxes.push((impostor_drawn, screen_box(&scene, 1.8)));
+                    super::write_chain_evidence(&format!("impostor-dolly-{distance:05.2}"), &capture);
+                }
+                captures[run].push(capture);
+            }
+        }
+        let mut crossed = 0;
+        let pixel = |bytes: &[u8], x: u32, y: u32| -> [u8; 4] {
+            let at = ((y * WIDTH + x) * 4) as usize;
+            [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]
+        };
+        for (k, distance) in frames.iter().enumerate() {
+            let (impostor_drawn, (x0, y0, x1, y1)) = boxes[k];
+            crossed += usize::from(impostor_drawn > 0);
+            let (mesh, imp, empty) = (captures[0][k].bgra(), captures[1][k].bgra(), captures[2][k].bgra());
+            let (mut outside, mut drawn, mut mesh_drawn) = (0, 0, 0);
+            for y in 0..HEIGHT {
+                for x in 0..WIDTH {
+                    if (x0..=x1).contains(&x) && (y0..=y1).contains(&y) {
+                        drawn += usize::from(pixel(imp, x, y) != pixel(empty, x, y));
+                        mesh_drawn += usize::from(pixel(mesh, x, y) != pixel(empty, x, y));
+                        continue;
+                    }
+                    outside += usize::from(pixel(mesh, x, y) != pixel(imp, x, y));
+                }
+            }
+            eprintln!("dolly {distance:5.2} m: impostor survivors {impostor_drawn}; the copy covers {drawn} pixels (the meshes-only run {mesh_drawn}); {outside} pixels outside the caster differ");
+            assert_eq!(outside, 0, "dolly at {distance} m (impostor survivors {impostor_drawn}): {outside} pixels outside the caster differ");
+            assert!(drawn * 2 > mesh_drawn, "dolly at {distance} m: the camera keeps drawing the copy ({drawn} pixels against the meshes' {mesh_drawn})");
+        }
+        eprintln!("{} dolly frames, {crossed} with the camera drawing the impostor: shadows equal byte for byte outside the caster", frames.len());
+        assert!(crossed > 5 && crossed < frames.len(), "the dolly crosses the switch");
+    }
+
+    /// The screen box (x0, y0, x1, y1, inclusive) of a sphere of `radius` at (0, 1, 0) seen by
+    /// `scene`'s camera, grown by a margin of 12 pixels.
+    fn screen_box(scene: &Scene, radius: f32) -> (u32, u32, u32, u32) {
+        let projection = scene.camera.projection(WIDTH as f32 / HEIGHT as f32, false);
+        let project = |p: [f32; 3]| {
+            let c = projection * glam::Vec4::new(p[0], p[1], p[2], 1.0);
+            ((c.x / c.w * 0.5 + 0.5) * WIDTH as f32, (0.5 - c.y / c.w * 0.5) * HEIGHT as f32)
+        };
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        for dx in [-radius, radius] {
+            for dy in [-radius, radius] {
+                for dz in [-radius, radius] {
+                    let (x, y) = project([dx, 1.0 + dy, dz]);
+                    xs.push(x);
+                    ys.push(y);
+                }
+            }
+        }
+        let margin = 12.0;
+        let clamp = |v: f32, max: u32| v.clamp(0.0, (max - 1) as f32) as u32;
+        let min = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
+        let max = |v: &[f32]| v.iter().copied().fold(f32::MIN, f32::max);
+        (clamp(min(&xs) - margin, WIDTH), clamp(min(&ys) - margin, HEIGHT), clamp(max(&xs) + margin, WIDTH), clamp(max(&ys) + margin, HEIGHT))
+    }
+}
+
+/// Write a capture's BGRA (top row first) to `GENEX_RENDER_EVIDENCE_DIR`, the size in the name.
+fn write_chain_evidence(name: &str, capture: &genex_render::capture::Capture) {
+    if let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join(format!("{name}-{}x{}.bgra", capture.width(), capture.height())), capture.bgra()).expect("evidence");
+    }
+}

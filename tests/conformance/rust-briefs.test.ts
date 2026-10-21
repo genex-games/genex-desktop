@@ -290,6 +290,14 @@ describe("the words that were wrong before Rust", () => {
     assert.ok(!text.includes("C++ · raylib"), text);
   });
 
+  // G6 MP-5c: a Rust game plays online through its web draft, so multiplayer needs Browser among
+  // the destinations, not a Three.js game.
+  it("a new game's intake says multiplayer needs Browser among the destinations, never that it is Browser-only", () => {
+    const text = nativeBriefs.intakeGuidance("claude-code").join("\n");
+    assert.doesNotMatch(text, /multiplayer[^.)]*Browser-only/);
+    assert.match(text, /multiplayer needs Browser among the destinations/);
+  });
+
   it("a C++ starting scene draws its HUD in world pixels, as studio::hud takes them", () => {
     const text = nativeBriefs.cppBaseBrief({ run: RUN, plan: {}, projectLabel: "pong" });
     assert.doesNotMatch(text, /fractions of the frame/);

@@ -28,13 +28,20 @@ pub mod debug;
 #[cfg(feature = "physics")]
 pub mod input_rapier;
 
+pub use agents_api::{
+    NAV_AGENTS_MAX, NAV_BODIES_MAX, NAV_SNAPSHOT_VERSION, NAV_SPEED_DEFAULT, NAV_SPEED_MAX_DEFAULT, NavAgent, NavBody, NavHit,
+    NavLinkReached, NavPath, NavPoint, NavStatus, NavStep,
+};
 pub use bake::{BakeConfig, bake_tile};
 pub use carve::{NAV_OBSTACLES_MAX, NavObstacle};
 pub use config::NavConfig;
 pub use debug::NavDebug;
 pub use error::{NavError, NavErrorCode};
+pub use filter::NavFilter;
 pub use ids::{AgentId, NavBodyId, NavLinkId, NavObstacleId};
 pub use input::{NavArea, NavInput};
+pub use links::{NAV_LINKS_MAX, NavLink, NavLinkKind};
 pub use memo::{NAV_MEMO_BYTES_MAX, NAV_MEMO_BYTES_MAX_PHONE};
+pub use stream::{NavIsland, NavIslands, StreamedNav};
 pub use tile::NavTile;
 pub use world::{NAV_TILES_MAX, Nav, NavBudget, NavMesh, NavMeshSource};

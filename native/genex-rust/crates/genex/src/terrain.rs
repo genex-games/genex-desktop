@@ -332,7 +332,8 @@ impl Terrain {
         Ok(Terrain::of(field))
     }
 
-    fn of(heights: Heightfield) -> Terrain {
+    /// A terrain of `heights` as they are (STR-23's tiles keep their shared quantization).
+    pub(crate) fn of(heights: Heightfield) -> Terrain {
         let layers = vec![TerrainLayer::flat(Color::rgb(160, 160, 150))];
         Terrain { inner: Arc::new(TerrainInner { heights, layers, control: Vec::new(), look: TerrainLook::default(), version: next_version() }) }
     }

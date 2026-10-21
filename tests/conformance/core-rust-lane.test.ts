@@ -388,6 +388,8 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
       assetGroups: [],
       // Flipped (C-17): the stage also hands the lane the game's [assets] budgets, null for the template.
       assets: null,
+      // Flipped (G6 MP-5b): the stage also hands the lane the game's [net], null for the template.
+      net: null,
     });
     assert.match(await readFile(path.join(into, "Cargo.toml"), "utf8"), /^genex = "=0\.1\.0"$/m);
   });

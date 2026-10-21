@@ -12,12 +12,19 @@
 //!   `scripts/spike/rust-wgpu/android-apk.sh`), with records under the app's `internal_data_path`.
 //! - the safe area: the content rectangle inside the window, widened by the display cutout.
 //! - the audio focus (`AudioManager.requestAudioFocus`), held while the app is resumed; a focus
-//!   change while resumed is not heard yet (it needs a Java listener class: TODO(M5-F1)).
+//!   change while resumed is not heard yet (it needs a Java listener class: TODO(M5-F1)). The
+//!   shared shell's audio gate mutes the game's device output (cpal's AAudio output, opened once
+//!   the focus is first held) whenever the focus is not held (game systems AU-8).
 //! - [`gamepad`]: `KEYCODE_BUTTON_*` keys, each controller in its own slot, and the d-pad as
 //!   arrows; joystick motion (sticks, triggers, hat) read per device id into the same slots.
 //! - [`thermal`]: the PowerManager's thermal status, which paces frames when the phone is hot.
 //! - the refusal screen for a GPU below WebGPU core, blitted into the `ANativeWindow` on the CPU
 //!   (`refusal_blit`, Android only).
+//! - the game's assets past the compiled table (game systems STR-15, owner call S10): the APK's
+//!   `assets/` read through `AAssetManager` (ndk 0.9.0, [`ApkAssets`]), whole or by range
+//!   (`AAsset_seek`), behind the shared shell's [`shell::BundleAssets`] path and range checks. The
+//!   packager places a game's `assets/` files under the APK's `assets/`; a game with no file-backed
+//!   assets reads its table as before.
 //! - the soft keyboard: winit's `set_ime_allowed` shows the soft input; its keys reach the shell.
 //!   NativeActivity has no `InputConnection` bridge, so composed, autocorrected and swipe text
 //!   does not reach the game (TODO(M5-F1)).
@@ -39,6 +46,7 @@ pub mod refusal_blit;
 pub mod thermal;
 
 pub use genex_platform_ios::mobile::{self, audio, lifecycle, present, records, safe_area, selftest, shell, touch};
+pub use genex_platform_ios::mobile::shell::{BundleAssets, BundleOpen, SharedAssets};
 pub use genex_platform_ios::{
     AudioChange, AudioGate, AudioPlatform, Lifecycle, LifecycleCode, LifecycleError, PadChange, Phase, PhoneAxis, PhoneButton,
     PlatformHooks, Presentation, Records, SafeArea, ShellConfig, ShellOutcome, Thermal, TouchEvent, TouchTracker,
@@ -78,6 +86,29 @@ fn display_refresh_ms() -> Option<f64> {
 fn display_refresh_ms() -> Option<f64> {
     None
 }
+
+/// The APK's `assets/` (an `AAssetManager`), opened by name for [`BundleAssets`].
+#[cfg(target_os = "android")]
+pub struct ApkFiles(pub ndk::asset::AssetManager);
+
+#[cfg(target_os = "android")]
+impl BundleOpen for ApkFiles {
+    type File = ndk::asset::Asset;
+
+    /// `AAssetManager_open` of `path` (ndk 0.9 opens in streaming mode; `AAsset_seek64` still
+    /// seeks, directly when the packager stores the file uncompressed); a name with a NUL is never
+    /// opened.
+    fn open(&self, path: &str) -> Option<(ndk::asset::Asset, u64)> {
+        let name = std::ffi::CString::new(path).ok()?;
+        let asset = self.0.open(&name)?;
+        let length = asset.length() as u64;
+        Some((asset, length))
+    }
+}
+
+/// The game's assets on Android: its compiled table, then the APK's `assets/` ([`ApkFiles`]).
+#[cfg(target_os = "android")]
+pub type ApkAssets = BundleAssets<ApkFiles>;
 
 #[cfg(target_os = "android")]
 mod entry {
@@ -122,8 +153,11 @@ mod entry {
         if let Some(records) = &records {
             records.log_lifecycle(&genex::json!({ "event": "launched", "activity": ACTIVITY }));
         }
-        // The sim reads the compiled table from its first reset on, as the presenter draws from it.
-        let mut runtime = match Runtime::with_assets(game, Box::new(assets)) {
+        // The sim reads the compiled table, then the APK's `assets/` (STR-15), from its first reset
+        // on, as the presenter draws from them; each opens its own `AAssetManager` reads.
+        let apk = |app: &AndroidApp| crate::ApkAssets::new(assets, Some(crate::ApkFiles(app.asset_manager())));
+        let files: SharedAssets = std::sync::Arc::new(apk(&app));
+        let mut runtime = match Runtime::with_assets(game, Box::new(apk(&app))) {
             Ok(runtime) => runtime,
             Err(error) => {
                 log::error!("{error}");
@@ -142,6 +176,7 @@ mod entry {
             game: name,
             plan: selftest::device_plan(name, demo),
             assets,
+            files: Some(files),
             records,
             safe_area: window_safe_area,
             audio: AUDIO_FOCUS,

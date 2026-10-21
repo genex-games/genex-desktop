@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { DeviceClass, QualityPreset, RenderFeature } from "../../shared/render-quality.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { checkSavesArg, checkUiSettingsArg, SaveOp } from "../../shared/game-saves.ts";
 import { NATIVE_CAPTURE_MAX_PX, NATIVE_CAPTURE_MIN_PX } from "../../shared/native-contract.ts";
 
 const GRAPH_DRAG_MIN_MS = 100;
@@ -81,6 +82,10 @@ export const DevMethod = {
   GameState: "game.state",
   /** The game's `renderSettings` verb: a read, or a change held for this session (a preset, a class, a frame budget). */
   GameRenderSettings: "game.renderSettings",
+  /** The game's `saves` verb: list, read, write, save, load or delete a slot (native-classified: a fixture profile refuses it). */
+  GameSaves: "game.saves",
+  /** The game's `uiSettings` verb: a read, or a locale, scale, safe area or text size held for this session (native-classified). */
+  GameUiSettings: "game.uiSettings",
   Capture: "capture",
   Logs: "logs",
   Runs: "runs",
@@ -117,6 +122,31 @@ const renderSettingsSet = z
     frameBudgetMs: z.number().nullable().optional(),
   })
   .strict();
+/**
+ * A `saves` call (`shared/game-saves.ts`): its members by type here, then the host's own check, so
+ * an unsafe slot name or an envelope no line can carry is refused before any game is asked.
+ */
+const savesParams = z
+  .object({
+    surface: gameSurface,
+    op: z.enum(SaveOp),
+    slot: z.string().optional(),
+    label: z.string().optional(),
+    envelope: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+  .refine(({ surface: _, ...arg }) => checkSavesArg(arg).ok, "bad-argument: a saves call out of shape");
+/** A `uiSettings` change (`shared/game-saves.ts`); no member reads, null gives the game's own back. */
+const uiSettingsParams = z
+  .object({
+    surface: gameSurface,
+    locale: z.string().nullable().optional(),
+    scale: z.number().nullable().optional(),
+    safeArea: z.array(z.number()).nullable().optional(),
+    textSize: z.number().nullable().optional(),
+  })
+  .strict()
+  .refine(({ surface: _, ...arg }) => checkUiSettingsArg(arg).ok, "bad-argument: a uiSettings change out of shape");
 const name = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/)
@@ -204,6 +234,8 @@ export const operationSchema = z.discriminatedUnion("method", [
   operation(DevMethod.FixtureGraph, { action: z.enum(GraphFixtureAction) }),
   operation(DevMethod.GameState, { surface: gameSurface }),
   operation(DevMethod.GameRenderSettings, { surface: gameSurface, set: renderSettingsSet.optional() }),
+  z.object({ method: z.literal(DevMethod.GameSaves), params: savesParams }).strict(),
+  z.object({ method: z.literal(DevMethod.GameUiSettings), params: uiSettingsParams }).strict(),
   operation(DevMethod.Capture, {
     surface,
     name,

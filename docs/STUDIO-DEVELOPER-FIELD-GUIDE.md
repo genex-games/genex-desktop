@@ -458,9 +458,12 @@ snapshot (desktop, scope/limit), click (selector/scope), type (plus text/replace
 (surface/key/code/modifiers), select (selector/scope/value), scroll (surface/deltas/target),
 game.input (existing bounded action union; on a native run the host plays `hold`, `wait`, `drag`
 and a positioned `click` as timed messages, as the web preview does, and a position with `px` or a
-coordinate outside 0..1 is pixels, on a native run Live's own pixels), game.state and game.renderSettings (the game's verb,
-with an optional `set`) (each with an optional `surface`: `game`, the default, or `native` for the
-open game's native run), window.resize, capture (`--surface native` takes `--frame pinned`, the
+coordinate outside 0..1 is pixels, on a native run Live's own pixels), game.state, game.renderSettings (the game's verb,
+with an optional `set`), game.saves (`op` `list`, `read`, `write`, `save`, `load` or `delete`, with `slot`, `label`
+or `envelope`) and game.uiSettings (`locale`, `scale`, `safeArea`, `textSize`; none reads) (each with an optional
+`surface`: `game`, the default, or `native` for the open game's native run; game.saves and game.uiSettings are
+native-classified, so a fixture profile refuses them, and an argument out of shape is refused before any game is
+asked), window.resize, capture (`--surface native` takes `--frame pinned`, the
 run's own capture profile, drawn at `--size WxH` when given (64 to 4096 a side; a C++ game, which
 draws its world size only, is refused), or `live`, the studio window's Native view without Studio's
 Click to play pill or hint, taken only while that view is playing and shown), logs, runs, cpu.start/stop,

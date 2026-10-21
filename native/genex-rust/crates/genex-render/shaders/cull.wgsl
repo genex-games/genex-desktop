@@ -26,6 +26,10 @@
 // The far field (game systems LOD-18): a copy whose LOD row names a far rule (`far_rules`) and
 // lies past its start is thinned (`gx_far_field`): its whole batches drop it, its fade batches
 // keep it with the far share in its fade and the far field's grow beside it.
+// Impostors (game systems LOD-15): an impostor is the last level of its chain (`GX_LOD_IMPOSTOR_TAG`),
+// its error measured over the LOD row's radius so every part of a compound switches together. In
+// every view but the camera (option A) a band at the impostor level reads as the last mesh level
+// whole: the casters keep the mesh's shape where the camera draws the impostor.
 
 @group(0) @binding(0) var<uniform> views: CullViews;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
@@ -210,6 +214,8 @@ fn gx_cull_batch_of(row: u32) -> u32 {
 const GX_LOD_TAG: u32 = 0x80000000u;
 // A fade batch's bit (mesh_lod.rs LOD_FADE_TAG): without a band it keeps nothing.
 const GX_LOD_FADE_TAG: u32 = 0x40000000u;
+// A chain ended by an impostor (mesh_lod.rs LOD_IMPOSTOR_TAG, game systems LOD-15).
+const GX_LOD_IMPOSTOR_TAG: u32 = 0x20000000u;
 
 // The value of the non-negative, finite half float `bits` (mesh_lod.rs `f16_value`, exact):
 // decoded by hand, since naga counts `unpack2x16float` outside WebGPU core.
@@ -230,9 +236,11 @@ fn gx_cull_half(bits: u32) -> f32 {
 // (`lod.w` not positive) or a radius that is not positive draw the mesh itself whole. With far
 // rules (`views.lod_params.z`, game systems LOD-18) a copy past its rule's start is thinned:
 // every whole batch drops it and its fade batches keep it, the fade times the far share and the
-// grow the far field's (`gx_far_field`). mesh_lod.rs `lod_row_keep_far` is its CPU twin,
+// grow the far field's (`gx_far_field`). In a shadow view (`caster`, every view but the camera)
+// a chain ended by an impostor casts its last mesh level whole where the camera's band is at the
+// impostor (game systems LOD-15 option A). mesh_lod.rs `lod_row_keep_view` is its CPU twin,
 // expression for expression.
-fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32) -> vec3<f32> {
+fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool) -> vec3<f32> {
     var far = vec3<f32>(0.0, 1.0, 1.0);
     if views.lod_params.z != 0u {
         far = gx_far_field(lod_rows[row]);
@@ -250,10 +258,17 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32) -> vec3<f32> {
     if views.lod.w > 0.0 && bounds.w > 0.0 {
         let levels = min((batch.lod >> 4u) & 15u, 4u);
         let halves = vec4<u32>(batch.lod_error01 & 0xFFFFu, batch.lod_error01 >> 16u, batch.lod_error23 & 0xFFFFu, batch.lod_error23 >> 16u);
-        let errors = vec4<f32>(gx_cull_half(halves.x), gx_cull_half(halves.y), gx_cull_half(halves.z), gx_cull_half(halves.w)) * bounds.w;
+        var errors = vec4<f32>(gx_cull_half(halves.x), gx_cull_half(halves.y), gx_cull_half(halves.z), gx_cull_half(halves.w)) * bounds.w;
         let lod_row = lod_rows[row];
+        let impostor = (batch.lod & GX_LOD_IMPOSTOR_TAG) != 0u && levels > 0u;
+        if impostor {
+            errors[levels - 1u] = gx_cull_half(halves[levels - 1u]) * lod_row.origin.w;
+        }
         let distance = length(lod_row.origin.xyz - views.lod.xyz) - lod_row.origin.w;
         band = gx_lod_band(errors, levels, distance, views.lod.w, 1.0, lod_row.bias, bitcast<f32>(views.lod_params.y));
+        if caster && impostor && u32(band.x) >= levels {
+            band = vec2<f32>(f32(levels - 1u), 1.0);
+        }
     }
     let picked = u32(band.x);
     if far.x > 0.0 {
@@ -305,7 +320,7 @@ fn cull_mark(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_
         if views.lod_params.x != 0u {
             let batch = batches[gx_cull_batch_of(slot)];
             row = batch.first_row + slot - batch.first_instance;
-            lod_keeps = gx_cull_lod_fade(batch, instances[row].bounds, row).x > 0.0;
+            lod_keeps = gx_cull_lod_fade(batch, instances[row].bounds, row, view != 0u).x > 0.0;
         }
         if lod_keeps && in_frustum(view, instances[row].bounds) {
             keep = 1u;
@@ -395,7 +410,7 @@ fn cull_scatter(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocati
         visible[view * views.params.x + slot] = row;
         // A fade batch's survivor gets its fade (LOD-03) and its far field's grow (LOD-18).
         if (batch.lod & GX_LOD_FADE_TAG) != 0u {
-            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row);
+            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row, view != 0u);
             fades[view * views.params.x + slot] = kept.yz;
         }
     }

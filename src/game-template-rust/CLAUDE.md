@@ -16,10 +16,11 @@ game with and which refusals a run can meet.
    `=<version>`. Never add cargo files, build scripts, `unsafe`, or renderer internals, and never
    edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`.
 4. **One screen, one input path, phone first.** Draw all UI with egui in `on_ui` (the HUD is egui
-   too). Read input only from `ctx` inside the hooks (`ctx.keys`, `ctx.touches`, `ctx.pointer`,
-   `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a first-class input: the mouse's first button
-   arrives as touch 0, so write one touch path that also serves the desktop, keep tap targets
-   large, and give every action a way to reach it without a keyboard.
+   too). Read input only from `ctx` inside the hooks (`ctx.actions` for a game's own actions,
+   `ctx.keys`, `ctx.touches`, `ctx.pointer`, `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a
+   first-class input: the mouse's first button arrives as touch 0, so write one touch path that
+   also serves the desktop, keep tap targets large, and give every action a way to reach it
+   without a keyboard.
 5. **Tag and measure.** `frame.tag("<name>")` before what you draw, a `probe` per mechanic, a
    camera that shows it, a `demo` when a generic walk cannot reach it. The checks see the game only
    through these: a mechanic with no probe, tag or camera is unmeasured, and an unmeasured
@@ -42,14 +43,37 @@ over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` ra
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
 `invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
 Rapier (a fifth of the web build) out.
-Assets have a budget per destination too (web 64 MB, phones 200 MB, desktop 2 GB): an export past it
-still ships but downloads slower, so prefer compressed and fewer files over raising `[assets]
-budget_mb`; past 512 MB a web build is refused `assets-over-ceiling`.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
+A multiplayer game follows `docs/api/net.md`: no network before the player picks online, Live
+is a loopback room, and online play is proved only on the published draft in two windows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
+
+## Assets
+
+Models, textures and skies live in `assets/`. Studio imports each file when it lands and writes
+what the game loads; `docs/api/assets.md`, `docs/api/drawing.md` and `docs/api/genex-toml.md`
+hold the how.
+
+- **CC0 before making.** For a common prop, surface or sky, `cc0__search`, then `cc0__fetch` at
+  `1k` (2k only for what fills the screen). Studio downloads it and records its licence in
+  `genex-assets.lock`: never download a file, add a licence line or edit the lock yourself. A held
+  curated pack answers why: take a Poly Haven or ambientCG asset instead.
+- **Read the import's facts.** After a delivery the lock's rows name `issues` by code
+  (`triangles-over-budget`, `albedo-out-of-range`, `usage-unknown`): fix the file, never the lock.
+- **Say how a loose texture is used.** A texture a model's material samples needs nothing. A loose
+  image your code samples gets a `[[texture]]` row (`color`, `data` or `normal`); without one it
+  ships uncompressed and `state().__render.assetIssues` names it `texture-uncompressed`. Keep
+  images square with a power-of-two side.
+- **Fit the budgets.** Each destination has one (web 64 MB, phones 200 MB, desktop 2 GB): past it
+  an export still ships but downloads slower, so prefer compressed, fewer and smaller files over
+  raising `[assets] budget_mb`; past 512 MB a web build is refused `assets-over-ceiling`. What the
+  first frame does not need goes in an `[[asset_group]]`, which a reset never reads.
+- **Check a capture.** `state().__render.missingModels` absent, each texture in
+  `__render.textures` with a compressed `family`, and `assetIssues` absent before calling assets
+  done.
 
 ## Rendering
 
@@ -125,6 +149,26 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
   volume.
 - **Lens off in play.** `.depth_of_field(..)` and `.motion_blur(..)` suit cutscenes, photo modes
   and racers, never where the person steers.
+
+## Game systems
+
+Use the built-in system before writing your own; each page holds the how and its refusals.
+
+- **Input**: name actions once with `game.input(ActionMap::new()..)` and read `ctx.actions`, so
+  keys, pads and on-screen touch controls drive the same action (`docs/api/ctx.md`).
+- **UI and settings**: text, locales and the kit's menus through `game.ui(..)` and `genex::ui`
+  (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
+  (`docs/api/settings.md`).
+- **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`).
+- **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
+  `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
+  `Animator` for rigged models (`docs/api/animation.md`).
+- **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
+  `state().volatile.audio`, never by ear (`docs/api/audio.md`).
+- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`); multiplayer is
+  `docs/api/net.md`.
+- **A hitch**: time the suspects with `genex::profile_scope!` and read `volatile.profile`
+  (`docs/api/profiling.md`).
 
 ## Extension ladder
 

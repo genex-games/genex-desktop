@@ -1,7 +1,8 @@
 //! The in-game graphics settings panel: an egui widget a game shows from its `on_ui` hook
 //! (through `genex::render::settings_panel`, which fills it from the renderer's settings). It
 //! knows nothing about the renderer: it shows the [`SettingsPanel`] it is given (a row of quality
-//! presets, a render-scale slider, one switch per feature and the device class detected) and answers
+//! presets, a render-scale slider, a "Detail distance" slider, one switch per feature and the device
+//! class detected) and answers
 //! what the person changed as [`PanelChange`]s. The caller applies them outside the simulation.
 //!
 //! Like every HUD widget it runs inside the tick from the tick's merged input, so a play script
@@ -19,6 +20,8 @@ pub struct PanelWords<'a> {
     pub quality: &'a str,
     /// The render-scale slider's label.
     pub render_scale: &'a str,
+    /// The "Detail distance" slider's label (how far levels of detail keep their finer shapes).
+    pub detail: &'a str,
     /// The feature switches' header.
     pub features: &'a str,
     /// The device line's label.
@@ -35,6 +38,7 @@ impl PanelWords<'static> {
         heading: "Graphics",
         quality: "Quality",
         render_scale: "Render scale",
+        detail: "Detail distance",
         features: "Features",
         device: "Device",
         emulated: "emulating",
@@ -50,6 +54,8 @@ impl Default for PanelWords<'static> {
 
 /// The slider's step: render scales are coarse (each is an exact target size).
 const SCALE_STEP: f64 = 0.05;
+/// The "Detail distance" slider's step (a share of the preset's distance).
+const DETAIL_STEP: f64 = 0.05;
 
 /// What the panel shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,6 +74,9 @@ pub struct SettingsPanel<'a> {
     pub detected: &'a str,
     /// The class in force when it differs (an emulated class), by label.
     pub emulated: Option<&'a str>,
+    /// The "Detail distance" in force (1: the preset's; 2: levels keep their finer shapes twice as
+    /// far) and the range its slider moves over; `None` hides the row (game systems LOD-06).
+    pub detail: Option<(f32, (f32, f32))>,
 }
 
 /// One change the person made in the panel this tick.
@@ -77,6 +86,8 @@ pub enum PanelChange {
     Preset(usize),
     /// A new render scale.
     RenderScale(f32),
+    /// A new "Detail distance" (a share of the preset's).
+    Detail(f32),
     /// A feature switch, by index, and its new state.
     Feature(usize, bool),
     /// Back to the game's and the device's defaults.
@@ -102,6 +113,7 @@ pub fn settings_panel_with_words(ui: &mut Ui, panel: &SettingsPanel<'_>, words: 
             ui.heading(words.heading);
             preset_choice(ui, panel, words, &mut changes);
             scale_slider(ui, panel, words, &mut changes);
+            detail_slider(ui, panel, words, &mut changes);
             feature_switches(ui, panel, words, &mut changes);
             device_line(ui, panel, words);
             if ui.button(words.reset).clicked() {
@@ -133,6 +145,18 @@ fn scale_slider(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>, 
     ui.add(egui::Slider::new(&mut scale, low..=high).step_by(SCALE_STEP).text(words.render_scale));
     if scale != before {
         changes.push(PanelChange::RenderScale(scale as f32));
+    }
+}
+
+/// The "Detail distance" slider, when the caller offers it.
+fn detail_slider(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>, changes: &mut Vec<PanelChange>) {
+    let Some((detail, (low, high))) = panel.detail else { return };
+    let (low, high) = (f64::from(low), f64::from(high.max(low)));
+    let before = f64::from(detail).clamp(low, high);
+    let mut value = before;
+    ui.add(egui::Slider::new(&mut value, low..=high).step_by(DETAIL_STEP).text(words.detail));
+    if value != before {
+        changes.push(PanelChange::Detail(value as f32));
     }
 }
 
@@ -188,6 +212,7 @@ mod tests {
             features: &FEATURES,
             detected: "desktop-high",
             emulated: None,
+            detail: Some((1.0, (0.5, 2.0))),
         }
     }
 
@@ -238,6 +263,27 @@ mod tests {
         });
         output.textures_delta.clear();
         assert!(bottom <= 120.0, "the panel ends at {bottom}, past the 120 px it was given");
+    }
+
+    /// Game systems LOD-06 (new behaviour): the "Detail distance" row is drawn with its label only
+    /// when offered, and a value outside its range is shown clamped without a change.
+    #[test]
+    fn the_detail_distance_row_is_offered_and_shown_clamped() {
+        let presets = presets();
+        let labels = |panel: &SettingsPanel<'_>| {
+            let mut hud = crate::Hud::new();
+            hud.run([640, 480], 0.0, &crate::HudInput::default(), |ui| {
+                settings_panel(ui, panel);
+            });
+            hud.widgets().iter().map(|widget| widget.label.clone()).collect::<Vec<_>>()
+        };
+        let offered = panel(&presets);
+        assert!(labels(&offered).iter().any(|label| label.contains("Detail distance")), "{:?}", labels(&offered));
+        let hidden = SettingsPanel { detail: None, ..offered };
+        assert!(!labels(&hidden).iter().any(|label| label.contains("Detail distance")), "no row without an offer");
+        let far = SettingsPanel { detail: Some((9.0, (0.5, 2.0))), ..offered };
+        let (changes, _) = run(&far, egui::RawInput::default());
+        assert!(changes.is_empty(), "a value outside the range is shown clamped: {changes:?}");
     }
 
     #[test]

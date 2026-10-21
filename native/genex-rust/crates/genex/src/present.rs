@@ -44,7 +44,8 @@
 //! A model is loaded once per path ([`AssetCache`]) as one mesh per material its GLB names, with
 //! the textures those materials sample; a draw's own [`crate::Material`] replaces them, and its
 //! textures load once per path and kind. A texture that cannot load leaves its slot untextured
-//! (neutral), never the checker.
+//! (neutral), never the checker. A dev build's `reloadAssets` ([`Presenter::reload_assets`]) has
+//! the files it names read again by the next frame, once their new bytes match the host's digest.
 //!
 //! Every frame draws through the game's render settings ([`crate::render::RenderControl`], owned
 //! by the runtime and attached on the first draw, probed with this device's facts). A **Live**
@@ -94,7 +95,8 @@ use crate::camera::{Camera, Projection};
 use crate::render::{CaptureRender, FrameChoice, RenderHandle, WebHints};
 use crate::extend::{ExtensionRefusal, GpuKey, GpuParts};
 use crate::frame::{Color, CustomMesh, DEFAULT_METALLIC, DEFAULT_ROUGHNESS, Frame, Lights, Shape};
-use crate::gfx::AssetTable;
+use crate::gfx::{AssetTable, Model};
+use crate::lod::{LodRefusalCode, ModelLod};
 use genex_core::paths::is_safe_asset_path;
 use crate::runtime::{FIXED_STEP_MS, Runtime, View};
 use genex_hud::egui::epaint::textures::TexturesDelta;
@@ -114,12 +116,24 @@ use genex_render::letterbox::{letterbox, output_for_window};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
 use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
+use genex_render::lod_rows::DrawLod;
 use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
 use genex_render::timing::{Clock, CpuTimer};
-use genex_render::device_class::DeviceClass;
+use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, TargetOs};
 use genex_render::{CullPath, Gpu, GpuCounters, ImmediateFrame, RenderCode, RenderError, RenderOptions, WORLD_FORMAT};
+
+/// The streamed view set the presenter draws for a game that registered `game.streaming` (STR-16).
+pub use characters::{CharacterStats, RATE_FULL_PX, RATE_HALF_PX, RATE_QUARTER_PX, RateBand, palette_digest, rate_band};
+pub use crate::present_stream::{
+    STREAM_LOADS_DESKTOP, STREAM_LOADS_PHONE, STREAM_LOADS_WEB, STREAM_VIEW_CELL_MODELS_MAX, STREAM_VIEW_MODEL_ESTIMATE_BYTES, StreamView, ViewIo,
+    ViewLimits, ViewStats,
+};
+/// Settled captures drain the view set first (STR-25).
+pub use crate::present_stream::{Drain, DrainClock, DrainReport, DrainStep, STREAM_DRAIN_MAX_MS, STREAM_DRAIN_POLL, drain_blocking};
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::present_stream::WallDrainClock;
 
 /// The renderer's planes for a facade camera, which carries none.
 const NEAR_PLANE: f32 = 0.1;
@@ -150,8 +164,20 @@ pub struct Drawn {
     pub textures: Vec<TextureFact>,
     /// What those textures tell an agent to fix ([`texture_facts`], C-11).
     pub asset_issues: Vec<AssetIssue>,
+    /// The models drawn whole because a level-of-detail option was refused, once per model and
+    /// code in first-draw order (`state().__render.lodRefused`, game systems LOD-07).
+    pub lod_refused: Vec<LodRefused>,
     /// What the GPU encoded for the frame (`state().volatile.gpu`), never compared.
     pub gpu: GpuCounters,
+}
+
+/// A model drawn whole because a level-of-detail option was refused (game systems LOD-07).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LodRefused {
+    /// The model's path (a compound's first member's; empty for a compound with no members).
+    pub model: String,
+    /// Why.
+    pub code: LodRefusalCode,
 }
 
 /// Where a bound texture's texels came from (`__render.textures[path].family`, C-11).
@@ -288,6 +314,9 @@ pub struct LoadedModel {
     pub textures: Vec<ModelTexture>,
     /// A normal-mapped primitive had no TANGENT, so its tangents were generated at load (C-9).
     pub runtime_tangents: bool,
+    /// The model-space sphere around every part's mesh (centre xyz, radius; 0 when unknown): a
+    /// compound's parts measure their levels from its members' spheres together (LOD-07).
+    pub sphere: [f32; 4],
 }
 
 /// One GLB image a [`LoadedModel`] uploaded (C-11, C-14).
@@ -335,6 +364,16 @@ pub trait Uploads {
     }
     /// Add a texture as the next layer of its kind's array.
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError>;
+    /// Add a character's GLB as a skinned model with its parts (game systems AN-17); refused by
+    /// default, and a refused character draws its model in bind pose.
+    fn add_skinned_model(&mut self, _model: &genex_render::skin::SkinnedModel) -> Result<genex_render::skin::SkinId, RenderError> {
+        Err(RenderError::refused(RenderCode::MeshInvalid, "skinned models are not taken here"))
+    }
+    /// Remove mesh `id` and its levels (an evicted streamed model, STR-16). The default holds no
+    /// meshes, so it removes nothing.
+    fn remove_mesh(&mut self, _id: MeshId) -> Result<(), RenderError> {
+        Ok(())
+    }
     /// [`Uploads::add_meshes_with_meshlets`] for parts `source` decodes again from bytes the
     /// program holds for its whole life: a renderer that replays uploads keeps the source, not the
     /// parts (the default adds them as any other).
@@ -396,6 +435,14 @@ impl Uploads for Resilient {
         Resilient::add_texture(self, data, kind)
     }
 
+    fn add_skinned_model(&mut self, model: &genex_render::skin::SkinnedModel) -> Result<genex_render::skin::SkinId, RenderError> {
+        Resilient::add_skinned_model(self, model)
+    }
+
+    fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
+        Resilient::remove_mesh(self, id).map(drop)
+    }
+
     fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
         Resilient::add_meshes_from(self, parts, source)
     }
@@ -433,9 +480,46 @@ impl Uploads for Resilient {
     }
 }
 
+/// What [`AssetCache::invalidate`] dropped: the models (their meshes are the renderer's to free)
+/// and whether the environment map was among the paths (the presenter uploads it again).
+#[derive(Debug, Default, PartialEq)]
+pub struct Invalidated {
+    /// The models dropped that had loaded (a refused one had nothing on the device).
+    pub models: Vec<LoadedModel>,
+    /// Whether an environment map was dropped.
+    pub environment: bool,
+}
+
+/// Why [`Presenter::reload_assets`] left a file as it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReloadMiss {
+    /// The game's source has no such file.
+    Missing,
+    /// The bytes the source serves now are not the digest the host named.
+    DigestMismatch,
+}
+
+/// Whether a change to `changed` touches what was loaded for the texture `path`: the file itself
+/// or one of its family files (`<stem>.<family>.ktx2`).
+fn touches_texture(path: &str, changed: &str) -> bool {
+    path == changed || TextureFamily::ALL.into_iter().any(|family| family_file(path, family) == changed)
+}
+
+/// Whether a change to `changed` touches the model loaded from `path`: the GLB itself, or a family
+/// file in its folder, which may be one of its image sidecars (C-14; the stems its GLB names are
+/// not kept, so any family file there reloads it).
+fn touches_model(path: &str, changed: &str) -> bool {
+    if path == changed {
+        return true;
+    }
+    let folder = |file: &str| file.rfind('/').map_or("", |at| &file[..=at]).to_owned();
+    changed.ends_with(".ktx2") && folder(path) == folder(changed)
+}
+
 /// The models and textures a renderer holds for a game, by asset path. Each is tried once: a
 /// refusal is kept (a model then draws the checker, a texture leaves its slot untextured) and
-/// never retried; only a lost device leaves it to be tried again.
+/// never retried; only a lost device leaves it to be tried again, and a dev build's
+/// `reloadAssets` ([`AssetCache::invalidate`]) has the paths it names tried again.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AssetCache {
     models: Vec<(String, Option<LoadedModel>)>,
@@ -448,6 +532,20 @@ pub struct AssetCache {
     /// Whether the texture family was chosen (renderer pass 2 A6.4): at the first frame naming a
     /// texture, before any texture loads.
     family_chosen: bool,
+    /// The characters' skinned models and poses (AN-17).
+    characters: characters::Characters,
+    /// What became of the authored levels of each model loaded with them (LOD-07), by cache key:
+    /// every GLB it read (a change to any reloads it) and the load's refusal.
+    leveled: Vec<Leveled>,
+}
+
+/// A model loaded with authored levels (LOD-07): its cache key, the GLBs it read and the load's
+/// refusal (`levels-mismatch`, or `levels-invalid` for a level not in the game's assets).
+#[derive(Clone, Debug, PartialEq)]
+struct Leveled {
+    key: String,
+    files: Vec<String>,
+    refused: Option<LodRefusalCode>,
 }
 
 /// One texture an [`AssetCache`] tried: its path and kind, its id (`None`: refused) and where it
@@ -568,13 +666,64 @@ impl AssetCache {
         self.models.iter().any(|(known, _)| known == path)
     }
 
+    /// Why the authored levels of the model loaded under `key` were refused at load (LOD-07).
+    fn lod_refusal(&self, key: &str) -> Option<LodRefusalCode> {
+        self.leveled.iter().find(|leveled| leveled.key == key).and_then(|leveled| leveled.refused)
+    }
+
     /// Record `path` as one mesh with no material of its own (`None`: refused), unless it was
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4] });
             self.models.push((path.to_owned(), loaded));
         }
+    }
+
+    /// Record what became of `path`'s load (`None`: refused), replacing what was recorded: the
+    /// streamed view set's finish (STR-16).
+    pub(crate) fn put_model(&mut self, path: &str, loaded: Option<LoadedModel>) {
+        match self.models.iter_mut().find(|(known, _)| known == path) {
+            Some(entry) => entry.1 = loaded,
+            None => self.models.push((path.to_owned(), loaded)),
+        }
+    }
+
+    /// Forget `path` (it was evicted): the model it held, for its meshes to be freed; a later
+    /// draw loads it again.
+    pub(crate) fn take_model(&mut self, path: &str) -> Option<LoadedModel> {
+        let at = self.models.iter().position(|(known, _)| known == path)?;
+        self.models.remove(at).1
+    }
+
+    /// Forget what was loaded from each of `changed` (game systems C-18): a texture loaded from
+    /// the file or one of its family files, a model loaded from the GLB or with a family file in
+    /// its folder (a character's skin too), an environment map; the next load reads them again, a
+    /// refused one included.
+    /// Answers the dropped models, whose meshes the caller frees, and whether an environment map
+    /// was dropped. Textures already on the device stay there until the device is re-created (a
+    /// texture array slot is never freed); what the sim read (`gfx.assets().bytes`) is untouched.
+    pub fn invalidate(&mut self, changed: &[&str]) -> Invalidated {
+        let mut dropped = Invalidated::default();
+        let touched = |path: &str, rule: fn(&str, &str) -> bool| changed.iter().any(|changed| rule(path, changed));
+        let mut kept = Vec::with_capacity(self.models.len());
+        let leveled_touched = |key: &str| self.leveled.iter().any(|leveled| leveled.key == key && leveled.files.iter().any(|file| touched(file, touches_model)));
+        for (path, loaded) in std::mem::take(&mut self.models) {
+            if !touched(&path, touches_model) && !leveled_touched(&path) {
+                kept.push((path, loaded));
+                continue;
+            }
+            dropped.models.extend(loaded);
+        }
+        self.models = kept;
+        let models = &self.models;
+        self.leveled.retain(|leveled| models.iter().any(|(key, _)| *key == leveled.key));
+        self.characters.forget(|path| touched(path, touches_model));
+        self.textures.retain(|cached| !touched(&cached.path, touches_texture));
+        let environments = self.environments.len();
+        self.environments.retain(|(path, _)| !changed.contains(&path.as_str()));
+        dropped.environment = self.environments.len() != environments;
+        dropped
     }
 
     /// The texture loaded for `path` as `kind`; `None` when it was refused or never tried.
@@ -618,6 +767,22 @@ impl AssetCache {
         models
     }
 
+    /// Load the model at `path` with its authored levels (LOD-07) under `key`, remembering the
+    /// files it read and the load's refusal; a refused chain loads the model whole.
+    fn load_leveled(&mut self, key: &str, path: &str, lod: &ModelLod, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+        let files: Vec<String> = std::iter::once(path).chain(lod.levels.iter().filter_map(|(level, _)| level.path())).map(str::to_owned).collect();
+        let (levels, refused) = match level_parts(lod, source) {
+            Ok(levels) => (levels, None),
+            Err(code) => (Vec::new(), Some(code)),
+        };
+        let (loaded, refused) = load_model_levels(path, source, uploads, log, (levels, refused))?;
+        if let Some(code) = refused {
+            log(&format!("model {path:?}: its levels were refused ({}); drawing it whole", code.wire()));
+        }
+        self.leveled.push(Leveled { key: key.to_owned(), files, refused });
+        Ok(loaded)
+    }
+
     /// Load every model and material texture `frame` draws that was never tried: bytes from
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
@@ -630,13 +795,18 @@ impl AssetCache {
                 self.family_chosen = true;
             }
         }
-        for path in model_paths(frame) {
-            if self.tried(path) {
+        for (key, model) in model_keys(frame) {
+            if self.tried(key) {
                 continue;
             }
-            let loaded = load_model(path, source, uploads, log)?;
-            self.models.push((path.to_owned(), loaded));
+            let chained = model.and_then(|model| Some((model.path()?, model.lod_options().filter(|lod| lod.chained())?)));
+            let loaded = match chained {
+                Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log)?,
+                None => load_model(key, source, uploads, log)?,
+            };
+            self.models.push((key.to_owned(), loaded));
         }
+        self.characters.load(frame, source, uploads, log)?;
         // A file used as several kinds (a base colour that is also a mask) is read once, and its
         // family files are looked for once.
         let mut read: Vec<(&str, Option<TextureData>)> = Vec::new();
@@ -710,27 +880,80 @@ fn read_environment(path: &str, source: &dyn ModelSource, log: &mut dyn FnMut(&s
     genex_render::hdri::decode(&bytes).map_err(|refusal| log(&format!("environment map {path:?} refused: {refusal}"))).ok()
 }
 
-/// Every model path `frame` draws: its shapes', then its custom draws', in draw order.
+/// Every model path `frame` draws: its shapes', then its custom draws', in draw order (a
+/// compound's members' in its place).
 fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
-    let shapes = frame.draws().iter().filter_map(|draw| match &draw.shape {
-        Shape::Model { model, .. } => model.path(),
+    model_keys(frame).filter_map(|(key, model)| match model {
+        Some(model) => model.path(),
+        None => Some(key),
+    })
+}
+
+/// The model a shape or custom draw names, if it names one (a character's is not a [`Model`]).
+fn shape_model(shape: &Shape) -> Option<&Model> {
+    match shape {
+        Shape::Model { model, .. } => Some(model),
         Shape::Group { group } => match group.shape() {
-            crate::GroupShape::Model(model) => model.path(),
+            crate::GroupShape::Model(model) => Some(model),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
         },
-        Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
-    });
+        Shape::Character { .. } | Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } | Shape::Lines { .. } => None,
+    }
+}
+
+/// Every model `frame` draws as its own [`Model`] handle: its shapes', then its custom draws', in
+/// draw order, a compound as itself.
+fn drawn_models(frame: &Frame) -> impl Iterator<Item = &Model> {
+    let shapes = frame.draws().iter().filter_map(|draw| shape_model(&draw.shape));
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
-        CustomMesh::Model(model) => model.path(),
+        CustomMesh::Model(model) => Some(model),
         CustomMesh::Cube | CustomMesh::Sphere => None,
     });
     shapes.chain(custom)
 }
 
+/// The asset-cache key of every model `frame` draws, with its handle (none for a character's
+/// GLB, keyed by its path): its shapes', then its custom draws', in draw order, a compound's
+/// members in its place (LOD-07). A plain model's key is its path.
+fn model_keys(frame: &Frame) -> impl Iterator<Item = (&str, Option<&Model>)> {
+    let shapes = frame.draws().iter().flat_map(|draw| {
+        let (models, character): (&[Model], Option<&str>) = match &draw.shape {
+            Shape::Character { animator, .. } => (&[], Some(animator.asset().path())),
+            shape => (shape_model(shape).map_or(&[][..], Model::drawn_members), None),
+        };
+        let models = models.iter().filter_map(|model| Some((model.key()?, Some(model))));
+        character.map(|path| (path, None)).into_iter().chain(models)
+    });
+    let custom = frame.custom_draws().iter().flat_map(|draw| match &draw.mesh {
+        CustomMesh::Model(model) => model.drawn_members(),
+        CustomMesh::Cube | CustomMesh::Sphere => &[],
+    });
+    shapes.chain(custom.filter_map(|model| Some((model.key()?, Some(model)))))
+}
+
+/// Every model `frame` draws whole because a level-of-detail option was refused (LOD-07), once
+/// per model and code in first-draw order: the handle's own refusal, a member's, or its load's.
+fn lod_refusals(frame: &Frame, assets: &AssetCache) -> Vec<LodRefused> {
+    let mut refused: Vec<LodRefused> = Vec::new();
+    for model in drawn_models(frame) {
+        let members = model.drawn_members().iter().filter(|member| *member != model);
+        let member_codes = members.filter_map(|member| member.lod_refusal().map(|code| (member, code)));
+        let loads = model.drawn_members().iter().filter_map(|member| Some((member, assets.lod_refusal(member.key()?)?)));
+        let own = model.lod_refusal().map(|code| (model, code));
+        for (named, code) in own.into_iter().chain(member_codes).chain(loads) {
+            let entry = LodRefused { model: named.path().unwrap_or_default().to_owned(), code };
+            if !refused.contains(&entry) {
+                refused.push(entry);
+            }
+        }
+    }
+    refused
+}
+
 /// Every texture path the draws' materials name, with the array kind its slot samples.
 fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
     let materials = frame.draws().iter().filter_map(|draw| match &draw.shape {
-        Shape::Model { material, .. } => material.as_ref(),
+        Shape::Model { material, .. } | Shape::Character { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
         Shape::Group { group } => group.material(),
         Shape::Line { .. } | Shape::Lines { .. } => None,
@@ -778,12 +1001,12 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
         }
     }
     let mut models: Vec<&str> = Vec::new();
-    for path in models_with_own_materials(frame) {
-        if models.contains(&path) {
+    for (key, path) in models_with_own_materials(frame) {
+        if models.contains(&key) {
             continue;
         }
-        models.push(path);
-        let Some(loaded) = assets.model(path) else { continue };
+        models.push(key);
+        let Some(loaded) = assets.model(key) else { continue };
         for texture in &loaded.textures {
             let key = format!("{path}#{}", texture.image);
             // An image bound in two usages is one fact (its first) but each usage's issue counts.
@@ -799,8 +1022,9 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
     }
     // Every model drawn whose tangents were generated at load (C-9), once, in first-draw order.
     let mut named: Vec<&str> = Vec::new();
-    for path in model_paths(frame) {
-        if named.contains(&path) || !assets.model(path).is_some_and(|loaded| loaded.runtime_tangents) {
+    for (key, model) in model_keys(frame) {
+        let path = model.and_then(Model::path).unwrap_or(key);
+        if named.contains(&path) || !assets.model(key).is_some_and(|loaded| loaded.runtime_tangents) {
             continue;
         }
         named.push(path);
@@ -809,15 +1033,21 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
     (facts, issues)
 }
 
-/// The paths of the models `frame` draws with the materials their GLBs name (no material given).
-fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = &str> {
-    frame.draws().iter().filter_map(|draw| match &draw.shape {
-        Shape::Model { model, material: None, .. } => model.path(),
-        Shape::Group { group } if group.material().is_none() => match group.shape() {
-            crate::GroupShape::Model(model) => model.path(),
-            crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
-        },
-        _ => None,
+/// The cache keys and paths of the models `frame` draws with the materials their GLBs name (no
+/// material given), a compound's members in its place.
+fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = (&str, &str)> {
+    frame.draws().iter().flat_map(|draw| {
+        let (models, character): (&[Model], Option<&str>) = match &draw.shape {
+            Shape::Model { model, material: None, .. } => (model.drawn_members(), None),
+            Shape::Character { animator, material: None, .. } => (&[], Some(animator.asset().path())),
+            Shape::Group { group } if group.material().is_none() => match group.shape() {
+                crate::GroupShape::Model(model) => (model.drawn_members(), None),
+                crate::GroupShape::Cube | crate::GroupShape::Sphere => (&[], None),
+            },
+            _ => (&[], None),
+        };
+        let models = models.iter().filter_map(|model| Some((model.key()?, model.path()?)));
+        character.map(|path| (path, path)).into_iter().chain(models)
     })
 }
 
@@ -897,17 +1127,93 @@ fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &
 
 /// Load one model: every part's mesh and the textures its materials sample. A missing or
 /// malformed file, or a refused mesh, refuses the model (logged); a refused texture only its slot.
-fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+    Ok(load_model_levels(path, source, uploads, log, (Vec::new(), None))?.0)
+}
+
+/// Each authored level's parts with its switch distance (LOD-07), read from the game's assets:
+/// `levels-invalid` for a level the game does not ship, `levels-mismatch` for one that does not
+/// open as a GLB with triangles.
+fn level_parts(lod: &ModelLod, source: &dyn ModelSource) -> Result<Vec<(ModelParts, f32)>, LodRefusalCode> {
+    let mut levels = Vec::with_capacity(lod.levels.len());
+    for ((level, _), metres) in lod.levels.iter().zip(lod.distances()) {
+        let bytes = level.path().and_then(|path| source.model_bytes(path)).ok_or(LodRefusalCode::LevelsInvalid)?;
+        let parts = GlbModel::parts_from_glb(&bytes).map_err(|_| LodRefusalCode::LevelsMismatch)?;
+        levels.push((parts, metres));
+    }
+    Ok(levels)
+}
+
+/// `parts` with authored `levels` as each part's chain (LOD-07): level k's part i appended to
+/// part i's vertices, its triangles over them, its switch distance as the error the renderer's
+/// rule switches at ([`crate::lod::switch_error`]). Replaces any imported chain.
+fn with_authored_levels(parts: ModelParts, levels: &[(ModelParts, f32)]) -> ModelParts {
+    let mut parts = parts;
+    for (at, part) in parts.iter_mut().enumerate() {
+        let mut chain = genex_render::mesh::LodChain::default();
+        for (level_parts, metres) in levels {
+            let level = &level_parts[at].mesh;
+            let base = part.mesh.vertices.len() as u32;
+            part.mesh.vertices.extend_from_slice(&level.vertices);
+            let indices = level.indices.iter().map(|index| base + index).collect();
+            chain.levels.push(genex_render::mesh::LodLevel { indices, error: crate::lod::switch_error(*metres) });
+        }
+        part.lods = Some(chain);
+    }
+    parts
+}
+
+/// The smallest sphere around two (centre xyz, radius); a radius that is not positive is none.
+fn union_sphere(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let positive = |radius: f32| radius > 0.0;
+    if !positive(a[3]) {
+        return b;
+    }
+    if !positive(b[3]) {
+        return a;
+    }
+    let offset = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt();
+    if distance + b[3] <= a[3] {
+        return a;
+    }
+    if distance + a[3] <= b[3] {
+        return b;
+    }
+    let radius = (distance + a[3] + b[3]) * 0.5;
+    let t = (radius - a[3]) / distance;
+    [a[0] + offset[0] * t, a[1] + offset[1] * t, a[2] + offset[2] * t, radius]
+}
+
+/// The sphere around every part's mesh.
+fn parts_sphere(parts: &ModelParts) -> [f32; 4] {
+    parts.iter().fold([0.0; 4], |sphere, part| {
+        let ([x, y, z], radius) = part.mesh.bounds();
+        union_sphere(sphere, [x, y, z, radius])
+    })
+}
+
+/// [`load_model`] with authored `levels` (LOD-07; none for a plain model) and the refusal they
+/// already met: a level with another part count than the model's refuses them
+/// `levels-mismatch`, and a refused chain loads the model whole. Answers the load and the chain's
+/// refusal.
+fn load_model_levels(
+    path: &str,
+    source: &dyn ModelSource,
+    uploads: &mut dyn Uploads,
+    log: &mut dyn FnMut(&str),
+    (levels, refused): (Vec<(ModelParts, f32)>, Option<LodRefusalCode>),
+) -> Result<(Option<LoadedModel>, Option<LodRefusalCode>), RenderError> {
     let Some(bytes) = source.model_bytes(path) else {
         log(&format!("model {path:?} is not in the game's assets: drawing the missing-asset checker"));
-        return Ok(None);
+        return Ok((None, refused));
     };
     // Images are decoded only when their sidecar does not load (C-14).
     let glb = match GlbModel::from_glb_undecoded(&bytes) {
         Ok(glb) => glb,
         Err(error) => {
             log(&format!("model {path:?} refused: {error}"));
-            return Ok(None);
+            return Ok((None, refused));
         }
     };
     if let GlbSidecars::Malformed(detail) = glb.sidecars() {
@@ -920,8 +1226,13 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
     let model_parts: ModelParts = glb.model_parts();
+    let sphere = parts_sphere(&model_parts);
+    let mismatch = levels.iter().any(|(level, _)| level.len() != model_parts.len());
+    let refused = refused.or(mismatch.then_some(LodRefusalCode::LevelsMismatch));
     let still = source.static_bytes(path);
     let added = match still {
+        // Authored levels (LOD-07) upload merged parts, which a replay keeps as they are.
+        _ if refused.is_none() && !levels.is_empty() => uploads.add_model_parts(with_authored_levels(model_parts, &levels)),
         Some(bytes) => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes))),
         None => uploads.add_model_parts(model_parts),
     };
@@ -930,7 +1241,7 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
         Err(error) if error.code() == RenderCode::DeviceLost => return Err(error),
         Err(error) => {
             log(&format!("model {path:?} refused: {error}"));
-            return Ok(None);
+            return Ok((None, refused));
         }
     };
     for (part, mesh) in glb.parts().iter().zip(meshes) {
@@ -947,7 +1258,7 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
     }
     let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
     let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
-    Ok(Some(LoadedModel { parts, triangles, textures, runtime_tangents }))
+    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere }), refused))
 }
 
 /// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
@@ -1075,6 +1386,8 @@ pub struct Presenter {
     /// The last Live frame's HUD, painted over the window after the upscale at every present
     /// (its texture changes wait in `hud_unsent`); None after a capture, whose world carries its own.
     live_hud: Option<HudPaint>,
+    /// The player profile overlay (PROF-8): painted over window presents only, never a capture.
+    pub profile_overlay: genex_hud::ProfileOverlay,
     /// Device pixels per HUD point of the last window present: what the next Live HUD is
     /// tessellated at.
     window_pixels_per_point: f32,
@@ -1089,6 +1402,16 @@ pub struct Presenter {
     last_output: Option<(u32, u32)>,
     source: Box<dyn ModelSource>,
     assets: AssetCache,
+    /// The paths a `reloadAssets` dropped that no frame has loaded again yet (C-18).
+    reloading: Vec<String>,
+    /// The profiler's frame index the next Live frame's graph steps are bracketed as, while
+    /// per-node GPU timing is armed (PROF-5); None while it is not.
+    node_frame: Option<u64>,
+    /// Per-node GPU samples that landed since they were last taken.
+    node_samples: Vec<genex_profile::GpuNodeSample>,
+    /// The streamed view set (STR-16): idle unless the game registered `game.streaming`; its
+    /// limits follow the drawn class.
+    stream: crate::present_stream::StreamView,
     /// Why the last frame was not drawn, until one is.
     failed: Option<RenderError>,
     /// Whether frames run the game's custom passes (a diagnostic switch; on by default).
@@ -1244,6 +1567,7 @@ impl Presenter {
             hud_unsent: TexturesDelta::default(),
             hud_history: TexturesDelta::default(),
             live_hud: None,
+            profile_overlay: genex_hud::ProfileOverlay::default(),
             window_pixels_per_point: WORLD_PIXELS_PER_POINT,
             window: None,
             capture_size: None,
@@ -1251,6 +1575,13 @@ impl Presenter {
             last_output: None,
             source,
             assets: AssetCache::default(),
+            reloading: Vec::new(),
+            node_frame: None,
+            node_samples: Vec::new(),
+            stream: crate::present_stream::StreamView::new(crate::present_stream::ViewLimits::for_class(
+                DeviceClass::new(FormFactor::Desktop, PerformanceTier::High),
+                TargetOs::current(),
+            )),
             failed: None,
             custom_passes: true,
             log,
@@ -1575,6 +1906,8 @@ impl Presenter {
         immediate.set_seconds((tick as f64 * FIXED_STEP_MS / 1000.0) as f32);
         // The frame's water on the same clock (renderer pass 2 B.3).
         immediate.set_water(water_of(frame, tick));
+        // The quality's crossfade band between levels of detail (LOD-06; `lod-fade` off gives 0).
+        immediate.set_lod_band(self.resilient.renderer().renderer().quality().lod.fade_band);
         self.sync_passes(passes);
         immediate.set_tick(tick);
         // Each emitter as it is at the frame's tick (a refused one is skipped).
@@ -1695,6 +2028,7 @@ impl Presenter {
         self.set_window_size(window);
         let Some(mut paint) = self.live_hud.take() else {
             self.resilient.present(target, format, window);
+            self.paint_profile_overlay(target, format, window);
             return;
         };
         paint.textures_delta = std::mem::take(&mut self.hud_unsent);
@@ -1706,6 +2040,13 @@ impl Presenter {
         // What the painter did not take (a lost device paints nothing) waits for the next one.
         self.hud_unsent = std::mem::take(&mut paint.textures_delta);
         self.live_hud = Some(paint);
+        self.paint_profile_overlay(target, format, window);
+    }
+
+    /// The profile overlay over the presented window, after the HUD (PROF-8).
+    fn paint_profile_overlay(&mut self, target: &wgpu::TextureView, format: wgpu::TextureFormat, window: (u32, u32)) {
+        let gpu = self.resilient.gpu();
+        self.profile_overlay.paint(&gpu.device, &gpu.queue, target, format, [window.0, window.1]);
     }
 
     /// Hand the pass registry this frame's render size and the renderer's pipeline-shaping facts;
@@ -1725,8 +2066,11 @@ impl Presenter {
     /// the triangles drawn; None for a view the game does not have.
     pub fn draw_view<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Option<Result<Drawn, RenderError>> {
         let camera = runtime.camera(view)?;
-        let frame = runtime.frame(view)?;
+        let mut frame = runtime.frame(view)?;
         let handle = self.attach(runtime);
+        if let Err(error) = self.stream_frame(runtime, &handle, &camera, &mut frame) {
+            return Some(Err(error));
+        }
         let output = self.frame_output(&handle);
         let world = self.resilient.renderer().renderer().logical_size();
         // A capture paints its HUD into the world target at the capture's own pixels per point (1 at
@@ -1735,6 +2079,15 @@ impl Presenter {
         let pixels_per_point = if self.capturing { capture_ppp } else { self.window_pixels_per_point };
         let mut hud = runtime.hud_paint(pixels_per_point);
         let live = !self.capturing;
+        if live {
+            // PROF-8: the dev flavour's Ctrl+Shift+P, and the numbers a shown overlay reads.
+            if cfg!(feature = "studio") {
+                self.profile_overlay.note_keys(&runtime.held());
+            }
+            if self.profile_overlay.shown() {
+                self.profile_overlay.set_view(runtime.profiling().summary_json().as_deref().and_then(genex_hud::ProfileView::from_summary));
+            }
+        }
         // The frame's Level-2 extensions first: a v1 material it brings keeps it on the legacy LDR
         // scene, which `apply` reads to choose the anti-aliasing, so the first frame that draws one
         // chooses as every later frame does (pass-1 gate: two captures of one frame differed).
@@ -1756,6 +2109,13 @@ impl Presenter {
         self.set_output(output);
         self.keep_warm_frame = live && self.wants_warm(&handle, held.is_some());
         let timing = live.then(|| self.begin_live());
+        // Characters' poses (AN-17), over their skins (loaded first): Live's rate bands read the
+        // game camera, whatever the view.
+        if let Err(error) = self.load(&frame) {
+            return Some(Err(error));
+        }
+        let game_camera = runtime.camera(View::Game).unwrap_or(camera);
+        self.assets.pose_characters(&frame, &game_camera, runtime.tick(), live);
         let drawn = crate::gpu::host::with_passes(runtime, |passes, tick| self.draw(&frame, &camera, passes, tick, &mut hud));
         if let Some(timing) = timing {
             self.end_live(&handle, timing);
@@ -1773,9 +2133,66 @@ impl Presenter {
         if let Ok(drawn) = &drawn {
             runtime.note_triangles(drawn.triangles, &drawn.by_tag);
             runtime.note_missing_models(&drawn.missing_models);
+            runtime.note_lod_refused(&drawn.lod_refused);
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
         }
         Some(drawn)
+    }
+
+    /// The streamed view set's part of a frame (STR-16): its limits follow the drawn class, then it
+    /// updates from the camera and appends its draws to `frame`. Nothing without `game.streaming`.
+    fn stream_frame<W>(&mut self, runtime: &Runtime<W>, handle: &RenderHandle, camera: &Camera, frame: &mut Frame) -> Result<(), RenderError> {
+        self.stream_update(runtime, handle, camera)?;
+        self.stream.draw_into(frame);
+        Ok(())
+    }
+
+    /// The view set's update for a frame drawn from `camera` (Live's or the capture class's limits).
+    fn stream_update<W>(&mut self, runtime: &Runtime<W>, handle: &RenderHandle, camera: &Camera) -> Result<(), RenderError> {
+        let (class, os) = {
+            let control = handle.borrow();
+            let class = if self.capturing { control.capture_class() } else { control.live_class() };
+            (class, control.facts().os)
+        };
+        let limits = ViewLimits::for_class(class, os);
+        if limits != self.stream.limits() {
+            self.stream.set_limits(limits);
+        }
+        let log = self.log;
+        let io = ViewIo { assets: &mut self.assets, source: &*self.source, uploads: &mut self.resilient, clock: &self.clock, log: &mut |line| log(line) };
+        self.stream.update(runtime, camera, io)
+    }
+
+    /// One pass of a settled capture's drain (STR-25, `present_stream/drain.rs`): the view set
+    /// updates as the capture draws it (the capture class, the drawn camera; no tick, no draw) and
+    /// answers whether everything it wants is resident or refused. True at once without
+    /// `game.streaming` or for a view the game lacks.
+    pub fn drain_pass<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Result<bool, RenderError> {
+        let Some(camera) = runtime.camera(view) else { return Ok(true) };
+        if runtime.stream_view().is_none() {
+            return Ok(true);
+        }
+        let handle = self.attach(runtime);
+        let capturing = std::mem::replace(&mut self.capturing, true);
+        let updated = self.stream_update(runtime, &handle, &camera);
+        self.capturing = capturing;
+        updated.map(|()| self.stream.settled())
+    }
+
+    /// Record how a settled capture's drain ended (`volatile.__stream.view`, STR-25).
+    pub fn note_drain(&mut self, report: DrainReport) {
+        self.stream.note_drain(report);
+    }
+
+    /// What the streamed view set holds and did in the last frame (STR-16).
+    pub fn stream_stats(&self) -> ViewStats {
+        self.stream.stats()
+    }
+
+    /// Read streamed models through `source` (natively `StreamFiles`, on the web the page's
+    /// fetches) instead of the presenter's own source, answered at once (STR-16).
+    pub fn set_stream_source(&mut self, source: Box<dyn crate::stream_source::AsyncSource>) {
+        self.stream.set_source(source);
     }
 
     /// Start a Live frame's timing: the GPU times that landed since the last one (None without
@@ -1783,6 +2200,10 @@ impl Presenter {
     /// frame.
     fn begin_live(&mut self) -> LiveTiming {
         let queue = self.resilient.gpu().queue.clone();
+        if let Some(frame) = self.node_frame {
+            let nodes = self.resilient.renderer_mut().renderer_mut().arm_node_timer(&queue, frame);
+            self.node_samples.extend(nodes.into_iter().flatten().flat_map(|landed| landed.nodes));
+        }
         let landed = self.resilient.renderer_mut().renderer_mut().arm_frame_timer(&queue);
         let now = (self.clock)();
         let since_last = self.last_live.map_or(0.0, |last| now.saturating_sub(last).as_secs_f32() * 1000.0);
@@ -1872,7 +2293,65 @@ impl Presenter {
     /// again.
     fn load(&mut self, frame: &Frame) -> Result<(), RenderError> {
         let log = self.log;
-        self.assets.load(frame, &*self.source, &mut self.resilient, &mut |line| log(line))
+        self.assets.load(frame, &*self.source, &mut self.resilient, &mut |line| log(line))?;
+        // Every dropped path the frame draws was read again; one it does not draw has nothing left
+        // to load.
+        self.reloading.clear();
+        Ok(())
+    }
+
+    /// `reloadAssets` (game systems C-18): for each `(path, digest)` (a path already under the
+    /// asset-path rule), check the bytes the game's source serves now against the FNV-1a 64 the
+    /// host named, then drop what the renderer holds of every file that matched (its models'
+    /// meshes freed, an environment map uploaded again), so the next frame reads them; one answer
+    /// per file, in order. A missing file or a stale digest changes nothing.
+    pub fn reload_assets(&mut self, files: &[(&str, u64)]) -> Vec<Result<(), ReloadMiss>> {
+        let answers: Vec<Result<(), ReloadMiss>> = files
+            .iter()
+            .map(|(path, digest)| match self.source.model_bytes(path) {
+                None => Err(ReloadMiss::Missing),
+                Some(bytes) if genex_core::digest::fnv1a64(&bytes) != *digest => Err(ReloadMiss::DigestMismatch),
+                Some(_) => Ok(()),
+            })
+            .collect();
+        let changed: Vec<&str> = files.iter().zip(&answers).filter(|(_, answer)| answer.is_ok()).map(|((path, _), _)| *path).collect();
+        if changed.is_empty() {
+            return answers;
+        }
+        let dropped = self.assets.invalidate(&changed);
+        for model in dropped.models {
+            for part in model.parts {
+                if let Err(error) = self.resilient.remove_mesh(part.mesh) {
+                    (self.log)(&format!("a reloaded model's mesh was not removed: {error}"));
+                }
+            }
+        }
+        if dropped.environment {
+            self.environment_map = None;
+        }
+        for path in changed {
+            if !self.reloading.iter().any(|known| known == path) {
+                self.reloading.push(path.to_owned());
+            }
+        }
+        answers
+    }
+
+    /// Bracket the next Live frames' graph steps on the GPU as the profiler's frame `frame` (per-node
+    /// timing armed, PROF-5), or stop (None). Captures are never bracketed.
+    pub fn set_node_frame(&mut self, frame: Option<u64>) {
+        self.node_frame = frame;
+    }
+
+    /// The per-node GPU samples that landed since the last take, in schedule order per frame.
+    pub fn take_node_samples(&mut self) -> Vec<genex_profile::GpuNodeSample> {
+        std::mem::take(&mut self.node_samples)
+    }
+
+    /// The paths a `reloadAssets` dropped that no frame has loaded again yet: 0 once a frame
+    /// drew (a lost device keeps them pending).
+    pub fn reload_pending(&self) -> u32 {
+        u32::try_from(self.reloading.len()).unwrap_or(u32::MAX)
     }
 
     /// Hand the renderer the environment `frame` lights with ([`environment_of`]), uploading an
@@ -2081,14 +2560,17 @@ impl Presenter {
         let (meshes, triangles) = match &draw.mesh {
             CustomMesh::Cube => (vec![MeshId::CUBE], CUBE_TRIANGLES),
             CustomMesh::Sphere => (vec![MeshId::SPHERE], SPHERE_TRIANGLES),
-            CustomMesh::Model(model) => match model.path().and_then(|path| self.assets.model(path)) {
-                Some(loaded) => (loaded.parts.iter().map(|part| part.mesh).collect(), loaded.triangles),
-                None => {
-                    note_missing(&mut drawn.missing_models, model.path());
-                    immediate.mesh(MeshId::CUBE, matrix, Material::missing());
-                    return CUBE_TRIANGLES;
+            CustomMesh::Model(model) => {
+                let loaded: Option<Vec<&LoadedModel>> = model.drawn_members().iter().map(|member| self.assets.model(member.key()?)).collect();
+                match loaded {
+                    Some(loaded) => (loaded.iter().flat_map(|model| model.parts.iter().map(|part| part.mesh)).collect(), loaded.iter().map(|model| model.triangles).sum()),
+                    None => {
+                        note_missing(&mut drawn.missing_models, model.path());
+                        immediate.mesh(MeshId::CUBE, matrix, Material::missing());
+                        return CUBE_TRIANGLES;
+                    }
                 }
-            },
+            }
         };
         let id = self.material_id(draw.material.gpu_key());
         for mesh in meshes {
@@ -2418,7 +2900,7 @@ fn lighting(lights: &Lights) -> Lighting {
 }
 
 /// Where a frame's world draws go: the presenter's [`ImmediateFrame`] or a bare [`Scene`].
-trait WorldSink {
+trait WorldSink: characters::SkinSink {
     fn tag(&mut self, name: &str);
     /// The draw id the following meshes carry ([`Frame::id`]): motion vectors match a moving
     /// draw to its last frame by it (RQ5.1).
@@ -2430,6 +2912,8 @@ trait WorldSink {
     /// Line segments as one logical draw (NAV-15): each pair of vertices one segment.
     fn lines(&mut self, vertices: &[LineVertex]);
     fn lighting(&mut self) -> &mut Lighting;
+    /// How the following meshes choose their levels (LOD-07): a bias and a compound's sphere.
+    fn lod(&mut self, lod: DrawLod);
 }
 
 impl WorldSink for Scene {
@@ -2457,6 +2941,10 @@ impl WorldSink for Scene {
 
     fn lighting(&mut self) -> &mut Lighting {
         &mut self.lighting
+    }
+
+    fn lod(&mut self, lod: DrawLod) {
+        self.set_lod(lod);
     }
 }
 
@@ -2490,6 +2978,10 @@ impl WorldSink for ImmediateFrame {
     fn lighting(&mut self) -> &mut Lighting {
         self.lighting_mut()
     }
+
+    fn lod(&mut self, lod: DrawLod) {
+        self.set_lod(lod);
+    }
 }
 
 /// Write `frame`'s lights and shapes into `sink` with what `assets` loaded, in draw order, and
@@ -2511,20 +3003,33 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
     match shape {
         Shape::Model { model, transform, tint, material } => {
             let matrix = transform.to_cols_array();
-            let Some(loaded) = model.path().and_then(|path| assets.model(path)) else {
-                sink.mesh(MeshId::CUBE, matrix, Material::missing());
-                note_missing(missing, model.path());
-                return CUBE_TRIANGLES;
-            };
-            for part in &loaded.parts {
-                let drawn_with = match (material, &part.material) {
-                    (Some(material), _) => surface(material, *tint, assets),
-                    (None, Some(glb)) => glb.to_material(rgba(*tint)),
-                    (None, None) => surface(&crate::Material::color(*tint), Color::WHITE, assets),
-                };
-                sink.mesh(part.mesh, matrix, drawn_with);
+            // LOD-07: a bias, and a compound's one sphere every part measures from.
+            let lod = draw_lod(model, assets);
+            if let Some(lod) = lod {
+                sink.lod(lod);
             }
-            loaded.triangles
+            let mut triangles = 0u32;
+            for member in model.drawn_members() {
+                let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
+                    sink.mesh(MeshId::CUBE, matrix, Material::missing());
+                    note_missing(missing, member.path());
+                    triangles = triangles.saturating_add(CUBE_TRIANGLES);
+                    continue;
+                };
+                for part in &loaded.parts {
+                    let drawn_with = match (material, &part.material) {
+                        (Some(material), _) => surface(material, *tint, assets),
+                        (None, Some(glb)) => glb.to_material(rgba(*tint)),
+                        (None, None) => surface(&crate::Material::color(*tint), Color::WHITE, assets),
+                    };
+                    sink.mesh(part.mesh, matrix, drawn_with);
+                }
+                triangles = triangles.saturating_add(loaded.triangles);
+            }
+            if lod.is_some() {
+                sink.lod(DrawLod::OWN);
+            }
+            triangles
         }
         Shape::Cube { transform, material } => {
             sink.mesh(MeshId::CUBE, transform.to_cols_array(), surface(material, Color::WHITE, assets));
@@ -2545,7 +3050,25 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             0
         }
         Shape::Group { group } => push_group(sink, assets, missing, group),
+        // AN-17: skinned in its pose; a missing file draws the checker.
+        Shape::Character { animator, transform, tint, material } => {
+            let character = characters::CharacterShape { animator, transform: *transform, tint: *tint, material: material.as_ref() };
+            characters::push(sink, assets, missing, character)
+        }
     }
+}
+
+/// How `model`'s draw chooses its levels (LOD-07), when it differs from each part measuring from
+/// its own bounds at bias 1: its bias, and for a compound the sphere around its members' loaded
+/// meshes, so every part switches at the same distance.
+fn draw_lod(model: &Model, assets: &AssetCache) -> Option<DrawLod> {
+    let lod = model.lod_options()?;
+    let compound = !lod.members.is_empty();
+    let sphere = lod.members.iter().filter_map(|member| assets.model(member.key()?)).fold([0.0; 4], |sphere, loaded| union_sphere(sphere, loaded.sphere));
+    let origin = (compound && sphere[3] > 0.0).then_some(sphere);
+    let bias = lod.bias();
+    let differs = origin.is_some() || bias != crate::lod::LOD_BIAS_DEFAULT;
+    differs.then_some(DrawLod { origin, bias, ..DrawLod::OWN })
 }
 
 /// Add one retained instance group to `sink` (renderer pass 2 A.0b): the renderer's group of
@@ -2565,19 +3088,32 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             SPHERE_TRIANGLES.saturating_mul(count)
         }
         crate::GroupShape::Model(model) => {
-            let Some(loaded) = model.path().and_then(|path| assets.model(path)) else {
-                sink.group(&group.render_group(MeshId::CUBE), Material::missing());
-                note_missing(missing, model.path());
-                return CUBE_TRIANGLES.saturating_mul(count);
-            };
-            for part in &loaded.parts {
-                let drawn_with = match (group.material(), &part.material) {
-                    (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
-                    _ => own(),
-                };
-                sink.group(&group.render_group(part.mesh), drawn_with);
+            // LOD-07: the model's bias and a compound's sphere hold for every copy.
+            let lod = draw_lod(model, assets);
+            if let Some(lod) = lod {
+                sink.lod(lod);
             }
-            loaded.triangles.saturating_mul(count)
+            let mut triangles = 0u32;
+            for member in model.drawn_members() {
+                let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
+                    sink.group(&group.render_group(MeshId::CUBE), Material::missing());
+                    note_missing(missing, member.path());
+                    triangles = triangles.saturating_add(CUBE_TRIANGLES.saturating_mul(count));
+                    continue;
+                };
+                for part in &loaded.parts {
+                    let drawn_with = match (group.material(), &part.material) {
+                        (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
+                        _ => own(),
+                    };
+                    sink.group(&group.render_group(part.mesh), drawn_with);
+                }
+                triangles = triangles.saturating_add(loaded.triangles.saturating_mul(count));
+            }
+            if lod.is_some() {
+                sink.lod(DrawLod::OWN);
+            }
+            triangles
         }
     }
 }
@@ -2593,6 +3129,12 @@ pub fn water_of(frame: &Frame, tick: u64) -> Option<genex_render::scene::SceneWa
 /// The renderer's scene for `frame` drawn from `camera` with what `assets` loaded: its lights,
 /// then its shapes in draw order. The presenter writes its frame with the same writer, so a shell
 /// drawing this scene draws what the presenter draws.
+/// What `frame`'s world draw counts against `assets` with no GPU: the draws, triangles, models
+/// drawn as the checker and textures `draw_view` reports.
+pub fn drawn_of(frame: &Frame, camera: &Camera, assets: &AssetCache) -> Drawn {
+    world_frame(frame, camera, assets).1
+}
+
 pub fn to_scene(frame: &Frame, camera: &Camera, assets: &AssetCache) -> Scene {
     let mut scene = Scene::new(camera_desc(camera), rgba(frame.clear_color()));
     write_world(&mut scene, frame, assets, &mut Drawn::default());
@@ -2632,7 +3174,8 @@ fn world_frame(frame: &Frame, camera: &Camera, assets: &AssetCache) -> (Immediat
         immediate.camera_cut();
     }
     let (textures, asset_issues) = texture_facts(frame, assets);
-    let mut drawn = Drawn { draw_calls: frame.draw_calls(), textures, asset_issues, ..Drawn::default() };
+    let lod_refused = lod_refusals(frame, assets);
+    let mut drawn = Drawn { draw_calls: frame.draw_calls(), textures, asset_issues, lod_refused, ..Drawn::default() };
     write_world(&mut immediate, frame, assets, &mut drawn);
     (immediate, drawn)
 }

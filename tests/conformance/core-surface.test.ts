@@ -54,6 +54,7 @@ const METHODS = [
   "knownSecretValues",
   "landBuild",
   "listAllEvents",
+  "liveAssetsLoaded",
   "liveState",
   "loadPreview",
   // Home's Make your own writes a live background on the model the user picked (backdrop-generation.ts).
@@ -91,6 +92,7 @@ const METHODS = [
   "recover",
   "referenceStills",
   "reloadLive",
+  "reloadLiveAssets",
   "reloadPreview",
   "removeGame",
   "renameThread",

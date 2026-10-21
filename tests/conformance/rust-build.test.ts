@@ -37,6 +37,7 @@ import {
   rustBuildSandboxes,
 } from "../../src/main/rust-build.ts";
 import { RustBuildRefusal, RustDiagnosticTool } from "../../src/main/rust-build-diagnostics.ts";
+import { RustNetFeature } from "../../src/main/rust-manifest.ts";
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import {
   BuildTarget,
@@ -51,6 +52,7 @@ import type { XcodeExec } from "../../src/substrate/toolchain-store/locate.ts";
 import { admitRustOutput } from "../../src/substrate/native-cross-admission.ts";
 import { NativeRefusal, RustAdmissionProblem } from "../../src/shared/native-contract.ts";
 import { macBinary } from "../fixtures/rust-bundles/binaries.ts";
+import { DebugFileKind, EXPORT_DEBUG_SETTINGS } from "../../src/substrate/rust-debug-files.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LOCK: ToolchainLock = {
@@ -621,11 +623,78 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
-  it("builds Live with the engine and its dependencies optimized and the game crate not (K6); an export keeps cargo's release profile", async () => {
+  it("links a [net] game's room in Live and its relay in an export, which alone bakes in the binding's slug (G6 MP-5b)", async () => {
+    const NET_ON = { enabled: true, matchmaking: null };
+    const rows: Array<[CppBuildPurpose, RustStaged & { ok: true }, string | null, RustNetFeature, string]> = [
+      [
+        CppBuildPurpose.Live,
+        { ok: true, dependencies: ["genex"], net: NET_ON },
+        "tag-run",
+        RustNetFeature.Loopback,
+        "unset",
+      ],
+      [
+        CppBuildPurpose.Export,
+        { ok: true, dependencies: ["genex"], net: NET_ON },
+        "tag-run",
+        RustNetFeature.Relay,
+        "tag-run",
+      ],
+      // A hostile binding is never baked; a game with networking off never carries a slug.
+      [
+        CppBuildPurpose.Export,
+        { ok: true, dependencies: ["genex"], net: NET_ON },
+        "../x",
+        RustNetFeature.Relay,
+        "unset",
+      ],
+      [
+        CppBuildPurpose.Export,
+        { ok: true, dependencies: ["genex"], net: null },
+        "tag-run",
+        RustNetFeature.Relay,
+        "unset",
+      ],
+    ];
+    for (const [purpose, answer, slug, feature, baked] of rows) {
+      const parent = await realpath(await tmpDir("rust-net-slug-"));
+      const open = openSandboxes();
+      const linked: Array<RustNetFeature | undefined> = [];
+      const base = stager();
+      const stage: RustBuildsOptions["stage"] = async (
+        game,
+        into,
+        _target,
+        _flavour,
+        _lock,
+        _vendor,
+        _ejected,
+        net,
+      ) => {
+        linked.push(net);
+        const staged = await base.stage(game, into);
+        return staged.ok ? { ...staged, ...answer } : staged;
+      };
+      const onBuild = '{ printenv GENEX_GAME_SLUG || echo unset; } > "$CARGO_TARGET_DIR/../slug"';
+      const { builds } = await lane(parent, open.sandbox, {
+        stub: { onBuild },
+        stage,
+        gameSlug: async () => slug,
+      });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, purpose);
+      assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+      assert.deepEqual(linked, [feature], `${purpose}: what the stage links`);
+      const [spec] = open.specs;
+      assert.ok(spec);
+      assert.equal((await readFile(path.join(spec.bin, "slug"), "utf8")).trim(), baked, `${purpose} ${slug}`);
+    }
+  });
+
+  it("builds Live with the engine and its dependencies optimized and the game crate not (K6); an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
     const depsOptimized = 'profile.dev.package."*".opt-level=1';
     for (const [purpose, expected] of [
       [CppBuildPurpose.Live, [depsOptimized]],
-      [CppBuildPurpose.Export, []],
+      [CppBuildPurpose.Export, EXPORT_DEBUG_SETTINGS[DebugFileKind.Dsym]],
     ] as const) {
       const parent = await realpath(await tmpDir("rust-dev-profile-"));
       const open = openSandboxes();

@@ -42,6 +42,17 @@ phone_max_texture_px = 2048  # 512..=4096, a power of two
 
 [assets.web]              # one destination's own budget: web, ios, android or desktop
 budget_mb = 64            # at most 512 on the web, 4096 on a phone
+
+[net]                     # optional: multiplayer; absent, the game is built with no networking
+enabled = true            # required in the table
+
+[net.matchmaking]         # optional: what matchmake() asks Genex's relay for, carried by the draft
+preset = "open"           # open | duel | arena | teams | private
+win_condition = "firstToScore"  # optional: lastStanding | firstToScore | highScoreInTime | firstToFinish
+
+[net.matchmaking.config]  # optional: the preset's numeric knobs, in Genex's spelling
+maxPlayers = 8            # at most 16 knobs, each 0..=1000000
+minPlayers = 2
 ```
 
 Unknown keys are refused. A `[[crate_request]]` row is a request, never an approval: keep it
@@ -97,3 +108,13 @@ Past its budget an export is still made, with a warning that it takes longer to 
 cap is refused `asset-budget-out-of-range`. `phone_max_texture_px` (default 2048) is the largest
 texture side an iPhone or Android package keeps; one that is not a power of two from 512 to 4096 is
 refused `invalid-texture-cap`.
+
+`[net] enabled = true` builds the game with networking (`docs/api/net.md`). Studio's Live, its
+judges and the Simulator build an On a device press installs link the in-process room, so nothing
+Studio runs reaches the network; only an export links the relay, and it joins the game's own Genex
+draft. Test multiplayer on the published draft, in a normal and a private window.
+`[net.matchmaking]` reaches Genex with the draft as a three.js game's `genex.matchmaking` does;
+without it, `matchmake()` gets Genex's `duel`. Write it as the tables above: an inline table
+(`matchmaking = { … }`) is refused `manifest-syntax`. `enabled` missing or not a boolean, an
+unknown key, a preset or win condition outside the lists, or a knob that is not a camelCase name
+with a number from 0 to 1000000 (at most 16) is refused `invalid-net`.

@@ -51,6 +51,8 @@ export interface LiveGateDeps {
   showing(): { project: string; root: string | null } | undefined;
   /** The commit Live shows, when the studio knows it. */
   showingHead(project: string): string | null;
+  /** A load the person made reached Live (the asset watcher starts over on that game, `asset-watch.ts`). */
+  loaded?(project: string): void;
 }
 
 /** The paths `git status --porcelain -z` lists: a rename or copy carries its source as the next entry. */
@@ -151,6 +153,7 @@ export class LiveGate {
     this.#waiting = null;
     if (was && was.project !== project) this.#emit(was.project);
     if (moved || was?.project === project) this.#emit(project);
+    this.#deps.loaded?.(project);
   }
 
   /** Nothing waits for Live. */

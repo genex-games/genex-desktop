@@ -3,7 +3,7 @@
 //! (`tests/fixtures/rust-facade-vocabulary.json`) and documents them in the same change.
 //!
 //! `StreamViewCode` is the other vocabulary: why a streamed cell or asset of the view set was
-//! refused. Those are display state, reported in `state().volatile.stream.refused`, never a call's
+//! refused. Those are display state, reported in `state().volatile.__stream`, never a call's
 //! refusal; the cell pack codes are pinned by `tests/fixtures/stream/cell-pack-v1.json`.
 
 /// Why a streaming call refused.
@@ -21,18 +21,29 @@ pub enum StreamErrorCode {
     /// `stream_tick.rs`).
     NotRegistered,
     /// A commit held past the facade's `STREAM_HOLD_MAX_MS` waiting on a cell build: reported in
-    /// `state().volatile.stream`, never a call's refusal; the tick did not run (STR-9).
+    /// `state().volatile.__stream.timeout`, never a call's refusal; the tick did not run (STR-9).
     HoldTimeout,
+    /// A `StreamState` snapshot that cannot be restored: not this version or cell size, a field
+    /// missing or of the wrong kind, a cell outside the world, or more anchors, kept cells or
+    /// active cells than the registration can hold; the state is unchanged (STR-12,
+    /// `snapshot.rs`).
+    SnapshotInvalid,
+    /// A settled capture's drain ran past the facade's `STREAM_DRAIN_MAX_MS` with something still
+    /// loading: the capture was drawn with what was resident, and
+    /// `state().volatile.__stream.view.timeout` names it until a drain settles (STR-25).
+    DrainTimeout,
 }
 
 impl StreamErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [StreamErrorCode; 5] = [
+    pub const ALL: [StreamErrorCode; 7] = [
         StreamErrorCode::Invalid,
         StreamErrorCode::TooManyAnchors,
         StreamErrorCode::OutOfWorld,
         StreamErrorCode::NotRegistered,
         StreamErrorCode::HoldTimeout,
+        StreamErrorCode::SnapshotInvalid,
+        StreamErrorCode::DrainTimeout,
     ];
 
     /// The code's wire spelling.
@@ -43,6 +54,8 @@ impl StreamErrorCode {
             StreamErrorCode::OutOfWorld => "stream-out-of-world",
             StreamErrorCode::NotRegistered => "stream-not-registered",
             StreamErrorCode::HoldTimeout => "stream-hold-timeout",
+            StreamErrorCode::SnapshotInvalid => "stream-snapshot-invalid",
+            StreamErrorCode::DrainTimeout => "stream-drain-timeout",
         }
     }
 }

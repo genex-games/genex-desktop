@@ -427,7 +427,13 @@ the build's console error), and `preview.viewport` puts one leased window at
 another size (clamped to 1920×1200) until its release, never Live, the stand-in or a computer session's window:
 handing the lease to a session puts it back at the facet size, so size it again afterwards
 (`preview.status` `viewSize` is the size it is at now); a pass given `viewport` sizes its leased window
-before it loads. Every pass records the cameras the game registers (`registeredCameras`).
+before it loads. Every pass records the cameras the game registers (`registeredCameras`). A window
+that crashed for the build's own reasons, or a failed native look whose run `native.status` calls
+crashed, reads the newest crash record the host kept since the pass began (`game.crashes`, by the
+run's `crash.crashId` on a native lease; `loop/crash-facts.ts`) and adds one problem naming its kind,
+message, `file:line:column`, tick, seed, the game's own symbolicated top frames and whether its input
+tail was kept, pointing at the `debug.crash-replay` recipe (`evidence.crash`). A host that keeps no
+records answers the look as before.
 
 What a drive shows the judges (`loop/evidence.ts`). A held throttle steers by the game's own
 racing line when the template's `config.steer` exists (`__studio.assist`, recorded as `drive`);

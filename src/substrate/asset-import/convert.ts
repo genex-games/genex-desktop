@@ -25,6 +25,7 @@ import {
   transcodeKtx2,
   transcodeKtx2Families,
 } from "./ktx2.ts";
+import { foldAuthoredLods, liftMsftLod } from "./lod-authored.ts";
 import { addLodExtras } from "./lods.ts";
 import { addMeshletExtras } from "./meshlets.ts";
 import { MeshFormatError, objToMesh } from "./obj.ts";
@@ -124,12 +125,16 @@ type MeshStep = (glb: Uint8Array, input: ConvertInput) => Promise<Uint8Array>;
 /**
  * The mesh steps in order. Weld comes before tangents (MikkTSpace splits only what welded vertices
  * still disagree on) and both before the reorder, which fixes the vertex order the meshlets and LODs
- * then index; the extras name views by index, so nothing rewrites vertices after them.
+ * then index; the extras name views by index, so nothing rewrites vertices after them. Authored
+ * `MSFT_lod` levels are lifted into a private extra before the weld and folded into `genex_lods`
+ * after the reorder (LOD-11).
  */
 const MESH_STEPS: readonly MeshStep[] = [
+  async (glb) => liftMsftLod(glb).bytes,
   async (glb) => weldGlb(glb).bytes,
   async (glb) => (await addTangents(glb)).bytes,
   async (glb) => (await reorderGlb(glb)).bytes,
+  async (glb) => (await foldAuthoredLods(glb)).bytes,
   async (glb, input) => {
     const minTriangles = input.meshletMinTriangles;
     return (await addMeshletExtras(glb, minTriangles === undefined ? {} : { minTriangles })).bytes;

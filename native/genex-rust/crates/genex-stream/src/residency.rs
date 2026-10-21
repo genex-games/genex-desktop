@@ -139,7 +139,7 @@ pub trait ResidencyClock {
     fn now_ms(&mut self) -> f64;
 }
 
-/// Counts for `state().volatile.stream`.
+/// Counts for `state().volatile.__stream.view` (the presenter's view set, STR-16).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ResidencyStats {
     /// Bytes of resident entries.
@@ -441,7 +441,7 @@ impl<K: Copy + Eq + Hash + Ord> Residency<K> {
         None
     }
 
-    /// The counts for `state().volatile.stream`.
+    /// The counts for `state().volatile.__stream.view`.
     pub fn stats(&self) -> ResidencyStats {
         let pinned = self.pinned();
         let held_bytes = self

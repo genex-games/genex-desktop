@@ -43,6 +43,8 @@ pub const SEARCH_NODES_DEFAULT: u32 = 2048;
 pub const SEARCHES_PER_TICK_DEFAULT: u32 = 8;
 /// The bit that keeps a character's avoidance key apart from every agent's.
 const CHARACTER_KEY_BIT: u64 = 1 << 63;
+/// The bits that keep an avoid disc's key apart from every agent's and character's.
+const AVOID_DISC_KEY_BITS: u64 = (1 << 63) | (1 << 62);
 
 /// The search work one update may do, in work units (never time), so a tick costs the same on
 /// every destination.
@@ -108,14 +110,17 @@ pub struct Archipelago<CS: CoordinateSystem> {
     /// The options; changes apply from the next update.
     pub archipelago_options: ArchipelagoOptions<CS>,
     pub(crate) nav_data: NavigationData<CS>,
-    agents: Arena<AgentId, Agent<CS>>,
-    characters: Arena<CharacterId, Character<CS>>,
+    pub(crate) agents: Arena<AgentId, Agent<CS>>,
+    pub(crate) characters: Arena<CharacterId, Character<CS>>,
     pathing_results: Vec<PathingResult>,
     /// Agents waiting for a search, oldest first; `queued` mirrors it for lookups.
-    repath_queue: VecDeque<AgentId>,
-    queued: Set<AgentId>,
+    pub(crate) repath_queue: VecDeque<AgentId>,
+    pub(crate) queued: Set<AgentId>,
     gates: Gates,
     avoidance: Avoidance,
+    /// Discs agents steer around this update, in genex world space (centre, radius): the nav's
+    /// avoid obstacles (NAV-12), set before each update.
+    pub(crate) avoid_discs: Vec<(Vec3, f32)>,
 }
 
 /// Where each agent and target was sampled this update.
@@ -138,6 +143,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
             queued: Set::default(),
             gates: Gates::new(),
             avoidance: Avoidance::new(),
+            avoid_discs: Vec::new(),
         }
     }
 
@@ -525,7 +531,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
             obstacles.push(border_obstacles((point, node), &self.nav_data, options.neighbourhood));
             ids.push(agent_id);
         }
-        let bodies: Vec<AvoidanceBody> = self
+        let mut bodies: Vec<AvoidanceBody> = self
             .characters
             .iter()
             .filter_map(|(id, character)| {
@@ -538,6 +544,10 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
                 })
             })
             .collect();
+        // Avoid obstacles are still bodies; their keys sit past every character's.
+        for (index, &(position, radius)) in self.avoid_discs.iter().enumerate() {
+            bodies.push(AvoidanceBody { key: AVOID_DISC_KEY_BITS | index as u64, position, velocity: Vec3::ZERO, radius });
+        }
         let settings = AvoidanceSettings {
             neighbourhood: options.neighbourhood,
             time_horizon: options.avoidance_time_horizon,
