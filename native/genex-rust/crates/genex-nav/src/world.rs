@@ -49,6 +49,9 @@ pub const NAV_MESH_VERSION: u16 = 1;
 pub const NAV_SEARCH_NODES_DEFAULT: u32 = SEARCH_NODES_DEFAULT;
 /// Path searches one update runs by default.
 pub const NAV_SEARCHES_PER_TICK_DEFAULT: u32 = SEARCHES_PER_TICK_DEFAULT;
+/// Cells a baked surface may sit above the ground it was cut from (Recast rounds span tops up and
+/// the polygon mesh adds one), besides the detail mesh's own error.
+const SAMPLE_LIFT_CELLS: f32 = 2.0;
 /// The four bytes `.navmesh` bytes start with.
 const MESH_MAGIC: [u8; 4] = *b"GXNM";
 /// Magic, version, padding, config digest, input digest, tile count.
@@ -345,6 +348,13 @@ impl Nav {
     /// that refuses every tile and obstacle `nav-config-invalid`.
     pub fn new(config: &NavConfig) -> Nav {
         let mut options = ArchipelagoOptions::<GenexCoords>::from_agent_radius(config.radius());
+        // A walker's feet stand on the ground; the mesh sits above it by the bake's lift (whole
+        // cells) and, at the foot of a step, by the climb its detail surface ramps over. A point
+        // that far below the mesh is on it.
+        let bake = config.bake_config();
+        let lift = (SAMPLE_LIFT_CELLS + bake.detail_max_error_cells) * bake.cell_height;
+        let above = &mut options.point_sample_distance.distance_above;
+        *above = above.max(config.climb() + lift);
         let budget = NavBudget::default();
         options.budget = SearchBudget { searches_per_tick: budget.searches_per_tick, search_nodes: budget.search_nodes };
         Nav {
