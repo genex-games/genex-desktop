@@ -2863,12 +2863,15 @@ the linked id at the call (`install.ts`): a link in the copied files, a link or 
 to the destination, or a link where a file lands refuses the whole install before anything is
 written; each file lands under a temporary name opened without following links, then is renamed
 into place. Every game file it replaces is kept, and the first install copies the saves aside
-(2 GB at most), all in the plugin's storage (`installs/<hash>/`). `remove` and the panel's
+(2 GB at most), all in the plugin's storage (`installs/<hash>/`); with `replace`, what the project
+placed before (an older version under another folder name) comes out first, in the same approval
+and only once the new install's checks pass. `remove` and the panel's
 **Remove mod** take out exactly what was placed, put back what was replaced and remove the folders
 it made once they are empty; **Put back saves** copies the kept saves back, copying today's aside
 first. `play` opens the game through its store's own link (`launch.ts`); Genex starts no game
 process. The observer hands a run's reviewer the newest pictures in the project's `shots/`, and
-Live's card, the **Mod** toolbar button and the panel read `status`. History leaves out
+Live's card, the **Mod** toolbar button and the panel read `status`, sharing one read of the
+stores for 10 s (only the panel reads the game's Steam picture); the tools always read afresh. History leaves out
 `decompiled/` and `extracted/`. The `game-mods` skill gives the rules (offline only, no game
 files shared) and the loop; a development test points it at a made-up Mac with
 `STUDIO_ENGINE_TEST_ROOT`.
