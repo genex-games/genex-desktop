@@ -205,8 +205,9 @@ describe("installing a mod", () => {
       ...s.places,
       beforeFile: async (index) => {
         if (index !== 1) return;
-        await rm(swap);
-        await writeFile(swap, "swapped in");
+        // A new file renamed over the old one: made while the old still exists, it never reuses its inode.
+        await writeFile(`${swap}.new`, "swapped in");
+        await rename(`${swap}.new`, swap);
       },
     };
     const before = await tree(s.game);
