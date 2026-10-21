@@ -38,6 +38,8 @@
 #[cfg(all(feature = "native-activity", feature = "game-activity", target_os = "android"))]
 compile_error!("choose one activity: `native-activity` (default) or `game-activity` with --no-default-features");
 
+/// The last exit's crash record at launch (game systems CRASH-4).
+pub mod exit_info;
 pub mod gamepad;
 #[cfg(target_os = "android")]
 pub mod jni_bridge;
@@ -152,6 +154,10 @@ mod entry {
         let records = app.internal_data_path().map(|dir| Records::new(&dir, PLATFORM));
         if let Some(records) = &records {
             records.log_lifecycle(&genex::json!({ "event": "launched", "activity": ACTIVITY }));
+            // Panics leave `crash-<n>.json` from here on, and the last run's native crash or
+            // low-memory kill is recorded now (game systems CRASH-4).
+            crate::mobile::crash::install(records.clone());
+            crate::exit_info::record_last_exit(records);
         }
         // The sim reads the compiled table, then the APK's `assets/` (STR-15), from its first reset
         // on, as the presenter draws from them; each opens its own `AAssetManager` reads.

@@ -26,6 +26,7 @@
 
 pub mod admit;
 pub mod audio;
+pub mod crash;
 pub mod frame_time;
 pub mod gamepad;
 pub mod keyboard;

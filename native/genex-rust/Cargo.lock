@@ -1339,6 +1339,7 @@ version = "0.1.0"
 dependencies = [
  "genex",
  "genex-core",
+ "genex-crash",
  "genex-hud",
  "genex-platform-web",
  "genex-render",

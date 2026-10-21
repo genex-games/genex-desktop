@@ -11,7 +11,7 @@
 
 #[cfg(feature = "native-activity")]
 use crate::SafeArea;
-use jni::objects::{JObject, JValue};
+use jni::objects::{JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
 
 /// `Context.AUDIO_SERVICE`.
@@ -237,4 +237,59 @@ fn low_memory(env: &mut JNIEnv<'_>, manager: &JObject<'_>) -> Option<bool> {
         let _ = env.exception_clear();
     }
     value.ok()?.z().ok()
+}
+
+/// The process's last exit as `ActivityManager.getHistoricalProcessExitReasons` reports it (API 30+;
+/// game systems CRASH-4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastExit {
+    /// `ApplicationExitInfo.getReason` (a `REASON_*`).
+    pub reason: i32,
+    /// The system's description ("" when it has none).
+    pub description: String,
+    /// When the process exited (`getTimestamp`, milliseconds since the epoch).
+    pub timestamp_ms: i64,
+    /// The trace (`getTraceInputStream`, API 31+: a native crash's tombstone), at most the cap
+    /// asked for; `None` without one or past the cap.
+    pub trace: Option<Vec<u8>>,
+}
+
+/// Bytes read from a trace stream at a time.
+const TRACE_CHUNK_BYTES: i32 = 16 * 1024;
+
+/// This process's last exit, with its trace when one of at most `trace_max` bytes is kept; `None`
+/// before API 30, with no exit recorded, or on any Java exception.
+pub fn last_exit(trace_max: usize) -> Option<LastExit> {
+    with_activity(|env, activity| {
+        let name = env.new_string(ACTIVITY_SERVICE).ok()?;
+        let manager = object(env, activity, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", &[JValue::Object(&name)])?;
+        let package = JObject::null();
+        let sig = "(Ljava/lang/String;II)Ljava/util/List;";
+        let exits = object(env, &manager, "getHistoricalProcessExitReasons", sig, &[JValue::Object(&package), JValue::Int(0), JValue::Int(1)])?;
+        let exit = object(env, &exits, "get", "(I)Ljava/lang/Object;", &[JValue::Int(0)])?;
+        let reason = call(env, &exit, "getReason", "()I", &[])?.i().ok()?;
+        let timestamp_ms = call(env, &exit, "getTimestamp", "()J", &[])?.j().ok()?;
+        let description = object(env, &exit, "getDescription", "()Ljava/lang/String;", &[])
+            .and_then(|text| env.get_string(&JString::from(text)).ok().map(String::from))
+            .unwrap_or_default();
+        let trace = object(env, &exit, "getTraceInputStream", "()Ljava/io/InputStream;", &[]).and_then(|stream| read_stream(env, &stream, trace_max));
+        Some(LastExit { reason, description, timestamp_ms, trace })
+    })
+}
+
+/// A Java `InputStream` read to its end and closed; `None` past `max` bytes or on an exception.
+fn read_stream(env: &mut JNIEnv<'_>, stream: &JObject<'_>, max: usize) -> Option<Vec<u8>> {
+    let buffer = env.new_byte_array(TRACE_CHUNK_BYTES).ok()?;
+    let mut out = Vec::new();
+    let mut chunk = vec![0i8; TRACE_CHUNK_BYTES as usize];
+    let whole = loop {
+        let Some(read) = call(env, stream, "read", "([B)I", &[JValue::Object(&buffer)]).and_then(|answer| answer.i().ok()) else { break false };
+        let Ok(count) = usize::try_from(read) else { break true };
+        if out.len() + count > max || env.get_byte_array_region(&buffer, 0, &mut chunk[..count]).is_err() {
+            break false;
+        }
+        out.extend(chunk[..count].iter().map(|byte| u8::from_ne_bytes(byte.to_ne_bytes())));
+    };
+    let _ = call(env, stream, "close", "()V", &[]);
+    whole.then_some(out)
 }
