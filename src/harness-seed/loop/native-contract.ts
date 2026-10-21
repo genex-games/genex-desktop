@@ -2,7 +2,8 @@
  * The harness's copy of the C++ · raylib contract: stacks, destinations, the phone artifacts the
  * harness may export and the judging target,
  * the native run protocol's vocabularies, ops and reply checks (the renderer's quality vocabulary of
- * `renderSettings`, `volatile.render` and capture provenance included), which checks a raylib game can
+ * `renderSettings`, `volatile.render` and capture provenance included; the `saves` and `uiSettings`
+ * codes and arguments of `shared/game-saves.ts` too), which checks a raylib game can
  * measure per stack, and the `SERVES_NATIVE` and `SERVES_RUST` marks a raylib or Rust night needs
  * from every part it runs. The app
  * keeps the same in `shared/game-project.ts`, `shared/game-targets.ts`,
@@ -303,6 +304,10 @@ export const NativeOp = {
   ReloadAssets: "reloadAssets",
   /** Read a dev game's frame profile (`{action, frames?, mode?}`): summary, report, arm or trace. */
   Profile: "profile",
+  /** List, read, write, save, load or delete the game's save slots (`{op, slot?, label?, envelope?}`). */
+  Saves: "saves",
+  /** A session layer over the gameplay UI's settings (`{locale?, scale?, safeArea?, textSize?}`); no member reads. */
+  UiSettings: "uiSettings",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
 
@@ -728,6 +733,84 @@ export interface CaptureProvenance {
   exposure: CaptureExposure;
 }
 
+// ── saves and the gameplay UI's settings (shared/game-saves.ts) ───────────────────────────
+
+/** What a `saves` call does. Wire values: never rename one. */
+export const SaveOp = {
+  List: "list",
+  Read: "read",
+  Write: "write",
+  Save: "save",
+  Load: "load",
+  Delete: "delete",
+} as const;
+export type SaveOp = (typeof SaveOp)[keyof typeof SaveOp];
+
+/** Why a game refused a save, load or delete; nothing changed. Wire values: never rename one. */
+export const SaveErrorCode = {
+  SlotInvalid: "save-slot-invalid",
+  SlotMissing: "save-slot-missing",
+  SlotsFull: "save-slots-full",
+  TooLarge: "save-too-large",
+  Quota: "save-quota",
+  Unavailable: "save-unavailable",
+  Corrupt: "save-corrupt",
+  FormatUnknown: "save-format-unknown",
+  Newer: "save-newer",
+  MigrationMissing: "save-migration-missing",
+  MigrationFailed: "save-migration-failed",
+  SectionInvalid: "save-section-invalid",
+  SectionMissing: "save-section-missing",
+  Busy: "save-busy",
+  LoadTimeout: "save-load-timeout",
+  NotConfigured: "save-not-configured",
+} as const satisfies Record<string, `save-${string}`>;
+export type SaveErrorCode = (typeof SaveErrorCode)[keyof typeof SaveErrorCode];
+
+/** The volatile issue of a load that applied but whose recomputed checksum differs from the saved one. */
+export const SAVE_RESTORE_DIVERGED = "save-restore-diverged";
+
+/** Why a game's text could not be shown as asked. Wire values. */
+export const TextErrorCode = {
+  Missing: "text-missing",
+  Invalid: "text-invalid",
+  TooLarge: "text-too-large",
+  LocaleUnknown: "text-locale-unknown",
+  FontMissing: "text-font-missing",
+} as const satisfies Record<string, `text-${string}`>;
+export type TextErrorCode = (typeof TextErrorCode)[keyof typeof TextErrorCode];
+
+/** The most bytes a slot name holds; the most characters a label holds. */
+export const SAVE_SLOT_NAME_MAX = 32;
+export const SAVE_LABEL_CHARS_MAX = 64;
+/** The most bytes of JSON an envelope a `saves` call carries or answers may hold. */
+export const NATIVE_SAVES_ENVELOPE_MAX_BYTES = 1024 * 1024 - 4 * 1024;
+/** The longest locale tag; the UI scale and text size range; the largest safe-area inset (world px). */
+export const UI_LOCALE_TAG_CHARS_MAX = 35;
+export const UI_SCALE_MIN = 0.5;
+export const UI_SCALE_MAX = 3.0;
+export const UI_TEXT_SIZE_MIN = UI_SCALE_MIN;
+export const UI_TEXT_SIZE_MAX = UI_SCALE_MAX;
+export const UI_SAFE_AREA_MAX_PX = 4096;
+
+/** A `saves` argument; the host refuses anything else `bad-argument` before it is sent. */
+export type SavesArg =
+  | { op: typeof SaveOp.List }
+  | { op: typeof SaveOp.Read | typeof SaveOp.Load | typeof SaveOp.Delete; slot: string }
+  | { op: typeof SaveOp.Save; slot: string; label?: string }
+  | { op: typeof SaveOp.Write; slot: string; envelope: Record<string, unknown> };
+
+/** The UI's left, top, right and bottom safe-area insets, in world pixels. */
+export type UiSafeArea = [left: number, top: number, right: number, bottom: number];
+
+/** A `uiSettings` change: a member left out stays, null gives the game's own back, none reads. */
+export interface UiSettingsArg {
+  locale?: string | null;
+  scale?: number | null;
+  safeArea?: UiSafeArea | null;
+  textSize?: number | null;
+}
+
 /** A pad's state as the Gamepad API reports it. */
 export interface NativeGamepadAction {
   type: typeof NativeInputKind.Gamepad;
@@ -820,6 +903,8 @@ export interface NativeOpArgs {
   [NativeOp.BakeAssets]: { kind: BakeKind; name: string };
   [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
   [NativeOp.Profile]: { action: FrameProfileAction; frames?: number; mode?: GpuTimingMode };
+  [NativeOp.Saves]: SavesArg;
+  [NativeOp.UiSettings]: UiSettingsArg;
 }
 
 /** Per-op results, as the host checks every reply against them. Fields beyond these are ignored. */
@@ -849,6 +934,10 @@ export interface NativeOpResults {
   [NativeOp.ReloadAssets]: NativeReloadAnswer;
   /** Checked by shape only (summary `v: 1`, report `v: 2`, `{mode}` or `{bytes, digest}`); read it field by field. */
   [NativeOp.Profile]: Record<string, unknown>;
+  /** An object (a list, an envelope or its `tooLarge` stand-in, a slot, a load's checksum); read the members asked for. */
+  [NativeOp.Saves]: Record<string, unknown>;
+  /** The settings in force after the call. */
+  [NativeOp.UiSettings]: Record<string, unknown>;
 }
 
 /** Names a list answer may carry, and how long each may be. */
@@ -992,6 +1081,8 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.BakeAssets]: isBakeReply,
   [NativeOp.ReloadAssets]: isReloadAnswer,
   [NativeOp.Profile]: isProfileReply,
+  [NativeOp.Saves]: isRecord,
+  [NativeOp.UiSettings]: isRecord,
 };
 
 const LIFECYCLES: ReadonlySet<string> = new Set<NativeLifecycle>(Object.values(NativeLifecycle));

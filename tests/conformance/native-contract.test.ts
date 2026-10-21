@@ -77,6 +77,21 @@ import {
 } from "../../src/shared/native-contract.ts";
 import { CRASH_RECORD_FORMAT, CrashKind, CrashSource, parseCrashRecord } from "../../src/shared/crash-record.ts";
 import { GpuTimingMode } from "../../src/shared/frame-profile.ts";
+import {
+  checkSavesArg,
+  checkUiSettingsArg,
+  isSafeSlotName,
+  NATIVE_SAVES_ENVELOPE_MAX_BYTES,
+  SAVE_LABEL_CHARS_MAX,
+  SAVE_RESTORE_DIVERGED,
+  SAVE_SLOT_NAME_MAX,
+  SaveErrorCode,
+  SaveOp,
+  TextErrorCode,
+  UI_LOCALE_TAG_CHARS_MAX,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+} from "../../src/shared/game-saves.ts";
 import { parseRenderSettingsAnswer } from "../../src/shared/render-quality.ts";
 import { ReadyPhase, ReadyVia, TouchPhase } from "../../src/shared/preview-contract.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
@@ -273,6 +288,21 @@ const RESULTS: { [K in keyof NativeOpResults]: { good: unknown[]; bad: unknown[]
       { bytes: 1 },
       [],
     ],
+  },
+  // The host reads saves and uiSettings replies as objects; the caller reads the members it asked for.
+  [NativeOp.Saves]: {
+    good: [
+      { slots: [], bytes: 0, quota: 67108864 },
+      { genex: "save", format: 1, schema: 3, sections: {} },
+      { tooLarge: true, bytes: 2097152, digest: "0123456789abcdef" },
+      { tick: 18000, checksum: "0123456789abcdef", checksumMatch: true },
+      {},
+    ],
+    bad: [[], null, [{ slots: [] }]],
+  },
+  [NativeOp.UiSettings]: {
+    good: [{ locale: "en", scale: 1, safeArea: [0, 0, 0, 0], textSize: 1 }, {}],
+    bad: [[], null, ["en"]],
   },
   [NativeOp.ReloadAssets]: {
     good: [
@@ -1222,5 +1252,160 @@ describe("contract v2: ready carries the capability receipt", () => {
 describe("the boot's stages are the wire's", () => {
   it("names every stage genex-studio's `starting` and the web shell's progress carry, in boot order", () => {
     assert.deepEqual(Object.values(BootStage), WIRE.bootStages);
+  });
+});
+
+const SAVES = JSON.parse(readFileSync(new URL("../fixtures/native-saves.json", import.meta.url), "utf8")) as {
+  ops: Record<string, string>;
+  saveOps: string[];
+  saveErrorCodes: string[];
+  saveRestoreDiverged: string;
+  textErrorCodes: string[];
+  slotNameMax: number;
+  labelCharsMax: number;
+  envelopeMaxBytes: number;
+  localeTagCharsMax: number;
+  uiScale: [number, number];
+  unsafeSlotNames: string[];
+  safeSlotNames: string[];
+  wellFormedLocales: string[];
+  malformedLocales: string[];
+};
+
+describe("saves and uiSettings (UIS-15): the codes and caps are genex-save's and genex-ui's", () => {
+  it("names the fixture's ops, save ops and codes, in genex-save's and genex-ui's order", () => {
+    assert.deepEqual({ saves: NativeOp.Saves, uiSettings: NativeOp.UiSettings }, SAVES.ops);
+    assert.deepEqual(Object.values(SaveOp), SAVES.saveOps);
+    assert.deepEqual(Object.values(SaveErrorCode), SAVES.saveErrorCodes);
+    assert.equal(SAVE_RESTORE_DIVERGED, SAVES.saveRestoreDiverged);
+    assert.deepEqual(Object.values(TextErrorCode), SAVES.textErrorCodes);
+  });
+
+  it("holds the fixture's caps", () => {
+    assert.deepEqual(
+      [SAVE_SLOT_NAME_MAX, SAVE_LABEL_CHARS_MAX, NATIVE_SAVES_ENVELOPE_MAX_BYTES, UI_LOCALE_TAG_CHARS_MAX],
+      [SAVES.slotNameMax, SAVES.labelCharsMax, SAVES.envelopeMaxBytes, SAVES.localeTagCharsMax],
+    );
+    assert.deepEqual([UI_SCALE_MIN, UI_SCALE_MAX], SAVES.uiScale);
+  });
+
+  it("refuses exactly the slot names genex-save refuses by shape, and the locales genex-ui cannot parse", () => {
+    for (const name of SAVES.unsafeSlotNames) assert.equal(isSafeSlotName(name), false, JSON.stringify(name));
+    for (const name of SAVES.safeSlotNames) assert.equal(isSafeSlotName(name), true, name);
+    for (const locale of SAVES.wellFormedLocales) assert.equal(checkUiSettingsArg({ locale }).ok, true, locale);
+    for (const locale of SAVES.malformedLocales) assert.equal(checkUiSettingsArg({ locale }).ok, false, locale);
+  });
+});
+
+describe("saves and uiSettings (UIS-15): every argument is checked before it is sent", () => {
+  const big = { genex: "save", sections: { world: { blob: "x".repeat(2 * 1024 * 1024) } } };
+  const cyclic: Record<string, unknown> = { genex: "save" };
+  cyclic.self = cyclic;
+
+  it("refuses a hostile saves argument (bad-argument)", () => {
+    const rows: unknown[] = [
+      undefined,
+      null,
+      "list",
+      [],
+      {},
+      { op: "eval" },
+      { op: "__proto__" },
+      { op: "LIST" },
+      { op: 1 },
+      { op: SaveOp.Load },
+      { op: SaveOp.Load, slot: "../world" },
+      { op: SaveOp.Read, slot: "a/b" },
+      { op: SaveOp.Delete, slot: "x".repeat(SAVE_SLOT_NAME_MAX + 1) },
+      { op: SaveOp.Save, slot: "Slot" },
+      { op: SaveOp.Save, slot: "one", label: 3 },
+      { op: SaveOp.Save, slot: "one", label: "l".repeat(SAVE_LABEL_CHARS_MAX + 1) },
+      { op: SaveOp.Write, slot: "one" },
+      { op: SaveOp.Write, slot: "one", envelope: "{}" },
+      { op: SaveOp.Write, slot: "one", envelope: [] },
+      { op: SaveOp.Write, slot: "one", envelope: big },
+      { op: SaveOp.Write, slot: "one", envelope: cyclic },
+      { op: SaveOp.Write, slot: "one", envelope: { n: 1n } },
+    ];
+    for (const arg of rows)
+      assert.deepEqual(
+        checkSavesArg(arg),
+        { ok: false },
+        typeof arg === "object" && arg !== null && "envelope" in arg ? "an envelope" : JSON.stringify(arg),
+      );
+  });
+
+  it("sends a saves argument with only the members the game reads", () => {
+    const rows: Array<[unknown, unknown]> = [
+      [{ op: SaveOp.List, slot: "ignored" }, { op: SaveOp.List }],
+      [
+        { op: SaveOp.Read, slot: "chapter-2" },
+        { op: SaveOp.Read, slot: "chapter-2" },
+      ],
+      [
+        { op: SaveOp.Load, slot: "autosave-0", label: "x" },
+        { op: SaveOp.Load, slot: "autosave-0" },
+      ],
+      [
+        { op: SaveOp.Delete, slot: "one" },
+        { op: SaveOp.Delete, slot: "one" },
+      ],
+      [
+        { op: SaveOp.Save, slot: "one" },
+        { op: SaveOp.Save, slot: "one" },
+      ],
+      [
+        { op: SaveOp.Save, slot: "one", label: "Chapter 2 · the bridge" },
+        { op: SaveOp.Save, slot: "one", label: "Chapter 2 · the bridge" },
+      ],
+      [
+        { op: SaveOp.Write, slot: "fixture", envelope: { genex: "save" }, label: "dropped" },
+        { op: SaveOp.Write, slot: "fixture", envelope: { genex: "save" } },
+      ],
+    ];
+    for (const [arg, sent] of rows) assert.deepEqual(checkSavesArg(arg), { ok: true, arg: sent }, JSON.stringify(arg));
+  });
+
+  it("refuses a hostile uiSettings argument (bad-argument)", () => {
+    const rows: unknown[] = [
+      null,
+      "en",
+      [],
+      { scale: Number.NaN },
+      { scale: Number.POSITIVE_INFINITY },
+      { scale: "1" },
+      { scale: UI_SCALE_MIN - 0.01 },
+      { scale: UI_SCALE_MAX + 0.01 },
+      { textSize: Number.NaN },
+      { textSize: 0 },
+      { locale: 7 },
+      { locale: "en US" },
+      { locale: "x".repeat(UI_LOCALE_TAG_CHARS_MAX + 1) },
+      { safeArea: [0, 0, 0] },
+      { safeArea: [0, 0, 0, -1] },
+      { safeArea: [0, 0, 0, Number.NaN] },
+      { safeArea: [0, 0, 0, 5000] },
+      { safeArea: { left: 0 } },
+    ];
+    for (const arg of rows) assert.deepEqual(checkUiSettingsArg(arg), { ok: false }, String(JSON.stringify(arg)));
+  });
+
+  it("sends a uiSettings change with only its members; none reads, null gives the game's own back", () => {
+    const rows: Array<[unknown, unknown]> = [
+      [undefined, {}],
+      [{}, {}],
+      [{ warp: true }, {}],
+      [{ locale: "xx-pseudo" }, { locale: "xx-pseudo" }],
+      [
+        { scale: 1.5, textSize: 2, safeArea: [0, 47, 0, 34] },
+        { scale: 1.5, textSize: 2, safeArea: [0, 47, 0, 34] },
+      ],
+      [
+        { locale: null, scale: null, safeArea: null, textSize: null },
+        { locale: null, scale: null, safeArea: null, textSize: null },
+      ],
+    ];
+    for (const [arg, sent] of rows)
+      assert.deepEqual(checkUiSettingsArg(arg), { ok: true, arg: sent }, String(JSON.stringify(arg)));
   });
 });

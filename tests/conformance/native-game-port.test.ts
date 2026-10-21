@@ -31,6 +31,7 @@ import {
   NativeError,
   NativeEvent,
   NativeOp,
+  NativeOpError,
   NativeRefusal,
   NativeRunMode,
   NativeRunState,
@@ -651,6 +652,72 @@ describe("what the port does not do", () => {
       assert.equal(refused, code, JSON.stringify(arg));
       await r.clock.settle();
       assert.equal(r.game.requests.length, 0, `nothing is sent for ${JSON.stringify(arg)}`);
+    }
+  });
+
+  // UIS-15 (new behaviour): saves and uiSettings reach the game only in shape, as a web page's verbs.
+  it("saves and uiSettings through preview.call are the game's ops, carrying only what the game reads", async () => {
+    const rows: ReadonlyArray<[string, unknown, unknown]> = [
+      ["saves", { op: "list" }, { op: "list" }],
+      ["saves", { op: "load", slot: "autosave-0", envelope: {} }, { op: "load", slot: "autosave-0" }],
+      [
+        "saves",
+        { op: "write", slot: "fixture", envelope: { genex: "save" } },
+        { op: "write", slot: "fixture", envelope: { genex: "save" } },
+      ],
+      ["uiSettings", undefined, {}],
+      ["uiSettings", { locale: "xx-pseudo", scale: 1.25, extra: 1 }, { locale: "xx-pseudo", scale: 1.25 }],
+    ];
+    for (const [method, arg, sent] of rows) {
+      const r = await rig();
+      const call = r.port.studioCall(method, arg);
+      const request = await lastRequest(r);
+      assert.equal(request.op, method);
+      assert.deepEqual(request.arg, sent, JSON.stringify(arg));
+      r.game.send({ id: request.id, ok: true, op: method, result: { answered: true } });
+      assert.deepEqual(await call, { answered: true });
+    }
+  });
+
+  it("a hostile saves or uiSettings argument is refused bad-argument and the game is never asked", async () => {
+    const rows: ReadonlyArray<[string, unknown]> = [
+      ["saves", { op: "load", slot: "../../etc/passwd" }],
+      ["saves", { op: "save", slot: "Slot One" }],
+      ["saves", { op: "write", slot: "fixture", envelope: { blob: "x".repeat(2 * 1024 * 1024) } }],
+      ["saves", { op: "format" }],
+      ["saves", undefined],
+      ["uiSettings", { scale: Number.NaN }],
+      ["uiSettings", { safeArea: [0, 0, 0] }],
+      ["uiSettings", "en"],
+    ];
+    for (const [method, arg] of rows) {
+      const r = await rig();
+      const call = r.port.studioCall(method, arg).then(
+        () => null,
+        (error: unknown) => (error instanceof NativeOpRefusedError ? error.gameError : `untyped: ${String(error)}`),
+      );
+      // Asked before the answer is awaited: a call that reached the game would wait on it forever.
+      await r.clock.settle();
+      assert.equal(r.game.requests.length, 0, `nothing is sent: ${method} ${String(JSON.stringify(arg)).slice(0, 60)}`);
+      assert.equal(await call, NativeOpError.BadArgument, `${method} ${String(JSON.stringify(arg)).slice(0, 60)}`);
+      assert.equal(r.game.killed(), false, "the game keeps running");
+    }
+  });
+
+  it("a game made before the verbs (an export) answers unknown-op, and the call rejects with that code", async () => {
+    for (const [method, arg] of [
+      ["saves", { op: "list" }],
+      ["uiSettings", { locale: "en" }],
+    ] as const) {
+      const r = await rig();
+      const refused = r.port.studioCall(method, arg).then(
+        () => null,
+        (error: unknown) => (error instanceof NativeOpRefusedError ? error.gameError : `untyped: ${String(error)}`),
+      );
+      const request = await lastRequest(r);
+      r.game.send({ id: request.id, ok: false, op: method, error: NativeOpError.UnknownOp });
+      assert.equal(await refused, NativeOpError.UnknownOp, method);
+      assert.equal(r.game.killed(), false, "the game keeps running");
     }
   });
 

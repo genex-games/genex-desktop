@@ -17,6 +17,7 @@ import { type BuildIdentity, type CaptureProvenance, renderProvenanceCopy } from
 import { type CrashRecordV1, isGameMadeRecord } from "../shared/crash-record.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import type { BuildTarget } from "../shared/game-project.ts";
+import { checkSavesArg, checkUiSettingsArg, type GameArgCheck } from "../shared/game-saves.ts";
 import {
   NATIVE_CALL_TIMEOUT_MS,
   NATIVE_LINE_MAX_BYTES,
@@ -32,6 +33,7 @@ import {
   type NativeEventMessage,
   NativeInputKind,
   NativeOp,
+  NativeOpError,
   checkRenderSettingsArg,
   type NativeOpArgs,
   type NativeOpResults,
@@ -296,6 +298,16 @@ const textArg = (arg: unknown, key: string): string | null => {
   return isRecord(arg) && typeof arg[key] === "string" ? arg[key] : null;
 };
 
+/** `op` with an argument checked before it is sent: one out of shape is refused `bad-argument`, nothing sent. */
+function checkedCall<K extends typeof NativeOp.Saves | typeof NativeOp.UiSettings>(
+  port: NativeGamePort,
+  op: K,
+  checked: GameArgCheck<OpArg<K>>,
+): Promise<unknown> {
+  if (!checked.ok) return Promise.reject(new NativeOpRefusedError(op, NativeOpError.BadArgument));
+  return port.call(op, checked.arg);
+}
+
 /**
  * The page verbs (`PageMethod` in the seed: the same names as their ops) and how each argument is
  * carried. `audio({muted})` mutes; `audio()` is the level probe, as the web shell has it.
@@ -323,6 +335,9 @@ const PAGE_CALLS: Readonly<Record<string, PageCall>> = {
     if (!checked.ok) return Promise.reject(new NativeOpRefusedError(NativeOp.RenderSettings, checked.error));
     return port.call(NativeOp.RenderSettings, checked.arg);
   },
+  /** Saves and the UI's session settings: a slot name, envelope or setting out of shape never reaches the game. */
+  [NativeOp.Saves]: (port, arg) => checkedCall(port, NativeOp.Saves, checkSavesArg(arg)),
+  [NativeOp.UiSettings]: (port, arg) => checkedCall(port, NativeOp.UiSettings, checkUiSettingsArg(arg)),
 };
 
 /** What a native run's `input` takes: the preview's actions and contract v2's `touch`. */

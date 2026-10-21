@@ -23,6 +23,7 @@ import {
   PROFILE_REPORT_VERSION,
   PROFILE_SUMMARY_VERSION,
 } from "./frame-profile.ts";
+import type { SavesArg, UiSettingsArg } from "./game-saves.ts";
 import { DestinationBadge, TargetRefusal } from "./game-targets.ts";
 import { type PreviewInputAction, type PreviewTouchAction, TouchPhase } from "./preview-contract.ts";
 import {
@@ -117,6 +118,19 @@ export const NativeOp = {
    * `unknown-op`, a game that serves no profiles yet `unavailable`.
    */
   Profile: "profile",
+  /**
+   * List, read, write, save, load or delete the game's save slots (`{op, slot?, label?,
+   * envelope?}`, `shared/game-saves.ts`); a load answers once it applied. Checked before it is
+   * sent (`checkSavesArg`); a game made before the verb answers `unknown-op`, one that registered
+   * no saves `save-not-configured`.
+   */
+  Saves: "saves",
+  /**
+   * A session layer over the gameplay UI's settings (`{locale?, scale?, safeArea?, textSize?}`,
+   * `shared/game-saves.ts`), applied at the next tick; no member reads them. Checked before it is
+   * sent (`checkUiSettingsArg`); a game made before the verb answers `unknown-op`.
+   */
+  UiSettings: "uiSettings",
 } as const;
 export type NativeOp = (typeof NativeOp)[keyof typeof NativeOp];
 
@@ -173,6 +187,16 @@ export interface NativeReloadAnswer {
  * asked with `parseProfileAnswer` (`shared/frame-profile.ts`) and refuses what is out of shape there.
  */
 export type NativeProfileReply = Record<string, unknown>;
+
+/**
+ * A `saves` reply as the port checks it: an object (a list, an envelope or its `tooLarge` stand-in,
+ * a slot's info, a load's `{tick, checksum, checksumMatch}`). The caller asked with the op and
+ * reads the members it named.
+ */
+export type NativeSavesReply = Record<string, unknown>;
+
+/** A `uiSettings` reply as the port checks it: an object, the settings in force after the call. */
+export type NativeUiSettingsReply = Record<string, unknown>;
 
 /** What `bakeAssets` answers: the bake it ran, and the size and digest of the file it wrote. */
 export interface NativeBakeReply {
@@ -1320,6 +1344,10 @@ export interface NativeOpArgs {
   [NativeOp.ReloadAssets]: { files: NativeReloadFile[] };
   /** `frames` 1..=240 for a report; `mode` for an arm. */
   [NativeOp.Profile]: { action: FrameProfileAction; frames?: number; mode?: GpuTimingMode };
+  /** Checked by `checkSavesArg`: a slot name of a safe shape, an envelope a line can carry. */
+  [NativeOp.Saves]: SavesArg;
+  /** Checked by `checkUiSettingsArg`: no member reads, null gives the game's own back. */
+  [NativeOp.UiSettings]: UiSettingsArg;
 }
 
 /**
@@ -1353,6 +1381,8 @@ export interface NativeOpResults {
   [NativeOp.BakeAssets]: NativeBakeReply;
   [NativeOp.ReloadAssets]: NativeReloadAnswer;
   [NativeOp.Profile]: NativeProfileReply;
+  [NativeOp.Saves]: NativeSavesReply;
+  [NativeOp.UiSettings]: NativeUiSettingsReply;
 }
 
 // Every op has a result shape: an op added without one fails here.
@@ -1783,6 +1813,8 @@ const RESULT_CHECKS: { readonly [K in keyof NativeOpResults]: (value: unknown) =
   [NativeOp.BakeAssets]: isBakeAssetsResult,
   [NativeOp.ReloadAssets]: isReloadAssetsResult,
   [NativeOp.Profile]: isProfileResult,
+  [NativeOp.Saves]: isRecord,
+  [NativeOp.UiSettings]: isRecord,
 };
 
 /** What protocol 2 adds to an op's check; ops absent here are checked as in protocol 1. */

@@ -133,6 +133,7 @@ import {
 } from "../../src/shared/game-project.ts";
 import { HOST_MATRIX, judgingTarget, STACK_HOST_MATRIX, TargetRefusal } from "../../src/shared/game-targets.ts";
 import * as frameProfile from "../../src/shared/frame-profile.ts";
+import * as gameSaves from "../../src/shared/game-saves.ts";
 import { SampleBackend } from "../../src/shared/optimization.ts";
 import { SampleBackend as SeedSampleBackend } from "../../src/harness-seed/loop/performance.ts";
 import * as native from "../../src/shared/native-contract.ts";
@@ -1235,6 +1236,32 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
     }
     assert.deepEqual(seedNative.FrameProfileAction, frameProfile.FrameProfileAction);
     assert.deepEqual(seedNative.GpuTimingMode, frameProfile.GpuTimingMode);
+  });
+
+  it("both copies declare the saves and uiSettings ops with game-saves' codes, caps and argument shapes (UIS-15)", () => {
+    for (const copy of [native, seedNative]) {
+      assert.equal(copy.NativeOp.Saves, "saves");
+      assert.equal(copy.NativeOp.UiSettings, "uiSettings");
+    }
+    for (const name of [
+      "SaveOp",
+      "SaveErrorCode",
+      "SAVE_RESTORE_DIVERGED",
+      "TextErrorCode",
+      "SAVE_SLOT_NAME_MAX",
+      "SAVE_LABEL_CHARS_MAX",
+      "NATIVE_SAVES_ENVELOPE_MAX_BYTES",
+      "UI_LOCALE_TAG_CHARS_MAX",
+      "UI_SCALE_MIN",
+      "UI_SCALE_MAX",
+      "UI_TEXT_SIZE_MIN",
+      "UI_TEXT_SIZE_MAX",
+      "UI_SAFE_AREA_MAX_PX",
+    ] as const)
+      assert.deepEqual(seedNative[name], gameSaves[name], name);
+    const savesArg: Same<gameSaves.SavesArg, seedNative.SavesArg> = true;
+    const uiSettingsArg: Same<gameSaves.UiSettingsArg, seedNative.UiSettingsArg> = true;
+    assert.deepEqual([savesArg, uiSettingsArg], [true, true]);
   });
 
   it("both copies declare the asset ops: bakeAssets of a nav or impostor bake, reloadAssets of named files", () => {
