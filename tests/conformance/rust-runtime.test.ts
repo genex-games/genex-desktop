@@ -370,7 +370,7 @@ describe("the Rust runtime over fd 3: the HUD and custom passes", { ...NEEDS, ti
     await run.port.ready();
     await run.port.call(NativeOp.Seed, { seed: 3 });
     const plain = await run.port.call(NativeOp.Capture, {});
-    assert.deepEqual((await stateOf(run)).hud, { items: [], crosshair: false, flash: 0 });
+    assert.deepEqual((await stateOf(run)).hud, { items: [], crosshair: false, flash: 0, widgets: [], focus: null });
     await run.port.call(NativeOp.Input, { actions: [{ type: "down", keys: ["KeyH"] }] });
     await run.port.call(NativeOp.Step, { ms: TICK_MS });
     const hud = (await stateOf(run)).hud as { items: string[] };
