@@ -33,8 +33,9 @@ pub(crate) fn profile_summary(json: &[u8]) {
 }
 
 /// Name the build crash records describe (host glue: a shell, once): `destination` (`mac`, ...),
-/// the flavour (`dev` for a studio run), the build's name and the game contract's version.
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+/// the flavour (`dev` for a studio run), the build's name and the game contract's version. A
+/// desktop export calls it, and so does a studio run on every native target (phones included).
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", all(feature = "studio", not(target_arch = "wasm32"))))]
 pub(crate) fn set_identity(destination: &str, dev: bool, build: &str, contract: u64) {
     let flavour = if dev { genex_crash::CrashFlavour::Dev } else { genex_crash::CrashFlavour::Export };
     genex_crash::context().set_identity(genex_crash::CrashIdentity {
