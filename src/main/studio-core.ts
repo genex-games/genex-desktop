@@ -142,6 +142,7 @@ import { ConnectionService } from "./core/connections.ts";
 import { developmentStacksOpen } from "./core/stack-gate.ts";
 import { ConversationService } from "./core/conversation.ts";
 import { DelegationService } from "./core/delegation.ts";
+import { createCrashSymbolicator, storeSymbolicateTool } from "./core/crash-symbolicate.ts";
 import { createGameCrashStore } from "./core/game-crashes.ts";
 import { GameFileService } from "./core/game-files.ts";
 import { nameFromIdea, nameGame } from "./core/game-naming.ts";
@@ -1363,6 +1364,14 @@ export class StudioCore {
         },
         announce: (payload) => this.append([customEventData(CustomEvent.GameCrashed, { ...payload })]),
         now: () => Date.now(),
+        // Named from the build's own debug files by the store's tool, under the sandbox (CRASH-7b).
+        symbolicate: createCrashSymbolicator({
+          tool: async (project) => {
+            const lock = await this.toolchains.currentLock(GameStack.RustWgpu, project).catch(() => null);
+            return lock ? storeSymbolicateTool(this.layout.toolchains, lock) : null;
+          },
+          run: (request) => this.sandbox.run(request),
+        }),
       }),
     };
     return this.options.createNativeRuns ? this.options.createNativeRuns(options) : new NativeRuns(options);

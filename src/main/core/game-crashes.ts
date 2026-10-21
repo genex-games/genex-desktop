@@ -22,6 +22,7 @@ import {
   CrashKind,
   type CrashRecordV1,
   CrashSource,
+  type CrashSymbols,
   type GameCrashedPayload,
   type GameCrashEntry,
   type GameCrashesAnswer,
@@ -32,6 +33,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { NativeRefusal, NativeRunState, type NativeRunStatus } from "../../shared/native-contract.ts";
 import { createFileInDir, ensureDirBelow, isJsonObject, readRegularFile } from "../../substrate/fsx.ts";
 import { fnv1a64Hex } from "../../substrate/native-game-port.ts";
+import { type CrashBuild, parseCrashSymbols } from "./crash-symbolicate.ts";
 
 /** The folder below a game's root that holds its crash records. */
 export const GAME_CRASHES_DIR: readonly string[] = Object.freeze([".studio", "crashes"]);
@@ -62,6 +64,8 @@ const MESSAGE = {
 export interface CrashedRun {
   project: string;
   runId: string;
+  /** The build the run played, for symbolication; absent or null names none. */
+  build?: CrashBuild | null;
 }
 
 /** What the store reaches, injected. */
@@ -71,6 +75,8 @@ export interface GameCrashStoreDeps {
   /** Appends the `game_crashed` event (the studio's main thread). */
   announce(payload: GameCrashedPayload): Promise<unknown>;
   now(): number;
+  /** Names the record's frames (`core/crash-symbolicate.ts`); null when it could not. Absent: never symbolicated. */
+  symbolicate?(run: CrashedRun, record: CrashRecordV1): Promise<CrashSymbols | null>;
   /** Where a record that was not kept is written (default: `console.warn`). */
   log?(line: string): void;
 }
@@ -189,7 +195,10 @@ function storedOf(value: unknown, crashId: string): StoredCrash | null {
   if (!runOk || !atOk || !repeatOk || !signatureOk || typeof symbolicated !== "boolean") return null;
   const record = parseCrashRecord(value.record);
   if (!record) return null;
-  return { crashId, runId, at, repeat: Number(repeat), symbolicated, signature, record };
+  // Symbols count only when the entry says it was symbolicated and they read back whole.
+  const symbols = symbolicated && value.symbols !== undefined ? parseCrashSymbols(value.symbols) : null;
+  const entry = { crashId, runId, at, repeat: Number(repeat), symbolicated: symbols !== null, signature, record };
+  return symbols ? { ...entry, symbols } : entry;
 }
 
 /** Every entry kept in `dir` (a folder the caller checked), newest first; a file that is not one is skipped. */
@@ -292,7 +301,19 @@ async function keepOne(deps: GameCrashStoreDeps, run: CrashedRun, record: CrashR
   const repeat = Math.min(REPEAT_MAX, 1 + Math.max(0, ...same.map((entry) => entry.repeat)));
   const crashId = crashIdOf(run.runId);
   const at = new Date(deps.now()).toISOString();
-  const stored: StoredCrash = { crashId, runId: run.runId, at, repeat, symbolicated: false, signature, record };
+  // A symbolication that fails or throws keeps the record unsymbolicated; it never fails the intake.
+  const symbols = (await deps.symbolicate?.(run, record).catch(() => null)) ?? null;
+  const named = symbols ? { symbols } : {};
+  const stored: StoredCrash = {
+    crashId,
+    runId: run.runId,
+    at,
+    repeat,
+    symbolicated: symbols !== null,
+    signature,
+    record,
+    ...named,
+  };
   const text = `${JSON.stringify({ ...stored, record: crashWire(record) })}\n`;
   await createFileInDir(dir, `${crashId}.json`, text);
   const others = entries.filter((entry) => entry.signature !== signature && entry.crashId !== crashId);

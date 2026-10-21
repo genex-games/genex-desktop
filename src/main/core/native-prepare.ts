@@ -358,7 +358,8 @@ async function prepareWgpuRun(
     admittedFiles,
   });
   const identity: BuildIdentity = { stack: GameStack.RustWgpu, target: request.target, digest, lock: lock.digest };
-  return { runId: request.runId, ...assembled, bundleId, build: identity };
+  const crashBuild = digest === null ? null : { output, exe, digest };
+  return { runId: request.runId, ...assembled, bundleId, build: identity, crashBuild };
 }
 
 /**
