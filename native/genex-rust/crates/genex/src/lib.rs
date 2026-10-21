@@ -158,6 +158,11 @@ pub use stream::{
 };
 /// The view set's radius bounds (STR-16): `Streaming::view_radius` defaults to 4 cells, at most 64.
 pub use stream::{STREAM_VIEW_CELLS_MAX, STREAM_VIEW_RADIUS_DEFAULT_CELLS};
+/// Streamed terrain tiles (STR-23): procedural or authored, their ground and colliders.
+pub use terrain_tiles::{
+    TERRAIN_HEIGHT_RANGE_DEFAULT, TERRAIN_INDEX_BYTES_MAX, TERRAIN_TILE_BYTES_MAX, TERRAIN_TILE_SAMPLES, TERRAIN_TILES_FORMAT, TERRAIN_TILES_MAX,
+    TERRAIN_TILES_VERSION, TerrainTiles,
+};
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 #[cfg(feature = "physics")]
 /// A cell's static colliders and the ledger of streamed colliders (STR-10).

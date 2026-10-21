@@ -54,6 +54,8 @@ pub struct Streaming {
     radii: SimRadii,
     anchors: usize,
     view_radius: Option<f32>,
+    /// The streamed terrain tiles (STR-23).
+    terrain: Option<crate::TerrainTiles>,
 }
 
 impl Streaming {
@@ -61,7 +63,7 @@ impl Streaming {
     /// [`STREAM_CELL_SIZE_MIN`]..=[`STREAM_CELL_SIZE_MAX`] (`install` refuses others
     /// `streaming-invalid`): sim radius 1, hysteresis 1, prefetch 1, one anchor.
     pub fn grid(cell_size: f32) -> Streaming {
-        Streaming { cell_size, radii: SimRadii::default(), anchors: 1, view_radius: None }
+        Streaming { cell_size, radii: SimRadii::default(), anchors: 1, view_radius: None, terrain: None }
     }
 
     /// Cells within `cells` of an anchor are simulated (at most [`STREAM_SIM_RADIUS_MAX`]).
@@ -95,6 +97,19 @@ impl Streaming {
     pub fn view_radius(mut self, metres: f32) -> Streaming {
         self.view_radius = Some(metres);
         self
+    }
+
+    /// Stream `tiles`, one per cell (STR-23): `sim.stream.ground` reads them. With physics,
+    /// `game.cell_content(tiles.colliders_content(cell))` beside `game.stream_colliders()` streams
+    /// each sim-active tile's collider.
+    pub fn terrain(mut self, tiles: crate::TerrainTiles) -> Streaming {
+        self.terrain = Some(tiles);
+        self
+    }
+
+    /// The streamed terrain tiles, when registered.
+    pub(crate) fn tiles(&self) -> Option<&crate::TerrainTiles> {
+        self.terrain.as_ref()
     }
 
     /// The cell side, in metres.

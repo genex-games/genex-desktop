@@ -117,13 +117,16 @@ pub struct StreamState {
     restored: Option<BTreeSet<CellId>>,
     entered: Vec<EnteredCell>,
     left: Vec<CellId>,
+    /// The streamed terrain tiles (STR-23).
+    terrain: Option<crate::TerrainTiles>,
 }
 
 impl StreamState {
     /// The state a seed starts from: no anchors, nothing active.
     pub(crate) fn fresh(streaming: Option<&Streaming>) -> StreamState {
         let cells = streaming.and_then(|s| Grid::new(s.cell_size()).and_then(|grid| SimCells::new(grid, s.radii())).ok());
-        StreamState { cells, max_anchors: streaming.map_or(0, Streaming::max_anchors), ..StreamState::default() }
+        let terrain = streaming.and_then(Streaming::tiles).cloned();
+        StreamState { cells, max_anchors: streaming.map_or(0, Streaming::max_anchors), terrain, ..StreamState::default() }
     }
 
     /// Whether the game registered `game.streaming`.
@@ -230,6 +233,14 @@ impl StreamState {
     /// Whether `cell` is active.
     pub fn is_active(&self, cell: CellId) -> bool {
         self.cells.as_ref().is_some_and(|cells| cells.active().contains(&cell))
+    }
+
+    /// The ground's height at world (`x`, `z`) on the streamed terrain tiles (STR-23), a tile's
+    /// `Terrain::height` bit for bit: procedural tiles anywhere in the world, authored ones only
+    /// inside a sim-active cell. None without tiles or outside them.
+    pub fn ground(&self, x: f32, z: f32) -> Option<f32> {
+        let cells = self.cells.as_ref()?;
+        self.terrain.as_ref()?.ground(x, z, cells.grid().cell_size(), |cell| self.is_active(cell))
     }
 
     /// The cells that entered at this tick's commit, ascending.
