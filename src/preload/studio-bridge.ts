@@ -428,6 +428,7 @@ function previewCalls(bridge: BridgeCalls) {
     playPreview: () => invoke("studio:preview.play"),
     previewFullScreen: () => invoke("studio:preview.fullscreen"),
     liveBehind: (project) => invoke("studio:live.behind", { project }),
+    reloadLiveAssets: (project) => invoke("studio:live.reloadAssets", { project }),
     previewState: () => invoke("studio:preview.state"),
     previewLive: () => invoke("studio:preview.live"),
   } satisfies Partial<StudioApi>;

@@ -172,6 +172,7 @@ const METHODS = [
   "playPreview",
   "previewFullScreen",
   "liveBehind",
+  "reloadLiveAssets",
   "previewState",
   "previewLive",
   "buildProblem",
@@ -354,6 +355,8 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     nativeResize: () => false,
     // No run has a profile to give, and the host keeps no crash records yet.
     nativeProfile: () => ({ state: "unavailable", reason: "no-run" }),
+    // Live shows no run to swap assets into: Reload rebuilds as before.
+    reloadLiveAssets: () => ({ outcome: "rebuild", reason: "no-run", reloaded: [], pending: 0 }),
     gameCrashes: () => ({ state: "unavailable", reason: "not-served" }),
     // No agent asked for a crate.
     cratesList: empty,

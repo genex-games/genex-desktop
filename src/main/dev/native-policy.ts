@@ -94,6 +94,9 @@ const NATIVE_CHANNELS = [
   // A launch on a Simulator, emulator or phone runs the game outside ProcessSandbox, on a device
   // outside the profile: the person's act alone, never a fixture's (containment stage 1).
   "studio:native.launchDevice",
+  // Live's asset swap writes the game's changed files into the copy its running build reads and
+  // sends that game an op: a run of the profile's real game, never a fixture's stand-in.
+  "studio:live.reloadAssets",
   // Approving a crate request lets new code into the profile's vendored set; the person decides.
   "studio:crates.decide",
   // Ejecting or un-ejecting a game's engine rewrites its build inputs, and the trust flag lets

@@ -42,6 +42,7 @@ import type { BootState, SandboxSetupResult } from "./boot.ts";
 import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
+import type { LiveAssetsAnswer } from "./live-assets.ts";
 import type { NativeEmbedSize, NativeFrameMeta, NativeInputActions, NativeRunStatus } from "./native-contract.ts";
 import type { GameCrashesAnswer, GameCrashesUnavailable } from "./crash-record.ts";
 import type { FrameProfileAnswer, FrameProfileRequest } from "./frame-profile.ts";
@@ -533,6 +534,11 @@ export interface StudioApi {
   previewFullScreen(): Promise<boolean>;
   /** What waits for this game's Live Reload and the build Live shows, as `live.behind` says it: read on mount. */
   liveBehind(project: string): Promise<LiveBehindEvent>;
+  /**
+   * Reload's asset swap (`shared/live-assets.ts`): when only files under the game's `assets/`
+   * changed, they go into its running Live build with no rebuild; otherwise `rebuild` with why.
+   */
+  reloadLiveAssets(project: string): Promise<LiveAssetsAnswer>;
   previewState(): Promise<unknown>;
   /** Whose page Live holds, whether it is still navigating, and whether its requests have settled. */
   previewLive(): Promise<{

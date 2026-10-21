@@ -95,6 +95,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { ReadyPhase, CaptureSurface, GameClock, GameFront } from "../../shared/preview-contract.ts";
 import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { type LiveAssetsPage, servedOutputOf } from "../asset-watch.ts";
 import { LiveGate, type LiveOffer } from "./live-gate.ts";
 import type { LiveBehindEvent } from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
@@ -599,6 +600,9 @@ async function servedOnLoopback(
   return !shape.own && (await templateLoadsGenexSdk(dir));
 }
 
+/** Whether Live's page binds the asset swap's verb (`window.__studio.reloadAssets`, the Rust web shell's). */
+const RELOAD_VERB_PROBE = `typeof window.__studio?.reloadAssets === "function"`;
+
 export class PreviewService {
   readonly #core: StudioCore;
   readonly #x: CoreInternals;
@@ -634,6 +638,7 @@ export class PreviewService {
       gameDir: (project) => core.games.dirFor(project),
       showing: () => x.servedRoots.get(LIVE_HANDLE),
       showingHead: (project) => (x.runPreview.project === project ? x.runPreview.head : null),
+      loaded: (project) => core.liveAssetsLoaded(project),
     });
   }
 
@@ -2203,6 +2208,29 @@ export class PreviewService {
   /** What waits for Live's Reload for this game, and the build Live shows: what the stage reads on mount. */
   liveState(project: string): LiveBehindEvent {
     return this.#live.state(project);
+  }
+
+  /**
+   * Live's page as the asset swap reaches it (`asset-watch.ts`): the build output it serves of
+   * `project`'s own folder, and its page verbs; null for another game, a run's build or no page.
+   */
+  liveAssetsPage(project: string): LiveAssetsPage | null {
+    const live = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (live?.project !== project || live.root !== null) return null;
+    const output = servedOutputOf(live.loaded);
+    const port = this.#optionalPreview();
+    if (!output || !port || port instanceof NativeLeasePort) return null;
+    return {
+      output,
+      serves: async () => (await port.evaluate(RELOAD_VERB_PROBE).catch(() => false)) === true,
+      studioCall: (method, arg) => port.studioCall(method, arg),
+    };
+  }
+
+  /** Live's asset swap brought it level with the game folder: nothing waits for its Reload any more. */
+  async liveAssetsSwapped(project: string): Promise<void> {
+    const print = await this.#live.printBefore(project, null);
+    await this.#live.loaded(project, { print, root: null });
   }
 
   /**

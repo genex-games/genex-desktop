@@ -97,6 +97,16 @@ export function liveBehindOf(now: {
   return null;
 }
 
+/**
+ * Whether Reload tries the asset swap first (`studio:live.reloadAssets`, owner call C10): for a
+ * change to the game folder main holds, and for a plain Reload (a change the watcher missed is
+ * found by the swap's own re-plan). A run's build, or the way back from a broken one, never swaps.
+ */
+export function reloadSwapsAssets(what: LiveBehind | null): boolean {
+  if (!what) return true;
+  return what.held && what.reason === LiveBehindReason.Changed && what.head === null;
+}
+
 /** What the stage shows, as far as the rules below care. */
 export interface StageWatch {
   view: StageView;

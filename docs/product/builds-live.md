@@ -25,17 +25,17 @@ or Reload. An empty scaffold shows “Ready for your first idea”, or
 Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
 hidden). A newer healthy build, a changed game folder (checkpoint, landing, rewind), a chat's show
 or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
-in at once. The
+in at once; Rust `assets/`-only changes swap in mid-play. The
 preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
 [projects](projects-engines.md#lives-views).
 
-**Compiled games** (C++ · raylib; Rust · wgpu on an Apple-silicon Mac or Linux x64) build per
-destination, sandboxed; **Web | Native** shows the Mac build in Live (Reload restarts it). Rust needs WebGPU. Only your
+**Compiled games** (C++ · raylib; Rust · wgpu on Apple-silicon Macs or Linux x64) build per
+destination, sandboxed; **Web | Native** shows the Mac build in Live. Rust needs WebGPU. Only your
 **On a device** press installs a phone build ([feature map](../agent/feature-map.md)).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
-hangs below. Tries a pause cut off show Paused until added. An eye marks (and opens) the reviewers'
+hangs below. Tries a pause cut off show Paused until added. An eye opens the reviewers'
 notes. A new build is “Checking it starts…” until it has run. A working node shows its agent's
 screen; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
 Earlier builds open from chat cards. A Loop in place draws the lead's save points on one row

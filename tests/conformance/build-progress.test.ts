@@ -17,6 +17,7 @@ import {
   firstBuildShows,
   laterOf,
   liveBehindOf,
+  reloadSwapsAssets,
   newBuildOffer,
   type StageWatch,
 } from "../../src/renderer/stage.ts";
@@ -446,6 +447,19 @@ test("nothing goes into Live on its own while someone is watching a game in it",
     assert.equal(appliesUnseen(build, stage), false, JSON.stringify(stage));
   }
   assert.equal(appliesUnseen(null, { ...watching, view: "builds" }), false);
+});
+
+/**
+ * Owner call C10 (game systems C-19b): Reload of the game folder tries the asset swap first, so a
+ * game whose only change is its assets keeps playing with them; a run's build and the way back
+ * from a broken one load as before.
+ */
+test("Reload swaps assets first for a folder change and a plain Reload, never for a build", () => {
+  assert.equal(reloadSwapsAssets(null), true, "a plain Reload: the swap's own re-plan finds a missed change");
+  assert.equal(reloadSwapsAssets({ reason: "changed", note: null, head: null, held: true }), true);
+  assert.equal(reloadSwapsAssets({ reason: "build", note: null, head: "bbb", held: true }), false);
+  assert.equal(reloadSwapsAssets({ reason: "build", note: null, head: "bbb", held: false }), false);
+  assert.equal(reloadSwapsAssets({ reason: "broken", note: null, head: null, held: false }), false);
 });
 
 test("only the empty scaffold takes the run's first healthy build by itself", () => {

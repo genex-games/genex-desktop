@@ -45,6 +45,7 @@ import { assetKind, isAudioFile, stackAcceptsAsset, type AssetDeliveredPayload }
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
 import type { NativeTimers } from "../shared/native-contract.ts";
+import type { LiveAssetsAnswer } from "../shared/live-assets.ts";
 import { hostOf } from "../shared/game-targets.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import {
@@ -250,6 +251,7 @@ import {
   rustStageImporter,
 } from "./rust-assets.ts";
 import { type AssetCache, cachedImporter, openAssetCache } from "./asset-cache.ts";
+import { LiveAssets, shownLiveGame } from "./asset-watch.ts";
 import { IMPORTER_TOOLS_RESOURCES_FOLDER } from "../substrate/asset-import/decoders.ts";
 import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
 import { webExportWarnings } from "./rust-build-web.ts";
@@ -627,6 +629,8 @@ export class StudioCore {
   readonly #x: CoreInternals;
   readonly #connections: ConnectionService;
   readonly #previews: PreviewService;
+  /** Live's asset watcher and swap (`asset-watch.ts`), made on first use. */
+  #liveAssets: LiveAssets | null = null;
   readonly #delegation: DelegationService;
   readonly #recovery: RecoveryService;
   /** Resumes a paused build on its own once its limit resets or its loop runs again. */
@@ -1895,6 +1899,7 @@ export class StudioCore {
 
   async stop(): Promise<void> {
     this.#planReviews?.stop();
+    this.#liveAssets?.dispose();
     // No compiled build outlives the studio; they run in the sandbox disposed below.
     this.#gameBuilds.cancelAll();
     // Nor a delivery's import (C-5): its job ends, so no importer outlives the core.
@@ -2891,6 +2896,39 @@ export class StudioCore {
   /** The person's Reload on the stage: what waits for Live, else what is on disk now (`live-gate.ts`). */
   reloadLive(p: { retry?: boolean } = {}): Promise<void> {
     return this.#previews.reloadLive(p);
+  }
+
+  /**
+   * Reload's asset swap (`studio:live.reloadAssets`, `asset-watch.ts`): the game's changed assets
+   * into the build Live shows, with no rebuild; `rebuild` with why when anything else changed.
+   */
+  reloadLiveAssets(project: string): Promise<LiveAssetsAnswer> {
+    return this.#liveAssetsService().reload(project);
+  }
+
+  /** A load the person made reached Live: the game's folder is watched for asset changes from a clean slate. */
+  liveAssetsLoaded(project: string): void {
+    this.#liveAssetsService().liveLoaded(project);
+  }
+
+  /** The asset watcher and swap for the game Live shows, made on first use. */
+  #liveAssetsService(): LiveAssets {
+    this.#liveAssets ??= new LiveAssets({
+      gameDir: (project) => this.games.dirFor(project),
+      shown: (project) =>
+        shownLiveGame(
+          {
+            nativeRuns: this.nativeRuns,
+            nativeRunsRoot: this.layout.nativeRuns,
+            livePage: (name) => this.#previews.liveAssetsPage(name),
+          },
+          project,
+        ),
+      offer: (project) => void this.#previews.offerLive({ project, root: null }).catch(() => {}),
+      caughtUp: (project) => this.#previews.liveAssetsSwapped(project),
+      timers: this.#x.nativeTimers,
+    });
+    return this.#liveAssets;
   }
 
   /** The stage's Stop: Live's game stops running until Play. */
