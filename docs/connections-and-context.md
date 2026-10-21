@@ -130,7 +130,7 @@ A failure says why; Settings then adds the vendor's install guide.
 
 ## OpenRouter and OpenCode
 
-Both are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
+OpenRouter, OpenCode and Pi are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
 so `EngineRegistry` never offers one as a fallback or a first ready engine, and the sign-in gate's
 local finish and the reference judge never pick one. Only the person's explicit pick runs on them.
 
@@ -208,6 +208,14 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
 (OpenCode 1.18 and 2.0.20).
 
+**Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`, resume
+`--session-id`), not the `pi-ai` HTTP client. Sign in and `--list-models` run with
+`--no-extensions --offline`; studio never reads `~/.pi`. Ready once `--list-models` lists a model.
+Sessions run in `ProcessSandbox` (`ownHome`: `~/.pi`) with `--no-extensions`. `~/.pi` stays
+read-only except `agent/sessions` and `agent/auth.json.lock`. An expired sign-in, or a refresh that
+cannot rewrite `auth.json`, says to sign in again. An unknown provider reaches only its `models.json` host. No in-app installer; Account can
+run `pi update`. Streams: `tests/fixtures/transcripts/pi-*`.
+
 ## Your own model server
 
 **Local server** ([local-server.ts](../src/substrate/engines/local-server.ts)) connects a model
@@ -249,6 +257,7 @@ nothing is `unavailable`, so another engine may take over. Tests: `engine-local-
 against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
+>>>>>>> upstream-dev
 session can read OpenCode's own `auth.json`, and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
 boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where

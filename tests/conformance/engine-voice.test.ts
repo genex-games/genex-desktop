@@ -179,6 +179,8 @@ describe("one engine voice", () => {
     // OpenCode has no channel for the studio's tools either: it runs the same bridge as Codex.
     assert.equal(toolCall("opencode", "computer"), `${BRIDGE_TOOL_CMD} computer`);
     assert.match(toolSyntax("opencode"), /tool\.mjs <name> --field=value/);
+    assert.equal(toolCall("pi", "computer"), `${BRIDGE_TOOL_CMD} computer`);
+    assert.match(toolSyntax("pi"), /tool\.mjs <name> --field=value/);
     // OpenRouter's tools run in the studio's own session loop, by their bare names.
     assert.equal(toolCall("openrouter", "computer"), "computer");
     assert.equal(toolCall(undefined, "capture"), "capture");

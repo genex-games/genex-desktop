@@ -102,6 +102,19 @@ test("invalid manual override never falls back; bundled and project dependencies
   });
   assert.equal(excluded.status.state, "missing");
 });
+test("a Bun global install is kept: its real path is install/global/node_modules, not a Studio dependency", async () => {
+  const home = path.join(root, "bun-home");
+  const real = path.join(home, ".bun/install/global/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js");
+  const flags = "--mode --session-id --model --list-models --thinking";
+  await launcher(real, `#!/bin/sh\ncase "$1" in\n --version) echo 'pi 0.1';;\n *) echo '${flags}';;\nesac\n`, "");
+  const bin = path.join(home, ".bun/bin");
+  await mkdir(bin, { recursive: true });
+  const shim = path.join(bin, exe("pi"));
+  await symlink(real, shim);
+  const found = await discoverCodingCli("pi", { ...options, loginPath: bin, home });
+  assert.equal(found.status.state, "ready");
+  assert.equal(found.status.path, shim);
+});
 test("npm launchers report missing Node and carry the required launch environment", async () => {
   const shim = await cli("npm/claude");
   const js =
