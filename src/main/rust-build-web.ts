@@ -38,7 +38,7 @@
  * `source`, and left out beside a family file, only when the runtime never falls back to it.
  *
  * A `[net]` game's build ({@link WebPackageInput.net}, MP-5a) also serves the relay client's JS
- * bridge: the pinned `bridge.global.js` ({@link MULTIPLAYER_BRIDGE_PIN}) and the template's ESM shim
+ * bridge: the pinned `bridge.global.js` ({@link MULTIPLAYER_BRIDGE_PIN}) and the build's ESM shim
  * under {@link WEB_NET_FILES}, with the import map and classic script tag the page carries only
  * then ({@link webShellPage}). The bridge is checked (a regular file, never a link, exactly the
  * pinned size and sha256) before anything is written, and refused `mp-bridge-refused` otherwise;
@@ -349,7 +349,7 @@ export interface WebPackageInput {
 export interface WebNetBridge {
   /** The store's `bridge.global.js` ({@link MULTIPLAYER_BRIDGE_PIN}`.file` in its component folder). */
   bridge: string;
-  /** The template's ESM shim's text (`src/game-template-rust/web/mp-bridge-shim.mjs`). */
+  /** The ESM shim's text (`MP_BRIDGE_SHIM` in `src/main/mp-bridge-shim.ts`). */
   shim: string;
   /** The pin the bridge is held to; absent: {@link MULTIPLAYER_BRIDGE_PIN} (tests hand their own). */
   pin?: WebBridgePin;

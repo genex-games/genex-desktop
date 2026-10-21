@@ -44,7 +44,7 @@
 
       Multiplayer (game systems MP-5a): a [net] game's game.js imports the relay client's bridge by
       its bare name, @genex-ai/multiplayer/bridge. Only that build's page carries, in its head where
-      the build puts it, an import map resolving the name to ./mp/bridge.mjs (the template's shim)
+      the build puts it, an import map resolving the name to ./mp/bridge.mjs (the build's shim)
       and a classic script loading mp/bridge.global.js (the pinned bridge) before any module; both
       are in the page's own folder, on its origin, outside assets/ and the asset map. Every other
       build's page has neither. The pipeline dry boot's worker has no import map, so a [net] game's

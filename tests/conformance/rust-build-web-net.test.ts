@@ -2,7 +2,7 @@
  * A `[net]` game's web build (game systems MP-5a): the relay client's JS bridge beside the page.
  *
  * - Packaging rows (scripted tools, everywhere): `packageWeb` with `net` copies the pinned
- *   `bridge.global.js` to `mp/bridge.global.js` and the template's shim to `mp/bridge.mjs`, the page
+ *   `bridge.global.js` to `mp/bridge.global.js` and the build's shim to `mp/bridge.mjs`, the page
  *   gains the import map and the classic script tag in its head, and the receipt records
  *   `mpBridgeBytes` and `mpBridgeGzip`. A build without `net` is the build it was before: the same
  *   files, receipt keys and page. A bridge that is a link, missing, not a regular file, or not the
@@ -38,6 +38,7 @@ import {
   type WebRun,
   webShellPage,
 } from "../../src/main/rust-build-web.ts";
+import { MP_BRIDGE_SHIM } from "../../src/main/mp-bridge-shim.ts";
 import { SECOND_MS } from "../../src/shared/duration.ts";
 import { MULTIPLAYER_BRIDGE_PIN } from "../../src/shared/toolchain.ts";
 import { playwrightHeadlessChromiumOnDisk } from "../helpers/playwright-chromium.ts";
@@ -45,7 +46,6 @@ import { tmpDir } from "../helpers/tmp.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const SHELL = path.join(REPO, "src", "game-template-rust", "web", "shell.html");
-const SHIM = path.join(REPO, "src", "game-template-rust", "web", "mp-bridge-shim.mjs");
 const CRATE_WEB = path.join(REPO, "native", "genex-rust", "crates", "genex-multiplayer", "src", "web.rs");
 const BOOT_TIMEOUT_MS = 30 * SECOND_MS;
 const SCRIPTED_TOOLS = { wasmBindgen: "/t/wasm-bindgen", wasmOpt: "/t/wasm-opt" };
@@ -281,7 +281,7 @@ async function crateBridgeCalls(): Promise<string[]> {
 /** The shim's exports, imported afresh with `bridge` as the global (absent: none). */
 async function shimExports(bridge: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
   const copy = path.join(await realpath(await tmpDir("rust-web-net-shim-")), "bridge.mjs");
-  await writeFile(copy, await readFile(SHIM));
+  await writeFile(copy, MP_BRIDGE_SHIM);
   const scope = globalThis as { GenexMultiplayerBridge?: unknown };
   scope.GenexMultiplayerBridge = bridge;
   try {
@@ -382,7 +382,7 @@ async function netFolder(net: boolean): Promise<string> {
   await writeFile(path.join(root, WEB_FILES.module), netModule(["models/crate.glb", asset.length]));
   await mkdir(path.join(root, "mp"));
   await writeFile(path.join(root, WEB_NET_FILES.bridge), fixtureBridge(["connect"]));
-  await writeFile(path.join(root, WEB_NET_FILES.shim), await readFile(SHIM));
+  await writeFile(path.join(root, WEB_NET_FILES.shim), MP_BRIDGE_SHIM);
   await mkdir(path.join(root, WEB_FILES.assets, "models"), { recursive: true });
   await writeFile(path.join(root, WEB_FILES.assets, "models", "crate.glb"), asset);
   await writeFile(path.join(root, WEB_FILES.assetMap), JSON.stringify({ version: 2, files: [] }));
