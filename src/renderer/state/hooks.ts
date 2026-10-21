@@ -17,6 +17,7 @@ import type { LaunchState } from "./launch.ts";
 import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
+import { type LiveProfileState, liveProfileStoreFor } from "./live-profile.ts";
 import { type NativeGame, type NativeState, type NativeStore, nativeOf, nativeStoreFor } from "./native.ts";
 import type { PluginsState } from "./plugins.ts";
 import { type SessionState, SessionStatus } from "./session.ts";
@@ -42,6 +43,9 @@ export const useToasts = <T>(select: Selector<ToastsState, T>): T => useStore(st
 export const useLayout = <T>(select: Selector<LayoutState, T>): T => useStore(studio().layout, select);
 /** The native run store lives beside the studio's stores, over the same `window.studio`. */
 export const useNative = <T>(select: Selector<NativeState, T>): T => useStore(nativeStoreFor(studio().api), select);
+/** Live's profile strip store lives beside the studio's stores, over the same `window.studio`. */
+export const useLiveProfile = <T>(select: Selector<LiveProfileState, T>): T =>
+  useStore(liveProfileStoreFor(studio().api), select);
 export const useLaunch = <T>(select: Selector<LaunchState, T>): T => useStore(studio().launch, select);
 export const useUpdate = <T>(select: Selector<UpdateState, T>): T => useStore(studio().update, select);
 export const useModelPicker = <T>(select: Selector<ModelPickerState, T>): T => useStore(studio().modelPicker, select);

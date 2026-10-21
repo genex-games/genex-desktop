@@ -108,6 +108,8 @@ import { NativeLiveCanvas } from "./stage/NativeLiveCanvas.tsx";
 import { DeviceLaunch } from "./stage/DeviceLaunch.tsx";
 import { EngineRows, type EngineRowsToggle, useEngineRows } from "./stage/EngineRows.tsx";
 import { NativeRunCard } from "./stage/NativeRunCard.tsx";
+import { CrashCard } from "./stage/CrashCard.tsx";
+import { ProfileStrip } from "./stage/ProfileStrip.tsx";
 import { type LiveViewChoice, StageStrip, useLaneRuns } from "./stage/StageStrip.tsx";
 import { type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
 import { StillsStage } from "./stage/StillsStage.tsx";
@@ -777,6 +779,8 @@ function StageAbove({
         <NativeRunCard project={macGame} onNotice={onNotice} onInstallTools={tools.showMac} />
       ) : null}
       {onStage && stage.loaded ? <DeviceLaunch game={stage.loaded} onNotice={onNotice} /> : null}
+      {onStage && stage.loaded ? <CrashCard game={stage.loaded} /> : null}
+      {onStage && stage.loaded ? <ProfileStrip game={stage.loaded} onNotice={onNotice} /> : null}
       {onStage && stage.loaded && engine?.open ? <EngineRows game={stage.loaded} onNotice={onNotice} /> : null}
       {tools.sheet}
     </>

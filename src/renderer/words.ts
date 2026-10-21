@@ -52,6 +52,8 @@ import {
   XcodeStatus,
 } from "../shared/toolchain.ts";
 import { sizeWords } from "../shared/byte-size.ts";
+import { CrashKind } from "../shared/crash-record.ts";
+import { ProfileUnavailableReason } from "../shared/frame-profile.ts";
 import { freeableBytes, StorageKind, type StorageFreed, type StorageSpace } from "../shared/storage-space.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
@@ -4527,4 +4529,50 @@ export const UNREAL_WORDS = {
     project
       ? `Loops need the Unreal project inside this game’s folder, so Rewind can undo each step; ${project} is in ${place}. Make a new one from the Unreal button, or move ${project} into this game’s folder and choose it there. Each message runs one turn.`
       : "Loops need this game’s Unreal project inside its folder, so Rewind can undo each step. A new Unreal project made from the Unreal button goes there. Each message runs one turn.",
+} as const;
+
+/** Live's frame profile strip and crash card (game-systems PROF-7). */
+export const PROFILE_WORDS = {
+  heading: "Frame profile",
+  show: "Show",
+  hide: "Hide",
+  reading: "Reading…",
+  failed: "Couldn’t read the frame profile.",
+  /** Why there is no profile to show. */
+  unavailable: {
+    [ProfileUnavailableReason.NoRun]: "Start the game to see its frame profile.",
+    [ProfileUnavailableReason.NotServed]: "This build doesn’t report a frame profile yet.",
+    [ProfileUnavailableReason.UnknownOp]: "Web and exported builds don’t report a frame profile.",
+  },
+  /** The sparkline's line: the frame times the last polls saw, the slower 5% of frames. */
+  times: (cpuMs: number, gpuMs: number | null) =>
+    gpuMs === null ? `CPU ${cpuMs.toFixed(1)} ms` : `CPU ${cpuMs.toFixed(1)} ms · GPU ${gpuMs.toFixed(1)} ms`,
+  hitches: (count: number) => (count === 1 ? "1 hitch" : `${count} hitches`),
+  sparkline: "Frame time over the last 30 seconds. The dashed line is a 60 fps frame; marks are hitches.",
+  scopes: "Slowest scopes",
+  gameScope: "game",
+  ms: (ms: number) => `${ms.toFixed(1)} ms`,
+  memory: "Memory",
+  mib: (mib: number, budgetMib: number | null) => (budgetMib === null ? `${mib} MiB` : `${mib} of ${budgetMib} MiB`),
+  overBudget: "over budget",
+  arm: "Time GPU passes",
+  disarm: "Stop timing passes",
+  passes: "GPU passes",
+  passesWaiting: "Timing the next frames…",
+  crash: {
+    heading: "The game crashed",
+    kind: {
+      [CrashKind.Panic]: "Panic",
+      [CrashKind.GpuValidation]: "GPU error",
+      [CrashKind.DeviceLost]: "GPU device lost",
+      [CrashKind.WasmTrap]: "WebAssembly trap",
+      [CrashKind.NativeFault]: "Memory fault",
+      [CrashKind.OutOfMemory]: "Out of memory",
+      [CrashKind.Hang]: "Stopped responding",
+      [CrashKind.ProcessExit]: "Exited unexpectedly",
+    },
+    replay: (tick: number | null, seed: number | null) =>
+      [tick === null ? null : `tick ${tick}`, seed === null ? null : `seed ${seed}`].filter(Boolean).join(" · "),
+    repeat: (count: number) => (count > 1 ? `${count} times` : ""),
+  },
 } as const;
