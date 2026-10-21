@@ -45,6 +45,8 @@ Rapier (a fifth of the web build) out.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
+A multiplayer game follows `docs/api/net.md`: no network before the player picks online, Live
+is a loopback room, and online play is proved only on the published draft in two windows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
 

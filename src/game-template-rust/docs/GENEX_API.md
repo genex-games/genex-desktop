@@ -44,6 +44,7 @@ needs Ctx and Drawing).
 | Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
+| Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, the loopback room in Studio, scripted remote players and the feel rules. |
 | Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, crash records. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
@@ -99,13 +100,11 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   `__render`, `assets` and `checksum`, `__stream` while `game.streaming` is registered and
   `__input` while `game.input` is registered, `__net` while the build links networking or
   `game.net` is registered (display only and never in the checksum, so a probe may be named
-  `stream`, `input` or `net`). A streamed world registers `game.streaming(..)` and builds cells
-  with `game.cell_content(..)` (`docs/api/streaming.md`); `game.navigation(..)` registers a
-  walker and `sim.nav` holds its nav (`docs/api/navigation.md`). `hud.items` lists
+  `stream`, `input` or `net`). `hud.items` lists
   the label of every egui widget the last tick drew, in drawing order, so a check can find a
   widget by its label.
 - **Demos.** A demo scripts what a generic walk cannot reach (a state behind a menu, a long
-  chain of inputs). Its driver offers `sim()`, `sim_mut()`, `inject(input)`, `advance_ms(ms)`
+  chain of inputs). Its driver offers `sim()`, `sim_mut()`, `inject(input)`, `advance_ms(ms)`,
   `save(file, bytes)` and `net()` (scripted remote players in the loopback room), and the value it returns is the demo's answer (a check captures the
   frame after the demo with the `capture` verb). The runtime
   is paused after a demo. Only a demo can advance time: `advance` inside `on_update` does not
