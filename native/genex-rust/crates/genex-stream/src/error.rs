@@ -28,17 +28,22 @@ pub enum StreamErrorCode {
     /// active cells than the registration can hold; the state is unchanged (STR-12,
     /// `snapshot.rs`).
     SnapshotInvalid,
+    /// A settled capture's drain ran past the facade's `STREAM_DRAIN_MAX_MS` with something still
+    /// loading: the capture was drawn with what was resident, and
+    /// `state().volatile.__stream.view.timeout` names it until a drain settles (STR-25).
+    DrainTimeout,
 }
 
 impl StreamErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [StreamErrorCode; 6] = [
+    pub const ALL: [StreamErrorCode; 7] = [
         StreamErrorCode::Invalid,
         StreamErrorCode::TooManyAnchors,
         StreamErrorCode::OutOfWorld,
         StreamErrorCode::NotRegistered,
         StreamErrorCode::HoldTimeout,
         StreamErrorCode::SnapshotInvalid,
+        StreamErrorCode::DrainTimeout,
     ];
 
     /// The code's wire spelling.
@@ -50,6 +55,7 @@ impl StreamErrorCode {
             StreamErrorCode::NotRegistered => "stream-not-registered",
             StreamErrorCode::HoldTimeout => "stream-hold-timeout",
             StreamErrorCode::SnapshotInvalid => "stream-snapshot-invalid",
+            StreamErrorCode::DrainTimeout => "stream-drain-timeout",
         }
     }
 }

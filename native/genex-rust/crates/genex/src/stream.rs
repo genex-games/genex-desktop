@@ -19,7 +19,9 @@ use glam::Vec2;
 
 use crate::frame::Transform;
 use crate::gfx::Model;
+use crate::group::InstanceGroup;
 use crate::rng::Pcg32;
+use crate::terrain::{Scatter, Terrain};
 
 pub use genex_stream::grid::{STREAM_ANCHORS_MAX, STREAM_RING_MAX, STREAM_SIM_RADIUS_MAX, STREAM_VIEW_CELLS_MAX, STREAM_WORLD_EXTENT_MAX};
 pub use genex_stream::{StreamError, StreamErrorCode, StreamTicket};
@@ -216,6 +218,14 @@ impl CellInputs {
         model
     }
 
+    /// `rule`'s instances on `terrain` within this cell's bounds (STR-20): `Terrain::scatter` is
+    /// place-deterministic, so the cells' scatters together are the scatter of their union and
+    /// neighbouring cells meet exactly. Hand them to [`CellBuild::group`].
+    pub fn scatter(&self, terrain: &Terrain, rule: &Scatter) -> Vec<Transform> {
+        let (min, max) = self.bounds();
+        terrain.scatter(rule, min, max)
+    }
+
     fn take_models(&self) -> Vec<String> {
         self.models.take()
     }
@@ -241,11 +251,12 @@ pub struct CellBuild<T> {
     things: Vec<T>,
     parts: Vec<Box<dyn CellPart>>,
     models: Vec<CellModel>,
+    groups: Vec<InstanceGroup>,
 }
 
 impl<T> Default for CellBuild<T> {
     fn default() -> Self {
-        CellBuild { things: Vec::new(), parts: Vec::new(), models: Vec::new() }
+        CellBuild { things: Vec::new(), parts: Vec::new(), models: Vec::new(), groups: Vec::new() }
     }
 }
 
@@ -258,7 +269,12 @@ pub(crate) struct CellModel {
 
 impl<T: std::fmt::Debug> std::fmt::Debug for CellBuild<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CellBuild").field("things", &self.things).field("parts", &self.parts.len()).field("models", &self.models.len()).finish()
+        f.debug_struct("CellBuild")
+            .field("things", &self.things)
+            .field("parts", &self.parts.len())
+            .field("models", &self.models.len())
+            .field("groups", &self.groups.len())
+            .finish()
     }
 }
 
@@ -282,6 +298,15 @@ impl<T> CellBuild<T> {
         self
     }
 
+    /// Draw `group` (rocks, a forest's trees: [`CellInputs::scatter`] places them) while the cell is
+    /// within the view radius of the drawn camera (display only, STR-20). Its rows upload once and
+    /// stop when the cell leaves the view; a model group draws once its model is resident. A cell
+    /// whose groups hold more than [`STREAM_CELL_INSTANCES_MAX`] instances together draws nothing.
+    pub fn group(mut self, group: InstanceGroup) -> CellBuild<T> {
+        self.groups.push(group);
+        self
+    }
+
     /// The things, in the order they were added.
     pub fn things(&self) -> &[T] {
         &self.things
@@ -297,6 +322,8 @@ pub(crate) struct ContentBuild {
     pub models: Vec<String>,
     /// What the cell draws in the view set, in build order.
     pub views: Vec<CellModel>,
+    /// The groups the cell draws in the view set, in build order (STR-20).
+    pub groups: Vec<InstanceGroup>,
 }
 
 type Runner = dyn Fn(CellId, u32, f32) -> ContentBuild + Send + Sync;
@@ -324,6 +351,7 @@ impl CellContent {
                 parts: build.parts,
                 models: inputs.take_models(),
                 views: build.models,
+                groups: build.groups,
             }
         };
         CellContent { run: Arc::new(run), thing_bytes: std::mem::size_of::<T>() }

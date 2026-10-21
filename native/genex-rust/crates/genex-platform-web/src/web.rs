@@ -56,7 +56,10 @@
 //! `debugCamera` placed, else the game's own) into the world target, copies it
 //! (through the renderer's nearest-texel present at world size, which keeps the bytes) into a
 //! mappable buffer and resolves once the browser has mapped it, with top-down BGRA and its
-//! FNV-1a-64 digest. The shell awaits it instead of reading the canvas in the same turn.
+//! FNV-1a-64 digest. The shell awaits it instead of reading the canvas in the same turn. A
+//! streaming game's capture first drains its view set (game systems STR-25): a pass, then the
+//! page's turn (a zero-delay timeout, so the fetches land), until every model it wants is resident
+//! or refused or `STREAM_DRAIN_MAX_MS` passed; Live frames never wait.
 //!
 //! Two diagnostic exports serve the web parity row: [`studio_custom_passes`] draws without the
 //! game's passes (the A/B), and [`studio_pipeline_check`] creates every renderer pipeline variant
@@ -70,7 +73,7 @@ use crate::handle::GameHandle;
 use crate::saves::{SAVES_DATABASE_PREFIX, saves_state};
 use crate::selftest::{self, CaptureDigest, SelfTestPlan};
 use crate::studio::{HandleGame, Held, Painter, Screen, WebSource, verb_changes_frame};
-use genex::present::Presenter;
+use genex::present::{Drain, DrainStep, Presenter, STREAM_DRAIN_MAX_MS};
 use genex::{Game, Runtime, Value, json};
 use genex_core::saves::mirror::{self, MirrorError};
 use genex_hud::HudPainter;
@@ -1156,8 +1159,51 @@ async fn capture_now() -> Result<(Capture, u64), JsValue> {
     captured
 }
 
-/// [`capture_now`]'s draws and readback, with animation frames held off.
+/// One drain pass for the current view (STR-25): whether the streamed view set settled.
+fn drain_pass(shell: &mut Shell) -> Result<bool, JsValue> {
+    let Shell { game, graphics, view, .. } = shell;
+    let graphics = graphics.as_mut().ok_or_else(|| refusal(NOT_BOOTED, "studio_boot has not succeeded"))?;
+    started(game)?.drain_pass(&mut graphics.screen.presenter, view.as_deref()).map_err(|error| render_refusal(&error))
+}
+
+/// Milliseconds on the page's clock.
+fn page_ms() -> f64 {
+    page_clock()().as_secs_f64() * 1000.0
+}
+
+/// Give the page its turn (a zero-delay timeout): the fetches a drain waits for land meanwhile.
+async fn yield_to_page() -> Result<(), JsValue> {
+    let window = web_sys::window().ok_or_else(|| refusal("capture-failed", "no window"))?;
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        let _ = window.set_timeout_with_callback(&resolve);
+    });
+    JsFuture::from(promise).await.map(|_| ())
+}
+
+/// Drain the streamed view set before a settled capture (STR-25): a pass, then the page's turn,
+/// until everything wanted is resident or refused or `STREAM_DRAIN_MAX_MS` passed (the capture is
+/// then drawn with what is resident and `volatile.__stream.view.timeout` says so).
+async fn drain_for_capture() -> Result<(), JsValue> {
+    let mut drain = Drain::start(page_ms(), STREAM_DRAIN_MAX_MS);
+    loop {
+        let settled = with_shell(drain_pass)?;
+        if drain.after_pass(settled, page_ms()) != DrainStep::Again {
+            break;
+        }
+        yield_to_page().await?;
+    }
+    let report = drain.report();
+    with_shell(|shell| {
+        let Shell { game, graphics, .. } = shell;
+        let graphics = graphics.as_mut().ok_or_else(|| refusal(NOT_BOOTED, "studio_boot has not succeeded"))?;
+        started(game)?.note_drain(&mut graphics.screen.presenter, report);
+        Ok(())
+    })
+}
+
+/// [`capture_now`]'s drain, draws and readback, with animation frames held off.
 async fn draw_and_read_capture() -> Result<(Capture, u64), JsValue> {
+    drain_for_capture().await?;
     with_shell(render_capture)?;
     if settle_shell_scopes().await? {
         with_shell(render_capture)?;

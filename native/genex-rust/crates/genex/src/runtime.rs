@@ -606,6 +606,21 @@ impl<W> Runtime<W> {
         restart_journal(&self.game, &mut self.core, tick);
     }
 
+    /// Serve a Studio `saves` call between ticks (UIS-16, the dev flavour's `saves` verb): list,
+    /// read, write, save, load or delete a slot at once, through the same driver as `ctx.slots()`.
+    /// A load answers once applied, and the HUD, streaming and the journal start over as after a
+    /// tick's restore. Refused with the slot code (`save-not-configured` without `game.saves`).
+    #[doc(hidden)]
+    pub fn host_saves(&mut self, call: crate::saves::HostSavesCall) -> Result<serde_json::Value, crate::saves::SaveError> {
+        let core = &mut self.core;
+        let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
+        let answer = crate::saves::host_call(&self.game, &mut core.g6.saves, running, call)?;
+        if answer.restored {
+            restored(&self.game, core);
+        }
+        Ok(answer.value)
+    }
+
     /// The simulation, read-only.
     pub fn sim(&self) -> &Sim<W> {
         &self.core.sim

@@ -19,7 +19,12 @@
 //! ms), and `capture` draws the pinned capture profile as a settled capture (K re-renders on the
 //! renderer's capture-owned history, RQ1.5; Live's history is left where it was, and the Live
 //! picture is drawn again at the same tick afterwards) and names it in its reply's `render`
-//! provenance (`settleFrames` is the K drawn). At boot the device is probed and, when no hint is cached in the saves, calibrated
+//! provenance (`settleFrames` is the K drawn). A streaming game's capture first drains its view
+//! set (game systems STR-25): passes until every model it wants is resident or refused, at most
+//! `STREAM_DRAIN_MAX_MS`, with `stream-drain-timeout` in `volatile.__stream.view` past it; Live
+//! frames never wait. The dev flavour also serves `saves` and `uiSettings` (G6 UIS-16) through
+//! `Runtime::host_saves` and the UI session layer, and its receipt advertises both.
+//! At boot the device is probed and, when no hint is cached in the saves, calibrated
 //! once; the host may name the adapter's reference class in `GENEX_RENDER_REFERENCE_CLASS`. A
 //! settings change is warmed off the loop (`Presenter::set_off_thread_changes`): Live keeps the
 //! settings it drew until the new renderer is ready, so the loop answers every verb and heartbeat
@@ -50,15 +55,15 @@ use genex_core::protocol::{BootProgress, BootStage};
 use genex_core::session::{AudioLevel, FrameTiming, StepResult, Timings};
 use genex_render::{GpuCounters, RenderCode, RenderError};
 use genex_studio::verbs::{
-    ReloadFile, ReloadOutcome, ReloadRefusal, SpelledAnswer, SpelledChange, capture_provenance_value, render_answer_value, render_status_value,
-    spell_change,
+    ReloadFile, ReloadOutcome, ReloadRefusal, SavesRequest, SpelledAnswer, SpelledChange, UiMember, UiSettingsChange, capture_provenance_value,
+    render_answer_value, render_status_value, spell_change,
 };
 use genex_studio::wire::{self, Backend, GpuRefusal, NativeEnhanced, Receipt, RenderSettingsChange, RenderSettingsRefusal, SurfaceArgs};
 use genex_studio::{
     CaptureFault, FatalReason, Injection, Pixels, ReadyInfo, RingFault, Studio, StudioGame, Transport,
     from_environment, report_panics,
 };
-use crate::present::{Presenter, ReloadMiss};
+use crate::present::{DrainClock, Presenter, ReloadMiss, STREAM_DRAIN_MAX_MS, WallDrainClock, drain_blocking};
 use crate::profile::EngineScope;
 use genex_profile::GpuTimeSource;
 use genex_studio::verbs::ProfileAnswer;
@@ -79,6 +84,8 @@ const BACKEND_UNKNOWN: &str = "unknown";
 const EXIT_NO_GPU: i32 = 1;
 /// The class the host recorded for this adapter, which captures are drawn as (`DeviceClass`).
 const REFERENCE_CLASS_ENV: &str = "GENEX_RENDER_REFERENCE_CLASS";
+/// The member of `volatile.__stream` the presenter's view set reports under (STR-25).
+const STREAM_VIEW_KEY: &str = "view";
 
 /// The game behind the studio: its runtime, the renderer, the view and the meters.
 struct StudioRun<'a, W> {
@@ -99,6 +106,78 @@ struct StudioRun<'a, W> {
     /// The audio device Studio Live opens with its first ring (AU-8): a headless studio run, which
     /// never makes a ring, never opens one.
     audio: crate::audio::Device,
+    /// The clock a settled capture's drain is timed with (STR-25; the wall clock, a test's own).
+    drain_clock: fn() -> Box<dyn DrainClock>,
+    /// The `uiSettings` session layer this studio asked for (UIS-16): a member left out of a
+    /// later call keeps its value here.
+    ui_layer: UiLayer,
+}
+
+/// The `uiSettings` session layer (UIS-16): None is the game's own value.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct UiLayer {
+    locale: Option<String>,
+    scale: Option<f64>,
+    safe_area: Option<[f64; 4]>,
+    text_size: Option<f64>,
+}
+
+impl UiLayer {
+    /// This layer with `change` over it.
+    fn with(&self, change: &UiSettingsChange) -> UiLayer {
+        fn over<T: Clone>(kept: &Option<T>, member: &UiMember<T>) -> Option<T> {
+            match member {
+                UiMember::Keep => kept.clone(),
+                UiMember::Reset => None,
+                UiMember::Set(value) => Some(value.clone()),
+            }
+        }
+        UiLayer {
+            locale: over(&self.locale, &change.locale),
+            scale: over(&self.scale, &change.scale),
+            safe_area: over(&self.safe_area, &change.safe_area),
+            text_size: over(&self.text_size, &change.text_size),
+        }
+    }
+
+    /// The runtime's session layer (text size is the studio's alone until gameplay UI reads it).
+    fn session(&self) -> crate::ui::UiSession {
+        crate::ui::UiSession {
+            locale: self.locale.clone(),
+            scale: self.scale.map(|scale| scale as f32),
+            safe_area: self.safe_area.map(|insets| insets.map(|inset| inset as f32)),
+            reduced_motion: None,
+        }
+    }
+
+    /// The `uiSettings` answer: each member, null for the game's own.
+    fn value(&self) -> Value {
+        let number = |value: Option<f64>| value.map_or(Value::Null, Value::from);
+        let mut answer = Value::object();
+        answer.set("locale", self.locale.as_deref().map_or(Value::Null, Value::from));
+        answer.set("scale", number(self.scale));
+        answer.set("safeArea", self.safe_area.map_or(Value::Null, |insets| Value::Array(insets.iter().map(|inset| Value::from(*inset)).collect())));
+        answer.set("textSize", number(self.text_size));
+        answer
+    }
+}
+
+/// The facade's call for a checked `saves` request.
+fn host_call(request: &SavesRequest) -> crate::saves::HostSavesCall {
+    use crate::saves::HostSavesCall as Call;
+    match request {
+        SavesRequest::List => Call::List,
+        SavesRequest::Read(slot) => Call::Read(slot.clone()),
+        SavesRequest::Write(slot, envelope) => Call::Write(slot.clone(), envelope.clone()),
+        SavesRequest::Save(slot, label) => Call::Save(slot.clone(), label.clone()),
+        SavesRequest::Load(slot) => Call::Load(slot.clone()),
+        SavesRequest::Delete(slot) => Call::Delete(slot.clone()),
+    }
+}
+
+/// The wall clock a settled capture's drain is timed with.
+fn wall_drain_clock() -> Box<dyn DrainClock> {
+    Box::new(WallDrainClock::default())
 }
 
 /// The receipt `ready` carries: the renderer's backend, adapter and offered native-enhanced
@@ -112,6 +191,9 @@ fn receipt_of(gpu: &genex_render::Gpu) -> Option<Receipt> {
     let mut receipt = Receipt::new(backend, facts.adapter.clone(), features);
     receipt.render_settings_api = Some(wire::RENDER_SETTINGS_API_VERSION);
     receipt.reload_assets_api = Some(wire::RELOAD_ASSETS_API_VERSION);
+    // The dev flavour serves `saves` and `uiSettings` (UIS-16).
+    receipt.saves_api = Some(wire::SAVES_API_VERSION);
+    receipt.ui_settings_api = Some(wire::UI_SETTINGS_API_VERSION);
     receipt.render_inputs = produced_inputs();
     Some(receipt)
 }
@@ -319,6 +401,31 @@ impl<W: Default + 'static> StudioRun<'_, W> {
         }
     }
 
+    /// Drain the streamed view set before a settled capture (STR-25): passes of the view set from
+    /// the captured view until everything it wants is resident or refused, at most
+    /// [`STREAM_DRAIN_MAX_MS`], so the capture answers before the host's call timeout. Live frames
+    /// never drain. A lost device ends the drain; the capture's draw answers its code.
+    fn drain_stream(&mut self) {
+        let name = self.view.clone();
+        let view = self.view_of(name.as_deref());
+        let mut clock = (self.drain_clock)();
+        let (presenter, game) = (&mut self.presenter, &mut *self.game);
+        match drain_blocking(&mut *clock, STREAM_DRAIN_MAX_MS, || presenter.drain_pass(game, view)) {
+            Ok(report) => presenter.note_drain(report),
+            Err(error) => eprintln!("genex: the capture's drain stopped: {error}"),
+        }
+    }
+
+    /// `volatile.__stream.view` beside the sim's `volatile.__stream` (STR-16, STR-25): what the
+    /// presenter's view set holds and how the last capture's drain ended. Nothing without
+    /// `game.streaming`.
+    fn stream_view_value(&self, volatile: &Value) -> Option<Value> {
+        let Value::Object(_) = &volatile[crate::stream::RUNTIME_KEY] else { return None };
+        let mut stream = volatile[crate::stream::RUNTIME_KEY].clone();
+        stream.set(STREAM_VIEW_KEY, self.presenter.stream_stats().volatile_value());
+        Some(stream)
+    }
+
     /// `volatile.customPasses`: each pass the game registered, in order, with what stopped it.
     fn custom_passes(&mut self) -> Option<Value> {
         let registered = self.game.gpu_passes();
@@ -354,10 +461,14 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
         let mut state = self.game.state_value(camera, self.fps.fps());
         let passes = self.custom_passes();
         let render = status_value(&self.game.render().borrow().status());
-        if passes.is_none() && self.gpu.is_none() && render.is_none() {
+        let stream = self.stream_view_value(&state["volatile"]);
+        if passes.is_none() && self.gpu.is_none() && render.is_none() && stream.is_none() {
             return state;
         }
         let mut volatile = state["volatile"].clone();
+        if let Some(stream) = stream {
+            volatile.set(crate::stream::RUNTIME_KEY, stream);
+        }
         if let Some(passes) = passes {
             volatile.set(wire::STATE_CUSTOM_PASSES, passes);
         }
@@ -433,6 +544,7 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
         Ok(Pixels { width: capture.width(), height: capture.height(), bgra: capture.bgra().to_vec() })
     }
     fn render_for_capture(&mut self) {
+        self.drain_stream();
         self.presenter.set_capturing(true);
         self.render();
         self.presenter.set_capturing(false);
@@ -458,6 +570,22 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
             None => handle.borrow().answer(),
         };
         answer_value(&answer).ok_or(RenderSettingsRefusal::Unavailable)
+    }
+    fn saves(&mut self, request: &SavesRequest) -> Result<Value, &'static str> {
+        let answer = self.game.host_saves(host_call(request)).map_err(|error| error.code.wire())?;
+        // A load replaced the game: the frame (and the next capture) shows the slot's.
+        if matches!(request, SavesRequest::Load(_)) {
+            self.render();
+        }
+        Ok(Value::from(&answer))
+    }
+    fn ui_settings(&mut self, change: &UiSettingsChange) -> Result<Value, &'static str> {
+        let layer = self.ui_layer.with(change);
+        if *change != UiSettingsChange::default() {
+            self.game.ui_session(layer.session()).map_err(crate::ui::UiSessionCode::wire)?;
+        }
+        self.ui_layer = layer;
+        Ok(self.ui_layer.value())
     }
     fn timings(&self) -> Timings {
         self.timing.timings()
@@ -612,6 +740,8 @@ fn studio_run<'a, W: Default + 'static>(
         born: Instant::now(),
         install_refused,
         audio: crate::audio::Device::default(),
+        drain_clock: wall_drain_clock,
+        ui_layer: UiLayer::default(),
     };
     // The first frame, then live play: what the game is at `ready`, as the C++ runtime begins.
     game.game.start();
@@ -860,6 +990,50 @@ mod metal {
         let shown = call(&mut studio, &mut run, "capture", "{}");
         assert_eq!(shown["ok"], json::Value::Bool(true), "{shown:?}");
         assert_ne!(shown["result"]["digest"], plain["result"]["digest"], "the HUD is painted into the capture");
+    }
+
+    /// UIS-16: `uiSettings {locale: "xx-pseudo"}` then a step, and the capture shows pseudo text;
+    /// an unoffered locale refuses `text-locale-unknown`; `saves` answers through the verb
+    /// (`save-not-configured` for a game without slots); the receipt advertises both verbs.
+    #[test]
+    #[ignore = "needs a GPU: run with --ignored metal"]
+    fn metal_ui_settings_pseudo_text_reaches_the_capture_and_saves_answer_through_the_verb() {
+        const ASSETS: AssetTable = &[("lang/en.ftl", b"menu-start = Start the game\n")];
+        let mut game = game(Projection::Perspective, 6.0);
+        game.ui(crate::ui::UiConfig::new().locales(&["en"]).pseudo_locale(true));
+        game.on_ui(|_, ui, _| {
+            ui.label(crate::ui::tr("menu-start"));
+        });
+        let Some(presenter) = presenter(required()) else { return };
+        let runtime = Box::leak(Box::new(Runtime::with_assets(game, Box::new(ASSETS)).expect("installs")));
+        let mut run = studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {});
+        let dir = scratch("ui-settings");
+        let mut studio = studio(&dir);
+        let receipt = run.ready_info().receipt.expect("a receipt").to_value();
+        assert_eq!((receipt["savesApi"].as_f64(), receipt["uiSettingsApi"].as_f64()), (1.0, 1.0), "{receipt:?}");
+        call(&mut studio, &mut run, "step", "{}");
+        let plain = call(&mut studio, &mut run, "capture", "{}");
+        let set = call(&mut studio, &mut run, "uiSettings", r#"{"locale":"xx-pseudo"}"#);
+        assert_eq!(set["result"]["locale"].as_str(), "xx-pseudo", "{set:?}");
+        call(&mut studio, &mut run, "step", "{}");
+        let state = call(&mut studio, &mut run, "state", "{}");
+        assert_eq!(state["result"]["volatile"]["ui"]["locale"].as_str(), "xx-pseudo", "{state:?}");
+        let pseudo = call(&mut studio, &mut run, "capture", "{}");
+        assert_ne!(pseudo["result"]["digest"], plain["result"]["digest"], "the pseudo text is painted into the capture");
+        if let Ok(evidence) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
+            let [width, height] = [pseudo["result"]["width"].as_f64() as u32, pseudo["result"]["height"].as_f64() as u32];
+            for (name, shot) in [("plain", &plain), ("pseudo", &pseudo)] {
+                let seq = shot["result"]["seq"].as_f64() as u32;
+                let bytes = std::fs::read(dir.join("captures").join(format!("{seq}.bgra"))).expect("the capture file");
+                std::fs::write(std::path::Path::new(&evidence).join(format!("ui-settings-{name}-{width}x{height}.bgra")), bytes).expect("evidence");
+            }
+        }
+        let refused = call(&mut studio, &mut run, "uiSettings", r#"{"locale":"fr"}"#);
+        assert_eq!(refused["error"].as_str(), "text-locale-unknown", "{refused:?}");
+        let read = call(&mut studio, &mut run, "uiSettings", "{}");
+        assert_eq!(read["result"]["locale"].as_str(), "xx-pseudo", "a refused call keeps the layer: {read:?}");
+        let saves = call(&mut studio, &mut run, "saves", r#"{"op":"list"}"#);
+        assert_eq!(saves["error"].as_str(), "save-not-configured", "{saves:?}");
     }
 
     /// `game` with `config` and AO and TAA switched off on the reference class: nothing temporal
