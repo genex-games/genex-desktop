@@ -83,6 +83,10 @@ fn state_is_genex_cores_snapshot_with_the_tally_as_studio_cpp_reports_it() {
         "checksum",
         "tiny",
     ];
+    // A build that links networking shows `__net` without `game.net` (MP-4a), after the probes as
+    // `__stream` and `__input` are; the C++ runtime has no such build.
+    let networked = cfg!(any(feature = "net", feature = "net-loopback"));
+    let runtime_keys: Vec<&str> = runtime_keys.into_iter().chain(networked.then_some("__net")).collect();
     assert_eq!(keys, runtime_keys);
     assert_eq!(state["camera"].as_str(), "top");
     assert_eq!(state["fps"].as_f64(), 12.5);

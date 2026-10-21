@@ -72,7 +72,11 @@ fn in_loopback_a_write_from_on_update_is_read_by_on_draw_on_the_next_tick() {
 fn a_game_without_networking_is_offline_and_has_no_net_key() {
     let drawn = Rc::new(RefCell::new(Vec::new()));
     let mut rt = Runtime::new(echo_game(Rc::clone(&drawn))).expect("installs");
-    assert_eq!(rt.net_mode(), NetMode::Off, "a build without net features");
+    if !cfg!(any(feature = "net", feature = "net-loopback")) {
+        assert_eq!(rt.net_mode(), NetMode::Off, "a build without net features");
+    }
+    // A networked build of the suite (`--features net-loopback`) runs the same rows offline.
+    rt.set_net_mode(NetMode::Off);
     for _ in 0..3 {
         step_and_draw(&mut rt);
     }
@@ -164,6 +168,7 @@ fn a_probe_named_net_installs_and_the_checksum_never_sees_the_net() {
         game
     };
     let mut offline = Runtime::new(game()).expect("a probe named net installs");
+    offline.set_net_mode(NetMode::Off);
     let mut looped = Runtime::new(game()).expect("installs");
     looped.set_net_mode(NetMode::Loopback);
     for _ in 0..30 {
@@ -200,6 +205,7 @@ fn a_demo_scripts_remote_players_in_the_loopback_room_only() {
     looped.set_net_mode(NetMode::Loopback);
     assert_eq!(looped.demo("two").expect("a demo"), json!(1), "the scripted remote is seated");
     let mut offline = Runtime::new(game()).expect("installs");
+    offline.set_net_mode(NetMode::Off);
     assert_eq!(offline.demo("two").expect("a demo"), json!(0));
     assert_eq!(offline.state()["__net"]["mode"], json!("off"));
     assert_eq!(offline.state()["__net"]["scriptIgnored"], json!(2), "join and set_state, ignored");
