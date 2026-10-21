@@ -61,12 +61,22 @@
       from them (a desktop or a phone class, and its memory budget); a page that sends none is
       read as a phone.
 
-      Saves: the game's synchronous save/load go to an in-memory mirror inside the module. Before
-      studio_boot starts the game (its first reset), the shell fills the mirror from the game's
-      IndexedDB database; files saved since are written back write-behind when the page is idle,
-      hidden or left (GenexShell.flushSaves() forces one). A write the browser refuses stays
-      pending, state().error says save-quota (or save-unavailable without IndexedDB) and the page
-      shows a notice.
+      Saves: the game's synchronous save/load go to an in-memory mirror inside the module. The
+      game's IndexedDB database (version 2) keeps each file's bytes in the store "files" and its
+      byte length in "sizes"; a version-1 database (files only) gains the sizes in its upgrade
+      transaction. Before studio_boot starts the game (its first reset), the shell fills the mirror
+      from it. A module that keeps slot bodies lazily (it exports studio_saves_index) gets every
+      file but the .sav ones whole and the .sav ones by name and size only; after each frame the
+      shell reads the bodies a load asked for (studio_saves_requests) and hands them over
+      (studio_saves_provide, undefined for a file the store does not keep). Files saved since are
+      written back write-behind, with their sizes, when the page is idle, hidden or left
+      (GenexShell.flushSaves() forces one); files the module removed (studio_saves_take_removed)
+      are deleted from both stores in the same transaction. When the page is hidden or left, a
+      module that exports studio_suspend_save writes its suspend autosave first, once per hide. A
+      write the browser refuses stays pending, state().error says save-quota (or save-unavailable
+      without IndexedDB) and the page shows a notice. After the preload the shell asks for
+      persistent storage (navigator.storage.persist()) and tells the module whether it got it
+      (studio_saves_persistent; refused, rejected or no IndexedDB is false).
 
       Page contract: window.__studio (version 1) as the C++ web shell's. Every verb goes through the
       one studio_call export (genex-studio's Studio::web(): the {id:null, ok, op, result} envelope
@@ -507,9 +517,12 @@
       const MOUSE1 = "Mouse1";
       /** One wheel line in pixels (WheelEvent.DOM_DELTA_LINE), as the desktop shell counts a notch. */
       const WHEEL_LINE_PX = 100;
-      /** The IndexedDB object store a game's saves are kept in, keyed by save name. */
-      const SAVES_STORE = "files";
-      const SAVES_DB_VERSION = 1;
+      /** The IndexedDB object stores a game's saves are kept in, keyed by save name: each file's bytes and its byte length. */
+      const SavesStore = { Files: "files", Sizes: "sizes" };
+      /** The saves database's version: 2 added the sizes store (a version-1 database gains it on open). */
+      const SAVES_DB_VERSION = 2;
+      /** The suffix of a saved file a lazy module keeps by name and size only (genex-core's mirror::LAZY_SUFFIX): a slot body. */
+      const LAZY_SAVE_SUFFIX = ".sav";
       /** An idle flush waits at most this long for the browser to be idle. */
       const SAVE_IDLE_TIMEOUT_MS = 2000;
       /** After a refused flush, the next idle one waits this long (a hidden or left page flushes at once). */
@@ -581,9 +594,21 @@
       const notice = document.getElementById("save-notice");
       const loader = document.getElementById("loading");
       /** The loading state: its stall watch, the bar's fill so far, and what the boot staged for the dry boot. */
-      const loading = { watchdog: null, fill: 0, staged: { saves: [], map: null, assets: [] } };
+      const loading = { watchdog: null, fill: 0, staged: { saves: [], savesIndex: [], map: null, assets: [] } };
       const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
-      const saves = { db: null, flushing: Promise.resolve(), scheduled: false, retryAt: 0 };
+      /**
+       * The saves store: its database, the flush and lazy-body reads in progress (each runs after the
+       * last), whether an idle flush is scheduled and when a refused one may retry, and whether the
+       * module wrote its suspend autosave for the page's current hide.
+       */
+      const saves = {
+        db: null,
+        flushing: Promise.resolve(),
+        reading: Promise.resolve(),
+        scheduled: false,
+        retryAt: 0,
+        suspended: false,
+      };
       /** The crash records: the database, those taken before it opened, and whether the module is dead. */
       const crashes = {
         db: null,
@@ -1042,6 +1067,7 @@
             const game = await import(source);
             await game.default({ module_or_path: data.module });
             if (typeof game.studio_saves_preload === "function") game.studio_saves_preload(data.saves);
+            if (typeof game.studio_saves_index === "function") game.studio_saves_index(data.savesIndex);
             if (data.map !== null && typeof game.studio_assets_plan === "function") {
               game.studio_assets_plan(data.map, data.adapter);
               for (const [name, bytes] of data.assets) game.studio_assets_preload(name, bytes);
@@ -1067,7 +1093,7 @@
         const code = `(${dryBoot.toString()})();`;
         const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
         const worker = new Worker(url, { type: "module" });
-        const { saves, map, assets } = loading.staged;
+        const { saves, savesIndex, map, assets } = loading.staged;
         const answer = new Promise((resolve) => {
           worker.onmessage = ({ data }) => resolve(data);
           worker.onerror = (event) => resolve({ error: String(event.message ?? "worker error") });
@@ -1075,9 +1101,10 @@
         });
         const transfer = assets.map(([, bytes]) => bytes.buffer);
         const size = [canvas.width, canvas.height];
-        const message = { source, module, saves, map, assets, adapter: adapterJson(), hints: deviceHints(), size };
+        const hints = deviceHints();
+        const message = { source, module, saves, savesIndex, map, assets, adapter: adapterJson(), hints, size };
         worker.postMessage(message, [...new Set(transfer)]);
-        loading.staged = { saves: [], map: null, assets: [] };
+        loading.staged = { saves: [], savesIndex: [], map: null, assets: [] };
         const result = await answer;
         worker.terminate();
         URL.revokeObjectURL(url);
@@ -1169,31 +1196,73 @@
         });
       }
 
-      /** The game's saves database, or null when this browser keeps none. */
+      /** The game's saves database at version 2, or null when this browser keeps none. */
       async function openSavesDb(name) {
         if (!("indexedDB" in window) || !window.indexedDB) return null;
         const request = indexedDB.open(name, SAVES_DB_VERSION);
-        request.onupgradeneeded = () => {
-          if (!request.result.objectStoreNames.contains(SAVES_STORE)) request.result.createObjectStore(SAVES_STORE);
-        };
+        request.onupgradeneeded = () => upgradeSavesDb(request.result, request.transaction);
         return settled(request);
       }
 
-      /** Every saved file, [[name, Uint8Array], …]. */
+      /**
+       * The upgrade, in its one versionchange transaction: a new database gets both stores, and a
+       * version-1 one (files only) gains the sizes store filled from every file it holds, so none is
+       * lost and a failed upgrade leaves version 1 as it was.
+       */
+      function upgradeSavesDb(db, transaction) {
+        if (!db.objectStoreNames.contains(SavesStore.Files)) db.createObjectStore(SavesStore.Files);
+        if (db.objectStoreNames.contains(SavesStore.Sizes)) return;
+        const sizes = db.createObjectStore(SavesStore.Sizes);
+        const cursor = transaction.objectStore(SavesStore.Files).openCursor();
+        cursor.onsuccess = () => {
+          const at = cursor.result;
+          if (!at) return;
+          sizes.put(at.value?.byteLength ?? 0, at.key);
+          at.continue();
+        };
+      }
+
+      /** Every saved file whole, [[name, Uint8Array], …], for a module that keeps no file lazily. */
       async function readAllSaves(db) {
-        const store = db.transaction(SAVES_STORE, "readonly").objectStore(SAVES_STORE);
+        const store = db.transaction(SavesStore.Files, "readonly").objectStore(SavesStore.Files);
         const [names, values] = await Promise.all([settled(store.getAllKeys()), settled(store.getAll())]);
-        return names.map((name, i) => [String(name), new Uint8Array(values[i])]);
+        return { entries: names.map((name, i) => [String(name), new Uint8Array(values[i])]), index: [] };
+      }
+
+      /**
+       * For a module that keeps slot bodies lazily: every file but the .sav ones whole, and the .sav
+       * ones by name and size only ([[name, size], …]), their bodies left in the store. A .sav file
+       * with no size recorded is read whole (the module keeps it by its length).
+       */
+      async function readSavesIndex(db) {
+        const transaction = db.transaction([SavesStore.Files, SavesStore.Sizes], "readonly");
+        const files = transaction.objectStore(SavesStore.Files);
+        const sizes = transaction.objectStore(SavesStore.Sizes);
+        const [names, sized, lengths] = await Promise.all([
+          settled(files.getAllKeys()),
+          settled(sizes.getAllKeys()),
+          settled(sizes.getAll()),
+        ]);
+        const sizeOf = new Map(sized.map((name, i) => [String(name), lengths[i]]));
+        const indexed = (name) => name.endsWith(LAZY_SAVE_SUFFIX) && Number.isSafeInteger(sizeOf.get(name));
+        const index = names.map(String).filter(indexed).map((name) => [name, sizeOf.get(name)]);
+        const whole = names.filter((name) => !indexed(String(name)));
+        const bodies = await Promise.all(whole.map((name) => settled(files.get(name))));
+        return { entries: whole.map((name, i) => [String(name), new Uint8Array(bodies[i])]), index };
       }
 
       /** The mirror filled before the first reset; without IndexedDB the game saves for this page only. */
       async function preloadSaves(game) {
+        const lazy = typeof game.studio_saves_index === "function";
         try {
           saves.db = await openSavesDb(game.studio_saves_database());
-          const entries = saves.db ? await readAllSaves(saves.db) : [];
+          const read = lazy ? readSavesIndex : readAllSaves;
+          const { entries, index } = saves.db ? await read(saves.db) : { entries: [], index: [] };
           // The dry boot's first reset reads the same files (it gets copies; the mirror keeps its own).
           loading.staged.saves = entries.map(([name, bytes]) => [name, bytes.slice()]);
+          loading.staged.savesIndex = index;
           game.studio_saves_preload(entries);
+          if (lazy) game.studio_saves_index(index);
           if (!saves.db) game.studio_saves_unavailable();
         } catch (error) {
           console.warn(`genex: saves: ${error?.name ?? error}`);
@@ -1202,6 +1271,21 @@
           game.studio_saves_unavailable();
         }
         showSaveNotice(game);
+        reportPersistence(game).catch((error) => console.warn(`genex: saves: ${error?.name ?? error}`));
+      }
+
+      /** Whether the browser keeps the game's storage under pressure: asked once; refused, failed or unasked is false. */
+      async function storagePersistence() {
+        const storage = navigator.storage;
+        if (!saves.db || typeof storage?.persist !== "function") return false;
+        if (await storage.persisted?.().catch(() => false)) return true;
+        return (await storage.persist().catch(() => false)) === true;
+      }
+
+      /** Ask for persistent storage, then tell a module that takes it whether the browser granted it. */
+      async function reportPersistence(game) {
+        const persistent = await storagePersistence();
+        if (typeof game.studio_saves_persistent === "function" && !crashes.fatal) game.studio_saves_persistent(persistent);
       }
 
       /** The typed code of a storage failure. */
@@ -1209,18 +1293,29 @@
         return error?.name === "QuotaExceededError" ? SaveError.Quota : SaveError.Unavailable;
       }
 
-      /** Write the files the mirror took in one transaction; resolves with null or the typed code. */
-      async function writeSaves(entries) {
+      /**
+       * Write the files the mirror took (each one's bytes and size) and delete the files it removed
+       * from both stores, in one transaction; resolves with null or the typed code.
+       */
+      async function writeSaves(entries, removed) {
         if (!saves.db) return SaveError.Unavailable;
         try {
-          const transaction = saves.db.transaction(SAVES_STORE, "readwrite");
+          const transaction = saves.db.transaction([SavesStore.Files, SavesStore.Sizes], "readwrite");
           const done = new Promise((resolve) => {
             transaction.oncomplete = () => resolve(null);
             transaction.onerror = () => resolve(saveErrorOf(transaction.error));
             transaction.onabort = () => resolve(saveErrorOf(transaction.error));
           });
-          const store = transaction.objectStore(SAVES_STORE);
-          for (const [name, bytes] of entries) store.put(bytes, name);
+          const files = transaction.objectStore(SavesStore.Files);
+          const sizes = transaction.objectStore(SavesStore.Sizes);
+          for (const [name, bytes] of entries) {
+            files.put(bytes, name);
+            sizes.put(bytes.byteLength, name);
+          }
+          for (const name of removed) {
+            files.delete(name);
+            sizes.delete(name);
+          }
           return await done;
         } catch (error) {
           return saveErrorOf(error);
@@ -1236,11 +1331,17 @@
         else delete notice.dataset.genexCode;
       }
 
-      /** One flush: take the mirror's dirty files, write them, answer how it went. */
+      /** The files the module removed since the last take (none from a module that keeps no such list). */
+      function takeRemovedSaves(game) {
+        return typeof game.studio_saves_take_removed === "function" ? Array.from(game.studio_saves_take_removed()) : [];
+      }
+
+      /** One flush: take the mirror's dirty and removed files, write them, answer how it went. */
       async function flushOnce(game) {
         const entries = game.studio_saves_take();
-        if (entries.length === 0) return;
-        const error = await writeSaves(entries);
+        const removed = takeRemovedSaves(game);
+        if (entries.length === 0 && removed.length === 0) return;
+        const error = await writeSaves(entries, removed);
         game.studio_saves_flushed(
           error,
           entries.map(([name]) => name),
@@ -1270,12 +1371,62 @@
         }
       }
 
+      /** The stored bodies of `names`, [[name, Uint8Array | undefined], …]: undefined for a file the store does not keep. */
+      async function readSaveBodies(names) {
+        const missing = () => names.map((name) => [name, undefined]);
+        if (!saves.db) return missing();
+        try {
+          const files = saves.db.transaction(SavesStore.Files, "readonly").objectStore(SavesStore.Files);
+          const bodies = await Promise.all(names.map((name) => settled(files.get(name))));
+          return names.map((name, i) => [name, bodies[i] === undefined ? undefined : new Uint8Array(bodies[i])]);
+        } catch (error) {
+          console.warn(`genex: saves: ${error?.name ?? error}`);
+          return missing();
+        }
+      }
+
+      /** Hand the module the lazy bodies it asked for, once read (a dead module gets none). */
+      async function provideSaves(game, names) {
+        const bodies = await readSaveBodies(names);
+        if (crashes.fatal) return;
+        for (const [name, bytes] of bodies) game.studio_saves_provide(name, bytes);
+      }
+
+      /** After a frame: the lazy bodies a load asked for are read from the store, after any read before them. */
+      function serveSaveRequests(game) {
+        if (typeof game.studio_saves_requests !== "function") return;
+        const names = Array.from(game.studio_saves_requests(), String);
+        if (names.length === 0) return;
+        saves.reading = saves.reading.then(() => provideSaves(game, names)).catch((error) => console.warn(error));
+      }
+
+      /**
+       * The page is hidden or left: the module writes its suspend autosave (once per hide, so a hide
+       * followed by pagehide writes one), then the flush writes it to the store.
+       */
+      function suspendSaves(game) {
+        const writes = !saves.suspended && !crashes.fatal && typeof game.studio_suspend_save === "function";
+        if (writes) {
+          saves.suspended = true;
+          try {
+            game.studio_suspend_save();
+          } catch (error) {
+            console.warn(`genex: saves: suspend: ${error?.message ?? error}`);
+          }
+        }
+        return flushSaves(game);
+      }
+
       function listenForSaves(game) {
         shell.flushSaves = () => flushSaves(game);
         document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") flushSaves(game);
+          if (document.visibilityState === "hidden") suspendSaves(game);
+          else saves.suspended = false;
         });
-        window.addEventListener("pagehide", () => flushSaves(game));
+        window.addEventListener("pagehide", () => suspendSaves(game));
+        window.addEventListener("pageshow", () => {
+          saves.suspended = false;
+        });
       }
 
       // ── assets: the files the build staged, fetched before the first frame ──
@@ -1855,6 +2006,7 @@
             if (first) awaitFirstLitFrame();
             first = false;
             scheduleIdleFlush(game);
+            serveSaveRequests(game);
           } catch (error) {
             if (error?.code === FrameFailure.DeviceLost) {
               showDeviceLost(game, error);
