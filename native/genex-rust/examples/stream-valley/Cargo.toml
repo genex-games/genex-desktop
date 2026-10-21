@@ -1,0 +1,52 @@
+# The stream-valley example (STR-26a): a 4 x 4 km streamed world of 64 m cells on the genex facade.
+# Procedural terrain tiles, per-cell forests and authored villages, waystones, a tower and rock
+# fields from a placement file (`world/valley.cells.json`) compiled by the host's C-28 compiler into
+# the cell pack under `assets/valley/` (`world/compile.ts`). One crate serves every destination, as
+# the pond does: the `stream-valley` binary is the native build and the library is also a `cdylib`
+# for the web shell. No model files: the props are written in code.
+[package]
+name = "stream-valley"
+description = "The stream-valley example game (STR-26a)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `stream_valley`: on wasm32 the library and the binary would both be `stream-valley.wasm`.
+name = "stream_valley_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "stream-valley"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true, features = ["physics"] }
+# The cell pack reader (C-28's output) and the digests, below the facade: the facade has no
+# `Streaming::cells_from` yet, so the example reads its built-in pack itself.
+genex-core = { workspace = true }
+genex-stream = { workspace = true, features = ["physics"] }
+genex-platform-web = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/captures.rs writes the captures as PNG evidence on the host GPU.
+[dev-dependencies]
+image = { workspace = true }
+
+# tests/valley.rs replays the anchor's drive on 1 and 8 stream threads.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+genex-render = { workspace = true }
