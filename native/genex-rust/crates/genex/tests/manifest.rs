@@ -248,6 +248,12 @@ fn the_render_vocabulary_is_the_wires() {
     assert_eq!(wire["shadowDistance"]["min"].as_i64(), Some(manifest::SHADOW_DISTANCE_MIN));
     assert_eq!(wire["shadowDistance"]["max"].as_i64(), Some(manifest::SHADOW_DISTANCE_MAX));
     assert_eq!(wire["shadowBlendBandMax"].as_f64(), Some(manifest::SHADOW_BLEND_BAND_MAX));
+    // Game systems LOD-06: the class tables' LOD ranges.
+    assert_eq!(wire["lodThresholdPx"]["min"].as_f64(), Some(manifest::LOD_THRESHOLD_PX_MIN));
+    assert_eq!(wire["lodThresholdPx"]["max"].as_f64(), Some(manifest::LOD_THRESHOLD_PX_MAX));
+    assert_eq!(wire["lodFadeBandMax"].as_f64(), Some(manifest::LOD_FADE_BAND_MAX));
+    assert_eq!(wire["farDensityMin"].as_f64(), Some(manifest::FAR_DENSITY_MIN));
+    assert_eq!(manifest::FAR_DENSITY_MIN as f32, genex_render::settings::FAR_DENSITY_MIN, "the file's floor is the renderer's");
     assert_eq!(wire["exposureEvLimit"].as_f64(), Some(manifest::EXPOSURE_EV_LIMIT));
     assert_eq!(wire["adaptationSpeedMax"].as_f64(), Some(manifest::ADAPTATION_SPEED_MAX));
     // RQ4.0: bloom, GTAO, fog and contact-shadow limits.

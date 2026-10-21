@@ -97,6 +97,10 @@ export const RenderFeature = {
   TextureQuality: "texture-quality",
   /** Shadow maps for spot lights that ask for one. */
   SpotShadows: "spot-shadows",
+  /** The crossfade between levels of detail (off: hard switches). */
+  LodFade: "lod-fade",
+  /** Impostors past a model's last mesh level (off: the last level stays). */
+  Impostors: "impostors",
 } as const;
 export type RenderFeature = (typeof RenderFeature)[keyof typeof RenderFeature];
 
@@ -189,6 +193,12 @@ export const QualityKey = {
   Preset: "preset",
   RenderScale: "render_scale",
   Fps: "fps",
+  /** The error a drawn level of detail may show, output pixels. */
+  LodThresholdPx: "lod_threshold_px",
+  /** The LOD crossfade band, a share of the threshold (0: hard switches). */
+  LodFadeBand: "lod_fade_band",
+  /** The share of far-field copies kept. */
+  FarDensity: "far_density",
 } as const;
 export type QualityKey = (typeof QualityKey)[keyof typeof QualityKey];
 
@@ -323,6 +333,13 @@ export const SHADOW_DISTANCE_MIN = 10;
 export const SHADOW_DISTANCE_MAX = 400;
 /** The widest cascade blend band, a share of a cascade's depth range (genex-render's `SHADOW_BLEND_BAND_MAX`). */
 export const SHADOW_BLEND_BAND_MAX = 0.5;
+/** The finest and coarsest LOD threshold a game may ask for, output pixels (genex-render's `LOD_THRESHOLD_PX_MIN`, `LOD_THRESHOLD_PX_MAX`). */
+export const LOD_THRESHOLD_PX_MIN = 0.5;
+export const LOD_THRESHOLD_PX_MAX = 8;
+/** The widest LOD crossfade band, a share of the threshold (genex-render's `LOD_FADE_BAND_MAX`). */
+export const LOD_FADE_BAND_MAX = 0.5;
+/** The smallest share of far-field copies a game may keep (genex-render's `FAR_DENSITY_MIN`). */
+export const FAR_DENSITY_MIN = 0.1;
 /** The `[[wgsl]] api` versions the facade has defined; the host admits those up to `NATIVE_EXTENSION_API_VERSION`. */
 export const WGSL_EXTENSION_APIS: readonly number[] = Object.freeze([1, 2]);
 
@@ -447,6 +464,12 @@ export interface RenderClassOverride {
   preset?: QualityPreset;
   renderScale?: number;
   fps?: number;
+  /** `lod_threshold_px`: output pixels, `LOD_THRESHOLD_PX_MIN..=LOD_THRESHOLD_PX_MAX`. */
+  lodThresholdPx?: number;
+  /** `lod_fade_band`: `0..=LOD_FADE_BAND_MAX`. */
+  lodFadeBand?: number;
+  /** `far_density`: `FAR_DENSITY_MIN..=1`. */
+  farDensity?: number;
   /** Each switch the table names, in file order. */
   features: Partial<Record<RenderFeature, boolean>>;
 }
@@ -648,6 +671,12 @@ export const isShadowDistance = (value: unknown): value is number =>
   Number.isInteger(value) && within(SHADOW_DISTANCE_MIN, SHADOW_DISTANCE_MAX)(value);
 /** A cascade blend band within `0..=SHADOW_BLEND_BAND_MAX`. */
 export const isShadowBlendBand = within(0, SHADOW_BLEND_BAND_MAX);
+/** A LOD threshold within `LOD_THRESHOLD_PX_MIN..=LOD_THRESHOLD_PX_MAX` output pixels. */
+export const isLodThreshold = within(LOD_THRESHOLD_PX_MIN, LOD_THRESHOLD_PX_MAX);
+/** A LOD crossfade band within `0..=LOD_FADE_BAND_MAX`. */
+export const isLodFadeBand = within(0, LOD_FADE_BAND_MAX);
+/** A far-field density within `FAR_DENSITY_MIN..=1`. */
+export const isFarDensity = within(FAR_DENSITY_MIN, 1);
 
 /** A fog colour: three linear channels, each within `0..=FOG_COLOR_MAX`. */
 export function isFogColor(value: unknown): value is readonly [number, number, number] {

@@ -3731,7 +3731,10 @@ impl Renderer {
         let mut plan = FramePlan::build_with_motion(scene, &self.library, aspect, &options, temporal.motion)?;
         // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
         // no instance to another level.
-        plan.set_lod_height(self.height);
+        // At the quality's threshold and far density (game systems LOD-06; 1 px and every copy on
+        // desktop high and ultra, bit for bit the default).
+        plan.set_lod_view(self.height, self.quality.lod.threshold_px);
+        plan.thin_far_rules(self.quality.lod.far_density);
         // The sun's angular radius whatever the shadows (GxFrameV2's `sun_dir.w`): a v2 shader
         // sizing a sun disk or glare from it sees the same sun on every preset and device class.
         plan.frame.sun_dir[3] = sun_radius;

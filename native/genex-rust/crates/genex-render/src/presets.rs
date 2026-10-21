@@ -19,7 +19,7 @@ use crate::foliage::GrassQuality;
 use crate::post::motion_blur::MotionBlurTier;
 use crate::screen_inputs::ScreenInputs;
 use crate::settings::{
-    AntiAliasing, AoMethod, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
+    AntiAliasing, AoMethod, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, LodQuality, PresetChoice, Quality, QualityPreset,
     MAX_CASCADES, RENDER_SCALE_MIN, RenderFeature, RenderSettings, SHADOW_BLEND_BAND_MAX, SHADOW_DISTANCE_MAX_M, SHADOW_DISTANCE_MIN_M,
     SceneFormat, ShadowFilter, ShadowFormat, ShadowQuality, TAA_SHARPEN_RCAS_SHARPNESS, TaaQuality, Upscaler,
 };
@@ -392,6 +392,13 @@ fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
         QualityPreset::High => GrassQuality::HIGH,
         QualityPreset::Ultra => GrassQuality::ULTRA,
     };
+    // Game systems LOD-06 (owner call L6): 1 px on high and ultra, coarser below (phones take
+    // their tier's floor, `apply_mobile_caps`).
+    quality.lod = match preset {
+        QualityPreset::Low => LodQuality::LOW,
+        QualityPreset::Medium => LodQuality::MEDIUM,
+        QualityPreset::High | QualityPreset::Ultra => LodQuality::HIGH,
+    };
     quality
 }
 
@@ -757,6 +764,27 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     // tile GPU's cost); none elsewhere on phones.
     let phone_grass = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
     quality.grass = if phone_grass { GrassQuality::MOBILE } else { GrassQuality::OFF };
+    cap_lod(&mut quality.lod, class);
+}
+
+/// The LOD floor of a phone tier (owner call L6): 2, 2.5 and 3 px, and at most half, then about a
+/// third, of the far-field copies. Desktops have none.
+pub fn phone_lod_floor(class: DeviceClass) -> Option<LodQuality> {
+    match (class.form, class.tier) {
+        (FormFactor::Desktop, _) => None,
+        (FormFactor::Mobile, PerformanceTier::Ultra | PerformanceTier::High) => Some(LodQuality::MOBILE_HIGH),
+        (FormFactor::Mobile, PerformanceTier::Mid) => Some(LodQuality::MOBILE_MID),
+        (FormFactor::Mobile, _) => Some(LodQuality::MOBILE_LOW),
+    }
+}
+
+/// `lod` held to `class`'s floor: on a phone no finer a threshold and no more far copies than its
+/// tier's row ([`phone_lod_floor`]), whatever the preset; the band and impostors stay.
+pub fn cap_lod(lod: &mut LodQuality, class: DeviceClass) {
+    if let Some(floor) = phone_lod_floor(class) {
+        lod.threshold_px = lod.threshold_px.max(floor.threshold_px);
+        lod.far_density = lod.far_density.min(floor.far_density);
+    }
 }
 
 /// The widest HDR environment map `class` keeps on the GPU (an equirect `width × width / 2`
@@ -885,6 +913,92 @@ impl ShadowOverride {
     }
 }
 
+/// How far a game's or a person's LOD threshold may move from the preset's, each way: half to twice
+/// (the panel's "Detail distance" row spans the same).
+pub const LOD_THRESHOLD_SCALE_MIN: f32 = 0.5;
+/// See [`LOD_THRESHOLD_SCALE_MIN`].
+pub const LOD_THRESHOLD_SCALE_MAX: f32 = 2.0;
+
+/// A game's or a person's level-of-detail choices (game systems LOD-06, D19): the threshold, the
+/// crossfade band, impostors and the far-field density. Every key is optional; a set key wins over
+/// earlier sources and is held to its range ([`LodQuality::with_threshold_px`] and siblings), the
+/// threshold also to half..twice the preset's ([`LOD_THRESHOLD_SCALE_MIN`]..=[`LOD_THRESHOLD_SCALE_MAX`]).
+/// The `lod-fade` and `impostors` switches apply after, so either turns its feature off alone.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LodOverride {
+    /// The error a drawn level may show, output pixels.
+    pub threshold_px: Option<f32>,
+    /// The crossfade band, a share of the threshold (0: hard switches).
+    pub fade_band: Option<f32>,
+    /// Whether impostors draw.
+    pub impostors: Option<bool>,
+    /// The share of far-field copies kept.
+    pub far_density: Option<f32>,
+}
+
+impl LodOverride {
+    /// No choices: the preset's row.
+    pub fn new() -> LodOverride {
+        LodOverride::default()
+    }
+
+    /// The choices with a threshold of `pixels` output pixels.
+    pub fn threshold_px(mut self, pixels: f32) -> LodOverride {
+        self.threshold_px = Some(pixels);
+        self
+    }
+
+    /// The choices with a crossfade band of `band` (a share of the threshold; 0: hard switches).
+    pub fn fade_band(mut self, band: f32) -> LodOverride {
+        self.fade_band = Some(band);
+        self
+    }
+
+    /// The choices with impostors on or off.
+    pub fn impostors(mut self, on: bool) -> LodOverride {
+        self.impostors = Some(on);
+        self
+    }
+
+    /// The choices keeping `density` of the far-field copies.
+    pub fn far_density(mut self, density: f32) -> LodOverride {
+        self.far_density = Some(density);
+        self
+    }
+
+    /// These choices with `later`'s set keys on top.
+    pub fn over(self, later: LodOverride) -> LodOverride {
+        LodOverride {
+            threshold_px: later.threshold_px.or(self.threshold_px),
+            fade_band: later.fade_band.or(self.fade_band),
+            impostors: later.impostors.or(self.impostors),
+            far_density: later.far_density.or(self.far_density),
+        }
+    }
+
+    /// `lod` (the preset's, after the class's floor) with these choices applied, each held to its
+    /// range; the threshold also to half..twice the preset's, then to the class's floor.
+    pub fn apply(&self, lod: &mut LodQuality, class: DeviceClass) {
+        let preset = *lod;
+        if let Some(pixels) = self.threshold_px.filter(|pixels| !pixels.is_nan()) {
+            let low = preset.threshold_px * LOD_THRESHOLD_SCALE_MIN;
+            let high = preset.threshold_px * LOD_THRESHOLD_SCALE_MAX;
+            *lod = lod.with_threshold_px(pixels.clamp(low, high));
+        }
+        if let Some(band) = self.fade_band {
+            *lod = lod.with_fade_band(band);
+        }
+        if let Some(on) = self.impostors {
+            *lod = lod.with_impostors(on);
+        }
+        if let Some(density) = self.far_density {
+            *lod = lod.with_far_density(density);
+        }
+        cap_lod(lod, class);
+    }
+}
+
 /// Quality overrides for one class: a `[render.class.<class>]` table, or the person's saved
 /// choice on this device. Every key is optional; a set key wins over earlier sources.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -904,6 +1018,9 @@ pub struct ClassOverride {
     /// LOD bias; RQ5 review): a game's code may ask for ultra's 16-position cycle at `high`, a
     /// steadier floor or sharper textures. Whether TAA runs stays the preset's and the `taa` switch.
     pub taa: Option<TaaQuality>,
+    /// Level-of-detail choices (game systems LOD-06): applied after the preset and before the
+    /// switches, held to their ranges and the class's floor.
+    pub lod: LodOverride,
 }
 
 /// A game's genex.toml `[render]` quality: its preset and its per-class tables.
@@ -961,6 +1078,9 @@ pub fn profile(facts: &DeviceFacts, class: DeviceClass, game: &RenderOverrides, 
     let chosen = layers.iter().flatten().filter_map(|layer| layer.preset).next_back();
     let preset = chosen.or(game.preset).unwrap_or_else(|| default_preset(class, facts.os));
     let mut quality = preset_quality(preset, class);
+    // LOD choices before the switches, so `lod-fade = false` turns the crossfade off alone.
+    let lod = layers.iter().flatten().fold(LodOverride::new(), |merged, layer| merged.over(layer.lod));
+    lod.apply(&mut quality.lod, class);
     for (feature, on) in layers.iter().flatten().flat_map(|layer| layer.switches.iter()) {
         quality.set_feature(*feature, *on);
     }

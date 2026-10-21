@@ -348,6 +348,10 @@ vocabulary! {
         TextureQuality => "texture-quality",
         /// Shadow maps for spot lights that ask for one.
         SpotShadows => "spot-shadows",
+        /// The crossfade between levels of detail.
+        LodFade => "lod-fade",
+        /// Impostors past a model's last mesh level.
+        Impostors => "impostors",
     }
 }
 

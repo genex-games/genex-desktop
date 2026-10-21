@@ -33,6 +33,8 @@ import { stampedStack } from "./native-loop.ts";
 import { templateMainOf } from "./native-review.ts";
 import { weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
 import { nativeEvidence, withParity } from "./native-evidence.ts";
+import { type CrashFacts, readCrashFacts } from "./crash-facts.ts";
+import { crashFactsLine } from "./crash-facts-prompts.ts";
 import { CORNER_CAMERA, isPassFrame } from "./pass-frames.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CheckEvidence } from "./checks.ts";
@@ -90,6 +92,8 @@ export interface Evidence extends CheckEvidence {
   corner?: { seen: boolean; atMs?: number; turnDegPerSecond?: number; unreadable?: boolean };
   /** The throttle-only bot's race — only when the pass was asked to race it. */
   challenge?: AnyRecord;
+  /** The newest crash record the host kept for a run this look saw crash (`crash-facts.ts`) — only when there is one. */
+  crash?: CrashFacts;
   // biome-ignore lint/suspicious/noExplicitAny: every other reading of the pass, read by name where it is used.
   [field: string]: any;
 }
@@ -785,8 +789,33 @@ function photographed(shot: { surface?: unknown } | null | undefined, asked = "c
  */
 export async function gatherEvidence(ctx: HarnessCtx, options: GatherOptions): Promise<Evidence> {
   const leased = leasedJudging(options.handle);
-  if (leased && leased.target !== BuildTarget.Web) return nativeEvidence(ctx, options, { applySetup, consoleProblems });
+  if (leased && leased.target !== BuildTarget.Web) {
+    const since = new Date().toISOString();
+    return withNativeCrash(ctx, options, await nativeEvidence(ctx, options, { applySetup, consoleProblems }), since);
+  }
   return withParity(ctx, options, await webEvidence(ctx, options), leased);
+}
+
+/**
+ * A native look that failed reads the crash record its run's `native.status` names (CRASH-6), so
+ * the builder is told what crashed, where and on which tick, not only that the game crashed. A
+ * pass that judged the build fine, or a host that keeps no records, is answered as it was.
+ */
+async function withNativeCrash(
+  ctx: HarnessCtx,
+  options: GatherOptions,
+  evidence: Evidence,
+  since: string,
+): Promise<Evidence> {
+  if (evidence.ok) return evidence;
+  const crash = await readCrashFacts(ctx, {
+    project: options.run.project,
+    handle: options.handle,
+    native: true,
+    since,
+  });
+  if (!crash) return evidence;
+  return { ...evidence, crash, problems: [...evidence.problems, crashFactsLine(crash)] };
 }
 
 /** The evidence pass on a page: the web build of any game, as it has always been. */
@@ -845,6 +874,7 @@ async function webEvidence(
     keepPaths: challenge === true ? [...new Set([...kept, ...RACE_PATHS])] : kept,
     viewport,
     camerasOwned,
+    since: new Date().toISOString(),
   };
   for (const phase of LOOK_OPENING) {
     const done = await phase(look);
@@ -907,6 +937,7 @@ const LOOK_PHASES: Array<(look: Look) => Promise<LookEnd>> = [
   weighFrames,
   readLateStatus,
   readConsole,
+  readCrash,
   reportLook,
 ];
 
@@ -991,6 +1022,7 @@ async function loadPage(look: Look): Promise<LookEnd> {
   look.machineKilled = killedByMachine(status);
   if (status.loadError) problems.push(status.loadError);
   if (status.crashed) problems.push(RENDERER_CRASHED);
+  look.crashed = status.crashed === true;
   // A load that built nothing leaves no page, or the last good build Live keeps. None of it is
   // this build, so nothing is driven or photographed (M-1.2: a round's failed challenger once
   // went out with the older build's frames as its shots). The host's typed fact decides, never
@@ -2065,6 +2097,20 @@ async function readLateStatus(look: Look): Promise<LookEnd> {
   if (!isRecord(late)) return;
   look.machineKilled = look.machineKilled === true || killedByMachine(late);
   if (late.crashed && !problems.includes(RENDERER_CRASHED)) problems.push(RENDERER_CRASHED);
+  look.crashed = look.crashed === true || late.crashed === true;
+}
+
+/**
+ * (10) the crash record: a window that crashed during the pass hands the builder the newest record
+ * the host kept since the pass began (CRASH-6). The OS killing the window is the machine's doing,
+ * not the game's, and a host that keeps no records gives nothing: either way the look is as it was.
+ */
+async function readCrash(look: Look): Promise<LookEnd> {
+  if (!look.crashed || look.machineKilled) return;
+  const crash = await readCrashFacts(look.ctx, { project: look.run.project, native: false, since: look.since });
+  if (!crash) return;
+  look.crash = crash;
+  look.problems.push(crashFactsLine(crash));
 }
 
 /** Is this console line the page's own, rather than the studio's note that the window went away? */
@@ -2202,6 +2248,7 @@ async function reportLook(look: Look): Promise<LookEnd> {
       // killed, reports exactly what it always did.
       ...(look.play ? { play: look.play } : {}),
       ...(look.machineKilled ? { machineKilled: true } : {}),
+      ...(look.crash ? { crash: look.crash } : {}),
       // The drive's readings: whether the racing line steered it, the corner it photographed, and
       // the throttle-only bot's race (judge-facts.ts words each one; `throttle-bot-loses` reads the race).
       ...drivenReadings(look),

@@ -207,6 +207,7 @@ fn panel(presets: &[String]) -> SettingsPanel<'_> {
         features: &[("Shadows", true)],
         detected: "desktop-high",
         emulated: Some("phone"),
+        detail: None,
     }
 }
 
@@ -221,6 +222,7 @@ fn the_settings_panel_words_come_from_the_caller_and_english_stays_byte_identica
         heading: "Grafik",
         quality: "Qualität",
         render_scale: "Renderskalierung",
+        detail: "Detailentfernung",
         features: "Funktionen",
         device: "Gerät",
         emulated: "emuliert",
