@@ -68,7 +68,7 @@ use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, SceneP
 use crate::settings::{LdrReason, Look, Quality, TextureClass};
 use crate::settle::{ExposureHistories, FrameHistory, HistoryKey, HistoryReset, HistorySet, LiveFrame, LiveHistory, SettleFrame, SettleHooks};
 use crate::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, Scene, scaled};
-use crate::skin::{SkinId, SkinnedMeshData};
+use crate::skin::{SkinId, SkinnedMeshData, SkinnedModel};
 use crate::tables::{CullPath, buffer, entry, pipeline_layout, uniform};
 use crate::texture::{TextureData, TextureId, TextureKind};
 use crate::mesh::MeshData;
@@ -299,6 +299,14 @@ impl ImmediateFrame {
     /// Draw a skinned mesh posed by `joints`.
     pub fn skinned(&mut self, skin: SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, material: Material) -> &mut Self {
         self.scene.draw_skinned(skin, model, joints, material);
+        self.counter.count();
+        self
+    }
+
+    /// Draw a skinned mesh posed by `joints`, each part with its own material
+    /// ([`Scene::draw_skinned_parts`], game systems AN-17).
+    pub fn skinned_parts(&mut self, skin: SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, materials: Vec<Material>) -> &mut Self {
+        self.scene.draw_skinned_parts(skin, model, joints, materials);
         self.counter.count();
         self
     }
@@ -1079,6 +1087,11 @@ impl FrameRenderer {
     /// Add a skinned mesh.
     pub fn add_skinned_mesh(&mut self, gpu: &Gpu, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
         self.renderer.add_skinned_mesh(gpu, data)
+    }
+
+    /// Add a skinned GLB's mesh with its parts ([`Renderer::add_skinned_model`], game systems AN-17).
+    pub fn add_skinned_model(&mut self, gpu: &Gpu, model: &SkinnedModel) -> Result<SkinId, RenderError> {
+        self.renderer.add_skinned_model(gpu, model)
     }
 
     /// Add a texture.

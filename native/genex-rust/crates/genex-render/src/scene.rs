@@ -1697,6 +1697,21 @@ struct SkinnedFrame {
     uses: Vec<std::ops::Range<usize>>,
 }
 
+/// LOD's screen-size metric (game systems AN-17; STR-19 and the skinned paths read it too): the
+/// pixels the diameter of the world sphere `sphere` (centre xyz, radius) covers at the nominal
+/// output height ([`LOD_NOMINAL_HEIGHT`]) from `camera`, on the cull's own scale (the LOD view's w,
+/// [`crate::layout::GpuCullViews::lod`]). Infinite where levels are off (an orthographic camera)
+/// and with the eye inside the sphere: such a draw is always at its finest.
+pub fn screen_height_px(camera: &CameraDesc, sphere: [f32; 4]) -> f32 {
+    let per_unit = lod_per_height(camera) * LOD_NOMINAL_HEIGHT as f32;
+    let distance = Vec3::from(camera.eye).distance(Vec3::new(sphere[0], sphere[1], sphere[2]));
+    let at_finest = per_unit <= 0.0 || distance <= sphere[3];
+    if at_finest {
+        return f32::INFINITY;
+    }
+    2.0 * sphere[3] * per_unit / distance
+}
+
 /// The camera's pixels a world unit at distance 1 per pixel of output height, over
 /// [`LOD_THRESHOLD_PX`]: `1 / (2 tan(fovy / 2))` for a perspective camera, 0 (levels off) for an
 /// orthographic one, whose projected error does not shrink with distance.

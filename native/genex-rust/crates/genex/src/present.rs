@@ -122,6 +122,7 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, Targe
 use genex_render::{CullPath, Gpu, GpuCounters, ImmediateFrame, RenderCode, RenderError, RenderOptions, WORLD_FORMAT};
 
 /// The streamed view set the presenter draws for a game that registered `game.streaming` (STR-16).
+pub use characters::{CharacterStats, RATE_FULL_PX, RATE_HALF_PX, RATE_QUARTER_PX, RateBand, palette_digest, rate_band};
 pub use crate::present_stream::{
     STREAM_LOADS_DESKTOP, STREAM_LOADS_PHONE, STREAM_LOADS_WEB, STREAM_VIEW_CELL_MODELS_MAX, STREAM_VIEW_MODEL_ESTIMATE_BYTES, StreamView, ViewIo,
     ViewLimits, ViewStats,
@@ -341,6 +342,11 @@ pub trait Uploads {
     }
     /// Add a texture as the next layer of its kind's array.
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError>;
+    /// Add a character's GLB as a skinned model with its parts (game systems AN-17); refused by
+    /// default, and a refused character draws its model in bind pose.
+    fn add_skinned_model(&mut self, _model: &genex_render::skin::SkinnedModel) -> Result<genex_render::skin::SkinId, RenderError> {
+        Err(RenderError::refused(RenderCode::MeshInvalid, "skinned models are not taken here"))
+    }
     /// Remove mesh `id` and its levels (an evicted streamed model, STR-16). The default holds no
     /// meshes, so it removes nothing.
     fn remove_mesh(&mut self, _id: MeshId) -> Result<(), RenderError> {
@@ -407,6 +413,10 @@ impl Uploads for Resilient {
         Resilient::add_texture(self, data, kind)
     }
 
+    fn add_skinned_model(&mut self, model: &genex_render::skin::SkinnedModel) -> Result<genex_render::skin::SkinId, RenderError> {
+        Resilient::add_skinned_model(self, model)
+    }
+
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
         Resilient::remove_mesh(self, id).map(drop)
     }
@@ -463,6 +473,8 @@ pub struct AssetCache {
     /// Whether the texture family was chosen (renderer pass 2 A6.4): at the first frame naming a
     /// texture, before any texture loads.
     family_chosen: bool,
+    /// The characters' skinned models and poses (AN-17).
+    characters: characters::Characters,
 }
 
 /// One texture an [`AssetCache`] tried: its path and kind, its id (`None`: refused) and where it
@@ -668,6 +680,7 @@ impl AssetCache {
             let loaded = load_model(path, source, uploads, log)?;
             self.models.push((path.to_owned(), loaded));
         }
+        self.characters.load(frame, source, uploads, log)?;
         // A file used as several kinds (a base colour that is also a mask) is read once, and its
         // family files are looked for once.
         let mut read: Vec<(&str, Option<TextureData>)> = Vec::new();
@@ -1799,6 +1812,13 @@ impl Presenter {
         self.set_output(output);
         self.keep_warm_frame = live && self.wants_warm(&handle, held.is_some());
         let timing = live.then(|| self.begin_live());
+        // Characters' poses (AN-17), over their skins (loaded first): Live's rate bands read the
+        // game camera, whatever the view.
+        if let Err(error) = self.load(&frame) {
+            return Some(Err(error));
+        }
+        let game_camera = runtime.camera(View::Game).unwrap_or(camera);
+        self.assets.pose_characters(&frame, &game_camera, runtime.tick(), live);
         let drawn = crate::gpu::host::with_passes(runtime, |passes, tick| self.draw(&frame, &camera, passes, tick, &mut hud));
         if let Some(timing) = timing {
             self.end_live(&handle, timing);
@@ -2491,7 +2511,7 @@ fn lighting(lights: &Lights) -> Lighting {
 }
 
 /// Where a frame's world draws go: the presenter's [`ImmediateFrame`] or a bare [`Scene`].
-trait WorldSink {
+trait WorldSink: characters::SkinSink {
     fn tag(&mut self, name: &str);
     /// The draw id the following meshes carry ([`Frame::id`]): motion vectors match a moving
     /// draw to its last frame by it (RQ5.1).
@@ -2618,11 +2638,10 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             0
         }
         Shape::Group { group } => push_group(sink, assets, missing, group),
-        // AN-15: a character draws its GLB as the model of the same path (bind pose) until the
-        // presenter evaluates and skins it (AN-17); a missing file draws the checker.
+        // AN-17: skinned in its pose; a missing file draws the checker.
         Shape::Character { animator, transform, tint, material } => {
-            let model = Shape::Model { model: animator.model(), transform: *transform, tint: *tint, material: material.clone() };
-            push_shape(sink, assets, missing, &model)
+            let character = characters::CharacterShape { animator, transform: *transform, tint: *tint, material: material.as_ref() };
+            characters::push(sink, assets, missing, character)
         }
     }
 }
