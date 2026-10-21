@@ -114,9 +114,11 @@ export async function modsBackend(computer: Awaited<ReturnType<typeof fakeComput
     host,
     ...more,
   });
+  const { tool: callTool, action: callAction } = backend;
+  if (!callTool || !callAction) throw new Error("The Game mods backend answers tools and actions");
   const tool = (name: string, args: Record<string, string | number | boolean> = {}, more?: Partial<PluginContext>) =>
-    backend.tool?.(name, args, context(more));
+    callTool(name, args, context(more));
   const act = (name: string, args: Record<string, unknown> = {}, more?: Partial<PluginContext>) =>
-    backend.action?.(name, args, context(more));
+    callAction(name, args, context(more));
   return { storage, gameDir, launches, backend, context, tool, act };
 }

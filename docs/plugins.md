@@ -2842,6 +2842,36 @@ Not there yet: a still of every camera (only the main one), and a dialog of Unit
 (`blocked_by_dialog`) answered for the person: it is waited out, then ends in the same restart. All of the above was run against Pipeline 0.8.0-exp.1 on Unity 6000.3.10f1
 (2026-10-14) with the built package.
 
+## The bundled Game mods plugin
+
+`mods` (**Game mods**, `src/plugins/mods/`, off until turned on: it writes into games the person
+installed) makes a project a mod of a game a store installed on this computer. `find-games` reads
+Steam's library list and each library's `appmanifest_<id>.acf` (`vdf.ts`, bounded), Epic's
+`.item` manifests (games only, whole installs) and Minecraft's launcher (`find-games.ts`); a game
+counts only while a store lists it and its folder is there, and its id (`steam:<app id>`,
+`epic:<app name>`, `minecraft`) is all a link keeps. `fingerprint.ts` reads the names near the
+top of the game's folder for its engine and for anti-cheat; a game that ships anti-cheat, or an
+online game's Steam id (`ONLINE_STEAM_APPS`), gets no mod. `known-games.ts` names the mods and
+saves folders of the games Genex knows, on a Mac and on Windows.
+
+`use-game` (`makes: ["game-mod"]`, scaffold **Mod**, `game: false`) keeps the link in the plugin's
+storage (`links/<hash>.json`) and writes `genex-mod.json` at the project's root for the agent;
+nothing reads a destination from that file. `install` (confirmed on a card) copies a file or
+folder of the project into the game's mods folder or its own folder, each worked out again from
+the linked id at the call (`install.ts`): a link in the copied files, a link or file on the way
+to the destination, or a link where a file lands refuses the whole install before anything is
+written; each file lands under a temporary name opened without following links, then is renamed
+into place. Every game file it replaces is kept, and the first install copies the saves aside
+(2 GB at most), all in the plugin's storage (`installs/<hash>/`). `remove` and the panel's
+**Remove mod** take out exactly what was placed, put back what was replaced and remove the folders
+it made once they are empty; **Put back saves** copies the kept saves back, copying today's aside
+first. `play` opens the game through its store's own link (`launch.ts`); Genex starts no game
+process. The observer hands a run's reviewer the newest pictures in the project's `shots/`, and
+Live's card, the **Mod** toolbar button and the panel read `status`. History leaves out
+`decompiled/` and `extracted/`. The `game-mods` skill gives the rules (offline only, no game
+files shared) and the loop; a development test points it at a made-up Mac with
+`STUDIO_ENGINE_TEST_ROOT`.
+
 ## Panels and trusted approval
 
 Panels register `settings` or `project` placements. They are opaque-origin sandboxed frames

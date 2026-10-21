@@ -77,6 +77,9 @@ through the JS API imports `@typescript/typescript6`.
   plugin's backend on all of those in a game folder (`backendOn`: its tools by `call`, its panel's
   actions by `act`), with launches recorded and an opened editor started as a process with its
   descriptor.
+- `mods-computer.ts`: a made-up Mac for the Game mods plugin (Steam's library list, manifests and
+  game folders where the test puts them, Epic's manifests, Minecraft's launcher) and the plugin's
+  backend on it in an open game, launches recorded.
 - `loop-host.ts`: a fake host for the one Loop (`runDirector` on a project of any kind): a real git
   repository as the game folder, the moments a plugin manifest hooks on `unreal-moment-bus.ts`, and
   the lead's scripted turns, the pool's workers and the reviewer as three kinds of delegation, on
