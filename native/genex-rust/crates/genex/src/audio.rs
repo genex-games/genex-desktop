@@ -914,3 +914,33 @@ impl CtxAudio<'_> {
         self.push(AudioCommand::RemoveZone(zone));
     }
 }
+
+/// The waveform of the asset-import fixture `tone.wav` (FFmpeg's 440 Hz sine, mono, 48 kHz, 0.5 s,
+/// peak 4095) as a 16-bit PCM WAV, synthesized for unit tests: a forked engine crate's sources may
+/// not include a file outside the crate (the eject stage refuses `include-escape`).
+#[cfg(test)]
+pub(crate) fn test_tone_wav() -> &'static [u8] {
+    const RATE: u32 = 48_000;
+    const FRAMES: u32 = RATE / 2;
+    const PEAK: f64 = 4095.0;
+    let data_bytes = FRAMES * 2;
+    let mut bytes = Vec::with_capacity(44 + data_bytes as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&RATE.to_le_bytes());
+    bytes.extend_from_slice(&(RATE * 2).to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_bytes.to_le_bytes());
+    for frame in 0..FRAMES {
+        let phase = 2.0 * std::f64::consts::PI * 440.0 * f64::from(frame) / f64::from(RATE);
+        let sample = (phase.sin() * PEAK).round() as i16;
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    Box::leak(bytes.into_boxed_slice())
+}

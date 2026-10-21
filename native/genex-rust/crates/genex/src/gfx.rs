@@ -765,7 +765,7 @@ mod tests {
     #[test]
     fn a_sound_outside_the_reset_is_missing_not_at_reset() {
         use crate::audio::SoundRefusal;
-        let table: AssetTable = &[("sfx/tone.wav", include_bytes!("../../../../../tests/fixtures/asset-import/tone.wav"))];
+        let table: AssetTable = Box::leak(Box::new([("sfx/tone.wav", crate::audio::test_tone_wav())]));
         let gfx = Gfx::new([320, 180], Saves::at(Err(genex_core::paths::SaveRefusal::NoStateDir)), WgslSetup::default(), Box::new(table));
         let outside = gfx.sound("sfx/tone.wav");
         assert_eq!(outside.refusal(), Some(SoundRefusal::Asset(AssetErrorCode::NotAtReset)));

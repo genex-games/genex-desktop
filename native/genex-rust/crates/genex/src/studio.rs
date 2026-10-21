@@ -951,8 +951,7 @@ mod metal {
     #[test]
     #[ignore = "needs the host GPU: run with --ignored metal"]
     fn metal_audio_level_answers_the_games_mix_and_a_mute_leaves_it() {
-        const TONE: &[u8] = include_bytes!("../../../../../tests/fixtures/asset-import/tone.wav");
-        static ASSETS: AssetTable = &[("sfx/tone.wav", TONE)];
+        let assets: AssetTable = Box::leak(Box::new([("sfx/tone.wav", crate::audio::test_tone_wav())]));
         #[derive(Default)]
         struct Tone {
             sound: Option<crate::audio::Sound>,
@@ -967,7 +966,7 @@ mod metal {
             sim.world.played = true;
         });
         let Some(presenter) = presenter(required()) else { return };
-        let runtime = Box::leak(Box::new(Runtime::with_assets(game, Box::new(ASSETS)).expect("installs")));
+        let runtime = Box::leak(Box::new(Runtime::with_assets(game, Box::new(assets)).expect("installs")));
         let mut run = studio_run(runtime, presenter, Live::from_env(&|_| None), &|_| {});
         let mut studio = studio(&scratch("audio"));
         call(&mut studio, &mut run, "seed", r#"{"seed":1}"#);

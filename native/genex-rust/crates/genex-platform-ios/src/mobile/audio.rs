@@ -198,12 +198,39 @@ mod tests {
         assert!(!gate.muted() && !gate.interrupted(), "a resume starts clean");
     }
 
-    const TONE: &[u8] = include_bytes!("../../../../../../tests/fixtures/asset-import/tone.wav");
-    static TONE_TABLE: genex::AssetTable = &[("sfx/tone.wav", TONE)];
+    /// The waveform of the asset-import fixture `tone.wav` (FFmpeg's 440 Hz sine, mono, 48 kHz,
+    /// 0.5 s, peak 4095) as a 16-bit PCM WAV: a forked engine crate's sources may not include a
+    /// file outside the crate (the eject stage refuses `include-escape`).
+    fn tone_wav() -> &'static [u8] {
+        const RATE: u32 = 48_000;
+        const FRAMES: u32 = RATE / 2;
+        const PEAK: f64 = 4095.0;
+        let data_bytes = FRAMES * 2;
+        let mut bytes = Vec::with_capacity(44 + data_bytes as usize);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&RATE.to_le_bytes());
+        bytes.extend_from_slice(&(RATE * 2).to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_bytes.to_le_bytes());
+        for frame in 0..FRAMES {
+            let phase = 2.0 * std::f64::consts::PI * 440.0 * f64::from(frame) / f64::from(RATE);
+            let sample = (phase.sin() * PEAK).round() as i16;
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        Box::leak(bytes.into_boxed_slice())
+    }
     const STEP_MS: f64 = 1000.0 / 60.0;
 
     /// A game that plays the tone on its first tick.
     fn tone_game() -> genex::Runtime<Option<genex::audio::Sound>> {
+        let table: genex::AssetTable = Box::leak(Box::new([("sfx/tone.wav", tone_wav())]));
         let mut game = genex::Game::new(None::<genex::audio::Sound>);
         game.on_reset(|sim, _, _, gfx| sim.world = Some(gfx.sound("sfx/tone.wav")));
         game.on_update(|sim, ctx| {
@@ -211,7 +238,7 @@ mod tests {
                 ctx.audio.play(sound);
             }
         });
-        genex::Runtime::with_assets(game, Box::new(TONE_TABLE)).expect("installs")
+        genex::Runtime::with_assets(game, Box::new(table)).expect("installs")
     }
 
     /// AU-8 red row (closes M5-F3): a muted gate mutes the device output, shown in
