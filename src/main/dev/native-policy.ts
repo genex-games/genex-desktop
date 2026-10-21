@@ -137,6 +137,11 @@ const NATIVE_STEPS = [
   // with the user's real Genex account; `host-package` opens the npm registry for one install.
   "studio:plugins.host-cli",
   "studio:plugins.host-package",
+  // Not channels either: dev-control's `game.saves` and `game.uiSettings` (`dev/runtime.ts`
+  // `DEV_NATIVE_STEPS`). A save writes and a load replaces the running game's state under the run's
+  // `state/`, and the session settings change what a judged run shows; a fixture profile refuses both.
+  "studio:dev.game.saves",
+  "studio:dev.game.uiSettings",
 ] as const;
 /** Channels a disposable fixture profile may run: no native account, dialog, download or external app. */
 const FIXTURE_SAFE = [
