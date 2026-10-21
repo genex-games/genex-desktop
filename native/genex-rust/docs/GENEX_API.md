@@ -120,10 +120,10 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   `invalid-world-size`, `duplicate-streaming` (a second `game.streaming`), `streaming-invalid`
   (a cell size outside 8..=1024 metres, a radius or anchor count outside its range, a
   registration past the simulated cells' memory cap, or, with `game.navigation`, a stream cell
-  that is not a whole number of nav tiles), `duplicate-input` (a second `game.input`),
-  `input-invalid` (an action map or touch layout genex-input refuses) and
-  `duplicate-touch-controls` (a second `game.touch_controls`). `game.gpu_pass` panics `gpu-pass-invalid` as it is
-  registered: an empty, overlong or repeated pass name, or one pass over the cap.
+  that is not a whole number of nav tiles), `duplicate-input`, `input-invalid`,
+  `duplicate-touch-controls`, `duplicate-audio` and `audio-zone-limit` (the Ctx page explains
+  these five). `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong
+  or repeated pass name, or one pass over the cap.
 
 ## Verbs
 

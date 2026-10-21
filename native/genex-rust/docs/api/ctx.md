@@ -58,3 +58,23 @@ game.input(ActionMap::new().context(Context::new(PLAY, 0)
   destination.
 - Install refusals: `duplicate-input`, `input-invalid`, `duplicate-touch-controls`. The map's own
   refusals (`input-action-invalid`, `input-binding-conflict` and the rest) come from genex-input.
+
+**Audio.** The types live in `genex::audio` (the prelude has `Sound`, `Music`, `PlayOpts`, `Bus`,
+`AudioSetup` and the rest):
+
+- `gfx.sound(path)` and `gfx.music(path)` in `on_reset` read a file under `assets/` once (WAV,
+  Ogg Vorbis, MP3, FLAC; Ogg music stays compressed). A refused file is a missing sound:
+  `sound.refusal()` names why (`not-preloaded`, `needs-import`, `malformed`, `memory-limit`) and
+  its play is refused `sound-missing`.
+- The update and UI hooks call `ctx.audio.play(&sound)`, `ctx.audio.play_with(&sound, opts)`
+  (`PlayOpts::ui()` for menus), `ctx.audio.play_at(&sound, position)`, `ctx.audio.stop(..)`,
+  `ctx.audio.set_position(..)`, `ctx.audio.bus_volume(..)` and `ctx.audio.music(&music, opts)`.
+  Commands apply after physics, with the game's own camera as the ears.
+- `ctx.audio.playing(voice)` answers the logical state, the same on every destination; audio
+  never enters the checksum. Check sound through `state().volatile.audio` (voices, events,
+  counts, issues) and `audioLevel`, never by ear.
+- `game.audio(AudioSetup { .. })` adds ducking, reverb zones and collider occlusion. Install
+  refusals: `duplicate-audio`, `audio-zone-limit`.
+- A device plays only in a run a person sees: a desktop window, Studio Live, the web page after
+  its first click or key, a phone while it holds its audio. Headless runs and tests open none
+  (`volatile.audio.device.open` is false); the mix and `audioLevel` are the same either way.

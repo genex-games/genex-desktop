@@ -76,6 +76,27 @@ game.on_update(|sim, _| {
   reverse; `sim.facets.get::<StreamColliders>().handles(cell)` lists their handles. Register it
   once.
 
+## Kept cells and saves
+
+- `sim.stream.keep(cell)` keeps a cell in the simulated set wherever the anchors go (a cell the
+  game changed and still simulates), from the next commit until `sim.stream.release(cell)` or a
+  reseed; `sim.stream.kept()` lists them. At most 64 cells.
+- `sim.stream.snapshot()` is a `Value` for the game's save: the anchors, the kept cells and the
+  simulated cells, never their content (at most about 62 KB of JSON).
+  `sim.stream.restore(&value)` restores it; the next commit leaves the cells it does not hold and
+  enters the ones it does, so builders and `game.stream_colliders()` rebuild them in order. The
+  game restores its own world beside it.
+- Two restores of one save replay equal on every destination. A scene of streamed static
+  colliders and kinematic characters also replays equal to the run that never restored. A scene
+  with dynamic bodies does not: Rapier's slot generations, contacts and sleep state are not saved,
+  so restored collider handles can differ.
+
+```rust
+let save: Value = sim.stream.snapshot(); // written with the game's own save
+// Later, after the game restored its world from the same save:
+sim.stream.restore(&save).expect("a save of this registration");
+```
+
 A build that is late holds the frame, never the commit: the tick waits for it, so the
 simulation is the same however fast the machine is. `state().volatile.__stream` counts `stalls`
 and `heldMs`. One `step(ms)` waits at most 6 s; past that it answers with fewer `ticks` than
@@ -88,7 +109,8 @@ It is display only and never in the checksum.
 | Refusal | When |
 |-|-|
 | `stream-not-registered` | A `sim.stream` call in a game without `game.streaming`. |
-| `stream-invalid` | An empty, overlong or control-character anchor name, a point that is not finite; a cell over its caps (reported, not returned). |
-| `stream-out-of-world` | An anchor more than 8192 m from the origin on x or z. |
+| `stream-invalid` | An empty, overlong or control-character anchor name, a point that is not finite, a 65th kept cell; a cell over its caps (reported, not returned). |
+| `stream-out-of-world` | An anchor or a kept cell more than 8192 m from the origin on x or z. |
 | `stream-too-many-anchors` | A new anchor name past the registration's `anchors(n)`. |
 | `stream-hold-timeout` | Reported in `state().volatile.__stream.timeout`, never returned: a commit held past 6 s. |
+| `stream-snapshot-invalid` | A `restore` of another version or cell size, a field missing or of the wrong kind, a cell outside the world, or more anchors, kept or simulated cells than the registration holds. Nothing changes. |

@@ -1126,6 +1126,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "genex-anim",
+ "genex-audio",
  "genex-core",
  "genex-frames",
  "genex-hud",

@@ -32,7 +32,8 @@
 pub mod actions;
 mod actions_journal;
 mod actions_touch;
-mod audio;
+/// Sounds, music and spatial audio: `gfx.sound`, `gfx.music`, `ctx.audio`, `game.audio` (genex-audio).
+pub mod audio;
 mod crash;
 mod g6;
 mod net;
@@ -197,6 +198,7 @@ pub mod physics {
 /// Everything a game file needs: `use genex::prelude::*;`.
 pub mod prelude {
     pub use crate::actions::{ActionId, ActionMap, Binding, Condition, Context, ContextId, PadButton, Stick, TouchControls};
+    pub use crate::audio::{AudioSetup, Bus, Duck, Listener, Music, MusicOpts, PlayOpts, ReverbPreset, ReverbZone, Sound, Spatial, Voice, ZoneShape};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,

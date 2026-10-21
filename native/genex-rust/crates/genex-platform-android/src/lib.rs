@@ -12,7 +12,9 @@
 //!   `scripts/spike/rust-wgpu/android-apk.sh`), with records under the app's `internal_data_path`.
 //! - the safe area: the content rectangle inside the window, widened by the display cutout.
 //! - the audio focus (`AudioManager.requestAudioFocus`), held while the app is resumed; a focus
-//!   change while resumed is not heard yet (it needs a Java listener class: TODO(M5-F1)).
+//!   change while resumed is not heard yet (it needs a Java listener class: TODO(M5-F1)). The
+//!   shared shell's audio gate mutes the game's device output (cpal's AAudio output, opened once
+//!   the focus is first held) whenever the focus is not held (game systems AU-8).
 //! - [`gamepad`]: `KEYCODE_BUTTON_*` keys, each controller in its own slot, and the d-pad as
 //!   arrows; joystick motion (sticks, triggers, hat) read per device id into the same slots.
 //! - [`thermal`]: the PowerManager's thermal status, which paces frames when the phone is hot.

@@ -41,6 +41,7 @@
 //! and lifecycle beyond the saves flush are not wired yet.
 
 pub mod assets;
+pub mod audio;
 pub mod crash;
 pub mod draw;
 pub mod handle;

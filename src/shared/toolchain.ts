@@ -596,6 +596,20 @@ export const RUST_NET_COMPONENTS = {
 } as const satisfies StackComponents;
 
 /**
+ * The relay client's JS bridge a `[net]` game's web build serves (MP-5a): `bridge.global.js` of
+ * `@genex-ai/multiplayer` (MIT; @colyseus/sdk, @colyseus/schema and @genex-ai/embed-sdk bundled,
+ * all MIT), at `file` in the npm tarball once its `package/` folder is stripped. The web build
+ * copies it only when it is a regular file of exactly `bytes` with this sha256 (taken from the
+ * registry's tarball, whose sha512 matched its published integrity, on 2026-10-21).
+ */
+export const MULTIPLAYER_BRIDGE_PIN = {
+  version: "0.17.0",
+  file: "dist/bridge.global.js",
+  bytes: 298_356,
+  sha256: "db08676af07fca824ff5a235248b76e1bd0e01214c3d82c2d628d58fad757d2a",
+} as const;
+
+/**
  * The components a person installs with the Android SDK and its licence, never an agent and never
  * the store's downloader: the store finds them where the person put them and pins their versions.
  */

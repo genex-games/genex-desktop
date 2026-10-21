@@ -341,10 +341,18 @@
           return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
         };
         api.player = () => api.state()?.player ?? null;
-        /** `audio({muted})` mutes; `audio()` is the level probe, which the web build does not measure. */
+        /**
+         * `audio({muted})` mutes the device; `audio()` is the level probe: the game's own mix before
+         * the mute (`studio_audio_level`), whether or not the first gesture opened the device yet.
+         */
         api.audio = (arg) => {
-          if (typeof arg?.muted !== "boolean") return { available: false, rms: 0, centroid: 0 };
-          return call(game, "audio", { muted: arg.muted });
+          if (typeof arg?.muted === "boolean") return call(game, "audio", { muted: arg.muted });
+          if (typeof game.studio_audio_level !== "function") return { available: false, rms: 0, centroid: 0 };
+          try {
+            return JSON.parse(game.studio_audio_level());
+          } catch {
+            return { available: false, rms: 0, centroid: 0 };
+          }
         };
         // Bound only when the module exports its capture, as the C++ shell binds each verb.
         if (typeof game.studio_capture !== "function") return;

@@ -206,6 +206,11 @@ impl AssetBytes {
     pub fn json(&self) -> Result<Value, AssetError> {
         serde_json::from_slice(&self.bytes).map_err(|error| AssetError::new(AssetErrorCode::Malformed, format!("not JSON: {error}")))
     }
+
+    /// The bytes, shared (streamed music keeps them without a copy).
+    pub(crate) fn shared(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
 }
 
 impl std::ops::Deref for AssetBytes {
@@ -569,12 +574,35 @@ pub struct Gfx {
     extensions: Extensions,
     /// The textures each textured material binds, by its source path, in binding order.
     textured: RefCell<Vec<(String, Vec<GameTexture>)>>,
+    /// The sounds and music the resets decoded (AU-7), kept across seeds.
+    audio: crate::audio::Bank,
 }
 
 impl Gfx {
     pub(crate) fn new(world_size: [u32; 2], saves: Saves, wgsl: WgslSetup, source: Box<dyn AssetSource>) -> Gfx {
         let assets = Assets::with_source(source);
-        Gfx { assets, world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()) }
+        Gfx { assets, world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()), audio: crate::audio::Bank::default() }
+    }
+
+    /// The sound at `assets/<path>` (WAV, Ogg Vorbis, MP3, FLAC), in `on_reset` (an asset of the
+    /// boot or sim group, as [`Assets::bytes`] reads), decoded once and cached across seeds. A
+    /// refusal never crashes: it is a missing sound ([`crate::audio::Sound::refusal`] says why:
+    /// `not-at-reset`, `not-preloaded`, an unsafe path, `missing`, `needs-import` for Opus or AAC,
+    /// `malformed`, `memory-limit` past [`crate::audio::SOUNDS_DECODED_MAX_BYTES`] decoded), and a
+    /// play of it is refused `sound-missing`.
+    pub fn sound(&self, path: &str) -> crate::audio::Sound {
+        self.audio.sound(&self.assets, path)
+    }
+
+    /// Music at `assets/<path>`, read as [`Gfx::sound`] reads: Ogg Vorbis stays compressed and
+    /// decodes while it plays (about 1 MB a minute resident); another format is held decoded.
+    pub fn music(&self, path: &str) -> crate::audio::Music {
+        self.audio.music(&self.assets, path)
+    }
+
+    /// What the resets decoded for audio (the runtime hands it to the mixer after each reset).
+    pub(crate) fn audio_bank(&self) -> &crate::audio::Bank {
+        &self.audio
     }
 
     /// The rigged GLB at `assets/<path>` as a [`CharacterAsset`], in `on_reset` (an asset of the
@@ -729,6 +757,24 @@ mod tests {
         assert_eq!(assets.bytes("levels/one.json").map(|bytes| bytes.to_vec()), Ok(b"{}".to_vec()));
         assets.set_at_reset(false);
         assert_eq!(assets.bytes("levels/one.json").expect_err("after the reset").code(), AssetErrorCode::NotAtReset);
+    }
+
+    /// AU-7: `gfx.sound` and `gfx.music` read as the sim reads, so outside the reset they answer
+    /// a missing handle refused `not-at-reset` before the source is asked; inside it the same
+    /// path decodes, and a later call outside it still refuses.
+    #[test]
+    fn a_sound_outside_the_reset_is_missing_not_at_reset() {
+        use crate::audio::SoundRefusal;
+        let table: AssetTable = &[("sfx/tone.wav", include_bytes!("../../../../../tests/fixtures/asset-import/tone.wav"))];
+        let gfx = Gfx::new([320, 180], Saves::at(Err(genex_core::paths::SaveRefusal::NoStateDir)), WgslSetup::default(), Box::new(table));
+        let outside = gfx.sound("sfx/tone.wav");
+        assert_eq!(outside.refusal(), Some(SoundRefusal::Asset(AssetErrorCode::NotAtReset)));
+        assert_eq!(gfx.music("sfx/tone.wav").refusal(), Some(SoundRefusal::Asset(AssetErrorCode::NotAtReset)));
+        gfx.assets().set_at_reset(true);
+        let inside = gfx.sound("sfx/tone.wav");
+        assert!(!inside.is_missing() && inside.seconds() > 0.4, "{inside:?}");
+        gfx.assets().set_at_reset(false);
+        assert_eq!(gfx.sound("sfx/tone.wav").refusal(), Some(SoundRefusal::Asset(AssetErrorCode::NotAtReset)), "the cache never skips the rule");
     }
 
     #[test]

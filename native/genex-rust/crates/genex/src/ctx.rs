@@ -295,9 +295,9 @@ pub struct Ctx<'a> {
     /// The tick's evaluated input actions (`game.input`): `ctx.actions.pressed(JUMP)`. Without
     /// `game.input` every action reads false.
     pub actions: &'a crate::actions::Actions,
-    /// What the tick's hooks play through (G6 contract stub until AU-7 makes it game API).
-    #[expect(dead_code, reason = "AU-7 makes ctx.audio game API")]
-    pub(crate) audio: crate::audio::CtxAudio<'a>,
+    /// What the tick's hooks play through (`game.audio`, `gfx.sound`): `ctx.audio.play(&step)`.
+    /// Commands apply after the hooks and the physics step, in call order.
+    pub audio: crate::audio::CtxAudio<'a>,
 }
 
 impl Ctx<'_> {

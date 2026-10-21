@@ -37,6 +37,13 @@
  * texture they are `of`, so the module plans only the one the adapter samples; the image is tagged
  * `source`, and left out beside a family file, only when the runtime never falls back to it.
  *
+ * A `[net]` game's build ({@link WebPackageInput.net}, MP-5a) also serves the relay client's JS
+ * bridge: the pinned `bridge.global.js` ({@link MULTIPLAYER_BRIDGE_PIN}) and the template's ESM shim
+ * under {@link WEB_NET_FILES}, with the import map and classic script tag the page carries only
+ * then ({@link webShellPage}). The bridge is checked (a regular file, never a link, exactly the
+ * pinned size and sha256) before anything is written, and refused `mp-bridge-refused` otherwise;
+ * the receipt records `mpBridgeBytes` and `mpBridgeGzip`. Every other build is unchanged.
+ *
  * The refusal of a web build for a game that declares native-enhanced features
  * (`native-features-web`) is the stage's (`rust-stage.ts`), before cargo runs.
  *
@@ -61,13 +68,22 @@ import {
 } from "../shared/game-export-contract.ts";
 import { assetFormat } from "../shared/game-assets.ts";
 import { LOADING_DEFAULTS, type LoadingStyle, loadingStyleProblem } from "../shared/loading-style.ts";
+import { MULTIPLAYER_BRIDGE_PIN } from "../shared/toolchain.ts";
+import {
+  CELL_PACK_FORMAT,
+  CELL_PACK_WORLD_FILE,
+  TERRAIN_TILES_DIR,
+  TERRAIN_TILES_FILE,
+} from "../shared/world-cells.ts";
 import { readKtx2Header } from "../substrate/asset-import/ktx2.ts";
 import { isSafeAssetPath } from "../substrate/asset-import/safe-asset.ts";
+import { ktx2LevelFacts } from "../substrate/asset-import/stream-facts.ts";
 import { TextureCompression } from "../substrate/asset-import/texture-table.ts";
-import { atomicWriteText, readRegularFile } from "../substrate/fsx.ts";
+import { atomicWriteFile, atomicWriteText, readRegularFile } from "../substrate/fsx.ts";
 import { fnv1a64Hex } from "../substrate/native-game-port.ts";
 import { shellQuote } from "../substrate/shell-quote.ts";
 import type { RustTargetBuilder } from "./rust-build.ts";
+import { ASSET_INDEX_FILE } from "./rust-package-assets.ts";
 
 /** The wasm-bindgen CLI the lane runs: the same version as the `wasm-bindgen` crate in the lock. */
 export const WASM_BINDGEN_VERSION = "0.2.129";
@@ -106,6 +122,13 @@ const LoadingPlaceholder = {
 } as const;
 /** The folder a logo path is under, beside the page. */
 const LOGO_FOLDER = "assets/";
+/**
+ * The template shell's place for a `[net]` build's bridge tags, at the end of a line of its head:
+ * every other build's page drops it and is the page it was before MP-5a, byte for byte.
+ */
+const NET_PLACEHOLDER = "<!--__NET_BRIDGE__-->";
+/** The bare specifier the genex-multiplayer crate's web backend imports (its `#[wasm_bindgen(module)]`). */
+export const MP_BRIDGE_SPECIFIER = "@genex-ai/multiplayer/bridge";
 /** The wasm features the pinned Rust emits for wasm32; wasm-opt must accept and keep them. */
 const WASM_OPT_FEATURES = [
   "--enable-bulk-memory",
@@ -133,6 +156,16 @@ export const WEB_FILES = {
   assetMap: "assets.json",
 } as const;
 
+/**
+ * The files a `[net]` game's web build serves besides {@link WEB_FILES} (MP-5a): the pinned bridge,
+ * which a classic script loads before any module, and the ESM shim the import map resolves
+ * {@link MP_BRIDGE_SPECIFIER} to.
+ */
+export const WEB_NET_FILES = {
+  bridge: "mp/bridge.global.js",
+  shim: "mp/bridge.mjs",
+} as const;
+
 /** The asset map's format (genex-platform-web's `ASSET_MAP_VERSION`): v2 adds a texture's `family` and `of`. */
 export const WEB_ASSET_MAP_VERSION = 2;
 /**
@@ -146,6 +179,26 @@ const KTX2_HEAD_BYTES = 1024;
 const KTX2_SUFFIX = ".ktx2";
 /** The family tags a family file's name may carry (`texture-table.ts`' families, exactly as spelled). */
 const FAMILY_TAGS: ReadonlySet<string> = new Set(Object.values(TextureCompression));
+/** A cell pack's bodies (`cells/<x>_<z>.cell`, `substrate/asset-import/world-cells.ts`), each fetched while playing. */
+const CELL_BODIES_DIR = "cells";
+const CELL_BODY_SUFFIX = ".cell";
+/** A pack's terrain tiles (`terrain/<x>_<z>.r16`), each fetched while playing. */
+const TERRAIN_TILE_SUFFIX = ".r16";
+/** The most of a pack's `world.json` read to tell it is one (its `format` comes first). */
+const PACK_WORLD_HEAD_BYTES = 256;
+/** The largest asset index read for its named groups (the package step writes it; a bigger one names none). */
+const ASSET_INDEX_MAX_BYTES = 16 * 1024 * 1024;
+/**
+ * The web's streaming budgets (game systems STR-14b, owner call S9): the boot and sim groups the page
+ * fetches before the first frame, and the most one fetch made while playing carries (the shell
+ * refuses a bigger one), which bounds the module's memory high-water at the pool plus one asset.
+ */
+export const WEB_STREAM_LIMITS = {
+  /** The boot and sim groups together. */
+  preloadBytes: 64 * 1024 * 1024,
+  /** One streamed fetch: a whole streamed file, or one of its ranges. */
+  fetchBytes: 64 * 1024 * 1024,
+} as const;
 /** The module's caps (genex-platform-web's `assets`): one file, all files, and how many. */
 export const WEB_ASSET_LIMITS = {
   /** The desktop's own cap on one asset (genex-assets' `MAX_ASSET_BYTES`). */
@@ -163,6 +216,21 @@ export type WebAssetLimits = { [K in keyof typeof WEB_ASSET_LIMITS]: number };
 export const WebAssetFamily = { ...TextureCompression, Source: "source" } as const;
 export type WebAssetFamily = (typeof WebAssetFamily)[keyof typeof WebAssetFamily];
 
+/**
+ * A map entry's `group` (genex-platform-web's map v2, genex's `AssetGroup`): `boot` and `sim` files
+ * are fetched before the first reset, `stream` and `named` ones while playing, when the game wants
+ * them. An entry without one is `sim`. Wire values; never rename one.
+ */
+export const WebAssetGroup = { Boot: "boot", Sim: "sim", Stream: "stream", Named: "named" } as const;
+export type WebAssetGroup = (typeof WebAssetGroup)[keyof typeof WebAssetGroup];
+
+/** One piece of a streamed file the page fetches by a `Range` request: where it starts, its length and FNV-1a 64. */
+export interface WebAssetRange {
+  offset: number;
+  bytes: number;
+  fnv1a64: string;
+}
+
 /** One staged file the page may fetch: its `/`-separated path under `assets/`, length and FNV-1a 64. */
 export interface WebAssetEntry {
   path: string;
@@ -172,9 +240,15 @@ export interface WebAssetEntry {
   family?: WebAssetFamily;
   /** The texture the file is one of: its image's path, or the family files' stem when it has none. */
   of?: string;
+  /** Its group when it is not the default `sim`, or a cell pack's index (written `sim`). */
+  group?: WebAssetGroup;
+  /** The `genex.toml` group of a `named` entry. */
+  name?: string;
+  /** A streamed KTX2's pieces: its head, then its levels smallest first (STR-14b). */
+  ranges?: WebAssetRange[];
 }
 
-/** `assets.json`: every staged file the page fetches before the game's first frame. */
+/** `assets.json`: every staged file the page fetches, before the game's first frame or while playing. */
 export interface WebAssetMap {
   version: typeof WEB_ASSET_MAP_VERSION;
   files: WebAssetEntry[];
@@ -209,6 +283,8 @@ export const RustWebRefusal = {
   OutputRefused: "output-refused",
   /** An optimized `game_bg.wasm` compresses past the {@link WEB_WASM_CEILING_MB} MB ceiling, whatever its game's budget. */
   WasmOverBudget: "wasm-over-budget",
+  /** A `[net]` build's bridge is missing, a link, not a regular file, or not the pinned size and sha256. */
+  MpBridgeRefused: "mp-bridge-refused",
 } as const;
 export type RustWebRefusal = (typeof RustWebRefusal)[keyof typeof RustWebRefusal];
 
@@ -220,6 +296,10 @@ const MESSAGE = {
   overCeiling: (gzip: number, budgetMb: number) =>
     `game_bg.wasm is ${gzip} bytes gzipped, past the ${WEB_WASM_CEILING_MB} MB ceiling (this game's budget is ${budgetMb} MB)`,
   failed: (step: string, code: number | null) => `${step} exited ${code ?? "on a signal"}`,
+  bridgeUnreadable: (file: string, pinned: number) =>
+    `the multiplayer bridge ${file} is missing, a link, not a regular file or larger than the pinned ${pinned} bytes`,
+  bridgeMismatch: (bytes: number, pin: WebBridgePin) =>
+    `the multiplayer bridge is not @genex-ai/multiplayer ${pin.version}'s (${bytes} bytes; the pin is ${pin.bytes} bytes, sha256 ${pin.sha256})`,
 } as const;
 
 /** What one tool answered. */
@@ -259,8 +339,27 @@ export interface WebPackageInput {
   symbolMap?: string;
   /** The game's own budget in MB of gzip (`[web] wasm_budget_mb`); absent: {@link WEB_WASM_BUDGET_DEFAULT_MB}. */
   budgetMb?: number;
+  /** A `[net]` game's relay bridge (MP-5a); absent for every other game, whose build is unchanged. */
+  net?: WebNetBridge;
   tools: WebTools;
   run: WebRun;
+}
+
+/** What a `[net]` game's web build serves for its relay client (MP-5a). */
+export interface WebNetBridge {
+  /** The store's `bridge.global.js` ({@link MULTIPLAYER_BRIDGE_PIN}`.file` in its component folder). */
+  bridge: string;
+  /** The template's ESM shim's text (`src/game-template-rust/web/mp-bridge-shim.mjs`). */
+  shim: string;
+  /** The pin the bridge is held to; absent: {@link MULTIPLAYER_BRIDGE_PIN} (tests hand their own). */
+  pin?: WebBridgePin;
+}
+
+/** A bridge's pin: its release, size and sha256. */
+export interface WebBridgePin {
+  version: string;
+  bytes: number;
+  sha256: string;
 }
 
 /** A web build's part of the receipt: the tools, the sizes against the budget, the served files. */
@@ -281,6 +380,10 @@ export interface WebReceipt {
   warning: ExportWarningCode | null;
   /** Served file name → sha256. */
   files: Record<string, string>;
+  /** A `[net]` build's {@link WEB_NET_FILES}: their bytes together (absent for every other build). */
+  mpBridgeBytes?: number;
+  /** The same files' `gzip -9` sizes added up. */
+  mpBridgeGzip?: number;
 }
 
 export type WebPackageResult =
@@ -305,12 +408,24 @@ export function webExportWarnings(receipt: WebReceipt | null | undefined): Expor
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
 
 /**
+ * The import map and classic script a `[net]` build's page carries in its head: the bridge loads
+ * first and sets its global, then the map resolves the game's bare import to the shim, both inside
+ * the page's own folder.
+ */
+const NET_BRIDGE_TAGS = [
+  "",
+  `    <script type="importmap">${JSON.stringify({ imports: { [MP_BRIDGE_SPECIFIER]: `./${WEB_NET_FILES.shim}` } })}</script>`,
+  `    <script src="${WEB_NET_FILES.bridge}"></script>`,
+].join("\n");
+
+/**
  * The shell with the game's title in place of every placeholder, HTML-escaped, and its loading
  * screen styled by `loading` (`[render.loading]`; a key left out takes the default, the title the
- * game's). Throws `loading-style: <key>` for a value the manifest's check would have refused, so
- * nothing of it reaches the page.
+ * game's). A `net` page also carries the bridge's import map and script tag (MP-5a); any other
+ * page drops their placeholder. Throws `loading-style: <key>` for a value the manifest's check
+ * would have refused, so nothing of it reaches the page.
  */
-export function webShellPage(shell: string, title: string, loading: LoadingStyle = {}): string {
+export function webShellPage(shell: string, title: string, loading: LoadingStyle = {}, net = false): string {
   const problem = loadingStyleProblem(loading);
   if (problem !== null) throw new Error(`loading-style: ${problem}`);
   const logo = loading.logo
@@ -322,7 +437,8 @@ export function webShellPage(shell: string, title: string, loading: LoadingStyle
     .replaceAll(LoadingPlaceholder.Background, loading.background ?? LOADING_DEFAULTS.background)
     .replaceAll(LoadingPlaceholder.Accent, loading.accent ?? LOADING_DEFAULTS.accent)
     .replaceAll(LoadingPlaceholder.Text, loading.text ?? LOADING_DEFAULTS.text)
-    .replaceAll(LoadingPlaceholder.Logo, logo);
+    .replaceAll(LoadingPlaceholder.Logo, logo)
+    .replaceAll(NET_PLACEHOLDER, net ? NET_BRIDGE_TAGS : "");
 }
 
 /** `wasm-bindgen --target web` of `wasm` into `out` as `game.js` + `game_bg.wasm`. */
@@ -400,6 +516,7 @@ async function receiptOf(input: WebPackageInput, optimized: boolean): Promise<We
   for (const name of [WEB_FILES.module, WEB_FILES.page]) {
     files[name] = sha256(await readRegularFile(path.join(input.out, name), TEXT_MAX_BYTES));
   }
+  const net = input.net ? await netReceipt(input.out, files) : {};
   return {
     version: 1,
     wasmBindgen: WASM_BINDGEN_VERSION,
@@ -413,15 +530,44 @@ async function receiptOf(input: WebPackageInput, optimized: boolean): Promise<We
     // The budget is a release promise: a Live (cargo dev, no wasm-opt) module is several times bigger.
     warning: optimized && !withinBudget ? ExportWarningCode.WasmOverTarget : null,
     files,
+    ...net,
   };
 }
 
-/**
- * Package the module cargo built into the served folder `input.out`: wasm-bindgen, wasm-opt, the
- * shell as `index.html`, `size.json` and the receipt; or the typed refusal. Throws only on an I/O
- * failure of the host's own folders.
- */
-export async function packageWeb(input: WebPackageInput): Promise<WebPackageResult> {
+/** A `[net]` build's bridge files in the receipt: each one's sha256 into `files`, and their sizes. */
+async function netReceipt(
+  out: string,
+  files: Record<string, string>,
+): Promise<Pick<WebReceipt, "mpBridgeBytes" | "mpBridgeGzip">> {
+  let mpBridgeBytes = 0;
+  let mpBridgeGzip = 0;
+  for (const name of Object.values(WEB_NET_FILES)) {
+    const bytes = await readRegularFile(path.join(out, name), TEXT_MAX_BYTES);
+    files[name] = sha256(bytes);
+    mpBridgeBytes += bytes.length;
+    mpBridgeGzip += gzipSync(bytes, { level: 9 }).length;
+  }
+  return { mpBridgeBytes, mpBridgeGzip };
+}
+
+/** The pinned bridge's bytes, or the refusal: never a link, exactly the pinned size and sha256. */
+async function pinnedBridge(net: WebNetBridge): Promise<Uint8Array | WebPackageResult> {
+  const pin = net.pin ?? MULTIPLAYER_BRIDGE_PIN;
+  const bytes = await readRegularFile(net.bridge, pin.bytes).catch(() => null);
+  if (!bytes) return refused(RustWebRefusal.MpBridgeRefused, MESSAGE.bridgeUnreadable(net.bridge, pin.bytes));
+  const pinned = bytes.length === pin.bytes && sha256(bytes) === pin.sha256;
+  return pinned ? bytes : refused(RustWebRefusal.MpBridgeRefused, MESSAGE.bridgeMismatch(bytes.length, pin));
+}
+
+/** Writes a `[net]` build's {@link WEB_NET_FILES} into the fresh output folder. */
+async function writeNetFiles(out: string, bridge: Uint8Array, shim: string): Promise<void> {
+  await mkdir(path.join(out, path.posix.dirname(WEB_NET_FILES.bridge)));
+  await atomicWriteFile(path.join(out, WEB_NET_FILES.bridge), bridge);
+  await atomicWriteText(path.join(out, WEB_NET_FILES.shim), shim);
+}
+
+/** The pinned wasm-bindgen, a fresh output folder and the bound module in it; the refusal or null. */
+async function bindModule(input: WebPackageInput): Promise<WebPackageResult | null> {
   const version = await input.run(`${shellQuote(input.tools.wasmBindgen)} --version`, RustWebStep.BindgenVersion);
   const found = BINDGEN_VERSION_LINE.exec(version.stdout)?.[1] ?? "";
   if (version.code !== 0 || found !== WASM_BINDGEN_VERSION) {
@@ -429,18 +575,32 @@ export async function packageWeb(input: WebPackageInput): Promise<WebPackageResu
   }
   if (!(await freshOutput(input.out))) return refused(RustWebRefusal.OutputRefused, MESSAGE.outputLinked);
   const bound = await input.run(bindgenCommand(input.tools.wasmBindgen, input.wasm, input.out), RustWebStep.Bindgen);
-  if (bound.code !== 0) {
-    return refused(
-      RustWebRefusal.BindgenFailed,
-      `${MESSAGE.failed(RustWebStep.Bindgen, bound.code)}\n${firstLines(bound)}`,
-    );
-  }
+  if (bound.code === 0) return null;
+  return refused(
+    RustWebRefusal.BindgenFailed,
+    `${MESSAGE.failed(RustWebStep.Bindgen, bound.code)}\n${firstLines(bound)}`,
+  );
+}
+
+/**
+ * Package the module cargo built into the served folder `input.out`: wasm-bindgen, wasm-opt, the
+ * shell as `index.html`, a `[net]` build's bridge files, `size.json` and the receipt; or the typed
+ * refusal. Throws only on an I/O failure of the host's own folders.
+ */
+export async function packageWeb(input: WebPackageInput): Promise<WebPackageResult> {
+  // A [net] build's bridge is checked before anything runs or is written.
+  const bridge = input.net ? await pinnedBridge(input.net) : null;
+  if (bridge && !(bridge instanceof Uint8Array)) return bridge;
+  const bindRefusal = await bindModule(input);
+  if (bindRefusal) return bindRefusal;
   const wasmOpt = input.optimize ? input.tools.wasmOpt : null;
   const optimizeRefusal = wasmOpt ? await optimize(input, wasmOpt) : null;
   if (optimizeRefusal) return optimizeRefusal;
   const odd = await outputRefusal(input.out);
   if (odd) return refused(RustWebRefusal.OutputRefused, odd);
-  await atomicWriteText(path.join(input.out, WEB_FILES.page), webShellPage(input.shell, input.title, input.loading));
+  if (bridge && input.net) await writeNetFiles(input.out, bridge, input.net.shim);
+  const page = webShellPage(input.shell, input.title, input.loading, input.net !== undefined);
+  await atomicWriteText(path.join(input.out, WEB_FILES.page), page);
   const receipt = await receiptOf(input, wasmOpt !== null);
   const size = {
     optimized: receipt.optimized,
@@ -479,7 +639,45 @@ async function assetEntry(assets: string, rel: string, maxFileBytes: number): Pr
   if (!bytes) return null;
   const header = rel.endsWith(KTX2_SUFFIX) ? readKtx2Header(bytes.subarray(0, KTX2_HEAD_BYTES)) : null;
   const side = header ? Math.min(header.width, header.height) : null;
-  return { entry: { path: rel, bytes: bytes.length, fnv1a64: fnv1a64Hex(bytes) }, side, family: familyFile(rel) };
+  const entry = { path: rel, bytes: bytes.length, fnv1a64: fnv1a64Hex(bytes) };
+  return {
+    entry,
+    side,
+    family: familyFile(rel),
+    ranges: header ? ktx2Ranges(bytes) : null,
+    pack: isPackWorld(rel, bytes),
+  };
+}
+
+/**
+ * A KTX2's pieces for a fetch by ranges: the head (header, level index and descriptors, up to its
+ * first level's data), then each level smallest first; null when its level index does not read.
+ */
+function ktx2Ranges(bytes: Uint8Array): WebAssetRange[] | null {
+  const levels = ktx2LevelFacts(bytes, bytes.length);
+  if (!levels) return null;
+  const pieces = levels.filter((level) => level.bytes > 0);
+  const headBytes = Math.min(...pieces.map((level) => level.offset));
+  if (!(headBytes > 0) || overlapping(pieces)) return null;
+  const range = (offset: number, length: number): WebAssetRange => ({
+    offset,
+    bytes: length,
+    fnv1a64: fnv1a64Hex(bytes.subarray(offset, offset + length)),
+  });
+  return [range(0, headBytes), ...pieces.map((level) => range(level.offset, level.bytes))];
+}
+
+/** Whether any two of `ranges` share a byte (the module refuses such an entry `asset-range-invalid`). */
+function overlapping(ranges: ReadonlyArray<{ offset: number; bytes: number }>): boolean {
+  const sorted = [...ranges].sort((a, b) => a.offset - b.offset);
+  return sorted.some((range, i) => i > 0 && sorted[i - 1].offset + sorted[i - 1].bytes > range.offset);
+}
+
+/** Whether `rel` is a cell pack's `world.json` (its `format` is genex-stream's), so its folder is a pack. */
+function isPackWorld(rel: string, bytes: Uint8Array): boolean {
+  if (path.posix.basename(rel) !== CELL_PACK_WORLD_FILE) return false;
+  const head = new TextDecoder().decode(bytes.subarray(0, PACK_WORLD_HEAD_BYTES));
+  return /^\{\s*"format"\s*:\s*"([^"]*)"/.exec(head)?.[1] === CELL_PACK_FORMAT;
 }
 
 /** A file the map lists: its entry, the side of its KTX2 header (null when not a readable KTX2) and, for a family file, its stem and family. */
@@ -487,6 +685,10 @@ interface Staged {
   entry: WebAssetEntry;
   side: number | null;
   family: FamilyFile | null;
+  /** A readable KTX2's pieces, used only when the file is streamed. */
+  ranges: WebAssetRange[] | null;
+  /** Whether it is a cell pack's `world.json`. */
+  pack: boolean;
 }
 
 /** A family file's texture stem and family. */
@@ -570,11 +772,117 @@ function tagTextures(staged: readonly Staged[]): void {
 }
 
 /**
+ * Each shipped file of the asset index's named groups (C-30), with its group's name: every file of
+ * every asset a group lists (a texture's family files too). A file in several groups takes the
+ * first by name (the index sorts them). An index that is missing, a link, too big or not the
+ * package step's shape names none.
+ */
+async function namedGroupFiles(assets: string): Promise<Map<string, string>> {
+  const named = new Map<string, string>();
+  const bytes = await readRegularFile(path.join(assets, ASSET_INDEX_FILE), ASSET_INDEX_MAX_BYTES).catch(() => null);
+  const index = bytes ? parsedIndex(bytes) : null;
+  if (!index) return named;
+  const filesOf = new Map(index.assets.map((asset) => [asset.path, asset.files.map((file) => file.path)]));
+  for (const group of index.groups) {
+    for (const asset of group.assets) {
+      for (const file of filesOf.get(asset) ?? []) if (!named.has(file)) named.set(file, group.name);
+    }
+  }
+  return named;
+}
+
+/** The part of the asset index the map reads: each asset's shipped files, and the named groups. */
+interface IndexGroups {
+  assets: Array<{ path: string; files: Array<{ path: string }> }>;
+  groups: Array<{ name: string; assets: string[] }>;
+}
+
+const isString = (value: unknown): value is string => typeof value === "string";
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+/** The index's assets and groups, or null when it is not the package step's shape. */
+function parsedIndex(bytes: Uint8Array): IndexGroups | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+  if (!isRecord(value) || !Array.isArray(value.assets) || !Array.isArray(value.groups)) return null;
+  const assets = value.assets.filter(isRecord).map((asset) => ({
+    path: String(asset.path),
+    files: (Array.isArray(asset.files) ? asset.files : [])
+      .filter(isRecord)
+      .map((file) => ({ path: String(file.path) })),
+  }));
+  const groups = value.groups
+    .filter((group): group is Record<string, unknown> => isRecord(group) && isString(group.name) && group.name !== "")
+    .map((group) => ({
+      name: String(group.name),
+      assets: (Array.isArray(group.assets) ? group.assets : []).filter(isString),
+    }));
+  return { assets, groups };
+}
+
+/** Whether `rel` is a cell body or terrain tile of a pack (a folder holding a pack's `world.json`). */
+function streamedPackFile(rel: string, packs: ReadonlySet<string>): boolean {
+  const parts = rel.split("/");
+  const file = parts.at(-1) ?? "";
+  const folder = parts.at(-2);
+  const pack = parts.slice(0, -2).join("/");
+  if (!packs.has(pack)) return false;
+  const body = folder === CELL_BODIES_DIR && file.endsWith(CELL_BODY_SUFFIX);
+  const tile = folder === TERRAIN_TILES_DIR && file.endsWith(TERRAIN_TILE_SUFFIX);
+  return body || tile;
+}
+
+/** Whether `rel` is a pack's index the simulation reads at reset: its `world.json` or `terrain/terrain.json`. */
+function packIndexFile(rel: string, packs: ReadonlySet<string>): boolean {
+  const dir = path.posix.dirname(rel);
+  const own = dir === "." ? "" : dir;
+  if (path.posix.basename(rel) === CELL_PACK_WORLD_FILE) return packs.has(own);
+  const terrain = path.posix.basename(own) === TERRAIN_TILES_DIR && path.posix.basename(rel) === TERRAIN_TILES_FILE;
+  const pack = path.posix.dirname(own);
+  return terrain && packs.has(pack === "." ? "" : pack);
+}
+
+/** Whether `entry` is fetched while playing rather than before the first frame. */
+const isStreamed = (entry: WebAssetEntry) =>
+  entry.group === WebAssetGroup.Stream || entry.group === WebAssetGroup.Named;
+
+/**
+ * Puts each file in its fetch group (STR-14b): a cell pack's `world.json` and terrain index in
+ * `sim` (a reset reads them); each named group's files in `named` with the group's name; a pack's
+ * cell bodies and terrain tiles in `stream`. A streamed or named KTX2 is fetched by ranges (its
+ * head, then its levels smallest first); every other file is fetched whole. A file in no group is
+ * left as the v1 map wrote it (`sim`).
+ */
+function groupFiles(staged: readonly Staged[], named: ReadonlyMap<string, string>): void {
+  const packs = new Set(
+    staged
+      .filter((file) => file.pack)
+      .map((file) => {
+        const dir = path.posix.dirname(file.entry.path);
+        return dir === "." ? "" : dir;
+      }),
+  );
+  for (const file of staged) {
+    const rel = file.entry.path;
+    const name = named.get(rel);
+    if (packIndexFile(rel, packs)) Object.assign(file.entry, { group: WebAssetGroup.Sim });
+    else if (name !== undefined) Object.assign(file.entry, { group: WebAssetGroup.Named, name });
+    else if (streamedPackFile(rel, packs)) Object.assign(file.entry, { group: WebAssetGroup.Stream });
+    if (isStreamed(file.entry) && file.ranges) file.entry.ranges = file.ranges;
+  }
+}
+
+/**
  * The asset map of a staged `assets/` folder: each regular file (never a link, never through a
  * linked folder) whose path passes the asset-path rule and fits the per-file cap, sorted by path,
  * until the file count or total byte cap is reached. A texture's files are tagged for the
- * adapter's pick ({@link tagTextures}); every other entry is the v1 map's. A missing folder is an
- * empty map.
+ * adapter's pick ({@link tagTextures}) and each file is put in its fetch group ({@link groupFiles});
+ * a game with neither family files, cell packs nor named groups gets the v1 map's entries. A
+ * missing folder is an empty map.
  */
 export async function webAssetMap(assets: string, limits: WebAssetLimits = WEB_ASSET_LIMITS): Promise<WebAssetMap> {
   const staged: Staged[] = [];
@@ -587,7 +895,45 @@ export async function webAssetMap(assets: string, limits: WebAssetLimits = WEB_A
     staged.push(file);
   }
   tagTextures(staged);
+  groupFiles(staged, await namedGroupFiles(assets));
   return { version: WEB_ASSET_MAP_VERSION, files: staged.map((file) => file.entry) };
+}
+
+/** What a map fetches when (STR-14b): the boot and sim bytes before the first frame, and the largest single fetch while playing. */
+export interface WebAssetMapLoad {
+  preloadBytes: number;
+  streamedBytes: number;
+  largestFetchBytes: number;
+  /** Whether both fit {@link WEB_STREAM_LIMITS}. */
+  withinLimits: boolean;
+}
+
+/**
+ * {@link WebAssetMapLoad} of `map`, for the adapter that fetches the most: of a texture's per-family
+ * files (the module plans one) the largest counts.
+ */
+export function webAssetMapLoad(map: WebAssetMap): WebAssetMapLoad {
+  const preloadOf = new Map<string, number>();
+  let streamedBytes = 0;
+  let largestFetchBytes = 0;
+  for (const entry of map.files) {
+    if (!isStreamed(entry)) {
+      const key = entry.of === undefined ? `file:${entry.path}` : `texture:${entry.of}`;
+      preloadOf.set(key, Math.max(preloadOf.get(key) ?? 0, entry.bytes));
+      continue;
+    }
+    streamedBytes += entry.bytes;
+    const pieces = entry.ranges?.map((range) => range.bytes) ?? [entry.bytes];
+    largestFetchBytes = Math.max(largestFetchBytes, ...pieces);
+  }
+  const preloadBytes = [...preloadOf.values()].reduce((sum, bytes) => sum + bytes, 0);
+  const fits = preloadBytes <= WEB_STREAM_LIMITS.preloadBytes;
+  return {
+    preloadBytes,
+    streamedBytes,
+    largestFetchBytes,
+    withinLimits: fits && largestFetchBytes <= WEB_STREAM_LIMITS.fetchBytes,
+  };
 }
 
 /** Writes `out`'s {@link WEB_FILES.assetMap} for the assets staged in `out/assets`. */

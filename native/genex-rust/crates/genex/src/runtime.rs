@@ -146,11 +146,15 @@ pub enum InstallErrorCode {
     InputInvalid,
     /// A second `game.touch_controls`.
     DuplicateTouchControls,
+    /// A second `game.audio`.
+    DuplicateAudio,
+    /// More than `REVERB_ZONES_MAX` (16) reverb zones in `game.audio`.
+    AudioZoneLimit,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 15] = [
+    pub const ALL: [InstallErrorCode; 17] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -166,6 +170,8 @@ impl InstallErrorCode {
         InstallErrorCode::DuplicateInput,
         InstallErrorCode::InputInvalid,
         InstallErrorCode::DuplicateTouchControls,
+        InstallErrorCode::DuplicateAudio,
+        InstallErrorCode::AudioZoneLimit,
     ];
 
     /// The typed code's wire spelling.
@@ -186,6 +192,8 @@ impl InstallErrorCode {
             InstallErrorCode::DuplicateInput => "duplicate-input",
             InstallErrorCode::InputInvalid => "input-invalid",
             InstallErrorCode::DuplicateTouchControls => "duplicate-touch-controls",
+            InstallErrorCode::DuplicateAudio => "duplicate-audio",
+            InstallErrorCode::AudioZoneLimit => "audio-zone-limit",
         }
     }
 }
@@ -384,6 +392,14 @@ impl<W: Default + 'static> Runtime<W> {
     /// clear held and pending input.
     pub fn seed(&mut self, seed: u32) {
         seed_core(&self.game, &mut self.core, seed);
+    }
+
+    /// Render with `class`'s physical voice pool (a shell, at boot): the run is re-seeded on its
+    /// seed so the sounds are handed to the new pool. It never changes the logical state.
+    #[doc(hidden)]
+    pub fn set_audio_pool(&mut self, class: crate::audio::PoolClass) {
+        self.core.g6.audio.set_class(class);
+        self.seed(self.core.seed);
     }
 
     /// Run streamed cell builds on `pool` instead of the process pool (tests and tools comparing
@@ -634,6 +650,11 @@ impl<W> Runtime<W> {
             state.set(session::VOLATILE_KEY, volatile);
         }
         core.g6.runtime_keys(&self.game.g6, &mut state);
+        if let Some(audio) = core.g6.audio.volatile_value() {
+            let mut volatile = state[session::VOLATILE_KEY].clone();
+            volatile.set(crate::audio::VOLATILE_AUDIO_KEY, audio);
+            state.set(session::VOLATILE_KEY, volatile);
+        }
         if core.g6.input.registered() {
             let mut input = state[crate::actions::RUNTIME_KEY].clone();
             input.set("journal", CoreValue::from(&core.g6.journal.runtime_value()));
@@ -738,6 +759,64 @@ impl<W> Runtime<W> {
     /// triangles}}, exact: false}` (`studio.cpp` `tallyJson`), plus `missingModels` (the model
     /// paths drawn as the magenta checker), `textures` (`{path: {kind, family}}`) and
     /// `assetIssues` (`[{path, code}]`), each only when there are some.
+    /// The queue a shell's audio device drains (`genex_audio::AudioOutput::open`): once asked
+    /// for, every tick's rendered block is pushed to it. Only a run a person sees asks.
+    #[doc(hidden)]
+    pub fn audio_output(&mut self) -> crate::audio::SinkQueue {
+        self.core.g6.audio.output()
+    }
+
+    /// The pool class audio renders with.
+    #[doc(hidden)]
+    pub fn audio_pool(&self) -> crate::audio::PoolClass {
+        self.core.g6.audio.class()
+    }
+
+    /// `audio({muted})` and a phone's audio gate: silence the device output; the mix, the meter
+    /// and the simulation go on.
+    #[doc(hidden)]
+    pub fn set_output_muted(&mut self, muted: bool) {
+        self.core.g6.audio.set_muted(muted);
+    }
+
+    /// Whether the device output is muted.
+    #[doc(hidden)]
+    pub fn output_muted(&self) -> bool {
+        self.core.g6.audio.muted()
+    }
+
+    /// `audioLevel`: the level of the last 2048 frames mixed, before the mute; silence for a game
+    /// that uses no audio.
+    #[doc(hidden)]
+    pub fn audio_level(&self) -> crate::audio::AudioLevel {
+        self.core.g6.audio.level()
+    }
+
+    /// The person's volumes (the settings menu's Audio tab), outside the simulation.
+    #[doc(hidden)]
+    pub fn set_audio_settings(&mut self, settings: crate::audio::AudioSettings) {
+        self.core.g6.audio.set_settings(settings);
+    }
+
+    /// The person's volumes.
+    #[doc(hidden)]
+    pub fn audio_settings(&self) -> crate::audio::AudioSettings {
+        self.core.g6.audio.settings()
+    }
+
+    /// What a shell's audio device reported (`volatile.audio.device`): open, and its last fault.
+    #[doc(hidden)]
+    pub fn note_audio_device(&mut self, open: bool, fault: Option<crate::audio::DeviceFault>) {
+        self.core.g6.audio.note_device(open, fault);
+    }
+
+    /// genex-audio's logical-state hash (0 for a game that uses no audio): the same for the same
+    /// seed, input and ticks on every destination and pool class. Display only, never checksummed.
+    #[doc(hidden)]
+    pub fn audio_logical_hash(&self) -> u64 {
+        self.core.g6.audio.logical_hash()
+    }
+
     fn render_value(&self) -> CoreValue {
         let tally = &self.core.tally;
         let mut tags = CoreValue::object();
@@ -972,6 +1051,7 @@ fn seed_core<W: Default>(game: &Game<W>, core: &mut Core<W>, seed: u32) {
         hook(&mut core.sim, seed, &mut rng, &core.gfx);
     }
     core.gfx.assets().set_at_reset(false);
+    core.g6.audio.sync(&game.g6.audio, core.gfx.audio_bank());
     core.rng.set(rng);
     // Anchors a reset placed take effect at the first tick's commit: start its builds now.
     core.stream.prefetch(&core.sim);
@@ -1126,6 +1206,10 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     core.sim.physics.step();
     core.g6.net.flush(&game.g6.net, &mut core.sim.net);
     core.stream.prefetch(&core.sim);
+    // Audio after physics (occlusion sees this tick's bodies), with the game's own camera as the
+    // ears, before `g6_tick_end` writes a pending save (AU-7).
+    let camera = || Some(game.cameras.last().map_or(Camera::DEFAULT, |c| (c.hook)(&core.sim)));
+    core.g6.audio.step(camera, &core.sim);
     core.g6.tick_end(&game.g6, core.tick);
     core.tick += 1;
     true
@@ -1168,6 +1252,19 @@ fn check_input<W>(game: &Game<W>) -> Result<(), InstallError> {
     Ok(())
 }
 
+fn check_audio<W>(game: &Game<W>) -> Result<(), InstallError> {
+    let audio = &game.g6.audio;
+    if audio.count() > 1 {
+        return Err(InstallError::new(InstallErrorCode::DuplicateAudio, "game.audio is registered once"));
+    }
+    let zones = audio.setup().map_or(0, |setup| setup.zones.len());
+    if zones > crate::audio::REVERB_ZONES_MAX {
+        let detail = format!("{zones} reverb zones; at most {}", crate::audio::REVERB_ZONES_MAX);
+        return Err(InstallError::new(InstallErrorCode::AudioZoneLimit, detail));
+    }
+    Ok(())
+}
+
 fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_world_size(game.world_size)?;
     check_single(&game.cameras, InstallErrorCode::DuplicateCamera, "a second camera needs .camera_override()")?;
@@ -1179,6 +1276,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
     check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
     check_input(game)?;
+    check_audio(game)?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {
