@@ -128,7 +128,10 @@
       failed and unsupported ones too. After a fatal crash the module is never called again (its
       state is mid-frame). window.__studio.profile(request) is the dev profile verb through
       studio_call, a refusal answered {__refused: code} as renderSettings (the web answers
-      unknown-op: an export serves the same page).
+      unknown-op: an export serves the same page). window.__studio.reloadAssets({files}) is Live's
+      asset swap, bound only when the module exports studio_assets_replace: it fetches again only
+      the files named, swaps each into the module (which checks the host's FNV-1a 64), then sends
+      the reloadAssets op.
 
       Input: keys while the canvas has focus, all released at once when the canvas, the window or
       the page loses it (their keyups would go elsewhere); Mouse1 held from pointerdown to pointerup
@@ -532,6 +535,15 @@
       const ASSETS_DIR = "assets/";
       /** How many asset files are fetched at once (before the first frame, and again while playing). */
       const ASSET_FETCHES = 6;
+      /** The most files one `reloadAssets` names (native-contract NATIVE_RELOAD_FILES_MAX), and one file's cap (the plan's per-file cap). */
+      const RELOAD_FILES_MAX = 256;
+      const RELOAD_FILE_MAX_BYTES = 256 * 1024 * 1024;
+      /** Why the page refused a changed file before the op (the op's `refused[].code`), by the module's refusal code. */
+      const RELOAD_REFUSALS = {
+        "asset-unsafe-path": "unsafe-path",
+        "asset-outside": "unsafe-path",
+        "asset-digest-mismatch": "digest-mismatch",
+      };
       /**
        * The most one fetch made while playing carries (rust-build-web.ts WEB_STREAM_LIMITS.fetchBytes):
        * a bigger piece is refused unfetched, which bounds the module's memory at its pool plus one asset.
@@ -1575,6 +1587,51 @@
         }
       }
 
+      // ── reload: Live's asset swap fetches only the files that changed (game systems C-19a) ──
+
+      /** The module's refusal code at the head of an error's message (`asset-…: detail`), or null. */
+      function refusalCode(error) {
+        const head = /^([a-z][a-z0-9-]*)[: ]/.exec(String(error?.message ?? error ?? ""));
+        return head ? head[1] : null;
+      }
+
+      /** One changed file fetched again from inside assets/ and handed to the module in place of its old bytes; a refusal code, or null. */
+      async function replaceAsset(game, base, { path, digest }) {
+        try {
+          const response = landedInside(await fetch(assetUrl(path, base), { cache: "no-store" }), path, base);
+          if (!response.ok) return "missing";
+          game.studio_assets_replace(path, await boundedBytes(response, path, RELOAD_FILE_MAX_BYTES), digest);
+          return null;
+        } catch (error) {
+          return RELOAD_REFUSALS[refusalCode(error)] ?? "missing";
+        }
+      }
+
+      /**
+       * `reloadAssets({files: [{path, digest}]})`: each named file fetched again (nothing else), its
+       * new bytes swapped into the module (which checks the host's FNV-1a 64), then the op, so the
+       * next frame draws them. A file the page could not swap is answered refused with its code; a
+       * whole refusal answers `{__refused: code}`, as renderSettings.
+       */
+      async function reloadAssets(game, arg) {
+        if (crashes.fatal) return { [REFUSED]: FrameFailure.Failed };
+        const files = Array.isArray(arg?.files) ? arg.files : null;
+        const named = (file) => typeof file?.path === "string" && typeof file?.digest === "string";
+        if (!files || files.length > RELOAD_FILES_MAX || !files.every(named)) return { [REFUSED]: "bad-argument" };
+        const base = new URL(ASSETS_DIR, location.href);
+        const refused = [];
+        const swapped = [];
+        for (const file of files) {
+          const code = await replaceAsset(game, base, file);
+          if (code) refused.push({ path: file.path, code });
+          else swapped.push({ path: file.path, digest: file.digest });
+        }
+        if (swapped.length === 0) return { reloaded: [], refused, pending: 0 };
+        const reply = JSON.parse(game.studio_call("reloadAssets", JSON.stringify({ files: swapped })));
+        if (reply?.ok !== true) return { [REFUSED]: String(reply?.error ?? "") };
+        return { ...reply.result, refused: [...refused, ...(reply.result?.refused ?? [])] };
+      }
+
       /** Ask for queued pieces while fewer than ASSET_FETCHES are open; a fetched piece waits for the next frame. */
       function startFetches() {
         while (streaming.open < ASSET_FETCHES && streaming.queued.length > 0) {
@@ -1937,6 +1994,9 @@
             const reply = JSON.parse(game.studio_call("profile", JSON.stringify(request ?? {})));
             return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
           };
+          // Bound only when the module can swap a file's bytes: Studio asks for the verb before it
+          // places anything, and a page without it is reloaded instead.
+          if (typeof game.studio_assets_replace === "function") api.reloadAssets = (arg) => reloadAssets(game, arg);
         }
         api.crashes = readCrashes;
         window.__studio = api;
