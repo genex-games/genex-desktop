@@ -41,6 +41,7 @@ import {
   CheckSupport,
   GameStack,
   NativeNightRefusal,
+  NativeRunState,
   ProjectKind,
   RAYLIB_CHECK_SUPPORT,
   StudioPlatform,
@@ -220,7 +221,8 @@ import {
   relativeGamePath,
 } from "../../src/substrate/ownership.ts";
 import { ownershipHook } from "../../src/substrate/engines/claude-code.ts";
-import { ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { ctxRecorder, type CtxHandler, type CtxRecorder } from "../helpers/ctx-recorder.ts";
+import { CrashKind } from "../../src/shared/crash-record.ts";
 import { classifyEvidenceFailure, EvidenceFailure, gatherEvidence } from "../../src/harness-seed/loop/evidence.ts";
 import { PageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import { runTurn } from "../../src/harness-seed/loop/turn-loop.ts";
@@ -10375,6 +10377,169 @@ describe("a round whose challenger build failed (M-1.2)", () => {
       handle: "lease-1",
     });
     assert.ok(evidence.shots.length > 0, "a loaded build is looked at");
+  });
+});
+
+/**
+ * CRASH-6 (game systems, G6 PROFILE): a Rust game that panicked at tick 300 handed its next
+ * builder only "the renderer crashed" (or "the game crashed"), while the host kept a typed
+ * `genex-crash/1` record naming the kind, the source line, the seed and the tick. The pass reads
+ * the newest record (`game.crashes`) and hands the builder those facts; a host that keeps no
+ * records answers exactly what it always did.
+ */
+describe("a crashed run hands the builder its crash record (CRASH-6)", () => {
+  const PANIC_FILE = "src/facets/dash.rs";
+  /** The newest record the host kept: a panic at tick 300, symbolicated, with its input tail. */
+  const panicEntry = (crashId = "run_7-1") => ({
+    crashId,
+    runId: "run_7",
+    at: "2026-10-21T10:00:00.000Z",
+    repeat: 2,
+    symbolicated: true,
+    record: {
+      format: "genex-crash/1",
+      kind: CrashKind.Panic,
+      source: "game",
+      fatal: true,
+      handled: false,
+      message: "index out of bounds: the len is 3 but the index is 3",
+      location: { file: PANIC_FILE, line: 42, column: 9 },
+      thread: { name: "main", main: true },
+      frames: [{ ip: "0x1000" }, { ip: "0x2000" }, { ip: "0x3000" }],
+      anchor: "0x900",
+      images: [],
+      gpu: null,
+      wasm: null,
+      context: { seed: 7, tick: 300, frame: 300, destination: "web", flavour: "dev" },
+      replay: { seed: 7, fromTick: 0, toTick: 300, complete: true, track: "R1hJVA==" },
+      profile: null,
+      hitches: [],
+      symbols: null,
+      trimmed: [],
+    },
+    symbols: {
+      frames: [
+        {
+          foreign: false,
+          functions: [{ function: "core::panicking::panic_bounds_check", file: null, line: null, column: null }],
+        },
+        {
+          foreign: false,
+          functions: [{ function: "pong::dash::wire::{{closure}}", file: PANIC_FILE, line: 42, column: 9 }],
+        },
+        { foreign: true },
+      ],
+      wasm: [],
+    },
+  });
+
+  /** A leased window whose renderer went away mid-pass, on a host that answers `game.crashes` as `crashes` says. */
+  function crashedWindow(crashes: CtxHandler | null) {
+    return ctxRecorder({
+      handlers: {
+        [HostMethod.PreviewLoad]: () => "about:blank",
+        [HostMethod.PreviewReload]: () => true,
+        [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+        [HostMethod.PreviewStatus]: () => ({ crashed: true, unresponsive: false, loadError: null, buildFailed: null }),
+        [HostMethod.PreviewCall]: (params) => {
+          if (params.method === PageMethod.Cameras) return ["default"];
+          if (params.method === PageMethod.Demos || params.method === PageMethod.Eyes) return [];
+          return { ok: true };
+        },
+        [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+        [HostMethod.PreviewState]: () => ({ version: 2, player: { x: 1 } }),
+        [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+        [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0 }),
+        [HostMethod.PreviewInput]: () => ({ ok: true, applied: 1, width: 800, height: 600 }),
+        [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+        [HostMethod.PreviewScreenshot]: (params) => ({
+          path: `/runs/shots/${String(params.label)}.jpg`,
+          base64: "RlJBTUU=",
+          bytes: 12,
+          stats: { canvas: true, litFraction: 0.4, drawCalls: 40 },
+        }),
+        [HostMethod.PreviewConsole]: () => [],
+        [HostMethod.PreviewGpuErrors]: () => [],
+        ...(crashes ? { [HostMethod.GameCrashes]: crashes } : {}),
+      },
+    });
+  }
+  const look = (recorder: CtxRecorder) =>
+    gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_pond", project: "pond", stack: GameStack.RustWgpu } as never,
+      iterationId: "004",
+      seed: 7,
+      root: "/fixture/worktrees/w1",
+      handle: "lease-1",
+    });
+
+  it("CRASH-6. a game that panics at tick 300 hands the builder the record's kind, location and tick", async () => {
+    const recorder = crashedWindow(() => ({ records: [panicEntry()] }));
+    const evidence = await look(recorder);
+    assert.equal(evidence.ok, false);
+    assert.equal(evidence.crash?.kind, CrashKind.Panic, JSON.stringify(evidence.crash));
+    assert.deepEqual(evidence.crash?.location, { file: PANIC_FILE, line: 42, column: 9 });
+    assert.equal(evidence.crash?.tick, 300);
+    assert.equal(evidence.crash?.seed, 7);
+    assert.equal(evidence.crash?.replay?.complete, true, "the record carries its input tail");
+    assert.deepEqual(evidence.crash?.frames, [`pong::dash::wire::{{closure}} (${PANIC_FILE}:42)`], "the game's frame");
+    const said = evidence.problems.join("\n");
+    for (const fact of [CrashKind.Panic, `${PANIC_FILE}:42:9`, "tick 300", "seed 7", "debug.crash-replay"])
+      assert.ok(said.includes(fact), `the builder reads ${fact}: ${said}`);
+    const [asked] = recorder.paramsOf(HostMethod.GameCrashes);
+    assert.equal(asked?.project, "pond");
+    assert.ok(typeof asked?.since === "string", "only the records kept since the pass began");
+    assert.equal(classifyEvidenceFailure(evidence.problems), EvidenceFailure.Build, "a crash is the build's failure");
+  });
+
+  const oldHosts: Array<[string, CtxHandler | null]> = [
+    ["a host that does not know game.crashes", null],
+    ["a host that keeps no records yet", () => ({ state: "unavailable", reason: "not-served" })],
+    ["a host with no record for this pass", () => ({ records: [] })],
+    ["a host whose answer is not a record", () => ({ records: [{ crashId: 3, record: "panic" }] })],
+  ];
+  for (const [name, crashes] of oldHosts) {
+    it(`CRASH-6-OLD-HOST. ${name} keeps today's evidence: the crash sentence and nothing more`, async () => {
+      const today = await look(crashedWindow(() => ({ records: [] })));
+      const evidence = await look(crashedWindow(crashes));
+      assert.equal(evidence.crash, undefined);
+      assert.deepEqual(evidence.problems, today.problems);
+      assert.ok(evidence.problems.includes("the renderer crashed"), evidence.problems.join("; "));
+    });
+  }
+
+  it("CRASH-6-NATIVE. a native run the host saw crash is read by the crashId native.status names", async () => {
+    const { readCrashFacts } = await import("../../src/harness-seed/loop/crash-facts.ts");
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.NativeStatus]: () => ({
+          state: NativeRunState.Crashed,
+          crash: { crashId: "run_9-1", kind: CrashKind.Panic },
+        }),
+        [HostMethod.GameCrashes]: (params) => ({ records: params.id === "run_9-1" ? [panicEntry("run_9-1")] : [] }),
+      },
+    });
+    const facts = await readCrashFacts(recorder.ctx as never, {
+      project: "pond",
+      handle: "lease-native",
+      native: true,
+      since: "2026-10-21T09:59:00.000Z",
+    });
+    assert.equal(facts?.crashId, "run_9-1");
+    assert.equal(facts?.tick, 300);
+    assert.deepEqual(recorder.paramsOf(HostMethod.GameCrashes), [{ project: "pond", id: "run_9-1" }]);
+
+    const running = ctxRecorder({
+      handlers: { [HostMethod.NativeStatus]: () => ({ state: NativeRunState.Ready, crash: null }) },
+    });
+    const none = await readCrashFacts(running.ctx as never, {
+      project: "pond",
+      handle: null,
+      native: true,
+      since: "2026-10-21T09:59:00.000Z",
+    });
+    assert.equal(none, null, "a run that did not crash is never asked about");
+    assert.equal(running.paramsOf(HostMethod.GameCrashes).length, 0);
   });
 });
 

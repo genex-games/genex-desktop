@@ -1,0 +1,44 @@
+{
+  "id": "perf.hitch-scopes",
+  "runtime": "rust-wgpu",
+  "title": "Find a hitch with profile scopes: time the suspects, read the report's hitches, fix the heaviest game scope",
+  "tags": [
+    "hitch",
+    "hitches",
+    "stutter",
+    "spike",
+    "frame",
+    "time",
+    "profile",
+    "scope",
+    "scopes",
+    "budget",
+    "fps",
+    "perf",
+    "cpu",
+    "gpu",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "hitch",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "A frame-time spike: wrap the suspects in profile_scope!, read the profile report's hitches and fix the heaviest game scope.",
+  "intent": "A hitch is a frame over its line. Before changing code, time the suspects: wrap each part you could blame (AI, a generator, a pathfinding batch, a spawn wave) in genex::profile_scope!(\"name\") and count what grows with genex::profile::counter. Names are 1 to 48 bytes of a-z, 0-9, _, . and -, and scopes are write-only, so the checksum never changes. Then read state().volatile.profile (top lists the 8 heaviest scopes by p95; game: true marks yours) or ask preview.frameProfile for a report: each kept hitch names its frame, its cause (cpu, gpu or pacing) and its heaviest scopes. A cpu hitch topped by a game scope is yours: spread the work over ticks, cap it per tick, or build it once in on_reset. A gpu hitch wants fewer draws or a lighter preset (arm nodes to see which pass). A pacing hitch is the machine or the compositor, not the build. Measure again after the fix: the same scope's p95 must fall.",
+  "sketch": "use genex::prelude::*;\nuse genex::profile::ScopeName;\n\nconst PATHS: ScopeName = ScopeName::new(\"paths\");\n\npub fn wire(game: &mut Game<World>) {\n    game.on_update(|sim, ctx| {\n        genex::profile_scope!(\"enemy_paths\"); // a suspect, timed\n        // The fix for a cpu hitch topped by enemy_paths: at most 8 paths per tick, not all at once.\n        let mut done = 0;\n        while let Some(id) = sim.world.path_queue.pop_front() {\n            sim.world.plan_path(id, ctx);\n            done += 1;\n            if done == 8 { break; }\n        }\n        genex::profile::counter(PATHS, done as f64);\n    });\n}\n",
+  "port": "The facet that owns the work owns its scope and its counter; scope names stay unique across facets (prefix them with the facet).",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Profiling)",
+      "note": "profile_scope! and profile::counter are write-only; volatile.profile summarizes the last 120 frames with the 8 heaviest scopes; the profile verb reads a ProfileReport v2 with every kept hitch."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

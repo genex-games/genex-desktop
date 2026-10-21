@@ -1,0 +1,46 @@
+{
+  "id": "debug.crash-replay",
+  "runtime": "rust-wgpu",
+  "title": "Reproduce a crash from its record: the seed, the tick, the line, then a demo that walks it",
+  "tags": [
+    "crash",
+    "crashed",
+    "panic",
+    "replay",
+    "record",
+    "seed",
+    "tick",
+    "location",
+    "frames",
+    "renderer",
+    "demo",
+    "probe",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "crash",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "When a look says the game crashed: open the record's file:line, replay its seed to its tick, fix the cause, and keep a demo that walks the crash path.",
+  "intent": "A look that says \"the game crashed: <kind> ... at <file:line:column> on tick N (seed S)\" read the host's genex-crash/1 record (game.crashes names it). Open that file and line first: it is where the panic was raised, and the top frames are the game's own callers (the panic machinery is left out). Reproduce it before fixing: seed S, pause, then step to tick N (step runs round(ms / 16.667) ticks). When the line says the record holds input from tick A to N, the crash needed that input: write a demo that injects the same keys after the seed and advances to tick N. A crash that does not come back on that path is nondeterminism (a clock, thread_rng, HashMap or a thread), not the line it named. Fix the cause and never catch the panic: catch_unwind loses the record and leaves the state broken. Keep the demo and a probe of the end state, so every later look walks the crash path. A gpu-validation or device-lost record names the GPU error instead of a line, and a line saying the same crash ended more runs is not fixed yet.",
+  "sketch": "// src/facets/dash.rs: a demo that walks the path the record named (panic at tick 300, seed 7),\n// so every later look replays it and a probe proves the end state.\nuse super::World;\nuse genex::prelude::*;\n\npub fn wire(game: &mut Game<World>) {\n    game.demo(\"dash-into-wall\", |d| {\n        d.advance_ms(4_000); // up to the tick before the input that crashed it (about 240 ticks)\n        d.inject(Input::key_tap(Key::Space)); // the input the record kept\n        d.advance_ms(1_000); // past tick 300, where it panicked\n        json!({ \"dashes\": d.sim().facets.get::<Dash>().dashes })\n    });\n}\n\n// The fix guards the cause instead of catching the panic:\n// let Some(lane) = sim.world.lanes.get(next) else { return }; // was sim.world.lanes[next]\n",
+  "port": "The facet whose file the record names owns the fix and the demo; a crash in src/main.rs or src/game.rs is the entry owner's.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Profiling)",
+      "note": "A panic's record names the seed, the tick it happened on and the last summary, so an agent can replay it with seed and step."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Determinism)",
+      "note": "A simulation replays bit for bit from its seed on every destination: a crash that does not repeat on the same seed and input is nondeterminism."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}
