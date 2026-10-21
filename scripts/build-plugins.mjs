@@ -385,6 +385,21 @@ async function buildUnity(root, resources, sdk) {
   });
 }
 
+async function buildMods(root, resources, sdk) {
+  const source = path.join(root, "src/plugins/mods");
+  const mods = path.join(resources, "plugins/mods");
+  await mkdir(mods, { recursive: true });
+  for (const file of ["plugin.json", "icon.svg"]) await cp(path.join(source, file), path.join(mods, file));
+  await cp(path.join(source, "skills"), path.join(mods, "skills"), { recursive: true });
+  const panel = await inlinePanelSdk(await readFile(path.join(source, "panel.html"), "utf8"), sdk);
+  await writeFile(path.join(mods, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(source, "backend.ts")],
+    outfile: path.join(mods, "backend.mjs"),
+  });
+}
+
 /** Copies the SDK and builds the bundled plugins (and the example) into the app's resources. */
 export async function buildPlugins(root, resources, { dependencies = true } = {}) {
   await cp(path.join(root, "src/plugin-sdk"), path.join(resources, "plugin-sdk"), { recursive: true });
@@ -395,6 +410,7 @@ export async function buildPlugins(root, resources, { dependencies = true } = {}
   await buildGodot(root, resources, sdk);
   await buildUnity(root, resources, sdk);
   await buildRoblox(root, resources, sdk);
+  await buildMods(root, resources, sdk);
   await mkdir(path.join(resources, "examples"), { recursive: true });
   await cp(path.join(root, "src/plugins/example"), path.join(resources, "examples/example"), { recursive: true });
   const examplePanel = path.join(resources, "examples/example/panel.html");

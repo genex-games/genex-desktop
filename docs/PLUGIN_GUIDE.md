@@ -349,7 +349,8 @@ Two different things, both asked by the host and never by the plugin or the agen
   (`{consent:'declined', by, message}`), never as an error — say in your skill text that a declined
   request must not be repeated. API 3: `confirmationInput: {parameter, label}` names one of the
   tool's string parameters the person may edit on the card before Allow (a game's name, say); the
-  call runs with their edit.
+  call runs with their edit. `confirmationCard` (a backend wording each call's card) is honoured
+  only for plugins that ship with Genex; yours always asks its `confirmation`.
 - **`actions[].confirmation`** — a user-invoked action behind a Studio-owned review and a native
   dialog. Your optional `review` returns `{message, detail, images:[{label, dataUrl}]}`: `message`
   (at most 2,000 characters) is the dialog's question instead of the manifest's `confirmation`, and

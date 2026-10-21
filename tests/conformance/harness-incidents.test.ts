@@ -113,7 +113,7 @@ import { setAsideStrays } from "../../src/harness-seed/loop/director/lead-sessio
 import { landIntegration } from "../../src/harness-seed/loop/director/integrate.ts";
 import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/message-queue.ts";
 import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
-import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
+import { factsReadyPrompt, pendingKindRule } from "../../src/harness-seed/loop/project-prompts.ts";
 import { steeredCall } from "../../src/harness-seed/loop/chat-steer.ts";
 import { nextWords, personWrote } from "../../src/harness-seed/loop/person-wrote.ts";
 import { switchedTurnPrompt, WAIT_ENDED } from "../../src/harness-seed/loop/steer-switch-prompts.ts";
@@ -15815,5 +15815,14 @@ describe("the reviewer's no's in a Loop that still has time", () => {
     const report = await host.start();
     assert.equal(report.executionStatus, "paused", "a Stop pauses the Loop for a Resume");
     assert.equal(report.stillToFix, undefined);
+  });
+});
+
+describe("a mod of a game the person has (game-mods)", () => {
+  it("1. a new project asked to mod a game the person installed wrote the mod with no way into the game: it looks for a Genex plugin first", () => {
+    for (const kinds of [[], [{ plugin: "toy", name: "Toy Engine", tool: "toy__new-toy", makes: ["toy-project"] }]]) {
+      const rules = pendingKindRule("claude-code", kinds, null, null, false).join("\n");
+      assert.match(rules, /asks to mod a game the person already has[^.]*plugins_find/);
+    }
   });
 });

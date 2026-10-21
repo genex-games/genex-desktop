@@ -159,6 +159,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[]` | 1 | `{name, description, parameters}`; scalar properties only; agent-invoked as `<id>__<name>` |
 | `tools[].confirmation` | 2 | 1–300 characters. The tool needs the user's consent before it runs; see the consent model below |
 | `tools[].confirmationInput` | 3 | `{parameter, label}`, with `confirmation`: one of the tool's string parameters the person may edit on the card, under a one-line label of at most 60 characters; see the consent model below |
+| `tools[].confirmationCard` | 3 | `true`, with `confirmation`, honoured for bundled plugins only: the backend's read-only `card(name, args)` words each call's card; see the consent model below |
 | `tools[].host` | 3 | A program Studio runs for the tool instead of the backend; reserved for the bundled Genex plugin (see [First-party privileges](#first-party-privileges)) |
 | `tools[].facts`, `tools[].makes` | 3 | The facts of the games whose sessions get the tool, and (agent tools) the facts it makes in a game's folder; see [Scope by facts](#scope-by-facts) |
 | `skills[]` | 1 | Guidance for agents while the plugin is enabled: inline `{name, text}`, or (API 3) a file skill `{name, summary, file, references?}`, either (API 3) with `facts` (or the older `engines`) and `tools`; see [Skills](#skills) |
@@ -281,7 +282,7 @@ gets no such notice: the list names what is on (`delegation-prompts.ts`).
   (`Retry`, `Ready`, `Live`, `Builds`, `Assets`, `Export`, `Plugins`, `Reload`, `State`,
   `Close plugins`, compared case-insensitively); `ariaLabel` 1–60 characters, unique, not reserved;
   `icon` a glyph of at most 4 characters or a host icon (`globe`, `export`, `play`, `image`, `box`,
-  `boxes`, `unreal`, `godot`, `unity`).
+  `boxes`, `unreal`, `godot`, `unity`, `gamepad`).
 - `target` is either `{kind: "action", name, args?}` naming a declared action (scalar args, at
   most 16 keys) — pressed, it runs the same review → ticket → native approval sequence as the
   Plugins page — or `{kind: "panel", id}` naming a declared panel, which opens as a dialog over
@@ -1661,6 +1662,14 @@ the set-up with the link. The host — never the plugin, never the agent — ask
   chat folds onto one ASK card with Approve and Decline. The card's own channel,
   `studio:plugins.consent`, is Studio-UI only: it keeps the main-frame guard and the core's RPC
   table has no equivalent method, so nothing an agent can call answers a card.
+- A bundled plugin's tool that declares `confirmationCard` (API 3) asks with the words its
+  backend's `card(name, args, context)` gives this call, within 10 s (Game mods names the game and
+  the game files an install replaces). `card` must stay read only: it runs before the person has
+  answered, so it may look at what the call would change but never change it. The host takes one
+  plain line of 1–300 characters with no control or reordering character (`confirmationCardText`);
+  a late, failed or unusable answer asks the manifest's `confirmation` instead. Any plugin that
+  isn't Studio's own (local, GitHub, catalog) always asks its manifest's `confirmation`, so no
+  outside code words a card per call. Each call asks again: no earlier yes answers it.
 - A card with a field (`confirmationInput`, API 3) shows the agent's value for that parameter under
   its question, in a field with the declared label. The person's own Allow sends what the field
   holds (`studio:plugins.consent {input}`), and the call runs with it as that parameter when it is
@@ -2844,6 +2853,56 @@ the project compiles and runs in that editor, and Genex's own steps run `eval` t
 Not there yet: a still of every camera (only the main one), and a dialog of Unity's own
 (`blocked_by_dialog`) answered for the person: it is waited out, then ends in the same restart. All of the above was run against Pipeline 0.8.0-exp.1 on Unity 6000.3.10f1
 (2026-10-14) with the built package.
+
+## The bundled Game mods plugin
+
+`mods` (**Game mods**, `src/plugins/mods/`, off until turned on: it writes into games the person
+installed) makes a project a mod of a game a store installed on this computer. `find-games` reads
+Steam's library list and each library's `appmanifest_<id>.acf` (`vdf.ts`, bounded; on Windows
+Steam's folder comes from the registry's `SteamPath`, `windows-folders.ts`), Epic's `.item`
+manifests (games only, whole installs) and Minecraft's launcher (`find-games.ts`); a game counts
+only while a store lists it and its folder is there, and its id (`steam:<app id>`,
+`epic:<app name>`, `minecraft`) is all a link keeps. `fingerprint.ts` reads the names near the top
+of the game's folder, each top folder's Unreal `Content/Paks` and `Binaries/Win64` included, for
+its engine and for anti-cheat (Easy Anti-Cheat, BattlEye, EA Javelin and the rest); a game that
+ships anti-cheat, an online game's id (`ONLINE_STEAM_APPS`, `ONLINE_EPIC_APPS`), or a folder too
+big to read whole (anti-cheat not ruled out) gets no mod. `known-games.ts` names the mods and saves
+folders of the games Genex knows, on a Mac and on Windows (Documents is the registry's real one,
+often in OneDrive).
+
+`use-game` (`makes: ["game-mod"]`, scaffold **Mod**, `game: false`) keeps the link in the plugin's
+storage (`links/<hash>.json`) and writes `genex-mod.json` at the project's root for the agent;
+nothing reads a destination from that file. Only the scaffold's rule finds that file (the plugin
+declares no `detect`), so the sidebar names the project's kind **Mod**.
+
+`install` copies a file or folder of the project (hidden files left out) into the game's mods
+folder or its own folder, each worked out again from the linked id at the call (`install.ts`). Its
+card names the game and how many of the game's own files the call replaces
+(`confirmationCard`, worded from a dry run of the same checks). Every check runs before anything is
+written (`planInstall`): a link in the copied files, a link or file on the way to any destination,
+a link where a file lands, or a file another mod project of the same game placed (the game's
+claims, `games/<hash>/claims.json`) refuses the whole install. Installs and removals of one game
+run one at a time in the backend (`withGame`), and an install claims every file it will write
+before writing the first, so two projects never both take a file. A mods folder the game hasn't made
+is made only when its parent, the game's own data folder, is there. Each file lands under a
+temporary name opened without following links and is renamed into place; its source must still be
+the file the check saw (device and inode), and a failure while writing undoes the install. Every
+game file it replaces is kept, the digest of each file it writes is recorded, and the first install
+copies the saves aside (2 GB at most), all in the plugin's storage (`installs/<hash>/`); with
+`replace`, what the project placed before (an older version under another folder name) comes out
+first, in the same approval and only once the new install's checks pass. `remove` and the panel's
+**Remove mod** take out each placed file that still holds what was written and put back what it
+replaced; a file the game or the person changed since is left and forgotten, one behind a link on
+the way stays recorded with its kept original for a later try, and folders the installs made go
+once empty. **Put back saves** copies the kept saves back after copying today's aside, and puts
+nothing back when today's are too big to copy. `play` opens the game through its store's own link
+(`launch.ts`); Genex starts no game process. The observer hands a run's reviewer the newest
+pictures in the project's `shots/`, and Live's card, the **Mod** toolbar button (`gamepad`) and the
+panel read `status`, sharing one read of the stores for 10 s (only the panel reads the game's Steam
+picture); the tools always read afresh. History leaves out `decompiled/` and `extracted/`. The
+`game-mods` skill gives the rules (offline only, the game's own modding surface, no decompiling,
+no game files shared) and the loop; a development test points it at a made-up Mac with
+`STUDIO_ENGINE_TEST_ROOT`.
 
 ## Panels and trusted approval
 

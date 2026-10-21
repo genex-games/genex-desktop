@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Game mods">
+  <title>Game mods</title>
+  <defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1A1A1D"/><stop offset="1" stop-color="#050506"/></linearGradient></defs>
+  <rect width="256" height="256" fill="url(#t)"/>
+  <path d="M84 92h88a40 40 0 0 1 38 28l10 34a24 24 0 0 1-41 22l-17-18H94l-17 18a24 24 0 0 1-41-22l10-34a40 40 0 0 1 38-28z" fill="none" stroke="#F4F5F7" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M90 116v28M76 130h28" fill="none" stroke="#F4F5F7" stroke-width="9" stroke-linecap="round"/>
+  <path d="M164 106l7 15 16 2-12 11 3 16-14-8-14 8 3-16-12-11 16-2z" fill="#F4F5F7"/>
+</svg>
