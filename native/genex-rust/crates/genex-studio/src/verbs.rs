@@ -187,6 +187,10 @@ impl VerbRefusal {
     /// A verb the game knows but this build cannot serve yet ([`Op::ASSET_TOOLS`] before their
     /// runtime lands); the spelling `renderSettings` shares.
     pub const UNAVAILABLE: &'static str = RenderSettingsRefusal::Unavailable.wire();
+    /// `bakeAssets` named a bake the game did not register for that kind: nothing written.
+    pub const UNKNOWN_BAKE: &'static str = "unknown-bake";
+    /// A bake's output past [`BAKE_MAX_BYTES`] (`NATIVE_BAKE_MAX_BYTES`): nothing written.
+    pub const BAKE_TOO_LARGE: &'static str = "bake-too-large";
 }
 
 /// Why a game could not make the ring `surface` asked for.
@@ -353,6 +357,50 @@ pub fn parse_reload(arg: &Value) -> Result<Vec<ReloadFile>, wire::BadField> {
         .collect()
 }
 
+/// The longest bake name (`isBakeName` in `shared/native-contract.ts`).
+pub const BAKE_NAME_MAX: usize = 64;
+/// The most bytes one bake's output may hold (`NATIVE_BAKE_MAX_BYTES`).
+pub const BAKE_MAX_BYTES: usize = 256 * 1024 * 1024;
+/// The folder under the state root bakes go in, one folder per kind below it.
+const BAKES_DIR: &str = "bakes";
+/// The suffix of a bake's staging file, renamed onto the bake once whole.
+const BAKE_STAGING_SUFFIX: &str = ".partial";
+
+/// One `bakeAssets` request: the kind and the registered name of the bake to run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BakeRequest {
+    /// What is baked.
+    pub kind: wire::BakeKind,
+    /// The name the game registered it under ([`is_bake_name`]).
+    pub name: String,
+}
+
+/// Whether `name` is a bake name: one path segment of lowercase ASCII letters, digits, `-` and
+/// `_`, starting with a letter or digit, at most [`BAKE_NAME_MAX`] (never a dot, a separator or a
+/// control character), so `state/bakes/<kind>/<name>` can never climb out.
+pub fn is_bake_name(name: &str) -> bool {
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
+    let leads = name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    leads && name.len() <= BAKE_NAME_MAX && name.chars().all(allowed)
+}
+
+/// A `bakeAssets` argument: `{kind, name}` with a known kind and a bake name ([`is_bake_name`]);
+/// unknown members are ignored.
+pub fn parse_bake(arg: &Value) -> Result<BakeRequest, wire::BadField> {
+    if !matches!(arg, Value::Object(_)) {
+        return Err(wire::BadField("arg"));
+    }
+    let (Some(Value::String(_)), Some(Value::String(_))) = (arg.get("kind"), arg.get("name")) else {
+        return Err(wire::BadField("arg"));
+    };
+    let kind = wire::BakeKind::from_wire(arg["kind"].as_str()).ok_or(wire::BadField("kind"))?;
+    let name = arg["name"].as_str();
+    if !is_bake_name(name) {
+        return Err(wire::BadField("name"));
+    }
+    Ok(BakeRequest { kind, name: name.to_owned() })
+}
+
 /// What the studio drives: the runtime behind a game (the facade's `Runtime`, a shell, a test
 /// double). Every method runs on the thread that serves the studio, between frames.
 pub trait StudioGame {
@@ -456,6 +504,14 @@ pub trait StudioGame {
     /// the renderer holds of the rest and draw again, answering what is still pending. A game still
     /// applying an earlier reload answers `busy`; one that does not serve the verb `unavailable`.
     fn reload_assets(&mut self, _files: &[ReloadFile]) -> Result<ReloadOutcome, &'static str> {
+        Err(VerbRefusal::UNAVAILABLE)
+    }
+    /// `bakeAssets` (dev flavour, NAV-14): run the bake `request` names (checked: a known kind and
+    /// a bake name) and answer its output bytes, which the studio writes into
+    /// `state/bakes/<kind>/<name>`; or refuse it with a wire code (`unknown-bake` for a name the
+    /// game did not register, the bake's own typed code). A game that serves no bakes of that kind
+    /// answers `unavailable`.
+    fn bake_assets(&mut self, _request: &BakeRequest) -> Result<Vec<u8>, &'static str> {
         Err(VerbRefusal::UNAVAILABLE)
     }
     /// Draw the frame `capture` reads: a game with render settings draws its pinned capture
@@ -936,6 +992,20 @@ fn names(list: impl IntoIterator<Item = String>) -> Value {
     out
 }
 
+/// Write `bytes` as `<folder><name>` whole: into a staging file beside it, then renamed onto it, so
+/// the host never reads half a file; the staging file is removed when either step fails.
+fn write_whole(folder: &str, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    fs::create_dir_all(folder)?;
+    let target = format!("{folder}{name}");
+    let staging = format!("{target}{BAKE_STAGING_SUFFIX}");
+    let written = fs::write(&staging, bytes).and_then(|()| fs::rename(&staging, &target));
+    if written.is_err() {
+        // Nothing else reads the staging file; a failed removal leaves only it behind.
+        let _ = fs::remove_file(&staging);
+    }
+    written
+}
+
 fn object(members: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     let mut out = Value::object();
     for (key, value) in members {
@@ -1289,7 +1359,7 @@ impl Studio {
                 Answer::Result(object([("visible", Value::from(visible))]))
             }
             Op::RENDER_SETTINGS => Studio::render_settings(game, arg),
-            Op::BAKE_ASSETS => refuse(VerbRefusal::UNAVAILABLE),
+            Op::BAKE_ASSETS => self.bake_assets(game, arg),
             Op::RELOAD_ASSETS => Studio::reload_assets(game, arg),
             Op::PROFILE => self.profile(game, arg),
             Op::SAVES => Studio::saves(game, arg),
@@ -1330,6 +1400,44 @@ impl Studio {
             refused.push(object([("path", Value::from(path)), ("code", Value::from(code.wire()))]));
         }
         Answer::Result(object([("reloaded", names(outcome.reloaded)), ("refused", refused), ("pending", Value::from(outcome.pending))]))
+    }
+
+    /// `bakeAssets`: the argument checked here, the bake the game's; its output is written here
+    /// into `<state>/bakes/<kind>/<name>` (a staging file renamed onto it) and answered with its
+    /// size and digest. Refused while the game ticks or draws.
+    fn bake_assets<G: StudioGame>(&mut self, game: &mut G, arg: &Value) -> Answer {
+        let Ok(request) = parse_bake(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        if game.busy() {
+            return refuse(VerbRefusal::BUSY);
+        }
+        let bytes = match game.bake_assets(&request) {
+            Ok(bytes) => bytes,
+            Err(code) => return refuse(code),
+        };
+        if bytes.len() > BAKE_MAX_BYTES {
+            return refuse(VerbRefusal::BAKE_TOO_LARGE);
+        }
+        let folder = self.bake_folder(request.kind);
+        if folder.is_empty() || write_whole(&folder, &request.name, &bytes).is_err() {
+            return refuse(VerbRefusal::NO_STATE_DIR);
+        }
+        Answer::Result(object([
+            ("kind", Value::from(request.kind.wire())),
+            ("name", Value::from(request.name)),
+            ("bytes", Value::from(bytes.len() as f64)),
+            ("digest", Value::from(hex64(fnv1a64(&bytes)))),
+        ]))
+    }
+
+    /// `<state>/bakes/<kind>/`, beside `captures/`; "" where captures have nowhere to go either.
+    fn bake_folder(&self, kind: wire::BakeKind) -> String {
+        let captures = paths::capture_folder(&self.save_root);
+        if captures.is_empty() {
+            return String::new();
+        }
+        // `capture_folder` ends in the platform's separator (one ASCII byte); the bake folder does too.
+        let separator = &captures[captures.len() - 1..];
+        format!("{}{BAKES_DIR}{separator}{}{separator}", self.save_root, kind.wire())
     }
 
     /// `saves`: the argument checked here, the slots the game's; refused while it ticks or draws.

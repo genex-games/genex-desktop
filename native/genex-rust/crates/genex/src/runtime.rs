@@ -632,6 +632,22 @@ impl<W> Runtime<W> {
         crate::saves::suspend_save(&self.game, &mut core.g6.saves, &view)
     }
 
+    /// The nav bakes the game registered (`game.nav_bake`), in registration order: what a dev
+    /// build's receipt advertises for `bakeAssets` (NAV-14).
+    #[doc(hidden)]
+    pub fn nav_bakes(&self) -> Vec<String> {
+        self.game.nav_bakes.names()
+    }
+
+    /// Run the nav bake `name` (`bakeAssets {kind: nav, name}`, NAV-14): its input built as a reset
+    /// builds one and baked with `game.navigation`'s config, as `.navmesh` bytes. None for a name
+    /// the game did not register; refused as `NavMesh::bake` refuses, or `nav-config-invalid`
+    /// without `game.navigation`. Display and build glue: the simulation is untouched.
+    #[doc(hidden)]
+    pub fn bake_nav(&mut self, name: &str) -> Option<Result<Vec<u8>, crate::nav::NavError>> {
+        crate::nav_bake::bake(&self.game, &self.core.gfx, name)
+    }
+
     /// Rebase the saves onto the web's in-memory mirror (`genex_core::saves::mirror`), as a web
     /// page's are: for tests and tools that stand in for one off wasm32.
     #[doc(hidden)]
@@ -1539,6 +1555,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_input(game)?;
     check_audio(game)?;
     crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
+    crate::nav_bake::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
     crate::ui::check(&game.g6.ui).map_err(|(code, detail)| InstallError::new(code, detail))?;
     game.g6.net.check().map_err(|(code, detail)| InstallError::new(code, detail))?;
     let mut facets = Set::default();
