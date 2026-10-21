@@ -130,6 +130,33 @@ frame.skeleton_debug(hero, at);
   the GLB's materials.
 - `frame.skeleton_debug(..)` draws every bone as one line batch (one logical draw).
 
+## Rigid node clips (doors, platforms, props)
+
+A GLB without a skin whose nodes move by its own animations (a door, a lift, a turning sign)
+plays through a node animator, not a character:
+
+```rust
+// on_reset (a refusal returns early)
+let Ok(clips) = gfx.node_clips("props/door.glb") else { return }; // animation-clip-missing: no animations
+sim.world.door = Some(clips.animator());
+sim.world.door_model = gfx.assets().model("props/door.glb");
+
+// on_update
+let Some(door) = sim.world.door.as_mut() else { return };
+if opening { let _ = door.play_once("open"); } // .play("open") loops; .stop() rests
+door.update(ctx.dt);
+
+// on_draw
+if let Some(door) = &sim.world.door { frame.model_posed(&sim.world.door_model, door, transform); }
+```
+
+- The animator is the clip and its time: simulation state, saved and replayed like any field,
+  and `door.probe()` (`{clip, time, once, finished}`) for a probe. `.finished()` says a clip played
+  once reached its end; `.clips()` names the file's clips (`.clip_names()`).
+- `frame.model_posed` is one logical draw with every node at the pose, its GLB's materials, its
+  shadows; a model of another file than the animator's draws at rest, as `frame.model` does.
+- `frame.model` of the same file stays at rest: node animations play only through the animator.
+
 ## Refusals
 
 - `animation-asset-invalid`: a file that is not a GLB with a usable skin or clips, or a snapshot
@@ -137,6 +164,8 @@ frame.skeleton_debug(hero, at);
 - `animation-graph-invalid`: a graph that cannot run (no layer, a layer without a state, a
   transition across layers, a duplicate name, a NaN or negative time), or one built over another
   character.
+- `animation-clip-missing`: `gfx.node_clips` of a GLB with no animations, or a clip name the
+  file does not have (`play`, `play_once`).
 - `animation-retarget-unmapped`: a retarget where either character lacks a humanoid bone (the
   toes are optional). It names the bone and the character.
 - `ragdoll-profile-invalid` and `character-shape-invalid`: see `docs/api/characters.md`.

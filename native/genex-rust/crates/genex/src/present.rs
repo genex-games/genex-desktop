@@ -85,6 +85,8 @@
 
 mod characters;
 mod hud_history;
+mod impostors;
+mod posed;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;
 
@@ -125,6 +127,8 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, Targe
 use genex_render::{CullPath, Gpu, GpuCounters, ImmediateFrame, RenderCode, RenderError, RenderOptions, WORLD_FORMAT};
 
 /// The streamed view set the presenter draws for a game that registered `game.streaming` (STR-16).
+/// The impostor bakes (game systems LOD-16).
+pub use impostors::{BakeTally, ImpostorStat, LIVE_BAKES_PER_FRAME};
 pub use characters::{CharacterStats, RATE_FULL_PX, RATE_HALF_PX, RATE_QUARTER_PX, RateBand, palette_digest, rate_band};
 pub use crate::present_stream::{
     STREAM_LOADS_DESKTOP, STREAM_LOADS_PHONE, STREAM_LOADS_WEB, STREAM_VIEW_CELL_MODELS_MAX, STREAM_VIEW_MODEL_ESTIMATE_BYTES, StreamView, ViewIo,
@@ -537,6 +541,10 @@ pub struct AssetCache {
     /// What became of the authored levels of each model loaded with them (LOD-07), by cache key:
     /// every GLB it read (a change to any reloads it) and the load's refusal.
     leveled: Vec<Leveled>,
+    /// The impostor bake jobs (LOD-16).
+    impostors: impostors::Impostors,
+    /// The node-posed models' rigid skins (AN-27).
+    posed: posed::Posed,
 }
 
 /// A model loaded with authored levels (LOD-07): its cache key, the GLBs it read and the load's
@@ -716,9 +724,13 @@ impl AssetCache {
             dropped.models.extend(loaded);
         }
         self.models = kept;
+        // LOD-16: a job over a dropped model's meshes is queued again with its new ones.
+        let dropped_meshes: Vec<MeshId> = dropped.models.iter().flat_map(|model| model.parts.iter().map(|part| part.mesh)).collect();
+        self.impostors.forget_meshes(&dropped_meshes);
         let models = &self.models;
         self.leveled.retain(|leveled| models.iter().any(|(key, _)| *key == leveled.key));
         self.characters.forget(|path| touched(path, touches_model));
+        self.posed.forget(|path| touched(path, touches_model));
         self.textures.retain(|cached| !touched(&cached.path, touches_texture));
         let environments = self.environments.len();
         self.environments.retain(|(path, _)| !changed.contains(&path.as_str()));
@@ -807,6 +819,12 @@ impl AssetCache {
             self.models.push((key.to_owned(), loaded));
         }
         self.characters.load(frame, source, uploads, log)?;
+        // AN-27: node-posed models as rigid skins.
+        self.posed.load(frame, source, uploads, log)?;
+        // LOD-16: a model with an impostor whose parts are loaded becomes a bake job.
+        let mut impostors = std::mem::take(&mut self.impostors);
+        impostors.queue(frame, self);
+        self.impostors = impostors;
         // A file used as several kinds (a base colour that is also a mask) is read once, and its
         // family files are looked for once.
         let mut read: Vec<(&str, Option<TextureData>)> = Vec::new();
@@ -892,7 +910,7 @@ fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
 /// The model a shape or custom draw names, if it names one (a character's is not a [`Model`]).
 fn shape_model(shape: &Shape) -> Option<&Model> {
     match shape {
-        Shape::Model { model, .. } => Some(model),
+        Shape::Model { model, .. } | Shape::Posed { model, .. } => Some(model),
         Shape::Group { group } => match group.shape() {
             crate::GroupShape::Model(model) => Some(model),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
@@ -940,6 +958,8 @@ fn lod_refusals(frame: &Frame, assets: &AssetCache) -> Vec<LodRefused> {
         let member_codes = members.filter_map(|member| member.lod_refusal().map(|code| (member, code)));
         let loads = model.drawn_members().iter().filter_map(|member| Some((member, assets.lod_refusal(member.key()?)?)));
         let own = model.lod_refusal().map(|code| (model, code));
+        // LOD-16: an impostor with nothing to bake.
+        let own = own.or_else(|| Some((model, assets.impostors.refusal(model.key()?)?)));
         for (named, code) in own.into_iter().chain(member_codes).chain(loads) {
             let entry = LodRefused { model: named.path().unwrap_or_default().to_owned(), code };
             if !refused.contains(&entry) {
@@ -956,7 +976,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         Shape::Model { material, .. } | Shape::Character { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
         Shape::Group { group } => group.material(),
-        Shape::Line { .. } | Shape::Lines { .. } => None,
+        Shape::Line { .. } | Shape::Lines { .. } | Shape::Posed { .. } => None,
     });
     let drawn = materials.flat_map(|material| {
         let slots = [
@@ -1038,7 +1058,7 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
 fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = (&str, &str)> {
     frame.draws().iter().flat_map(|draw| {
         let (models, character): (&[Model], Option<&str>) = match &draw.shape {
-            Shape::Model { model, material: None, .. } => (model.drawn_members(), None),
+            Shape::Model { model, material: None, .. } | Shape::Posed { model, .. } => (model.drawn_members(), None),
             Shape::Character { animator, material: None, .. } => (&[], Some(animator.asset().path())),
             Shape::Group { group } if group.material().is_none() => match group.shape() {
                 crate::GroupShape::Model(model) => (model.drawn_members(), None),
@@ -1897,6 +1917,7 @@ impl Presenter {
         hud: &mut HudPaint,
     ) -> Result<Drawn, RenderError> {
         self.load(frame)?;
+        self.bake_impostors()?;
         self.admit(frame)?;
         self.light(frame)?;
         self.terrain(frame)?;
@@ -2130,6 +2151,8 @@ impl Presenter {
         handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
+        // The impostors baked on the renderer in use (LOD-16, `volatile.render.lod`).
+        handle.borrow_mut().note_impostors(self.assets.impostors.stats());
         if let Ok(drawn) = &drawn {
             runtime.note_triangles(drawn.triangles, &drawn.by_tag);
             runtime.note_missing_models(&drawn.missing_models);
@@ -2286,6 +2309,39 @@ impl Presenter {
         let _ = self.passes.rebuild(self.resilient.gpu(), passes);
         self.failed = None;
         Ok(true)
+    }
+
+    /// Run the impostor bake jobs (LOD-16, `present/impostors.rs`): every pending one for a
+    /// capture, [`LIVE_BAKES_PER_FRAME`] for a Live frame; none on a quality with impostors off
+    /// (the installed levels come off). The atlas class is the session's
+    /// ([`crate::render::RenderControl::impostor_class`]).
+    fn bake_impostors(&mut self) -> Result<(), RenderError> {
+        let class = match &self.render {
+            Some(handle) => handle.borrow().impostor_class(),
+            None => genex_render::impostor::impostor_class(genex_render::settings::QualityPreset::High, genex_render::device_class::classify(self.resilient.gpu().device_facts())),
+        };
+        let budget = if self.capturing { usize::MAX } else { LIVE_BAKES_PER_FRAME };
+        let enabled = self.resilient.renderer().renderer().quality().lod.impostors;
+        let clock = Arc::clone(&self.clock);
+        let (gpu, renderer) = self.resilient.parts_mut();
+        self.assets.impostors.bake((gpu, renderer.renderer_mut()), class, enabled, (budget, &clock))?;
+        Ok(())
+    }
+
+    /// How far the impostor bakes are (LOD-16): the boot's `pipelines` stage counts them
+    /// ([`crate::loading::preparing`]).
+    pub fn impostor_tally(&self) -> BakeTally {
+        self.assets.impostors.tally()
+    }
+
+    /// The impostors baked on the renderer in use (`state().volatile.render.lod.impostors`).
+    pub fn impostor_stats(&self) -> Vec<ImpostorStat> {
+        self.assets.impostors.stats()
+    }
+
+    /// Impostor bakes run since the presenter opened (a device loss bakes again).
+    pub fn impostor_bakes(&self) -> u32 {
+        self.assets.impostors.bakes()
     }
 
     /// Load every model and material texture `frame` draws that was never tried; a refusal is
@@ -3055,6 +3111,11 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             let character = characters::CharacterShape { animator, transform: *transform, tint: *tint, material: material.as_ref() };
             characters::push(sink, assets, missing, character)
         }
+        // AN-27: skinned at its node pose; a model it cannot pose draws at rest.
+        Shape::Posed { model, nodes, palette, transform, tint } => {
+            let posed = posed::PosedShape { model, nodes, palette, transform: *transform, tint: *tint };
+            posed::push(sink, assets, missing, posed)
+        }
     }
 }
 
@@ -3064,8 +3125,13 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
 fn draw_lod(model: &Model, assets: &AssetCache) -> Option<DrawLod> {
     let lod = model.lod_options()?;
     let compound = !lod.members.is_empty();
-    let sphere = lod.members.iter().filter_map(|member| assets.model(member.key()?)).fold([0.0; 4], |sphere, loaded| union_sphere(sphere, loaded.sphere));
-    let origin = (compound && sphere[3] > 0.0).then_some(sphere);
+    let loaded: Vec<&LoadedModel> = model.drawn_members().iter().filter_map(|member| assets.model(member.key()?)).collect();
+    let sphere = loaded.iter().fold([0.0; 4], |sphere, loaded| union_sphere(sphere, loaded.sphere));
+    // LOD-16: a model of several parts with an impostor measures every part from its one sphere,
+    // so the card replaces all of them at once.
+    let parts: usize = loaded.iter().map(|loaded| loaded.parts.len()).sum();
+    let shared = compound || (lod.drawn_impostor().is_some() && parts > 1);
+    let origin = (shared && sphere[3] > 0.0).then_some(sphere);
     let bias = lod.bias();
     let differs = origin.is_some() || bias != crate::lod::LOD_BIAS_DEFAULT;
     differs.then_some(DrawLod { origin, bias, ..DrawLod::OWN })

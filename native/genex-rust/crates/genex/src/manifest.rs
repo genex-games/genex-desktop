@@ -194,7 +194,7 @@ pub const FOG_CALLS: [&str; 8] =
 /// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26; the
 /// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
 /// a ragdoll view's `.apply`, pinned at gate GI).
-pub const ANIMATION_CALLS: [&str; 81] = [
+pub const ANIMATION_CALLS: [&str; 86] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
@@ -205,7 +205,7 @@ pub const ANIMATION_CALLS: [&str; 81] = [
     "CharacterDraw::new", ".tint", ".material", "Motion::clip", ".once", ".above", ".below", ".at_end", ".synced",
     ".inertialize", ".priority", ".interruptible", ".layer_mask", ".event", ".vec2", ".bool", ".set_vec2", ".set_bool",
     ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
-    ".socket", ".apply",
+    ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
@@ -255,12 +255,12 @@ pub const ASSET_CALLS: [&str; 10] = [
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
 /// The level-of-detail calls of the facade (LOD-07; a class's crossfade threshold, LOD-06, pinned at
 /// gate GI).
-pub const LOD_CALLS: [&str; 7] = [
+pub const LOD_CALLS: [&str; 12] = [
     ".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound", ".lod_at", "LodConfig::new",
-    ".threshold_px",
+    ".threshold_px", ".with_impostor", ".impostor", "Impostor::hemi", "Impostor::sphere", ".not_before",
 ];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
-pub const LOD_REFUSALS: [&str; 3] = ["levels-invalid", "levels-mismatch", "compound-invalid"];
+pub const LOD_REFUSALS: [&str; 4] = ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid"];
 /// The settings menu's calls (UIS-11).
 pub const SETTINGS_CALLS: [&str; 12] = [
     "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",

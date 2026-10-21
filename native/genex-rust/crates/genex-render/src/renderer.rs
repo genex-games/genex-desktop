@@ -123,6 +123,7 @@ mod probe_capture;
 mod grass_draw;
 mod skin_vertex_draw;
 mod impostor_draw;
+mod impostor_install;
 mod shadow_cache_draw;
 mod ssr_draw;
 mod terrain_draw;
@@ -130,6 +131,7 @@ mod variants;
 mod water_draw;
 
 pub use grass_draw::GrassStats;
+pub use impostor_install::ImpostorInstall;
 pub use lens::CaptureLens;
 pub use terrain_draw::TerrainStats;
 

@@ -225,7 +225,7 @@ fn answer_value(answer: &RenderAnswer) -> Option<Value> {
 /// `state().volatile.render` on the wire.
 fn status_value(status: &RenderStatus) -> Option<Value> {
     let degraded: Vec<(&str, Option<String>)> = status.degraded.iter().map(|d| (d.reason.wire(), d.subject.clone())).collect();
-    render_status_value(
+    let mut value = render_status_value(
         &status.device_class.wire(),
         status.preset.wire(),
         f64::from(status.scale),
@@ -233,7 +233,10 @@ fn status_value(status: &RenderStatus) -> Option<Value> {
         &degraded,
         status.gpu_ms.map(f64::from),
         status.cpu_ms.map(f64::from),
-    )
+    )?;
+    // Game systems LOD-16: the level-of-detail quality and the impostors baked.
+    value.set("lod", Value::from(&status.lod.to_json()));
+    Some(value)
 }
 
 /// A capture's `render` provenance on the wire.

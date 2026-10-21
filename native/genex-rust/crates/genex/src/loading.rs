@@ -55,6 +55,15 @@ pub fn look_from_build(title: &str) -> LoadingLook {
     look_of(title, &section)
 }
 
+/// The screen while the pipelines compile and the impostors bake (game systems LOD-16: a GPU bake
+/// needs the device, so the `pipelines` stage counts it): "Preparing shaders · n of m" over both,
+/// and the bar at their share.
+pub fn preparing(compiles: CompileTally, bakes: crate::present::BakeTally) -> LoadingProgress {
+    let submitted = compiles.submitted.saturating_add(bakes.submitted as usize);
+    let finished = compiles.finished.min(compiles.submitted).saturating_add(bakes.finished.min(bakes.submitted) as usize);
+    compiling(CompileTally { submitted, finished })
+}
+
 /// The screen while the pipelines compile: "Preparing shaders · n of m" and the bar at their share.
 pub fn compiling(tally: CompileTally) -> LoadingProgress {
     let words = stage_words(BootStage::Pipelines);
@@ -97,6 +106,18 @@ mod tests {
         assert_eq!(some.words, "Preparing shaders · 12 of 40");
         let all = compiling(CompileTally { submitted: 40, finished: 40 });
         assert!(empty.fill < some.fill && some.fill < all.fill && all.fill < 1.0, "{empty:?} {some:?} {all:?}");
+    }
+
+    #[test]
+    fn pipelines_stage_counts_impostor_bakes() {
+        use crate::present::BakeTally;
+        let compiles = CompileTally { submitted: 40, finished: 40 };
+        let waiting = preparing(compiles, BakeTally { submitted: 2, finished: 0 });
+        assert_eq!(waiting.words, "Preparing shaders · 40 of 42", "two bakes still to run keep the stage open");
+        let done = preparing(compiles, BakeTally { submitted: 2, finished: 2 });
+        assert_eq!(done.words, "Preparing shaders · 42 of 42");
+        assert!(waiting.fill < done.fill, "{waiting:?} {done:?}");
+        assert_eq!(preparing(compiles, BakeTally::default()), compiling(compiles), "a game without impostors reads as before");
     }
 
     #[test]

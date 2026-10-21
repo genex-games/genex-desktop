@@ -50,6 +50,19 @@ or unsafe level, a level with levels of its own, a model that already has levels
 `levels-mismatch` (a level with another part count) and `compound-invalid` (no members, a missing
 member, a nested compound); `model.lod_refusal()` answers the first and last at once.
 
+`model.with_impostor(Impostor::hemi())` (side and above: trees, bushes, buildings) or
+`Impostor::sphere()` (every side) draws the model past its last mesh level as a camera-facing card
+baked from its own parts on the GPU, sized by the device class, lit and fogged like the mesh (its
+last mesh level still casts the shadow); `.not_before(40.0)` keeps the mesh nearer than 40 m.
+It works on a model with levels and on a compound (one card). Live bakes one model a frame
+after it loads, its last mesh level standing in meanwhile; a capture bakes every model first, and
+a lost device bakes again. A quality with impostors off keeps the last mesh level. An empty model
+is refused `impostor-invalid` (a missing model at once, a GLB with no triangles at load) and
+draws whole; `model.impostor()` answers the impostor in force. `state().volatile.render.lod`
+shows the Live threshold, band, `species` against the class's `speciesCap` and the baked
+impostors (`model`, `layout`, `frames`, `framePx`, `bytes`, `bakeMs`); it is never part of the
+checksum.
+
 The threshold and the crossfade band follow the quality preset: 2 px (band 0.15, half the
 far-field copies) on `low`, 1.5 px (0.2, three quarters of them) on `medium`, 1 px (0.15, all) on
 `high` and `ultra`. Phones

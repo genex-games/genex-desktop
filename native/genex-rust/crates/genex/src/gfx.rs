@@ -39,7 +39,7 @@ use genex_core::saves::Saves;
 use serde_json::Value;
 
 use crate::extend::{CustomMaterial, ExtensionRefusal, Extensions, PostPass, WgslSetup};
-use crate::lod::{LOD_BIAS_DEFAULT, LOD_BIAS_MAX, LOD_BIAS_MIN, LodRefusalCode, ModelLod};
+use crate::lod::{Impostor, LOD_BIAS_DEFAULT, LOD_BIAS_MAX, LOD_BIAS_MIN, LodRefusalCode, ModelLod};
 #[cfg(doc)]
 use crate::lod::LOD_LEVELS_MAX;
 use crate::map::Map;
@@ -135,6 +135,28 @@ impl Model {
         let mut lod = self.lod_options().cloned().unwrap_or_default();
         lod.bias = bias.to_bits();
         Model { path: self.path, lod: Some(Arc::new(lod)) }
+    }
+
+    /// Past its last mesh level, draw this model as an impostor baked from its own parts at load
+    /// (on the GPU, sized by the device class: game systems LOD-16): lit, shadowed (its last mesh
+    /// level casts) and fogged like the mesh. Until the bake lands, and on a quality with
+    /// impostors off, the last mesh level draws to the horizon. Works on a model with levels and
+    /// on a compound (one card for all its members).
+    ///
+    /// Refused `impostor-invalid` on an empty model (a missing model here, a GLB with no
+    /// triangles at load): the model draws whole and `state().__render.lodRefused` names it.
+    pub fn with_impostor(self, impostor: Impostor) -> Model {
+        let mut lod = self.lod_options().cloned().unwrap_or_default();
+        lod.impostor = Some(impostor);
+        if self.path.is_none() {
+            lod.refused = Some(LodRefusalCode::ImpostorInvalid);
+        }
+        Model { path: self.path, lod: Some(Arc::new(lod)) }
+    }
+
+    /// Its impostor, unless refused (game systems LOD-16).
+    pub fn impostor(&self) -> Option<Impostor> {
+        self.lod_options().and_then(ModelLod::drawn_impostor)
     }
 
     /// Why one of this model's level-of-detail options was refused (it then draws whole), or
@@ -703,6 +725,16 @@ impl Gfx {
     pub fn character(&self, path: &str) -> Result<CharacterAsset, AnimationError> {
         let (rig, set) = self.assets.rig(path)?;
         Ok(CharacterAsset { path: Arc::from(path), rig, set })
+    }
+
+    /// The rigid node clips of the GLB at `assets/<path>` (game systems AN-27): its node tree and
+    /// animations, in `on_reset` (an asset of the boot or sim group, as [`Assets::bytes`] reads).
+    /// Refused `animation-asset-invalid`: an unsafe path, a file the build does not have or cannot
+    /// read now, or one that is not a usable GLB; `animation-clip-missing`: a GLB with no
+    /// animations. Draw it with `frame.model_posed`.
+    pub fn node_clips(&self, path: &str) -> Result<crate::node_anim::NodeClips, AnimationError> {
+        let bytes = self.assets.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path:?}: {error}")))?;
+        crate::node_anim::NodeClips::from_glb(path, &bytes)
     }
 
     /// A texture handle for a v2 material or post pass (`gfx.texture(path)`, [`Assets::texture`]).

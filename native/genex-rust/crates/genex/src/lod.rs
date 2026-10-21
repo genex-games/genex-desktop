@@ -41,11 +41,14 @@ pub enum LodRefusalCode {
     LevelsMismatch,
     /// No members, a missing member, or a member that is a compound itself.
     CompoundInvalid,
+    /// An impostor on an empty model (a missing model, or a GLB with no triangles to bake, game
+    /// systems LOD-16): the model draws whole, its last mesh level to the horizon.
+    ImpostorInvalid,
 }
 
 impl LodRefusalCode {
     /// Every code, in declaration order.
-    pub const ALL: [LodRefusalCode; 3] = [LodRefusalCode::LevelsInvalid, LodRefusalCode::LevelsMismatch, LodRefusalCode::CompoundInvalid];
+    pub const ALL: [LodRefusalCode; 4] = [LodRefusalCode::LevelsInvalid, LodRefusalCode::LevelsMismatch, LodRefusalCode::CompoundInvalid, LodRefusalCode::ImpostorInvalid];
 
     /// The wire spelling.
     pub const fn wire(self) -> &'static str {
@@ -53,6 +56,7 @@ impl LodRefusalCode {
             LodRefusalCode::LevelsInvalid => "levels-invalid",
             LodRefusalCode::LevelsMismatch => "levels-mismatch",
             LodRefusalCode::CompoundInvalid => "compound-invalid",
+            LodRefusalCode::ImpostorInvalid => "impostor-invalid",
         }
     }
 }
@@ -72,11 +76,83 @@ pub(crate) struct ModelLod {
     /// The presenter's cache key: the path for a model whose parts are its GLB's, else a key
     /// naming every file and distance (never a safe asset path, so it meets no real file).
     pub(crate) key: Option<Arc<str>>,
+    /// Its impostor (game systems LOD-16), past its last mesh level.
+    pub(crate) impostor: Option<Impostor>,
 }
 
 impl Default for ModelLod {
     fn default() -> ModelLod {
-        ModelLod { levels: Vec::new(), bias: LOD_BIAS_DEFAULT.to_bits(), members: Vec::new(), refused: None, key: None }
+        ModelLod { levels: Vec::new(), bias: LOD_BIAS_DEFAULT.to_bits(), members: Vec::new(), refused: None, key: None, impostor: None }
+    }
+}
+
+/// How an impostor is laid out (`Impostor::hemi`, `Impostor::sphere`). Wire spellings
+/// (`volatile.render.lod.impostors[].layout`): never rename one.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ImpostorLayout {
+    /// Seen from the side and above (trees, bushes, buildings).
+    Hemi,
+    /// Seen from every side, below too (rocks, props on slopes, flying views).
+    Sphere,
+}
+
+impl ImpostorLayout {
+    /// Every layout, in declaration order.
+    pub const ALL: [ImpostorLayout; 2] = [ImpostorLayout::Hemi, ImpostorLayout::Sphere];
+
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ImpostorLayout::Hemi => "hemi",
+            ImpostorLayout::Sphere => "sphere",
+        }
+    }
+
+    /// The renderer's layout.
+    pub(crate) const fn render(self) -> genex_render::impostor::ImpostorLayout {
+        match self {
+            ImpostorLayout::Hemi => genex_render::impostor::ImpostorLayout::Hemi,
+            ImpostorLayout::Sphere => genex_render::impostor::ImpostorLayout::Sphere,
+        }
+    }
+}
+
+/// A model's impostor (`Model::with_impostor`, game systems LOD-16): past its last mesh level the
+/// model draws as a camera-facing card baked from its own parts on the GPU, sized by the device
+/// class. The distance is kept as bits so the handle stays `Eq + Hash`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Impostor {
+    layout: ImpostorLayout,
+    not_before: u32,
+}
+
+impl Impostor {
+    /// Hemi-octahedral: seen from the side and above (the default for foliage and buildings).
+    pub const fn hemi() -> Impostor {
+        Impostor { layout: ImpostorLayout::Hemi, not_before: 0 }
+    }
+
+    /// Full octahedral: seen from every side.
+    pub const fn sphere() -> Impostor {
+        Impostor { layout: ImpostorLayout::Sphere, not_before: 0 }
+    }
+
+    /// Never before `metres` from the camera (nominal view, as `Model::with_levels` measures),
+    /// even when its error allows it; a distance that is not finite and positive keeps none.
+    pub fn not_before(self, metres: f32) -> Impostor {
+        let usable = metres.is_finite() && metres > 0.0;
+        Impostor { not_before: if usable { metres.to_bits() } else { 0 }, ..self }
+    }
+
+    /// Its layout.
+    pub const fn layout(self) -> ImpostorLayout {
+        self.layout
+    }
+
+    /// The nearest it draws, in metres (0: wherever its error allows).
+    pub fn not_before_m(self) -> f32 {
+        f32::from_bits(self.not_before)
     }
 }
 
@@ -93,6 +169,11 @@ impl ModelLod {
     /// that were not refused).
     pub(crate) fn chained(&self) -> bool {
         self.refused.is_none() && !self.levels.is_empty()
+    }
+
+    /// The impostor drawn past the last mesh level, unless refused.
+    pub(crate) fn drawn_impostor(&self) -> Option<Impostor> {
+        self.impostor.filter(|_| self.refused != Some(LodRefusalCode::ImpostorInvalid))
     }
 
     /// The switch distances, in metres.

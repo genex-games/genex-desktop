@@ -55,6 +55,8 @@ pub mod subsurface;
 pub mod shadow;
 /// Skinned glTF and compute skinning.
 pub mod skin;
+/// Rigid node animation as skinning (game systems AN-27): `SkinnedModel::rigid_from_glb`.
+mod skin_rigid;
 /// Sorted transparency.
 pub mod transparent;
 /// Texture arrays and mips.

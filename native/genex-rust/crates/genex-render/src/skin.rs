@@ -396,7 +396,7 @@ fn skin_row(joints: [u16; 4], weights: [f32; 4]) -> GpuSkinVertex {
     GpuSkinVertex { joints: joints.map(u32::from), weights: weights.map(|w| w.max(0.0) / sum) }
 }
 
-fn skeleton_nodes(gltf: &gltf::Gltf) -> Result<Vec<SkeletonNode>, RenderError> {
+pub(crate) fn skeleton_nodes(gltf: &gltf::Gltf) -> Result<Vec<SkeletonNode>, RenderError> {
     let mut nodes: Vec<SkeletonNode> = gltf
         .nodes()
         .map(|node| {
@@ -416,7 +416,7 @@ fn skeleton_nodes(gltf: &gltf::Gltf) -> Result<Vec<SkeletonNode>, RenderError> {
     Ok(nodes)
 }
 
-fn read_animation(animation: &gltf::Animation<'_>, blob: Option<&[u8]>) -> Result<Animation, RenderError> {
+pub(crate) fn read_animation(animation: &gltf::Animation<'_>, blob: Option<&[u8]>) -> Result<Animation, RenderError> {
     let mut channels = Vec::new();
     for channel in animation.channels() {
         let reader = channel.reader(|_| blob);

@@ -125,7 +125,7 @@ pub use gfx::{
 };
 /// A model's levels of detail (game systems LOD-07): `Model::with_levels`, `Model::with_lod_bias`,
 /// `Assets::compound` and their refusals (`state().__render.lodRefused`).
-pub use lod::{LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
+pub use lod::{Impostor, ImpostorLayout, LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
 /// Why `gfx.character` refused (`error.code.wire()`, `error.detail`) and the skeleton a
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;
@@ -133,6 +133,8 @@ pub use genex_anim::{AnimationError, AnimationErrorCode};
 /// The animator a world holds and how `frame.character_with` draws it (the rest of the surface is
 /// in [`animation`]).
 pub use animation::{Animator, CharacterDraw};
+/// Rigid GLB node clips (AN-27): `gfx.node_clips`, the animator a world holds, `frame.model_posed`.
+pub use node_anim::{NodeAnimator, NodeClips};
 /// The character controller (genex-anim, AN-19): `Character::spawn` / `drive` through
 /// `sim.physics`, `Character::on_ground` / `drive_on` over a height function in any build.
 pub use character::{
