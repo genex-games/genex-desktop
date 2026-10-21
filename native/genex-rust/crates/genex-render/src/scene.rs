@@ -1122,6 +1122,22 @@ impl Scene {
         self.lod
     }
 
+    /// The far rule `rule` as a draw names it ([`DrawLod::far_rule`], game systems LOD-19): 1 +
+    /// its index in [`Scene::far_rules`], added the first time a frame names it (an equal rule is
+    /// shared); [`FAR_RULE_NONE`] once the frame holds [`FAR_RULES_MAX`] other rules, so its copies
+    /// draw unthinned rather than under another rule.
+    pub fn far_rule(&mut self, rule: GpuFarRule) -> u32 {
+        let index = |at: usize| u32::try_from(at + 1).unwrap_or(FAR_RULE_NONE);
+        if let Some(at) = self.far_rules.iter().position(|held| *held == rule) {
+            return index(at);
+        }
+        if self.far_rules.len() >= FAR_RULES_MAX {
+            return FAR_RULE_NONE;
+        }
+        self.far_rules.push(rule);
+        index(self.far_rules.len() - 1)
+    }
+
     /// The draw id the following draws carry (`frame.id(key)` in the facade), `None` for none:
     /// motion vectors find a draw's last transform by its id and its ordinal within the id, so a
     /// moving object keeps its history when other draws come and go. Draws without an id fall

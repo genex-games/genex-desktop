@@ -2972,6 +2972,8 @@ trait WorldSink: characters::SkinSink {
     fn lighting(&mut self) -> &mut Lighting;
     /// How the following meshes choose their levels (LOD-07): a bias and a compound's sphere.
     fn lod(&mut self, lod: DrawLod);
+    /// The far rule `rule` as the following draws name it (LOD-19, `Scene::far_rule`).
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32;
 }
 
 impl WorldSink for Scene {
@@ -3003,6 +3005,10 @@ impl WorldSink for Scene {
 
     fn lod(&mut self, lod: DrawLod) {
         self.set_lod(lod);
+    }
+
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        Scene::far_rule(self, rule)
     }
 }
 
@@ -3039,6 +3045,10 @@ impl WorldSink for ImmediateFrame {
 
     fn lod(&mut self, lod: DrawLod) {
         self.set_lod(lod);
+    }
+
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        ImmediateFrame::far_rule(self, rule)
     }
 }
 
@@ -3143,6 +3153,27 @@ fn draw_lod(model: &Model, assets: &AssetCache) -> Option<DrawLod> {
 /// each mesh it draws, with the material the matching single draw would take; answers its
 /// triangles (every transform's).
 fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, group: &crate::InstanceGroup) -> u32 {
+    // LOD-19: the group's far field, one of the frame's far rules, thins every copy it draws.
+    let far_rule = group.far().map_or(genex_render::lod_rows::FAR_RULE_NONE, |far| sink.far_rule(far.rule()));
+    // LOD-07: a model's bias and a compound's sphere hold for every copy.
+    let model_lod = match group.shape() {
+        crate::GroupShape::Model(model) => draw_lod(model, assets),
+        _ => None,
+    };
+    let thinned = far_rule != genex_render::lod_rows::FAR_RULE_NONE;
+    let lod = model_lod.or(thinned.then_some(DrawLod::OWN)).map(|lod| DrawLod { far_rule, ..lod });
+    if let Some(lod) = lod {
+        sink.lod(lod);
+    }
+    let triangles = push_group_shape(sink, assets, missing, group);
+    if lod.is_some() {
+        sink.lod(DrawLod::OWN);
+    }
+    triangles
+}
+
+/// [`push_group`]'s draws, under the LOD its caller set.
+fn push_group_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, group: &crate::InstanceGroup) -> u32 {
     let count = group.len() as u32;
     let white = crate::Material::color(Color::WHITE);
     let own = || surface(group.material().unwrap_or(&white), Color::WHITE, assets);
@@ -3156,11 +3187,6 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             SPHERE_TRIANGLES.saturating_mul(count)
         }
         crate::GroupShape::Model(model) => {
-            // LOD-07: the model's bias and a compound's sphere hold for every copy.
-            let lod = draw_lod(model, assets);
-            if let Some(lod) = lod {
-                sink.lod(lod);
-            }
             let mut triangles = 0u32;
             for member in model.drawn_members() {
                 let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
@@ -3177,9 +3203,6 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                     sink.group(&group.render_group(part.mesh), drawn_with);
                 }
                 triangles = triangles.saturating_add(loaded.triangles.saturating_mul(count));
-            }
-            if lod.is_some() {
-                sink.lod(DrawLod::OWN);
             }
             triangles
         }
