@@ -18,7 +18,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 use crate::caps::BUFFER_MAX_BYTES;
-use crate::cull::{CullLod, active_views, cascade_view, cpu_cull};
+use crate::cull::{CullLod, active_views, cascade_view, cpu_cull_view};
 use crate::error::{RenderCode, RenderError};
 use crate::instance::instance_row;
 use crate::layout::{GpuBatch, GpuMeshlet, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
@@ -164,6 +164,45 @@ pub struct MeshLods {
     pub errors: Vec<f32>,
 }
 
+/// A library mesh's impostor level (game systems LOD-15): one more level past its mesh levels,
+/// in the same cull. Its chain keeps at most [`crate::mesh::LOD_IMPOSTOR_MESH_LEVELS`] mesh
+/// levels; past them the impostor is drawn. Every part of a compound model declares one with
+/// the same error (and the model's draws a shared LOD sphere, [`DrawLod::origin`]), so the parts
+/// switch together; only the lead part names the species whose quad draws, the others just stop
+/// drawing. Shadow views cast the last mesh level in the impostor's place (option A).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeshImpostor {
+    /// The baked species the impostor draws ([`crate::impostor::GpuImpostor::layer`]); `None`
+    /// for a part of a compound other than its lead.
+    pub species: Option<u32>,
+    /// The impostor level's error over the radius of the LOD sphere it is measured from
+    /// ([`crate::mesh::impostor_level_error`]).
+    pub error: f32,
+}
+
+impl MeshImpostor {
+    /// The lead part's impostor: its level draws `species`' quad.
+    pub const fn lead(species: u32, error: f32) -> MeshImpostor {
+        MeshImpostor { species: Some(species), error }
+    }
+
+    /// Another part of a compound: it draws nothing at the impostor level.
+    pub const fn part(error: f32) -> MeshImpostor {
+        MeshImpostor { species: None, error }
+    }
+}
+
+/// One impostor batch of a plan (game systems LOD-15): the lead part's batch at its chain's
+/// impostor level, or its fade twin, whose camera survivors (its region of the visible list,
+/// with their fades for a twin) are the copies the impostor draw draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImpostorBatch {
+    /// Its index in [`FramePlan::batches`].
+    pub batch: u32,
+    /// The species it draws.
+    pub species: u32,
+}
+
 /// How a library entry came in: its role decides whether it is clustered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EntryRole {
@@ -231,6 +270,8 @@ pub struct MeshLibrary {
     roles: Vec<EntryRole>,
     /// The levels of the meshes that brought them (A6.9), by entry.
     lods: BTreeMap<u32, MeshLods>,
+    /// The impostor levels set on meshes (game systems LOD-15), by entry.
+    impostors: BTreeMap<u32, MeshImpostor>,
     /// The valid sets meshes brought with them (R2.3's `genex_meshlets`), by entry, kept for a
     /// re-cluster.
     imported: BTreeMap<u32, MeshletSet>,
@@ -278,6 +319,7 @@ impl MeshLibrary {
             meshlet_states: Vec::new(),
             roles: Vec::new(),
             lods: BTreeMap::new(),
+            impostors: BTreeMap::new(),
             imported: BTreeMap::new(),
             generations: Vec::new(),
             free_slots: BTreeSet::new(),
@@ -569,6 +611,34 @@ impl MeshLibrary {
         self.lods.get(&id.index).filter(|_| self.is_live(id))
     }
 
+    /// End mesh `id`'s chain with an impostor level, or take it away (`None`; game systems
+    /// LOD-15). Refused `mesh-invalid` for an id the library does not hold, a level of another
+    /// mesh, a skinned mesh, or an error that is not finite and positive. A mesh drawn on the
+    /// meshlet path keeps drawing whole meshes there (only whole meshes have levels).
+    pub fn set_impostor(&mut self, id: MeshId, impostor: Option<MeshImpostor>) -> Result<(), RenderError> {
+        let refuse = |why: &str| Err(RenderError::refused(RenderCode::MeshInvalid, format!("mesh {} (generation {}) {why}", id.index, id.generation)));
+        if !self.is_live(id) {
+            return refuse("is not in the library");
+        }
+        if self.roles[id.index as usize] != EntryRole::Mesh {
+            return refuse("is not a mesh a game draws: no impostor level");
+        }
+        let Some(impostor) = impostor else {
+            self.impostors.remove(&id.index);
+            return Ok(());
+        };
+        if !(impostor.error > 0.0 && impostor.error.is_finite()) {
+            return refuse("has an impostor error that is not finite and positive");
+        }
+        self.impostors.insert(id.index, impostor);
+        Ok(())
+    }
+
+    /// Mesh `id`'s impostor level ([`MeshLibrary::set_impostor`]), if any.
+    pub fn impostor(&self, id: MeshId) -> Option<MeshImpostor> {
+        self.impostors.get(&id.index).copied().filter(|_| self.is_live(id))
+    }
+
     /// Add a skinned mesh: its bind pose as a mesh and its skin rows, one part drawn with one
     /// material. Refused `mesh-invalid` when the skin rows and vertices differ in number, a joint
     /// index is past its joints, it has more than [`MAX_JOINTS`] joints or its inverse bind
@@ -663,6 +733,7 @@ impl MeshLibrary {
         self.meshlet_states[at] = MeshletState::Whole;
         self.imported.remove(&id.index);
         self.lods.remove(&id.index);
+        self.impostors.remove(&id.index);
         if let Some(next) = self.generations[at].checked_add(1) {
             self.generations[at] = next;
             self.free_slots.insert(id.index);
@@ -1229,6 +1300,10 @@ pub struct FramePlan {
     /// The frame's far rules (game systems LOD-18; cull binding 8): [`Scene::far_rules`], at most
     /// [`FAR_RULES_MAX`], each one `far_rule_usable` refuses zeroed (a zero rule thins nothing).
     pub far_rules: Vec<GpuFarRule>,
+    /// The impostor batches (game systems LOD-15), in batch order: each lead part's batch at its
+    /// chain's impostor level (it draws no mesh indices) and its fade twin; their camera
+    /// survivors are the copies drawn as impostors.
+    pub impostor_batches: Vec<ImpostorBatch>,
 }
 
 /// How a material's opaque draws are batched and drawn (P2-0.12): plain (back faces culled, drawn
@@ -1366,6 +1441,8 @@ struct Rows {
     /// Each batched mesh with levels or a far rule, for its fade twins (game systems LOD-03,
     /// LOD-18).
     lod_meshes: Vec<LodMesh>,
+    /// The impostor batches so far (game systems LOD-15).
+    impostor_batches: Vec<ImpostorBatch>,
 }
 
 /// A batched mesh with fade twins: its variant, its rows (its fade twins hold the same rows), its
@@ -1380,6 +1457,25 @@ struct LodMesh {
     errors: Vec<f32>,
     radius: f32,
     far: bool,
+    /// Its impostor level (game systems LOD-15): its chain's LOD rows carry it.
+    impostor: Option<MeshImpostor>,
+}
+
+impl LodMesh {
+    /// The LOD row of its level `level` batch (a fade twin's when `fade`).
+    fn lod(&self, level: u32, fade: bool) -> [u32; 3] {
+        chain_lod(level, &self.errors, self.radius, self.impostor, fade)
+    }
+}
+
+/// The LOD row of level `level`'s batch of a chain with `errors` on a mesh of bounding radius
+/// `radius`, ended by `impostor` when it has one (game systems LOD-15), a fade twin's when `fade`.
+fn chain_lod(level: u32, errors: &[f32], radius: f32, impostor: Option<MeshImpostor>, fade: bool) -> [u32; 3] {
+    match impostor {
+        Some(impostor) => crate::mesh::impostor_batch_lod(level, errors, radius, impostor.error, fade),
+        None if fade => crate::mesh::fade_batch_lod(level, errors, radius),
+        None => crate::mesh::batch_lod(level, errors, radius),
+    }
 }
 
 /// One variant's draws of one library mesh: retained groups (indices into `Scene::groups`), then
@@ -1411,36 +1507,56 @@ impl Rows {
             // A6.9: a mesh drawn whole with levels gets a batch per level, each with slots of its
             // own over the mesh's rows (pushed once); the cull keeps each instance in one of
             // them (`mesh::lod_keeps`).
-            let lods = library.lods(*mesh).filter(|_| library.meshlet_state(*mesh) == Some(MeshletState::Whole));
+            let whole = library.meshlet_state(*mesh) == Some(MeshletState::Whole);
+            let lods = library.lods(*mesh).filter(|_| whole);
+            // LOD-15: an impostor ends the chain after at most three mesh levels.
+            let impostor = library.impostor(*mesh).filter(|_| whole);
             let first_row = self.instances.len() as u32;
             let count = self.push_mesh_rows(scene, entry, drawn, key_of, keys, materials);
-            let levels = lods.map_or(0, |lods| lods.levels.len());
-            for level in 0..=levels {
-                let (level_mesh, geometry) = match lods {
-                    Some(lods) if level > 0 => (lods.levels[level - 1], mesh_entry(library, lods.levels[level - 1])?),
-                    _ => (*mesh, entry),
+            let kept = if impostor.is_some() { crate::mesh::LOD_IMPOSTOR_MESH_LEVELS } else { usize::MAX };
+            let level_meshes: Vec<MeshId> = lods.map_or_else(Vec::new, |lods| lods.levels.iter().copied().take(kept).collect());
+            let errors: Vec<f32> = lods.map_or_else(Vec::new, |lods| lods.errors.iter().copied().take(kept).collect());
+            let chained = lods.is_some() || impostor.is_some();
+            for level in 0..=level_meshes.len() {
+                let (level_mesh, geometry) = match level.checked_sub(1) {
+                    Some(at) => (level_meshes[at], mesh_entry(library, level_meshes[at])?),
+                    None => (*mesh, entry),
                 };
                 self.slot_base[variant * self.slot_count + level_mesh.raw() as usize] = self.slots;
                 let mut row = batch(self.slots as usize, count, geometry.first_index, geometry.index_count, geometry.base_vertex);
                 row.first_row = first_row;
-                row.lod = lods.map_or([0; 3], |lods| crate::mesh::batch_lod(level as u32, &lods.errors, entry.radius));
+                row.lod = if chained { chain_lod(level as u32, &errors, entry.radius, impostor, false) } else { [0; 3] };
                 self.batches.push(row);
                 self.slots += count as u32;
             }
-            self.lod_batches |= levels > 0;
+            if let Some(species) = impostor.and_then(|impostor| impostor.species) {
+                self.push_impostor_batch(first_row, count, chain_lod(level_meshes.len() as u32 + 1, &errors, entry.radius, impostor, false), species);
+            }
+            self.lod_batches |= chained;
             // A clustered mesh's meshlet path culls its instances itself: it is never thinned
             // (game systems LOD-18), so its rows' far rules are dropped here.
             if library.meshlet_state(*mesh) != Some(MeshletState::Whole) {
                 self.lod_rows[first_row as usize..].iter_mut().for_each(|row| row.far_rule = FAR_RULE_NONE);
             }
             let far = self.lod_rows[first_row as usize..].iter().any(|row| row.far_rule != FAR_RULE_NONE);
-            if lods.is_some() || far {
-                let levels = std::iter::once(*mesh).chain(lods.iter().flat_map(|lods| lods.levels.iter().copied())).collect();
-                let errors = lods.map_or_else(Vec::new, |lods| lods.errors.clone());
-                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, radius: entry.radius, far });
+            if chained || far {
+                let levels = std::iter::once(*mesh).chain(level_meshes).collect();
+                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, radius: entry.radius, far, impostor });
             }
         }
         Ok(())
+    }
+
+    /// A lead part's impostor batch (game systems LOD-15): slots of its own over the part's
+    /// `count` rows from `first_row`, no mesh indices (the impostor draw draws its survivors),
+    /// LOD row `lod`.
+    fn push_impostor_batch(&mut self, first_row: u32, count: usize, lod: [u32; 3], species: u32) {
+        let mut row = batch(self.slots as usize, count, 0, 0, 0);
+        row.first_row = first_row;
+        row.lod = lod;
+        self.impostor_batches.push(ImpostorBatch { batch: self.batches.len() as u32, species });
+        self.batches.push(row);
+        self.slots += count as u32;
     }
 
     /// The fade twins (game systems LOD-03, LOD-18), after every other batch: with a band
@@ -1456,6 +1572,7 @@ impl Rows {
         self.lod_batches = true;
         let mut fade_slots = vec![NO_BATCH; self.slot_base.len()];
         let mut runs = Vec::new();
+        let mut impostor_twins = Vec::new();
         for variant in DrawVariant::ALL {
             let first = self.batches.len() as u32;
             for lod_mesh in self.lod_meshes.iter().filter(|lod_mesh| lod_mesh.variant == variant.index() && (banded || lod_mesh.far)) {
@@ -1464,7 +1581,17 @@ impl Rows {
                     fade_slots[variant.index() * self.slot_count + level_mesh.raw() as usize] = self.slots;
                     let mut row = batch(self.slots as usize, lod_mesh.count, geometry.first_index, geometry.index_count, geometry.base_vertex);
                     row.first_row = lod_mesh.first_row;
-                    row.lod = crate::mesh::fade_batch_lod(level as u32, &lod_mesh.errors, lod_mesh.radius);
+                    row.lod = lod_mesh.lod(level as u32, true);
+                    self.batches.push(row);
+                    self.slots += lod_mesh.count as u32;
+                }
+                // LOD-15: the lead part's impostor level fades in through its own twin.
+                if let Some(species) = lod_mesh.impostor.and_then(|impostor| impostor.species) {
+                    let lod = lod_mesh.lod(lod_mesh.levels.len() as u32, true);
+                    impostor_twins.push(ImpostorBatch { batch: self.batches.len() as u32, species });
+                    let mut row = batch(self.slots as usize, lod_mesh.count, 0, 0, 0);
+                    row.first_row = lod_mesh.first_row;
+                    row.lod = lod;
                     self.batches.push(row);
                     self.slots += lod_mesh.count as u32;
                 }
@@ -1474,6 +1601,7 @@ impl Rows {
                 runs.push(VariantRun { variant, batches: first..end, skinned_from: end });
             }
         }
+        self.impostor_batches.extend(impostor_twins);
         Ok((runs, fade_slots))
     }
 
@@ -1783,6 +1911,7 @@ impl FramePlan {
             slots: 0,
             lod_rows: Vec::with_capacity(instances),
             lod_meshes: Vec::new(),
+            impostor_batches: Vec::new(),
         };
         rows.push_meshes(scene, library, &by_mesh, 0, &key_of, &mut keys, &mut materials)?;
         let static_batches = rows.batches.len() as u32;
@@ -1819,7 +1948,7 @@ impl FramePlan {
         let band = fade_band(scene.lod_band);
         let (fade_runs, fade_slots) = rows.push_fade_twins(library, band > 0.0)?;
         let far_rules: Vec<GpuFarRule> = scene.far_rules.iter().take(FAR_RULES_MAX).map(|rule| if far_rule_usable(rule) { *rule } else { GpuFarRule::default() }).collect();
-        let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, lod_rows, .. } = rows;
+        let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, lod_rows, impostor_batches, .. } = rows;
         let opaque_instances = instances.len() as u32;
         let view_proj = scene.camera.projection(aspect, depth_reversed);
         let lit = options.sun.map_or(scene.lighting.sun_intensity > 0.0, |sun| sun.color.iter().any(|c| *c > 0.0));
@@ -1892,6 +2021,7 @@ impl FramePlan {
             fade_runs,
             fade_slots,
             far_rules,
+            impostor_batches,
         })
     }
 
@@ -1907,9 +2037,32 @@ impl FramePlan {
         self.cpu_cull_view(0)
     }
 
-    /// The reference cull of view `view` (0 the camera, 1 + c shadow cascade c).
+    /// The copies the camera draws as impostors this frame (game systems LOD-15): the camera
+    /// survivors of [`FramePlan::impostor_batches`] (the cull's CPU twin over those batches only,
+    /// so the GPU cull keeps the same copies), each at its row's model with its species and its
+    /// fade (1 whole; a fade twin's signed share while it crossfades from the last mesh level).
+    pub fn impostor_instances(&self) -> Vec<crate::impostor::draw::ImpostorInstance> {
+        if self.impostor_batches.is_empty() {
+            return Vec::new();
+        }
+        let batches: Vec<GpuBatch> = self.impostor_batches.iter().map(|impostor| self.batches[impostor.batch as usize]).collect();
+        let cull = cpu_cull_view(&self.cull_views.planes[0], &self.cull_lod(), &batches, &self.instances, self.visible_slots as usize, false);
+        let mut out = Vec::new();
+        for ((impostor, batch), count) in self.impostor_batches.iter().zip(&batches).zip(&cull.counts) {
+            let fade_batch = batch.lod[0] & crate::mesh::LOD_FADE_TAG != 0;
+            for slot in batch.first_instance..batch.first_instance + count {
+                let row = cull.visible[slot as usize] as usize;
+                let fade = if fade_batch { cull.fades[slot as usize][0] } else { 1.0 };
+                out.push(crate::impostor::draw::ImpostorInstance { model: self.instances[row].model, species: impostor.species, fade });
+            }
+        }
+        out
+    }
+
+    /// The reference cull of view `view` (0 the camera, 1 + c shadow cascade c); every view but
+    /// the camera casts a chain's last mesh level in its impostor's place (game systems LOD-15).
     pub fn cpu_cull_view(&self, view: usize) -> CpuCull {
-        cpu_cull(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize)
+        cpu_cull_view(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize, view != 0)
     }
 
     /// What the cull reads to choose levels: the LOD view, the fade band and the LOD rows.

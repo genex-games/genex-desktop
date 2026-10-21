@@ -902,6 +902,9 @@ pub struct Renderer {
     impostors: crate::impostor::bake::ImpostorStage,
     /// The impostors placed and their draw (game systems LOD-14, [`Renderer::set_impostors`]).
     impostor_draw: Option<crate::impostor::draw::ImpostorDraw>,
+    /// The impostors [`Renderer::set_impostors`] placed: each frame draws them and the copies its
+    /// plan's camera draws as impostors (game systems LOD-15, `FramePlan::impostor_instances`).
+    impostors_placed: Vec<crate::impostor::draw::ImpostorInstance>,
     /// The look's depth of field and motion blur (graph nodes 17a and 17b, renderer pass 2 A.9).
     lens: std::cell::RefCell<lens::LensNodes>,
     shadow_sampler: Sampler,
@@ -2788,6 +2791,7 @@ impl Renderer {
             grass_time: grass_draw::GrassTime::default(),
             impostors: crate::impostor::bake::ImpostorStage::default(),
             impostor_draw: None,
+            impostors_placed: Vec::new(),
             lens: std::cell::RefCell::default(),
             shadow_sampler,
             point_sampler,
@@ -3683,6 +3687,12 @@ impl Renderer {
         &self.library
     }
 
+    /// End mesh `id`'s chain with an impostor level, or take it away (game systems LOD-15,
+    /// [`MeshLibrary::set_impostor`]): the next frame's plan carries it.
+    pub fn set_impostor(&mut self, id: MeshId, impostor: Option<crate::scene::MeshImpostor>) -> Result<(), RenderError> {
+        self.library.set_impostor(id, impostor)
+    }
+
     /// Whether the AO term the surfaces of a scene that is HDR (`hdr`) or the legacy one read
     /// carries screen-space GI (`GX_AO_GI`, renderer pass 2 B.4): Level-2 v2 materials read it so.
     pub fn ao_gi(&self, hdr: bool) -> bool {
@@ -4572,6 +4582,7 @@ impl Renderer {
         self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_grass(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.place_plan_impostors(&plan)?;
         self.prepare_impostors(&scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;

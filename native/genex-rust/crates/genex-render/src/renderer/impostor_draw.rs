@@ -1,7 +1,10 @@
 //! The impostors' place in the frame (game systems LOD-14; `crate::impostor::draw`): placed
-//! with [`Renderer::set_impostors`], drawn after the terrain and its grass in the world pass and
-//! the prepass (node 7, with their motion on frames writing motion), over the impostor frame
-//! group (`impostor_frame_layout_entries`), the pass view and the impostor group.
+//! with [`Renderer::set_impostors`] and, each frame, the copies the plan's camera draws at their
+//! chain's impostor level (game systems LOD-15, [`FramePlan::impostor_instances`]: the cull's
+//! CPU twin, equal to the GPU cull slot for slot). They are drawn after the terrain and its grass
+//! in the world pass and the prepass (node 7, with their motion on frames writing motion), over
+//! the impostor frame group (`impostor_frame_layout_entries`), the pass view and the impostor
+//! group.
 //!
 //! A frame without placed impostors, or before a species was baked, makes no impostor pipeline,
 //! group or table and costs what it did before.
@@ -11,6 +14,7 @@ use wgpu::RenderPass;
 use super::{FrameGroups, FramePrep, FramePrepass, Renderer, ScenePath, depth_state, surface_constants};
 use crate::error::RenderError;
 use crate::impostor::draw::{IMPOSTOR_MOTION_GROUP, ImpostorDraw, ImpostorInstance, PipelineInputs, PrepassKey, WorldKey, class_of, writes_depth};
+use crate::scene::FramePlan;
 
 impl Renderer {
     /// Place `instances` for the next frames, replacing the ones placed before (game systems
@@ -25,7 +29,25 @@ impl Renderer {
         if self.impostor_draw.is_none() {
             self.impostor_draw = Some(ImpostorDraw::new(&self.device)?);
         }
+        self.impostors_placed = instances.to_vec();
         Ok(self.impostor_draw.as_mut().map_or(0, |draw| draw.set_instances(instances)))
+    }
+
+    /// This frame's impostor rows: the placed ones, then the copies `plan`'s camera draws as
+    /// impostors (game systems LOD-15), with their cull fades.
+    pub(super) fn place_plan_impostors(&mut self, plan: &FramePlan) -> Result<(), RenderError> {
+        let planned = plan.impostor_instances();
+        if planned.is_empty() && self.impostor_draw.is_none() {
+            return Ok(());
+        }
+        if self.impostor_draw.is_none() {
+            self.impostor_draw = Some(ImpostorDraw::new(&self.device)?);
+        }
+        let rows: Vec<ImpostorInstance> = self.impostors_placed.iter().copied().chain(planned).collect();
+        if let Some(draw) = self.impostor_draw.as_mut() {
+            draw.set_instances(&rows);
+        }
+        Ok(())
     }
 
     /// The impostors placed (their GPU rows; tests and diagnostics).
