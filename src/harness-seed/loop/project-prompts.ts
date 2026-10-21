@@ -98,9 +98,10 @@ export function appIdentity({
   return `You are working inside Genex, the desktop app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
 }
 
-/** How a session finds a plugin for what the request names, and never turns one on itself. */
+/** How a session finds a plugin for what the request names, or for a mod of a game the person has, and never turns one on itself. */
 function findRule(engine: string | undefined, beyond: string): string {
-  return `If the request names an engine or tool ${beyond}, call ${toolCall(engine, ProjectTool.PluginsFind)} with what it names and follow its answer; never turn a plugin on yourself.`;
+  const find = toolCall(engine, ProjectTool.PluginsFind);
+  return `If the request names an engine or tool ${beyond}, call ${find} with what it names; if it asks to mod a game the person already has (one they installed, not made in Genex), call ${find} with "game mods". Follow its answer; never turn a plugin on yourself.`;
 }
 
 /** How a new project's first rule opens, by what its folder holds: nothing, or notes to read first. */
@@ -119,7 +120,8 @@ const offerName = (kind: PluginKindOffer): string =>
  * message until it has one. With engine plugins' kinds on offer (`kinds`) and the question card
  * bridged (`asked`): the engine question, whose web answer starts the web starter. Otherwise web is
  * the default through `start_web_game`, each kind on offer is made by its own tool when the request
- * names it, and an engine Genex has no plugin on for goes through `plugins_find`.
+ * names it, and an engine Genex has no plugin on for, or a mod of a game the person has, goes
+ * through `plugins_find`.
  */
 export function pendingKindRule(
   engine: string | undefined,
