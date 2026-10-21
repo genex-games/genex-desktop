@@ -169,6 +169,27 @@ describe("installing a mod", () => {
   });
 });
 
+describe("a new version replacing the old", () => {
+  it("takes the old files out only once the new install's checks pass", async () => {
+    const s = await setUp();
+    await installMod(s.places, GAME, { from: "mod", into: InstallRoot.Mods });
+    await assert.rejects(
+      installMod(s.places, GAME, { from: "../x", into: InstallRoot.Mods, replace: true }),
+      InstallRefused,
+    );
+    assert.deepEqual(await tree(s.mods), [
+      "mod/",
+      "mod/data.lua",
+      "mod/graphics/",
+      "mod/graphics/icon.png",
+      "mod/info.json",
+    ]);
+    const done = await installMod(s.places, GAME, { from: "loader", into: InstallRoot.Mods, replace: true });
+    assert.equal(done.saves, SavesKept.Before, "the saves copied before the first install stay the ones kept");
+    assert.deepEqual(await tree(s.mods), ["loader/", "loader/liblovely.dylib", "loader/run.sh"]);
+  });
+});
+
 describe("removing a mod", () => {
   it("takes out every file it placed, puts back each it replaced and leaves the saves", async () => {
     const s = await setUp();

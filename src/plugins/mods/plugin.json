@@ -59,6 +59,10 @@
           "contents": {
             "type": "boolean",
             "description": "true copies what is inside the from folder (a loader's files that sit beside the game) instead of the folder itself."
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "true first takes out everything this project put in the game before, in the same approval: use it for a new version whose folder has another name (faster_1.1.0 after faster_1.0.0). Never call mods__remove just to install again."
           }
         },
         "required": ["from"]

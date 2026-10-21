@@ -94,12 +94,17 @@ export interface InstallPlaces {
   saves: string | null;
 }
 
-/** What one install asks for: a file or folder of the project, the place, a folder below it, and whether a folder's contents go in instead of the folder. */
+/**
+ * What one install asks for: a file or folder of the project, the place, a folder below it, whether
+ * a folder's contents go in instead of the folder, and whether what the project put in the game
+ * before comes out first (a new version under another name).
+ */
 export interface InstallAsk {
   from: string;
   into: InstallRoot;
   to?: string;
   contents?: boolean;
+  replace?: boolean;
 }
 
 /** What became of the game's saves at an install. Wire values: the agent reads them. */
@@ -374,13 +379,18 @@ async function keepReplaced(places: InstallPlaces, root: InstallRoot, rel: strin
   await copyInto(target, copy);
 }
 
-/** Installs the ask's files into the game for `game`, copying its saves aside first when this is the project's first install. */
+/**
+ * Installs the ask's files into the game for `game`, copying its saves aside first when this is the
+ * project's first install; with `replace`, what the project placed before comes out first, once
+ * every check has passed.
+ */
 export async function installMod(places: InstallPlaces, game: string, ask: InstallAsk): Promise<InstallDone> {
   if (!isInstallRoot(ask.into)) throw new InstallRefused(InstallProblem.BadPath);
   // Every check before anything is written: the files, the folder below the place, the place itself.
   const plan = await planSource(places.project, ask);
   const base = ask.to ? segments(ask.to) : [];
   const root = await rootFolder(places, ask.into);
+  if (ask.replace) await removeMod(places, game);
   const record = await readRecord(places.kept, game);
   let saves: SavesKept = SavesKept.Before;
   if (!record.saves) {

@@ -6,7 +6,7 @@
  * pictures the agent kept. Every destination comes from the linked game, never from the project.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { ModsAction, ModsTool, SHOTS_FOLDER } from "../../src/plugins/mods/backend.ts";
@@ -119,6 +119,18 @@ describe("the mod in the game", () => {
     assert.equal(status.files, 2);
     assert.equal(typeof status.savesAt, "string");
     assert.equal(status.canPlay, true);
+  });
+});
+
+describe("a new version of the mod", () => {
+  it("replaces what the project put in the game in the same approval, so an older version leaves", async () => {
+    const { tool, gameDir, computer } = await factorioMod();
+    await tool(ModsTool.UseGame, { game: "steam:427520" });
+    await tool(ModsTool.Install, { from: "faster_1.0.0" });
+    await writeTree(gameDir, ["faster_1.1.0/info.json"]);
+    assert.match(String(await tool(ModsTool.Install, { from: "faster_1.1.0", replace: true })), /^Copied 1 file /);
+    const mods = path.join(computer.home, "Library", "Application Support", "factorio", "mods");
+    assert.deepEqual(await readdir(mods), ["faster_1.1.0"]);
   });
 });
 

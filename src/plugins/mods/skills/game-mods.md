@@ -36,7 +36,9 @@ you take it all the way to working in the real game.
 3. Build one working slice in the project (one item, one rule) with the loader's real API; read
    the game's code in `decompiled/` only where the API says nothing.
 4. Put it in with `mods__install` (`from` is the mod's folder in the project). A loader whose
-   files sit beside the game goes in with `into: "game"` and `contents: true`.
+   files sit beside the game goes in with `into: "game"` and `contents: true`. Installing again
+   replaces the files it put there; a new version under another folder name goes in with
+   `replace: true`, which takes the old one out in the same approval.
 5. Open the game with `mods__play`, look at it with `app_look` (save a picture as
    `shots/game.jpg`: Live and reviewers see it) and play it with the computer tool when computer
    control is on. Read the game's or the loader's log for errors. Fix, install again, look again

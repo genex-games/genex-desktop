@@ -161,6 +161,7 @@ async function install(deps: ModsDeps, args: Record<string, unknown>, context: P
     from: textArg(args, "from"),
     into: intoOf(args, target),
     contents: args.contents === true,
+    replace: args.replace === true,
     ...(to ? { to } : {}),
   };
   try {
