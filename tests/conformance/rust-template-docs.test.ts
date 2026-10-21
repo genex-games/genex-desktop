@@ -117,6 +117,7 @@ const FACADE = JSON.parse(
   instanceGroups: { calls: string[]; refusals: string[] };
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
+  audio: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
   probes: { calls: string[] };
   decals: { calls: string[] };
@@ -439,6 +440,13 @@ describe("GENEX_API.md is the facade's reference", () => {
     const text = api();
     for (const call of FACADE.particles.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
     for (const refusal of FACADE.particles.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("teaches every audio call and refusal on the Audio page the index lists (AU-9)", () => {
+    const page = read(pageOf("Audio"));
+    for (const call of FACADE.audio.calls) assert.ok(page.includes(`${call}(`), `audio.md teaches ${call}(..)`);
+    for (const refusal of FACADE.audio.refusals)
+      assert.ok(page.includes(`\`${refusal}\``), `audio.md names ${refusal}`);
   });
 
   it("teaches every fog call, the volumetric opt-out among them", () => {

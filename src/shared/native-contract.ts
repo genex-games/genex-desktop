@@ -1391,6 +1391,29 @@ const everyOpHasAResult: [UncheckedOp] extends [never] ? true : { unchecked: Unc
 void everyOpHasAResult;
 
 /**
+ * What a compiled game's web page answers to `audio()` with no argument (the page verb; a native
+ * run answers `audioLevel` instead): the game's own mix before the mute, as `rms` and spectral
+ * `centroid`. `available` is false when the build exports no level or the level could not be read;
+ * its numbers then read 0 and are never judged.
+ */
+export interface NativeAudioAnswer {
+  available: boolean;
+  rms: number;
+  centroid: number;
+}
+
+/** Whether `value` is a page `audio()` answer: `available` a flag, the level finite and not negative. */
+export function isNativeAudioAnswer(value: unknown): value is NativeAudioAnswer {
+  const level = (n: unknown) => isFiniteNumber(n) && n >= 0;
+  return isRecord(value) && typeof value.available === "boolean" && level(value.rms) && level(value.centroid);
+}
+
+/** Whether a page `audio()` answer measured the game's level: a well-formed answer that says `available`. */
+export function isNativeAudioMeasured(value: unknown): value is NativeAudioAnswer & { available: true } {
+  return isNativeAudioAnswer(value) && value.available;
+}
+
+/**
  * A `starting` event, with the boot's progress when it names a known stage (counts out of shape,
  * negative, fractional, past {@link NATIVE_BOOT_COUNT_MAX} or done past total read as uncounted). A
  * progress it cannot read is dropped, never the event: its deadline still counts.

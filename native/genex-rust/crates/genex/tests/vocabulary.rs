@@ -215,6 +215,15 @@ fn the_saves_block_is_the_fixtures() {
     assert_eq!(names(&pinned["slotOps"]), SlotOp::ALL.map(SlotOp::wire));
 }
 
+/// The audio block (AU-9): the calls the audio page teaches and genex-audio's refusals.
+#[test]
+fn the_audio_block_is_the_fixtures() {
+    use genex::audio::{AUDIO_CALLS, AudioErrorCode};
+    let pinned = &fixture()["audio"];
+    assert_eq!(names(&pinned["calls"]), AUDIO_CALLS);
+    assert_eq!(names(&pinned["refusals"]), AudioErrorCode::ALL.map(AudioErrorCode::as_str));
+}
+
 #[test]
 fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};

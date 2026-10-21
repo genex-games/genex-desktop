@@ -960,6 +960,29 @@ const isOptional = (value: unknown, check: (value: unknown) => boolean): boolean
 const isText = (value: unknown): value is string => typeof value === "string" && value.length <= NAME_MAX_CHARS;
 const hasFlag = (value: unknown, field: string): boolean => isRecord(value) && typeof value[field] === "boolean";
 const hasNames = (value: unknown, field: string): boolean => isRecord(value) && isNames(value[field]);
+
+/**
+ * What a compiled game's web page answers to `audio()` with no argument (`PageMethod.Audio`; a
+ * native run answers `audioLevel` instead): the game's own mix before the mute, as `rms` and
+ * spectral `centroid`. `available` is false when the build exports no level or the level could not
+ * be read; its numbers then read 0 and are never judged.
+ */
+export interface NativeAudioAnswer {
+  available: boolean;
+  rms: number;
+  centroid: number;
+}
+
+/** Whether `value` is a page `audio()` answer: `available` a flag, the level finite and not negative. */
+export function isNativeAudioAnswer(value: unknown): value is NativeAudioAnswer {
+  const level = (n: unknown) => isFiniteNumber(n) && n >= 0;
+  return isRecord(value) && typeof value.available === "boolean" && level(value.rms) && level(value.centroid);
+}
+
+/** Whether a page `audio()` answer measured the game's level: a well-formed answer that says `available`. */
+export function isNativeAudioMeasured(value: unknown): value is NativeAudioAnswer & { available: true } {
+  return isNativeAudioAnswer(value) && value.available;
+}
 /** A ring generation is a uint32 the host chose, from 1; a slot side is at most `NATIVE_FRAME_SIDE_MAX`. */
 const GENERATION_MAX = 0xffff_ffff;
 const isGeneration = (value: unknown): boolean =>
@@ -1195,6 +1218,11 @@ export type NativeProbe = (typeof NativeProbe)[keyof typeof NativeProbe];
 
 /** Probes with no counterpart on a raylib web build: reported `unmeasured` by name, never pass. */
 export const RAYLIB_WEB_UNMEASURED: readonly NativeProbe[] = [NativeProbe.Audio, NativeProbe.Profiler];
+/**
+ * Probes a Rust · wgpu web build never measures. Its sound is measured when the page's `audio()`
+ * answers `available` ({@link isNativeAudioMeasured}), and named unmeasured otherwise.
+ */
+export const RUST_WEB_UNMEASURED: readonly NativeProbe[] = [NativeProbe.Profiler];
 /** Probes with no counterpart on a native run (frame similarity until it is measured). */
 export const RAYLIB_NATIVE_UNMEASURED: readonly NativeProbe[] = [
   NativeProbe.GpuErrors,

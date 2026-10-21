@@ -1264,6 +1264,37 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
     assert.deepEqual([savesArg, uiSettingsArg], [true, true]);
   });
 
+  it("both copies read the page's audio() answer alike: available beside the game's level (AU-9)", () => {
+    const answer: Same<native.NativeAudioAnswer, seedNative.NativeAudioAnswer> = true;
+    assert.equal(answer, true);
+    const heard = { available: true, rms: 0.0886, centroid: 459 };
+    const candidates: unknown[] = [
+      undefined,
+      null,
+      {},
+      heard,
+      { available: true, rms: 0, centroid: 0 },
+      { available: false, rms: 0, centroid: 0 },
+      // A page from before the level probe: a level with no `available` is not an answer.
+      { rms: 0.1, centroid: 900 },
+      { available: "yes", rms: 0.1, centroid: 900 },
+      { available: true, rms: Number.NaN, centroid: 900 },
+      { available: true, rms: 0.1, centroid: Number.POSITIVE_INFINITY },
+      { available: true, rms: -0.1, centroid: 900 },
+      { available: true, rms: 0.1 },
+      { __missing: true },
+    ];
+    for (const value of candidates) {
+      const label = JSON.stringify(value);
+      assert.equal(seedNative.isNativeAudioAnswer(value), native.isNativeAudioAnswer(value), label);
+      assert.equal(seedNative.isNativeAudioMeasured(value), native.isNativeAudioMeasured(value), label);
+    }
+    assert.equal(native.isNativeAudioMeasured(heard), true);
+    assert.equal(native.isNativeAudioAnswer({ available: false, rms: 0, centroid: 0 }), true);
+    assert.equal(native.isNativeAudioMeasured({ available: false, rms: 0, centroid: 0 }), false);
+    assert.equal(native.isNativeAudioMeasured({ rms: 0.1, centroid: 900 }), false);
+  });
+
   it("both copies declare the asset ops: bakeAssets of a nav or impostor bake, reloadAssets of named files", () => {
     for (const copy of [native, seedNative]) {
       assert.equal(copy.NativeOp.BakeAssets, "bakeAssets");

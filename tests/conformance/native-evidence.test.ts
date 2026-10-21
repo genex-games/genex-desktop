@@ -27,6 +27,7 @@ import {
   NativeRefusal,
   RAYLIB_NATIVE_UNMEASURED,
   RAYLIB_WEB_UNMEASURED,
+  RUST_WEB_UNMEASURED,
   StudioPlatform,
   TargetRefusal,
 } from "../../src/harness-seed/loop/native-contract.ts";
@@ -1379,8 +1380,30 @@ describe("a Rust · wgpu game's evidence (M3.2)", () => {
     recorder.handle(HostMethod.GameList, () => [{ name: "pond", ...rustGame([BuildTarget.Web]) }]);
     const evidence = { ok: true, problems: [], warnings: [], shots: [] } as unknown as Evidence;
     const looked = await withParity(ctxOf(recorder), { run: rustRun(), iterationId: "i1" } as never, evidence, null);
-    for (const probe of RAYLIB_WEB_UNMEASURED)
+    for (const probe of RUST_WEB_UNMEASURED)
       assert.match(String(looked.unmeasured?.[probe]), /Rust · wgpu web build/, probe);
+    assert.equal(looked.audio, null, "no level answered: the sound is unmeasured");
+    assert.equal(typeof looked.unmeasured?.[NativeProbe.Audio], "string");
+  });
+
+  it("measures a Rust web build's sound exactly when its page's audio() answers available (AU-9)", async () => {
+    const heard = { available: true, rms: 0.0886, centroid: 459 };
+    const answers = [
+      { audio: heard, measured: true },
+      { audio: { available: false, rms: 0, centroid: 0 }, measured: false },
+      { audio: { rms: 0.1, centroid: 900 }, measured: false },
+      { audio: null, measured: false },
+    ];
+    for (const { audio, measured } of answers) {
+      const recorder = fakeHost();
+      recorder.handle(HostMethod.GameList, () => [{ name: "pond", ...rustGame([BuildTarget.Web]) }]);
+      const evidence = { ok: true, problems: [], warnings: [], shots: [], audio } as unknown as Evidence;
+      const looked = await withParity(ctxOf(recorder), { run: rustRun(), iterationId: "i1" } as never, evidence, null);
+      const label = JSON.stringify(audio);
+      assert.deepEqual(looked.audio, measured ? heard : null, label);
+      assert.equal(looked.unmeasured?.[NativeProbe.Audio] === undefined, measured, label);
+      assert.match(String(looked.unmeasured?.[NativeProbe.Profiler]), /Rust · wgpu web build/, label);
+    }
   });
 
   it("a phone destination is never run or said to be built: every row unmeasured, its gameplay judged on this computer's build", async () => {

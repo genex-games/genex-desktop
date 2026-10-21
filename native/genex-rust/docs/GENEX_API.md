@@ -42,6 +42,7 @@ needs Ctx and Drawing).
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
+| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones and occlusion, and checking sound through `volatile.audio` and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Look and quality: presets, device classes, features, `[render]`, the settings panel, shadows, draw ids and camera cuts. |
