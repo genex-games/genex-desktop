@@ -2856,7 +2856,8 @@ saves folders of the games Genex knows, on a Mac and on Windows.
 
 `use-game` (`makes: ["game-mod"]`, scaffold **Mod**, `game: false`) keeps the link in the plugin's
 storage (`links/<hash>.json`) and writes `genex-mod.json` at the project's root for the agent;
-nothing reads a destination from that file. `install` (confirmed on a card) copies a file or
+nothing reads a destination from that file. Only the scaffold's rule finds that file (the plugin
+declares no `detect`), so the sidebar names the project's kind **Mod**. `install` (confirmed on a card) copies a file or
 folder of the project into the game's mods folder or its own folder, each worked out again from
 the linked id at the call (`install.ts`): a link in the copied files, a link or file on the way
 to the destination, or a link where a file lands refuses the whole install before anything is

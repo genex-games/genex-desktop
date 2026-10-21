@@ -13,7 +13,7 @@ import { findGames, type GamesEnv, GameStore, type InstalledGame, STORE_NAME } f
 import { BUILT_WITH_NAME, type BuiltWith, fingerprint } from "./fingerprint.ts";
 import { KNOWN_GAMES, ONLINE_STEAM_APPS, placeFolder } from "./known-games.ts";
 
-/** The file that marks a project as a mod, at its root: the plugin's `detect` rule finds it. */
+/** The file that marks a project as a mod, at its root: the rule of the plugin's **Mod** scaffold finds it. */
 export const MOD_FILE = "genex-mod.json";
 
 /** Why Genex makes no mod for a game. Wire values: the agent reads them. */

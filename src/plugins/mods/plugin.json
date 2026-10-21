@@ -8,7 +8,6 @@
   "description": "Make mods for games you own: ask for a change to a game installed on this computer, and agents build the mod with the game's own modding tools, put it in the game and test it. Remove mod puts the game back as it was. No online games or games with anti-cheat.",
   "backend": "backend.mjs",
   "capabilities": [],
-  "detect": [{ "fact": "game-mod", "files": ["genex-mod.json"] }],
   "tools": [
     {
       "name": "find-games",
@@ -65,7 +64,7 @@
         "required": ["from"]
       },
       "facts": ["game-mod"],
-      "confirmation": "Copy this mod into the game? Genex keeps every file it replaces, and Remove mod puts the game back as it was."
+      "confirmation": "Put this mod into the game? Remove mod takes it out again."
     },
     {
       "name": "remove",
