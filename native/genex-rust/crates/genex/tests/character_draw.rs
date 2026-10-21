@@ -178,6 +178,23 @@ fn a_rigged_glb_drawn_with_frame_character_is_one_skinned_draw_in_its_animators_
     assert_eq!(drawn_of(&frame, &camera, &cache).missing_models, Vec::<String>::new());
 }
 
+/// C-18 with AN-17: a `reloadAssets` that names the character's GLB has it skinned again from its
+/// new bytes on the next load.
+#[test]
+fn an_invalidated_character_glb_is_skinned_again_on_the_next_load() {
+    let mut runtime = runtime(hero_game(Draws::Character, near_eye(), near_eye()), 1);
+    let frame = runtime.frame(View::Game).expect("the game view");
+    let mut uploads = Library::default();
+    let mut cache = loaded(&frame, &mut uploads);
+    let first = cache.skin("hero.glb").expect("the skin is held");
+    cache.invalidate(&["hero.glb"]);
+    assert_eq!(cache.skin("hero.glb"), None, "the reload forgot the skin");
+    let source: &dyn ModelSource = &table();
+    cache.load(&frame, source, &mut uploads, &mut |line| eprintln!("{line}")).expect("no device to lose");
+    assert_eq!(uploads.skinned, 2, "the GLB is skinned again");
+    assert_ne!(cache.skin("hero.glb"), Some(first), "a new skin");
+}
+
 #[test]
 fn the_pose_at_half_a_second_differs_from_the_bind_pose() {
     let pose_at = |ticks: u32| {

@@ -660,7 +660,8 @@ impl AssetCache {
 
     /// Forget what was loaded from each of `changed` (game systems C-18): a texture loaded from
     /// the file or one of its family files, a model loaded from the GLB or with a family file in
-    /// its folder, an environment map; the next load reads them again, a refused one included.
+    /// its folder (a character's skin too), an environment map; the next load reads them again, a
+    /// refused one included.
     /// Answers the dropped models, whose meshes the caller frees, and whether an environment map
     /// was dropped. Textures already on the device stay there until the device is re-created (a
     /// texture array slot is never freed); what the sim read (`gfx.assets().bytes`) is untouched.
@@ -676,6 +677,7 @@ impl AssetCache {
             dropped.models.extend(loaded);
         }
         self.models = kept;
+        self.characters.forget(|path| touched(path, touches_model));
         self.textures.retain(|cached| !touched(&cached.path, touches_texture));
         let environments = self.environments.len();
         self.environments.retain(|(path, _)| !changed.contains(&path.as_str()));

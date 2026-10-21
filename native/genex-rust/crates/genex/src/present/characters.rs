@@ -166,6 +166,14 @@ impl Characters {
         Ok(())
     }
 
+    /// Forget the skins (and held poses) of every path `touched` names, so the next load skins
+    /// them again (a dev build's `reloadAssets`, C-18). The old skin stays on the device until it
+    /// is re-created, as a reloaded texture's slot does.
+    pub(super) fn forget(&mut self, touched: impl Fn(&str) -> bool) {
+        self.skins.retain(|(path, _)| !touched(path));
+        self.held.retain(|held| !touched(&held.key.path));
+    }
+
     fn skin(&self, path: &str) -> Option<&LoadedSkin> {
         self.skins.iter().find(|(known, _)| known == path).and_then(|(_, loaded)| loaded.as_ref())
     }
