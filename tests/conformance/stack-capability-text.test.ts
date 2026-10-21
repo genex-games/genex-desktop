@@ -64,7 +64,7 @@ describe("the capability facts' dependency sentence is the game's stack's own", 
   });
 });
 
-describe("Genex's JavaScript multiplayer packages are refused by a compiled game's stack", () => {
+describe("Genex multiplayer readiness by stack: raylib refused, Rust through its web draft (G6 MP-5c)", () => {
   const ready = {
     manifest: true,
     install: true,
@@ -72,13 +72,26 @@ describe("Genex's JavaScript multiplayer packages are refused by a compiled game
     account: PluginAccountState.Unlocked,
   };
 
-  it("a Rust game is answered first, by its own reason, whatever else is ready", () => {
-    assert.deepEqual(multiplayerReadiness({ ...ready, stack: GameStack.RustWgpu }), {
-      ready: false,
-      reason: MULTIPLAYER_REASON.RustGame,
+  // Flipped (G6 MP-5c): a Rust game was refused RustGame whatever else was ready; it now plays
+  // online through genex-net and its web draft, so it needs neither a package.json nor Genex's npm
+  // packages, and is refused only for no web build, the account or the draft route.
+  it("a Rust game with a web build is ready on the draft route, with no package.json or npm packages", () => {
+    const rust = { manifest: false, install: false, publish: true, account: PluginAccountState.Unlocked };
+    assert.deepEqual(multiplayerReadiness({ ...rust, stack: GameStack.RustWgpu, webBuild: true }), {
+      ready: true,
+      reason: MULTIPLAYER_REASON.RustReady,
       hostedVerified: false,
     });
-    for (const word of CPP_WORDS) assert.doesNotMatch(MULTIPLAYER_REASON.RustGame, word);
+    for (const word of [...CPP_WORDS, ...THREE_WORDS]) assert.doesNotMatch(MULTIPLAYER_REASON.RustReady, word);
+  });
+
+  it("a Rust game is refused, in this order, for no web build, the account, then the draft route", () => {
+    const rust: Parameters<typeof multiplayerReadiness>[0] = { ...ready, stack: GameStack.RustWgpu, webBuild: true };
+    const reasonOf = (facts: typeof rust) => multiplayerReadiness(facts).reason;
+    assert.equal(reasonOf({ ...rust, webBuild: false, account: "locked" }), MULTIPLAYER_REASON.RustNoWeb);
+    assert.equal(reasonOf({ ...rust, account: "locked", publish: false }), MULTIPLAYER_REASON.Locked);
+    assert.equal(reasonOf({ ...rust, publish: false }), MULTIPLAYER_REASON.NoPublish);
+    assert.equal(multiplayerReadiness({ ...rust, webBuild: false }).hostedVerified, false);
   });
 
   it("a raylib game keeps its reason, and a three.js game is still asked for the rest", () => {
@@ -157,11 +170,13 @@ describe("the host answers a Rust game's sessions in Rust terms", () => {
     assert.match(text, /This is a Rust · wgpu game/);
   });
 
-  it("plugins.preflightMultiplayer refuses a Rust game by its stack, though it holds a package.json", async (t) => {
+  // Flipped (G6 MP-5c): the preflight answered RustGame; a Rust game with a web build is now asked
+  // for what its draft route needs, the Genex account first (locked in a fresh profile).
+  it("plugins.preflightMultiplayer asks a Rust game with a web build for the account, never for npm packages", async (t) => {
     const { call } = await rustLibrary(t);
     assert.deepEqual(await call("plugins.preflightMultiplayer", { project: "ferris" }), {
       ready: false,
-      reason: MULTIPLAYER_REASON.RustGame,
+      reason: MULTIPLAYER_REASON.Locked,
       hostedVerified: false,
     });
   });

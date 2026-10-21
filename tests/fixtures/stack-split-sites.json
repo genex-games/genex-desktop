@@ -125,7 +125,7 @@
       "site": "multiplayerReadiness",
       "bucket": "needs-rust-content",
       "owner": "M3.4",
-      "note": "A Rust game must be answered first with its own typed reason: Genex's multiplayer packages are JavaScript. Done in M3.4: the Rust row answers it."
+      "note": "A Rust game must be answered with its own reasons, never Genex's JavaScript packages. Done in M3.4; since G6 MP-5c it plays online through its web draft: RustNoWeb without a web build, then the account and the draft route (RustReady)."
     },
     {
       "file": "src/main/harness-rpc/game.ts",

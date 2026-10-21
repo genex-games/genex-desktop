@@ -65,7 +65,7 @@ export function intakeGuidance(engine: string | undefined): string[] {
   return [
     "WHERE PEOPLE WILL PLAY (a new game): before its first build, propose where people will play it, from the user's own words:",
     `- ${quotedList(DESKTOP_WORDS)}: a desktop destination (this computer's own system first). Any desktop destination makes it a compiled game, which the studio builds for each destination it names; Browser can be ticked beside it.`,
-    `- ${quotedList(BROWSER_WORDS)}: Browser, a Three.js game (multiplayer, login and AI characters are Browser-only).`,
+    `- ${quotedList(BROWSER_WORDS)}: Browser, a Three.js game (login and AI characters are Browser-only; multiplayer needs Browser among the destinations, because it is played on the game's Genex draft, so a desktop game with Browser ticked beside it has it too).`,
     "- Unclear, or none of these: Browser.",
     `Ask once, with ${ask}: your proposal first, the other choice second (the one question before a build may cover this beside the look). After the answer, never ask about it again. When you launch, pass the chosen destinations as targets (any of ${targets}). Destinations can be added later; the stack never changes.`,
   ];
