@@ -108,6 +108,28 @@ pub enum SkinVertexPolicy {
     Vertex,
 }
 
+/// What the last frame skinned (game systems AN-23): its skinned instances by compute and in the
+/// vertex stage, and the compute cap they were held to (None: a renderer with no device class).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SkinnedInstances {
+    /// Instances skinned by the compute pass.
+    pub compute: u32,
+    /// Instances skinned in the vertex stage.
+    pub vertex: u32,
+    /// The class's compute cap ([`crate::presets::skinned_compute_instances_max`]).
+    pub compute_max: Option<u32>,
+}
+
+impl SkinnedInstances {
+    /// The counts of a frame of `draws` skinned draws whose vertex-stage flags are `vertex` (empty:
+    /// none), held to `compute_max`.
+    pub fn of(draws: usize, vertex: &[bool], compute_max: Option<u32>) -> SkinnedInstances {
+        let on_vertex = vertex.iter().filter(|flag| **flag).count();
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        SkinnedInstances { compute: count(draws - on_vertex), vertex: count(on_vertex), compute_max }
+    }
+}
+
 /// One part's record in the vertex skin table (`GxSkinVertexDraw`): model, normal matrix, last
 /// frame's model, then the words (palette base, last frame's palette base, skin-row offset,
 /// material; flags).
@@ -206,6 +228,16 @@ fn draw_sphere(draw: &SkinnedDraw, library: &MeshLibrary) -> Option<[f32; 4]> {
 /// (empty: none). A draw naming a mesh outside `library` keeps compute skinning (the plan refuses
 /// it there).
 pub fn vertex_skinned_draws(scene: &Scene, library: &MeshLibrary, policy: SkinVertexPolicy) -> Vec<bool> {
+    vertex_skinned_draws_within(scene, library, policy, u32::MAX)
+}
+
+/// [`vertex_skinned_draws`] held to a class's compute cap (game systems AN-23,
+/// [`crate::presets::skinned_compute_instances_max`]): under [`SkinVertexPolicy::Auto`], when more
+/// than `compute_max` draws would skin by compute, the smallest on screen of those that can take
+/// the path (plain opaque) skin in the vertex stage instead, ties going to the later draw, until
+/// `compute_max` remain. Masked, double-sided and transparent draws stay on compute past the cap.
+/// The other policies ignore the cap (they are the tests' and goldens' explicit choices).
+pub fn vertex_skinned_draws_within(scene: &Scene, library: &MeshLibrary, policy: SkinVertexPolicy, compute_max: u32) -> Vec<bool> {
     if policy == SkinVertexPolicy::Compute || scene.skinned.is_empty() {
         return Vec::new();
     }
@@ -218,8 +250,32 @@ pub fn vertex_skinned_draws(scene: &Scene, library: &MeshLibrary, policy: SkinVe
         }
         draw_sphere(draw, library).is_some_and(|sphere| screen_height_px(&scene.camera, sphere) < SKIN_VERTEX_BELOW_PX)
     };
-    let flags: Vec<bool> = scene.skinned.iter().map(takes).collect();
+    let mut flags: Vec<bool> = scene.skinned.iter().map(takes).collect();
+    if policy == SkinVertexPolicy::Auto {
+        hold_compute_cap(scene, library, &mut flags, compute_max);
+    }
     if flags.iter().any(|flag| *flag) { flags } else { Vec::new() }
+}
+
+/// Move the smallest plain opaque compute draws of `scene` to the vertex stage until at most
+/// `compute_max` of `flags` stay on compute (AN-23).
+fn hold_compute_cap(scene: &Scene, library: &MeshLibrary, flags: &mut [bool], compute_max: u32) {
+    let compute = flags.iter().filter(|flag| !**flag).count();
+    let over = compute.saturating_sub(usize::try_from(compute_max).unwrap_or(usize::MAX));
+    if over == 0 {
+        return;
+    }
+    let mut movable: Vec<(f32, usize)> = scene
+        .skinned
+        .iter()
+        .enumerate()
+        .filter(|(at, draw)| !flags[*at] && plain_opaque(draw))
+        .filter_map(|(at, draw)| draw_sphere(draw, library).map(|sphere| (screen_height_px(&scene.camera, sphere), at)))
+        .collect();
+    movable.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+    for (_, at) in movable.into_iter().take(over) {
+        flags[at] = true;
+    }
 }
 
 /// The record of a part of `draw` (its material row `material`), its palette at `joint_base` and

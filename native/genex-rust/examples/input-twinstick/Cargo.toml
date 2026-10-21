@@ -1,0 +1,47 @@
+# The input-twinstick example (G6 input, IN-14): a twin-stick arena shooter read entirely through
+# input actions (`game.input`, `ctx.actions`): keyboard and mouse, a pad, on-screen touch controls,
+# a pause menu with the Controls panel, prompts that follow the device in use, and a recorded
+# session the `replay` demo plays back. One crate serves every destination, as the pond does: the
+# `input-twinstick` binary is the native build and the library is also a `cdylib` for the web
+# shell. No assets: the scene is procedural.
+[package]
+name = "input-twinstick"
+description = "The input-twinstick example game (G6 input, IN-14)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `input_twinstick`: on wasm32 the library and the binary would both be `input-twinstick.wasm`.
+name = "input_twinstick_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "input-twinstick"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true }
+# The `pad_glyphs` demo injects a PlayStation pad, and the facade's `Input` has no pad builder yet:
+# the demo builds the `input` verb's pad JSON through genex-core (src/demos.rs, `pad`).
+genex-core = { workspace = true }
+genex-platform-web = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/captures.rs writes the settled captures as PNG evidence on the host GPU.
+[dev-dependencies]
+image = { workspace = true }

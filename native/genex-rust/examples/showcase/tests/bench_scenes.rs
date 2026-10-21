@@ -70,6 +70,28 @@ fn the_material_scene_covers_metal_and_roughness_skinning_glass_and_point_lights
     assert_ne!(later.scene(30).skinned[0].joints, drawn.skinned[0].joints, "the character does not move");
 }
 
+/// Game systems AN-23 (character rows): the material scene's walkers fit every class's
+/// compute-skinning cap on every destination, so the cap never moves one of them to the vertex
+/// stage and the bench captures keep their skinning path.
+#[test]
+fn the_material_scenes_walkers_fit_every_classs_compute_cap() {
+    use genex_render::device_class::{DeviceClass, TargetOs};
+    use genex_render::presets::skinned_compute_instances_max;
+    use genex_render::skin_vertex::{SkinVertexPolicy, vertex_skinned_draws, vertex_skinned_draws_within};
+    let (scene, library) = load(SceneId::Materials);
+    for frame in [0, PATH_FRAMES / 3, PATH_FRAMES * 2 / 3] {
+        let drawn = scene.scene(frame);
+        let uncapped = vertex_skinned_draws(&drawn, &library, SkinVertexPolicy::Auto);
+        for class in DeviceClass::ALL {
+            for os in [TargetOs::MacOs, TargetOs::Web, TargetOs::Android] {
+                let cap = skinned_compute_instances_max(class, os);
+                assert!(drawn.skinned.len() as u32 <= cap, "frame {frame}: {} walkers over {}'s cap {cap}", drawn.skinned.len(), class.wire());
+                assert_eq!(vertex_skinned_draws_within(&drawn, &library, SkinVertexPolicy::Auto, cap), uncapped, "frame {frame}, {} on {os:?}", class.wire());
+            }
+        }
+    }
+}
+
 #[test]
 fn the_outdoor_scene_has_terrain_foliage_water_and_a_sky_placeholder() {
     let (scene, library) = load(SceneId::Outdoor);

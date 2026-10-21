@@ -112,7 +112,7 @@ pub use frame::{
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use particles::{PARTICLES_MAX, ParticleFlipbook, Particles, ParticlesError, ParticlesErrorCode};
-pub use group::{GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
+pub use group::{Far, GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
 pub use terrain::{GRASS_DENSITY_MAX, GRASS_HEIGHT_MAX, Grass, Scatter, TERRAIN_LAYER_MAX, TERRAIN_SAMPLES_MAX, Terrain, TerrainError, TerrainErrorCode, TerrainLayer, TerrainTexel};
 /// The look a terrain's layers share (macro variation, wetness, the height blend's depth).
 pub use genex_render::terrain::TerrainLook;

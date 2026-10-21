@@ -409,7 +409,9 @@ impl Terrain {
     /// Place `rule`'s instances on this terrain within the world rectangle from `min` to `max` (x,
     /// z), standing on the ground (renderer pass 2 A.8): the same instances in the same places for
     /// any area that covers them, so chunks scattered apart meet exactly. Draw them through an
-    /// instance group. A rule out of range or an empty rectangle places nothing.
+    /// instance group; a large scatter thins far from the camera with
+    /// [`crate::InstanceGroup::with_far`] (`Far::thin(start, end)`, game systems LOD-19). A rule
+    /// out of range or an empty rectangle places nothing.
     pub fn scatter(&self, rule: &Scatter, min: Vec2, max: Vec2) -> Vec<crate::Transform> {
         let desc = genex_render::terrain::TerrainDesc {
             heights: self.inner.heights.clone(),
