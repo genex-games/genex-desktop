@@ -1,0 +1,47 @@
+# The characters example (AN-21): animated characters on the genex facade. A simple animator (the
+# hero), a two-layer graph (the duelist), a nav-driven climber that plays its climb clip on the
+# ladder link between `take_link` and `finish_link`, and 30 walkers. One crate serves every
+# destination, as the pond does: the `characters` binary is the native build and the library is
+# also a `cdylib` for the web shell. No asset files: the mannequin GLB is written in code.
+[package]
+name = "characters"
+description = "The characters example game (AN-21)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `characters`: on wasm32 the library and the binary would both be `characters.wasm`.
+name = "characters_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "characters"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true, features = ["physics"] }
+genex-platform-web = { workspace = true }
+
+# The native self-test renders headless on the host GPU (Metal on the Mac).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+genex-render = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/captures.rs writes the settled captures as PNG evidence on the host GPU.
+[dev-dependencies]
+image = { workspace = true }
