@@ -3804,6 +3804,7 @@ export const TOOLCHAIN_WORDS = {
     [ToolchainId.RustsecAdvisoryDb]: "RustSec advisories",
     [ToolchainId.Colyseus]: "Multiplayer relay library",
     [ToolchainId.ColyseusSource]: "Multiplayer relay library source",
+    [ToolchainId.MultiplayerBridge]: "Multiplayer bridge for the browser",
   } satisfies Record<ToolchainId, string>,
   size: byteWords,
   disk: (free: number, need: number) => `${byteWords(need)} needed, ${byteWords(free)} free`,

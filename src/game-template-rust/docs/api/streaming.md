@@ -61,6 +61,9 @@ game.on_update(|sim, _| {
   level first and draws that until the whole model arrives. Display only: never in the checksum.
 - `frame.cells_debug()` outlines the view's cells on the ground. Green: drawn. Yellow: loading.
   Grey: building. Red: refused.
+- On the web, a pack's cells and terrain tiles and each named group's files arrive while playing
+  (by `Range`, a KTX2's small levels first); a reset that reads one is refused `not-preloaded`, as
+  natively.
 - Caps per cell, all builders together: 256 things, 64 colliders, 4096 group instances. A cell
   past one enters empty (`cell.refused()` is `stream-invalid`), nothing of it is kept, and
   `state().volatile.__stream.refused` names it.

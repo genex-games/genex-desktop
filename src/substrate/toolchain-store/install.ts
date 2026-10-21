@@ -33,6 +33,7 @@ import {
   type ToolchainInstallJob,
   ToolchainInstallPhase,
   type ToolchainLocalArtifact,
+  MULTIPLAYER_BRIDGE_PIN,
   ToolchainProblem,
 } from "../../shared/toolchain.ts";
 import { listDirs } from "../fsx.ts";
@@ -461,6 +462,8 @@ const PROBES = {
   // inputs in their folders (`colyseus-android.ts`): the source, the host's zig, the zig package.
   [ToolchainId.Colyseus]: (entry) => [{ files: colyseusProbeFiles(entry) }],
   [ToolchainId.ColyseusSource]: () => [{ files: colyseusSourceProbeFiles() }],
+  // The npm tarball unpacks with its `package/` folder stripped: the bridge the web build copies.
+  [ToolchainId.MultiplayerBridge]: () => [{ files: [MULTIPLAYER_BRIDGE_PIN.file] }],
 } as const satisfies Record<ToolchainId, (entry: ToolchainEntry, host: ToolchainHost) => ProbeSpec[]>;
 
 /** Components whose unpacked archives are rearranged in staging before the probe: libcolyseus's per-triple folders. */

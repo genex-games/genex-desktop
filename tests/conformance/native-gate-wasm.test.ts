@@ -11,13 +11,14 @@ import { createHash } from "node:crypto";
 import { link, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { WEB_FILES } from "../../src/main/rust-build-web.ts";
+import { WEB_FILES, WEB_NET_FILES } from "../../src/main/rust-build-web.ts";
 import { NativeRefusal, RustAdmissionProblem } from "../../src/shared/native-contract.ts";
 import {
   admitRustWasm,
   admitWebShell,
   parseWasm,
   RUST_WASM_GLUE_MODULE,
+  RUST_WEB_NET_FILES,
   RUST_WEB_SHELL_FILES,
   WasmImportKind,
 } from "../../src/substrate/native-gate-wasm.ts";
@@ -192,6 +193,47 @@ describe("the web build's shell manifest (M3.5)", () => {
       try {
         const admission = await admitWebShell(dir);
         assert.equal(admission.ok ? "admitted" : `${admission.refusal}/${admission.problem}`, expected);
+      } finally {
+        await rm(path.dirname(dir), { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("names the files a [net] build's web branch writes besides the shell's (MP-5a)", () => {
+    assert.deepEqual(RUST_WEB_NET_FILES, WEB_NET_FILES);
+  });
+
+  const BRIDGE = Buffer.from('"use strict";globalThis.GenexMultiplayerBridge={};\n');
+  const NET = { [WEB_NET_FILES.bridge]: BRIDGE, [WEB_NET_FILES.shim]: Buffer.from("export default {};\n") };
+
+  it("admits a [net] build's bridge and shim beside the shell, the bridge held to its pin (MP-5a)", async () => {
+    const dir = await webFolder(NET);
+    try {
+      const admission = await admitWebShell(dir, sha256(BRIDGE));
+      assert.ok(admission.ok, admission.ok ? "" : admission.detail);
+      const listed = admission.manifest.files.map((file) => file.path);
+      for (const file of Object.values(WEB_NET_FILES)) assert.ok(listed.includes(file), file);
+    } finally {
+      await rm(path.dirname(dir), { recursive: true, force: true });
+    }
+  });
+
+  const netHostile: Array<[string, Record<string, Buffer>, string | undefined]> = [
+    ["the bridge without its shim", { [WEB_NET_FILES.bridge]: BRIDGE }, sha256(BRIDGE)],
+    ["the shim without its bridge", { [WEB_NET_FILES.shim]: NET[WEB_NET_FILES.shim] }, sha256(BRIDGE)],
+    ["a bridge that is not the pin's", NET, sha256(Buffer.from("another bridge"))],
+    ["a bridge that is not the real pin's", NET, undefined],
+    ["a bridge outside mp/", { "bridge.global.js": BRIDGE }, sha256(BRIDGE)],
+  ];
+  for (const [label, extra, pin] of netHostile) {
+    it(`refuses a web folder with ${label}, typed (MP-5a)`, async () => {
+      const dir = await webFolder(extra);
+      try {
+        const admission = await admitWebShell(dir, pin);
+        assert.equal(
+          admission.ok ? "admitted" : `${admission.refusal}/${admission.problem}`,
+          `${NativeRefusal.NotAnExecutable}/${RustAdmissionProblem.ShellFiles}`,
+        );
       } finally {
         await rm(path.dirname(dir), { recursive: true, force: true });
       }

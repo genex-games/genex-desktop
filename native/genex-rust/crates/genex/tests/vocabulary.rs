@@ -202,6 +202,19 @@ fn the_game_systems_blocks_are_the_fixtures() {
     }
 }
 
+/// The saves block (UIS-9): the calls the saves page teaches, genex-save's refusals, the volatile
+/// issue, the slot states and the slot ops.
+#[test]
+fn the_saves_block_is_the_fixtures() {
+    use genex::saves::{SAVE_CALLS, SAVE_RESTORE_DIVERGED, SaveErrorCode, SlotOp, SlotState};
+    let pinned = &fixture()["saves"];
+    assert_eq!(names(&pinned["calls"]), SAVE_CALLS);
+    assert_eq!(names(&pinned["refusals"]), SaveErrorCode::ALL.map(SaveErrorCode::wire));
+    assert_eq!(names(&pinned["issues"]), [SAVE_RESTORE_DIVERGED]);
+    assert_eq!(names(&pinned["slotStates"]), SlotState::ALL.map(SlotState::wire));
+    assert_eq!(names(&pinned["slotOps"]), SlotOp::ALL.map(SlotOp::wire));
+}
+
 #[test]
 fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};

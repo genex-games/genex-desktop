@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it. libcolyseus (colyseus, colyseus-source; MP-1a) is pinned by the GitHub release digest of each Colyseus native-sdk v0.18.10 asset, checked against the downloaded bytes on 2026-10-20; only an export of a `[net]` game installs it (`RUST_NET_COMPONENTS`). Android's libcolyseus is built from the source (colyseus-source, MP-1b, owner decision G12) with zig 0.15.2 (upstream's build.zig refuses any other zig; ziglang.org's download/index.json digest, checked against the downloaded bytes) and the zig_msgpack archive build.zig.zon names (commit 47c15d2, sha256 taken on download, its zig package hash checked with zig fetch), one entry per host.",
+  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it. libcolyseus (colyseus, colyseus-source; MP-1a) is pinned by the GitHub release digest of each Colyseus native-sdk v0.18.10 asset, checked against the downloaded bytes on 2026-10-20; only an export of a `[net]` game installs it (`RUST_NET_COMPONENTS`). Android's libcolyseus is built from the source (colyseus-source, MP-1b, owner decision G12) with zig 0.15.2 (upstream's build.zig refuses any other zig; ziglang.org's download/index.json digest, checked against the downloaded bytes) and the zig_msgpack archive build.zig.zon names (commit 47c15d2, sha256 taken on download, its zig package hash checked with zig fetch), one entry per host. The browser's relay bridge (genex-mp-bridge, MP-5a) is @genex-ai/multiplayer 0.17.0's npm tarball, its sha256 taken on download on 2026-10-21 after its sha512 matched the registry's published integrity; only a web export of a `[net]` game installs it.",
   "rust": {
     "version": "1.99.0",
     "date": "2026-10-01",
@@ -396,6 +396,23 @@
           "format": "tar.gz",
           "strip": 1,
           "into": "packages/zig_msgpack-0.0.14-evvueGolBQBs_m726tBf4ISJQqC926AM96EtxZy9LUaI"
+        }
+      ]
+    },
+    {
+      "id": "genex-mp-bridge",
+      "version": "0.17.0",
+      "host": null,
+      "target": null,
+      "licence": "MIT",
+      "archives": [
+        {
+          "url": "https://registry.npmjs.org/@genex-ai/multiplayer/-/multiplayer-0.17.0.tgz",
+          "bytes": 187064,
+          "sha256": "647177ea84b981aa944eb2c014c3ecbde4d6b11f37364b4257ef95f9d2412b79",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
         }
       ]
     }

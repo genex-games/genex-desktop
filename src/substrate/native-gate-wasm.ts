@@ -11,7 +11,8 @@
  *   ({@link RUST_WEB_SHELL_FILES}: the page, the glue, the module and the optional size report) and
  *   regular files under `assets/`, none of them a wasm module; it is read through the shared
  *   bounded walk (`bundle-walk.ts`), links and hard links refused, and each file opened again
- *   without following a link. The answer lists every file with its sha256 and size: what the export
+ *   without following a link. A `[net]` game's build also holds {@link RUST_WEB_NET_FILES}, both
+ *   or neither, its bridge exactly the pinned one (MP-5a). The answer lists every file with its sha256 and size: what the export
  *   copies and re-checks.
  *
  * Reads only, never writes.
@@ -20,6 +21,7 @@ import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { errorMessage } from "../shared/errors.ts";
 import { NativeRefusal, RustAdmissionProblem, type RustBinaryRefusal } from "../shared/native-contract.ts";
+import { MULTIPLAYER_BRIDGE_PIN } from "../shared/toolchain.ts";
 import { readBundleFile, WalkKind, WalkProblem, type WalkRefused, walkBundle } from "./bundle-walk.ts";
 
 /** The biggest wasm module the gate reads (the plan's budget is 4 MB gzipped; a debug build is larger). */
@@ -78,6 +80,15 @@ const REQUIRED_SHELL_FILES: readonly string[] = [
   RUST_WEB_SHELL_FILES.wasm,
 ];
 const SHELL_FILES: ReadonlySet<string> = new Set(Object.values(RUST_WEB_SHELL_FILES));
+/**
+ * The files a `[net]` game's web build holds besides the shell's (MP-5a, `WEB_NET_FILES` in
+ * `main/rust-build-web.ts`): the pinned relay bridge and its ESM shim, both or neither.
+ */
+export const RUST_WEB_NET_FILES = {
+  bridge: "mp/bridge.global.js",
+  shim: "mp/bridge.mjs",
+} as const;
+const NET_FILES: ReadonlySet<string> = new Set(Object.values(RUST_WEB_NET_FILES));
 
 /** One import as the module declares it. */
 export interface WasmImport {
@@ -137,6 +148,8 @@ const MESSAGE = {
     `it imports ${entry.kind} ${JSON.stringify(entry.name)} from ${JSON.stringify(entry.module)}; a Rust web build imports functions from ${RUST_WASM_GLUE_MODULE} only`,
   ExtraFile: (file: string) => `${file} is not a file of the web shell, nor under assets/`,
   ExtraWasm: (file: string) => `${file} is a WebAssembly module besides the game's own`,
+  NetPair: `a [net] web build holds both ${RUST_WEB_NET_FILES.bridge} and ${RUST_WEB_NET_FILES.shim}, never one`,
+  NetBridge: `${RUST_WEB_NET_FILES.bridge} is not the pinned @genex-ai/multiplayer bridge`,
   MissingFile: (file: string) => `the web build has no ${file}`,
   Unreadable: (file: string, detail: string) => `${file} cannot be read: ${detail}`,
 } as const;
@@ -341,8 +354,20 @@ function placeRefusal(file: string, bytes: Uint8Array): RustBinaryRefusal | null
     if (!isWasm(bytes)) return null;
     return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.ShellFiles, MESSAGE.ExtraWasm(file));
   }
-  if (SHELL_FILES.has(file)) return null;
+  if (SHELL_FILES.has(file) || NET_FILES.has(file)) return null;
   return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.ShellFiles, MESSAGE.ExtraFile(file));
+}
+
+/** Why a `[net]` build's bridge files may not be served: one without the other, or a bridge not the pin's; or null. */
+function netRefusal(read: ReadonlyMap<string, Uint8Array>, bridgeSha256: string): RustBinaryRefusal | null {
+  const present = [...NET_FILES].filter((file) => read.has(file));
+  if (present.length === 0) return null;
+  if (present.length < NET_FILES.size) {
+    return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.ShellFiles, MESSAGE.NetPair);
+  }
+  const bridge = read.get(RUST_WEB_NET_FILES.bridge) ?? new Uint8Array();
+  if (createHash("sha256").update(bridge).digest("hex") === bridgeSha256) return null;
+  return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.ShellFiles, MESSAGE.NetBridge);
 }
 
 /** Each listed file's bytes, read again without following a link, with its place checked. */
@@ -366,10 +391,14 @@ async function readShellFiles(
 /**
  * Admits a Rust web build's folder (the shell manifest, M3.5): exactly the shell's files and
  * regular files under `assets/` (none a wasm module), each reached without a link and with no
- * second hard link, and a module {@link admitRustWasm} admits. Answers every file's digest. Reads
- * only; never throws.
+ * second hard link, and a module {@link admitRustWasm} admits; a `[net]` build's bridge files both
+ * present, the bridge's sha256 `bridgeSha256` ({@link MULTIPLAYER_BRIDGE_PIN}'s unless a test hands
+ * its own). Answers every file's digest. Reads only; never throws.
  */
-export async function admitWebShell(dir: string): Promise<WebShellAdmission> {
+export async function admitWebShell(
+  dir: string,
+  bridgeSha256: string = MULTIPLAYER_BRIDGE_PIN.sha256,
+): Promise<WebShellAdmission> {
   try {
     const walk = await walkBundle(dir);
     if (!walk.ok) return walkRefusal(walk);
@@ -380,6 +409,8 @@ export async function admitWebShell(dir: string): Promise<WebShellAdmission> {
     if (missing) {
       return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.ShellFiles, MESSAGE.MissingFile(missing));
     }
+    const net = netRefusal(read, bridgeSha256);
+    if (net) return net;
     const module = admitRustWasm(read.get(RUST_WEB_SHELL_FILES.wasm) ?? new Uint8Array());
     if (!module.ok) return module;
     const listed = [...read].map(([path, bytes]) => ({

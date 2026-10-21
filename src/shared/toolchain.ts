@@ -84,6 +84,12 @@ export const ToolchainId = {
   Colyseus: "colyseus",
   /** The same release's source tarball: Android's libcolyseus is built from it (upstream ships no Android prebuilt). */
   ColyseusSource: "colyseus-source",
+  /**
+   * The relay client's JS bridge for the browser: `@genex-ai/multiplayer`'s npm tarball, whose
+   * `bridge.global.js` {@link MULTIPLAYER_BRIDGE_PIN} holds. Only a web export of a `[net]` game
+   * installs it ({@link RUST_NET_COMPONENTS}).
+   */
+  MultiplayerBridge: "genex-mp-bridge",
 } as const;
 export type ToolchainId = (typeof ToolchainId)[keyof typeof ToolchainId];
 
@@ -583,11 +589,11 @@ export const COLYSEUS_LIBRARIES: readonly string[] = Object.freeze([
 /**
  * What an export of a `[net]` game needs per destination beyond the destination's own components
  * (Live, judges and captures link no network code, so no other build needs them): libcolyseus for
- * every native destination, built from source for Android, nothing for the browser (its relay
- * client is the JS bridge).
+ * every native destination, built from source for Android, and the relay client's JS bridge for
+ * the browser.
  */
 export const RUST_NET_COMPONENTS = {
-  [BuildTarget.Web]: [],
+  [BuildTarget.Web]: [ToolchainId.MultiplayerBridge],
   [BuildTarget.Mac]: [ToolchainId.Colyseus],
   [BuildTarget.Windows]: [ToolchainId.Colyseus],
   [BuildTarget.Linux]: [ToolchainId.Colyseus],

@@ -23,7 +23,12 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   must be a whole number of tiles, or `install` refuses `streaming-invalid`.
 - **Input.** `NavInput::new()` takes `with_triangles`, `with_mesh`, `with_box`, `with_terrain`,
   `with_area_volume(outline, min_y, max_y, area)` and `with_bounds`. Areas are `NavArea::WALK`,
-  `ROAD`, `GRASS`, `WATER`, `DOOR` and `NavArea::custom(8..=62)`.
+  `ROAD`, `GRASS`, `WATER`, `DOOR` and `NavArea::custom(8..=62)`. With physics,
+  `.with_static_colliders(&sim.physics, area)` adds the world's static colliders (no body or a
+  fixed body), and `.with_colliders(&sim.physics, |view| ..)` lets the game pick: return an area to
+  take the collider, `None` to skip it. Sensors and disabled colliders never count; balls,
+  capsules, cuboids, cylinders, cones, convex hulls, triangle meshes, heightfields and compounds
+  give triangles, and half-spaces, segments and polylines give none.
 - **Meshes.** `NavMesh::bake(&input, &config)` bakes every tile over the input on the calling
   thread; `NavMesh::bake_tile(&input, &config, cell)` bakes one. Baking the same input again in
   one process is free (a memo of at most 32 MiB). `mesh.to_bytes()` writes `.navmesh` bytes.
@@ -56,6 +61,26 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   `moving`, `waiting` (the tick's search budget is spent), `arrived`, `at-link`, `on-link`,
   `no-path`, `off-mesh` (its tile streamed out: it stands still) or `target-off-mesh`;
   `nav.next_corner(agent)` is where it heads next.
+- **Characters.** There is no nav driver: the character controller moves the body. Bake with
+  `character.nav_config()` (its climb and slope), then every tick, in this order:
+  `sim.nav.update(ctx.dt)` once; per agent, `nav.desired_velocity(agent)` into the animator's
+  speed parameter; `animator.update(ctx.dt)`; `character.drive(&mut sim.physics,
+  CharacterMotion::Mixed { root, wish, jump: false, root_share }, ctx.dt)`; then
+  `nav.set_position(agent, character.feet(), character.velocity())`. Capsules move at the physics
+  step, so the agents' order does not change the result.
+
+```rust
+sim.nav.update(ctx.dt);
+for w in &mut sim.world.walkers {
+    let wish = sim.nav.desired_velocity(w.agent);
+    w.animator.set_float(w.speed, wish.length());
+    let root = w.animator.update(ctx.dt).root_motion;
+    let motion = CharacterMotion::Mixed { root, wish, jump: false, root_share: 0.5 };
+    w.character.drive(&mut sim.physics, motion, ctx.dt);
+    sim.nav.set_position(w.agent, w.character.feet(), w.character.velocity());
+}
+```
+
 - **Links.** `nav.add_link(NavLink::between(from, to, NavLinkKind::Ladder).both_ways())` joins two
   places (`Jump`, `Drop`, `Ladder`, `Door`, `Teleport`, `Custom(n)`; `with_cost`), and
   `nav.remove_link(link)` removes one. An agent at a link says `at-link`: `nav.take_link(agent)`
@@ -83,4 +108,8 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   late island holds the frame like a collider. Agents on a cell that leaves go `off-mesh` and
   freeze; when it comes back they walk on. On the web, islands come only from offline bakes.
 
-`frame.nav_debug` draws nothing yet.
+- **Drawing.** `frame.nav_debug(&sim.nav, NavDebug::mesh())` draws the walkable surface (every
+  polygon edge, the borders and the tile seams, each once) as one logical draw;
+  `NavDebug::borders()` draws the outline only, `.with_links()` adds off-mesh links and
+  `.with_paths()` each agent's path to its target; `NavDebug::everything()` is all of them. The
+  default draws nothing. Seams draw stitched after the update that follows a change.

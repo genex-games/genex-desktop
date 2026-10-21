@@ -8,9 +8,12 @@ pub use genex_nav::agents_api::{
     NavLinkReached, NavPath, NavPoint, NavStatus, NavStep,
 };
 pub use genex_nav::carve::{NAV_BAKE_UNITS_PER_TICK_DEFAULT, NAV_OBSTACLES_MAX, NAV_REBUILD_STAGES, NavObstacle};
+pub use genex_nav::debug::NavDebugLine;
 pub use genex_nav::error::NavError;
 pub use genex_nav::filter::NavFilter;
 pub use genex_nav::input::{HeightGrid, NAV_AREA_VOLUMES_MAX, NAV_INPUT_TRIANGLES_MAX, NavArea, NavInput, TerrainHeights};
+#[cfg(feature = "physics")]
+pub use genex_nav::input_rapier::ColliderView;
 // NAV_MEMO_BYTES_MAX_PHONE stays in genex-nav until the runtime applies a per-class cap.
 pub use genex_nav::memo::NAV_MEMO_BYTES_MAX;
 pub use genex_nav::links::{NAV_LINKS_MAX, NavLink, NavLinkKind};

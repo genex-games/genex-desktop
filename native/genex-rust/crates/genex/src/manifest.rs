@@ -195,8 +195,9 @@ pub const STREAM_CALLS: [&str; 25] = [
     "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
     ".model", "frame.cells_debug", "sim.stream.keep", "sim.stream.release", "sim.stream.snapshot", "sim.stream.restore",
 ];
-/// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12).
-pub const NAV_CALLS: [&str; 44] = [
+/// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
+/// collider input, NAV-5; debug drawing, NAV-16).
+pub const NAV_CALLS: [&str; 52] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
@@ -204,7 +205,8 @@ pub const NAV_CALLS: [&str; 44] = [
     "nav.set_position", "nav.desired_velocity", "nav.status", "nav.next_corner", "nav.take_link", "nav.finish_link",
     "nav.add_link", "nav.remove_link", "nav.set_link_open", "nav.add_body", "nav.set_body", "nav.remove_body",
     "nav.closest_point", "nav.path", "nav.raycast", "nav.move_along", "nav.random_point", "nav.distance_to_wall",
-    "nav.probe", "nav.snapshot", "nav.restore",
+    "nav.probe", "nav.snapshot", "nav.restore", ".with_colliders", ".with_static_colliders", "frame.nav_debug",
+    "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths",
 ];
 /// The input calls of the facade (IN-11, IN-12).
 pub const INPUT_CALLS: [&str; 30] = [
