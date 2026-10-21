@@ -48,6 +48,8 @@ genex-hud = { workspace = true }
 # Input actions (G6 input): action maps, bindings files, touch controls, the journal; `panel` for
 # the Controls panel and the prompt glyphs (egui, already the HUD's).
 genex-input = { workspace = true, features = ["panel"] }
+# Save slots (G6 saves): the envelope, migrations, the slot index, autosave and the slot driver.
+genex-save = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 genex-studio = { workspace = true, optional = true }

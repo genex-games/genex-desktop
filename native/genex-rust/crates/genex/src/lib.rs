@@ -37,7 +37,8 @@ mod crash;
 mod g6;
 mod net;
 mod profile;
-mod saves;
+/// Save slots: `game.saves`, `game.save_section`, `game.save_world` and `ctx.slots()` (genex-save).
+pub mod saves;
 mod settings;
 mod ui;
 mod animation;

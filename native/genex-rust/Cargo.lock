@@ -1133,6 +1133,7 @@ dependencies = [
  "genex-nav",
  "genex-platform-desktop",
  "genex-render",
+ "genex-save",
  "genex-stream",
  "genex-studio",
  "glam 0.33.12",
