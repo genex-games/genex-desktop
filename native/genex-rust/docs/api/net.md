@@ -92,10 +92,11 @@ game.on_draw(|sim, frame, _| {
 ## Demos
 
 A demo scripts remote players in the loopback room through `driver.net()`: `join(name)` (ids
-`remote-1`, `remote-2`, ...), `leave`, `drop_connection`, `set_state`, `set_object`, `send`,
-`chat`, `set_shared`, `make_host`, `answer_claims`, `latency_ticks`, `reconnect_for` and `close`.
-A scripted run is a pure function of the seed and the script, so its checksum is the same on every
-destination. Net state is never saved and never in the checksum; a reseed keeps a relay seat.
+`remote-1`, `remote-2`, ...), `leave`, `drop_connection`, `set_state`, `set_object`, `send`, `chat`,
+`set_shared`, `make_host`, `answer_claims`, `latency_ticks`, `reconnect_for` and `close`. A scripted
+run is a pure function of the seed and the script, so its checksum is the same on every destination.
+Net state is never saved (`docs/api/saves.md`) and never in the checksum; a reseed keeps a relay
+seat.
 
 A helper the game needs beyond this (a lobby screen, a team reconciler, interpolation of your own)
 is the game's own code: the facade keeps only what a hook cannot build, the write queue, publish

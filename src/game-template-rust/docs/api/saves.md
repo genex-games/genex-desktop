@@ -38,9 +38,10 @@ game.on_update(|sim, ctx| {
 - **Sections.** `game.save_world()` is the section `world`. `game.save_section(name, save, load)`
   adds any other: `save` reads the `Sim` and returns JSON, `load` writes it back onto the restored
   `Sim`. Physics bodies, facet state and anything outside `sim.world` need their own section. With
-  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot), and with `game.streaming`
-  it adds `genex.stream` (`sim.stream.snapshot()`: anchors, kept cells and active cells). A slot
-  holds at most 62 game sections; names are at most 48 characters.
+  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot, `docs/api/navigation.md`),
+  and with `game.streaming` it adds `genex.stream` (`docs/api/streaming.md`;
+  `sim.stream.snapshot()`: anchors, kept cells and active cells). A slot holds at most 62 game
+  sections; names are at most 48 characters.
 - **Saving.** `slots.save(slot, label)` queues a save written at the end of the tick, after
   physics. A save only reads, so it never changes the checksum. A slot name is 1 to 32 of
   `[a-z0-9-]` with no leading dash; `autosave-*` is the ring's. A label is at most 64 characters.

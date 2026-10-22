@@ -9,7 +9,7 @@ all of it.
 ## The simple animator (start here)
 
 ```rust
-// on_reset (it returns nothing, so a refusal returns early; `assets.md` shows reading its code)
+// on_reset (it returns nothing, so a refusal returns early; `docs/api/assets.md` shows reading its code)
 let Ok(hero) = gfx.character("characters/hero.glb") else { return };   // animation-asset-invalid
 let (Some(idle), Some(walk), Some(slash)) = (hero.clip("Idle"), hero.clip("Walk"), hero.clip("Sword_Attack")) else { return };
 let Ok(mut animator) = Animator::simple(&hero) else { return };

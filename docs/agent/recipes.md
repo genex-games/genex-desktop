@@ -302,9 +302,13 @@ in short:
 1. Test first in `native/genex-rust/crates/genex/tests/` (or a compile-fail case), run only
    through `node scripts/toolchains/rust-env.ts -- cargo test -p genex --offline --locked`.
 2. The facade and the runtime crate behind it; new dependencies only from the vendored set
-   (`scripts/toolchains/rust-vendor.ts check`).
-3. the topic page `native/genex-rust/docs/api/<topic>.md` (and its row in the index
-   `docs/GENEX_API.md`), byte-equal in `src/game-template-rust/docs/`; vocabularies in `tests/fixtures/rust-facade-vocabulary.json`.
+   (`scripts/toolchains/rust-vendor.ts check`). Code or rules ported from another project name
+   their source and licence in the file's header and get a row in a Rust table of
+   `THIRD-PARTY-NOTICES.md` (an Apache-2.0 port also lists its changes).
+3. The topic page `native/genex-rust/docs/api/<topic>.md`, linking the pages it leans on by
+   `docs/api/<page>.md`, and its row in the index `docs/GENEX_API.md` (in reading order; the index
+   stays under 2,000 words), byte-equal in `src/game-template-rust/docs/`; vocabularies in
+   `tests/fixtures/rust-facade-vocabulary.json`.
 4. A verb, refusal or native feature the app knows also goes through `src/shared/native-contract.ts`
    and the seed's copy ([seed contract](#seed-contract)).
 5. `npm run test:rust-spike`, `npm run test:area -- rust-runtime` and `npm run verify:harness`;
