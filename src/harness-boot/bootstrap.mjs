@@ -11,6 +11,7 @@
  * agent edit itself without a human standing by.
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
+import * as nodeModule from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -128,6 +129,9 @@ async function boot() {
   const capabilities = Array.isArray(studio?.capabilities)
     ? studio.capabilities.filter((c) => typeof c === "string")
     : [];
+  // With NODE_COMPILE_CACHE set, write what this boot compiled now: a harness that is killed
+  // rather than exiting never reaches Node's write at exit, and the next boot would compile again.
+  nodeModule.flushCompileCache?.();
   out({ kind: MessageKind.Ready, pid: process.pid, harnessVersion: hash(fingerprint(WS)), capabilities });
 }
 

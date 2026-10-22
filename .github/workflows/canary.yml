@@ -1,0 +1,262 @@
+name: Release canary
+# After a release is published, real machines download Genex from the public links, install it as
+# a person does, start it with no account, run one sandboxed agent command against a fake engine
+# and report (scripts/canary/). GitHub-hosted machines always run. Windows 11 and 10 run on Azure
+# VMs made for the run once the repository variable CANARY_AZURE is `on` and the `canary`
+# environment holds AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (OIDC, no stored
+# secret). A failing run opens or updates one issue labelled `canary`; a passing one closes it.
+# A dispatch with `package_run` checks an unreleased build instead: the Azure machines install the
+# Windows installer that Package workflow run made, its commit's e2e runner drives the agent
+# command, and no other machine runs and no issue is touched.
+on:
+  release:
+    types: [published]
+  schedule:
+    # Mondays, on the latest release: catches Windows, Defender and runner image changes.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to check (empty for the latest release)
+        required: false
+      package_run:
+        description: A Package workflow run whose Windows installer the Azure machines install instead of a release
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: canary-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      ref: ${{ steps.tag.outputs.ref }}
+      azure: ${{ vars.CANARY_AZURE == 'on' }}
+      expect: ${{ steps.tag.outputs.expect }}
+    steps:
+      - name: The release to check
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          AZURE: ${{ vars.CANARY_AZURE }}
+          PACKAGE_RUN: ${{ inputs.package_run }}
+        run: |
+          if [ -n "$PACKAGE_RUN" ]; then
+            [ "$AZURE" = on ] || { echo "::error::A build is checked on the Azure machines, and CANARY_AZURE is not on"; exit 1; }
+            read -r workflow sha <<< "$(gh run view "$PACKAGE_RUN" -R "$GITHUB_REPOSITORY" --json workflowName,headSha -q '"\(.workflowName) \(.headSha)"')"
+            [ "$workflow" = Package ] || { echo "::error::Run $PACKAGE_RUN is $workflow, not Package"; exit 1; }
+            echo "Checking the build of Package run $PACKAGE_RUN at $sha"
+            { echo "tag=v0.0.0-run.$PACKAGE_RUN"; echo "ref=$sha"; echo "expect=windows-11,windows-10"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag=${TAG:-$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)}
+          case "$tag" in v[0-9]*) ;; *) echo "::error::Not a release tag: $tag"; exit 1 ;; esac
+          echo "Checking $tag"
+          expect="macos-26,macos-15,ubuntu-26.04,ubuntu-24.04,windows-server-2025,fedora"
+          if [ "$AZURE" = on ]; then expect="$expect,windows-11,windows-10"; fi
+          { echo "tag=$tag"; echo "ref=$tag"; echo "expect=$expect"; } >> "$GITHUB_OUTPUT"
+
+  hosted:
+    needs: plan
+    if: ${{ !inputs.package_run }}
+    name: ${{ matrix.machine }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { machine: macos-26, runner: macos-26, kind: dmg }
+          - { machine: macos-15, runner: macos-15, kind: dmg }
+          - { machine: ubuntu-26.04, runner: ubuntu-26.04, kind: deb }
+          - { machine: ubuntu-24.04, runner: ubuntu-24.04, kind: deb }
+          - { machine: windows-server-2025, runner: windows-2025, kind: exe }
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # The release's own e2e runner drives the agent command, so its fake engine matches the build.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.tag }}
+          path: release-src
+          sparse-checkout: |
+            tests/e2e
+            tests/helpers
+            scripts/electron-runtime.mjs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Canary (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/canary/run.ts --machine "${{ matrix.machine }}" --kind dmg --tag "$TAG" --evidence "$RUNNER_TEMP/canary/${{ matrix.machine }}" --release-src release-src
+      - name: Canary (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          # The screen; the deb's own dependencies come with apt as on a person's machine.
+          sudo apt-get update -q && sudo apt-get install -y -q xvfb imagemagick
+          xvfb-run -a node scripts/canary/run.ts --machine "${{ matrix.machine }}" --kind deb --tag "$TAG" --evidence "$RUNNER_TEMP/canary/${{ matrix.machine }}" --release-src release-src
+      # The runner's own account is an administrator: the owner of a PC, on a profile filled like a
+      # person's (the sandbox start walks it), whose first start sets the sandbox up (the runner has
+      # UAC off, so its one prompt passes by itself). A standard user needs a desktop session of its
+      # own, which only the Azure machines give it.
+      - name: Canary (Windows, the owner on a lived-in profile)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node scripts/canary/lived-in-profile.ts --home "$env:USERPROFILE" --force-own-home
+          node scripts/canary/run.ts --machine "${{ matrix.machine }}" --kind exe --tag "$env:TAG" --persona owner --evidence C:\canary\evidence\owner --release-src release-src
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: canary-${{ matrix.machine }}
+          # The downloaded installer is no evidence, and it is most of the bytes.
+          path: |
+            ${{ runner.os == 'Windows' && 'C:\canary\evidence' || format('{0}/canary', runner.temp) }}
+            !**/download/**
+          retention-days: 30
+          if-no-files-found: warn
+
+  fedora:
+    needs: plan
+    if: ${{ !inputs.package_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      # Install from the release page and the dnf repository only: the sandbox needs user
+      # namespaces a container does not give, and the Ubuntu machines cover the start.
+      - name: Canary (Fedora, install and repository)
+        run: |
+          node_home=$(dirname "$(dirname "$(command -v node)")")
+          docker run --rm -v "$PWD:/w" -v "$node_home:/opt/node:ro" -w /w fedora:latest \
+            /opt/node/bin/node scripts/canary/run.ts --machine fedora --kind rpm --tag "$TAG" --evidence /w/evidence/fedora --install-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: canary-fedora
+          path: |
+            evidence
+            !evidence/**/download/**
+          retention-days: 30
+          if-no-files-found: warn
+
+  # Windows 11 and 10 client editions: one VM per machine, made for this run and deleted after it.
+  azure:
+    needs: plan
+    if: needs.plan.outputs.azure == 'true'
+    name: ${{ matrix.machine }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: canary
+    permissions:
+      contents: read
+      id-token: write
+      # Only a `package_run` dispatch uses it: that run's installer artifact.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { machine: windows-11, image: "MicrosoftWindowsDesktop:windows-11:win11-26h2-pro:latest" }
+          - { machine: windows-10, image: "MicrosoftWindowsDesktop:Windows-10:win10-22h2-pro-g2:latest" }
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      # azure.ts signs az in again with fresh OIDC tokens: a run outlasts the sign-in azure/login made.
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.ref }}
+          path: release-src
+          sparse-checkout: |
+            tests/e2e
+            tests/helpers
+            scripts/electron-runtime.mjs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: The build to install
+        if: ${{ inputs.package_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN: ${{ inputs.package_run }}
+        run: |
+          gh run download "$PACKAGE_RUN" -R "$GITHUB_REPOSITORY" -n package-win32-x64 -D "$RUNNER_TEMP/build"
+          mkdir -p canary-package && cp "$RUNNER_TEMP/build/squirrel.windows/x64/Genex-Setup.exe" canary-package/
+      - name: What the VM runs
+        run: zip -qr "$RUNNER_TEMP/canary-src.zip" scripts/canary src/shared/duration.ts package.json release-src $(test -d canary-package && echo canary-package) -x 'release-src/.git/*'
+      - name: Canary (${{ matrix.machine }}, owner then standard user)
+        env:
+          IMAGE: ${{ matrix.machine == 'windows-11' && vars.CANARY_WIN11_IMAGE || matrix.machine == 'windows-10' && vars.CANARY_WIN10_IMAGE || '' }}
+          SIZE: ${{ vars.CANARY_AZURE_SIZE }}
+          LOCATION: ${{ vars.CANARY_AZURE_LOCATION }}
+        run: >-
+          node scripts/canary/azure.ts run --machine "${{ matrix.machine }}" --image "${IMAGE:-${{ matrix.image }}}"
+          --tag "$TAG" --source "$RUNNER_TEMP/canary-src.zip" --evidence "$RUNNER_TEMP/canary/${{ matrix.machine }}"
+          --size "$SIZE" --location "$LOCATION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: canary-${{ matrix.machine }}
+          path: ${{ runner.temp }}/canary
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Delete expired canary VMs a cancelled run left behind
+        if: ${{ always() && matrix.machine == 'windows-11' }}
+        run: node scripts/canary/azure.ts sweep
+
+  report:
+    needs: [plan, hosted, fedora, azure]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && !inputs.package_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: canary-*
+          path: results
+      - name: Report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ASSIGNEE: ${{ !contains(github.actor, '[bot]') && github.actor || '' }}
+          EXPECT: ${{ needs.plan.outputs.expect }}
+        run: |
+          mkdir -p results
+          node scripts/canary/report.ts --results results --tag "$TAG" --expect "$EXPECT" --run-url "$RUN_URL" --assignee "$ASSIGNEE"

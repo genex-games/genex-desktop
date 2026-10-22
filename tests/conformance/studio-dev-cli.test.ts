@@ -16,10 +16,11 @@ import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  // Flipped from 30: building-card joined the list from dev (from 25 → 30, the cpp-game, native-game,
-  // cross-game, rust-game and rust-mobile-game fixtures of the C++ · raylib and Rust · wgpu branch;
-  // from 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
-  assert.equal(FIXTURE_NAMES.length, 31);
+  // Flipped from 33: the cpp-game, native-game, cross-game, rust-game and rust-mobile-game fixtures of the
+  // C++ · raylib and Rust · wgpu branch joined dev's list (from 31: data-folder and data-missing, 30: native-games,
+  // 29: agents-start-failed, 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build,
+  // 23: plugin-updates, 22: open-projects, 21: stills-game).
+  assert.equal(FIXTURE_NAMES.length, 38);
   for (const added of [
     "first-launch",
     "notifications",
@@ -39,6 +40,13 @@ test("fixtures lists the one exported fixture list without a profile or app", as
     "plugin-updates",
     "paused-build",
     "building-card",
+    "roblox-game",
+    "genex-terms",
+    "asset-library",
+    "agents-start-failed",
+    "native-games",
+    "data-folder",
+    "data-missing",
   ])
     assert.ok((FIXTURE_NAMES as readonly string[]).includes(added), added);
   assert.deepEqual(await main(["fixtures"]), { fixtures: [...FIXTURE_NAMES] });
@@ -57,7 +65,7 @@ test("the plugin-updates fixture leaves every bundled plugin one version behind 
     fs.readdirSync(seeds).map((name) => fs.readFileSync(path.join(seeds, name, "plugin.json"), "utf8"));
   const shipped = shippedManifests();
   const versions = new Map(shipped.map((text) => [JSON.parse(text).id as string, JSON.parse(text).version as string]));
-  assert.deepEqual([...versions.keys()].sort(), ["blender", "cc0", "genex", "unreal"]);
+  assert.deepEqual([...versions.keys()].sort(), ["blender", "cc0", "genex", "godot", "roblox", "unity", "unreal"]);
   /** What the app's own registry says of the profile's plugins, as the core starts it. */
   const installed = async () => {
     const registry = new PluginRegistry(
@@ -185,6 +193,32 @@ test("snapshot, logs and capture shortcuts build the protocol operations with it
   assert.throws(() => parseStudioDevArgs(["capture", "--profile", "p", "--name", "../private"]));
 });
 
+test("Play's bar layer and game view are surfaces of their own, and the pointer moves only to a point on one", () => {
+  assert.deepEqual(parseStudioDevArgs(["snapshot", "--profile", "p", "--surface", "play-bar"]).operation, {
+    method: "snapshot",
+    params: { surface: "play-bar", limit: 150 },
+  });
+  assert.deepEqual(
+    parseOperation('{"method":"click","params":{"surface":"play-bar","selector":"[data-play-comments]"}}'),
+    {
+      method: "click",
+      params: { surface: "play-bar", selector: "[data-play-comments]" },
+    },
+  );
+  assert.deepEqual(parseOperation('{"method":"move","params":{"surface":"play-game","x":12,"y":2}}'), {
+    method: "move",
+    params: { surface: "play-game", x: 12, y: 2 },
+  });
+  const refused = [
+    '{"method":"snapshot","params":{"surface":"play-game"}}',
+    '{"method":"click","params":{"surface":"game","selector":"button"}}',
+    '{"method":"move","params":{"surface":"play-game","x":-1,"y":2}}',
+    '{"method":"move","params":{"surface":"play-game","x":1,"y":2,"script":"x()"}}',
+    '{"method":"move","params":{"surface":"keychain","x":1,"y":2}}',
+  ];
+  for (const request of refused) assert.throws(() => parseOperation(request), request);
+});
+
 test("the CLI prints the fixture list as JSON and reports errors as JSON with exit 1", () => {
   const run = (...args: string[]) =>
     spawnSync(process.execPath, ["scripts/studio-dev.ts", ...args], { encoding: "utf8" });
@@ -298,7 +332,9 @@ test("the eval lanes strip the same session variables a live launch does, and th
 });
 
 test("a live games root under a .claude folder is warned about, through a link too, and nothing is created", (t) => {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "games-root-")));
+  // The check resolves a link with the native realpath, which on Windows also expands the 8.3
+  // short names `os.tmpdir()` can carry (RUNNER~1); the JS realpath keeps them.
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "games-root-")));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const claudeTree = path.join(base, "repo/.claude/worktrees/wt");
   fs.mkdirSync(claudeTree, { recursive: true });

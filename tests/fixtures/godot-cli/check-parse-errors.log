@@ -1,0 +1,19 @@
+Godot Engine v4.6.1.stable.official.14d19694e - https://godotengine.org
+
+SCRIPT ERROR: Parse Error: Cannot assign a value of type "String" as "int".
+          at: GDScript::reload (res://bad.gd:3)
+          GDScript backtrace (most recent call first):
+              [0] _initialize (/plugin/scripts/genex_check.gd:16)
+SCRIPT ERROR: Parse Error: Cannot assign a value of type String to variable "x" with specified type int.
+          at: GDScript::reload (res://bad.gd:3)
+          GDScript backtrace (most recent call first):
+              [0] _initialize (/plugin/scripts/genex_check.gd:16)
+SCRIPT ERROR: Parse Error: Function "undefined_call()" not found in base self.
+          at: GDScript::reload (res://bad.gd:4)
+          GDScript backtrace (most recent call first):
+              [0] _initialize (/plugin/scripts/genex_check.gd:16)
+ERROR: Failed to load script "res://bad.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript.cpp:2907)
+   GDScript backtrace (most recent call first):
+       [0] _initialize (/plugin/scripts/genex_check.gd:16)
+GENEX_CHECKED 6

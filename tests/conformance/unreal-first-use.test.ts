@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import type { PluginEngineLink } from "../../src/plugin-sdk/index.d.ts";
+import type { PluginEngineLink, PluginToolbarStatus } from "../../src/plugin-sdk/index.d.ts";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import type { Launch } from "../../src/plugins/unreal/editor-launch.ts";
 import type { EditorLog } from "../../src/plugins/unreal/editor-log.ts";
@@ -121,6 +121,11 @@ async function computer(options: { engines?: Installed; game?: string | null } =
   };
   const act = async (name: string, args: Record<string, unknown> = {}) => backend.action?.(name, args, context);
   const tool = async (name: string, args: Record<string, unknown> = {}) => backend.tool?.(name, args as never, context);
+  /** The same calls from another open game of the same Genex. */
+  const inGame = (other: string) => ({ ...context, project: other, directory: path.join(root, "games", other) });
+  const actFor = async (other: string, name: string) => backend.action?.(name, {}, inGame(other));
+  const toolFor = async (other: string, name: string, args: Record<string, unknown> = {}) =>
+    backend.tool?.(name, args as never, inGame(other));
   const lantern = await project("Lantern");
   const harbor = await project("Harbor");
   /** Lantern set up and this game linked to it, as New game leaves it. */
@@ -129,7 +134,21 @@ async function computer(options: { engines?: Installed; game?: string | null } =
     await act("use-project", { project: lantern });
     return realpath(lantern);
   };
-  return { root, storage, live, clock, launched, act, tool, lantern, harbor, linkLantern, runs };
+  return {
+    root,
+    storage,
+    live,
+    clock,
+    launched,
+    act,
+    tool,
+    actFor,
+    toolFor,
+    lantern,
+    harbor,
+    linkLantern,
+    runs,
+  };
 }
 
 describe("engine-status, before a new game's engine question", () => {
@@ -324,4 +343,50 @@ describe("the toolbar with no Unreal installed", () => {
       assert.deepEqual([status.badge, status.dot], ["Not installed", true]);
       assert.match(status.title, /5\.8/);
     });
+
+  it("comes out only on a game whose chat chose Unreal (show-steps, or new-game refused), never on another", async () => {
+    const c = await computer({ engines: [] });
+    const shown = async (game?: string) =>
+      ((game ? await c.actFor(game, "toolbar-status") : await c.act("toolbar-status")) as PluginToolbarStatus).shown;
+    assert.equal(await shown(), undefined, "a game whose chat never asked for Unreal");
+    assert.match(
+      String(await c.tool("show-steps")),
+      /Unreal setup card is in the chat, and the Unreal button is above the game/,
+    );
+    assert.equal(await shown(), true);
+    assert.equal(await shown("harbor-night"), undefined, "another game's strip stays as it was");
+    await assert.rejects(
+      c.toolFor("harbor-night", "new-game", { template: "TP_BlankBP", name: "Harbor" }),
+      /isn't on this computer/,
+    );
+    assert.equal(await shown("harbor-night"), true, "a new game refused for want of Unreal brings it out too");
+  });
+});
+
+describe("the Unreal setup card on a Mac without Unreal", () => {
+  it("shows getting Unreal while it's missing, and closes on Don't use Unreal until the agent shows it again", async () => {
+    const c = await computer({ engines: [] });
+    type Card = { open: boolean; steps: { id: string }[]; doneSays?: string };
+    const card = async () => (await c.act("steps")) as Card;
+    await c.tool("show-steps");
+    const missing = await card();
+    assert.equal(missing.open, true);
+    assert.deepEqual(
+      missing.steps.map((step) => step.id),
+      ["get-launcher", "install-engine"],
+    );
+    await c.act("skip");
+    const skipped = await card();
+    assert.equal(skipped.open, false);
+    assert.match(String(skipped.doneSays), /web game/);
+    await c.tool("show-steps");
+    assert.equal((await card()).open, true, "the person changed their mind");
+  });
+});
+
+describe("the toolbar with Unreal installed", () => {
+  it("leaves a game with no Unreal project to its facts: nothing brings the button out", async () => {
+    const c = await computer();
+    assert.deepEqual(await c.act("toolbar-status"), { tone: "info", title: "Make this game in Unreal" });
+  });
 });

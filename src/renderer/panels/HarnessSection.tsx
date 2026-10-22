@@ -10,13 +10,14 @@ import { Switch } from "../ui/switch.tsx";
 import { DiagnosticsRow } from "./DiagnosticsRow.tsx";
 import { AUTO_RESUME_SETTING_WORDS, problemWords } from "../words.ts";
 import { Pending } from "../ui/Pending.tsx";
+import { t } from "../../shared/i18n.ts";
 
 /** What the auto-apply switch means, given whether the harness learns at all. */
 function applyWords(learning: boolean, selfImproving: boolean): string {
-  if (!learning) return "Self-improvement is off in Harness, so there is nothing to apply.";
+  if (!learning) return t("Self-improvement is off in Harness, so there is nothing to apply.");
   return selfImproving
-    ? "Suggestions that pass testing apply without asking. You can undo any of them in Harness."
-    : "Harness asks before changing how it builds. You can undo any change in Harness.";
+    ? t("Suggestions that pass testing apply without asking. You can undo any of them in Harness.")
+    : t("Harness asks before changing how it builds. You can undo any change in Harness.");
 }
 
 export function HarnessSection(): JSX.Element {
@@ -49,7 +50,7 @@ export function HarnessSection(): JSX.Element {
             {error}
           </p>
         ) : (
-          <Pending label="Loading…" />
+          <Pending label={t("Loading…")} />
         )}
       </div>
     );
@@ -61,7 +62,7 @@ export function HarnessSection(): JSX.Element {
       <section className="appearance-theme settings-rows">
         <div className="appearance-row">
           <label htmlFor="harness-self-improving" className="flex min-w-0 flex-col">
-            <span className="text-ink">Apply suggestions automatically</span>
+            <span className="text-ink">{t("Apply suggestions automatically")}</span>
             <span className="text-ink-3">{applyWords(learning, selfImproving)}</span>
           </label>
           <Switch
@@ -74,13 +75,13 @@ export function HarnessSection(): JSX.Element {
         <div className="appearance-row">
           <span className="flex min-w-0 flex-col">
             <span id="harness-builders" className="text-ink">
-              Maximum concurrent workers
+              {t("Maximum concurrent workers")}
             </span>
-            <span className="text-ink-3">Harness can run up to this many workers at the same time.</span>
+            <span className="text-ink-3">{t("Harness can run up to this many workers at the same time.")}</span>
           </span>
           <div role="group" aria-labelledby="harness-builders" className="appearance-value">
             <Button
-              aria-label="Fewer workers"
+              aria-label={t("Fewer workers")}
               disabled={busy || builders <= 1}
               onClick={() => void change({ buildersMax: builders - 1 })}
             >
@@ -90,7 +91,7 @@ export function HarnessSection(): JSX.Element {
               {builders}
             </output>
             <Button
-              aria-label="More workers"
+              aria-label={t("More workers")}
               disabled={busy || builders >= MAX_BUILDERS}
               onClick={() => void change({ buildersMax: builders + 1 })}
             >
@@ -113,10 +114,11 @@ export function HarnessSection(): JSX.Element {
         </div>
         <div className="appearance-row">
           <span className="flex min-w-0 flex-col">
-            <span className="text-ink">How suggestions are tested</span>
+            <span className="text-ink">{t("How suggestions are tested")}</span>
             <span className="text-ink-3">
-              An independent reviewer compares the current and suggested instructions on your past requests. It doesn’t
-              rebuild your games, so an applied change isn’t proof of better results.
+              {t(
+                "An independent reviewer compares the current and suggested instructions on your past requests. It doesn’t rebuild your games, so an applied change isn’t proof of better results.",
+              )}
             </span>
           </span>
         </div>

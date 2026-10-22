@@ -119,6 +119,33 @@ test("static deployment requires its unique marker and every exact runtime file"
   }
 });
 
+test("every hosted HTML page passes with the scripts Genex adds to its head, and a stale one does not", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "deployment-html-"));
+  try {
+    const page = (body: string) => `<!doctype html><html><head><title>t</title></head><body>${body}</body></html>`;
+    await writeFile(path.join(root, "index.html"), page("game"));
+    await mkdir(path.join(root, "dev"));
+    await writeFile(path.join(root, "dev/audio.html"), page("audio bench"));
+    const expected = await markDeployment(root, "upload-one");
+    let audioBody = "audio bench";
+    const injected = (html: string) =>
+      html
+        .replace(/<head>/i, "<head><script>window.__GENEX__={}</script>")
+        .replace(/<\/head>/i, '<script defer src="/__genex/watchdog.js"></script></head>');
+    const serve = (async (url: URL | RequestInfo) => {
+      const relative = new URL(String(url)).pathname.slice(1);
+      if (relative === "dev/audio.html") return new Response(injected(page(audioBody)));
+      const bytes = await readFile(path.join(root, relative));
+      return new Response(relative.endsWith(".html") ? injected(bytes.toString("utf8")) : bytes);
+    }) as typeof fetch;
+    await verifyDeployment("https://game.genex.technology/", expected, serve);
+    audioBody = "previous audio bench";
+    await assert.rejects(verifyDeployment("https://game.genex.technology/", expected, serve), /dev\/audio\.html/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("native derivative retains the staged original identity after both files are renamed", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "asset-lineage-"));
   try {

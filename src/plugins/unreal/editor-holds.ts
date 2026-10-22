@@ -26,6 +26,11 @@ const LINE_BREAK = /\r?\n/;
 const NAME_FIELD = "n";
 const SLASH = "/";
 
+/** Unreal's crash reporter, by the start of its process name (CrashReportClient, CrashReportClientEditor). */
+const CRASH_REPORTER = "CrashRep";
+/** The ports Unreal can listen on. */
+const HIGHEST_PORT = 65_535;
+
 /** What lsof printed, and whether it complained (so a quiet "not open" can be told from a failure to look). */
 type LsofAnswer = { stdout: string; complained: boolean };
 
@@ -102,4 +107,21 @@ export async function heldProjectNames(platform: NodeJS.Platform, runner: Runner
   if (files.length === 0) return [];
   const answer = await askLsof(runner, lsofArgs("-Fn", files.sort()));
   return answer ? namesInLsof(answer.stdout) : [];
+}
+
+/**
+ * Whether Unreal's crash reporter listens on `port`: a crashed editor's reporter inherits its
+ * sockets, the MCP server's with them, and keeps the project's port until it is closed. True, false,
+ * or undefined when this computer can't tell (off a Mac, a port Unreal can't use, lsof failed).
+ */
+export async function crashReporterHolds(
+  port: number,
+  platform: NodeJS.Platform,
+  runner: Runner,
+): Promise<boolean | undefined> {
+  const usable = Number.isInteger(port) && port > 0 && port <= HIGHEST_PORT;
+  if (platform !== MAC || !usable) return undefined;
+  const args = ["-w", "-n", "-P", "-t", "-a", "-c", CRASH_REPORTER, `-iTCP:${port}`, "-sTCP:LISTEN"];
+  const answer = await askLsof(runner, args);
+  return answer ? answer.stdout.trim() !== "" : undefined;
 }

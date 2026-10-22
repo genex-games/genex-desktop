@@ -3,6 +3,7 @@
  * skills and the plugins'. Pure, so what each row says is tested without React; `SkillsBrowse.tsx`
  * draws it.
  */
+import { t } from "../../../shared/i18n.ts";
 import { engineLabel } from "../../../shared/model-roles.ts";
 import {
   isFileSkill,
@@ -144,6 +145,6 @@ export function skillChangeWords(change: PluginSkillChange | undefined): string 
   if (!change) return "";
   const parts = (["added", "changed", "removed"] as const)
     .filter((key) => change[key].length)
-    .map((key) => `${SKILLS_WORDS.changed[key]} ${change[key].join(", ")}`);
+    .map((key) => t("{change} {names}", { change: SKILLS_WORDS.changed[key], names: change[key].join(", ") }));
   return parts.join(" · ");
 }

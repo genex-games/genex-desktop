@@ -66,6 +66,11 @@ export function skillScopeFields(
   return fields;
 }
 
+/** A toolbar item's `facts` in canonical form, or undefined when it names none (every game). */
+export function toolbarFacts(raw: { facts?: unknown }, m: Pick<PluginManifest, "apiVersion">): string[] | undefined {
+  return raw.facts === undefined ? undefined : factList(raw.facts, "toolbar[]", m);
+}
+
 /** An MCP server's `facts` in canonical form, or undefined when it names none. */
 export function serverFacts(raw: { facts?: unknown }, m: Pick<PluginManifest, "apiVersion">): string[] | undefined {
   return raw.facts === undefined ? undefined : factList(raw.facts, "mcpServers[]", m);

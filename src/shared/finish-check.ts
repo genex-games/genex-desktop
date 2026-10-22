@@ -9,6 +9,7 @@
  * Renderer-safe: no Node.
  */
 import type { RunScope } from "./custom-events.ts";
+import { MINUTE_MS } from "./duration.ts";
 
 /** Where one round of a finish check stands (`finish_check.step`). Persisted: never rename a value. */
 export const FinishCheckStep = {
@@ -18,6 +19,37 @@ export const FinishCheckStep = {
   Unanswered: "unanswered",
 } as const;
 export type FinishCheckStep = (typeof FinishCheckStep)[keyof typeof FinishCheckStep];
+
+/**
+ * Why a Loop that closed with something still to fix stopped (`run_finished.stillToFix.why`), as its
+ * result card tells the person. The seed's copy is in `loop/finish-contract.ts`. Persisted: never
+ * rename a value.
+ */
+export const StopWhy = {
+  /** Its hours ran out. */
+  Time: "time",
+  /** The reviewer's no's in a row stopped it. */
+  Stuck: "stuck",
+  /** The person stopped it. */
+  Person: "person",
+  /** It ended some other way. */
+  Ended: "ended",
+} as const;
+export type StopWhy = (typeof StopWhy)[keyof typeof StopWhy];
+
+const STOP_WHYS: ReadonlySet<unknown> = new Set(Object.values(StopWhy));
+
+/**
+ * What a Loop that closed without its yes leaves for its result card (`run_finished.stillToFix`,
+ * written by the harness at the close): the last no's lists, why it stopped, and its hours.
+ */
+export interface StillToFix {
+  done: string[];
+  notDone: string[];
+  why: StopWhy;
+  /** A timed Loop's hours; null for an ∞ or goal Loop. */
+  hours: number | null;
+}
 
 /** The words a reviewer's JSON `verdict` answers with (lower-cased). */
 const FINISH_VERDICT = { Yes: "yes", No: "no" } as const;
@@ -33,6 +65,13 @@ export const MAX_FINISH_REJECTIONS = 3;
 export const MAX_FINISH_REASONS = 6;
 /** How long one reason (or why a check got no answer) reads, in characters. */
 export const FINISH_REASON_CHARS = 300;
+/**
+ * With more of a timed Loop's working time left than this, no row of the reviewer's no's stops it:
+ * its lead keeps working on what isn't done. An ∞ Loop names no time left, and its no's stop it.
+ */
+export const FINISH_TIME_LEFT_MS = 20 * MINUTE_MS;
+/** A clip ends at the last space within its cap, when that space leaves at least this share of the cap. */
+const CLIP_AT_WORD_SHARE = 0.8;
 /** How many `{` of a reply the verdict reader tries as an answer's start, and how many stray `}` after one it skips. */
 const VERDICT_STARTS_MAX = 64;
 const STRAY_BRACES = 3;
@@ -54,12 +93,18 @@ export interface FinishCheckPayload extends RunScope {
   proof?: string[];
   /** The observers whose captures the reviewer read. */
   observers?: string[];
-  /** Why the reviewer said no (or what it found when it said yes). */
+  /** What the reviewer checked and found, met or not (why it said yes, or no). */
   reasons?: string[];
+  /** On a no: each thing asked for that the proof doesn't show yet, as the reviewer named it. */
+  notDone?: string[];
+  /** Each thing asked for that the proof shows, in a few words, as the reviewer named it. */
+  done?: string[];
   /** The no's in a row so far. */
   rejections?: number;
   /** This no was the last one the Loop takes: it stops. */
   stopped?: boolean;
+  /** On a no: the timed Loop had more than `FINISH_TIME_LEFT_MS` left, so no row of no's stopped it. */
+  timeLeft?: boolean;
   /** Why the reviewer could not answer. */
   why?: string;
   reviewer?: { engine: string; model?: string };
@@ -73,8 +118,14 @@ export interface FinishRecord {
   step: FinishCheckStep;
   claim: string | null;
   reasons: string[];
+  /** What the reviewer found not done; empty for a record that names none (older records name reasons alone). */
+  notDone: string[];
+  /** What the reviewer found done, in a few words each; empty for a record that names none. */
+  done: string[];
   why: string | null;
   stopped: boolean;
+  /** A no the Loop had time left at: it went on whatever the row of no's. */
+  timeLeft: boolean;
   rejections: number | null;
 }
 
@@ -87,6 +138,20 @@ function reasonsOf(value: unknown): string[] | null {
   if (value === undefined) return [];
   if (!Array.isArray(value) || !value.every((reason) => typeof reason === "string")) return null;
   return value.filter((reason) => reason.trim());
+}
+
+/**
+ * A close's `stillToFix` as the chat reads it: null unless its why is known and it names something
+ * left; a Loop whose time ran out before any final look lists nothing and still says so.
+ */
+export function stillToFixOf(value: unknown): StillToFix | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { done, notDone, why, hours } = value as Record<string, unknown>;
+  const left = reasonsOf(notDone);
+  if (!left || !STOP_WHYS.has(why)) return null;
+  if (!left.length && why !== StopWhy.Time) return null;
+  const timed = typeof hours === "number" && Number.isFinite(hours) && hours > 0;
+  return { done: reasonsOf(done) ?? [], notDone: left, why: why as StopWhy, hours: timed ? hours : null };
 }
 
 /**
@@ -105,20 +170,31 @@ export function finishRecordOf(payload: Record<string, unknown>): FinishRecord |
     step,
     claim: textOrNull(payload.claim),
     reasons,
+    notDone: reasonsOf(payload.notDone) ?? [],
+    done: reasonsOf(payload.done) ?? [],
     why: textOrNull(payload.why),
     stopped: payload.stopped === true,
+    timeLeft: payload.timeLeft === true,
     rejections: isCount(payload.rejections) ? payload.rejections : null,
   };
 }
 
-/** A reviewer's answer read from its reply: yes or no with reasons, or no answer and why. */
+/** A reviewer's answer read from its reply: yes or no with its reasons and what isn't done, or no answer and why. */
 export type ReviewerVerdict =
-  | { step: typeof FinishCheckStep.Accepted | typeof FinishCheckStep.Rejected; reasons: string[] }
+  | {
+      step: typeof FinishCheckStep.Accepted | typeof FinishCheckStep.Rejected;
+      reasons: string[];
+      notDone: string[];
+      done: string[];
+    }
   | { step: typeof FinishCheckStep.Unanswered; why: string };
 
-/** A text clipped to `max` characters, marked when cut. */
+/** A text clipped to `max` characters at a word (inside a long one when none ends near the cap), marked when cut. */
 export function clipReason(value: string, max = FINISH_REASON_CHARS): string {
-  return value.length <= max ? value : `${value.slice(0, max)}…`;
+  if (value.length <= max) return value;
+  const space = value.lastIndexOf(" ", max);
+  const end = space >= max * CLIP_AT_WORD_SHARE ? space : max;
+  return `${value.slice(0, end).trimEnd()}…`;
 }
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -166,11 +242,10 @@ function answerIn(reply: string): Record<string, unknown> | null {
   return null;
 }
 
-/** An answer's reasons (its `reasons`, then its `notDone`), one line each, at most `MAX_FINISH_REASONS`, each clipped. */
-function answerReasons(answer: Record<string, unknown>): string[] {
-  const texts = (value: unknown) =>
-    Array.isArray(value) ? value.filter((one): one is string => typeof one === "string") : [];
-  return [...texts(answer.reasons), ...texts(answer.notDone)]
+/** One list of an answer's (its `reasons` or its `notDone`), one line each, at most `MAX_FINISH_REASONS`, each clipped. */
+function answerLines(value: unknown): string[] {
+  const texts = Array.isArray(value) ? value.filter((one): one is string => typeof one === "string") : [];
+  return texts
     .map((reason) => clipReason(reason.replace(/\s+/g, " ").trim()))
     .filter(Boolean)
     .slice(0, MAX_FINISH_REASONS);
@@ -178,15 +253,19 @@ function answerReasons(answer: Record<string, unknown>): string[] {
 
 /**
  * A reviewer's yes or no from its reply: the JSON `verdict` its brief asks for (fenced or trailing),
- * with its reasons; a no that names none says so. Anything else is no answer.
+ * with its reasons, what isn't done and what is, each a list of its own; a no that names neither of the first two says so.
+ * Anything else is no answer.
  */
 export function reviewerVerdict(summary: string): ReviewerVerdict {
   const answer = answerIn(String(summary ?? ""));
   const word = typeof answer?.verdict === "string" ? answer.verdict.trim().toLowerCase() : "";
-  const reasons = answer ? answerReasons(answer) : [];
-  if (word === FINISH_VERDICT.Yes) return { step: FinishCheckStep.Accepted, reasons };
+  const reasons = answerLines(answer?.reasons);
+  const notDone = answerLines(answer?.notDone);
+  const done = answerLines(answer?.done);
+  if (word === FINISH_VERDICT.Yes) return { step: FinishCheckStep.Accepted, reasons, notDone, done };
   if (word !== FINISH_VERDICT.No) return { step: FinishCheckStep.Unanswered, why: MESSAGE.noVerdict };
-  return { step: FinishCheckStep.Rejected, reasons: reasons.length ? reasons : [MESSAGE.noReason] };
+  const named = reasons.length || notDone.length;
+  return { step: FinishCheckStep.Rejected, reasons: named ? reasons : [MESSAGE.noReason], notDone, done };
 }
 
 /**

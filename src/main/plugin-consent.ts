@@ -45,6 +45,8 @@ export interface PluginConsentResult {
   by: PluginConsentBy;
   /** The person chose Always allow (a connector's card only offers it). */
   always?: boolean;
+  /** On an approval: the person's edit of the card's field (`confirmationInput`), as they sent it. */
+  input?: string;
 }
 
 export interface PluginConsentOptions {
@@ -105,11 +107,15 @@ export class PluginConsent {
     });
   }
 
-  /** The user's answer. False when the id is unknown or already settled — a second click changes nothing. */
-  resolve(consentId: string, approved: boolean, always = false): boolean {
+  /**
+   * The user's answer, with their edit of the card's field when it has one (kept on an approval
+   * only). False when the id is unknown or already settled — a second click changes nothing.
+   */
+  resolve(consentId: string, approved: boolean, always = false, input?: string): boolean {
     const waiting = this.#waiting.get(consentId);
     if (!waiting) return false;
-    waiting.settle({ approved, by: "user", ...(approved && always ? { always: true } : {}) });
+    const edited = approved && input !== undefined ? { input } : {};
+    waiting.settle({ approved, by: "user", ...(approved && always ? { always: true } : {}), ...edited });
     return true;
   }
 

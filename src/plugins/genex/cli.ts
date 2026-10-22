@@ -9,6 +9,7 @@ import { genexTelemetryEnv } from "../../substrate/genex-telemetry.ts";
 import { windowsBaseEnv } from "../../substrate/child-env.ts";
 import { envPath } from "../../substrate/toolchain.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { PLUGIN_SEED_ENV } from "../../substrate/plugins/process.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -28,6 +29,7 @@ const MESSAGE = {
   LocalStop: (timedOut: boolean) =>
     `${timedOut ? "Local wait timed out" : "Stopped locally"}; an accepted Genex job may still be running. Reconcile the existing request before submitting again.`,
   Exited: (code: number | null) => `Genex exited ${code}`,
+  NoCli: "The pinned Genex CLI is missing from this plugin and its seed",
 } as const;
 
 /** Terminal colour codes the CLI prints despite NO_COLOR. */
@@ -46,7 +48,11 @@ export function parseGenexJson(output: string): any {
 
 /**
  * The pinned CLI's whole environment, built from scratch: nothing else of Studio's reaches it.
- * `home` is a publish run's contained HOME, which also commits as the studio (GIT_ENV).
+ * `home` is the run's contained HOME: a publish run's workspace `home/`, or an asset run's in its
+ * project's tools workspace. Every Studio run of the CLI gets one (`GenexCliRun.home`), because the
+ * CLI removes `genex-*` skills from `.claude`, `.codex` and `.cursor` under its HOME before most
+ * commands; the user's own home would lose the skills they installed. A run with one also commits
+ * as the studio (GIT_ENV).
  * The CLI's crash reporting is off unless the user turned it on (`genexTelemetryEnv`). On Windows
  * it also gets what any program needs to start there, its profile folders inside `home` when set.
  */
@@ -70,10 +76,23 @@ export function genexCliEnv(
 }
 
 /** The vendored CLI's entry point, outside the asar archive when packaged. */
-export function genexCliPath(): string {
-  return path
-    .join(path.dirname(require.resolve("@genex-ai/cli-demo/package.json")), "dist/index.js")
-    .replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+export function genexCliPath(seed = process.env[PLUGIN_SEED_ENV]): string {
+  const pkg =
+    (seed ? resolveCliPackage(createRequire(path.join(seed, "package.json"))) : undefined) ??
+    resolveCliPackage(require);
+  if (!pkg) throw new Error(MESSAGE.NoCli);
+  return path.join(path.dirname(pkg), "dist/index.js").replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+}
+
+const CLI_PACKAGE_JSON = "@genex-ai/cli-demo/package.json";
+
+/** Where `require` finds the pinned CLI's package.json, if it does. */
+function resolveCliPackage(from: NodeJS.Require): string | undefined {
+  try {
+    return from.resolve(CLI_PACKAGE_JSON);
+  } catch {
+    return undefined;
+  }
 }
 
 /** One CLI run. `parse` asks for `--json` and returns the parsed answer; otherwise `{ out }`. */
@@ -87,7 +106,8 @@ export interface GenexCliRun {
   signal: AbortSignal | undefined;
   timeoutMs: number;
   parse: boolean;
-  home?: string;
+  /** The run's contained HOME (`genexCliEnv`); never the user's, so every run must name one. */
+  home: string;
   /**
    * The exit codes whose output is the command's answer rather than a failure; `[0]` unless given.
    * `genex cover <file>` exits 1 for a frame Genex refused, which is an answer like any other.
@@ -149,9 +169,16 @@ function cliResult(run: GenexCliRun, code: number | null, output: CliOutput, tim
   const redact = (text: string) => text.replaceAll(run.token, REDACTED);
   if (run.signal?.aborted || timedOut) throw new GenexCliStopped(timedOut);
   const answered = code !== null && (run.answerExitCodes ?? ANSWER_EXIT_CODES).includes(code);
-  if (!answered) throw new Error(redact(output.err || output.out || MESSAGE.Exited(code)).slice(-ERROR_TAIL_CHARS));
+  const failure = () => new Error(redact(output.err || output.out || MESSAGE.Exited(code)).slice(-ERROR_TAIL_CHARS));
+  if (!answered) throw failure();
   if (!run.parse) return { out: redact(output.out) };
-  return parseGenexJson(output.out);
+  try {
+    return parseGenexJson(output.out);
+  } catch (error) {
+    // A non-zero exit named as an answer that printed none is a failure, in the CLI's own words.
+    if (code !== 0) throw failure();
+    throw error;
+  }
 }
 
 /** Spawn the CLI with the token on fd 3 and settle with its answer. */

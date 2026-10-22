@@ -1,4 +1,5 @@
 import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
+import { t } from "../../shared/i18n.ts";
 import { type Entry, EntryKind } from "../chat-entries.ts";
 import type { ToolChipRow } from "../ui/ToolChips.tsx";
 import { toolFailed, ToolState } from "../ui/tool-state.ts";
@@ -89,8 +90,8 @@ export function activitySummary(items: ActivityItem[]): string {
       workSources(items).map((source) => source.name),
       tools.length,
     );
-  if (items.every((item) => item.kind === ActivityItemKind.Thought)) return "Thinking details";
-  return "Work details";
+  if (items.every((item) => item.kind === ActivityItemKind.Thought)) return t("Thinking details");
+  return t("Work details");
 }
 
 /** A tool call in the work that failed. */

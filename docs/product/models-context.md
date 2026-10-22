@@ -2,7 +2,7 @@
 
 ## Selecting a model
 
-The model button opens Main agent, Workers and Reviewers, grouped by provider; Add more models opens
+The model button opens Main agent, Workers and Reviewers by provider; Add more models opens
 setup. Blocked plans keep the request, offering settings or retry.
 
 Claude Code and Codex discover models without generating. The list names each family's newest
@@ -10,9 +10,10 @@ model of the newest generation; older ones switch on in Settings; a model in use
 An unset pick runs the CLI's named default, else a default row. Aliases follow the CLI;
 versions stay pinned.
 
-Settings shows CLI versions; Account rechecks or updates CLIs; failed refreshes offer Try again.
-Unavailable picks block sends; without models, Connect AI model replaces the model pill. Listing
-does not prove access.
+Settings shows CLI versions; Account rechecks or updates them; failed refreshes offer Try again.
+Tabs switch [accounts](../connections-and-context.md#several-accounts-per-subscription).
+Unavailable picks block sends; without models, Connect AI model replaces the model pill. A
+listing proves no access.
 
 Each chat keeps its model, effort and Loop; fresh games inherit the last picks. One effort, on the
 main agent's levels, serves every role (Workers and Reviewers at most high).
@@ -30,15 +31,15 @@ Studio, llama.cpp or TabbyAPI ([details](../connections-and-context.md#your-own-
 The context ring shows reported orchestrator usage and capacity; unknown stays unknown. Its panel
 offers Compact now (or `/compact`; Claude Code and Codex use
 [their own](../connections-and-context.md#compact-now), others hand over); every provider, workers
-included, also compacts automatically. Then plan limits
+included, compacts automatically. Then plan limits
 ([details](../connections-and-context.md#plan-limits)).
 
-Ollama's context is a loaded model's report, else an estimate marked unknown. Tools and images
+Ollama's context is a loaded model's report, else an unknown estimate. Tools and images
 need reported capability; unsupported requests fail before inference.
 
 Game files, instructions, reference images and enabled tools contribute through channels
-([tool setup](assets-plugins.md)). Credentials stay in protected storage, never in messages, logs
-or docs.
+([tool setup](assets-plugins.md)). Credentials stay in protected storage, never in messages
+or logs.
 
 ## Permissions
 

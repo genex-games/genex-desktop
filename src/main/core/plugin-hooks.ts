@@ -28,6 +28,7 @@ import {
   type HookReport,
   type HookStep,
   hookAnswerOf,
+  type PluginHook,
   STOP_OUTLIVING_HOOK_EVENTS,
   WRITING_HOOK_EVENTS,
 } from "../../shared/plugin-hooks.ts";
@@ -125,6 +126,10 @@ const MESSAGE = {
     `[core] ${on} in ${project} stopped by ${by}: ${reason}`,
   logNote: (on: HookEvent, project: string, plugin: string, text: string) =>
     `[core] ${on} in ${project}, ${plugin}: ${text}`,
+  logMessageSkipped: (project: string, why: string) =>
+    `[core] ${HookEvent.CheckpointBefore} steps for a chat message in ${project} skipped; its files are still saved: ${why}`,
+  messageLate: "no time was left in the message's wait.",
+  messagePlanning: "the chat is in Plan mode.",
 } as const;
 
 /** Who a moment is for, and what its steps are told. */
@@ -162,6 +167,17 @@ export interface CheckpointAsk {
   label: string;
   onlyIfUnsaved?: boolean;
   forPerson?: boolean;
+  signal?: AbortSignal;
+}
+
+/**
+ * A chat message's checkpoint about to be taken: the game, the chat, and the time (on the hook bus's
+ * clock) by which its steps must be done, so the snapshot still lands within the message's wait.
+ */
+export interface MessageCheckpointAsk {
+  project: string;
+  threadId: string;
+  deadline: number;
   signal?: AbortSignal;
 }
 
@@ -231,6 +247,15 @@ function hookContextOf(on: HookEvent, scope: HookScope): HookContext {
 export interface HookServiceOptions {
   /** A signal that aborts once `ms` passed (`AbortSignal.timeout`). */
   timeout?: (ms: number) => AbortSignal;
+  /** Now, on the clock a chat message's deadline is read on (`Date.now`). */
+  now?: () => number;
+}
+
+/** How a moment's steps run: Stop ends them, a shared limit (always around an agent's call), and who reads each answer. */
+interface StepRunOptions {
+  signal?: AbortSignal | undefined;
+  limitMs?: number | undefined;
+  onAnswer?: (step: HookStep, answer: HookAnswer) => void;
 }
 
 /** Genex's moments, and the plugin steps each runs for a game. */
@@ -238,6 +263,7 @@ export class HookService {
   readonly #core: StudioCore;
   readonly #x: Pick<CoreInternals, "locks" | "planning" | "observers">;
   readonly #timeout: (ms: number) => AbortSignal;
+  readonly #now: () => number;
 
   constructor(
     core: StudioCore,
@@ -247,6 +273,7 @@ export class HookService {
     this.#core = core;
     this.#x = x;
     this.#timeout = options.timeout ?? ((ms) => AbortSignal.timeout(ms));
+    this.#now = options.now ?? Date.now;
   }
 
   /**
@@ -275,7 +302,7 @@ export class HookService {
       options.signal?.throwIfAborted();
       // Once its locks are held, a restore's after steps (a restart's) reopen what was closed: no Stop cuts them.
       const signal = STOP_OUTLIVING_HOOK_EVENTS.has(on) ? undefined : options.signal;
-      const report = await this.#run(on, steps, scope, binding, signal, options.limitMs);
+      const report = await this.#run(on, steps, scope, binding, { signal, limitMs: options.limitMs });
       this.#logNotes(on, scope, report);
       return report;
     } finally {
@@ -320,6 +347,41 @@ export class HookService {
   }
 
   /**
+   * Before a chat message's checkpoint: the `checkpoint.before` steps that ask to run for each
+   * message (`PluginHook.messages`), under their locks, never a `checkpoint.after` step. They live
+   * within the message's short wait: the lock wait and their shared limit are what is left of it by
+   * `deadline`. Plan mode, a lock not given, or no time left skips them, logged; a block or a step
+   * cut short is logged too. The caller saves the folder whatever they answered, so nothing here
+   * throws for a step.
+   */
+  async prepareMessageCheckpoint(ask: MessageCheckpointAsk): Promise<HookReport> {
+    const scope: HookScope = { project: ask.project, threadId: ask.threadId };
+    const steps = await this.#messagePlan(ask.project);
+    if (!steps.length) return EMPTY_HOOK_REPORT;
+    if (this.#left(ask.deadline) <= 0) return this.#messageSkipped(scope, MESSAGE.messageLate, {});
+    if (await this.#planning(scope)) return this.#messageSkipped(scope, MESSAGE.messagePlanning, PLAN_HELD);
+    const binding = await this.#binding(scope);
+    const on = HookEvent.CheckpointBefore;
+    let release = NO_RELEASE;
+    try {
+      const waitMs = Math.min(HOOK_LOCK_WAIT_MS[on], this.#left(ask.deadline));
+      release = await this.#hold(on, steps, binding, scope, ask.signal, waitMs);
+    } catch (error) {
+      if (!isLockRefused(error)) throw error;
+      return this.#messageSkipped(scope, error.message, heldBy(error));
+    }
+    try {
+      const limitMs = this.#left(ask.deadline);
+      if (limitMs <= 0) return this.#messageSkipped(scope, MESSAGE.messageLate, {});
+      const report = await this.#run(on, steps, scope, binding, { signal: ask.signal, limitMs });
+      this.#logNotes(on, scope, report);
+      return report;
+    } finally {
+      release();
+    }
+  }
+
+  /**
    * Restore a game folder (`run`) between its `restore.before` and `restore.after` steps, under
    * their locks. Plan mode holds a run's or a chat's restore even when no plugin has steps there. A
    * block before (or Plan mode, or a lock not given) throws `HookBlockedError` and
@@ -353,7 +415,7 @@ export class HookService {
       throw error;
     }
     try {
-      const opened = await this.#run(HookEvent.RestoreBefore, before, scope, binding, options.signal);
+      const opened = await this.#run(HookEvent.RestoreBefore, before, scope, binding, { signal: options.signal });
       if (opened.blocked) throw new HookBlockedError(opened.blocked.reason);
       this.#logNotes(HookEvent.RestoreBefore, scope, opened);
       try {
@@ -375,7 +437,7 @@ export class HookService {
     before: HookStep[],
     after: HookStep[],
   ): Promise<CheckpointAnswer> {
-    const opened = await this.#run(HookEvent.CheckpointBefore, before, scope, binding, ask.signal);
+    const opened = await this.#run(HookEvent.CheckpointBefore, before, scope, binding, { signal: ask.signal });
     if (opened.blocked) return { blocked: opened.blocked.reason };
     let snapshot: Awaited<ReturnType<StudioCore["snapshot"]>>;
     try {
@@ -401,9 +463,10 @@ export class HookService {
     const answered: Array<{ step: HookStep; answer: HookAnswer }> = [];
     let report: HookReport;
     try {
-      report = await this.#run(HookEvent.CheckpointAfter, after, scope, binding, signal, undefined, (step, answer) =>
-        answered.push({ step, answer }),
-      );
+      report = await this.#run(HookEvent.CheckpointAfter, after, scope, binding, {
+        signal,
+        onAnswer: (step, answer) => answered.push({ step, answer }),
+      });
     } catch (error) {
       this.#log(MESSAGE.logNote(HookEvent.CheckpointAfter, scope.project, GENEX, errorMessage(error)));
       return { ...EMPTY_HOOK_REPORT, notes: [{ plugin: GENEX, text: MESSAGE.afterStopped }] };
@@ -428,11 +491,7 @@ export class HookService {
   /** The restore's after steps: their notes, and a step that failed, logged; never thrown over the restore's own outcome. */
   async #closeRestore(after: HookStep[], scope: HookScope, binding: PluginBinding) {
     try {
-      this.#logNotes(
-        HookEvent.RestoreAfter,
-        scope,
-        await this.#run(HookEvent.RestoreAfter, after, scope, binding, undefined),
-      );
+      this.#logNotes(HookEvent.RestoreAfter, scope, await this.#run(HookEvent.RestoreAfter, after, scope, binding));
     } catch (error) {
       this.#log(MESSAGE.logNote(HookEvent.RestoreAfter, scope.project, GENEX, errorMessage(error)));
     }
@@ -446,11 +505,37 @@ export class HookService {
     return game ? this.#core.plugins.hookPlan(on, game, own) : [];
   }
 
-  /** Whether some enabled plugin (only `own`, when named) hooks the moment at all: no game is read otherwise. */
-  #anyHook(on: HookEvent, own: string | undefined): boolean {
+  /** The steps a chat message's checkpoint runs for the game (`messageCheckpointPlan`): none for a folder that can't be read. */
+  async #messagePlan(project: string): Promise<HookStep[]> {
+    if (!this.#anyHook(HookEvent.CheckpointBefore, undefined, (hook) => hook.messages === true)) return [];
+    const game = await this.#core.games.kindOf(project).catch(() => null);
+    return game ? this.#core.plugins.messageCheckpointPlan(game) : [];
+  }
+
+  /**
+   * Whether some enabled plugin (only `own`, when named) hooks the moment at all, with a hook `keep`
+   * picks when given: no game is read otherwise.
+   */
+  #anyHook(on: HookEvent, own: string | undefined, keep: (hook: PluginHook) => boolean = () => true): boolean {
     return this.#core.plugins
       .list()
-      .some((p) => p.enabled && (!own || p.manifest.id === own) && p.manifest.hooks?.some((hook) => hook.on === on));
+      .some(
+        (p) =>
+          p.enabled &&
+          (!own || p.manifest.id === own) &&
+          p.manifest.hooks?.some((hook) => hook.on === on && keep(hook)),
+      );
+  }
+
+  /** How long is left until `deadline`, on the bus's clock; never less than nothing. */
+  #left(deadline: number): number {
+    return Math.max(0, deadline - this.#now());
+  }
+
+  /** A chat message's steps Genex held back: logged, and reported as its hold. */
+  #messageSkipped(scope: HookScope, reason: string, held: HookHeld): HookReport {
+    this.#log(MESSAGE.logMessageSkipped(scope.project, reason));
+    return heldReport(reason, held);
   }
 
   /** Why a writing moment waits for the plan, or null: the person's own action never does. */
@@ -551,22 +636,23 @@ export class HookService {
   }
 
   /**
-   * Each step in turn, read for its answer; a stopping block ends the moment. Around an agent's call
-   * the steps share one limit: once it runs out, the step running fails and no later step runs.
+   * Each step in turn, read for its answer; a stopping block ends the moment. Around an agent's call,
+   * and for a chat message's checkpoint, the steps share one limit: once it runs out, the step
+   * running fails and no later step runs.
    */
   async #run(
     on: HookEvent,
     steps: readonly HookStep[],
     scope: HookScope,
     binding: PluginBinding,
-    signal: AbortSignal | undefined,
-    limitMs: number = HOOK_CALL_MS[on],
-    onAnswer?: (step: HookStep, answer: HookAnswer) => void,
+    options: StepRunOptions = {},
   ): Promise<HookReport> {
+    const { signal, onAnswer } = options;
     const report: HookReport = { blocked: null, pending: null, notes: [], images: [], ran: [] };
     const told: PluginBinding = { ...binding, hook: hookContextOf(on, scope) };
-    const shared = Math.min(limitMs, HOOK_CALL_MS[on]);
-    const limit = TOOL_MOMENTS.has(on) && steps.length ? this.#timeout(shared) : undefined;
+    const limitMs = options.limitMs ?? (TOOL_MOMENTS.has(on) ? HOOK_CALL_MS[on] : undefined);
+    const limit =
+      limitMs !== undefined && steps.length ? this.#timeout(Math.min(limitMs, HOOK_CALL_MS[on])) : undefined;
     for (const step of steps) {
       const name = `${step.plugin}__${step.tool}`;
       report.ran.push(name);

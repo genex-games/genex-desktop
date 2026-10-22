@@ -13,7 +13,7 @@ import { gitFile } from "../helpers/git.ts";
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
@@ -97,6 +97,7 @@ import {
 } from "../../src/harness-seed/loop/replan.ts";
 import { isTransientProviderError, StopReason, withProviderPatience } from "../../src/harness-seed/loop/outage.ts";
 import { forgetProviderLosses, noteProviderLoss, providerLossFor } from "../../src/harness-seed/loop/provider-loss.ts";
+import { forgetSandboxRefusals, sandboxRefusalOn } from "../../src/harness-seed/loop/workers/sandbox-refusal.ts";
 import {
   HARNESS_CHECKS,
   loadCatalogue,
@@ -137,6 +138,9 @@ import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/mes
 import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
 import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
 import { steeredCall } from "../../src/harness-seed/loop/chat-steer.ts";
+import { nextWords, personWrote } from "../../src/harness-seed/loop/person-wrote.ts";
+import { switchedTurnPrompt, WAIT_ENDED } from "../../src/harness-seed/loop/steer-switch-prompts.ts";
+import { steeredTurnPrompt } from "../../src/harness-seed/loop/chat-steer-prompts.ts";
 import { leadLineOf, openLeadLine } from "../../src/harness-seed/loop/director/lead-line.ts";
 import { handleUserMessage } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
@@ -146,6 +150,14 @@ import { cancelThread } from "../../src/harness-seed/loop/main.ts";
 import type { Studio } from "../../src/harness-seed/loop/studio-state.ts";
 import type { Host } from "../../src/harness-seed/types/harness.d.ts";
 import { wakeTools } from "../../src/harness-seed/loop/director/wake-prompts.ts";
+import { folderLabelOf } from "../../src/harness-seed/loop/workers/identity.ts";
+
+it("WIN-FOLDER-LABEL: a Windows game folder is named by its last two parts, never the whole C:\\Users path", () => {
+  assert.equal(folderLabelOf("C:\\Users\\ana\\AI Games\\rift", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf("C:/Users/ana/AI Games/rift/", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf("/Users/ana/AI Games/rift", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf(null, "rift"), "rift");
+});
 
 it("AUDIT-WAKE-TOOL: shortened worker guidance still tells a waking lead to end its turn", () => {
   const tool = wakeTools(DIRECTOR_TOOLS, { lead: true }).find((tool) => tool.name === "worker_start");
@@ -3916,6 +3928,96 @@ describe("a Loop chat asked for research (corner-guy)", () => {
 });
 
 /**
+ * "Can you start a 3h Loop…" sent with Mode on Auto (Loop off) reached a contractor with no launch
+ * tool: it worked on in its own turn and said "The 3-hour loop starts now" while no run started and
+ * the Builds bar stayed empty. Asked in words, an Auto chat starts the Loop itself, for the hours named.
+ */
+describe("a Loop asked for in words with Mode on Auto (auto-loop)", () => {
+  /** A game chat on a delegated engine whose answer records `launch`; the run's own sessions end at once. */
+  async function autoChat(launch: Record<string, unknown>) {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const project = "seyda-neen";
+    await rig.core.games.scaffold(project);
+    const thread = await rig.core.createGameThread(project);
+    const chat: DelegateRequest[] = [];
+    rig.core.engines.register({
+      id: "vendor",
+      label: "Vendor",
+      kind: "delegated",
+      status: async () => ({ code: "ready", detail: "signed in" }),
+      models: async () => [],
+      defaultModel: async () => "vendor-model",
+      delegate: async (request: DelegateRequest) => {
+        const inTheGame = request.cwd?.endsWith(`/games/${project}`) === true;
+        const ran = { ok: true, engine: "vendor", turns: 1, usage: {} };
+        if (request.director || !inTheGame || chat.length > 0)
+          return { ...ran, sessionId: "run-session", summary: "Looked around." };
+        chat.push(request);
+        return {
+          ...ran,
+          sessionId: "auto-chat",
+          summary: "Starting the Loop.",
+          studioToolCalls: [{ name: "start_autopilot", args: launch }],
+        };
+      },
+    });
+    return { rig, thread, chat };
+  }
+  type Json = Record<string, any>;
+  const ask = { goal: "The Morrowind start scene", direction: "AAA swamp town at dawn" };
+  /** The thread's registered runs in `log`, by their payloads. */
+  const runsIn = (log: Parameters<typeof customEvents>[0], thread: string): Json[] =>
+    customEvents(
+      log.filter((e) => e.thread_id === thread),
+      "run_registered",
+    );
+  /** The run the chat registered, once it has. */
+  async function registered(rig: Rig, thread: string): Promise<Json | undefined> {
+    const events = await waitForLog(rig.core, (log) => runsIn(log, thread).length > 0, 30_000, "run_registered");
+    await rig.core.stopThread(thread);
+    return runsIn(events, thread)[0];
+  }
+
+  it('auto-loop. "start a 3h Loop" in Auto: the chat is handed the Loop\'s start and a 3-hour run starts', async () => {
+    const { rig, thread, chat } = await autoChat({ ...ask, hours: 3 });
+    await rig.core.sendUserMessage("Can you start a 3h Loop on my Morrowind scene?", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+
+    const launch = chat[0]?.interviewTools?.find((tool) => tool.name === "start_autopilot");
+    assert.ok(launch, "an Auto chat may start the Loop it is asked for");
+    assert.ok((launch?.parameters as Json)?.properties?.hours, "with the hours the user named");
+    assert.match(String(chat[0]?.prompt), /Never say a Loop started/);
+    assert.equal(run?.goal, ask.goal);
+    assert.equal(run?.budgets?.wallClockMs, 3 * HOUR_MS, "for the hours named");
+    assert.notEqual(run?.budgets?.untilSatisfied, true);
+  });
+
+  it('auto-loop. hours sent as text ("2h", as engines that bridge every field as text send them) still cap the run', async () => {
+    const { rig, thread, chat } = await autoChat({ ...ask, hours: "2h" });
+    await rig.core.sendUserMessage("Start a 2h Loop", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+    assert.equal(run?.budgets?.wallClockMs, 2 * HOUR_MS);
+    const launch = chat[0]?.interviewTools?.find((tool) => tool.name === "start_autopilot");
+    assert.equal(launch?.onlyWhenAsked, true, "called only when asked: messages still join the turn");
+  });
+
+  it('auto-loop. "30m" is half an hour, never 30 hours', async () => {
+    const { rig, thread } = await autoChat({ ...ask, hours: "30m" });
+    await rig.core.sendUserMessage("Start a 30 minute Loop", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+    assert.equal(run?.budgets?.wallClockMs, HOUR_MS / 2);
+  });
+
+  it('auto-loop. a Loop "until it\'s done" in Auto: no hours named, the run goes until what was asked is verified', async () => {
+    const { rig, thread } = await autoChat(ask);
+    await rig.core.sendUserMessage("Start a Loop and don't stop until it's really AAA", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+    assert.equal(run?.budgets?.untilSatisfied, true);
+  });
+});
+
+/**
  * A resumed run read its inbox from the whole log as if it were new: a wrap-up the user asked
  * of the session before the Resume told it to skip every builder and integrate having built
  * nothing (the host only narrowed this by refusing a finish on a run that was not running), and
@@ -4459,8 +4561,14 @@ function liveChat() {
   const log: Array<{ id: string; data: Record<string, any> }> = [];
   const steers: Array<Record<string, any>> = [];
   const answered: string[] = [];
-  /** The host's knobs: a gate on appends, a hook before each read, and whether it cuts a lead short. */
-  const hooks: { gate?: Promise<void>; gated: number; beforeList?: () => Promise<void>; cuts: boolean } = {
+  /** The host's knobs: a gate on appends, a hook before each read, whether it cuts a lead short, and a hold on its answer to a steer. */
+  const hooks: {
+    gate?: Promise<void>;
+    gated: number;
+    beforeList?: () => Promise<void>;
+    cuts: boolean;
+    steerAnswer?: Promise<void>;
+  } = {
     gated: 0,
     cuts: true,
   };
@@ -4482,6 +4590,7 @@ function liveChat() {
     }
     if (method === HostMethod.EngineSteer) {
       steers.push(p);
+      await hooks.steerAnswer;
       // The host cuts a lead that cannot read input mid-turn short — unless it is asked not to.
       const cut = hooks.cuts && p.interrupt !== false;
       return { how: cut ? "interrupt" : null, accepted: cut ? p.messages.map((m: { id: string }) => m.id) : [] };
@@ -4539,7 +4648,8 @@ function liveChat() {
       void say(text);
     });
   };
-  function loopRun({ resume = false } = {}) {
+  /** A run of the row's; `sessionId` is the session its lead resumes, null for a lead that opens a fresh one. */
+  function loopRun({ resume = false, sessionId = "lead-1" as string | null } = {}) {
     const notes: Array<{ at: number; seq: number; text: string; kind?: string }> = [];
     const worker = { id: "sky", title: "Sky", state: "running", iterations: [], brief: "paint the sky" };
     const state = {
@@ -4595,7 +4705,7 @@ function liveChat() {
     /** The run, each of the lead's turns answered by `script`; its line released when it ends, as director.ts does. */
     const run = async (script: (turn: number) => unknown) => {
       const talk: DirectorTalk = {
-        sessionId: "lead-1",
+        sessionId,
         keep: async (result) => {
           if (result?.sessionId) talk.sessionId = result.sessionId;
         },
@@ -4753,6 +4863,29 @@ describe("a provider lost mid-run", () => {
     assert.equal(w.state.limit?.retryAfterMs, null);
   });
 
+  // Live, 2026-10-15: a 2-hour Unreal Loop ended 6 minutes in when the Mac's network dropped, and
+  // its closing words said the time ran out.
+  it("D9b. a lead turn that couldn't reach the API (no network, no DNS) pauses the run like any outage", async () => {
+    const unreachable = [
+      "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)",
+      "API Error: connect ENETUNREACH 160.79.104.10:443",
+      "API Error: connect EHOSTUNREACH 160.79.104.10:443",
+      "API Error: getaddrinfo ENOTFOUND api.anthropic.com",
+      "API Error: ENETDOWN",
+    ];
+    for (const errorText of unreachable) {
+      const w = clockNight();
+      const { talk } = w.lead((turn) =>
+        turn === 1
+          ? { ok: true, sessionId: "lead-1" }
+          : { ok: false, stopReason: "error", errorText, sessionId: "lead-1" },
+      );
+      const outcome = await w.run(talk);
+      assert.equal(outcome.wrapCause, null, errorText);
+      assert.equal(w.state.limit?.kind, "unavailable", errorText);
+    }
+  });
+
   it("D10. a sign-in a judge lost while the lead slept pauses the run before the lead is woken", async () => {
     const w = clockNight();
     try {
@@ -4819,6 +4952,30 @@ describe("a provider lost mid-run", () => {
     const turns = calls.filter((c) => c.method === "engine.delegate").map((c) => c.params);
     return { result, appended, turns };
   };
+
+  it("WIN-275. a build the engine refused because its sandbox cannot run here stops the facet on its first attempt: no judge, no strike, no outage wait, and no later worker starts on that engine", async () => {
+    const said =
+      "Claude Code cannot run its sandbox on this computer, so it refused the session before it began: sandbox required but unavailable: the Windows sandbox is not active on this session (feature gate off)";
+    try {
+      const { result, appended, turns } = await facetOnStub(() => ({
+        ok: false,
+        stopReason: "sandbox_unavailable",
+        errorText: said,
+        turns: 0,
+        usage: {},
+        engine: "codex",
+      }));
+      assert.equal(turns.length, 1, "a refused build is not tried a second time");
+      assert.equal(result.stopCode, "sandbox-unavailable");
+      assert.ok(result.stoppedBecause.includes("sandbox required but unavailable"), result.stoppedBecause);
+      assert.deepEqual(appended("facet_iteration"), [], "there is no build to judge");
+      assert.deepEqual(appended("facet_circuit_break"), []);
+      assert.deepEqual(appended("facet_provider_outage"), []);
+      assert.ok(sandboxRefusalOn("codex"), "the refusal holds the engine for the next worker start");
+    } finally {
+      forgetSandboxRefusals();
+    }
+  });
 
   it("D12. a worker's build turn that meets a disabled account is an outage, never a broken round: it waits, and the run's stop keeps its work", async () => {
     try {
@@ -5210,6 +5367,275 @@ describe("live chat during a build, reviewed", () => {
     await handleUserMessage(studio as never, { threadId: "t_pass", text: "what did you finish?" }).catch(() => {});
     assert.equal(cancels.has("t_pass"), false, "the chat takes the message");
     assert.equal(pass.cancelled, true, "the learning pass Stop reached stays stopped");
+  });
+
+  /*
+   * A Codex lead could not hear the chat for its whole first turn — up to an open Loop's 45 minutes:
+   * "stop, just test computer use" was shown as delivered and read by nobody until the person pressed
+   * Stop. A first turn with a session to resume is cut for the words like any other.
+   */
+  it("LC12. a lead's first turn with a session to resume is cut short for the user's words, told so, and asked to finish", async () => {
+    const chat = liveChat();
+    const one = chat.loopRun();
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
+      void chat.say("stop building, just test computer use");
+      await settleOn(() => chat.steers.length > 0);
+      return { ok: false, stopReason: "stopped", sessionId: "lead-1", turns: 4 };
+    });
+    assert.equal(chat.steers[0]?.interrupt, true, "the first turn may be cut for the words");
+    // Read mid-turn by an engine that can, the words say how a stop is done, never only "carry on".
+    assert.match(String(chat.steers[0]?.messages[0]?.text), /stop or finish[^\n]*wrap_up/i);
+    assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
+    const resumed = String(one.calls[1]?.prompt);
+    assert.match(resumed, /cut short/i, "the resumed turn is told it was cut");
+    assert.match(resumed, /stop or finish[^\n]*wrap_up/i, "a stop is wrap_up, not finishing what it was doing");
+    assert.deepEqual(userSaysIn(resumed), ["stop building, just test computer use"]);
+  });
+
+  it("LC13. a first turn cut before its session began is asked its brief again with the words, never crashing the run", async () => {
+    const chat = liveChat();
+    // The host's answer to the cut reaches the loop only after the failure the cut caused.
+    let answer = () => {};
+    chat.hooks.steerAnswer = new Promise((resolve) => {
+      answer = resolve;
+    });
+    const one = chat.loopRun();
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
+      void chat.say("stop building");
+      await settleOn(() => chat.steers.length > 0);
+      setImmediate(answer);
+      // The host was still preparing the session's tools when the cut came.
+      throw new EngineError("aborted", "codex", "stopped before the contractor started");
+    });
+    assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
+    const [brief = "", again = ""] = one.calls.map((c) => c.prompt);
+    assert.ok(again.includes(brief), "the brief is asked again");
+    assert.deepEqual(userSaysIn(again), ["stop building"]);
+  });
+
+  it("LC14. a first turn with no session to resume yet is left alone: the words open the next message", async () => {
+    const chat = liveChat();
+    const one = chat.loopRun({ sessionId: null });
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
+      void chat.say("is it started?");
+      await settleOn(() => chat.steers.length > 0);
+      return { ok: true, sessionId: "lead-9", turns: 2 };
+    });
+    assert.equal(chat.steers[0]?.interrupt, false, "a cut would leave nothing to resume");
+    assert.deepEqual(userSaysIn(String(one.calls[1]?.prompt)), ["is it started?"]);
+  });
+
+  it("LC15. a picture sent before (its file the game's already) reaches the lead: the chat names the file it is saved as", async () => {
+    const chat = liveChat();
+    chat.loopRun();
+    // Saved before, so this message added no file of its own: only `pictureFiles` names where it is.
+    const again = { ...picture, pickedImages: 1, references: [], pictureFiles: ["references/sky-1a2b3c4d.png"] };
+    await chat.say("this one again", again);
+    assert.deepEqual(standing(chat), { "this one again": `delivered ${chat.RUN}` });
+    const heard = chat.log.find((e) => e.data.event_type === "run_steering")?.data.payload.text;
+    assert.match(String(heard), /references\/sky-1a2b3c4d\.png/);
+  });
+
+  it("LC16. a picture the person's words name by its path (no picture attached) reaches the lead with the words", async () => {
+    const chat = liveChat();
+    chat.loopRun();
+    await chat.say("look at ~/Desktop/sky.png", { ...picture, pickedImages: 0 });
+    assert.deepEqual(standing(chat), { "look at ~/Desktop/sky.png": `delivered ${chat.RUN}` });
+  });
+
+  it("LC17. in the wrap-up the lead still hears the person, and the chat answers what they said once the build closes", async () => {
+    const chat = liveChat();
+    const one = chat.loopRun();
+    one.line.wrapUp();
+    await chat.say("also add rain");
+    // Told to the lead, with the wrap-up's words; never delivered to the run: the chat owes the answer.
+    assert.deepEqual(standing(chat), { "also add rain": "queued" });
+    const told = chat.log.filter((e) => e.data.event_type === "run_steering");
+    assert.equal(told.length, 1);
+    assert.match(String(told[0]?.data.payload.text), /^also add rain\n\n\(You are wrapping up this build/);
+    assert.equal(told[0]?.data.payload.kept, true, "marked as only told: the chat shows it where the lead heard it");
+    // Never handed again while it waits, however the queue looks.
+    await chat.say("and fog");
+    await settleOn(() => chat.log.filter((e) => e.data.event_type === "run_steering").length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(chat.log.filter((e) => e.data.event_type === "run_steering").length, 2, "each told once");
+    assert.deepEqual(chat.answered, [], "nothing answered while the build closes");
+    await one.line.release();
+    chat.closeBuild();
+    assert.ok(await settleOn(() => chat.answered.length === 2));
+    assert.deepEqual(chat.answered, ["also add rain", "and fog"], "the chat answers both, in order, once it closed");
+  });
+
+  it("LC18. a lead in its wrap-up turn hears what the person sends at its next step, told the chat takes up new work", async () => {
+    const chat = liveChat();
+    const one = chat.loopRun();
+    // Working time is over: the first turn is the wrap-up.
+    one.n.softDeadline = chat.at.now - 1;
+    await one.run(async (turn) => {
+      if (turn === 1) {
+        void chat.say("also add rain");
+        await settleOn(() => chat.steers.length > 0);
+      }
+      one.state.finished = true;
+      return worked;
+    });
+    assert.equal(chat.steers[0]?.interrupt, false, "the wrap-up is never cut short");
+    assert.match(String(chat.steers[0]?.messages[0]?.text), /also add rain[\s\S]*You are wrapping up this build/);
+    chat.closeBuild();
+    assert.ok(await settleOn(() => chat.answered.length === 1));
+    assert.deepEqual(chat.answered, ["also add rain"], "and the chat answers it once the build closed");
+  });
+});
+
+/**
+ * Messages without a queue: a message the person sent while the chat's answer ran 3 workers for 28
+ * minutes had switched the Loop on, so it never joined the answer and sat in Queued for 21 minutes;
+ * a Stop pressed to get it going handed over at once, and the next press stopped it. Now it reaches
+ * the answer at its next step, which goes on with its settings, and a wait ends when the person writes.
+ */
+describe("messages without a queue", () => {
+  const ok = (summary: string, sessionId: string) => ({
+    ok: true,
+    summary,
+    sessionId,
+    turns: 1,
+    usage: {},
+    engine: "x",
+  });
+  const cut = (sessionId: string) => ({
+    ok: false,
+    summary: "",
+    stopReason: "stopped",
+    sessionId,
+    turns: 2,
+    usage: {},
+    engine: "x",
+  });
+
+  it("NQ1. the Loop switched on while the chat's answer works reaches that answer at its next step, which goes on in the Loop", async () => {
+    const log: Array<{ id: string; data: Record<string, any> }> = [];
+    let onCut = () => {};
+    const host = {
+      call: async (method: string, p: Record<string, any>) => {
+        if (method === HostMethod.EventsAppend)
+          for (const data of p.batch) log.push({ id: String(log.length + 1).padStart(6, "0"), data });
+        if (method === HostMethod.EventsList) return log;
+        if (method === HostMethod.EngineSteer) {
+          onCut();
+          return { how: "interrupt", accepted: p.messages.map((m: { id: string }) => m.id) };
+        }
+        return null;
+      },
+      notify: () => {},
+    };
+    const legs: Array<{ prompt: string; resume: string | null; loop: boolean }> = [];
+    let running = () => {};
+    const working = new Promise<void>((resolve) => {
+      running = resolve;
+    });
+    const queue = new MessageQueue(host as never, async (action, steer) => {
+      if (action.text !== "build the boss fight") return;
+      await steeredCall({ cancelled: false }, steer, {
+        prompt: "BRIEF",
+        call: async (prompt, resume) => {
+          legs.push({ prompt, resume, loop: false });
+          const cutNow = new Promise<void>((resolve) => {
+            onCut = resolve;
+          });
+          running();
+          await cutNow;
+          return cut("s1") as never;
+        },
+        switches: {
+          changes: (item) => Boolean(item.autopilot),
+          takes: () => true,
+          apply: async () => ({
+            call: async (prompt, resume) => {
+              legs.push({ prompt, resume, loop: true });
+              return ok("Starting the Loop.", "s1") as never;
+            },
+            newSession: false,
+            notes: ["The Loop is on."],
+          }),
+        },
+      });
+    });
+    await queue.enqueue({
+      type: "user_message",
+      threadId: "chat",
+      text: "build the boss fight",
+      engine: "claude-code",
+    });
+    await working;
+    await queue.enqueue({
+      type: "user_message",
+      threadId: "chat",
+      text: "make it in the loop",
+      engine: "claude-code",
+      autopilot: {},
+    });
+    assert.ok(await settleOn(() => legs.length === 2));
+    const states = () => [...messageQueueState(log as never).messages.values()].map((m) => [m.action?.text, m.state]);
+    assert.deepEqual(legs[1], {
+      prompt: switchedTurnPrompt(["The Loop is on."], steeredTurnPrompt(["make it in the loop"])),
+      resume: "s1",
+      loop: true,
+    });
+    assert.ok(
+      await settleOn(
+        () =>
+          [...messageQueueState(log as never).messages.values()].find((m) => m.action?.text === "make it in the loop")
+            ?.state === "delivered",
+      ),
+      JSON.stringify(states()),
+    );
+    queue.stop();
+  });
+
+  it("NQ2. a lead's wait for a busy reviewer ends when the person writes, and says so", async () => {
+    let calls = 0;
+    const words = nextWords("chat_nq2");
+    const busy = Object.assign(new Error("overloaded_error: the provider is busy"), {});
+    const waiting = withProviderPatience(
+      { cancelled: false, setStatus: () => {} } as never,
+      async () => {
+        calls += 1;
+        throw busy;
+      },
+      { delays: [60_000, 60_000], endEarly: { when: words.ended, why: WAIT_ENDED.judge } },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    personWrote("chat_nq2");
+    await assert.rejects(waiting, (err: Error) => err.message === WAIT_ENDED.judge);
+    assert.equal(calls, 1, "it stopped waiting at once, without asking again");
+    words.cancel();
+    // A real failure after the person wrote is still the caller's: it is never said to be their words.
+    const after = nextWords("chat_nq2");
+    personWrote("chat_nq2");
+    const refused = Object.assign(new Error("invalid_request_error: the prompt is too long"), {});
+    await assert.rejects(
+      withProviderPatience(
+        { cancelled: false, setStatus: () => {} } as never,
+        async () => {
+          throw refused;
+        },
+        { delays: [60_000], endEarly: { when: after.ended, why: WAIT_ENDED.judge } },
+      ),
+      (err: Error) => err === refused,
+    );
+    after.cancel();
   });
 });
 
@@ -5655,7 +6081,7 @@ describe("the Loop's time limit", () => {
     assert.doesNotMatch(unbounded, /Building until about/, "∞ has no end time to promise");
     assert.match(unbounded, /required outcomes are verified/);
     assert.ok(unbounded.includes(ceilingDay), `the ceiling is dated (${ceilingDay}): ${unbounded}`);
-    assert.match(unbounded, /keep the app open and the Mac awake/i);
+    assert.match(unbounded, /keep the app open and the computer awake/i);
     assert.match(unbounded, /resumes itself|tap on Resume/);
 
     const capped = launchPromise({ wallClockMs: 3_600_000 }, null, now);
@@ -9136,6 +9562,32 @@ describe("C++ · raylib on the web lane (M3a)", () => {
   }
 });
 
+describe("an engine's plugin turned on from the chat's card (mp-unity)", () => {
+  // A chat asked for a Unity game while the Unity plugin was off; its card turned the plugin on and
+  // the same session resumed with "Go on with what I asked". The resumed brief carried no kind rules,
+  // so the lead never heard "When the request names Unity, call unity__new-game" and launched a Loop:
+  // the Loop gave the kindless folder the web starter, and unity__new-game was refused under the run.
+  it("tells a resumed session of a folder with no kind yet which tool makes each kind on offer", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const { toolCall } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const engine = "claude-code";
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    const ask = "I turned on the Unity plugin from your card. Go on with what I asked.";
+    const launch = { toolName: "start_autopilot", hours: 0.5, frameCount: 0, project: "cube-arena" };
+    const resumed = buildContractorBrief({ ask, resume: true, engine, facts: [], kinds: [unity], launch });
+    assert.ok(resumed.includes(`When the request names Unity, call ${toolCall(engine, unity.tool)}`), resumed);
+    const made = buildContractorBrief({
+      ask,
+      resume: true,
+      engine,
+      facts: [{ id: "unity-project", path: "unity" }],
+      kinds: [unity],
+      launch,
+    });
+    assert.ok(!made.includes(toolCall(engine, unity.tool)), "a folder that has its kind is not told again");
+  });
+});
+
 describe("stuck ladders and small reviewers", () => {
   const rulesUrl = "../../src/harness-seed/loop/facet/rules.ts";
   const judgementUrl = "../../src/harness-seed/loop/facet/round-judgement.ts";
@@ -10557,13 +11009,14 @@ describe("an Unreal game is never checked as a web page", () => {
     reply: Record<string, unknown> = {},
   ): Promise<{ rig: Rig; prompts: string[]; requests: DelegateRequest[] }> {
     const { writeEngineBinding } = await import("../../src/substrate/game-engine-binding.ts");
+    const { ENGINES, UNREAL_ENGINE } = await import("../helpers/engines.ts");
     const { tmpDir } = await import("../helpers/tmp.ts");
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const game = await rig.core.games.scaffold(GAME, { title: "Tower Game" });
     const uproject = path.join(await tmpDir("unreal-project-"), "Tower.uproject");
     await writeFile(uproject, "{}\n");
-    await writeEngineBinding(game.dir, uproject);
+    await writeEngineBinding(game.dir, uproject, UNREAL_ENGINE.id, ENGINES);
     rig.preview.pixelStatsNext = { ...rig.preview.pixelStatsNext, meanLuma: 0.4, litFraction: 0 };
     const prompts: string[] = [];
     const requests: DelegateRequest[] = [];
@@ -10836,7 +11289,7 @@ const ENGINE_QUESTION = "FIRST, THE ENGINE:";
  * New game makes the game before the chat's first ask, as an empty folder with no kind; with the
  * Unreal plugin on, the delegated turn finds a project that already exists. A folder with no kind
  * yet (the host's facts) is asked with the question card, exactly as a game the turn makes itself,
- * and not again in the session that asked: the answer comes back to it.
+ * and not again in the session that asked: the answer comes back to it, the card still at hand.
  */
 describe("a game New game made is asked its engine on its chat's first ask", () => {
   it("with the Unreal plugin on, a game New game made is empty, its chat's first build asks web or Unreal with the question card, and its next does not", async () => {
@@ -10883,11 +11336,15 @@ describe("a game New game made is asked its engine on its chat's first ask", () 
     assert.ok(asks(first.prompt), "the first build asks the engine first");
     assert.deepEqual(
       first.interviewTools?.map((tool) => tool.name),
-      ["ask_user"],
-      "with the question card bridged in",
+      ["start_autopilot", "ask_user"],
+      "with the question card bridged in beside Auto's Loop start (flipped: auto-loop)",
     );
     assert.ok(!asks(next.prompt), "a later message is never asked again");
-    assert.equal(next.interviewTools, undefined);
+    assert.deepEqual(
+      next.interviewTools?.map((tool) => tool.name),
+      ["start_autopilot", "ask_user"],
+      "the session that asked keeps its card while the game has no kind (flipped: resumed card)",
+    );
   });
 });
 
@@ -10899,6 +11356,7 @@ describe("a game New game made is asked its engine on its chat's first ask", () 
 describe("a game linked to Unreal during its turn", () => {
   it("a game linked to Unreal during its turn got the web health pass and a black-screen line: no preview load, no build_observation, the builder's report alone", async () => {
     const { writeEngineBinding } = await import("../../src/substrate/game-engine-binding.ts");
+    const { ENGINES, UNREAL_ENGINE } = await import("../helpers/engines.ts");
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const game = await rig.core.games.scaffold("city-circuit", { title: "City Circuit" });
@@ -10917,7 +11375,7 @@ describe("a game linked to Unreal during its turn", () => {
         const uproject = path.join(game.dir, "unreal", "CityCircuit.uproject");
         await mkdir(path.dirname(uproject), { recursive: true });
         await writeFile(uproject, "{}\n");
-        await writeEngineBinding(game.dir, uproject);
+        await writeEngineBinding(game.dir, uproject, UNREAL_ENGINE.id, ENGINES);
         await writeFile(path.join(request.cwd, "NOTES.md"), "# City Circuit\n");
         return { ok: true, engine: "vendor", sessionId: "cc-1", turns: 9, usage: {}, summary: report };
       },
@@ -10986,7 +11444,8 @@ describe("the Unreal lead's saves, crashes, owner words and end", () => {
       throw new Error("Stopped.");
     });
     const report = await runLead(host, { minutes: 20 });
-    assert.equal(report.executionStatus, "cancelled");
+    // A Stop pauses every Loop for a Resume: it ends as the person's stop, never as the plugins' halt.
+    assert.deepEqual([report.executionStatus, report.endReason], ["paused", "stopped"]);
     assert.doesNotMatch(String(report.stoppedBecause), /couldn't ask the game's plugins/);
   });
 
@@ -13915,6 +14374,1085 @@ describe("the scout under a local main agent (issue #47)", () => {
   });
 });
 
+/**
+ * Computer use, the judge that plays. A playtester's or a picture judge's "yes" was the model's
+ * word: nothing checked it reached what it said it saw, a screenshot question nobody could answer
+ * stayed unanswered, and a regression a picture cannot show (the key that no longer opens the menu)
+ * reached the user. A judge now plays blind on the computer tool, the studio checks its goal in the
+ * game's own state, and a route it played to a verified goal is replayed on every later build.
+ */
+describe("computer use: the judge that plays, escalation and routes", () => {
+  const engines = [
+    {
+      id: "ollama",
+      label: "Ollama",
+      kind: "direct",
+      status: { code: "ready", detail: "" },
+      defaultModel: "vl",
+      models: [{ id: "vl", label: "vl", contextWindow: 32_000, supportsTools: true, supportsVision: true }],
+    },
+    {
+      id: "claude-code",
+      label: "Claude Code",
+      kind: "delegated",
+      supportsSessions: true,
+      status: { code: "ready", detail: "" },
+      defaultModel: null,
+      models: [{ id: "opus", label: "Opus", contextWindow: 200_000, supportsTools: true, supportsVision: true }],
+    },
+  ];
+  const delegatedRun = { runId: "run_cu", project: "marsh", engine: "claude-code", model: "opus", goal: "a marsh" };
+  const question = { id: "gate", kind: "play", ask: "Could you open the gate?", expect: "yes", weight: "normal" };
+  const quest = { id: "gate-open", until: { path: "gate.open", truthy: true } };
+  /** The payload of the first record a recorder appended to the run's log. */
+  function firstRecord(recorder: { paramsOf(method: string): Array<Record<string, unknown>> }) {
+    const batch = (recorder.paramsOf("events.append")[0]?.batch ?? []) as Array<{ payload: Record<string, unknown> }>;
+    return batch[0]?.payload;
+  }
+  /** A session's folder: a trace whose third move reached the goal, and its frames on disk. */
+  async function sessionFolder(): Promise<{ dir: string; trace: string; frame: string }> {
+    const dir = await tmpDir("cu-session-");
+    const frame = path.join(dir, "s3_screen.jpg");
+    await writeFile(frame, Buffer.from("not really a jpeg"));
+    const rows = [
+      {
+        i: 1,
+        atMs: 0,
+        action: "screenshot",
+        caption: "",
+        args: { action: "screenshot" },
+        route: null,
+        frame: path.join(dir, "s1_screen.jpg"),
+        cursor: null,
+        simMs: null,
+      },
+      {
+        i: 2,
+        atMs: 1,
+        action: "key",
+        caption: "",
+        args: { action: "key", text: "e", repeat: 1 },
+        route: "browser",
+        frame: path.join(dir, "s2_screen.jpg"),
+        cursor: { x: 1, y: 1 },
+        simMs: 48,
+      },
+      {
+        i: 3,
+        atMs: 2,
+        action: "left_click",
+        caption: "",
+        args: { action: "left_click", coordinate: [400, 300] },
+        route: "browser",
+        frame,
+        cursor: { x: 400, y: 300 },
+        simMs: 48,
+        reached: true,
+      },
+      {
+        i: 4,
+        atMs: 3,
+        action: "key",
+        caption: "",
+        args: { action: "key", text: "q" },
+        route: "browser",
+        frame: null,
+        cursor: null,
+        simMs: 48,
+      },
+    ];
+    const trace = path.join(dir, "trace.jsonl");
+    await writeFile(trace, rows.map((row) => `${JSON.stringify(row)}\n`).join(""));
+    return { dir, trace, frame };
+  }
+  /** A delegated judge that answers `answer` with the given trace summary. */
+  function judgeCtx(
+    answer: unknown,
+    trace: unknown,
+    extra: Record<string, (p: Record<string, unknown>) => unknown> = {},
+  ) {
+    return ctxRecorder({
+      handlers: {
+        "engine.describe": () => engines,
+        "engine.delegate": () => ({ summary: JSON.stringify(answer), turns: 6, trace }),
+        "run.artifact": () => "ok",
+        "events.append": () => "e1",
+        ...extra,
+      },
+    });
+  }
+
+  it("CU1. a judge that plays with no window measures nothing and fails nothing", async () => {
+    const { runHandsOnJudge } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const recorder = judgeCtx({}, null);
+    const out = await runHandsOnJudge(recorder.ctx as never, {
+      run: delegatedRun as never,
+      root: "/fake/marsh",
+      handle: null,
+      questions: [question] as never,
+      quest,
+    });
+    assert.deepEqual(
+      out.results.map((r) => [r.id, r.pass, r.state]),
+      [["gate", null, "unmeasured"]],
+    );
+    assert.equal(out.objective, "model-said");
+    assert.deepEqual(recorder.sequence("engine."), [], "no session without a window");
+  });
+
+  it("CU2. a judge's yes without the studio seeing the goal is incomplete; with it and a lit frame it is studio-verified", async () => {
+    const { runHandsOnJudge } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const { trace } = await sessionFolder();
+    const said = {
+      answers: { gate: { answer: "yes", note: "it swung open", frames: ["s3_screen"] } },
+      report: "opened",
+    };
+    const options = {
+      run: delegatedRun as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      questions: [question] as never,
+      quest,
+      labelPrefix: "director/play_1",
+    };
+    const unseen = judgeCtx(said, { path: trace, steps: 4, deterministic: true, reachedAt: null });
+    const claimed = await runHandsOnJudge(unseen.ctx as never, options);
+    assert.equal(claimed.results[0]?.pass, null, "a yes the studio never saw is not a pass");
+    assert.equal(claimed.results[0]?.state, "unmeasured");
+    assert.equal(claimed.objective, "model-said");
+    const grant = unseen.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown>;
+    assert.equal(grant.role, "judge");
+    assert.equal(grant.pacing, "stepped");
+    assert.deepEqual(grant.quest, quest);
+    assert.equal(grant.maxActions, 12);
+    assert.deepEqual(grant.setup, { begin: false }, "the judge reaches the state by playing, from the first screen");
+
+    const lit = () => ({ stats: { litFraction: 0.4, meanLuma: 90 }, width: 960, height: 600 });
+    const blank = () => ({ stats: { litFraction: 0, meanLuma: 0 }, width: 960, height: 600 });
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const verified = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const held = await runHandsOnJudge(verified.ctx as never, options);
+    assert.equal(held.results[0]?.pass, true);
+    assert.equal(held.objective, "studio-verified");
+    assert.match(
+      String(verified.paramsOf("preview.statsOf")[0]?.path),
+      /s3_screen\.jpg$/,
+      "the frame it cited is read",
+    );
+    assert.match(String(held.frames.gate?.[0]), /s3_screen\.jpg$/);
+    const dark = judgeCtx(said, reached, { "preview.statsOf": blank });
+    const blackout = await runHandsOnJudge(dark.ctx as never, options);
+    assert.equal(blackout.results[0]?.pass, null, "a yes resting on a blank frame is incomplete");
+    assert.equal(blackout.objective, "model-said");
+  });
+
+  it("CU3. an unmeasured screenshot answer is put to one judge that plays, once, and resolved", async () => {
+    const { escalateVision } = await import("../../src/harness-seed/loop/vision-escalation.ts");
+    const asks = ["lamp", "door", "bench"].map((id) => ({
+      check: { id, kind: "vision", camera: "default", ask: `Is the ${id} visible?`, expect: "yes", weight: "normal" },
+      crop: null,
+    }));
+    const unmeasuredAnswer = (id: string) => ({
+      id,
+      kind: "vision",
+      weight: "normal",
+      pass: null,
+      state: "unmeasured",
+      reason: "camera default was not captured",
+    });
+    const said = {
+      answers: { lamp: { answer: "yes", note: "lit by the door" }, door: { answer: "no" }, bench: { answer: "yes" } },
+    };
+    const recorder = judgeCtx(said, { path: null, steps: 3, deterministic: true, reachedAt: null });
+    const run = { ...delegatedRun };
+    const out = await escalateVision(recorder.ctx as never, {
+      run: run as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: asks as never,
+      answers: asks.map((ask) => unmeasuredAnswer(ask.check.id)) as never,
+    });
+    assert.equal(recorder.paramsOf("engine.delegate").length, 1, "one probe for the build");
+    assert.deepEqual(
+      out.map((r) => [r.id, r.pass, r.kind]),
+      [
+        ["lamp", true, "vision"],
+        ["door", false, "vision"],
+        ["bench", null, "vision"],
+      ],
+      "the probe answers at most two questions; the third stays the picture judge's",
+    );
+    const noWindow = judgeCtx(said, null);
+    const left = await escalateVision(noWindow.ctx as never, {
+      run: run as never,
+      root: "/fake/marsh",
+      handle: null,
+      asks: asks as never,
+      answers: asks.map((ask) => unmeasuredAnswer(ask.check.id)) as never,
+    });
+    assert.deepEqual(noWindow.sequence("engine."), [], "no leased window, no probe");
+    assert.ok(left.every((r) => r.pass === null));
+    const off = judgeCtx(said, null);
+    await escalateVision(off.ctx as never, {
+      run: { ...delegatedRun, handsOnJudges: false } as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: asks as never,
+      answers: asks.map((ask) => unmeasuredAnswer(ask.check.id)) as never,
+    });
+    assert.deepEqual(off.sequence("engine."), [], "a run that turned judges that play off never probes");
+  });
+
+  it("CU4. a probe never overturns a confident screenshot no, and a flip stands only when a second look agrees", async () => {
+    const { escalateVision } = await import("../../src/harness-seed/loop/vision-escalation.ts");
+    const { trace } = await sessionFolder();
+    const ask = {
+      check: {
+        id: "lamp",
+        kind: "vision",
+        camera: "default",
+        ask: "Is the lamp lit?",
+        expect: "yes",
+        weight: "normal",
+      },
+      crop: { base64: "AAAA" },
+    };
+    const sure = {
+      id: "lamp",
+      kind: "vision",
+      weight: "normal",
+      pass: false,
+      answer: "no",
+      confidence: 0.9,
+      reason: "dark",
+    };
+    const said = { answers: { lamp: { answer: "yes", frames: ["s3_screen"] } } };
+    const traced = { path: trace, steps: 4, deterministic: true, reachedAt: null };
+    const confident = judgeCtx(said, traced);
+    const kept = await escalateVision(confident.ctx as never, {
+      run: { ...delegatedRun } as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [sure] as never,
+    });
+    assert.deepEqual(kept, [sure], "a confident no stands");
+    assert.deepEqual(confident.sequence("engine."), [], "and is not even escalated");
+
+    const hedged = { ...sure, confidence: 0.3 };
+    const secondLook = (answer: string) => () => ({
+      message: { role: "assistant", content: JSON.stringify({ answer, confidence: 0.8, note: "" }) },
+    });
+    const disagree = judgeCtx(said, traced, { "engine.complete": secondLook("no") });
+    const [stood] = await escalateVision(disagree.ctx as never, {
+      run: { ...delegatedRun } as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [hedged] as never,
+    });
+    assert.equal(disagree.paramsOf("engine.delegate").length, 1, "a hedged no is probed");
+    assert.equal(disagree.paramsOf("engine.complete").length, 1, "and the flip is looked at again");
+    assert.equal(stood?.pass, false, "the second look did not agree: the picture's answer stands");
+    const agree = judgeCtx(said, traced, { "engine.complete": secondLook("yes") });
+    const [flipped] = await escalateVision(agree.ctx as never, {
+      run: { ...delegatedRun } as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [hedged] as never,
+    });
+    assert.equal(flipped?.pass, true, "a flip the second look agrees with stands");
+    assert.equal(flipped?.probed, true);
+  });
+
+  it("CU5. a direct playtest on an older host without preview.computer falls back to the shorthands; on a newer one it holds only the computer", async () => {
+    const { runPlaytest } = await import("../../src/harness-seed/loop/playtester.ts");
+    const answer = JSON.stringify({ answers: { gate: { answer: "yes" } }, report: "ok" });
+    const local = { runId: "run_cu", project: "marsh", engine: "ollama", model: "vl", goal: "a marsh" };
+    const options = {
+      run: local as never,
+      checks: [question] as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      maxActions: 2,
+    };
+    const older = ctxRecorder({
+      handlers: {
+        "engine.describe": () => engines,
+        "engine.complete": () => ({ message: { role: "assistant", content: answer } }),
+        "preview.load": () => ({ ok: true }),
+        "preview.call": () => null,
+      },
+    });
+    const played = await runPlaytest(older.ctx as never, options);
+    assert.equal(played?.results[0]?.pass, true);
+    const tools = ((older.paramsOf("engine.complete")[0]?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
+    assert.deepEqual(tools.sort(), ["click", "game_state", "look", "press_keys", "screenshot"]);
+    assert.ok(older.sequence().includes("preview.load"), "the shorthands load the build as before");
+
+    let moves = 0;
+    const newer = ctxRecorder({
+      handlers: {
+        "engine.describe": () => engines,
+        "engine.complete": () =>
+          moves++ === 0
+            ? {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [{ id: "c1", name: "computer", arguments: { action: "key", text: "e" } }],
+                },
+              }
+            : { message: { role: "assistant", content: answer } },
+        "preview.computer": (p) =>
+          p.describe
+            ? {
+                tool: { name: "computer", description: "the computer", parameters: { type: "object", properties: {} } },
+              }
+            : {
+                answer: {
+                  text: "s1_key.jpg, litFraction 0.40",
+                  images: [{ mimeType: "image/jpeg", data: "AAAA", label: "s1" }],
+                },
+                trace: { path: null, steps: 1, deterministic: false, reachedAt: null },
+              },
+      },
+    });
+    const computed = await runPlaytest(newer.ctx as never, options);
+    assert.equal(computed?.results[0]?.pass, true);
+    const held = ((newer.paramsOf("engine.complete")[0]?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
+    assert.deepEqual(held, ["computer"]);
+    const call = newer.paramsOf("preview.computer")[1] as Record<string, unknown>;
+    assert.deepEqual(call.args, { action: "key", text: "e" });
+    assert.equal(call.handle, "pool-1");
+    assert.equal(call.role, "playtester");
+    assert.ok(!newer.sequence().includes("preview.load"), "the computer loads the build itself");
+    const shown = ((newer.paramsOf("engine.complete")[1]?.messages ?? []) as Array<{ images?: unknown[] }>).find(
+      (m) => m.images,
+    );
+    assert.equal(shown?.images?.length, 1, "the picture the move took goes back to the model");
+  });
+
+  it("CU6. a kept older playtester.ts without playResults still loads the judge that plays, which reads answers itself", async () => {
+    const root = await tmpDir("cu-kept-");
+    const seed = fileURLToPath(new URL("../../src/harness-seed", import.meta.url));
+    await cp(seed, root, { recursive: true });
+    await writeFile(
+      path.join(root, "loop", "playtester.ts"),
+      "export async function runPlaytest() { return null; }\nexport function playBrief() { return ''; }\nexport const SERVES_LOCAL_ROLES = true;\n// the agent's own playtester\n",
+    );
+    const kept = await import(pathToFileURL(path.join(root, "loop", "hands-on-judge.ts")).href);
+    const results = kept.handsOnResults([question], { answers: { gate: { answer: "no", note: "locked" } } });
+    assert.deepEqual(
+      results.map((r: { id: string; pass: boolean | null }) => [r.id, r.pass]),
+      [["gate", false]],
+    );
+    const evidence = await import(pathToFileURL(path.join(root, "loop", "evidence.ts")).href);
+    assert.equal(typeof evidence.gatherEvidence, "function", "the evidence pass still loads beside it");
+  });
+
+  it("CU7. a route is distilled from a verified session: the computer calls up to the goal, as they ran, no looks", async () => {
+    const { distillRoute, readTraceRows } = await import("../../src/harness-seed/loop/routes.ts");
+    const { trace } = await sessionFolder();
+    const rows = await readTraceRows(trace);
+    const route = distillRoute(rows, quest, { deterministic: true });
+    assert.deepEqual(
+      route?.steps.map((step) => [step.args, step.frame]),
+      [
+        [{ action: "key", text: "e", repeat: 1 }, "s2_screen.jpg"],
+        [{ action: "left_click", coordinate: [400, 300] }, "s3_screen.jpg"],
+      ],
+    );
+    assert.equal(
+      distillRoute(
+        rows.map(({ reached: _reached, ...row }) => row),
+        quest,
+      ),
+      null,
+      "never reached, nothing kept",
+    );
+    const batched = [
+      {
+        i: 1,
+        action: "batch",
+        args: {
+          action: "batch",
+          steps: [
+            { action: "key", text: "e" },
+            { action: "wait", duration: 0.5 },
+          ],
+        },
+        frame: null,
+        simMs: 548,
+        reached: true as const,
+      },
+    ];
+    assert.deepEqual(
+      distillRoute(batched, quest)?.steps.map((step) => step.args),
+      [
+        {
+          action: "batch",
+          actions: [
+            { action: "key", text: "e" },
+            { action: "wait", duration: 0.5 },
+          ],
+        },
+      ],
+      "a batch is kept whole, as the call that ran it: its steps keep their timing",
+    );
+  });
+
+  /** A run that keeps one three-call route to an open gate. */
+  function routedRun(deterministic: boolean) {
+    const steps = [
+      { args: { action: "key", text: "e" }, frame: "s2_key.jpg" },
+      { args: { action: "wait", duration: 0.5 }, frame: "s3_wait.jpg" },
+      { args: { action: "left_click", coordinate: [400, 300] }, frame: "s4_click.jpg" },
+    ];
+    return {
+      ...delegatedRun,
+      keptRoutes: [{ id: "gate-open", quest, steps, deterministic, divergences: 0, retired: false }],
+    };
+  }
+  /**
+   * A host whose computer session plays the replay: one trace row per call, written to a trace file,
+   * the goal reached on call `reachAt`, calls from `refuseFrom` on refused, `deterministic` as the
+   * session's clock says.
+   */
+  async function replayHost({
+    reachAt = Number.POSITIVE_INFINITY,
+    refuseFrom = Number.POSITIVE_INFINITY,
+    deterministic = true,
+  } = {}) {
+    const dir = await tmpDir("cu-replay-");
+    const file = path.join(dir, "trace-2.jsonl");
+    let calls = 0;
+    let reachedAt: number | null = null;
+    const rows: string[] = [];
+    const recorder = ctxRecorder({
+      handlers: {
+        "preview.computer": async (p) => {
+          calls++;
+          const refused = calls >= refuseFrom;
+          if (!refused && calls >= reachAt && reachedAt === null) reachedAt = calls;
+          const args = p.args as Record<string, unknown>;
+          rows.push(
+            JSON.stringify({
+              i: calls,
+              action: args.action,
+              args,
+              frame: path.join(dir, `s${calls + 10}_replay.jpg`),
+              simMs: 48,
+              ...(refused ? { refused: true } : {}),
+            }),
+          );
+          await writeFile(file, `${rows.join("\n")}\n`);
+          return { answer: "moved", trace: { path: file, steps: calls, deterministic, reachedAt } };
+        },
+        "events.append": () => "e1",
+      },
+    });
+    return { recorder, file };
+  }
+
+  it("CU8. a route is replayed through the host's own computer session; a deterministic one that no longer reaches its goal fails a check naming the step and the replay's trace", async () => {
+    const { replayRoutes } = await import("../../src/harness-seed/loop/routes.ts");
+    const run = routedRun(true);
+    const options = { run: run as never, root: "/fake/marsh", handle: "pool-1", labelPrefix: "director/judge_2" };
+    const { recorder, file } = await replayHost();
+    const out = await replayRoutes(recorder.ctx as never, options);
+    const calls = recorder.paramsOf("preview.computer");
+    assert.deepEqual(
+      calls.map((call) => call.args),
+      run.keptRoutes[0]?.steps.map((step) => step.args),
+      "each kept call replayed as it ran, one call at a time",
+    );
+    assert.deepEqual(
+      calls.map((call) => call.fresh ?? false),
+      [true, false, false],
+      "a fresh session: reloaded, reseeded, its own trace",
+    );
+    const grant = calls[0] as Record<string, unknown>;
+    assert.deepEqual(
+      [grant.role, grant.pacing, grant.handle, grant.root],
+      ["judge", "stepped", "pool-1", "/fake/marsh"],
+    );
+    assert.deepEqual(grant.quest, quest, "the kept goal, checked by the host after every move");
+    assert.deepEqual(
+      recorder.sequence().filter((method) => method.startsWith("preview.") && method !== "preview.computer"),
+      [],
+      "no input of the harness's own around the session",
+    );
+    assert.equal(out?.replays[0]?.divergedAt, 3);
+    assert.equal(out?.results[0]?.pass, false);
+    assert.match(String(out?.results[0]?.reason), /diverged at step 3 of 3/);
+    assert.ok(String(out?.results[0]?.reason).includes(file), "the replay's trace is named");
+    const record = firstRecord(recorder);
+    assert.equal(record?.source, "route-replay");
+    assert.equal(record?.status, "failed");
+    assert.equal(record?.trace, file);
+
+    const refused = await replayHost({ refuseFrom: 2 });
+    const stopped = await replayRoutes(refused.recorder.ctx as never, { ...options, run: routedRun(true) as never });
+    assert.equal(stopped?.replays[0]?.divergedAt, 2, "a call the session refused names its step");
+
+    for (let i = 0; i < 2; i++) await replayRoutes((await replayHost()).recorder.ctx as never, options);
+    assert.equal(run.keptRoutes[0]?.retired, true, "three divergences retire the route");
+    assert.equal(await replayRoutes((await replayHost()).recorder.ctx as never, options), null);
+
+    const open = await replayHost({ reachAt: 2 });
+    const held = await replayRoutes(open.recorder.ctx as never, { ...options, run: routedRun(true) as never });
+    assert.deepEqual(held?.results, []);
+    assert.equal(open.recorder.paramsOf("preview.computer").length, 2, "the replay stops once the host saw the goal");
+    const verified = firstRecord(open.recorder);
+    assert.equal(verified?.objective, "studio-verified");
+    assert.equal(verified?.trace, open.file, "the host vouches for the trace it saw reach the goal");
+  });
+
+  it("CU9. a route whose original or replayed session was not deterministic never fails a check: it is reported", async () => {
+    const { replayRoutes } = await import("../../src/harness-seed/loop/routes.ts");
+    const options = { root: "/fake/marsh", handle: "pool-1", labelPrefix: "x" };
+    const kept = await replayHost();
+    const out = await replayRoutes(kept.recorder.ctx as never, { ...options, run: routedRun(false) as never });
+    assert.deepEqual(out?.results, [], "no failed check");
+    assert.match(String(out?.notes[0]), /diverged at step 3 of 3.*reported, never failed/);
+    assert.equal(firstRecord(kept.recorder)?.status, "incomplete");
+    const loose = await replayHost({ deterministic: false });
+    const replayed = await replayRoutes(loose.recorder.ctx as never, { ...options, run: routedRun(true) as never });
+    assert.deepEqual(replayed?.results, [], "a replay the host could not step exactly is reported, never failed");
+  });
+
+  it("CU9b. on a host without the computer session a route is not replayed: reported, never failed, never counted", async () => {
+    const { replayRoutes } = await import("../../src/harness-seed/loop/routes.ts");
+    const run = routedRun(true);
+    const older = ctxRecorder({ handlers: { "events.append": () => "e1" } });
+    const out = await replayRoutes(older.ctx as never, {
+      run: run as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      labelPrefix: "x",
+    });
+    assert.deepEqual(out?.results, []);
+    assert.match(String(out?.notes[0]), /route gate-open not replayed/);
+    assert.equal(run.keptRoutes[0]?.divergences, 0);
+    const preInput = {
+      ...delegatedRun,
+      keptRoutes: [
+        {
+          id: "gate-open",
+          quest,
+          steps: [{ input: { type: "press", combo: "e", repeat: 1 }, stepMs: 48, frame: null }],
+          deterministic: true,
+          divergences: 0,
+          retired: false,
+        },
+      ],
+    };
+    const host = await replayHost();
+    assert.equal(
+      await replayRoutes(host.recorder.ctx as never, {
+        run: preInput as never,
+        root: "/fake/marsh",
+        handle: "pool-1",
+        labelPrefix: "x",
+      }),
+      null,
+      "a route kept as preview inputs by an older seed is not replayed",
+    );
+  });
+
+  it("CU10. a director's goal_state is read strictly: anything that is not a plain path and a primitive is refused", async () => {
+    const { parseGoalState } = await import("../../src/harness-seed/loop/quest.ts");
+    const refused: Array<[string, unknown]> = [
+      ["not JSON", "{path: flow.phase"],
+      ["a list", "[1,2]"],
+      ["a number", "42"],
+      ["a string", '"flow.phase"'],
+      ["no path", '{"equals":"playing"}'],
+      ["a path with spaces", '{"path":"flow phase","equals":"playing"}'],
+      ["a path with brackets", '{"path":"enemies[0].hp","equals":0}'],
+      ["a path into the prototype", '{"path":"__proto__.polluted","truthy":true}'],
+      ["a path into a constructor", '{"path":"flow.constructor","truthy":true}'],
+      ["an object to equal", '{"path":"flow.phase","equals":{"a":1}}'],
+      ["no test at all", '{"path":"flow.phase"}'],
+      ["truthy that is not true", '{"path":"flow.phase","truthy":"yes"}'],
+      ["a path too long", JSON.stringify({ path: "a.".repeat(80) + "b", truthy: true })],
+    ];
+    for (const [why, text] of refused) {
+      const read = parseGoalState(text);
+      assert.ok(read && "error" in read, `${why} is refused: ${JSON.stringify(read)}`);
+    }
+    assert.equal(({} as Record<string, unknown>).polluted, undefined, "nothing reached the prototype");
+    assert.equal(parseGoalState(""), null);
+    assert.equal(parseGoalState(undefined), null);
+    assert.deepEqual(parseGoalState('{"path":"flow.phase","equals":"playing"}'), {
+      until: { path: "flow.phase", equals: "playing" },
+    });
+    assert.deepEqual(parseGoalState('{"path":"level.cleared","truthy":true}'), {
+      until: { path: "level.cleared", truthy: true },
+    });
+  });
+
+  // Live (Star Dash, 2026-10-14): the lead wrote a part's done scenarios in worker_start's
+  // {what, check} shape, the plan kept each as "[object Object]", and the blind judge was asked to
+  // "verify every required scenario through actual interaction: [object Object]; [object Object]".
+  it("CU17. a plan's done scenarios written as {what, check} keep their sentences, so the judge is asked them", async () => {
+    const { compilePlan } = await import("../../src/harness-seed/loop/director/rules.ts");
+    const { createGoals } = await import("../../src/harness-seed/loop/director/goals.ts");
+    const compiled = compilePlan({
+      summary: "A second enemy",
+      workers: JSON.stringify([
+        {
+          id: "enemy2",
+          done: [
+            { what: "A second red block patrols left and right near the star", check: { kind: "play" } },
+            "The game is still winnable",
+            { check: { kind: "play" } },
+          ],
+        },
+      ]),
+    });
+    assert.ok(compiled.plan);
+    assert.deepEqual(compiled.plan.workers[0]!.done, [
+      "A second red block patrols left and right near the star",
+      "The game is still winnable",
+    ]);
+    const acceptance = createGoals(compiled.plan.workers).entries[0]!.acceptance;
+    assert.ok(!acceptance.join(" ").includes("[object Object]"), acceptance.join("; "));
+  });
+
+  // Live (Star Dash): the blind judge's note reached the build card cut inside a word ("The second
+  // red block patro"). A play answer's note is cut at a word, with the mark, like every other note.
+  it("CU18. a long play answer's note is cut at a word, never inside one", async () => {
+    const { playResults } = await import("../../src/harness-seed/loop/playtester.ts");
+    const note = `I reached the win screen. ${"The second red block patrols left and right near the star. ".repeat(8)}`;
+    const [result] = playResults([{ id: "q", kind: "play", ask: "Can you win?", expect: "yes" } as never], {
+      answers: { q: { answer: "yes", note } },
+    });
+    const kept = String(result!.note);
+    assert.ok(kept.length < note.length, "a long note is still cut");
+    assert.ok(kept.endsWith("…"), kept.slice(-40));
+    const lastWord = kept.slice(0, -1).split(/\s+/).at(-1)!;
+    assert.ok(note.split(/\s+/).includes(lastWord), `"${lastWord}" is a whole word`);
+  });
+
+  /** A chat's call for a judge (`chat_judge`), as the host forwards it. */
+  const chatAsk = {
+    type: "chat_judge",
+    threadId: "thread-1",
+    project: "marsh",
+    root: "/fake/marsh",
+    engine: "claude-code",
+    model: "opus",
+    ask: "Could you open the gate?",
+    goalState: '{"path":"gate.open","truthy":true}',
+  } as const;
+  /** A judge's host with one hidden window to lend: describes, leases, delegates, releases. */
+  function chatJudgeCtx(
+    answer: unknown,
+    trace: unknown,
+    extra: Record<string, (p: Record<string, unknown>) => unknown> = {},
+  ) {
+    return judgeCtx(answer, trace, {
+      "preview.capacity": () => ({ headless: true, free: 1 }),
+      "preview.acquire": () => ({ handle: "pool-7" }),
+      "preview.release": () => true,
+      "preview.statsOf": () => ({ stats: { litFraction: 0.4, meanLuma: 90 }, width: 960, height: 600 }),
+      ...extra,
+    });
+  }
+
+  // A chat's own session made a change and had no way to have it checked by anyone but itself: the
+  // blind judge played only inside a Loop's build. It is the same judge, called from the chat.
+  it("CU19. a chat's judge plays the game folder on a leased hidden window, blind and stepped, and is studio-verified only on the trace that reached the goal", async () => {
+    const { judgeFromChat } = await import("../../src/harness-seed/loop/chat-judge.ts");
+    const { trace } = await sessionFolder();
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const recorder = chatJudgeCtx({ answers: { "chat-judge": { answer: "yes", frames: ["s3_screen"] } } }, reached);
+    const out = await judgeFromChat(recorder.ctx as never, chatAsk, { retriesMs: [] });
+    assert.deepEqual([out.status, out.answer, out.objective, out.trace], ["passed", "yes", "studio-verified", trace]);
+    const sent = recorder.paramsOf("engine.delegate")[0]!;
+    const grant = sent.playtest as Record<string, unknown>;
+    assert.deepEqual(
+      [grant.role, grant.pacing, grant.root, grant.handle, grant.runId, sent.readOnly],
+      ["judge", "stepped", "/fake/marsh", "pool-7", undefined, true],
+      "the same blind judge a build uses, on a window of its own, filed under no run",
+    );
+    assert.deepEqual(grant.quest, { id: "could-you-open-the-gate", until: { path: "gate.open", truthy: true } });
+    assert.deepEqual(recorder.paramsOf("preview.release"), [{ handle: "pool-7" }], "the window goes back");
+    assert.equal(recorder.paramsOf("events.append").length, 0, "the host records the outcome, never the harness");
+
+    const said = chatJudgeCtx(
+      { answers: { "chat-judge": { answer: "yes" } } },
+      { path: trace, steps: 4, deterministic: true, reachedAt: null },
+    );
+    const unverified = await judgeFromChat(said.ctx as never, chatAsk, { retriesMs: [] });
+    assert.notEqual(unverified.objective, "studio-verified", "a yes the studio did not see reached is not verified");
+  });
+
+  it("CU20. a chat's call for a judge with a goal state that is not a plain path, or with no question, is refused before anything is leased or played", async () => {
+    const { judgeFromChat } = await import("../../src/harness-seed/loop/chat-judge.ts");
+    for (const bad of [
+      { ...chatAsk, goalState: '{"path":"__proto__.x","truthy":true}' },
+      { ...chatAsk, goalState: "{path: gate" },
+      { ...chatAsk, ask: "   " },
+    ]) {
+      const recorder = chatJudgeCtx({}, null);
+      const out = await judgeFromChat(recorder.ctx as never, bad, { retriesMs: [] });
+      assert.equal(out.status, "incomplete");
+      assert.ok(out.refusal, JSON.stringify(out));
+      assert.deepEqual(
+        [recorder.paramsOf("preview.acquire").length, recorder.paramsOf("engine.delegate").length],
+        [0, 0],
+      );
+    }
+  });
+
+  it("CU22. a kept older judge that cannot play a chat's check leaves the chat's judge unclaimed, so the host never offers it", async () => {
+    const { servesChatJudge } = await import("../../src/harness-seed/loop/chat-judge.ts");
+    assert.equal(servesChatJudge(), true, "the shipped judge serves it");
+    assert.equal(
+      servesChatJudge([{ runHandsOnJudge: () => null }]),
+      false,
+      "an agent-edited copy from before does not",
+    );
+  });
+
+  it("CU23. a direct engine's chat (Ollama) has the same judge_play, run by the host with this chat's model", async () => {
+    const { tools } = await import("../../src/harness-seed/tools/judge-tools.ts");
+    const [tool] = tools;
+    assert.equal(tool?.name, "judge_play");
+    const recorder = ctxRecorder({
+      handlers: { "judge.play": () => ({ answer: "Passed. The judge answered yes, verified by the studio." }) },
+    });
+    const ctx = { ...recorder.ctx, project: "marsh", engine: "ollama", model: "qwen3.5:4b" };
+    const said = await tool!.execute({ ask: "Could you open the gate?" }, ctx as never);
+    assert.match(String(said), /verified by the studio/);
+    assert.deepEqual(recorder.paramsOf("judge.play"), [
+      {
+        project: "marsh",
+        threadId: "thread-1",
+        engine: "ollama",
+        model: "qwen3.5:4b",
+        args: { ask: "Could you open the gate?" },
+      },
+    ]);
+    const refused = ctxRecorder({ handlers: { "judge.play": () => ({ unavailable: "no window to play in" }) } });
+    assert.equal(
+      await tool!.execute({ ask: "x" }, { ...refused.ctx, project: "marsh" } as never),
+      "no window to play in",
+    );
+  });
+
+  it("CU21. with every hidden window leased, a chat's judge says so and plays nothing", async () => {
+    const { judgeFromChat } = await import("../../src/harness-seed/loop/chat-judge.ts");
+    const recorder = chatJudgeCtx({}, null, {
+      "preview.acquire": () => ({ handle: null }),
+      "preview.capacity": () => ({ headless: true, free: 0, leased: 2 }),
+    });
+    const out = await judgeFromChat(recorder.ctx as never, chatAsk, { retriesMs: [] });
+    assert.equal(out.status, "incomplete");
+    assert.ok(out.refusal, "the session hears why nothing was played");
+    assert.equal(recorder.paramsOf("engine.delegate").length, 0);
+  });
+
+  const bench = { id: "bench", kind: "play", ask: "Could you sit on the bench?", expect: "yes", weight: "normal" };
+  const lit = () => ({ stats: { litFraction: 0.4, meanLuma: 90 }, width: 960, height: 600 });
+  const blank = () => ({ stats: { litFraction: 0, meanLuma: 0 }, width: 960, height: 600 });
+  /** Every interaction record a recorder appended, as [label, source, objective]. */
+  function records(recorder: { paramsOf(method: string): Array<Record<string, unknown>> }) {
+    return recorder
+      .paramsOf("events.append")
+      .flatMap((p) => (p.batch ?? []) as Array<{ payload: Record<string, unknown> }>)
+      .map(({ payload }) => [payload.label, payload.source, payload.objective]);
+  }
+
+  it("CU11. a reached goal verified every yes the judge gave: only the question it was set for is studio-verified, every other yes stays the model's word", async () => {
+    const { runHandsOnJudge, recordHandsOn } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const { trace } = await sessionFolder();
+    const said = {
+      answers: { gate: { answer: "yes", frames: ["s3_screen"] }, bench: { answer: "yes", note: "sat" } },
+    };
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const options = { run: delegatedRun as never, root: "/fake/marsh", handle: "pool-1", questions: [question, bench] };
+    const tied = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const out = await runHandsOnJudge(tied.ctx as never, {
+      ...options,
+      questions: options.questions as never,
+      quest: { ...quest, checkId: "gate" },
+    });
+    assert.deepEqual(
+      out.results.map((r) => [r.id, r.pass]),
+      [
+        ["gate", true],
+        ["bench", true],
+      ],
+    );
+    assert.deepEqual(out.objectives, { gate: "studio-verified", bench: "model-said" });
+    assert.equal(out.objective, "studio-verified", "the question the goal was set for");
+    const grant = tied.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown>;
+    assert.deepEqual(grant.quest, quest, "the host is handed the goal alone");
+    await recordHandsOn(tied.ctx as never, delegatedRun as never, out, [question, bench] as never);
+    assert.deepEqual(records(tied), [
+      ["Could you open the gate?", "hands-on-judge", "studio-verified"],
+      ["Could you sit on the bench?", "hands-on-judge", "model-said"],
+    ]);
+
+    const loose = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const untied = await runHandsOnJudge(loose.ctx as never, {
+      ...options,
+      questions: options.questions as never,
+      quest,
+    });
+    assert.equal(untied.objective, "model-said", "a goal for two questions that names neither verifies neither");
+    assert.deepEqual(
+      untied.results.map((r) => r.pass),
+      [true, true],
+      "each yes stands as the model gave it, on the normal rubric",
+    );
+    assert.deepEqual(untied.objectives, { gate: "model-said", bench: "model-said" });
+  });
+
+  it("CU12. the integration's play went to a judge sent to the run's requested state, which then passed every play check: only a check tied to that state is put to it; otherwise the playtester plays as before", async () => {
+    const { scoreEvidence } = await import("../../src/harness-seed/loop/facet/scoring.ts");
+    const { normalizeCheck } = await import("../../src/harness-seed/loop/spec.ts");
+    const run = { ...delegatedRun, setup: { begin: false, verify: { path: "gate.open", truthy: true } } };
+    const roam = normalizeCheck({ id: "integration-play", kind: "play", ask: "Could you move through the world?" });
+    const reach = normalizeCheck({ id: "reach-gate", kind: "play", ask: "Could you open the gate?", reaches: "setup" });
+    assert.equal(reach?.reaches, "setup", "the tie survives the planner's normalisation");
+    assert.equal(roam?.reaches, undefined);
+    const input = (checks: unknown[]) => ({
+      run,
+      spec: { id: "integration", title: "Integration", checks },
+      evidence: { shots: [] },
+      diffs: {},
+      handle: "pool-1",
+      role: "integration",
+      worktree: "/fake/marsh",
+      deadline: Date.now() + 3_600_000,
+      iteration: 1,
+      iterationId: "001",
+      facetId: "integration",
+    });
+    const said = {
+      answers: { "integration-play": { answer: "yes" }, "reach-gate": { answer: "yes", frames: ["s3_screen"] } },
+    };
+    const plain = judgeCtx(said, null);
+    await scoreEvidence(plain.ctx as never, input([roam]));
+    const played = plain.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown> | undefined;
+    assert.notEqual(played?.role, "judge", "no check tied to the requested state: the playtester plays");
+    assert.equal(played?.quest, undefined);
+    assert.deepEqual(records(plain), [], "and records nothing a judge that plays established");
+
+    const { trace } = await sessionFolder();
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const tied = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const scored = await scoreEvidence(tied.ctx as never, input([roam, reach]));
+    const judged = tied.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown> | undefined;
+    assert.equal(judged?.role, "judge");
+    assert.deepEqual(judged?.quest, { id: "requested-state", until: { path: "gate.open", truthy: true } });
+    assert.deepEqual(
+      scored.results.map((r) => [r.id, r.pass]),
+      [
+        ["integration-play", true],
+        ["reach-gate", true],
+      ],
+    );
+    assert.deepEqual(records(tied), [
+      ["Could you move through the world?", "hands-on-judge", "model-said"],
+      ["Could you open the gate?", "hands-on-judge", "studio-verified"],
+    ]);
+  });
+
+  it("CU13. whether the frame a yes rests on is lit was read from the words of a tool answer: it is read from the frame file, and the frame must be taken at or after the goal", async () => {
+    const { runHandsOnJudge } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const { trace, dir } = await sessionFolder();
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const options = {
+      run: delegatedRun as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      questions: [question] as never,
+      quest,
+    };
+    const early = { answers: { gate: { answer: "yes", frames: ["s2_screen"] } } };
+    const before = judgeCtx(early, reached, { "preview.statsOf": lit });
+    const cited = await runHandsOnJudge(before.ctx as never, options);
+    assert.equal(cited.results[0]?.pass, null, "a frame from before the goal shows nothing the goal proves");
+    assert.equal(cited.objective, "model-said");
+
+    const png = path.join(dir, "trace-png.jsonl");
+    const pngRows = (await readFile(trace, "utf8")).replaceAll("s3_screen.jpg", "s3_screen.png");
+    await writeFile(png, pngRows);
+    const pictured = judgeCtx(
+      { answers: { gate: { answer: "yes", frames: ["s3_screen.png"] } } },
+      { ...reached, path: png },
+      {
+        "preview.statsOf": lit,
+      },
+    );
+    const fromPng = await runHandsOnJudge(pictured.ctx as never, options);
+    assert.equal(fromPng.objective, "studio-verified");
+    assert.match(String(pictured.paramsOf("preview.statsOf")[0]?.path), /s3_screen\.png$/);
+
+    const local = { runId: "run_cu", project: "marsh", engine: "ollama", model: "vl", goal: "a marsh" };
+    let turns = 0;
+    const final = JSON.stringify({ answers: { gate: { answer: "yes", frames: ["s3_screen"] } } });
+    const direct = ctxRecorder({
+      handlers: {
+        "engine.describe": () => engines,
+        "engine.complete": () =>
+          turns++ === 0
+            ? {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    { id: "c1", name: "computer", arguments: { action: "left_click", coordinate: [400, 300] } },
+                  ],
+                },
+              }
+            : { message: { role: "assistant", content: final } },
+        "preview.computer": (p) =>
+          p.describe
+            ? {
+                tool: { name: "computer", description: "the computer", parameters: { type: "object", properties: {} } },
+              }
+            : {
+                answer: `${path.join(dir, "s3_screen.jpg")} — 960×600, cursor at 400,300, litFraction 0.90, meanLuma 120`,
+                trace: reached,
+              },
+        "preview.statsOf": blank,
+        "events.append": () => "e1",
+      },
+    });
+    const said = await runHandsOnJudge(direct.ctx as never, { ...options, run: local as never });
+    assert.equal(said.results[0]?.pass, null, "the answer's words say lit; the frame is blank");
+    assert.equal(said.objective, "model-said");
+    assert.equal(direct.paramsOf("preview.statsOf").length, 1);
+  });
+
+  it("CU14. a probe without a goal resolved an unmeasured picture as if measured, and its budget was forgotten on a restart: its answer is the model's word, below the confidence that counts, and the count rides in the journal", async () => {
+    const { escalateVision, ESCALATE_BELOW_CONFIDENCE, MAX_PROBES_PER_RUN } = await import(
+      "../../src/harness-seed/loop/vision-escalation.ts"
+    );
+    const { recordLoopRun } = await import("../../src/harness-seed/loop/director/journal.ts");
+    const ask = {
+      check: {
+        id: "lamp",
+        kind: "vision",
+        camera: "default",
+        ask: "Is the lamp lit?",
+        expect: "yes",
+        weight: "normal",
+      },
+      crop: null,
+    };
+    const unmeasuredLamp = {
+      id: "lamp",
+      kind: "vision",
+      weight: "normal",
+      pass: null,
+      state: "unmeasured",
+      reason: "camera default was not captured",
+    };
+    const said = { answers: { lamp: { answer: "yes", note: "it glows" } } };
+    const probe = judgeCtx(said, { path: null, steps: 3, deterministic: true, reachedAt: null });
+    const run = { ...delegatedRun };
+    const [resolved] = await escalateVision(probe.ctx as never, {
+      run: run as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [unmeasuredLamp] as never,
+    });
+    assert.equal(resolved?.pass, true);
+    assert.ok(Number(resolved?.confidence) < ESCALATE_BELOW_CONFIDENCE, "never a measured-confident answer");
+    assert.equal(resolved?.objective, "model-said");
+    assert.deepEqual(records(probe), [["Is the lamp lit?", "hands-on-judge", "model-said"]]);
+
+    const now = Date.now();
+    const spent = { ...delegatedRun, handsOnProbes: MAX_PROBES_PER_RUN };
+    const loopRun = {
+      run: spent,
+      started: now,
+      softDeadline: now,
+      finalDeadline: now,
+      state: { judges: 0, plays: 0, ledger: [], workers: new Map(), log: [], planReviewUntil: 0 },
+      journal: { run: { ...delegatedRun } as Record<string, unknown>, director: {} as Record<string, unknown> },
+    };
+    recordLoopRun(loopRun as never, now);
+    assert.equal(loopRun.journal.run.handsOnProbes, MAX_PROBES_PER_RUN);
+    const resumed = judgeCtx(said, null);
+    await escalateVision(resumed.ctx as never, {
+      run: loopRun.journal.run as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [unmeasuredLamp] as never,
+    });
+    assert.deepEqual(
+      resumed.sequence("engine."),
+      [],
+      "a run resumed from its journal spends no probe it already spent",
+    );
+  });
+
+  it("CU15. a direct engine's computer loop kept every move's screenshots in its conversation: only the latest turn's pictures go back", async () => {
+    const { runPlaytest } = await import("../../src/harness-seed/loop/playtester.ts");
+    const answer = JSON.stringify({ answers: { gate: { answer: "yes" } }, report: "ok" });
+    let moves = 0;
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.describe": () => engines,
+        "engine.complete": () =>
+          moves++ < 3
+            ? {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [{ id: `c${moves}`, name: "computer", arguments: { action: "key", text: "e" } }],
+                },
+              }
+            : { message: { role: "assistant", content: answer } },
+        "preview.computer": (p) =>
+          p.describe
+            ? {
+                tool: { name: "computer", description: "the computer", parameters: { type: "object", properties: {} } },
+              }
+            : {
+                answer: { text: "moved", images: [{ mimeType: "image/jpeg", data: "AAAA", label: "shot" }] },
+                trace: { path: null, steps: 1, deterministic: false, reachedAt: null },
+              },
+      },
+    });
+    const local = { runId: "run_cu", project: "marsh", engine: "ollama", model: "vl", goal: "a marsh" };
+    await runPlaytest(recorder.ctx as never, {
+      run: local as never,
+      checks: [question] as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      maxActions: 6,
+    });
+    const last = recorder.paramsOf("engine.complete").at(-1)?.messages as Array<{ images?: unknown[] }>;
+    const pictured = last.filter((message) => message.images?.length);
+    assert.equal(pictured.length, 1, "only the latest turn's pictures ride along");
+  });
+
+  it("CU16. the pass rule read a quest's 'yes' from the check's pass: a 'no' that a check expects was ruled incomplete for lacking the goal", async () => {
+    const { questRuled } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const quest = { id: "gate", until: { path: "gate.open", equals: true }, checkId: "closed" };
+    const proof = { reachedAt: null, frameLit: null, frameAt: null };
+    const no = { id: "closed", kind: "play", weight: "normal", pass: true, reason: "", answer: "no", note: "" };
+    const ruledNo = questRuled([no] as never, quest as never, proof);
+    assert.equal(ruledNo.results[0]?.pass, true, "a 'no' stands either way");
+    assert.equal(ruledNo.objective, "model-said");
+    const yes = { ...no, pass: false, answer: "yes", reason: "judge answered yes" };
+    const ruledYes = questRuled([yes] as never, quest as never, proof);
+    assert.equal(ruledYes.results[0]?.pass, null, "a 'yes' without the goal is incomplete");
+  });
+});
 describe("a Loop chat whose turn made the game's project (an Unreal game)", () => {
   it("LL1. the session that goes on is told to launch the build with its launch tool, never to build the game itself", () => {
     const unreal = [{ id: "unreal-project", path: "unreal" }];
@@ -14250,6 +15788,304 @@ describe("workers the run's pause stopped, and their kept work", () => {
 });
 
 const racingRunForSteer = { runId: "run_racing", project: "racing", goal: "a night street race", model: "sonnet" };
+
+/** The smallest PNG: one transparent pixel. */
+const ONE_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+describe("a lead hears what its workers found", () => {
+  /** A reader's written report, its finding far past its first sentence. */
+  const REPORT = [
+    "Reviewed the scene from four cameras.",
+    "",
+    "1. The roofs and the dock read well from the overview camera.",
+    "2. The fog is a little thin at the far shore; raise its density.",
+    "3. The hero's left arm sticks out about 40 degrees from the body in idle, and a strip of cloth stretches to the floor in the walk.",
+  ].join("\n");
+  const FINDING = /left arm sticks out about 40 degrees/;
+
+  it("LH1. a reader's written report never reached the lead: worker_status names it in full, and a reopened pool still does", async () => {
+    const { chatPool, finish, gameRepo, poolHost, start } = await import("../helpers/worker-pool-host.ts");
+    const { WorkerTool } = await import("../../src/shared/workers.ts");
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const id = await start(pool, { title: "Fresh eyes", task: "Review the scene.", isolation: "read" });
+    await finish(host, pool, id, { ok: true, sessionId: "s1", summary: REPORT });
+    assert.match(await pool.call(WorkerTool.Status, { id }), FINDING);
+    assert.match(await pool.call(WorkerTool.Wait, { id }), FINDING);
+    await pool.close();
+    const reopened = await chatPool(host, repo);
+    assert.match(await reopened.call(WorkerTool.Status, { id }), FINDING, "the report outlives the turn");
+  });
+
+  it("LH2. a lead waiting on any worker reads the report of the one that ended, while the list of all stays one line each", async () => {
+    const { chatPool, gameRepo, poolHost, settle, start } = await import("../helpers/worker-pool-host.ts");
+    const { WorkerTool } = await import("../../src/shared/workers.ts");
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const id = await start(pool, { title: "Fresh eyes", task: "Review the scene.", isolation: "read" });
+    const waited = pool.call(WorkerTool.Wait, { seconds: 60 });
+    await settle();
+    host.sessionOf(id).end({ ok: true, sessionId: "s1", summary: REPORT });
+    assert.match(await waited, FINDING);
+    const all = await pool.call(WorkerTool.Status, {});
+    assert.match(all, /Reviewed the scene from four cameras\./, "the list names it by its first sentence");
+    assert.doesNotMatch(all, FINDING);
+  });
+
+  it("LH4. a worker ended its turn to wait on a long job in the background, and its later calls were refused: its brief says its turn is its whole job", async () => {
+    const { workerBrief } = await import("../../src/harness-seed/loop/workers/prompts.ts");
+    const brief = workerBrief({
+      identity: { folderLabel: "AI Games/garden", facts: [{ id: "web-game", path: "." }] },
+      task: "Make the three townsfolk with Genex.",
+      isolation: "copy",
+      research: false,
+      typeDescription: null,
+      inputs: [],
+    } as never);
+    assert.match(brief, /Your turn is your whole job/);
+    assert.match(brief, /never wait with sleep or a background command/i);
+    assert.match(brief, /call its wait again with the same id/);
+  });
+
+  it("LH5. save points were kept on wide shots that never showed the change: a save point names the picture that shows it, and that picture leads its round on the graph", async () => {
+    const { gameRepo, loopHost } = await import("../helpers/loop-host.ts");
+    const dir = await tmpDir("save-shows-");
+    await mkdir(path.join(dir, "shots"), { recursive: true });
+    await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
+    await writeFile(path.join(dir, "shots/hero-closeup.png"), Buffer.from(ONE_PIXEL_PNG, "base64"));
+    await gameRepo(dir);
+    const answers: unknown[] = [];
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ tool }) => {
+          await writeFile(path.join(dir, "a.txt"), "a");
+          const shows = "shots/hero-closeup.png";
+          answers.push(await tool("save_point", { label: "Hero", summary: "the hero's arms at his sides", shows }));
+          await writeFile(path.join(dir, "b.txt"), "b");
+          answers.push(await tool("save_point", { label: "Dock", summary: "the dock" }));
+          await writeFile(path.join(dir, "c.txt"), "c");
+          answers.push(await tool("save_point", { label: "Boat", summary: "the boat", shows: "../outside.png" }));
+          await tool("finish", { summary: "Built.", proof: "a.txt" });
+          return undefined;
+        },
+      ],
+    });
+    await host.start();
+    const [hero, dock, boat] = host.appended("facet_iteration");
+    assert.match(String((hero?.shown as { path?: string } | undefined)?.path), /save-1\/shows/);
+    assert.equal(dock?.shown, undefined);
+    assert.equal(boat?.shown, undefined, "a path outside the folder is never read");
+    assert.doesNotMatch(String(answers[0]), /name the picture/);
+    assert.match(String(answers[1]), /name the picture that shows what changed/);
+    assert.match(String(answers[2]), /not a picture in the project's folder/);
+  });
+
+  it("a save point's picture is read only from inside the folder, as a plain PNG or JPEG", async () => {
+    const { shownPicture } = await import("../../src/harness-seed/loop/director/open/shown-picture.ts");
+    const { symlink } = await import("node:fs/promises");
+    const root = await tmpDir("save-shows-hostile-");
+    const dir = path.join(root, "game");
+    await mkdir(path.join(dir, "shots"), { recursive: true });
+    await mkdir(path.join(dir, ".hidden"), { recursive: true });
+    const picture = Buffer.from(ONE_PIXEL_PNG, "base64");
+    await writeFile(path.join(root, "outside.png"), picture);
+    await writeFile(path.join(dir, ".hidden/a.png"), picture);
+    await writeFile(path.join(dir, "shots/notes.txt"), "not a picture\n");
+    await writeFile(path.join(dir, "shots/huge.png"), Buffer.concat([picture, Buffer.alloc(9 * 1024 * 1024)]));
+    await writeFile(path.join(dir, "shots/ok.png"), picture);
+    await symlink(path.join(root, "outside.png"), path.join(dir, "shots/link.png"));
+    await promisify(execFile)("mkfifo", [path.join(dir, "shots/pipe.png")]);
+    const hostile = [
+      "../outside.png",
+      path.join(root, "outside.png"),
+      "shots/link.png",
+      ".hidden/a.png",
+      "shots/pipe.png",
+      "shots/huge.png",
+      "shots/notes.txt",
+      "shots/missing.png",
+      "shots/../../outside.png",
+    ];
+    for (const rel of hostile) {
+      const shown = await shownPicture(dir, rel);
+      assert.ok("problem" in shown, `${rel} is refused`);
+    }
+    const ok = await shownPicture(dir, "shots/ok.png");
+    assert.ok("image" in ok && ok.image.data === picture.toString("base64"));
+  });
+
+  it("LH6. a worker's work was marked used seconds after it ended, before anyone looked: the merge hands back the pictures it made, to look at", async () => {
+    const { chatPool, delegation, finish, gameRepo, poolHost, start } = await import("../helpers/worker-pool-host.ts");
+    const { WorkerTool } = await import("../../src/shared/workers.ts");
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const id = await start(pool, { title: "Model the annex", task: "Model the annex.", isolation: "copy" });
+    const copy = String(delegation(host, id).cwd);
+    await mkdir(path.join(copy, "assets/annex"), { recursive: true });
+    await writeFile(path.join(copy, "assets/annex/annex.glb"), "glb");
+    await writeFile(path.join(copy, "assets/annex/render.png"), Buffer.from(ONE_PIXEL_PNG, "base64"));
+    await finish(host, pool, id, { ok: true, sessionId: "s1", summary: "Modelled the annex." });
+    const merged = await pool.call(WorkerTool.Mark, { id, verdict: "used" });
+    assert.match(merged, /Merged w1/);
+    assert.match(merged, /Look at[^.]*assets\/annex\/render\.png/);
+    assert.doesNotMatch(merged, /annex\.glb/, "only its pictures");
+  });
+
+  it("LH3. a copy worker's status names the files its work changes", async () => {
+    const { chatPool, delegation, finish, gameRepo, poolHost, start } = await import("../helpers/worker-pool-host.ts");
+    const { WorkerTool } = await import("../../src/shared/workers.ts");
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const id = await start(pool, { title: "Add a boat", task: "Add boat.js.", isolation: "copy" });
+    const copy = String(delegation(host, id).cwd);
+    await mkdir(path.join(copy, "src"), { recursive: true });
+    await writeFile(path.join(copy, "src/boat.js"), "export const boat = 1;\n");
+    await writeFile(path.join(copy, "a.txt"), "changed\n");
+    await finish(host, pool, id, { ok: true, sessionId: "s1", summary: "Added the boat." });
+    const status = await pool.call(WorkerTool.Status, { id });
+    assert.match(status, /a\.txt/);
+    assert.match(status, /src\/boat\.js/);
+  });
+});
+
+describe("a finish claim with known gaps", () => {
+  /** A game folder with one commit, for a Loop in place. */
+  const folder = async (prefix: string) => {
+    const { gameRepo } = await import("../helpers/loop-host.ts");
+    const dir = await tmpDir(prefix);
+    await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
+    return gameRepo(dir);
+  };
+  const GAPS = "the player has no walk animation\nthe hero's left arm sticks out from the body";
+
+  it("LF1. the lead's closing line of known gaps was cut off with its claim at its length limit: what remains is a field of its own, read first and whole", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const dir = await folder("finish-remaining-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      run: { budgets: { wallClockMs: 15 * MINUTE_MS, completionPolicy: "goal" } },
+      turns: [
+        async ({ tool }) => {
+          await writeFile(path.join(dir, "a.txt"), "a");
+          await tool("save_point", { label: "Scene", summary: "the scene" });
+          await tool("finish", {
+            summary: `${"The scene holds the town. ".repeat(160)}`,
+            remaining: GAPS,
+            proof: "a.txt",
+          });
+          return undefined;
+        },
+      ],
+    });
+    await host.start();
+    const prompt = String(host.reviewed()[0]?.prompt ?? "");
+    assert.match(prompt, /the hero's left arm sticks out from the body/);
+    assert.ok(
+      prompt.indexOf("the player has no walk animation") < prompt.indexOf("## The lead's claim"),
+      "what remains comes before the claim",
+    );
+  });
+
+  it("LF2. a reviewer's yes ended a three-hour Loop early while the lead named gaps: a claim naming gaps with time left reaches no reviewer, and the lead works on them first", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const dir = await folder("finish-gaps-early-");
+    const answers: unknown[] = [];
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      run: { budgets: { wallClockMs: 3 * HOUR_MS, completionPolicy: "timed" } },
+      turns: [
+        async ({ tool }) => {
+          await writeFile(path.join(dir, "a.txt"), "a");
+          await tool("save_point", { label: "Scene", summary: "the scene" });
+          answers.push(await tool("finish", { summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }));
+          return undefined;
+        },
+        async ({ tool }) => {
+          await writeFile(path.join(dir, "b.txt"), "b");
+          await tool("save_point", { label: "Walk", summary: "the walk and the arms" });
+          answers.push(
+            await tool("finish", { summary: "The scene is built and the gaps are closed.", proof: "b.txt" }),
+          );
+          return undefined;
+        },
+      ],
+    });
+    await host.start();
+    assert.match(String(answers[0]), /^Not checked: .*work on it first/);
+    assert.match(String(answers[0]), /walk animation/);
+    assert.equal(host.reviewed().length, 1, "only the claim with nothing remaining reached a reviewer");
+    assert.match(String(answers[1]), /^Accepted/);
+  });
+
+  it("LF3. with gaps named but the Loop's time nearly spent, a reviewer's yes still closes it", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const dir = await folder("finish-gaps-late-");
+    const answers: unknown[] = [];
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      run: { budgets: { wallClockMs: 15 * MINUTE_MS, completionPolicy: "timed" } },
+      turns: [
+        async ({ tool }) => {
+          await writeFile(path.join(dir, "a.txt"), "a");
+          await tool("save_point", { label: "Scene", summary: "the scene" });
+          answers.push(await tool("finish", { summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }));
+          return undefined;
+        },
+      ],
+    });
+    await host.start();
+    assert.match(String(answers[0]), /^Accepted/);
+  });
+});
+
+describe("the most workers at once", () => {
+  it("LW1. a lead was told 'up to eight at once' while the person's Settings allowed four, and the fifth was answered 'Started' before the host refused it: the pool says the live cap and refuses at once", async () => {
+    const { chatPool, gameRepo, poolHost, start } = await import("../helpers/worker-pool-host.ts");
+    const { WorkerTool } = await import("../../src/shared/workers.ts");
+    const { workerTools } = await import("../../src/harness-seed/loop/workers/specs.ts");
+    const repo = await gameRepo();
+    const host = poolHost(repo, { workersAllowed: 4 });
+    const pool = await chatPool(host, repo);
+    for (const n of [1, 2, 3, 4]) await start(pool, { title: `Read ${n}`, task: "Look around.", isolation: "read" });
+    const fifth = await pool.call(WorkerTool.Start, { title: "Read 5", task: "Look around.", isolation: "read" });
+    assert.match(fifth, /^Not started: 4 workers are running, and at most 4 run at once/);
+    assert.equal(host.sessions.length, 4, "nothing was asked of the host for the fifth");
+    const start5 = workerTools([], pool.state.allowed).find((tool) => tool.name === WorkerTool.Start);
+    assert.match(String(start5?.description), /Up to 4 at once/);
+  });
+});
+
+describe("a worker wait inside the lead's capped turn", () => {
+  it("LT1. the turn's cap cut a four-minute worker_wait short and the turn's continuation re-sent its guidance: a wait ends before the turn must, saying so", async () => {
+    const { turnRoomNote, waitWithinTurn } = await import("../../src/harness-seed/loop/director/open/turn-room.ts");
+    const { noteTurnEnds } = await import("../../src/harness-seed/loop/director/turn-ends.ts");
+    const state = {};
+    const now = 1_000_000;
+    noteTurnEnds(state, now + 4 * MINUTE_MS);
+    const near = waitWithinTurn({ state } as never, { seconds: "240" }, now);
+    assert.equal(near.args.seconds, 150, "the wait returns 90 s before the turn must end");
+    assert.equal(near.endsBy, now + 4 * MINUTE_MS);
+    // Told as the wait returns, not as it began.
+    assert.match(turnRoomNote(Number(near.endsBy), now + 150 * SECOND_MS), /turn ends in about 2 minutes/);
+    const far = waitWithinTurn({ state } as never, { seconds: "60" }, now);
+    assert.deepEqual(far, { args: { seconds: "60" }, endsBy: null }, "a wait that fits is left alone");
+    // The pool lets no wait run past 240 s: a longer ask that fits once capped is left alone too.
+    noteTurnEnds(state, now + 10 * MINUTE_MS);
+    assert.equal(waitWithinTurn({ state } as never, { seconds: "600" }, now).endsBy, null);
+    const none = waitWithinTurn({ state: {} } as never, { seconds: "240" }, now);
+    assert.equal(none.endsBy, null, "a turn with no end noted waits as asked");
+  });
+});
 
 describe("the user's ask to finish a running build (director/wrap-up.ts)", () => {
   const FINISH_ASK = "time to move toward completion: wait for the last workers and put everything together";
@@ -14598,6 +16434,23 @@ describe("a worker whose model provider went away", () => {
     await refundProviderAttempt(loopRun as never, unjudged as never, {});
     assert.equal(goals.entries[0]!.attempts, 1, "a worker the provider did not end keeps its count");
   });
+  it("PC4. the paused clock measures the wait on the loop's own clock, not the wall clock", async () => {
+    const { sleepOnPausedClock } = await import("../../src/harness-seed/loop/facet/paused-clock.ts");
+    let now = PT0;
+    const moved: number[] = [];
+    const loop = {
+      now: () => now,
+      deadline: PT0 + 5 * MIN,
+      deadlineCeiling: () => PT0 + 2 * 60 * MIN,
+      onDeadline: (deadline: number) => void moved.push(deadline),
+      sleepFor: async (ms: number) => {
+        now += ms;
+      },
+    };
+    await sleepOnPausedClock(loop, 20 * MIN);
+    assert.equal(loop.deadline, PT0 + 25 * MIN, "the 20 minutes the loop's clock waited are given back");
+    assert.deepEqual(moved, [PT0 + 25 * MIN]);
+  });
 });
 
 describe("a worker's budget, in rounds of this game", () => {
@@ -14864,5 +16717,482 @@ describe("a worker waiting on its provider when the user asks to finish", () => 
     assert.equal(flow, "stop", "the round stops at the ask, not at the run's end");
     const stopped = records.find(([type]) => type === RunEvent.FacetStopped)?.[1];
     assert.equal(stopped?.by, "user");
+  });
+});
+
+describe("a chat in a game linked to an engine other than Unreal", () => {
+  it("EG1. its brief never gives web-page rules, the preview's Reload or the web Loop, whether or not the host lists facts", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const { launchRules } = await import("../../src/harness-seed/loop/launch-prompts.ts");
+    const launch = { toolName: "start_build", hours: 2 };
+    const toy = { ask: "make the garden", gameEngine: "toy-engine", engineProject: "/g/garden/Garden.toyproj", launch };
+    const webWords = [/window\.__studio/, /Reload/, /holds a web game/, /builders working in parallel/];
+    for (const [name, brief] of [
+      ["with facts", buildContractorBrief({ ...toy, facts: [{ id: "toy-project", path: "." }] })],
+      ["an older caller that names only the engine", buildContractorBrief(toy)],
+    ] as const)
+      for (const words of webWords) assert.doesNotMatch(brief, words, `${name}: ${words}`);
+    const unnamedLoop = launchRules("claude-code", launch, "toy-engine").join("\n");
+    assert.doesNotMatch(
+      unnamedLoop,
+      /builders working in parallel/,
+      "with no Loop named, another engine's is the one Loop",
+    );
+    assert.match(unnamedLoop, /reviewer/);
+    assert.match(launchRules("claude-code", launch, "unreal").join("\n"), /the Unreal Loop/, "Unreal's stays Unreal's");
+  });
+});
+
+describe("a game its engine plugin plays in its editor, with judges", () => {
+  const TOY_FACTS = [{ id: "toy-project", path: "." }];
+  const UNREAL_FACTS = [{ id: "unreal-project", path: "." }];
+  const JUDGES = [
+    { id: "crowd", label: "Crowd" },
+    { id: "plain", label: "Plain" },
+  ];
+
+  /** A Loop's host on a copy of the toy project, listed as the host lists a game it plays in its editor. */
+  async function toyLoop(
+    turns: Array<import("../helpers/loop-host.ts").LoopTurn>,
+    game: { editorPlay?: boolean; judges?: typeof JUDGES } = { editorPlay: true, judges: JUDGES },
+    facts: Array<{ id: string; path: string }> = TOY_FACTS,
+  ) {
+    const { gameRepo, loopHost } = await import("../helpers/loop-host.ts");
+    const { copyProject, Project } = await import("../helpers/project-fixtures.ts");
+    const project = facts === UNREAL_FACTS ? Project.UnrealGame : Project.ToyProject;
+    const dir = await gameRepo(await copyProject(project, await tmpDir("judged-loop-")));
+    const host = loopHost({ dir, facts, turns, run: { runId: `run-judged-${path.basename(dir)}` } });
+    Object.assign(host.game, game);
+    return host;
+  }
+
+  /** A turn that keeps one save point, "One". */
+  const savesOne = async ({ tool }: { tool: (name: string, args?: Record<string, string>) => Promise<unknown> }) => {
+    await tool("save_point", { label: "One", summary: "the first room" });
+    return undefined;
+  };
+  /** A turn that claims the goal, naming a file of the folder as proof. */
+  const finishing =
+    (proof: string) =>
+    async ({ tool }: { tool: (name: string, args?: Record<string, string>) => Promise<unknown> }) => {
+      await tool("finish", { summary: "The room is built.", proof });
+      return undefined;
+    };
+  const finishes = finishing("Garden.toyproj");
+
+  /** The lead's `judge_play` on its first turn, as its engine was handed it; undefined when not offered. */
+  const leadJudgeTool = (host: import("../helpers/loop-host.ts").LoopHost) =>
+    ((host.leadCalls()[0]?.director as { tools?: Array<Record<string, unknown>> } | undefined)?.tools ?? []).find(
+      (tool) => tool.name === "judge_play",
+    ) as { parameters: { properties: Record<string, { description?: string }> } } | undefined;
+
+  /** The judges each judge session played as, in order. */
+  const judgesPlayed = (host: import("../helpers/loop-host.ts").LoopHost) =>
+    host.judged().map((params) => (params.playtest as { judge?: string; role?: string }).judge ?? "plain judge");
+
+  it("EJ1. a game the host says it plays in an editor, whatever its engine: the lead is offered judge_play with the game's judges by id, not only on the Unreal fact", async () => {
+    const { playedInEditor } = await import("../../src/harness-seed/loop/folder-facts.ts");
+    assert.equal(playedInEditor({ editorPlay: true, facts: TOY_FACTS }), true, "the host's word");
+    assert.equal(playedInEditor({ facts: UNREAL_FACTS }), true, "an older host that never says: the Unreal fact");
+    assert.equal(playedInEditor(UNREAL_FACTS), true, "a kept older caller that hands facts alone");
+    assert.equal(playedInEditor({ facts: TOY_FACTS }), false);
+    const host = await toyLoop([finishes]);
+    await host.start();
+    const tool = leadJudgeTool(host);
+    assert.ok(tool, "judge_play offered on a toy-engine game played in its editor");
+    assert.match(String(tool.parameters.properties.judge?.description), /crowd \(Crowd\), plain \(Plain\)/);
+    assert.match(host.prompts()[0] ?? "", /judge_play: a blind judge plays the game/);
+    const plain = await toyLoop([finishes], {});
+    await plain.start();
+    assert.equal(leadJudgeTool(plain), undefined, "a game no plugin plays in its editor offers none");
+  });
+
+  it("EJ2. after a turn keeps a save point every judge plays it in turn, each as itself; the answers open the lead's next turn and reach the run's checks", async () => {
+    const host = await toyLoop([savesOne, finishes]);
+    await host.start();
+    assert.deepEqual(judgesPlayed(host), ["crowd", "plain"]);
+    for (const params of host.judged()) assert.equal((params.playtest as { role?: string }).role, "judge");
+    const second = host.prompts()[1] ?? "";
+    assert.match(second, /The Crowd judge played save point "One": The judge answered yes/, second);
+    assert.match(second, /The Plain judge played save point "One"/);
+    const checks = host.appended("run_interaction_evidence").map((payload) => String(payload.label));
+    assert.equal(checks.length, 2, JSON.stringify(checks));
+    assert.match(checks[0] ?? "", /Crowd judge/);
+    assert.match(checks[1] ?? "", /Plain judge/);
+  });
+
+  it("EJ3. a stop while a judge plays cancels the judges not played yet", async () => {
+    const host = await toyLoop([savesOne, finishes]);
+    host.judging = () => {
+      host.rec.ctx.cancelled = true;
+      return undefined;
+    };
+    await host.start();
+    assert.deepEqual(judgesPlayed(host), ["crowd"]);
+  });
+
+  it("EJ4. no judges, no rounds: a toy game whose plugin declares none, and an Unreal game", async () => {
+    const none = await toyLoop([savesOne, finishes], { editorPlay: true });
+    await none.start();
+    assert.deepEqual(none.judged(), []);
+    assert.equal(none.prompts().length, 2, "the Loop went on to its second turn");
+    const unreal = await toyLoop([savesOne, finishing("Lantern.uproject")], {}, UNREAL_FACTS);
+    await unreal.start();
+    assert.deepEqual(unreal.judged(), []);
+    assert.ok(leadJudgeTool(unreal), "the Unreal lead keeps judge_play, as before");
+  });
+
+  it("EJ5. a round keeps to the Loop's hours: with a few minutes of working time left no judge plays, and the lead hears why", async () => {
+    const host = await toyLoop([
+      async (call) => {
+        await savesOne(call);
+        call.host.pass(3 * 60 * 60_000 - 2 * 60_000);
+        return undefined;
+      },
+      finishes,
+    ]);
+    await host.start();
+    assert.deepEqual(host.judged(), []);
+    assert.match(host.prompts()[1] ?? "", /No judge played save point "One": the Loop's working time is nearly over/);
+  });
+
+  it("EJ7. a round whose working time runs out while a judge plays starts no further judge, and the lead hears which didn't play", async () => {
+    const host = await toyLoop([savesOne, finishes]);
+    host.judging = () => {
+      // The first judge plays past the Loop's working time.
+      host.pass(3 * 60 * 60_000);
+      return undefined;
+    };
+    await host.start();
+    assert.deepEqual(judgesPlayed(host), ["crowd"]);
+    assert.match(
+      host.prompts()[1] ?? "",
+      /The judges' round after save point "One" stopped before the Plain judge played: the Loop's working time is over/,
+    );
+  });
+
+  it("EJ6. the chat's judge_play plays as the judge it names; a kept older judge that can't is refused, playing nothing", async () => {
+    const { judgeFromChat } = await import("../../src/harness-seed/loop/chat-judge.ts");
+    const { servesEngineJudges } = await import("../../src/harness-seed/loop/engine-judges.ts");
+    const rec = ctxRecorder({
+      handlers: {
+        "preview.capacity": () => ({ max: 2, inUse: 0, headless: true }),
+        "preview.acquire": () => ({ handle: "w1" }),
+        "preview.release": () => true,
+        "engine.describe": () => [{ id: "claude-code", kind: "delegated", supportsSessions: true }],
+        "engine.delegate": () => ({ ok: true, summary: '{"answers":{"chat-judge":{"answer":"yes"}}}', turns: 2 }),
+      },
+    });
+    const ask = {
+      type: "chat_judge" as const,
+      threadId: "t1",
+      project: "garden",
+      root: "/games/garden",
+      engine: "claude-code",
+      ask: "Can three players all reach the gate?",
+      judge: "crowd",
+    };
+    const answered = await judgeFromChat(rec.ctx as never, ask, { retriesMs: [] });
+    assert.equal(answered.answer, "yes");
+    const [delegated] = rec.paramsOf("engine.delegate");
+    assert.equal((delegated?.playtest as { judge?: string } | undefined)?.judge, "crowd");
+    assert.equal(servesEngineJudges([{}]), false, "a kept older judge module serves no engine judge");
+    const [plainTool] = (await import("../../src/harness-seed/tools/judge-tools.ts")).tools;
+    const properties = (plainTool?.parameters ?? {}) as { properties?: Record<string, { description: string }> };
+    const judgeArg = properties.properties?.judge;
+    assert.match(judgeArg?.description ?? "", /hint, not a rule/);
+  });
+});
+
+describe("the close's sentence of an open Loop", () => {
+  it('SP1. a save point the lead gave no summary closes as its label alone, never with an empty "()" or ":"', async () => {
+    const { openCloseOf } = await import("../../src/harness-seed/loop/director/open/graph.ts");
+    const { newOpenJournal } = await import("../../src/harness-seed/loop/director/open/contract.ts");
+    const point = (label: string, summary: string) => ({
+      label,
+      summary,
+      snapshotId: "s",
+      auto: false,
+      at: 0,
+      notes: [],
+    });
+    const journal = (...savePoints: ReturnType<typeof point>[]) => ({ ...newOpenJournal(), savePoints });
+    assert.equal(openCloseOf(journal(point("Ship flies", "")), false).summary, "One save point: Ship flies.");
+    assert.equal(
+      openCloseOf(journal(point("Ship flies", ""), point("Rocks fall", "  ")), false).summary,
+      "2 save points; the last, Rocks fall.",
+    );
+    assert.equal(
+      openCloseOf(journal(point("Ship flies", "It turns and thrusts.")), false).summary,
+      "One save point: Ship flies (It turns and thrusts).",
+      "a summary's own full stop is not doubled",
+    );
+  });
+});
+
+describe("a plugin's web build and the chat's turn", () => {
+  it("WB1. a turn whose only change is a plugin's web build (Godot's export in web/) leaves the game's kind as it was: no new-kind continuation", async () => {
+    const { kindKey } = await import("../../src/harness-seed/loop/web-build.ts");
+    const before = [{ id: "godot-project", path: "godot" }];
+    const exported = [
+      ...before,
+      { id: "web-game", path: "web" },
+      { id: "godot-web-export", path: "web", source: "plugin:godot" },
+    ];
+    assert.equal(kindKey(exported), kindKey(before), "the build is no new kind");
+    const site = [...before, { id: "web-game", path: "site" }];
+    assert.notEqual(kindKey(site), kindKey(before), "a web game no plugin claims is one");
+  });
+});
+
+describe("a Loop whose lead lost what its goal needs (claude-code-and-chatgpt)", () => {
+  const WHY =
+    "Unity's editor tools are gone from this session, so nothing I change reaches the game. Open the project in Unity, then press Resume.";
+
+  it("MK1. a Unity lead whose editor tools vanished spent hours on work that never reached the game, with no way to tell the person: it pauses the Loop with its words, and nothing runs after", async () => {
+    const { gameRepo, loopHost } = await import("../helpers/loop-host.ts");
+    const { OPEN_WORDS } = await import("../../src/harness-seed/loop/director/open/prompts.ts");
+    const dir = await tmpDir("lead-pauses-");
+    await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
+    await gameRepo(dir);
+    const answers: unknown[] = [];
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ tool }) => {
+          answers.push(await tool("pause", {}));
+          answers.push(await tool("pause", { why: WHY }));
+          answers.push(await tool("save_point", { label: "Late", summary: "after the pause" }));
+          return undefined;
+        },
+      ],
+    });
+    const report = await host.start();
+    assert.match(String(answers[0]), /pause needs/, "a pause says what only the person can do");
+    assert.match(String(answers[1]), /end your turn/i);
+    assert.equal(answers[2], OPEN_WORDS.paused, "nothing is kept once it pauses");
+    assert.equal(report.executionStatus, "paused");
+    assert.match(String(report.stoppedBecause), /Open the project in Unity, then press Resume/);
+    assert.equal(host.leadCalls().length, 1, "no turn after the pause");
+    assert.equal(host.appended("autopilot_paused").length, 1);
+    assert.equal(host.reviewed().length, 0, "nothing was claimed");
+  });
+});
+
+describe("a tool the user asked for that can't run here (claude-code-and-chatgpt)", () => {
+  it("MK2. the contractor saw Blender was too old to run, said Unity was ready and queued a 24-hour build that never used Blender: its brief says to tell the user with the fix first", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const brief = buildContractorBrief({ ask: "Make a Unity fighting game. Use blender." });
+    assert.match(brief, /never carry on without it in silence/);
+    assert.match(brief, /__install/);
+  });
+});
+
+describe("the reviewer's no's in a Loop that still has time", () => {
+  const HOUR = 60 * 60 * 1000;
+  const MINUTE = 60 * 1000;
+  const MET = "The hands, the boss and the full run were already accepted and still hold.";
+  const NOT_DONE = "The enemy in the game shows none of the armour its model has.";
+  const CLAIM = { summary: "The enemy wears its armour in the game.", proof: "shots/enemy.png" };
+
+  /** A web game with a close picture the lead names as proof, made before the Loop. */
+  async function gameWithProof(prefix: string): Promise<string> {
+    const { gameRepo } = await import("../helpers/loop-host.ts");
+    const dir = await tmpDir(prefix);
+    await mkdir(path.join(dir, "shots"), { recursive: true });
+    await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
+    await writeFile(path.join(dir, "shots/enemy.png"), Buffer.from(ONE_PIXEL_PNG, "base64"));
+    await gameRepo(dir);
+    return dir;
+  }
+
+  it("FC1. a timed Loop with most of its time left closed on the reviewer's third no about one fixable point: it keeps working, and its next claim needs new work since that no", async () => {
+    const { utimes } = await import("node:fs/promises");
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const dir = await gameWithProof("nos-time-left-");
+    const answers: unknown[] = [];
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      run: { budgets: { wallClockMs: 5 * HOUR, completionPolicy: "duration" } },
+      turns: [
+        async ({ tool }) => {
+          for (let n = 0; n <= MAX_FINISH_REJECTIONS; n++) answers.push(await tool("finish", CLAIM));
+          // A fresh picture alone is no new work: it needs a save point too.
+          const now = new Date(host.now() + MINUTE);
+          await utimes(path.join(dir, "shots/enemy.png"), now, now);
+          answers.push(await tool("finish", CLAIM));
+          await writeFile(path.join(dir, "enemy.txt"), "armour plates on the limbs\n");
+          answers.push(await tool("save_point", { label: "Armour", summary: "the enemy wears its plates" }));
+          answers.push(await tool("finish", CLAIM));
+          return undefined;
+        },
+      ],
+    });
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
+      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
+    const report = await host.start();
+    assert.match(String(answers[MAX_FINISH_REJECTIONS - 1]), /time left, so it goes on/, "the third no keeps it going");
+    assert.match(
+      String(answers[MAX_FINISH_REJECTIONS]),
+      /new work since the last no/,
+      "the same proof again is turned back",
+    );
+    assert.match(
+      String(answers[MAX_FINISH_REJECTIONS + 1]),
+      /new work since the last no/,
+      "a touched file is not enough",
+    );
+    assert.equal(host.reviewed().length, MAX_FINISH_REJECTIONS + 1, "the stale claims asked no reviewer");
+    assert.equal(report.victory, true, "the claim after a save point and a fresh picture was checked and accepted");
+    const nos = host.appended("finish_check").filter((check) => check.step === "rejected");
+    assert.deepEqual(
+      nos.map((check) => [check.stopped === true, check.timeLeft === true]),
+      Array.from({ length: MAX_FINISH_REJECTIONS }, () => [false, true]),
+    );
+  });
+
+  it("FC2. a Loop the reviewer's no's stopped listed what the reviewer had accepted under not done: only what isn't done is", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const dir = await gameWithProof("nos-not-done-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ tool }) => {
+          for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await tool("finish", CLAIM);
+          return undefined;
+        },
+      ],
+    });
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
+      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
+    const report = await host.start();
+    assert.equal(report.victory, false);
+    assert.deepEqual(report.notDone, [NOT_DONE]);
+    assert.ok(String(report.summary).includes(NOT_DONE));
+    assert.ok(!String(report.summary).includes(MET), "what the reviewer accepted is not listed as not done");
+    const stopped = host.appended("finish_check").at(-1);
+    assert.equal(stopped?.stopped, true);
+    assert.deepEqual([stopped?.reasons, stopped?.notDone], [[MET], [NOT_DONE]]);
+  });
+
+  it("FC3. the chat rebuilt a stopped Loop's Almost there card from records a reopened page could lose: the close carries the list, why it stopped and its hours", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const { MAX_FINISH_REJECTIONS, StopWhy } = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const dir = await gameWithProof("nos-card-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ tool }) => {
+          for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await tool("finish", CLAIM);
+          return undefined;
+        },
+      ],
+    });
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
+      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE], ["Laps run"]));
+    const report = await host.start();
+    assert.deepEqual(report.stillToFix, { done: ["Laps run"], notDone: [NOT_DONE], why: StopWhy.Stuck, hours: null });
+  });
+
+  it("FC4. a Loop the person stopped after a no paused, and its card offered Keep building beside Resume: a pause carries no list", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const dir = await gameWithProof("stop-after-no-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ host, tool }) => {
+          await tool("finish", CLAIM);
+          host.rec.cancel();
+          return undefined;
+        },
+      ],
+    });
+    host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
+    const report = await host.start();
+    assert.equal(report.executionStatus, "paused", "a Stop pauses the Loop for a Resume");
+    assert.equal(report.stillToFix, undefined);
+  });
+});
+
+/**
+ * A request that names an engine none of the engine question's options covers is never asked that
+ * question: it goes through `plugins_find`, as the question's own words say before they ask.
+ */
+describe("a request naming an engine the engine question doesn't offer", () => {
+  it("with only Unity on, a request for a Godot game is sent to plugins_find before the question is asked, never offered Web or Unity", async () => {
+    const { engineChoiceRule } = await import("../../src/harness-seed/loop/unreal-prompts.ts");
+    const { toolCall } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    for (const engine of ["claude-code", "codex", undefined]) {
+      const rule = engineChoiceRule(engine, null, [unity]);
+      const find = rule.indexOf(toolCall(engine, "plugins_find"));
+      const ask = rule.indexOf(toolCall(engine, "ask_user"));
+      assert.ok(find >= 0, `${engine}: another engine goes through plugins_find`);
+      assert.ok(find < ask, `${engine}: before the question is asked`);
+    }
+  });
+});
+
+/**
+ * A resumed chat session whose game still has no kind keeps the question card its first brief named:
+ * a session that remembers the engine question would otherwise call a tool it no longer has.
+ */
+describe("a resumed chat session on a game with no kind yet", () => {
+  it("a resumed session was told to ask with ask_user on its first turn and lost the card on the next: it keeps the card while the game has no kind", async () => {
+    const { runDelegatedTurn } = await import("../../src/harness-seed/loop/delegated-turn.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    const made = { name: "dodger", title: "Dodger", dir: "/games/dodger", shape: null, built: false, facts: [] };
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        "events.messages": () => [{ role: "user", content: "make a game in godot" }],
+        "game.contentStamp": () => ({ all: null, source: null }),
+        "game.list": () => [made],
+        "plugins.tools": () => ({ tools: [], guidance: "", revision: 1, kinds: [unity] }),
+        "engine.describe": () => [],
+        "preview.ready": () => ({ ready: false }),
+        "engine.delegate": () => ({
+          ok: true,
+          engine: "claude-code",
+          turns: 1,
+          usage: {},
+          sessionId: "s",
+          summary: "ok",
+        }),
+      },
+    });
+    const turn = { threadId: "t", turnId: "turn-2", text: "Godot is on now", engine: "claude-code", project: "dodger" };
+    await runDelegatedTurn(
+      recorder.ctx as never,
+      { ...turn, engineLabel: "Claude Code", resume: "session-1" } as never,
+    );
+    const [delegated] = recorder.paramsOf("engine.delegate");
+    const bridged = (delegated?.interviewTools as Array<{ name: string }> | undefined)?.map((tool) => tool.name) ?? [];
+    assert.ok(bridged.includes("ask_user"), "the card is still there to call");
+  });
+});
+
+describe("the language of Genex's own turns", () => {
+  it("AL1. a resume or continue is Genex's own English words, and the agent answered a Russian chat in English: the brief names the app's language as the fallback", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const russian = { tag: "ru", name: "Русский" };
+    for (const resume of [false, true])
+      assert.match(
+        buildContractorBrief({ ask: "Continue", resume, appLanguage: russian }),
+        /Genex's own rather than the user's[\s\S]*Русский \(ru\)/,
+        resume ? "a resumed session" : "a new session",
+      );
   });
 });

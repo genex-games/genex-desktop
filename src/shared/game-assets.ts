@@ -15,6 +15,7 @@ import { type CompiledStack, GameStack, isCompiledStack } from "./game-project.t
 import type { ImportIssue } from "./asset-db.ts";
 import type { CharacterFacts } from "./character-facts.ts";
 import type { CallMaking, MakingJob } from "./asset-making.ts";
+import type { GenexBlocked } from "./genex.ts";
 import type { CallCutOff } from "./plugins.ts";
 
 export type AssetKind = "image" | "model" | "audio" | "video" | "other";
@@ -152,20 +153,22 @@ export function deliveredToBuild(delivery: Pick<AssetDeliveredPayload, "workspac
 
 /**
  * Where `readProjectAsset` reads its one picture: the game's own asset folders, one Genex job's
- * saved inspection frame, or the game's kept Genex cover shot in the Genex plugin's storage. Wire
- * values: never rename one.
+ * saved inspection frame, the game's kept Genex cover shot (or one of its recent candidates) in the
+ * Genex plugin's storage, or the game's kept Genex cover clip beside it. Wire values: never rename one.
  */
 export const ProjectAssetScope = {
   Game: "game",
   GenexInspection: "genex-inspection",
   GenexCover: "genex-cover",
+  GenexCoverClip: "genex-cover-clip",
 } as const;
 export type ProjectAssetScope = (typeof ProjectAssetScope)[keyof typeof ProjectAssetScope];
 
 /**
  * What `readProjectAsset` is asked for. A file of the game (or of a Genex job) is named by the
- * caller; the Genex cover shot never is: the host builds its place from the game's name alone.
- * `maxPx` asks for a downscale.
+ * caller; the Genex cover shot and clip never are: the host builds their place from the game's name
+ * alone, and a cover `candidate` from its 64 lowercase hex digits (the sha256 of its bytes).
+ * `maxPx` asks for a downscale of a picture; a clip is answered as it was kept.
  */
 export type ProjectAssetRead =
   | {
@@ -175,7 +178,8 @@ export type ProjectAssetRead =
       scope?: typeof ProjectAssetScope.Game | typeof ProjectAssetScope.GenexInspection;
       jobId?: string;
     }
-  | { project: string; scope: typeof ProjectAssetScope.GenexCover; maxPx?: number };
+  | { project: string; scope: typeof ProjectAssetScope.GenexCover; maxPx?: number; candidate?: string }
+  | { project: string; scope: typeof ProjectAssetScope.GenexCoverClip };
 
 /** Which session asked for the tool. There is no `role` on a delegate request; it is derived. */
 export type PluginToolRole = "director" | "builder" | "chat";
@@ -230,6 +234,8 @@ export interface PluginToolFinishedPayload extends PluginToolStartedPayload {
   version?: string;
   /** Set when the call was cut off: its outcome is unknown. */
   cutOff?: CallCutOff;
+  /** Set when the job went no further than asking the person for something first (Genex's terms). */
+  blocked?: GenexBlocked;
 }
 
 /** How the app shows a file: the viewer it opens in, or none (unknown files stay metadata). */

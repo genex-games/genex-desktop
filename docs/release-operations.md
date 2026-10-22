@@ -55,10 +55,15 @@ Windows is signed by the [SignPath Foundation](https://signpath.org) through
 [`.github/actions/windows-signpath`](../.github/actions/windows-signpath/action.yml): the
 packaged app's `genex.exe` and `.node` add-ons, then the `Genex-Setup.exe` made from them (the
 SignPath project `genex-desktop`'s artifact configurations `app` and `installer`). The repository
-secret `SIGNPATH_API_TOKEN` is SignPath's CI user's API token. Publishing runs use the
+secret `SIGNPATH_API_TOKEN` is SignPath's CI user's API token. Publishing runs sign only while the
+repository variable `WINDOWS_SIGNING` is `on`; until SignPath has the production certificate,
+leave it unset so Windows ships unsigned as a preview (SignPath refuses the policy otherwise, and
+the refusal drops Windows from the release). They use the
 `release-signing` policy, which accepts only builds from this repository's GitHub workflows; a
 Package dispatch with `only: win32` and `test_sign` uses `test-signing`, SignPath's self-signed
-test certificate, to check the wiring.
+test certificate, to check the wiring. The SignPath Foundation program requires the README's
+[code signing policy](../README.md#code-signing-policy) (attribution, team roles, privacy) and a
+link to it from release notes that ship Windows files.
 
 The owner controls signing secrets, the protected release environment, tags and publication.
 Require product checks and approval on the actual release repository, including fork workflow
@@ -67,11 +72,22 @@ certificates out of the checkout and do not give pull-request code release crede
 
 Retain the candidate's checksums, inventory, notices and signed-asset verification. Validate
 `codesign`, Gatekeeper and stapling on macOS, and Authenticode on Windows. The workflow validates tag/version and main ancestry before signing access, then requires full
-regression, terminal and gallery checks. Build-only dispatches use the `candidate` environment
+regression, terminal and gallery checks. The regression runs the whole `npm test` inventory as
+parallel shards (`node scripts/ci-test-plan.mjs plan --full`: fast, rig and harness, each rig
+runner serial) beside the end-to-end suites, while the packages build; only the draft upload
+waits for both, and a failed shard re-runs alone. When Check's macOS `fast` job already passed on
+the same commit (its push to `main`, or a dispatch), the release reuses it and skips its own fast
+shards (`scripts/release-fast-evidence.mjs`); otherwise it runs them. The serial rig shards balance by the file
+times the newest earlier release left (`scripts/release-durations.mjs`), by source bytes without one. An urgent fix may skip the regression with the repository
+variable `RELEASE_REGRESSION=skip` (the builds then start after validation); dispatch a build-only
+run on `main` after publication to run it, and unset the variable. Build-only dispatches use the `candidate` environment
 and receive no signing secrets. Draft upload requires verified macOS signing plus the macOS and
 Linux packaged smokes. Windows is built and tested every release, cannot hold the draft back, and
-joins it only once it is signed and its job passed (`distributionPlatforms` in `scripts/release-policy.mjs`); unsigned candidates, including
-unsigned Windows packages, remain Actions artifacts. Each packaged platform
+joins it once its job passed (`windowsShips` in `scripts/release-policy.mjs`): signed when
+SignPath signs it, otherwise unsigned as a preview while `WINDOWS_SHIPS_UNSIGNED` is on. Release
+notes that ship an unsigned Windows build say so and how to open it (SmartScreen: More info, then
+Run anyway); set the flag off once Windows is signed. Unsigned build-only candidates remain
+Actions artifacts. Each packaged platform
 also exercises its terminal; Windows checks
 the installer/uninstaller and a scripted packaged chat turn. Apps and DMGs both
 need notarization/stapling. Platform provenance records the source, the lockfile digest and
@@ -186,6 +202,50 @@ identity, catalog and service disclosures. Never publish the existing private hi
 visibility: use the owner's approved, independently reviewed source/history route. Current-tree
 cleanup does not erase old refs, PR diffs, Actions logs or artifacts.
 
+### Release canary
+
+`canary.yml` checks a published release the way people get it: on `release: published`, every
+Monday on the latest release, and by hand with a tag. Each machine downloads from the public link
+(waiting up to 20 minutes for it to serve the tag), checks the file against `SHA256SUMS`, installs
+as a person does (a quarantined DMG into `/Applications`, `Genex-Setup.exe` with Mark of the Web, the
+deb or rpm whose repository must then offer the version), times a flag-free first start to
+`studio ready` in `studio.log`, and runs the release's own `run-electron-e2e.mjs --packaged` on the
+installed app until the self test's sandboxed chat turn has reported (`scripts/canary/`). On Windows,
+when the release's runner has the stage, the run adds `--claude-worker`: one Loop worker on the real
+Claude Code CLI (the vendor's installer puts it in a home of the stage's own), its model a scripted Anthropic
+stand-in (`tests/helpers/fake-anthropic.ts`, a dummy token, nothing billed), must run its turn
+unrefused and write its folder from Genex's sandbox (`smoke/claude-worker-check.ts`). Machines:
+macOS 26 and 15, Ubuntu 26.04 and 24.04 and Windows Server 2025 on GitHub-hosted runners, Fedora
+(install and repository only, in a container), and with `CANARY_AZURE=on` Windows 11 and 10 on
+Azure VMs made for the run and deleted after it. Every Windows machine starts Genex as its
+administrator on a lived-in profile (`lived-in-profile.ts`), whose first start sets the sandbox up;
+after writing a profile it waits up to 15 minutes for the CPU to go quiet (`settle.ts`), since
+Windows Search and the antivirus scan the new files and a start timed in that storm measured them;
+the Azure machines then log a standard user on at its own desktop, with a lived-in profile too, and
+run it again. An owner's run whose script never starts fails its machine as `owner run did not
+start`, and the standard user's run, which needs that sandbox, is skipped. A GitHub runner cannot: an account started inside the runner's session cannot set up
+that session's objects for the sandbox's runner. Logs, crash dumps and screenshots are run artifacts for 30 days.
+A failing release gets one issue labelled `canary`, assigned to whoever published it; a passing
+run closes it. The canary only reports: pulling a release stays the owner's call.
+
+A dispatch with `package_run` checks a build before it is released: give it a Package workflow run
+(dispatched with `only: win32`) and the Azure machines install that run's `Genex-Setup.exe` instead
+of a download, with that run's commit driving the agent command. No other machine runs and no issue
+is touched. Dispatch it from a ref the `canary` environment allows.
+
+Azure setup, once: the subscription owner runs `scripts/canary/azure-setup.sh` in Cloud Shell. It
+creates an app registration whose only credential is GitHub's OIDC token for the `canary`
+environment, gives it Contributor on the subscription, and sets a budget alert. Its three IDs go
+in the `canary` environment's variables (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`). A run outlasts one OIDC sign-in, so `azure.ts` signs in again with a
+fresh token before an Azure call once the last sign-in is five minutes old, dropping az's cached
+Azure token first so az never renews it with an expired OIDC token. `CANARY_WIN11_IMAGE`, `CANARY_WIN10_IMAGE`, `CANARY_AZURE_SIZE` and
+`CANARY_AZURE_LOCATION` (regions, comma-separated) override the defaults. Without them the job
+takes the first two-core size its quota allows, in the first region that accepts it; a region
+whose quota the run's other machine took first is passed over too. Windows 11
+and 10 images need a qualifying Windows license (Microsoft 365 Business Premium, E3/E5, Windows
+Enterprise or Visual Studio); Windows Server images carry their own.
+
 ## Automatic updates
 
 Installed macOS and Windows copies ask update.electronjs.org hourly, which serves the newest
@@ -194,7 +254,29 @@ repository `forge.config.cjs` publishes to and `package.json` names (`auto-updat
 holds the three together). `AUTO_UPDATE_ENABLED` is on and [PRIVACY](../PRIVACY.md) discloses
 the check. Linux copies ask GitHub's `releases/latest` every six hours instead
 ([release-check](../src/main/release-check.ts)) and offer the release page; nothing installs in
-place there. Settings → About and the app menu's Check for Updates ask on demand. Squirrel.Mac
+place there. The exception is a `.deb` or `.rpm` installed since the Genex package repository:
+its maintainer scripts (`build/linux/postinst`, `rpm-post`) add packages.genex.games with the
+key the package carries (`build/linux/genex-archive-keyring.asc`), and the system's updates bring
+the next version, so the app asks nothing (`UpdateMode.System`).
+
+The first check runs at launch, before the core starts (10 s later on a fresh Windows install's
+first launch, while Squirrel holds its lock), so a start that fails, waits on Set up or hangs still
+downloads the release that may fix it. Until the studio opens, its setup, start and start-failure
+screens offer **Relaunch to update** for a downloaded version; once a version waits, quitting
+installs it too, and Squirrel.Windows starts the newest installed version at the next launch.
+
+### Linux package repository
+
+packages.genex.games is the R2 bucket `genex-packages` behind that custom domain: a signed apt
+repository (`dists/stable`, `pool/`) and a signed dnf repository (`rpm/`), each naming only the
+newest release. `linux-repo.yml` fills it when a release is published, and on a pull request
+builds it from the latest release with a throwaway key and installs Genex from it on Ubuntu 24.04
+and Fedora. Its `packages` environment (dev and `v*` tags) holds `LINUX_REPO_SIGNING_KEY` and the
+R2 credentials (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`); the workflow refuses
+a key whose fingerprint differs from the shipped public key. To republish a release, run it on
+dev with its tag. A publishing `release.yml` refuses to build Linux packages while the repository
+is down, because every new install points apt or dnf at it. Never lose or replace the key without a
+release that ships the new public key first: installs trust only the key their package wrote. Settings → About and the app menu's Check for Updates ask on demand. Squirrel.Mac
 runs one check at a time, the download inside it, so a check asked meanwhile answers from the
 running one (downloading), and the hourly checks stop once a version is downloaded: asked again,
 the release CDN answers 304 and Electron forgets the update. Copies built before the switch

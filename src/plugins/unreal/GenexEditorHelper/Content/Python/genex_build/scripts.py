@@ -9,6 +9,12 @@ already running finishes first). The answer is {ok, ms, script, output (the end 
 result (the script's `result`, if it set one), scopes (actors removed and made per scope), actors
 (the level's count)} or, when it failed, also {error, where (file:line), line (its text)}. Whatever
 it changed before failing stays: fix the script and run it again, or undo in the editor.
+
+A material Unreal fails to compile while the script runs is only a warning in the editor's log, and
+the game draws it with the default material: the run reads what the log gained meanwhile, and a
+material it changed (unsaved, or saved since it began) that so failed makes it fail too, with
+{materials: [{material, instanceOf?, platform, reasons}]}. Others Unreal compiled meanwhile in the
+background are only named, under otherMaterials.
 """
 
 import contextlib
@@ -22,8 +28,8 @@ import traceback
 
 import unreal
 
-from genex_build import gx, scope, script_files
-from genex_loop import editor
+from genex_build import compile_log, gx, scope, script_files
+from genex_loop import editor, editor_log
 
 SCRIPT_TIMEOUT_S = 240.0
 # How many traced Python lines pass between looks at the clock.
@@ -32,6 +38,8 @@ OUTPUT_CHARS = 4000
 RESULT_CHARS = 8000
 ERROR_CHARS = 600
 SCRIPT_NAME = '__genex_build__'
+# The most of the editor's log a run reads back for the materials it failed to compile.
+LOG_READ_BYTES = 4 * 1024 * 1024
 # The navigation bounds a level's nav mesh is built in.
 NAV_BOUNDS_CLASS = 'NavMeshBoundsVolume'
 
@@ -139,14 +147,47 @@ def run_script(file: str, args_json: str) -> dict:
     output = io.StringIO()
     namespace = {'__name__': SCRIPT_NAME, '__file__': script, 'unreal': unreal, 'gx': gx, 'args': arguments}
     sys.modules.setdefault('gx', gx)
+    log, offset = editor_log.mark()
+    since = time.time()
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
         with unreal.ScopedEditorTransaction(f'Genex build {name}'):
             scope.begin_run(name)
             problem = _execute(code, namespace, build)
             counts = scope.end_run()
+    failed, others = _materials(log, offset, problem, (project, since))
+    problem = {**problem, **failed}
     return {'ok': not problem, 'ms': editor.elapsed_ms(started), 'script': relative,
-            'output': io.StringIO.getvalue(output)[-OUTPUT_CHARS:], **_result(namespace), **problem, 'scopes': counts,
+            'output': io.StringIO.getvalue(output)[-OUTPUT_CHARS:], **_result(namespace), **problem, **others,
+            'scopes': counts,
             **_navigation(counts), 'actors': len(editor.actors().get_all_level_actors())}
+
+
+def _materials(log: str | None, offset: int, problem: dict, run: tuple) -> tuple:
+    """The materials Unreal failed to compile during the run: ({materials, error?} for those the run changed, the
+    script's own error, if any, staying the error; {otherMaterials} for those it didn't), each {} when there are
+    none. `run` is (the project's folder, when the run began)."""
+    unreal.log_flush()
+    failures = compile_log.material_failures(editor_log.read_since(log, offset, LOG_READ_BYTES))
+    dirty = set(editor.dirty_packages())
+    own = [failure for failure in failures if _changed(failure['material'], dirty, run)]
+    others = [failure for failure in failures if failure not in own]
+    noted = {'otherMaterials': others} if others else {}
+    if not own:
+        return {}, noted
+    error = {} if 'error' in problem else {'error': compile_log.failure_message(own)}
+    return {'materials': own, **error}, noted
+
+
+def _changed(material: str, dirty: set, run: tuple) -> bool:
+    """Whether the run changed a /Game/ material: unsaved now, or its package saved since the run began."""
+    if material in dirty:
+        return True
+    project, since = run
+    package = os.path.join(project, 'Content', *material.removeprefix('/Game/').split('/')) + '.uasset'
+    try:
+        return os.stat(package).st_mtime >= since
+    except OSError:
+        return False
 
 
 def _navigation(counts: dict) -> dict:

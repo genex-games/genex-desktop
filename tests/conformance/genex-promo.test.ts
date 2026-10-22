@@ -121,6 +121,7 @@ describe("Native game visibility", () => {
       liveLoading: false,
       toolbarOpen: false,
       cardOnStage: false,
+      pluginCardOnStage: false,
       stillsOnStage: false,
       stopped: false,
       watching: true,

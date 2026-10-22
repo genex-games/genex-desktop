@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
+import { t } from "../../shared/i18n.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
 import { Switch } from "./switch.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
@@ -170,7 +171,7 @@ export function PickerSegmented<T extends string | number>({
 export function PickerHead({ title, onBack }: { title: ReactNode; onBack: () => void }) {
   return (
     <div className="picker-head">
-      <button type="button" className="picker-back" aria-label="Back" data-focus-key="back" onClick={onBack}>
+      <button type="button" className="picker-back" aria-label={t("Back")} data-focus-key="back" onClick={onBack}>
         <Icon name="chevron-left" />
       </button>
       <span className="min-w-0 truncate">{title}</span>

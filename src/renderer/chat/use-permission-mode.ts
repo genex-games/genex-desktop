@@ -32,6 +32,21 @@ export function planModesFor(engine: string, autoUnavailable: boolean): Permissi
   return planContinuations(engine).filter((mode) => !autoUnavailable || mode !== PermissionMode.Auto);
 }
 
+/**
+ * The mode a chat's pill shows on its engine: a pick still on its way to the host, else the mode the
+ * chat's record keeps, else the one new chats start in.
+ */
+export function shownPermissionMode(input: {
+  engine: string;
+  picked: PermissionMode | undefined;
+  /** The mode the thread's metadata records. */
+  recorded: unknown;
+  defaultMode: PermissionMode | undefined;
+}): PermissionMode {
+  const recorded = isPermissionMode(input.recorded) ? input.recorded : undefined;
+  return engineMode(input.engine, input.picked ?? recorded ?? input.defaultMode ?? DEFAULT_PERMISSION_MODE);
+}
+
 export function usePermissionMode(input: {
   threadId: string | undefined;
   studio: boolean;
@@ -53,7 +68,7 @@ export function usePermissionMode(input: {
   const planModes = planModesFor(engine, autoUnavailable);
   if (studio) return { bar: null, planModes };
   const picked = pick?.thread === threadId ? pick?.mode : undefined;
-  const chosen = picked ?? (isPermissionMode(recorded) ? recorded : (settings?.defaultMode ?? DEFAULT_PERMISSION_MODE));
+  const mode = shownPermissionMode({ engine, picked, recorded, defaultMode: settings?.defaultMode });
   const onMode = (next: PermissionMode): void => {
     setPick({ thread: threadId, mode: next });
     void window.studio
@@ -64,5 +79,5 @@ export function usePermissionMode(input: {
         onNotice(problemWords(error), ToastTone.Error);
       });
   };
-  return { bar: { mode: engineMode(engine, chosen), onMode, autoUnavailable, engine }, planModes };
+  return { bar: { mode, onMode, autoUnavailable, engine }, planModes };
 }

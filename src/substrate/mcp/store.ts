@@ -32,6 +32,10 @@ import {
 import { SecretStorageUnavailableError, SecretStore } from "../secrets.ts";
 import { SecretStorageIssue } from "../../shared/secret-storage.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
+
+/** The two kinds of value a connector declares by name: environment variables and request headers. */
+type SecretKind = "env" | "header";
 
 /** The half of `SecretStore` the connector code needs. A Map stands in for it in tests. */
 export interface SecretPort {
@@ -52,31 +56,44 @@ const MAX_COMMAND_CHARS = 1024;
 const MAX_PATH_CHARS = 4096;
 const MAX_URL_CHARS = 2048;
 
-/** What a person reads when a connector or the connectors file is refused. */
+/**
+ * What a person reads when a connector or the connectors file is refused. The words that are
+ * functions are the person's, in their language: the Connectors card's own fields. The plain
+ * strings stay English: only a hand-edited connectors.json or a malformed caller meets them, and
+ * they name the file's fields. Saved credentials being locked stops a tool call too, so the model
+ * reads it as well, and it stays English.
+ */
 const MESSAGE = {
   NotANameList: (label: string) => `Connector ${label} must be a list of names`,
-  TooManyNames: (label: string) => `Too many ${label} names`,
-  InvalidName: (label: string, name: unknown) => `Invalid ${label} name: ${String(name)}`,
+  TooManyNames: (kind: SecretKind) =>
+    kind === "env" ? t("Too many environment variable names") : t("Too many header names"),
+  InvalidName: (kind: SecretKind, name: unknown) =>
+    kind === "env"
+      ? t("Invalid environment variable name: {name}", { name: String(name) })
+      : t("Invalid header name: {name}", { name: String(name) }),
   InvalidToolPolicy: "Invalid connector tool policy",
   InvalidPolicyList: (label: string) => `Invalid connector ${label} list`,
   InvalidSource: "Invalid connector source",
   InvalidConnector: "Invalid connector",
-  InvalidId: "A connector id is lowercase letters, digits and dashes, up to 32 characters",
-  NeedsName: "A connector needs a name",
+  InvalidId: () => t("A connector id is lowercase letters, digits and dashes, up to 32 characters"),
+  NeedsName: () => t("A connector needs a name"),
   InvalidTransport: "A connector is stdio, http or sse",
   InvalidScope: "Invalid connector scope",
   InvalidEnabled: "Invalid connector enabled flag",
   InvalidCreatedAt: "Invalid connector createdAt",
-  OAuthRemoteOnly: "Browser OAuth is available for HTTP/SSE connectors only",
-  OAuthOrHeader: "Choose browser OAuth or an Authorization header, not both",
+  OAuthRemoteOnly: () => t("Browser OAuth is available for HTTP/SSE connectors only"),
+  OAuthOrHeader: () => t("Choose browser OAuth or an Authorization header, not both"),
   ArgsNotText: "Connector arguments must be text",
-  TooManyArgs: `A connector takes at most ${MAX_ARGS} arguments`,
-  ArgsTooLong: "Connector arguments are too long",
-  NeedsCommand: "A stdio connector needs a command",
-  StdioHasUrl: "A stdio connector has no url",
-  RelativeCwd: "A connector working directory must be an absolute path",
-  InsecureUrl: "A connector url must be https, or http on localhost",
-  RemoteHasCommand: "An http or sse connector has no command",
+  TooManyArgs: () =>
+    t("{max, plural, one {A connector takes at most # argument} other {A connector takes at most # arguments}}", {
+      max: MAX_ARGS,
+    }),
+  ArgsTooLong: () => t("Connector arguments are too long"),
+  NeedsCommand: () => t("A stdio connector needs a command"),
+  StdioHasUrl: () => t("A stdio connector has no url"),
+  RelativeCwd: () => t("A connector working directory must be an absolute path"),
+  InsecureUrl: () => t("A connector url must be https, or http on localhost"),
+  RemoteHasCommand: () => t("An http or sse connector has no command"),
   InvalidTrustDigest: "Invalid connector trust digest",
   InvalidShareProjectRoot: "Invalid project root sharing option",
   DuplicateId: "Duplicate connector id",
@@ -118,13 +135,18 @@ export function launchTrusted(connector: McpConnector): boolean {
 const isText = (v: unknown, min: number, max: number): v is string =>
   typeof v === "string" && v.length >= min && v.length <= max;
 
-function names(value: unknown, shape: RegExp, label: string): string[] | undefined {
+/** The shape a declared name of each kind has. */
+const NAME_SHAPE = { env: MCP_ENV_NAME, header: MCP_HEADER_NAME } as const satisfies Record<SecretKind, RegExp>;
+/** What each kind of declared name is called in the file's own refusals. */
+const NAME_LABEL = { env: "environment variable", header: "header" } as const satisfies Record<SecretKind, string>;
+
+function names(value: unknown, kind: SecretKind): string[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value)) throw new Error(MESSAGE.NotANameList(label));
-  if (value.length > MAX_NAMES) throw new Error(MESSAGE.TooManyNames(label));
+  if (!Array.isArray(value)) throw new Error(MESSAGE.NotANameList(NAME_LABEL[kind]));
+  if (value.length > MAX_NAMES) throw new Error(MESSAGE.TooManyNames(kind));
   const out: string[] = [];
   for (const name of value) {
-    if (typeof name !== "string" || !shape.test(name)) throw new Error(MESSAGE.InvalidName(label, name));
+    if (typeof name !== "string" || !NAME_SHAPE[kind].test(name)) throw new Error(MESSAGE.InvalidName(kind, name));
     if (!out.includes(name)) out.push(name);
   }
   return out.length ? out : undefined;
@@ -177,8 +199,8 @@ const MAX_SCOPE_PROJECTS = 256;
 /** The fields every connector has: id, name, transport, scope, switch and creation time. */
 function validateIdentity(c: McpConnector): McpTransport {
   if (!c || typeof c !== "object" || Array.isArray(c)) throw new Error(MESSAGE.InvalidConnector);
-  if (typeof c.id !== "string" || !MCP_ID.test(c.id)) throw new Error(MESSAGE.InvalidId);
-  if (!isText(c.name, 1, MAX_NAME_CHARS)) throw new Error(MESSAGE.NeedsName);
+  if (typeof c.id !== "string" || !MCP_ID.test(c.id)) throw new Error(MESSAGE.InvalidId());
+  if (!isText(c.name, 1, MAX_NAME_CHARS)) throw new Error(MESSAGE.NeedsName());
   if (!TRANSPORTS.has(c.transport)) throw new Error(MESSAGE.InvalidTransport);
   if (!isMcpScope(c.scope)) throw new Error(MESSAGE.InvalidScope);
   if (typeof c.enabled !== "boolean") throw new Error(MESSAGE.InvalidEnabled);
@@ -190,43 +212,43 @@ function validateIdentity(c: McpConnector): McpTransport {
 /** Browser OAuth: remote connectors only, and never alongside an Authorization header. */
 function applyAuthentication(c: McpConnector, transport: McpTransport, out: McpConnector): void {
   if (c.authentication === undefined) return;
-  if (c.authentication !== "oauth" || transport === McpTransport.Stdio) throw new Error(MESSAGE.OAuthRemoteOnly);
-  if (c.headers?.some((h) => h.toLowerCase() === "authorization")) throw new Error(MESSAGE.OAuthOrHeader);
+  if (c.authentication !== "oauth" || transport === McpTransport.Stdio) throw new Error(MESSAGE.OAuthRemoteOnly());
+  if (c.headers?.some((h) => h.toLowerCase() === "authorization")) throw new Error(MESSAGE.OAuthOrHeader());
   out.authentication = "oauth";
 }
 
 function validateArgs(value: unknown): string[] {
   const args = value ?? [];
   if (!Array.isArray(args) || args.some((a) => typeof a !== "string")) throw new Error(MESSAGE.ArgsNotText);
-  if (args.length > MAX_ARGS) throw new Error(MESSAGE.TooManyArgs);
-  if (Buffer.byteLength(args.join("\u0000"), "utf8") > MAX_ARGS_BYTES) throw new Error(MESSAGE.ArgsTooLong);
+  if (args.length > MAX_ARGS) throw new Error(MESSAGE.TooManyArgs());
+  if (Buffer.byteLength(args.join("\u0000"), "utf8") > MAX_ARGS_BYTES) throw new Error(MESSAGE.ArgsTooLong());
   return args;
 }
 
 /** A stdio connector: a command, text arguments and an optional absolute working directory; no url. */
 function applyStdioLaunch(c: McpConnector, out: McpConnector): void {
-  if (!isText(c.command, 1, MAX_COMMAND_CHARS)) throw new Error(MESSAGE.NeedsCommand);
-  if (c.url) throw new Error(MESSAGE.StdioHasUrl);
+  if (!isText(c.command, 1, MAX_COMMAND_CHARS)) throw new Error(MESSAGE.NeedsCommand());
+  if (c.url) throw new Error(MESSAGE.StdioHasUrl());
   const args = validateArgs(c.args);
   out.command = c.command;
   if (args.length) out.args = [...args];
   if (c.cwd === undefined || c.cwd === null || c.cwd === "") return;
-  if (!isText(c.cwd, 1, MAX_PATH_CHARS) || !path.isAbsolute(c.cwd)) throw new Error(MESSAGE.RelativeCwd);
+  if (!isText(c.cwd, 1, MAX_PATH_CHARS) || !path.isAbsolute(c.cwd)) throw new Error(MESSAGE.RelativeCwd());
   out.cwd = c.cwd;
 }
 
 /** An http or sse connector: an https (or loopback http) url; no command. */
 function applyRemoteUrl(c: McpConnector, out: McpConnector): void {
-  if (!isText(c.url, 1, MAX_URL_CHARS) || !validUrl(c.url)) throw new Error(MESSAGE.InsecureUrl);
-  if (c.command) throw new Error(MESSAGE.RemoteHasCommand);
+  if (!isText(c.url, 1, MAX_URL_CHARS) || !validUrl(c.url)) throw new Error(MESSAGE.InsecureUrl());
+  if (c.command) throw new Error(MESSAGE.RemoteHasCommand());
   out.url = c.url;
 }
 
 /** The secret names, the approved launch digest and the owning plugin, when present. */
 function applyNamesAndTrust(c: McpConnector, out: McpConnector): void {
-  const env = names(c.env, MCP_ENV_NAME, "environment variable");
+  const env = names(c.env, "env");
   if (env) out.env = env;
-  const headers = names(c.headers, MCP_HEADER_NAME, "header");
+  const headers = names(c.headers, "header");
   if (headers) out.headers = headers;
   if (c.trustedLaunch !== undefined && c.trustedLaunch !== null) {
     if (typeof c.trustedLaunch !== "string" || !SHA256_HEX.test(c.trustedLaunch))

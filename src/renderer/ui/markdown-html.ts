@@ -192,12 +192,16 @@ function openFence(token: Token): boolean {
 export function markdownHtml(text: string, options: MarkdownOptions = {}): string {
   const { files: withFiles, streaming } = options;
   if (!streaming) return cachedHtml(`document:${text}`, withFiles, () => parser.parse(text, { async: false }));
+  return markdownBlocks(text, options).join("");
+}
+
+/** Arriving Markdown as the HTML of each of its blocks, which `markdownHtml` joins. */
+export function markdownBlocks(text: string, options: Omit<MarkdownOptions, "streaming"> = {}): string[] {
+  const { files: withFiles } = options;
   const tokens = parser.lexer(text);
   const links = JSON.stringify(tokens.links);
-  return tokens
-    .map((token) => {
-      if (openFence(token) && token.type === "code") return `<pre><code>${escapeHtml(token.text)}</code></pre>\n`;
-      return cachedHtml(`block:${links}:${token.raw}`, withFiles, () => parser.parser([token]));
-    })
-    .join("");
+  return tokens.map((token) => {
+    if (openFence(token) && token.type === "code") return `<pre><code>${escapeHtml(token.text)}</code></pre>\n`;
+    return cachedHtml(`block:${links}:${token.raw}`, withFiles, () => parser.parser([token]));
+  });
 }

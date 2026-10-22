@@ -7,6 +7,7 @@ transaction, no actor. A failing script answers the file and line it failed on."
 
 import json
 import os
+import time
 import unittest
 from unittest import mock
 
@@ -208,3 +209,64 @@ class Navigation(ScriptCase):
         self.script('query.py', 'result = len(gx.actors("kit"))\n')
         self.assertNotIn('navigation', self.run_script('query.py'))
         self.assertEqual(self.rebuilds(), 0)
+
+
+WATER_FAILED = ('[2026.01.01-10.00.00:001][533]LogMaterial: Warning: [AssetLog] /Game/Env/M_Water.M_Water: Failed to '
+                'compile Material for platform SF_METAL_SM6, Default Material will be used in game.\n'
+                '\tSingleLayerWater materials requires the use of SingleLayerWaterMaterial output node.\n\n')
+ROCK_FAILED = ('[2026.01.01-10.00.00:002][533]LogMaterial: Warning: [AssetLog] {project}/Content/Env/MI_Rock.uasset: '
+               'Failed to compile Material Instance with Base M_Surface for platform SF_METAL_SM6, Default Material '
+               'will be used in game.\n'
+               '\t(Node TextureSampleParameter2D) Sampler type is Grayscale, should be Linear Grayscale for '
+               '/Game/Env/T_Rock_R.T_Rock_R\n'
+               '\t(Node Normalize) Missing Normalize input\n')
+
+
+class MaterialsThatFail(ScriptCase):
+    """Unreal logs a material it can't compile as a warning and draws the default material in game: a run that
+    leaves one so fails, naming each material and why, read from what the editor log gained while it ran."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.log = os.path.join(self.path('game', 'unreal', 'Saved', 'Logs'), 'Game.log')
+        self.write(self.log, 'LogInit: Display: started\n' + WATER_FAILED)
+
+    def logging(self, text: str) -> str:
+        """A script that does what Unreal does while it compiles: appends to the editor log."""
+        return f'open({self.log!r}, "a").write({text!r})\n' + SPAWN_THREE
+
+    def test_a_material_that_failed_to_compile_during_the_run_fails_it(self) -> None:
+        self.script('kit.py', self.logging(WATER_FAILED + ROCK_FAILED.format(project=self.project)))
+        # The run changed both: the water left unsaved, the rock saved while it ran.
+        unreal.state['dirty'] = ['/Game/Env/M_Water']
+        rock = self.write(os.path.join(self.project, 'Content', 'Env', 'MI_Rock.uasset'), 'rock')
+        later = time.time() + 5
+        os.utime(rock, (later, later))
+        result = self.run_script('kit.py')
+        self.assertFalse(result['ok'])
+        self.assertEqual([m['material'] for m in result['materials']], ['/Game/Env/M_Water', '/Game/Env/MI_Rock'])
+        rock = result['materials'][1]
+        self.assertEqual((rock['instanceOf'], rock['platform']), ('M_Surface', 'SF_METAL_SM6'))
+        self.assertEqual(len(rock['reasons']), 2)
+        self.assertIn('/Game/Env/M_Water', result['error'])
+        self.assertEqual(result['result'], 3, 'what the script made stays')
+
+    def test_a_material_the_run_did_not_change_is_named_not_its_failure(self) -> None:
+        self.script('kit.py', self.logging(WATER_FAILED))
+        result = self.run_script('kit.py')
+        self.assertTrue(result['ok'], result)
+        self.assertNotIn('materials', result)
+        self.assertEqual([m['material'] for m in result['otherMaterials']], ['/Game/Env/M_Water'])
+
+    def test_failures_logged_before_the_run_are_not_its_own(self) -> None:
+        self.script('kit.py', self.logging('LogMaterial: Display: compiled M_Rock\n'))
+        result = self.run_script('kit.py')
+        self.assertTrue(result['ok'], result)
+        self.assertNotIn('materials', result)
+
+    def test_the_scripts_own_error_stays_the_error(self) -> None:
+        self.script('kit.py', f'open({self.log!r}, "a").write({WATER_FAILED!r})\nraise ValueError("bad kit")\n')
+        unreal.state['dirty'] = ['/Game/Env/M_Water']
+        result = self.run_script('kit.py')
+        self.assertIn('bad kit', result['error'])
+        self.assertEqual(result['materials'][0]['material'], '/Game/Env/M_Water')

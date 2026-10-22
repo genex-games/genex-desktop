@@ -14,7 +14,7 @@ import {
   readLoginPath,
   withEnvPath,
 } from "../toolchain.ts";
-import { commandLaunch } from "../command-launch.ts";
+import { commandLaunch, isCommandScript, npmShimScript } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
 import { childEnv } from "../child-env.ts";
 import { atomicWriteText } from "../fsx.ts";
@@ -91,6 +91,10 @@ const DIAGNOSTIC_CACHE_MS = 15 * SECOND_MS;
 const LAUNCHER_BYTES = 4096;
 /** npm's `.cmd` shim runs the `node.exe` beside it, else the first `node` on PATH. */
 const CMD_SHIM_PATH_NODE = /_prog=node\b/i;
+/** A file inside an npm package, whose version tells an update apart: npm resets its files' times. */
+const IN_NODE_MODULES = /[\\/]node_modules[\\/]/;
+/** The file beside the overrides that keeps the CLIs' answers between launches. */
+const ANSWERS_FILE = "coding-cli-answers.json";
 
 /** What discovery tells the user about a CLI it could not use, and why a probe or setting fails. */
 const MESSAGE = {
@@ -114,6 +118,16 @@ const MESSAGE = {
 } as const;
 
 const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
+/** Unsigned UI readers can share discovery without sharing another caller's Stop signal. */
+const diagnosticReads = new Map<string, Promise<CliInstallation>>();
+/** Only the latest request for a selection may replace its cached diagnostic. */
+const diagnosticOwners = new Map<string, symbol>();
+const discoveryGenerations = new Map<CodingProvider, number>();
+let answersRevision = 0;
+
+function discoveryGeneration(provider: CodingProvider): number {
+  return discoveryGenerations.get(provider) ?? 0;
+}
 /**
  * The login shell's PATH, read once and shared by every discovery: a login shell takes seconds to
  * start (2.1–2.3 s on a developer's Mac), and every session start discovers its CLI.
@@ -122,15 +136,78 @@ const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
 let loginPathRead: Promise<string | null> | null = null;
 /**
  * A CLI's answers to `--version` and `--help`, by the exact file that gave them (its real path,
- * size, modification time and inode): an updated or replaced CLI is asked again, an unchanged one
- * is not asked before every session.
+ * size, modification time and inode, and its npm package's version): an updated or replaced CLI
+ * is asked again, an unchanged one is not asked before every session. Kept on disk beside the
+ * overrides, so a relaunch does not ask every CLI again either.
  */
-const answered = new Map<string, { version: string; help: string }>();
+const answered = new Map<string, CliAnswers>();
+/** What a CLI said when asked: its version line and its help. */
+interface CliAnswers {
+  version: string;
+  help: string;
+}
 /** Forget what discovery knows, for one provider or all; the login shell's PATH is read again either way. */
 export function invalidateCodingCli(provider?: CodingProvider): void {
-  for (const key of diagnostics.keys()) if (!provider || key.startsWith(`${provider}:`)) diagnostics.delete(key);
-  for (const key of answered.keys()) if (!provider || key.startsWith(`${provider}\0`)) answered.delete(key);
+  forget(provider);
+  void keepAnswers();
+}
+function forget(provider?: CodingProvider): void {
+  const providers = provider ? [provider] : (Object.keys(CLI_BINARY) as CodingProvider[]);
+  for (const id of providers) discoveryGenerations.set(id, discoveryGeneration(id) + 1);
+  forgetEntries(diagnostics, provider, ":");
+  forgetEntries(diagnosticReads, provider, ":");
+  forgetEntries(diagnosticOwners, provider, ":");
+  forgetEntries(answered, provider, "\0");
+  answersRevision++;
   loginPathRead = null;
+}
+
+/** Drop only the invalidated provider's entries, or the whole cache when settings are replaced. */
+function forgetEntries<T>(entries: Map<string, T>, provider: CodingProvider | undefined, delimiter: string): void {
+  for (const key of entries.keys()) if (!provider || key.startsWith(`${provider}${delimiter}`)) entries.delete(key);
+}
+/** Where the answers are kept, beside the overrides; none before the app configures discovery. */
+function answersFile(): string | undefined {
+  return settingsFile ? path.join(path.dirname(settingsFile), ANSWERS_FILE) : undefined;
+}
+function isAnswers(value: unknown): value is CliAnswers {
+  const answers = value as Partial<CliAnswers> | null;
+  return typeof answers?.version === "string" && typeof answers.help === "string";
+}
+let answersWrite: Promise<unknown> = Promise.resolve();
+/** Settles once the kept answers are read; every lookup waits for it. */
+let answersRead: Promise<void> = Promise.resolve();
+/** Read the answers a previous launch kept, after any write still on its way. */
+function loadAnswers(): void {
+  const file = answersFile();
+  const revision = answersRevision;
+  answersRead = file ? answersWrite.catch(() => {}).then(() => readKeptAnswers(file, revision)) : Promise.resolve();
+}
+/** The kept answers, beside any learned meanwhile; a missing or damaged file keeps none. */
+async function readKeptAnswers(file: string, revision: number): Promise<void> {
+  try {
+    const kept: unknown = JSON.parse(await readFile(file, "utf8"));
+    const staleOrInvalid = revision !== answersRevision || typeof kept !== "object" || kept === null;
+    if (staleOrInvalid) return;
+    for (const [identity, answers] of Object.entries(kept))
+      if (isAnswers(answers) && !answered.has(identity)) answered.set(identity, answers);
+  } catch {
+    // Nothing kept, or nothing readable: every CLI is asked again.
+  }
+}
+/** Keep the answers for the next launch, one write after another; settles when this one is on disk. */
+function keepAnswers(): Promise<unknown> {
+  const file = answersFile();
+  if (!file) return Promise.resolve();
+  const text = JSON.stringify(Object.fromEntries(answered));
+  answersWrite = answersWrite
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+      await atomicWriteText(file, text, { mode: 0o600 });
+    })
+    .catch(() => {});
+  return answersWrite;
 }
 let settingsFile: string | undefined;
 let discoveryDefaults: Pick<DiscoveryOptions, "loginPath" | "loginShell" | "home" | "env" | "standardDirs"> = {};
@@ -139,7 +216,8 @@ export function configureCodingClis(file: string, roots: string[], discovery: ty
   settingsFile = file;
   excludedRoots = roots;
   discoveryDefaults = { ...discovery };
-  invalidateCodingCli();
+  forget();
+  loadAnswers();
 }
 function providerId(value: string): asserts value is CodingProvider {
   if (!Object.hasOwn(CLI_BINARY, value)) throw new Error(MESSAGE.UnknownProvider);
@@ -174,7 +252,8 @@ export async function setCodingCliOverride(provider: CodingProvider, executable:
       else values[provider] = executable;
       await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       await atomicWriteText(file, JSON.stringify(values, null, 2), { mode: 0o600 });
-      invalidateCodingCli(provider);
+      forget(provider);
+      await keepAnswers();
     });
   settingsWrite = operation;
   await operation;
@@ -368,6 +447,7 @@ export async function discoverCodingCli(
   options: DiscoveryOptions = {},
 ): Promise<CliInstallation> {
   providerId(provider);
+  const generation = discoveryGeneration(provider);
   const platform = options.platform ?? process.platform;
   const home = options.home ?? os.homedir();
   const parent = options.env ?? process.env;
@@ -396,7 +476,7 @@ export async function discoverCodingCli(
   let first: CodingCliStatus | undefined;
   for (const selected of found) {
     const checked: CodingCliStatus = { ...status, path: selected };
-    await checkSelectedCli(provider, selected, { dirs, env, signal: options.signal, platform }, checked);
+    await checkSelectedCli(provider, selected, { dirs, env, signal: options.signal, platform, generation }, checked);
     if (checked.state === CodingCliState.Ready) return { status: checked, env };
     first ??= checked;
   }
@@ -455,14 +535,44 @@ function untilStopped<T>(promise: Promise<T>, signal: AbortSignal | undefined): 
 
 /** The exact file a launcher runs, as a cache key; null when it cannot be told (then nothing is reused). */
 async function cliIdentity(provider: CodingProvider, file: string, platform: NodeJS.Platform): Promise<string | null> {
-  // A Windows `.cmd` shim stays the same file when the package it starts is updated.
-  if (isWindows(platform)) return null;
   try {
-    const real = await realpath(file);
+    const launched = await launchedFile(file, platform);
+    if (launched === null) return null;
+    const real = await realpath(launched);
     const info = await stat(real, { bigint: true });
-    return [provider, real, info.size, info.mtimeNs, info.ino].join("\0");
+    return [provider, real, info.size, info.mtimeNs, info.ino, await packageRelease(real)].join("\0");
   } catch {
     return null;
+  }
+}
+
+/**
+ * The file a launcher runs. A Windows `.cmd` shim stays the same file when the package it starts
+ * is updated, so npm's shim stands for its script; another command script names nothing (null).
+ */
+async function launchedFile(file: string, platform: NodeJS.Platform): Promise<string | null> {
+  if (!isCommandScript(file, platform)) return file;
+  return npmShimScript(await launcherHead(file), file);
+}
+
+/** The npm package a CLI's file belongs to, as `name@version`; empty outside a package. */
+async function packageRelease(file: string): Promise<string> {
+  if (!IN_NODE_MODULES.test(file)) return "";
+  for (let dir = path.dirname(file); path.basename(dir) !== "node_modules"; dir = path.dirname(dir)) {
+    const manifest = await readFile(path.join(dir, "package.json"), "utf8").catch(() => null);
+    if (manifest !== null) return releaseOf(manifest);
+    if (path.dirname(dir) === dir) break;
+  }
+  return "";
+}
+
+/** A package manifest's `name@version`, or the manifest itself when it cannot be read as one. */
+function releaseOf(manifest: string): string {
+  try {
+    const { name, version } = JSON.parse(manifest) as { name?: unknown; version?: unknown };
+    return `${String(name)}@${String(version)}`;
+  } catch {
+    return manifest;
   }
 }
 
@@ -472,6 +582,7 @@ interface CheckContext {
   env: NodeJS.ProcessEnv;
   signal: AbortSignal | undefined;
   platform: NodeJS.Platform;
+  generation: number;
 }
 
 /** Whether the chosen CLI can run here and speaks what we need; the verdict lands in `status`. */
@@ -598,6 +709,7 @@ async function checkCliCapabilities(
   // M6: a version and a help text need no credential; the CLI is asked with none.
   const probeEnv = childEnv(context.env, { base: "contractor", vendor: CLI_BINARY[provider] });
   const identity = await cliIdentity(provider, file, platform);
+  await answersRead;
   const known = identity ? answered.get(identity) : undefined;
   status.version =
     known?.version ?? (await probe(file, ["--version"], probeEnv, signal, platform)).split("\n")[0]?.trim();
@@ -606,7 +718,12 @@ async function checkCliCapabilities(
   const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, signal, platform));
   const missing = required.filter((flag) => !help.includes(flag));
   if (missing.length) throw new Error(MESSAGE.MissingOptions(missing));
-  if (identity && !known) answered.set(identity, { version: status.version, help });
+  const keepNewAnswer = identity && !known && context.generation === discoveryGeneration(provider);
+  if (keepNewAnswer) {
+    answered.set(identity, { version: status.version, help });
+    // A discovery ends with its answers on disk, never with a write still landing in the folder.
+    await keepAnswers();
+  }
 }
 /** The options a CLI must list: OpenCode's by the command line its version speaks; throws for a version it cannot run. */
 function requiredFlags(provider: CodingProvider, version: string): string[] {
@@ -630,11 +747,48 @@ export async function resolveCodingCli(
 ): Promise<CliInstallation> {
   providerId(provider);
   signal?.throwIfAborted();
+  const generation = discoveryGeneration(provider);
   const selected = override ?? (await overrides())[provider];
-  const key = `${provider}:${selected ?? "automatic"}`;
+  const key = `${provider}:${override === undefined ? "saved" : "explicit"}:${selected ?? "automatic"}`;
   const cached = diagnostics.get(key);
   const cacheFresh = cached !== undefined && Date.now() - cached.at < DIAGNOSTIC_CACHE_MS;
-  if (!refresh && cacheFresh) return { status: { ...cached.value.status }, env: { ...cached.value.env } };
+  const current = generation === discoveryGeneration(provider);
+  const useCache = !refresh && cacheFresh && current;
+  if (useCache) return copyInstallation(cached.value);
+  const shared = !refresh && signal === undefined && current;
+  const existing = shared ? diagnosticReads.get(key) : undefined;
+  if (existing) return copyInstallation(await existing);
+  const owner = Symbol();
+  if (current) {
+    diagnosticOwners.set(key, owner);
+    diagnosticReads.delete(key);
+  }
+  const read = resolveUncachedCli(provider, override, selected, signal).then((value) => {
+    const latest = diagnosticOwners.get(key) === owner && generation === discoveryGeneration(provider);
+    if (latest) diagnostics.set(key, { at: Date.now(), value });
+    return value;
+  });
+  if (shared) diagnosticReads.set(key, read);
+  try {
+    return copyInstallation(await read);
+  } finally {
+    if (diagnosticReads.get(key) === read) diagnosticReads.delete(key);
+    if (diagnosticOwners.get(key) === owner) diagnosticOwners.delete(key);
+  }
+}
+
+/** Keep cached and shared answers private from consumers that adjust their status or environment. */
+function copyInstallation(value: CliInstallation): CliInstallation {
+  return { status: { ...value.status }, env: { ...value.env } };
+}
+
+/** One uncached discovery, including fallback only for a broken persisted override. */
+async function resolveUncachedCli(
+  provider: CodingProvider,
+  override: string | undefined,
+  selected: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<CliInstallation> {
   let value = await discoverCodingCli(provider, { ...discoveryDefaults, override: selected, signal });
   // A persisted override that stopped working (moved, deleted, outdated) must not strand the user:
   // Settings has no path picker, so an automatic installation that works takes over.
@@ -645,8 +799,7 @@ export async function resolveCodingCli(
     if (automatic.status.state === CodingCliState.Ready || value.status.state === CodingCliState.InvalidPath)
       value = automatic;
   }
-  diagnostics.set(key, { at: Date.now(), value });
-  return { status: { ...value.status }, env: { ...value.env } };
+  return value;
 }
 export async function requireCodingCli(
   provider: CodingProvider,

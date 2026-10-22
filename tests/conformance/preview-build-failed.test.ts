@@ -25,6 +25,7 @@ function failedBuild(project: string): BuildOutcome {
     lines: ["src/main.ts(3,1): error TS1005: ';' expected."],
     needsInstall: false,
     install: null,
+    skippedScripts: null,
     showingLastBuild: false,
     at: new Date(0).toISOString(),
   };

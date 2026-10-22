@@ -9,6 +9,7 @@ import { gatherEvidence } from "../evidence.ts";
 import { commitAll, GIT, gitAt, gitlinks, headOf, resetClean, shortSha } from "../git.ts";
 import { keptContractWords } from "../contract-kept.ts";
 import { HostMethod } from "../host-methods.ts";
+import { editorPlayOf } from "../engine-judges.ts";
 import { factsOfGame, LoopProfile } from "../folder-facts.ts";
 import { AttachedContract, StudioContract } from "../page-contract.ts";
 import { readDeclaredGame } from "../kinds.ts";
@@ -304,7 +305,7 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
   if (!projectDir) throw new Error(`project ${run.project} has no folder`);
   loopRun.gameFacts = factsOfGame(game);
   // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
-  loopRun.game = { hookEvents: game?.hookEvents };
+  loopRun.game = { hookEvents: game?.hookEvents, ...editorPlayOf(game) };
   loopRun.leaseGame = leaseGameOf(game);
   return projectDir;
 }
@@ -810,7 +811,7 @@ async function prepareOpenLoopRun(
   const facts = openLoopRunFacts({ threadId, run, priorJournal }, game, baseCommit, runClock);
   Object.assign(loopRun, openLoopRunData(facts, { inbox, clock: runClock, report }));
   loopRun.gameFacts = game.facts;
-  loopRun.game = { hookEvents: game.hookEvents };
+  loopRun.game = { hookEvents: game.hookEvents, ...editorPlayOf(game) };
   // What the lead asked of a turn's end that a pause cut off is said, never run over the next turn's work.
   const journal = openJournalOf(priorJournal);
   const open = openLoopOf(game, journal ? settledAcrossPause(journal) : newOpenJournal(), clock);

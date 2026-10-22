@@ -15,6 +15,7 @@ import {
   TOGGLE_TERMINAL_EVENT,
 } from "./terminal-events.ts";
 import { Pending } from "../ui/Pending.tsx";
+import { t } from "../../shared/i18n.ts";
 
 const TerminalView = lazy(() => import("./TerminalView.tsx"));
 
@@ -38,18 +39,19 @@ const savedHeight = (): number =>
 function sessionStatus(current: TerminalSession): string {
   if (current.error !== undefined) return current.error;
   if (current.phase === "exited") {
-    if (current.exitCode === 0) return "Process finished";
-    return current.exitCode === SIGINT_EXIT ? "Process stopped" : `Process exited (${current.exitCode})`;
+    if (current.exitCode === 0) return t("Process finished");
+    if (current.exitCode === SIGINT_EXIT) return t("Process stopped");
+    return t("Process exited ({code})", { code: String(current.exitCode) });
   }
-  if (current.phase === "starting") return "Starting…";
-  return current.kind === TerminalKind.ClaudeLogin ? "Finish sign-in here or in your browser." : current.title;
+  if (current.phase === "starting") return t("Starting…");
+  return current.kind === TerminalKind.ClaudeLogin ? t("Finish sign-in here or in your browser.") : current.title;
 }
 
 /** The dock's name for its one session: a sign-in, a command a reply offered, or the terminal. */
 function dockLabel(current: TerminalSession | undefined): string {
-  if (current?.kind === TerminalKind.ClaudeLogin) return "Claude Code sign-in";
-  if (current?.kind === TerminalKind.OpenCodeLogin) return "OpenCode sign-in";
-  return current?.kind === TerminalKind.Command ? "Command" : "Terminal";
+  if (current?.kind === TerminalKind.ClaudeLogin) return t("Claude Code sign-in");
+  if (current?.kind === TerminalKind.OpenCodeLogin) return t("OpenCode sign-in");
+  return current?.kind === TerminalKind.Command ? t("Command") : t("Terminal");
 }
 
 /** What the dock needs from its latest render when a window event or a key arrives. */
@@ -149,7 +151,7 @@ function ResizeHandle({
   return (
     <div
       role="separator"
-      aria-label="Terminal height"
+      aria-label={t("Terminal height")}
       aria-orientation="horizontal"
       tabIndex={0}
       aria-valuemin={DOCK_MIN_PX}
@@ -209,15 +211,14 @@ function DockBar({
       <div className="min-w-0 flex-1 px-1 font-mono text-xs text-ink-2">
         {sessions.length > 1 ? (
           <select
-            aria-label="Terminal session"
+            aria-label={t("Terminal session")}
             value={current?.id ?? ""}
             onChange={(event) => onSelect(event.target.value)}
             className="w-full min-w-0 cursor-pointer rounded-control bg-field py-1 text-ink"
           >
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
-                {session.title}
-                {session.phase === "exited" ? " · ended" : ""}
+                {session.phase === "exited" ? t("{title} · ended", { title: session.title }) : session.title}
               </option>
             ))}
           </select>
@@ -229,8 +230,8 @@ function DockBar({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Open project terminal"
-          title="Open project terminal"
+          aria-label={t("Open project terminal")}
+          title={t("Open project terminal")}
           disabled={opening}
           onClick={onOpen}
         >
@@ -244,19 +245,20 @@ function DockBar({
           disabled={current.phase === "stopping"}
           onClick={() => onAct(() => stop(current))}
         >
-          {current.phase === "stopping" ? "Stopping…" : "Stop"}
+          {current.phase === "stopping" ? t("Stopping…") : t("Stop")}
         </Button>
       )}
       {current?.phase === "exited" && (
         <Button variant="ghost" className="px-2" onClick={() => onAct(() => window.studio.terminalRemove(current.id))}>
-          Close session
+          {t("Close session")}
         </Button>
       )}
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label="Hide terminal"
-        title="Hide terminal · keeps running"
+        data-terminal-hide
+        aria-label={t("Hide terminal")}
+        title={t("Hide terminal · keeps running")}
         onClick={onHide}
       >
         <Icon name="close" />
@@ -279,13 +281,13 @@ function SignInNotes({
       {login?.hasBrowserUrl && (
         <div className="px-3 pb-2">
           <Button variant="secondary" onClick={() => onAct(() => window.studio.claudeLoginOpenBrowser())}>
-            Open the sign-in page
+            {t("Open the sign-in page")}
           </Button>
         </div>
       )}
       {finished && (
         <p role="status" className="px-3 pb-1 text-xs text-ink-2">
-          {login.phase === "connected" ? "Signed in to Claude Code." : login.error}
+          {login.phase === "connected" ? t("Signed in to Claude Code.") : login.error}
         </p>
       )}
     </>
@@ -327,7 +329,7 @@ export function TerminalDock({ project, onReveal }: { project: string | null; on
       return;
     }
     if (!project || opening) {
-      if (!project && !sessions.length) setError("Open a game to start a terminal.");
+      if (!project && !sessions.length) setError(t("Open a game to start a terminal."));
       return;
     }
     setOpening(true);
@@ -349,7 +351,7 @@ export function TerminalDock({ project, onReveal }: { project: string | null; on
     <section
       ref={root}
       data-terminal-dock
-      aria-label="Terminal"
+      aria-label={t("Terminal")}
       hidden={!visible}
       className="terminal-dock relative min-h-0 shrink-0 border-t border-line bg-base"
       style={{ height, maxHeight: "50%" }}
@@ -379,7 +381,7 @@ export function TerminalDock({ project, onReveal }: { project: string | null; on
       <div className="relative min-h-0 flex-1">
         {sessions.map((session) => (
           <div key={session.id} hidden={session.id !== current?.id} className="h-full min-h-0">
-            <Suspense fallback={<Pending label="Loading terminal…" className="px-3 text-xs" />}>
+            <Suspense fallback={<Pending label={t("Loading terminal…")} className="px-3 text-xs" />}>
               <TerminalView session={session} visible={visible && session.id === current?.id} onError={setError} />
             </Suspense>
           </div>

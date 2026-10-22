@@ -87,6 +87,8 @@ import {
 // Read by namespace, not by name: a seed upgrade keeps an agent-edited wake-prompts.ts, and an
 // older copy has no `buildCard` — a named import of it would keep the harness from linking.
 import * as wakeWords from "./wake-prompts.ts";
+import * as liveChat from "../live-chat.ts";
+import * as messageQueue from "../message-queue.ts";
 import {
   afterTurn,
   HEARTBEAT_MS,
@@ -1282,6 +1284,7 @@ async function patientSession(
  * turn has none to resume (a fresh one that met the engine's limit before it began). A failure on
  * the first turn is the run's (the crash close); on a later one it is a failed turn — and so is a
  * first turn the host kept refusing because its lock stayed busy: the run closes on its own terms.
+ * A first turn cut short for the user's words is no failure at all (`lineWatchedSession`).
  */
 async function sessionOrFresh(
   loopRun: LoopRun,
@@ -1557,14 +1560,17 @@ async function askAgain(loopRun: LoopRun, wake: WakeState, asked: string): Promi
 }
 
 /**
- * A later turn with a session to resume may be cut short for the user's words: never the first
- * (its brief), the wrap-up, a turn whose run is already over (its `finish` may be under way), or
- * one inside a tool call — cut there, the lead never gets the call's answer (tools.ts counts them).
+ * A turn with a session to resume may be cut short for the user's words — the first too, whose
+ * session has read its brief or is asked it again (`askAgain`): an engine that cannot read input
+ * mid-turn would otherwise hear nothing for a whole open Loop turn. Never one with no session yet
+ * (a fresh lead's first: a cut would leave nothing to resume), the wrap-up, a turn whose run is
+ * already over (its `finish` may be under way), or one inside a tool call — cut there, the lead
+ * never gets the call's answer (tools.ts counts them).
  */
 function mayCut(loopRun: LoopRun, wake: WakeState, kit: TurnKit): boolean {
-  const later = wake.turns > 1 && Boolean(kit.talk.sessionId);
+  const resumable = Boolean(kit.talk.sessionId);
   const inCall = (loopRun.toolsInFlight ?? 0) > 0;
-  return later && !inCall && !wake.wrapping && !loopRunOver(loopRun);
+  return resumable && !inCall && !wake.wrapping && !loopRunOver(loopRun);
 }
 
 /**
@@ -1673,6 +1679,14 @@ async function lineWatchedSession(
   try {
     result = await sessionOrFresh(loopRun, wake, kit, turn);
     return result;
+  } catch (err) {
+    // A first turn's failure is the run's (`sessionOrFresh`) — unless it was cut short for the
+    // user's words before its session began: then it is asked again (`takeTurn`). The watch settles
+    // first, since the host's answer to the cut may come after the failure the cut caused.
+    await watch.stop();
+    if (!wake.cut) throw err;
+    result = failedTurn(err);
+    return result;
   } finally {
     await watch.stop();
     let read = 0;
@@ -1775,8 +1789,8 @@ export async function runWakeLoop(
     wake.wrapCause = WrapCause.Deadline;
   }
   const first = await firstPrompt(loopRun, wake, brief, clock.now());
-  // The wrap-up takes no more of the chat: what is sent from now on waits for the run to close.
-  if (wake.wrapping) line?.shut();
+  // The wrap-up still hears the chat, but what is sent from now on is the chat's to answer once the run closes.
+  if (wake.wrapping) wrapUpLine(line);
   let result = await turnThenBetween(loopRun, wake, kit, first);
   for (;;) {
     const verdict = afterTurn(await turnFacts(loopRun, wake, result, clock.now()));
@@ -1787,11 +1801,30 @@ export async function runWakeLoop(
     // A sign-in a worker or a judge lost while the lead slept pauses the run before it is woken.
     if (await pauseOnLostSignIn(loopRun, clock.now())) break;
     const prompt = await wakePrompt(loopRun, wake, due, clock);
-    if (wake.wrapping) line?.shut();
+    if (wake.wrapping) wrapUpLine(line);
     result = await turnThenBetween(loopRun, wake, kit, prompt);
   }
   journalWake(loopRun, wake);
   return { result, wrapCause: wake.wrapCause, failed: wake.failed };
+}
+
+/**
+ * The wrap-up began: the lead still hears the chat, and what is sent from now on stays the chat's to
+ * answer once the run closes (`LeadLine.wrapUp`). Only when the chat's door and queue both keep what
+ * the lead is told then: a kept older copy of either would deliver it to a run that is ending, and
+ * nobody would answer it. Otherwise, or with a kept older lead-line.ts, the line shuts and what is
+ * sent waits for the run to close.
+ */
+function wrapUpLine(line: LeadLine | null): void {
+  if (typeof line?.wrapUp === "function" && wrapUpKeeps()) line.wrapUp();
+  else line?.shut();
+}
+
+/** Do the chat's door (live-chat.ts) and queue (message-queue.ts) keep what a lead in its wrap-up is told? */
+export function wrapUpKeeps(): boolean {
+  const door: { DOOR_KEEPS_IN_WRAP_UP?: unknown } = liveChat;
+  const queue: { QUEUE_KEEPS_TOLD?: unknown } = messageQueue;
+  return door.DOOR_KEEPS_IN_WRAP_UP === true && queue.QUEUE_KEEPS_TOLD === true;
 }
 
 /**

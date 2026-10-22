@@ -83,6 +83,7 @@ export const RPC_CLASSES = {
   "run.exec": RpcClass.Work,
   "engine.describe": RpcClass.Work,
   "studio.context": RpcClass.Record,
+  "studio.language": RpcClass.Record,
   "context.policy": RpcClass.Record,
   "learning.enabled": RpcClass.Record,
   "engine.complete": RpcClass.Work,
@@ -121,6 +122,12 @@ export const RPC_CLASSES = {
   "preview.crop": RpcClass.Page,
   "preview.diff": RpcClass.Page,
   "preview.input": RpcClass.Page,
+  // Its first call loads the build into the window, and a wait may run five minutes.
+  "preview.computer": RpcClass.PageLoad,
+  // The person may take minutes to answer the consent card; the card's own timeout bounds it.
+  "desktop.computer": RpcClass.Work,
+  // A judge plays for minutes; the host's own dispatch timeout (`judge-play-tool.ts`) bounds it.
+  "judge.play": RpcClass.Work,
   "preview.console": RpcClass.Page,
   "preview.gpuErrors": RpcClass.Page,
   "preview.status": RpcClass.Page,

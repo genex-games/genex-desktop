@@ -88,6 +88,7 @@ async function resumeLine() {
     images: new Map(),
     onNotice: noop,
     onApprovePlan: async () => {},
+    onPluginTurnedOn: () => {},
     onRevisePlan: noop,
   };
   const entry = {

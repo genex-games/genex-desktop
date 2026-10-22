@@ -7,7 +7,8 @@
  */
 import type { Host } from "../types/harness.d.ts";
 import type { GameProject, ProjectFact } from "../types/host-api.d.ts";
-import { engineOfGame, GameEngine } from "./game-engine.ts";
+import { isEngineGame } from "./engine-game.ts";
+import { type EngineId, engineOfGame, GameEngine } from "./game-engine.ts";
 import { HostMethod } from "./host-methods.ts";
 
 /** Fact ids Genex itself knows; a plugin's `detect` may add others. Written in records: never rename a value. */
@@ -76,19 +77,34 @@ export type FactsOfDescriptor =
 
 const ROOT = FACT_ROOT;
 
-/** The facts an engine of the older vocabulary stands for: its fact at the game's root (the app's `factsOfEngine`). */
-export function factsOfEngine(engine: GameEngine): FactRef[] {
-  return [{ id: engine === GameEngine.Unreal ? CoreFact.UnrealProject : CoreFact.WebGame, path: ROOT }];
+/**
+ * The facts an engine stands for when a caller names the engine and not the facts (an older
+ * caller): its project at the game's root. The engines of the older vocabulary by their facts (the
+ * app's `factsOfEngine`); any other engine, whose declared fact only the app knows, by its own id,
+ * so it is never read as a web game.
+ */
+export function factsOfEngine(engine: EngineId): FactRef[] {
+  const id = ENGINE_FACT.get(engine) ?? (isEngineGame(engine) ? engine : CoreFact.WebGame);
+  return [{ id, path: ROOT }];
 }
+
+/** The fact each engine of the older vocabulary stands for (the app's `ENGINE_FACT`). */
+const ENGINE_FACT: ReadonlyMap<string, string> = new Map<GameEngine, string>([
+  [GameEngine.Web, CoreFact.WebGame],
+  [GameEngine.Unreal, CoreFact.UnrealProject],
+  [GameEngine.Godot, CoreFact.GodotProject],
+]);
 
 /**
  * The facts of a game descriptor: the ones it carries. One from a host that predates facts reads by
- * its older fields: a link is an Unreal project at the root, a folder that said it holds no web
- * game has none, and anything else (no descriptor at all included) is a web game at the root.
+ * its older fields: a link is its engine's project at the root (`factsOfEngine`), a folder that
+ * said it holds no web game has none, and anything else (no descriptor at all included) is a web
+ * game at the root.
  */
 export function factsOfGame(game: FactsOfDescriptor): FactRef[] {
   if (Array.isArray(game?.facts)) return game.facts.map(({ id, path }) => ({ id, path }));
-  if (engineOfGame(game) === GameEngine.Unreal) return [{ id: CoreFact.UnrealProject, path: ROOT }];
+  const engine = engineOfGame(game);
+  if (isEngineGame(engine)) return factsOfEngine(engine);
   if (game?.web === false) return [];
   return [{ id: CoreFact.WebGame, path: ROOT }];
 }
@@ -135,6 +151,18 @@ export function servedFactsKey(game: FactsOfDescriptor): string {
     .map((fact) => `${fact.id}@${fact.path}`)
     .sort()
     .join("\n");
+}
+
+/** How a game runs, as its studio.json declares it: the app's `TargetRuntime` a game may name (held to it by seed-contracts). */
+export const GameRuntime = { Browser: "browser", Bridge: "bridge" } as const;
+export type GameRuntime = (typeof GameRuntime)[keyof typeof GameRuntime];
+
+/**
+ * Whether the game is its own process Genex starts and plays through the Play Protocol: its
+ * studio.json declares the bridge runtime and a play command (a Godot game Genex set up does).
+ */
+export function playsThroughBridge(game: Pick<GameProject, "shape"> | null | undefined): boolean {
+  return game?.shape?.runtime === GameRuntime.Bridge && Boolean(game.shape.play);
 }
 
 /**
@@ -201,4 +229,24 @@ export async function startWebIfPending(
   if (kindUnknown(game)) throw new Error(MESSAGE.unknownKind(project));
   if (!kindPending(game)) return;
   await host.call(HostMethod.GameStart, { project, starter: ProjectStarter.Web });
+}
+
+/** What says whether the studio plays a game in its engine's editor: the host's word (`editorPlay`), and the game's facts. */
+export type EditorPlayedGame = { editorPlay?: unknown; facts?: readonly FactRef[] | null | undefined };
+
+/** Whether these facts hold an Unreal project, the one game an older host plays in its editor. */
+const holdsUnreal = (facts: readonly FactRef[] | null | undefined): boolean =>
+  (facts ?? []).some((fact) => fact.id === CoreFact.UnrealProject);
+
+/**
+ * Whether the studio plays a game in its engine's editor, where a judge can play it: as the host's
+ * `game.list` says (`editorPlay`, set by the plugin that declares the game's engine and its play).
+ * A host that never says (an older one), and a kept older caller that hands the facts alone, read
+ * it by the facts: an Unreal game.
+ */
+export function playedInEditor(game: EditorPlayedGame | readonly FactRef[] | null | undefined): boolean {
+  if (Array.isArray(game)) return holdsUnreal(game);
+  const described = game as EditorPlayedGame | null | undefined;
+  if (typeof described?.editorPlay === "boolean") return described.editorPlay;
+  return holdsUnreal(described?.facts);
 }

@@ -293,6 +293,92 @@ describe("the never-touch list", () => {
     assert.match(reason, /Do not retry it or work around it; carry on without it\./);
   });
 
+  it("reads a here-document a program takes as text: code and prose in it name paths only as paths alone", async () => {
+    const f = await fixture();
+    const allowed: Array<[string, string]> = [
+      ["a division in Python written to a file", "cat > assets/src/roof.py <<'EOF'\nh0 = (t0 / 2) / COSP\nEOF"],
+      [
+        "a tilde in a docstring and a division in a generator",
+        'cat > assets/src/pose.py <<\'EOF\'\n"""rotate the arms ~40 deg down"""\nratio = max(p / r for p, r in pairs)\nEOF\necho ok',
+      ],
+      ["a floor division Python reads from stdin", "python3 - <<'EOF'\nprint(a // b)\nEOF"],
+      ["prose with a lone tilde and a security note", "cat > notes.txt <<EOF\nsecurity review: turn ~ 40 deg\nEOF"],
+      ["a relative import", "cat > assets/src/kit.py <<'EOF'\nfrom .. import common\nEOF"],
+      ["a body whose quote never closes", "cat > a.py <<'EOF'\nprint(\"it's / done\")\nEOF\nls src"],
+      ["tab-stripped delimiter", "cat > a.py <<-EOF\n\tx = a / b\n\tEOF"],
+      ["two here-documents in turn", "cat > a.py <<'A'; cat > b.py <<'B'\nx = 1 / 2\nA\ny = ~ / 3\nB"],
+      ["a reader behind sudo", "sudo cat > a.py <<'EOF'\nx = a / b\nEOF"],
+      [
+        "Blender reading a script from stdin",
+        "/Applications/Blender.app/Contents/MacOS/Blender -b <<'EOF'\nx = a / b\nEOF",
+      ],
+    ];
+    for (const [name, command] of allowed) {
+      const hit = neverTouchVerdict({ tool: "Bash", input: { command } }, f.list, f.game, f.home, "darwin");
+      assert.equal(hit, null, `${name}: ${JSON.stringify(hit)}`);
+    }
+    const refused: Array<[string, string, NeverTouchKind]> = [
+      ["a shell reading commands", "bash <<'EOF'\nrm -rf ~/.codex\nEOF", NeverTouchKind.Login],
+      ["sh reading a read of a sign-in", "sh <<EOF\ncat ~/.codex/auth.json\nEOF", NeverTouchKind.Login],
+      ["a body piped into a shell", "cat <<'EOF' | sh\nrm -rf ~\nEOF", NeverTouchKind.Login],
+      ["a substitution the shell runs in a body", "cat <<EOF\n$(cat ~/.codex/auth.json)\nEOF", NeverTouchKind.Login],
+      ["security in backticks in a body", "cat <<EOF\n`security dump-keychain`\nEOF", NeverTouchKind.Login],
+      [
+        "a sign-in named in a program's text",
+        `python3 - <<'EOF'\nprint(open("${f.home}/.codex/auth.json").read())\nEOF`,
+        NeverTouchKind.Login,
+      ],
+      ["a redirect into a sign-in's home", "cat > ~/.genex/key <<'EOF'\nhi\nEOF", NeverTouchKind.Login],
+      ["a command after the body", "cat > a.py <<'EOF'\nit's / here\nEOF\nrm -rf ~/.codex", NeverTouchKind.Login],
+      ["a loop reading paths", `while read f; do rm -rf "$f"; done <<'EOF'\n${f.home}\nEOF`, NeverTouchKind.Login],
+      ["xargs handing a body's words to a program", "xargs cat <<'EOF'\n~\nEOF", NeverTouchKind.Login],
+      // `<<` that is no here-document leaves the next lines commands, even after a program that reads text.
+      ["a shift of a variable named like a program", "echo $((cat<<X))\nrm -rf ~\nX", NeverTouchKind.Login],
+      ["an old-style shift", "cat a $[1<<X]\nrm -rf ~\nX]", NeverTouchKind.Login],
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's own parameter form is the input.
+      ["a shift in a parameter's default", "cat ${x:-<<X}\nrm -rf ~\nX}", NeverTouchKind.Login],
+      ["a here-document marker in a comment", "cat a # <<EOF\nrm -rf ~\nEOF", NeverTouchKind.Login],
+      ["a body that never ends", "cat <<EOF\nrm -rf ~", NeverTouchKind.Login],
+      // A body read as text may still run: written to a file run by its path, or inside a substitution.
+      ["a script written, then run by its path", "cat > x.sh <<'EOF'\nrm -rf ~\nEOF\n./x.sh", NeverTouchKind.Login],
+      ["a body eval runs", "eval \"$(cat <<'EOF'\nrm -rf ~\nEOF\n)\"", NeverTouchKind.Login],
+      [
+        "the keychain in a body a shell runs",
+        "bash -c \"$(cat <<'EOF'\nsecurity find-generic-password -w\nEOF\n)\"",
+        NeverTouchKind.Login,
+      ],
+    ];
+    for (const [name, command, kind] of refused) {
+      const hit = neverTouchVerdict({ tool: "Bash", input: { command } }, f.list, f.game, f.home, "darwin");
+      assert.equal(hit?.kind ?? null, kind, `${name}: ${JSON.stringify(hit)}`);
+    }
+  });
+
+  it("the hook reads relative paths from the folder the session's shell stands in", async () => {
+    const f = await fixture();
+    await mkdir(path.join(f.copy, "assets", "src"), { recursive: true });
+    await mkdir(path.join(f.game, "src"), { recursive: true });
+    // A worker's session works in its copy; its shell moved into a subfolder of it.
+    const worker = neverTouchHook(f.list, f.copy, f.home);
+    const lead = neverTouchHook(f.list, f.game, f.home);
+    const denied = async (hook: typeof worker, cwd: unknown, tool: string, input: Record<string, unknown>) => {
+      const answer = await hook({ hook_event_name: "PreToolUse", cwd, tool_name: tool, tool_input: input });
+      return (answer.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision === "deny";
+    };
+    const inCopy = path.join(f.copy, "assets", "src");
+    const back = "cd ../.. && rm -rf assets/blender/x && git status --short";
+    assert.equal(await denied(worker, inCopy, "Bash", { command: back }), false, "back to the copy's root");
+    assert.equal(await denied(worker, inCopy, "Bash", { command: "rm -rf ../../assets/blender/x" }), false);
+    assert.equal(await denied(worker, inCopy, "Bash", { command: "rm -rf ../../.." }), true, "out of the copy");
+    const inGame = path.join(f.game, "src");
+    assert.equal(await denied(lead, inGame, "Bash", { command: "cat ../../other-game/x" }), true, "another game");
+    assert.equal(await denied(lead, inGame, "Read", { file_path: "../../other-game/x" }), true, "a file tool too");
+    assert.equal(await denied(lead, inGame, "Bash", { command: "cat ../src/main.js" }), false);
+    // A cwd that is no absolute path is not read: the session's own folder stands in.
+    for (const cwd of [undefined, 7, "", "src", "../other-game", ["/"]])
+      assert.equal(await denied(lead, cwd, "Bash", { command: "cat ../other-game/x" }), true, JSON.stringify(cwd));
+  });
+
   it("refuses what the screen cannot read: a parameter form, the folder a cd left", async () => {
     const f = await fixture();
     const hook = neverTouchHook(f.list, f.game, f.home);

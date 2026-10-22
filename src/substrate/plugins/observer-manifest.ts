@@ -28,7 +28,7 @@ const MESSAGE = {
   NeedsApi3: "observers requires apiVersion 3",
   NotList: `Invalid observers (a list of at most ${LIMIT.Observers} entries)`,
   InvalidObserver: (at: string) =>
-    `Invalid observers entry ${at} (id: lowercase letters, digits and dashes, starting with a letter, at most 40, not ${[...RESERVED_OBSERVER_IDS].join(" or ")}; facts: 1-${LIMIT.Facts} fact ids, each once; tool: a tool of this manifest only the harness calls, that asks nothing and runs no host program; live: ${[...PLUGIN_OBSERVER_LIVE].join(" or ")}, ${ObserverLive.UnrealCard} only for the Unreal plugin; label: 1-${OBSERVER_LABEL_CHARS} printable characters on one line, not blank, not one of the stage strip's own names)`,
+    `Invalid observers entry ${at} (id: lowercase letters, digits and dashes, starting with a letter, at most 40, not ${[...RESERVED_OBSERVER_IDS].join(" or ")}; facts: 1-${LIMIT.Facts} fact ids, each once; tool: a tool of this manifest only the harness calls, that asks nothing and runs no host program; live: ${[...PLUGIN_OBSERVER_LIVE].join(" or ")}, ${ObserverLive.UnrealCard} only for the Unreal plugin; status: for a ${ObserverLive.Card} only, an action of this manifest that asks nothing; label: 1-${OBSERVER_LABEL_CHARS} printable characters on one line, not blank, not one of the stage strip's own names)`,
   DuplicateObserver: (id: string) => `Invalid observers: ${id} is declared twice`,
 } as const;
 
@@ -53,6 +53,17 @@ function liveAllowed(live: unknown, m: Pick<PluginManifest, "id">): live is Obse
   return live !== ObserverLive.UnrealCard || m.id === UNREAL_PLUGIN_ID;
 }
 
+/** Whether `status` fits the view: a card names an action of the manifest that asks nothing; any other view names none. */
+function statusAllowed(
+  status: unknown,
+  live: unknown,
+  m: Pick<PluginManifest, "actions">,
+): status is string | undefined {
+  if (live !== ObserverLive.Card) return status === undefined;
+  const action = typeof status === "string" ? m.actions.find((a) => a.name === status) : undefined;
+  return action !== undefined && action.confirmation === undefined;
+}
+
 /** A tab name's characters: none a control, format, line or paragraph separator (no line break, no bidi override). */
 const PRINTABLE = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u;
 
@@ -60,7 +71,7 @@ const PRINTABLE = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u;
  * The names the stage strip gives Genex's own Live views when a folder has more than one (the
  * renderer's `STAGE_WORDS.tabs`, held to this list by plugin-observers.test.ts).
  */
-const GENEX_VIEW_LABELS = ["Web game", "Unreal"] as const;
+export const GENEX_VIEW_LABELS = ["Web game", "Unreal"] as const;
 
 /**
  * Whether a label repeats, in any case, a name the stage strip already shows: its own buttons'
@@ -90,9 +101,11 @@ function pluginObserver(entry: unknown, index: number, m: PluginManifest, canoni
   const tool = quietHarnessTool(canonical.tools, entry.tool);
   if (!facts || !tool) throw new Error(MESSAGE.InvalidObserver(at));
   if (!liveAllowed(entry.live, m) || !labelAllowed(entry.label)) throw new Error(MESSAGE.InvalidObserver(at));
+  if (!statusAllowed(entry.status, entry.live, m)) throw new Error(MESSAGE.InvalidObserver(at));
   const observer: PluginObserver = { id: entry.id, facts, tool: tool.name };
   if (entry.live !== undefined) observer.live = entry.live;
   if (entry.label !== undefined) observer.label = entry.label;
+  if (entry.status !== undefined) observer.status = entry.status;
   return observer;
 }
 

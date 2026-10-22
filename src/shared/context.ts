@@ -1,5 +1,6 @@
 import { CustomEvent, customPayload, type CustomEventData } from "./custom-events.ts";
 import { EngineId } from "./providers.ts";
+import { t } from "./i18n.ts";
 /** Where a context reading came from, most trustworthy first. Recorded in logs: never rename a value. */
 export const ContextSource = {
   Provider: "provider",
@@ -71,7 +72,7 @@ export function validateContextPolicy(input: unknown): ContextPolicy {
     Number.isFinite(threshold) &&
     threshold >= MIN_THRESHOLD_PERCENT &&
     threshold <= MAX_THRESHOLD_PERCENT;
-  if (p?.mode !== "custom" || !inRange) throw new Error("Choose an auto-compaction threshold between 5% and 95%.");
+  if (p?.mode !== "custom" || !inRange) throw new Error(t("Choose an auto-compaction threshold between 5% and 95%."));
   return { mode: "custom", thresholdPercent: p.thresholdPercent };
 }
 

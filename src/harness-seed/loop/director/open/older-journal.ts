@@ -61,7 +61,7 @@ function olderTally(value: unknown): FinishTally | null | undefined {
   if (!isRecord(value) || !isCount(value.round) || !isCount(value.rejections)) return undefined;
   const reasons = Array.isArray(value.reasons) ? value.reasons : [];
   if (!reasons.every((reason) => typeof reason === "string")) return undefined;
-  return { round: value.round, rejections: value.rejections, checking: false, reasons: [...reasons] };
+  return { round: value.round, rejections: value.rejections, checking: false, reasons: [...reasons], notDone: [] };
 }
 
 /** The lines the Unreal runner's next digest owed its lead, or null when the digest is not one. */

@@ -5,13 +5,15 @@
 import { memo, useMemo, useRef, useCallback, type JSX, type ReactNode } from "react";
 import { PerformanceBoundary } from "../performance.tsx";
 import { PerformanceComponent } from "../../shared/performance.ts";
+import { t } from "../../shared/i18n.ts";
 import { QueueState } from "../../shared/message-queue.ts";
 import { EntryKind } from "../chat-entries.ts";
 import { QueuedMessage, SendingMessage } from "../panels/QueuedMessage.tsx";
-import type { Notify } from "../state/toasts.ts";
+import { MessageOrigin } from "../../shared/protocol.ts";
+import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
-import { PLAN_WORDS } from "../words.ts";
+import { PLAN_WORDS, pluginTurnedOnWords } from "../words.ts";
 import type { ChatHistory } from "./chat-panel-props.ts";
 import { ChatWork } from "./ChatWork.tsx";
 import { type ConversationEntry, entrySize } from "./conversation-entries.ts";
@@ -40,6 +42,10 @@ function useTranscriptContext(parts: ChatParts): TranscriptContext {
         const { composer, focusComposer } = latest.current;
         if (!composer.drafts.draft) composer.drafts.setDraft(PLAN_WORDS.changePrefill);
         focusComposer();
+      },
+      onPluginTurnedOn: (name: string) => {
+        const { report, props } = latest.current;
+        void report(pluginTurnedOnWords(name), MessageOrigin.PluginTurnedOn).catch(notifyProblem(props.onNotice));
       },
     }),
     [],
@@ -230,7 +236,7 @@ const ConversationContent = memo(function ConversationContent({
             />
           )}
         </ChatScroll>
-        <JumpToLatest unseen={follow.unseen} onJump={follow.jumpToLatest} />
+        <JumpToLatest unseen={follow.unseen} working={!view.idle} onJump={follow.jumpToLatest} />
       </div>
     </PerformanceBoundary>
   );
@@ -246,7 +252,7 @@ function ChatScroll({ follow, children }: { follow: FollowScroll; children: Reac
       // below it would jump past an expanded tool list and unmount its disclosure.
       style={{ overflowAnchor: "none" }}
       data-chat-scroll
-      aria-label="Conversation"
+      aria-label={t("Conversation")}
       tabIndex={0}
       // Nothing in the conversation is wider than its column: a long unbroken line wraps or scrolls
       // in its own box, never the whole conversation sideways.
@@ -261,9 +267,9 @@ function ChatScroll({ follow, children }: { follow: FollowScroll; children: Reac
 function EarlierFailed({ onRetry }: { onRetry: () => Promise<void> }): JSX.Element {
   return (
     <div role="alert" className="flex items-center justify-center gap-2 text-xs text-red">
-      Could not load earlier messages.
+      {t("Could not load earlier messages.")}
       <Button variant="ghost" onClick={() => void onRetry()}>
-        Try again
+        {t("Try again")}
       </Button>
     </div>
   );
@@ -293,9 +299,9 @@ const savedFrom = (sends: ConversationSends, clientId: string): boolean =>
   [...sends.placeholders.values()].some((placeholder) => placeholder.clientId === clientId);
 
 /**
- * Follow-ups that wait below the current work until they are delivered, then those still being
- * sent. A waiting message keeps the place of the bubble it was sent as; delivered, it closes here
- * as it opens where it was read.
+ * Follow-ups that wait below the current work until it reads them, then those still being sent;
+ * each reads Sending… either way, and one no turn has taken yet can be removed. A waiting message
+ * keeps the place of the bubble it was sent as; delivered, it closes here as it opens where it was read.
  */
 function WaitingFollowUps({
   threadId,

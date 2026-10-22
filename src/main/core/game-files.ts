@@ -17,6 +17,7 @@ import { rewindsOf, withoutRewound } from "../../shared/chat-rewind.ts";
 import { latestRun } from "../../shared/coordinator.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
 import type { GameFile } from "../../shared/game-file.ts";
+import { t } from "../../shared/i18n.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { RunState } from "../../shared/run-state.ts";
 import { toolchain } from "../../substrate/toolchain.ts";
@@ -24,14 +25,17 @@ import { ChatFileResolver, credentialRoots, type ChatFileScope } from "../chat-f
 import { folderFilePath, gameRelativePath, readCommitFile, readFolderFile } from "../game-file.ts";
 import type { StudioCore } from "../studio-core.ts";
 
-/** What the user reads when a chat's file cannot be opened. */
+/**
+ * What the user reads when a chat's file cannot be opened. `namesRequired` answers only a
+ * malformed request from our own renderer, so it stays English.
+ */
 const MESSAGE = {
-  chatGone: "This chat is no longer here.",
+  chatGone: () => t("This chat is no longer here."),
   namesRequired: "File names are required.",
-  noGameFolder: "This chat has no game folder yet.",
-  notInFolder: "This file isn’t in the game folder yet.",
-  outsideGame: (raw: string) => `${raw.trim()} is outside this game.`,
-  notFound: (relative: string) => `Couldn’t find ${relative} in this game.`,
+  noGameFolder: () => t("This chat has no game folder yet."),
+  notInFolder: () => t("This file isn’t in the game folder yet."),
+  outsideGame: (raw: string) => t("{path} is outside this game.", { path: raw.trim() }),
+  notFound: (relative: string) => t("Couldn’t find {file} in this game.", { file: relative }),
 } as const;
 
 /** A message id the harness could have saved attachments under. */
@@ -74,7 +78,7 @@ export class GameFileService {
   ): Promise<{ projectDir: string; head: string | null; preferBuild: boolean; runId: string | null }> {
     const record = await this.#core.store.getRecord(threadId);
     const project = (record?.metadata as { project?: string } | undefined)?.project;
-    if (!project) throw new Error(MESSAGE.noGameFolder);
+    if (!project) throw new Error(MESSAGE.noGameFolder());
     const projectDir = this.#core.games.dirFor(project);
     await this.#core.assertProjectAllowed(projectDir);
     // A build a rewind withdrew is not this chat's: its files are not the ones the chat names.
@@ -101,7 +105,7 @@ export class GameFileService {
    */
   async #chatFileScope(threadId: string): Promise<ChatFileScope> {
     const record = await this.#core.store.getRecord(threadId).catch(() => null);
-    if (!record) throw new Error(MESSAGE.chatGone);
+    if (!record) throw new Error(MESSAGE.chatGone());
     const meta = (record.metadata ?? {}) as { project?: string; kind?: string };
     const { layout, games, options } = this.#core;
     const home = games.homeDir;
@@ -149,7 +153,7 @@ export class GameFileService {
     const { projectDir } = await this.#fileSources(threadId);
     const relative = gameRelativePath(raw, projectDir);
     const target = relative ? await folderFilePath(projectDir, relative) : null;
-    if (!target) throw new Error(MESSAGE.notInFolder);
+    if (!target) throw new Error(MESSAGE.notInFolder());
     return target;
   }
 

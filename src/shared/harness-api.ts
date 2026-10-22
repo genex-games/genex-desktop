@@ -35,6 +35,7 @@ import type {
   StudioToolSpec,
   ToolDefinition,
 } from "./engine-requests.ts";
+import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
 import { FINISH_REASON_CHARS, type FinishCheckStep } from "./finish-check.ts";
 import type { ProjectAssets } from "./game-assets.ts";
@@ -170,11 +171,15 @@ export interface CapturedImage extends CapturedFile {
   data: string;
 }
 
-/** A finish check's round as the host answers it: the reviewer's yes or no with reasons, or no answer and why. */
+/** A finish check's round as the host answers it: the reviewer's yes or no with reasons and what isn't done, or no answer and why. */
 export interface FinishRoundAnswer {
   round: number;
   step: FinishCheckStep;
   reasons?: string[];
+  /** What the reviewer found not done, when it named any. */
+  notDone?: string[];
+  /** What the reviewer found done, in a few words each, when it named any. */
+  done?: string[];
   why?: string;
 }
 
@@ -562,6 +567,11 @@ export interface HarnessHostApi {
       pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
+  /**
+   * The language Genex speaks (Settings, else the computer's): its tag and its own name. An agent
+   * answers Genex's own messages in it (a resume, a continue), and the person in theirs.
+   */
+  "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };
@@ -611,19 +621,23 @@ export interface HarnessHostApi {
    * End the held round of a run: the host records its outcome and counts the no's in a row from its
    * own records (`stopped` once they reach the cap). `unanswered` turns the held answer into no
    * answer, with why (a yes that lapsed, a turn that ended); nothing turns a no or no answer into a yes.
+   * `timeLeftMs`, a timed Loop's working time left: with more than `FINISH_TIME_LEFT_MS` no row of
+   * no's stops it (`timeLeft`); an ∞ Loop names none.
    */
   "finish.settle": {
-    params: { project: string; runId: string; round: number; unanswered?: string | null };
-    result: FinishRoundAnswer & { rejections: number; stopped: boolean };
+    params: { project: string; runId: string; round: number; unanswered?: string | null; timeLeftMs?: number | null };
+    result: FinishRoundAnswer & { rejections: number; stopped: boolean; timeLeft?: boolean };
   };
   /**
    * Steer: messages the person sent while the chat's turn works, into the session answering that
    * turn (`chatTurn` is `into`). `accepted` lists what the session took; `how` is how (`SteerDelivery`
-   * in `shared/message-queue.ts`), null when it took nothing. `interrupt: false` takes them only
-   * into a session that reads them mid-turn, and never cuts one short.
+   * in `shared/message-queue.ts`), null when it took nothing. A session is cut only between tool
+   * calls, never inside one. `interrupt: false` takes them only into a session that reads them
+   * mid-turn, and never cuts one short; `native: false` never hands them to it mid-turn: the session
+   * is cut at its next step (a message that changes how the turn runs, steer-switch.ts).
    */
   "engine.steer": {
-    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean };
+    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean; native?: boolean };
     result: { how: SteerDelivery | null; accepted: string[] };
   };
   "coordinator.tool": {
@@ -790,6 +804,48 @@ export interface HarnessHostApi {
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
   /**
+   * The `computer` tool, run by the host on a window the harness leased: the same tool every
+   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
+   * answers the tool's schema instead of running an action; otherwise `args` is one call.
+   */
+  "preview.computer": {
+    params: DelegatePlaytestGrant & {
+      handle: string;
+      args?: Record<string, unknown>;
+      describe?: boolean;
+      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
+      fresh?: boolean;
+    };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
+  };
+  /**
+   * The `desktop` tool, run by the host for an engine whose tool loop is the harness's own
+   * (Ollama): the person's computer, behind the consent asked on a card in `threadId`. `describe`
+   * answers the tool's schema and starts the chat's session afresh; `unavailable` says why there is
+   * none (computer control off in Settings, no desktop driver, no chat to ask in).
+   */
+  "desktop.computer": {
+    params: { project: string; threadId?: string; args?: Record<string, unknown>; describe?: boolean };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult } | { unavailable: string };
+  };
+  /**
+   * `judge_play`, run by the host for an engine whose tool loop is the harness's own (Ollama), as
+   * session engines are handed it (`core/judge-play-tool.ts`): a blind judge plays the game, the
+   * chat's model playing, and the outcome is one line in `threadId`. `unavailable` says why not
+   * (no chat to record in, a game the studio does not play in a window).
+   */
+  "judge.play": {
+    params: {
+      project: string;
+      threadId?: string;
+      args?: Record<string, unknown>;
+      engine?: string;
+      model?: string;
+      effort?: string;
+    };
+    result: { answer: LiveToolResult } | { unavailable: string };
+  };
+  /**
    * Input to a leased game, in order. A play script's `touch` action (contract v2: one finger's
    * start, move or end in world coordinates) reaches a Rust game's native `input` op.
    */
@@ -862,6 +918,8 @@ export interface HarnessHostApi {
       live: boolean;
       headless: boolean;
       memory: { freeMb: number; totalMb: number };
+      /** The most workers the person's Settings let one chat run at once. */
+      workers: number;
       /** The host's platform, which with `native.gameBox` picks a C++ game's judging target; absent from a host without native runs. */
       host?: StudioPlatform | null;
       /** Native runs: whether this host has a game box for its own OS, and its native leases. */
@@ -1018,6 +1076,7 @@ export const HostMethod = {
   RunExec: "run.exec",
   EngineDescribe: "engine.describe",
   StudioContext: "studio.context",
+  StudioLanguage: "studio.language",
   ContextPolicy: "context.policy",
   LearningEnabled: "learning.enabled",
   EngineComplete: "engine.complete",
@@ -1058,6 +1117,9 @@ export const HostMethod = {
   PreviewCrop: "preview.crop",
   PreviewDiff: "preview.diff",
   PreviewInput: "preview.input",
+  PreviewComputer: "preview.computer",
+  DesktopComputer: "desktop.computer",
+  JudgePlay: "judge.play",
   PreviewConsole: "preview.console",
   PreviewGpuErrors: "preview.gpuErrors",
   PreviewStatus: "preview.status",
@@ -1239,7 +1301,7 @@ export const HARNESS_PARAM_SCHEMAS = {
     proof: z.array(z.string().max(REVIEWER_READS_CHARS)).max(FINISH_NAMES_MAX),
     observers: z.array(z.string().max(REVIEWER_READS_CHARS)).max(FINISH_NAMES_MAX),
   }),
-  // Settling names nothing but its round: a field it does not take (a step, a verdict) is refused.
+  // Settling names its round, why it has no answer and the time left: a field it does not take (a step, a verdict) is refused.
   "finish.settle": z.strictObject({
     project,
     runId: runIdSegment,
@@ -1250,7 +1312,11 @@ export const HARNESS_PARAM_SCHEMAS = {
       .min(1)
       .max(FINISH_REASON_CHARS + 1)
       .nullish(),
+    timeLeftMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish(),
   }),
+  "preview.computer": z.object({ project, root: text, handle: text, runId: optionalText, facetId: optionalText }),
+  "desktop.computer": z.object({ project }),
+  "judge.play": z.object({ project }),
   "game.setCover": z.object({ project }),
   "game.setCoverShader": z.object({ project }),
   "game.contentStamp": z.object({ project }),

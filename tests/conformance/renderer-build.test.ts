@@ -96,3 +96,34 @@ for (const { name, mode, profiled } of [
 test("only development React can count commits", () => {
   assert.throws(() => rendererBuildOptions({ commitCounts: true }), /development/);
 });
+
+/** A renderer build's outputs: the entry, the studio it loads after the language, and one language. */
+function splitMetafile(studioInputs: Record<string, object>): Metafile {
+  const output = (entryPoint: string, bytes: number, inputs: Record<string, object>, imports: object[] = []) => ({
+    entryPoint,
+    bytes,
+    inputs,
+    imports,
+    exports: [],
+  });
+  return {
+    inputs: {},
+    outputs: {
+      "dist/renderer/renderer.js": output("src/renderer/main.tsx", 100, { "src/renderer/main.tsx": {} }, [
+        { path: "dist/renderer/chunks/studio-entry.js", kind: "dynamic-import" },
+        { path: "dist/renderer/chunks/ru.js", kind: "dynamic-import" },
+      ]),
+      "dist/renderer/chunks/studio-entry.js": output("src/renderer/studio-entry.tsx", 5_000, studioInputs),
+      "dist/renderer/chunks/ru.js": output("src/shared/locales/ru.ts", 9_000_000, { "src/shared/locales/ru.ts": {} }),
+    },
+  } as unknown as Metafile;
+}
+
+test("the eager budget counts the studio the entry loads after the language, never the languages", () => {
+  const report = rendererBundleReport(splitMetafile({ "src/renderer/App.tsx": {} }), { release: true });
+  assert.equal(report.entryBytes, 5_100);
+  assert.throws(
+    () => rendererBundleReport(splitMetafile({ "node_modules/three/build/three.module.js": {} }), {}),
+    /three\.js/,
+  );
+});

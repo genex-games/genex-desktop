@@ -195,6 +195,7 @@ async function renamedToyPlugin(): Promise<{ dir: string; id: string; rename: (t
   const rename = (tool: string) => `r-${tool}`;
   const manifest = JSON.parse(await readFile(path.join(dir, "plugin.json"), "utf8"));
   manifest.id = "toy-renamed";
+  manifest.engine.id = "toy-renamed";
   manifest.name = "Toy Renamed";
   for (const tool of manifest.tools) tool.name = rename(tool.name);
   for (const hook of manifest.hooks) hook.tool = rename(hook.tool);
@@ -202,6 +203,7 @@ async function renamedToyPlugin(): Promise<{ dir: string; id: string; rename: (t
   for (const lock of manifest.locks) lock.personFirst = rename(lock.personFirst);
   for (const skill of manifest.skills) skill.tools = skill.tools.map(rename);
   for (const type of manifest.workerTypes) type.tools = type.tools.map(rename);
+  for (const judge of manifest.judges) if (judge.probe) judge.probe = rename(judge.probe);
   await writeFile(path.join(dir, "plugin.json"), JSON.stringify(manifest, null, 2));
   return { dir, id: manifest.id, rename };
 }
@@ -269,7 +271,14 @@ async function toyLoop(plugin: { dir: string; id: string; rename: (tool: string)
   const name = plugin.rename;
   const ended = await untilCalled(calls, (call) => call.moment === "run.end");
   assert.ok(ended, "the run's end moment fired");
-  const { steps, health } = trailOf(calls, plugin.id);
+  const { steps: trail, health } = trailOf(calls, plugin.id);
+  // The person's message that started the Loop took its own checkpoints first, with the one step
+  // the plugin opts in to for chat messages, before its answer and (flipped: also) after it; the
+  // run's own steps follow them.
+  const message = `checkpoint.before:${name("save-scenes")}`;
+  assert.equal(trail[0], message, `the message's checkpoint step comes first: ${trail.join(", ")}`);
+  const leading = trail.findIndex((step) => step !== message);
+  const steps = trail.slice(leading);
   const want = [
     `run.prepare:${name("editor-state")}`,
     `checkpoint.before:${name("save-scenes")}`,

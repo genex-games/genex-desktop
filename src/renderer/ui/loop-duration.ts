@@ -3,6 +3,7 @@
  * whatever the user types ("2h 30m", "90m", "1:45", "1.5") read back into minutes.
  */
 import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** An hour, in the minutes every limit here is counted in. */
 export const MINUTES_PER_HOUR = HOUR_MS / MINUTE_MS;
@@ -21,7 +22,10 @@ const HOURS = /(\d+(?:\.\d+)?)\s*h/;
 const MINUTES = /(\d+)\s*m/;
 const BARE_HOURS = /^\d+(\.\d+)?$/;
 
-/** 150 → "2 h 30 m", 120 → "2 h", 45 → "45 m". */
+/**
+ * 150 → "2 h 30 m", 120 → "2 h", 45 → "45 m", always in these units: the custom limit's field
+ * shows it and `parseDuration` reads it back. Text that is only read uses {@link durationText}.
+ */
 export function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / MINUTES_PER_HOUR);
   const m = Math.round(minutes % MINUTES_PER_HOUR);
@@ -29,12 +33,34 @@ export function formatDuration(minutes: number): string {
   return h ? `${h} h` : `${m} m`;
 }
 
+/** 150 → "2 h 30 m", 120 → "2 h", 45 → "45 m" in the reader's language, for text that is only read. */
+export function durationText(minutes: number): string {
+  const h = Math.floor(minutes / MINUTES_PER_HOUR);
+  const m = Math.round(minutes % MINUTES_PER_HOUR);
+  if (h && m) return t("{hours} h {minutes} m", { hours: h, minutes: m });
+  return h ? t("{hours} h", { hours: h }) : t("{minutes} m", { minutes: m });
+}
+
+/** The limit spelled out for the Mode caption: 30 → "30 minutes", 105 → "1 hour 45 minutes". */
+export function limitWords(minutes: number): string {
+  const h = Math.floor(minutes / MINUTES_PER_HOUR);
+  const m = Math.round(minutes % MINUTES_PER_HOUR);
+  if (h && m)
+    return t("{hours, plural, one {# hour} other {# hours}} {minutes, plural, one {# minute} other {# minutes}}", {
+      hours: h,
+      minutes: m,
+    });
+  return h
+    ? t("{hours, plural, one {# hour} other {# hours}}", { hours: h })
+    : t("{minutes, plural, one {# minute} other {# minutes}}", { minutes: m });
+}
+
 /** The Mode button's compact limit: 150 → "2h30", 120 → "2h", 30 → "30m". */
 export function shortDuration(minutes: number): string {
   const h = Math.floor(minutes / MINUTES_PER_HOUR);
   const m = Math.round(minutes % MINUTES_PER_HOUR);
-  if (h && m) return `${h}h${String(m).padStart(2, "0")}`;
-  return h ? `${h}h` : `${m}m`;
+  if (h && m) return t("{hours}h{minutes}", { hours: h, minutes: String(m).padStart(2, "0") });
+  return h ? t("{hours}h", { hours: h }) : t("{minutes}m", { minutes: m });
 }
 
 /** "2h 30m", "2 h" or "90m" → minutes, or null when neither unit is there. */

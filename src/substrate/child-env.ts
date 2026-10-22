@@ -68,6 +68,8 @@ const SANDBOX_ALLOW = new Set([
   "SSL_CERT_DIR",
 ]);
 const SANDBOX_ALLOW_PREFIX = /^LC_/;
+/** Windows PowerShell's module path variable, upper-cased: Windows names are case-insensitive. */
+const PS_MODULE_PATH = "PSMODULEPATH";
 
 /**
  * A variable whose name says it carries a secret, in any case. `_PWD` needs its underscore: `PWD`
@@ -144,6 +146,16 @@ export function childEnv(parent: Record<string, string | undefined>, request: Ch
 }
 
 /**
+ * `env` for a Windows PowerShell 5.1 child, without any inherited module path, whatever its case.
+ * 5.1 builds its own when none is set; one inherited from PowerShell 7 (Genex started from a pwsh
+ * terminal) puts 7.x modules first, 5.1 cannot load them, and their cmdlets vanish
+ * (Get-FileHash, ConvertTo-Json, Get-Process). `env` itself is left as it was.
+ */
+export function windowsPowerShellEnv<T extends string | undefined>(env: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => name.toUpperCase() !== PS_MODULE_PATH));
+}
+
+/**
  * What any Windows program needs from its parent to start and find its folders (Node itself reads
  * SystemRoot, USERPROFILE and TEMP); none of it is a credential. Only asked for on Windows.
  */
@@ -175,10 +187,18 @@ export function windowsBaseEnv(
     const value = envValue(parent, name);
     if (value !== undefined) env[name] = value;
   }
-  if (home) {
-    env.USERPROFILE = home;
-    env.APPDATA = path.win32.join(home, "AppData", "Roaming");
-    env.LOCALAPPDATA = path.win32.join(home, "AppData", "Local");
-  }
-  return env;
+  return home ? { ...env, ...windowsHomeEnv(home, platform) } : env;
+}
+
+/**
+ * The profile folders a child given its own `home` must see inside it on Windows, where
+ * `os.homedir()` reads USERPROFILE rather than HOME. Empty on macOS and Linux.
+ */
+export function windowsHomeEnv(home: string, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  if (platform !== StudioPlatform.Windows) return {};
+  return {
+    USERPROFILE: home,
+    APPDATA: path.win32.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.win32.join(home, "AppData", "Local"),
+  };
 }

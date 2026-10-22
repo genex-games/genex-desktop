@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseMcpSnippet } from "../../src/shared/mcp-import.ts";
+import { parseMcpInput, parseMcpSnippet } from "../../src/shared/mcp-import.ts";
 
 test("a Claude-style stdio entry keeps env names on the connector and values in the secrets map", () => {
   const { drafts, warnings } = parseMcpSnippet(
@@ -195,4 +195,97 @@ test("TOML sub-tables: a headers section is read, any other table is reported an
     "[mcp_servers.a]\nport = [1]",
   ])
     assert.match(parseMcpSnippet(broken).warnings[0] ?? "", /^Studio could not read that snippet: /);
+});
+
+test("a pasted URL becomes a remote server named after its host", () => {
+  const cases: Array<[string, string, string]> = [
+    ["https://mcp.linear.app/mcp", "Linear", "linear"],
+    ["  https://api.githubcopilot.com/mcp/  \n", "Githubcopilot", "githubcopilot"],
+    ["http://localhost:3845/mcp", "Localhost", "localhost"],
+    ["https://docs.example.com/sse", "Docs", "docs"],
+  ];
+  for (const [text, name, id] of cases) {
+    const { drafts, warnings } = parseMcpInput(text);
+    assert.equal(drafts.length, 1, text);
+    const { connector, secrets } = drafts[0]!;
+    assert.deepEqual(
+      { name: connector.name, id: connector.id, transport: connector.transport, url: connector.url },
+      { name, id, transport: "http", url: text.trim() },
+      text,
+    );
+    assert.equal(connector.command, undefined);
+    assert.deepEqual(secrets, {});
+    assert.deepEqual(warnings, []);
+  }
+});
+
+test("a pasted command line runs on this Mac, its leading NAME=value words become stored secrets", () => {
+  const { drafts, warnings } = parseMcpInput("GITHUB_TOKEN=ghp_abc123 npx -y @modelcontextprotocol/server-github");
+  assert.equal(drafts.length, 1);
+  const { connector, secrets } = drafts[0]!;
+  assert.equal(connector.transport, "stdio");
+  assert.equal(connector.command, "npx");
+  assert.deepEqual(connector.args, ["-y", "@modelcontextprotocol/server-github"]);
+  assert.deepEqual(connector.env, ["GITHUB_TOKEN"]);
+  assert.deepEqual(secrets, { "env.GITHUB_TOKEN": "ghp_abc123" });
+  assert.equal(JSON.stringify(connector).includes("ghp_abc123"), false, "a value never rides on the connector");
+  assert.ok(warnings.some((w) => /stored encrypted/.test(w)));
+});
+
+test("a command's name comes from the package or program it runs", () => {
+  const cases: Array<[string, string]> = [
+    ["npx -y @modelcontextprotocol/server-github", "Github"],
+    ["npx @playwright/mcp@latest", "Playwright"],
+    ["uvx mcp-server-fetch", "Fetch"],
+    ["pipx run figma-mcp-server", "Figma"],
+    ["pnpm dlx @upstash/context7-mcp", "Context7"],
+    ["node /Users/me/weather-server/build/index.js", "Weather"],
+    ["python3 -u ./servers/notes_mcp.py", "Notes"],
+    ["/usr/local/bin/blender-mcp --stdio", "Blender"],
+  ];
+  for (const [line, name] of cases) assert.equal(parseMcpInput(line).drafts[0]?.connector.name, name, line);
+});
+
+test("claude and codex mcp add lines are read for what they add, not run as the claude or codex program", () => {
+  const claude = parseMcpInput(
+    "claude mcp add github --scope user -e GITHUB_TOKEN=ghp_x -- npx -y @modelcontextprotocol/server-github",
+  ).drafts[0]!;
+  assert.deepEqual(
+    { name: claude.connector.name, command: claude.connector.command, args: claude.connector.args },
+    { name: "github", command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] },
+  );
+  assert.deepEqual(claude.secrets, { "env.GITHUB_TOKEN": "ghp_x" });
+  const remote = parseMcpInput(
+    'claude mcp add --transport http linear https://mcp.linear.app/mcp --header "X-Team: games"',
+  ).drafts[0]!;
+  assert.deepEqual(
+    { name: remote.connector.name, transport: remote.connector.transport, url: remote.connector.url },
+    { name: "linear", transport: "http", url: "https://mcp.linear.app/mcp" },
+  );
+  assert.deepEqual(remote.connector.headers, ["X-Team"]);
+  assert.deepEqual(remote.secrets, { "header.X-Team": "games" });
+  const sse = parseMcpInput("claude mcp add -t sse feed https://feed.example/sse").drafts[0]!;
+  assert.equal(sse.connector.transport, "sse");
+  const codex = parseMcpInput("codex mcp add notes --env NOTES_DIR=/tmp/notes -- uvx notes-mcp").drafts[0]!;
+  assert.deepEqual(
+    { name: codex.connector.name, command: codex.connector.command, env: codex.connector.env },
+    { name: "notes", command: "uvx", env: ["NOTES_DIR"] },
+  );
+});
+
+test("pasted JSON and TOML still read as before, and what cannot be read is a warning", () => {
+  const json = parseMcpInput(JSON.stringify({ mcpServers: { docs: { url: "https://docs.example/mcp" } } }));
+  assert.deepEqual(
+    json.drafts.map((d) => d.connector.id),
+    ["docs"],
+  );
+  assert.deepEqual(
+    parseMcpInput('[mcp_servers.plain]\ncommand = "run"').drafts.map((d) => d.connector.command),
+    ["run"],
+  );
+  for (const broken of ["node 'unfinished", "API_KEY=abc", "claude mcp add", "   "]) {
+    const { drafts, warnings } = parseMcpInput(broken);
+    assert.deepEqual(drafts, [], broken);
+    if (broken.trim()) assert.equal(warnings.length, 1, broken);
+  }
 });

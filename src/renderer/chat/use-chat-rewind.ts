@@ -5,6 +5,7 @@
  */
 import { type RefObject, useCallback, useMemo, useRef, useState } from "react";
 import { type RewindResult, rewindableMessages } from "../../shared/chat-rewind.ts";
+import { t } from "../../shared/i18n.ts";
 import type { EventEnvelope } from "../types.ts";
 import { type Notify, ToastTone } from "../state/toasts.ts";
 import { COMPOSE_FRAMES_EVENT } from "../ui/PromptBar.tsx";
@@ -39,7 +40,7 @@ function restorePictures(threadId: string, result: RewindResult): void {
 }
 
 const restoredWords = (files: number): string =>
-  files === 1 ? "Restored 1 game file." : `Restored ${files} game files.`;
+  t("{count, plural, one {Restored # game file.} other {Restored # game files.}}", { count: files });
 
 export interface ChatRewind {
   /** Whether a user bubble (by entry id) offers Rewind now. */

@@ -99,8 +99,9 @@ function DropdownMenuContent({
           // against this box.
           // bg-popover, NOT bg-background: a menu is a floating surface and
           // owes the page a step of contrast (see the token's note in
-          // globals.css). It used to be the page colour exactly.
-          "relative z-[230] min-w-[10rem] overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg",
+          // globals.css). It used to be the page colour exactly. Its edge is
+          // every menu's one edge (`--menu-edge`), which a dark theme brightens.
+          "relative z-[230] min-w-[10rem] overflow-hidden rounded-xl border border-menu-edge bg-popover p-1 shadow-lg",
           className,
         )}
         {...props}
@@ -158,13 +159,27 @@ function DropdownMenuRadioGroup({ ...props }: React.ComponentProps<typeof Dropdo
  * column: the caller (the composer's model picker) is a two-line row whose name
  * and sentence share one left edge, and a leading indicator would indent the
  * sentence under nothing. Its box is reserved whether or not the row is the
- * checked one, so choosing cannot reflow the menu.
+ * checked one, so choosing cannot reflow the menu. A row that shows the choice
+ * its own way (the Builds picker's) passes `indicator={false}` and lays out its
+ * children itself.
  */
 function DropdownMenuRadioItem({
   className,
   children,
+  indicator = true,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.RadioItem> & { indicator?: boolean }) {
+  if (!indicator) {
+    return (
+      <DropdownMenuPrimitive.RadioItem
+        data-slot="dropdown-menu-radio-item"
+        className={cn(rowClass, className)}
+        {...props}
+      >
+        {children}
+      </DropdownMenuPrimitive.RadioItem>
+    );
+  }
   return (
     <DropdownMenuPrimitive.RadioItem
       data-slot="dropdown-menu-radio-item"

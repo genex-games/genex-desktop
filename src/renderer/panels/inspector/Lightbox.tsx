@@ -1,6 +1,7 @@
 /** The Builds tab's lightbox: one still at a time, stepped with the arrow keys when there are several. */
 import type { JSX } from "react";
 import { useEffect } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { useStill } from "../../stills.ts";
 import { Button } from "../../ui/Button.tsx";
 import { PanelButton } from "./chrome.tsx";
@@ -48,16 +49,16 @@ export function Lightbox({
         {src ? (
           <img src={src} alt="" className="block max-h-full max-w-full object-contain" draggable={false} />
         ) : (
-          <Pending label="Loading…" className="px-16 py-24 text-micro" />
+          <Pending label={t("Loading…")} className="px-16 py-24 text-micro" />
         )}
       </div>
       <div className="flex items-center gap-2.5" onClick={(event) => event.stopPropagation()}>
-        {several ? <PanelButton label="Previous (←)" icon="chevron-left" onClick={onPrev} /> : null}
+        {several ? <PanelButton label={t("Previous (←)")} icon="chevron-left" onClick={onPrev} /> : null}
         <span className="text-xs text-ink">{item.title}</span>
         {item.caption ? <span className="text-xs text-ink-3">{item.caption}</span> : null}
-        {several ? <PanelButton label="Next (→)" icon="chevron-right" onClick={onNext} /> : null}
+        {several ? <PanelButton label={t("Next (→)")} icon="chevron-right" onClick={onNext} /> : null}
         <Button variant="ghost" onClick={onClose}>
-          Close
+          {t("Close")}
         </Button>
       </div>
     </div>

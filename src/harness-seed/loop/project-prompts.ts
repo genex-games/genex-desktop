@@ -7,6 +7,7 @@
 import type { PluginKindOffer } from "../types/host-api.d.ts";
 import { CoreFact, type FactRef, FolderHolds, PLUGIN_FACT_SOURCE_PREFIX, ProjectTool } from "./folder-facts.ts";
 import { toolCall } from "./model-roles.ts";
+import { pluginWebBuilds, WEB_BUILD_WORDS } from "./web-build.ts";
 // A kept older `unreal-prompts.ts` exports only what it did: new names live here, never there.
 import { engineChoiceRule, UNREAL_NEW_GAME_TOOL } from "./unreal-prompts.ts";
 
@@ -67,11 +68,20 @@ const NO_FACT_WORDS = {
 /** What the folder holds, in words: each kind and where, or what a folder with no facts holds. */
 function holdsWords(facts: readonly FactRef[], holds?: FolderHolds | null): string {
   if (facts.length === 0) return NO_FACT_WORDS[holds ?? FolderHolds.Nothing];
-  return facts.map((fact) => `${factWords(fact.id)} ${whereWords(fact.path)}`).join(", ");
+  // A plugin's web build is one thing in its folder: the web page, named as the build it is.
+  const builds = pluginWebBuilds(facts);
+  return facts
+    .filter((fact) => !builds.has(fact.path) || fact.id === CoreFact.WebGame)
+    .map((fact) =>
+      builds.has(fact.path)
+        ? `${WEB_BUILD_WORDS} ${whereWords(fact.path)}`
+        : `${factWords(fact.id)} ${whereWords(fact.path)}`,
+    )
+    .join(", ");
 }
 
 /**
- * Who runs the session, the first thing every brief says: Genex, the Mac app the chat runs in; the
+ * Who runs the session, the first thing every brief says: Genex, the desktop app the chat runs in; the
  * project's folder and what it holds (`holds`: what a folder with no facts holds); that Genex shows a
  * web game itself; and that a plugin here is a Genex plugin, never an engine's own plugins or add-ons.
  */
@@ -85,7 +95,7 @@ export function appIdentity({
   holds?: FolderHolds | null;
 }): string {
   const folder = folderLabel ? `the folder \`${folderLabel}\`` : "this game's folder";
-  return `You are working inside Genex, the Mac app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
+  return `You are working inside Genex, the desktop app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
 }
 
 /** How a session finds a plugin for what the request names, and never turns one on itself. */
@@ -119,8 +129,8 @@ export function pendingKindRule(
   asked = true,
 ): string[] {
   const offered = kinds ?? [];
-  if (asked && offered.length > 0)
-    return [engineChoiceRule(engine, unreal, offered), findRule(engine, "none of those options covers")];
+  // The engine question sends another engine to `plugins_find` itself, before it asks.
+  if (asked && offered.length > 0) return [engineChoiceRule(engine, unreal, offered)];
   const start = toolCall(engine, ProjectTool.StartWebGame);
   return [
     `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build on its starter.`,
@@ -167,10 +177,12 @@ const detectedByPlugin = (fact: FactRef & { source?: string }) =>
 /**
  * The rules of a kind Genex has no rules of its own for: for one of Genex's own kinds, or a plugin's
  * kind its plugin's `detect` didn't find (held by a scaffold's record), a plugin is looked for first
- * (`pluginFirstRule`); one an enabled plugin detected has that plugin on already.
+ * (`pluginFirstRule`); one an enabled plugin detected, or one a plugin that is on makes (`made`: a
+ * kind on offer names it, as the bundled Godot plugin does Genex's own Godot project), has that
+ * plugin on already.
  */
-export function ownKindRules(engine: string | undefined, fact: FactRef & { source?: string }): string[] {
-  if (!isCoreFact(fact.id) && detectedByPlugin(fact)) return [factLine(fact)];
+export function ownKindRules(engine: string | undefined, fact: FactRef & { source?: string }, made = false): string[] {
+  if (made || (!isCoreFact(fact.id) && detectedByPlugin(fact))) return [factLine(fact)];
   return [pluginFirstRule(engine, `the fact "${fact.id}"`), factLine(fact)];
 }
 

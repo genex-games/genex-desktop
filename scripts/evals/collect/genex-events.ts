@@ -38,7 +38,7 @@ import { StudioTool, studioToolName } from "../../../src/substrate/engines/studi
 import { epochMs, stringField, asRecord, recordField, type TraceReading } from "./honesty.ts";
 import type { BuildSpanEvent, ObservationEvent, SessionRef, ToolCallEvent } from "./observation.ts";
 import type { ModelUsageReading } from "./observe.ts";
-import { classifyTool } from "./tool-category.ts";
+import { TOOL_USE_PART, classifyTool } from "../../../src/shared/tool-category.ts";
 import { addUsage, appUsageTokens, modelRowTokens, promptTokens } from "./usage.ts";
 import {
   BuildSpanKind,
@@ -53,7 +53,6 @@ import {
 export { DELEGATE_TOOL };
 /** The event store's agent id for the studio's log. */
 const STUDIO_AGENT = "studio";
-const TOOL_USE_PART = "tool_use";
 const TOOL_RESULT_PART = "tool_result";
 
 /** The preview proxies, by the studio tool name a contractor calls them by. */

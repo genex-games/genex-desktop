@@ -8,6 +8,7 @@
  */
 import { type JSX, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { TerminalKind, type TerminalSession } from "../../shared/terminal.ts";
 import { useCliInstall } from "../cli-install.ts";
@@ -56,7 +57,7 @@ export function useRun(): { run: (action: () => Promise<unknown>) => Promise<voi
 export function AccountMenu({
   name,
   label = WORDS.account,
-  menuName = `${name} account`,
+  menuName = t("{name} account", { name }),
   onCheck,
   children,
 }: {

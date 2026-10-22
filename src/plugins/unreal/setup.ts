@@ -1,7 +1,8 @@
 /**
  * Set up Unreal: everything Genex needs from a user's Unreal project, applied in one step so nobody
  * edits a .uproject or an ini by hand. Each piece is what had to be done by hand before:
- * - Epic's ModelContextProtocol and EditorToolset plugins on in the .uproject;
+ * - Epic's ModelContextProtocol and EditorToolset plugins on in the .uproject, and Epic's other
+ *   toolsets agents make games with added beside them;
  * - the MCP server starting on the project's own port whenever the project opens, from the
  *   project's per-user `Saved/Config/<Platform>Editor/EditorPerProjectUserSettings.ini`, which
  *   Unreal keeps when it rewrites that file on exit; the port is chosen once (`editor-port.ts`);
@@ -19,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   atomicWriteJson,
   atomicWriteText,
@@ -28,7 +30,7 @@ import {
 } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { envValue } from "../../substrate/toolchain.ts";
-import { editorHoldsLog, heldProjectNames } from "./editor-holds.ts";
+import { crashReporterHolds, editorHoldsLog, heldProjectNames } from "./editor-holds.ts";
 import { type EditorLog, editorLogPath, readEditorLog } from "./editor-log.ts";
 import { isProjectPath, projectName } from "./project-file.ts";
 import {
@@ -58,9 +60,31 @@ export const installEngineVersion = () => `${MIN_ENGINE.major}.${MIN_ENGINE.mino
  * it on. Named after the version Genex makes projects with ({@link MIN_ENGINE}).
  */
 export const installEngineText = () =>
-  `Unreal Engine ${installEngineVersion()} isn't on this computer yet. The Unreal button above the game shows how to get it free from Epic, and notices when it's installed.`;
-/** Epic's plugins the bridge talks to, in the order setup adds them. */
+  t(
+    "Unreal Engine {version} isn't on this computer yet. The Unreal button above the game shows how to get it free from Epic, and notices when it's installed.",
+    { version: installEngineVersion() },
+  );
+/** Epic's plugins the bridge talks to, in the order setup adds them: a project without them on isn't set up. */
 const MCP_PLUGINS = ["ModelContextProtocol", "EditorToolset"] as const;
+/**
+ * Epic's other toolsets agents make games with, added after {@link MCP_PLUGINS}, for the editor only:
+ * UI widgets, effects, AI (state trees, behavior trees), animation and sequences, procedural content,
+ * physics assets, gameplay tags and automation tests. Not Epic's AllToolsets: its GameFeaturesToolset
+ * makes every editor start log a load error, and its other toolsets serve no game Genex makes. A
+ * toolset the project already names, on or off, stays as the user left it, and one Genex added that
+ * the user took out again stays out.
+ */
+const TOOLSET_PLUGINS = [
+  "UMGToolSet",
+  "NiagaraToolsets",
+  "StateTreeToolset",
+  "AIModuleToolset",
+  "AnimationAssistantToolset",
+  "PCGToolset",
+  "PhysicsToolsets",
+  "GameplayTagsToolset",
+  "AutomationTestToolset",
+] as const;
 /** The section of the per-user project settings that starts Epic's MCP server. */
 const MCP_SECTION = "[/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]";
 const AutoStartKey = { Start: "bAutoStartServer", Port: "ServerPortNumber" } as const;
@@ -119,15 +143,21 @@ export const SetupErrorCode = {
 } as const;
 export type SetupErrorCode = (typeof SetupErrorCode)[keyof typeof SetupErrorCode];
 
+/** Setup's refusals, in the person's words: the panel shows them as they are. */
 const MESSAGE = {
-  NotProjectFile: "Choose a project's .uproject file by its full path.",
-  NoProject: "There's no Unreal project file at that path.",
-  BadProjectFile: "This .uproject file isn't valid JSON, so Genex won't change it.",
-  Link: (where: string) => `${where} in this project links somewhere else, so Genex won't write through it.`,
-  EditorRunning: "Quit Unreal Editor first. It rewrites the project's settings when it closes.",
-  NothingToUndo: "Genex hasn't set up this project, so there's nothing to undo.",
-  NoFreePort: `Genex found no free port for Unreal's MCP server: other apps hold every port from ${PROJECT_PORT_RANGE.first} to ${PROJECT_PORT_RANGE.last}. Quit some of them and try again.`,
-  NotSetUp: "Genex hasn't set up this project, so it has no Genex editor helper to update. Set it up first.",
+  NotProjectFile: () => t("Choose a project's .uproject file by its full path."),
+  NoProject: () => t("There's no Unreal project file at that path."),
+  BadProjectFile: () => t("This .uproject file isn't valid JSON, so Genex won't change it."),
+  Link: (where: string) =>
+    t("{where} in this project links somewhere else, so Genex won't write through it.", { where }),
+  EditorRunning: () => t("Quit Unreal Editor first. It rewrites the project's settings when it closes."),
+  NothingToUndo: () => t("Genex hasn't set up this project, so there's nothing to undo."),
+  NoFreePort: () =>
+    t(
+      "Genex found no free port for Unreal's MCP server: other apps hold every port from {first} to {last}. Quit some of them and try again.",
+      { first: PROJECT_PORT_RANGE.first, last: PROJECT_PORT_RANGE.last },
+    ),
+  NotSetUp: () => t("Genex hasn't set up this project, so it has no Genex editor helper to update. Set it up first."),
 } as const;
 
 /** A copy of a helper file the user changed, kept beside it when setup puts the shipped one back. */
@@ -155,6 +185,11 @@ export type SetupEnv = {
   editorCount?: () => Promise<number>;
   /** Whether anything accepts connections on a port (setup's choice of a free one). */
   portListening: (port: number) => Promise<boolean>;
+  /**
+   * Whether Unreal's crash reporter holds a port (a crashed editor's reporter keeps its sockets);
+   * undefined, or absent, when this computer can't tell.
+   */
+  crashReporterHolds?: (port: number) => Promise<boolean | undefined>;
   /**
    * Whether Epic's Unreal MCP completes an `initialize` on a port, and, given a project's real
    * `.uproject`, whether that editor has this project open (the Genex editor helper names it).
@@ -211,6 +246,11 @@ export type ProjectState = {
   engine: string;
   cpp: boolean;
   plugins: boolean;
+  /**
+   * Each of Epic's toolsets for games ({@link TOOLSET_PLUGINS}) is named in the .uproject, or Genex
+   * added it and the user took it out again.
+   */
+  toolsets: boolean;
   autoStart: boolean;
   /** The port Epic's MCP server starts on when the project opens; null while it doesn't start. */
   port: number | null;
@@ -304,6 +344,7 @@ export function systemSetupEnv(
     editorRunning: async () => (await editorProcesses(platform, env, runner)) > 0,
     editorCount: () => editorProcesses(platform, env, runner),
     portListening,
+    crashReporterHolds: (port) => crashReporterHolds(port, platform, runner),
     editorAnswers: rememberAnswers((port, project) => {
       const endpoint = editorEndpoint(String(port));
       return project === undefined ? editorAnswers(endpoint) : editorServes(endpoint, project);
@@ -464,12 +505,12 @@ export function engineMatch(association: string, engines: Engine[]): EngineMatch
  * on disk, so another case of the same name (macOS and Windows ignore case) is the same project.
  */
 async function resolveProject(file: string): Promise<Project> {
-  if (!isProjectPath(file)) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile);
-  if (!(await isFile(file))) throw new SetupError(SetupErrorCode.NoProject, MESSAGE.NoProject);
+  if (!isProjectPath(file)) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile());
+  if (!(await isFile(file))) throw new SetupError(SetupErrorCode.NoProject, MESSAGE.NoProject());
   const directory = await realpath(path.dirname(file));
   // A plain file (checked above), so realpath only gives its name the case it has on disk.
   const real = await realpath(file);
-  if (path.dirname(real) !== directory) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile);
+  if (path.dirname(real) !== directory) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile());
   return { file: real, name: projectName(real), directory };
 }
 
@@ -479,7 +520,7 @@ async function readUProject(project: Project): Promise<{ json: UProject; text: s
     const json: unknown = JSON.parse(text);
     if (isJsonObject(json)) return { json, text };
   } catch {}
-  throw new SetupError(SetupErrorCode.BadProjectFile, MESSAGE.BadProjectFile);
+  throw new SetupError(SetupErrorCode.BadProjectFile, MESSAGE.BadProjectFile());
 }
 
 /** JSON in the layout Unreal writes (tabs), keeping the file's own line endings. */
@@ -495,14 +536,24 @@ function pluginEntry(json: UProject, name: string): Record<string, unknown> | un
 }
 
 const pluginsOn = (json: UProject) => MCP_PLUGINS.every((name) => pluginEntry(json, name)?.Enabled === true);
+/** Whether Genex added this plugin before: a toolset it added that the user took out again stays out. */
+const addedBefore = (record: SetupRecord | null, name: string) =>
+  record?.uproject.added.some((added) => lower(added) === lower(name)) === true;
+
+/** The toolsets the project doesn't name and Genex never added to it: the ones setup still adds. */
+const toolsetsMissing = (json: UProject, record: SetupRecord | null) =>
+  TOOLSET_PLUGINS.filter((name) => pluginEntry(json, name) === undefined && !addedBefore(record, name));
 
 function addOnce(list: string[], name: string) {
   if (!list.includes(name)) list.push(name);
 }
 
-/** Turns Epic's plugins on, recording which it added and which it switched on. */
+/** An editor-only entry for one of Epic's plugins, as setup adds it. */
+const editorPlugin = (name: string) => ({ Name: name, Enabled: true, TargetAllowList: ["Editor"] });
+
+/** Turns Epic's plugins on and adds its toolsets, recording which it added and which it switched on. */
 function enablePlugins(json: UProject, record: SetupRecord): boolean {
-  if (pluginsOn(json)) return false;
+  if (pluginsOn(json) && toolsetsMissing(json, record).length === 0) return false;
   if (!Array.isArray(json.Plugins)) json.Plugins = [];
   for (const name of MCP_PLUGINS) {
     const entry = pluginEntry(json, name);
@@ -511,11 +562,23 @@ function enablePlugins(json: UProject, record: SetupRecord): boolean {
       entry.Enabled = true;
       addOnce(record.uproject.enabled, name);
     } else {
-      (json.Plugins as unknown[]).push({ Name: name, Enabled: true, TargetAllowList: ["Editor"] });
+      (json.Plugins as unknown[]).push(editorPlugin(name));
       addOnce(record.uproject.added, name);
     }
   }
+  addToolsets(json, record);
   return true;
+}
+
+/** Adds each of Epic's toolsets still missing, recording it; the names it added. */
+function addToolsets(json: UProject, record: SetupRecord): string[] {
+  if (!Array.isArray(json.Plugins)) json.Plugins = [];
+  const missing = toolsetsMissing(json, record);
+  for (const name of missing) {
+    (json.Plugins as unknown[]).push(editorPlugin(name));
+    addOnce(record.uproject.added, name);
+  }
+  return missing;
 }
 
 function restorePlugins(json: UProject, record: SetupRecord): void {
@@ -751,7 +814,7 @@ async function assertWritable(project: Project, options: SetupOptions): Promise<
 }
 
 async function assertEditorClosed(env: SetupEnv): Promise<void> {
-  if (await env.editorRunning()) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning);
+  if (await env.editorRunning()) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning());
 }
 
 /**
@@ -776,7 +839,7 @@ export async function editorHasProject(
  */
 async function assertProjectClosed(env: SetupEnv, project: Project, port: number | null | undefined): Promise<void> {
   const open = (await env.editorRunning()) && (await editorHasProject(env, project, port));
-  if (open) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning);
+  if (open) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning());
 }
 
 const recordFolder = (storage: string, project: Project) =>
@@ -807,7 +870,7 @@ async function projectPort(
     taken: new Set(others.map((p) => p.port)),
     listening: options.env.portListening,
   });
-  if (port === undefined) throw new SetupError(SetupErrorCode.NoFreePort, MESSAGE.NoFreePort);
+  if (port === undefined) throw new SetupError(SetupErrorCode.NoFreePort, MESSAGE.NoFreePort());
   return port;
 }
 
@@ -844,12 +907,14 @@ export async function inspectProject(file: string, options: SetupOptions): Promi
     engine: typeof json.EngineAssociation === "string" ? json.EngineAssociation : "",
     cpp: Array.isArray(json.Modules) && json.Modules.length > 0,
     plugins: pluginsOn(json),
+    toolsets: toolsetsMissing(json, record).length === 0,
     autoStart: inProjectBlock(port) && recordAgrees(record, port),
     port,
     helper: await helperState(project, options.helper),
     undoable: record !== null,
   };
-  return { ...state, ready: state.plugins && state.autoStart && !helperNeedsInstall(state.helper) };
+  const ready = state.plugins && state.toolsets && state.autoStart && !helperNeedsInstall(state.helper);
+  return { ...state, ready };
 }
 
 /**
@@ -888,7 +953,7 @@ export async function planSetup(
   const engine = await engineSwitch(state.engine, options.env);
   const steps: Array<[boolean, SetupStep]> = [
     [engine !== undefined, SetupStep.Engine],
-    [!state.plugins, SetupStep.Plugins],
+    [!state.plugins || !state.toolsets, SetupStep.Plugins],
     [!state.autoStart || state.port !== port, SetupStep.AutoStart],
     [helperNeedsInstall(state.helper), SetupStep.Helper],
   ];
@@ -1035,7 +1100,7 @@ export async function updateHelper(file: string, options: SetupOptions): Promise
   await assertEditorClosed(options.env);
   const folder = recordFolder(options.storage, project);
   const record = await readRecord(folder);
-  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp);
+  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp());
   const versions = { from: await projectHelperVersion(project), to: (await helperVersion(options.helper)) ?? "" };
   if (!helperNeedsInstall(await helperState(project, options.helper))) return { ...versions, kept: [] };
   // What Genex wrote last time: a file still holding it was never changed by the user.
@@ -1043,6 +1108,28 @@ export async function updateHelper(file: string, options: SetupOptions): Promise
   await recordHelperInstall(folder, project, record, options.helper);
   const kept = await installHelper(project, options.helper, installed);
   return { ...versions, kept: kept.map((mine) => projectRelative(project, mine)) };
+}
+
+/**
+ * Adds Epic's toolsets for games to a set-up project that lacks them (one Genex set up before it
+ * added them), touching nothing but the .uproject, and records them so undo takes them back out.
+ * Refuses, writing nothing, while Unreal Editor runs and for a project Genex hasn't set up.
+ * Answers the toolsets it added: none when the project names them all.
+ */
+export async function addToolsetPlugins(file: string, options: SetupOptions): Promise<string[]> {
+  const project = await resolveProject(file);
+  await assertEditorClosed(options.env);
+  const folder = recordFolder(options.storage, project);
+  const record = await readRecord(folder);
+  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp());
+  const { json, text } = await readUProject(project);
+  const added = addToolsets(json, record);
+  if (added.length === 0) return [];
+  await keepCopy(folder, project, path.basename(project.file));
+  // Recorded first, so an undo after a failed write still knows what to take out.
+  await atomicWriteJson(path.join(folder, SetupStorage.Record), record);
+  await atomicWriteText(project.file, formatLike(text, json));
+  return added;
 }
 
 /** Removes a folder only while it is empty: anything the user put there since keeps it. */
@@ -1115,7 +1202,7 @@ export async function undoSetup(file: string, options: SetupOptions): Promise<Pr
   const project = await resolveProject(file);
   const folder = recordFolder(options.storage, project);
   const record = await readRecord(folder);
-  if (!record) throw new SetupError(SetupErrorCode.NothingToUndo, MESSAGE.NothingToUndo);
+  if (!record) throw new SetupError(SetupErrorCode.NothingToUndo, MESSAGE.NothingToUndo());
   const { json, text } = await readUProject(project);
   await assertWritable(project, options);
   await assertProjectClosed(options.env, project, record.port);

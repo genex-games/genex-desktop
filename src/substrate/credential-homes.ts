@@ -25,9 +25,38 @@ const HOMEBREW_PLATFORM_TOOLS = [
 ] as const;
 
 /**
+ * Sign-ins under a Mac's Library that Roblox keeps, by their segments under the home folder: the
+ * apps' cookie jars (`HTTPStorages`, where Studio and the player keep the `.ROBLOSECURITY` session,
+ * a whole account; every other app's jar there is a sign-in too) and Studio's own folder (its local
+ * storage, its storage database and StudioMCP's token). Genex's Roblox plugin runs Studio and
+ * StudioMCP outside every sandbox; an agent's command, which could be following a planted script,
+ * never reads them. Place files live in Documents, not here.
+ */
+export const ROBLOX_MAC_SIGN_IN_STORES: readonly (readonly string[])[] = [
+  ["Library", "HTTPStorages"],
+  ["Library", "Roblox"],
+];
+
+/** Roblox's sign-ins on Windows, by their segments under `%LOCALAPPDATA%`. */
+export const ROBLOX_WINDOWS_SIGN_IN_STORES: readonly (readonly string[])[] = [
+  ["Roblox", "LocalStorage"],
+  ["Roblox", "StudioMCP"],
+];
+
+/**
+ * Roblox Studio's Assistant settings, which switch its MCP server on or off: no agent's command
+ * writes them (Mac segments under the home folder; Windows under `%LOCALAPPDATA%`).
+ */
+export const ROBLOX_ASSISTANT_SETTINGS = {
+  mac: ["Library", "Roblox", "AssistantSettings"],
+  windows: ["Roblox", "AssistantSettings"],
+} as const;
+
+/**
  * The person's other sign-in stores under the home folder, by their segments: SSH keys, the
- * keychains, cloud and GitHub logins, `.netrc`. No agent process reads them (`baseDenyRead`), no
- * worker reaches them (the never-touch list) and no plugin folder is or holds one.
+ * keychains, cloud and GitHub logins, `.netrc` and Roblox's sign-ins. No agent process reads them
+ * (`baseDenyRead`), no worker reaches them (the never-touch list) and no plugin folder is or holds
+ * one.
  */
 export const HOME_SIGN_IN_STORES: readonly (readonly string[])[] = [
   [".ssh"],
@@ -35,6 +64,7 @@ export const HOME_SIGN_IN_STORES: readonly (readonly string[])[] = [
   [".aws"],
   [".config", "gh"],
   [".netrc"],
+  ...ROBLOX_MAC_SIGN_IN_STORES,
 ];
 
 /**

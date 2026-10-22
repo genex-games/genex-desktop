@@ -23,8 +23,8 @@
 | Platform | Download |
 | --- | --- |
 | macOS (Apple Silicon) | [`Genex.dmg`](https://github.com/genex-games/genex-desktop/releases/latest/download/Genex.dmg) |
-| Linux (x64) | `.deb`, `.rpm` or `.zip` from the [latest release](https://github.com/genex-games/genex-desktop/releases/latest) |
-| Windows | Soon |
+| Linux (x64) | `.deb`, `.rpm` or `.zip` from the [latest release](https://github.com/genex-games/genex-desktop/releases/latest). The `.deb` and `.rpm` add the Genex package repository, so your system's updates (Software Updater, `apt`, `dnf`) bring every later version |
+| Windows (x64), preview | [`Genex-Setup.exe`](https://github.com/genex-games/genex-desktop/releases/latest/download/Genex-Setup.exe). Not signed yet: if Windows warns, choose More info, then Run anyway |
 
 Genex is early: expect rough edges, and tell us about them in
 [issues](https://github.com/genex-games/genex-desktop/issues).
@@ -38,7 +38,7 @@ Genex is early: expect rough edges, and tell us about them in
 → Meshy, Tripo, ElevenLabs and more through the Genex tools router\
 → Export anywhere, or publish to the web\
 → Three.js or Rust · wgpu games for the browser, desktop and phones\
-→ Unity and Unreal plugins soon
+→ Build in Unreal or Godot on your Mac with their plugins
 
 > [!TIP]
 > Have a tool your games need? [Build a plugin](#build-a-plugin) and put it in the Genex
@@ -86,7 +86,23 @@ The [plugin guide](docs/PLUGIN_GUIDE.md) covers tools, panels, settings and acco
 - [Developer field guide](docs/STUDIO-DEVELOPER-FIELD-GUIDE.md): run commands and where data lives
 - [Release operations](docs/release-operations.md): packaging, signing and publishing a release
 
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+Windows builds are signed only when GitHub Actions builds them from this repository's source,
+and a maintainer approves each release before it is signed.
+Until that signing is in place, Windows builds ship unsigned as a preview; every release lists
+each file's SHA-256 in `SHA256SUMS`.
+
+- Committers and reviewers: [members of genex-games](https://github.com/orgs/genex-games/people)
+- Approvers: [owners of genex-games](https://github.com/orgs/genex-games/people?query=role%3Aowner)
+
+Privacy: what Genex stores and sends is in its [privacy policy](PRIVACY.md); connected providers,
+plugins and services have their own policies.
+
 ---
 
-[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [MIT license](LICENSE), copyright `genex.games` ·
-[Third-party notices](THIRD-PARTY-NOTICES.md)
+[Privacy](PRIVACY.md) · [Security](SECURITY.md) · [Code signing policy](#code-signing-policy) ·
+[MIT license](LICENSE), copyright `genex.games` · [Third-party notices](THIRD-PARTY-NOTICES.md)

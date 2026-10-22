@@ -4,6 +4,7 @@ import { ModelCatalogState } from "../shared/model-catalog.ts";
  * effort each role runs at once a model is picked.
  */
 import { EngineKind, isEngineReady, needsSignIn } from "../shared/engine-descriptor.ts";
+import { t } from "../shared/i18n.ts";
 import { ReasoningEffort } from "../shared/model-preferences.ts";
 import { crossesTo, resolveRoles, roleEffortCap } from "../shared/model-roles.ts";
 import { EngineId, isMetered } from "../shared/providers.ts";
@@ -17,10 +18,10 @@ type EngineModel = EngineDescriptor["models"][number];
 
 /** What the provider-default row says while there is no catalog naming the default model. */
 const CATALOG_LABEL = {
-  [ModelCatalogState.Loading]: "Loading models…",
-  [ModelCatalogState.Ready]: "CLI default",
-  [ModelCatalogState.Stale]: "Saved model list",
-  [ModelCatalogState.Unavailable]: "Model list unavailable",
+  [ModelCatalogState.Loading]: t("Loading models…"),
+  [ModelCatalogState.Ready]: t("CLI default"),
+  [ModelCatalogState.Stale]: t("Saved model list"),
+  [ModelCatalogState.Unavailable]: t("Model list unavailable"),
 } as const;
 
 /** The model id that means "whatever the engine itself is set to". */
@@ -138,7 +139,7 @@ function defaultRow(engine: EngineDescriptor): EngineModel {
   return (
     engine.models.find((model) => model.id === DEFAULT_MODEL) ?? {
       id: DEFAULT_MODEL,
-      label: `${engine.label} default`,
+      label: t("{engine} default", { engine: engine.label }),
       contextWindow: 0,
       supportsTools: true,
       supportsVision: true,
@@ -171,10 +172,15 @@ function subscriptionChoice(engine: EngineDescriptor, model: EngineModel, shown:
   };
 }
 
-/** A row's second line: what the default row is doing while no catalog names it, or that a model is free. */
+/** A free model's name without its own trailing "Free" ("Cat Jam Free", "Ling (free)"): its Free tag says it. */
+export function withoutFreeWord(name: string): string {
+  return name.replace(/\s*[(:[]?\s*free\s*[)\]]?\s*$/i, "").trim() || name;
+}
+
+/** A row's second line: what the default row is doing while no catalog names it. A free model says so in a tag beside its name. */
 function choiceDetail(engine: EngineDescriptor, model: EngineModel): string | undefined {
   if (model.id === DEFAULT_MODEL && engine.catalog) return CATALOG_LABEL[engine.catalog.state];
-  return model.free ? MODEL_PICKER_WORDS.free : undefined;
+  return undefined;
 }
 
 function subscriptionTag(engine: EngineDescriptor, ready: boolean, signIn: boolean): string {

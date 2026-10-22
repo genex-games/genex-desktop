@@ -7,8 +7,9 @@
  * `bypassPermissionsWords`).
  */
 import { type KeyboardEvent, type RefObject, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import {
-  PERMISSION_MODE_WORDS,
+  permissionModeWords,
   PERMISSION_MODES,
   PermissionMode,
   type PermissionMode as PermissionModeType,
@@ -29,16 +30,16 @@ import { Shortcut } from "./Shortcut.tsx";
 
 /** The pill's and the panel's own words. */
 const WORDS = {
-  permissions: "Permissions",
-  panel: "Permission modes",
-  autoTip: "Auto permissions",
-  autoUnavailableTip: "Auto isn’t available for this model, so Claude asks first",
-  autoUnavailable: "Not on this plan or model",
-  sandboxedAuto: "Never asks, stays sandboxed",
-  recommended: "Recommended",
-  bypassTitle: "Bypass permissions?",
-  cancel: "Cancel",
-  bypass: "Bypass permissions",
+  permissions: t("Permissions"),
+  panel: t("Permission modes"),
+  autoTip: t("Auto permissions"),
+  autoUnavailableTip: t("Auto isn’t available for this model, so Claude asks first"),
+  autoUnavailable: t("Not on this plan or model"),
+  sandboxedAuto: t("Never asks, stays sandboxed"),
+  recommended: t("Recommended"),
+  bypassTitle: t("Bypass permissions?"),
+  cancel: t("Cancel"),
+  bypass: t("Bypass permissions"),
 } as const;
 
 /**
@@ -47,15 +48,15 @@ const WORDS = {
  * characters); a longer one is cut with an ellipsis and shown whole on hover.
  */
 const UNAVAILABLE_WORDS: Record<UnavailableModeReason, (engine: string) => string> = {
-  [UnavailableModeReason.CannotAsk]: (engine) => `${engine} can’t stop to ask yet`,
-  [UnavailableModeReason.AlwaysSandboxed]: (engine) => `${engine} always uses its sandbox`,
+  [UnavailableModeReason.CannotAsk]: (engine) => t("{engine} can’t stop to ask yet", { engine }),
+  [UnavailableModeReason.AlwaysSandboxed]: (engine) => t("{engine} always uses its sandbox", { engine }),
 };
 
 /** What a mode does where the chat's engine works otherwise than Claude Code, by engine. */
 const ENGINE_MODE_WORDS: Partial<Record<string, Partial<Record<PermissionModeType, string>>>> = {
   [EngineId.Codex]: {
-    [PermissionMode.Auto]: "Game folder only, no network",
-    [PermissionMode.Bypass]: "Runs outside its sandbox",
+    [PermissionMode.Auto]: t("Game folder only, no network"),
+    [PermissionMode.Bypass]: t("Runs outside its sandbox"),
   },
 };
 
@@ -95,9 +96,9 @@ function digitMode(event: KeyboardEvent<HTMLElement>, engine: string): Permissio
 function modeDescription(option: PermissionModeType, engine: string, autoUnavailable: boolean): string {
   const own = ENGINE_MODE_WORDS[engine]?.[option];
   if (own) return own;
-  if (option !== PermissionMode.Auto) return PERMISSION_MODE_WORDS[option].description;
+  if (option !== PermissionMode.Auto) return permissionModeWords()[option].description;
   if (engine !== EngineId.ClaudeCode) return WORDS.sandboxedAuto;
-  return autoUnavailable ? WORDS.autoUnavailable : PERMISSION_MODE_WORDS[option].description;
+  return autoUnavailable ? WORDS.autoUnavailable : permissionModeWords()[option].description;
 }
 
 /** Why the chat's engine does not honour a mode, in the menu's words, or null when it does. */
@@ -108,7 +109,7 @@ function unavailableWords(option: PermissionModeType, engine: string): string | 
 
 /** What the pill says the mode is: Auto by its tooltip alone, any other mode by name. */
 function pillLabel(mode: PermissionModeType, autoUnavailable: boolean): string {
-  if (mode !== PermissionMode.Auto) return PERMISSION_MODE_WORDS[mode].label;
+  if (mode !== PermissionMode.Auto) return permissionModeWords()[mode].label;
   return autoUnavailable ? WORDS.autoUnavailableTip : WORDS.autoTip;
 }
 
@@ -132,7 +133,7 @@ function ModeRow({
   engine: string;
   onPick: (mode: PermissionModeType) => void;
 }) {
-  const words = PERMISSION_MODE_WORDS[option];
+  const words = permissionModeWords()[option];
   const auto = option === PermissionMode.Auto;
   const unavailable = unavailableWords(option, engine);
   const description = unavailable ?? modeDescription(option, engine, autoUnavailable);

@@ -32,7 +32,7 @@ function release(id, version, fields = {}) {
     description: "Test plugin.",
     category: "tools",
     tier: official ? "official" : "community",
-    repo: official ? CURRENT : `someone/${id}`,
+    repo: official ? CURRENT : `${id.split("-")[0]}/${id}`,
     sha: "a".repeat(40),
     version,
     capabilities: ["observe"],
@@ -121,9 +121,40 @@ test("a community id cannot move to an official repository across releases", asy
 
 test("a community id keeps a single repository", async () => {
   const old = [release("helper", "1.0.0")];
-  const moved = [...old, release("helper", "1.1.0", { repo: "someone-else/helper" })];
+  const moved = [...old, release("helper", "1.1.0", { repo: "helper/another-repo" })];
   await assert.rejects(check(moved), /Publisher\/source ownership changed: helper/);
   await assert.rejects(check(moved, { previous: old }), /Publisher\/source ownership changed: helper/);
+});
+
+test("a community id is its publisher's own: the source repository's owner, alone or before a dash", async () => {
+  const own = [release("acme", "1.0.0", { repo: "acme/genex-plugin" }), release("acme-tool", "1.0.0", { repo: "Acme/tools" })];
+  assert.equal((await check(own)).ok, true);
+  const borrowed = [
+    ["elevenlabs", "arklanq/genex-elevenlabs", "arklanq"],
+    ["acmetool", "acme/tools", "acme"],
+    ["tool-acme", "acme/tools", "acme"],
+  ];
+  for (const [id, repo, owner] of borrowed)
+    await assert.rejects(
+      check([release(id, "1.0.0", { repo })]),
+      new RegExp(`Community id must be ${owner} or start with ${owner}-: ${id}`),
+      id,
+    );
+});
+
+test("setup steps are short plain lines: no markup risk, control characters or direction overrides", async () => {
+  assert.equal((await check([release("acme-tool", "1.0.0", { setup: ["Install it.", "Paste your key on its page."] })])).ok, true);
+  const bad = [
+    ["not a list", "Install it."],
+    ["an empty list", []],
+    ["seven steps", Array.from({ length: 7 }, (_, i) => `Step ${i}`)],
+    ["a long step", ["x".repeat(201)]],
+    ["a blank step", ["  "]],
+    ["a second line", ["Install.\nRun."]],
+    ["a direction override", ["Install \u202eti."]],
+  ];
+  for (const [what, setup] of bad)
+    await assert.rejects(check([release("acme-tool", "1.0.0", { setup })]), /Invalid setup steps: acme-tool/, what);
 });
 
 test("an official id still cannot change its subdirectory", async () => {

@@ -296,6 +296,44 @@ describe("native Codex login", () => {
     assert.equal((await engine.resolveLogin()).source, "isolated");
   });
 
+  it("plan usage read for the account before a switch is never shown or kept for the next one", async () => {
+    const root = await tmpDir("studio-usage-switch-");
+    const home = path.join(root, "codex");
+    await mkdir(home);
+    await writeFile(path.join(home, "studio-login.json"), "{}");
+    await writeFile(path.join(home, "auth.json"), "{}");
+    const limits = (usedPercent: number) => ({ rateLimits: { primary: { usedPercent, windowDurationMins: 300 } } });
+    let answerFirst: (value: unknown) => void = () => {};
+    const firstAnswer = new Promise<unknown>((resolve) => {
+      answerFirst = resolve;
+    });
+    let firstAsked: () => void = () => {};
+    const asked = new Promise<void>((resolve) => {
+      firstAsked = resolve;
+    });
+    const answers = [() => firstAnswer, async () => limits(80)];
+    const engine = new CodexEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: home,
+      systemHome: path.join(root, "system"),
+      executable: "/bundled/codex",
+      authStatusFn: async () => ({ loggedIn: true, method: "chatgpt", detail: "native status" }),
+      readRateLimits: () => {
+        const answer = answers.shift() ?? (async () => null);
+        if (answers.length === 1) firstAsked();
+        return answer();
+      },
+    });
+    const before = engine.readUsage();
+    await asked;
+    await engine.recheckLogin();
+    const after = engine.readUsage();
+    answerFirst(limits(10));
+    assert.equal((await after)?.windows[0]?.percent, 80, "the read after the switch asks the new account");
+    assert.equal((await before)?.windows[0]?.percent, 80, "the earlier read answers with the new account's limits");
+    assert.equal(engine.usageSnapshot()?.windows[0]?.percent, 80, "the old account's limits are never kept");
+  });
+
   it("carries the selected credential store from login into status, builds, resumes, and critics", async () => {
     const f = await fixture("process.exit(0)");
     await f.controller.start(f.home);

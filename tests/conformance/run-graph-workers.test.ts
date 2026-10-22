@@ -348,6 +348,8 @@ describe("workers on the graph", () => {
       verdict: null,
       note: null,
       merged: false,
+      startedSeq: 3,
+      settledSeq: 5,
     });
     assert.equal(partOf(graph, steering)?.building, true);
     assert.equal(partRows(graph)[1]?.steps[0]?.state, StepState.Building);
@@ -403,7 +405,8 @@ describe("a worker's end and the lead's verdict", () => {
       }),
       started(runScope, "sword-2", fitting, { isolation: WorkerIsolation.Copy, task: fitting }),
       inRun(CustomEvent.DirectorWorker, { workerId: "sword-2", title: "Merge Sword", state: "done" }),
-      finished(runScope, "sword-2", fitting, { state: WorkerEnd.Done }),
+      finished(runScope, "sword-2", fitting, { state: WorkerEnd.Done, delivered: true }),
+      finished(runScope, "sword-2", fitting, { verdict: WorkerVerdict.Used }),
     ]);
     assert.ok(graph);
     assert.deepEqual(rowsOf(graph), [["sword-2", [["session:sword-2", StepState.Delivered, true, fitting]]]]);
@@ -707,7 +710,11 @@ describe("a worker started again", () => {
     assert.equal(part?.building, true);
     assert.equal(part?.stoppedBecause, null);
     assert.deepEqual([part?.worker?.ended, part?.worker?.verdict, part?.worker?.note], [null, null, null]);
-    const ended = buildRunGraph([...again, finished(runScope, sword, "Sword", { state: WorkerEnd.Done })]);
+    const ended = buildRunGraph([
+      ...again,
+      finished(runScope, sword, "Sword", { state: WorkerEnd.Done, delivered: true }),
+      finished(runScope, sword, "Sword", { verdict: WorkerVerdict.Used }),
+    ]);
     assert.ok(ended);
     assert.deepEqual(rowsOf(ended), [[sword, [[`session:${sword}`, StepState.Delivered, true, "Sword"]]]]);
     const endFirst = buildRunGraph([

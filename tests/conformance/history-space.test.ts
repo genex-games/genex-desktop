@@ -466,18 +466,22 @@ describe("which runs a clear counts as ended", () => {
     return { dir: repo.dir, activeRunIds, storage: new StorageSpaceService(core as never, internals as never) };
   }
 
-  it("clears cancelled, failed and older finished runs, and keeps the newest ended run and a paused one", async () => {
+  it("clears cancelled, failed and older finished runs, and keeps the newest finished run and a paused one", async () => {
     const { dir, storage } = await service([
       { runId: "run_paused", state: "paused" },
       { runId: "run_newest", state: "cancelled" },
       { runId: "run_failed", state: "failed" },
       { runId: "run_finished", state: "finished" },
+      { runId: "run_older_finished", state: "finished" },
       { runId: "run_cancelled", state: "cancelled" },
     ]);
     await storage.free("g");
-    for (const runId of ["run_failed", "run_finished", "run_cancelled"])
+    for (const runId of ["run_newest", "run_failed", "run_older_finished", "run_cancelled"])
       assert.equal(await resolves(dir, `refs/studio/runs/${runId}/integration`), null, runId);
-    assert.ok(await resolves(dir, "refs/studio/runs/run_newest/integration"), "the newest ended run keeps its track");
+    assert.ok(
+      await resolves(dir, "refs/studio/runs/run_finished/integration"),
+      "the newest finished run keeps its track, whatever ended after it",
+    );
     assert.ok(await resolves(dir, "refs/studio/runs/run_paused/integration"), "a paused run keeps its track");
   });
 

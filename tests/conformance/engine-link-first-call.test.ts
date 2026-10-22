@@ -12,6 +12,7 @@ import { it } from "node:test";
 import { CustomEvent, customEvent } from "../../src/shared/custom-events.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { readEngineBinding } from "../../src/substrate/game-engine-binding.ts";
+import { ENGINES } from "../helpers/engines.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
 const SERVER = path.resolve("tests/fixtures/mcp/plugin-server.mjs");
@@ -87,7 +88,11 @@ it("a game's first call to a game-engine plugin's server never links it", async 
       });
 
     assert.equal(await api["mcp.invoke"]!({ project, threadId, name: TOOL, args: { text: "one" } }), "one");
-    assert.equal(await readEngineBinding(lite.core.games.dirFor(project)), undefined, "the game is not linked");
+    assert.equal(
+      await readEngineBinding(lite.core.games.dirFor(project), ENGINES),
+      undefined,
+      "the game is not linked",
+    );
     assert.deepEqual(await linked(), [], "no engine_linked line");
   } finally {
     // A core-lite never started, so its stop() leaves the plugin backend to the test.
@@ -116,7 +121,7 @@ it("a connector call never links a game when its plugin lacks game-engine", asyn
     await lite.core.mcp.toolsFor(project);
     const api = lite.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
     assert.equal(await api["mcp.invoke"]!({ project, threadId, name: TOOL, args: { text: "one" } }), "one");
-    assert.equal(await readEngineBinding(lite.core.games.dirFor(project)), undefined);
+    assert.equal(await readEngineBinding(lite.core.games.dirFor(project), ENGINES), undefined);
   } finally {
     // A core-lite never started, so its stop() leaves the plugin backend to the test.
     lite.core.plugins.cancel();

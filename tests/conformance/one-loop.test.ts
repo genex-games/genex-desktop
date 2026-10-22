@@ -90,6 +90,7 @@ const UNREAL_MANIFEST = unrealManifest as unknown as LoopManifest;
 const OPEN_TOOLS = [
   "finish",
   "note",
+  "pause",
   "restart",
   "rewind",
   "run_status",
@@ -270,7 +271,7 @@ describe("the one Loop's start", () => {
     const fresh = host.leadCalls().findIndex((call, i) => i > 0 && call.resume === undefined);
     assert.ok(fresh > 0, "a later turn opened a fresh session");
     for (const prompt of [prompts[0], prompts[fresh]]) {
-      assert.match(String(prompt), /You are working inside Genex, the Mac app this chat runs in/);
+      assert.match(String(prompt), /You are working inside Genex, the desktop app this chat runs in/);
       assert.match(String(prompt), /never start a server/);
     }
   });
@@ -428,6 +429,42 @@ describe("the one Loop's workers", () => {
 
 describe("the one Loop's end", () => {
   it(
+    "a claim after a row of no's that brings no new work is turned back before Genex's finish moment: no plugin step runs",
+    TEST_TIMEOUT,
+    async () => {
+      const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
+      const answers: string[] = [];
+      const host = await hostOn(Project.ToyProject, {
+        facts: TOY,
+        manifest: TOY_WITH_FINISH,
+        run: { budgets: { wallClockMs: 5 * 60 * MINUTE, completionPolicy: "duration" } },
+        turns: [
+          async ({ tool, host }) => {
+            await writeFile(path.join(host.dir, "scenes", "hall.toyscene"), "a hall\n");
+            const claim = { summary: "The hall is built.", proof: "scenes/hall.toyscene" };
+            for (let n = 0; n <= MAX_FINISH_REJECTIONS; n++) answers.push(String(await tool("finish", claim)));
+            return undefined;
+          },
+        ],
+      });
+      for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) host.reviews.push(reviewerAnswer("no", ["the hall is dark"]));
+      await host.start();
+      assert.match(
+        answers[MAX_FINISH_REJECTIONS] ?? "",
+        /new work since the last no/,
+        "the stale claim is turned back",
+      );
+      assert.equal(host.reviewed().length, MAX_FINISH_REJECTIONS, "and asks no reviewer");
+      const moments = callsOf(host, "hooks.fire", (p) => p.on === "finish");
+      assert.equal(
+        moments.length,
+        MAX_FINISH_REJECTIONS,
+        "Genex's finish moment ran once per checked claim, not for it",
+      );
+    },
+  );
+
+  it(
     "finish runs the finish moment, then asks the reviewer; a yes closes the Loop in place: workers settled, the last work kept, run.end fired, the report and journal written",
     TEST_TIMEOUT,
     async () => {
@@ -555,6 +592,16 @@ describe("the one Loop's turns", () => {
     const [woke] = host.appended("director_continued");
     assert.deepEqual(woke?.reasons, ["turn_cap"], "woken at once by its cap, never rested or wrapped up");
     assert.equal(host.appended("run_finished")[0]?.victory, true);
+  });
+
+  it("its first message says an ask to stop is wrap_up, and promises no news mid-turn", TEST_TIMEOUT, async () => {
+    const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });
+    await host.start();
+    const brief = String(host.prompts()[0]);
+    assert.match(brief, /ask to stop[^\n]*wrap_up/i, "the person's stop is a wrap-up, in their words");
+    // An engine that can't take input mid-turn (Codex) hears news only once its turn ends.
+    assert.match(brief, /when your turn ends/i);
+    assert.doesNotMatch(brief, /News that comes while you work reaches you mid-turn\./);
   });
 
   it("tools now include save_point and rewind, and restart only when hooked", TEST_TIMEOUT, async () => {
@@ -1952,6 +1999,28 @@ describe("the one Loop's idle rule", () => {
     assert.equal(report.victory, true, String(report.stoppedBecause));
   });
 
+  it(
+    "a timed Loop in a Godot project names its time left when it settles a claim, so the reviewer's no keeps it going",
+    TEST_TIMEOUT,
+    async () => {
+      const host = await hostOn(Project.GodotGame, {
+        facts: GODOT,
+        run: { budgets: { wallClockMs: 3 * 60 * MINUTE, completionPolicy: "duration" } },
+        turns: [keepsRoom(1), finishes, keepsRoom(2), finishes],
+      });
+      host.reviews.push(reviewerAnswer("no", ["the door does not open"]));
+      const report = await host.start();
+      const [settled] = host.rec.paramsOf("finish.settle");
+      assert.ok(
+        Number(settled?.timeLeftMs) > 2 * 60 * MINUTE,
+        `the settle names the Loop's time left: ${settled?.timeLeftMs}`,
+      );
+      const no = host.appended("finish_check").find((record) => record.step === "rejected");
+      assert.equal(no?.timeLeft, true, "the no records that the Loop had time left");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+    },
+  );
+
   it("one quiet turn after work is asked what next, never wrapped up at once", TEST_TIMEOUT, async () => {
     const host = await hostOn(Project.GodotGame, {
       facts: GODOT,
@@ -2095,6 +2164,7 @@ describe("the one Loop's save points in its messages", () => {
       appSaved: false,
       restart: false,
       cppRestart: false,
+      judge: false,
       savePoints: points,
       now: 0,
       softDeadline: 60 * MINUTE,
@@ -4264,5 +4334,44 @@ describe("the one Loop's reads of the game folder", () => {
     const loopRun = { ctx: host.rec.ctx, run: host.run } as unknown as Parameters<typeof folderChanged>[0];
     assert.equal(await folderChanged(loopRun), false);
     assert.ok((await readFile(index)).equals(before), "the folder's index is as it was");
+  });
+});
+
+describe("the open lead's finish words", () => {
+  it("a timed Loop's no's stop it only once little time is left, an ∞ Loop's at the cap, and a picture outranks the files", async () => {
+    const { FINISH_TIME_LEFT_MS, MAX_FINISH_REJECTIONS } = await import(
+      "../../src/harness-seed/loop/finish-contract.ts"
+    );
+    const finishLine = (untilFinish: boolean) =>
+      openBrief({
+        goal: "A level.",
+        folder: "/games/level",
+        folderLabel: "level",
+        facts: GODOT,
+        holds: null,
+        carried: [],
+        references: [],
+        workerTypes: [],
+        appSaved: false,
+        restart: false,
+        cppRestart: false,
+        judge: false,
+        savePoints: [],
+        now: 0,
+        softDeadline: 60 * MINUTE,
+        finalDeadline: 60 * MINUTE,
+        untilFinish,
+        skills: [],
+      })
+        .split("\n\n")
+        .find((one) => one.startsWith("FINISH:")) ?? "";
+    const timed = finishLine(false);
+    const endless = finishLine(true);
+    assert.ok(timed.includes(`while over ${FINISH_TIME_LEFT_MS / MINUTE} minutes are left, no's never stop the Loop`));
+    assert.match(timed, /a new claim needs a new save point and new proof/);
+    assert.ok(endless.includes(`${MAX_FINISH_REJECTIONS} no's in a row stop the Loop.`));
+    assert.doesNotMatch(endless, /never stop/);
+    for (const line of [timed, endless])
+      assert.match(line, /Your own pictures of the running project outrank what its files say/);
   });
 });

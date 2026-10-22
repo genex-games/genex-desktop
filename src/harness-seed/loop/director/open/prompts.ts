@@ -9,11 +9,16 @@ import { type HookHeldBy, HookHold, holdOf } from "../../hooks.ts";
 import { resumeHeldWords, runHeldWords } from "../held-words.ts";
 import { FACT_ROOT, type FactRef, type FolderHolds } from "../../folder-facts.ts";
 import { CLAIM_BEFORE_END_MINUTES } from "../../finish-check.ts";
-import { MAX_FINISH_REJECTIONS } from "../../finish-contract.ts";
+import { PICTURE_OUTRANKS_FILES, stopRuleWords } from "../../finish-check-prompts.ts";
+import { GAPS_FIRST_MIN_MS } from "../../finish-remaining.ts";
+import { JUDGE_PLAY_TOOL } from "../../judge-play-prompts.ts";
+import type { JudgeRef } from "../../engine-judges.ts";
+import { ENGINE_JUDGE_WORDS } from "../../engine-judges-prompts.ts";
 import { appIdentity } from "../../project-prompts.ts";
 import { MINUTE_MS, minutes } from "../../time.ts";
 import { JobTool } from "../../jobs/contract.ts";
 import { WorkerTool } from "../../workers/contract.ts";
+import { DirectorTool } from "../tool-specs.ts";
 import { REASON_WORDS } from "../wake-prompts.ts";
 import { WakeCause, type WakeReason, WrapCause } from "../wake-schedule.ts";
 import { OPEN_TURN_MS, OpenTool, type OpenSavePoint } from "./contract.ts";
@@ -71,6 +76,10 @@ export interface OpenBriefFacts {
   restart: boolean;
   /** Whether a restart also rebuilds the game's C++ (a project with an Unreal project in it). */
   cppRestart: boolean;
+  /** Whether the studio plays the game in its engine's editor, so the lead is offered `judge_play`. */
+  judge: boolean;
+  /** The judges the game's engine plugin declares for it, which play after each turn that keeps a save point. */
+  judges?: readonly JudgeRef[];
   savePoints: readonly OpenSavePoint[];
   now: number;
   softDeadline: number;
@@ -125,13 +134,18 @@ function workerWords(types: readonly WorkerType[]): string {
 }
 
 /** The save points paragraph: `save_point`, `rewind`, and `restart` when a plugin restarts the project's app. */
-function savePointWords(facts: Pick<OpenBriefFacts, "restart" | "cppRestart">): string {
+function savePointWords(facts: Pick<OpenBriefFacts, "restart" | "cppRestart" | "judge" | "judges">): string {
   const lines = [
     `SAVE POINTS: ${OpenTool.SavePoint} keeps the folder as it is now in Genex's checkpoint (the project's plugins save their apps first); keep one after each step that works. ${OpenTool.Rewind} with a save point's label goes back to it when your turn ends.`,
   ];
   if (facts.restart)
     lines.push(`${OpenTool.Restart} closes and reopens the project's app when your turn ends; no file changes.`);
   if (facts.restart && facts.cppRestart) lines.push("After changing the game's C++ source, call restart: it rebuilds.");
+  if (facts.judge)
+    lines.push(
+      `${JUDGE_PLAY_TOOL}: a blind judge plays the game and answers one yes/no; ask it before you claim a mechanic works.`,
+    );
+  if (facts.judge && facts.judges?.length) lines.push(ENGINE_JUDGE_WORDS.briefRounds(facts.judges));
   return lines.join(" ");
 }
 
@@ -150,7 +164,8 @@ export function openBrief(facts: OpenBriefFacts): string {
     workerWords(facts.workerTypes),
     savePointWords(facts),
     "JOBS AND LOOKS: run a long command as a job and keep working while it runs; look at any window of the project's app with app_look, when the chat offers them.",
-    `FINISH: when the goal is reached, call finish with a summary and proof: the files in the folder that show it (a test report, a picture, a log). A reviewer who did none of the work checks it; ${MAX_FINISH_REJECTIONS} no's in a row stop the Loop.`,
+    `BLOCKED: when the goal needs what only the person can do (a tool, editor or app the work needs is gone or can't run here and nothing you can call brings it back, an install, a permission, a sign-in), call ${OpenTool.Pause} with what they should do. While such a block lasts, never fill the Loop's time with work that can't reach the project.`,
+    `FINISH: when the goal is reached, call finish with a summary, what remains (everything you know is not done or not right yet) and proof: the files in the folder that show it (a test report, a close-up picture, a log). A reviewer who did none of the work checks it; ${stopRuleWords(facts.untilFinish)} While something remains and more than ${minutes(GAPS_FIRST_MIN_MS)} minutes are left, no reviewer reads the claim: you work on what remains first. ${PICTURE_OUTRANKS_FILES}`,
     ...(facts.appSaved ? [] : ["SAVING: Genex's save points keep the files on disk only: save inside the app first."]),
     ...(facts.skills.length ? [["SKILLS FOR THIS PROJECT:", ...facts.skills].join("\n\n")] : []),
   ].join("\n\n");
@@ -161,7 +176,8 @@ export function openWakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }
   return [
     "HOW THIS LOOP WORKS — ONE DECISION PER TURN:",
     `- Act, then end your turn; a turn lasts at most ${minutes(OPEN_TURN_MS)} minutes, and one cut there goes on at once. Between your turns nothing of yours runs; your workers and jobs keep working.`,
-    `- Genex wakes you in this same session when something happens — the person speaks or asks to finish, a worker ends or asks, a job ends, the project's app stops — and every ${heartbeatMinutes} minutes while workers run. News that comes while you work reaches you mid-turn.`,
+    `- Genex wakes you in this same session when something happens — the person speaks or asks to finish, a worker ends or asks, a job ends, the project's app stops — and every ${heartbeatMinutes} minutes while workers run. News that comes while you work reaches you mid-turn when your session can take it in, otherwise when your turn ends: a long turn hears late.`,
+    `- The person outranks the goal: answer them in the chat, directly and briefly, and act on what they ask. An ask to stop or finish the Loop is ${DirectorTool.WrapUp} first, quoting their words; a question alone stops no worker.`,
     `- Each wake opens with what happened. Use ${WorkerTool.Wait} only when you need a worker's answer within this turn.`,
   ].join("\n");
 }
@@ -187,9 +203,12 @@ export const OPEN_WORDS = {
   noted: "noted",
   finishUnderWay: "Your finish is already being checked; wait for its answer.",
   ending: "The Loop is already ending; end your turn.",
-  /** A save point, a rewind, a restart or a finish once Genex paused the Loop (the project's app couldn't be brought back). */
+  /** A save point, a rewind, a restart or a finish once the Loop is paused (its app couldn't be brought back, or the lead paused it). */
   paused:
-    "The Loop is paused: Genex couldn't bring the project's app back. Nothing was kept or checked; end your turn.",
+    "The Loop is paused: Genex couldn't bring the project's app back, or you paused it for the person. Nothing was kept or checked; end your turn.",
+  needsWhy: `${OpenTool.Pause} needs why: what stops the goal and what the person should do.`,
+  pausing:
+    "The Loop pauses when this turn ends, with your words for the person. End your turn now with the same two sentences.",
   /** A claim while a worker writes in the folder in place: the reviewer would read a folder that keeps changing. */
   writerAtWork: (ids: readonly string[]) =>
     `A worker writes in the folder in place (${ids.join(", ")}), so a reviewer would read a folder that keeps changing: nothing was checked. Wait for it (${WorkerTool.Wait}) or stop it (${WorkerTool.Stop}), then claim the goal.`,
@@ -214,10 +233,11 @@ export const OPEN_WORDS = {
   /** A save point or a finish while Genex brings the project's app back: nothing is kept or checked. */
   recovering:
     "Genex is bringing the project's app back; nothing was kept or checked. Try again once it says the app is back.",
-  saved: (label: string, notes: readonly string[], minutesLeft: number) =>
+  saved: (label: string, notes: readonly string[], minutesLeft: number, shows: string | null = null) =>
     [
       `Saved save point "${label}".`,
       ...(notes.length ? [`The project's plugins said: ${notes.join(" ")}`] : []),
+      ...(shows ? [shows] : []),
       `About ${minutesLeft} minutes of working time left.`,
     ].join(" "),
   notSaved: (why: string) => `No save point was made, and nothing was kept: ${clause(why)}.`,

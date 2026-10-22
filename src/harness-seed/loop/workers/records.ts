@@ -110,6 +110,10 @@ export interface WorkerRecord {
   verdict: WorkerVerdict | null;
   /** The lead's note with its verdict. */
   note?: string | null;
+  /** Its own final report, as it ended its session (clipped long); absent in older records. */
+  report?: string | null;
+  /** A copy worker's work: the files it changes, as git names them; absent otherwise. */
+  changed?: string[] | null;
   /** The question it waits on the person for, in words; null when none waits. */
   question: string | null;
   /** The chat turn that started it. */
@@ -130,6 +134,8 @@ export interface PoolState {
   scope: WorkerScope;
   records: WorkerRecord[];
   types: WorkerType[];
+  /** The most workers this pool runs at once: the person's Settings, at most `MAX_WORKERS_AT_ONCE` (none from a kept pool.ts). */
+  allowed?: number;
   /** Each running worker's sessions, settled when it has ended. */
   runs: Map<string, Promise<void>>;
   /** What the lead said to a worker that its next session leg reads first. */

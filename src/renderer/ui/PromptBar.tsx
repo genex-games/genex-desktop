@@ -1,11 +1,21 @@
 import { markPerformance } from "../performance.tsx";
 import { PerformanceMarkName } from "../../shared/performance.ts";
-import type { ClipboardEvent, DragEvent, JSX, Ref, RefObject } from "react";
+import { t } from "../../shared/i18n.ts";
+import type { ClipboardEvent, JSX, KeyboardEvent, Ref, RefObject } from "react";
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons.tsx";
 import { Shortcut } from "./Shortcut.tsx";
 import { ComposerTip } from "./PickerPanel.tsx";
-import { filesToFramesDetailed, MAX_REFERENCE_FRAMES, type PickedFrame } from "../reference-frames.ts";
+import { MAX_REFERENCE_FRAMES, type PickedFrame } from "../reference-frames.ts";
+import {
+  addAttachedFiles,
+  addToBoard,
+  type AttachedFile,
+  type LeftOut,
+  leftOutLine,
+  messageWithFiles,
+} from "./composer-drop.ts";
+import { DropVeil, FileChip, LeftOutNote, readDroppedFiles, useFileDrop } from "./ComposerDrop.tsx";
 import {
   ModelMenu,
   shortModelName,
@@ -23,7 +33,13 @@ import { ComposerPermissionMenu } from "./ComposerPermissionMenu.tsx";
 import type { PermissionMode } from "../../shared/permissions.ts";
 import { ComposerAddMenu, type AddMenuHandle, PlanModeOff } from "./ComposerAddMenu.tsx";
 import { ComposerLimits, type ContextUsage } from "./ComposerLimits.tsx";
-import { ComposerCommandMenu, compactCommand, useComposerCommands } from "./ComposerCommandMenu.tsx";
+import {
+  ComposerCommandMenu,
+  compactCommand,
+  type PluginCommand,
+  useComposerCommands,
+} from "./ComposerCommandMenu.tsx";
+import { useAsyncEffect } from "../use-async-effect.ts";
 import { selectedCompact } from "../chat/compact-control.ts";
 import { useToolbarFit } from "./toolbar-fit.ts";
 import { composerPlaceholder, PLAN_PLACEHOLDER } from "../composer-placeholder.ts";
@@ -40,10 +56,24 @@ import {
   storedChatLoop,
 } from "../loop-setting.ts";
 import { parseModelKey } from "../model-key.ts";
+import {
+  atomicBackspaceRange,
+  splitMentions,
+  insertMention as insertTag,
+  type MentionDoc,
+  type MentionRef,
+  mentionQueryAt,
+  mentionRef,
+  pluginDoc,
+  PROMPT_MENTION_MAX,
+  sentMentions,
+} from "../../shared/prompt-mention.ts";
 export { shortModelName };
 export type { ModelChoice, RoleGroup, RoleRecord, RoleRow };
 export interface AutopilotSend {
   reviewPlan?: boolean;
+  /** Keep building's own send: the build goes on, whatever the message reads like (`AutopilotCommission.keepBuilding`). */
+  keepBuilding?: boolean;
   roles?: RoleRecord;
   hours: number | null;
   frames: PickedFrame[];
@@ -52,6 +82,8 @@ export interface ComposerExtras {
   autopilot?: AutopilotSend;
   reviewPlan?: boolean;
   frames?: PickedFrame[];
+  /** The games, tools and assets the message tags with @. */
+  mentions?: MentionRef[];
 }
 
 /** Adds pictures to a composer's attachments: `{conversationKey, frames}` (a rewound message's). */
@@ -72,6 +104,11 @@ export interface PromptBarHandle {
   openModelMenu(): void;
   /** Put words in the prompt when it has none yet (the first-launch idea), cursor after them. */
   compose(text: string): void;
+  /**
+   * Keep building: switch this chat's Loop on as Mode would, with its kept hours, and answer what a
+   * send now carries: the Loop's commission where Mode could start one, else none (`composerExtras`).
+   */
+  loopOn(): ComposerExtras;
 }
 
 /**
@@ -114,7 +151,7 @@ const MIN_INPUT_HEIGHT = 38;
 const MAX_INPUT_HEIGHT = 138;
 /** The send control morphs into Stop on the same click; this long after a send, Stop ignores it (ms). */
 const STOP_PAD_MS = 600;
-const DEFAULT_PLACEHOLDER = "Write a message…";
+const DEFAULT_PLACEHOLDER = t("Write a message…");
 
 /**
  * The composer's mode: the chat's own Loop (`loop-setting.ts`), what Mode shows and allows given
@@ -152,7 +189,10 @@ function useLoopSettings(props: PromptBarProps) {
 
 type Mention = { query: string; start: number; end: number };
 
-/** @ at the caret opens Add as a mention list; the query is what follows it. */
+/**
+ * @ at the caret opens Add as the @ picker; the query is what follows it. A picked card puts its
+ * `@handle` in the text and joins `tagged`, the map the send and the painted tags read.
+ */
 function useMention(
   gameMode: boolean,
   draft: string,
@@ -161,30 +201,94 @@ function useMention(
 ) {
   const [mention, setMention] = useState<Mention | null>(null);
   const [mentionOption, setMentionOption] = useState<string | null>(null);
+  const [tagged, setTagged] = useState<ReadonlyMap<string, MentionDoc>>(() => new Map());
   const mentionListId = useId();
   const findMention = (text: string, caret: number | null): Mention | null => {
     if (!gameMode || caret === null) return null;
-    const match = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
-    if (!match) return null;
-    const [, lead = "", query = ""] = match;
-    return { query, start: match.index + lead.length, end: caret };
+    const open = mentionQueryAt(text, caret);
+    return open ? { query: open.query, start: open.start, end: caret } : null;
+  };
+  const placeCaret = (caret: number): void => {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(caret, caret);
+    });
   };
   const insertMention = (text: string | null): void => {
     if (!mention) return;
     const insert = text ?? "";
     setDraft(draft.slice(0, mention.start) + insert + draft.slice(mention.end));
     setMention(null);
-    const caret = mention.start + insert.length;
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(caret, caret);
-    });
+    placeCaret(mention.start + insert.length);
+  };
+  /** The caret goes back to the end of the words after the @, so typing goes on there. */
+  const focusQuery = (): void => {
+    if (mention) placeCaret(mention.end);
+  };
+  /** The words after the @ are emptied; the @ stays and the picker with it. */
+  const clearQuery = (): void => {
+    if (!mention) return;
+    const end = mention.start + 1;
+    setDraft(draft.slice(0, end) + draft.slice(mention.end));
+    setMention({ query: "", start: mention.start, end });
+    placeCaret(end);
+  };
+  /** The draft becomes this tag alone, ready for the words after it (a pick from the / list). */
+  const startWith = (doc: MentionDoc): void => {
+    const value = `@${doc.handle} `;
+    setTagged((current) => new Map(current).set(doc.handle, doc));
+    setDraft(value);
+    setMention(null);
+    placeCaret(value.length);
+  };
+  const insertDoc = (doc: MentionDoc): void => {
+    const caret = mention?.end ?? inputRef.current?.selectionStart ?? draft.length;
+    const open = mention ? { start: mention.start, query: mention.query } : null;
+    const next = insertTag(draft, caret, doc.handle, open);
+    setTagged((current) => new Map(current).set(doc.handle, doc));
+    setDraft(next.value);
+    setMention(null);
+    placeCaret(next.caret);
   };
   // A draft replaced from outside (another chat, a prefill) leaves no @ to complete.
   useLayoutEffect(() => {
     if (mention && draft[mention.start] !== "@") setMention(null);
   }, [draft]);
-  return { mention, setMention, mentionOption, setMentionOption, mentionListId, findMention, insertMention };
+  const inText = useMemo(() => sentMentions(draft, tagged), [draft, tagged]);
+  const taggedNow = useMemo(() => new Set(inText.map((doc) => doc.handle)), [inText]);
+  return {
+    mention,
+    setMention,
+    mentionOption,
+    setMentionOption,
+    mentionListId,
+    findMention,
+    insertMention,
+    focusQuery,
+    clearQuery,
+    insertDoc,
+    startWith,
+    tagged,
+    taggedNow,
+    atCap: inText.length >= PROMPT_MENTION_MAX,
+    refs: (): MentionRef[] => inText.map(mentionRef),
+  };
+}
+
+/** One Backspace right after a whole tag removes the tag; true when it did. */
+function backspaceTag(
+  event: KeyboardEvent<HTMLTextAreaElement>,
+  tagged: ReadonlyMap<string, MentionDoc>,
+  setDraft: (text: string) => void,
+): boolean {
+  if (event.key !== "Backspace" || event.altKey || event.metaKey || event.ctrlKey) return false;
+  const input = event.currentTarget;
+  const range = atomicBackspaceRange(input.value, input.selectionStart, input.selectionEnd, tagged);
+  if (!range) return false;
+  event.preventDefault();
+  setDraft(input.value.slice(0, range.start) + input.value.slice(range.end));
+  requestAnimationFrame(() => input.setSelectionRange(range.start, range.start));
+  return true;
 }
 
 /**
@@ -239,10 +343,19 @@ function withFrames(current: PickedFrame[], added: PickedFrame[]): PickedFrame[]
   return [...current, ...added.filter((f) => !seen.has(f.data))].slice(0, MAX_REFERENCE_FRAMES);
 }
 
-/** The pictures on the mood board, and the files that could not be read as pictures. */
+/** What goes with the next message besides its words: pictures, and links to other files. */
+interface Attachments {
+  frames: PickedFrame[];
+  files: AttachedFile[];
+}
+
+/** The pictures on the mood board, the files going as links, and what the last drop left out. */
 function useBoardFrames(conversationKey: string | undefined) {
   const [frames, setFrames] = useState<PickedFrame[]>([]);
-  const [skippedFiles, setSkippedFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<AttachedFile[]>([]);
+  const [leftOut, setLeftOut] = useState<LeftOut | null>(null);
+  const now = useRef<Attachments>({ frames, files });
+  now.current = { frames, files };
   // A rewound message comes back with its pictures, beside any already attached.
   useEffect(() => {
     const compose = (event: Event): void => {
@@ -254,20 +367,39 @@ function useBoardFrames(conversationKey: string | undefined) {
     window.addEventListener(COMPOSE_FRAMES_EVENT, compose);
     return () => window.removeEventListener(COMPOSE_FRAMES_EVENT, compose);
   }, [conversationKey]);
-  const addFiles = (files: FileList | File[]): void => {
-    void filesToFramesDetailed(files).then(({ frames: picked, skipped }) => {
-      // A still the browser cannot decode is said so, never silently dropped.
-      setSkippedFiles(skipped);
-      if (!picked.length) return;
-      setFrames((current) => withFrames(current, picked));
+  const addFiles = (list: FileList | File[]): void => {
+    void readDroppedFiles([...list]).then((read) => {
+      const board = addToBoard(now.current.frames, read.frames);
+      const attached = addAttachedFiles(now.current.files, read.files);
+      const left = {
+        overPictures: board.overLimit + read.unreadPictures,
+        overFiles: attached.overLimit,
+        unlinked: read.unlinked,
+      };
+      setLeftOut(leftOutLine(left) ? left : null);
+      now.current = { frames: board.frames, files: attached.files };
+      setFrames(board.frames);
+      setFiles(attached.files);
     });
   };
-  /** A send that failed puts its pictures back in front of what was added since. */
-  const restore = (sent: PickedFrame[]): void =>
+  /** Everything attached, taken off the board as the message goes (a chip that lingers reads as "not sent"). */
+  const take = (): Attachments => {
+    const taken = now.current;
+    if (taken.frames.length) setFrames([]);
+    if (taken.files.length) setFiles([]);
+    return taken;
+  };
+  /** A send that failed puts its attachments back in front of what was added since. */
+  const restore = (sent: Attachments): void => {
     setFrames((current) =>
-      [...sent, ...current.filter((f) => !sent.some((frame) => frame.data === f.data))].slice(0, MAX_REFERENCE_FRAMES),
+      [...sent.frames, ...current.filter((f) => !sent.frames.some((frame) => frame.data === f.data))].slice(
+        0,
+        MAX_REFERENCE_FRAMES,
+      ),
     );
-  return { frames, setFrames, skippedFiles, setSkippedFiles, addFiles, restore };
+    setFiles((current) => addAttachedFiles(sent.files, current).files);
+  };
+  return { frames, setFrames, files, setFiles, leftOut, setLeftOut, addFiles, take, restore };
 }
 
 /** Which roles each subscription serves right now, for the plan limits beside the context. */
@@ -314,51 +446,36 @@ function pasteIsOnlyNames(clipboard: DataTransfer, files: File[]): boolean {
   return !text || text.split(/\r?\n/).every((line) => names.has(line.trim().split("/").pop() ?? ""));
 }
 
-/** Files a drop or paste could not read as pictures: said so, with a way to dismiss it. */
-function SkippedFiles({ files, onDismiss }: { files: string[]; onDismiss: () => void }): JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5" role="alert">
-      <span
-        className="rounded-[6px] border border-red/40 bg-red-tint px-1.5 py-0.5 text-micro text-red"
-        title={files.join(", ")}
-      >
-        could not decode {files.length === 1 ? files[0] : `${files.length} files`} — not added to the board
-      </span>
-      <button
-        type="button"
-        className="text-micro text-ink-3 hover:text-control-text-hover"
-        onClick={onDismiss}
-        aria-label="Dismiss"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-/** The pictures going with the next message, each with its own remove button. */
+/** The pictures and files going with the next message, each with its own remove button. */
 function FrameBoard({
   frames,
+  files,
   gameMode,
   onRemove,
+  onRemoveFile,
 }: {
   frames: PickedFrame[];
+  files: AttachedFile[];
   gameMode: boolean;
   onRemove: (index: number) => void;
+  onRemoveFile: (path: string) => void;
 }): JSX.Element {
   return (
-    <div className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5" aria-label={gameMode ? "Mood board" : "Attached images"}>
+    <div
+      className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5"
+      aria-label={gameMode ? t("Mood board") : t("Attached images")}
+    >
       {frames.map((frame, index) => (
         <div key={`${frame.label}-${index}`} className="group relative">
           <img
             src={`data:${frame.mimeType};base64,${frame.data}`}
             alt={frame.label}
             title={frame.label}
-            className="h-11 w-14 rounded-[6px] border border-line object-cover"
+            className="h-11 w-14 rounded-[8px] border border-line object-cover"
           />
           <button
             type="button"
-            aria-label={`Remove ${frame.label}`}
+            aria-label={t("Remove {name}", { name: frame.label })}
             onClick={() => onRemove(index)}
             className="absolute -top-1 -right-1 flex size-5 items-center justify-center rounded-full bg-ink text-micro text-surface group-hover:flex"
             style={{ background: "var(--ink)", color: "var(--surface)" }}
@@ -366,6 +483,9 @@ function FrameBoard({
             ×
           </button>
         </div>
+      ))}
+      {files.map((file) => (
+        <FileChip key={file.path} file={file} onRemove={() => onRemoveFile(file.path)} />
       ))}
     </div>
   );
@@ -378,13 +498,13 @@ function ReplyAboutTag({ about }: { about: ReplyAboutChip }): JSX.Element {
       <span
         data-reply-about
         className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-[9px] bg-inset pr-1 pl-2 text-body-sm text-ink-2"
-        title={`Your next message goes to the build as a note about ${about.label}`}
+        title={t("Your next message goes to the build as a note about {about}", { about: about.label })}
       >
         <Icon name="chat" size={13} />
         <span className="truncate">{about.label}</span>
         <button
           type="button"
-          aria-label={`Stop replying about ${about.label}`}
+          aria-label={t("Stop replying about {about}", { about: about.label })}
           onClick={about.onClear}
           className="grid size-5 shrink-0 cursor-pointer place-items-center rounded-[6px] text-ink-3 hover:bg-control-hover hover:text-control-text-hover"
         >
@@ -416,17 +536,17 @@ function SendControl({
       hidden={quiet}
       content={
         stopping ? (
-          "Stop"
+          t("Stop")
         ) : (
           <span className="flex items-center gap-2">
-            Send <Shortcut>↵</Shortcut>
+            {t("Send")} <Shortcut>↵</Shortcut>
           </span>
         )
       }
     >
       <button
         type="button"
-        aria-label={stopping ? "Stop" : "Send"}
+        aria-label={stopping ? t("Stop") : t("Send")}
         data-state={action}
         disabled={action === SendAction.Idle}
         onClick={(event) => {
@@ -479,7 +599,7 @@ interface PromptBarProps {
   project?: string | null;
   /** The game can run a Loop (`loopAvailableFor`); without it Mode offers Off alone and says why. */
   loopAvailable?: boolean;
-  /** Why the game can't run a Loop, naming its project and where it is (`unrealLoopGate`). */
+  /** Why the game can't run a Loop, naming its project and where it is (`engineLoopGate`). */
   loopGate?: string;
   contexts?: ContextUsage[];
   contextUsage?: ContextUsage | null;
@@ -500,6 +620,8 @@ interface PromptBarProps {
   /** Controlled draft — ChatPanel keys this per thread so a half-written brief cannot follow you. */
   value?: string;
   onChange?: (text: string) => void;
+  /** Where the @ picker opens: under the prompt bar on the home screen, above it in a chat. */
+  mentionSide?: "top" | "bottom";
   /** Composer stays usable, but Enter/send starts sign-in instead of a turn. */
   blockSend?: boolean;
   onBlockedSend?: () => void;
@@ -524,7 +646,8 @@ function useComposerSend(
     loop: ReturnType<typeof useLoopSettings>;
     board: ReturnType<typeof useBoardFrames>;
     inputRef: RefObject<HTMLTextAreaElement | null>;
-    clearMention: () => void;
+    /** The @ query to close on send, and the tags in the draft, read at the moment it is sent. */
+    mentions: Pick<ReturnType<typeof useMention>, "setMention" | "refs">;
   },
 ) {
   const ignoreStopUntil = useRef(0);
@@ -533,7 +656,9 @@ function useComposerSend(
   // lights that up instead of going anywhere.
   const noModel = (props.gameMode ?? true) && props.model.choices.length === 0;
   const modelNudge = useModelNudge();
-  const writable = !props.disabled && !props.busy && draft.trim().length > 0;
+  // A picture or a file is a message on its own: words are optional when one is attached.
+  const hasMessage = draft.trim().length > 0 || board.frames.length > 0 || board.files.length > 0;
+  const writable = !props.disabled && !props.busy && hasMessage;
   const canSend = writable && !noModel;
   const send = (): void => {
     if (writable && noModel) {
@@ -548,26 +673,29 @@ function useComposerSend(
     // The send control morphs into Stop on the same click; without this pad that click
     // cancels the turn it just started ("keep going" → cancelled).
     ignoreStopUntil.current = Date.now() + STOP_PAD_MS;
-    const text = draft.trim();
-    const sentFrames = board.frames;
-    setDraft("");
-    composer.clearMention();
-    // The board goes with the message — a chip that lingers after send reads as "not sent".
+    const words = draft.trim();
     // The harness keeps the board attached for the rest of the interview on its side.
-    if (sentFrames.length) board.setFrames([]);
+    const sent = board.take();
+    const text = messageWithFiles(words, sent.files);
+    setDraft("");
+    composer.mentions.setMention(null);
     // A failed send is already durable in the thread (main appends the error); catching here
     // only stops the same failure from surfacing twice as console noise.
-    const extras = composerExtras({
-      gameMode: props.gameMode ?? true,
-      view: loop.view,
-      reviewPlan: loop.reviewPlan,
-      frames: sentFrames,
-    });
+    const tags = composer.mentions.refs();
+    const extras = {
+      ...composerExtras({
+        gameMode: props.gameMode ?? true,
+        view: loop.view,
+        reviewPlan: loop.reviewPlan,
+        frames: sent.frames,
+      }),
+      ...(tags.length ? { mentions: tags } : {}),
+    };
     loop.setReviewPlan(false);
     void Promise.resolve(props.onSend(text, Object.keys(extras).length ? extras : undefined)).catch(() => {
       if (extras.reviewPlan) loop.setReviewPlan(true);
-      if (!inputRef.current?.value) setDraft(text);
-      board.restore(sentFrames);
+      if (!inputRef.current?.value) setDraft(words);
+      board.restore(sent);
     });
   };
   const blocked = writable && noModel;
@@ -599,8 +727,84 @@ function PromptInput({
   commandMenuRef: RefObject<AddMenuHandle | null>;
   onEnter: () => void;
 }): JSX.Element {
-  const { mention, setMention, findMention } = mentions;
   const list = listAria(mentions, commands);
+  const painted = useMemo(() => splitMentions(draft, mentions.tagged), [draft, mentions.tagged]);
+  const hasTags = painted.some((run) => run.handle);
+  const mirror = useRef<HTMLDivElement>(null);
+  return (
+    <div className="composer-input-wrap" data-painted={hasTags || undefined}>
+      {hasTags ? <PaintedDraft runs={painted} mirrorRef={mirror} /> : null}
+      <PromptTextarea
+        {...{
+          inputRef,
+          draft,
+          setDraft,
+          disabled,
+          placeholder,
+          mentions,
+          commands,
+          addMenuRef,
+          commandMenuRef,
+          onEnter,
+        }}
+        list={list}
+        onScroll={(top) => {
+          if (mirror.current) mirror.current.scrollTop = top;
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * The draft's words drawn under a text box whose own glyphs are clear while it has tags, so a tag
+ * shows as a pill in the sentence. The layer has the text box's box and type, glyph for glyph.
+ */
+function PaintedDraft({
+  runs,
+  mirrorRef,
+}: {
+  runs: { text: string; handle: string | null }[];
+  mirrorRef: RefObject<HTMLDivElement | null>;
+}): JSX.Element {
+  return (
+    <div ref={mirrorRef} aria-hidden className={`${PROMPT_INPUT_CLASS} composer-input-paint`}>
+      {runs.map((run, index) =>
+        run.handle ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the draft.
+          <span key={index} className="mention-pill">
+            {run.text}
+          </span>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the draft.
+          <span key={index}>{run.text}</span>
+        ),
+      )}
+      {/* A last empty line still takes its height, as in the text box. */}
+      {"\u200b"}
+    </div>
+  );
+}
+
+/** The text box: the draft, the @ and / lists' keys, and one Backspace per whole tag. */
+function PromptTextarea({
+  inputRef,
+  draft,
+  setDraft,
+  disabled,
+  placeholder,
+  mentions,
+  commands,
+  addMenuRef,
+  commandMenuRef,
+  onEnter,
+  list,
+  onScroll,
+}: Parameters<typeof PromptInput>[0] & {
+  list: { id: string; option: string | null } | null;
+  onScroll: (top: number) => void;
+}): JSX.Element {
+  const { mention, setMention, findMention } = mentions;
   return (
     <textarea
       ref={inputRef}
@@ -623,6 +827,7 @@ function PromptInput({
         markPerformance(PerformanceMarkName.Keydown);
         if (addMenuRef.current?.keyDown(event)) return;
         if (commandMenuRef.current?.keyDown(event)) return;
+        if (backspaceTag(event, mentions.tagged, setDraft)) return;
         const sends = event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing;
         if (sends) {
           event.preventDefault();
@@ -630,7 +835,8 @@ function PromptInput({
         }
       }}
       placeholder={placeholder}
-      aria-label="Prompt"
+      aria-label={t("Prompt")}
+      onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
       {...(list
         ? {
             "aria-controls": list.id,
@@ -638,10 +844,14 @@ function PromptInput({
             "aria-activedescendant": list.option ?? undefined,
           }
         : {})}
-      className="composer-input min-h-[35px] w-full min-w-0 resize-none bg-transparent pt-[6px] pr-2 pb-[9px] pl-[7px] text-composer text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3"
+      className={`${PROMPT_INPUT_CLASS} resize-none bg-transparent text-ink outline-none placeholder:text-ink-3`}
     />
   );
 }
+
+/** The text box's box and type, which the painted words under it share glyph for glyph. */
+const PROMPT_INPUT_CLASS =
+  "composer-input min-h-[35px] w-full min-w-0 pt-[6px] pr-2 pb-[9px] pl-[7px] text-composer [overflow-wrap:anywhere]";
 
 /** The / command list in a game's composer; the Harness chat has none. */
 function CommandList({
@@ -649,24 +859,56 @@ function CommandList({
   commands,
   anchor,
   menuRef,
+  onPlugin,
 }: {
   props: PromptBarProps;
   commands: ReturnType<typeof useComposerCommands>;
   anchor: RefObject<HTMLDivElement | null>;
   menuRef: RefObject<AddMenuHandle | null>;
+  /** A plugin picked from the list: the draft becomes its tag. */
+  onPlugin: (doc: MentionDoc) => void;
 }): JSX.Element | null {
+  // A plugin picked from the / list: the message becomes its @ tag, ready for the words after it.
+  const plugins = usePluginCommands(commands.query !== null, (plugin) => {
+    commands.setQuery(null);
+    onPlugin(pluginDoc(plugin));
+  });
   if (props.gameMode === false) return null;
   return (
     <ComposerCommandMenu
       ref={menuRef}
       query={commands.query}
       options={compactCommand(composerCompact(props), props.onCompact && commands.runner(props.onCompact))}
+      plugins={plugins}
       anchor={anchor}
       listId={commands.listId}
       onClose={() => commands.setQuery(null)}
       onActiveOption={commands.setActiveOption}
     />
   );
+}
+
+/**
+ * The plugins that are on, for the / list, read when it opens; picking one tags it in the message
+ * as @ does. A failed read offers none.
+ */
+function usePluginCommands(open: boolean, tag: (plugin: { id: string; name: string }) => void): PluginCommand[] {
+  const [names, setNames] = useState<{ id: string; name: string }[]>([]);
+  useAsyncEffect(
+    (alive) => {
+      if (!open) return;
+      window.studio.pluginsList().then(
+        (plugins) => {
+          if (!alive()) return;
+          const on = plugins.filter((plugin) => plugin.enabled && !plugin.removed && !plugin.unlisted);
+          setNames(on.map((plugin) => ({ id: plugin.manifest.id, name: plugin.manifest.name })));
+        },
+        () => {},
+      );
+    },
+    [open],
+  );
+  return names.map((plugin) => ({ ...plugin, pick: () => tag(plugin) }));
 }
 
 /** Compact now as this composer's selected model and its work allow it. */
@@ -687,7 +929,7 @@ function listAria(
   return null;
 }
 
-/** The hidden file picker behind Add → References and the attach button. */
+/** The hidden file picker behind Add → References and the attach button: pictures or any file. */
 function ImagePicker({
   fileRef,
   onFiles,
@@ -699,7 +941,6 @@ function ImagePicker({
     <input
       ref={fileRef}
       type="file"
-      accept="image/*"
       multiple
       className="hidden"
       onChange={(event) => {
@@ -721,7 +962,7 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
   const addMenuRef = useRef<AddMenuHandle>(null);
   const commandMenuRef = useRef<AddMenuHandle>(null);
   const modelMenuRef = useRef<ModelMenuHandle>(null);
-  usePromptHandle(props.ref, { inputRef, modelMenuRef, draft, setDraft });
+  usePromptHandle(props.ref, { inputRef, modelMenuRef, draft, setDraft, loop, gameMode });
   const mentions = useMention(gameMode, draft, setDraft, inputRef);
   const commands = useComposerCommands(draft, setDraft);
   // A reply about the build is a note to it, delivered at once, not a message waiting in line.
@@ -729,15 +970,15 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
   const contextual = loop.planOn ? PLAN_PLACEHOLDER : (props.placeholder ?? DEFAULT_PLACEHOLDER);
   const placeholderNow = props.about?.placeholder ?? composerPlaceholder(coordinating, contextual, props.leadListens);
   useAutosize(inputRef, draft, placeholderNow);
-  const clearMention = (): void => mentions.setMention(null);
-  const composer = useComposerSend(props, { draft, setDraft, loop, board, inputRef, clearMention });
+  const composer = useComposerSend(props, { draft, setDraft, loop, board, inputRef, mentions });
+  const held = useFileDrop(panelRef, disabled, board.addFiles);
 
   return (
     <div
       data-promptbar
       data-studio-composer={!gameMode || undefined}
       className="composer relative min-w-0"
-      {...fileDropHandlers(disabled, board.addFiles)}
+      {...pasteHandlers(disabled, board.addFiles)}
     >
       {/* ── composer ───────────────────────────────────── */}
       <div
@@ -745,13 +986,18 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
         className={`composer-panel relative flex min-w-0 flex-col gap-0.5
           transition-colors duration-150 ${disabled ? "opacity-55" : ""}`}
       >
-        {board.skippedFiles.length > 0 ? (
-          <SkippedFiles files={board.skippedFiles} onDismiss={() => board.setSkippedFiles([])} />
-        ) : null}
+        <DropVeil held={held} board={{ pictures: board.frames.length, files: board.files.length }} />
+        <LeftOutNote
+          left={board.leftOut}
+          onChoose={() => fileRef.current?.click()}
+          onDismiss={() => board.setLeftOut(null)}
+        />
         {props.about ? <ReplyAboutTag about={props.about} /> : null}
-        {board.frames.length > 0 ? (
+        {board.frames.length > 0 || board.files.length > 0 ? (
           <FrameBoard
             frames={board.frames}
+            files={board.files}
+            onRemoveFile={(path) => board.setFiles((current) => current.filter((file) => file.path !== path))}
             gameMode={gameMode}
             onRemove={(index) => board.setFrames((current) => current.filter((_, i) => i !== index))}
           />
@@ -768,7 +1014,12 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
           commandMenuRef={commandMenuRef}
           onEnter={composer.send}
         />
-        <CommandList props={props} commands={commands} anchor={panelRef} menuRef={commandMenuRef} />
+        <CommandList
+          {...{ props, commands }}
+          anchor={panelRef}
+          menuRef={commandMenuRef}
+          onPlugin={mentions.startWith}
+        />
         <ImagePicker fileRef={fileRef} onFiles={board.addFiles} />
         <ComposerToolbar
           model={props.model}
@@ -778,18 +1029,13 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
           coordinating={coordinating}
           project={props.project}
           loop={loop}
-          limits={{
-            contextUsage: props.contextUsage,
-            contexts: props.contexts,
-            onCompact: props.onCompact,
-            compacting: props.compacting,
-            compactBusy: props.compactBusy,
-          }}
+          limits={composerLimits(props)}
           panelRef={panelRef}
           addMenuRef={addMenuRef}
           modelMenuRef={modelMenuRef}
           modelNudge={composer.modelNudge}
           mentions={mentions}
+          mentionSide={props.mentionSide ?? "top"}
           onPickImages={() => fileRef.current?.click()}
           onClosed={() => inputRef.current?.focus()}
           send={
@@ -806,6 +1052,12 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
   );
 }
 
+/** The context meter's inputs, as the chat passed them. */
+function composerLimits(props: PromptBarProps): ComposerLimitsInput {
+  const { contextUsage, contexts, onCompact, compacting, compactBusy } = props;
+  return { contextUsage, contexts, onCompact, compacting, compactBusy };
+}
+
 /** What the composer can do for the chat: focus, open the model menu, or take the welcome's idea. */
 function usePromptHandle(
   ref: Ref<PromptBarHandle> | undefined,
@@ -814,10 +1066,14 @@ function usePromptHandle(
     modelMenuRef: RefObject<ModelMenuHandle | null>;
     draft: string;
     setDraft: (text: string) => void;
+    loop: ReturnType<typeof useLoopSettings>;
+    gameMode: boolean;
   },
 ): void {
   const composeNow = useRef({ draft: input.draft, setDraft: input.setDraft });
   composeNow.current = { draft: input.draft, setDraft: input.setDraft };
+  const loopNow = useRef({ loop: input.loop, gameMode: input.gameMode });
+  loopNow.current = { loop: input.loop, gameMode: input.gameMode };
   const { inputRef, modelMenuRef } = input;
   useImperativeHandle(
     ref,
@@ -832,26 +1088,22 @@ function usePromptHandle(
           element?.setSelectionRange(element.value.length, element.value.length);
         });
       },
+      loopOn: () => {
+        const { loop, gameMode } = loopNow.current;
+        const on = { on: true, hours: loop.setting.hours };
+        const turnsOn = gameMode && loop.view.editable && !loop.view.loopUnavailable;
+        if (turnsOn) loop.chooseLoop(on);
+        const view = turnsOn ? { ...loop.view, shown: on } : loop.view;
+        return composerExtras({ gameMode, view, reviewPlan: false, frames: [] });
+      },
     }),
     [],
   );
 }
 
-/** Pictures dropped or pasted on the composer join the board; a paste of only their names adds no text. */
-function fileDropHandlers(disabled: boolean, addFiles: (files: FileList | File[]) => void) {
+/** Pictures pasted on the composer join the board; a paste of only their names adds no text. */
+function pasteHandlers(disabled: boolean, addFiles: (files: FileList | File[]) => void) {
   return {
-    onDragOver: (event: DragEvent<HTMLDivElement>) => {
-      if (disabled) return;
-      if ([...event.dataTransfer.items].some((item) => item.kind === "file")) event.preventDefault();
-    },
-    onDrop: (event: DragEvent<HTMLDivElement>) => {
-      if (disabled) return;
-      const files = event.dataTransfer.files;
-      if (files?.length) {
-        event.preventDefault();
-        addFiles(files);
-      }
-    },
     onPaste: (event: ClipboardEvent<HTMLDivElement>) => {
       if (disabled) return;
       const files = pastedFiles(event.clipboardData);
@@ -886,6 +1138,7 @@ interface ComposerToolbarProps {
   /** A blocked send's beat while Connect AI model is lit (`useModelNudge`), else null. */
   modelNudge: number | null;
   mentions: ReturnType<typeof useMention>;
+  mentionSide: "top" | "bottom";
   onPickImages: () => void;
   onClosed: () => void;
   send: JSX.Element;
@@ -938,6 +1191,7 @@ function AttachControl({
   panelRef,
   addMenuRef,
   mentions,
+  mentionSide,
   onPickImages,
 }: ComposerToolbarProps): JSX.Element {
   if (gameMode) {
@@ -953,15 +1207,18 @@ function AttachControl({
         listId={mentions.mentionListId}
         onMention={mentions.insertMention}
         onMentionClose={() => mentions.setMention(null)}
+        onMentionFocus={mentions.focusQuery}
+        onMentionClear={mentions.clearQuery}
         onActiveOption={mentions.setMentionOption}
+        tagging={{ tagged: mentions.taggedNow, atCap: mentions.atCap, onPick: mentions.insertDoc, side: mentionSide }}
       />
     );
   }
   return (
-    <ComposerTip align="start" content="Attach images">
+    <ComposerTip align="start" content={t("Attach images")}>
       <button
         type="button"
-        aria-label="Attach images"
+        aria-label={t("Attach images")}
         disabled={disabled}
         onClick={onPickImages}
         className="composer-icon composer-add"

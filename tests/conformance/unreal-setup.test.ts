@@ -24,12 +24,13 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import { type Launch, type LaunchEnv, systemLaunchEnv } from "../../src/plugins/unreal/editor-launch.ts";
-import { UnrealStepId, unrealSteps, XcodeStep } from "../../src/plugins/unreal/engine-steps.ts";
+import { UnrealStepId, unrealInstallCard, unrealSteps, XcodeStep } from "../../src/plugins/unreal/engine-steps.ts";
 import type { PluginEngineLink } from "../../src/plugin-sdk/index.d.ts";
 import { pluginBackendEnv } from "../../src/substrate/plugins/process.ts";
 import { editorLogPath, readEditorLog } from "../../src/plugins/unreal/editor-log.ts";
-import { derivedPort, listSetUpProjects } from "../../src/plugins/unreal/editor-port.ts";
+import { chosenProject, derivedPort, listSetUpProjects, SetupStorage } from "../../src/plugins/unreal/editor-port.ts";
 import {
+  addToolsetPlugins,
   findEngines,
   HelperState,
   helperVersion,
@@ -47,6 +48,8 @@ import {
   updateHelper,
 } from "../../src/plugins/unreal/setup.ts";
 import { type XcodeStatus, XcodeState } from "../../src/plugins/unreal/xcode.ts";
+import { createEngineLinks } from "../../src/substrate/plugins/engine-links.ts";
+import { ENGINES as ENGINE_CATALOG } from "../helpers/engines.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const GIB = 1024 ** 3;
@@ -282,6 +285,7 @@ describe("Set up Unreal on a project", () => {
         ["ChaosVehiclesPlugin", true],
         ["EditorToolset", true],
         ["ModelContextProtocol", true],
+        ...TOOLSETS.map((name) => [name, true]),
       ],
     );
     assert.deepEqual(uproject.Modules, [{ Name: "Drift", Type: "Runtime", LoadingPhase: "Default" }]);
@@ -310,6 +314,137 @@ describe("Set up Unreal on a project", () => {
     const copies = Object.values(await tree(f.storage));
     for (const original of [UPROJECT, USER_INI])
       assert.ok(copies.includes(createHash("sha256").update(original).digest("hex")));
+  });
+});
+
+/** Epic's toolset plugins setup adds beyond EditorToolset, in the order it adds them. */
+const TOOLSETS = [
+  "UMGToolSet",
+  "NiagaraToolsets",
+  "StateTreeToolset",
+  "AIModuleToolset",
+  "AnimationAssistantToolset",
+  "PCGToolset",
+  "PhysicsToolsets",
+  "GameplayTagsToolset",
+  "AutomationTestToolset",
+];
+
+type PluginEntry = { Name: string; Enabled: boolean; TargetAllowList?: string[] };
+const pluginsOf = async (file: string): Promise<PluginEntry[]> => JSON.parse(await readFile(file, "utf8")).Plugins;
+
+/** The one setup record in `storage`, read and written as the plugin keeps it. */
+async function setupRecord(storage: string) {
+  const [key] = await readdir(path.join(storage, SetupStorage.Folder));
+  const file = path.join(storage, SetupStorage.Folder, key, SetupStorage.Record);
+  return { file, record: JSON.parse(await readFile(file, "utf8")) };
+}
+
+/** Drift as a Genex from before the toolsets set it up: Epic's MCP plugins and the helper, no toolset. */
+async function setUpWithoutToolsets() {
+  const f = await setupFixture({ ini: USER_INI });
+  await setUpProject(f.project.file, f.options);
+  const uproject = JSON.parse(await readFile(f.project.file, "utf8"));
+  uproject.Plugins = uproject.Plugins.filter((p: PluginEntry) => !TOOLSETS.includes(p.Name));
+  await writeFile(f.project.file, `${JSON.stringify(uproject, null, "\t")}\n`);
+  const { file, record } = await setupRecord(f.storage);
+  record.uproject.added = record.uproject.added.filter((name: string) => !TOOLSETS.includes(name));
+  await writeFile(file, JSON.stringify(record));
+  return f;
+}
+
+describe("Epic's toolsets for games", () => {
+  it("setup adds them after Epic's MCP plugins, for the editor only, and undo takes them back out", async () => {
+    const f = await setupFixture({ ini: USER_INI });
+    const before = await inspectProject(f.project.file, f.options);
+    assert.equal(before.toolsets, false);
+    const after = await setUpProject(f.project.file, f.options);
+    assert.deepEqual([after.toolsets, after.ready], [true, true]);
+    const added = (await pluginsOf(f.project.file)).filter((p) => TOOLSETS.includes(p.Name));
+    assert.deepEqual(
+      added,
+      TOOLSETS.map((name) => ({ Name: name, Enabled: true, TargetAllowList: ["Editor"] })),
+    );
+    await undoSetup(f.project.file, f.options);
+    assert.equal(await readFile(f.project.file, "utf8"), UPROJECT, "the .uproject as it was before Genex");
+  });
+
+  it("a toolset the project already names stays as the user left it, turned off included", async () => {
+    const f = await setupFixture({ ini: USER_INI });
+    const uproject = JSON.parse(UPROJECT);
+    uproject.Plugins.push({ Name: "NiagaraToolsets", Enabled: false }, { Name: "pcgtoolset", Enabled: true });
+    const own = `${JSON.stringify(uproject, null, "\t")}\n`;
+    await writeFile(f.project.file, own);
+    const after = await setUpProject(f.project.file, f.options);
+    assert.deepEqual([after.toolsets, after.ready], [true, true], "the user's own choice counts as decided");
+    const plugins = await pluginsOf(f.project.file);
+    assert.deepEqual(
+      plugins.filter((p) => ["niagaratoolsets", "pcgtoolset"].includes(p.Name.toLowerCase())),
+      [
+        { Name: "NiagaraToolsets", Enabled: false },
+        { Name: "pcgtoolset", Enabled: true },
+      ],
+    );
+    // Epic's MCP plugin and the toolsets the project didn't name yet join the four it had.
+    assert.equal(plugins.length, uproject.Plugins.length + 1 + TOOLSETS.length - 2);
+    await undoSetup(f.project.file, f.options);
+    assert.equal(await readFile(f.project.file, "utf8"), own, "undo keeps the user's own entries");
+  });
+
+  it("a toolset the user takes out after setup stays out: the project stays set up, and nothing puts it back", async () => {
+    const f = await setupFixture({ ini: USER_INI });
+    await setUpProject(f.project.file, f.options);
+    const uproject = JSON.parse(await readFile(f.project.file, "utf8"));
+    uproject.Plugins = uproject.Plugins.filter((p: PluginEntry) => p.Name !== "NiagaraToolsets");
+    const edited = `${JSON.stringify(uproject, null, "\t")}\n`;
+    await writeFile(f.project.file, edited);
+
+    const state = await inspectProject(f.project.file, f.options);
+    assert.deepEqual([state.toolsets, state.ready], [true, true], "the user's removal counts as decided");
+    assert.deepEqual((await planSetup(f.project.file, f.options)).steps, []);
+    assert.deepEqual(await addToolsetPlugins(f.project.file, f.options), []);
+    await setUpProject(f.project.file, f.options);
+    assert.equal(await readFile(f.project.file, "utf8"), edited, "neither adding nor setup again puts it back");
+    await undoSetup(f.project.file, f.options);
+    assert.equal(await readFile(f.project.file, "utf8"), UPROJECT, "the .uproject as it was before Genex");
+  });
+
+  it("a project set up before them is still set up, and only its setup plan names them", async () => {
+    const f = await setUpWithoutToolsets();
+    const state = await inspectProject(f.project.file, f.options);
+    assert.deepEqual(
+      [state.plugins, state.autoStart, state.undoable, state.toolsets, state.ready],
+      [true, true, true, false, false],
+    );
+    assert.deepEqual((await planSetup(f.project.file, f.options)).steps, [SetupStep.Plugins]);
+  });
+
+  it("adding them to such a project changes only its .uproject, and undo takes them back out", async () => {
+    const f = await setUpWithoutToolsets();
+    const before = await tree(f.project.directory);
+    const uprojectBefore = await readFile(f.project.file, "utf8");
+
+    assert.deepEqual(await addToolsetPlugins(f.project.file, f.options), TOOLSETS);
+
+    assert.deepEqual(changedKeys(before, await tree(f.project.directory)), [path.basename(f.project.file)]);
+    assert.match(await readFile(f.project.file, "utf8"), /^\{\n\t"FileVersion": 3,/, "Unreal's own tab layout");
+    assert.equal((await inspectProject(f.project.file, f.options)).ready, true);
+    assert.deepEqual(await addToolsetPlugins(f.project.file, f.options), [], "a second time adds nothing");
+    assert.equal((await pluginsOf(f.project.file)).length, JSON.parse(uprojectBefore).Plugins.length + TOOLSETS.length);
+    await undoSetup(f.project.file, f.options);
+    assert.equal(await readFile(f.project.file, "utf8"), UPROJECT, "the .uproject as it was before Genex");
+  });
+
+  it("adding them refuses, writing nothing, while Unreal runs or for a project Genex never set up", async () => {
+    const f = await setUpWithoutToolsets();
+    const witness = await tree(f.root);
+    const running = { ...f.options, env: { ...f.env, editorRunning: async () => true } };
+    await assert.rejects(addToolsetPlugins(f.project.file, running), { code: SetupErrorCode.EditorRunning });
+    const fresh = await setupFixture();
+    const untouched = await readFile(fresh.project.file, "utf8");
+    await assert.rejects(addToolsetPlugins(fresh.project.file, fresh.options), { code: SetupErrorCode.NotSetUp });
+    assert.deepEqual(await tree(f.root), witness);
+    assert.equal(await readFile(fresh.project.file, "utf8"), untouched);
   });
 });
 
@@ -568,9 +703,16 @@ describe("A project's own port", () => {
     assert.deepEqual([set.ready, set.undoable, set.port], [true, true, f.port]);
     const changed = await tree(f.project.directory);
     assert.deepEqual(
-      Object.keys(changed).filter((file) => changed[file] !== witness[file]),
-      [SETTINGS_INI],
-      "only the settings' port changes",
+      Object.keys(changed)
+        .filter((file) => changed[file] !== witness[file])
+        .sort(),
+      [path.basename(f.project.file), SETTINGS_INI].sort(),
+      "only the settings' port changes, and Epic's toolsets join the .uproject",
+    );
+    assert.deepEqual(
+      (await pluginsOf(f.project.file)).map((p) => p.Name),
+      ["EditorToolset", "ModelContextProtocol", ...TOOLSETS],
+      "the hand-made plugin entries stay as they were",
     );
     assert.equal(await iniPort(f.project.directory), String(f.port));
     assert.deepEqual(await setUp(f.storage), [["Drift", f.port]]);
@@ -687,7 +829,7 @@ describe("Set up Unreal while an editor runs", () => {
       const other = (await fakeProject(path.join(f.root, "Projects"), "Other")).file;
       const named = await row.named(f, other);
       const real = await realpath(f.project.file);
-      const log = editorLogPath({ file: real, directory: path.dirname(real) }, f.home, "darwin");
+      const log = editorLogPath({ file: real, directory: path.dirname(real) }, f.home, process.platform);
       await mkdir(path.dirname(log), { recursive: true });
       await writeFile(
         log,
@@ -696,7 +838,8 @@ describe("Set up Unreal while an editor runs", () => {
       const env: SetupEnv = {
         ...f.env,
         editorRunning: async () => true,
-        editorLog: (project) => readEditorLog(editorLogPath(project, f.home, "darwin"), project.file, project.port),
+        editorLog: (project) =>
+          readEditorLog(editorLogPath(project, f.home, process.platform), project.file, project.port),
       };
       const options = { ...f.options, env };
       if (!row.refuses) {
@@ -1029,6 +1172,35 @@ describe("the Unreal plugin's setup actions", () => {
     assert.deepEqual([status.lowDisk, status.lowMemory, status.xcode.state], [true, false, XcodeState.Missing]);
   });
 
+  /** The panel status's ray tracing warning for the fixture's project. */
+  const rayTracingRisk = async (b: Awaited<ReturnType<typeof backendFixture>>) => {
+    const status = (await b.backend.action?.("status", {}, b.context)) as { rayTracingRisk?: boolean } | undefined;
+    return status?.rayTracingRisk;
+  };
+
+  // UE 5.8 on a Mac hangs the GPU rendering a ray-traced level behind another app.
+  it("on a Mac, status warns of a project that ray-traces, and turning it off clears the warning", async () => {
+    const b = await backendFixture();
+    const config = path.join(b.project.directory, "Config", "DefaultEngine.ini");
+    await mkdir(path.dirname(config), { recursive: true });
+    await writeFile(config, "[/Script/Engine.RendererSettings]\nr.RayTracing=True\n");
+    const project = await realpath(b.project.file);
+    assert.equal(await rayTracingRisk(b), true);
+    const review = await b.backend.review?.("ray-tracing-off", { project }, b.context);
+    assert.match(String(review?.message), /Drift/);
+    await b.backend.action?.("ray-tracing-off", { project }, b.context);
+    assert.equal(await readFile(config, "utf8"), "[/Script/Engine.RendererSettings]\nr.RayTracing=False\n");
+    assert.equal(await rayTracingRisk(b), false);
+  });
+
+  it("never warns of ray tracing off a Mac", async () => {
+    const b = await backendFixture({ platform: "win32" });
+    const config = path.join(b.project.directory, "Config", "DefaultEngine.ini");
+    await mkdir(path.dirname(config), { recursive: true });
+    await writeFile(config, "[/Script/Engine.RendererSettings]\nr.RayTracing=True\n");
+    assert.equal(await rayTracingRisk(b), false);
+  });
+
   it("status says where Xcode stands on every Mac, C++ project or not, against the supported engine", async () => {
     const asked: Array<string | undefined> = [];
     const b = await backendFixture({
@@ -1059,6 +1231,18 @@ describe("the Unreal plugin's setup actions", () => {
     assert.equal(undone.plugins, false);
     await assert.rejects(b.backend.action?.("setup", {}, b.context) ?? Promise.reject(), {
       code: SetupErrorCode.NotProjectFile,
+    });
+  });
+
+  it("a link's Undo takes the set-up back through undo-setup, and answers nothing once it is gone", async () => {
+    const b = await backendFixture();
+    await b.backend.action?.("setup", { project: b.project.file }, b.context);
+    const args = { project: await realpath(b.project.file), ifSetUp: true };
+    const undone = (await b.backend.action?.("undo-setup", args, b.context)) as { undoable: boolean };
+    assert.equal(undone.undoable, false);
+    assert.equal(await b.backend.action?.("undo-setup", args, b.context), null, "nothing left to undo is no refusal");
+    await assert.rejects(b.backend.action?.("undo-setup", { project: b.project.file }, b.context) ?? Promise.reject(), {
+      code: SetupErrorCode.NothingToUndo,
     });
   });
 
@@ -1356,12 +1540,124 @@ describe("a game's own Unreal project and the steps card", () => {
     assert.deepEqual(methods(b.calls), ["game.engine.link", "game.engine.link", "game.engine.read"]);
   });
 
+  it("the agent's use-project sets up a project that isn't set up, then links it with the set-up on the link", async () => {
+    const b = await linkFixture();
+    const answer = String(await b.backend.tool?.("use-project", { project: b.project.file }, b.context));
+    assert.match(answer, /Set up Drift for Genex/);
+    assert.deepEqual(b.calls, [["game.engine.link", { project: b.real, setUp: true }]]);
+    const state = await inspectProject(b.project.file, b.options);
+    assert.deepEqual([state.plugins, state.autoStart, state.undoable], [true, true, true], "set up as the panel does");
+    assert.equal(await chosenProject(b.storage), undefined, "the panel's choice stays as it was");
+    await b.backend.tool?.("use-project", { project: "drift" }, b.context);
+    assert.deepEqual(b.calls.at(-1), ["game.engine.link", { project: b.real }], "a set-up project links as before");
+  });
+
+  it("the agent's use-project refuses a project open in Unreal, saying why in one line, and changes nothing", async () => {
+    const b = await linkFixture({ editorRunning: async () => true });
+    const before = await tree(b.root);
+    const call = b.backend.tool?.("use-project", { project: b.project.file }, b.context) ?? Promise.reject();
+    await assert.rejects(call, (error: Error) => {
+      assert.match(error.message, /Drift is open in Unreal Editor/);
+      assert.match(error.message, /quit Unreal Editor/);
+      assert.doesNotMatch(error.message, /Unreal button|\n/);
+      return true;
+    });
+    assert.deepEqual(await tree(b.root), before, "no record, the .uproject and its settings untouched");
+    assert.deepEqual(b.calls, [], "nothing is linked");
+  });
+
+  it("the agent's use-project takes its set-up back when the host refuses the link", async () => {
+    const b = await linkFixture();
+    const uproject = await readFile(b.project.file, "utf8");
+    const host = (async (method: string) => {
+      if (method === "storage.root") return b.storage;
+      throw new Error("the link was refused");
+    }) as never;
+    await assert.rejects(
+      b.backend.tool?.("use-project", { project: b.project.file }, { ...b.context, host }) ?? Promise.reject(),
+      /the link was refused/,
+    );
+    const state = await inspectProject(b.project.file, b.options);
+    assert.deepEqual([state.plugins, state.autoStart, state.undoable], [false, false, false]);
+    assert.equal(await readFile(b.project.file, "utf8"), uproject);
+    assert.deepEqual(await listSetUpProjects(b.storage), []);
+    assert.equal(await exists(path.join(b.project.directory, "Plugins")), false, "no Genex editor helper left");
+  });
+
   it("the setup question is short, and what changes sits under it", async () => {
     const b = await linkFixture();
     const review = await b.backend.review!("setup", { project: b.project.file }, b.context);
     assert.equal(review.message, "Set up Drift for Genex?");
     assert.match(review.detail ?? "", /Drift\.uproject/);
     assert.doesNotMatch(review.detail ?? "", /[{}]/, "no JSON");
+  });
+
+  it("the agent's use-project leaves a project from an older Unreal to the user, in one line, and changes nothing", async () => {
+    const b = await linkFixture();
+    const older = UPROJECT.replace('"EngineAssociation": "5.8"', '"EngineAssociation": "5.7"');
+    await writeFile(b.project.file, older);
+    const before = await tree(b.root);
+    const call = b.backend.tool?.("use-project", { project: b.project.file }, b.context) ?? Promise.reject();
+    await assert.rejects(call, (error: Error) => {
+      assert.match(error.message, /Drift was made in Unreal 5\.7/);
+      assert.match(error.message, /5\.8 is the user's choice/);
+      assert.match(error.message, /press Set up in the Unreal panel/);
+      assert.doesNotMatch(error.message, /\n/);
+      return true;
+    });
+    assert.equal(await readFile(b.project.file, "utf8"), older, "the .uproject byte for byte");
+    assert.deepEqual(await tree(b.root), before, "no set-up record, no settings, no helper");
+    assert.deepEqual(await listSetUpProjects(b.storage), []);
+    assert.deepEqual(b.calls, [], "nothing is linked");
+  });
+
+  /** Two games on one backend, their links made and undone by the host's own link service, which takes a set-up back through the plugin's undo-setup. */
+  async function twoGames() {
+    const b = await linkFixture();
+    const gameDir = (game: string) => path.join(b.root, "games", game);
+    const binding = (game: string) => ({ project: game, directory: gameDir(game), threadId: `thread-of-${game}` });
+    const links = createEngineLinks({
+      root: () => b.storage,
+      gameDir,
+      append: async () => {},
+      changed: () => {},
+      gameThread: async (game) => `thread-of-${game}`,
+      now: () => new Date("2026-10-04T12:00:00.000Z"),
+      catalog: () => ENGINE_CATALOG,
+      undoSetUp: async (_pluginId, game, project) => {
+        await b.backend.action?.("undo-setup", { project, ifSetUp: true }, contextOf(game));
+      },
+    });
+    function contextOf(game: string) {
+      const host = (async (method: string, args?: unknown) => {
+        if (method === "storage.root") return b.storage;
+        if (method === "game.engine.link") return links.link("unreal", binding(game), args);
+        if (method === "game.engine.read") return links.read("unreal", binding(game));
+        throw new Error(`unexpected host call ${method}`);
+      }) as never;
+      return { ...b.context, project: game, host };
+    }
+    for (const game of ["valley", "lantern"]) await mkdir(gameDir(game), { recursive: true });
+    return { ...b, links, binding, contextOf };
+  }
+
+  it("Undo of the link that set a project up keeps the set-up while another game builds in it", async () => {
+    const g = await twoGames();
+    await g.backend.tool?.("use-project", { project: g.project.file }, g.contextOf("valley"));
+    await g.backend.tool?.("use-project", { project: "drift" }, g.contextOf("lantern"));
+    const made = await g.links.read("unreal", g.binding("valley"));
+    assert.ok(made);
+    await g.links.undo("unreal", "valley", made.linkedAt, "thread-of-valley");
+    assert.equal(await g.links.read("unreal", g.binding("valley")), null, "the first game's link is undone");
+    assert.deepEqual(
+      (await listSetUpProjects(g.storage)).map((p) => p.project),
+      [g.real],
+      "Drift's set-up record stays: the other game's Unreal calls find it",
+    );
+    assert.equal((await inspectProject(g.project.file, g.options)).ready, true);
+    assert.equal((await g.links.read("unreal", g.binding("lantern")))?.project, g.real);
+    const again = await g.backend.tool?.("use-project", { project: "drift" }, g.contextOf("lantern"));
+    assert.match(String(again), /now builds in Drift/);
   });
 });
 
@@ -1755,4 +2051,35 @@ describe("Updating the Genex editor helper refuses, writing nothing,", () => {
         witness,
       );
     });
+});
+
+describe("The Unreal setup card for a Mac without Unreal", () => {
+  it("asks for Epic's launcher, then the person's install of Unreal in it, with Don't use Unreal", () => {
+    const none = unrealInstallCard({ launcher: false, version: "5.8", installed: false, skipped: false });
+    assert.equal(none.open, true);
+    assert.deepEqual(
+      none.steps.map((step) => [step.id, step.done]),
+      [
+        [UnrealStepId.GetLauncher, false],
+        [UnrealStepId.InstallEngine, false],
+      ],
+    );
+    assert.equal(none.steps[0]?.action?.name, "get-unreal");
+    assert.equal(none.steps[1]?.you, true, "only the person signs in to Epic and installs in its launcher");
+    assert.equal(none.steps[1]?.action, undefined, "no launcher to open yet");
+    assert.deepEqual(none.secondary, { name: "skip", args: {}, label: "Don't use Unreal" });
+    const launcher = unrealInstallCard({ launcher: true, version: "5.8", installed: false, skipped: false });
+    assert.equal(launcher.steps[0]?.done, true);
+    assert.equal(launcher.steps[1]?.action?.label, "Open the Epic Games Launcher");
+  });
+
+  it("closes with what the agent is told: Unreal is there, or the person chose not to use it", () => {
+    const ready = unrealInstallCard({ launcher: true, version: "5.8", installed: true, skipped: false });
+    assert.equal(ready.open, false);
+    assert.match(String(ready.doneSays), /Unreal 5\.8 is installed/);
+    assert.match(String(ready.doneSays), /unreal__new-game/);
+    const skipped = unrealInstallCard({ launcher: false, version: "5.8", installed: false, skipped: true });
+    assert.equal(skipped.open, false);
+    assert.match(String(skipped.doneSays), /web game/);
+  });
 });

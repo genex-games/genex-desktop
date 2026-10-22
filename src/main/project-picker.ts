@@ -1,20 +1,27 @@
 /** The native folder pickers behind New game and home's folder chip: where a game goes, and a folder to open instead. */
 import path from "node:path";
 import type { OpenDialogOptions } from "electron";
+import { t } from "../shared/i18n.ts";
 
-/** Open existing's words: the folder chosen is the game. */
-const OPEN_MESSAGE = {
-  title: "Open project folder",
-  buttonLabel: "Open",
-  message: "Choose a folder, or create one. Images and notes inside it are visible to the agent.",
-} as const satisfies Pick<OpenDialogOptions, "title" | "buttonLabel" | "message">;
+type PickerWords = Pick<OpenDialogOptions, "title" | "buttonLabel" | "message">;
+
+/** Open existing's words, in main's language: the folder chosen is the game. */
+function openWords(): PickerWords {
+  return {
+    title: t("Open project folder"),
+    buttonLabel: t("Open"),
+    message: t("Choose a folder, or create one. Images and notes inside it are visible to the agent."),
+  };
+}
 
 /** The location picker's words: the folder chosen is only where the game's own folder is made. */
-const LOCATION_MESSAGE = {
-  title: "Choose where to create the game",
-  buttonLabel: "Choose",
-  message: "The game gets a new folder of its own inside the folder you choose.",
-} as const satisfies Pick<OpenDialogOptions, "title" | "buttonLabel" | "message">;
+function locationWords(): PickerWords {
+  return {
+    title: t("Choose where to create the game"),
+    buttonLabel: t("Choose"),
+    message: t("The game gets a new folder of its own inside the folder you choose."),
+  };
+}
 
 /**
  * Open existing: one folder, opening in the games root, with New Folder (`createDirectory`,
@@ -22,7 +29,7 @@ const LOCATION_MESSAGE = {
  */
 export function projectPickerOptions(gamesRoot: string): OpenDialogOptions {
   return {
-    ...OPEN_MESSAGE,
+    ...openWords(),
     defaultPath: gamesRoot,
     properties: ["openDirectory", "createDirectory"],
   };
@@ -34,7 +41,7 @@ export function projectPickerOptions(gamesRoot: string): OpenDialogOptions {
  */
 export function gameLocationPickerOptions(gamesRoot: string): OpenDialogOptions {
   return {
-    ...LOCATION_MESSAGE,
+    ...locationWords(),
     defaultPath: path.dirname(gamesRoot),
     properties: ["openDirectory", "createDirectory"],
   };

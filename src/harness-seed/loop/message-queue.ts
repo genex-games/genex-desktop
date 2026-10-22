@@ -2,7 +2,9 @@ import type { AnyRecord, HarnessEvent, Host } from "../types/harness.d.ts";
 import type { DelegateImage } from "../types/host-api.d.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
+import { personWrote } from "./person-wrote.ts";
 import { SteerDelivery } from "./steer-delivery.ts";
+import { isSlashText, JoinKind, joinKindOf, type OpenOptions } from "./steer-switch.ts";
 
 /**
  * This queue hands a message to a run's lead while its build runs (live chat, `beforeProcess`
@@ -54,10 +56,16 @@ export interface QueuedMessage {
 interface Turn {
   messageId: string;
   action: QueueAction;
+  /** The message whose settings the turn runs on: its own, or the last switch its runner went on with. */
+  settings: AnyRecord;
   /** Only what is sent from here on (by send order) may join this turn; older messages keep theirs. */
   after: number;
   /** Its runner will answer with a session: what is sent joins it (Sending…), not the queue. */
   expecting: boolean;
+  /** Its runner goes on with a message's settings when one changes how the turn runs (steer-switch.ts). */
+  switches: boolean;
+  /** Which switches its runner can go on with; unset, every one. */
+  accepts: ((item: AnyRecord) => boolean) | null;
   /** Its session runs: what is sent is handed to it (`engine.steer`). */
   open: boolean;
   closed: boolean;
@@ -88,7 +96,10 @@ export interface SteerHandle {
   readonly delivered: QueueAction[];
   expect(): Promise<void>;
   done(): Promise<void>;
-  open(): Promise<QueueAction[]>;
+  /** The session starts; a runner that takes switches says so (`switches`), and a message that changes how the turn runs joins it too. */
+  open(options?: OpenOptions): Promise<QueueAction[]>;
+  /** The runner went on with this message's settings: what is sent after it is weighed against them. */
+  follows?(item: QueueAction): void;
   close(result?: { steered?: string[] } | null): Promise<QueueAction[]>;
   deliver(items: QueueAction[], how: SteerDelivery): Promise<void>;
   requeue(items: QueueAction[]): Promise<void>;
@@ -112,7 +123,15 @@ export interface LeadDoor {
    * back in the queue when its run ends, so they still get an answer (and Stop hands over to them).
    */
   handed(item: QueueAction, giveBack: (items: QueueAction[]) => Promise<void>): void;
+  /**
+   * The lead only hears of it (its wrap-up began): the message is never recorded delivered to the run,
+   * and stays waiting for the chat to answer once the run closes.
+   */
+  keeps?: boolean;
 }
+
+/** This copy of the queue keeps a message a lead's door only tells (`LeadDoor.keeps`): director/wake.ts reads it. */
+export const QUEUE_KEEPS_TOLD = true;
 
 /** A value `beforeProcess` answered with: the lead's door for the next message, or anything else. */
 const isLeadDoor = (value: unknown): value is LeadDoor =>
@@ -236,46 +255,14 @@ export function interruptedReplyNotice(events: readonly HarnessEvent[]): string 
     : "This response was interrupted by a restart again, so Studio will not retry it. Send it again to continue.";
 }
 
-/** The intake settings a message commissions a run with, which joining another turn would drop. */
-const COMMISSION_FIELDS = ["hours", "reviewPlan", "roles"] as const;
-
-/** A message's commission (mode, hours, plan review, roles and effort), or null for none. */
-function commissionOf(message: AnyRecord): string | null {
-  const commission = message.autopilot ?? message.loop;
-  if (!commission) return null;
-  const fields = COMMISSION_FIELDS.map((field) => commission[field] ?? null);
-  return JSON.stringify([Boolean(message.autopilot), Boolean(message.loop), ...fields, message.effort ?? null]);
-}
-
 /**
- * A fresh build asked for (`newRun`, a New build queued before the composer dropped it), Studio's
- * chat, or a new mood board: always a turn of its own.
- */
-function startsItsOwnTurn(item: AnyRecord, action: AnyRecord): boolean {
-  return Boolean(item.newRun || item.studioThread || action.studioThread || item.autopilot?.frames?.length);
-}
-
-/** The same engine and model answer both. */
-function sameModel(item: AnyRecord, action: AnyRecord): boolean {
-  return (item.engine ?? null) === (action.engine ?? null) && (item.model ?? null) === (action.model ?? null);
-}
-
-/** Slash text is a command to the session, never words to fold into its turn. */
-const isSlashText = (text: unknown): boolean =>
-  String(text ?? "")
-    .trimStart()
-    .startsWith("/");
-
-/**
- * Whether a waiting message can join the turn answering `action` instead of waiting for a turn
- * of its own: the same kind of request, to the same model. A fresh build asked for, a changed mood
- * board or slash text waits. An intake message carries the commission the run launches with: joining a
- * turn would drop hours, roles or plan review the person changed, so a different one waits too.
+ * Whether a waiting message joins the turn answering `action` as words, read at the session's next
+ * step: the same kind of request, settled the same way. One that changes how the turn runs joins
+ * only a runner that takes switches (`JoinKind.Switch`, steer-switch.ts); a fresh build asked for
+ * and Studio's chat never join.
  */
 export function steersInto(item: AnyRecord, action: AnyRecord | null | undefined): boolean {
-  if (!action || startsItsOwnTurn(item, action) || !sameModel(item, action)) return false;
-  if (commissionOf(item) !== commissionOf(action)) return false;
-  return !isSlashText(item.text);
+  return joinKindOf(item, action) === JoinKind.Words;
 }
 
 /** The turn answering `action`, as it begins: `after` is the send order it starts at. */
@@ -283,8 +270,12 @@ function newTurn(action: QueueAction, after: number, carried: QueueAction[]): Tu
   return {
     messageId: action.messageId as string,
     action,
+    // As it was sent: the dispatch may drop its Loop on routing, which never makes the person's same Loop a change.
+    settings: { ...action },
     after,
     expecting: false,
+    switches: false,
+    accepts: null,
     open: false,
     closed: false,
     handing: Promise.resolve(),
@@ -389,9 +380,11 @@ export class MessageQueue {
       thread = this.#thread(threadId);
     await this.#serial(thread, async () => {
       thread.paused = state.paused;
+      // The replayed turns that read a switch: it, and what they read after it, get turns of their own.
+      const split = new Set<string>();
       for (const message of state.messages.values()) {
         const restorable = !isSettled(message) && message.action && !thread.ids.has(message.messageId);
-        if (restorable) await this.#restoreMessage(threadId, thread, message);
+        if (restorable) await this.#restoreMessage(threadId, thread, message, split);
       }
       // A turn that began before this replay reached the thread keeps to its own messages: the
       // restored ones were sent before it, and each gets a turn of its own.
@@ -399,11 +392,30 @@ export class MessageQueue {
     });
     this.#pump(threadId);
   }
-  /** Put one unsettled message back on the queue, unless a restart has already cut it off twice. */
-  async #restoreMessage(threadId: string, thread: ThreadQueue, message: QueuedMessage): Promise<void> {
+  /**
+   * Put one unsettled message back on the queue, unless a restart has already cut it off twice. One
+   * read by a turn a restart cut short goes in front of that turn's replay; one that switched how
+   * that turn ran (the Loop, another model) gets a turn of its own after it instead, with all that
+   * turn read after it: the replay runs on the turn's own settings, which the switch changed. A slash
+   * command it read stays read, never run twice (it may have cleared the session).
+   */
+  async #restoreMessage(
+    threadId: string,
+    thread: ThreadQueue,
+    message: QueuedMessage,
+    split: Set<string>,
+  ): Promise<void> {
     if (message.state === MessageState.Delivered) {
-      this.#carry(thread, message);
-      return;
+      const replayed = this.#replayedTurnOf(thread, message);
+      if (!replayed || isSlashText(message.action?.text)) return;
+      const own =
+        split.has(replayed.messageId as string) || joinKindOf(message.action ?? {}, replayed) === JoinKind.Switch;
+      if (!own) {
+        this.#carry(thread, replayed, message);
+        return;
+      }
+      split.add(replayed.messageId as string);
+      await this.#event(threadId, RunEvent.CoordinatorMessageRequeued, { messageId: message.messageId });
     }
     if (message.state === MessageState.Processing) {
       // Cut off mid-answer. Retried once, with the attempt recorded; never a third time.
@@ -431,12 +443,16 @@ export class MessageQueue {
    * of it — delivered once, never asked twice or lost. One read by a turn that is not answered
    * again (finished, removed, or cut off twice) stays settled with it.
    */
-  #carry(thread: ThreadQueue, message: QueuedMessage): void {
-    const into = message.into;
-    if (!into || !thread.items.some((item) => item.messageId === into)) return;
+  #carry(thread: ThreadQueue, replayed: QueueAction, message: QueuedMessage): void {
+    const into = replayed.messageId as string;
     this.#track(thread, message.messageId);
     const carried = thread.carried.get(into) ?? [];
     thread.carried.set(into, [...carried, { ...message.action, messageId: message.messageId } as QueueAction]);
+  }
+  /** The turn a restart cut short that read this message, when it is answered again. */
+  #replayedTurnOf(thread: ThreadQueue, message: QueuedMessage): QueueAction | undefined {
+    const into = message.into;
+    return into ? thread.items.find((item) => item.messageId === into) : undefined;
   }
   async enqueue(action: QueueAction): Promise<void> {
     const thread = this.#thread(action.threadId);
@@ -470,7 +486,9 @@ export class MessageQueue {
       throw err;
     }
     this.#track(thread, messageId);
-    if (!turn && !door) thread.items.push(queued);
+    // A lead that only hears of it (its wrap-up): it waits for the chat all the same.
+    const waits = !turn && (!door || door.keeps === true);
+    if (waits) thread.items.push(queued);
     else if (turn && !receipt) turn.pending.push(queued);
     thread.paused = false;
     this.host.notify("coordinator.queued", { threadId: action.threadId, messageId });
@@ -489,9 +507,14 @@ export class MessageQueue {
     const handedFirst = thread.items.some((item) => this.lead(queued.threadId, item));
     return handedFirst ? null : door;
   }
-  /** Handed to the lead: the chat hears it was delivered, and the lead that it was handed. */
+  /**
+   * Handed to the lead: the chat hears it was delivered, and the lead that it was handed. One the
+   * lead only hears of is marked told, so it is never handed again while it waits for the chat.
+   */
   #toldLead(threadId: string, door: LeadDoor, item: QueueAction): void {
-    this.host.notify("coordinator.delivered", { threadId, messageIds: [item.messageId] });
+    personWrote(threadId);
+    if (door.keeps) item.toldLead = door.into;
+    else this.host.notify("coordinator.delivered", { threadId, messageIds: [item.messageId] });
     door.handed(item, (items) => this.#giveBack(threadId, items));
   }
   /** Messages a run's lead never heard, back from its ended run: each waits for a turn of its own. */
@@ -499,11 +522,13 @@ export class MessageQueue {
     if (this.#stopped) return;
     await this.#requeue(threadId, this.#thread(threadId), null, items);
   }
-  /** Hand a waiting message to the run's lead, as its receipt would have. */
+  /** Hand a waiting message to the run's lead, as its receipt would have: one it only hears of keeps its place. */
   async #handToLead(threadId: string, thread: ThreadQueue, item: QueueAction, door: LeadDoor): Promise<void> {
     await this.#events(threadId, leadRecords(item, door));
-    thread.items = thread.items.filter((waiting) => waiting !== item);
-    thread.attempts.delete(item.messageId as string);
+    if (!door.keeps) {
+      thread.items = thread.items.filter((waiting) => waiting !== item);
+      thread.attempts.delete(item.messageId as string);
+    }
     this.#toldLead(threadId, door, item);
   }
   /**
@@ -517,10 +542,24 @@ export class MessageQueue {
       if (door?.open()) await this.#handToLead(threadId, thread, item, door);
     }
   }
-  /** Can this message join the running turn: it takes messages, nothing older waits, and it is the same kind of request. */
+  /**
+   * Can this message join the running turn: it takes messages, nothing sent before the turn began
+   * waits, and the turn takes this kind of message. A message sent during the turn that could not
+   * join it (a switch its runner does not take) holds nothing back: what is sent after it still joins.
+   */
   #joins(thread: ThreadQueue, turn: Turn, queued: QueueAction): boolean {
-    const takes = !thread.items.length && (turn.open || turn.expecting);
-    return takes && this.#steerable(thread, queued.threadId, turn) && steersInto(queued, turn.action);
+    const takes = (turn.open || turn.expecting) && !this.#olderWaits(thread, turn);
+    return takes && this.#steerable(thread, queued.threadId, turn) && this.#takes(turn, queued);
+  }
+  /** A message sent before this turn began still waits: it keeps its own turn, and nothing passes it. */
+  #olderWaits(thread: ThreadQueue, turn: Turn): boolean {
+    return thread.items.some((item) => (thread.order.get(item.messageId as string) ?? -1) < turn.after);
+  }
+  /** Does this turn take this message: as words, or as a switch its runner goes on with. */
+  #takes(turn: Turn, item: QueueAction): boolean {
+    const kind = joinKindOf(item, turn.settings);
+    if (kind === JoinKind.Words) return true;
+    return kind === JoinKind.Switch && turn.switches && (turn.accepts?.(item) ?? true);
   }
   /** The message as the log keeps it: its pictures saved beside it, only their count in the log. */
   async #durable(queued: QueueAction): Promise<QueueAction> {
@@ -616,32 +655,29 @@ export class MessageQueue {
     return [...items].sort((a, b) => place(a) - place(b));
   }
   /**
-   * The messages sent during this turn that wait at the front of the queue and can join it, taken
-   * out in order. Older ones (sent before this turn began, or a cut-short turn replayed after a
-   * restart) keep their own turns: never reordered.
+   * The waiting messages sent during this turn that can join it, taken out in the order sent. Older
+   * ones (sent before this turn began, or a cut-short turn replayed after a restart) keep their own
+   * turns, and while one waits nothing joins; one sent during the turn that cannot join keeps its
+   * place for a turn of its own without holding back what was sent after it.
    */
-  #front(threadId: string, thread: ThreadQueue, turn: Turn): QueueAction[] {
-    const taken: QueueAction[] = [];
-    if (!this.#takesMessages(thread, threadId, turn)) return taken;
-    for (;;) {
-      const item = thread.items[0];
-      if (!item || !this.#joinsFromFront(thread, turn, item)) return taken;
-      taken.push(item);
-      thread.items.shift();
-    }
+  #joinable(threadId: string, thread: ThreadQueue, turn: Turn): QueueAction[] {
+    if (!this.#takesMessages(thread, threadId, turn) || this.#olderWaits(thread, turn)) return [];
+    const taken = thread.items.filter((item) => this.#joinsLater(thread, turn, item));
+    thread.items = thread.items.filter((item) => !taken.includes(item));
+    return taken;
   }
-  /** Sent during this turn, not a replayed turn itself, and the same kind of request. */
-  #joinsFromFront(thread: ThreadQueue, turn: Turn, item: QueueAction): boolean {
+  /** Sent during this turn, not a replayed turn itself, and a message this turn takes. */
+  #joinsLater(thread: ThreadQueue, turn: Turn, item: QueueAction): boolean {
     const messageId = item.messageId as string;
     const sentDuring = (thread.order.get(messageId) ?? -1) >= turn.after;
-    return sentDuring && !thread.carried.has(messageId) && steersInto(item, turn.action);
+    return sentDuring && !thread.carried.has(messageId) && this.#takes(turn, item);
   }
   /** The runner will answer with a session: what is sent from now on joins it (Sending…), not the queue. */
   #expect(threadId: string, thread: ThreadQueue, turn: Turn): Promise<void> {
     return this.#serial(thread, async () => {
       if (!isCurrent(thread, turn)) return;
       turn.expecting = true;
-      const taken = this.#front(threadId, thread, turn);
+      const taken = this.#joinable(threadId, thread, turn);
       if (!taken.length) return;
       await this.#events(threadId, recordsFor(RunEvent.CoordinatorMessageSteering, taken, { into: turn.messageId }));
       turn.pending.push(...taken);
@@ -653,12 +689,15 @@ export class MessageQueue {
    * sent, is what joined while it was being set up — its runner puts that in the prompt it is
    * about to send and records it delivered (`deliver`).
    */
-  #openTurn(threadId: string, thread: ThreadQueue, turn: Turn): Promise<QueueAction[]> {
+  #openTurn(threadId: string, thread: ThreadQueue, turn: Turn, options?: OpenOptions): Promise<QueueAction[]> {
     return this.#serial(thread, async () => {
       if (!isCurrent(thread, turn)) return [];
       turn.open = true;
       turn.expecting = true;
-      const joined = this.#inOrder(thread, [...turn.pending.splice(0), ...this.#front(threadId, thread, turn)]);
+      // Each session says what it takes as it opens: a later leg of the turn may take no switches.
+      turn.switches = Boolean(options?.switches);
+      turn.accepts = options?.switches ? (options.takes ?? null) : null;
+      const joined = this.#inOrder(thread, [...turn.pending.splice(0), ...this.#joinable(threadId, thread, turn)]);
       for (const item of joined) turn.taken.set(item.messageId as string, { item, how: SteerDelivery.Prompt });
       return joined;
     });
@@ -694,13 +733,22 @@ export class MessageQueue {
     // message never waits as Sending… until a restart.
     for (const item of items)
       if (item.attachmentsArtifact && !item.stills) await this.#attach(threadId, item).catch(() => {});
+    // A switch is never read as words mid-turn: the session is cut at its next step and goes on with it.
+    const switching = items.some((item) => joinKindOf(item, turn.settings) === JoinKind.Switch);
     const answer = await this.host
-      .call(HostMethod.EngineSteer, { threadId, into: turn.messageId, messages: items.map(steerMessageOf) })
+      .call(HostMethod.EngineSteer, {
+        threadId,
+        into: turn.messageId,
+        messages: items.map(steerMessageOf),
+        ...(switching ? { native: false } : {}),
+      })
       .catch(() => null);
     const accepted = new Set(answer?.accepted ?? []);
     for (const item of items)
       if (accepted.has(item.messageId as string))
         turn.taken.set(item.messageId as string, { item, how: answer?.how ?? null });
+    // A wait the session is in (its workers, an editor) ends, so it reaches the step that reads them.
+    if (accepted.size) personWrote(threadId);
     const refused = items.filter((item) => !accepted.has(item.messageId as string));
     if (!refused.length) return;
     // The session will not take input now (its turn is ending, or it never could): stop
@@ -716,7 +764,8 @@ export class MessageQueue {
     }
     if (!items.length) return;
     await this.#serial(thread, async () => {
-      const back = items.filter((item) => !thread.items.includes(item));
+      // Each once: a message is never put back twice, nor beside itself.
+      const back = items.filter((item, at) => !thread.items.includes(item) && items.indexOf(item) === at);
       if (!back.length) return;
       await this.#events(threadId, recordsFor(RunEvent.CoordinatorMessageRequeued, back));
       thread.items.push(...back);
@@ -802,7 +851,10 @@ export class MessageQueue {
       },
       expect: () => this.#expect(threadId, thread, turn),
       done: () => this.#done(threadId, thread, turn),
-      open: () => this.#openTurn(threadId, thread, turn),
+      open: (options) => this.#openTurn(threadId, thread, turn, options),
+      follows: (item) => {
+        turn.settings = item;
+      },
       close: (result) => this.#close(threadId, thread, turn, result),
       deliver: (items, how) => this.#deliver(threadId, turn, items, how),
       requeue: (items) => {
@@ -964,15 +1016,16 @@ function receiptBatch(
   ];
 }
 
-/** A message delivered to a run's lead: recorded delivered to its run, then what the lead reads it from. */
+/**
+ * A message delivered to a run's lead: recorded delivered to its run, then what the lead reads it
+ * from. One the lead only hears of (`keeps`) is not delivered: the chat answers it.
+ */
 function leadRecords(item: QueueAction, door: LeadDoor): Array<{ event_type: RunEvent; payload: AnyRecord }> {
-  return [
-    {
-      event_type: RunEvent.CoordinatorMessageDelivered,
-      payload: { messageId: item.messageId, into: door.into, how: SteerDelivery.Lead },
-    },
-    ...door.records(item),
-  ];
+  const delivered = {
+    event_type: RunEvent.CoordinatorMessageDelivered,
+    payload: { messageId: item.messageId, into: door.into, how: SteerDelivery.Lead },
+  };
+  return [...(door.keeps ? [] : [delivered]), ...door.records(item)];
 }
 
 /** A message as `engine.steer` hands it to the session: its words and its pictures. */

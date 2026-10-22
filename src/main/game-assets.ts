@@ -17,7 +17,16 @@ import { sniffImage } from "../substrate/image-sniff.ts";
 import { assertRelativePath, isBelow } from "../substrate/paths.ts";
 import { isJsonObject, readRegularFile } from "../substrate/fsx.ts";
 import { isPluginId } from "../shared/plugin-id.ts";
-import { GENEX_COVER_MAX_BYTES, GENEX_COVER_SHOT_FILE, GENEX_COVERS_DIR, GENEX_PLUGIN_ID } from "../shared/genex.ts";
+import {
+  GENEX_COVER_CANDIDATES_DIR,
+  GENEX_COVER_CLIP_FILE,
+  GENEX_COVER_MAX_BYTES,
+  GENEX_COVER_SHOT_FILE,
+  GENEX_COVERS_DIR,
+  GENEX_PLUGIN_ID,
+} from "../shared/genex.ts";
+import { PLUGIN_CLIP_MAX_BYTES, type PluginClipMimeType } from "../shared/plugins.ts";
+import { sniffClipContainer } from "../substrate/video-sniff.ts";
 import { genexJobShown, genexMaking, genexPhase, type MakingJob } from "../shared/asset-making.ts";
 import type { StillMimeType } from "../shared/preview-contract.ts";
 import { genexRef } from "../shared/genex-ref.ts";
@@ -252,40 +261,105 @@ export function genexCoverDir(engineHomes: string, project: string): string | nu
   return GENEX_PROJECT.test(project) ? path.join(engineHomes, "genex", GENEX_COVERS_DIR, project) : null;
 }
 
-/** The kept shot's image when the folder holds it as a plain file: its name, type and time. */
-async function shotCandidate(
+/** A kept file when the folder holds it as a plain file: its path, type and time. */
+async function keptFile<M extends string>(
   dir: string,
-  [mimeType, name]: [StillMimeType, string],
-): Promise<{ file: string; mimeType: StillMimeType; mtimeMs: number } | null> {
+  [mimeType, name]: [M, string],
+): Promise<{ file: string; mimeType: M; mtimeMs: number } | null> {
   const st = await lstat(path.join(dir, name)).catch(() => null);
   return st?.isFile() ? { file: path.join(dir, name), mimeType, mtimeMs: st.mtimeMs } : null;
 }
 
+/** How one kept cover file is found and checked: its names by type, its size cap and what its bytes are. */
+interface KeptCoverFile<M extends string> {
+  names: Record<M, string>;
+  maxBytes: number;
+  sniff: (data: Buffer) => string | null;
+}
+
 /**
- * The game's kept Genex cover shot, as bytes the renderer can show, or null. Its place is built
- * here from the game's name, never taken from anyone: the cover folder must be exactly that folder
- * by its real path (a link anywhere on the way from engine homes refuses it), and only `shot.png`
- * or `shot.jpg` is read: a regular file opened without following a link, at most Genex's upload
- * limit, whose bytes are the type its name says. While a shot of the other type replaces the last
- * one both are there for a moment, and the newer is the shot.
+ * The newest of a cover folder's kept files `kind` names, its bytes and its type, or null. The
+ * folder must be exactly `dir` by its real path (a link anywhere on the way refuses it), and the
+ * file a regular one opened without following a link, at most its cap, whose bytes are the type its
+ * name says. While a file of another type replaces the last one both are there for a moment, and
+ * the newer is the one.
+ */
+async function readKeptCoverFile<M extends string>(
+  dir: string | null,
+  kind: KeptCoverFile<M>,
+): Promise<{ mimeType: M; data: Buffer } | null> {
+  if (!dir || (await realpath(dir).catch(() => null)) !== dir) return null;
+  const entries = Object.entries(kind.names) as Array<[M, string]>;
+  const found = (await Promise.all(entries.map((entry) => keptFile(dir, entry)))).filter((kept) => kept !== null);
+  const newest = found.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!newest) return null;
+  const data = await readRegularFile(newest.file, kind.maxBytes).catch(() => null);
+  if (!data || kind.sniff(data) !== newest.mimeType) return null;
+  return { mimeType: newest.mimeType, data };
+}
+
+/** A cover candidate's name: the sha256 of its bytes, 64 lowercase hex digits. */
+const COVER_CANDIDATE = /^[0-9a-f]{64}$/;
+
+/** A kept cover shot or candidate: PNG or JPEG, at most Genex's upload limit. */
+const coverShotKind = (names: Record<StillMimeType, string>): KeptCoverFile<StillMimeType> => ({
+  names,
+  maxBytes: GENEX_COVER_MAX_BYTES,
+  sniff: (data) => sniffImage(data)?.mimeType ?? null,
+});
+
+/** The kept cover clip: WebM or MP4, at most a clip's byte limit. */
+const COVER_CLIP: KeptCoverFile<PluginClipMimeType> = {
+  names: GENEX_COVER_CLIP_FILE,
+  maxBytes: PLUGIN_CLIP_MAX_BYTES,
+  sniff: sniffClipContainer,
+};
+
+/** The real game's cover folder under engine homes, by its real path, or null for a name no game has. */
+async function realCoverDir(engineHomes: string, project: unknown): Promise<string | null> {
+  if (typeof project !== "string") return null;
+  const homes = await realpath(engineHomes).catch(() => null);
+  return homes && genexCoverDir(homes, project);
+}
+
+/**
+ * The game's kept Genex cover shot, or with `candidate` one of its recent candidate shots
+ * (`candidates/<sha256>.png|jpg`), as bytes the renderer can show, or null. Its place is built
+ * here from the game's name and the candidate's 64 hex digits, never taken from anyone, and read as
+ * {@link readKeptCoverFile} reads: only `shot.png` or `shot.jpg` (or the candidate's own two names),
+ * each folder on the way its own real path.
  */
 export async function readGenexCoverShot(
   engineHomes: string,
   project: string,
-  { resize }: { resize?: (data: Buffer) => Promise<Buffer> } = {},
+  { resize, candidate }: { resize?: (data: Buffer) => Promise<Buffer>; candidate?: unknown } = {},
 ): Promise<{ mimeType: string; data: string } | null> {
-  const homes = typeof project === "string" ? await realpath(engineHomes).catch(() => null) : null;
-  const dir = homes && genexCoverDir(homes, project);
-  if (!dir || (await realpath(dir).catch(() => null)) !== dir) return null;
-  const files = Object.entries(GENEX_COVER_SHOT_FILE) as Array<[StillMimeType, string]>;
-  const found = (await Promise.all(files.map((entry) => shotCandidate(dir, entry)))).filter((shot) => shot !== null);
-  const shot = found.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
-  if (!shot) return null;
-  const data = await readRegularFile(shot.file, GENEX_COVER_MAX_BYTES).catch(() => null);
-  if (!data || sniffImage(data)?.mimeType !== shot.mimeType) return null;
-  const smaller = resize ? await resize(data).catch(() => null) : null;
+  if (candidate !== undefined && (typeof candidate !== "string" || !COVER_CANDIDATE.test(candidate))) return null;
+  const dir = await realCoverDir(engineHomes, project);
+  const kept =
+    candidate === undefined
+      ? await readKeptCoverFile(dir, coverShotKind(GENEX_COVER_SHOT_FILE))
+      : await readKeptCoverFile(
+          dir && path.join(dir, GENEX_COVER_CANDIDATES_DIR),
+          coverShotKind({ "image/png": `${candidate}.png`, "image/jpeg": `${candidate}.jpg` }),
+        );
+  if (!kept) return null;
+  const smaller = resize ? await resize(kept.data).catch(() => null) : null;
   if (smaller) return { mimeType: "image/jpeg", data: smaller.toString("base64") };
-  return { mimeType: shot.mimeType, data: data.toString("base64") };
+  return { mimeType: kept.mimeType, data: kept.data.toString("base64") };
+}
+
+/**
+ * The game's kept Genex cover clip (`clip.webm` or `clip.mp4`, the newer when both are there), as
+ * bytes the renderer can play, or null. Its place is built from the game's name alone and read as
+ * {@link readKeptCoverFile} reads, its bytes sniffed as the WebM or MP4 its name says.
+ */
+export async function readGenexCoverClip(
+  engineHomes: string,
+  project: string,
+): Promise<{ mimeType: PluginClipMimeType; data: string } | null> {
+  const kept = await readKeptCoverFile(await realCoverDir(engineHomes, project), COVER_CLIP);
+  return kept && { mimeType: kept.mimeType, data: kept.data.toString("base64") };
 }
 
 /** A value that is a plain object (not an array), as a record; otherwise null. */

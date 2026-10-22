@@ -6,7 +6,21 @@ import unreal
 
 import toolset_registry
 
-from genex_build import args, audit, imports, material, models, retarget, routes, scripts, shots, sockets, terrain
+from genex_build import (
+    args,
+    audit,
+    character,
+    imports,
+    material,
+    models,
+    motion,
+    retarget,
+    routes,
+    scripts,
+    shots,
+    sockets,
+    terrain,
+)
 from genex_loop.errors import Refused, short_message
 
 
@@ -30,8 +44,9 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     run it again after each change. capture_shot, capture_play and motion_strip are the eyes: clean
     frames of the game (never the editor), each answered as an image with its tone numbers.
     Imports bring the game's own model, character, animation and sound files in; retarget plays
-    one skeleton's clips on another; attach_to_socket puts a mesh in a hand; audit counts what the
-    level is made of. Compound arguments are JSON text. Every tool answers JSON; a refusal is
+    one skeleton's clips on another; motion_character moves a character with the Game Animation
+    Sample's Motion Matching; character_check measures and pictures a character standing and
+    walking; attach_to_socket puts a mesh in a hand; audit counts what the level is made of. Compound arguments are JSON text. Every tool answers JSON; a refusal is
     {error} and changes nothing. Stop play first, except for capture_play and motion_strip.
 
     Writing your own Python against the editor: a function with out-params answers a tuple
@@ -102,15 +117,19 @@ class GenexBuildTools(unreal.ToolsetDefinition):
         audit) and `args`, in one undo step, for at most 240 s. The script runs in a scope named
         after it, so running it again first removes what it made last time. Its own modules in
         unreal/build/ import fresh each run. An MCP timeout does not stop a running script. A run
-        that changed a level with navigation bounds rebuilds its nav mesh (navigation: rebuilt).
+        that changed a level with navigation bounds rebuilds its nav mesh (navigation: rebuilt). A
+        material Unreal fails to compile while it runs fails the run (Unreal would draw it with its
+        default material): materials names each one and why.
 
         Args:
             file: The script, relative to unreal/build/: kit.py or zones/shaft.py.
             args_json: A JSON object the script reads as `args`, or empty.
 
         Returns:
-            JSON {ok, ms, script, output, result?, scopes: {scope: {removed, made}}, navigation?, actors}; when it
-            failed also {error, where: "file.py:line", line}. What it changed before failing stays.
+            JSON {ok, ms, script, output, result?, scopes: {scope: {removed, made}}, navigation?, actors,
+            otherMaterials?}; when it failed also {error, where: "file.py:line", line} or {error, materials:
+            [{material, instanceOf?, platform, reasons}]} for materials it changed that Unreal failed to compile
+            (otherMaterials: ones it didn't change that failed meanwhile). What it changed before failing stays.
         """
         return _answer(scripts.run_script, file, args_json)
 
@@ -183,7 +202,9 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def import_model(file: str, dest: str, name: str, collision: str, nanite: bool) -> str:
         """Imports a model file of the game's assets as ONE static mesh (its pieces combined), into
-        its own folder <dest>/<name>/, never opening the Content Browser.
+        its own folder <dest>/<name>/, never opening the Content Browser. Importing the same file into
+        the same folder again answers the first import (reused: true); another file there is refused:
+        use a new name.
 
         Args:
             file: The model (.glb .gltf .fbx .obj, at most 100 MB) in the game folder's assets/ or
@@ -206,8 +227,10 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     def import_character(file: str, dest: str, name: str) -> str:
         """Imports a rigged character (a skinned .glb, .gltf or .fbx of the game's assets): its
         skeletal mesh, skeleton, physics asset and any clips in the file, into <dest>/<name>/.
-        Refused during a play session (an import then makes only part of the asset). A skeleton
-        scaled at its root comes back with scaleWarning and how to fix the file.
+        Refused during a play session (an import then makes only part of the asset). A .glb whose
+        skeleton hangs under a scaled root (a centimetre Armature at 0.01) is imported from a copy
+        with that scale baked in (skeletonScale); one it can't bake comes back with scaleWarning.
+        Run character_check before the character goes into the game.
 
         Args:
             file: The model file, relative to the game folder (assets/agents/<id>/hero.glb).
@@ -215,7 +238,8 @@ class GenexBuildTools(unreal.ToolsetDefinition):
             name: Its folder name: a letter, then up to 63 letters, digits or _.
 
         Returns:
-            JSON {mesh, skeleton, physicsAsset, boundsCm, animations: [{path, seconds}], folder, ms}.
+            JSON {mesh, skeleton, physicsAsset, boundsCm, animations: [{path, seconds}], folder,
+            skeletonScale?: {baked, file}, scaleWarning?, reused?, ms}.
         """
         return _answer(imports.import_character, file, dest, name)
 
@@ -242,7 +266,7 @@ class GenexBuildTools(unreal.ToolsetDefinition):
 
         Args:
             file: The sound file, relative to the game folder (assets/sfx/hit.mp3).
-            dest: The /Game/ folder for its folder, such as /Game/Audio.
+            dest: The /Game/ folder for its folder, such as /Game/Sounds.
             name: Its folder name: a letter, then up to 63 letters, digits or _.
 
         Returns:
@@ -254,8 +278,11 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def retarget(source_mesh: str, target_mesh: str, animations: str, dest: str) -> str:
         """Copies clips made for one skeletal mesh onto another (the template mannequin's onto an
-        imported character): IK Rigs by Unreal's auto-characterisation, a retargeter with chains
-        mapped by name, then a batch retarget into dest.
+        imported character): IK Rigs by Unreal's auto-characterisation with full-body IK and the
+        whole spine, a retargeter with the default ops (arms and legs copied bone for bone, IK on
+        the legs only), chains mapped by name, the retarget pose aligned and its arms turned to the
+        source's, then a batch retarget into dest. Retarget only the clips this character plays,
+        never a whole library.
 
         Args:
             source_mesh: The SkeletalMesh the clips were made for (/Game/...).
@@ -264,9 +291,59 @@ class GenexBuildTools(unreal.ToolsetDefinition):
             dest: The /Game/ folder for the new clips.
 
         Returns:
-            JSON {animations, retargeter, ms}, or {error} (a skeleton Unreal can't characterise is named).
+            JSON {animations, retargeter, fbik: {source, target}, spineFrom, oneToOne, ikOff,
+            armFixDeg: {bone: [before, after]}, fingersAligned, limbErrorDeg (the first new clip's
+            limbs against its source clip's), warnings, ms}, or {error} (a skeleton Unreal can't
+            characterise is named).
         """
         return _answer(lambda: retarget.retarget(source_mesh, target_mesh, args.json_list(animations, 'animations'), dest))
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def motion_character(mesh: str, name: str) -> str:
+        """Gives an imported character the Game Animation Sample's Motion Matching, the sample's own
+        way: the sample's character runs it on a hidden mannequin and the character's mesh copies
+        that pose live. Makes the retargeter from the mannequin (as retarget sets one up), its
+        entry in the sample's ABP_GenericRetarget, and BP_<name>, a child of the sample's
+        SandboxCharacter_CMC showing the character. No clip is copied. Needs the sample's content in
+        the project (the Unreal plugin's add-motion-matching); refused during play.
+
+        Args:
+            mesh: The character's SkeletalMesh (/Game/...), from import_character; a rig with finger
+                bones gets moving fingers.
+            name: Its Blueprint's name: a letter, then up to 47 letters, digits or _.
+
+        Returns:
+            JSON {blueprint, retargeter, tag, fbik, spineFrom, oneToOne, ikOff, armFixDeg,
+            fingersAligned, next, ms}, or {error}.
+        """
+        return _answer(motion.motion_character, mesh, name)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def character_check(mesh: str, idle: str, walk: str, driver: str, pictures: bool) -> str:
+        """Checks a rigged character standing and walking, before it goes into the game: samples
+        its idle and walk clips (no play session) and answers passed, the reasons it failed and
+        the numbers: each upper arm's angle out from the body, each hand's distance from its
+        thigh, the skeleton's width against the character's height, how far the feet float or
+        sink, the most any mesh edge stretches against the bind pose (a strip of cloth weighted to
+        the wrong bone), finger bones and whether they move, and, with a driver, each limb's
+        angle from the driver's at the same frame. With pictures, a copy of it is shot from the
+        front, side and back in idle and from the side through the walk, as one sheet.
+
+        Args:
+            mesh: The SkeletalMesh's /Game/ path, or a level actor's label.
+            idle: Its idle AnimSequence, or empty to check its reference pose.
+            walk: Its walk AnimSequence, or empty.
+            driver: JSON {"mesh": path, "idle": path, "walk": path} of the skeleton a runtime
+                retarget copies (the hidden mannequin), or empty.
+            pictures: Whether to take the picture sheet (about 20 s more).
+
+        Returns:
+            JSON {passed, reasons, warnings, notes, heightCm, clips: {idle, walk}, stretch, fingers,
+            limbErrorDeg?, thresholds, bones, pictures?: {record, files}, ms}, or {error}.
+        """
+        return _answer(character.character_check, mesh, idle, walk, driver, pictures)
 
     @toolset_registry.tool_call
     @staticmethod

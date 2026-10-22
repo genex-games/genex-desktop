@@ -9,10 +9,11 @@ import {
   useState,
 } from "react";
 import { ComposerCommand, commandMatches, commandQuery } from "../chat/composer-commands.ts";
-import { COMPACT_WORDS } from "../words.ts";
+import { COMPACT_WORDS, MENTION_WORDS } from "../words.ts";
+import { Icon } from "./icons.tsx";
 import { type AddMenuHandle, mentionKeyDown } from "./ComposerAddMenu.tsx";
 import { Popover, PopoverContent } from "./popover.tsx";
-import { pickerItem } from "./PickerPanel.tsx";
+import { PickerLabel, pickerItem } from "./PickerPanel.tsx";
 
 /** One / command as the list offers it: what it does, and whether it can run now. */
 export interface CommandOption {
@@ -60,14 +61,28 @@ export function compactCommand(
   ];
 }
 
+/** A plugin the / list offers: picking it tags it in the message, as @ does. */
+export interface PluginCommand {
+  id: string;
+  name: string;
+  pick: () => void;
+}
+
+/** The plugins whose names hold what was typed after the slash. */
+function pluginMatches(query: string, plugins: readonly PluginCommand[]): PluginCommand[] {
+  return plugins.filter((plugin) => plugin.name.toLowerCase().includes(query));
+}
+
 /**
  * The / list above the composer, opened by typing "/" as a message: the commands whose names
- * start with what follows it. Focus stays in the text box, which hands it the keys: the arrows
- * move, Enter or Tab runs, Escape closes. A command that cannot run now is listed but not taken.
+ * start with what follows it, then the plugins whose names hold it. Focus stays in the text box,
+ * which hands it the keys: the arrows move, Enter or Tab runs, Escape closes. A command that
+ * cannot run now is listed but not taken.
  */
 export function ComposerCommandMenu({
   query,
   options,
+  plugins = [],
   anchor,
   listId,
   onClose,
@@ -76,6 +91,8 @@ export function ComposerCommandMenu({
 }: {
   query: string | null;
   options: CommandOption[];
+  /** The plugins that are on, which the list offers after its commands. */
+  plugins?: readonly PluginCommand[];
   anchor: RefObject<HTMLDivElement | null>;
   listId: string;
   onClose: () => void;
@@ -92,13 +109,17 @@ export function ComposerCommandMenu({
           options.map((option) => option.name),
         );
   const matches = options.filter((option) => names.includes(option.name));
-  const open = matches.length > 0;
-  const active = Math.min(highlight, Math.max(0, matches.length - 1));
-  const picks = matches.map((option) => ({
-    id: option.name,
-    name: option.name,
-    pick: option.disabled ? () => {} : option.run,
-  }));
+  const pluginRows = query === null ? [] : pluginMatches(query, plugins);
+  const picks = [
+    ...matches.map((option) => ({
+      id: option.name,
+      name: option.name,
+      pick: option.disabled ? () => {} : option.run,
+    })),
+    ...pluginRows,
+  ];
+  const open = picks.length > 0;
+  const active = Math.min(highlight, Math.max(0, picks.length - 1));
   useImperativeHandle(
     ref,
     () => ({
@@ -127,6 +148,9 @@ export function ComposerCommandMenu({
         aria-label={COMPACT_WORDS.commands}
       >
         <div role="listbox" id={listId} aria-label={COMPACT_WORDS.commands} data-command-list>
+          {pluginRows.length > 0 && matches.length > 0 ? (
+            <PickerLabel first>{COMPACT_WORDS.commands}</PickerLabel>
+          ) : null}
           {matches.map((option, index) => (
             <div
               key={option.name}
@@ -145,6 +169,29 @@ export function ComposerCommandMenu({
               <span className="min-w-0 truncate text-ink-3">{option.description}</span>
             </div>
           ))}
+          {pluginRows.length > 0 ? (
+            <PickerLabel first={matches.length === 0}>{MENTION_WORDS.plugins}</PickerLabel>
+          ) : null}
+          {pluginRows.map((plugin, index) => {
+            const at = matches.length + index;
+            return (
+              <div
+                key={plugin.id}
+                id={optionId(at)}
+                role="option"
+                aria-selected={at === active}
+                data-command-plugin={plugin.id}
+                data-highlighted={at === active || undefined}
+                className={`${pickerItem} cursor-pointer hover:bg-control-hover`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={plugin.pick}
+                onMouseMove={() => setHighlight(at)}
+              >
+                <Icon name="plugins" className="text-icon-strong" />
+                <span className="min-w-0 truncate">{plugin.name}</span>
+              </div>
+            );
+          })}
         </div>
       </PopoverContent>
     </Popover>

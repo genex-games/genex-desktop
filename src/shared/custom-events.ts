@@ -11,7 +11,7 @@
  * `customEvent` / `customPayload`, never `payload as`.
  */
 import type { ChatActivityPhase } from "./chat-activity.ts";
-import type { ChatRewind, CheckpointSkippedPayload } from "./chat-rewind.ts";
+import type { ChatRewind, CheckpointSkippedPayload, RewindUndonePayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
 import type { CrateDecisionPayload, CrateRequestPayload } from "./crate-requests.ts";
@@ -19,6 +19,7 @@ import type { GameCrashedPayload } from "./crash-record.ts";
 import type { DeviceLaunchPayload } from "./device-launch.ts";
 import type { ConformanceRunPayload, EngineEjectedPayload, GameTrustPayload } from "./game-conformance.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
+import type { MentionTaggedPayload } from "./prompt-mention.ts";
 import type { PluginConsentEvent } from "./plugins.ts";
 import type { ConnectorToolEvent, ConnectorToolStartedEvent } from "./mcp.ts";
 import type { ToolPermissionEvent } from "./permissions.ts";
@@ -31,9 +32,12 @@ import type { RunSpec } from "./protocol.ts";
 import type { SeedRetakePayload } from "./seed-retake.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
 import type { AppLookAccessPayload, JobEndedPayload, JobStartedPayload } from "./jobs.ts";
+import type { AgentWentAheadPayload } from "./plugin-hooks.ts";
+import type { ChatJudgeResultPayload } from "./chat-judge.ts";
 import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
 import type { ObserverCapturePayload } from "./observers.ts";
-import type { FinishCheckPayload } from "./finish-check.ts";
+import type { FinishCheckPayload, StillToFix } from "./finish-check.ts";
+import type { InstallFailure, PlayInstallPayload } from "./play-native.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -44,6 +48,8 @@ import type { FinishCheckPayload } from "./finish-check.ts";
 export const CustomEvent = {
   // assets and plugins
   AssetDelivered: "asset_delivered",
+  /** What each @ tag of a message gave the agent; written by the host after the message is sent. */
+  MentionTagged: "mention_tagged",
   BlenderAsset: "blender_asset",
   ConnectorTool: "connector_tool",
   /** A connector call on its way out, paired with its `connector_tool` by `callId`; written by the host only. */
@@ -67,6 +73,10 @@ export const CustomEvent = {
   JobEnded: "job_ended",
   /** Genex cannot see app windows yet: the macOS access the person must allow (shared/jobs.ts); written by the host only. */
   AppLookAccess: "app_look_access",
+  /** An agent went ahead of the person in what a plugin's lock guards, said once (shared/plugin-hooks.ts); written by the host only. */
+  AgentWentAhead: "agent_went_ahead",
+  /** A blind judge played the game for the chat's own session (shared/chat-judge.ts); written by the host only. */
+  ChatJudgeResult: "chat_judge_result",
   // the unattended run and its lead
   AutopilotBase: "autopilot_base",
   AutopilotBaseStarted: "autopilot_base_started",
@@ -153,6 +163,7 @@ export const CustomEvent = {
   ContractorHandoff: "contractor_handoff",
   ContractorSession: "contractor_session",
   ConversationCapabilitiesApplied: "conversation_capabilities_applied",
+  ConversationRewindUndone: "conversation_rewind_undone",
   ConversationRewound: "conversation_rewound",
   CoordinatorMessageDelivered: "coordinator_message_delivered",
   CoordinatorMessageHandled: "coordinator_message_handled",
@@ -176,6 +187,12 @@ export const CustomEvent = {
   ToolRegistryApplied: "tool_registry_applied",
   UserFeedback: "user_feedback",
   // the studio itself: its harness, learning and games
+  /** A game from Play installed on this computer (shared/play-native.ts); written by the host only. */
+  PlayInstallFinished: "play_install_finished",
+  /** A game from Play failed to install, and why; written by the host only. */
+  PlayInstallFailed: "play_install_failed",
+  /** genex.games has a newer build of an installed game; written by the host only. */
+  PlayUpdateAvailable: "play_update_available",
   BuildObservation: "build_observation",
   /** An agent asked for an extra crate in a Rust game (shared/crate-requests.ts); written by the host only. */
   CrateRequest: "crate_request",
@@ -303,6 +320,7 @@ export const StopCode = {
   CircuitBreak: "circuit-break",
   UsageLimit: "usage-limit",
   EngineExhausted: "engine-exhausted",
+  SandboxUnavailable: "sandbox-unavailable",
   ObservationDown: "observation-down",
   JudgeDown: "judge-down",
   SignIn: "sign-in",
@@ -339,6 +357,8 @@ export interface RunFinishedPayload extends RunScope {
   stoppedBecause?: string;
   /** What a Loop's reviewer found not done at its last no, one line each (a run that ended without its yes). */
   notDone?: string[];
+  /** A Loop's close without its yes, not a pause: its result card's lists, why it stopped, its hours (`stillToFixOf`). */
+  stillToFix?: StillToFix;
   executionStatus?: string;
   iterations?: unknown[];
   landed?: boolean;
@@ -599,6 +619,10 @@ export interface SelfChangePayload {
 
 export interface CustomEventMap {
   asset_delivered: AssetDeliveredPayload;
+  play_install_finished: PlayInstallPayload;
+  play_install_failed: PlayInstallPayload & { failure?: InstallFailure; neededBytes?: number };
+  play_update_available: PlayInstallPayload & { sizeBytes?: number };
+  mention_tagged: MentionTaggedPayload;
   /**
    * `facetId` and `beyond`: a card about a step beyond the ask names its part and the proposal, so a
    * restart of the part reads back what it already asked (seed loop/facet/beyond.ts).
@@ -664,8 +688,13 @@ export interface CustomEventMap {
   device_launch: DeviceLaunchPayload;
   game_crashed: GameCrashedPayload;
   engine_ejected: EngineEjectedPayload;
-  /** A chat rewound to before a message (`shared/chat-rewind.ts`); `files`: game files put back, null when none were asked for. */
-  conversation_rewound: Partial<ChatRewind> & { files?: number | null };
+  /**
+   * A chat rewound to before a message (`shared/chat-rewind.ts`); `files`: game files put back, null
+   * when none were asked for; `rewindId`: the saved folder that brings the newer version back.
+   */
+  conversation_rewound: Partial<ChatRewind> & { files?: number | null; rewindId?: string };
+  /** The newer version a rewind replaced came back; the chat stayed rewound. */
+  conversation_rewind_undone: RewindUndonePayload;
   checkpoint_skipped: CheckpointSkippedPayload;
   director_show: RunScope & { target?: string; root?: string };
   director_verdict: RunScope & { pass?: string; because?: string; decision?: { kept?: boolean | null } };
@@ -723,6 +752,8 @@ export interface CustomEventMap {
   job_started: Partial<JobStartedPayload>;
   job_ended: Partial<JobEndedPayload>;
   app_look_access: Partial<AppLookAccessPayload>;
+  agent_went_ahead: Partial<AgentWentAheadPayload>;
+  chat_judge_result: Partial<ChatJudgeResultPayload>;
   worker_started: WorkerStartedPayload;
   worker_finished: WorkerFinishedPayload;
   observer_capture: Partial<ObserverCapturePayload>;

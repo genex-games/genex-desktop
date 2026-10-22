@@ -117,6 +117,13 @@ const IN_SCOPE_WORDS = "what this build delivers, each item in the user's words"
 const CUT_WORDS =
   "what a game like this often has that this build will not (a reference is a look bar, not a feature list)";
 
+/**
+ * A launch's hours, for a Loop an Auto chat was asked for in words (delegated-turn.ts `autoLaunchFor`
+ * bridges this tool only while it has them); with Loop on the composer's hours win.
+ */
+const LOOP_HOURS_WORDS =
+  "Loop off only: the hours the user named, digits only (3, 1.5); leave it out when they said until done or named no time. With Loop on, the composer's hours win.";
+
 /** A launch's in-scope and cut lists as the run carries them to its scope (chat-dispatch.ts `intakeRun`); none when unnamed. */
 function scopeArgs(args: AnyRecord): { inScope?: string[]; cut?: string[] } {
   const inScope = scopeItems(args.in_scope);
@@ -538,6 +545,7 @@ export const tools: HarnessTool[] = [
         in_scope: list(IN_SCOPE_WORDS),
         cut: list(CUT_WORDS),
         targets: targetsParam(LAUNCH_TARGETS),
+        hours: { type: "number", description: LOOP_HOURS_WORDS },
       },
       required: ["goal", "direction"],
     },

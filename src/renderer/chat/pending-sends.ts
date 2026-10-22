@@ -55,6 +55,28 @@ export function newClientId(): string {
 /** How long an acknowledged send may wait for its row before the placeholder gives way. */
 export const PENDING_SEND_GRACE_MS = 10 * SECOND_MS;
 
+/** What a slash command starts with: words to the chat's session, never to a build's lead. */
+const SLASH = "/";
+
+/**
+ * Whether a running build's lead takes this send at once, as the harness hands one over (the
+ * seed's `loop/live-chat.ts` `forTheLead`): anything but a slash command, to a lead that takes the
+ * chat. Pictures go too: the chat saves them in the game for the lead. Not after Finish: the lead's
+ * line shuts as the build lands, with no record the chat could read, so such a send waits below.
+ */
+export function leadTakesSend(text: string, lead: { listens: boolean; finishing: boolean }): boolean {
+  return lead.listens && !lead.finishing && !text.trim().startsWith(SLASH);
+}
+
+/**
+ * Whether a send waits below what is under way: the chat's own work, or a running build that does
+ * not take it at once. One the build's lead takes at once joins the conversation above the
+ * build's card, as one to an idle chat does.
+ */
+export function waitsBehindWork(work: { chatWorking: boolean; runId: string | null; leadTakes: boolean }): boolean {
+  return work.chatWorking || (work.runId !== null && !work.leadTakes);
+}
+
 /** A follow-up waits below the current work; an idle chat answers at once. */
 export function sendPlacement(working: boolean, queue: QueueView): SendPlacement {
   if (working || queue.paused) return SendPlacement.Waiting;
@@ -116,19 +138,17 @@ function durableEntry(send: PendingSend, match: Matching): string | null {
 
 /**
  * Main routed it to plan review after all: its request shows in the plan, not as a bubble. Only
- * a plan this send asked for counts (its request ends with the send's words).
+ * a plan this send asked for counts (its request ends with the send's words, or has none when the
+ * send was pictures alone).
  */
 function wentToPlanReview(send: PendingSend, events: readonly EventEnvelope[]): boolean {
   const text = send.text.trim();
   return events.some((event) => {
     if (!newerThan(event, send.after)) return false;
     const review = customPayload(event.data, CustomEvent.PlanReview);
-    return (
-      review?.state === PlanReviewState.Generating &&
-      String(review.text ?? "")
-        .trim()
-        .endsWith(text)
-    );
+    if (review?.state !== PlanReviewState.Generating) return false;
+    const request = String(review.text ?? "").trim();
+    return text ? request.endsWith(text) : request === "";
   });
 }
 

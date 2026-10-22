@@ -93,8 +93,11 @@ export const FACT_ID = /^[a-z][a-z0-9-]{0,39}$/;
 /** Whether `value` is a well-formed fact id. */
 export const isFactId = (value: unknown): value is string => typeof value === "string" && FACT_ID.test(value);
 
-/** Where Genex never looks for a web game: build output, dependencies and vendored copies. */
-const NOT_A_WEB_GAME = ["**/node_modules/", "**/dist/", "**/build/", "**/out/", "**/vendor/"];
+/**
+ * Where Genex never looks for a web game: build output, dependencies, vendored copies and Unity's
+ * WebGL templates, whose index.html is a page Unity fills in at build time, not a game.
+ */
+const NOT_A_WEB_GAME = ["**/node_modules/", "**/dist/", "**/build/", "**/out/", "**/vendor/", "**/WebGLTemplates/"];
 
 /** The kinds Genex knows by their files, before any plugin. */
 export const CORE_FACT_RULES: readonly FactRule[] = [
@@ -173,6 +176,18 @@ export function globMatches(rel: string, glob: string): boolean {
   return false;
 }
 
+/**
+ * Whether a game-relative POSIX path is the file of one of `globs`, each parsed once: the files a
+ * walk keeps for these globs. A folder glob, or one outside the grammar, matches nothing.
+ */
+export function anyFileGlob(globs: readonly string[]): (rel: string) => boolean {
+  const parsed = globs.filter(isFileGlob).map(parseGlob);
+  return (rel) => {
+    const parts = rel.split("/");
+    return parsed.some((glob) => matchedPrefix(parts, glob) >= 0);
+  };
+}
+
 /** Whether a file (by its segments) lies inside a folder some folder glob names. */
 function isUnder(parts: readonly string[], folders: readonly ParsedGlob[]): boolean {
   for (let depth = 1; depth < parts.length; depth++) {
@@ -229,12 +244,11 @@ function factOfFile(
 }
 
 /**
- * The facts a list of files gives (POSIX paths relative to the game): each rule's matches, minus
- * any under one of its `notUnder` folders, settled (`settleFacts`; earlier rules win a tie, so the
- * core table goes first). A fact's path is the match's folder minus the glob's own folders
- * (`a/ProjectSettings/ProjectVersion.txt` gives `a`).
+ * The facts a list of files gives (POSIX paths relative to the game), before they are settled: each
+ * rule's matches in rule order, minus any under one of its `notUnder` folders. A fact's path is the
+ * match's folder minus the glob's own folders (`a/ProjectSettings/ProjectVersion.txt` gives `a`).
  */
-export function factsOfFiles(files: readonly string[], rules: readonly SourcedFactRule[]): ProjectFact[] {
+export function foundFacts(files: readonly string[], rules: readonly SourcedFactRule[]): ProjectFact[] {
   const found: ProjectFact[] = [];
   const split = files.map((file) => file.split("/"));
   for (const { rule, source } of rules) {
@@ -245,7 +259,75 @@ export function factsOfFiles(files: readonly string[], rules: readonly SourcedFa
       if (at !== undefined) found.push({ id: rule.fact, path: at, source });
     }
   }
-  return settleFacts(found);
+  return found;
+}
+
+/**
+ * The facts a list of files gives (`foundFacts`), settled (`settleFacts`; earlier rules win a tie,
+ * so the core table goes first).
+ */
+export function factsOfFiles(files: readonly string[], rules: readonly SourcedFactRule[]): ProjectFact[] {
+  return settleFacts(foundFacts(files, rules));
+}
+
+/** Where a game engine puts the game's web version (Godot's web export, Unity's WebGL build): `web/` at its root. */
+const ENGINE_WEB_FOLDER = "web";
+
+/** Whether a folder of the game is `ENGINE_WEB_FOLDER`, in any case: `Web/` is the same folder on macOS and Windows. */
+export const isEngineWebFolder = (folder: string): boolean => folder.toLowerCase() === ENGINE_WEB_FOLDER;
+
+/** Whether a fact sits in `ENGINE_WEB_FOLDER`. */
+const inEngineWebFolder = (fact: FactRef): boolean => isEngineWebFolder(fact.path);
+
+/** The kinds whose engine exports the game for the web into `ENGINE_WEB_FOLDER`. */
+const WEB_EXPORTING: ReadonlySet<string> = new Set<string>([CoreFact.UnityProject, CoreFact.GodotProject]);
+
+/**
+ * The folder of a Unity or Godot game's web version (`withEngineWebVersion`), the build its engine
+ * makes again from the project; null for any other game, and for one whose root page is its own.
+ */
+export function engineWebFolderOf(game: GameKind): string | null {
+  const exports = game.facts.some((fact) => WEB_EXPORTING.has(fact.id));
+  const webVersion = game.facts.find((fact) => fact.id === CoreFact.WebGame && inEngineWebFolder(fact));
+  return exports && webVersion ? webVersion.path : null;
+}
+
+/**
+ * A game as its skills read it: a Unity or Godot game's web version left out, since it is the build
+ * its engine exports and no web game's know-how fits it. Any other game is as it is.
+ */
+export function withoutEngineWebVersion(game: GameKind): GameKind {
+  const web = engineWebFolderOf(game);
+  if (web === null) return game;
+  return { ...game, facts: game.facts.filter((fact) => fact.id !== CoreFact.WebGame || fact.path !== web) };
+}
+
+/**
+ * A Unity or Godot game's web version among `found` (the folder's facts before settling, which drops
+ * a web game below another): its web game in `ENGINE_WEB_FOLDER`; null for any other game.
+ */
+export function engineWebVersion(listed: readonly FactRef[], found: readonly ProjectFact[]): ProjectFact | null {
+  if (!listed.some((fact) => WEB_EXPORTING.has(fact.id))) return null;
+  return found.find((fact) => fact.id === CoreFact.WebGame && inEngineWebFolder(fact)) ?? null;
+}
+
+/**
+ * A Unity or Godot game's listed facts with its web version (`engineWebVersion`) as its web game. A
+ * web game at the root beside it is left out when it is Genex's web starter page nobody built on
+ * (`starterAtRoot`), whether or not the game's port was recorded; a root page of the folder's own,
+ * or a web game built from the starter, keeps its place and the facts are returned as they are, as
+ * are any other game's.
+ */
+export function withEngineWebVersion(
+  listed: readonly ProjectFact[],
+  found: readonly ProjectFact[],
+  starterAtRoot: boolean,
+): ProjectFact[] {
+  const webVersion = engineWebVersion(listed, found);
+  const ownRootPage = hasFact(listed, CoreFact.WebGame, ROOT) && !starterAtRoot;
+  if (!webVersion || ownRootPage) return [...listed];
+  const besides = listed.filter((fact) => !(fact.id === CoreFact.WebGame && fact.path === ROOT));
+  return settleFacts([...besides, webVersion]);
 }
 
 /**
@@ -376,6 +458,7 @@ export function scopePaths(scope: readonly string[] | undefined, game: GameKind)
 export const ENGINE_FACT: Readonly<Record<GameEngine, CoreFact>> = {
   [GameEngine.Web]: CoreFact.WebGame,
   [GameEngine.Unreal]: CoreFact.UnrealProject,
+  [GameEngine.Godot]: CoreFact.GodotProject,
 };
 
 /** The facts an engine of the older vocabulary stands for: its fact at the game's root. */

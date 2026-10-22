@@ -1,12 +1,14 @@
 import { GameStack } from "./game-project.ts";
 import type { PluginToolAsset } from "./asset-making.ts";
-import type { GameEngine } from "./game-engine.ts";
+import type { EngineCatalog, EngineDeclaration, EngineId, GameEngine } from "./game-engine.ts";
 import type { RuntimeInstallPhase } from "./model-install.ts";
 import type { ObserveContext, PluginObserver } from "./observers.ts";
 import type { HookContext, PluginHook, PluginLock } from "./plugin-hooks.ts";
-import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches } from "./project-facts.ts";
+import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches, withoutEngineWebVersion } from "./project-facts.ts";
 import type { WorkerIsolation } from "./workers.ts";
 import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
+import { MINUTE_MS } from "./duration.ts";
+import { t } from "./i18n.ts";
 
 /** Where a plugin's native runtime stands on this Mac (`PluginNativeStatus.state`). */
 export const NativeRuntimeState = {
@@ -27,23 +29,55 @@ export const NativeJobState = {
 } as const;
 export type NativeJobState = (typeof NativeJobState)[keyof typeof NativeJobState];
 
+/**
+ * The computers a pinned runtime download is for (`PluginRuntimePin.platform`): operating system and
+ * processor, as Node names them. Published in plugin manifests: never rename a value.
+ */
+export const NativePlatform = {
+  MacArm64: "darwin-arm64",
+  WindowsX64: "win32-x64",
+  WindowsArm64: "win32-arm64",
+} as const;
+export type NativePlatform = (typeof NativePlatform)[keyof typeof NativePlatform];
+
+/** The archive a pinned runtime comes in. Published in plugin manifests: never rename a value. */
+export const RuntimeArchive = { Dmg: "dmg", TarGz: "tar.gz", Zip: "zip" } as const;
+export type RuntimeArchive = (typeof RuntimeArchive)[keyof typeof RuntimeArchive];
+
+/** One pinned runtime download behind a confirmed setup action, for one kind of computer. */
+export interface PluginRuntimePin {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: RuntimeArchive;
+  entry: string;
+  executable: string;
+  notices: string[];
+  /** The computer this download runs on; left out, a Mac with Apple silicon. */
+  platform?: NativePlatform;
+}
+
 /** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
+  install?: PluginRuntimePin;
+  /** Pinned downloads for other computers, one per `platform`. */
+  installs?: PluginRuntimePin[];
+}
+
+/** The pinned download of `runtime` for `platform` (this computer's by default), if it has one. */
+export function runtimePinFor(
+  runtime: Pick<PluginNativeRuntime, "install" | "installs">,
+  platform: string,
+): PluginRuntimePin | undefined {
+  const pins = [...(runtime.install ? [runtime.install] : []), ...(runtime.installs ?? [])];
+  return pins.find((pin) => (pin.platform ?? NativePlatform.MacArm64) === platform);
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
 export interface PluginNativeJob {
@@ -63,6 +97,8 @@ export interface PluginNativeStatus {
   path?: string;
   version?: string;
   detail: string;
+  /** The pinned download for this computer, when the runtime has one: its setup action and size. */
+  download?: { action: string; url: string; bytes: number };
 }
 export interface PluginRuntimeInstall {
   runtime: string;
@@ -177,15 +213,49 @@ export const PluginCallBlocker = {
 export type PluginCallBlocker = (typeof PluginCallBlocker)[keyof typeof PluginCallBlocker];
 /**
  * Why a plugin or connector call ended before its answer, so whether it took effect is unknown:
- * the harness that made it ended, its plugin's backend ended, or the app it drives went away (an
- * editor crash). Written in call records: never rename a value.
+ * the harness that made it ended, its plugin's backend ended, the app it drives went away (an
+ * editor crash), or the session made it after its turn had ended, when no answer could reach it.
+ * Written in call records: never rename a value.
  */
 export const CallCutOff = {
   HarnessEnded: "harness-ended",
   PluginEnded: "plugin-ended",
   AppLost: "app-lost",
+  TurnEnded: "turn-ended",
 } as const;
 export type CallCutOff = (typeof CallCutOff)[keyof typeof CallCutOff];
+/**
+ * The one text parameter of a confirmed tool that the person may edit on its card (API 3): the
+ * card shows the agent's value under its question, in a field with this label, and the person's
+ * Allow sends their edit as that parameter.
+ */
+export interface PluginConfirmationInput {
+  parameter: string;
+  /** One plain line of at most {@link CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters. */
+  label: string;
+}
+/** The longest label a card's field carries. */
+export const CONFIRMATION_INPUT_LABEL_MAX_CHARS = 60;
+/** The longest edit a card's field sends. */
+export const CONFIRMATION_INPUT_MAX_CHARS = 200;
+/** The last character code of the ASCII controls, and DEL: characters that break a plain line. */
+const LAST_CONTROL = 0x1f;
+const DELETE = 0x7f;
+const breaksLine = (char: string) => {
+  const code = char.charCodeAt(0);
+  return code <= LAST_CONTROL || code === DELETE;
+};
+
+/**
+ * The person's edit on a card, as the host takes it: one plain line, trimmed, of 1 to
+ * {@link CONFIRMATION_INPUT_MAX_CHARS} characters; anything else is no edit (undefined).
+ */
+export function confirmationInputValue(value: unknown): string | undefined {
+  if (typeof value !== "string" || [...value].some(breaksLine)) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= CONFIRMATION_INPUT_MAX_CHARS ? trimmed : undefined;
+}
+
 /**
  * A tool as the manifest declares it. `host`, `audience`, `facts`, `makes`, `needs` and `ready`
  * never reach an agent: the tool list the registry serves is plain `PluginTool`, which the harness
@@ -209,6 +279,13 @@ export interface PluginManifestTool extends PluginTool {
    * Assets canvas and in the chat, in the spot its files will land.
    */
   asset?: PluginToolAsset;
+  /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
+  confirmationInput?: PluginConfirmationInput;
+  /**
+   * API 3: the longest one call may run in the backend when that is longer than the host's ceiling
+   * (a game engine's import or export), at most {@link PLUGIN_TOOL_MAX_TIMEOUT_MS}.
+   */
+  timeoutMs?: number;
 }
 /** Whether agents are handed a manifest tool: every one but those only the harness calls. */
 export const isAgentTool = (tool: Pick<PluginManifestTool, "audience">): boolean =>
@@ -306,8 +383,8 @@ export interface PluginReach {
 /**
  * What of one plugin reaches a session for a game (`{ facts: [] }`: no kind yet, served as a web
  * game; one of a kind Genex can't name is served by no fact), narrowed to `offered` when the session was: the agent tools whose `facts` reach; the skills
- * whose scope reaches and, when they name tools, one of those reaches too (a skill follows its
- * tools); the skill reader while a file skill reaches. A narrowed session none of whose offered
+ * whose scope reaches, never through a Unity or Godot game's web export, and, when they name tools,
+ * one of those reaches too (a skill follows its tools); the skill reader while a file skill reaches. A narrowed session none of whose offered
  * tools the plugin has gets nothing of it, not even its skills. The registry's snapshot and the
  * capability facts both read this one rule.
  */
@@ -321,8 +398,9 @@ export function pluginReach(
   );
   if (offered && !tools.length) return { tools, skills: [], skillTool: false };
   const reaching = new Set(tools.map((t) => t.name));
+  const known = withoutEngineWebVersion(game);
   const skills = manifest.skills.filter(
-    (s) => scopeReaches(skillScope(s), game) && (!s.tools || s.tools.some((name) => reaching.has(name))),
+    (s) => scopeReaches(skillScope(s), known) && (!s.tools || s.tools.some((name) => reaching.has(name))),
   );
   return { tools, skills, skillTool: skills.some(isFileSkill) };
 }
@@ -374,7 +452,17 @@ export type PluginToolbarTarget =
   | { kind: "action"; name: string; args?: Record<string, PluginScalar> }
   | { kind: "panel"; id: string };
 /** Host icons a toolbar item may name instead of drawing its own glyph. */
-export const TOOLBAR_ICON_NAMES = ["globe", "export", "play", "image", "box", "boxes", "unreal"] as const;
+export const TOOLBAR_ICON_NAMES = [
+  "globe",
+  "export",
+  "play",
+  "image",
+  "box",
+  "boxes",
+  "unreal",
+  "godot",
+  "unity",
+] as const;
 export type ToolbarIconName = (typeof TOOLBAR_ICON_NAMES)[number];
 export const isToolbarIconName = (value: unknown): value is ToolbarIconName =>
   (TOOLBAR_ICON_NAMES as readonly unknown[]).includes(value);
@@ -385,6 +473,11 @@ export interface PluginToolbarItem {
   /** A glyph of at most 4 characters, or one of TOOLBAR_ICON_NAMES. */
   icon?: string;
   requiresProject?: boolean;
+  /**
+   * API 3: the facts of the games whose strip shows this button (an engine's project, say); every
+   * game when absent. Its status can still bring it out on another game (`shown`).
+   */
+  facts?: string[];
   target: PluginToolbarTarget;
   /** Names a declared action without confirmation that returns a PluginToolbarStatus. */
   status?: string;
@@ -398,6 +491,8 @@ export interface PluginToolbarStatus {
   attention?: boolean;
   /** The badge drawn as a dot in its tone (ok green, warn amber, err red, info grey), its word said in the tooltip. */
   dot?: boolean;
+  /** A button scoped to `facts` shows on this game anyway (its chat chose the engine before the project exists). */
+  shown?: boolean;
 }
 /**
  * Where one environment variable of a plugin's MCP server gets its value. The manifest names a
@@ -493,6 +588,11 @@ export interface PluginManifest {
    */
   detect?: FactRule[];
   /**
+   * API 3, capability `game-engine`: the engine the plugin declares, by its own id
+   * (`shared/game-engine.ts`): what a game linked to its projects builds in.
+   */
+  engine?: EngineDeclaration;
+  /**
    * API 3: what history (`ignore`) and writers' copies (`copySkip`) leave out of a folder holding
    * the plugin's facts, as patterns placed at each fact's folder (`shared/project-workspace.ts`).
    * `facts` names the facts it reaches; without it, those the plugin's `detect` declares.
@@ -519,6 +619,11 @@ export interface PluginManifest {
    * Live view it shows (`shared/observers.ts`).
    */
   observers?: PluginObserver[];
+  /**
+   * API 3, capability `game-engine` with an `engine`: the blind judges that play the engine's games
+   * in its editor, each with its own brief, players and probe (`PluginJudge`).
+   */
+  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -526,7 +631,53 @@ export interface PluginManifest {
    * package, square, full-bleed (Studio rounds the corners). Without one Studio shows its initial.
    */
   icon?: string;
+  /** What to do to start using it, for its page: plain one-line steps Genex draws ({@link isPluginSetup}). */
+  setup?: string[];
 }
+
+/** The most judges one manifest declares. */
+export const MAX_PLUGIN_JUDGES = 8;
+/** The longest judge brief, in characters: a package file read and checked at install. */
+export const MAX_JUDGE_BRIEF_CHARS = 16_000;
+
+/**
+ * API 3: a blind judge an engine plugin declares (`judges`). It plays a game in the engine's editor
+ * through the play tools, never sees code, and answers from playing. Data only: the host runs it.
+ */
+export interface PluginJudge {
+  /** Unique in the manifest: what an agent names the judge by. */
+  id: string;
+  /** What the person and the agent read it as, 1-40 characters on one line. */
+  label: string;
+  /** The facts of the games it judges; every game the plugin plays in its editor when absent. */
+  facts?: string[];
+  /** The package's Markdown file holding its brief, appended to the judge's rubric (at most `MAX_JUDGE_BRIEF_CHARS`). */
+  brief: string;
+  /** How many players its play opens, 1 to the engine's `play.players`; one when absent. */
+  players?: number;
+  /**
+   * A quiet harness tool of the plugin, needing the play tools' locks, that the host runs once in
+   * the judge's play right after it opens: its `note` and `images` (measurements and pictures,
+   * never source) open the judge's first message.
+   */
+  probe?: string;
+}
+
+/** A judge as a game's descriptor and an agent name it. */
+export type JudgeRef = Pick<PluginJudge, "id" | "label">;
+
+/** The judges that reach a game: those naming no facts, and those whose facts the game holds. */
+export function judgesFor(judges: readonly PluginJudge[] | undefined, game: GameKind): PluginJudge[] {
+  return (judges ?? []).filter((judge) => scopeReaches(judge.facts, game));
+}
+
+/** The engines `manifests` declare, by id: the first declaration of an id wins. */
+export function engineCatalog(manifests: readonly Pick<PluginManifest, "engine">[]): EngineCatalog {
+  const catalog = new Map<EngineId, EngineDeclaration>();
+  for (const { engine } of manifests) if (engine && !catalog.has(engine.id)) catalog.set(engine.id, engine);
+  return catalog;
+}
+
 /** Where an installed plugin came from. Persisted in install records: never rename a value. */
 export const PluginSourceKind = {
   Bundled: "bundled",
@@ -695,6 +846,11 @@ export interface PluginConsentEvent {
   alwaysOffered?: boolean;
   /** Approved with Always allow: the tool runs without asking from now on. */
   always?: boolean;
+  /**
+   * A card with a field the person may edit (`confirmationInput`): its label and the agent's value;
+   * on an approval, the value the call was made with.
+   */
+  input?: { label: string; value: string };
   state: "pending" | "approved" | "declined";
   by?: PluginConsentBy;
   expiresAt?: number;
@@ -710,6 +866,28 @@ export type PluginTier = (typeof PluginTier)[keyof typeof PluginTier];
  * guide links, and what `plugin:new` points an author and their coding agent at.
  */
 export const PLUGIN_GUIDE_URL = "https://github.com/genex-games/genex-desktop/blob/dev/docs/PLUGIN_GUIDE.md";
+/** How many setup steps a plugin's page shows, and how long each may be. */
+export const PLUGIN_SETUP_STEPS = 6;
+export const PLUGIN_SETUP_STEP_CHARS = 200;
+/** Control characters, line breaks and text direction overrides or isolates: none belongs in a step. */
+const UNSAFE_STEP_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+
+/**
+ * Whether a value is a plugin page's setup steps: one to six short lines of plain text the author
+ * writes and Genex draws itself, as text, never as markup. The catalog's validator
+ * (`marketplace/template/scripts/check-catalog.mjs`) applies the same rule.
+ */
+export function isPluginSetup(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > PLUGIN_SETUP_STEPS) return false;
+  return value.every(isSetupStep);
+}
+
+const isSetupStep = (step: unknown): boolean =>
+  typeof step === "string" &&
+  step.trim() !== "" &&
+  step.length <= PLUGIN_SETUP_STEP_CHARS &&
+  !UNSAFE_STEP_CHARACTER.test(step);
+
 export const PLUGIN_CATEGORIES = ["assets", "publishing", "tools", "analytics", "other"] as const;
 export type PluginCategory = (typeof PLUGIN_CATEGORIES)[number];
 export interface PluginIndexEntry {
@@ -728,6 +906,8 @@ export interface PluginIndexEntry {
   capabilities: string[];
   minStudioVersion?: string;
   docsUrl?: string;
+  /** The steps its page shows before it is installed, copied from its manifest ({@link isPluginSetup}). */
+  setup?: string[];
   artifact?: { url: string; sha256: string };
 }
 export interface PluginIndex {
@@ -832,6 +1012,37 @@ export type GithubLookup =
   | { kind: typeof GithubLookupKind.Choose; repo: string; version: GithubVersion; plugins: GithubPluginFound[] }
   | { kind: typeof GithubLookupKind.Problem; problem: GithubLookupProblem; detail?: string };
 
+/**
+ * Consent cards the studio itself asks with, not a plugin: their source id, and the name the card
+ * shows for it. Persisted in every log: never rename an id.
+ */
+export const StudioConsentSource = {
+  Desktop: "studio-desktop",
+  /** Turning computer control on for every chat, asked when a plugin's Do it for me finds it off. */
+  ComputerSetting: "studio-computer-setting",
+} as const;
+export type StudioConsentSource = (typeof StudioConsentSource)[keyof typeof StudioConsentSource];
+
+/**
+ * The question the computer-setting card asks: the chat's card shows it as its title, and the
+ * consent record keeps it as the prompt, so both say the same words.
+ */
+export function computerSettingQuestion(): string {
+  return t(
+    "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.",
+  );
+}
+
+/** The name a studio consent card shows; getters, as main reads it in the language it sets after loading. */
+export const STUDIO_CONSENT_NAMES: Readonly<Record<StudioConsentSource, string>> = {
+  get [StudioConsentSource.Desktop]() {
+    return t("Computer control");
+  },
+  get [StudioConsentSource.ComputerSetting]() {
+    return t("Computer control");
+  },
+};
+
 export interface PluginBinding {
   project: string;
   directory: string;
@@ -888,8 +1099,119 @@ export const PluginService = {
   GameCreate: "game.create",
   /** `game-engine`: the games whose run is going now, each with the project this plugin linked it to. */
   GameEngineRuns: "game.engine.runs",
+  /**
+   * `game-engine`: Do it for me. Hands a setup task to the bound game's chat, whose own session
+   * clicks it with computer control, limited to the apps the plugin's `engine.apps` declares.
+   */
+  GameEngineAssist: "game.engine.assist",
+  /**
+   * `game-engine`: whether Do it for me can run for this plugin on this computer: computer control
+   * has a desktop and its driver, and the plugin's engine declares apps here. Asks the person nothing.
+   */
+  GameEngineCanAssist: "game.engine.canAssist",
+  /**
+   * `game-engine`: a long job of the plugin's (an engine's build or package) started in Genex's
+   * process sandbox, writing only folders inside the bound game; answers its id at once, and the
+   * host owns the job from then on.
+   */
+  SandboxRun: "sandbox.run",
+  /** `game-engine`: how one of the plugin's sandbox jobs stands, or null for one the host doesn't know. */
+  SandboxResult: "sandbox.result",
+  /** `game-engine`: ends one of the plugin's sandbox jobs with its process tree. */
+  SandboxStop: "sandbox.stop",
 } as const;
 export type PluginService = (typeof PluginService)[keyof typeof PluginService];
+
+/** The longest one call of a plugin tool may declare (`timeoutMs`): within an agent's own call deadline. */
+export const PLUGIN_TOOL_MAX_TIMEOUT_MS = 9 * MINUTE_MS;
+/** The longest a plugin's sandbox job may be given: an Unreal plugin's package takes up to 45 minutes. */
+export const PLUGIN_SANDBOX_MAX_TIMEOUT_MS = 60 * MINUTE_MS;
+/** How many of one plugin's sandbox jobs may run at once; another is refused until one ends. */
+export const PLUGIN_SANDBOX_MAX_RUNNING = 2;
+/** The shortest deadline a sandbox job may ask for. */
+export const PLUGIN_SANDBOX_MIN_TIMEOUT_MS = 1000;
+/** How much of each of a sandbox job's stdout and stderr the host keeps, in characters, from its end. */
+export const PLUGIN_SANDBOX_OUTPUT_CHARS = 4 * 1024 * 1024;
+
+/** Where a plugin's sandbox job is (`PluginSandboxJob.state`). Published to plugins: never rename a value. */
+export const SandboxJobState = {
+  Running: "running",
+  /** The program ended by itself: `exitCode` says how. */
+  Exited: "exited",
+  /** Ended at its deadline. */
+  TimedOut: "timed-out",
+  /** Ended by `sandbox.stop`, or because its plugin stopped, turned off or was removed. */
+  Stopped: "stopped",
+  /** Never started: `reason` says why. */
+  Failed: "failed",
+} as const;
+export type SandboxJobState = (typeof SandboxJobState)[keyof typeof SandboxJobState];
+
+/**
+ * `sandbox.run`'s arguments: the program (inside one of `reads`), its arguments, the folders it
+ * reads (the engine, the project), the folders inside the bound game it writes, the variables that
+ * name a scratch folder of the job's own (`scratchEnv`), further variables, and its deadline.
+ * Mirrors `PluginSandboxRunArgs` in `src/plugin-sdk/index.d.ts`.
+ */
+export interface PluginSandboxRunArgs {
+  program: string;
+  args: string[];
+  reads: string[];
+  writes: string[];
+  scratchEnv?: string[];
+  env?: Record<string, string>;
+  timeoutMs: number;
+}
+
+/** One sandbox job as `sandbox.result` answers it. Mirrors `PluginSandboxJob` in the SDK. */
+export interface PluginSandboxJob {
+  id: string;
+  state: SandboxJobState;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  /** Whether either output stream was cut at {@link PLUGIN_SANDBOX_OUTPUT_CHARS}. */
+  truncated?: boolean;
+  seconds?: number;
+  reason?: string;
+}
+
+/** The longest task a plugin may hand to the chat with `game.engine.assist`. */
+export const ENGINE_ASSIST_TASK_MAX_CHARS = 300;
+
+/** Why `game.engine.assist` started nothing. */
+export const EngineAssistRefusal = {
+  /** No computer control on this computer: no desktop driver (Linux, or a development build without one). */
+  Unavailable: "unavailable",
+  /** The person said no to the task's card or to turning computer control on. */
+  Declined: "declined",
+  /** The call names no game, so there is no chat to hand the task to. */
+  NoChat: "no-chat",
+  /**
+   * Not the person's: neither an action they pressed nor a tool call whose card they approved, from a
+   * plugin that did not come with Genex, or any Genex moment's or observer's step.
+   */
+  NotPerson: "not-person",
+  /** The plugin's engine declares no apps for this computer, so there is nothing it may click. */
+  NoApps: "no-apps",
+  /**
+   * An assist the person didn't ask for, while the chat's own assist is under way: the turn that
+   * answers it does the clicking, so nothing more is posted.
+   */
+  InAssist: "in-assist",
+} as const;
+export type EngineAssistRefusal = (typeof EngineAssistRefusal)[keyof typeof EngineAssistRefusal];
+
+/** `game.engine.assist`'s arguments: the task, one plain line of at most {@link ENGINE_ASSIST_TASK_MAX_CHARS} characters. */
+export interface EngineAssistArgs {
+  task: string;
+}
+
+/** `game.engine.assist`'s answer: whether the task's turn was started, and why not. */
+export interface EngineAssistAnswer {
+  started: boolean;
+  reason?: EngineAssistRefusal;
+}
 
 /** The folder in a `game-engine` plugin's storage where the host keeps each game's link, `<game>.json`. */
 export const ENGINE_LINKS_FOLDER = "links";
@@ -926,7 +1248,7 @@ export const PluginStillProblemCode = {
   ViewUnknown: "view_unknown",
   ViewFailed: "view_failed",
   CaptureFailed: "capture_failed",
-  /** Not even the lowest-quality JPEG fits `maxBytes`. */
+  /** Not even the lowest-quality JPEG (or, for a clip, the lowest bitrate) fits `maxBytes`. */
   TooLarge: "too_large",
   Timeout: "timeout",
 } as const;
@@ -952,6 +1274,61 @@ export interface PluginStillProblem {
 }
 /** What `observe` with a `still` answers. A host older than the option answers an ordinary observation instead. */
 export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginStillProblem };
+
+/** The least, the most and the default length of a clip, in seconds of the game running. */
+export const PLUGIN_CLIP_MIN_SECONDS = 2;
+export const PLUGIN_CLIP_MAX_SECONDS = 10;
+export const PLUGIN_CLIP_DEFAULT_SECONDS = 5;
+/** The least, the most and the default frames per second a clip records. */
+export const PLUGIN_CLIP_MIN_FPS = 15;
+export const PLUGIN_CLIP_MAX_FPS = 30;
+export const PLUGIN_CLIP_DEFAULT_FPS = 30;
+/** The least, the most and the default size of a clip's encoded video. */
+export const PLUGIN_CLIP_MIN_BYTES = 256 * 1024;
+export const PLUGIN_CLIP_MAX_BYTES = 8 * 1024 * 1024;
+export const PLUGIN_CLIP_DEFAULT_BYTES = 8 * 1024 * 1024;
+
+/** How a clip's video is contained: MP4 (H.264) where the recorder can, else WebM. Published to plugins: never rename a value. */
+export const PluginClipMimeType = { Webm: "video/webm", Mp4: "video/mp4" } as const;
+export type PluginClipMimeType = (typeof PluginClipMimeType)[keyof typeof PluginClipMimeType];
+
+/**
+ * `observe` with a `clip` (API 3, additive): `seconds` of the bound game running from the start
+ * of a moment a demo stages, recorded on a hidden window of its own at `width`×`height`, at `fps`,
+ * in at most `maxBytes`. Mirrors `PluginClipRequest` in `src/plugin-sdk/index.d.ts`.
+ */
+export interface PluginClipRequest {
+  demo: string;
+  width: number;
+  height: number;
+  seconds?: number;
+  fps?: number;
+  maxBytes?: number;
+}
+/** A clip request as the host checked it: whole-pixel sides and every default filled in. */
+export interface PluginClipOrder {
+  demo: string;
+  width: number;
+  height: number;
+  seconds: number;
+  fps: number;
+  maxBytes: number;
+}
+/** A clip: the video, its size and length, the demo that staged it, a poster and how much moved. */
+export interface PluginClip {
+  video: Uint8Array;
+  mimeType: PluginClipMimeType;
+  width: number;
+  height: number;
+  durationMs: number;
+  view: { demo: string };
+  /** JPEG of the first recorded frame, at most 1280 px on its long side. */
+  poster: Uint8Array;
+  /** 0–1: the share of sampled frame pairs that differ visibly; a frozen recording is about 0. */
+  motion: number;
+}
+/** What `observe` with a `clip` answers; the problem codes are a still's. A host older than the option answers an ordinary observation. */
+export type PluginClipAnswer = { clip: PluginClip } | { clipProblem: PluginStillProblem };
 
 /** Whether a plugin's own saved account is usable right now (`PluginRegistry.accountState`). */
 export const PluginAccountState = {

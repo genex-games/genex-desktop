@@ -7,6 +7,8 @@ import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { t } from "../../shared/i18n.ts";
+import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineId, type SubscriptionId } from "../../shared/providers.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { MarkState } from "./art.ts";
@@ -15,7 +17,7 @@ import { STORAGE_KEYS } from "../storage.ts";
 /** Set once the welcome is finished or skipped on this profile. */
 export const WELCOMED_KEY = STORAGE_KEYS.welcomed;
 /** The demo prompt names the game the Judges' screen plays. */
-export const DEMO_IDEA = "A tiny space shooter in a field of asteroids";
+export const DEMO_IDEA = t("A tiny space shooter in a field of asteroids");
 
 /** Welcome only a first launch: the session allows it, the library is empty and this profile was never welcomed. */
 export function shouldWelcome(allowed: boolean | undefined, games: number, storage: Pick<Storage, "getItem">): boolean {
@@ -27,26 +29,31 @@ export type Subscription = SubscriptionId;
 /** The subscriptions, in the order their buttons stand. */
 export const SUBSCRIPTIONS: readonly Subscription[] = [EngineId.ClaudeCode, EngineId.Codex];
 
-type Words = Record<"connect" | "install" | "installing" | "update" | "updating" | "recheck" | "on", string>;
+type Words = Record<
+  "connect" | "install" | "installing" | "update" | "updating" | "recheck" | "on" | "notStarting",
+  string
+>;
 
 const WORDS: Record<Subscription, Words> = {
   [EngineId.ClaudeCode]: {
-    connect: "Connect Claude Code",
-    install: "Set up Claude Code",
-    installing: "Setting up Claude Code…",
-    update: "Update Claude Code",
-    updating: "Updating Claude Code…",
-    recheck: "Check Claude Code again",
-    on: "Claude Code connected",
+    connect: t("Connect Claude Code"),
+    install: t("Set up Claude Code"),
+    installing: t("Setting up Claude Code…"),
+    update: t("Update Claude Code"),
+    updating: t("Updating Claude Code…"),
+    recheck: t("Check Claude Code again"),
+    on: t("Claude Code connected"),
+    notStarting: t("Claude Code is signed in, but Genex couldn't start it."),
   },
   [EngineId.Codex]: {
-    connect: "Connect ChatGPT",
-    install: "Set up Codex",
-    installing: "Setting up Codex…",
-    update: "Update Codex",
-    updating: "Updating Codex…",
-    recheck: "Check Codex again",
-    on: "ChatGPT connected",
+    connect: t("Connect ChatGPT"),
+    install: t("Set up Codex"),
+    installing: t("Setting up Codex…"),
+    update: t("Update Codex"),
+    updating: t("Updating Codex…"),
+    recheck: t("Check Codex again"),
+    on: t("ChatGPT connected"),
+    notStarting: t("Codex is signed in, but Genex couldn't start it."),
   },
 };
 
@@ -77,7 +84,7 @@ export type ConnectView =
   | { kind: typeof ConnectViewKind.On; label: string };
 
 export interface ConnectInput {
-  engine: Pick<EngineDescriptor, "status" | "account"> | undefined;
+  engine: Pick<EngineDescriptor, "status" | "account" | "catalog"> | undefined;
   claude?: ClaudeLoginState["phase"];
   codexActive?: boolean;
   codex?: CodexLoginState["phase"];
@@ -97,16 +104,16 @@ export interface ConnectInput {
 function claudeSignInView(phase: ConnectInput["claude"], pastingCode: boolean): ConnectView | undefined {
   switch (phase) {
     case "starting":
-      return { kind: ConnectViewKind.Busy, label: "Opening sign-in…", cancel: true };
+      return { kind: ConnectViewKind.Busy, label: t("Opening sign-in…"), cancel: true };
     case "browser":
-      return { kind: ConnectViewKind.Busy, label: "Finish in your browser", cancel: true };
+      return { kind: ConnectViewKind.Busy, label: t("Finish in your browser"), cancel: true };
     case "code":
       if (pastingCode) return { kind: ConnectViewKind.Code };
-      return { kind: ConnectViewKind.Busy, label: "Finish in your browser", cancel: true, offersCode: true };
+      return { kind: ConnectViewKind.Busy, label: t("Finish in your browser"), cancel: true, offersCode: true };
     case "verifying":
-      return { kind: ConnectViewKind.Busy, label: "Checking…", cancel: false };
+      return { kind: ConnectViewKind.Busy, label: t("Checking…"), cancel: false };
     case "terminal":
-      return { kind: ConnectViewKind.Action, action: ConnectAction.Terminal, label: "Finish in the terminal" };
+      return { kind: ConnectViewKind.Action, action: ConnectAction.Terminal, label: t("Finish in the terminal") };
     default:
       return undefined;
   }
@@ -115,7 +122,7 @@ function claudeSignInView(phase: ConnectInput["claude"], pastingCode: boolean): 
 /** The subscription's one-line button for its engine and sign-in state. */
 export function connectView(id: Subscription, input: ConnectInput): ConnectView {
   const words = WORDS[id];
-  if (input.engine?.status.code === EngineStatusCode.Ready) return { kind: ConnectViewKind.On, label: words.on };
+  if (input.engine?.status.code === EngineStatusCode.Ready) return readyView(words, input);
   const signingIn = id === EngineId.ClaudeCode ? claudeSignInView(input.claude, input.pastingCode === true) : undefined;
   if (signingIn) return signingIn;
   // Codex signs in in the browser; while it checks the sign-in there is nothing left to cancel.
@@ -123,11 +130,34 @@ export function connectView(id: Subscription, input: ConnectInput): ConnectView 
     const verifying = input.codex === "verifying";
     return {
       kind: ConnectViewKind.Busy,
-      label: verifying ? "Checking…" : "Finish in your browser",
+      label: verifying ? t("Checking…") : t("Finish in your browser"),
       cancel: !verifying,
     };
   }
   return cliView(words, input);
+}
+
+/**
+ * Whether a signed-in CLI failed to start for Genex: its model list is read by starting it, so a
+ * list that never loaded means no build could run either, whatever the sign-in says.
+ */
+function failsToStart(engine: ConnectInput["engine"]): boolean {
+  return engine?.catalog?.state === ModelCatalogState.Unavailable;
+}
+
+/** A signed-in CLI's button: connected, unless Genex could not start it, then a check again. */
+function readyView(words: Words, input: ConnectInput): ConnectView {
+  if (!failsToStart(input.engine)) return { kind: ConnectViewKind.On, label: words.on };
+  if (input.checking || input.engine?.catalog?.refreshing)
+    return { kind: ConnectViewKind.Busy, label: t("Checking…"), cancel: false };
+  return { kind: ConnectViewKind.Action, action: ConnectAction.Recheck, label: words.recheck };
+}
+
+/** The line under a signed-in CLI Genex could not start, or null; none while a check runs. */
+export function startTrouble(id: Subscription, engine: ConnectInput["engine"]): string | null {
+  const ready = engine?.status.code === EngineStatusCode.Ready;
+  const settled = ready && failsToStart(engine) && !engine?.catalog?.refreshing;
+  return settled ? WORDS[id].notStarting : null;
 }
 
 /** The button when no sign-in is under way: an install or check running, else what the CLI needs. */
@@ -138,7 +168,7 @@ function cliView(words: Words, input: ConnectInput): ConnectView {
     const label = cli === CodingCliState.Incompatible ? words.updating : words.installing;
     return { kind: ConnectViewKind.Busy, label, cancel: false };
   }
-  if (input.checking) return { kind: ConnectViewKind.Busy, label: "Checking…", cancel: false };
+  if (input.checking) return { kind: ConnectViewKind.Busy, label: t("Checking…"), cancel: false };
   if (cli === CodingCliState.Incompatible)
     return { kind: ConnectViewKind.Action, action: ConnectAction.Update, label: words.update };
   const cliMissing = cli !== undefined && cli !== CodingCliState.Ready;

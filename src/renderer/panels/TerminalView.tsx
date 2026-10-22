@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { TERMINAL_LIMITS, type TerminalSession } from "../../shared/terminal.ts";
 import { useAppearance } from "../appearance/store.ts";
 import { isTerminalChord, TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The terminal's type: its size, its line height, and the contrast xterm keeps text above (WCAG AA). */
 const FONT_SIZE = 13;
@@ -47,7 +48,7 @@ function createTerminal(style: CSSStyleDeclaration, report: { current: (error: s
       activate: (_event, text) => {
         try {
           if (["http:", "https:"].includes(new URL(text).protocol))
-            void window.studio.openUrl(text).catch(() => report.current("Could not open this link."));
+            void window.studio.openUrl(text).catch(() => report.current(t("Could not open this link.")));
         } catch {}
       },
     },
@@ -60,7 +61,7 @@ function dockKeys(terminal: Terminal, node: HTMLElement, report: { current: (err
     event.preventDefault();
     // Let xterm receive keyup before moving focus; otherwise its IME key state stays down.
     if (event.type === "keyup")
-      node.closest("[data-terminal-dock]")?.querySelector<HTMLButtonElement>('[aria-label="Hide terminal"]')?.focus();
+      node.closest("[data-terminal-dock]")?.querySelector<HTMLButtonElement>("[data-terminal-hide]")?.focus();
     return false;
   };
   const toggle = (event: KeyboardEvent): false => {
@@ -74,7 +75,7 @@ function dockKeys(terminal: Terminal, node: HTMLElement, report: { current: (err
     if (terminal.hasSelection())
       void navigator.clipboard
         .writeText(terminal.getSelection())
-        .catch(() => report.current("Could not copy the selection."));
+        .catch(() => report.current(t("Could not copy the selection.")));
     return false;
   };
   return (event: KeyboardEvent): boolean => {
@@ -205,7 +206,7 @@ export default function TerminalView({
       ref={element}
       className="h-full min-h-0 min-w-0 px-3 pb-2"
       data-terminal-view={session.id}
-      aria-label={`${session.title} terminal`}
+      aria-label={t("{title} terminal", { title: session.title })}
       onKeyDown={(event) => {
         if (!isTerminalChord(event)) event.stopPropagation();
       }}

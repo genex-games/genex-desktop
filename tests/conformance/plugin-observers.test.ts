@@ -58,6 +58,9 @@ const observer = (fields: Record<string, unknown> = {}) => ({
   ...fields,
 });
 
+/** The action a card's status names: declared, and it asks nothing. */
+const STAGE_ACTION = { name: "stage", label: "On the Live stage" };
+
 const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8")) as PluginManifest;
 const TOY_MANIFEST = readJson(path.join(TOY_PLUGIN, "plugin.json"));
 const UNREAL_MANIFEST = readJson("src/plugins/unreal/plugin.json");
@@ -97,6 +100,14 @@ const hostile: Array<[string, Record<string, unknown>, Parameters<typeof manifes
   ["a label that is a stage-strip tab", { observers: [observer({ label: "Builds" })] }],
   ["a label that is a Live view's own name in another case", { observers: [observer({ label: "unreal" })] }],
   ["a label that is the web preview's name", { observers: [observer({ label: "Web Game" })] }],
+  ["a card that names no status", { observers: [observer({ live: "card" })], actions: [STAGE_ACTION] }],
+  ["a card whose status is no action", { observers: [observer({ live: "card", status: "nowhere" })] }],
+  [
+    "a card whose status asks the person",
+    { observers: [observer({ live: "card", status: "stage" })], actions: [{ ...STAGE_ACTION, confirmation: "Look?" }] },
+  ],
+  ["a status beside stills", { observers: [observer({ live: "stills", status: "stage" })], actions: [STAGE_ACTION] }],
+  ["a status that is no name", { observers: [observer({ live: "card", status: 7 })], actions: [STAGE_ACTION] }],
 ];
 
 const ROOT = ".";
@@ -181,6 +192,15 @@ describe("a plugin's observers and Genex's own preview", () => {
       ["id", "facts", "tool", "live"],
     );
     assert.equal(validateManifest(manifest({})).observers, undefined, "a manifest without observers keeps none");
+  });
+
+  it("any plugin's observer may be a card that names the action it reads its status from", () => {
+    const kept = validateManifest(
+      manifest({ observers: [observer({ live: "card", status: "stage", label: "Toy" })], actions: [STAGE_ACTION] }),
+    );
+    assert.deepEqual(kept.observers, [
+      { id: "viewport", facts: ["toy-project"], tool: "shot", live: "card", label: "Toy", status: "stage" },
+    ]);
   });
 
   it("an observer may name its Live view's tab", () => {

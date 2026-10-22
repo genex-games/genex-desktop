@@ -18,6 +18,7 @@ import { type EngineModel, ModelContextSource } from "../engines/types.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { type FoundLocalServer, LocalServerKind } from "../../shared/local-server.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** How long one discovery request waits. */
 export const DISCOVERY_TIMEOUT_MS = 10 * SECOND_MS;
@@ -249,7 +250,7 @@ interface ModelFacts {
 
 /** What a row says when its server reports no context for it. */
 const MESSAGE = {
-  UnknownContext: "Context size not reported",
+  UnknownContext: () => t("Context size not reported"),
 } as const;
 
 const positive = (value: unknown): number | undefined =>
@@ -385,7 +386,7 @@ function modelRow(id: string, facts: ModelFacts): EngineModel {
     supportsVision: facts.vision ?? false,
     supportsThinking: false,
     installed: true,
-    ...(facts.context ? {} : { note: MESSAGE.UnknownContext }),
+    ...(facts.context ? {} : { note: MESSAGE.UnknownContext() }),
   };
 }
 

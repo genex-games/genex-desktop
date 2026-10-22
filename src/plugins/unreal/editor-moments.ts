@@ -115,6 +115,8 @@ export type MomentOps = {
   running(): Promise<boolean | null>;
   /** The editor's activity; throws when it can't say. */
   activity(): Promise<{ pie: boolean; dirty: number }>;
+  /** Whether a checkpoint's save may end the play under way: the agent's own, or a run's while agents may use Unreal as the person plays. */
+  mayEndPlay(): Promise<boolean>;
   /** Saves the editor's work (a play session ended first), each editor call within its moment's limit; throws its refusal. */
   save(): Promise<Saved>;
   /** Ends the project's editor; throws when it couldn't. */
@@ -193,14 +195,15 @@ async function saving(ops: MomentOps, dirty: number): Promise<SaveRead> {
 }
 
 /**
- * A checkpoint's save: never during a play session or of an editor that can't say whether one runs.
+ * A checkpoint's save: never during a play session it may not end (the save ends one it may) or of
+ * an editor that can't say whether one runs.
  * A run saves even with nothing unsaved (as its save points did); a chat saves only what is unsaved.
  */
 async function checkpointSave(ops: MomentOps, hook: HookContext): Promise<SaveRead> {
   if (!(await ops.answers())) return { outcome: SaveOutcome.NotAnswering };
   const activity = await ops.activity().catch(() => null);
   if (!activity) return { outcome: SaveOutcome.CantTell };
-  if (activity.pie) return { outcome: SaveOutcome.Playing };
+  if (activity.pie && !(await ops.mayEndPlay().catch(() => false))) return { outcome: SaveOutcome.Playing };
   if (activity.dirty === 0 && !inRun(hook)) return { outcome: SaveOutcome.Clean };
   return saving(ops, activity.dirty);
 }

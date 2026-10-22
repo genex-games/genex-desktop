@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate as nextTurn } from "node:timers/promises";
@@ -26,12 +26,14 @@ import {
   type FinishScope,
   finishAnswer,
   newTally,
+  notDoneOf,
   REVIEW_MAX_TURNS,
   reviewerSeat,
   tallyOf,
 } from "../../src/harness-seed/loop/finish-check.ts";
 import {
   FINISH_CHECK_EVENT,
+  FINISH_TIME_LEFT_MS,
   FinishCheckStep,
   LEAD_CALL_MS,
   MAX_FINISH_REJECTIONS,
@@ -40,6 +42,7 @@ import {
   PROOF_OBSERVER,
 } from "../../src/harness-seed/loop/finish-contract.ts";
 import {
+  freshProofIn,
   MAX_PROOF_FILES,
   PROOF_FILE_MAX_BYTES,
   readProof,
@@ -47,6 +50,7 @@ import {
 } from "../../src/harness-seed/loop/finish-proof.ts";
 import { REVIEW_IMAGES_MAX_BYTES, REVIEW_PICTURE_MAX_BYTES } from "../../src/harness-seed/loop/observers.ts";
 import { createScope } from "../../src/harness-seed/loop/scope.ts";
+import { MINUTE_MS } from "../../src/harness-seed/loop/time.ts";
 import type { Run } from "../../src/harness-seed/types/harness.d.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { type CtxRecorder, ctxRecorder } from "../helpers/ctx-recorder.ts";
@@ -250,6 +254,49 @@ describe("the finish check", () => {
     );
   });
 
+  it("tells the reviewer the blind judges' latest answer to each question of this run, and what each rests on", async () => {
+    const folder = await leadFolder();
+    const judged = (runId: string, label: string, status: string, objective: string, note: string) => ({
+      data: {
+        type: "custom",
+        event_type: "run_interaction_evidence",
+        payload: { runId, head: null, label, status, objective, note, source: "hands-on-judge" },
+      },
+    });
+    const ROOF = "Can the player reach the rooftop?";
+    const events = [
+      judged(RUN.runId, ROOF, "failed", "model-said", "Ran out of moves in the guard hall."),
+      judged(RUN.runId, ROOF, "passed", "studio-verified", "Climbed the stair to the roof."),
+      judged(RUN.runId, "Does the key open the tower door?", "failed", "model-said", "E did nothing at the lock."),
+      judged("run_other", "Can the player swim?", "passed", "model-said", "Another run's answer."),
+      {
+        data: {
+          type: "custom",
+          event_type: "run_interaction_evidence",
+          payload: { runId: RUN.runId, label: "A playtest", status: "passed", source: "playtester", note: "" },
+        },
+      },
+    ];
+    const { r } = host([verdict("yes")], { [HostMethod.EventsList]: () => events });
+    await checkFinish(scopeOf(r, folder), claimOf());
+    const prompt = String(reviewersOf(r)[0]?.prompt);
+    assert.match(prompt, /## What blind judges found when they played the game/);
+    assert.match(
+      prompt,
+      /Can the player reach the rooftop\?: yes \(studio-verified: Genex saw the goal state reached\)/,
+    );
+    assert.doesNotMatch(prompt, /Ran out of moves in the guard hall/, "only each question's latest answer");
+    assert.match(prompt, /Does the key open the tower door\?: no \(the judge's word\) — E did nothing at the lock\./);
+    assert.doesNotMatch(prompt, /Another run's answer|A playtest/, "this run's blind judges only");
+  });
+
+  it("says no judge played when none did", async () => {
+    const folder = await leadFolder();
+    const { r } = host([verdict("yes")]);
+    await checkFinish(scopeOf(r, folder), claimOf());
+    assert.doesNotMatch(String(reviewersOf(r)[0]?.prompt), /What blind judges found/);
+  });
+
   it("the harness asks for the check and acts on the app's answer; it writes no finish check itself", async () => {
     const folder = await leadFolder();
     // The host's own records hold two no's in a row; the harness's tally says none.
@@ -310,16 +357,26 @@ describe("the finish check", () => {
     assert.equal(tally.rejections, 0, "a yes resets the row");
     const no = await checkFinish(scopeOf(r, folder, { tally }), claimOf());
     assert.ok(!("noTime" in no) && no.step === FinishCheckStep.Rejected);
-    assert.deepEqual(no.reasons, NO_REASONS, "its reasons and what isn't done");
+    assert.deepEqual(
+      [no.reasons, no.notDone],
+      [NO_REASONS.slice(0, 1), NO_REASONS.slice(1)],
+      "its reasons, apart from what isn't done",
+    );
     assert.equal(no.rejections, 1);
     assert.equal(no.stop, false);
-    assert.deepEqual(tally.reasons, NO_REASONS, "kept for the next round");
+    assert.deepEqual(
+      [tally.reasons, tally.notDone],
+      [NO_REASONS.slice(0, 1), NO_REASONS.slice(1)],
+      "kept for the next round",
+    );
+    assert.deepEqual(notDoneOf(tally), NO_REASONS.slice(1), "the report's not done is what isn't done alone");
     const answer = finishAnswer(no);
     assert.match(answer, new RegExp(`1 of ${MAX_FINISH_REJECTIONS} in a row`));
     assert.ok(answer.includes(NO_REASONS[0] as string));
+    assert.ok(answer.includes(`Not done: ${NO_REASONS[1]}`), "the lead hears what isn't done as such");
     const last = checks().at(-1);
     assert.equal(last?.step, FinishCheckStep.Rejected);
-    assert.deepEqual(last?.reasons, NO_REASONS);
+    assert.deepEqual([last?.reasons, last?.notDone], [NO_REASONS.slice(0, 1), NO_REASONS.slice(1)]);
     assert.deepEqual(last?.reviewer, { engine: CLAUDE, model: "opus" });
     assert.equal(last?.runId, RUN.runId);
   });
@@ -360,6 +417,84 @@ describe("the finish check", () => {
       "each round starts with a checking record",
     );
     assert.equal(tally.checking, false, "no check left under way");
+  });
+
+  it("a timed Loop with time left goes on after three no's in a row, and its next claim needs proof made since the last no", async () => {
+    const folder = await leadFolder();
+    const { r, checks } = host([
+      verdict("no", [], NO_REASONS),
+      verdict("no", [], NO_REASONS),
+      verdict("no", [], NO_REASONS),
+      verdict("yes", ["The laps and the timer show."]),
+    ]);
+    const tally = newTally();
+    const timed = { tally, timeLeft: () => FINISH_TIME_LEFT_MS + MINUTE_MS };
+    // The proof files were made before the reviewer's no's (the test's clock starts at START).
+    const before = new Date(START - MINUTE_MS);
+    for (const file of ["reports/tests.txt", "shots/finish.png"]) await utimes(path.join(folder, file), before, before);
+    const nos: FinishOutcome[] = [];
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) nos.push(await checkFinish(scopeOf(r, folder, timed), claimOf()));
+    const third = nos.at(-1);
+    assert.ok(third && !("noTime" in third) && third.step === FinishCheckStep.Rejected);
+    assert.equal(third.rejections, MAX_FINISH_REJECTIONS);
+    assert.equal(third.stop, false, "with time left the third no doesn't stop the Loop");
+    assert.equal(third.timeLeft, true);
+    assert.match(finishAnswer(third), /time left, so it goes on/);
+    assert.equal(checks().at(-1)?.stopped, undefined);
+
+    const recorded = checks().length;
+    const stale = await checkFinish(scopeOf(r, folder, timed), claimOf());
+    assert.ok(!("noTime" in stale) && stale.step === FinishCheckStep.Unanswered && stale.staleProof === true);
+    assert.match(finishAnswer(stale), /new work since the last no/);
+    assert.equal(checks().length, recorded, "nothing recorded");
+    assert.equal(reviewersOf(r).length, MAX_FINISH_REJECTIONS, "no reviewer asked");
+
+    const after = new Date(START + MINUTE_MS);
+    await utimes(path.join(folder, "shots", "finish.png"), after, after);
+    const fresh = await checkFinish(scopeOf(r, folder, timed), claimOf());
+    assert.equal(stepOf(fresh), FinishCheckStep.Accepted, "a claim with a fresh picture is checked");
+  });
+
+  it("after the row of no's a timed Loop went on past, a fresh picture alone is no new work: the lead's work mark must move too", async () => {
+    const folder = await leadFolder();
+    const { r, checks } = host([
+      verdict("no", [], NO_REASONS),
+      verdict("no", [], NO_REASONS),
+      verdict("no", [], NO_REASONS),
+      verdict("yes", ["The laps and the timer show."]),
+    ]);
+    const tally = newTally();
+    let mark = "save-1";
+    const timed = { tally, timeLeft: () => FINISH_TIME_LEFT_MS + MINUTE_MS, workMark: async () => mark };
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await checkFinish(scopeOf(r, folder, timed), claimOf());
+    assert.equal(tally.noMark, "save-1", "the no keeps the mark it was given on");
+    const after = new Date(START + MINUTE_MS);
+    await utimes(path.join(folder, "shots", "finish.png"), after, after);
+    const recorded = checks().length;
+    const touched = await checkFinish(scopeOf(r, folder, timed), claimOf());
+    assert.ok(!("noTime" in touched) && touched.step === FinishCheckStep.Unanswered && touched.staleProof === true);
+    assert.equal(checks().length, recorded, "nothing recorded");
+    mark = "save-2";
+    const saved = await checkFinish(scopeOf(r, folder, timed), claimOf());
+    assert.equal(stepOf(saved), FinishCheckStep.Accepted, "a save point since the no and a fresh picture are checked");
+    assert.equal(tally.noMark, undefined, "a yes clears the mark");
+  });
+
+  it("only a proof file inside the lead's folder counts as fresh proof", async () => {
+    const folder = await leadFolder();
+    const outside = await tmpDir("finish-check-outside-");
+    await writeFile(path.join(outside, "new.png"), PNG);
+    await symlink(path.join(outside, "new.png"), path.join(folder, "shots", "link.png"));
+    const since = Date.now() - MINUTE_MS;
+    const rows: Array<[string, string]> = [
+      ["a path outside", path.join(outside, "new.png")],
+      ["a way up and out", "../new.png"],
+      ["a link that leads out", "shots/link.png"],
+      ["nothing there", "shots/missing.png"],
+      ["not text", 7 as unknown as string],
+    ];
+    for (const [label, name] of rows) assert.equal(await freshProofIn(folder, [name], since), false, label);
+    assert.equal(await freshProofIn(folder, ["shots/finish.png"], since), true, "a file written since counts");
   });
 
   it("a claim with no time left in the lead's call for a review is no claim, and nothing is recorded", async () => {
@@ -446,12 +581,15 @@ describe("the finish check", () => {
     await writeFile(path.join(folder, "big.log"), Buffer.alloc(PROOF_FILE_MAX_BYTES + 1, 0x61));
     await writeFile(path.join(folder, "nul.txt"), Buffer.from("text\0more"));
     await writeFile(path.join(folder, "bad\nname.txt"), "a name with a line break");
-    const hostile = ["../x", "/etc/hosts", "~/x", "link-out.txt", "a-folder", "big.log", "nul.txt", "bad\nname.txt"];
+    const kinds = ["../x", "/etc/hosts", "~/x", "link-out.txt", "a-folder", "big.log", "nul.txt", "bad\nname.txt"];
+    // Every name up to the cap is a hostile one: the climbs past the kinds fill it.
+    const climbs = Array.from({ length: MAX_PROOF_FILES - kinds.length }, (_, i) => `../climb-${i}`);
+    const hostile = [...kinds, ...climbs];
     assert.equal(hostile.length, MAX_PROOF_FILES);
     const { r } = host([]);
     const proof = await readProof(r.ctx as never, RUN, folder, [...hostile, "reports/tests.txt"]);
     assert.deepEqual(proof.images, [], "no picture");
-    assert.deepEqual(proof.texts, [], "no text: the ninth name is past the cap");
+    assert.deepEqual(proof.texts, [], "no text: the name after the cap is past it");
     assert.equal(proof.refused.length, hostile.length + 1, `a line each, and one for the rest: ${proof.refused}`);
     for (const line of proof.refused) assert.ok(!line.includes("\n"), `one line: ${JSON.stringify(line)}`);
     assert.deepEqual(
@@ -809,7 +947,7 @@ describe("the finish check", () => {
       earlier(1, FinishCheckStep.Rejected),
       earlier(2, FinishCheckStep.Rejected),
     ]);
-    const tally = { round: 2, rejections: 2, checking: false, reasons: ["No lap timer."] };
+    const tally = { round: 2, rejections: 2, checking: false, reasons: ["No lap timer."], notDone: [] };
     const outcome = await checkFinish(
       scopeOf(r, folder, { tally, lapsed: async () => "the build moved while the reviewer read the claim" }),
       claimOf(),
@@ -1002,8 +1140,10 @@ describe("the finish check", () => {
   });
 
   it("a tally kept in a journal reads back, and anything unreadable is a new one", () => {
-    const kept = { round: 2, rejections: 1, checking: true, reasons: ["no timer"] };
+    const kept = { round: 2, rejections: 1, checking: true, reasons: ["no timer"], notDone: ["a lap timer"], noAt: 7 };
     assert.deepEqual(tallyOf(JSON.parse(JSON.stringify(kept))), { ...kept, checking: false });
+    const older = { round: 2, rejections: 1, checking: false, reasons: ["no timer"] };
+    assert.deepEqual(tallyOf(older), { ...older, notDone: [] }, "an older journal's tally names nothing not done");
     for (const saved of [
       null,
       "x",

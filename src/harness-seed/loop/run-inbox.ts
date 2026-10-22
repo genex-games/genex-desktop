@@ -221,8 +221,11 @@ function absorbInboxEvent(fold: InboxFold, event: HarnessEvent, runId: string): 
   const d = event?.data;
   if (d?.type !== EventKind.Custom) return;
   const p = d.payload ?? {};
-  // A message a run's lead never heard went back to the chat, which answers it (live chat).
-  if (d.event_type === RunEvent.CoordinatorMessageRequeued) settleLeadSteers(fold, p.messageId);
+  // A message a run's lead never heard went back to the chat, which answers it (live chat); so does
+  // one its lead was only told in its wrap-up, which the chat takes up once the run has closed.
+  const chatAnswers =
+    d.event_type === RunEvent.CoordinatorMessageRequeued || d.event_type === RunEvent.CoordinatorMessageProcessing;
+  if (chatAnswers) settleLeadSteers(fold, p.messageId);
   if (p.runId !== runId) return;
   if (d.event_type === RunEvent.RunRegistered) fold.finishing = false;
   if (d.event_type === RunEvent.RunControl && p.action === RunControlAction.Finish) fold.finishing = true;

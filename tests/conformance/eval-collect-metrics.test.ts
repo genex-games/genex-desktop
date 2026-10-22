@@ -27,7 +27,7 @@ import {
   type ObservationInput,
   type TimelineReading,
 } from "../../scripts/evals/collect/observe.ts";
-import { classifyCommand, classifyTool } from "../../scripts/evals/collect/tool-category.ts";
+import { classifyCommand, classifyTool } from "../../src/shared/tool-category.ts";
 import { readTranscripts } from "../../scripts/evals/collect/transcripts.ts";
 import { isMeasured, unavailable } from "../../scripts/evals/ledger/types.ts";
 import {

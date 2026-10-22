@@ -91,6 +91,11 @@ export interface BuildProblem {
   install: string | null;
   /** The stage is showing the last build that worked instead of nothing at all. */
   showingLastBuild: boolean;
+  /**
+   * A remix's setup scripts its script-free install skipped, which it may need to build: the stage
+   * offers to run them once the person trusts the game. Null for a game whose scripts ran.
+   */
+  skippedScripts: SetupScripts | null;
   at: string;
   /** Typed reason; absent on problems written before this field existed (read as CommandFailed). */
   reason?: BuildProblemCode;
@@ -100,6 +105,12 @@ export interface BuildProblem {
   diagnostics?: BuildDiagnostic[];
   /** `GateRefused`: the gate's refusal and the file in `out/` it was about. */
   gate?: { refusal: NativeRefusal; file: string };
+}
+
+/** The setup scripts a script-free install skipped: the game's own, and its packages' by name. */
+export interface SetupScripts {
+  own: boolean;
+  packages: string[];
 }
 
 /** What one press of "Install packages" did. */

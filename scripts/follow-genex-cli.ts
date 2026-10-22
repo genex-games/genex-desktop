@@ -15,6 +15,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { writeManifest } from "./refresh-genex-skills.ts";
 
 const run = promisify(execFile);
 
@@ -94,16 +95,16 @@ async function apply(root: string): Promise<void> {
   const fromCli = await pinned(root);
   const toCli = await latestOnNpm();
   if (!isNewer(toCli, fromCli)) throw new Error(`Already on ${fromCli}; npm latest is ${toCli}`);
+  // --save-exact keeps the exact pin #90 relies on; --ignore-scripts skips Electron's download.
+  await run("npm", ["install", "--save-exact", "--ignore-scripts", `${CLI_PACKAGE}@${toCli}`], { cwd: root });
+  // The refresh rewrites the cards' references in plugin.json, so the manifest is read after it.
+  await run("npm", ["run", "--silent", "genex:skills", "--", "--fetch"], { cwd: root });
+
   const manifest = await readJson(root, MANIFEST);
   const fromPlugin: string = manifest.version;
   const toPlugin = nextPatch(fromPlugin);
-
-  // --save-exact keeps the exact pin #90 relies on; --ignore-scripts skips Electron's download.
-  await run("npm", ["install", "--save-exact", "--ignore-scripts", `${CLI_PACKAGE}@${toCli}`], { cwd: root });
-  await run("npm", ["run", "--silent", "genex:skills", "--", "--fetch"], { cwd: root });
-
   manifest.version = toPlugin;
-  await writeFile(path.join(root, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeManifest(root, path.join(root, MANIFEST), manifest);
   for (const mention of VERSION_MENTIONS) {
     const file = path.join(root, mention.file);
     const [from, to] = mention.of === "cli" ? [fromCli, toCli] : [fromPlugin, toPlugin];

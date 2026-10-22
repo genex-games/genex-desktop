@@ -30,8 +30,13 @@ const MAX_THUMBNAILS = 4;
 /** The graph's words: the lead's row, and the close's sentence. */
 const WORDS = {
   lead: "Lead",
-  saves: (count: number, label: string, summary: string) =>
-    count === 1 ? `One save point: ${label} (${summary}).` : `${count} save points; the last, ${label}: ${summary}.`,
+  /** The save points, and the last one's summary when the lead gave one (without its own full stop). */
+  saves: (count: number, label: string, summary: string) => {
+    if (count === 1) return summary ? `One save point: ${label} (${summary}).` : `One save point: ${label}.`;
+    return summary
+      ? `${count} save points; the last, ${label}: ${summary}.`
+      : `${count} save points; the last, ${label}.`;
+  },
   noSaves: "No save point was made, so the project is as the Loop left it.",
   lastKept: "Genex kept the last work in a checkpoint at the close.",
 } as const;
@@ -54,16 +59,21 @@ async function thumbnailOf(
   return typeof path === "string" ? { camera: image.name, path } : null;
 }
 
+/** The camera name of the picture the lead named as showing a save point's change. */
+const SHOWN_CAMERA = "shows";
+
 /**
  * A save point on the graph: the lead's row at work at the first one, a kept round of the lead's part
- * with its label, summary, snapshot and thumbnails, and its merge into the game folder (the live
- * project), which names its snapshot and no build of its own.
+ * with its label, summary, snapshot and thumbnails (the picture the lead named as showing the change
+ * apart, as `shown`: the graph's picture of the save point), and its merge into the game folder (the
+ * live project), which names its snapshot and no build of its own.
  */
 export async function savePointRound(
   loopRun: LoopRun,
   point: OpenSavePoint,
   round: number,
   images: readonly HookImage[],
+  shownImage: HookImage | null = null,
 ) {
   if (round === 1) await leadRow(loopRun, WorkerState.Running);
   const shots = [];
@@ -71,6 +81,7 @@ export async function savePointRound(
     const shot = await thumbnailOf(loopRun, round, image);
     if (shot) shots.push(shot);
   }
+  const shown = shownImage ? await thumbnailOf(loopRun, round, { ...shownImage, name: SHOWN_CAMERA }) : null;
   const iteration = {
     facetId: OPEN_LEAD_PART,
     facetTitle: WORDS.lead,
@@ -83,6 +94,7 @@ export async function savePointRound(
     label: point.label,
     snapshot: point.snapshotId,
     shots,
+    ...(shown ? { shown } : {}),
     auto: point.auto,
     move: { what: point.summary ? `${point.label}: ${point.summary}` : point.label, delivered: true },
   };
@@ -101,7 +113,8 @@ export async function savePointRound(
 /** The close's sentence: the save points and the last one's summary, and whether the close kept the last work. */
 function closeSentence(journal: OpenJournal, lastKept: boolean): string {
   const last = journal.savePoints.at(-1);
-  const saves = last ? WORDS.saves(journal.savePoints.length, last.label, last.summary) : WORDS.noSaves;
+  const summary = last?.summary.trim().replace(/\.+$/, "") ?? "";
+  const saves = last ? WORDS.saves(journal.savePoints.length, last.label, summary) : WORDS.noSaves;
   return lastKept ? `${saves} ${WORDS.lastKept}` : saves;
 }
 

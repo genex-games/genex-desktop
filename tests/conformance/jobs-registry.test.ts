@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { readdir, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { after, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -37,6 +37,7 @@ import {
   MAX_ENDED_JOBS_KEPT,
   MAX_RUNNING_JOBS_PER_GAME,
 } from "../../src/substrate/jobs.ts";
+import type { TreeKillCommand } from "../../src/substrate/process-tree.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -415,6 +416,140 @@ it("a new app start marks jobs it did not start as interrupted, and kills a left
   assert.equal((await service.get(GAME, ids.endedTold))?.state, JobState.Succeeded, "an ended job stays as it was");
 });
 
+it("on Windows, a new app start ends a left job's tree only when its start time matches", async () => {
+  const h = await harness({ sendSignals: false, platform: "win32" });
+  const ids = {
+    matches: "00000000-0000-4000-8000-000000000011",
+    differs: "00000000-0000-4000-8000-000000000012",
+    unread: "00000000-0000-4000-8000-000000000013",
+  };
+  const started = "2030-01-01T00:00:00.1234567Z";
+  const left = (id: string, pid: number, procStart: string | undefined): JobRecord => ({
+    id,
+    title: "Dev server",
+    owner: owner(),
+    command: "npm run dev",
+    cwd: h.cwd,
+    startedAt: new Date(Date.UTC(2029, 11, 31)).toISOString(),
+    state: JobState.Running,
+    deadlineAt: new Date(Date.UTC(2030, 0, 1)).toISOString(),
+    pid,
+    procStart,
+    logFile: path.join(h.root, GAME, id, "output.log"),
+    logBytes: 0,
+    mode: PermissionMode.Auto,
+  });
+  for (const record of [
+    left(ids.matches, 4_100_001, started),
+    left(ids.differs, 4_100_002, started),
+    left(ids.unread, 4_100_003, undefined),
+  ]) {
+    await mkdir(path.join(h.root, GAME, record.id), { recursive: true });
+    await writeFile(path.join(h.root, GAME, record.id, "job.json"), JSON.stringify(record));
+  }
+  const ended: TreeKillCommand[] = [];
+  const service = new JobService({
+    root: h.root,
+    spawn: async () => assert.fail("reconcile starts nothing"),
+    clock: h.clock,
+    platform: "win32",
+    probe: { startTime: async (pid) => (pid === 4_100_001 ? started : "2030-01-02T00:00:00.0000000Z") },
+    kill: () => assert.fail("Windows has no signals"),
+    endTree: async (command) => {
+      ended.push(command);
+    },
+  });
+  await service.reconcile();
+
+  assert.deepEqual(
+    ended.map((command) => command.args),
+    [["/PID", "4100001", "/T", "/F"]],
+    "only the tree whose start time matches is ended; a reused id and an unread start are left alone",
+  );
+  for (const id of Object.values(ids)) assert.equal((await service.get(GAME, id))?.state, JobState.Interrupted, id);
+});
+
+it("on Windows, a start time that could not be read at first is read again before a left job is given up", async () => {
+  const h = await harness({ sendSignals: false, platform: "win32" });
+  const id = "00000000-0000-4000-8000-000000000021";
+  const lostId = "00000000-0000-4000-8000-000000000022";
+  const started = "2030-01-01T00:00:00.1234567Z";
+  const left = (jobId: string, pid: number): JobRecord => ({
+    id: jobId,
+    title: "Dev server",
+    owner: owner(),
+    command: "npm run dev",
+    cwd: h.cwd,
+    startedAt: new Date(Date.UTC(2029, 11, 31)).toISOString(),
+    state: JobState.Running,
+    deadlineAt: new Date(Date.UTC(2030, 0, 1)).toISOString(),
+    pid,
+    procStart: started,
+    logFile: path.join(h.root, GAME, jobId, "output.log"),
+    logBytes: 0,
+    mode: PermissionMode.Auto,
+  });
+  for (const record of [left(id, 4_200_001), left(lostId, 4_200_002)]) {
+    await mkdir(path.join(h.root, GAME, record.id), { recursive: true });
+    await writeFile(path.join(h.root, GAME, record.id, "job.json"), JSON.stringify(record));
+  }
+  const reads = new Map<number, number>();
+  const ended: TreeKillCommand[] = [];
+  const logged: string[] = [];
+  const service = new JobService({
+    root: h.root,
+    spawn: async () => assert.fail("reconcile starts nothing"),
+    clock: h.clock,
+    platform: "win32",
+    probe: {
+      // PowerShell starting slowly while the app boots: the first read of 4200001 times out.
+      startTime: async (pid) => {
+        const count = (reads.get(pid) ?? 0) + 1;
+        reads.set(pid, count);
+        if (pid === 4_200_002 || count === 1) throw new Error("the start time reader timed out");
+        return started;
+      },
+    },
+    kill: () => assert.fail("Windows has no signals"),
+    endTree: async (command) => {
+      ended.push(command);
+    },
+    onLog: (line) => logged.push(line),
+  });
+  await service.reconcile();
+
+  assert.deepEqual(
+    ended.map((command) => command.args),
+    [["/PID", "4200001", "/T", "/F"]],
+    "the tree is ended once its start time is read",
+  );
+  assert.ok(
+    logged.some((line) => line.includes(lostId) && line.includes("4200002")),
+    `a left job whose start time never reads is said in the log: ${logged.join(" | ")}`,
+  );
+  assert.equal((await service.get(GAME, lostId))?.state, JobState.Interrupted);
+});
+
+it("on Windows, a job's start time is recorded so a later app start can end it", async () => {
+  const probed: number[] = [];
+  const h = await harness({
+    platform: "win32",
+    probe: {
+      startTime: async (pid) => {
+        probed.push(pid);
+        return "2030-01-01T00:00:00.1234567Z";
+      },
+    },
+    endTree: async (command) => killGroup(Number(command.args[1])),
+  });
+  const job = await h.service.start(startRequest(h, "sleep 30", { title: "Server" }));
+  assert.ok(job.pid);
+  assert.deepEqual(probed, [job.pid]);
+  assert.equal(job.procStart, "2030-01-01T00:00:00.1234567Z");
+  assert.equal((await h.service.get(GAME, job.id))?.procStart, "2030-01-01T00:00:00.1234567Z", "on disk");
+  await h.service.stop(GAME, job.id, JobStopper.Agent);
+});
+
 it("keeps the last fifty ended jobs per game and never removes a running one", async () => {
   const h = await harness();
   const keeper = await h.service.start(startRequest(h, "sleep 30", { title: "Server" }));
@@ -538,4 +673,45 @@ it("answers nothing for an id or a game it does not hold", async () => {
     assert.equal(await h.service.stop(project, id, JobStopper.Agent), null, `${project} ${id}`);
   }
   assert.deepEqual(await h.service.list(".."), []);
+});
+
+/** Make a job's record unwritable: a folder with something in it where its `job.json` goes. */
+async function blockRecord(root: string, id: string): Promise<void> {
+  const record = path.join(root, GAME, id, "job.json");
+  await rm(record, { force: true });
+  await mkdir(path.join(record, "in-the-way"), { recursive: true });
+}
+
+it("a job whose end record cannot be written still ends, is told, and frees its place", async () => {
+  const h = await harness();
+  const sleepers = await Promise.all(
+    Array.from({ length: MAX_RUNNING_JOBS_PER_GAME }, () => h.service.start(startRequest(h, "sleep 30"))),
+  );
+  const blocked = sleepers[0];
+  assert.ok(blocked);
+  await blockRecord(h.root, blocked.id);
+  await h.service.stop(GAME, blocked.id, JobStopper.Agent).catch(() => null);
+  assert.equal((await h.endOf(blocked.id)).state, JobState.Stopped, "its end is told");
+  const next = await h.service.start(startRequest(h, "sleep 30"));
+  assert.equal(next.state, JobState.Running, "the game has room again");
+  await h.service.stopAll(JobStopper.Quit);
+});
+
+it("a job whose start record cannot be written is refused and leaves nothing running or listed", async () => {
+  let root = "";
+  const h = await harness({
+    spawn: async (request) => {
+      await blockRecord(root, request.label.replace(/^job-/, ""));
+      const child = spawn("/bin/sh", ["-c", request.command], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+      strays.push(child);
+      return { child, sandboxed: false };
+    },
+  });
+  root = h.root;
+  await assert.rejects(h.service.start(startRequest(h, "sleep 30")));
+  const [failed] = await readdir(path.join(h.root, GAME));
+  assert.ok(failed);
+  await h.endOf(failed);
+  assert.deepEqual(await h.service.list(GAME), [], "no job is listed as running");
+  assert.equal(await h.service.get(GAME, failed), null);
 });

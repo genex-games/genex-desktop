@@ -11,10 +11,11 @@ import { readText, STORAGE_KEYS, writeText } from "../../storage.ts";
 const ColorTweaker = lazy(() => import("./ColorTweaker.tsx"));
 
 /**
- * The colour tweaker is hidden while the presets are settled, not removed: to tune colours again,
- * set this to true and press ⌥⌘C in a `studio:dev` window ("Colour tweaker" in docs/agent/design.md).
+ * Whether the colour tweaker is offered: on while Play's colours are being tuned. Press ⌥⌘C in a
+ * `studio:dev` window ("Colour tweaker" in docs/agent/design.md); set this to false again to hide it
+ * once the presets are settled (it is never removed).
  */
-const COLOR_TWEAKER_ON = false;
+const COLOR_TWEAKER_ON = true;
 
 /** ⌥⌘C, by the key's place so Option's character (ç) does not hide it. */
 const isToggle = (event: KeyboardEvent): boolean =>

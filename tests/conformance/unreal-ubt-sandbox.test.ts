@@ -12,7 +12,7 @@ import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:net";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { type BuildSandbox, prepareBuildSandbox } from "../../src/plugins/unreal/ubt-sandbox.ts";
+import { type BuildSandbox, buildSandboxProfile, prepareBuildSandbox } from "../../src/plugins/unreal/ubt-sandbox.ts";
 import { systemRunCommand } from "../../src/plugins/unreal/ubt.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -158,6 +158,16 @@ describe("UnrealBuildTool's sandbox", { skip: SKIP }, () => {
     }
   });
 
+  it("sends no Apple Event to another app, so a build can't script one or type into it", async () => {
+    // Asking Finder for its scripting dictionary needs no Automation consent, so nothing is ever asked.
+    const outcome = await confined(
+      world.sandbox,
+      `/usr/bin/osascript -e 'tell application "Finder" to «event ascrgdte» 0'`,
+    );
+    assert.notEqual(outcome.code, 0, outcome.output);
+    assert.ok(!outcome.output.includes("«data aete"), outcome.output);
+  });
+
   it("starts with only its own environment: a private HOME and TMPDIR, the system PATH and a language", async () => {
     const outcome = await confined(world.sandbox, "env");
     const names = outcome.output
@@ -176,6 +186,16 @@ describe("UnrealBuildTool's sandbox", { skip: SKIP }, () => {
     assert.ok(existsSync(own.sandbox.profile));
     await own.sandbox.dispose();
     assert.ok(!existsSync(scratch));
+  });
+});
+
+describe("the build sandbox's profile", () => {
+  it("sends no Apple Events and reaches no service that acts outside the build", () => {
+    const rules = buildSandboxProfile({ home: "/h", reads: [], writes: [], createOnly: [], denied: [] }).split("\n");
+    assert.ok(rules.includes("(deny appleevent-send)"), "no Apple Event leaves the build (osascript, System Events)");
+    const deniedMach = rules.find((rule) => rule.startsWith("(deny mach-lookup")) ?? "";
+    for (const name of ["com.apple.coreservices.appleevents", "com.apple.lsd.open", "com.apple.pasteboard.1"])
+      assert.ok(deniedMach.includes(`"${name}"`), `the build cannot reach ${name}`);
   });
 });
 

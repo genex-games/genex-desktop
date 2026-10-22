@@ -1,5 +1,6 @@
 import type { AutopilotCommission, LoopCommission, MessageOrigin, ReferenceFrame } from "./protocol.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
+import type { MentionRef } from "./prompt-mention.ts";
 /** One send contract from the renderer through preload to the host. */
 export interface ComposerSendOptions {
   thread?: string;
@@ -14,6 +15,8 @@ export interface ComposerSendOptions {
   autopilot?: AutopilotCommission;
   reviewPlan?: boolean;
   frames?: ReferenceFrame[];
+  /** The games, tools and assets the message tags with @ (`shared/prompt-mention.ts`). */
+  mentions?: MentionRef[];
   /** The renderer's id for its optimistic bubble; the queue records the message under it. */
   clientId?: string;
   /** Words the chat wrote itself rather than the user; absent for the user's own. */

@@ -15,6 +15,7 @@
 import path from "node:path";
 import { engineMode, PermissionDecision, PermissionMode } from "../../shared/permissions.ts";
 import { providerInfo } from "../../shared/providers.ts";
+import { t } from "../../shared/i18n.ts";
 import type { ToolCall } from "../types.ts";
 import { LocalTool } from "./local-session-tools.ts";
 import { deniedWithWords, LOCAL_NOTE } from "./local-session-prompts.ts";
@@ -43,11 +44,14 @@ const ASKS: Record<PermissionMode, ReadonlySet<ChangeKind>> = {
 /** Claude Code's tool names, which the card (`PermissionRequest`) reads a request by. Vendor names. */
 const CardTool = { Shell: "Bash", Edit: "Edit", Write: "Write" } as const;
 
-/** The card's own sentence, as Claude Code words its questions, in the name of the engine that asks. */
+/**
+ * The card's own sentence, as Claude Code words its questions, in the name of the engine that asks:
+ * the person reads it on the card, in their language.
+ */
 const ASK_TITLE = {
-  command: (who: string) => `${who} wants to run a command`,
-  edit: (who: string, file: string) => `${who} wants to edit ${path.basename(file)}`,
-  write: (who: string, file: string) => `${who} wants to write ${path.basename(file)}`,
+  command: (who: string) => t("{who} wants to run a command", { who }),
+  edit: (who: string, file: string) => t("{who} wants to edit {file}", { who, file: path.basename(file) }),
+  write: (who: string, file: string) => t("{who} wants to write {file}", { who, file: path.basename(file) }),
 } as const;
 
 /** The engine's name as a person says it ("Bonsai", "OpenRouter"), or its id when the table has none. */

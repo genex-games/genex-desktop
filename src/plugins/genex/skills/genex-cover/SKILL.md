@@ -18,6 +18,13 @@ it.
   `none` left by an earlier publish is not this one's: a draft of a public game sends nothing.
 - Neither applies to a game whose owner keeps its code untouched (see below): it gets no
   `genex-cover` demo.
+- Make the cover in the same turn the game first looks like itself: a small side task beside the
+  build, never a turn of its own. Until a `genex-cover` demo exists, Studio keeps a plain frame of
+  the game as it loads so Publish always shows a cover; yours replaces it.
+- The person can ask for another from Publish: "Make another Genex cover for this game: …" with
+  what they want, or "a different moment". Stage a different honest moment (or what they asked
+  for), point `genex-cover` at it and shoot it; the new shot shows on Publish's banner, where the
+  arrows also flip back to the last few.
 
 ## The cover shot is the demo named `genex-cover`
 
@@ -62,6 +69,19 @@ it.
   never a game Studio built) gets no `genex-cover` demo: Publish then sends no cover and Genex keeps
   its own. A game Studio built gets its demo before its next publish.
 
+## The clip is the demo named `genex-clip`
+
+- Beside the cover, a demo named exactly `genex-clip` starts a moment the game then plays by itself:
+  five seconds of real play, which genex.games runs over the cover on its cards. Stage it like the
+  cover (a loaded place, overlays hidden) but end it running, never with `__studio.pause()`: the game
+  drives itself from there with its own scripted input (the hero runs the track, the camera follows
+  the action), with no input from Studio and nothing a player would not see.
+- `genex__cover {"operation":"clip"}` records it in a hidden 960×540 window and keeps it as the
+  game's clip, answering with its first frame and `motion` (the share of frames that moved): near 0
+  is frozen, and Genex refuses frozen or flashing footage. Publish sends the kept clip after the
+  cover; the owner's own clip on genex.games always stands.
+- The person can ask for another clip the same way as a cover ("Make another Genex clip …").
+
 ## Check it: `genex__cover`
 
 - `genex__cover {"operation":"shoot"}` runs `genex-cover` in a hidden window of its own at
@@ -105,7 +125,7 @@ it.
 | `not_hosted` | No hosted project yet: the first publish sends it. |
 | `busy` | A publish of this game is running: check `genex__cover {"operation":"status"}` once it is done. |
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-cover/SKILL.md v1.36.4 sha256 9552bc1910747fd3b2c7a09921e4cbabe6d33824b4765ce9715682582f82ac0b -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-cover/SKILL.md v1.36.13 sha256 d112fa31e709a519aa9c453f3b1fdecd640464dcd0bf5efdfc698a1438e04b8c -->
 ---
 name: genex-cover
 description: Make this game's cover — the one real frame its gallery card, game page and every shared link show. Choose or stage its best moment from its own world, models, light and effects (the hero, the action at its peak, the best-lit angle; no HUD, no text, 16:9), shoot several candidates, judge them at card size and send the best. Load once the game looks like itself, before its first publish, and again when its look changes.
@@ -459,6 +479,9 @@ must not be there.
    `npx genex cover .genex/scratch/cover.png` sends it now: exit 0 for set or
    outranked, 1 otherwise; `--json` prints one object whose `kind` is
    `applied`, `outranked`, `rejected`, `invalid` or `failed`.
+   A cover clip (5–6 s of real play, MP4 or WebM, at most 8 MB) goes up with
+   `npx genex cover --clip <file> --commit <sha of the build it shows>`, with
+   the same exit codes and kinds; the owner's own clip always outranks it.
 4. **No browser that can capture the game?** Do not set one up just for this;
    tell the owner they can set a cover on the game's page.
 

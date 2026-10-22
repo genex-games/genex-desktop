@@ -1,297 +1,222 @@
 /**
- * The `native-game` fixture's seam: a scripted native registry that stands in for real game
- * processes, so the native run card renders in a fixture profile without a window. It holds the
- * cpp-game fixture's two games: pong-mac's Mac window already runs (no process, no port), pong-cpp
- * has none. Stop ends a run and announces `stopping`, then `stopped`, as the real registry does.
- * It starts nothing: Play on Mac and Bring to front are refused before it by the fixture policy
- * (`native-policy.ts`), and a start that still reaches it (an agent's lease) is refused typed.
- *
- * Live's Native view is scripted too (its four channels are fixture-safe): embed answers a ready
- * embedded run with no process and no frames, and the input, resizes and sight it then receives are
- * said in that run's `native.log` (`embed: 1280x720 @2`, `input: tap`, `resize: …`, `hidden`, `shown`), so a
- * fixture run can read what Live sent.
- *
- * The `cross-game` fixture's seed is here too: the cpp-game fixture plus pong-cross, made for all
- * four destinations (so on a Mac its Export for list offers Browser, Mac, Windows and Linux), whose
- * library holds the checks the lane records after cross-building it on a Mac (Windows admitted and
- * not run here, Linux refused by the ELF gate). No build runs, and no export: `studio:export` is
- * native, refused in a fixture profile.
+ * The native builds of a fixture launch's made-up games, as genex.games would serve their rows. Each
+ * build's archive is on the fixture's `.invalid` build host, which never resolves: a fixture launch
+ * never reaches the network for them.
  */
-import { BuildTarget, GameStack } from "../../shared/game-project.ts";
-import { DestinationBadge } from "../../shared/game-targets.ts";
-import {
-  type DestinationCheck,
-  NativeBackend,
-  NativeError,
-  type NativeInputAction,
-  NativeRefusal,
-  NativeRunMode,
-  NativeRunState,
-  type NativeRunStatus,
-} from "../../shared/native-contract.ts";
-import { UiEvent } from "../../shared/ui-events.ts";
-import type {
-  NativeEmbedRequest,
-  NativeRun,
-  NativeRunsHost,
-  NativeRunsOptions,
-  NativeStartRequest,
-  NativeSurfaceSize,
-} from "../core/native-runs.ts";
-import type { NativeGamePort } from "../../substrate/native-game-port.ts";
-import { readCurrentLock } from "../../substrate/toolchain-store/lock.ts";
-import type { StudioCore } from "../studio-core.ts";
-import { FixtureName } from "./fixture-kit.ts";
-import { FIXTURE_CPP_GAMES, seedCppGame } from "./fixture-toolchains.ts";
-import { ScaffoldCaller } from "../../substrate/game-workspace.ts";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
+import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { SECOND_MS } from "../../shared/duration.ts";
+import { FIXTURE_BUILD_HOST, NativeArch, NativePlatform } from "../../shared/play-native.ts";
 
-const MESSAGE = {
-  noGame: "The native-game fixture starts no game: its runs are scripted.",
-  input: (actions: readonly NativeInputAction[]) => `input: ${actions.map((action) => action.type).join(", ")}`,
-  resize: (surface: NativeSurfaceSize) => `resize: ${surface.width}x${surface.height} @${surface.dpr}`,
-  embed: (surface: NativeSurfaceSize) => `embed: ${surface.width}x${surface.height} @${surface.dpr}`,
-  hidden: "hidden",
-  shown: "shown",
-} as const;
-
-/** Whether a fixture game is made for the Mac alone. */
-function macOnly(game: { targets: readonly BuildTarget[] }): boolean {
-  return !game.targets.includes(BuildTarget.Web);
+/** One build a fixture game has. */
+export interface FixtureBuildSpec {
+  platform: NativePlatform;
+  arch: NativeArch;
+  version: string;
+  /** What runs, inside the archive. */
+  entry: string;
+  /** The archive's and the unpacked game's sizes, as the catalog states them. */
+  sizeBytes: number;
+  installedBytes: number;
+  /** Its oldest macOS or Windows version. */
+  minOs?: string;
+  publishedAt: string;
 }
 
-/** The game whose window the fixture shows running: the Mac-only one (pong-mac). */
-const RUNNING_GAME = FIXTURE_CPP_GAMES.find(macOnly)?.name ?? "pong-mac";
-
-/** States a run has ended in. */
-const ENDED: ReadonlySet<NativeRunState> = new Set([
-  NativeRunState.Stopped,
-  NativeRunState.Crashed,
-  NativeRunState.Killed,
-  NativeRunState.Refused,
-]);
-
-/** Whether `run` is `project`'s live run in `mode`. */
-function liveRunOf(run: NativeRunStatus, project: string, mode: NativeRunMode): boolean {
-  if (run.project !== project || run.mode !== mode) return false;
-  return !ENDED.has(run.state);
+/** A fixture game's native side. */
+export interface FixtureNative {
+  /** It has a web build too: its card plays that. */
+  web: boolean;
+  engine: string;
+  builds: FixtureBuildSpec[];
 }
 
-/** A scripted registry: in-memory runs, each change announced as `native.status`. */
-class ScriptedNativeRuns implements NativeRunsHost {
-  readonly #options: Pick<NativeRunsOptions, "emit" | "timers">;
-  /** Every run it knows, by run id. */
-  readonly #runs = new Map<string, NativeRunStatus>();
-  readonly #statusListeners = new Set<(run: NativeRunStatus) => void>();
-  /** Embedded runs scripted so far, for their run ids. */
-  #embeds = 0;
+const GB = 1024 ** 3;
+const MB = 1024 ** 2;
 
-  constructor(options: Pick<NativeRunsOptions, "emit" | "timers">) {
-    this.#options = options;
-    const at = this.#iso();
-    this.#announce({
-      project: RUNNING_GAME,
-      runId: `fixture-${RUNNING_GAME}-window`,
-      target: BuildTarget.Mac,
-      state: NativeRunState.Ready,
-      mode: NativeRunMode.Window,
-      pid: null,
-      backend: NativeBackend.MetalAngle,
-      refusal: null,
-      problem: null,
-      exit: null,
-      owner: null,
-      startedAt: at,
-      endedAt: null,
-    });
-  }
+/** A Mac app of `title` at `version`, built for both kinds of Mac. */
+export const macApp = (
+  title: string,
+  version: string,
+  sizes: { archive: number; unpacked: number },
+): FixtureBuildSpec => ({
+  platform: NativePlatform.Mac,
+  arch: NativeArch.Universal,
+  version,
+  entry: `${title}.app`,
+  sizeBytes: sizes.archive,
+  installedBytes: sizes.unpacked,
+  minOs: "13.0",
+  publishedAt: "2026-10-18T09:00:00.000Z",
+});
 
-  /** Nothing starts in a fixture profile. */
-  async start(_request: NativeStartRequest): Promise<NativeRun> {
-    throw new NativeError(NativeRefusal.Unsupported, MESSAGE.noGame);
-  }
+/** A Windows program of `title` at `version`, in a folder of its own. */
+export const windowsApp = (
+  title: string,
+  version: string,
+  sizes: { archive: number; unpacked: number },
+): FixtureBuildSpec => ({
+  platform: NativePlatform.Windows,
+  arch: NativeArch.X64,
+  version,
+  entry: `${title}/${title.replace(/\s+/g, "")}.exe`,
+  sizeBytes: sizes.archive,
+  installedBytes: sizes.unpacked,
+  minOs: "10.0.19041",
+  publishedAt: "2026-10-18T09:00:00.000Z",
+});
 
-  /** Stopping, then stopped: what the real registry announces for a game that quits when asked. */
-  async stop(runId: string): Promise<void> {
-    const run = this.#runs.get(runId);
-    if (!run || ENDED.has(run.state)) return;
-    this.#announce({ ...run, state: NativeRunState.Stopping });
-    this.#announce({
-      ...run,
-      state: NativeRunState.Stopped,
-      pid: null,
-      exit: { code: 0, signal: null },
-      endedAt: this.#iso(),
-    });
-  }
+/** Sizes the canvas shows: a 1.4 GB game, its 1.2 GB download. */
+export const LARGE = { archive: Math.round(1.2 * GB), unpacked: Math.round(1.4 * GB) };
+export const MEDIUM = { archive: 900 * MB, unpacked: Math.round(1.1 * GB) };
+export const SMALL = { archive: 310 * MB, unpacked: 420 * MB };
 
-  /** A ready embedded run with no process: the game's run before it ends first, as in the real registry. */
-  async embed(request: NativeEmbedRequest): Promise<NativeRunStatus> {
-    const before = this.state(request.project, NativeRunMode.Embedded);
-    if (before) await this.stop(before.runId);
-    this.#embeds += 1;
-    const status: NativeRunStatus = {
-      project: request.project,
-      runId: `fixture-${request.project}-embedded-${this.#embeds}`,
-      target: request.target,
-      state: NativeRunState.Ready,
-      mode: NativeRunMode.Embedded,
-      pid: null,
-      backend: NativeBackend.MetalAngle,
-      refusal: null,
-      problem: null,
-      exit: null,
-      owner: null,
-      startedAt: this.#iso(),
-      endedAt: null,
-    };
-    this.#announce(status);
-    this.#say(request.project, MESSAGE.embed(request.surface));
-    return { ...status };
-  }
+/** Where a fixture build's archive is: the fixture build host, never a real one. */
+export const fixtureBuildUrl = (slug: string, build: FixtureBuildSpec): string =>
+  `https://${FIXTURE_BUILD_HOST}/${slug}/${build.version}/${build.platform}-${build.arch}.zip`;
 
-  /** Said in the embedded run's log; false when there is none. */
-  resize(project: string, surface: NativeSurfaceSize): boolean {
-    return this.#say(project, MESSAGE.resize(surface));
-  }
-
-  /** Said in the embedded run's log; false when there is none. */
-  async input(project: string, actions: NativeInputAction[]): Promise<boolean> {
-    return this.#say(project, MESSAGE.input(actions));
-  }
-
-  /** Said in the embedded run's log. */
-  showEmbedded(project: string, visible: boolean): void {
-    this.#say(project, visible ? MESSAGE.shown : MESSAGE.hidden);
-  }
-
-  /** Ends the run killed with `refusal`, as the real registry's frames failure does. */
-  kill(runId: string, refusal: NativeRefusal): void {
-    const run = this.#runs.get(runId);
-    if (!run || ENDED.has(run.state)) return;
-    this.#announce({ ...run, state: NativeRunState.Killed, refusal, pid: null, endedAt: this.#iso() });
-  }
-
-  onStatus(listener: (run: NativeRunStatus) => void): () => void {
-    this.#statusListeners.add(listener);
-    return () => this.#statusListeners.delete(listener);
-  }
-
-  async stopAll(): Promise<void> {
-    await this.#stopWhere(() => true);
-  }
-
-  async stopAgentRuns(): Promise<void> {
-    await this.#stopWhere((run) => run.mode === NativeRunMode.Headless);
-  }
-
-  async stopProject(project: string, modes: readonly NativeRunMode[]): Promise<void> {
-    await this.#stopWhere((run) => run.project === project && modes.includes(run.mode));
-  }
-
-  async stopMode(mode: NativeRunMode): Promise<void> {
-    await this.#stopWhere((run) => run.mode === mode);
-  }
-
-  async stopOwnedBy(owner: string): Promise<void> {
-    await this.#stopWhere((run) => run.owner === owner);
-  }
-
-  /** The live run of `project` in `mode` (the window, by default), or null. */
-  state(project: string, mode: NativeRunMode = NativeRunMode.Window): NativeRunStatus | null {
-    for (const run of this.#runs.values()) if (liveRunOf(run, project, mode)) return run;
-    return null;
-  }
-
-  /** A scripted run has no port. */
-  portOf(_project: string, _mode?: NativeRunMode): NativeGamePort | null {
-    return null;
-  }
-
-  /** Whether `project` has a window to raise; no window exists to raise. */
-  async front(project: string): Promise<boolean> {
-    return this.state(project) !== null;
-  }
-
-  async sweepOrphans(): Promise<number> {
-    return 0;
-  }
-
-  /** A scripted window never gains focus. */
-  onFocus(_listener: (run: NativeRunStatus, focused: boolean) => void): () => void {
-    return () => {};
-  }
-
-  async #stopWhere(match: (run: NativeRunStatus) => boolean): Promise<void> {
-    for (const run of [...this.#runs.values()]) if (match(run)) await this.stop(run.runId);
-  }
-
-  #announce(status: NativeRunStatus): void {
-    this.#runs.set(status.runId, status);
-    this.#options.emit({ type: UiEvent.NativeStatus, payload: { ...status } });
-    for (const listener of this.#statusListeners) listener({ ...status });
-  }
-
-  /** One line in `project`'s embedded run's log; false when it has none. */
-  #say(project: string, line: string): boolean {
-    const run = this.state(project, NativeRunMode.Embedded);
-    if (!run) return false;
-    const payload = { project, runId: run.runId, lines: [line], truncated: false };
-    this.#options.emit({ type: UiEvent.NativeLog, payload });
-    return true;
-  }
-
-  #iso(): string {
-    return new Date(this.#options.timers.now()).toISOString();
-  }
+/** A fixture archive made for this launch: its file and what the catalog says of it. */
+interface FixtureArchive {
+  file: string;
+  sizeBytes: number;
+  installedBytes: number;
+  sha256: string;
 }
 
-/** The registry factory a fixture profile hands the core (`StudioCoreOptions.createNativeRuns`), or undefined. */
-export function fixtureNativeRuns(
-  fixture: string | undefined,
-): ((options: NativeRunsOptions) => NativeRunsHost) | undefined {
-  if (fixture !== FixtureName.NativeGame) return undefined;
-  return (options) => new ScriptedNativeRuns(options);
+/** The archives this launch made, by address (`prepareFixtureArchives`); none outside the native-games fixture. */
+const archives = new Map<string, FixtureArchive>();
+
+/**
+ * A fixture build's row as genex.games serves it: the real facts of its archive once this launch
+ * made one, else the catalog's stated sizes and a stand-in checksum (its install then fails as a
+ * checksum, as it should: there is nothing to download).
+ */
+export function fixtureBuildRow(slug: string, build: FixtureBuildSpec): Record<string, unknown> {
+  const url = fixtureBuildUrl(slug, build);
+  const made = archives.get(url);
+  if (made) {
+    const { sizeBytes, installedBytes, sha256 } = made;
+    return { ...build, url, sizeBytes, installedBytes, sha256 };
+  }
+  return { ...build, url, sha256: createHash("sha256").update(url).digest("hex") };
 }
 
-/** The cross-game fixture's game: made for every destination, as Create game makes one, so every export is offered. */
-export const FIXTURE_CROSS_GAME = {
-  name: "pong-cross",
-  title: "Pong everywhere",
-  targets: [BuildTarget.Web, BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux],
-} as const;
+/** A fixture game's native fields on its gallery item: its builds, whether it has a web build and its engine. */
+export const fixtureNativeFields = (slug: string, native: FixtureNative): Record<string, unknown> => ({
+  builds: native.builds.map((build) => fixtureBuildRow(slug, build)),
+  web: native.web,
+  engine: native.engine,
+});
 
-/** When the fixture's checks say they were made: fixed, so a reused profile writes nothing new. */
-const CROSS_CHECKED_AT = "2026-10-01T00:00:00.000Z";
-/** The lock a check names when the fixture's store has none (12 hex, as a check records it). */
-const NO_LOCK = "000000000000";
-const LOCK_HEX = 12;
+/** A fixture game with native builds, as the fixture catalog lists it. */
+export interface FixtureNativeGame {
+  slug: string;
+  title: string;
+  hue: number;
+  native: FixtureNative;
+}
 
-/** The checks a Mac's lane records for pong-cross: Windows built and admitted but not run here, Linux refused for linking libGL. */
-function crossChecks(lock: string): Array<[BuildTarget, DestinationCheck]> {
-  const at = CROSS_CHECKED_AT;
-  return [
-    [BuildTarget.Windows, { badge: DestinationBadge.NotRunHere, lock, at }],
-    [BuildTarget.Linux, { badge: DestinationBadge.Failed, lock, at, refusal: NativeRefusal.ImportsLibGl }],
-  ];
+/** How large each made archive is: its stated size scaled down, so a download takes a few seconds. */
+const ARCHIVE_SCALE = 1 / 64;
+/** How fast the fixture's build host sends, so an install is seen downloading. */
+const FIXTURE_BYTES_PER_SECOND = 4 * MB;
+const FIXTURE_CHUNK_BYTES = 256 * 1024;
+
+/** `bytes` of noise from a fixed seed: the same archive, and checksum, on every launch. */
+function noise(bytes: number, seed: number): Buffer {
+  const out = Buffer.alloc(bytes);
+  let state = seed >>> 0 || 1;
+  for (let at = 0; at + 4 <= bytes; at += 4) {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    out.writeUInt32LE(state >>> 0, at);
+  }
+  return out;
+}
+
+/** The deps that make and pack the stand-in apps; dev code passes the real ones. */
+export interface FixtureArchiveDeps {
+  /** Build `title`'s app at `version` into `dir`, carrying `level` as its data, and answer its path. */
+  buildApp(
+    spec: { title: string; slug: string; hue: number; version: string; level: Uint8Array },
+    dir: string,
+  ): Promise<string>;
+  /** Zip `app` into `zip` as a release does (`ditto -c -k --keepParent`). */
+  zip(app: string, zip: string): Promise<void>;
+  /** The space a folder takes on disk. */
+  diskBytes(dir: string): Promise<number>;
 }
 
 /**
- * The `cross-game` fixture's seed: the cpp-game fixture (its games and store), then pong-cross,
- * scaffolded once through the real path, and its checks written through the library as the lane
- * writes them. It runs on every launch; an unchanged check writes nothing.
+ * Make each fixture game's Mac archive in `dir` (kept there, so a reused profile serves the same
+ * bytes) and register it, so the catalog states its real size and checksum and the fixture host
+ * serves it. `extra` adds versions the catalog no longer offers (an older one to update from).
  */
-export async function seedCrossGame(core: StudioCore): Promise<void> {
-  await seedCppGame(core);
-  const game = FIXTURE_CROSS_GAME;
-  if (!(await core.games.list()).some((listed) => listed.name === game.name)) {
-    await core.games.scaffold(game.name, {
-      title: game.title,
-      stack: GameStack.RaylibCpp,
-      caller: ScaffoldCaller.Internal,
-      targets: [...game.targets],
+export async function prepareFixtureArchives(
+  dir: string,
+  games: readonly FixtureNativeGame[],
+  deps: FixtureArchiveDeps,
+  extra: ReadonlyArray<{ slug: string; build: FixtureBuildSpec }> = [],
+): Promise<void> {
+  const wanted = [
+    ...games.flatMap((game) => game.native.builds.map((build) => ({ slug: game.slug, build }))),
+    ...extra,
+  ].filter(({ build }) => build.platform === NativePlatform.Mac);
+  for (const { slug, build } of wanted) {
+    const game = games.find((one) => one.slug === slug);
+    const title = game?.title ?? slug;
+    const zip = path.join(dir, slug, `${build.version}.zip`);
+    const unpacked = path.join(dir, slug, build.version);
+    if (!existsSync(zip)) {
+      await mkdir(unpacked, { recursive: true });
+      const size = Math.round(build.sizeBytes * ARCHIVE_SCALE);
+      const level = noise(size, size);
+      const app = await deps.buildApp({ title, slug, hue: game?.hue ?? 210, version: build.version, level }, unpacked);
+      await deps.zip(app, zip);
+    }
+    const data = await readFile(zip);
+    archives.set(fixtureBuildUrl(slug, build), {
+      file: zip,
+      sizeBytes: data.length,
+      installedBytes: Math.max(data.length, await deps.diskBytes(unpacked)),
+      sha256: createHash("sha256").update(data).digest("hex"),
     });
-    await core.threadForGame(game.name);
   }
-  const lock = (await readCurrentLock(core.layout.toolchains))?.digest.slice(0, LOCK_HEX) ?? NO_LOCK;
-  for (const [target, check] of crossChecks(lock)) await core.games.writeNativeCheck(game.name, target, check);
 }
+
+/** The bytes of `data` from `start`, sent at the fixture host's pace; it errors once `signal` stops. */
+function pacedBody(data: Buffer, start: number, signal: AbortSignal | null | undefined): ReadableStream<Uint8Array> {
+  let at = start;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (signal?.aborted) return controller.error(signal.reason);
+      if (at >= data.length) return controller.close();
+      await sleep((FIXTURE_CHUNK_BYTES / FIXTURE_BYTES_PER_SECOND) * SECOND_MS);
+      const end = Math.min(data.length, at + FIXTURE_CHUNK_BYTES);
+      controller.enqueue(data.subarray(at, end));
+      at = end;
+    },
+  });
+}
+
+/**
+ * The fixture build host: a fetch that answers only the archives this launch made, from their
+ * files, honouring a range, and refuses everything else. It never opens a socket.
+ */
+export const fixtureNativeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = String(input instanceof Request ? input.url : input);
+  const made = archives.get(url);
+  init?.signal?.throwIfAborted();
+  if (!made) return new Response(null, { status: 404 });
+  const data = await readFile(made.file);
+  const range = /^bytes=(\d+)-$/.exec(new Headers(init?.headers).get("range") ?? "");
+  const start = range ? Number(range[1]) : 0;
+  if (start >= data.length) return new Response(null, { status: 416 });
+  const headers: Record<string, string> = { "content-length": String(data.length - start) };
+  if (range) headers["content-range"] = `bytes ${start}-${data.length - 1}/${data.length}`;
+  return new Response(pacedBody(data, start, init?.signal), { status: range ? 206 : 200, headers });
+}) as typeof fetch;

@@ -6,8 +6,12 @@
  * session's id. They are mirrored in the compacted Claude Code shape every consumer already reads
  * (the chat rows, the run graph, the morning review), as `codex.ts` mirrors Codex's. 2.x names
  * some tools anew (`shell`, `subagent`, `patch`) and carries a failure's status in the error itself.
+ * A step's edges are the session's activity: OpenCode reports a tool only once it ended, so the
+ * host reads a step, the model's turn and the tools it calls, as in flight from its start to its
+ * finish, and a steer cuts the session only between steps (`main/core/steer-cut.ts`).
  * Recorded samples: `tests/fixtures/transcripts/opencode-*.jsonl` (OpenCode 1.18 and 2.0.20).
  */
+import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { clip } from "./common.ts";
 import { DelegateEventType } from "./types.ts";
 import { studioToolName } from "./studio-tool-prompts.ts";
@@ -71,6 +75,8 @@ export interface Translated {
   /** Set when OpenCode reported the turn failed, with its words and the HTTP status it named. */
   failure?: { message: string; status: number | null };
   turns?: number;
+  /** The session's activity at a step's edge: `Working` as one starts, `Thinking` once it finished. */
+  activity?: ChatActivityPhase;
 }
 
 type Record_ = Record<string, unknown>;
@@ -97,6 +103,8 @@ function translateBody(event: Record_): Translated {
       return reasoning(part);
     case OpenCodeEvent.ToolUse:
       return toolUse(part);
+    case OpenCodeEvent.StepStart:
+      return { events: [], activity: ChatActivityPhase.Working };
     case OpenCodeEvent.StepFinish:
       return stepFinish(part);
     case OpenCodeEvent.Error:
@@ -160,6 +168,7 @@ function stepFinish(part: Record_): Translated {
   const cache = record(tokens.cache);
   return {
     events: [],
+    activity: ChatActivityPhase.Thinking,
     usage: {
       input_tokens: finite(tokens.input),
       output_tokens: finite(tokens.output) + finite(tokens.reasoning),

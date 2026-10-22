@@ -71,6 +71,14 @@ export function pluginUpdates(list: PluginInfo[], index: PluginIndexView | null)
   return list.flatMap((plugin) => updateOf(plugin, releases) ?? []);
 }
 
+/** One update by plugin and version: unticking it skips that version only, so a newer one is offered again. */
+export const updateKey = (update: PluginUpdate): string => `${update.plugin.manifest.id}@${update.version}`;
+
+/** The updates still ticked: all of them but the ones `skipped` names (`updateKey`). */
+export function chosenUpdates(updates: readonly PluginUpdate[], skipped: ReadonlySet<string>): PluginUpdate[] {
+  return updates.filter((update) => !skipped.has(updateKey(update)));
+}
+
 /**
  * Install one update. For an index release main shows the plugin's trust dialog first, and a "no"
  * there resolves like a "yes": the plugin list says which it was. A seed installs without asking.
@@ -89,10 +97,10 @@ export interface PluginsStore extends StoreApi<PluginsState> {
   /** Read the plugin index again: what it offers, and the newer releases of installed plugins. */
   refreshIndex(): Promise<void>;
   /**
-   * Install every waiting update, one after another, then read the plugins and the index again.
-   * Resolves with the failures; a press while one runs starts nothing.
+   * Install every waiting update but the `skipped` ones (`updateKey`), one after another, then read
+   * the plugins and the index again. Resolves with the failures; a press while one runs starts nothing.
    */
-  updateAll(): Promise<unknown[]>;
+  updateAll(skipped?: ReadonlySet<string>): Promise<unknown[]>;
 }
 
 export function createPluginsStore(
@@ -108,13 +116,13 @@ export function createPluginsStore(
   );
   const refresh = (): Promise<void> => list.request();
   const refreshIndex = (): Promise<void> => index.request();
-  const updateAll = async (): Promise<unknown[]> => {
+  const updateAll = async (skipped: ReadonlySet<string> = new Set()): Promise<unknown[]> => {
     const state = store.getState();
     if (state.updating) return [];
     store.setState((current) => updatingChanged(current, true), true);
     const failures: unknown[] = [];
     try {
-      for (const update of pluginUpdates(state.list, state.index)) {
+      for (const update of chosenUpdates(pluginUpdates(state.list, state.index), skipped)) {
         // One refusal (a release withdrawn since the index was read) leaves the others to install.
         await installPluginUpdate(api, update).catch((error: unknown) => failures.push(error));
       }

@@ -4,6 +4,7 @@
  * button is read from the live plugin list, not the record, so a plugin turned on since says On.
  */
 import { type PluginInfo, PluginSourceKind } from "../../shared/plugins.ts";
+import type { StudioApi } from "../../shared/studio-api.ts";
 import { PluginOffer, type PluginSuggestedPayload } from "../../shared/project-tools.ts";
 import { PLUGIN_SUGGESTION_WORDS } from "../words.ts";
 
@@ -64,6 +65,25 @@ export function suggestionLocalAccess(
 ): string {
   const plugin = list.find((p) => p.manifest.id === pluginId && !p.unlisted && !p.removed);
   return plugin?.source === PluginSourceKind.Local ? PLUGIN_SUGGESTION_WORDS.localAccess : "";
+}
+
+/**
+ * The card's button pressed: Turn on turns the plugin on and then tells the agent (`onTurnedOn`),
+ * so the chat goes on without the person typing; Install… asks Genex's own review first and tells
+ * the agent nothing. A press that fails rejects, and the agent hears nothing of it either.
+ */
+export async function pressSuggestion(
+  api: Pick<StudioApi, "pluginEnable" | "pluginInstall">,
+  state: typeof SuggestionState.TurnOn | typeof SuggestionState.Install,
+  plugin: { pluginId: string; name: string },
+  onTurnedOn: (name: string) => void,
+): Promise<void> {
+  if (state === SuggestionState.Install) {
+    await api.pluginInstall(plugin.pluginId);
+    return;
+  }
+  await api.pluginEnable(plugin.pluginId, true);
+  onTurnedOn(plugin.name);
 }
 
 const isText = (value: unknown): value is string => typeof value === "string";

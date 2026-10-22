@@ -7,12 +7,15 @@
  * still no sandboxed process starts: the harness never boots. Startup runs one command in the
  * sandbox first, and a failure becomes the setup screen's problem. Under AppArmor's restriction it
  * carries the command that installs the same profile the .deb's postinst installs
- * (build/linux/postinst); processes the app starts, bwrap included, inherit it.
+ * (build/linux/postinst); processes the app starts, bwrap included, inherit it. Where the system
+ * also confines /usr/bin/bwrap (Ubuntu 24.10 and later), the command copies it beside the app as
+ * postinst does, since only a copy keeps the app's profile (linux-bubblewrap.ts).
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { type SandboxProblem, SandboxProblemCode, StudioPlatform } from "../shared/boot.ts";
 import { SECOND_MS } from "../shared/duration.ts";
+import { bubblewrapConfined, ownBubblewrapPath } from "./linux-bubblewrap.ts";
 import { SandboxUnavailableError } from "./sandbox-unavailable.ts";
 import { type ProcessSandbox, shellQuote } from "./spawn.ts";
 
@@ -57,12 +60,32 @@ export function appArmorProfile(execPath: string): string | null {
   return lines ? `${lines.join("\n")}\n` : null;
 }
 
-/** One shell command line that installs {@link appArmorProfile} for `execPath` and loads it. */
-export function appArmorAllowCommand(execPath: string): string | null {
+/** What the setup command does: install the profile, copy bubblewrap beside the app, or both. */
+export interface AllowSteps {
+  profile: boolean;
+  ownBubblewrap: boolean;
+}
+
+/**
+ * One shell command line that installs {@link appArmorProfile} for `execPath` and loads it, and
+ * with `ownBubblewrap` copies the bubblewrap on PATH beside the app, root-owned.
+ */
+export function appArmorAllowCommand(
+  execPath: string,
+  steps: AllowSteps = { profile: true, ownBubblewrap: false },
+): string | null {
   const lines = profileLines(execPath);
   if (!lines) return null;
   const write = `printf '%s\\n' ${lines.map(shellQuote).join(" ")}`;
-  return `${write} | sudo tee ${PROFILE_FILE} > /dev/null && sudo apparmor_parser -r ${PROFILE_FILE}`;
+  const parts = [
+    ...(steps.profile
+      ? [`${write} | sudo tee ${PROFILE_FILE} > /dev/null && sudo apparmor_parser -r ${PROFILE_FILE}`]
+      : []),
+    ...(steps.ownBubblewrap
+      ? [`sudo install -m 0755 "$(command -v bwrap)" ${shellQuote(ownBubblewrapPath(execPath))}`]
+      : []),
+  ];
+  return parts.length ? parts.join(" && ") : null;
 }
 
 /** Does the kernel restrict user namespaces to programs an AppArmor profile allows? */
@@ -79,11 +102,14 @@ export interface IsolationFailure {
   restricted: boolean;
   /** The app's executable, which the profile names. */
   execPath: string;
+  /** The system confines /usr/bin/bwrap itself, so the app needs its own copy. */
+  bwrapConfined: boolean;
 }
 
 /** The setup problem for a sandbox that cannot start a process. */
 export function isolationProblem(failure: IsolationFailure): SandboxProblem {
-  const allowCommand = failure.restricted ? appArmorAllowCommand(failure.execPath) : null;
+  const steps = { profile: failure.restricted, ownBubblewrap: failure.bwrapConfined };
+  const allowCommand = steps.profile || steps.ownBubblewrap ? appArmorAllowCommand(failure.execPath, steps) : null;
   return {
     code: SandboxProblemCode.IsolationBlocked,
     platform: StudioPlatform.Linux,
@@ -99,6 +125,8 @@ export interface IsolationCheckOptions {
   platform?: NodeJS.Platform;
   /** Where /proc is. */
   procRoot?: string;
+  /** Where /etc is. */
+  etcRoot?: string;
   /** The executable the profile names (default: this process's). */
   execPath?: string;
 }
@@ -122,7 +150,8 @@ export async function checkLinuxIsolation(sandbox: ProcessSandbox, options: Isol
     : MESSAGE.exited(result.code);
   const details = printed.some(Boolean) ? printed.filter(Boolean) : [outcome];
   const restricted = await appArmorRestrictsNamespaces(options.procRoot);
+  const bwrapConfined = bubblewrapConfined(options.etcRoot);
   throw new SandboxUnavailableError(
-    isolationProblem({ details, restricted, execPath: options.execPath ?? process.execPath }),
+    isolationProblem({ details, restricted, bwrapConfined, execPath: options.execPath ?? process.execPath }),
   );
 }

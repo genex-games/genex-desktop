@@ -1,0 +1,17 @@
+{
+  "Blender": "Blender",
+  "Cancel download": "Cancelar descarga",
+  "Checking runtime…": "Comprobando Blender…",
+  "Download Blender 5.2.1": "Descargar Blender 5.2.1",
+  "Download Blender 5.2.1 (350 to 400 MB) into Genex's Local Blender storage, so agents can model with it. Genex verifies its digest, and your own Blender stays as it is.": "Descargar Blender 5.2.1 (de 350 a 400 MB) en el almacenamiento de Local Blender de Genex, para que los agentes puedan modelar con él. Genex verifica su suma de comprobación y tu propio Blender se queda como está.",
+  "Download pinned Blender": "Descargar Blender para Genex",
+  "Download the pinned Blender 5.2.1 runtime (350 to 400 MB) into this plugin’s storage. Studio verifies its digest. Existing external Blender installations stay unchanged.": "Descargar la versión fijada de Blender 5.2.1 (de 350 a 400 MB) en el almacenamiento de este plugin. Studio verifica su suma de comprobación. Las instalaciones de Blender que ya tengas no cambian.",
+  "Download: {phase} · {done} / {total} MiB": "Descarga: {phase} · {done} / {total} MiB",
+  "Download: {phase} · {done} / {total} MiB · {error}": "Descarga: {phase} · {done} / {total} MiB · {error}",
+  "Local Blender": "Local Blender",
+  "Model 3D assets with Blender on this computer. No account or credits.": "Modela recursos 3D con Blender en este equipo. Sin cuenta ni créditos.",
+  "Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.": "Modela recursos en este Mac. No se usan la cuenta de Genex ni créditos. Si activas este plugin, sus herramientas estarán disponibles en la próxima respuesta de este chat.",
+  "Recheck": "Volver a comprobar",
+  "Runtime and jobs": "Entorno y tareas",
+  "The Blender program to use (blender.exe on Windows), when Genex doesn't find yours": "El programa de Blender que se usa (blender.exe en Windows) si Genex no encuentra el tuyo"
+}

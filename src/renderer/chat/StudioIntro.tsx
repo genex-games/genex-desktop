@@ -1,11 +1,12 @@
+import { t } from "../../shared/i18n.ts";
 import { Markdown } from "../ui/Markdown.tsx";
 import { Presence } from "../ui/Presence.tsx";
 
-const GREETING = "You can ask about Harness and its improvements here. Games are built in their own chats.";
+const GREETING = t("You can ask about Harness and its improvements here. Games are built in their own chats.");
 const QUESTIONS = [
-  "How does Harness build a game?",
-  "How does Harness improve itself?",
-  "What has it improved so far?",
+  t("How does Harness build a game?"),
+  t("How does Harness improve itself?"),
+  t("What has it improved so far?"),
 ];
 
 /**
@@ -22,7 +23,7 @@ export function StudioIntro({
   onAsk: (question: string) => void;
 }) {
   return (
-    <section data-studio-intro aria-label="About this chat" className="flex min-w-0 flex-col gap-3">
+    <section data-studio-intro aria-label={t("About this chat")} className="flex min-w-0 flex-col gap-3">
       <Markdown text={GREETING} />
       <Presence>{empty ? [{ key: "questions", node: <Questions disabled={disabled} onAsk={onAsk} /> }] : []}</Presence>
     </section>

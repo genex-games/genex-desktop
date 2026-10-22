@@ -5,7 +5,8 @@
  * none), answered by the fake hook bus (`unreal-moment-bus.ts`), and `engine.delegate` split three
  * ways: the lead (a script of turns calling the run's tools through `directorTool`, as the host
  * forwards them), pool workers (sessions the test ends, writing files in their copies first), and
- * the reviewer (`reviewerAnswer`). A checkpoint's pictures are kept as the plugin's observer's
+ * the reviewer (`reviewerAnswer`), and a judge that plays on a leased window (a delegation with a
+ * `playtest` grant, answering yes to every question it is asked unless the test says otherwise). A checkpoint's pictures are kept as the plugin's observer's
  * capture, as the host keeps them. A checkpoint commits the folder and a restore resets it to the
  * snapshot's commit (after a rescue commit), as the host's snapshots do; the test may put the chat in Plan mode, let the lead's turn take
  * what is steered into it, and list the run's jobs. The clock is the test's: a wait moves it and
@@ -69,7 +70,15 @@ export type LoopHost = {
   threadId: string;
   /** The game folder: a real git repository. */
   dir: string;
-  game: { name: string; dir: string; facts: GameKind["facts"]; holds?: string | null };
+  /** The game as `game.list` lists it; a test may mark it played in an editor, with its engine's judges. */
+  game: {
+    name: string;
+    dir: string;
+    facts: GameKind["facts"];
+    holds?: string | null;
+    editorPlay?: boolean;
+    judges?: Array<{ id: string; label: string }>;
+  };
   run: Record<string, unknown> & { runId: string; project: string; budgets: Record<string, unknown> };
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -82,6 +91,10 @@ export type LoopHost = {
   stepAnswers: Map<string, (hook: HookContext) => unknown>;
   /** The worker sessions the pool started, in order. */
   workers: WorkerSession[];
+  /** How a judge's session answers its questions, by check id; yes to each when the test sets nothing. */
+  judging: ((params: Record<string, unknown>, ids: string[]) => Record<string, unknown> | undefined) | null;
+  /** The judges' sessions, as the Loop delegated them, in order. */
+  judged: () => Array<Record<string, unknown>>;
   /** The run's artifacts by id, as `artifact.write` keeps them (the journal is one). */
   artifacts: Map<string, unknown>;
   /** The chat's run inbox: what the person said, and whether they asked to finish. */
@@ -283,6 +296,23 @@ function workerSession(host: Internals, params: Record<string, unknown>): Promis
   });
 }
 
+/** The check ids a judge's prompt asks it to answer (`- <id>: <question>`). */
+function askedIds(prompt: string): string[] {
+  const from = prompt.indexOf("QUESTIONS TO ANSWER");
+  if (from < 0) return [];
+  return [...prompt.slice(from).matchAll(/^- ([^:\s]+): /gm)].map((match) => match[1] ?? "");
+}
+
+/** A judge's session: its answers as the judge's JSON reply, yes to each question unless the test says otherwise. */
+function judgeSession(host: Internals, params: Record<string, unknown>) {
+  const ids = askedIds(String(params.prompt ?? ""));
+  const answers = Object.fromEntries(ids.map((id) => [id, { answer: "yes", note: "played it through", frames: [] }]));
+  const own = host.judging?.(params, ids);
+  const summary = JSON.stringify({ answers, ...own });
+  const trace = { path: `/runs/${host.run.runId}/judge-${host.judged().length}/trace.jsonl`, actions: 3 };
+  return { ok: true, engine: String(host.run.engine), summary, usage: {}, turns: 3, trace };
+}
+
 /** The run's events as the log keeps them: what the test seeded, then every append. */
 function append(host: Internals, params: Record<string, unknown>): { ids: string[] } {
   const batch = (params.batch ?? []) as Array<Record<string, unknown>>;
@@ -366,6 +396,7 @@ function handlers(host: Internals) {
     "plugins.workerTypes": () => [...host.workerTypes],
     "engine.delegate": (params: Record<string, unknown>) => {
       if (params.worker) return workerSession(host, params);
+      if (params.playtest) return judgeSession(host, params);
       return leadTurn(host, params, ++leadTurns);
     },
     "engine.steer": (params: Record<string, unknown>) => {
@@ -393,6 +424,10 @@ function handlers(host: Internals) {
     "observers.capture": () => [],
     "locks.hold": () => ({ held: true, labels: [] }),
     "locks.release": () => true,
+    // A judge's window: the pool always has one free.
+    "preview.capacity": () => ({ max: 4, inUse: 0, headless: true }),
+    "preview.acquire": (params: Record<string, unknown>) => ({ handle: `window-${String(params.label)}` }),
+    "preview.release": () => true,
   };
 }
 
@@ -464,6 +499,7 @@ export function loopHost(options: {
     reviews: [],
     stepAnswers: new Map(),
     workers: [],
+    judging: null,
     artifacts: new Map<string, unknown>(),
     inbox: { said: [], finishing: false },
     planning: false,
@@ -517,7 +553,9 @@ export function loopHost(options: {
       .map((event) => event.data as { event_type?: string; payload?: Record<string, unknown> })
       .filter((data) => data.event_type === eventType)
       .map((data) => data.payload ?? {});
-  host.leadCalls = () => host.rec.paramsOf("engine.delegate").filter((p) => !asksReviewer(p) && !p.worker);
+  host.leadCalls = () =>
+    host.rec.paramsOf("engine.delegate").filter((p) => !asksReviewer(p) && !p.worker && !p.playtest);
+  host.judged = () => host.rec.paramsOf("engine.delegate").filter((p) => Boolean(p.playtest));
   host.prompts = () => host.leadCalls().map((p) => String(p.prompt));
   host.reviewed = () => [...host.review.asked];
   host.until = async (done) => {

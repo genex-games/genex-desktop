@@ -188,10 +188,22 @@ describe("the open-projects dev fixture", () => {
     assert.deepEqual(access, [[AppLookAccessKind.Screen, AppLookAccessKind.Accessibility]]);
   });
 
+  it("a Unity game whose chat says once that an agent used Unity while the person played, with Unity settings", async () => {
+    const unity = await listed(OPEN_PROJECTS.unity);
+    assert.deepEqual(
+      unity.facts?.map((fact) => fact.id),
+      ["unity-project"],
+    );
+    const lines = toEntries(await chat(OPEN_PROJECTS.unity)).flatMap((entry) =>
+      entry.kind === EntryKind.Action && entry.action === EntryAction.WentAhead ? [[entry.text, entry.wentAhead]] : [],
+    );
+    assert.deepEqual(lines, [["An agent used Unity while you were playing.", { pluginId: "unity", label: "Unity" }]]);
+  });
+
   it("seeding again writes nothing", async () => {
     const counts = async () =>
       Promise.all(
-        [GAME, OPEN_PROJECTS.godot, OPEN_PROJECTS.plugin, OPEN_PROJECTS.ported].map(
+        [GAME, OPEN_PROJECTS.godot, OPEN_PROJECTS.plugin, OPEN_PROJECTS.ported, OPEN_PROJECTS.unity].map(
           async (name) => (await chat(name)).length,
         ),
       );

@@ -239,3 +239,50 @@ describe("notifications", () => {
     assert.equal(dayGroup(new Date(2026, 8, 20, 12, 0).toISOString(), now), "Earlier");
   });
 });
+
+describe("notifications: games from Play", () => {
+  const install = (event: string, payload: Record<string, unknown>) =>
+    custom("studio", event, {
+      slug: "dust-runners",
+      title: "Dust Runners",
+      version: "1.3",
+      platform: "mac",
+      ...payload,
+    });
+
+  it("says a game is ready to play, from the game, as news that opens its page", () => {
+    const { state, arrived } = run(EMPTY_NOTICES, [install("play_install_finished", {})]);
+    const [row] = activityNotices(state.items);
+    assert.equal(row?.kind, "play");
+    assert.equal(row?.slug, "dust-runners");
+    assert.equal(row?.text, "Ready to play on this Mac.");
+    assert.equal(row?.waiting, undefined, "news, never something that waits on the person");
+    assert.equal(noticeSource(row ?? arrived[0]!, undefined), "Dust Runners");
+  });
+
+  it("says why an install failed, naming the space to free, in the failed tone", () => {
+    const failed = run(EMPTY_NOTICES, [
+      install("play_install_failed", { failure: "no-space", neededBytes: Math.round(2.1 * 1024 ** 3) }),
+    ]);
+    const [row] = activityNotices(failed.state.items);
+    assert.equal(row?.text, "Couldn’t install: free 2.1 GB on this Mac and try again.");
+    assert.equal(row?.tone, "failed");
+    const odd = run(EMPTY_NOTICES, [install("play_install_failed", { failure: "a reason from a newer app" })]);
+    assert.equal(activityNotices(odd.state.items)[0]?.text, "Couldn’t install. Try again.");
+  });
+
+  it("tells a new version with its size, and keeps one row per game, the newest", () => {
+    const { state } = run(EMPTY_NOTICES, [
+      install("play_install_finished", {}),
+      install("play_update_available", { version: "1.4", sizeBytes: 120 * 1024 ** 2 }),
+    ]);
+    const rows = activityNotices(state.items);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.text, "New version · 120 MB. It updates when you play.");
+  });
+
+  it("raises nothing for a record that names no game", () => {
+    const { state } = run(EMPTY_NOTICES, [custom("studio", "play_install_finished", { title: "Nameless" })]);
+    assert.deepEqual(state.items, []);
+  });
+});

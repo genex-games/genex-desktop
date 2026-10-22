@@ -28,6 +28,16 @@ import {
   type PreviewInputAction,
 } from "./preview-input.ts";
 import type { PreviewSetup } from "../shared/preview-contract.ts";
+import {
+  BROWSER_CAPABILITIES,
+  canClick,
+  canPoint,
+  hasState,
+  PointerLevel,
+  type TargetCapabilities,
+} from "../shared/computer-target.ts";
+import { resolveAlias, SCROLL_NOTCH_PX } from "./computer-vocabulary.ts";
+import { MAX_PLAY_PLAYERS, playerArg } from "../shared/engine-play.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import { type ScreenAct, ScreenDeed } from "../shared/agent-screen.ts";
 import {
@@ -39,6 +49,12 @@ import {
 } from "./computer-tool-prompts.ts";
 
 export const COMPUTER_TOOL_NAME = "computer";
+
+/**
+ * The same tool on the person's desktop or a VM: its own name, so a session that also holds its
+ * game's `computer` can hold both — one vocabulary, two targets.
+ */
+export const DESKTOP_TOOL_NAME = "desktop";
 
 /** Actions that become input events on the preview. */
 export const COMPUTER_INPUT_ACTIONS = [
@@ -55,6 +71,7 @@ export const COMPUTER_INPUT_ACTIONS = [
   "type",
   "key",
   "hold_key",
+  "look",
 ] as const;
 
 /** Actions the tool host answers itself: looking, waiting, and the studio verbs. */
@@ -67,7 +84,21 @@ export const COMPUTER_HOST_ACTIONS = [
   "state",
   "reload",
   "console",
+  "batch",
+  "act",
+  "web_open",
+  "web_read",
+  "web_click",
+  "web_type",
 ] as const;
+
+/** The actions the session itself treats specially, by name: a wait, a batch and a reload. */
+export const ComputerVerb = { Wait: "wait", Batch: "batch", Reload: "reload", Act: "act", Look: "look" } as const;
+
+/** The web page verbs: a page read and driven by its structure, in a separate, clean browser. */
+export const WebVerb = { Open: "web_open", Read: "web_read", Click: "web_click", Type: "web_type" } as const;
+export type WebVerb = (typeof WebVerb)[keyof typeof WebVerb];
+export type ComputerVerb = (typeof ComputerVerb)[keyof typeof ComputerVerb];
 
 export type ComputerInputAction = (typeof COMPUTER_INPUT_ACTIONS)[number];
 export type ComputerHostAction = (typeof COMPUTER_HOST_ACTIONS)[number];
@@ -92,6 +123,19 @@ export const COMPUTER_SURFACE_ACTIONS: readonly ComputerAction[] = ["screenshot"
 /** Which way a scroll turns the wheel. */
 export type ScrollDirection = "up" | "down" | "left" | "right";
 
+/**
+ * What an input action brings back with its answer: a picture of the whole screen, of only the
+ * canvas, or nothing. Absent lets the session decide by role (a playtester and a judge look after
+ * every move; a builder does not).
+ */
+export const ComputerObserve = { Screenshot: "screenshot", Canvas: "canvas", None: "none" } as const;
+export type ComputerObserve = (typeof ComputerObserve)[keyof typeof ComputerObserve];
+
+/** The actions a batch may hold: input, and waits between it. */
+const BATCHABLE: ReadonlySet<string> = new Set<string>([...COMPUTER_INPUT_ACTIONS, "wait"]);
+/** The most steps one batch runs. */
+export const MAX_BATCH_STEPS = 8;
+
 export interface ComputerRequest {
   action: ComputerAction;
   coordinate?: Point;
@@ -107,12 +151,26 @@ export interface ComputerRequest {
   surface?: ComputerSurface;
   /** What to tell the model when it asked for a surface nobody has — never a refusal. */
   surfaceNote?: string;
+  /** What an input action brings back; absent lets the session decide. */
+  observe?: ComputerObserve;
+  /** What to tell the model when it asked to observe in a way nobody knows — never a refusal. */
+  observeNote?: string;
+  /** A batch's steps, each already parsed: input actions and waits. */
+  steps?: ComputerRequest[];
+  /** Mouse-look: how far the view turns, in view pixels of motion. */
+  dx?: number;
+  dy?: number;
+  /** A web page element, as `web_read` names it (`p3:12`). */
+  ref?: string;
+  /** web_type: press Enter after the text. */
+  submit?: boolean;
+  /** Which player this and every later action addresses, on a target that plays several. */
+  player?: number;
 }
 
 export type ParsedComputer = { ok: true; request: ComputerRequest } | { ok: false; error: string };
 
-/** Wheel pixels per notch — what a physical wheel click delivers to a page. */
-export const SCROLL_NOTCH_PX = 120;
+export { SCROLL_NOTCH_PX };
 export const MAX_SCROLL_NOTCHES = 50;
 export const MAX_WAIT_S = 300;
 /** Size of a worker's window — inside Anthropic's recommended band, so no coordinate scaling. */
@@ -127,6 +185,10 @@ const MAX_LISTED_CAMERAS = 12;
 const MAX_QUOTED_SURFACE_CHARS = 40;
 /** How much of typed text a caption quotes. */
 const MAX_CAPTION_TEXT_CHARS = 40;
+/** The longest web element ref the tool reads. */
+const MAX_REF_CHARS = 64;
+/** A web element ref inside whatever a model wrote for it (`[p3:12] link "Home"` → `p3:12`). */
+const WEB_REF = /[a-z]+\d+:\d+/i;
 
 /** Nothing given: absent, null or an empty string. */
 function isBlank(value: unknown): boolean {
@@ -271,6 +333,7 @@ function readPointerFields(request: ComputerRequest, raw: Record<string, unknown
 /** The rest: text, repeat, duration, scroll and surface, each clamped to what the port allows. */
 function readOtherFields(request: ComputerRequest, raw: Record<string, unknown>): void {
   if (raw.text !== undefined && raw.text !== null) request.text = String(raw.text);
+  readWebFields(request, raw);
   const repeat = num(raw.repeat);
   if (repeat !== null) request.repeat = clampRepeat(repeat);
   const duration = num(raw.duration);
@@ -279,11 +342,69 @@ function readOtherFields(request: ComputerRequest, raw: Record<string, unknown>)
     .trim()
     .toLowerCase();
   if (isScrollDirection(direction)) request.scroll_direction = direction;
+  const dx = num(raw.dx);
+  if (dx !== null) request.dx = dx;
+  const dy = num(raw.dy);
+  if (dy !== null) request.dy = dy;
   const amount = num(raw.scroll_amount ?? raw.amount);
   if (amount !== null) request.scroll_amount = Math.max(0, Math.min(MAX_SCROLL_NOTCHES, Math.round(amount)));
   const surface = parseSurface(raw.surface);
   if (surface.surface) request.surface = surface.surface;
   if (surface.note) request.surfaceNote = surface.note;
+  readObserve(request, raw.observe);
+}
+
+/** A web element ref (`p3:12`) and whether a typed text is submitted, as either transport delivers them. */
+function readWebFields(request: ComputerRequest, raw: Record<string, unknown>): void {
+  const written = raw.ref === undefined || raw.ref === null ? "" : String(raw.ref).trim();
+  // A model may copy the page's whole line for an element: its ref is the token inside it.
+  const ref = WEB_REF.exec(written)?.[0] ?? written;
+  if (ref) request.ref = ref.slice(0, MAX_REF_CHARS);
+  const submit = raw.submit;
+  if (submit === true || submit === "true") request.submit = true;
+}
+
+/** The observe word, as either transport delivers it; an unknown word is a note, never a refusal. */
+function readObserve(request: ComputerRequest, value: unknown): void {
+  if (value === undefined || value === null || value === "") return;
+  const word = String(value).trim().toLowerCase();
+  const known = (Object.values(ComputerObserve) as string[]).includes(word);
+  if (known) request.observe = word as ComputerObserve;
+  else request.observeNote = COMPUTER_ARG_PROBLEM.unknownObserve(word.slice(0, MAX_QUOTED_SURFACE_CHARS));
+}
+
+/** A batch's `actions`, as an array of argument objects: given as one, or as JSON text. */
+function batchList(value: unknown): unknown[] | null {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A batch's steps, each parsed as its own call: the steps, or the sentence naming the first that cannot run. */
+function parseBatch(value: unknown): { steps: ComputerRequest[] } | { error: string } {
+  const list = batchList(value);
+  if (!list?.length) return { error: COMPUTER_ARG_PROBLEM.batchNeedsActions };
+  if (list.length > MAX_BATCH_STEPS) return { error: COMPUTER_ARG_PROBLEM.batchTooLong(MAX_BATCH_STEPS) };
+  const steps: ComputerRequest[] = [];
+  for (const [index, item] of list.entries()) {
+    const args = typeof item === "object" && item !== null ? (item as Record<string, unknown>) : {};
+    const name = resolvedAction(args);
+    if (!BATCHABLE.has(name)) return { error: COMPUTER_ARG_PROBLEM.batchOnlyInput(index + 1) };
+    const parsed = parseComputerArgs(args);
+    if (!parsed.ok) return { error: COMPUTER_ARG_PROBLEM.batchStep(index + 1, parsed.error) };
+    steps.push(parsed.request);
+  }
+  return { steps };
+}
+
+/** The action a call names, after its alias is read. */
+function resolvedAction(raw: Record<string, unknown>): string {
+  return actionName(resolveAlias(actionName(raw), raw));
 }
 
 /** What each action needs, said before anything is pressed: the sentence when it is missing. */
@@ -296,6 +417,11 @@ const ACTION_NEEDS: Partial<Record<ComputerAction, (request: ComputerRequest) =>
   key: (r) => (r.text ? null : COMPUTER_ARG_PROBLEM.keyNeedsText(r.action)),
   hold_key: (r) => (r.text ? null : COMPUTER_ARG_PROBLEM.keyNeedsText(r.action)),
   camera: (r) => (r.text ? null : COMPUTER_ARG_PROBLEM.cameraNeedsName),
+  look: (r) => (r.dx !== undefined || r.dy !== undefined ? null : COMPUTER_ARG_PROBLEM.lookNeedsDelta),
+  act: (r) => (r.text?.trim() ? null : COMPUTER_ARG_PROBLEM.actNeedsName),
+  web_open: (r) => (r.text?.trim() ? null : COMPUTER_ARG_PROBLEM.webOpenNeedsUrl),
+  web_click: (r) => (r.ref ? null : COMPUTER_ARG_PROBLEM.webNeedsRef(r.action)),
+  web_type: (r) => (r.ref && r.text !== undefined ? null : COMPUTER_ARG_PROBLEM.webTypeNeedsRefAndText),
 };
 
 /** The amounts an action falls back to when it names none. */
@@ -312,7 +438,8 @@ function applyActionDefaults(request: ComputerRequest): void {
  * typed values from MCP) → one validated request, or the sentence the model reads instead.
  */
 export function parseComputerArgs(args: Record<string, unknown> | null | undefined): ParsedComputer {
-  const raw = args ?? {};
+  const given = args ?? {};
+  const raw = resolveAlias(actionName(given), given);
   const action = actionName(raw);
   const actions = COMPUTER_ACTIONS.join(", ");
   if (!action) return { ok: false, error: COMPUTER_ARG_PROBLEM.noAction(actions) };
@@ -320,6 +447,16 @@ export function parseComputerArgs(args: Record<string, unknown> | null | undefin
   const request: ComputerRequest = { action };
   readPointerFields(request, raw);
   readOtherFields(request, raw);
+  if (!isBlank(raw.player)) {
+    const player = playerArg(num(raw.player));
+    if (player === null) return { ok: false, error: COMPUTER_ARG_PROBLEM.badPlayer(MAX_PLAY_PLAYERS) };
+    request.player = player;
+  }
+  if (action === "batch") {
+    const batch = parseBatch(raw.actions);
+    if ("error" in batch) return { ok: false, error: batch.error };
+    request.steps = batch.steps;
+  }
   const missing = ACTION_NEEDS[action]?.(request) ?? null;
   if (missing) return { ok: false, error: missing };
   applyActionDefaults(request);
@@ -411,9 +548,71 @@ export function computerToInput(request: ComputerRequest, pointer: { x: number; 
       return [{ type: "press", combo: String(request.text), repeat: request.repeat ?? 1 }];
     case "hold_key":
       return holdKeyInput(request);
+    case "look":
+      return [{ type: "look", dx: request.dx ?? 0, dy: request.dy ?? 0 }];
     default:
       return pointerInput(request);
   }
+}
+
+/** The clicks: each needs a target that can press a button, at a point or where its view is aimed. */
+const CLICK_ACTIONS: ReadonlySet<ComputerAction> = new Set([
+  "left_click",
+  "right_click",
+  "middle_click",
+  "double_click",
+  "triple_click",
+]);
+
+/** The pointer actions: each needs a target that can put its pointer at a point. */
+const POINTED_ACTIONS: ReadonlySet<ComputerAction> = new Set([
+  "left_click_drag",
+  "mouse_move",
+  "left_mouse_down",
+  "left_mouse_up",
+]);
+
+/** What each action asks of a target beyond pictures and keys; an action missing here every target can do. */
+const ACTION_NEEDS_CAPABILITY: Partial<Record<ComputerAction, (caps: TargetCapabilities) => boolean>> = {
+  zoom: (caps) => caps.zoom,
+  camera: (caps) => caps.cameras,
+  look: (caps) => caps.pointer !== PointerLevel.None,
+  // A wheel turns and a cursor sits somewhere in a view: a target with no pointer has neither.
+  scroll: (caps) => caps.pointer !== PointerLevel.None,
+  cursor_position: (caps) => canPoint(caps),
+  act: (caps) => caps.actions,
+  state: (caps) => hasState(caps),
+  console: (caps) => caps.console,
+  reload: (caps) => caps.reload,
+  web_open: (caps) => caps.dom,
+  web_read: (caps) => caps.dom,
+  web_click: (caps) => caps.dom,
+  web_type: (caps) => caps.dom,
+};
+
+/** Can this target carry out this action? */
+function actionFits(action: ComputerAction, caps: TargetCapabilities): boolean {
+  if (CLICK_ACTIONS.has(action)) return canClick(caps);
+  if (POINTED_ACTIONS.has(action) && !canPoint(caps)) return false;
+  return ACTION_NEEDS_CAPABILITY[action]?.(caps) ?? true;
+}
+
+/** The actions a target can carry out, in the tool's own order: the only ones the model is offered. */
+export function computerActionsFor(caps: TargetCapabilities): ComputerAction[] {
+  return COMPUTER_ACTIONS.filter((action) => actionFits(action, caps));
+}
+
+/** The sentence for an action the target cannot carry out, or null when it can. Never a silent no-op. */
+export function unsupportedAction(action: ComputerAction, caps: TargetCapabilities): string | null {
+  if (actionFits(action, caps)) return null;
+  return COMPUTER_ARG_PROBLEM.unsupported(action, computerActionsFor(caps).join(", "));
+}
+
+/** The sentence for a player the target does not play, or null when it plays that one (player 1 always). */
+export function unsupportedPlayer(request: ComputerRequest, caps: TargetCapabilities): string | null {
+  const players = caps.players ?? 1;
+  if (request.player === undefined || request.player <= players) return null;
+  return COMPUTER_ARG_PROBLEM.noSuchPlayer(request.player, players);
 }
 
 /** The flat parameter schema both transports share (the bridge prints it as flags). */
@@ -432,17 +631,33 @@ export interface ComputerToolSchema {
  * `mcp__studio__computer`, Codex as `node .studio/bridge/tool.mjs computer --action=…`.
  */
 export function computerToolDefinition(
-  options: { role?: ComputerToolRole; cameras?: string[] } = {},
+  options: {
+    role?: ComputerToolRole;
+    cameras?: string[];
+    capabilities?: TargetCapabilities;
+    view?: { width: number; height: number };
+    observeByDefault?: boolean;
+    /** The tool's name: `computer` unless the target is the desktop's (`DESKTOP_TOOL_NAME`). */
+    name?: string;
+  } = {},
 ): ComputerToolSchema {
+  const capabilities = options.capabilities ?? BROWSER_CAPABILITIES;
   const cameras = knownCamerasLine((options.cameras ?? []).slice(0, MAX_LISTED_CAMERAS));
   const text = COMPUTER_PARAMETER_TEXT;
+  const view = options.view ?? COMPUTER_VIEW;
   return {
-    name: COMPUTER_TOOL_NAME,
-    description: computerToolDescription({ role: options.role ?? "builder", view: COMPUTER_VIEW, cameras }),
+    name: options.name ?? COMPUTER_TOOL_NAME,
+    description: computerToolDescription({
+      role: options.role ?? "builder",
+      view,
+      cameras,
+      capabilities,
+      ...(options.observeByDefault ? { observeByDefault: true } : {}),
+    }),
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", description: text.action(COMPUTER_ACTIONS.join(", ")) },
+        action: { type: "string", description: text.action(computerActionsFor(capabilities).join(", ")) },
         coordinate: { type: "string", description: text.coordinate },
         start_coordinate: { type: "string", description: text.start_coordinate },
         region: { type: "string", description: text.region },
@@ -451,7 +666,17 @@ export function computerToolDefinition(
         duration: { type: "number", description: text.duration },
         scroll_direction: { type: "string", description: text.scroll_direction },
         scroll_amount: { type: "number", description: text.scroll_amount },
-        surface: { type: "string", description: text.surface },
+        dx: { type: "number", description: text.dx },
+        dy: { type: "number", description: text.dy },
+        ...(capabilities.dom
+          ? { ref: { type: "string", description: text.ref }, submit: { type: "boolean", description: text.submit } }
+          : {}),
+        ...(capabilities.surfaces ? { surface: { type: "string", description: text.surface } } : {}),
+        ...((capabilities.players ?? 1) > 1
+          ? { player: { type: "number", description: text.player(capabilities.players ?? 1) } }
+          : {}),
+        observe: { type: "string", description: text.observe },
+        actions: { type: "string", description: text.actions },
       },
       required: ["action"],
     },
@@ -482,10 +707,19 @@ const ACTION_DEED: Record<ComputerAction, ScreenDeed> = {
   console: ScreenDeed.Look,
   wait: ScreenDeed.Wait,
   reload: ScreenDeed.Reload,
+  batch: ScreenDeed.Press,
+  look: ScreenDeed.Move,
+  act: ScreenDeed.Press,
+  web_open: ScreenDeed.Load,
+  web_read: ScreenDeed.Look,
+  web_click: ScreenDeed.Click,
+  web_type: ScreenDeed.Type,
 };
 
 /** A computer action as the agent's screen shows it: its deed, and the keys of a press. */
 export function computerAct(request: ComputerRequest): ScreenAct {
+  const last = request.steps?.at(-1);
+  if (request.action === "batch" && last) return computerAct(last);
   const deed = ACTION_DEED[request.action];
   const keys = request.text?.trim();
   return deed === ScreenDeed.Press && keys ? { deed, keys: [keys] } : { deed };
@@ -521,10 +755,41 @@ function describeAction(request: ComputerRequest): string {
       return `hold ${request.text} ${request.duration ?? DEFAULT_DURATION_S}s`;
     case "wait":
       return `wait ${request.duration ?? DEFAULT_DURATION_S}s`;
+    default:
+      return describeStudioAction(request);
+  }
+}
+
+/** The studio's own verbs and the views it takes, in a caption's words. */
+function describeStudioAction(request: ComputerRequest): string {
+  switch (request.action) {
     case "zoom":
       return `zoom ${request.region?.map(Math.round).join(",")}`;
     case "camera":
       return `camera ${request.text}`;
+    case "batch":
+      return `batch: ${(request.steps ?? []).map(describeAction).join(", ")}`;
+    case "look":
+      return `look ${Math.round(request.dx ?? 0)},${Math.round(request.dy ?? 0)}`;
+    case "act":
+      return `act ${request.text}${request.duration ? ` ${request.duration}s` : ""}`;
+    default:
+      return describeWebAction(request);
+  }
+}
+
+/** The web verbs in a caption's words. */
+function describeWebAction(request: ComputerRequest): string {
+  const quoted = String(request.text ?? "").slice(0, MAX_CAPTION_TEXT_CHARS);
+  switch (request.action) {
+    case "web_open":
+      return `open ${quoted}`;
+    case "web_read":
+      return quoted ? `read the page for "${quoted}"` : "read the page";
+    case "web_click":
+      return `click ${request.ref}`;
+    case "web_type":
+      return `type "${quoted}" into ${request.ref}${request.submit ? " and press Enter" : ""}`;
     default:
       return request.action;
   }
@@ -567,6 +832,7 @@ function normalizeVerify(raw: unknown): PreviewSetup["verify"] | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const v = raw as Record<string, unknown>;
   if (typeof v.path !== "string" || !/^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)*$/.test(v.path)) return undefined;
+  if (v.path.split(".").some((key) => MACHINERY_KEYS.has(key))) return undefined;
   return {
     path: v.path,
     ...("equals" in v ? { equals: v.equals } : {}),
@@ -602,10 +868,15 @@ export function normalizeSetup(raw: unknown): PreviewSetup | null {
   return setup.actions || setup.demo || setup.verify || setup.gesture ? setup : null;
 }
 
+/** Path segments that would read the object machinery rather than the game's own state. */
+const MACHINERY_KEYS: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor"]);
+
+/** A dotted path read through own fields only: never the prototype chain, never its machinery. */
 function lookupPath(state: unknown, path: string): unknown {
   let current: unknown = state;
   for (const key of path.split(".")) {
-    if (typeof current !== "object" || current === null) return undefined;
+    if (typeof current !== "object" || current === null || MACHINERY_KEYS.has(key)) return undefined;
+    if (!Object.hasOwn(current, key)) return undefined;
     current = (current as Record<string, unknown>)[key];
   }
   return current;
@@ -617,7 +888,8 @@ export function setupReached(verify: PreviewSetup["verify"], state: unknown): bo
   const readable = typeof state === "object" && state !== null && !(state as { __missing?: boolean }).__missing;
   if (!readable) return null;
   const value = lookupPath(state, verify.path);
-  if ("equals" in verify) return value === verify.equals || String(value) === String(verify.equals);
+  if ("equals" in verify)
+    return value !== undefined && (value === verify.equals || String(value) === String(verify.equals));
   if (verify.truthy) return Boolean(value);
   return value !== undefined;
 }

@@ -141,6 +141,8 @@ export function poolHost(
     locks?: FakeLocks | false;
     /** How the host answers a shell command (`run.exec`): run in the folder (the default), or as the test says. */
     exec?: (params: Record<string, unknown>, run: () => ReturnType<typeof shell>) => unknown;
+    /** The most workers the person's Settings let a chat run at once, as `preview.capacity` answers it; unanswered when absent. */
+    workersAllowed?: number;
   } = {},
 ) {
   const locks = options.locks === false ? null : (options.locks ?? fakeLocks());
@@ -162,6 +164,19 @@ export function poolHost(
         return `e${appended.length}`;
       },
       [HostMethod.PluginsWorkerTypes]: () => options.types ?? [],
+      ...(options.workersAllowed === undefined
+        ? {}
+        : {
+            [HostMethod.PreviewCapacity]: () => ({
+              max: 2,
+              inUse: 0,
+              free: 2,
+              live: false,
+              headless: true,
+              memory: { freeMb: 8000, totalMb: 16000 },
+              workers: options.workersAllowed,
+            }),
+          }),
       [HostMethod.EventsHead]: () => null,
       [HostMethod.EventsList]: (p) => {
         const index = log.findIndex((event) => (event as { id: string }).id === p.after);

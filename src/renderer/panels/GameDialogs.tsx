@@ -4,6 +4,7 @@ import type { GameUpdate } from "../../shared/game-library.ts";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Button } from "../ui/Button.tsx";
 import { problemWords } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 
 export function RenameGameDialog({
   game,
@@ -21,7 +22,7 @@ export function RenameGameDialog({
   return (
     <DialogSurface
       dismissible={!busy}
-      title="Rename game"
+      title={t("Rename game")}
       onDismiss={() => {
         if (!busy) onDismiss();
       }}
@@ -40,7 +41,7 @@ export function RenameGameDialog({
         }}
       >
         <label className="flex flex-col gap-2 text-xs text-ink-2">
-          Game name
+          {t("Game name")}
           <input
             className="game-text-input"
             ref={input}
@@ -59,10 +60,10 @@ export function RenameGameDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" disabled={busy} onClick={onDismiss}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button type="submit" variant="default" disabled={busy || !name.trim()}>
-            {busy ? "Saving…" : "Save"}
+            {busy ? t("Saving…") : t("Save")}
           </Button>
         </div>
       </form>
@@ -83,8 +84,10 @@ export function DeleteGameDialog({
   return (
     <DialogSurface
       dismissible={!busy}
-      title={`Delete “${game.title}”?`}
-      description="Removes it from the sidebar. Your files and conversation history stay on this computer. Open the folder again to restore it."
+      title={t("Delete “{game}”?", { game: game.title })}
+      description={t(
+        "Removes it from the sidebar. Your files and conversation history stay on this computer. Open the folder again to restore it.",
+      )}
       onDismiss={() => {
         if (!busy) onDismiss();
       }}
@@ -96,7 +99,7 @@ export function DeleteGameDialog({
       )}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" disabled={busy} onClick={onDismiss}>
-          Cancel
+          {t("Cancel")}
         </Button>
         <Button
           data-delete-game
@@ -110,7 +113,7 @@ export function DeleteGameDialog({
               .finally(() => setBusy(false));
           }}
         >
-          {busy ? "Removing…" : "Delete game"}
+          {busy ? t("Removing…") : t("Delete game")}
         </Button>
       </div>
     </DialogSurface>

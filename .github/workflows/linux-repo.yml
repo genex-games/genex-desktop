@@ -1,0 +1,104 @@
+name: Linux package repository
+# packages.genex.games: the signed apt and dnf repository every deb and rpm adds on install
+# (build/linux/postinst, rpm-post), so the system's own updates bring the next version. A published
+# release fills it with that release's packages; a pull request touching it builds the repository
+# from the latest release with a throwaway key and installs Genex from it on Ubuntu and Fedora.
+# Run by hand on dev with a tag to (re)publish that release, as the first fill did.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (v0.1.8)
+        required: true
+  pull_request:
+    paths:
+      - scripts/linux-repo.sh
+      - .github/workflows/linux-repo.yml
+      - build/linux/**
+permissions:
+  contents: read
+concurrency:
+  group: linux-repo-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+jobs:
+  repository:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    # The signing key and R2 credentials live in `packages` (dev and v* tags only); a pull request
+    # signs with a throwaway key in `candidate`, which holds no secret.
+    environment: ${{ github.event_name != 'pull_request' && 'packages' || 'candidate' }}
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y apt-utils rpm createrepo-c
+      - name: The release's packages
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          tag=${TAG:-$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)}
+          echo "Packages of $tag"
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -D packages -p 'genex_*_amd64.deb' -p 'genex-*.x86_64.rpm'
+          ls -l packages
+      - name: Signing key (the repository's on publish, a throwaway one on a pull request)
+        env:
+          SIGNING_KEY: ${{ secrets.LINUX_REPO_SIGNING_KEY }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            if [ -z "$SIGNING_KEY" ]; then echo "::error::No LINUX_REPO_SIGNING_KEY in the packages environment."; exit 1; fi
+            printf '%s\n' "$SIGNING_KEY" | gpg --batch --import
+            cp build/linux/genex-archive-keyring.asc public.asc
+          else
+            gpg --batch --passphrase '' --quick-gen-key "Genex test <test@genex.games>" rsa4096 sign never
+            gpg --armor --export > public.asc
+          fi
+          fingerprint=$(gpg --with-colons --list-secret-keys | awk -F: '/^fpr:/ { print $10; exit }')
+          if [ "$PUBLISH" = true ] && ! gpg --with-colons --import-options show-only --import build/linux/genex-archive-keyring.asc | grep -q "fpr:::::::::$fingerprint:"; then
+            echo "::error::The signing key is not the one the packages ship (build/linux/genex-archive-keyring.asc)."; exit 1
+          fi
+          echo "LINUX_REPO_KEY_ID=$fingerprint" >> "$GITHUB_ENV"
+      - name: Build the repository
+        run: scripts/linux-repo.sh packages repo public.asc
+      - name: Install Genex from it on Ubuntu 24.04 and Fedora
+        run: |
+          (cd repo && python3 -m http.server 8080 >/dev/null 2>&1 &)
+          sleep 1
+          docker run --rm --network host -v "$PWD/public.asc:/genex.asc:ro" ubuntu:24.04 sh -euc '
+            install -D -m 0644 /genex.asc /etc/apt/keyrings/genex.asc
+            echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/genex.asc] http://127.0.0.1:8080 stable main" > /etc/apt/sources.list.d/genex.list
+            apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -yq genex >/dev/null
+            dpkg -s genex | grep ^Version
+            test -x /usr/lib/genex/genex'
+          docker run --rm --network host -v "$PWD/public.asc:/genex.asc:ro" fedora:42 sh -euc '
+            install -D -m 0644 /genex.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-genex
+            printf "[genex]\nname=Genex\nbaseurl=http://127.0.0.1:8080/rpm\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-genex\n" > /etc/yum.repos.d/genex.repo
+            dnf install -yq genex
+            rpm -q genex
+            test -x /usr/lib/genex/genex'
+      - name: Upload to packages.genex.games
+        if: env.PUBLISH == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$R2_ACCOUNT_ID" ]; then echo "::error::No R2 credentials in the packages environment."; exit 1; fi
+          s3=(aws s3 --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com")
+          bucket=s3://genex-packages
+          # Packages first, under names that never change, then the indexes that point at them,
+          # so no index ever names a file that is not there yet.
+          "${s3[@]}" cp repo/pool "$bucket/pool" --recursive --cache-control "public, max-age=31536000, immutable"
+          "${s3[@]}" cp repo/rpm "$bucket/rpm" --recursive --exclude "repodata/*" --cache-control "public, max-age=31536000, immutable"
+          "${s3[@]}" cp repo/rpm/repodata "$bucket/rpm/repodata" --recursive --exclude "repomd.xml*" --cache-control "public, max-age=31536000, immutable"
+          "${s3[@]}" cp repo/rpm/repodata "$bucket/rpm/repodata" --recursive --exclude "*" --include "repomd.xml*" --cache-control "public, max-age=300"
+          "${s3[@]}" cp repo/genex.asc "$bucket/genex.asc" --cache-control "public, max-age=300"
+          "${s3[@]}" cp repo/dists "$bucket/dists" --recursive --exclude "*Release*" --cache-control "public, max-age=300"
+          "${s3[@]}" cp repo/dists "$bucket/dists" --recursive --exclude "*" --include "*Release*" --cache-control "public, max-age=300"
+          curl -fsS https://packages.genex.games/dists/stable/InRelease | head -12

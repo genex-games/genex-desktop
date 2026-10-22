@@ -182,8 +182,12 @@ export function transcriptEntries(input: {
     return !isRunningWorkerTrace(event, input.activeRunId);
   });
   // Merging sorts by id; delivery order is applied to the merged log so it is not undone.
+  // A message's queue id by the event that wrote it, read before delivery order moves the event.
+  const queueIds = new Map(
+    [...queue.messages.values()].flatMap((message) => (message.eventId ? [[message.eventId, message.messageId]] : [])),
+  );
   return conversationEntries(
-    toEntries(deliveryOrder(mergeChatEvents([...pending.values()], transcript), queue.messages)),
+    toEntries(deliveryOrder(mergeChatEvents([...pending.values()], transcript), queue.messages), queueIds),
   );
 }
 

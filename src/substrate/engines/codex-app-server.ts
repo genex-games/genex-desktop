@@ -22,12 +22,16 @@ export interface CodexAppServerConnection {
   close(): void;
 }
 
-/** Starts `codex app-server` for one compaction; injected in tests, as `CodexExec` is. */
+/**
+ * Starts `codex app-server` for one compaction or one delegation turn (`codex-turns.ts`); injected
+ * in tests, as `CodexExec` is. `onStderr` hears the server's own log, which a turn keeps the end of.
+ */
 export type CodexAppServer = (invocation: {
   argv: string[];
   cwd: string;
   env: Record<string, string>;
   signal: AbortSignal;
+  onStderr?: (chunk: string) => void;
 }) => CodexAppServerConnection;
 
 /** How a compaction on the app server ended; `error` is Codex's own words when it did not compact. */
@@ -36,15 +40,32 @@ export interface CodexCompaction {
   error: string | null;
 }
 
-/** The app server's methods this speaks, in their wire spelling. */
-const AppServerMethod = {
+/**
+ * The app server's methods the studio speaks, in their wire spelling: the requests it sends, the
+ * server requests it answers and the notifications it reads (`codex-turns.ts` reads the most).
+ */
+export const AppServerMethod = {
   Initialize: "initialize",
   Initialized: "initialized",
+  ThreadStart: "thread/start",
   ThreadResume: "thread/resume",
   ThreadCompactStart: "thread/compact/start",
+  TurnStart: "turn/start",
+  TurnInterrupt: "turn/interrupt",
+  ItemStarted: "item/started",
   ItemCompleted: "item/completed",
+  AgentMessageDelta: "item/agentMessage/delta",
+  TokenUsageUpdated: "thread/tokenUsage/updated",
   TurnCompleted: "turn/completed",
+  Error: "error",
+  ToolCall: "item/tool/call",
+  CommandApproval: "item/commandExecution/requestApproval",
+  FileChangeApproval: "item/fileChange/requestApproval",
+  ExecCommandApproval: "execCommandApproval",
+  ApplyPatchApproval: "applyPatchApproval",
+  Elicitation: "mcpServer/elicitation/request",
 } as const;
+export type AppServerMethod = (typeof AppServerMethod)[keyof typeof AppServerMethod];
 
 /** The id of each request this sends: one of each, in this order. */
 const RequestId = {
@@ -58,7 +79,7 @@ const COMPACTION_ITEM = "contextCompaction";
 const TURN_COMPLETED = "completed";
 
 /** Who is asking, as the app server's `initialize` records it. */
-const CLIENT_INFO = { name: "genex", title: "Genex", version: "1" };
+export const CLIENT_INFO = { name: "genex", title: "Genex", version: "1" };
 
 /** A polite stop's grace before the app server is killed. */
 const KILL_GRACE_MS = 5 * SECOND_MS;
@@ -131,14 +152,20 @@ function request(id: number, method: string, params: Record<string, unknown>): R
 /**
  * The real app server: `binary app-server …` over stdio, one JSON message per line each way.
  * Closing ends its input, which it answers by exiting; a stop or a server that lingers is killed.
+ * Nothing is written once the input has ended: a late answer to a tool call is dropped, not an error.
  */
 export function spawnCodexAppServer(binary: string): CodexAppServer {
   return (invocation) => {
+    const { onStderr } = invocation;
     const child = spawnCommand(binary, invocation.argv, {
       cwd: invocation.cwd,
       env: invocation.env,
-      stdio: ["pipe", "pipe", "ignore"],
+      stdio: ["pipe", "pipe", onStderr ? "pipe" : "ignore"],
     });
+    child.stderr?.setEncoding("utf8");
+    if (onStderr) child.stderr?.on("data", (chunk: string) => onStderr(chunk));
+    // A server that exits mid-write must not raise an unhandled error on its input.
+    child.stdin?.on("error", () => {});
     const stop = (): void => {
       void stopChild(child, { signal: "SIGTERM" });
       setTimeout(() => void stopChild(child), KILL_GRACE_MS).unref?.();
@@ -152,7 +179,7 @@ export function spawnCodexAppServer(binary: string): CodexAppServer {
     const lines = readline.createInterface({ input: stdout });
     return {
       send: (message) => {
-        child.stdin?.write(`${JSON.stringify(message)}\n`);
+        if (child.stdin?.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
       },
       messages: (async function* () {
         for await (const line of lines) {

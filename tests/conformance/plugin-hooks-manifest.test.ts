@@ -2,6 +2,7 @@
  * What a plugin may declare about Genex's moments and its locks, and what Genex refuses.
  */
 import assert from "node:assert/strict";
+import { ENGINE_PLAY_TOOLS } from "../../src/shared/engine-play.ts";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -12,7 +13,10 @@ import {
   RESTORE_SAVE_MAX_MS,
 } from "../../src/plugins/unreal/editor-moments.ts";
 import { HERO_SHOTS_MAX_MS } from "../../src/plugins/unreal/loop-tools.ts";
-import { HookEvent, hookEventsOf, hookPlan, LockScope } from "../../src/shared/plugin-hooks.ts";
+import * as robloxMoments from "../../src/plugins/roblox/studio-moments.ts";
+import { CHECK_MAX_MS } from "../../src/plugins/roblox/check-scripts.ts";
+import { CHAT_CHECKPOINT_WAIT_MS, MESSAGE_SNAPSHOT_ROOM_MS } from "../../src/main/core/rewind.ts";
+import { HookEvent, hookEventsOf, hookPlan, LockScope, messageCheckpointPlan } from "../../src/shared/plugin-hooks.ts";
 import type { PluginManifest } from "../../src/shared/plugins.ts";
 import { FolderHolds, type GameKind } from "../../src/shared/project-facts.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
@@ -115,6 +119,24 @@ const hostile: Array<[string, RegExp, Record<string, unknown>, Parameters<typeof
     { hooks: [hook(HookEvent.Health, "save"), hook(HookEvent.Health, "save")] },
   ],
   ["an unknown key in a hook", /hooks/, { hooks: [{ ...hook(HookEvent.Health, "save"), args: { all: true } }] }],
+  ...[
+    HookEvent.CheckpointAfter,
+    HookEvent.RestoreBefore,
+    HookEvent.RestoreAfter,
+    HookEvent.RunPrepare,
+    HookEvent.TurnStart,
+    HookEvent.Health,
+    HookEvent.ToolBefore,
+  ].map((on): [string, RegExp, Record<string, unknown>] => [
+    `a hook at ${on} run for each chat message`,
+    /hooks/,
+    { hooks: [hook(on, "save", { messages: true })] },
+  ]),
+  [
+    "a hook run for each chat message by a word, not true or false",
+    /hooks/,
+    { hooks: [hook(HookEvent.CheckpointBefore, "save", { messages: "yes" })] },
+  ],
   ["33 hooks", /hooks/, { hooks: Array.from({ length: 33 }, () => hook(HookEvent.Health, "save")) }],
   ["hooks that are no list", /hooks/, { hooks: hook(HookEvent.Health, "save") }],
   ["a lock id that is a path", /locks/, { locks: [lock({ id: "../x" })] }],
@@ -163,7 +185,7 @@ function plansByFactsAndOrder() {
     manifest: {
       tools: [harnessTool("save", { needs: ["bench"] }), harnessTool("audit")],
       hooks: [
-        hook(HookEvent.CheckpointBefore, "save", { facts: ["toy-project"] }),
+        hook(HookEvent.CheckpointBefore, "save", { facts: ["toy-project"], messages: true }),
         hook(HookEvent.ToolBefore, "audit"),
       ],
     } as Pick<PluginManifest, "hooks" | "tools">,
@@ -188,6 +210,12 @@ function plansByFactsAndOrder() {
   assert.deepEqual(hookPlan([a, b], HookEvent.ToolBefore, toyKind, "b"), [], "never around another plugin's tool");
   assert.deepEqual(hookPlan([a, b], HookEvent.ToolBefore, toyKind), [], "nor around a tool of no plugin");
 
+  // A chat message's checkpoint runs only the checkpoint.before steps that ask for it, by the same facts.
+  assert.deepEqual(messageCheckpointPlan([a, b], toyKind), [save], "only the hook that asks for each message");
+  assert.deepEqual(messageCheckpointPlan([b, a], toyKind), [save]);
+  assert.deepEqual(messageCheckpointPlan([a, b], webKind), [], "by its facts, as at any checkpoint");
+  assert.deepEqual(messageCheckpointPlan([b], toyKind), [], "no hook asks: no step");
+
   assert.deepEqual(hookEventsOf([a, b], toyKind), [HookEvent.CheckpointBefore, HookEvent.ToolBefore]);
   assert.deepEqual(hookEventsOf([a, b], webKind), [HookEvent.CheckpointBefore, HookEvent.ToolBefore]);
   assert.deepEqual(hookEventsOf([a], webKind), [HookEvent.ToolBefore]);
@@ -199,6 +227,7 @@ async function registryPlansPluginsThatAreOn() {
   const registry = await toyRegistry();
   await registry.setEnabled(TOY_PLUGIN_ID, false);
   assert.deepEqual(registry.hookPlan(HookEvent.CheckpointBefore, toyKind), []);
+  assert.deepEqual(registry.messageCheckpointPlan(toyKind), []);
   assert.deepEqual(registry.hookEvents(toyKind), []);
   assert.deepEqual(registry.locksFor(toyKind), []);
   assert.deepEqual(registry.needsOf(`${TOY_PLUGIN_ID}__build`), []);
@@ -208,6 +237,16 @@ async function registryPlansPluginsThatAreOn() {
   assert.deepEqual(registry.hookPlan(HookEvent.CheckpointBefore, toyKind), [
     { plugin: TOY_PLUGIN_ID, tool: "save-scenes", needs: [] },
   ]);
+  assert.deepEqual(
+    registry.messageCheckpointPlan(toyKind),
+    [{ plugin: TOY_PLUGIN_ID, tool: "save-scenes", needs: [] }],
+    "the toy saves its scenes before each chat message too",
+  );
+  assert.deepEqual(
+    registry.messageCheckpointPlan(webKind),
+    registry.messageCheckpointPlan(toyKind),
+    "its hooks name no facts",
+  );
   assert.deepEqual(
     [...registry.hookEvents(toyKind)].sort(),
     [
@@ -241,7 +280,8 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
             lock({ id: "kiln", label: "Kiln" }),
           ],
           hooks: [
-            hook(HookEvent.CheckpointBefore, "save", { facts: ["toy-project"] }),
+            hook(HookEvent.CheckpointBefore, "save", { messages: true, facts: ["toy-project"] }),
+            hook(HookEvent.CheckpointBefore, "status", { messages: false }),
             hook(HookEvent.ToolBefore, "status"),
           ],
           mcpServers: [server({ needs: ["bench"] })],
@@ -259,9 +299,15 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
       JSON.stringify({ id: "bench", label: "Bench", per: "app", personFirst: "probe" }),
     );
     assert.deepEqual(kept.hooks, [
-      { on: "checkpoint.before", tool: "save", facts: ["toy-project"] },
+      { on: "checkpoint.before", tool: "save", facts: ["toy-project"], messages: true },
+      { on: "checkpoint.before", tool: "status" },
       { on: "tool.before", tool: "status" },
     ]);
+    assert.equal(
+      JSON.stringify(kept.hooks?.[0]),
+      JSON.stringify({ on: "checkpoint.before", tool: "save", facts: ["toy-project"], messages: true }),
+      "a hook run for each chat message says so last; one that is not says nothing",
+    );
     const tool = (name: string) => kept.tools.find((t) => t.name === name);
     assert.deepEqual(tool("paint")?.needs, ["bench", "kiln"]);
     assert.equal(tool("build")?.ready, "status");
@@ -296,7 +342,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
   it("the bundled Unreal manifest is valid and its lock's probe needs no lock", () => {
     const raw = JSON.parse(readFileSync("src/plugins/unreal/plugin.json", "utf8")) as PluginManifest;
     const unreal = validateManifest(raw);
-    assert.equal(unreal.version, "0.10.4");
+    assert.equal(unreal.version, "0.17.8");
     assert.deepEqual(unreal.locks, [
       { id: "editor", label: "Unreal", per: LockScope.Project, personFirst: "editor-activity" },
     ]);
@@ -323,6 +369,130 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
         ["crash", "reopen-editor"],
       ].map(([on, tool]) => ({ on, tool, facts: UNREAL_PROJECT })),
       "its moments, each for Unreal projects only; nothing ends the person's editor when a run ends",
+    );
+    const unrealKind: GameKind = { facts: [{ id: "unreal-project", path: "." }] };
+    const plugins = [{ id: "unreal", manifest: unreal }];
+    assert.equal(hookPlan(plugins, HookEvent.CheckpointBefore, unrealKind).length, 2, "it saves at every checkpoint");
+    assert.deepEqual(messageCheckpointPlan(plugins, unrealKind), [], "but never before each chat message");
+  });
+
+  it("the bundled Roblox manifest is valid: its version, its lock, its toolbar button, and no folders", () => {
+    const raw = JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest;
+    const roblox = validateManifest(raw);
+    // A change to the plugin raises its version above the one dev has (check-plugin-versions).
+    assert.equal(roblox.version, "0.1.6", "one step above the version dev has");
+    assert.deepEqual(roblox.locks, [
+      { id: "studio", label: "Roblox Studio", per: LockScope.Project, personFirst: "studio-activity" },
+    ]);
+    const probe = roblox.tools.find((t) => t.name === "studio-activity");
+    assert.equal(probe?.audience, "harness");
+    assert.equal(probe?.needs, undefined, "the probe asks without waiting for its own lock");
+    assert.deepEqual(roblox.toolbar, [
+      {
+        id: "studio",
+        label: "Roblox Studio",
+        ariaLabel: "Roblox Studio",
+        icon: "box",
+        facts: ["roblox-project"],
+        target: { kind: "panel", id: "setup" },
+        status: "toolbar-status",
+      },
+    ]);
+    assert.equal(roblox.engine?.id, "roblox");
+    assert.deepEqual(roblox.engine?.projectFiles, [".rbxl", ".rbxlx", ".project.json"]);
+    assert.equal(roblox.engine?.projectInFolder, false, "the helper exports the place into the game folder");
+    assert.deepEqual(roblox.engine?.apps, { mac: ["com.Roblox.RobloxStudio"], windows: ["RobloxStudioBeta.exe"] });
+    assert.equal("folders" in raw, false, "no worker or job may write Studio's Plugins folder");
+    assert.equal(roblox.folders, undefined);
+    assert.deepEqual(
+      roblox.workerTypes?.map((type) => [type.id, type.tools, type.isolation]),
+      [["scripts", ["check-scripts"], "copy"]],
+      "script workers write .luau files in a copy and check them offline",
+    );
+    assert.match(roblox.description, /Not affiliated with Roblox Corporation\. For people 18 and over\./);
+  });
+
+  it("the Roblox plugin's moments: each for Roblox places only, the place saved before each chat message too", () => {
+    const roblox = validateManifest(
+      JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest,
+    );
+    const ROBLOX_PROJECT = ["roblox-project"];
+    assert.deepEqual(
+      roblox.hooks,
+      [
+        { on: "run.prepare", tool: "open-for-run", facts: ROBLOX_PROJECT },
+        { on: "turn.start", tool: "team-note", facts: ROBLOX_PROJECT },
+        { on: "checkpoint.before", tool: "save-place", facts: ROBLOX_PROJECT, messages: true },
+        { on: "checkpoint.after", tool: "hero-shots", facts: ROBLOX_PROJECT },
+        { on: "restore.before", tool: "save-place", facts: ROBLOX_PROJECT },
+        { on: "restore.after", tool: "load-place", facts: ROBLOX_PROJECT },
+        { on: "health", tool: "studio-state", facts: ROBLOX_PROJECT },
+        { on: "crash", tool: "studio-crash-note", facts: ROBLOX_PROJECT },
+        { on: "worker.end", tool: "luau-note", facts: ROBLOX_PROJECT },
+        { on: "finish", tool: "luau-finish", facts: ROBLOX_PROJECT },
+      ],
+      "nothing hooks run.end: the person's Studio stays open when a run ends",
+    );
+    const robloxKind: GameKind = { facts: [{ id: "roblox-project", path: "." }] };
+    const plugins = [{ id: "roblox", manifest: roblox }];
+    assert.deepEqual(
+      messageCheckpointPlan(plugins, robloxKind).map((step) => step.tool),
+      ["save-place"],
+      "only save-place runs before each chat message",
+    );
+    assert.deepEqual(hookPlan(plugins, HookEvent.CheckpointBefore, { facts: [] }), [], "a web game runs none of them");
+    assert.deepEqual(roblox.observers, [{ id: "viewport", facts: ROBLOX_PROJECT, tool: "hero-shots", live: "stills" }]);
+    const needing = roblox.tools.filter((t) => t.needs?.includes("studio")).map((t) => t.name);
+    assert.deepEqual(
+      needing,
+      [
+        "generate-mesh",
+        "generate-model",
+        "generate-texture",
+        "generate-material",
+        "segment-mesh",
+        "roblox-playtest",
+        "insert-asset",
+        "import-model",
+        "load-place",
+        ...ENGINE_PLAY_TOOLS,
+        "players-state",
+        "cheat-remotes",
+        "phone-check",
+      ],
+      "only what changes or plays the place waits on the person (Roblox's AI tools, inserts and model imports, the load, the play lane and the judges' probes in it); reading, exporting, checking models and sending pictures never do",
+    );
+    for (const name of [
+      "open-for-run",
+      "save-place",
+      "hero-shots",
+      "load-place",
+      "studio-state",
+      "studio-crash-note",
+      "team-note",
+      "luau-note",
+      "luau-finish",
+    ])
+      assert.equal(roblox.tools.find((t) => t.name === name)?.audience, "harness", `${name} is Genex's only`);
+  });
+
+  it("gives each Roblox step longer than its slowest path, and the save before a chat message room within the message's wait", () => {
+    const longest: Array<[HookEvent, number, string]> = [
+      [HookEvent.RunPrepare, robloxMoments.OPEN_FOR_RUN_MAX_MS, "open-for-run"],
+      [HookEvent.TurnStart, robloxMoments.TEAM_NOTE_MAX_MS, "team-note"],
+      [HookEvent.CheckpointBefore, robloxMoments.SAVE_PLACE_RUN_MAX_MS, "save-place at a run's save point"],
+      [HookEvent.CheckpointAfter, robloxMoments.HERO_SHOTS_MAX_MS, "hero-shots"],
+      [HookEvent.RestoreBefore, robloxMoments.SAVE_PLACE_RESTORE_MAX_MS, "save-place before a restore"],
+      [HookEvent.RestoreAfter, robloxMoments.LOAD_PLACE_MAX_MS, "load-place"],
+      [HookEvent.Health, robloxMoments.STUDIO_STATE_MAX_MS, "studio-state"],
+      [HookEvent.WorkerEnd, CHECK_MAX_MS, "luau-note"],
+      [HookEvent.Finish, CHECK_MAX_MS, "luau-finish"],
+    ];
+    for (const [on, maxMs, step] of longest)
+      assert.ok(maxMs < HOOK_CALL_MS[on], `${step} answers in its own words before Genex's ceiling at ${on}`);
+    assert.ok(
+      robloxMoments.SAVE_PLACE_CHAT_MAX_MS < CHAT_CHECKPOINT_WAIT_MS - MESSAGE_SNAPSHOT_ROOM_MS,
+      "the incremental save before a chat message ends before its checkpoint must be taken",
     );
   });
 
@@ -354,6 +524,7 @@ const UNREAL_EDITOR_STEPS = [
   "reopen-editor",
   "update-helper",
   "add-cpp-module",
+  "add-motion-matching",
   "plugin-build",
   "export-reference",
   "hero-shots",
@@ -361,4 +532,6 @@ const UNREAL_EDITOR_STEPS = [
   "run-part",
   "rollback-part",
   "reload-level",
+  // The computer's play in the editor (`shared/engine-play.ts`): each call waits for the lock.
+  ...ENGINE_PLAY_TOOLS,
 ];

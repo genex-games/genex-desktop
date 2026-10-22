@@ -9,6 +9,7 @@ import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts"
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { HOUR_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { MODEL_LIMIT_PREFIX } from "../../shared/provider-usage.ts";
 import { type LocalServerInfo, LocalServerKind } from "../../shared/local-server.ts";
 import {
   type CompleteRequest,
@@ -182,7 +183,7 @@ function fixtureUsage(id: EngineId) {
         resetsAt: new Date(Date.now() + 3.9 * HOUR_MS).toISOString(),
       },
       { id: "seven_day", label: "Weekly · all models", percent: 52, resetsAt: inDays(5) },
-      { id: "model:fable", label: "Weekly · Fable", percent: 100, resetsAt: inDays(5) },
+      { id: `${MODEL_LIMIT_PREFIX}fable`, label: "Weekly · Fable", percent: 100, resetsAt: inDays(5) },
     ],
   };
 }

@@ -54,7 +54,8 @@ export const APP_LOOK_ANSWER = {
   noPicture: (why: string) => `(no screenshot: ${why})`,
   noMatch: "No window on screen matches that. Call app_look with no arguments to list them.",
   notOnScreen: "That window is not on screen any more. Call app_look with no arguments to list them.",
-  refused: "Genex does not look at password managers.",
+  refused:
+    "Genex does not look at password managers, System Settings, the system's password prompts or its own windows.",
   unsupported: "app_look works on macOS only for now.",
   failed: (detail: string) => `Genex could not look at app windows: ${detail || "the command failed"}.`,
   saved: (file: string) => `Saved the picture as ${file}.`,

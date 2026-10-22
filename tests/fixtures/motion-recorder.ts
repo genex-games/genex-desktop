@@ -60,6 +60,17 @@ export interface Flash {
   shownMs: number;
 }
 
+/**
+ * How a part that should hold still kept: the frames it was gone or faded in, and its furthest move
+ * from where it first was against its anchor (the composer it sits on, which grows with what is typed).
+ */
+export interface Held {
+  part: string;
+  anchor: string;
+  missing: number;
+  driftPx: number;
+}
+
 /** What one recorded stretch adds up to. */
 export interface MotionReport {
   frames: number;
@@ -259,6 +270,24 @@ function flashesOf(frames: MotionFrame[]): { flashes: Flash[]; labels: string[] 
     if (replaced) flashes.push({ label: item.label, shownMs: next.from - item.from });
   }
   return { flashes, labels: shown.map((item) => item.label) };
+}
+
+/** How `part` held over these frames: each frame it is absent or not fully opaque, and how far it moved against `anchor`. */
+export function heldStill(frames: MotionFrame[], part: string, anchor: string): Held {
+  const offset = (frame: MotionFrame | undefined): number | null => {
+    const box = frame?.parts[part];
+    const under = frame?.parts[anchor];
+    return box && under ? box.top - under.top : null;
+  };
+  const first = offset(frames.find((frame) => offset(frame) !== null));
+  let missing = 0;
+  let drift = 0;
+  for (const frame of frames) {
+    const now = offset(frame);
+    if (now === null || (frame.parts[part]?.opacity ?? 0) < 1) missing++;
+    else if (first !== null) drift = Math.max(drift, Math.abs(now - first));
+  }
+  return { part, anchor, missing, driftPx: Math.round(drift * 10) / 10 };
 }
 
 /**

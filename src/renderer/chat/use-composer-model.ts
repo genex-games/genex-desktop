@@ -9,6 +9,7 @@ import { MODEL_PICKER_WORDS } from "../words.ts";
  * hook keeps the picks a chat has made in this session and writes them back.
  */
 import { useEffect, useMemo, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { crossesTo, normalizeRoles, takesRoles } from "../../shared/model-roles.ts";
 import { supportedPreferences, type ModelPreferences } from "../../shared/model-preferences.ts";
 import {
@@ -120,7 +121,10 @@ export interface ComposerModelView {
   roles: RoleRecord | null;
 }
 
-const modelRow = (m: { id: string; label: string }) => ({ id: m.id, label: m.id === "default" ? "Default" : m.label });
+const modelRow = (m: { id: string; label: string }) => ({
+  id: m.id,
+  label: m.id === "default" ? t("Default") : m.label,
+});
 /**
  * Another engine can take the builder or judge role: it takes roles (a session engine, or a
  * completion-only local one), is ready, and has models.
@@ -231,6 +235,7 @@ export function composerSendOptions(
     preferences: model.preferences,
     ...(extras?.reviewPlan ? { reviewPlan: true } : {}),
     ...(extras?.frames?.length ? { frames: extras.frames } : {}),
+    ...(extras?.mentions?.length ? { mentions: extras.mentions } : {}),
     ...(extras?.autopilot && input.autopilot ? { autopilot: autopilotSendOptions(extras.autopilot, roles) } : {}),
   };
 }

@@ -25,7 +25,7 @@ export const TWEAKER_CSS = `
   border: 1px solid #ffffff1f;
   border-radius: 12px;
   box-shadow: 0 16px 48px #0000009e, 0 0 0 1px #000000a6;
-  font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Geist Fallback", system-ui, sans-serif;
+  font: 12px/1.35 -apple-system, BlinkMacSystemFont, "TikTok Sans Genex", system-ui, sans-serif;
   color-scheme: dark;
   user-select: none;
   overflow: hidden;

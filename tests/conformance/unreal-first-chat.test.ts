@@ -379,7 +379,8 @@ describe("engine-status, in the words the card shows (the Unreal plugin)", () =>
       /offer it as "Unreal Engine" with the description "Plays in Epic's free editor on this computer; needs a 45 GB install first"/,
     );
     assert.match(none.note, /don't call unreal__new-game/);
-    assert.match(none.note, /Unreal button/);
+    assert.match(none.note, /call unreal__show-steps, which puts the Unreal setup card in the chat/);
+    assert.match(none.note, /brings the Unreal button out above the game/);
 
     const newer = readinessAnswer({ engine: EngineReadiness.NewerOnly, version: "5.9" });
     assert.equal(newer.ready, false);

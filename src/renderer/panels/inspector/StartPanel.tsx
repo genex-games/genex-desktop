@@ -1,5 +1,6 @@
 /** The panel of "You asked": the prompt, the user's reference pictures, and the starting point every part builds on. */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { providerInfo, SUBSCRIPTION_ENGINES } from "../../../shared/providers.ts";
 import {
   type BaseNode,
@@ -11,7 +12,7 @@ import {
 } from "../../run-graph.ts";
 import { BuildCapture } from "../BuildCapture.tsx";
 import type { ReferenceFrame } from "../run-stills.ts";
-import { Details, Panel, Para, Row, Rows, Section } from "./chrome.tsx";
+import { Details, Panel, PanelRow, Para, Row, Rows, Section } from "./chrome.tsx";
 import { formatWhen, modelLine } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
@@ -26,12 +27,16 @@ const builderName = (engine: string | null): string | null =>
 
 /** What the run started from, in one sentence. */
 function startedFromWords(base: BaseNode | null, building: boolean): string {
-  if (!base || base.absent) return "Your game as it was when the run started.";
-  if (building) return "Building the starting point…";
-  if (base.ok === false)
-    return `The starting point was rejected, and the game was put back the way it started.${base.error ? ` What the checks saw: ${base.error}` : ""}`;
-  if (base.empty) return "An empty scene. It runs and its cameras see it; nothing else was checked yet.";
-  return "Checked: it loads and its cameras see it. Gameplay is reviewed step by step.";
+  if (!base || base.absent) return t("Your game as it was when the run started.");
+  if (building) return t("Building the starting point…");
+  if (base.ok === false && base.error)
+    return t(
+      "The starting point was rejected, and the game was put back the way it started. What the checks saw: {problem}",
+      { problem: base.error },
+    );
+  if (base.ok === false) return t("The starting point was rejected, and the game was put back the way it started.");
+  if (base.empty) return t("An empty scene. It runs and its cameras see it; nothing else was checked yet.");
+  return t("Checked: it loads and its cameras see it. Gameplay is reviewed step by step.");
 }
 
 function References({
@@ -43,9 +48,9 @@ function References({
 }): JSX.Element | null {
   if (!references.length) return null;
   const items = (): LightItem[] =>
-    references.map((item) => ({ path: null, src: item.src, title: "Your reference", caption: item.label }));
+    references.map((item) => ({ path: null, src: item.src, title: t("Your reference"), caption: item.label }));
   return (
-    <Section label="Your references">
+    <Section label={t("Your references")}>
       <div className="grid grid-cols-2 gap-2">
         {references.map((frame, index) => (
           <button
@@ -85,7 +90,7 @@ function StartedFrom({
 }): JSX.Element {
   const built = base !== null && !base.absent;
   return (
-    <Section label="Started from" gap="gap-2">
+    <Section label={t("Started from")} gap="gap-2">
       {built || baseSrc ? (
         <BuildCapture
           graph={graph}
@@ -111,17 +116,17 @@ function StartDetails({
   base: BaseNode | null;
 }): JSX.Element {
   return (
-    <Row label="Technical details">
+    <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
       <Details
         rows={[
-          ["run", runIdOf(graph)],
-          ["project", run.project],
-          ["worker", modelLine(builderName(run.builderEngine), run.model)],
-          ["lead", modelLine(run.engine, run.model)],
-          ["parallel", run.maxParallel !== null ? String(run.maxParallel) : null],
-          ["base commit", base?.commit ?? null],
-          ["started", formatWhen(run.startedAt)],
-          ["finished", run.finishedAt ? formatWhen(run.finishedAt) : null],
+          [t("run"), runIdOf(graph)],
+          [t("project"), run.project],
+          [t("worker"), modelLine(builderName(run.builderEngine), run.model)],
+          [t("lead"), modelLine(run.engine, run.model)],
+          [t("parallel"), run.maxParallel !== null ? String(run.maxParallel) : null],
+          [t("base commit"), base?.commit ?? null],
+          [t("started"), formatWhen(run.startedAt)],
+          [t("finished"), run.finishedAt ? formatWhen(run.finishedAt) : null],
         ]}
       />
       {run.decisions.length ? (
@@ -142,17 +147,17 @@ export function StartPanel(props: InspectorProps): JSX.Element {
   return (
     <Panel
       id={GraphSelection.Start}
-      label="What you asked"
-      title="You asked"
+      label={t("What you asked")}
+      title={t("You asked")}
       nav={false}
       onPrev={props.onPrev}
       onNext={props.onNext}
       onClose={props.onClose}
-      reply={{ label: "Every part", placeholder: "A note for every part" }}
+      reply={{ label: t("Every part"), placeholder: t("A note for every part") }}
       onReply={props.onReply}
     >
       <p className="text-chat-sub whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">
-        {run.goal || "No prompt was recorded."}
+        {run.goal || t("No prompt was recorded.")}
       </p>
       <References references={references} onLight={props.onLight} />
       <StartedFrom graph={graph} base={base} baseSrc={props.baseSrc} building={building} />

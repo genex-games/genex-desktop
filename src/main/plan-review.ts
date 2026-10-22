@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { type ComposerSendOptions, type PlanReview, PlanReviewState } from "../shared/composer.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 import { approvedPlanMessage, planRevisionRequest } from "./plan-review-prompts.ts";
 
-/** What the user reads when a plan cannot be written or started yet. */
+/**
+ * What the user reads when a plan cannot be written or started yet. `emptyPlan` is saved on the
+ * review (its Details line), so it stays English like the other errors saved there.
+ */
 const MESSAGE = {
-  starting: "The approved plan is starting. Please wait.",
+  starting: () => t("The approved plan is starting. Please wait."),
   emptyPlan: "The model returned an empty plan. Send a message to try again.",
 } as const;
 
@@ -69,7 +73,7 @@ export class PlanReviewController {
     options: ComposerSendOptions,
     { sentAt }: { sentAt?: number } = {},
   ): Promise<void> {
-    if (this.#answering.has(thread)) throw new Error(MESSAGE.starting);
+    if (this.#answering.has(thread)) throw new Error(MESSAGE.starting());
     this.#active.get(thread)?.abort();
     const abort = new AbortController();
     this.#active.set(thread, abort);

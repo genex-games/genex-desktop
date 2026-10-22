@@ -1,0 +1,1 @@
+[{"filename":"src/ServerScriptService/Bad.server.luau","location":{"end":9,"end_column":10,"end_line":1,"start":8,"start_column":9,"start_line":1},"message":"unexpected token `=`: expected an expression","type":"parse_error"}]

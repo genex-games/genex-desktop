@@ -37,15 +37,21 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
     "Content/Python/genex_build/args.py",
     "Content/Python/genex_build/atmosphere.py",
     "Content/Python/genex_build/audit.py",
+    "Content/Python/genex_build/character.py",
+    "Content/Python/genex_build/character_math.py",
+    "Content/Python/genex_build/compile_log.py",
     "Content/Python/genex_build/gx.py",
     "Content/Python/genex_build/imports.py",
     "Content/Python/genex_build/kit.py",
     "Content/Python/genex_build/material.py",
     "Content/Python/genex_build/mesh_math.py",
     "Content/Python/genex_build/models.py",
+    "Content/Python/genex_build/motion.py",
     "Content/Python/genex_build/outs.py",
     "Content/Python/genex_build/place.py",
+    "Content/Python/genex_build/pose_math.py",
     "Content/Python/genex_build/retarget.py",
+    "Content/Python/genex_build/rig_math.py",
     "Content/Python/genex_build/routes.py",
     "Content/Python/genex_build/scope.py",
     "Content/Python/genex_build/script_files.py",
@@ -63,6 +69,7 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
     "Content/Python/genex_loop/capture.py",
     "Content/Python/genex_loop/cpp.py",
     "Content/Python/genex_loop/editor.py",
+    "Content/Python/genex_loop/editor_log.py",
     "Content/Python/genex_loop/errors.py",
     "Content/Python/genex_loop/part_api.py",
     "Content/Python/genex_loop/part_files.py",
@@ -87,7 +94,7 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
   assert.equal(descriptor.EnabledByDefault, true, "the game's .uproject stays untouched");
   assert.equal(descriptor.CanContainContent, true, "Unreal runs Content/Python only for content plugins");
   assert.equal(descriptor.EditorOnly, true, "a packaged game never carries it");
-  assert.deepEqual([descriptor.Version, descriptor.VersionName], [8, "0.6.2"]);
+  assert.deepEqual([descriptor.Version, descriptor.VersionName], [10, "0.8.0"]);
   const geometry = descriptor.Plugins.filter((plugin: { Name: string }) => plugin.Name === "GeometryScripting");
   assert.deepEqual(geometry, [{ Name: "GeometryScripting", Enabled: true }], "the terrain tool needs Geometry Script");
 });

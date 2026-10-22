@@ -622,12 +622,12 @@ describe("a C++ · raylib game's briefs", () => {
 describe("the computer tool's words", () => {
   const view = { width: 1280, height: 720 };
   const cameras = " Known cameras: default, eye:here.";
-  it("are what they were before C++ games for every Three.js session (sha256 at origin/dev cf4b2c56)", () => {
+  it("are dev's own for every Three.js session (sha256 at origin/dev e5da06dc, merged into the stack)", () => {
     const PRE_NATIVE = {
-      builder: "66885724c53287dc",
-      director: "9aad5ebfff99c483",
-      playtester: "62a2ba5bfbdc8741",
-      scout: "e6d353c39e17adae",
+      builder: "cf4ed221939c17ef",
+      director: "ccf42b3ea6270766",
+      playtester: "6eb910059a9ae856",
+      scout: "887ea54c13377943",
     } as const;
     for (const [role, digest] of Object.entries(PRE_NATIVE)) {
       const text = computerToolDescription({ role: role as keyof typeof PRE_NATIVE, view, cameras });
@@ -645,7 +645,7 @@ describe("the computer tool's words", () => {
 
 /**
  * Every Three.js brief, rendered from fixed arguments, and the first 16 hex of its sha256 in
- * origin/dev cf4b2c56's seed, before the compiled stacks were ported to it: the C++ and Rust
+ * origin/dev e5da06dc's seed, the dev merged into the compiled stacks: the C++ and Rust
  * variants branch beside these texts, never through them.
  */
 const PRE_NATIVE_BRIEFS = {
@@ -654,30 +654,30 @@ const PRE_NATIVE_BRIEFS = {
     baseBriefStart: "73fe6a14005c24a1",
     baseBriefOwn: "9a2cabce6cd93d4f",
     contractWiringAsk: "08bd1fab4144a340",
-    contractorFresh: "b94dc08e250475da",
-    contractorFollowUp: "f75cf05c6ee0de88",
-    contractorOwn: "c23353614b9e6a40",
-    contractorResume: "f08664c74565604b",
+    contractorFresh: "aa11594e43055c7b",
+    contractorFollowUp: "b0fa3cca28ac0df3",
+    contractorOwn: "5ec74a5246eac4c7",
+    contractorResume: "aa77e9e84b29a6cf",
     interview: "ccfc8e18264c12f3",
     spikeBrief: "3981c09354d6e4f8",
     facetPrompt: "1597ab4163ef756b",
     contractBrief: "4fd6edf2d2afabe1",
-    singleWorkerBrief: "9f8cc64ed6b36d3a",
+    singleWorkerBrief: "cce08ab7b3129366",
   },
   [CODEX]: {
     baseBriefFacets: "b46b89125416b882",
     baseBriefStart: "73fe6a14005c24a1",
     baseBriefOwn: "8e36d19e777dc2f6",
     contractWiringAsk: "08bd1fab4144a340",
-    contractorFresh: "687471899698e04b",
-    contractorFollowUp: "aca630fcbe4ea7d1",
-    contractorOwn: "47afdca1c69693e5",
-    contractorResume: "f08664c74565604b",
+    contractorFresh: "44599eeba906e7b8",
+    contractorFollowUp: "56c66e08c9418f79",
+    contractorOwn: "8b7018139d5a1f7a",
+    contractorResume: "aa77e9e84b29a6cf",
     interview: "ccfc8e18264c12f3",
     spikeBrief: "7279d5ca7f175080",
     facetPrompt: "a5717393b3494bea",
     contractBrief: "cf35637b1216e916",
-    singleWorkerBrief: "9028fcf334c02e81",
+    singleWorkerBrief: "2814ded529c131ff",
   },
 } as const;
 

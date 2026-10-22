@@ -3,7 +3,7 @@
  * line, and where it stands (Ready, Off, waiting on the account) or the one setting it needs.
  * They used to hide on the Plugins list behind "Show disabled and optional connections". An engine
  * plugin's connection is only as ready as its editor: once on, it says what its toolbar button
- * says (Unreal: Not installed, Set up, Not open, Starting, Ready), not the bridge's own Ready.
+ * says (Not installed, Not set up, Not open, Starting, Ready), not the bridge's own Ready.
  */
 import type { JSX } from "react";
 import { useState } from "react";
@@ -19,7 +19,8 @@ import {
 import { Button } from "../../ui/Button.tsx";
 import { useAsyncEffect } from "../../use-async-effect.ts";
 import { UNREAL_PLUGIN_ID } from "../../unreal-game.ts";
-import { PLUGINS_WORDS, UNREAL_WORDS, consentToolWords } from "../../words.ts";
+import { UNITY_PLUGIN_ID } from "../../../shared/observers.ts";
+import { PLUGINS_WORDS, UNITY_WORDS, UNREAL_WORDS, consentToolWords } from "../../words.ts";
 import { isActive, pluginAccount, pluginIconUrl } from "./labels.ts";
 import { type PluginsPage, usePluginServers } from "./page.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
@@ -80,6 +81,7 @@ const firstSentence = (text: string): string => /^.*?[.!?](?=\s|$)/s.exec(text)?
 /** Studio's own names for a bundled plugin's servers, by plugin and server id, where the manifest's line speaks to agents. */
 const OWN_NAMES: Readonly<Record<string, Readonly<Record<string, ConnectionNames>>>> = {
   [UNREAL_PLUGIN_ID]: { editor: UNREAL_WORDS.connection },
+  [UNITY_PLUGIN_ID]: { editor: UNITY_WORDS.connection },
 };
 
 /**

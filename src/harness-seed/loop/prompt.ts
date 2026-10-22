@@ -29,6 +29,7 @@ import { factsOfGame, kindPending, kindUnknown } from "./folder-facts.ts";
 import { appIdentity, pendingKindRule, unknownKindRules } from "./project-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
+import { folderLabelOf } from "./workers/identity.ts";
 
 /** What the system prompt stands on besides the tools and the turn's briefing: read once per turn. */
 export interface StandingContext {
@@ -463,7 +464,7 @@ async function readIdentity(
 ): Promise<string> {
   const identity = await readPromptFile(ctx, "prompts/identity.md");
   if (!project) return identity;
-  const folderLabel = game?.dir ? game.dir.split("/").slice(-2).join("/") : project;
+  const folderLabel = folderLabelOf(game?.dir, project);
   const app = appIdentity({ folderLabel, facts: factsOfGame(game), holds: game?.holds ?? null });
   const web = webTurn(project, game) ? await readPromptFile(ctx, "prompts/identity-web.md") : "";
   return [identity, app, await noFactRules(ctx, project, game), web].filter((text) => text.trim()).join("\n\n");

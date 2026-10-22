@@ -1,11 +1,13 @@
 import { validateDetect } from "./detect-manifest.ts";
+import { validateEngine } from "./engine-manifest.ts";
+import { inspectJudgeBriefs, validateJudges } from "./judge-manifest.ts";
 import { validateAssets, validateWorkspace } from "./workspace-manifest.ts";
 import { validateFolders, validateWorkerTypes } from "./worker-manifest.ts";
 import { validateScaffolds } from "./scaffold-manifest.ts";
 import { validateMomentSections } from "./hook-manifest.ts";
 import { validateObservers } from "./observer-manifest.ts";
 import { RESERVED_TOOLBAR_LABELS } from "./reserved-labels.ts";
-import { applyToolScope, serverFacts, skillScopeFields } from "./scope-manifest.ts";
+import { applyToolScope, serverFacts, skillScopeFields, toolbarFacts } from "./scope-manifest.ts";
 import { validateNativeDeclarations } from "./native-manifest.ts";
 import { assertRelativePath, containedReal } from "../paths.ts";
 import path from "node:path";
@@ -14,6 +16,7 @@ import { constants, type Dirent } from "node:fs";
 import { lstat, open, readdir, readFile } from "node:fs/promises";
 import type {
   PluginApiVersion,
+  PluginConfirmationInput,
   PluginFileSkill,
   PluginManifest,
   PluginManifestTool,
@@ -26,9 +29,15 @@ import type {
   PluginToolbarTarget,
 } from "../../shared/plugins.ts";
 import {
+  CONFIRMATION_INPUT_LABEL_MAX_CHARS,
+  confirmationInputValue,
   isFileSkill,
   isToolbarIconName,
   PLUGIN_SKILL_TOOL,
+  isPluginSetup,
+  PLUGIN_SETUP_STEP_CHARS,
+  PLUGIN_SETUP_STEPS,
+  PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
   PluginToolAudience,
@@ -63,6 +72,8 @@ const KIB = 1024;
 /** The Genex blender server's own per-call ceiling is 15 minutes; 30 is the outer bound. */
 const MAX_CALL_TIMEOUT_MS = 1_800_000;
 const MIN_CALL_TIMEOUT_MS = 1_000;
+/** The shortest deadline a tool may declare for one call. */
+const MIN_TOOL_TIMEOUT_MS = 1_000;
 /** How many folders a package inspection lists at once. */
 const PACKAGE_WALK_FOLDERS = 16;
 const hostname = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*$/i;
@@ -84,6 +95,10 @@ const reservedLower = new Set([...RESERVED_TOOLBAR_LABELS].map((l) => l.toLowerC
 const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, RUST_SKILL_STACKS_API] satisfies PluginApiVersion[];
 /** The first API with file skills, object parameters, host tools, asset limits and native runtimes; later APIs keep them. */
 const FILE_SKILLS_API = 3;
+/** The longest label a toolbar button shows on the stage strip, in characters. */
+export const TOOLBAR_LABEL_CHARS = 24;
+/** The longest aria label a toolbar button has, in characters. */
+export const TOOLBAR_ARIA_CHARS = 60;
 /** Declared limits, each the largest a manifest field may be. */
 const LIMIT = {
   NameChars: 200,
@@ -104,8 +119,8 @@ const LIMIT = {
   /** The longest raw tool name a server's `reads` may name. */
   McpToolNameChars: 128,
   ToolbarItems: 4,
-  ToolbarLabelChars: 24,
-  ToolbarAriaChars: 60,
+  ToolbarLabelChars: TOOLBAR_LABEL_CHARS,
+  ToolbarAriaChars: TOOLBAR_ARIA_CHARS,
   ToolbarGlyphChars: 4,
   TargetArgs: 16,
   ToolInputChars: 100000,
@@ -145,6 +160,7 @@ const EnvSource = {
 
 /** What a publisher reads when a manifest is refused, and a caller when tool input is. */
 const MESSAGE = {
+  InvalidSetup: `setup must be 1 to ${PLUGIN_SETUP_STEPS} plain one-line steps of at most ${PLUGIN_SETUP_STEP_CHARS} characters`,
   InvalidIcon: "icon must name a .png, .jpg, .webp or .svg file inside the package",
   MissingIcon: (file: string) => `icon ${file} is missing from the package`,
   IconNotAFile: (file: string) => `icon ${file} is not a plain file`,
@@ -185,6 +201,8 @@ const MESSAGE = {
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
+  InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
+  InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
   InvalidAction: "Invalid action",
@@ -333,6 +351,22 @@ function toolAsset(t: PluginManifestTool, m: PluginManifest): PluginToolAsset {
   return asset;
 }
 
+/**
+ * The text parameter the person may edit on a tool's card (API 3): one of the tool's own string
+ * parameters, on a tool with a card, labelled in one plain line.
+ */
+function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConfirmationInput {
+  const input: unknown = t.confirmationInput;
+  if (m.apiVersion < 3 || t.confirmation === undefined || !isRecord(input))
+    throw new Error(MESSAGE.InvalidConfirmationInput);
+  const { parameter, label } = input;
+  const declared = typeof parameter === "string" && Object.hasOwn(t.parameters.properties, parameter);
+  const text = declared && t.parameters.properties[parameter as string]?.type === "string";
+  const labelled = confirmationInputValue(label) === label && isText(label, 1, CONFIRMATION_INPUT_LABEL_MAX_CHARS);
+  if (!text || !labelled) throw new Error(MESSAGE.InvalidConfirmationInput);
+  return { parameter: parameter as string, label: label as string };
+}
+
 /** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
 function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.confirmation !== undefined) {
@@ -341,6 +375,19 @@ function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   }
   if (t.host !== undefined) validateHost(t, m);
   if (t.audience !== undefined) validateAudience(t, m);
+}
+
+/** A tool's own call deadline (API 3): whole milliseconds, from a second to the most a tool may declare. */
+function toolTimeout(t: PluginManifestTool, m: PluginManifest): number {
+  const value = t.timeoutMs;
+  const valid =
+    m.apiVersion === 3 &&
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_TOOL_TIMEOUT_MS &&
+    value <= PLUGIN_TOOL_MAX_TIMEOUT_MS;
+  if (!valid) throw new Error(MESSAGE.InvalidToolTimeout);
+  return value as number;
 }
 
 /** One tool in canonical form; `names` holds the tool names already declared. */
@@ -363,6 +410,8 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
       required === undefined ? { type: "object", properties } : { type: "object", properties, required: [...required] },
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
+  if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
   if (t.audience === PluginToolAudience.Harness) tool.audience = t.audience;
@@ -659,14 +708,24 @@ function validateReachSections(m: PluginManifest, canonical: PluginManifest): vo
 }
 
 /**
+ * What the plugin shows of a game beside its moments (API 3): its observers, and its judges, whose
+ * probes are checked against the tools' canonical locks.
+ */
+function validateEvidenceSections(m: PluginManifest, canonical: PluginManifest): void {
+  if (m.observers !== undefined) canonical.observers = validateObservers(m, canonical);
+  if (m.judges !== undefined) canonical.judges = validateJudges({ ...m, engine: canonical.engine }, canonical.tools);
+}
+
+/**
  * The account flow (API 2), and the API 3 delivery limits, native declarations, project detection,
- * what a project's history leaves out and where its assets live, the plugin's worker types, its
- * scaffolds and the folders its engine programs write to, its locks and the handlers of Genex's moments, and its
- * observers.
+ * the engine a game-engine plugin declares, what a project's history leaves out and where its assets live, the plugin's worker types, its
+ * scaffolds and the folders its engine programs write to, its locks and the handlers of Genex's moments, its
+ * observers and its judges.
  */
 function validateHostSections(m: PluginManifest, canonical: PluginManifest): void {
   if (m.account !== undefined) canonical.account = validateAccount(m, canonical.actions);
   if (m.detect !== undefined) canonical.detect = validateDetect(m);
+  if (m.engine !== undefined) canonical.engine = validateEngine({ ...m, detect: canonical.detect });
   if (m.workspace !== undefined) canonical.workspace = validateWorkspace(m);
   if (m.assets !== undefined) canonical.assets = validateAssets(m);
   if (m.assetLimits !== undefined) canonical.assetLimits = validateAssetLimits(m);
@@ -674,7 +733,7 @@ function validateHostSections(m: PluginManifest, canonical: PluginManifest): voi
   if (m.scaffolds !== undefined) canonical.scaffolds = validateScaffolds({ ...m, tools: canonical.tools });
   if (m.folders !== undefined) canonical.folders = validateFolders(m);
   validateMomentSections(m, canonical);
-  if (m.observers !== undefined) canonical.observers = validateObservers(m, canonical);
+  validateEvidenceSections(m, canonical);
   if (m.nativeRuntimes !== undefined || m.nativeJobs !== undefined) {
     if (m.apiVersion < FILE_SKILLS_API || !hasCapability(m, PluginCapability.NativeRuntime))
       throw new Error(MESSAGE.NativeNeedsApi3);
@@ -720,6 +779,10 @@ export function validateManifest(value: unknown): PluginManifest {
   validateReachSections(m, canonical);
   validateHostSections(m, canonical);
   if (m.icon !== undefined) canonical.icon = validateIcon(m.icon);
+  if (m.setup !== undefined) {
+    if (!isPluginSetup(m.setup)) throw new Error(MESSAGE.InvalidSetup);
+    canonical.setup = [...m.setup];
+  }
   return canonical;
 }
 
@@ -967,9 +1030,11 @@ function validateToolbar(value: unknown, m: PluginManifest): PluginToolbarItem[]
     validateToolbarExtras(raw);
     const target = validateTarget(raw.target, m);
     validateToolbarStatus(raw, m);
+    const facts = toolbarFacts(raw, m);
     const item: PluginToolbarItem = { id: raw.id, label: raw.label, ariaLabel: raw.ariaLabel, target };
     if (raw.icon !== undefined) item.icon = raw.icon;
     if (raw.requiresProject !== undefined) item.requiresProject = raw.requiresProject;
+    if (facts) item.facts = facts;
     if (raw.status !== undefined) item.status = raw.status;
     return item;
   });
@@ -1007,6 +1072,7 @@ export async function inspectPackage(root: string): Promise<PluginManifest> {
   await containedReal(root, m.backend);
   for (const p of m.panels) await containedReal(root, p.file);
   await inspectSkillFiles(root, m);
+  await inspectJudgeBriefs(root, m);
   if (m.icon) await readPluginIcon(root, m.icon);
   return m;
 }

@@ -335,6 +335,18 @@ describe("the stage's flags follow Live's view", () => {
       ObserverLive.Stills,
       { previewOnStage: false, cardOnStage: false, stillsOnStage: true, liveLoading: false, gameStopped: false },
     ],
+    [
+      "a plugin's card: no page, no controls",
+      ObserverLive.Card,
+      {
+        previewOnStage: false,
+        cardOnStage: false,
+        pluginCardOnStage: true,
+        stillsOnStage: false,
+        liveLoading: false,
+        gameStopped: false,
+      },
+    ],
   ];
   for (const [name, liveView, expected] of rows)
     it(name, () => {
@@ -362,7 +374,8 @@ describe("the stage's flags follow Live's view", () => {
   it("on Builds no view is on stage", () => {
     for (const liveView of Object.values(ObserverLive)) {
       const flags = flagsOf(liveView, StageView.Builds);
-      assert.deepEqual([flags.previewOnStage, flags.cardOnStage, flags.stillsOnStage], [false, false, false]);
+      const on = [flags.previewOnStage, flags.cardOnStage, flags.pluginCardOnStage, flags.stillsOnStage];
+      assert.deepEqual(on, [false, false, false, false]);
     }
   });
 });
@@ -458,6 +471,52 @@ describe("Live's views of a folder with more than one", () => {
     assert.deepEqual(tabChoice("live-stills-sketches/board", views), { view: StageView.Live, live: "sketches/board" });
     assert.equal(activeStageTab(StageView.Live, views, views[1]!), "live-stills-sketches/board");
     assert.equal(activeStageTab(StageView.Live, views, views[0]!), "live");
+  });
+
+  it("a plugin's card is a view of its own beside another plugin's pictures, only while its plugin is on", () => {
+    const godotCard = (enabled: boolean) => ({
+      manifest: {
+        id: "godot",
+        name: "Godot",
+        observers: [
+          { id: "viewport", facts: [CoreFact.GodotProject], tool: "hero", live: ObserverLive.Card, status: "stage" },
+        ],
+      },
+      enabled,
+      removed: false,
+    });
+    const folder = game(fact(CoreFact.GodotProject));
+    const plugins = [godotCard(true), snaps([CoreFact.GodotProject], { label: "Board" })];
+    const views = liveViewsFor(folder, plugins);
+    assert.deepEqual(
+      views.map((view) => [view.live, view.observer]),
+      [
+        [ObserverLive.Card, "godot/viewport"],
+        [ObserverLive.Stills, "snaps/view"],
+      ],
+      "the card comes first, as the Unreal card does",
+    );
+    const tabs = stageTabs({ views, plugins, hasBuilds: false, buildsLive: false, beside: null });
+    assert.deepEqual(
+      tabs.map((tab) => [tab.key, tab.label]),
+      [
+        ["live", "Godot"],
+        ["live-stills-snaps/view", "Board"],
+        ["assets", "Assets"],
+      ],
+    );
+    const second = liveViewsFor(folder, [snaps([CoreFact.GodotProject], { label: "Board" }), godotCard(true)]);
+    const keys = stageTabs({ views: second, plugins, hasBuilds: false, buildsLive: false, beside: null });
+    assert.equal(keys[1]?.key, "live-stills-snaps/view", "the card still leads, whatever the plugins' order");
+    assert.deepEqual(
+      liveViewFor(folder, [godotCard(false)]),
+      { live: ObserverLive.Stills, at: ".", observer: null },
+      "an off plugin's card doesn't count",
+    );
+    const beside = liveViewsFor(game(fact(CoreFact.WebGame), fact(CoreFact.GodotProject, "godot")), [godotCard(true)]);
+    const besideTabs = stageTabs({ views: beside, plugins, hasBuilds: false, buildsLive: false, beside: null });
+    assert.deepEqual(besideTabs[1], { key: "live-card-godot/viewport", label: "Godot" }, "beside a web game");
+    assert.deepEqual(tabChoice("live-card-godot/viewport", beside), { view: StageView.Live, live: "godot/viewport" });
   });
 
   it("a plugin's stills view is named by its manifest label, else by the plugin's name", () => {

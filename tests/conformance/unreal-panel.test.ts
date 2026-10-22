@@ -15,7 +15,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { type Browser, chromium, type Page } from "@playwright/test";
 import type { PluginEngineLink } from "../../src/plugin-sdk/index.d.ts";
-import { inlinePanelSdk } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
+import { inlinePanelSdk, panelWordsScripts } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import type { Launch } from "../../src/plugins/unreal/editor-launch.ts";
 import type { EditorLog } from "../../src/plugins/unreal/editor-log.ts";
@@ -90,6 +90,8 @@ async function computer(options: { game?: string } = {}) {
     serving?: string;
     log?: EditorLog;
     listening?: Set<number>;
+    /** Ports Unreal's crash reporter holds after a crash. */
+    crashReporter?: Set<number>;
     held?: string[];
   } = {
     running: false,
@@ -103,6 +105,7 @@ async function computer(options: { game?: string } = {}) {
     editorLog: async () => live.log,
     heldProjects: async () => live.held ?? [],
     portListening: async (port) => live.listening?.has(port) ?? false,
+    crashReporterHolds: async (port) => live.crashReporter?.has(port) ?? false,
     editorAnswers: async (_port, project) => live.answering && (live.serving === undefined || live.serving === project),
     xcode: async () => ({
       state: XcodeState.Ready,
@@ -246,6 +249,14 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     },
     sends: "quit-editor",
   },
+  [PanelStep.Crashed]: {
+    arrange: async (c) => {
+      const { port } = (await c.act("setup", { project: c.drift })) as { port: number };
+      c.live.listening = new Set([port]);
+      c.live.crashReporter = new Set([port]);
+      return c.drift;
+    },
+  },
 };
 /** Steps with a view of their own instead of the project view. */
 const OTHER_VIEWS: string[] = [PanelStep.GetUnreal, PanelStep.Choose];
@@ -255,7 +266,9 @@ describe("The Set up Unreal panel", { skip }, () => {
   let server: http.Server;
   let url = "";
   before(async () => {
-    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", BRIDGE);
+    // The stand-in bridge, then the SDK's own words (in English: the stand-in names no language).
+    const words = await panelWordsScripts();
+    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", () => BRIDGE + words);
     server = http.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page),
     );
@@ -275,8 +288,10 @@ describe("The Set up Unreal panel", { skip }, () => {
     const tab = await browser.newPage({ viewport: { width: 360, height: 720 } });
     const backend = async (method: string, name: string, args: Record<string, unknown>, wait: number | null) => {
       if (method !== "action") return { error: `unexpected ${method}` };
-      if (name !== "status") c.sent.push([name, args]);
-      if (name !== "status") c.waits.push([name, wait]);
+      // Looks the panel takes on every refresh are not what a press sends.
+      const look = name === "status" || name === "agents";
+      if (!look) c.sent.push([name, args]);
+      if (!look) c.waits.push([name, wait]);
       try {
         return { value: await c.act(name, args) };
       } catch (error) {
@@ -346,6 +361,29 @@ describe("The Set up Unreal panel", { skip }, () => {
       assert.equal(say, "Unreal couldn't use the port Genex gave Drift.");
       // Restart quits Unreal, then opens the project again, as Switch does.
       assert.equal(await tab.evaluate(() => document.getElementById("primary")?.textContent), "Restart Unreal");
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("a project that ray-traces says what it risks on this Mac, and its button turns ray tracing off", async () => {
+    const c = await computer();
+    const file = await STEPS[PanelStep.Open].arrange(c);
+    const config = path.join(path.dirname(file), "Config", "DefaultEngine.ini");
+    await mkdir(path.dirname(config), { recursive: true });
+    await writeFile(config, "[/Script/Engine.RendererSettings]\nr.RayTracing=True\n");
+    await c.act("status", { project: file });
+    const tab = await open(c);
+    try {
+      await tab.waitForSelector("#ray-tracing:not([hidden])");
+      const text = await tab.evaluate(() => document.getElementById("ray-tracing-text")?.textContent ?? "");
+      assert.match(text, /^Ray tracing is on in Drift\./);
+      c.sent.length = 0;
+      await tab.click("#ray-tracing-off");
+      for (let i = 0; i < WAIT_TRIES && c.sent.length === 0; i++) await tab.waitForTimeout(WAIT_STEP_MS);
+      assert.equal(c.sent[0]?.[0], "ray-tracing-off");
+      await tab.waitForSelector("#ray-tracing[hidden]", { state: "attached" });
+      assert.match(await readFile(config, "utf8"), /r\.RayTracing=False/);
     } finally {
       await tab.close();
     }
@@ -630,7 +668,162 @@ describe("The Set up Unreal panel", { skip }, () => {
       await tab.close();
     }
   });
+
+  /** The project list as a person reads it: each shown row's name, where it is and its tag. */
+  const listRows = (tab: Page) =>
+    tab.evaluate(() =>
+      [...document.querySelectorAll("#projects li:not([hidden]) .row")].map((row) => ({
+        name: row.querySelector(".name")?.textContent ?? "",
+        where: row.querySelector(".path")?.textContent ?? "",
+        tag: row.querySelector(".tag")?.textContent ?? "",
+      })),
+    );
+  const byName = (rows: Array<{ name: string }>) => [...rows].sort((a, b) => a.name.localeCompare(b.name));
+
+  it("a path reads from ~ in home, keeps a long one's ends, names a temporary folder, and the list tags what lies outside the open game", async () => {
+    const c = await computer({ game: "lantern" });
+    const home = path.dirname(path.dirname(c.newGames));
+    const neon = await writeProject(path.join(c.newGames, "Neon", "Neon.uproject"));
+    const deep = await writeProject(
+      path.join(home, "work", "studio", "dev", "profiles", "manual", "Deep", "Deep.uproject"),
+    );
+    // The open game's folder holds Neon: Deep and Drift lie outside it. Drift is in the test's temporary folder.
+    Object.assign(c.context, { directory: path.dirname(neon) });
+    await c.act("setup", { project: c.drift });
+    await c.act("status", { project: deep });
+    const tab = await open(c);
+    try {
+      await tab.waitForSelector("#project:not([hidden])");
+      const head = await tab.evaluate(() => ({
+        where: document.getElementById("project-path")?.textContent,
+        full: document.getElementById("project-path")?.title,
+        reach: document.getElementById("fact-reach")?.hidden
+          ? ""
+          : document.getElementById("project-reach")?.textContent,
+      }));
+      assert.deepEqual(head, { where: "~/work/…/manual/Deep", full: deep, reach: "No, outside this game's folder" });
+      await tab.click("#change");
+      await tab.waitForSelector("#pick:not([hidden])");
+      const temporary =
+        process.platform === "win32" ? [] : [{ name: "Drift", where: "Temporary folder › Drift", tag: "Outside game" }];
+      assert.deepEqual(
+        byName(await listRows(tab)).filter((row) => process.platform !== "win32" || row.name !== "Drift"),
+        byName([
+          { name: "Deep", where: "~/work/…/manual/Deep", tag: "In use" },
+          { name: "Neon", where: "~/Documents/Unreal Projects/Neon", tag: "" },
+          ...temporary,
+        ]),
+      );
+      assert.equal(
+        await tab.textContent("#outside-note"),
+        "Outside game: chats use it, Rewind and Loops can't reach it.",
+      );
+      await tab.click("#back");
+      await tab.waitForSelector("#project:not([hidden])");
+      assert.equal(
+        await tab.evaluate(() => document.activeElement?.id),
+        "project-name",
+        "Back returns to the project's name",
+      );
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("Ready is the green dot alone, its word kept for screen readers; another state shows its word", async () => {
+    const c = await computer();
+    const file = await STEPS[PanelStep.Connected].arrange(c);
+    await c.act("status", { project: file });
+    const tab = await open(c);
+    const state = () =>
+      tab.evaluate(() => {
+        const chip = document.getElementById("state");
+        const word = document.getElementById("state-word");
+        return {
+          word: word?.textContent,
+          title: chip?.title,
+          wordSeen: (word?.getBoundingClientRect().width ?? 0) > 1,
+          dot: chip ? getComputedStyle(chip, "::before").backgroundColor : "",
+        };
+      });
+    try {
+      await tab.waitForFunction(() => document.getElementById("state")?.textContent === "Ready", null, {
+        timeout: CONNECTED_WAIT_MS,
+      });
+      // The light theme's green, chosen for 4.5:1 on white.
+      assert.deepEqual(await state(), { word: "Ready", title: "Ready", wordSeen: false, dot: "rgb(29, 127, 70)" });
+      c.live.running = false;
+      c.live.answering = false;
+      await tab.waitForFunction(() => document.getElementById("state")?.textContent === "Not open", null, {
+        timeout: CONNECTED_WAIT_MS,
+      });
+      assert.equal((await state()).wordSeen, true);
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("beside a project, shows whether agents may use Unreal while the person plays, on unless turned off, and keeps the choice", async () => {
+    const c = await computer();
+    const file = await STEPS[PanelStep.Connected].arrange(c);
+    await c.act("status", { project: file });
+    const tab = await open(c);
+    try {
+      const box = tab.locator("#while-playing");
+      await tab.waitForFunction(() => !document.getElementById("agents")?.hidden);
+      assert.match(await tab.locator("#agents").innerText(), /Agents may use Unreal while you play/);
+      assert.equal(await box.isChecked(), true, "on unless the person turned it off");
+      await tab.getByText("Agents may use Unreal while you play").click();
+      await tab.waitForFunction(() => !(document.getElementById("while-playing") as HTMLInputElement).disabled);
+      assert.equal(await box.isChecked(), false);
+      assert.deepEqual(c.sent.at(-1), ["agents-wait", {}]);
+      assert.deepEqual(await c.act("agents", {}), { whilePlaying: false }, "kept for every game");
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("past six projects a filter narrows the list by name and says when nothing matches; six need none", async () => {
+    const names = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"];
+    const seven = await computer();
+    for (const name of names) await writeProject(path.join(seven.newGames, name, `${name}.uproject`));
+    const tab = await open(seven);
+    try {
+      await tab.waitForSelector("#pick:not([hidden])");
+      assert.equal((await listRows(tab)).length, 7);
+      await tab.fill("#filter", "EP");
+      assert.deepEqual(
+        (await listRows(tab)).map((row) => row.name),
+        ["Epsilon"],
+      );
+      assert.equal(await tab.isVisible("#no-match"), false);
+      await tab.fill("#filter", "zzz");
+      assert.deepEqual(await listRows(tab), []);
+      assert.equal(await tab.isVisible("#no-match"), true);
+      await tab.fill("#filter", "");
+      assert.equal((await listRows(tab)).length, 7);
+    } finally {
+      await tab.close();
+    }
+    const six = await computer();
+    for (const name of names.slice(0, 6)) await writeProject(path.join(six.newGames, name, `${name}.uproject`));
+    const few = await open(six);
+    try {
+      await few.waitForSelector("#pick:not([hidden])");
+      assert.equal((await listRows(few)).length, 6);
+      assert.equal(await few.isVisible("#filter"), false);
+    } finally {
+      await few.close();
+    }
+  });
 });
+
+/** A 5.8 project file at `file`, its folder made. */
+async function writeProject(file: string) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, uproject("5.8"));
+  return file;
+}
 
 /**
  * The host page for the sandboxed tests: the panel, with Studio's real bridge SDK pasted in, runs in
@@ -661,7 +854,7 @@ window.addEventListener("message", async (event) => {
   const f = document.getElementById("f");
   const m = event.data;
   if (event.source !== f.contentWindow || m?.type !== "studio-plugin-request") return;
-  if (m.method === "action" && m.name !== "status") window.__requests.push([m.name, m.args]);
+  if (m.method === "action" && m.name !== "status" && m.name !== "agents") window.__requests.push([m.name, m.args]);
   if (m.method === "chooseFile") window.__requests.push(["chooseFile", m.args]);
   const reply = (body) => f.contentWindow.postMessage({ type: "studio-plugin-result", id: m.id, ...body }, "*");
   try { reply({ result: await answer(m) }); } catch (e) { reply({ error: String(e) }); }
@@ -720,15 +913,27 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
         const a = document.activeElement;
         return { id: a?.id ?? "", text: a?.textContent?.trim() ?? "" };
       });
-    /** Waits until the panel has answered: not busy, and every request it sent settled. */
+    /** A pause in which the panel could send a request it shouldn't; a check of what it shows waits with `answered`. */
     const settled = () => tab.waitForTimeout(600);
+    /**
+     * Waits until the project view shows its answer to a press: `#id`'s text starts with `text`, and
+     * Change, held while an action runs, is pressable again. The panel puts focus back in the same
+     * turn that renders the answer, so focus can be read right after.
+     */
+    const answered = (id: string, text: string) =>
+      frame.waitForFunction(
+        ([shownId, start]) =>
+          (document.getElementById(shownId)?.textContent ?? "").startsWith(start) &&
+          (document.getElementById("change") as HTMLButtonElement | null)?.disabled === false,
+        [id, text] as const,
+      );
     /** The names of the requests the panel sent, once `ready` holds for them or the wait runs out. */
     const sentOnce = async (ready: (names: string[]) => boolean) => {
       const names = async () => ((await requests()) as Array<[string]>).map(([name]) => name);
       for (let i = 0; i < WAIT_TRIES && !ready(await names()); i++) await tab.waitForTimeout(WAIT_STEP_MS);
       return names();
     };
-    return { tab, frame, requests, focused, settled, sentOnce };
+    return { tab, frame, requests, focused, settled, answered, sentOnce };
   }
 
   for (const how of ["Enter in the name", "Enter on Create and open"] as const)
@@ -776,7 +981,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       assert.equal(await p.frame.textContent("#secondary"), "Set up Later");
       await p.frame.focus("#secondary");
       await p.tab.keyboard.press("Enter");
-      await p.settled();
+      await p.answered("secondary", "Open in Unreal");
       assert.deepEqual(await p.focused(), { id: "secondary", text: "Open in Unreal" });
     } finally {
       await p.tab.close();
@@ -792,7 +997,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       assert.equal(await p.frame.textContent("#primary"), "Set up and open Drift");
       await p.frame.focus("#primary");
       await p.tab.keyboard.press("Enter");
-      await p.settled();
+      await p.answered("headline", "Opening in Unreal");
       assert.deepEqual(
         ((await p.requests()) as Array<[string]>).map(([name]) => name),
         ["setup", "open-editor"],
@@ -911,7 +1116,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       await p.frame.evaluate(() => document.getElementById("more")?.setAttribute("open", ""));
       await p.frame.focus("#undo");
       await p.tab.keyboard.press("Enter");
-      await p.settled();
+      await p.answered("primary", "Set up and open Drift");
       assert.deepEqual(await p.focused(), { id: "primary", text: "Set up and open Drift" });
     } finally {
       await p.tab.close();

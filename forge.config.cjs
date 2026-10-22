@@ -12,10 +12,12 @@
  * (dist/resources/tsc) are **spawned** as child processes and the vendored three.js is **served**
  * to the preview, and none of that works from inside an asar archive.
  * Runtime resources (including the Genex plugin payload) are unpacked. Coding CLIs are external installations:
- * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only.
+ * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only. A Windows
+ * package also carries Git for Windows outside the archive (scripts/package-git.cjs), and the
+ * Visual C++ runtime DLLs its executables import beside them (scripts/package-vc-runtime.cjs).
  */
 const { execFile } = require("node:child_process");
-const { mkdir, mkdtemp, rm, writeFile } = require("node:fs/promises");
+const { mkdir, mkdtemp, readFile, rm, writeFile } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { promisify } = require("node:util");
@@ -34,10 +36,14 @@ const {
   portableReadme,
   writeLinuxPackageScripts,
 } = require("./src/substrate/linux-apparmor.ts");
+const { copyBundledGit } = require("./scripts/package-git.cjs");
+const { copyVcRuntime } = require("./scripts/package-vc-runtime.cjs");
 const { version } = require("./package.json");
 
 const PRODUCT_NAME = "Genex";
 const EXECUTABLE_NAME = "genex";
+/** The URL scheme the app answers: `GAME_LINK_SCHEME` in src/main/play/game-links.ts (forge-config.test.ts holds them equal). */
+const GAME_LINK_SCHEME = "genex";
 const HOMEPAGE = "https://github.com/genex-games/genex-desktop";
 const SUMMARY = "Self-improving AI game studio";
 /** The Linux desktop entry's generic name, beside the product name. */
@@ -109,6 +115,18 @@ const DEB_SCRIPTS = {
   postinst: path.join(__dirname, "build", "linux", "postinst"),
   postrm: path.join(__dirname, "build", "linux", "postrm"),
 };
+/**
+ * The rpm's repository scriptlets: add the Genex package repository on install, take it away on
+ * uninstall; `preMake` appends each to the generated profile scriptlet of the same name, since an
+ * rpm has one %post and one %postun. Both packages read the repository's public key from the app's
+ * resources (`LINUX_REPOSITORY_KEY`).
+ */
+const RPM_SCRIPTS = {
+  post: path.join(__dirname, "build", "linux", "rpm-post"),
+  postun: path.join(__dirname, "build", "linux", "rpm-postun"),
+};
+/** The public key of packages.genex.games, shipped in resources/ only by Linux builds. */
+const LINUX_REPOSITORY_KEY = path.join(__dirname, "build", "linux", "genex-archive-keyring.asc");
 /** The Windows installer's file name, the same for every version so a download link can stay put. */
 const WINDOWS_SETUP_EXE = "Genex-Setup.exe";
 /** Only with a WINDOWS_SIGN_* certificate, parameters or hook; otherwise unsigned. */
@@ -125,6 +143,11 @@ module.exports = {
     appBundleId: APP_BUNDLE_ID,
     appCategoryType: "public.app-category.developer-tools",
     icon: ICON,
+    // The website's Open in Genex links (`genex://game/<slug>`, main/play/game-links.ts): macOS
+    // learns the scheme from the app's Info.plist; Windows and Linux from the app at its start.
+    protocols: [{ name: "Genex", schemes: [GAME_LINK_SCHEME] }],
+    // Each platform is made on its own runner, so only a Linux build carries the repository key.
+    ...(process.platform === "linux" ? { extraResource: [LINUX_REPOSITORY_KEY] } : {}),
     asar: {
       unpack:
         "{**/dist/resources/**,**/node_modules/node-pty/**,**/node_modules/@anthropic-ai/sandbox-runtime/vendor/**}",
@@ -134,6 +157,9 @@ module.exports = {
       /^\/node_modules\/@genex-ai\/cli-demo(?:\/|$)/,
       /\/node_modules\/@anthropic-ai\/claude-agent-sdk-[^/]+(?:\/|$)/,
       /\/node_modules\/@openai\/codex(?:-[^/]+)?(?:\/|$)/,
+      // The build's download cache (vendored Git and cua-driver, their archives). It is no module,
+      // so the packager's prune keeps it; what ships from it is copied where it belongs.
+      /^\/node_modules\/\.cache($|\/)/,
       /^\/(?!dist(?:\/|$)|node_modules(?:\/|$)|package\.json$|LICENSE(?:\..*)?$|THIRD-PARTY-NOTICES\.md$)/,
       /^\/archive($|\/)/,
       /^\/src($|\/)/,
@@ -149,13 +175,19 @@ module.exports = {
       /^\/tsconfig\.json$/,
       /\.map$/,
     ],
+    // Windows: the Git for Windows the build vendored, beside the app as resources\git, so agents
+    // have Git Bash and the snapshots have git on a PC without Git (scripts/package-git.cjs).
+    afterCopy: [async ({ buildPath, platform }) => copyBundledGit(buildPath, platform)],
     // Forge's prune keeps the trees of ignored dependencies and every platform's node-pty and
-    // sandbox-runtime helpers; drop what the target never loads (scripts/package-prune.cjs).
+    // sandbox-runtime helpers; drop what the target never loads (scripts/package-prune.cjs). Then
+    // Windows: the Visual C++ runtime DLLs what is left imports (srt-win.exe's vcruntime140.dll),
+    // beside each importer, since Windows does not include them (scripts/package-vc-runtime.cjs).
     afterPrune: [
       async ({ buildPath, platform, arch }) => {
         await pruneUnreachable(buildPath);
         await trimNodePty(buildPath, platform, arch);
         await trimSandboxVendor(buildPath, platform, arch);
+        await copyVcRuntime(buildPath, platform);
       },
     ],
     extendInfo: {
@@ -167,9 +199,15 @@ module.exports = {
       NSDesktopFolderUsageDescription: folderAccess("your Desktop"),
       NSDownloadsFolderUsageDescription: folderAccess("your Downloads folder"),
       NSRemovableVolumesUsageDescription: folderAccess("folders on an external drive"),
-      // app_look reads an app window's accessibility tree through System Events (Automation).
+      // app_look reads an app window's accessibility tree through System Events (Automation), and
+      // the embedded cua-driver runs as Genex, so its Automation and screen requests name Genex too.
       NSAppleEventsUsageDescription:
-        "Genex reads the accessibility tree of an app window when an agent looks at it. It never clicks or types.",
+        "Genex reads an app window when an agent looks at it. It clicks and types only after you let the chat's agent use your computer.",
+      NSScreenCaptureUsageDescription:
+        "Genex sees your screen only after you let the chat's agent use your computer, so it can see the apps it works in.",
+      // Voice chat in a Play game, only while the person turns its mic on in the game's header.
+      NSMicrophoneUsageDescription:
+        "Genex uses your microphone for voice chat in Play games, while you turn the mic on.",
     },
     // The Windows executable's version resource: what Explorer, Task Manager and UAC show.
     win32metadata: {
@@ -190,7 +228,12 @@ module.exports = {
     // A macOS build no identity signs is signed again over its finished Info.plist: the fuses'
     // ad-hoc signature predates it, and macOS then refuses the agents protected folders unasked.
     postPackage: localSigningHook(macSign, PRODUCT_NAME),
-    preMake: () => writeLinuxPackageScripts(LINUX_PACKAGE_SCRIPTS_DIR),
+    // The rpm's scriptlets also add (and take away) the Genex package repository (`RPM_SCRIPTS`).
+    preMake: async () =>
+      writeLinuxPackageScripts(LINUX_PACKAGE_SCRIPTS_DIR, {
+        [LinuxPackageScript.RpmPost]: await readFile(RPM_SCRIPTS.post, "utf8"),
+        [LinuxPackageScript.RpmPostun]: await readFile(RPM_SCRIPTS.postun, "utf8"),
+      }),
     postMake: (_forgeConfig, results) => addLinuxZipReadme(results),
   },
   makers: [
@@ -221,6 +264,9 @@ module.exports = {
         description: SUMMARY,
         setupExe: WINDOWS_SETUP_EXE,
         setupIcon: `${ICON}.ico`,
+        // Shown while Setup installs, and behind the first start's setup screen: a dithered ripple
+        // field that bends where it crosses the G.
+        loadingGif: path.join(__dirname, "src", "renderer", "media", "installing.gif"),
         noMsi: true,
         ...(windowsSign ? { windowsSign } : {}),
       },
@@ -246,6 +292,7 @@ module.exports = {
           icon: `${ICON}.png`,
           depends: DEB_DEPENDS,
           scripts: DEB_SCRIPTS,
+          mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },
     },
@@ -270,6 +317,7 @@ module.exports = {
             post: LINUX_SCRIPTS[LinuxPackageScript.RpmPost],
             postun: LINUX_SCRIPTS[LinuxPackageScript.RpmPostun],
           },
+          mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },
     },

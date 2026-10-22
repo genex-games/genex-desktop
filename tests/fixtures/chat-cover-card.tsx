@@ -300,6 +300,7 @@ function render(events: EventEnvelope[]) {
               destinations={[BuildTarget.Web]}
               facts={WEB_GAME}
               emptyGame={false}
+              game={{ builtOnce: true, multiplayer: false }}
               onNotice={noop}
               onOpenChange={noop}
             />

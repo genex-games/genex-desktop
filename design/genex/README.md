@@ -6,7 +6,8 @@ Genex source application's visual language with local desktop behavior. See
 for principles and skill routing.
 
 - **Type:** Zalando Sans SemiExpanded for words, Geist Mono for actions and machine text;
-  restricted Geist fallback for Greek/Cyrillic. Chat/menu 14px, composer 15px, dialog title
+  TikTok Sans tuned to Zalando for Cyrillic/Greek, and the app language's script from LINE Seed JP,
+  Genex Hangul (Pretendard) or Noto Sans SC. Chat/menu 14px, composer 15px, dialog title
   20px. Use named roles rather than adding arbitrary font sizes.
 - **Color:** configurable semantic light/dark palettes on one shared lightness ramp. A first launch follows the
   system's light or dark, painted before the page's first frame (`appearance/first-paint.ts`); Genex dark is the dark default,
@@ -35,7 +36,9 @@ for principles and skill routing.
   a faster start sees only the page), fades out in 200ms and never returns, and the window can be
   dragged by it. Reduced motion shows it at once and still. A failed start shows each
   area's failure and Retry, which stays up, busy (**Retrying…**), while it runs.
-- **Loading:** there are no skeletons. A region whose content is on its way uses `Pending`: nothing
+- **Loading:** there are no skeletons, except, at the owner's request, Play's grid: a tab on its
+  way draws eight cards' shapes (cover tile, title and author bars) shimmering in a faint ink tint,
+  fading in after 120ms, still under reduced motion. Elsewhere a region whose content is on its way uses `Pending`: nothing
   for 400ms (the local reads behind chats, settings, activity and files usually finish unseen),
   then its label ("Loading conversation…") shimmering in ink-3, still under reduced motion.
   Nothing claims to be empty (No matches, No screenshot, stripes for a missing still) before its
@@ -116,7 +119,7 @@ Workers remain compact 32px rows with 6px insets/gaps, named tasks and disclosed
 Successful tools need no repeated status. Code uses mono; tool labels, filenames and prose
 use the body font. A shown path is not repeated in the result.
 
-Working status belongs to the chat's own work (a turn, a plan, Stop, a pending permission). While only a build runs, chat shows one build card instead, and nothing under it: an 8px-inset 16px-radius composer-colored surface with the lead's latest non-black frame (88×55, 10px radius, omitted until one exists), "Building" and a chevron at 15px, one line of what is happening now at 14px ink-3 (the part at work, "and N more" when several are, else what the lead is doing — never "Running a tool"), and its clock on the right at 14px: the elapsed time, and under it in ink-3 the most it was given ("up to 10h", a cap, never "of 10h": a build may finish inside it; an ∞ build shows only the clock). The finished build is the same card: its capture, the outcome and chevron, one line of failed checks, parts added and duration ("4 parts added · 5h 17m"; orange and led by "1 check failed" when one failed), and Play on the right in the model pill's fill (`pill-quiet`, as every result button, “See it” included) with a filled play glyph. Nothing wraps under it. The whole card is one button to the build's graph on Builds (its title stretched over the card, tooltip "Open in Builds"): the pointer on it steps the card to composer-panel with a line-strong ring and inks the nudging chevron; keyboard focus rings the card in accent; Play sits above it, and the pointer on Play leaves the card unlit. Studio learning after a build is a static line. The composer placeholder during a build reads "Talk to the lead while it builds…" when its lead takes the chat (live chat), else "Sends when the build finishes…".
+Working status belongs to the chat's own work (a turn, a plan, Stop, a pending permission). While only a build runs, chat shows one build card instead, and nothing under it: an 8px-inset 16px-radius composer-colored surface with the lead's latest non-black frame (88×55, 10px radius, omitted until one exists), "Building" and a chevron at 15px, one line of what is happening now at 14px ink-3 (the part at work, "and N more" when several are, else what the lead is doing — never "Running a tool"), and its clock on the right at 14px: the elapsed time, and under it in ink-3 the most it was given ("up to 10h", a cap, never "of 10h": a build may finish inside it; an ∞ build shows only the clock). The finished build is the same card: its capture, the outcome and chevron, one line of failed checks, parts added and duration ("4 parts added · 5h 17m"; orange and led by "1 check failed" when one failed), and Play on the right in the model pill's fill (`pill-quiet`, as every result button, “See it” included) with a filled play glyph. Nothing wraps under it. The whole card is one button to the build's graph on Builds (its title stretched over the card, tooltip "Open in Builds"): the pointer on it steps the card to composer-panel with a line-strong ring and inks the nudging chevron; keyboard focus rings the card in accent; Play sits above it, and the pointer on Play leaves the card unlit. Studio learning after a build is a static line. The composer placeholder during a build reads "Talk to the lead while it builds…" when its lead takes the chat (live chat), else "Sends when the build finishes…". A message sent during a build never takes the card's place: one the lead takes opens above the card, any other waits below it, and the card holds still. The card stands 32px below the last line above it.
 The current status names the latest running tool, falling back to the actual task. Explicit
 reply, tool and waiting phases retain priority. The live status line (home's Naming and Opening
 too) is 12/18 type after a 14px halftone plasma orb (the Live loader's, `ui/StatusOrb.tsx`), 8px
@@ -141,6 +144,11 @@ draft. Approve remains disabled while that revision is being drafted; sending it
 new plan and explicit approval. Failed plan generation uses a recovery card with Choose model, Model providers, Try again and Dismiss; approval controls appear only for a prepared plan. Raw error details expand on demand. Steering can prefill the composer. These reuse existing consent
 and plan APIs; they do not add the web app's question protocol. Permission cards/docks scroll when available height is short; option lists have no separate
 scroll box. The plan body scrolls independently so all three footer actions remain reachable.
+
+A judge the chat asked to play (`judge_play`, `chat/JudgeLine.tsx`) is one quiet disclosure line,
+never a card: the checks list's state mark and its exact words ("Passed · Judge who played it ·
+verified by the studio", or "The judge didn't play" when nobody played); open, "Asked: …" in ink-2
+and the judge's note, or why it didn't play, in ink-3.
 
 An engine link is one quiet line in ink-3, not a card: "Lantern Run now builds in Unreal ·
 Lantern" with a secondary **Undo** while it is the game's newest link, flowing after the line's last
@@ -248,8 +256,8 @@ those already attached, up to the composer's limit.
 
 ## Studio hierarchy and progressive disclosure
 
-The shell is conversation-led: a full-height sidebar contains the theme-aware Genex wordmark,
-Search, the Notifications bell, **New game**, **Plugins**, **Harness**, **Settings**, then **Games**. Everything above the game
+The shell is conversation-led: a full-height sidebar contains Search, the Notifications bell and
+Send feedback on the toggle's line, the theme-aware Genex wordmark with the Play / Create switch, **New game**, **Plugins**, **Harness**, **Settings**, then **Games**. Everything above the game
 list stays fixed; only the flat game list scrolls, with a 24px fade into the sidebar colour once it
 has moved. The four actions are one stack of 36px rows, 2px apart, with labels styled like game titles, 18px animated
 icons (their ink in line with the wordmark's left edge) and an 18px accent count badge on Harness. Game rows use 28px circular covers, 14px Medium
@@ -280,6 +288,114 @@ waiting work or an 8px dot for unread news; the mark slides in diagonally and po
 the bell, and the glyph rings once (`data-announce`) when something arrives. With the sidebar
 hidden, Show sidebar carries the dot. Arrivals while Studio is unfocused also post macOS
 notifications (at most three, else one summary); the Dock badge counts waiting work.
+
+**Play.** Beside the wordmark a small segmented **Play** / **Create** switch (a tablist; arrow keys,
+Home and End) splits the sidebar: two 22px Geist Mono 11px tabs (44px and 54px) on a faint
+2px-padded track, the side that is on in ink under a pill of Play's blue secondary (genex.games'
+#4b60bf at 12%, a 1px edge at 40%, no glow) that slides between them; the colour tweaker's first
+group, "Play: switch and tabs", sets that blue with its edge and text, the track with its edge, the
+other tabs' backing, edge and text, and the focused search's edge (muted ink at 18% until set); the
+Genex presets set the blue, the track, the backing and the edges. Create is everything else, and every
+launch opens it; opening a game, home, Harness, Plugins or Command-N returns to it. Play folds New
+game, Plugins and Harness away and unfolds genex.games' shelves in their place, rows built exactly
+like them: **Games** (gamepad), **Tools** (wrench), **Assets** (cube), each with its count in mono
+11px ink-3 at the end; the shelf shown is the current row. **Settings** stays under either set. Games becomes
+**Recent** (games last played, newest first, 2px apart; 28px-tall 16:9 covers with 7px corners and
+a theme-line edge, 8px from the title, rectangles so Play reads apart from Create's round pictures; "Games you play show up here." while empty), the
+two lists sliding 16px past each other; Recent sits as far below the shelves as Games below Create's rows. Play's page replaces the workspace, on the plain page colour: the shelf's tabs (15px, 30px tall,
+9px corners, ink-3; the chosen one in the switch's blue secondary; only tabs with something in them; Games: Featured and its categories, Tools:
+All, Physics, Terrain, Lighting, VFX; none for Assets) on the header line and **Search games /
+tools / assets** (32px, mono 13px, at most 240px) at its right, 16px below the window's top. The
+bar has no background and the grid scrolls under it; scrolling on down it slides up out of the
+window (220ms), and any scroll up brings it back (300ms; a control with the keyboard keeps it). Once
+scrolled, every tab, the search and the sidebar toggle get a backing of the page colour at 90% with
+a 1px edge of ink at 9% (the chosen tab its blue over it), and the cards fade out under the bar as
+the sidebar's games do under its chrome: the page colour solid behind the bar's top, then a wide
+cosine fall (no slope at either end) to nothing 152px down; once the bar has stepped away, a 96px
+fall of the same curve with no solid part. The page's foot fades
+the cards out the same way over 48px. Below, a grid
+of cards at least 320px wide (16px rows, 12px columns, 20px from the page's sides, as wide as the page).
+A card sits straight on the page: a 16:9 cover (12px radius, a 1px inner edge in the theme's border
+colour that inks a little on hover, 1.03 scale on hover) with players now (a 7px green dot) and plays in 14px
+white mono over a shaded corner, a 17px medium title, "By <author>" in 12px mono ink-3 and a
+secondary **Remix** when the source is public. The next 24 load before the grid runs out; an empty
+tab, a search without matches and a failed read (with Try again) each say so in one centred line,
+and a next page that fails says so under the cards with Try again. Offline (no network at all), the
+bar wears a small mono **Offline** mark (a hollow dot) beside the search; a tab or a search with
+nothing to show says "You're offline" over a 32×24 signal of four dot-matrix bars (2px dots on a
+3px grid) lighting one after another, "Games load as soon as you're back online." and Try again;
+cards already shown stay (covers not yet loaded keep their plain tile) and the next page waits
+under them. Each reloads by itself once the Mac is back online.
+
+A card opens the game under the viewer's header: the app's own 48px bar across the window in the
+sidebar's colours over a hairline (80px in on macOS for the traffic lights), the game's view under
+it. Left: a 32px Back chevron and the game's name (14px) over its facts in 11px mono ink-3 (a 6px
+green dot and "8 playing" when people are in it, plays, the maker; offline, a hollow dot and
+"Offline" in the players' place, while Like and Remix wait). Right: 32px buttons with 9px
+corners, never pills, in ink at 6% (11% on hover), 13px labels with 16px glyphs: Like with its
+count, Share, Invite a friend, Remix in Play's blue secondary (only for public source), and an
+icon-only Exit. A note is worn by the button it is about, for 2.2s: the label folds into it and the
+button's width eases along ("Link copied" on Share, "Invite link copied" on Invite, "Connect Genex
+to like games" on Like, a pulsing "Making your copy…" on Remix); a copied link also swaps the glyph
+for a check drawn in, over a green tint (green at 14%, a 1px edge at 40%). The player's own like
+pops the heart (filled #ff5c7a), throws eight 2px square sparks in pink and blue in steps and rolls
+the count up; a like taken back at once (signed out) stops them. A guest without a Genex account
+sees, once the game plays, a strip in Play's blue secondary with 8px corners wipe in from the left,
+14px after the facts: the Genex G alone (16px, in ink, no tile), "Save your progress with the Genex
+plugin" and **Install plugin** (24px, 6px corners, solid blue); its × sits just outside the strip.
+It stays until that × or the game closes. A game in voice chat gets, 14px after the facts, the mic
+switch joined to a 22px chevron (4px inner corners): icon-only, a crossed-out mic while off, Play's
+blue secondary while on (the glyph at 60% until the microphone is live). While the game waits for
+it, the off switch says "Turn on mic"; a microphone note is worn the same way ("No microphone",
+"Allow the mic in Settings"). The chevron opens the system's own menu of microphones (System
+default first, the chosen one checked), since the game's view covers anything drawn under the
+header. The
+header's empty space drags the window. Holding Esc in the game puts the keyboard on Like; Esc gives
+it back to the game; a tap stays the game's. Until the game loads, the space under the header shows
+the cover coming up out of black as a dimmed colour 8×8 Bayer ordered dither (four steps a channel)
+in 2px cells, small close-set dots: cell by cell in Bayer order, bright cells first, easing in and
+out over 1.4s, then holding; no blue phase. Fine scan lines and a dark edge over it. Centred, the 28px title over a 240px 1px dot rail (a dot every 4px) with a lit 72px run sweeping
+along it every 1.3s. No "Loading" word; nothing of it draws once the game plays. A failure is a
+navy card with a blue hairline, Back to Play and Try again; offline it says "You're offline" over
+the signal, "<game> opens as soon as you're back online.", and opens it by itself once back.
+
+A game's coin purchase is Studio's own sheet, never genex.games' page: Comments' dialog over the
+game dimmed by black at 50%, a 440px card (the popover colour, a 1px line edge, 16px corners, 20px
+padding, 16px between rows), with the bar left down under it. A 32px ✕ in ink at 6% sits top right.
+Rows: the game (its 28px 16:9 cover and title); the item (a 72px picture with 12px corners, or the
+plain tile with the box glyph; its name 20/28 medium with "× 5" in ink-3 above one; a game-priced
+payment's terms whole in ink-3 in a scroll area at most 120px tall with the scroll fade, so the
+price and the buttons always show); the price box (ink at 4% with an inset soft line, 12px corners):
+Price and the coin mark, "75 coin" 16/22 medium, "$0.75" in mono 12/16 ink-3, then under a line
+"Your balance 1,240 → 1,165 coin" in mono 13, the balance before paying quieter; and Cancel beside
+the one thing to do, right-aligned, 32px with 9px corners, the primary in Play's blue. The coin mark
+is genex.games' own 11×10 pixel coin (`CoinMark.tsx`) in `--coin` gold, its light 45% of the gold
+in white and its shade 65% in black; never the blue credits shard, since coin pays for what games sell
+and credits for making. Pay stays disabled for a second after the sheet shows; a press before then,
+a held key or the window's focus changing starts the second again. Paying shows the spinner and
+"Paying…" with Cancel and ✕ at half opacity. Paid tints the price box green (8%, a 30% inset edge),
+puts "✓ Paid" in the paid ink, badges the picture with a 24px green check and leaves only Back to
+game. Not enough coin shows the balance and "N more needed" in the short orange, Cancel and Get coin
+↗ with the note "Opens genex.games. Pay comes back once the coin lands."; once the coin arrives,
+Review; after genex.games refused Pay for want of coin, Back to game, Get coin and "Try again in the
+game once the coin lands." Sign in, Pending (a clock beside its title) and Failed are a title and
+body above the item in a compact 40px row (in ink-3, its picture at 0.6, when Failed): Failed reads
+"This purchase timed out", "…was canceled", "…didn't go through" or "…was refunded", each "Try again
+in the game."; a refunded one says the coin went back to the balance, never that none was charged.
+The game writes the item's words: they wrap anywhere, run in their own direction (`unicode-bidi:
+isolate`, direction controls removed) and are never cut. On the light theme the coin is a deeper
+gold and the green and orange words mix toward the ink to read at 4.5:1. The buttons keep the app's
+controls font. Focus starts on Cancel (Back once it is over) and stays in the card; Esc, ✕ or a left
+click outside cancels (or goes back), and nothing answers while Paying.
+
+At the sidebar's foot in Play, while the Genex plugin is missing, off or not connected, sits the
+Genex card: an 8px-inset surface card with a 19:10 muted looping film (`play-publish.mp4`, rendered
+with Remotion from `design/play-publish-video/`; its poster under Reduce Motion; paused while a game
+is played or the window is hidden; dropped below 640px of window height), the 28px close, a
+"Genex plugin" eyebrow, the title "Put your game on Play", three rows of an 18px glyph in Play's
+blue and a 14px medium line (Publish in one click, Make it multiplayer, Every game dev tool), then
+Learn and the filled **Install plugin**, which connects the account or opens Plugins on Genex. It
+rises 12px over 480ms and goes for good when dismissed.
 
 Selecting Harness (internally the Studio conversation) opens its assistant conversation beside Activity; selecting a game chat
 restores chat + game stage. There is no global Build/Review switch. Command-2 enters Harness;
@@ -330,7 +446,13 @@ chat header's ⋯ menu and uses that chat's bound game; it is disabled on drafts
 game stage, selected build history and native-view occlusion behind Review, drawers and dialogs.
 
 Chat header and stage strip are 48px: 8px above and below 32px controls, and every gap between
-controls drags the window. The game title hugs its text (at most 320px, then truncates); select it
+controls drags the window. The strip holds the views, Play/Stop, Reload, Sound and Full screen at
+its start and the plugin buttons (a plugin's, Make multiplayer, Publish) at its end, always named,
+and nothing in it ever runs under the window's own controls. Narrower, it makes room in steps
+(`panels/stage/strip-fold.ts`): the views fold into one button naming the current one, in the
+switcher's accent with a chevron, its menu listing every view with the current one ticked; then the
+plugin buttons move to a second 48px row at the strip's end; then Sound and Full screen join them at
+that row's start. Each step undoes once the first row fits again. The game title hugs its text (at most 320px, then truncates); select it
 to rename, Enter to save and Escape to cancel. Rename updates the library display name; folder
 paths and identifiers stay stable. Show in Finder and Terminal sit together at the header's end,
 then ⋯ (Export game…, Rename). One game has one chat, so there is no chat switcher; conversations
@@ -344,31 +466,37 @@ sidebar's 7px accent dot and one `gate-pulse` (none under reduced motion), and i
 reload to see it", "A new build is ready — reload to play it", plus a builder's note). The strip's end
 holds one speaker for the game's sound, crossed out while off (⌥⌘M): no menu and no settings,
 because agents' windows are always silent and Live is silent while hidden or behind another app.
-Play/Stop sits before Reload: one icon button, ■ while the game runs, ▶ once it is stopped and a
-13px ring spinner while either is under way; each glyph fades and grows in (150ms). Full screen
+Play/Stop sits before Reload: one icon button in its action's colour, ▶ in green on the green tint
+once the game is stopped, ■ in red on the red tint while it runs, and a 13px ring spinner on the
+plain glass while either is under way; each glyph fades and grows in (150ms). Full screen
 (four corners) follows the speaker and is disabled unless the running game is on the stage. In
 full screen a studio-drawn dark glass pill sits 14px from the top-right corner, “Hold esc to exit
 full screen” beside the exit glyph; after 2.6s the words fold into the icon, which rests at 45%
 until the pointer is on it. Plugin buttons wear the prompt bar's model-pill fill (`pill-quiet`);
-one whose status says its action is due (`attention`: Publish with something to publish) takes
-the accent. Publish shows no badge: two looks, nothing else. A status badge is micro text after the
+one whose status says its action is due (`attention`) takes the accent. Publish (Genex's or
+Studio's own) wears Play's blue instead, as the profile's people buttons do: the tint with its edge
+(`Button variant="play-tint"`), the filled blue (`play-fill`) once there is something to publish,
+and no badge. A status badge is micro text after the
 label in its tone's colour, the quiet info word in ink-2 (4.5:1 on the pill in every theme), or,
-when the status asks for a dot, a 6px dot in green, amber, red or ink-3 grey. Unreal's button leads
-with the Unreal glyph and wears a dot: green Ready, amber Starting, grey Not open, Not set up or Not
-installed. A button's title opens in the strip's tooltip beside it, a dot's word on its first line;
+when the status asks for a dot, a 6px dot in green, amber, red or ink-3 grey. Unreal's button shows
+only on an Unreal game (its facts) or one whose chat chose Unreal; it leads with the Unreal glyph and
+wears a dot, never a word: green Ready, amber Starting, grey Not open, Not set up or Not installed. A button's title opens in the strip's tooltip beside it, a dot's word on its first line;
 a screen reader hears the badge after the button's name ("Unreal Editor, Ready"). An Unreal game's Live is one centred card (at most 560px) on the
 stage's hatch: the latest play shot when there is one, the project's name, one line of where it
 stands (a timer while it opens; "Ready in Unreal" once it answers) and at most one button, the same
 step the Unreal panel offers (Get Unreal Engine, Open the Unreal panel, Set up and open, Open in
 Unreal, Switch to <project>, Restart Unreal or Quit Unreal); with two editors open it offers no
 quit, only words. The Unreal panel, a plugin frame, wears Genex's type (both faces inlined as data,
-`inlinePanelFonts`) and controls: 32px borderless buttons in Geist Mono, a 20px view title, then in
-the project view its name with one state word in the toolbar's words and tone (Not set up, Not open,
-Starting, Ready, Unreal busy, Not answering, Not connected), Change and a ⋯ menu (Undo setup, Quit
-Unreal) at the head's end, one 15px line and one primary (held, not hidden, while Unreal is busy).
-Get Unreal's steps take the steps card's round marks; the engine and Xcode end it as one mono line. While Live or Builds loads, a 52×36
-halftone plasma in ink at 62% sits over a shimmering 13px line; it appears only after 0.4s, stays
-at least 0.6s and fades out (150ms) before the native view is uncovered.
+`inlinePanelFonts`) and controls (32px borderless buttons in Geist Mono) and is built as an
+[engine panel](#engine-panels): the project block's head carries its state in the toolbar's words
+and tone (Not set up, Not open, Starting, Ready as the green dot alone, Unreal busy, Not answering,
+Not connected), its foot one primary (held, not hidden, while Unreal is busy), Change project and a
+⋯ menu (Undo setup, Quit Unreal); This computer's block lists the engine and Xcode. The Unity
+panel is the same: its project block (Unity's mark on the tile, `unity/`, state in the button's
+words, the step, Engine, one primary and a quiet action at the foot's end) and This computer (the
+newest Unity, ticked once it is Unity 6); its strip button folds to Unity's mark. While Live or
+Builds loads, a 52×36 halftone plasma in ink at 62% sits over a shimmering 13px line; it appears
+only after 0.4s, stays at least 0.6s and fades out (150ms) before the native view is uncovered.
 
 **Home** is where every launch starts and where the wordmark leads: nothing selected, one 21px
 Medium line (“Everything you need to ship a game”) over the game composer (“What do you want to
@@ -463,6 +591,11 @@ In chat the outcome is the build card above: delivery, capture and Play; the car
 Counts and revision identifiers live under **Technical details** in the Builds result card. Checks and
 play/history actions remain separate, and a summary embedded in a completion card adds no
 second card surface. Do not hide adverse evidence merely to make a result look cleaner.
+Its checks list this build's first and an earlier build's under **Earlier builds**, failures first. A row
+is a 14px state mark (green check, red cross, ink-3 dash) beside the title, which clamps to three lines with
+**Show all** only when it hides words; one 12px line under it says the state in words, who checked and, for
+a check that played, what it rests on ("Passed · Judge who played it · verified by the studio"), red when
+it failed; then the checker's note. No category or revision on a row (`outcome-checks.ts`).
 The Builds graph stays a node graph: every node is one size (208×130), its picture filling it, a
 name and one status on a dark fade at its bottom, and a count in a chip at the top right; a ring
 outside it, never a border, so no state changes its size. Colour means state only (no per-part
@@ -477,8 +610,20 @@ A node at work, the lead's included, is its agent's screen: the newest frame wit
 cursor, and a status that is the action in plain words with its age ("Pressing Space · 3s"; a step
 being checked keeps "Being checked · …"). Its card shows that frame live and What it did, the
 window's last frames with the newest as Now. No strip of screens sits above the stage.
-The reviewers are an eye gate on the edge into what they looked at; one 52px status line ("Building ·
-9 of 30 min" and a 2px progress rule) replaces per-card chips and per-node status boxes. A selected node opens in place: the camera glides to it at 160%, the graph dims to
+The reviewers are an eye gate on the edge into what they looked at; one 40px bar of the chat's
+builds replaces per-card chips and per-node status boxes: a tab each, oldest on the left, on one
+quiet track with the open tab raised (surface fill, a ring halfway from `line` to `line-strong`) and wider. A tab is what was
+asked, ellipsized, after a bare ✓ once done, a muted dot while paused, or the status line's orb
+while it works, then its clock at 12px in the chat's shimmer. No "Building", budget or progress
+rule; the open build's status line ("Building · 9 of 30 min · 2 parts working") is its tooltip and
+what a screen reader hears. Past three builds, or when the bar less Play's fixed 160px is too narrow
+for each tab to show about 16 characters (150px), the track becomes one picker of the same height
+and edge (focus moves with the swap): the open build's mark, whole name and clock, then ⌄ and the
+count. Its list is the shared dropdown, newest first, one 32px line per build with its start time
+(its clock while it works). The open build's row is filled and scrolled into view, and focused when
+the list opens from the keyboard. Past ten rows it scrolls, the last row shown fading under a
+gradient that keeps the menu's shadow. Play keeps its place at the right end and shows for every
+build; one that made nothing yet plays Live as it is. A selected node opens in place: the camera glides to it at 160%, the graph dims to
 40% and stays clickable, and one card (max 560px, centred, scrolling inside) carries the detail —
 never a side panel. Replies go through the chat composer, so the app keeps one input. Semantic zoom
 trades words for pictures below 60% and adds the asked sentence from 135%.
@@ -541,6 +686,32 @@ Use the existing content font for Harness prose and controls, code font only for
 weights 400/500 and sizes 18px title, 15px regular, 14px small. Keep visible named entry points;
 do not replace them with hover-only controls.
 
+## Engine panels
+
+Every plugin that works with an engine's or tool's files (Unreal, Unity and Godot now; Blender, Roblox
+next) follows one pattern. Its strip button shows only on a game that is that engine: the game's
+facts name its project (`toolbar[].facts`), or its chat chose the engine before the project exists
+(the status's `shown`). A plugin that is on adds nothing to other games. The button opens one panel,
+and the dialog is its window: the dialog's title is the view's own heading (Set up Roblox Studio,
+Choose a project) or the engine's name, with Back as an arrow beside it, and the dialog scrolls
+once, with no second padding or scrollbar inside. Three views: **this game's project** first (its state, where it
+lives, the one next step), **setup** only while something it needs is missing, and **choose a
+project** behind Change project (New project on top, Back to the project).
+
+The panel is built from blocks: one subject per block (the project, this computer, the list), a 1px edge,
+14px corners and a fill one step above the dialog; a 13px third-ink label above each, 24px between
+them, 1px dividers between rows inside, and actions in the block's foot (primary first, Change and
+⋯ at its end). A padded button always has a fill; a rare action for the whole panel (Undo Set up)
+is an underlined link with no padding. A box inside a card (a setup step, in the chat's
+setup card too) has the `line-soft` edge: as quiet as the card's own edge on a light theme, the
+control edge on a dark one. The chat's setup card keeps its buttons in a footer under the steps,
+which scroll above it. List rows are 60px (32px tile, 15px name, 12px mono path, a tag, the version, a
+chevron; the whole row is the button); fact rows 44px, label left and mono value right; 16px side
+padding everywhere. A path starts at `~` with its middle folded to …; a temporary folder says so;
+the full path is the tooltip. Status is a dot and one word, the same in the block's head and on the
+strip button, except Ready, which is the green dot alone. Tags name the consequence (Outside game),
+explained once under the list.
+
 ## First launch
 
 The welcome (`renderer/onboarding/`, styles in `styles/onboarding.css`) is one full-window layer
@@ -587,7 +758,8 @@ hover, and copies the link where the browser may not open). A failure only turns
 ↻ Try again, its reason in the tooltip. Waiting shows the LoaderGrid with Cancel; connected, a
 green-dot title and Done. It stays hidden until the film has a first frame (at most
 1.5s), then rises whole 16px over 480ms; it leaves 6px over 180ms and drops the film below 640px
-of window height.
+of window height. It does not show while Play is up, where the sidebar's own Genex card (see
+[Play](#studio-hierarchy-and-progressive-disclosure)) offers the plugin.
 
 ## Application settings
 
@@ -673,16 +845,33 @@ submission: Add's row turns it on, and while it is on a bulb icon button follows
 1×16px hairline, turns it off, and the prompt reads "Describe what to plan…"; active build
 follow-ups retain the existing plan. No standalone Keep going button is needed.
 
+Files dragged anywhere over a chat (or home) land in its prompt bar, any kind: a picture goes on
+the board as a picture, any other file as a 44px chip with its name and goes with the message as a
+link to where it is. While files are held, the prompt bar's edge turns 1.5px dashed, its contents
+fade under the composer colour at 88% and one 14px line says what a drop does ("Drop to add 2
+pictures", "Drop to add 3 files") in the accent, in orange only past the limits (12 pictures, 12
+files); the chat above does not change. What a drop left out stays above the board as one orange
+line with a filled Choose files and a filled close button. A person's message shows each file it
+carries as a small chip with the file's own name.
+
 Composer panels share one density: 6px insets, 32px rows with 6px/10px padding, 12px medium
 group labels and a 17px radius (row 11 + inset 6). Everything opens on click, never on hover.
 Add spans the full composer width 8px above the writing surface: Images, then **Plan mode** (a
 bulb, "Turn plan mode on", or "off" while on; it closes Add; disabled with why while a build owns
 the chat), then plugins and MCP servers (each with its 16px picture) with switches. A status appears only when something needs
 doing, with an accent action in white mono 12px (Set up, Connect, Retry) beside it; an account
-needs only the Connect button, no words. Glyphs use the text colour. Manage plugins opens the
-Plugins page. Typing @ at the caret
+needs only the Connect button, no words. A plugin's name opens its page in Plugins (it ellipsizes
+only after its status); while its row is hovered or holds focus, a grey Settings of the same size
+shows left of its action and switch and opens that page too, unless the action (Set up, Retry,
+Manage) already does. A server's name works its switch. Glyphs use the text colour. Manage plugins
+opens the Plugins page. Typing @ at the caret
 opens the same list as mentions while focus stays in the text: arrows move, Enter/Tab inserts,
-Escape closes; with no match Enter sends as usual.
+Escape closes; with no match Enter sends as usual. The @ panel pins a header over its scrolling
+list (soft fades at both edges, no divider): a search field showing the text after @ (a click puts
+the caret back there; a small quiet underlined Clear) and two blue-fill switchers, All · Games ·
+Assets · Tools and Everyone · Mine (mouse; focus stays in the text). Images leads the list; Your
+games, then Your assets (the genex.games library) before the others' shelves; library and shared
+asset cards chip their kind (3D, Image, Sound, Video) and Saved or Shared.
 The permissions pill shows one glyph per mode: shield (Auto), help (Manual), pencil (Accept
 edits), plan (Plan) and shield-off (Bypass permissions, orange in the pill and its row). Auto is
 the glyph alone, its tooltip "Auto permissions"; another mode adds its label. The model's name keeps
@@ -719,7 +908,8 @@ reviewers use the closest level their models accept.
 The ring panel (340px) shows Context window used/capacity with one meter, "Compacts automatically",
 and, for a model whose chat can be compacted, Compact now (also `/compact` in the composer). Below it, each signed-in subscription has a block titled with
 its plan (e.g. Claude Max plan) that opens the provider's usage page, then each limit with its reset
-time, percent used and meter (amber from 75%, red from 90%). The orchestrator's plan comes first;
+time, percent used and meter (amber from 75%, red from 90%); model-scoped weekly limits (such as
+Fable's) stay off the panel. The orchestrator's plan comes first;
 with two plans, each names the roles it serves or says Not in use. While Genex is connected, a
 Genex credits block follows: Used by this game, then Left for all games in ink-3.
 Fresh games inherit the last selected chat model; returning chats retain their own saved model.
@@ -759,7 +949,10 @@ rows, menu and row glyphs) use `text-icon`/`text-icon-strong`, the palette's `ic
 sidebar's search and bell stay in the muted grey. The wordmark takes the palette's `logo` (`--logo`)
 when set; its gradient runs through `logoShade` (`--logo-2`), and a shade equal to the logo draws it
 solid (`--logo-fade`). Its sidebar width is `--logo-width`. The selected Settings tab's text reads `settingsTab` (`--settings-tab`). The prompt bar's edge reads `promptEdge`
-(`--prompt-edge`), and its composer menus draw that same single edge (`--prompt-bar-edge`, no ring). The Live/Assets switch's current view reads `viewSwitch` (`--switch-fill`) and the
+(`--prompt-edge`). Every floating menu (composer menus, dropdowns, popovers) draws one edge, `--menu-edge`
+(utility `border-menu-edge`, no ring): the prompt bar's edge on a light theme, the control edge on a dark
+one, whose menu fill would swallow the prompt bar's. A box inside a menu (a plan's limits, a mention card)
+has the `line-soft` edge. The Live/Assets switch's current view reads `viewSwitch` (`--switch-fill`) and the
 empty-state wire art `wireArt` (`--wire-art`); the stage's hatch draws `hatch` stripes
 (`--hatch-stripe`) over `hatchGround` (`--hatch-ground`), else the text's faint `--stripe` over the canvas.
 Chips, tabs and hover states read `controlFill`, `controlHover`, `controlText` and
@@ -863,7 +1056,8 @@ control, the roles panel (Orchestrator/Workers/Judge rows, ⓘ tooltips, quiet L
 Turn on), the side model list (focus, groups, Add more models, chat-side placement, arrow keys,
 Escape closing the list before the panel), the effort slider (keys, pointer snap, nearest level per
 role), context-window preferences and plan limits (order, roles, levels, usage link), Add density,
-plugin status actions and setup route, full-composer Add anchoring, @ mentions (filter, insert,
+plugin status actions and setup route, plugin row hover, Settings and name opening the plugin's
+page, full-composer Add anchoring, @ mentions (filter, insert,
 Escape, focus kept in the text),
 Named model rows without search, provider-default or empty local placeholders; High defaults in both displayed and submitted role settings; Send state/payload, the ink-filled Send/Stop cross-fade, exclusive Send/Stop transitions during work (including whitespace, clearing,
 follow-up submission, post-send guard and pointer/keyboard Stop), 200% zoom and reduced motion. Captures and results are in

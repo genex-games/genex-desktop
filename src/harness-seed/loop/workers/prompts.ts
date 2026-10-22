@@ -8,7 +8,7 @@ import { MAX_WORKERS_AT_ONCE, WorkerIsolation, WorkerTool } from "./contract.ts"
 
 /** The one line a lead's brief says about its workers, the same on every engine. */
 export const WORKERS_BRIEF_LINE =
-  "You can start workers (worker_start): readers in place, writers in their own copy that you merge with worker_mark, or one writer in place. Up to eight at once; they follow this chat's permission mode.";
+  "You can start workers (worker_start): readers in place, writers in their own copy that you merge with worker_mark, or one writer in place. As many at once as worker_start says; they follow this chat's permission mode.";
 
 /** What a worker may do about Genex's plugins: look, and tell the lead; the card is the lead's to show. */
 const WORKER_PLUGIN_SEARCH = `To look for a Genex plugin, call ${ProjectTool.PluginsFind} and say in your report what it found; only the lead shows the person a plugin's card.`;
@@ -43,6 +43,13 @@ export interface WorkerBriefParts {
   inputs: readonly string[];
 }
 
+/**
+ * A worker's turn is its whole job: once it ends, Genex can no longer answer its tool calls, so a
+ * session woken later (by a background task) has its calls refused and delivers nothing.
+ */
+const WORKER_ONE_TURN =
+  "Your turn is your whole job: the lead reads your report when it ends. Never end it to wait for something, and never wait with sleep or a background command. A job that is still running (a Genex generation, a render): call its wait again with the same id until it is done, then finish.";
+
 /** Where a worker works and what it may touch, by how it stands in the project. */
 const WHERE: Record<WorkerIsolation, string> = {
   [WorkerIsolation.Read]:
@@ -70,7 +77,8 @@ export function workerBrief(parts: WorkerBriefParts): string {
       ? "You may search and read the web for this task."
       : "Work from the project and your own knowledge; the web is not part of this task.",
     WORKER_PLUGIN_SEARCH,
-    "Never start workers of your own. Hand back by finishing: end with a short report of what you did and what is left.",
+    WORKER_ONE_TURN,
+    "Never start workers of your own. Hand back by finishing: end with a report of what you did, what you found (name the files and pictures that show it) and what is left; the lead reads it in full.",
   ];
   return lines.join("\n");
 }
@@ -89,8 +97,8 @@ export interface StatusLine {
 export const POOL_WORDS = {
   started: (id: string, isolation: string) =>
     `Started ${id} (${isolation}). Use ${WorkerTool.Wait} or ${WorkerTool.Status} to hear from it; other work can go on meanwhile.`,
-  tooMany: (running: number) =>
-    `Not started: ${running} workers are running, and at most ${MAX_WORKERS_AT_ONCE} run at once. Wait for one to finish (${WorkerTool.Wait}), or stop one (${WorkerTool.Stop}).`,
+  tooMany: (running: number, allowed: number = MAX_WORKERS_AT_ONCE) =>
+    `Not started: ${running} workers are running, and at most ${allowed} run at once. Wait for one to finish (${WorkerTool.Wait}), or stop one (${WorkerTool.Stop}).`,
   noTask: "Not started: give the worker a title and a task (everything it needs; it sees nothing else).",
   noIsolation: `Not started: say how it stands in the project: isolation read (in place, reads only), copy (writes in its own copy) or lock (the one writer in place).`,
   unknownType: (type: string, known: readonly string[]) =>

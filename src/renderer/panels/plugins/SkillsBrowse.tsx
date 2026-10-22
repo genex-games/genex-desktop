@@ -1,5 +1,6 @@
 /** The Skills tab: Studio's own skills, this game's, each provider's global skills, and the skills plugins ship. */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import type { ProjectSkillInventory, ProviderSkill, ProviderSkillInventory } from "../../../shared/provider-skills.ts";
 import { Icon } from "../../ui/icons.tsx";
@@ -18,7 +19,7 @@ import {
 } from "./skills-sections.ts";
 import { Pending } from "../../ui/Pending.tsx";
 
-const NO_MATCH = "No skills match your search.";
+const NO_MATCH = t("No skills match your search.");
 
 /** A skill as the Skills tab lists it: a name, a line under it, and what opening it shows. */
 function SkillButton({
@@ -49,14 +50,15 @@ function SkillButton({
 
 /** What a provider's skill page says: its description, where it lives, whether builders load it, and whether it is off. */
 function providerSkillText(provider: ProviderSkillInventory, s: ProviderSkill): string {
-  const disabled = s.enabled === false ? "\nDisabled in the provider configuration." : "";
-  return `${s.description}\n\nSource: ${s.scope}\n${s.path}\n\n${providerNote(provider)}${disabled}`;
+  const disabled = s.enabled === false ? `\n${t("Disabled in the provider configuration.")}` : "";
+  const source = t("Source: {scope}", { scope: s.scope });
+  return `${s.description}\n\n${source}\n${s.path}\n\n${providerNote(provider)}${disabled}`;
 }
 
 /** Why a provider's list is empty: the search, an unreadable inventory, or no skills at all. */
 function providerEmptyWords(query: string, provider: ProviderSkillInventory): string {
   if (query) return NO_MATCH;
-  return provider.warnings.length ? "Inventory unavailable. Refresh to retry." : "No global skills found.";
+  return provider.warnings.length ? t("Inventory unavailable. Refresh to retry.") : t("No global skills found.");
 }
 
 function ProviderSkills({
@@ -93,7 +95,7 @@ function ProviderSkills({
               onSkill({ plugin: "", provider: provider.label, name: s.name, text: providerSkillText(provider, s) })
             }
           >
-            {s.enabled === false && <span className="text-xs text-ink-3">Disabled</span>}
+            {s.enabled === false && <span className="text-xs text-ink-3">{t("Disabled")}</span>}
           </SkillButton>
         ))}
       </div>
@@ -109,7 +111,7 @@ function RowTag({ row }: { row: SkillRow }): JSX.Element | false {
   return row.enabled ? (
     <Icon name="check" className="text-icon" />
   ) : (
-    <span className="text-xs text-ink-3">Disabled</span>
+    <span className="text-xs text-ink-3">{t("Disabled")}</span>
   );
 }
 
@@ -195,7 +197,7 @@ export function SkillsBrowse({
     <>
       {game && <GameSkills game={game} page={page} query={query} onSkill={onSkill} />}
       <RowsSection view={studioSkillsSection(builtins)} page={page} query={query} onSkill={onSkill} />
-      {skillsLoading && <Pending label="Reading provider skills…" />}
+      {skillsLoading && <Pending label={t("Reading provider skills…")} />}
       {providerInventory?.map((provider) => (
         <ProviderSkills key={provider.provider} provider={provider} page={page} query={query} onSkill={onSkill} />
       ))}
@@ -203,7 +205,7 @@ export function SkillsBrowse({
         view={pluginsView}
         page={page}
         query={query}
-        empty="Installed plugins can include skills. They’ll appear here."
+        empty={t("Installed plugins can include skills. They’ll appear here.")}
         onSkill={onSkill}
       />
     </>

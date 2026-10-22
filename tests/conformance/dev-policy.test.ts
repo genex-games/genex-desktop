@@ -254,6 +254,11 @@ test("fixture native guard covers all account, external, picker, export and down
     "studio:mcp.tools",
   ])
     assert.ok(!FIXTURE_BLOCKED_CHANNELS.has(channel), channel);
+  // Bringing back the newer version after a Rewind rewrites only the chat's game folder from its own
+  // checkpoints, as the Rewind does.
+  const { classifyChannel, ChannelClass } = await import("../../src/main/dev/native-policy.ts");
+  assert.equal(classifyChannel("studio:chat.rewind.undo"), ChannelClass.FixtureSafe);
+  assert.doesNotThrow(() => assertNativeActionAllowed(true, "studio:chat.rewind.undo"));
   // …and adoption is not one of them: it opens no network and writes only inside the profile's
   // own games root, which is the one way a dev profile can hold a game that is not the fixture.
   assert.doesNotThrow(() => assertNativeActionAllowed(true, "studio:project.adopt"));

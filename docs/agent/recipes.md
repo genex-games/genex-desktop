@@ -100,7 +100,8 @@ Durable history the UI or the harness reads later.
    Read the payload with `customEvent(event, name)` / `customPayload(data, name)` (a name or a
    list of names; `null` for any other event, `{}` for a missing payload), `delegatedPayload`
    for the `delegated.<engine>` trace, or `customRecord` for any custom event; never
-   `data.payload as`. Put user-facing words in `src/renderer/words.ts`.
+   `data.payload as`. Put user-facing words in `src/renderer/words.ts`, inside `t()`
+   ([translation](translation.md)).
 5. Live updates reach the renderer through the `studio:event` push channel of the IPC map
    (`STUDIO_PUSH_CHANNELS` in `src/shared/ipc-channels.ts`, delivered by `onEvent`); no new
    channel is needed. A new transient UI event (`area.verb`) is a key of `UiEventMap` in
@@ -162,6 +163,9 @@ No core change. See [the plugin guide](../PLUGIN_GUIDE.md) and [plugin contract]
 
 1. Plugin stage button: declare `toolbar[]` with a matching `actions[]` in the manifest; the
    host renders it through `src/renderer/panels/PluginToolbar.tsx`. No core change.
+   An engine's button (one per engine plugin) names the engine's `facts` and an `icon`, says its
+   status as a dot, and opens a panel built to [Engine panels](../../design/genex/README.md#engine-panels)
+   (`src/plugins/unreal/panel.html` and `src/plugins/unity/panel.html` are the models).
 2. Built-in stage view: extend `StageView` and `VIEWS` in `src/renderer/stage.ts`, the
    tabs in `src/renderer/panels/stage/stage-tabs.ts` (`stageTabs`, `data-stage-action`; drawn by
    `StageStrip`'s `ViewSwitcher`), and the

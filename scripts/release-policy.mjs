@@ -59,8 +59,28 @@ export const ReleasePlatform = {
 };
 
 /**
+ * Windows joins a draft unsigned, as a preview, until a certificate signs it: SmartScreen warns
+ * before it opens ("More info", then "Run anyway") and the release notes say so. A signed Windows
+ * build ships either way. Set to false once Windows is signed, so an unsigned build stays an
+ * Actions artifact again.
+ */
+export const WINDOWS_SHIPS_UNSIGNED = true;
+
+/** Whether a draft carries Windows: its job passed, and it is signed or unsigned Windows may ship. */
+export function windowsShips({ passed, signed, unsigned = WINDOWS_SHIPS_UNSIGNED }) {
+  return passed && (signed || unsigned);
+}
+
+/** Whether a platform's provenance must record a signed build before it joins a draft. */
+export function requiresSignature(platform, { windowsUnsigned = WINDOWS_SHIPS_UNSIGNED } = {}) {
+  if (platform === "linux") return false;
+  return platform !== "win32" || !windowsUnsigned;
+}
+
+/**
  * The platforms a draft distributes. macOS ships only signed and notarized; Windows is built and
- * tested every release but ships only once it is signed; Linux packages carry no platform signature.
+ * tested every release and ships when `windowsShips` says so; Linux packages carry no platform
+ * signature.
  */
 export function distributionPlatforms({ macos, windows }) {
   if (!macos) throw new Error("Distribution requires a signed macOS artifact");

@@ -1,5 +1,5 @@
 /**
- * The preload's half of Live's embedded frames (`createStudioBridge(ipc, frames)` in
+ * The preload's half of Live's embedded frames (`createStudioBridge(ipc, files, languages, frames)` in
  * `src/preload/studio-bridge.ts`): one `sharedTexture` receiver, registered when the bridge is made
  * and before main can send anything, that hands each frame to the one `nativeFrames` subscriber and
  * then always closes the frame and releases the import. A frame never released holds one of the
@@ -61,7 +61,7 @@ function fakeFrames() {
 describe("the preload's frames receiver", () => {
   it("is registered exactly once, when the bridge is made, and never without sharedTexture", () => {
     const fake = fakeFrames();
-    const api = createStudioBridge(ipc, fake.frames);
+    const api = createStudioBridge(ipc, undefined, undefined, fake.frames);
     assert.equal(fake.receivers.length, 1, "registered at creation");
     const off = api.nativeFrames(() => {});
     off();
@@ -76,14 +76,14 @@ describe("the preload's frames receiver", () => {
 
   it("with no subscriber, closes the frame and releases the import once each, before it resolves", async () => {
     const fake = fakeFrames();
-    createStudioBridge(ipc, fake.frames);
+    createStudioBridge(ipc, undefined, undefined, fake.frames);
     await fake.deliver();
     assert.deepEqual(fake.log, ["frame", "close", "release"]);
   });
 
   it("awaits the subscriber's promise before it closes and releases", async () => {
     const fake = fakeFrames();
-    const api = createStudioBridge(ipc, fake.frames);
+    const api = createStudioBridge(ipc, undefined, undefined, fake.frames);
     let finish: () => void = () => {};
     const drawn = new Promise<void>((resolve) => {
       finish = resolve;
@@ -108,7 +108,7 @@ describe("the preload's frames receiver", () => {
   ] as const) {
     it(`still closes and releases once when the subscriber ${label}`, async () => {
       const fake = fakeFrames();
-      const api = createStudioBridge(ipc, fake.frames);
+      const api = createStudioBridge(ipc, undefined, undefined, fake.frames);
       api.nativeFrames(subscriber);
       await fake.deliver();
       assert.deepEqual(fake.log, ["frame", "close", "release"]);
@@ -118,9 +118,9 @@ describe("the preload's frames receiver", () => {
   it("releases the import once when its frame cannot be read (a lost GPU process), and draws nothing", async () => {
     const receivers: Receiver[] = [];
     const log: string[] = [];
-    createStudioBridge(ipc, { setSharedTextureReceiver: (receiver) => void receivers.push(receiver) }).nativeFrames(
-      () => assert.fail("no frame to draw"),
-    );
+    createStudioBridge(ipc, undefined, undefined, {
+      setSharedTextureReceiver: (receiver) => void receivers.push(receiver),
+    }).nativeFrames(() => assert.fail("no frame to draw"));
     const importedSharedTexture = {
       getVideoFrame: () => {
         throw new Error("the import can no longer be mapped");
@@ -133,7 +133,7 @@ describe("the preload's frames receiver", () => {
 
   it("hands the subscriber the frame and main's meta as sent", async () => {
     const fake = fakeFrames();
-    const api = createStudioBridge(ipc, fake.frames);
+    const api = createStudioBridge(ipc, undefined, undefined, fake.frames);
     const heard: Array<[unknown, NativeFrameMeta]> = [];
     api.nativeFrames((frame, meta) => {
       heard.push([frame, meta]);
@@ -146,7 +146,7 @@ describe("the preload's frames receiver", () => {
 
   it("keeps one subscriber: a second replaces the first, and the first's unsubscribe leaves the second", async () => {
     const fake = fakeFrames();
-    const api = createStudioBridge(ipc, fake.frames);
+    const api = createStudioBridge(ipc, undefined, undefined, fake.frames);
     const heard: string[] = [];
     const offFirst = api.nativeFrames(() => {
       heard.push("first");
@@ -161,7 +161,7 @@ describe("the preload's frames receiver", () => {
 
   it("releases at once again after the subscriber unsubscribes", async () => {
     const fake = fakeFrames();
-    const api = createStudioBridge(ipc, fake.frames);
+    const api = createStudioBridge(ipc, undefined, undefined, fake.frames);
     const heard: number[] = [];
     const off = api.nativeFrames((_frame, meta) => {
       heard.push(meta.seq);

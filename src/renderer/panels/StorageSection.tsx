@@ -1,6 +1,7 @@
 /**
  * Settings → Storage: what freeing space deletes, by kind, across every game, and one button that
  * frees it all after a confirmation. Games that are working are left alone and named afterwards.
+ * On Windows it also shows where Genex keeps its files, with Change… to move them to another drive.
  */
 import { type JSX, useEffect, useState } from "react";
 import { sizeWords } from "../../shared/byte-size.ts";
@@ -11,6 +12,9 @@ import { Pending } from "../ui/Pending.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { freedWords, freeSpaceWords, freeUpWords, problemWords, STORAGE_KIND_WORDS, STORAGE_WORDS } from "../words.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
+import { DataFolderCard } from "./DataFolderCard.tsx";
+import type { DataFolderState } from "../../shared/data-folder.ts";
+import { InstalledGamesSection } from "./InstalledGamesSection.tsx";
 
 /** The one button: how much it frees, with what goes and what stays in its tooltip. */
 function FreeUpButton({
@@ -73,8 +77,11 @@ export function StorageSection(): JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dataFolder, setDataFolder] = useState<DataFolderState | null>(null);
   useEffect(() => {
     void window.studio.storageSpace().then(setSpace, (cause: unknown) => setError(problemWords(cause)));
+    // Only where it can move: a launch that cannot leaves the card out.
+    void window.studio.dataFolder().then(setDataFolder, () => setDataFolder(null));
   }, []);
   const titleOf = (name: string): string => games.find((game) => game.name === name)?.title || name;
   const free = async (): Promise<void> => {
@@ -107,6 +114,8 @@ export function StorageSection(): JSX.Element {
         )}
       </section>
       {space && <StorageKinds space={space} />}
+      <InstalledGamesSection />
+      {dataFolder?.movable && <DataFolderCard state={dataFolder} />}
       {notice && (
         <p role="status" className="text-ink-2">
           {notice}

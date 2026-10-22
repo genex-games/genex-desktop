@@ -1,12 +1,12 @@
 /** The inspector's pictures: one still, two stills split by a handle, the camera switch and a try's thumbnail. */
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useRef, useState } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { clamp } from "../../canvas-view.ts";
-import { type IterationNode, type RunGraph as RunGraphModel, runIdOf } from "../../run-graph.ts";
+import { type IterationNode, type RunGraph as RunGraphModel, thumbShot } from "../../run-graph.ts";
 import { TRY_GLYPH, tryWord } from "../../round-status.ts";
-import type { StepPicture } from "../../run-steps.ts";
 import { Icon } from "../../ui/icons.tsx";
-import { useStepPicture } from "../run-graph/use-builds-model.ts";
+import { useRoundStill } from "../run-stills.ts";
 import { capitalise } from "./format.ts";
 
 /** Where the compare handle starts, how far it may go toward either edge, and one arrow key's step. */
@@ -85,7 +85,7 @@ export function Compare({
       <button
         type="button"
         role="slider"
-        aria-label="Drag to compare"
+        aria-label={t("Drag to compare")}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(split * 100)}
@@ -126,7 +126,7 @@ export function Compare({
 export function Single({
   src,
   label,
-  empty = "No picture was saved for this.",
+  empty = t("No picture was saved for this."),
   onOpen,
 }: {
   src: string | null;
@@ -163,7 +163,7 @@ export function Cameras({
 }): JSX.Element | null {
   if (names.length < 2) return null;
   return (
-    <div role="group" aria-label="Camera" className="flex flex-wrap gap-1">
+    <div role="group" aria-label={t("Camera")} className="flex flex-wrap gap-1">
       {names.map((name) => (
         <button
           key={name}
@@ -180,11 +180,10 @@ export function Cameras({
   );
 }
 
-/** One try of a step as a thumbnail (its own picture) with its status glyph; pressing it shows that try. */
+/** One try of a step as a thumbnail with its status glyph; pressing it shows that try. */
 export function TryThumb({
   graph,
   node,
-  picture,
   n,
   selected,
   live,
@@ -192,18 +191,17 @@ export function TryThumb({
 }: {
   graph: RunGraphModel;
   node: IterationNode;
-  picture: StepPicture;
   n: number;
   selected: boolean;
   live: boolean;
   onSelect: () => void;
 }): JSX.Element {
-  const src = useStepPicture(runIdOf(graph), picture, live).src;
+  const src = useRoundStill(graph, node.facetId, node.iteration, thumbShot(node)?.path ?? null, live);
   const glyph = TRY_GLYPH[node.status];
   return (
     <button
       type="button"
-      aria-label={`Try ${n}: ${tryWord(node)}`}
+      aria-label={t("Try {number}: {state}", { number: n, state: tryWord(node) })}
       aria-pressed={selected}
       onClick={onSelect}
       className="flex cursor-pointer flex-col items-center gap-1 rounded-[8px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"

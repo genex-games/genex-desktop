@@ -21,13 +21,17 @@ import {
   type ProjectShape,
   STACK_OF_KIND,
   STACK_TARGETS,
+  type PlayCommand,
+  type PlayEngine,
   stackOf,
 } from "../shared/game-project.ts";
 import { hostTarget, TargetRefusal } from "../shared/game-targets.ts";
+import { GAME_RUNTIMES, TargetRuntime } from "../shared/computer-target.ts";
 import { pageLoadsGenexSdk } from "../shared/genex-page.ts";
 import { CoreFact, FolderHolds, hasFact } from "../shared/project-facts.ts";
 import { entryExists, isJsonObject, pathExists, readRegularFile } from "./fsx.ts";
 import { isRemoteSrc, pageScripts, projectRelative } from "./game-page.ts";
+import { containedReal } from "./paths.ts";
 import { detectFacts, STUDIO_JSON_MAX_BYTES } from "./project-facts.ts";
 import { declaredBootMs } from "./preview-ready.ts";
 import { isInstallCommand, packageCommands } from "./toolchain.ts";
@@ -624,6 +628,72 @@ function serveDirOf(entry: string): string {
   return dir === "" ? "." : dir;
 }
 
+/** The most arguments a declared play command may carry. */
+const MAX_PLAY_ARGS = 32;
+/** The longest single argument of a declared play command. */
+const MAX_PLAY_ARG_CHARS = 1024;
+
+/** One argument of a play command: a string of bounded length with no NUL, which no shell word can carry. */
+function usablePlayArg(arg: unknown): arg is string {
+  return typeof arg === "string" && arg.length <= MAX_PLAY_ARG_CHARS && !arg.includes("\0");
+}
+
+/**
+ * A play command as studio.json declares it, or null when any part is unusable: the command a
+ * plain path inside the folder (never absolute, never `..`, never a shell character or an
+ * option), the arguments a short list of strings. Nothing is resolved here — the command's real
+ * path is checked by {@link resolvePlayCommand} right before it runs.
+ */
+function declaredPlay(raw: unknown): PlayCommand | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { command, args, engine } = raw as { command?: unknown; args?: unknown; engine?: unknown };
+  if (typeof command !== "string" || !plainRelativePath(command)) return null;
+  const words = playArgs(args);
+  if (!words) return null;
+  const runs = declaredEngine(engine);
+  return runs ? { command, args: words, engine: runs } : { command, args: words };
+}
+
+/** A play's arguments: none when absent, else at most 32 usable words; null when unusable. */
+function playArgs(args: unknown): string[] | null {
+  if (args === undefined) return [];
+  if (!Array.isArray(args) || args.length > MAX_PLAY_ARGS || !args.every(usablePlayArg)) return null;
+  return [...args];
+}
+
+/** A plugin runtime's id as a manifest declares it: never a path, never a shell word. */
+const ENGINE_RUNTIME = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** The engine a play names: a runtime id and its arguments; null when absent or unusable (the command still stands). */
+function declaredEngine(raw: unknown): PlayEngine | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { runtime, args } = raw as { runtime?: unknown; args?: unknown };
+  if (typeof runtime !== "string" || !ENGINE_RUNTIME.test(runtime)) return null;
+  const words = playArgs(args);
+  return words ? { runtime, args: words } : null;
+}
+
+/**
+ * The runtime studio.json declares, and a bridge game's play command; nothing for an unknown
+ * runtime — or for the desktop or a VM, which a game's folder never grants itself.
+ */
+function declaredRuntime(meta: ShapeMeta | null): Pick<ProjectShape, "runtime" | "play"> {
+  const runtime = GAME_RUNTIMES.find((known) => known === meta?.runtime);
+  if (!runtime) return {};
+  const play = runtime === TargetRuntime.Bridge ? declaredPlay(meta?.play) : null;
+  return play ? { runtime, play } : { runtime };
+}
+
+/**
+ * The real path of a bridge game's play command: inside the project once every link is
+ * followed, or a throw. Checked right before the command runs, because studio.json and the
+ * folder it names are both writable by any contractor between a read and a launch.
+ */
+export async function resolvePlayCommand(dir: string, play: PlayCommand): Promise<string> {
+  if (!plainRelativePath(play.command)) throw new Error(`not a plain path inside the project: ${play.command}`);
+  return containedReal(dir, play.command);
+}
+
 /** studio.json as `readProjectShape` reads it: every field unchecked until it is used. */
 interface ShapeMeta {
   entry?: unknown;
@@ -634,6 +704,8 @@ interface ShapeMeta {
   kind?: unknown;
   serve?: unknown;
   bootMs?: unknown;
+  runtime?: unknown;
+  play?: unknown;
 }
 
 /** A non-blank string field, trimmed; null for anything else. */
@@ -717,14 +789,14 @@ export async function readProjectShape(dir: string): Promise<ProjectShape> {
   // shape's own early return — and attached with a spread, never a mutation: TEMPLATE_SHAPE is
   // shared, and an undefined-valued key would break every shape a test compares whole.
   const bootMs = declaredBootMs(meta?.bootMs);
-  const declaredBoot = bootMs === null ? {} : { bootMs };
+  const declaredBoot = { ...(bootMs === null ? {} : { bootMs }), ...declaredRuntime(meta) };
   // A compiled game's shape is fixed, whatever studio.json records beside it: an `own` or a
   // `build` it claims would switch the lane off and serve sources nothing can run.
   const compiled = await compiledFolderShape(dir, meta);
   if (compiled) return { ...compiled, ...declaredBoot };
   if (!meta || !recordsShape(meta)) {
     const detected = (await detectProjectShape(dir)) ?? TEMPLATE_SHAPE;
-    return bootMs === null ? detected : { ...detected, ...declaredBoot };
+    return { ...detected, ...declaredBoot };
   }
   return { ...(await recordedShape(dir, meta)), ...declaredBoot };
 }

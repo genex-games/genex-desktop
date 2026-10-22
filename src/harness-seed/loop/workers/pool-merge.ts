@@ -13,6 +13,7 @@ import { CLIP_DETAIL, clip, hasText } from "../text.ts";
 import { throughClaudeFolder } from "./claude-folder.ts";
 import { WorkerIsolation, WorkerVerdict } from "./contract.ts";
 import { poolWorkerId, recordWorkerFinished } from "./events.ts";
+import { picturesToLookAt } from "./handback.ts";
 import { POOL_WORDS } from "./prompts.ts";
 import {
   eventScope,
@@ -144,7 +145,10 @@ async function mergeNow(state: PoolState, record: WorkerRecord, commit: string):
     failure: shortFailure,
     listConflicts: true,
   });
-  if (merge.ok) return { text: POOL_WORDS.merged(record.id), settled: true, merged: true };
+  if (merge.ok) {
+    const text = [POOL_WORDS.merged(record.id), picturesToLookAt(record)].filter(Boolean).join(" ");
+    return { text, settled: true, merged: true };
+  }
   const text = merge.conflicts.length
     ? POOL_WORDS.conflict(record.id, merge.conflicts)
     : POOL_WORDS.mergeFailed(record.id, clip(merge.error, CLIP_DETAIL));

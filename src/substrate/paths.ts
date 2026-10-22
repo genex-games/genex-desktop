@@ -19,7 +19,8 @@ import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
 
 const MESSAGE = {
-  InvalidPath: "Invalid plugin path",
+  InvalidPath:
+    "Invalid plugin path: name a file by its relative path inside its folder, with / between folders (no absolute path, backslash, control character, empty, . or .. part)",
   EscapesRoot: "Path escapes authorized root",
 } as const;
 
@@ -27,11 +28,20 @@ const MESSAGE = {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point: they are refused.
 const CONTROL_OR_BACKSLASH = /[\x00-\x1f\\]/;
 
+/**
+ * A path resolved and spelled for comparison on `platform`. Windows reads a name in any case
+ * (`c:\users\me` is `C:\Users\Me`), and an agent or a stored setting may spell it either way.
+ */
+function comparable(file: string, platform: NodeJS.Platform): { key: string; sep: string } {
+  if (platform !== StudioPlatform.Windows) return { key: path.resolve(file), sep: path.sep };
+  return { key: path.win32.resolve(file).toLowerCase(), sep: path.win32.sep };
+}
+
 /** `target` is `root` or lies under it, lexically (both resolved, links not followed). */
-export function isInside(root: string, target: string): boolean {
-  const base = path.resolve(root);
-  const resolved = path.resolve(target);
-  return resolved === base || resolved.startsWith(base + path.sep);
+export function isInside(root: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
+  const base = comparable(root, platform);
+  const resolved = comparable(target, platform).key;
+  return resolved === base.key || resolved.startsWith(base.key + base.sep);
 }
 
 /**
@@ -87,14 +97,14 @@ function throughProjectFolder(rel: string, folder: string): boolean {
 }
 
 /** `a` and `b` name the same place, lexically (both resolved, links not followed). */
-export function samePath(a: string, b: string): boolean {
-  return path.resolve(a) === path.resolve(b);
+export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  return comparable(a, platform).key === comparable(b, platform).key;
 }
 
 /** `target` lies strictly under `root`, lexically: `root` itself is not below it. */
-export function isBelow(root: string, target: string): boolean {
-  const base = path.resolve(root);
-  return path.resolve(target).startsWith(base + path.sep);
+export function isBelow(root: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
+  const base = comparable(root, platform);
+  return comparable(target, platform).key.startsWith(base.key + base.sep);
 }
 
 /**

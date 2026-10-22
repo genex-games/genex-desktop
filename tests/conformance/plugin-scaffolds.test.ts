@@ -285,6 +285,18 @@ describe("a plugin's scaffolds", () => {
         "Unreal plugin",
       ],
       [
+        "a scaffold fact the app has a word for: the app's word, in the app's language, not the stored label",
+        game([fact("unreal-plugin", FactSource.Scaffold, "unreal/Plugins/X")], {
+          scaffold: { ...scaffold, label: "Host plugin" },
+        }),
+        "Unreal plugin",
+      ],
+      [
+        "a scaffold fact no word names keeps the scaffold's label",
+        game([fact("toy-project", FactSource.Scaffold, "toy")], { scaffold: { ...scaffold, label: "Toy addon" } }),
+        "Toy addon",
+      ],
+      [
         "a record whose rules no longer find anything",
         game([fact("unreal-project", FactSource.Core, "unreal")], { scaffold }),
         null,
@@ -375,6 +387,7 @@ describe("a scaffold's record in a game", () => {
     await cp(TOY_PLUGIN, dir, { recursive: true });
     const manifest = JSON.parse(await readFile(path.join(dir, "plugin.json"), "utf8"));
     manifest.id = id;
+    manifest.engine.id = id;
     manifest.tools.push(tool("new-toy-plugin", { makes: [TOY, TOY_PLUGIN_FACT] }));
     manifest.scaffolds = [SCAFFOLDS[1]];
     await writeFile(path.join(dir, "plugin.json"), JSON.stringify(manifest, null, 2));

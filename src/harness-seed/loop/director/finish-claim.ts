@@ -34,12 +34,13 @@ import {
   tallyOf as savedTally,
 } from "../finish-check.ts";
 import { FINISH_ANSWER } from "../finish-check-prompts.ts";
-import { FinishCheckStep, LEAD_CALL_MS, MAX_FINISH_REJECTIONS } from "../finish-contract.ts";
+import { FinishCheckStep, LEAD_CALL_MS, StopWhy } from "../finish-contract.ts";
 import { readFinishLog } from "../finish-log.ts";
 import { proofPathsIn } from "../finish-proof.ts";
 import { gitAt } from "../git.ts";
 import { FACT_ROOT } from "../folder-facts.ts";
 import { RECORDING_FRAMES } from "../observers.ts";
+import { timeLeftOf } from "../time-cap.ts";
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
 import { list } from "./args.ts";
 import { CLOSE_SETTLE_MS } from "./budgets.ts";
@@ -81,7 +82,8 @@ export const CLAIM_ANSWER = {
   tooLate:
     "No time is left in this run for a reviewer to check your claim, so the run closes without a yes and its report says the time ran out.",
   noReviewer: "No engine here can hold a reviewer to check your claim, so the run closes without a yes.",
-  stopped: (reasons: readonly string[]) => FINISH_ANSWER.stopped(MAX_FINISH_REJECTIONS, reasons),
+  stopped: (no: { rejections: number; reasons: readonly string[]; notDone: readonly string[] }) =>
+    FINISH_ANSWER.stopped(no.rejections, no.reasons, no.notDone),
   closing:
     "The reviewer accepted that the goal is reached and the run is closing: Genex lands the build if it runs when it is checked at the end, and the report says so. End your session now with a one-paragraph summary for the user; do not say the build is live.",
   closingUnwon:
@@ -116,7 +118,16 @@ export function finishCallOf(started: number, held: Pick<HookReport, "notes" | "
  * what the lead is told before the landing when not), or an answer while the run goes on.
  */
 export type ClaimVerdict =
-  | { close: true; victory: boolean; because?: string; summary?: string; notDone?: string[]; told?: string }
+  | {
+      close: true;
+      victory: boolean;
+      because?: string;
+      summary?: string;
+      notDone?: string[];
+      told?: string;
+      /** Why the run stops short of its goal, for its result card. */
+      why?: StopWhy;
+    }
   | { close: false; answer: string };
 
 /** When the lead's `finish` call must have its answer: the call ends then, less the answer's trip. */
@@ -255,6 +266,7 @@ function noTimeVerdict(outcome: NoTime, claim: ClaimContext): ClaimVerdict {
     summary: withNotDone(claim.summary, notDone),
     ...(notDone.length ? { notDone } : {}),
     told: CLAIM_ANSWER.tooLate,
+    why: StopWhy.Time,
   };
 }
 
@@ -279,14 +291,15 @@ function verdictOf(outcome: FinishOutcome, claim: ClaimContext): ClaimVerdict {
     return { close: true, victory: false, because: FINISH_REPORT.noReviewer, told: CLAIM_ANSWER.noReviewer };
   if (outcome.step !== FinishCheckStep.Rejected || !outcome.stop)
     return { close: false, answer: finishAnswer(outcome) };
-  const { reasons } = outcome;
+  const notDone = notDoneOf(outcome);
   return {
     close: true,
     victory: false,
     because: FINISH_REPORT.notAccepted,
-    summary: withNotDone(claim.summary, reasons),
-    notDone: reasons,
-    told: CLAIM_ANSWER.stopped(reasons),
+    summary: withNotDone(claim.summary, notDone),
+    notDone,
+    told: CLAIM_ANSWER.stopped(outcome),
+    why: StopWhy.Stuck,
   };
 }
 
@@ -327,6 +340,8 @@ export async function checkClaim(
       previewPass: (at) => finishLook(loopRun, at),
       ended: () => closing(loopRun),
       lapsed: () => headMoved(loopRun, claim.head),
+      timeLeft: () => timeLeftOf(run, loopRun.softDeadline, Date.now()),
+      workMark: async () => (await loopRun.currentHead().catch(() => null)) ?? null,
       keep: () => loopRun.saveJournal(),
     },
     { summary, proof: list(args.proof), hookNotes: call.notes ?? [], hookImages: call.images ?? [] },

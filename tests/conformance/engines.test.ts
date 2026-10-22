@@ -210,7 +210,7 @@ describe("external Claude authentication", () => {
     });
     assert.deepEqual(asked, ["auth", "status", "--json"]);
     assert.equal(askedAbout, home, "the question is about the studio's home, not the shell's");
-    assert.deepEqual(answer, { loggedIn: true, detail: "a@b.c" });
+    assert.deepEqual(answer, { loggedIn: true, detail: "a@b.c", email: "a@b.c" });
     // A CLI old enough to reject the flag has told us nothing — that is not "signed out".
     assert.equal(parseAuthStatus(1, "", "error: unknown option '--json'").loggedIn, null);
     // Nor is a CLI that never answers: the probe's own timeout is "we could not ask" too.

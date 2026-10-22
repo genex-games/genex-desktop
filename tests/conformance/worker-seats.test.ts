@@ -6,15 +6,18 @@
  * engines, no harness; every wait is on what happened, never on a clock.
  */
 import assert from "node:assert/strict";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { normalGamesElsewhere } from "../../src/main/core/never-touch-list.ts";
 import { NeverTouchKind, pathVerdict } from "../../src/substrate/engines/never-touch.ts";
+import { writeEngineBinding } from "../../src/substrate/game-engine-binding.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
+import { ENGINES, GODOT_ENGINE } from "../helpers/engines.ts";
 import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { CODEX, closeWorkerChats, LOCAL, RUN_ID, realNearest, workerChat } from "../helpers/worker-chat.ts";
@@ -111,6 +114,50 @@ describe("the host's worker seat", () => {
     assert.deepEqual(seat.writeRoots, [await realpath(worktree), fine], "its copy and a folder that holds nothing");
     for (const root of seat.writeRoots)
       assert.equal(pathVerdict({ path: root, searches: true }, seat.neverTouch), null, `${root} reaches no root`);
+  });
+
+  it("a game linked to a Godot project outside its folder lets its workers write that project; never another game's", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { core, project, other, threadId, seen, delegate, runWorker } = await workerChat();
+    const outside = await realpath(await tmpDir("worker-seats-godot-"));
+    await writeFile(path.join(outside, "project.godot"), "config_version=5\n");
+    await writeEngineBinding(project.dir, path.join(outside, "project.godot"), GODOT_ENGINE.id, ENGINES);
+    await core.setPermissionMode(threadId, PermissionMode.Auto);
+    await delegate(runWorker());
+    assert.ok(seen.at(-1)?.worker?.writeRoots.includes(outside), "the linked project's folder");
+    // A game linked to a Godot project inside another game's folder gains nothing there.
+    const elsewhere = path.join(other.dir, "godot");
+    await mkdir(elsewhere, { recursive: true });
+    await writeFile(path.join(elsewhere, "project.godot"), "config_version=5\n");
+    await writeEngineBinding(project.dir, path.join(elsewhere, "project.godot"), GODOT_ENGINE.id, ENGINES);
+    await delegate(runWorker());
+    const roots = seen.at(-1)?.worker?.writeRoots ?? [];
+    const otherGame = await realpath(other.dir);
+    assert.ok(!roots.some((root) => root.startsWith(otherGame)), JSON.stringify(roots));
+  });
+
+  it("a session that changed its game's facts (a project it made, a web build) tells the app's game list at its end", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { core, project, threadId, delegate, runWorker, whileRunning } = await workerChat();
+    const changed: unknown[] = [];
+    const emit = core.emit.bind(core);
+    core.emit = ((type: string, payload: unknown) => {
+      if (type === UiEvent.GameChanged) changed.push(payload);
+      return emit(type as never, payload as never);
+    }) as typeof core.emit;
+    await core.setPermissionMode(threadId, PermissionMode.Auto);
+    whileRunning(async () => {
+      await mkdir(path.join(project.dir, "godot"), { recursive: true });
+      await writeFile(path.join(project.dir, "godot", "project.godot"), "config_version=5\n");
+    });
+    await delegate(runWorker());
+    assert.deepEqual(changed, [{ project: project.name }]);
+    changed.length = 0;
+    whileRunning(async () => {});
+    await delegate(runWorker());
+    assert.deepEqual(changed, [], "a session that changed nothing says nothing");
   });
 
   it("a run worker reads the folders of its own run its harness hands it, and no other run's", {

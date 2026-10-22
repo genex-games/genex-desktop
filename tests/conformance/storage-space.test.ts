@@ -240,6 +240,18 @@ describe("freeing space", () => {
       "once it ends, only the newest stays",
     );
   });
+
+  it("keeps a game's newest finished build when failed or stopped runs came after it", async () => {
+    const { layout, storage } = await studio([
+      { project: "g", runId: "run_g_stopped", state: "cancelled" },
+      { project: "g", runId: "run_g_broken", state: "failed" },
+      { project: "g", runId: "run_g_build", state: "finished" },
+      { project: "g", runId: "run_g_older_build", state: "finished" },
+    ]);
+    await storage.free("g");
+    assert.deepEqual(await names(layout.runs), ["run_g_build"], "the newest build stays; the runs after it go");
+    assert.deepEqual(await names(path.join(layout.scratch, "autopilot")), ["run_g_build"]);
+  });
 });
 
 describe("the words for freeing space", () => {

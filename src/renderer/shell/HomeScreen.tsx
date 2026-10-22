@@ -12,13 +12,14 @@ import { useEffect, useRef, useState } from "react";
 import type { GameLocation } from "../../shared/game-project.ts";
 import { cppLaneRunsOn } from "../../shared/toolchain.ts";
 import { hostPlatform } from "../platform.ts";
+import { t } from "../../shared/i18n.ts";
 import { UserMessage } from "../chat/UserMessage.tsx";
 import { chatPlaceholder, HOME_PLACEHOLDER } from "../composer-placeholder.ts";
 import { ShowSidebarButton } from "../panels/ChatHeader.tsx";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { HomeBackground } from "../home-backdrop/HomeBackdrop.tsx";
 import { PlanningBuild } from "../panels/stage/StageBody.tsx";
-import { useEngines, useLaunch, useLibrary, useSessionView, useThreads } from "../state/hooks.ts";
+import { useEngines, useLaunch, useLibrary, usePlay, useSessionView, useThreads } from "../state/hooks.ts";
 import { type Launch, LaunchPhase } from "../state/launch.ts";
 import type { Studio } from "../state/studio.ts";
 import { Room, roomOf } from "../state/threads.ts";
@@ -31,6 +32,8 @@ import { PromptBar, type ComposerExtras } from "../ui/PromptBar.tsx";
 import { withViewTransition } from "../ui/view-transition.ts";
 import type { ComposerHandoff } from "./use-composer-handoff.ts";
 import { useHomeComposerModel } from "./use-home-composer.ts";
+import { homeUnderControls, useHomeUnderControls } from "../window-controls.ts";
+import { nativeViewsUp } from "../play/play-model.ts";
 import type { ShellChrome } from "./use-shell-chrome.ts";
 import { HomeBackdropButton } from "./HomeBackdropButton.tsx";
 import { HomeFolderChip } from "./HomeFolderChip.tsx";
@@ -38,11 +41,12 @@ import { StatusOrb } from "../ui/StatusOrb.tsx";
 
 /** Home's words. */
 const MESSAGE = {
-  title: "Everything you need to ship a game",
-  naming: "Naming…",
-  namingStatus: "Naming your game…",
-  openingStatus: "Opening your game…",
-  suggest: "Suggest prompt",
+  title: t("Everything you need to ship a game"),
+  naming: t("Naming…"),
+  namingStatus: t("Naming your game…"),
+  openingStatus: t("Opening your game…"),
+  suggest: t("Suggest prompt"),
+  home: t("Home"),
   compiledGame: "Rust game…",
 } as const;
 
@@ -67,16 +71,29 @@ export function useCoveredByHome(): boolean {
   return (atHome || launch !== null) && launch !== LaunchPhase.Handed;
 }
 
-/** Home over the workspace while it is up; nothing otherwise. */
-export function HomeLayer(props: {
+/** Home over the workspace while it is up; nothing otherwise. Under a remix being made it takes nothing. */
+export function HomeLayer({
+  under,
+  ...props
+}: {
   app: Studio;
   dialogs: Dialogs;
   chrome: ShellChrome;
   handoff: ComposerHandoff;
+  /** A Play remix being made covers it (`RemixLayer`). */
+  under: boolean;
 }): JSX.Element | null {
   const { shown, launch } = useHomeShown();
+  const viewerUp = usePlay((s) => nativeViewsUp(s.viewer));
+  const resting = shown && launch === null;
+  const covered = under || props.chrome.workspaceCovered;
+  useHomeUnderControls(homeUnderControls({ resting, covered, viewerUp }));
   if (!shown) return null;
-  return <HomeScreen {...props} launch={launch} />;
+  return (
+    <div className="contents" inert={under}>
+      <HomeScreen {...props} launch={launch} />
+    </div>
+  );
 }
 
 function HomeScreen({
@@ -128,6 +145,7 @@ function HomeScreen({
         value={draft}
         onChange={setDraft}
         onSend={send}
+        mentionSide="bottom"
       />
     </div>
   );
@@ -143,10 +161,10 @@ function HomeScreen({
       />
     );
   return (
-    <section data-home="" aria-label="Home" className="home-layer">
+    <section data-home="" data-file-drop-zone aria-label={MESSAGE.home} className="home-layer">
       {/* Only home at rest has it: the first message's transition fades it out with the rest. */}
-      <HomeBackground />
-      <div className="home-header titlebar-drag">
+      <HomeBackground covered={chrome.workspaceCovered} />
+      <div className="home-header titlebar-drag window-controls-end">
         {chrome.sidebarHidden && <ShowSidebarButton onToggle={chrome.toggleSidebar} />}
         <HomeBackdropButton picked={model.selected} />
       </div>

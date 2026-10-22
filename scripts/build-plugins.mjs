@@ -1,8 +1,9 @@
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { cp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { bridgeLicenses } from "./vendor-genex-multiplayer.ts";
 import { inlinePanelFonts, inlinePanelSdk } from "../src/plugin-sdk/inline-panel-sdk.mjs";
 const require = createRequire(import.meta.url);
 
@@ -97,11 +98,20 @@ export async function vendorEmbedSdk(root, vendor) {
   await writeFile(path.join(vendor, "genex/connect.js"), previewConnectScript());
 }
 
+/**
+ * A bundled plugin's translations (`locales/`), beside its plugin.json: Genex reads the words of its
+ * manifest there in the app's language (`substrate/plugins/manifest-words.ts`).
+ */
+async function copyLocales(source, target) {
+  await cp(path.join(source, "locales"), path.join(target, "locales"), { recursive: true });
+}
+
 async function buildGenex(root, resources, { dependencies }) {
   const target = path.join(resources, "plugins/genex");
   await mkdir(target, { recursive: true });
   for (const file of ["plugin.json", "icon.png", "publish.html"])
     await cp(path.join(root, "src/plugins/genex", file), path.join(target, file));
+  await copyLocales(path.join(root, "src/plugins/genex"), target);
   await cp(path.join(root, "src/genex-host/preload.mjs"), path.join(target, "preload.mjs"));
   // The vendored skills ship even in a dependency-free build: each SKILL.md already holds its preface.
   await cp(path.join(root, "src/plugins/genex/skills"), path.join(target, "skills"), {
@@ -131,9 +141,14 @@ async function buildBlender(root, resources, sdk) {
   await mkdir(blender, { recursive: true });
   for (const file of ["plugin.json", "icon.png"])
     await cp(path.join(root, "src/plugins/blender", file), path.join(blender, file));
+  await copyLocales(path.join(root, "src/plugins/blender"), blender);
   await writeFile(
     path.join(blender, "panel.html"),
-    await inlinePanelSdk(await readFile(path.join(root, "src/plugins/blender/panel.html"), "utf8"), sdk),
+    await inlinePanelSdk(
+      await readFile(path.join(root, "src/plugins/blender/panel.html"), "utf8"),
+      sdk,
+      path.join(root, "src/plugins/blender/locales"),
+    ),
   );
   // A file URL: a bare Windows path (D:\...) is not an import specifier.
   const { BLENDER_WRAPPER_PY } = await import(pathToFileURL(path.join(root, "src/plugins/blender/wrapper.ts")).href);
@@ -166,8 +181,13 @@ async function buildUnreal(root, resources, sdk) {
   await mkdir(unreal, { recursive: true });
   for (const file of ["plugin.json", "icon.svg"])
     await cp(path.join(root, "src/plugins/unreal", file), path.join(unreal, file));
+  await copyLocales(path.join(root, "src/plugins/unreal"), unreal);
   // Genex's own type goes in as data: a panel can load no font from anywhere else.
-  const panel = await inlinePanelSdk(await readFile(path.join(root, "src/plugins/unreal/panel.html"), "utf8"), sdk);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(root, "src/plugins/unreal/panel.html"), "utf8"),
+    sdk,
+    path.join(root, "src/plugins/unreal/locales"),
+  );
   await writeFile(
     path.join(unreal, "panel.html"),
     await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
@@ -190,6 +210,231 @@ async function buildUnreal(root, resources, sdk) {
   });
 }
 
+/** The Roblox helper's file name, in the package and in Studio's Plugins folder. */
+const ROBLOX_HELPER_FILE = "GenexStudioHelper.rbxmx";
+/** Enum.RunContext.Plugin's value in a place file. */
+const RUN_CONTEXT_PLUGIN = 3;
+
+/** A Luau literal of a JSON-able value: plain ASCII text, numbers, lists and string-keyed tables. */
+function luauLiteral(value, indent = "\t") {
+  if (typeof value === "string") {
+    if (!/^[\x20-\x7e]*$/.test(value)) throw new Error(`The Roblox helper's constants hold plain text only: ${value}`);
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") return String(value);
+  const inner = `${indent}\t`;
+  if (Array.isArray(value)) return `{ ${value.map((item) => luauLiteral(item, inner)).join(", ")} }`;
+  const keys = Object.keys(value).sort();
+  return `{\n${keys.map((key) => `${inner}${key} = ${luauLiteral(value[key], inner)},`).join("\n")}\n${indent}}`;
+}
+
+/**
+ * The helper's `constants` module, generated from the plugin's TypeScript so the two sides of the
+ * helper link never disagree. `version` is the helper's own, from `helper/VERSION`.
+ */
+async function robloxHelperConstants(root, version) {
+  const module = (file) => import(pathToFileURL(path.join(root, file)).href);
+  const protocol = await module("src/plugins/roblox/helper-protocol.ts");
+  const { HELPER_PATH } = await module("src/plugins/roblox/helper-socket.ts");
+  const { MAX_PLAY_PLAYERS } = await module("src/shared/engine-play.ts");
+  const values = {
+    PROTOCOL: protocol.HELPER_PROTOCOL,
+    PORTS: [...protocol.HELPER_PORTS],
+    PATH: HELPER_PATH,
+    SESSION_MARKER: protocol.SESSION_MARKER,
+    MAX_FRAME_BYTES: protocol.MAX_HELPER_FRAME_BYTES,
+    MAX_SCRIPT_SOURCE_BYTES: protocol.MAX_SCRIPT_SOURCE_BYTES,
+    MAX_CHUNK_CHARS: protocol.MAX_CHUNK_CHARS,
+    MAX_CHUNKS: protocol.MAX_CHUNKS,
+    CHUNK_BYTES: protocol.CHUNK_BYTES,
+    PLACE_PART_MAX_BYTES: protocol.PLACE_PART_MAX_BYTES,
+    SCRIPT_SERVICES: [...protocol.SCRIPT_SERVICES],
+    PLACE_SERVICES: [...protocol.PLACE_SERVICES],
+    SERVICES_PART: protocol.SERVICES_PART,
+    TERRAIN_PART: protocol.TERRAIN_PART,
+    MODEL_PART: protocol.MODEL_PART,
+    MODEL_MAGIC: protocol.MODEL_MAGIC,
+    MAX_PLAYERS: MAX_PLAY_PLAYERS,
+    Message: protocol.HelperMessage,
+    ErrorCode: protocol.HelperErrorCode,
+  };
+  const fields = Object.keys(values)
+    .sort()
+    .map((key) => `\t${key} = ${luauLiteral(values[key])},`);
+  return [
+    "--!strict",
+    "-- The values the helper shares with Genex: the protocol, the ports, the names and the limits.",
+    "-- Generated by scripts/build-plugins.mjs from the Roblox plugin's TypeScript; never edit by hand.",
+    `local GENEX_HELPER_VERSION = ${version}`,
+    "",
+    "return table.freeze({",
+    "\tHELPER_VERSION = GENEX_HELPER_VERSION,",
+    ...fields,
+    "})",
+    "",
+  ].join("\n");
+}
+
+/** Luau source as a CDATA section; a `]]>` inside it is split across two sections. */
+const cdata = (source) => `<![CDATA[${source.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
+
+/** One script item of the helper's model: its class, name and source, and the items inside it. */
+function rbxmxItem(item, referent, inner = "", depth = 1) {
+  const tab = "\t".repeat(depth);
+  const runContext =
+    item.className === "Script" ? `\n${tab}\t\t<token name="RunContext">${RUN_CONTEXT_PLUGIN}</token>` : "";
+  const disabled = item.className === "Script" ? `\n${tab}\t\t<bool name="Disabled">false</bool>` : "";
+  return [
+    `${tab}<Item class="${item.className}" referent="${referent}">`,
+    `${tab}\t<Properties>`,
+    `${tab}\t\t<string name="Name">${item.name}</string>${disabled}${runContext}`,
+    `${tab}\t\t<ProtectedString name="Source">${cdata(item.source)}</ProtectedString>`,
+    `${tab}\t</Properties>`,
+    inner,
+    `${tab}</Item>`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+/**
+ * The Genex helper as the readable `.rbxmx` model Set up copies into Studio's Plugins folder: the
+ * entry Script (`helper/init.luau`, run context Plugin) holding one ModuleScript per other
+ * `helper/*.luau` file and the generated `constants`. The same tree always gives the same bytes.
+ * Refuses a `helper/VERSION` other than the plugin's `HELPER_VERSION`.
+ */
+export async function robloxHelperModel(root) {
+  const dir = path.join(root, "src/plugins/roblox/helper");
+  const version = Number((await readFile(path.join(dir, "VERSION"), "utf8")).trim());
+  const { HELPER_VERSION } = await import(pathToFileURL(path.join(root, "src/plugins/roblox/setup.ts")).href);
+  if (!Number.isSafeInteger(version) || version !== HELPER_VERSION)
+    throw new Error(`helper/VERSION says ${version}; the plugin's HELPER_VERSION is ${HELPER_VERSION}.`);
+  const files = (await readdir(dir)).filter((file) => file.endsWith(".luau")).sort();
+  if (!files.includes("init.luau") || files.includes("constants.luau"))
+    throw new Error("The Roblox helper needs helper/init.luau, and its constants module is generated.");
+  const modules = [{ name: "constants", source: await robloxHelperConstants(root, version) }];
+  for (const file of files.filter((name) => name !== "init.luau"))
+    modules.push({ name: file.slice(0, -".luau".length), source: await readFile(path.join(dir, file), "utf8") });
+  modules.sort((a, b) => (a.name < b.name ? -1 : 1));
+  const children = modules
+    .map((module, index) => rbxmxItem({ ...module, className: "ModuleScript" }, `RBXGENEX${index + 1}`, "", 2))
+    .join("\n");
+  const entry = {
+    className: "Script",
+    name: "GenexStudioHelper",
+    source: await readFile(path.join(dir, "init.luau"), "utf8"),
+  };
+  return [
+    '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">',
+    rbxmxItem(entry, "RBXGENEX0", children),
+    "</roblox>",
+    "",
+  ].join("\n");
+}
+
+/** Assembles the helper into the package, as Set up finds it beside the backend. */
+async function buildRobloxHelper(root, roblox) {
+  await writeFile(path.join(roblox, ROBLOX_HELPER_FILE), await robloxHelperModel(root));
+}
+
+async function buildRoblox(root, resources, sdk) {
+  const roblox = path.join(resources, "plugins/roblox");
+  await mkdir(roblox, { recursive: true });
+  for (const file of ["plugin.json", "icon.svg"])
+    await cp(path.join(root, "src/plugins/roblox", file), path.join(roblox, file));
+  await copyLocales(path.join(root, "src/plugins/roblox"), roblox);
+  await cp(path.join(root, "src/plugins/roblox/skills"), path.join(roblox, "skills"), { recursive: true });
+  // The judges' briefs, and their probes' Luau beside the backend that sends it to Studio.
+  await cp(path.join(root, "src/plugins/roblox/judges"), path.join(roblox, "judges"), { recursive: true });
+  for (const file of ["cheat-remotes.luau", "phone-check.luau"])
+    await cp(path.join(root, "src/plugins/roblox", file), path.join(roblox, file));
+  // New Roblox game's Baseplate, beside the backend that writes it.
+  await cp(path.join(root, "src/plugins/roblox/templates"), path.join(roblox, "templates"), { recursive: true });
+  // The Genex helper Set up copies into Studio's Plugins folder.
+  await buildRobloxHelper(root, roblox);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(root, "src/plugins/roblox/panel.html"), "utf8"),
+    sdk,
+    path.join(root, "src/plugins/roblox/locales"),
+  );
+  await writeFile(
+    path.join(roblox, "panel.html"),
+    await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
+  );
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/roblox/backend.ts")],
+    outfile: path.join(roblox, "backend.mjs"),
+  });
+  // The Roblox Studio connection: a copied package can't reach the repository's node_modules, so
+  // the MCP SDK is bundled in.
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/roblox/studio-mcp-entry.ts")],
+    outfile: path.join(roblox, "studio-mcp.mjs"),
+    banner: { js: "import {createRequire} from 'node:module'; const require = createRequire(import.meta.url);" },
+  });
+}
+
+async function buildGodot(root, resources, sdk) {
+  const source = path.join(root, "src/plugins/godot");
+  const godot = path.join(resources, "plugins/godot");
+  await mkdir(godot, { recursive: true });
+  for (const file of ["plugin.json", "icon.svg"]) await cp(path.join(source, file), path.join(godot, file));
+  await copyLocales(source, godot);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(source, "panel.html"), "utf8"),
+    sdk,
+    path.join(source, "locales"),
+  );
+  await writeFile(path.join(godot, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));
+  // Genex's own GDScript (the check and the plays), the new-game templates and the addon a set-up
+  // game carries (the Play Protocol autoload), read beside the backend.
+  for (const folder of ["scripts", "templates", "addon", "skills", "multiplayer"])
+    await cp(path.join(source, folder), path.join(godot, folder), { recursive: true });
+  // Genex's multiplayer SDK bridge (the SDK and its embed SDK in one script), which a multiplayer
+  // game's web export loads beside its page: the pinned version Studio installs.
+  await cp(
+    path.join(root, "node_modules/@genex-ai/multiplayer/dist/bridge.global.js"),
+    path.join(godot, "multiplayer/genex-multiplayer-bridge.js"),
+  );
+  await writeFile(path.join(godot, "multiplayer/genex-multiplayer-bridge.LICENSES.md"), await bridgeLicenses(root));
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(source, "backend.ts")],
+    outfile: path.join(godot, "backend.mjs"),
+  });
+}
+
+async function buildUnity(root, resources, sdk) {
+  const unity = path.join(resources, "plugins/unity");
+  await mkdir(unity, { recursive: true });
+  for (const file of ["plugin.json", "icon.svg"])
+    await cp(path.join(root, "src/plugins/unity", file), path.join(unity, file));
+  await copyLocales(path.join(root, "src/plugins/unity"), unity);
+  // Genex's Unity multiplayer package a game embeds, and the skill that explains it.
+  for (const folder of ["multiplayer", "skills"])
+    await cp(path.join(root, "src/plugins/unity", folder), path.join(unity, folder), { recursive: true });
+  // Genex's own type goes in as data: a panel can load no font from anywhere else.
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(root, "src/plugins/unity/panel.html"), "utf8"),
+    sdk,
+    path.join(root, "src/plugins/unity/locales"),
+  );
+  await writeFile(path.join(unity, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/unity/backend.ts")],
+    outfile: path.join(unity, "backend.mjs"),
+  });
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/unity/editor-mcp-entry.ts")],
+    outfile: path.join(unity, "editor-mcp.mjs"),
+    banner: { js: "import {createRequire} from 'node:module'; const require = createRequire(import.meta.url);" },
+  });
+}
+
 /** Copies the SDK and builds the bundled plugins (and the example) into the app's resources. */
 export async function buildPlugins(root, resources, { dependencies = true } = {}) {
   await cp(path.join(root, "src/plugin-sdk"), path.join(resources, "plugin-sdk"), { recursive: true });
@@ -198,6 +443,9 @@ export async function buildPlugins(root, resources, { dependencies = true } = {}
   await buildBlender(root, resources, sdk);
   await buildCc0(root, resources, sdk);
   await buildUnreal(root, resources, sdk);
+  await buildGodot(root, resources, sdk);
+  await buildUnity(root, resources, sdk);
+  await buildRoblox(root, resources, sdk);
   await mkdir(path.join(resources, "examples"), { recursive: true });
   await cp(path.join(root, "src/plugins/example"), path.join(resources, "examples/example"), { recursive: true });
   const examplePanel = path.join(resources, "examples/example/panel.html");

@@ -2,7 +2,7 @@
   "apiVersion": 3,
   "id": "genex",
   "version": "1.11.0",
-  "name": "Genex Tools",
+  "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
   "icon": "icon.png",
@@ -116,7 +116,7 @@
     },
     {
       "name": "package",
-      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins, with the game's own package manager. A multiplayer request installs both multiplayer and player identity in one approved command. In a game made from Studio's template (no package.json) player identity uses Studio's own copy instead of installing, and Studio connects the game; multiplayer cannot be added there yet. Any other game without package.json cannot add them, and neither can a compiled game (Rust · wgpu, or a C++ · raylib game made before Rust), whose stack refuses JavaScript packages.",
+      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one approved command. A game made from Studio's template (no package.json) gets Studio's own copies in its index.html instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them, and neither can a compiled game (Rust · wgpu, or a C++ · raylib game made before Rust), whose stack refuses JavaScript packages.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -127,18 +127,18 @@
         },
         "required": ["package"]
       },
-      "confirmation": "Install the listed pinned Genex packages. Multiplayer includes its player-identity dependency. Studio opens the npm registry for this command only.",
+      "confirmation": "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.",
       "host": "genex-package"
     },
     {
       "name": "cover",
-      "description": "Check this game's Genex cover: the one real 16:9 frame genex.games shows on its gallery card, its page and every shared link (not Studio's own sidebar look, set_game_cover). operation 'shoot' runs the game's demo named genex-cover at 1920x1080 in a hidden window, keeps that frame as the game's shot, replacing the last one, and answers with its preview image and its brightness, contrast and near-black share (stats); 'status' reports the kept shot, the last send and, once the game is hosted and the account connected, Genex's current cover and who chose it (coverSource; the owner's pick always stands). Shoot once the game first looks like itself, before any publish while no shot is kept, and after a big visual change, and judge the preview before any send. Publish shoots it again and sends it; genex__cover-set sends the kept shot now. Asks nothing, charges nothing and uploads nothing.",
+      "description": "Check this game's Genex cover: the one real 16:9 frame genex.games shows on its gallery card, its page and every shared link (not Studio's own sidebar look, set_game_cover). operation 'shoot' runs the game's demo named genex-cover at 1920x1080 in a hidden window, keeps that frame as the game's shot, replacing the last one, and answers with its preview image and its brightness, contrast and near-black share (stats); 'clip' runs the game's demo named genex-clip (it starts a moment the game then plays by itself) and records five seconds of it at 960x540 as the game's clip, the video genex.games plays over the cover on its cards, answering with its first frame and how much moved (motion); 'status' reports the kept shot, the last send and, once the game is hosted and the account connected, Genex's current cover and who chose it (coverSource; the owner's pick always stands). Shoot once the game first looks like itself, before any publish while no shot is kept, and after a big visual change, and judge the preview before any send. Publish shoots it again and sends it, then sends the kept clip; genex__cover-set sends the kept shot now. Asks nothing, charges nothing and uploads nothing.",
       "parameters": {
         "type": "object",
         "properties": {
           "operation": {
             "type": "string",
-            "description": "shoot or status"
+            "description": "shoot, clip or status"
           }
         },
         "required": ["operation"]
@@ -169,8 +169,12 @@
       "engines": ["web"]
     },
     {
+      "name": "publishing-apps",
+      "text": "A game made in Unity, Godot or Unreal reaches Genex players as its Mac, Windows and Linux apps, which people install from Play in the Genex desktop app, and a Unity or Godot game also as a web version: Genex publishes them, so never send the person to itch.io or another store for this. To publish an app, build the player app into the game's folder (Unity: a macOS build at unity/Builds/Mac/<Game>.app, a Windows build at unity/Builds/Windows/<Game>.exe, a Linux build at unity/Builds/Linux/<Game>.x86_64; Godot and Unreal: their export into a Builds folder of the project), check that it starts where this computer can run it, then tell the person to press Publish on the stage strip. A web version goes in web/ at the game's root: Godot's web export makes it there; for Unity, build for WebGL into web/ with Compression Format set to Disabled, so the page loads from any host (it needs Unity's WebGL Build Support module; if it is missing, say so), and with a page that fills the window: Unity's own Default and Minimal templates draw the game as a fixed 960x600 box with a Unity logo bar under it. Before building, write a WebGL template at unity/Assets/WebGLTemplates/Genex/index.html whose html, body and canvas take the whole window (width and height 100%, no margin, no scroll bars, black background, no footer or logo) and that starts the build with Unity's template tags ({{{ LOADER_FILENAME }}}, {{{ DATA_FILENAME }}}, {{{ FRAMEWORK_FILENAME }}}, {{{ CODE_FILENAME }}}, {{{ PRODUCT_NAME }}}), then select it with PlayerSettings.WebGL.template = \"PROJECT:Genex\". Unity keeps the game's resolution matched to the canvas, so nothing stretches. Unreal has no web export: say so plainly. For Linux: Unity builds it with its Linux Build Support (Mono) module (if it is missing, say so), as a 64-bit x86_64 player named <Game>.x86_64 beside its <Game>_Data folder. Godot exports it with a Linux preset into its own folder (Builds/Linux/<Game>.x86_64; godot__export-templates with linux gets the template first). Unreal packages it for Linux only on Windows (with Epic's Linux cross-compile toolchain) or on Linux: on a Mac, say plainly it cannot, and keep the whole packaged folder (its <Game>.sh, <Game> and Engine folders) together. A Linux build cannot be started on a Mac or on Windows: check that it was written whole, and say so instead of running it. Publish's window lists the Web, Mac, Windows and Linux builds it found and sends each ready one to genex.games, listing the game in the gallery; you do not run any publish command yourself. An app built before the game's last change is not sent: when the person asks to build it again, rebuild it the same way. Genex opens a Mac app full screen. When the person wants it in a window instead, build it windowed in the engine's own settings, then set GenexWindowed in the app's Info.plist and sign it again ad hoc: plutil -replace GenexWindowed -bool YES \"<Game>.app/Contents/Info.plist\", then codesign --force --deep --sign - \"<Game>.app\". Remove the key the same way to open it full screen again. Say plainly when a build is ready to publish."
+    },
+    {
       "name": "cover",
-      "text": "The Genex cover is the one real 16:9 frame genex.games shows for this game (its gallery card, its page, every shared link), not Studio's own sidebar look (set_game_cover). WHEN: once the game first looks like itself; before every publish, the first or an update, gallery or draft: check genex__cover {\"operation\":\"status\"} and, with no kept shot, stage and shoot it first; after a big visual change; never every turn. A publish whose own cover outcome is none (cover.last.jobId is its jobId) sent no frame: offer once to make one, and never again in this chat once the user says no. Neither applies to a game whose owner keeps its code untouched (a folder brought only to publish): it gets no genex-cover demo. WHO: the session that owns the whole build, not a worker with a narrower brief. HOW: read genex__skill {\"name\":\"genex-cover\"}; stage it as a demo named genex-cover in config.demos (the game's own world, light and effects, HUD hidden, ending in window.__studio.pause(), a camera composed for 16:9); check it with genex__cover {\"operation\":\"shoot\"}. SHOWN: your last shot is the cover the person sees, a card in the chat that offers Publish itself; shoot the winner last, then say one short line about it, never how to publish. Publish shoots it again and sends it; genex__cover-set sends it now. HONESTY: never relight the game or add text or anything it lacks; a dark-by-design game stays dark. A cover the owner chose on genex.games always wins: never ask to replace it.",
+      "text": "The Genex cover is the one real 16:9 frame genex.games shows for this game (its gallery card, its page, every shared link), not Studio's own sidebar look (set_game_cover). WHEN: in the same turn the game first looks like itself (a small side task, never a turn of its own), and again before a run ends; before every publish, the first or an update, gallery or draft: check genex__cover {\"operation\":\"status\"} and, with no kept shot, stage and shoot it first; after a big visual change; never every turn. A publish whose own cover outcome is none (cover.last.jobId is its jobId) sent no frame: offer once to make one, and never again in this chat once the user says no. Neither applies to a game whose owner keeps its code untouched (a folder brought only to publish): it gets no genex-cover demo. WHO: the session that owns the whole build, not a worker with a narrower brief. HOW: read genex__skill {\"name\":\"genex-cover\"}; stage it as a demo named genex-cover in config.demos (the game's own world, light and effects, HUD hidden, ending in window.__studio.pause(), a camera composed for 16:9); check it with genex__cover {\"operation\":\"shoot\"}. CLIP: beside it, a demo named genex-clip that starts a moment the game then plays by itself for five seconds (its own scripted input, HUD hidden, never paused), recorded with genex__cover {\"operation\":\"clip\"}; motion near 0 means frozen. Until a genex-cover demo exists, Studio keeps a plain frame of the game as it loads, so Publish always shows a cover; yours replaces it. SHOWN: your last shot is the cover the person sees, a card in the chat that offers Publish itself; shoot the winner last, then say one short line about it, never how to publish. Publish shoots it again and sends it; genex__cover-set sends it now. HONESTY: never relight the game or add text or anything it lacks; a dark-by-design game stays dark. A cover the owner chose on genex.games always wins: never ask to replace it.",
       "engines": ["web"]
     },
     {
@@ -181,7 +185,7 @@
     {
       "name": "genex-threejs-multiplayer",
       "engines": ["web"],
-      "summary": "Realtime multiplayer for Three.js games with @genex-ai/multiplayer: movement sync, shared objects, host authority, matchmaking. MANDATORY before networking code. Works only on the published Genex draft; Studio's preview stays single-player.",
+      "summary": "Realtime multiplayer for Three.js games with @genex-ai/multiplayer: movement sync, shared objects, host authority, matchmaking. MANDATORY before networking code. Test it on the Genex draft link with two different players; Studio's preview stays single-player.",
       "file": "skills/genex-threejs-multiplayer/SKILL.md",
       "references": [
         "skills/genex-threejs-multiplayer/references/realtime-patterns.md",
@@ -196,7 +200,8 @@
       "engines": ["web"],
       "summary": "Player identity, saves and leaderboards with @genex-ai/embed-sdk, whose token multiplayer needs. Read before writing boot code for a game that will be published on Genex. The owner can try sign-in on the published draft; server saves persist only once the game is in the gallery.",
       "file": "skills/genex-threejs-embed-auth/SKILL.md",
-      "stacks": ["three-js"]
+      "stacks": ["three-js"],
+      "references": ["skills/genex-threejs-embed-auth/references/shells.md"]
     },
     {
       "name": "genex-llm-in-games",
@@ -314,6 +319,10 @@
       "label": "Review Genex terms"
     },
     {
+      "name": "terms-status",
+      "label": "Genex terms"
+    },
+    {
       "name": "publish-status",
       "label": "Publishing state"
     },
@@ -328,9 +337,13 @@
       "confirmation": "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there."
     },
     {
+      "name": "publish-apps",
+      "label": "Publish apps",
+      "confirmation": "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account."
+    },
+    {
       "name": "publish-allow-upload",
-      "label": "Allow a new upload",
-      "confirmation": "Studio does not know whether the last upload reached Genex. Allow a new upload only after you have checked the deployment page: if the last one did land, the new upload replaces it."
+      "label": "Publish again"
     },
     {
       "name": "publish-open",
@@ -347,6 +360,14 @@
     {
       "name": "asset-badge",
       "label": "Asset setup state"
+    },
+    {
+      "name": "cover-auto",
+      "label": "Take this game's cover"
+    },
+    {
+      "name": "cover-pick",
+      "label": "Use this cover"
     }
   ],
   "toolbar": [

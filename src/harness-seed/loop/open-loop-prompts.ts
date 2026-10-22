@@ -32,7 +32,7 @@ export function openStillsWords(frames: number): string {
  */
 export const OPEN_LAUNCH_WORDS = {
   untilFinish: (ceiling: string) =>
-    `It finishes when a reviewer accepts the lead's finish, with a safety stop by about ${ceiling} — keep the app open and the Mac awake. `,
+    `It finishes when a reviewer accepts the lead's finish, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   /** What the launch tool answers for an ∞ Loop on such a project. */
   building: `Building until a reviewer accepts the finish, ${MAX_RUN_HOURS} h at most`,
 } as const;

@@ -38,6 +38,7 @@ function entryCheck(e,policy){
   if(e.subdir!==undefined)relative(e.subdir);
   if(e.minStudioVersion!==undefined&&!version.test(e.minStudioVersion))fail('Invalid minimum Studio version');
   if(e.docsUrl!==undefined)https(e.docsUrl);
+  if(e.setup!==undefined&&!setupSteps(e.setup))fail(`Invalid setup steps: ${e.id}`);
   if(!object(e.artifact)||!hash.test(e.artifact.sha256))fail(`Curated releases require an artifact digest: ${e.id}`);
   const url=https(e.artifact.url);
   if(!policy.artifactOrigins.includes(url.origin))fail(`Unapproved artifact origin: ${url.origin}`);
@@ -47,7 +48,13 @@ function entryCheck(e,policy){
   if(e.tier==='official'&&!official)fail(`Official identity not approved: ${e.id}`);
   // An official repository hosts only its official ids: no other id may borrow its provenance.
   if(!official&&Object.values(policy.official).some(o=>o.repos.some(r=>r.toLowerCase()===e.repo.toLowerCase())))fail(`Official source reserved: ${e.id}`);
+  // A community id is its publisher's own: a vendor's bare name stays the vendor's (or an official reservation).
+  const owner=e.repo.split('/')[0].toLowerCase();
+  if(e.tier==='community'&&e.id!==owner&&!e.id.startsWith(`${owner}-`))fail(`Community id must be ${owner} or start with ${owner}-: ${e.id}`);
 }
+/** A plugin page's setup steps: 1-6 plain one-line steps of at most 200 characters (the app's `isPluginSetup`). */
+const unsafeStep = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+const setupSteps = s => Array.isArray(s)&&s.length>0&&s.length<=6&&s.every(x=>typeof x==='string'&&x.trim()!==''&&x.length<=200&&!unsafeStep.test(x));
 /** The reservation for an official id: its publisher and its repositories, current first. */
 const officialFor = (policy,id) => Object.hasOwn(policy.official,id)?policy.official[id]:undefined;
 /**
@@ -71,6 +78,7 @@ export async function checkArtifact(e,bytes){
   if(![1,2,3].includes(m.apiVersion))fail('Unsupported plugin API');
   for(const k of ['id','version','publisher'])if(m[k]!==e[k])fail(`Manifest ${k} mismatch`);
   if(!Array.isArray(m.capabilities)||!same([...m.capabilities].sort(),[...e.capabilities].sort()))fail('Manifest capabilities mismatch');
+  if(!same(m.setup??null,e.setup??null))fail('Manifest setup mismatch');
   if(m.backend){relative(m.backend);if(!decoded.has(m.backend))fail('Missing backend');}
   return {id:e.id,version:e.version,files:decoded.size,bytes:bytes.length};
 }

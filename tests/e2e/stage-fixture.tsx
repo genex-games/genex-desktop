@@ -98,6 +98,7 @@ function Fixture() {
         onReload={() => {}}
         run={{ state: LiveRun.Running, toggle: () => {} }}
         fullScreen={{ offered: false, enter: () => {} }}
+        gameControls
         sound={{ on: true, toggle: () => {} }}
         emptyGame={false}
         livePreview

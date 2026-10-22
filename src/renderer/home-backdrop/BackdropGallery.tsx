@@ -5,6 +5,7 @@
  */
 import type { JSX, ReactNode } from "react";
 import { useMemo, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Scheme } from "../appearance/themes.ts";
 import { Icon } from "../ui/icons.tsx";
 import { BackdropPreview } from "./HomeBackdrop.tsx";
@@ -26,22 +27,22 @@ import { updateBackdrop } from "./store.ts";
 import type { Rect, Size } from "./view.ts";
 
 const MESSAGE = {
-  backgrounds: "Backgrounds",
-  effect: "Effect",
-  off: "Off",
-  picture: "Picture",
-  make: "Make your own",
-  making: "Making…",
-  connect: "Connect AI model",
-  full: `${MAX_MADE_SHADERS} kept`,
-  remove: (name: string) => `Remove ${name}`,
+  backgrounds: t("Backgrounds"),
+  effect: t("Effect"),
+  off: t("Off"),
+  picture: t("Picture"),
+  make: t("Make your own"),
+  making: t("Making…"),
+  connect: t("Connect AI model"),
+  full: t("{count, plural, other {# kept}}", { count: MAX_MADE_SHADERS }),
+  remove: (name: string) => t("Remove {name}", { name }),
 } as const;
 
 /** The effects, as the gallery names them. */
 const EFFECTS = [
-  { effect: BackdropEffect.None, name: "None" },
-  { effect: BackdropEffect.Lines, name: "Lines" },
-  { effect: BackdropEffect.Dots, name: "Dots" },
+  { effect: BackdropEffect.None, name: t("None") },
+  { effect: BackdropEffect.Lines, name: t("Lines") },
+  { effect: BackdropEffect.Dots, name: t("Dots") },
   { effect: BackdropEffect.Ascii, name: "ASCII" },
 ] as const;
 

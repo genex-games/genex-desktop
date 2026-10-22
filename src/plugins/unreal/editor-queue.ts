@@ -23,7 +23,16 @@
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { type CrashCheck, type CrashReport, shownLine } from "./editor-log.ts";
-import { ObjectTool, readThrottleArgs, throttleIn, writeThrottleArgs } from "./editor-throttle.ts";
+import {
+  CVarTool,
+  mayLiftThrottle,
+  ObjectTool,
+  rayTracingArgs,
+  rayTracingIn,
+  readThrottleArgs,
+  throttleIn,
+  writeThrottleArgs,
+} from "./editor-throttle.ts";
 import { type DriveStep, frameName, type PartCheck, type PartStep, PartStepKind, type PartTest } from "./part-test.ts";
 
 /**
@@ -49,8 +58,11 @@ export const LoopTool = {
   DriveRoute: "drive_route",
   ProbeRoute: "probe_route",
   PlayerState: "player_state",
+  Mouse: "mouse",
+  Pause: "pause",
   GetProperties: ObjectTool.GetProperties,
   SetProperties: ObjectTool.SetProperties,
+  SearchCVars: CVarTool.Search,
 } as const;
 export type LoopTool = (typeof LoopTool)[keyof typeof LoopTool];
 
@@ -68,6 +80,9 @@ export const PartRunState = {
   Failed: "failed",
 } as const;
 export type PartRunState = (typeof PartRunState)[keyof typeof PartRunState];
+
+/** The states a run ends in. */
+const FINISHED: ReadonlySet<PartRunState> = new Set([PartRunState.Done, PartRunState.Failed]);
 
 /** What a waiting run waits for: Unreal to answer, or the person to stop working in the editor. */
 export const WaitingFor = { Editor: "editor", Owner: "owner" } as const;
@@ -127,6 +142,8 @@ export type QueueDeps = {
   fileReady(file: string): Promise<boolean>;
   /** A shot's bytes, base64. */
   readShot(file: string): Promise<string>;
+  /** The platform the editor runs on (this one's, unless a test says otherwise): it decides whether a play may run unthrottled. */
+  platform?: NodeJS.Platform;
 };
 
 /** One part to run: the game, the part, its `apply.py` in the game folder, its parsed test and a C++ part's code. */
@@ -393,7 +410,8 @@ async function waitForOwner(deps: QueueDeps, run: PartRun, port: EditorPort, lim
   throw new WaitFailedError(PartRunFailure.OwnerBusy, MESSAGE.OwnerBusy);
 }
 
-async function shoot(deps: QueueDeps, port: EditorPort, name: string): Promise<Shot> {
+/** A play shot of what the player sees: the helper queues it, the file is waited for and read. */
+export async function shoot(deps: QueueDeps, port: EditorPort, name: string): Promise<Shot> {
   const answer = record(await port.call(LoopTool.CapturePlay, { name, width: SHOT_WIDTH, height: SHOT_HEIGHT }));
   const file = String(answer.file ?? "");
   if (!file || !(await pollUntil(deps, () => deps.fileReady(file), FILE_POLL_MS, SHOT_WAIT_MS)))
@@ -402,7 +420,7 @@ async function shoot(deps: QueueDeps, port: EditorPort, name: string): Promise<S
 }
 
 /** The play world's clock in game seconds, or null from a helper that keeps none (older than 0.5). */
-async function gameClock(port: EditorPort): Promise<{ gameSeconds: number | null; fps: number | null }> {
+export async function gameClock(port: EditorPort): Promise<{ gameSeconds: number | null; fps: number | null }> {
   const state = record(await port.call(LoopTool.PlayState, {}));
   return { gameSeconds: numberOr(state.gameSeconds), fps: numberOr(state.fps) };
 }
@@ -414,7 +432,7 @@ const wallCapMs = (seconds: number) => WALL_CAP_FACTOR * seconds * SECOND_MS + W
  * Lets the game play on for `seconds` of its own time, at most {@link wallCapMs} on the queue's
  * clock; an editor whose helper keeps no game clock is given `seconds` on the queue's clock.
  */
-async function playFor(deps: QueueDeps, port: EditorPort, seconds: number): Promise<void> {
+export async function playFor(deps: QueueDeps, port: EditorPort, seconds: number): Promise<void> {
   const start = (await gameClock(port)).gameSeconds;
   if (start === null) return deps.sleep(seconds * SECOND_MS);
   const reached = async () => ((await gameClock(port)).gameSeconds ?? Number.POSITIVE_INFINITY) >= start + seconds;
@@ -422,7 +440,7 @@ async function playFor(deps: QueueDeps, port: EditorPort, seconds: number): Prom
 }
 
 /** Calls one of the helper's play steps, which answers at once; throws its refusal (`{error}`). */
-async function startStep(port: EditorPort, tool: LoopTool, args: Record<string, unknown>) {
+export async function startStep(port: EditorPort, tool: LoopTool, args: Record<string, unknown>) {
   const answer = record(await port.call(tool, args));
   if (answer.error !== undefined) throw new Error(MESSAGE.StepRefused(tool, String(answer.error)));
   return answer;
@@ -533,7 +551,8 @@ async function playStep(context: PartPlay, step: PartStep): Promise<void> {
 }
 
 /** Whether the editor is in a play session. */
-const playing = async (port: EditorPort) => record(await port.call(LoopTool.PlayState, {})).pie === true;
+/** Whether a play session runs in the editor now. */
+export const playing = async (port: EditorPort) => record(await port.call(LoopTool.PlayState, {})).pie === true;
 
 /** A probe's answer, or `{error}` when it couldn't run: a probe never fails its run. */
 const askProbe = (port: EditorPort, tool: LoopTool, args: Record<string, unknown>) =>
@@ -565,7 +584,7 @@ async function probe(port: EditorPort): Promise<PartProbes> {
 }
 
 /** Starts play in the editor and waits until it runs. */
-async function startPlay(deps: QueueDeps, port: EditorPort) {
+export async function startPlay(deps: QueueDeps, port: EditorPort) {
   await port.call(LoopTool.StartPlay, { options: PIE_OPTIONS });
   if (!(await pollUntil(deps, () => playing(port), FILE_POLL_MS, PLAY_WAIT_MS)))
     throw new Error(MESSAGE.PlayDidNotStart);
@@ -603,18 +622,21 @@ async function playTheGame(deps: QueueDeps, port: EditorPort, job: PlayCheckJob)
 }
 
 /** Gives a setting back; never throws. */
-type GiveBack = () => Promise<void>;
+export type GiveBack = () => Promise<void>;
 const NOTHING_OWED: GiveBack = async () => {};
 
 /**
  * Turns Unreal's background throttle off for one play test, when it is on: an editor behind Genex
- * otherwise plays at a few frames per second and the test measures a slow game. Answers what gives
- * the setting back. A setting that can't be read is left alone and the test runs anyway; one that is
+ * otherwise plays at a few frames per second and the test measures a slow game. On a Mac it stays on
+ * unless the editor says it runs without ray tracing (`mayLiftThrottle`). Answers what gives the
+ * setting back. A setting that can't be read is left alone and the test runs anyway; one that is
  * already off (the user's choice, or the bridge's own play session) is left as it is.
  */
-async function liftThrottle(port: EditorPort): Promise<GiveBack> {
+export async function liftThrottle(port: EditorPort, platform: NodeJS.Platform = process.platform): Promise<GiveBack> {
   const read = await port.call(LoopTool.GetProperties, readThrottleArgs()).catch(() => undefined);
   if (throttleIn(read) !== true) return NOTHING_OWED;
+  const traced = await port.call(LoopTool.SearchCVars, rayTracingArgs()).catch(() => undefined);
+  if (!mayLiftThrottle(platform, rayTracingIn(traced))) return NOTHING_OWED;
   await port.call(LoopTool.SetProperties, writeThrottleArgs(false)).catch(() => undefined);
   // Writing the value it had is safe even when the write above was refused or half-done.
   return async () => {
@@ -623,7 +645,7 @@ async function liftThrottle(port: EditorPort): Promise<GiveBack> {
 }
 
 /** Stops a play session the queue started, and waits for it to end; never throws. */
-async function stopPlay(deps: QueueDeps, port: EditorPort) {
+export async function stopPlay(deps: QueueDeps, port: EditorPort) {
   try {
     await port.call(LoopTool.StopPlay, {});
     await pollUntil(deps, async () => !(await playing(port)), FILE_POLL_MS, PLAY_WAIT_MS);
@@ -767,7 +789,7 @@ async function checkPlay(deps: QueueDeps, guard: CrashGuard, job: PlayCheckJob):
 
 /** Runs `work` with Unreal's background throttle off, then stops play and gives the throttle back, whatever happened. */
 async function unthrottled<T>(deps: QueueDeps, port: EditorPort, work: () => Promise<T>): Promise<T> {
-  const giveBack = await liftThrottle(port);
+  const giveBack = await liftThrottle(port, deps.platform);
   try {
     return await work();
   } finally {
@@ -860,7 +882,11 @@ export function createEditorQueue(deps: QueueDeps) {
   const playing = (game: string): boolean =>
     [...runs.values()].some((run) => run.game === game && run.state === PartRunState.Playing);
 
-  return { enqueue, enqueuePlayCheck, playing, status: (id: string): PartRun | undefined => runs.get(id) };
+  /** Whether a run of `game`'s is still to finish (queued, waiting, applying or playing): the editor is the queue's. */
+  const busy = (game: string): boolean =>
+    [...runs.values()].some((run) => run.game === game && !FINISHED.has(run.state));
+
+  return { enqueue, enqueuePlayCheck, playing, busy, status: (id: string): PartRun | undefined => runs.get(id) };
 }
 
 /** The queue a backend keeps. */

@@ -22,7 +22,8 @@ Where it disagrees with this preface, this preface wins.
   first; it reports the account, credits and live lanes that `doctor` would. Its description lists
   the operations and which provider each lane is; its `options` parameter lists each lane's
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
-  so wire in those local paths.
+  so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
+  which the game loads as `res://assets/...`.
 - `doctor`, `budget`, `llm models`, `llm status`, `llm cancel` and `shop list`: `genex__cli`.
   `budget --assets` is not available: Studio's own asset allowance and the user's approval govern
   asset spending.
@@ -47,10 +48,10 @@ Where it disagrees with this preface, this preface wins.
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.
 - Any other `npx genex` command is not available in Studio. Say so rather than work around it.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.4 sha256 34dc648f1d1d25c357c98e3298ad0a1ab84c54416a404726056d560710959cad -->
+<!-- upstream https://genex.games/SKILL.md v1.36.13 sha256 86c7e5f1405c5d26865c152430cb32a13ab1c93ad01c8595e31b7c189caca8b9 -->
 ---
 name: genex
-version: 1.36.4
+version: 1.36.13
 description: >-
   Game-dev asset generation for your agent. Proactively check Genex before
   shipping placeholder assets, hand-rolling programmer art, or telling the user
@@ -95,7 +96,7 @@ The game's folder is the workspace: setup marks the folder you run it in, and ev
 4. If it ends with **"Not approved yet"**, nothing is broken - the user had not finished yet. Run `npx genex auth` to pick up the **same** code. Never restart from scratch, never treat that message as an error.
 5. When it is done, the folder has tool skill cards in every agent workspace it detected (`.claude/skills`, `.codex/skills`, `.cursor/skills`, `.hermes/skills` or `.agents/skills` for OpenClaw), the workspace rules in `AGENTS.md`, and this machine signed in. Nothing was created on the Genex platform and none of the user's files were touched.
 
-This file tracks CLI `1.36.4` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
+This file tracks CLI `1.36.13` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
 
 ## Never delete or overwrite anything in this folder
 

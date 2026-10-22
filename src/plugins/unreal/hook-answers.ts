@@ -253,13 +253,18 @@ export function probeAnswer(activity: EditorActivity | null, agentPlay: boolean,
 /** Where this computer's Unreal stands for making a new game, as `engine-status` reads it. */
 export type Readiness = { engine: EngineReadiness; version: string | null };
 
-/** The tool that makes a new Unreal game, as the host serves it to agents. */
+/** The tools that make a new Unreal game and bring the Unreal button out, as the host serves them to agents. */
 const NEW_GAME = "unreal__new-game";
+const SHOW_STEPS = "unreal__show-steps";
 const OPTION = `"Unreal Engine: plays in the Unreal editor on this computer"`;
 
-/** What to do when the user picks Unreal before Genex can make its project: never new-game, the Unreal button instead. */
+/**
+ * What to do when the user picks Unreal before Genex can make its project: never new-game, but
+ * show-steps, which shows the install card in the chat and brings the Unreal button out above this
+ * game (it shows only on Unreal games).
+ */
 const toUnrealButton = (how: string) =>
-  `If the user picks it, don't call ${NEW_GAME}, which would refuse: tell them to press the Unreal button above the game, which shows how to ${how} and notices when it's installed, and to send a message once it is.`;
+  `If the user picks it, don't call ${NEW_GAME}, which would refuse: call ${SHOW_STEPS}, which puts the Unreal setup card in the chat (it shows how to ${how}) and brings the Unreal button out above the game, then say so in one line and end your reply. The chat tells you when Unreal is installed.`;
 
 /** How the engine question offers Unreal beside an Unreal that makes no new games here. */
 const beside = (version: string) =>

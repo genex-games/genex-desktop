@@ -58,7 +58,7 @@ export const PLUGINS_SUGGEST_TOOL: LiveToolSpec = {
 /** What `plugins_find` says when nothing fits, before it says where the guide to writing one is. */
 const NONE_FITS = `${GENEX_PLUGINS} None fits. You may offer to write one (a local Genex plugin the person loads and turns on in Plugins), or go on with your own tools (the project's files and the shell) once the person says so.`;
 
-/** The note `plugins_find` answers with, by what it says to do next (with nothing found, while Genex Tools is on). */
+/** The note `plugins_find` answers with, by what it says to do next (with nothing found, while the Genex plugin is on). */
 export const PLUGINS_FIND_NOTE = {
   [FindNext.Suggest]: `${GENEX_PLUGINS} To offer one that is off or not installed, call plugins_suggest with its id and why it helps, then end your reply: only the person turns a plugin on.`,
   [FindNext.Use]: `${GENEX_PLUGINS} The ones found are on already: use their tools; those for another kind of project arrive once the project is that kind.`,
@@ -68,8 +68,8 @@ export const PLUGINS_FIND_NOTE = {
 /** `plugins_find`'s write-a-plugin note for a session with no `plugin_check` (a Loop's lead or worker, the local model): the chat checks it. */
 export const PLUGINS_FIND_WRITE_UNCHECKED = `${NONE_FITS} To write one, read ${GENEX_PLUGIN_ID}__${PLUGIN_SKILL_TOOL} ${JSON.stringify({ name: GENEX_PLUGIN_AUTHOR_SKILL })} and write the plugin in this project. You can't check it yourself: tell the person it is ready, and that the chat checks it before they load it.`;
 
-/** `plugins_find`'s note with nothing found while Genex Tools, which carries the guide, is off. */
-export const PLUGINS_FIND_GUIDE_OFF = `${NONE_FITS} The guide to writing one comes with Genex Tools, which is off: to write one, first suggest turning it on with plugins_suggest ${JSON.stringify({ plugin: GENEX_PLUGIN_ID })}.`;
+/** `plugins_find`'s note with nothing found while the Genex plugin, which carries the guide, is off. */
+export const PLUGINS_FIND_GUIDE_OFF = `${NONE_FITS} The guide to writing one comes with the Genex plugin, which is off: to write one, first suggest turning it on with plugins_suggest ${JSON.stringify({ plugin: GENEX_PLUGIN_ID })}.`;
 
 /** `plugin_check`: reads a folder in the project and installs nothing, so it runs in Plan mode too. */
 export const PLUGIN_CHECK_TOOL: LiveToolSpec = {
@@ -105,7 +105,8 @@ export const PLUGIN_CHECK_ANSWER = {
 
 /** What `plugins_suggest` answers. */
 export const PLUGINS_SUGGEST_ANSWER = {
-  shown: "Shown to the person as a card. End your reply now; they turn it on, or tell you to go on without it.",
+  shown:
+    "Shown to the person as a card. End your reply now, and don't ask them to tell you once it's on: turning it on continues this chat by itself. They may also tell you to go on without it.",
   refused: (plugin: string) =>
     `No card was shown: "${plugin}" is not a Genex plugin that is off or in Genex's catalog. Call plugins_find to see which are.`,
   noChat: "No card was shown: there is no chat to show it in.",

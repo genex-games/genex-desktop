@@ -30,6 +30,7 @@ import {
   LoopToolName,
 } from "../../src/plugins/unreal/loop-tools.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
+import { agentsSetting, setAgentsSetting } from "../../src/substrate/engine-agents.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { playable } from "../helpers/unreal-editor-stand-in.ts";
 
@@ -39,7 +40,7 @@ const EDITOR_EXEC = "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealE
 const LAUNCHD = { pid: 1, exec: "/sbin/launchd", args: "/sbin/launchd" };
 const PLAY_TOOLSET = "EditorToolset.EditorAppToolset";
 
-type Probe = { personActive: boolean; unsaved: number; pie: boolean; dirty: number };
+type Probe = { personActive: boolean; unsaved: number; pie: boolean; dirty: number; wentAhead?: boolean };
 
 /**
  * A game linked to its project, whose editor answers (or runs without answering, or isn't running,
@@ -52,6 +53,8 @@ async function personWorld(
     held?: Promise<unknown>;
     unlinked?: boolean;
     starting?: EditorStart | null;
+    /** Whether agents may use Unreal while the person plays; these cases are about whose play it is, so off unless said. */
+    goAhead?: boolean;
   } = {},
 ) {
   const root = await realpath(await tmpDir("studio-unreal-person-first-"));
@@ -60,6 +63,7 @@ async function personWorld(
   await mkdir(path.dirname(project), { recursive: true });
   await mkdir(storage, { recursive: true });
   await writeFile(project, JSON.stringify({ FileVersion: 3, EngineAssociation: "5.8" }));
+  await setAgentsSetting(storage, options.goAhead ?? false);
   const answering = options.answering ?? true;
   const state = { answering, running: options.running === undefined ? answering : options.running, dirty: 0 };
   const held = options.held;
@@ -292,6 +296,75 @@ describe("the Unreal editor's lock asks the person first", () => {
     } finally {
       await agent.close();
     }
+  });
+
+  it("marks the agent's play before Unreal gets its StartPIE: the lock may ask while play starts", async () => {
+    const w = await personWorld();
+    const seen: string[][] = [];
+    const base = epicServer(w.project);
+    const watching: typeof fetch = async (input, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (body?.params?.arguments?.tool_name === "StartPIE") seen.push(await markers(w));
+      return base(input, init);
+    };
+    const agent = await connector(w, { fetch: watching });
+    try {
+      await agent.play("StartPIE");
+      assert.deepEqual(seen, [[AGENT_PLAY_FILE]]);
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("a refused start gives back the mark the agent's earlier play had", async () => {
+    const w = await personWorld();
+    const ok = await connector(w);
+    await ok.play("StartPIE");
+    w.editor.editor.state.pie = true;
+    const refused = await connector(w, { fetch: refusing(w.project, "StartPIE") });
+    try {
+      await refused.play("StartPIE");
+      assert.deepEqual(await markers(w), [AGENT_PLAY_FILE], "the play under way is still the agent's");
+      assert.equal((await w.probe()).personActive, false);
+    } finally {
+      await refused.close();
+    }
+  });
+
+  it("keeps the agent's play while Unreal has not begun it, and forgets it once seen playing then stopped", async () => {
+    const w = await personWorld();
+    const agent = await connector(w);
+    try {
+      await agent.play("StartPIE");
+      assert.equal((await w.probe()).pie, false, "Unreal begins play on a later frame");
+      w.editor.editor.state.pie = true;
+      assert.equal((await w.probe()).personActive, false, "the play it began is the agent's");
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("keeps believing the agent's play as long as it is seen running, however long it runs", async () => {
+    const w = await personWorld();
+    w.editor.editor.state.pie = true;
+    const folder = bridgeFolder(w);
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, AGENT_PLAY_FILE), JSON.stringify({ startedAt: w.editor.deps.now() }));
+    assert.equal((await w.probe()).personActive, false);
+    await w.editor.deps.sleep(AGENT_PLAY_MAX_MS - 60_000);
+    assert.equal((await w.probe()).personActive, false);
+    await w.editor.deps.sleep(AGENT_PLAY_MAX_MS - 60_000);
+    assert.equal((await w.probe()).personActive, false, "past half an hour since it began, seen all along");
+  });
+
+  it("lets agents go ahead while the person plays unless they turned it off, saying so the first time only", async () => {
+    const w = await personWorld({ goAhead: true });
+    w.editor.editor.state.pie = true;
+    assert.deepEqual(await agentsSetting(w.storage), { whilePlaying: true });
+    assert.deepEqual(await w.probe(), { personActive: false, unsaved: 0, pie: true, dirty: 0, wentAhead: true });
+    assert.deepEqual(await w.probe(), { personActive: false, unsaved: 0, pie: true, dirty: 0 }, "said once");
+    await setAgentsSetting(w.storage, false);
+    assert.equal((await w.probe()).personActive, true);
   });
 
   it("a game without an Unreal project, or whose Unreal Genex is still opening, has nobody in its editor", async () => {

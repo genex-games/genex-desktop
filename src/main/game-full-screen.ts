@@ -6,6 +6,7 @@
  * other way. Electron-free: the window, the game view, the button and the clock come in as deps.
  */
 import { SECOND_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 
 /** How long Esc is held before full screen ends; a shorter press is the game's. */
 export const ESC_HOLD_MS = 0.8 * SECOND_MS;
@@ -128,8 +129,25 @@ export function gameFullScreen(deps: FullScreenDeps) {
 /** The game's full screen as `gameFullScreen` makes it. */
 export type GameFullScreen = ReturnType<typeof gameFullScreen>;
 
-/** The words on the exit button; its accessible name stays "Exit full screen" when folded. */
-const EXIT_WORDS = { hold: "Hold", key: "esc", rest: "to exit full screen", button: "Exit full screen" } as const;
+/** The key the exit button names: a key's own name, the same in every language. */
+const EXIT_KEY = "esc";
+/** Stands in for the key while the sentence around it is escaped; no translation holds it. */
+const KEY_SLOT = "\u0000";
+
+/** Text for the button's page: `&`, `<`, `>` and `"` written as entities. */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * The words on the exit button, in the app's language, as HTML: the hint around the key, and the
+ * button's accessible name, which it keeps when folded.
+ */
+function exitWords(): { hint: string; button: string } {
+  const hint = escapeHtml(t("Hold {key} to exit full screen", { key: KEY_SLOT }));
+  return { hint: hint.replace(KEY_SLOT, `<kbd>${EXIT_KEY}</kbd>`), button: escapeHtml(t("Exit full screen")) };
+}
+
 /** Where the button's page asks to end full screen: a `window.open` the view refuses and reports. */
 export const EXIT_FULL_SCREEN_URL = "about:blank#exit-full-screen";
 
@@ -140,6 +158,7 @@ export const EXIT_FULL_SCREEN_URL = "about:blank#exit-full-screen";
 export function exitButtonPage(): string {
   const unfolded = `${EXIT_UNFOLDED_MS}ms`;
   const fold = `${EXIT_FOLD_MS}ms`;
+  const words = exitWords();
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;height:100%;background:transparent;overflow:hidden}
 body{display:flex;justify-content:flex-end;align-items:center;font:13px/20px ui-sans-serif,system-ui,-apple-system,sans-serif;color:#fff;-webkit-user-select:none;user-select:none}
@@ -152,5 +171,5 @@ button:hover,button:focus-visible{background:rgba(255,255,255,.16)}
 @keyframes fold{to{max-width:0;padding:0;opacity:0}}
 @keyframes fade{to{opacity:.45}}
 @media (prefers-reduced-motion:reduce){.pill,.words{animation-duration:1ms}}
-</style></head><body><div class="pill"><span class="words" aria-hidden="true">${EXIT_WORDS.hold} <kbd>${EXIT_WORDS.key}</kbd> ${EXIT_WORDS.rest}</span><button type="button" aria-label="${EXIT_WORDS.button}" onclick="window.open('${EXIT_FULL_SCREEN_URL}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v2.5A2.5 2.5 0 0 1 6.5 9H4M20 9h-2.5A2.5 2.5 0 0 1 15 6.5V4M15 20v-2.5a2.5 2.5 0 0 1 2.5-2.5H20M4 15h2.5A2.5 2.5 0 0 1 9 17.5V20"/></svg></button></div></body></html>`;
+</style></head><body><div class="pill"><span class="words" aria-hidden="true">${words.hint}</span><button type="button" aria-label="${words.button}" onclick="window.open('${EXIT_FULL_SCREEN_URL}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v2.5A2.5 2.5 0 0 1 6.5 9H4M20 9h-2.5A2.5 2.5 0 0 1 15 6.5V4M15 20v-2.5a2.5 2.5 0 0 1 2.5-2.5H20M4 15h2.5A2.5 2.5 0 0 1 9 17.5V20"/></svg></button></div></body></html>`;
 }

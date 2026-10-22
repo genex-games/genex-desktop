@@ -1,12 +1,18 @@
+import { t, tc } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import type { ExportReview } from "../shared/plugins.ts";
 import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
 import { parseSuggestion } from "./chat/plugin-suggestion.ts";
 import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
 import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
+import { type ChatJudgeResultPayload, readChatJudgeResult } from "../shared/chat-judge.ts";
 import { type WorkerLine, workerEndLine, workerLineEnded, workerStartLine } from "./chat/worker-lines.ts";
 import { workerKeyOf } from "../shared/run-graph-events.ts";
-import { type FinishRecord, FinishCheckStep, finishRecordOf } from "../shared/finish-check.ts";
+import {
+  type StillToFix as ClosedStillToFix,
+  StopWhy,
+  stillToFixOf as closedStillToFix,
+} from "../shared/finish-check.ts";
 /**
  * The chat transcript as entries: the thread's event log read once, oldest first, into the
  * bubbles, tool-chip groups, narration lines and cards the chat draws. Pure — `chat/transcript.ts`
@@ -37,7 +43,7 @@ import { GENEX_COVER_TOOL, GENEX_PLUGIN_ID, GenexCoverOperation } from "../share
 import { SteerDelivery } from "../shared/message-queue.ts";
 import { engineLabel, roleName } from "../shared/model-roles.ts";
 import { ExecutionStatus, RoundOutcome, roundOutcome } from "../shared/run-state.ts";
-import { plural, skillWords } from "../shared/skill-words.ts";
+import { skillUpdatedWords } from "../shared/skill-words.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { type ToolPermissionEvent, ToolPermissionState } from "../shared/permissions.ts";
 import { contractorIdentity } from "./chat-labels.ts";
@@ -46,13 +52,14 @@ import { plainDefect, reportSummary } from "./run-graph.ts";
 import type { EventEnvelope } from "./types.ts";
 import type { ToolChipRow } from "./ui/ToolChips.tsx";
 import { OutputTone, ToolState } from "./ui/tool-state.ts";
-import { GameEngine, isGameEngine } from "../shared/game-engine.ts";
+import { type MentionOutcome, mergeMentionResults, withoutMentionContext } from "../shared/prompt-mention.ts";
+import { type EngineLinkedPayload, GameEngine, isEngineId, isGameEngine } from "../shared/game-engine.ts";
 import { CrashKind, type GameCrashedPayload, gameCrashedOf } from "../shared/crash-record.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
+import { offeredRewindUndo } from "../shared/chat-rewind.ts";
 import { type ConnectorStep, connectorStep, endsPlay, showsPlayView, startsPlay } from "./chat/connector-steps.ts";
 import {
   A_PLUGIN,
-  FINISH_CHECK_WORDS,
   GAME_ENGINE_WORDS,
   appAccessMissing,
   autopilotStartWords,
@@ -66,7 +73,6 @@ import {
   decisionWords,
   fixWords,
   flagWords,
-  harnessLearnedWords,
   improvementWords,
   judgeRoundLine,
   judgeUnreachable,
@@ -92,6 +98,7 @@ import {
   toolActivityWords,
   toolWords,
   usingPluginWords,
+  STILL_TO_FIX_WORDS,
   verdictSentence,
   wasCancelled,
 } from "./words.ts";
@@ -115,6 +122,8 @@ export const EntryKind = {
   Compaction: "compaction",
   /** A session's card to turn a Genex plugin on or install it (`plugin_suggested`). */
   PluginSuggestion: "plugin-suggestion",
+  /** What a message's @ tags gave the agent (`mention_tagged`): one card under the message. */
+  Mentions: "mentions",
 } as const;
 export type EntryKind = (typeof EntryKind)[keyof typeof EntryKind];
 
@@ -135,8 +144,23 @@ export const EntryAction = {
   Worker: "worker",
   /** Genex can't see app windows yet (`app_look_access`): one line, with Open Privacy settings per pane. */
   AppAccess: "app-access",
+  /** A blind judge played the game for the chat's own session (`chat_judge_result`): one line, the question inside. */
+  Judge: "judge",
+  /** A rewind put game files back (`conversation_rewound`): one line, with Bring back newer version while offered. */
+  Rewound: "rewound",
+  /** An agent went ahead of the person in an app a plugin's lock guards (`agent_went_ahead`): one line, with that plugin's settings. */
+  WentAhead: "went-ahead",
 } as const;
 export type EntryAction = (typeof EntryAction)[keyof typeof EntryAction];
+
+/** Why a Loop stopped, as the person reads it under "Almost there"; `listed`: the card lists what is left. */
+export function stopWhyLine(why: StopWhy, hours: number | null, listed = true): string {
+  if (why !== StopWhy.Time) return STILL_TO_FIX_WORDS.why[why];
+  return listed ? STILL_TO_FIX_WORDS.why.time(hours) : STILL_TO_FIX_WORDS.why.timeUnlooked(hours);
+}
+
+/** What a run that ended without the reviewer's yes leaves for the person: its last no's lists, why it stopped, its hours. */
+export type StillToFix = ClosedStillToFix;
 
 export type Entry =
   | {
@@ -147,6 +171,8 @@ export type Entry =
       contractor?: boolean;
       /** What a note sent to a build from its graph was about. */
       about?: string;
+      /** The @ tags the message carried, painted in its words. */
+      tags?: string[];
     }
   /**
    * A line of narration. `attention` marks one that reports trouble (a round stopped or broke
@@ -160,6 +186,8 @@ export type Entry =
   | { kind: typeof EntryKind.Activity; id: string; rows: Array<{ text: string; tag?: string }> }
   /** The conversation was compacted: its own row, opening to the summary that replaced the messages. */
   | { kind: typeof EntryKind.Compaction; id: string; messages: number | null; summary: string | null }
+  /** A message's @ tags and their results; `messageId` is the queue's, for Try again. */
+  | { kind: typeof EntryKind.Mentions; id: string; messageId?: string; tags: MentionOutcome[] }
   /** The turn-it-on card a session showed: its button is read from the live plugin list. */
   | { kind: typeof EntryKind.PluginSuggestion; id: string; suggestion: PluginSuggestedPayload }
   /** One plain line about what Harness learned; `link` opens Activity. */
@@ -189,11 +217,15 @@ export type Entry =
       prefill?: string;
       /** action "consent": a plugin's question to the user — Approve/Decline while it is pending, its outcome after. */
       consentId?: string;
+      /** Whose card it is: the plugin's id, or the studio's own (`StudioConsentSource`). */
+      consentSourceId?: string;
       consentSource?: string;
       consentPrompt?: string;
       consentExport?: ExportReview;
       /** A connector's card: Always allow is offered. */
       consentAlwaysOffered?: boolean;
+      /** A card with a field the person may edit before Allow: its label and the value it holds. */
+      consentInput?: { label: string; value: string };
       /** action "permission": Claude's own Allow / Deny question (or a plan to approve), as first asked, and how it ended. */
       permission?: ToolPermissionEvent;
       pending?: boolean;
@@ -208,12 +240,18 @@ export type Entry =
       snapshotId?: string;
       /** action "engine-link": what Undo takes back; absent once taken back or replaced by a newer link. */
       engineLink?: { project: string; pluginId: string; linkedAt: string };
+      /** action "rewound": the rewind whose newer version comes back; absent once the chat no longer offers it. */
+      rewindUndo?: string;
       /** action "job": what Stop reaches, and when the job started; absent once its end is read. */
       job?: JobHandle;
       /** action "worker": its work ended well (done, used or added), so its mark is ticked. */
       workerDone?: boolean;
       /** action "app-access": the Privacy & Security panes still to allow. */
       appAccess?: AppLookAccessKind[];
+      /** action "judge": what the judge established, in the words of a build's checks list. */
+      judge?: ChatJudgeResultPayload;
+      /** action "went-ahead": the plugin whose settings the line opens, and the app it names. */
+      wentAhead?: { pluginId: string; label: string };
     }
   /**
    * The morning: what the run amounts to, in one card. It replaces the line that read
@@ -251,10 +289,13 @@ export type Entry =
       handedOff?: boolean;
       /** a later close of the same run followed: only that one offers Resume */
       superseded?: true;
+      /** the run ended without the reviewer's yes: what its last no found done and still to fix */
+      stillToFix?: StillToFix;
+      /** the chat's newest result card: only it offers Keep building */
+      latest?: true;
     };
 
 type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
-type SystemEntry = Extract<Entry, { kind: typeof EntryKind.System }>;
 /** The card of the Genex cover a builder kept. */
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
@@ -264,7 +305,8 @@ const isConsentCard = (e: Entry): e is ActionEntry => e.kind === EntryKind.Actio
 /** Claude's own permission card in the transcript. */
 const isPermissionCard = (e: Entry): e is ActionEntry =>
   e.kind === EntryKind.Action && e.action === EntryAction.Permission;
-type MorningEntry = Extract<Entry, { kind: typeof EntryKind.Morning }>;
+/** A run's result card. */
+export type MorningEntry = Extract<Entry, { kind: typeof EntryKind.Morning }>;
 type QuestionEntry = Extract<Entry, { kind: typeof EntryKind.Question }>;
 
 /** The tag of a narration line or card (`Entry.tag`): what the transcript shows and the activity fold keys on. */
@@ -295,12 +337,51 @@ export const SystemTag = {
   Show: "SHOW",
   Checkpoint: "CHECKPOINT",
   Engine: "ENGINE",
-  /** The reviewer's check of the lead's claim that the goal is reached: never routine. */
-  FinishCheck: "FINISH CHECK",
+
   /** A game's run crashed and the host kept its record (`game_crashed`): never routine. */
   Crash: "CRASH",
 } as const;
 export type SystemTag = (typeof SystemTag)[keyof typeof SystemTag];
+
+/** Each tag in the reader's words, in sentence case: what the transcript heads its line with. */
+export const SYSTEM_TAG_WORDS: Record<SystemTag, string> = {
+  [SystemTag.Error]: t("Error"),
+  [SystemTag.SignIn]: t("Sign in"),
+  [SystemTag.Restarted]: t("Restarted"),
+  [SystemTag.Failed]: t("Failed"),
+  [SystemTag.Seed]: t("Seed"),
+  [SystemTag.Compacted]: t("Compacted"),
+  [SystemTag.Better]: t("Better"),
+  [SystemTag.Run]: t("Run"),
+  [SystemTag.TheLead]: t("The lead"),
+  [SystemTag.TheBuild]: t("The build"),
+  [SystemTag.Part]: t("Part"),
+  [SystemTag.Move]: t("Move"),
+  [SystemTag.Blender]: "Blender",
+  [SystemTag.Fix]: t("Fix"),
+  [SystemTag.Alive]: t("Alive"),
+  [SystemTag.Waiting]: t("Waiting"),
+  [SystemTag.Update]: tc("tag", "Update"),
+  [SystemTag.Plan]: t("Plan"),
+  [SystemTag.Ask]: t("Ask"),
+  [SystemTag.Stopped]: t("Stopped"),
+  [SystemTag.Resumed]: t("Resumed"),
+  [SystemTag.Reviewer]: t("Reviewer"),
+  [SystemTag.Checked]: t("Checked"),
+  [SystemTag.Show]: tc("tag", "Show"),
+  [SystemTag.Checkpoint]: t("Checkpoint"),
+  [SystemTag.Crash]: "Crash",
+  [SystemTag.Engine]: t("Engine"),
+};
+
+const SYSTEM_TAGS: ReadonlySet<string> = new Set(Object.values(SystemTag));
+const isSystemTag = (tag: string): tag is SystemTag => SYSTEM_TAGS.has(tag);
+
+/** A line's tag as its heading says it: a known tag in the reader's words, any other in sentence case. */
+export function systemTagWords(tag: string): string {
+  if (isSystemTag(tag)) return SYSTEM_TAG_WORDS[tag];
+  return tag.charAt(0) + tag.slice(1).toLowerCase();
+}
 
 /** Routine narration: folded into one activity row unless it reports trouble. */
 const ROUTINE_TAGS = new Set<string>([
@@ -495,23 +576,41 @@ interface ChatDraft {
   runResults: Map<string, MorningEntry>;
   /** Follow-ups typed during work and not yet delivered: a Stop with one waiting hands over to it. */
   waiting: Set<string>;
+  /**
+   * Each sent message's bubble by its queue id, and the @ tag cards whose message has not shown
+   * yet: main records a message's tags as it hands the message on, which can be before the queue
+   * writes the message itself.
+   */
+  tagged: {
+    queueIds: ReadonlyMap<string, string>;
+    bubbles: Map<string, UserEntry>;
+    cards: Map<string, MentionsEntry>;
+  };
   /** The chip group new tool rows join, until a line of narration closes it. */
   group: ToolsEntry | null;
   /** Each game's engine-link lines by the link's time, with the game's title, so Undo lands on its line. */
   engineLinks: Map<string, { entry: ActionEntry; title?: string; game: string }>;
+  /** Each rewind's line by its undo id, so bringing its newer version back lands on its line. */
+  rewindLines: Map<string, ActionEntry>;
   /** Each job's line by its id, with how it was named, so its end rewrites that line. */
   jobs: Map<string, { entry: ActionEntry; start: JobStart }>;
   /** The jobs whose end is on this page: an end recorded again (after a crash) draws nothing more. */
   endedJobs: Set<string>;
   /** Each worker's line by its graph and id (`workerKeyOf`), with what its records said, so later ones rewrite it. */
   workerLines: Map<string, { entry: ActionEntry; line: WorkerLine }>;
-  /** Each finish check round's line by its run and round, so the round's verdict rewrites it; `checking` until it has one. */
-  finishLines: Map<string, { entry: SystemEntry; runId: string; checking: boolean }>;
+  /** The chat's newest result card: only it offers Keep building. */
+  latestResult: MorningEntry | null;
 }
 
-export function toEntries(events: EventEnvelope[]): Entry[] {
-  const chat = newChatDraft(events);
+/**
+ * The chat's entries from its log. `queueIds` names each sent message's queue id by the event that
+ * wrote it (the queue's own record, read from the log in its written order); without it, a message
+ * is named by the queue record right after it.
+ */
+export function toEntries(events: EventEnvelope[], queueIds?: ReadonlyMap<string, string>): Entry[] {
+  const chat = newChatDraft(events, queueIds ?? queueIdsInOrder(events));
   for (const event of events) readEvent(chat, event);
+  keepOfferedRewind(chat, events);
   placeLastCoverCard(chat);
   for (const [runId, deliveries] of chat.runAssets) {
     const result = chat.runResults.get(runId);
@@ -520,7 +619,18 @@ export function toEntries(events: EventEnvelope[]): Entry[] {
   return withUniqueIds(foldRoutine(chat.entries, chat.runResults));
 }
 
-function newChatDraft(events: EventEnvelope[]): ChatDraft {
+/** Each message's queue id by the event before its `coordinator_message_queued` record. */
+function queueIdsInOrder(events: readonly EventEnvelope[]): Map<string, string> {
+  const ids = new Map<string, string>();
+  for (const [index, event] of events.entries()) {
+    const queued = customPayload(event.data, CustomEvent.CoordinatorMessageQueued)?.messageId;
+    const before = events[index - 1];
+    if (queued && before) ids.set(before.id, queued);
+  }
+  return ids;
+}
+
+function newChatDraft(events: EventEnvelope[], queueIds: ReadonlyMap<string, string>): ChatDraft {
   return {
     signInReplies: new Set(
       events.flatMap((event, index) => {
@@ -535,10 +645,11 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
     ),
     entries: [],
     engineLinks: new Map(),
+    rewindLines: new Map(),
     jobs: new Map(),
     endedJobs: new Set(),
     workerLines: new Map(),
-    finishLines: new Map(),
+    latestResult: null,
     rounds: { kept: 0, undone: 0, firstShot: null, lastShot: null },
     rowByCall: new Map(),
     directTurns: new Map(),
@@ -554,6 +665,7 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
     runAssets: new Map(),
     runResults: new Map(),
     waiting: new Set(),
+    tagged: { queueIds, bubbles: new Map(), cards: new Map() },
     group: null,
   };
 }
@@ -675,13 +787,20 @@ function readNoteLabel(chat: ChatDraft, data: EventData): boolean {
 }
 
 /** What a note's bubble says it was about until its record names it. */
-const NOTE_ABOUT = "Note to the build";
+const NOTE_ABOUT = t("Note to the build");
 
 /** A user bubble; a note sent to a build from its graph shows the words the user wrote, and what they were about. */
 function userEntry(id: string, content: string): Entry {
   const note = splitFeedback(content);
-  if (!note) return { id, kind: EntryKind.User, text: content };
+  // The lines about the message's @ tags are the agent's; the person sees their own words.
+  if (!note) return { id, kind: EntryKind.User, text: withoutMentionContext(content) };
   return { id, kind: EntryKind.User, text: note.text, about: NOTE_ABOUT };
+}
+
+/** The person spoke after the newest result: its Keep building is history, as Builds' is after a chat turn. */
+function retireLatestResult(chat: ChatDraft): void {
+  if (chat.latestResult) delete chat.latestResult.latest;
+  chat.latestResult = null;
 }
 
 function readMessages(chat: ChatDraft, eventId: string, data: Extract<EventData, { type: "messages" }>): void {
@@ -689,7 +808,10 @@ function readMessages(chat: ChatDraft, eventId: string, data: Extract<EventData,
     const messageId = `${eventId}-${messageIndex}`;
     if (message.role === "user") {
       for (const entry of chat.entries) if (awaitsAnswer(entry)) entry.pending = false;
-      chat.entries.push(userEntry(messageId, message.content));
+      retireLatestResult(chat);
+      const bubble = userEntry(messageId, message.content);
+      chat.entries.push(bubble);
+      placeTagCard(chat, chat.tagged.queueIds.get(eventId), bubble);
     } else if (message.role === "assistant") {
       readReply(chat, messageId, message, data.usage?.model);
     } else if (message.role === "system") {
@@ -1051,7 +1173,7 @@ function narrateSignIn(chat: ChatDraft, event: EventEnvelope): void {
       chat,
       event.id,
       SystemTag.SignIn,
-      TRANSCRIPT_WORDS.signInAgain(providerInfo(failure.engine)?.label ?? "Your coding provider"),
+      TRANSCRIPT_WORDS.signInAgain(providerInfo(failure.engine)?.label ?? t("Your coding provider")),
     );
 }
 
@@ -1137,26 +1259,74 @@ function narrateCompaction(chat: ChatDraft, event: EventEnvelope): void {
   });
 }
 
-/** "Fog Valley now builds in Unreal · Valley": the newest link of a game keeps its Undo. */
+/**
+ * The engine a link names, as the chat says it: the label its plugin declares; a record with no
+ * label by Genex's own words for an engine it knows, else by the engine's id; one that names no
+ * engine is from before engines were declared, all the Unreal plugin's.
+ */
+function linkedEngineWords(link: EngineLinkedPayload): string {
+  const label = typeof link.label === "string" ? link.label.trim() : "";
+  if (label) return label;
+  if (isGameEngine(link.engine)) return GAME_ENGINE_WORDS[link.engine];
+  return isEngineId(link.engine) ? link.engine : GAME_ENGINE_WORDS[GameEngine.Unreal];
+}
+
+/**
+ * "Fog Valley now builds in Unreal · Valley" ("Set up Valley for Genex · Fog Valley now builds in
+ * Unreal" when the link also set the project up): the newest link of a game keeps its one Undo.
+ */
 function narrateEngineLink(chat: ChatDraft, event: EventEnvelope): void {
   const link = customPayload(event.data, CustomEvent.EngineLinked);
   if (!link) return;
   const game = `${link.pluginId ?? ""}\n${link.project ?? ""}`;
   for (const earlier of chat.engineLinks.values()) if (earlier.game === game) delete earlier.entry.engineLink;
-  // A link is always to an engine project; a record that names none is from the Unreal plugin.
-  const engine = GAME_ENGINE_WORDS[isGameEngine(link.engine) ? link.engine : GameEngine.Unreal];
+  const engine = linkedEngineWords(link);
   const { pluginId, project, linkedAt } = link;
   const entry: ActionEntry = {
     id: event.id,
     kind: EntryKind.Action,
     tag: SystemTag.Engine,
     action: EntryAction.EngineLink,
-    text: TRANSCRIPT_WORDS.engineLinked(link.title, engine, link.name ?? ""),
+    text: link.setUp
+      ? TRANSCRIPT_WORDS.engineSetUpAndLinked(link.title, engine, link.name ?? "")
+      : TRANSCRIPT_WORDS.engineLinked(link.title, engine, link.name ?? ""),
     ...(pluginId && project && linkedAt ? { engineLink: { project, pluginId, linkedAt } } : {}),
   };
   closeGroup(chat);
   chat.entries.push(entry);
   if (link.linkedAt) chat.engineLinks.set(link.linkedAt, { entry, game, ...(link.title ? { title: link.title } : {}) });
+}
+
+/** "The chat went back, and 2 game files with it": only a rewind that put files back draws a line. */
+function narrateRewound(chat: ChatDraft, event: EventEnvelope): void {
+  const rewound = customPayload(event.data, CustomEvent.ConversationRewound);
+  const files = rewound?.files;
+  if (typeof files !== "number" || files <= 0) return;
+  const entry: ActionEntry = {
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Checkpoint,
+    action: EntryAction.Rewound,
+    text: TRANSCRIPT_WORDS.rewound(files),
+    ...(rewound?.rewindId ? { rewindUndo: rewound.rewindId } : {}),
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  if (rewound?.rewindId) chat.rewindLines.set(rewound.rewindId, entry);
+}
+
+/** The newer version came back: its rewind's line says so (the chat stays rewound). */
+function narrateRewindUndone(chat: ChatDraft, event: EventEnvelope): void {
+  const rewindId = customPayload(event.data, CustomEvent.ConversationRewindUndone)?.rewindId;
+  const line = rewindId ? chat.rewindLines.get(rewindId) : undefined;
+  if (line) line.outcome = TRANSCRIPT_WORDS.rewindUndone;
+}
+
+/** Only the rewind the chat still offers keeps Bring back newer version (`offeredRewindUndo`). */
+function keepOfferedRewind(chat: ChatDraft, events: readonly EventEnvelope[]): void {
+  if (!chat.rewindLines.size) return;
+  const offered = offeredRewindUndo(events);
+  for (const [rewindId, entry] of chat.rewindLines) if (rewindId !== offered) delete entry.rewindUndo;
 }
 
 /** "In the background: Unreal build": a job's line, with Stop while it runs; one without a title draws nothing. */
@@ -1267,57 +1437,6 @@ function pushWorkerLine(chat: ChatDraft, id: string, key: string, line: WorkerLi
   chat.workerLines.set(key, { entry, line });
 }
 
-/** A finish check round's line: the reviewer at work, its yes, its no with the first reason, a stop, or no answer. */
-function finishLine(check: FinishRecord): string {
-  const { chat } = FINISH_CHECK_WORDS;
-  if (check.step === FinishCheckStep.Checking) return chat.checking;
-  if (check.step === FinishCheckStep.Accepted) return chat.accepted;
-  if (check.step === FinishCheckStep.Unanswered) return chat.unanswered(check.why ?? "");
-  if (check.stopped) return chat.stopped(check.reasons.join(" "));
-  return chat.rejected(check.rejections ?? 1, check.reasons[0] ?? "");
-}
-
-/**
- * One line per round of a run's finish check: written when the reviewer starts, rewritten in place
- * by its verdict; a verdict whose start is not on this page is a line of its own. A stop asks for
- * attention.
- */
-function narrateFinishCheck(chat: ChatDraft, event: EventEnvelope): void {
-  const payload = customPayload(event.data, CustomEvent.FinishCheck);
-  const check = payload ? finishRecordOf(payload) : null;
-  if (!check) return;
-  const key = `${check.runId}\u0000${check.round}`;
-  const text = finishLine(check);
-  const checking = check.step === FinishCheckStep.Checking;
-  const known = chat.finishLines.get(key);
-  if (known) {
-    known.entry.text = text;
-    known.checking = checking;
-    if (check.stopped) known.entry.attention = true;
-    return;
-  }
-  const entry: SystemEntry = {
-    id: event.id,
-    kind: EntryKind.System,
-    tag: SystemTag.FinishCheck,
-    text,
-    ...(check.stopped ? { attention: true } : {}),
-  };
-  chat.entries.push(entry);
-  chat.finishLines.set(key, { entry, runId: check.runId, checking });
-}
-
-/** A run finished: a round of its finish check still checking (no verdict reached the log) had no answer. */
-function narrateRunFinishSettled(chat: ChatDraft, event: EventEnvelope): void {
-  const runId = customPayload(event.data, CustomEvent.RunFinished)?.runId;
-  if (!runId) return;
-  for (const known of chat.finishLines.values()) {
-    if (known.runId !== runId || !known.checking) continue;
-    known.entry.text = FINISH_CHECK_WORDS.chat.unanswered("");
-    known.checking = false;
-  }
-}
-
 /** Genex can't see app windows yet: one line naming what to allow, with a button per pane. */
 function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
   const payload = customPayload(event.data, CustomEvent.AppLookAccess);
@@ -1331,6 +1450,38 @@ function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
     action: EntryAction.AppAccess,
     text: appAccessMissing(missing),
     appAccess: missing,
+  });
+}
+
+/** An agent went ahead of the person: one line naming the app, with its plugin's settings; a partial record draws nothing. */
+function narrateWentAhead(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.AgentWentAhead);
+  const pluginId = typeof payload?.pluginId === "string" ? payload.pluginId : "";
+  const label = typeof payload?.label === "string" ? payload.label.trim() : "";
+  if (!pluginId || !label) return;
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Ask,
+    action: EntryAction.WentAhead,
+    text: TRANSCRIPT_WORDS.wentAhead(label),
+    wentAhead: { pluginId, label },
+  });
+}
+
+/** A blind judge's play for the chat's own session: one line; an old or partial record draws nothing. */
+function narrateChatJudge(chat: ChatDraft, event: EventEnvelope): void {
+  const judge = readChatJudgeResult(customPayload(event.data, CustomEvent.ChatJudgeResult));
+  if (!judge) return;
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Ask,
+    action: EntryAction.Judge,
+    text: judge.ask,
+    judge,
   });
 }
 
@@ -1349,7 +1500,10 @@ function narrateEngineUndone(chat: ChatDraft, event: EventEnvelope): void {
   const line = undone?.linkedAt ? chat.engineLinks.get(undone.linkedAt) : undefined;
   if (!line) return;
   delete line.entry.engineLink;
-  line.entry.outcome = TRANSCRIPT_WORDS.engineUndone(line.title, undone?.restored);
+  line.entry.outcome = TRANSCRIPT_WORDS.engineUndone(line.title, undone?.restored, {
+    undone: undone?.setUpUndone,
+    kept: undone?.setUpKept,
+  });
 }
 
 function narrateImprovement(chat: ChatDraft, event: EventEnvelope): void {
@@ -1371,8 +1525,8 @@ function narrateSkillAccepted(chat: ChatDraft, event: EventEnvelope): void {
   // The instruction file and the proposer's notes live in Activity; the chat says it plainly.
   const title = skillAccepted.title?.trim().replace(/\.$/, "");
   const text = title
-    ? `Harness learned to ${title.charAt(0).toLowerCase()}${title.slice(1)}.`
-    : `Harness updated ${skillWords(skillAccepted.skill).replace(/^how Harness /, "how it ")}.`;
+    ? t("Harness learned to {skill}.", { skill: `${title.charAt(0).toLowerCase()}${title.slice(1)}` })
+    : skillUpdatedWords(skillAccepted.skill);
   chat.entries.push({ id: event.id, kind: EntryKind.Learning, text, link: TRANSCRIPT_WORDS.seeInHarness });
 }
 
@@ -1392,7 +1546,9 @@ function narrateRunStart(chat: ChatDraft, event: EventEnvelope): void {
   const judgeEngine = started.judgeEngine ?? started.engine ?? "";
   const judgeName = judge ? roleName(judgeEngine, judge) : null;
   const crossProvider = Boolean(judgeName && started.engine && judgeEngine !== started.engine);
-  const judgeWords = crossProvider ? `${judgeName} on ${providerName(judgeEngine)}` : judgeName;
+  const judgeWords = crossProvider
+    ? t("{model} on {provider}", { model: judgeName ?? "", provider: providerName(judgeEngine) })
+    : judgeName;
   say(chat, event.id, SystemTag.Run, runStartWords(started.reference ?? null, judgeWords));
 }
 
@@ -1485,6 +1641,7 @@ function narratePluginCall(chat: ChatDraft, event: EventEnvelope): void {
   row.failed = row.state === ToolState.Failed;
   row.detail = [{ text }, ...(raw.result ? [{ text: String(raw.result) }] : [])];
   if (payload.making) row.making = { ids: makingIds(payload) };
+  if ("blocked" in payload && payload.blocked) row.blocked = payload.blocked;
   if (row.state === ToolState.Succeeded && keptGenexCover(payload)) holdCoverCard(chat, event, payload);
 }
 
@@ -1564,6 +1721,53 @@ function openPluginRow(
   chat.pluginCalls.set(row.key, row);
   if (payload.runId) chat.runByCall.set(row.key, payload.runId);
   return row;
+}
+
+/** A bubble: the user's, or the assistant's (one entry shape holds both). */
+type UserEntry = Extract<Entry, { kind: typeof EntryKind.User | typeof EntryKind.Assistant }>;
+type MentionsEntry = Extract<Entry, { kind: typeof EntryKind.Mentions }>;
+
+/**
+ * What a message's @ tags gave the agent (and again when a tag is tried again or taken off): one
+ * card under the message, each tag's latest result, and the message's words paint the tags. The
+ * card waits for its message when the tags were recorded first.
+ */
+function narrateMentions(chat: ChatDraft, event: EventEnvelope): void {
+  const tagged = customPayload(event.data, CustomEvent.MentionTagged);
+  const tags = tagged?.tags ?? [];
+  if (!tags.length) return;
+  const messageId = tagged?.messageId;
+  const known = messageId ? chat.tagged.cards.get(messageId) : undefined;
+  if (known) {
+    known.tags = mergeMentionResults(known.tags, tags);
+    return;
+  }
+  const card: MentionsEntry = { kind: EntryKind.Mentions, id: event.id, ...(messageId ? { messageId } : {}), tags };
+  if (!messageId) {
+    const at = chat.entries.findLastIndex((entry) => entry.kind === EntryKind.User);
+    putTagCard(chat, card, at);
+    return;
+  }
+  chat.tagged.cards.set(messageId, card);
+  const bubble = chat.tagged.bubbles.get(messageId);
+  if (bubble) putTagCard(chat, card, chat.entries.indexOf(bubble));
+}
+
+/** A sent message's bubble, by its queue id: a card already waiting for it goes under it. */
+function placeTagCard(chat: ChatDraft, messageId: string | undefined, bubble: Entry): void {
+  if (!messageId || bubble.kind !== EntryKind.User) return;
+  chat.tagged.bubbles.set(messageId, bubble);
+  const card = chat.tagged.cards.get(messageId);
+  if (card && !chat.entries.includes(card)) putTagCard(chat, card, chat.entries.indexOf(bubble));
+}
+
+/** The card under the bubble at `at` (at the end when there is none), and the bubble paints its tags. */
+function putTagCard(chat: ChatDraft, card: MentionsEntry, at: number): void {
+  const bubble = chat.entries[at];
+  if (bubble?.kind === EntryKind.User) bubble.tags = card.tags.map((tag) => tag.handle);
+  // Under its message, ahead of anything the turn has said since.
+  if (at < 0) chat.entries.push(card);
+  else chat.entries.splice(at + 1, 0, card);
 }
 
 function narrateDelivery(chat: ChatDraft, event: EventEnvelope): void {
@@ -1732,10 +1936,12 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
     tag: SystemTag.Ask,
     action: EntryAction.Consent,
     consentId,
+    ...(consent.pluginId ? { consentSourceId: consent.pluginId } : {}),
     consentSource: consent.pluginName || A_PLUGIN,
     consentPrompt: consent.prompt || undefined,
     consentExport: consent.exportReview,
     ...(consent.alwaysOffered ? { consentAlwaysOffered: true } : {}),
+    ...(consent.input ? { consentInput: consent.input } : {}),
     text: consentAskWords({
       pluginName: consent.pluginName,
       tool: consent.tool,
@@ -1827,6 +2033,10 @@ function narrateFinished(chat: ChatDraft, event: EventEnvelope): void {
   settleRunTools(chat, finished);
   const result = morningCard(chat, event.id, finished);
   chat.entries.push(result);
+  // Only the chat's newest result offers Keep building: an older card's list is history.
+  if (chat.latestResult) delete chat.latestResult.latest;
+  result.latest = true;
+  chat.latestResult = result;
   if (result.runId && chat.cover?.runId === result.runId) placeCoverCard(chat);
   // A paused or reopened run closes more than once; its latest result carries everything it
   // generated, and the earlier cards no longer speak for where it stands.
@@ -1861,8 +2071,20 @@ function profileOf(finished: FinishedPayload): LoopProfile | null {
   return isLoopProfile(finished.profile) ? finished.profile : null;
 }
 
+/**
+ * What a Loop's close without its yes leaves to fix, as the harness wrote it on the close
+ * (`run_finished.stillToFix`): none on a pause, which keeps its own reason and Resume, nor after a yes.
+ */
+function stillToFixOf(finished: FinishedPayload): { stillToFix?: StillToFix } {
+  const paused = finished.executionStatus === ExecutionStatus.Paused || finished.paused === true;
+  if (paused || finished.victory === true) return {};
+  const left = closedStillToFix(finished.stillToFix);
+  return left ? { stillToFix: left } : {};
+}
+
 function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): MorningEntry {
   const { rounds } = chat;
+  const stillToFix = stillToFixOf(finished);
   const judged = rounds.kept + rounds.undone;
   const n = judged || (Array.isArray(finished.iterations) ? finished.iterations.length : 0);
   const head = finished.integrationHead;
@@ -1888,6 +2110,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     before: rounds.firstShot,
     after: rounds.lastShot,
     ...(chat.waiting.size > 0 && wasCancelled(finished.stoppedBecause) ? { handedOff: true } : {}),
+    ...stillToFix,
   };
 }
 
@@ -1941,7 +2164,10 @@ function narrateLearningPass(chat: ChatDraft, event: EventEnvelope): void {
   chat.entries.push({
     id: event.id,
     kind: EntryKind.Learning,
-    text: harnessLearnedWords(plural(learned, "thing")),
+    text: t(
+      "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}",
+      { count: learned },
+    ),
     link: staged > 0 ? TRANSCRIPT_WORDS.reviewInHarness : TRANSCRIPT_WORDS.seeInHarness,
   });
 }
@@ -1958,13 +2184,15 @@ const NARRATORS: readonly Narrator[] = [
   narrateCompaction,
   narrateEngineLink,
   narrateEngineUndone,
+  narrateRewound,
+  narrateRewindUndone,
   narrateJobStarted,
   narrateJobEnded,
   narrateWorkerStarted,
   narrateWorkerFinished,
-  narrateFinishCheck,
-  narrateRunFinishSettled,
   narrateAppAccess,
+  narrateWentAhead,
+  narrateChatJudge,
   narratePluginSuggested,
   narrateImprovement,
   narrateSkillAccepted,
@@ -1974,6 +2202,7 @@ const NARRATORS: readonly Narrator[] = [
   narrateMove,
   narrateModel,
   narratePluginCall,
+  narrateMentions,
   narrateDelivery,
   narrateConnector,
   narrateFix,

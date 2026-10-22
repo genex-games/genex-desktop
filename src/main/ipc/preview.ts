@@ -39,6 +39,8 @@ export function registerPreviewIpc(
     if (!view) throw new Error(MESSAGE.noGameView);
     return view;
   };
+  // The page names a game; the core checks Live holds that game's folder before loading anything.
+  handle("studio:preview.web-build", async (payload) => core.loadWebBuild(String(payload.project)));
   handle("studio:preview.load", async (payload) => {
     await core.games.touch(payload.project).catch(() => {});
     // A game with no kind yet has no page: Live shows its first-idea state and loads nothing.
@@ -71,6 +73,8 @@ export function registerPreviewIpc(
     );
     return true;
   });
+  // The game as it looks now, for the stage to hold while a dialog covers the view.
+  handle("studio:preview.cover-still", async () => (await preview()?.coverStill()) ?? null);
   handle("studio:preview.stop", async () => {
     await core.stopLive();
     return true;
@@ -104,7 +108,9 @@ export function registerPreviewIpc(
   handle("studio:preview.live", async () => livePreview().liveStatus());
   // Why the stage is not showing the game's own build, and the one button that opens the network.
   handle("studio:build.problem", async (payload) => core.buildProblem(payload.project));
-  handle("studio:packages.install", async (payload) => core.installPackages(payload.project));
+  handle("studio:packages.install", async (payload) =>
+    core.installPackages(payload.project, { scripts: payload.scripts === true }),
+  );
 }
 
 /** The window size a slot was measured in, when the renderer sent a usable one. */

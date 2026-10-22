@@ -45,10 +45,12 @@ import path from "node:path";
 import { GIT, gitAt } from "./git.ts";
 import { MIN_DELEGATE_TIMEOUT_MS, PLAN_REVIEW_WAIT_MS } from "./config.ts";
 import { FINISH_REPORT, notDoneOf } from "./finish-check.ts";
+import { StopWhy } from "./finish-contract.ts";
 import { closeSettled, closeUnderWay, latchClose } from "./director/close-latch.ts";
 import { fireHooks, HookEvent, notesText, runScope } from "./hooks.ts";
 import { type HeldBack, heldTurnEnding, runHeldWords } from "./director/held-words.ts";
 import { LoopProfile } from "./folder-facts.ts";
+import { judgedInEditor, loopJudges } from "./director/open/judge-rounds.ts";
 import { loopSkill } from "./loop-skills.ts";
 import { closeRunPool } from "./workers/run-pool.ts";
 import { leadsOpenLoop } from "./director/open/active-work.ts";
@@ -622,6 +624,21 @@ function sessionEndWords(
 }
 
 /**
+ * Whether a web run's session ended on its clock, as `sessionEndWords` reads it: no Stop, limit, held
+ * turn, idle lead, finish or failed turn ended it first. Its result card then says its time ran out.
+ */
+function endedOnTheClock(
+  loopRun: LoopRun,
+  close: { result: Partial<DelegateResult>; at: number; wrapCause: WrapCause | null },
+): boolean {
+  const { ctx, softDeadline, state } = loopRun;
+  if (ctx.cancelled || state.limit || heldTurnEnding(close.result)) return false;
+  const { wrapCause } = close;
+  if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
+  return close.at >= softDeadline - OUT_OF_TIME_MS;
+}
+
+/**
  * What a web close says it left undone, in the report's field and the summary: the reviewer's last
  * no, else, when its time ran out with no claim read (`unchecked`), that no reviewer read one.
  */
@@ -663,6 +680,7 @@ export async function closeLeftOpen(
       because,
       notDone,
       unchecked: timeUp && noClaimRead(state.finishTally),
+      ...(timeUp ? { why: StopWhy.Time } : {}),
     });
   }
   // Out of time with no claim checked: the report says no reviewer read one (time-cap.ts), in its
@@ -672,10 +690,12 @@ export async function closeLeftOpen(
   const undone = closeUndone(notDone, unchecked);
   if (undone) loopRun.report.notDone = undone.notDone;
   const paused = Boolean(state.limit);
+  const onTheClock = endedOnTheClock(loopRun, { result, at: now, wrapCause });
   await closeTheLoopRun({
     land: !paused,
     paused,
     ...(undone ? { summary: undone.summary } : {}),
+    ...(onTheClock ? { ended: StopWhy.Time } : {}),
     stopWhy: "the build is over",
     settleMs: OPEN_LOOP_RUN_SETTLE_MS,
     because: (landed: AnyRecord) =>
@@ -953,7 +973,11 @@ async function sessionParts(ctx: HarnessCtx, loopRun: LoopRun, loop: DirectorLoo
   const open = leadsOpenLoop(loopRun);
   const skill = open ? "" : await directorSkill(ctx, loopRun);
   const types = loopRun.open?.pool?.state.types ?? [];
-  const tools = open ? openTools(types, { restart: restartsApp(loopRun.game) }) : runTools(loop, loopRun);
+  const workers = loopRun.open?.pool?.state.allowed;
+  const judge = judgedInEditor(loopRun);
+  const tools = open
+    ? openTools(types, { restart: restartsApp(loopRun.game), workers, judge, judges: loopJudges(loopRun) })
+    : runTools(loop, loopRun);
   const talk = directorTalk(loopRun, referenceImages(run), tools);
   directors.set(run.runId, open ? openHandler(loopRun) : loopRun.handler);
   // Between an open Loop's turns, Genex keeps what its lead left and runs the rewind or restart it asked for.

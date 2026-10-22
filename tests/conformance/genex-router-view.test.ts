@@ -1,27 +1,57 @@
 /**
  * The Plugins page as the router shows it: the router's own name and line on Genex's row and page,
- * its picture (eight routed tools on a 2×2 board that is never empty), and the Marketplace that is
- * still to come.
+ * its picture (eight routed tools on a 2×2 board that is never empty), and the catalog's Plugins and
+ * Community plugins.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
-import type { PluginInfo } from "../../src/shared/plugins.ts";
-import { MoreView, moreView } from "../../src/renderer/panels/plugins/labels.ts";
-import { shownDescription, shownName } from "../../src/renderer/panels/plugins/labels.ts";
+import type { PluginIndexEntry, PluginInfo } from "../../src/shared/plugins.ts";
+import {
+  CommunityView,
+  catalogShelves,
+  communityIds,
+  communityView,
+  installedSteps,
+  listingSteps,
+  needsSetup,
+} from "../../src/renderer/panels/plugins/labels.ts";
+import { PLUGINS_WORDS } from "../../src/renderer/words.ts";
+import { routerLine, shownDescription, shownIntro, shownName } from "../../src/renderer/panels/plugins/labels.ts";
 import { BOARD_CELLS, boardMoves, pieceFrames } from "../../src/renderer/panels/plugins/genex/router-icon.ts";
 import { ICON_TOOLS, ROUTED_TOOLS } from "../../src/renderer/panels/plugins/genex/routed-tools.ts";
-import { GENEX_WORDS } from "../../src/renderer/words.ts";
 
 const plugin = (id: string, name: string, description: string): PluginInfo =>
   ({ manifest: { id, name, description, publisher: "Someone" } }) as unknown as PluginInfo;
 
 describe("Genex's row and page name the router", () => {
-  it("shows Genex as the game dev tools router, with the tools it routes on its line", () => {
-    const genex = plugin(GENEX_PLUGIN_ID, "Genex Tools", "3D models, characters, sound and art…");
-    assert.equal(shownName(genex), "Game dev tools router");
-    assert.equal(shownDescription(genex), GENEX_WORDS.router.description);
-    assert.match(shownDescription(genex), /^Genex · .*Meshy/);
+  it("shows Genex as the Genex plugin, the game dev tools router, connected as the account on its page", () => {
+    const genex = plugin(GENEX_PLUGIN_ID, "Genex plugin", "3D models, characters, sound and art…");
+    assert.equal(shownName(genex), "Genex plugin");
+    assert.equal(shownIntro(genex), "Game dev tools router");
+    assert.equal(shownIntro(genex, "Rab Neba"), "Game dev tools router · connected as Rab Neba");
+  });
+
+  it("says on Genex's row what its switch does: tools for the agent, never the account", () => {
+    const genex = plugin(GENEX_PLUGIN_ID, "Genex plugin", "3D models, characters, sound and art…");
+    const on = { ...genex, enabled: true, removed: false };
+    const off = { ...genex, enabled: false, removed: false };
+    assert.deepEqual(routerLine(on), {
+      lead: "Tools for your agent: 3D, textures, animation, music, multiplayer.",
+      tail: "Uses your Genex account.",
+    });
+    assert.deepEqual(routerLine(off), {
+      lead: "Off. Your agent can't use Genex tools.",
+      tail: "Your profile, friends and Publish stay.",
+    });
+    assert.equal(
+      shownDescription(on),
+      "Tools for your agent: 3D, textures, animation, music, multiplayer. Uses your Genex account.",
+    );
+    assert.equal(
+      shownDescription(off),
+      "Off. Your agent can't use Genex tools. Your profile, friends and Publish stay.",
+    );
   });
 
   it("leaves every other plugin's own name and description alone", () => {
@@ -96,17 +126,91 @@ describe("the router's picture", () => {
   });
 });
 
-describe("the Marketplace below the MCP servers", () => {
+describe("Plugins and Community plugins below the MCP servers", () => {
   const index = { entries: [], updates: [], studioVersion: "1.0.0" } as never;
-  it("is coming soon while the catalog has nothing you don't have", () => {
-    assert.equal(moreView({ index, entries: 0, releases: 0 }), MoreView.Soon);
+  const entry = (id: string, tier: PluginIndexEntry["tier"]) => ({ id, tier }) as PluginIndexEntry;
+
+  it("files the catalog's official plugins under Plugins and everyone else's under Community plugins", () => {
+    const shelves = catalogShelves([
+      entry("genex", "official"),
+      entry("acme-tool", "community"),
+      entry("acme", "community"),
+    ]);
+    assert.deepEqual(
+      shelves.ours.map((e) => e.id),
+      ["genex"],
+    );
+    assert.deepEqual(
+      shelves.community.map((e) => e.id),
+      ["acme-tool", "acme"],
+    );
   });
-  it("lists what the catalog offers once it has something new", () => {
-    assert.equal(moreView({ index, entries: 1, releases: 0 }), MoreView.List);
+  it("shows Community plugins as coming soon while the catalog has none you don't have", () => {
+    assert.equal(communityView({ index, entries: 0 }), CommunityView.Soon);
+  });
+  it("lists the community's plugins once the catalog has one", () => {
+    assert.equal(communityView({ index, entries: 1 }), CommunityView.List);
   });
   it("stays coming soon while the catalog loads or can't be read: nothing else shows there yet", () => {
-    assert.equal(moreView({ index: null, entries: 0, releases: 0 }), MoreView.Soon);
+    assert.equal(communityView({ index: null, entries: 0 }), CommunityView.Soon);
     const failed = { ...(index as object), error: "offline" } as never;
-    assert.equal(moreView({ index: failed, entries: 0, releases: 0 }), MoreView.Soon);
+    assert.equal(communityView({ index: failed, entries: 0 }), CommunityView.Soon);
+  });
+});
+
+describe("a community plugin's page before it is installed", () => {
+  const entry = (fields: Partial<PluginIndexEntry>) =>
+    ({ id: "acme-tool", name: "Tool", capabilities: [], ...fields }) as PluginIndexEntry;
+  const WORDS = PLUGINS_WORDS.listing;
+
+  it("starts with Genex's install step and ends with when it is ready, its author's steps between", () => {
+    assert.deepEqual(listingSteps(entry({ setup: ["Paste your key on its page."] })), [
+      WORDS.installStep,
+      "Paste your key on its page.",
+      WORDS.readyStep,
+    ]);
+  });
+  it("asks to connect the account when the plugin needs one and its author wrote no steps", () => {
+    assert.deepEqual(listingSteps(entry({ capabilities: ["credentials"] })), [
+      WORDS.installStep,
+      WORDS.connectStep("Tool"),
+      WORDS.readyStep,
+    ]);
+    assert.deepEqual(listingSteps(entry({})), [WORDS.installStep, WORDS.readyStep]);
+  });
+  it("keeps installed community plugins in Community plugins, not in Installed", () => {
+    const index = {
+      entries: [entry({ id: "genex", tier: "official" }), entry({ id: "acme-tool", tier: "community" })],
+    } as never;
+    assert.deepEqual([...communityIds(index)], ["acme-tool"]);
+    assert.deepEqual([...communityIds(null)], [], "with no catalog, every installed plugin stays under Installed");
+  });
+});
+
+describe("an installed plugin's page and tile after Install", () => {
+  const WORDS = PLUGINS_WORDS.listing;
+  const installed = (manifest: object, enabled = true) =>
+    ({ enabled, manifest: { id: "acme-tool", name: "Tool", capabilities: [], ...manifest } }) as unknown as PluginInfo;
+  const ACCOUNT = { connect: "c", unlock: "u", disconnect: "d", status: "s" };
+
+  it("keeps its author's steps, with Install ticked off", () => {
+    assert.deepEqual(installedSteps(installed({ setup: ["Paste your key on its page."] }).manifest), [
+      { text: WORDS.installedStep, done: true },
+      { text: "Paste your key on its page.", done: false },
+      { text: WORDS.readyStep, done: false },
+    ]);
+  });
+  it("shows no steps for a plugin that has nothing to set up", () => {
+    assert.deepEqual(installedSteps(installed({}).manifest), []);
+  });
+  it("needs setup while its account is not connected, and not once it is", () => {
+    const plugin = installed({ account: ACCOUNT });
+    assert.equal(needsSetup(plugin, "not connected"), true);
+    assert.equal(needsSetup(plugin, "locked"), true);
+    assert.equal(needsSetup(plugin, "failed"), true);
+    assert.equal(needsSetup(plugin, "unlocked"), false);
+    assert.equal(needsSetup(plugin, "authorizing"), false, "the browser step is under way");
+    assert.equal(needsSetup(installed({ account: ACCOUNT }, false), "not connected"), false, "off is off, not unset");
+    assert.equal(needsSetup(installed({}), "not connected"), false, "a plugin with no account has nothing to connect");
   });
 });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { normalizeClaudeUsage, type ProviderUsage } from "../../shared/provider-usage.ts";
 import { type EngineModel, ModelContextSource } from "./types.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** How long a running session's telemetry waits on each optional control before it gives up. */
 const TELEMETRY_DEADLINE_MS = 1.5 * SECOND_MS;
@@ -134,6 +135,6 @@ const claudeModels = z
 export function validateClaudeModels(value: unknown): ClaudeModelInfo[] {
   const result = claudeModels.safeParse(value);
   if (!result.success)
-    throw new CatalogError(ModelCatalogProblemCode.Malformed, "Claude returned an invalid model list.");
+    throw new CatalogError(ModelCatalogProblemCode.Malformed, t("Claude returned an invalid model list."));
   return result.data;
 }

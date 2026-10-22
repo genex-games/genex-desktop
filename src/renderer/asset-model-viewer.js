@@ -14,7 +14,14 @@ import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { assetCompanion, assetExtension, assetPreviewMode } from "../shared/asset-preview.ts";
+import {
+  assetCompanion,
+  assetExtension,
+  assetPreviewMode,
+  loadFailure,
+  PreviewFailure,
+  PreviewFileError,
+} from "../shared/asset-preview.ts";
 import { assetFormat } from "../shared/game-assets.ts";
 
 /** The most memory a model's own files may take in the preview. */
@@ -54,9 +61,10 @@ const fileName = (url) => url.split("/").pop();
 function gltfDocument(bytes, ext) {
   if (ext === "gltf") return JSON.parse(new TextDecoder().decode(bytes));
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.length < 20 || data.getUint32(0, true) !== 0x46546c67) throw new Error(MESSAGE.notGlb);
+  if (bytes.length < 20 || data.getUint32(0, true) !== 0x46546c67) throw new PreviewFileError(MESSAGE.notGlb);
   const length = data.getUint32(12, true);
-  if (data.getUint32(16, true) !== 0x4e4f534a || length + 20 > bytes.length) throw new Error(MESSAGE.glbIncomplete);
+  if (data.getUint32(16, true) !== 0x4e4f534a || length + 20 > bytes.length)
+    throw new PreviewFileError(MESSAGE.glbIncomplete);
   return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length)).replace(/\0+$/, ""));
 }
 
@@ -109,10 +117,10 @@ function createManager(v) {
       return url;
     }
     if (v.urls.has(url)) return v.urls.get(url);
-    throw new Error(MESSAGE.missingResource(fileName(url)));
+    throw new PreviewFileError(MESSAGE.missingResource(fileName(url)));
   });
   manager.onError = (url) => {
-    if (!v.disposed) v.onError(new Error(MESSAGE.undecodable(fileName(url))));
+    if (!v.disposed) v.onError(new Error(MESSAGE.undecodable(fileName(url))), PreviewFailure.File);
   };
   return manager;
 }
@@ -131,7 +139,7 @@ function createKtx(v, renderer) {
         const worker = new Worker(new URL("./decoders/basis/worker.js", location.href));
         worker.addEventListener("error", (event) => {
           event.preventDefault();
-          if (!v.disposed) v.onError(new Error(MESSAGE.decoderFailed(event.message)));
+          if (!v.disposed) v.onError(new Error(MESSAGE.decoderFailed(event.message)), PreviewFailure.Interrupted);
           ktx.dispose();
         });
         const transcoderBinary = ktx.transcoderBinary.slice(0);
@@ -158,7 +166,7 @@ async function resource(v, uri) {
   if (v.disposed) return;
   const bytes = previewBytes(result.data);
   v.resourceBytes += bytes.length;
-  if (v.resourceBytes > RESOURCE_LIMIT_BYTES) throw new Error(MESSAGE.resourcesTooLarge);
+  if (v.resourceBytes > RESOURCE_LIMIT_BYTES) throw new PreviewFileError(MESSAGE.resourcesTooLarge);
   v.urls.set(uri, urlFor(v, bytes, result.mimeType));
 }
 
@@ -200,7 +208,7 @@ function fit(v) {
   const size = box.getSize(new THREE.Vector3()),
     center = box.getCenter(new THREE.Vector3());
   const radius = Math.max(size.x, size.y, size.z, 0.001);
-  if (!Number.isFinite(radius)) throw new Error(MESSAGE.badBounds);
+  if (!Number.isFinite(radius)) throw new PreviewFileError(MESSAGE.badBounds);
   const direction = v.isTexture ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0.65, 1.3).normalize();
   camera.position.copy(center).add(direction);
   camera.lookAt(center);
@@ -251,7 +259,7 @@ function startLoop(v) {
 async function loadGltf(v, bytes, ext) {
   const doc = gltfDocument(bytes, ext);
   const uris = [...(doc.buffers ?? []), ...(doc.images ?? [])].map((item) => item.uri).filter(Boolean);
-  if (uris.length > MAX_GLTF_RESOURCES) throw new Error(MESSAGE.tooManyResources);
+  if (uris.length > MAX_GLTF_RESOURCES) throw new PreviewFileError(MESSAGE.tooManyResources);
   for (const uri of uris) await resource(v, uri);
   if (v.disposed) return undefined;
   const loader = new GLTFLoader(v.manager)
@@ -277,7 +285,7 @@ async function objMaterials(v, library) {
       const tex = await v.read(target);
       const data = previewBytes(tex.data);
       v.resourceBytes += data.length;
-      if (v.resourceBytes > RESOURCE_LIMIT_BYTES) throw new Error(MESSAGE.texturesTooLarge);
+      if (v.resourceBytes > RESOURCE_LIMIT_BYTES) throw new PreviewFileError(MESSAGE.texturesTooLarge);
       v.urls.set(uri, urlFor(v, data, tex.mimeType));
     }
   materials.preload();
@@ -288,7 +296,7 @@ async function loadObj(v, bytes) {
   const text = new TextDecoder().decode(bytes),
     loader = new OBJLoader(v.manager);
   const mtls = [...text.matchAll(/^mtllib\s+(.+)$/gm)].map((match) => match[1].trim());
-  if (mtls.length > 1) throw new Error(MESSAGE.oneMaterialLibrary);
+  if (mtls.length > 1) throw new PreviewFileError(MESSAGE.oneMaterialLibrary);
   if (mtls.length) loader.setMaterials(await objMaterials(v, mtls[0]));
   return loader.parse(text);
 }
@@ -359,7 +367,7 @@ async function motionClips(v, motion) {
     if (v.disposed) return [];
     const bytes = previewBytes(result.data);
     v.resourceBytes += bytes.length;
-    if (v.resourceBytes > RESOURCE_LIMIT_BYTES) throw new Error(MESSAGE.motionsTooLarge);
+    if (v.resourceBytes > RESOURCE_LIMIT_BYTES) throw new PreviewFileError(MESSAGE.motionsTooLarge);
     const ext = assetExtension(motion.file);
     const gltf = await new GLTFLoader(v.manager)
       .setMeshoptDecoder(MeshoptDecoder)
@@ -475,7 +483,8 @@ function viewerControls(v, resize) {
 
 /**
  * A viewer for `file` in `host`. `motions` are animation-only files of the same rig, each `{file,
- * name}`: their clips play on the model after its own.
+ * name}`: their clips play on the model after its own. `onError(error, failure)` names why as a
+ * `PreviewFailure`: the file itself, or something around it that may pass.
  */
 export function createAssetViewer(
   host,
@@ -521,17 +530,17 @@ export function createAssetViewer(
   const resize = startLoop(v);
   renderer.domElement.addEventListener("webglcontextlost", (event) => {
     event.preventDefault();
-    if (!v.disposed) onError(new Error(MESSAGE.contextLost));
+    if (!v.disposed) onError(new Error(MESSAGE.contextLost), PreviewFailure.Interrupted);
   });
   v.loadTimer = setTimeout(() => {
     if (!v.disposed) {
-      onError(new Error(MESSAGE.timedOut));
+      onError(new Error(MESSAGE.timedOut), PreviewFailure.Interrupted);
       v.ktx.dispose();
     }
   }, DECODE_TIMEOUT_MS);
   void load(v)
     .catch((error) => {
-      if (!v.disposed) onError(error);
+      if (!v.disposed) onError(error, loadFailure(error));
     })
     .finally(() => clearTimeout(v.loadTimer));
   return viewerControls(v, resize);

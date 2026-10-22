@@ -3,10 +3,11 @@
 External developer reference after the [overview](context.md): read only the section you need. Each
 names its contract and owner; Git holds history.
 
-The app builds browser and C++ · raylib games. Mac arm64 builds every destination; Linux x64 builds
-Browser, Windows and Linux. Windows hosts refuse C++ builds. Rust · wgpu games are created where their lane runs; it builds
-the Mac and the web (see **Stacks and the build-lane seam**). Unity is archived in
-[`archive/unity/`](../../archive/unity/), with no flag or migration path.
+The app builds browser and C++ · raylib games: Mac arm64 every destination, Linux x64 Browser,
+Windows and Linux, Windows hosts none. Rust · wgpu games are created where their lane runs
+(**Stacks and the build-lane seam**). Unity's old built-in integration is archived in
+[`archive/unity/`](../../archive/unity/) (no flag, no migration); Unity is now a bundled plugin
+([plugins](../plugins.md#the-bundled-unity-plugin)).
 
 ## Processes and trust boundaries
 
@@ -95,9 +96,9 @@ use the same filter.
 is the one list of coding-CLI sign-in homes that the sandbox, Claude's absolute deny rules (its own
 config home [partly](../tool-permissions.md#rules-at-their-real-paths)), the Codex brief, Bonsai
 and native plugin jobs deny. `ProcessSandbox`
-adds its base deny-read list (`baseDenyRead` in `spawn.ts`): sign-in stores such as `~/.ssh`,
-`~/.aws` and `~/Library/Keychains`, and on Linux the desktop secret stores. Beside it,
-`phoneDenyRead` keeps `ProcessSandbox` commands and unattended Claude Code contractors from the
+adds base deny lists (`baseDenyRead`, `baseDenyWrite` in `spawn.ts`): sign-in stores like `~/.ssh`,
+`~/.aws`, `~/Library/Keychains` and Roblox's cookie jars, and Linux's desktop secret stores. Beside
+them, `phoneDenyRead` keeps `ProcessSandbox` commands and unattended Claude Code contractors from the
 phone sign-ins and keys (`mobileCredentialHomes`) and the SDK's device-tool folders (also off
 every child's and C++ session's PATH); on macOS `closeDeviceBridges` denies the adb and
 emulator ports on loopback
@@ -131,8 +132,9 @@ person's **On a device** press starts a phone build
 ### Residual risks
 
 - **A Codex contractor can read the whole disk.** `codex exec` runs under Codex's own sandbox
-  (`workspace-write`, one writable root, no network), which restricts writes but not reads, and
-  Studio does not wrap the CLI in `ProcessSandbox`. The studio's secrets, both CLIs' sign-in homes
+  (`workspace-write`, one writable root, no network; on Windows unelevated, plus the
+  bridge's `req/`), which restricts writes, not reads; Studio does not wrap it in
+  `ProcessSandbox`. The studio's secrets, both CLIs' sign-in homes
   and sibling games are named off limits in the brief only; the Claude path enforces the same list
   as `Read()` deny rules, and `ProcessSandbox` enforces it for the harness and Bonsai. A
   prompt-injected Codex build could copy what it reads into its game or summary. Studio's
@@ -140,18 +142,17 @@ person's **On a device** press starts a phone build
   borrowed Codex sign-in and the ordinary home folder. Running it under `ProcessSandbox` with
   deny-read is planned.
 - **OpenCode reads its sign-ins; 2.x's server is unsandboxed** ([details](../connections-and-context.md#openrouter-and-opencode)).
-- **An install briefly opens the npm registry to every sandboxed process**, C++ builds,
-  prewarms and crate checks included: sandbox-runtime's proxy filters against one process-wide
-  allow-list, so `ProcessSandbox.run` widens it for a package install's length and restores it
-  afterwards (counted, in `finally`). Two installs open it: the user's Install packages button and
-  `genex__package`, a consented add of one of the two exact-pinned Genex SDK packages
-  (`GENEX_GAME_PACKAGES`) that the agent cannot re-version.
-- **A Genex CLI run opens `api.genex.games` to every sandboxed process** for its length, by the
-  same widening. Only the CLI's preload holds the Genex token (on stdin).
-- **The asset adapter still runs the pinned CLI with the user's real `HOME`** (`adapter.ts`). Its
-  legacy cleanup therefore deletes `genex-*` entries under `~/.claude/skills`, `~/.codex/skills`
-  and `~/.cursor/skills` (and two legacy `~/.claude` files) on a `genex__asset` call; `genex__cli`
-  and publishing already use a contained `HOME`.
+- **An install briefly opens the npm registry to every sandboxed process.** sandbox-runtime's
+  proxy filters against one process-wide allow-list, so `ProcessSandbox.run` widens it for an
+  install's length (counted, restored in `finally`). The Install packages button, `genex__package`
+  (an exact-pinned `GENEX_GAME_PACKAGES` entry) and a remix's script-free `installGuarded` open
+  it. No build starts meanwhile; agents' commands, prewarms and crate checks still reach it.
+- **A remix's setup scripts run** once trusted (Run setup scripts).
+- **Builds are confined on macOS and Linux only, and for writes**: a build can copy home files
+  into the output Publish uploads.
+- **A Genex CLI run opens `api.genex.games` to every sandboxed process** for its length, the
+  same way; only the CLI's preload holds the Genex token (on stdin), so others reach the API but
+  not as the user.
 - **Windows sandbox residuals** are listed in [Windows sandbox](../windows-sandbox.md#residual-risks).
 - **A command a reply offers runs outside the sandbox.** Run starts the agent-written line with the
   user's own permissions. Only one visible line without control characters is accepted; a
@@ -169,25 +170,24 @@ person's **On a device** press starts a phone build
   [`src/main/ipc-handle.ts`](../../src/main/ipc-handle.ts). Plugin, MCP, terminal and permission
   channels accept only the main window's top-level frame. Follow the [IPC recipe](recipes.md#ipc-channel).
 - **Boot state.** The renderer first calls `bootState` (`studio:boot`, registered before any core;
-  contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform, which it sets as
-  `data-platform` on the root, and the phase. When `ProcessSandbox` raises
-  `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
-  unsupported platform, missing Linux tools found by a PATH lookup, Ubuntu's user-namespace
-  restriction (`userns-restricted`), Windows `not_provisioned` or `wfp_fence_inactive` by code,
-  Linux `isolation-blocked` from [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)),
-  main holds the boot gate ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a
-  core-less setup window instead of exiting; `studio:boot.retry` recreates the core and, once
-  started, replaces that window with the studio. `studio:boot.setup` (native; the feature map's
-  Sandbox setup row) installs Windows' sandbox with the unpacked srt-win
-  ([`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
-  UAC prompt) and retries, a dismissed prompt changing nothing, or Linux's AppArmor profile
-  ([`linux-userns-setup.ts`](../../src/substrate/linux-userns-setup.ts),
-  [`linux-apparmor.ts`](../../src/substrate/linux-apparmor.ts)) and relaunches, as AppArmor
-  attaches at exec. Other startup failures keep the error dialog and exit; smoke and developer
-  launches still fail (the `sandbox-setup` fixture shows the screen over a ready core). The
-  window's title bar comes from
-  [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS
-  (lights on the headers' line), a themed 48 px `titleBarOverlay` on Windows and Linux
+  contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform (`data-platform` on
+  the root) and the phase. When `ProcessSandbox` raises `SandboxUnavailableError`
+  ([`sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts): unsupported platform,
+  missing Linux tools, Ubuntu's `userns-restricted`, Windows `not_provisioned` or
+  `wfp_fence_inactive`, Linux `isolation-blocked` from
+  [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
+  ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) on a core-less setup window;
+  `studio:boot.retry` recreates the core, whose window replaces it. `studio:boot.setup` (native)
+  runs by itself on Windows ([`windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts),
+  one UAC prompt); on Linux its press installs the AppArmor profile
+  ([`linux-userns-setup.ts`](../../src/substrate/linux-userns-setup.ts)) and relaunches, as
+  AppArmor attaches at exec. Failures offer `studio:boot.report` (native). Windows opens that
+  window before the core (phase `starting`, stepped by boot marks); a harness that would not
+  start, a core failing there or a start past three minutes holds the gate on `failed`: Try again
+  (relaunches), the report, Quit (`studio:boot.quit`). Other failures show the error dialog and
+  exit; smoke and developer launches fail. The title bar comes from
+  [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS (lights
+  centred on headers), a themed 48 px `titleBarOverlay` on Windows (see-through on Home) and Linux
   (`studio:window.controls`).
 - [`src/main/studio-core.ts`](../../src/main/studio-core.ts) keeps the core's lifecycle, the event
   log's front door, settings and public methods. It assembles the EventStore, snapshots,
@@ -245,7 +245,8 @@ and must stay so.
 ## Renderer
 
 **State.** Zustand domain stores in [`src/renderer/state/`](../../src/renderer/state/) (engines,
-event log, layout, library, plugins, session, threads, toasts, agent screens, command runs) are wired once by
+event log, layout, library, plugins, session, threads, toasts, agent screens, command runs,
+Play/people) are wired once by
 `createStudio(api)` in `state/studio.ts`: one `onEvent` subscription, the log poll, the bootstrap
 and the commands that span stores. The app has one instance started before React mounts, so
 StrictMode cannot subscribe twice. Selector hooks (`state/hooks.ts`) use `useShallow` for objects
@@ -366,6 +367,8 @@ holds the registered engines, builds the `EngineDescriptor` list the UI reads (`
 answers fallbacks: a rate limit falls back only to a direct engine; context overflow and auth fall
 back to nothing. `StudioCore.init` registers the engines and sets the preferred order: local first
 (it cannot be rate limited), then the subscriptions.
+[`main/engine-boot.ts`](../../src/main/engine-boot.ts) answers the bootstrap with the last
+launch's checked engines while this launch checks.
 
 **Provider table.** [`src/shared/providers.ts`](../../src/shared/providers.ts) `PROVIDERS` is the one
 table of provider identity: id, the label a person says, whether it is a subscription, its login
@@ -390,9 +393,9 @@ any other `.cmd` goes through `cmd.exe`, plain words bare, others escaped for `%
 spawner for it, `claudeLaunchOptions`) and stops with its whole tree (`taskkill /T /F`,
 [`src/substrate/process-tree.ts`](../../src/substrate/process-tree.ts)). Studio or game-local
 dependencies and packaged binaries are excluded. A persisted override that is not ready yields to a
-ready automatic installation, an explicit executable never. Diagnostics share a 15-second cache;
-sessions reuse the login PATH and unchanged binaries' probe answers until Recheck; running
-processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
+ready automatic installation, an explicit executable never. Diagnostics share a 15-second
+cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers (kept
+across launches) until Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
 renderer or agent channel can write. Descriptors carry `account` (login source, variable, what
 signing out leaves, CLI state and version). Fixture and smoke sessions search no paths or standard
 locations (`configureCodingClis`).
@@ -408,8 +411,8 @@ credential patterns and terminal string controls before display.
 
 **Embedded terminal.** [`src/main/terminal-service.ts`](../../src/main/terminal-service.ts) owns at
 most four sessions, each node-pty in its own utility process; xterm.js loads lazily. Project shells
-resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, else
-PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
+resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, installed or
+Genex's own, else PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
 normal permissions. Games, plugins and the harness get no terminal API. A command a game reply offers
 runs only when the user presses Run (`studio:terminal.run`, `runnableCommand`) as one `command`
 session per game; its last 20 plain, redacted lines (`terminal-command.ts`) reach the agent hidden
@@ -504,15 +507,16 @@ its harness half only when it differs from the last healthy one in files that ne
 (`RUNS_AS_CODE`); a "both" record keeps its game half healthy with `harness_healthy: false` until
 then. Snapshots around a seed upgrade or the migration follow the same rule.
 
-**Recovery.** `HarnessHost.start`/`restart` take `{callerRecovers}`: a death before `ready` goes only
-to the caller. `core.start` stops the host on a boot failure, runs `recover()` (rewind to the newest
-healthy harness snapshot) and throws only if the harness is still not ready; `main/index.ts` then
-offers **Reset harness to shipped version** or Quit. If a rewind target exists but restore or
-restart fails, `recover()` reseeds and restarts (`harness_reseeded`); `watchdog.failed` is emitted
-only if that fails too. A self-update pending during a rewind is recorded failed and never marked
-healthy. The wedge watchdog ignores time the Mac was asleep (a tick more than three intervals late
-resets the silence clock) and a host call in flight; page and record calls end at their deadline
-(`substrate/rpc-deadlines.ts`). Three exits in five minutes or ten silent minutes trigger recovery.
+**Recovery.** Before migration or boot, `core.start` awaits sandbox readiness. Initialization faults
+report their original error without rewinding or reseeding harness code; a later retry can
+initialize again. `HarnessHost.start`/`restart` accept `{callerRecovers}`: deaths before `ready`
+go only to their caller. Once sandboxed, a failed harness boot rewinds to the newest healthy
+snapshot. Failed restore/restart falls back to reseeding (`harness_reseeded`); failure there emits
+`watchdog.failed` and offers **Reset harness to shipped version** or Quit. A self-update pending
+during rewind fails and is never marked healthy. The wedge watchdog ignores sleep (a tick over
+three intervals resets its clock) and in-flight host calls; page/record calls retain
+`substrate/rpc-deadlines.ts` deadlines. Three exits in five minutes or ten silent minutes trigger
+recovery.
 
 **A harness child dying mid-run** is repaired without an app restart (`onUnexpectedExit`,
 [feature map](feature-map.md)): StudioCore aborts every delegation, `run.settled` per open run
@@ -625,10 +629,11 @@ each answered message on `refs/studio/chat/<thread>/before|after/<message>` for
 rewinding ([conversation lifecycle](../conversation-coordinator.md#sending-and-rewinding)). Builder
 notes are `docs/notes/NOTES.<facet>.md`.
 `.studio/` is gitignored; on the long turn the studio copies `.studio/DIRECTOR.md` to run and thread
-artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Snapshot commits land on the user's checked-out branch with hooks disabled and are
-refused during a merge, rebase, cherry-pick or revert. `SnapshotEngine.restore` runs every check
-before any reset and refuses (`branch-changed`, `history-changed`, `operation-in-progress`,
-`rescue-failed`) leaving the folder untouched; the mandatory rescue snapshot is named on
+artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Adoption writes a real `.gitignore` before
+`git init`. `checkOutNewRepo` fast-imports the installed seed as the first harness repository; `ensureRepo` finishes an interrupted first commit. Snapshots commit to the checked-out branch, hooks off, never during a merge,
+rebase, cherry-pick or revert. `SnapshotEngine.restore` checks everything before any reset and
+refuses (`branch-changed`, `history-changed`, `operation-in-progress`, `rescue-failed`), folder
+untouched; the mandatory rescue snapshot is named on
 `workspace_restored`. Every loop shell command is built in `loop/git.ts`; model text goes through
 `shellQuote` and a commit reaches a command line only when `isCommit`.
 
@@ -721,19 +726,17 @@ template's (kept as `<name>.v<generation>.js`); an edited contract keeps its HUD
 older HUD is noted and narrows builders' HUD rule (`loop/held-hud.ts`).
 
 **Builds.** `preview.load`/`preview.reload` build through `GameBuilds`
-([`src/main/game-build.ts`](../../src/main/game-build.ts)) and serve the output. Builds mirror the project into
-`scratch/builds/<project>-<hash>/` (Git's view plus `.env*`, linked `node_modules`, output in
-`last/`); studio worktrees under `scratch/` build in place. Builds are memoised on
-a tree key; the stage's **Try again** (`reloadPreview({retry: true})`) forgets the memo and
-re-resolves the login shell PATH ([`src/substrate/toolchain.ts`](../../src/substrate/toolchain.ts); on
-Windows the process PATH plus the registry's machine and user PATH).
-The package manager comes from the lockfile; installing is the one thing that opens the network
-(`registry.npmjs.org`, `studio:packages.install`, behind a button), and only the lockfile's own
-install line runs (`INSTALL_COMMANDS`/`isInstallCommand`). A failed or empty build shows the last
-good output with the reason (`studio:build.problem`,
-[`src/shared/build-problem.ts`](../../src/shared/build-problem.ts)); a judged load fails to no page (`build-failed`, `buildFailed`); Live never blanks. Build
-actions coalesce identical `showBuild` requests and serialize worktree replacement per project;
-preview loads serialize per handle.
+([`src/main/game-build.ts`](../../src/main/game-build.ts)) and serve the output, never in a folder the
+user owns: a shadow under `scratch/builds/<project>-<hash>/` mirrors Git's view of it plus `.env*`
+(`node_modules` linked, output in `last/`); a studio worktree under `scratch/` builds in place.
+Builds are memoised on a tree key; **Try again** (`reloadPreview({retry: true})`) forgets it and
+re-resolves the PATH ([`toolchain.ts`](../../src/substrate/toolchain.ts)). The lockfile names the
+package manager; only an install opens the network (`registry.npmjs.org`), and only the
+lockfile's own install line runs (`isInstallCommand`). Builds and installs write only their game and scratch (`confine`); an
+install that runs scripts keeps its own cache. A failed or empty build shows the last good output
+(`studio:build.problem`, [`build-problem.ts`](../../src/shared/build-problem.ts)); a judged load
+fails to no page (`build-failed`, `buildFailed`); Live never blanks. `showBuild` requests
+coalesce; worktree swaps serialize per project, loads per handle.
 
 **Stacks and compiled games.** A game's stack is `stackOf(shape)` (glossary); every compiled build
 goes through `GameBuildLanes` (`CppBuilds`, `RustBuilds`), refusing a stack without a lane
@@ -794,30 +797,26 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 
-**Worker windows and computer use.** Every building delegation and read-only looking session
+**Worker windows and computer use.** Every building delegation and every looking read-only session
 gets one pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
 photographs (a C++ game's `target: "macos"` runs its Mac build headless in a native lease of the
-session's own); `computer` ([`src/substrate/computer-tool.ts`](../../src/substrate/computer-tool.ts)) is
-the studio's own computer use with Anthropic's action vocabulary plus `camera`, `state`, `reload`
-and `console`. Headless ports render offscreen. Once a trusted event of a type is seen, native input is
-sent and synthetic copies withheld, except a mousemove's (real delta; `game-template/src/studio.js` de-duplicates). Two pool windows are never a worker's
-(`workerWindows(max)` = max − 2, ≥ 1). A harness lease carries its boot as `owner`
-and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). Without a free window, judge and
-playtest answer *no window free*; unskippable passes use the stand-in, never Live.
-`preview.capacity` reports free windows and memory. Concurrent first `state` and `console` requests
-share one navigation. Each action emits `preview.frame` and `preview.screen`.
+session's own); `computer` is the studio's computer use: one tool, a session referee and
+swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones
+pause (`paint-while-used.ts`). Once a trusted event of a type is seen, native input is sent and
+synthetic copies withheld, except a mousemove's (real delta; `game-template/src/studio.js`
+de-duplicates). Two pool windows are never a worker's (`workerWindows(max)` = max − 2, ≥ 1). A
+harness lease carries its boot as `owner` and is freed when that harness dies
+(`PreviewPool.releaseOwnedBy`). Without a free window, judge and playtest answer *no window free*;
+unskippable passes use the stand-in, never Live. `preview.capacity` reports free windows and
+memory. Concurrent first `state` and `console` requests share one navigation. Each action emits
+`preview.frame` and `preview.screen`.
 
 **Native preview layering.** Modal dialogs hide the WebContentsView, popovers while
 over the Live slot; identical bounds skip IPC.
 
-**Native profiles and crash records.** A Rust game's `profile` verb answers
-`studio:native.profile` (Live's profile strip, polled only while open) and `preview.frameProfile`,
-checked by [`native-profile.ts`](../../src/substrate/native-profile.ts).
-[`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps a run's last `crash` record (or a
-host-made `hang` or `process-exit`) in the game's `.studio/crashes/` (at most 32, one per
-signature), appends `game_crashed` once, serves `game.crashes` and Live's crash card;
-`crash-symbolicate.ts` names frames with the sandboxed `genex-symbolicate`; nothing uploads.
+**Native profiles and crash records** are in
+[native games](native-games.md#profiles-and-crash-records).
 
 ## Plugins, MCP and Genex
 
@@ -901,7 +900,9 @@ is active (`PluginMcpLaunch.credential()`), and the launch reports it and stored
 ([`src/plugins/genex/`](../../src/plugins/genex/)) runs the restricted asset adapter (`adapter.ts`)
 in its backend; the pinned CLI owns quotes, locking, reservations and the credit ledger, and its
 `allowance.enforced` and the service's credit admission are authoritative. Job state
-lives under `engine-homes/genex/projects/<project>`. Arguments are arrays; operations, inputs and
+lives under `engine-homes/genex/projects/<project>`, whose `home/` is the CLI's `HOME`: the CLI
+removes `genex-*` skills from the agent folders under its `HOME` before each command, so that is
+never the user's. Arguments are arrays; operations, inputs and
 destinations are validated; hosted initialization, domains and billing administration stay hidden.
 The CLI environment starts from scratch (`genexCliEnv`, telemetry off). The creator MCP
 (`creator-mcp.ts`) connects only to `https://mcp.genex.games/mcp`; `genex blender mcp` is the
@@ -915,9 +916,9 @@ reconciliation reuses request and generation ids. A public export (Export, the h
 `game.export`, the Genex publish stage) refuses a file holding any `knownSecretValues()` value,
 naming the file, never the value. `inspect_use` and `verify_use`
 (`genex-outcomes.ts`, `audio-observation.ts`) record observed use of a captured version, not proof.
-Publishing verifies the upload against the hosted staging revision; an unresolved upload is never
-retried automatically, only settled by **Check again** or `publish-allow-upload`. Neither readiness nor an
-upload certifies gameplay.
+Publishing verifies the upload against the hosted revision and every file; an unknown upload is
+never retried, only settled by Genex's record or **Publish again**. Neither readiness nor upload
+certifies gameplay.
 
 Genex account rules: `status` returns the operation catalog for every provider path; Studio uses
 the pinned CLI's no-project-allowance mode (its `allowance.enforced` is authoritative) and Genex
@@ -931,7 +932,7 @@ not in the caller's workspace.
 
 **Genex cover** (`cover.ts`): the game's `genex-cover` demo, shot with `observe`'s `still` into the
 plugin's `covers/<project>/`, sent by `genex cover --json` after a recorded publish (the next one
-aborts it) or by `genex__cover-set`.
+aborts it), with the kept `genex-clip` clip after it, or by `genex__cover-set` (the picture only).
 
 **Plugin skills.** A manifest skill is inline text or (API 3) a package `.md` file with a summary
 (`PluginSkill`, `shared/plugins.ts`). `PluginRegistry.snapshot()` reads tools, guidance and the
@@ -1049,17 +1050,14 @@ managed local runtime; core has no Blender tool of its own.
   context reading independently of history. A missing, legacy or pre-rewind checkpoint is rebuilt
   from one log read without its rewound ranges, then extended in 256-event batches. Bootstrap carries the host thread-status map separately; a
   non-ready harness clears it.
-- **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) is a pure
-  reporting projection, never an execution gate (preload shares watchers; main caches histories
-  and folds by heads and evidence metadata; preview identity patches avoid refolds; Activity
-  retains summaries incrementally); main rebuilds summaries from uncapped project
-  conversations ([`src/main/run-summary-reader.ts`](../../src/main/run-summary-reader.ts)) without
-  creating a chat. Unknown coverage stays unknown; while a summary is pending the UI shows no totals.
-  `onRunSummary` shares one feed per run (`run-summary-feed.ts`): one fetch at a time, 250 ms
-  apart, asking only for the memoized (`run-summary-cache.ts`) graph events from the held last one,
-  which comes again with its compaction tail.
-  The reader keeps the histories of at most four recently opened projects (LRU) plus the Studio
-  conversation.
+- **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) reports work;
+  it never gates execution. Preload shares watchers, main caches and folds histories, Activity
+  keeps summaries incrementally. [`run-summary-reader.ts`](../../src/main/run-summary-reader.ts) reads
+  uncapped project conversations without creating chats. Unknown coverage stays unknown; pending
+  summaries show no totals. `onRunSummary` shares one feed per run (`run-summary-feed.ts`): serial
+  fetches 250 ms apart reuse the memoized graph (`run-summary-cache.ts`), including its compaction
+  tail. Concurrent cache reads with matching history and root share an evidence metadata scan;
+  later reads validate afresh. The reader keeps four recent project histories (LRU) plus Studio.
 - **Studio activity.** [`src/shared/studio-activity.ts`](../../src/shared/studio-activity.ts) projects
   the whole log; `StudioCore.activityEvents()` keeps per-thread cursors and only events
   `feedsActivity` says can change the projection.
@@ -1105,22 +1103,23 @@ managed local runtime; core has no Blender tool of its own.
   `OllamaEngine` pointed at a scripted host; packaged C++ acceptance uses offline fixtures only.
 - **Log and crash dumps.** Main keeps `<userData>/logs/studio.log`
   ([`src/main/logs.ts`](../../src/main/logs.ts)): rotated at 5 files of 5 MB, mode 0600, never
-  throws, and every line passes `scrubForLog` (`redactSecrets`, email addresses as `[email]`, the
-  home folder as `~` only as a whole path segment). It receives harness and core stderr, main errors
-  (`appendErrorDurably`, startup failures, uncaught errors), renderer console errors,
-  render-process-gone decisions and quit-step problems. `crashReporter` runs local-only
+  throws, and every line passes `scrubForLog` (`redactSecrets`, emails as `[email]`, the home
+  folder as `~`). It receives harness and core stderr, main errors
+  (`appendErrorDurably`, startup and uncaught), renderer console errors, render-process-gone
+  decisions and quit-step problems. `crashReporter` runs local-only
   (`uploadToServer: false`) with dumps in `<userData>/Crashpad`. Persisted writes stay immediate;
-  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters) and flush before
+  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters), flushed before
   other UI events or shutdown. Diagnostics read only a bounded log suffix.
 - **Lifecycle rules.** [`src/main/app-lifecycle.ts`](../../src/main/app-lifecycle.ts) holds the
-  Electron-free rules: process handlers log uncaught exceptions and rejections without exiting; the
-  reload policy reloads a crashed renderer at most twice in 60 s and never after a `clean-exit`;
+  Electron-free rules: process handlers log uncaught errors and rejections, never exiting; the
+  reload policy reloads a crashed renderer at most twice in 60 s, never after a `clean-exit`;
   `pageRecovery` notes each reload in the Studio chat and past the budget asks Reload/Quit (fixture
-  and smoke sessions leave the page dead). The Dock, a second launch or Keep running revive a dead
-  page; pushes skip it. `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`), logs
-  a failed or hung step and moves on.
+  and smoke sessions leave the page dead). The Dock, a relaunch or Keep running revive a dead
+  page; pushes skip it. Mid-run, close hides the window on a Mac and asks to quit
+  elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`),
+  logging and passing a failed or hung one.
   `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
-  agent job, and logs a plugin lease release that fails instead of skipping what follows it.
+  agent job, and logs a failed plugin lease release, skipping nothing after it.
 - **Diagnostics.** [`src/main/diagnostics.ts`](../../src/main/diagnostics.ts) builds the redacted
   Copy diagnostics text (versions, OS, paths, provider and CLI status, the last 100 log lines) on
   `studio:diagnostics` (fixture-safe); `ErrorBoundary` draws the error screen ([feature map](feature-map.md)).
@@ -1128,7 +1127,9 @@ managed local runtime; core has no Blender tool of its own.
   boundary) and unpacks spawned resources and native helpers from asar; the packaged smoke checks
   the archive for private roots. [`scripts/third-party-notices.mjs`](../../scripts/third-party-notices.mjs)
   generates notices, refuses license gaps and keeps Studio's license separate.
-  `afterPrune` runs [`scripts/package-prune.cjs`](../../scripts/package-prune.cjs) and `prePackage`
+  `afterPrune` runs [`scripts/package-prune.cjs`](../../scripts/package-prune.cjs), then
+  [`copyVcRuntime`](../../scripts/package-vc-runtime.cjs) puts the Visual C++ runtime DLLs Windows
+  executables import beside them ([why](../windows-sandbox.md#visual-c-runtime)); `prePackage`
   refuses a symlinked `node_modules`; what they keep is in
   [release readiness](../release-readiness.md#distribution-and-open-source).
 - Every build bundles the pinned ANGLE (macOS, Windows, Linux) in `resources/angle/`

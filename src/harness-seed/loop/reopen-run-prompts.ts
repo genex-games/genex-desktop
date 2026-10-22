@@ -51,9 +51,9 @@ export const MESSAGE = {
   /** Why, when Stop came after the reply and before the build was under way again. */
   stoppedFirst: "Stop came before it started again. It stays finished.",
   reopening: (end: string) =>
-    `The build goes on until your request is checked, by about ${end} at the latest — keep the app open and the Mac awake.`,
+    `The build goes on until your request is checked, by about ${end} at the latest — keep the app open and the computer awake.`,
   reopeningUntilSatisfied: (ceiling: string) =>
-    `The build goes on until what you asked for is checked working, and stops by about ${ceiling} whatever happens — keep the app open and the Mac awake.`,
+    `The build goes on until what you asked for is checked working, and stops by about ${ceiling} whatever happens — keep the app open and the computer awake.`,
   /** Said once for a finished build that no Loop can go on from here (chat-dispatch.ts); the message is answered as with Loop off. */
   loopUnused:
     "Loop can't continue this build here, so this message is answered as with Loop off — the build stays as it finished.",

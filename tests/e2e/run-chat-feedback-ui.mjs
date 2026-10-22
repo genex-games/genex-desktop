@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { request } from "../../scripts/studio-dev/client.ts";
+import { pressStageView } from "./stage-views.mjs";
 const exec = promisify(execFile),
   root = process.cwd(),
   profile = `chat-feedback-${Date.now()}`;
@@ -182,7 +183,7 @@ try {
         const s = await snap();
         return !s.text.includes("Loading conversation") && s.controls.some((c) => c.text === "Builds");
       }, "director conversation loaded");
-      await click('[data-stage-action="builds"]');
+      await pressStageView(click, "builds");
       await key("0", "Digit0");
       await until(async () => {
         const s = await snap();

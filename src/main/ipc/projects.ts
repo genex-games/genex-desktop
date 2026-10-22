@@ -4,19 +4,24 @@ import path from "node:path";
 import { dialog, shell, type BrowserWindow } from "electron";
 import { signerPasswordFile } from "../../substrate/mobile-sign.ts";
 import { tagGenexLink } from "../../plugins/genex/http.ts";
+import { browserMayOpen } from "../play/origins.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { ChatFileOpen } from "../../shared/chat-files.ts";
 import { isGenexRef } from "../../shared/genex-ref.ts";
+import { t } from "../../shared/i18n.ts";
 import { gameLocationPickerOptions, projectPickerOptions } from "../project-picker.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { exportForWindow, pickSigningReference } from "../export-window.ts";
 import type { IpcHandle } from "./registrar.ts";
 
-/** Why a project request from the renderer is refused. */
+/**
+ * Why a project request from the renderer is refused. A person reads `unknownProject`; the plain
+ * strings answer only a call our own renderer never makes (a link it does not offer, a closed window).
+ */
 const MESSAGE = {
-  httpsOnly: "only https urls",
+  httpsOnly: "only https urls, or the pages of the website Play links to",
   noWindow: "the window is not open",
-  unknownProject: (name: string) => `unknown project ${name}`,
+  unknownProject: (name: string) => t("unknown project {name}", { name }),
 } as const;
 
 export interface ProjectsIpcDeps {
@@ -25,14 +30,16 @@ export interface ProjectsIpcDeps {
   window(): BrowserWindow | null;
   /** `~/AI Games`, as a human reads it — the renderer never sees absolute paths. */
   gamesRootLabel(root: string): string;
+  /** The website Play links to (`play/origins.ts`): a development profile's may be plain http on this Mac. */
+  web: string;
 }
 
 export function registerProjectsIpc(
   handle: IpcHandle,
-  { core, window: currentWindow, gamesRootLabel }: ProjectsIpcDeps,
+  { core, window: currentWindow, gamesRootLabel, web }: ProjectsIpcDeps,
 ): void {
   handle("studio:open-url", async (payload) => {
-    if (!/^https:\/\//i.test(payload.url ?? "")) throw new Error(MESSAGE.httpsOnly);
+    if (!browserMayOpen(String(payload.url ?? ""), web)) throw new Error(MESSAGE.httpsOnly);
     // Every renderer link lands here; a genex.games page goes tagged `s=desktop`.
     await shell.openExternal(tagGenexLink(payload.url));
     return true;
@@ -115,10 +122,10 @@ export function registerProjectsIpc(
     const window = currentWindow();
     if (!window) throw new Error(MESSAGE.noWindow);
     const result = await dialog.showOpenDialog(window, {
-      title: "Folder for new games",
+      title: t("Folder for new games"),
       defaultPath: path.dirname(core.layout.gamesRoot),
-      buttonLabel: "Use this folder",
-      message: "Choose an empty folder, or create one. Games you already have stay where they are.",
+      buttonLabel: t("Use this folder"),
+      message: t("Choose an empty folder, or create one. Games you already have stay where they are."),
       properties: ["openDirectory", "createDirectory"],
     });
     const dir = result.filePaths[0];

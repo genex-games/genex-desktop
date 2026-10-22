@@ -9,6 +9,7 @@ import { readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { firstSentence } from "../../src/harness-seed/loop/workers/events.ts";
+import { forgetSandboxRefusals } from "../../src/harness-seed/loop/workers/sandbox-refusal.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { graphKeyOf, turnGraphKey, turnOfGraphKey } from "../../src/shared/run-graph-events.ts";
 import {
@@ -351,6 +352,34 @@ describe("why a worker stopped short, as a code the app words itself", { timeout
     const left = await start(pool, { title: "Bake the lights", task: "Bake them.", isolation: "read" });
     await pool.close();
     assert.equal(codeOf(host, left), WorkerStopCode.RunEnded);
+  });
+});
+
+describe("a workers' engine that cannot run its sandbox on this computer", { timeout: TEST_TIMEOUT_MS }, () => {
+  it("WIN-275: names the refusal by its code, and starts no other worker on that engine", async () => {
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    try {
+      const pool = await chatPool(host, repo);
+      const refused = await start(pool, { title: "Port the car", task: "Port it.", isolation: "read" });
+      await finish(host, pool, refused, {
+        ok: false,
+        stopReason: "sandbox_unavailable",
+        errorText: "Claude Code cannot run its sandbox on this computer (sandbox required but unavailable)",
+      });
+      assert.equal(recordsOf(host, poolWorkerId(refused))[1]?.payload.stopCode, WorkerStopCode.SandboxUnavailable);
+      const again = await pool.call(WorkerTool.Start, {
+        title: "Bake the lights",
+        task: "Bake them.",
+        isolation: "copy",
+      });
+      assert.match(again, /^Not started: Claude Code cannot run its sandbox on this computer/);
+      assert.match(again, /do the work yourself/);
+      assert.equal(host.sessions.length, 1, "no session was asked of the engine again");
+      assert.deepEqual(host.recorder.sequence("snapshot."), [], "nothing was copied for a worker that cannot run");
+    } finally {
+      forgetSandboxRefusals();
+    }
   });
 });
 

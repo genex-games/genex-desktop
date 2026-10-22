@@ -4,7 +4,8 @@
  * moves while asked to, at most at its frame rate, on one clock whatever changes meanwhile
  * (`stage-clock.ts`), and otherwise draws one still frame for each change (a shader that keeps
  * trails runs up to that moment first, once changes pause); a window that cannot keep up draws
- * fewer pixels rather than fewer frames, and a canvas out of sight draws nothing. A lost device is
+ * fewer pixels rather than fewer frames, and a canvas out of sight draws nothing: off screen, or
+ * covered by a page over its own (Play over home), which an observer cannot see. A lost device is
  * started again once.
  */
 import type { Effect, Surface, Texture } from "vgpu";
@@ -92,6 +93,8 @@ export interface StageOptions {
 /** A canvas drawing a shader. */
 export interface ShaderStage {
   update(inputs: StageInputs): void;
+  /** A page lies over the canvas's own, or has gone: covered, it draws nothing. */
+  cover(covered: boolean): void;
   dispose(): void;
 }
 
@@ -136,7 +139,11 @@ interface Stage {
   density: number;
   /** The canvas's size in points, as its last resize left it: never measured in a frame. */
   size: [number, number];
-  /** Whether any of the canvas is on screen: one out of sight draws nothing. */
+  /** Whether any of the canvas is on screen, as its observer says. */
+  onScreen: boolean;
+  /** Whether a page lies over the canvas's own: hidden there, it is still on screen to an observer. */
+  covered: boolean;
+  /** Whether the canvas can be seen: on screen and not covered. One out of sight draws nothing. */
   visible: boolean;
   clock: StageClock;
   time: number;
@@ -517,6 +524,19 @@ function recoloured(before: StageInputs | null, next: StageInputs): boolean {
   return before.page !== next.page || before.ink !== next.ink || before.accent !== next.accent;
 }
 
+/** The canvas may have come into sight or gone out of it: draw what it needs, or ask for no more frames. */
+function sightChanged(stage: Stage): void {
+  const visible = stage.onScreen && !stage.covered;
+  if (visible === stage.visible) return;
+  stage.visible = visible;
+  if (visible) {
+    play(stage);
+    return;
+  }
+  cancel(stage);
+  stopClock(stage.clock);
+}
+
 /** Watch the canvas's size and whether it is on screen; returns the unsubscribe. */
 function watchCanvas(stage: Stage): () => void {
   const resized = new ResizeObserver(([entry]) => {
@@ -527,15 +547,8 @@ function watchCanvas(stage: Stage): () => void {
     if (!stage.inputs?.moving) play(stage);
   });
   const seen = new IntersectionObserver(([entry]) => {
-    const visible = entry?.isIntersecting ?? true;
-    if (visible === stage.visible) return;
-    stage.visible = visible;
-    if (visible) {
-      play(stage);
-      return;
-    }
-    cancel(stage);
-    stopClock(stage.clock);
+    stage.onScreen = entry?.isIntersecting ?? true;
+    sightChanged(stage);
   });
   resized.observe(stage.canvas);
   seen.observe(stage.canvas);
@@ -563,6 +576,8 @@ export function createShaderStage(canvas: HTMLCanvasElement, options: StageOptio
     atlas: null,
     density: Math.min(window.devicePixelRatio || 1, options.maxDensity),
     size: [Math.max(1, canvas.clientWidth), Math.max(1, canvas.clientHeight)],
+    onScreen: true,
+    covered: false,
     visible: true,
     clock: stageClock(options.fps),
     time: options.stillTime,
@@ -585,6 +600,10 @@ export function createShaderStage(canvas: HTMLCanvasElement, options: StageOptio
       const changed = recoloured(stage.inputs, next);
       stage.inputs = next;
       apply(stage, next, changed);
+    },
+    cover(covered) {
+      stage.covered = covered;
+      sightChanged(stage);
     },
     dispose() {
       stage.disposed = true;

@@ -9,14 +9,16 @@
  * runs (`between.ts`): nothing is restored or restarted under a running turn.
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
-import type { CheckpointAnswer } from "../../../types/host-api.d.ts";
+import type { CheckpointAnswer, HookImage } from "../../../types/host-api.d.ts";
 import { type CheckpointAsk, notesText, runScope, takeCheckpoint } from "../../hooks.ts";
 import { clip, hasText } from "../../text.ts";
 import { minutes } from "../../time.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { MAX_SAVE_POINT_LABEL, newOpenJournal, type OpenJournal, type OpenSavePoint } from "./contract.ts";
 import { savePointRound } from "./graph.ts";
+import { SHOWS_WORDS } from "./evidence-prompts.ts";
 import { heldForLead, OPEN_WORDS } from "./prompts.ts";
+import { shownPicture } from "./shown-picture.ts";
 
 /** A taken checkpoint's answer. */
 type Taken = Extract<CheckpointAnswer, { snapshot: unknown }>;
@@ -41,8 +43,16 @@ export function checkpointNow(loopRun: LoopRun, label: string, onlyIfUnsaved = f
   return queued(loopRun, () => takeCheckpoint(loopRun.ctx, ask));
 }
 
-/** The save point a taken checkpoint makes: the journal's record and its round on the graph. */
-export async function recordSavePoint(loopRun: LoopRun, ask: SavePointAsk, taken: Taken): Promise<OpenSavePoint> {
+/**
+ * The save point a taken checkpoint makes: the journal's record and its round on the graph, led by
+ * the picture the lead named as showing the change, when it named one Genex could read.
+ */
+export async function recordSavePoint(
+  loopRun: LoopRun,
+  ask: SavePointAsk,
+  taken: Taken,
+  shown: { rel: string; image: HookImage } | null = null,
+): Promise<OpenSavePoint> {
   const journal = journalOf(loopRun);
   const point: OpenSavePoint = {
     label: ask.label,
@@ -51,10 +61,12 @@ export async function recordSavePoint(loopRun: LoopRun, ask: SavePointAsk, taken
     auto: ask.auto,
     at: nowOf(loopRun),
     notes: notesText(taken),
+    ...(shown ? { shows: shown.rel } : {}),
   };
   journal.savePoints.push(point);
   await loopRun.saveJournal().catch(() => {});
-  await savePointRound(loopRun, point, journal.savePoints.length, taken.images ?? []).catch(() => {});
+  const round = journal.savePoints.length;
+  await savePointRound(loopRun, point, round, taken.images ?? [], shown?.image ?? null).catch(() => {});
   return point;
 }
 
@@ -71,10 +83,21 @@ export async function savePointTool(loopRun: LoopRun, args: AnyRecord): Promise<
   // A recovery may yet take the folder back: a save point now would name the wrong files.
   if (loopRun.open?.recovering) return OPEN_WORDS.recovering;
   const summary = hasText(args.summary) ? args.summary.trim() : "";
+  // Read before the checkpoint: the picture is the one the lead looked at, as the save point keeps the folder.
+  const rel = hasText(args.shows) ? args.shows.trim() : "";
+  const picture = rel ? await shownPicture(loopRun.projectDir, rel) : null;
   const taken = await checkpointNow(loopRun, label);
   if (!("snapshot" in taken)) return OPEN_WORDS.notSaved(notKept(taken));
-  const point = await recordSavePoint(loopRun, { label, summary, auto: false }, taken);
-  return OPEN_WORDS.saved(point.label, point.notes, minutes(Math.max(0, loopRun.softDeadline - nowOf(loopRun))));
+  const shown = picture && "image" in picture ? { rel, image: picture.image } : null;
+  const point = await recordSavePoint(loopRun, { label, summary, auto: false }, taken, shown);
+  const left = minutes(Math.max(0, loopRun.softDeadline - nowOf(loopRun)));
+  return OPEN_WORDS.saved(point.label, point.notes, left, showsWords(rel, picture));
+}
+
+/** What the save point's answer says of its `shows`: nothing when it kept the picture, else what to do. */
+function showsWords(rel: string, picture: { image: HookImage } | { problem: string } | null): string | null {
+  if (!picture) return SHOWS_WORDS.none;
+  return "problem" in picture ? SHOWS_WORDS.refused(rel, picture.problem) : null;
 }
 
 /** The last save point with this label, or null. */

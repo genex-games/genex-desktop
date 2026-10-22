@@ -17,9 +17,26 @@ export function resolveElectron(checkout = process.cwd()) {
   }
 }
 
+/** A language tag as macOS lists one ("ja-JP", "zh-Hant-TW"); anything else is never passed on. */
+const LANGUAGE_TAG = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/;
+
+/**
+ * `-AppleLanguages (…)` for `STUDIO_FIXTURE_SYSTEM_LANGUAGES="ja-JP,en-US"`: macOS hands this one
+ * process that language list as the computer's (its argument domain; the computer's settings stay
+ * as they are), so a fixture launch with `STUDIO_FIXTURE_LANGUAGE=system` meets Genex the way a
+ * person on that Mac does. None without it, or off macOS.
+ * @param {string} platform @param {NodeJS.ProcessEnv} env @returns {string[]}
+ */
+function standInLanguages(platform, env) {
+  if (platform !== "darwin") return [];
+  const tags = (env.STUDIO_FIXTURE_SYSTEM_LANGUAGES ?? "").split(",").map((tag) => tag.trim());
+  const kept = tags.filter((tag) => LANGUAGE_TAG.test(tag));
+  return kept.length ? ["-AppleLanguages", `(${kept.join(", ")})`] : [];
+}
+
 /** Disposable fixture profiles only. Never use mock encryption with real account data. */
-export function fixtureElectronArgs(args, platform = process.platform) {
-  return [...(platform === "darwin" ? ["--use-mock-keychain"] : []), ...args];
+export function fixtureElectronArgs(args, platform = process.platform, env = process.env) {
+  return [...(platform === "darwin" ? ["--use-mock-keychain"] : []), ...args, ...standInLanguages(platform, env)];
 }
 /** @param {NodeJS.ProcessEnv} source @returns {NodeJS.ProcessEnv} */
 export function fixtureElectronEnv(source = process.env) {

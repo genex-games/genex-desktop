@@ -1,9 +1,9 @@
 {
 	"FileVersion": 3,
-	"Version": 8,
-	"VersionName": "0.6.2",
+	"Version": 10,
+	"VersionName": "0.8.0",
 	"FriendlyName": "Genex editor helper",
-	"Description": "Lets Genex build and play-test this game: runs the game's own build scripts (unreal/build/) with a library for kit pieces, instancing, world-aligned materials, atmosphere presets, lights and hero cameras; takes clean stills, play shots and motion strips; imports models, characters, animations and sounds, retargets clips and attaches meshes to sockets; holds the player's input and drives the pawn on the game's clock; and applies parts and exports the node reference for Genex's checks. Python only, nothing to compile.",
+	"Description": "Lets Genex build and play-test this game: runs the game's own build scripts (unreal/build/) with a library for kit pieces, instancing, world-aligned materials, atmosphere presets, lights and hero cameras; takes clean stills, play shots and motion strips; imports models, characters, animations and sounds, retargets clips, checks characters standing and walking, and attaches meshes to sockets; holds the player's input and drives the pawn on the game's clock; and applies parts and exports the node reference for Genex's checks. Python only, nothing to compile.",
 	"Category": "Editor",
 	"CreatedBy": "Genex",
 	"CanContainContent": true,

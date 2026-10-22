@@ -2,6 +2,8 @@
  * The words the game chat's coordinator (coordinator.ts) is given: who it is to the user, what
  * it may and may not do, and the run it answers for.
  */
+import type { AppLanguage } from "./app-language.ts";
+import { coordinatorLanguageRule } from "./language-prompts.ts";
 import { runSnapshot } from "./run-inbox.ts";
 import { coordinatorReopenRules } from "./reopen-run-prompts.ts";
 import type { AnyRecord, HarnessEvent } from "../types/harness.d.ts";
@@ -49,6 +51,7 @@ export function coordinatorPrompt({
   history,
   reopen = null,
   budgetChars = COORDINATOR_RECORD_CHARS,
+  appLanguage = null,
 }: {
   events: readonly HarnessEvent[];
   run: AnyRecord;
@@ -59,6 +62,8 @@ export function coordinatorPrompt({
   reopen?: { hours: number | null; frameCount?: number } | null;
   /** How much of the run the prompt may carry: a share of the model's window. */
   budgetChars?: number;
+  /** The language Genex speaks (`studio.language`): the fallback for Genex's own messages. */
+  appLanguage?: AppLanguage | null;
 }): string {
   const progress = { phase: journal?.phase, base: journal?.base, facets: journal?.facets, director: journal?.director };
   // Each part keeps its share of what this model can take; the message is never cut.
@@ -66,6 +71,7 @@ export function coordinatorPrompt({
     Math.floor((chars * Math.min(budgetChars, COORDINATOR_RECORD_CHARS)) / COORDINATOR_RECORD_CHARS);
   return [
     ...COORDINATOR_RULES,
+    coordinatorLanguageRule(appLanguage),
     ...(reopen ? coordinatorReopenRules(reopen.hours, reopen.frameCount ?? 0) : []),
     `SAVED PLAN (retain decisions and completed work):\n${head(JSON.stringify(savedPlan), share(PLAN_CHARS))}`,
     `SAVED PROGRESS:\n${head(JSON.stringify(progress), share(PROGRESS_CHARS))}`,

@@ -27,7 +27,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginContext } from "../../plugin-sdk/index.d.ts";
 import { type HookAnswer, type HookContext, HookEvent } from "../../shared/plugin-hooks.ts";
-import { agentPlaying, forgetAgentPlay } from "./agent-play.ts";
+import { agentsSetting, firstWentAhead } from "../../substrate/engine-agents.ts";
+import { agentPlaying, forgetAgentPlay, sawAgentPlay } from "./agent-play.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { OBSERVE_CALL_MS } from "../../shared/observers.ts";
@@ -68,6 +69,7 @@ import {
 } from "./editor-moments.ts";
 import { createReopenTools, type ProcessEnv } from "./editor-reopen.ts";
 import type { RunProgram } from "./automation-tests.ts";
+import { createMotionTools, MotionToolName } from "./motion-tools.ts";
 import { createShipTools, type ShipToolName } from "./plugin-ship.ts";
 import type { EditorRestart } from "./editor-restart.ts";
 import { EditorStart } from "./editor-status.ts";
@@ -81,8 +83,11 @@ import {
   LoopTool,
   type PartCode,
   pollUntil,
+  type QueueDeps,
 } from "./editor-queue.ts";
 import { OBJECT_TOOLSET } from "./editor-throttle.ts";
+import { createComputerPlay } from "./computer-play.ts";
+import type { EnginePlayTool } from "../../shared/engine-play.ts";
 import { GAME_PROJECT_FOLDER } from "./game-folder.ts";
 import { copyStamp, PART_NAME, readOtherParts, readPartCpp, readPartFiles } from "./part-files.ts";
 import {
@@ -144,6 +149,7 @@ const EPIC_APP_TOOLSET = "EditorToolset.EditorAppToolset";
 export const TOOLSET_OF = {
   [LoopTool.ApplyPart]: LOOP_TOOLSET,
   [LoopTool.StartPlay]: EPIC_APP_TOOLSET,
+  [LoopTool.SearchCVars]: EPIC_APP_TOOLSET,
   [LoopTool.Hold]: HELPER_TOOLSET,
   [LoopTool.CapturePlay]: LOOP_TOOLSET,
   [LoopTool.GameState]: LOOP_TOOLSET,
@@ -157,6 +163,8 @@ export const TOOLSET_OF = {
   [LoopTool.DriveRoute]: HELPER_TOOLSET,
   [LoopTool.ProbeRoute]: HELPER_TOOLSET,
   [LoopTool.PlayerState]: HELPER_TOOLSET,
+  [LoopTool.Mouse]: HELPER_TOOLSET,
+  [LoopTool.Pause]: HELPER_TOOLSET,
   [LoopTool.GetProperties]: OBJECT_TOOLSET,
   [LoopTool.SetProperties]: OBJECT_TOOLSET,
   [LoopEditorTool.RollbackPart]: LOOP_TOOLSET,
@@ -601,31 +609,46 @@ async function compileProblems(
 }
 
 /** The one editor queue the Loop's tools share, made on first use for the plugin's storage. */
+/** What the editor queue and the computer's play tools reach the game's editor and the clock through. */
+function queueDepsFor(deps: LoopToolsDeps, storage: string): QueueDeps {
+  const { watchCrash } = deps;
+  return {
+    editor: (game): EditorPort => ({
+      answering: () => deps.editorAnswers(storage, game),
+      call: (tool, args, timeoutMs) => deps.editorCall(storage, game, tool, args, timeoutMs),
+      ...(watchCrash ? { watchCrash: () => watchCrash(storage, game) } : {}),
+    }),
+    landCpp: landPartCpp,
+    now: deps.now,
+    sleep: deps.sleep,
+    fileReady: async (file) => (await stat(file).catch(() => null))?.isFile() === true,
+    readShot: async (file) => {
+      const info = await stat(file);
+      if (info.size > MAX_SHOT_BYTES) throw new Error(`${file} is too large`);
+      return (await readFile(file)).toString("base64");
+    },
+  };
+}
+
 function sharedQueue(deps: LoopToolsDeps): (storage: string) => EditorQueue {
   let queue: EditorQueue | undefined;
-  const { watchCrash } = deps;
   return (storage) => {
-    queue ??= createEditorQueue({
-      editor: (game): EditorPort => ({
-        answering: () => deps.editorAnswers(storage, game),
-        call: (tool, args, timeoutMs) => deps.editorCall(storage, game, tool, args, timeoutMs),
-        ...(watchCrash ? { watchCrash: () => watchCrash(storage, game) } : {}),
-      }),
-      landCpp: landPartCpp,
-      now: deps.now,
-      sleep: deps.sleep,
-      fileReady: async (file) => (await stat(file).catch(() => null))?.isFile() === true,
-      readShot: async (file) => {
-        const info = await stat(file);
-        if (info.size > MAX_SHOT_BYTES) throw new Error(`${file} is too large`);
-        return (await readFile(file)).toString("base64");
-      },
-    });
+    queue ??= createEditorQueue(queueDepsFor(deps, storage));
     return queue;
   };
 }
 
 /** The Loop's tools over one queue; `call` answers a tool by its name. */
+/**
+ * The person plays: agents wait for them, unless they may use Unreal while the person plays; then the
+ * first time for this game the answer says so (`wentAhead`), and the chat tells the person once.
+ */
+async function personPlaying(storage: string, game: string, answer: ReturnType<typeof probeAnswer>) {
+  if (!(await agentsSetting(storage)).whilePlaying) return answer;
+  const first = await firstWentAhead(storage, game);
+  return { ...answer, personActive: false, ...(first ? { wentAhead: true } : {}) };
+}
+
 export function createLoopTools(deps: LoopToolsDeps) {
   const queueFor = sharedQueue(deps);
   const game = gameOf;
@@ -641,12 +664,16 @@ export function createLoopTools(deps: LoopToolsDeps) {
 
   const compiles = createCompileJobs(deps.now);
   const cpp = createCppTools(deps);
+  const motion = createMotionTools(deps);
+  // Adding the C++ module or the sample's content restarts Unreal: one restart of a project at a time.
+  const restartsForJob = (project: string) => cpp.adding(project) || motion.adding(project);
   // No plugin build while Genex restarts the project's Unreal for another job: one build and one reopen at a time.
-  const ship = createShipTools(deps, (project) => cpp.adding(project) || reopen.reopening(project));
+  const ship = createShipTools(deps, (project) => restartsForJob(project) || reopen.reopening(project));
   const set: SetDeps = { ...deps, setup: deps.setup ?? systemSetup() };
-  // Adding the C++ module and building a plugin restart Unreal: the reopen tools read them as Genex's own reopen.
-  const reopen = createReopenTools(set, (project) => cpp.adding(project) || ship.restarting(project));
+  // Those jobs and building a plugin restart Unreal: the reopen tools read them as Genex's own reopen.
+  const reopen = createReopenTools(set, (project) => restartsForJob(project) || ship.restarting(project));
   const moments = momentTools(set, queueFor, reopen);
+  const play = createComputerPlay({ queueDeps: (storage) => queueDepsFor(deps, storage), queue: queueFor, game });
 
   const handlers: Record<LoopToolName, Handler> = {
     [LoopToolName.CheckPart]: async (args, context, storage) => {
@@ -707,6 +734,9 @@ export function createLoopTools(deps: LoopToolsDeps) {
     ...leadHandlers(set, moments),
     ...ship.handlers,
     [MomentToolName.OpenForRun]: async (_args, context, storage) => openForRun(moments.ops(context, storage)),
+    [MotionToolName.Status]: (_args, context, storage) => motion.status(storage, game(context)),
+    [MotionToolName.Add]: (_args, context, storage) => motion.add(storage, game(context), context.directory),
+    ...play.handlers,
   };
   return {
     has: (name: string): name is AnyLoopToolName => Object.hasOwn(every, name),
@@ -716,7 +746,14 @@ export function createLoopTools(deps: LoopToolsDeps) {
 }
 
 /** Any of the Loop's tools: the part tools, the harness's, the lead's and the moments' own. */
-export type AnyLoopToolName = LoopToolName | LiveLoopToolName | LeadLoopToolName | MomentToolName | ShipToolName;
+export type AnyLoopToolName =
+  | LoopToolName
+  | LiveLoopToolName
+  | LeadLoopToolName
+  | MomentToolName
+  | ShipToolName
+  | MotionToolName
+  | EnginePlayTool;
 
 /** The tools' dependencies with setup's chosen: a test's, or this computer's. */
 type SetDeps = LoopToolsDeps & { setup(storage: string): SetupOptions };
@@ -850,7 +887,10 @@ function momentTools(
     const activity = await readActivity(deps, storage, game);
     // The agent's play ended some other way than its own stop: its marker would claim the next play.
     if (activity && !activity.pie) await forgetAgentPlay(storage, game, asked);
-    return probeAnswer(activity, await agentPlaying(storage, game, deps.now()), queueFor(storage).playing(game));
+    const agents = await agentPlaying(storage, game, deps.now());
+    if (activity?.pie && agents) await sawAgentPlay(storage, game, deps.now());
+    const answer = probeAnswer(activity, agents, queueFor(storage).playing(game));
+    return answer.personActive ? personPlaying(storage, game, answer) : answer;
   };
   const closed = new Set<string>();
   const ops = (context: PluginContext, storage: string): MomentOps => {
@@ -898,6 +938,9 @@ function editorOps(
     answers: () => deps.editorAnswers(storage, game).catch(() => false),
     running: () => reopen.running(storage, game),
     activity: () => readActivity(deps, storage, game, MOMENT_ASK_MS),
+    mayEndPlay: async () =>
+      (await agentPlaying(storage, game, deps.now())) ||
+      (inRun(context.hook) && (await agentsSetting(storage)).whilePlaying),
     // A checkpoint's save has its step to itself; before a restore and at a run's start the busy wait leaves it less.
     save: () =>
       saveAll(deps, storage, game, context.hook?.on === HookEvent.CheckpointBefore ? CHECKPOINT_SAVE : MOMENT_SAVE),

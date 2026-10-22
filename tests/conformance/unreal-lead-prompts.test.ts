@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { stopRuleWords } from "../../src/harness-seed/loop/finish-check-prompts.ts";
 import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { launchRules } from "../../src/harness-seed/loop/launch-prompts.ts";
 import { BRIDGE_TOOL_CMD, EngineId } from "../../src/harness-seed/loop/model-roles.ts";
@@ -106,6 +107,16 @@ describe("the Unreal lead's brief", () => {
     assert.match(leadBrief({ ...OPTIONS, templateKind: TemplateKind.Vehicle }), /wheeled vehicle/);
     const facts = "Game mode: BP_ThirdPersonGameMode spawns BP_ThirdPersonCharacter as the player.";
     assert.match(leadBrief({ ...OPTIONS, template: facts }), /THE TEMPLATE:[\s\S]*BP_ThirdPersonCharacter/);
+  });
+
+  it("tells the lead when no's stop its Loop, by the Loop's kind, and that its own captures outrank the files", () => {
+    for (const untilFinish of [true, false]) {
+      const brief = leadBrief({ ...OPTIONS, untilFinish });
+      assert.ok(brief.includes(stopRuleWords(untilFinish)), `untilFinish ${untilFinish}`);
+    }
+    assert.ok(leadBrief(OPTIONS).includes(stopRuleWords(null)), "a brief that names no kind covers both");
+    assert.match(leadBrief({ ...OPTIONS, untilFinish: false }), /keep fixing[^\n]*a new save point and new proof/);
+    assert.match(leadBrief(OPTIONS), /judge it by your own captures, which outrank its files/);
   });
 
   it("is the only builder, looks first, and judges by its own clean captures", () => {

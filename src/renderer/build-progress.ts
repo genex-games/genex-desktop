@@ -1,9 +1,10 @@
 import { mergeChatEvents } from "../shared/chat-history.ts";
 import { CustomEvent, customEvent, customRecord, DELEGATED_PREFIX } from "../shared/custom-events.ts";
 import { type ConversationRecord, type EventEnvelope, EventKind } from "../shared/event-log.ts";
+import { intlLocale, t } from "../shared/i18n.ts";
 import { messageQueueState, type QueueView } from "../shared/message-queue.ts";
 import { graphKeyOf, turnOfGraphKey } from "../shared/run-graph-events.ts";
-import { RunState, runExecutions } from "../shared/run-state.ts";
+import { type RunExecution, RunState, runExecutions, workStart } from "../shared/run-state.ts";
 import { summaryCounts, summaryOutcome } from "../shared/run-summary.ts";
 import {
   answeringTurn,
@@ -15,6 +16,7 @@ import {
   hasMergedBuild,
   headVerdict,
   IterationStatus,
+  queuedAsk,
   type RunGraph,
   type RunNode,
   RUN_ID_EVENTS,
@@ -22,7 +24,7 @@ import {
   turnKeyOf,
   WORKER_EVENTS,
 } from "./run-graph.ts";
-import { DayGroup, dayOf } from "./notifications.ts";
+import { DayGroup, dayGroup, dayOf } from "./notifications.ts";
 import {
   BUILD_HISTORY_WORDS,
   keptSoFarWords,
@@ -175,6 +177,10 @@ export interface HistoryEntry {
   rounds: number;
   state: string;
   startedAt: string | null;
+  /** What the person asked for it: the Loop's goal, or the words of the message the turn answers; "" when unknown. */
+  ask: string;
+  /** While it works, when its clock began (ms): the time it has worked so far, counted back from now. */
+  since: number | null;
   chat?: true;
 }
 
@@ -183,6 +189,15 @@ interface TurnDraft {
   startedAt: string;
   started: Set<string>;
   ended: Set<string>;
+  /** What its first worker's start says the person asked. */
+  ask: string;
+}
+
+/** A run while the history is read: its rounds, when it opened, and the goal it was given. */
+interface RunDraft {
+  rounds: number;
+  startedAt: string | null;
+  ask: string;
 }
 
 /** Note one worker record of a chat turn; true when it is the turn's first, which opens it in the history. */
@@ -195,10 +210,11 @@ function readTurnRecord(
   const workerId = typeof payload.workerId === "string" ? payload.workerId : "";
   if (!workerId) return false;
   const known = turns.get(key);
-  const turn = known ?? { startedAt: e.created_at, started: new Set<string>(), ended: new Set<string>() };
+  const turn = known ?? { startedAt: e.created_at, started: new Set<string>(), ended: new Set<string>(), ask: "" };
   if (!known) turns.set(key, turn);
   const ended = e.data.type === EventKind.Custom && e.data.event_type === CustomEvent.WorkerFinished;
   (ended ? turn.ended : turn.started).add(workerId);
+  if (!ended && !turn.ask && typeof payload.ask === "string") turn.ask = payload.ask.trim();
   return !known;
 }
 
@@ -207,14 +223,15 @@ function readTurnRecord(
  * a run already open the way `lastGraphKey` reads it (a resume registers it again).
  */
 function readRunRecord(
-  runs: Map<string, { rounds: number; startedAt: string | null }>,
+  runs: Map<string, RunDraft>,
   id: string,
-  eventType: string,
-  at: string,
+  record: { eventType: string; at: string; payload: Record<string, unknown> },
 ): boolean {
+  const { eventType, at, payload } = record;
   const run = runs.get(id);
   if (RUN_OPEN_EVENTS.has(eventType)) {
-    runs.set(id, { rounds: run?.rounds ?? 0, startedAt: run?.startedAt ?? at });
+    const goal = typeof payload.goal === "string" ? payload.goal.trim() : "";
+    runs.set(id, { rounds: run?.rounds ?? 0, startedAt: run?.startedAt ?? at, ask: run?.ask || goal });
     return true;
   }
   if (run && ROUND_EVENTS.has(eventType)) run.rounds++;
@@ -239,7 +256,7 @@ function turnState(turn: TurnDraft, key: string, queue: QueueView): string {
 /** The history while the log is read: the builds, newest last, and what each holds. */
 interface HistoryDraft {
   order: string[];
-  runs: Map<string, { rounds: number; startedAt: string | null }>;
+  runs: Map<string, RunDraft>;
   turns: Map<string, TurnDraft>;
 }
 
@@ -253,7 +270,8 @@ function readHistoryRecord(draft: HistoryDraft, e: EventEnvelope): void {
     return;
   }
   const id = typeof payload.runId === "string" ? payload.runId : "";
-  if (id && readRunRecord(draft.runs, id, e.data.event_type, e.created_at)) moveLast(draft.order, id);
+  const record = { eventType: e.data.event_type, at: e.created_at, payload };
+  if (id && readRunRecord(draft.runs, id, record)) moveLast(draft.order, id);
 }
 
 /**
@@ -271,16 +289,40 @@ export function buildHistory(events: EventEnvelope[], threadId: string | null): 
   const queue = messageQueueState(own);
   return draft.order.map((key): HistoryEntry => {
     const turn = draft.turns.get(key);
-    if (turn)
-      return { runId: key, rounds: 0, state: turnState(turn, key, queue), startedAt: turn.startedAt, chat: true };
-    const run = draft.runs.get(key) ?? { rounds: 0, startedAt: null };
-    return {
-      runId: key,
-      rounds: run.rounds,
-      state: executions.get(key)?.state ?? RunState.Running,
-      startedAt: run.startedAt,
-    };
+    if (turn) return turnEntry(own, queue, key, turn);
+    return runEntry(key, draft.runs.get(key) ?? { rounds: 0, startedAt: null, ask: "" }, executions.get(key));
   });
+}
+
+/** A chat turn in the history: running while a worker or the lead's answer is, named by the message it answers. */
+function turnEntry(events: EventEnvelope[], queue: QueueView, key: string, turn: TurnDraft): HistoryEntry {
+  const state = turnState(turn, key, queue);
+  const message = turnOfGraphKey(key);
+  const since = Date.parse(turn.startedAt);
+  return {
+    runId: key,
+    rounds: 0,
+    state,
+    startedAt: turn.startedAt,
+    ask: turn.ask || (message ? queuedAsk(events, queue, message) : ""),
+    since: state === RunState.Running && Number.isFinite(since) ? since : null,
+    chat: true,
+  };
+}
+
+/** A run in the history. */
+function runEntry(key: string, run: RunDraft, execution: RunExecution | undefined): HistoryEntry {
+  const state = execution?.state ?? RunState.Running;
+  const since = state === RunState.Running ? runClockStart(run, execution) : null;
+  return { runId: key, rounds: run.rounds, state, startedAt: run.startedAt, ask: run.ask, since };
+}
+
+/** Where a working run's clock starts: the time it has worked counted back from now, not the time it spent paused; else when it opened. */
+function runClockStart(run: RunDraft, execution: RunExecution | undefined): number | null {
+  const worked = execution ? workStart(execution.worked) : null;
+  if (worked !== null) return worked;
+  const opened = run.startedAt ? Date.parse(run.startedAt) : Number.NaN;
+  return Number.isFinite(opened) ? opened : null;
 }
 
 /** The day a build started, as its history label says it: "today", "yesterday", else "5 Sep"; null when unknown. */
@@ -290,7 +332,23 @@ function dayWords(startedAt: string | null, now: Date): string | null {
   const day = dayOf(startedAt ?? "", now);
   if (day === DayGroup.Today) return BUILD_HISTORY_WORDS.today;
   if (day === DayGroup.Yesterday) return BUILD_HISTORY_WORDS.yesterday;
-  return date.toLocaleDateString([], { day: "numeric", month: "short" });
+  return date.toLocaleDateString(intlLocale(), { day: "numeric", month: "short" });
+}
+
+/** The picker's times are tabular, and tabular figures widen a plain (or narrow) space: "9:08 PM" keeps a no-break one. */
+const TIME_SPACE = "\u00a0";
+
+/** When a build started, as the Builds picker lists it: "15:02" today, "Yesterday", else "5 Sep"; "" when unknown. */
+export function buildWhen(startedAt: string | null, now: Date = new Date()): string {
+  const date = startedAt ? new Date(startedAt) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const day = dayOf(startedAt ?? "", now);
+  if (day === DayGroup.Yesterday) return dayGroup(startedAt ?? "", now);
+  const words =
+    day === DayGroup.Today
+      ? date.toLocaleTimeString(intlLocale(), { hour: "numeric", minute: "2-digit" })
+      : date.toLocaleDateString(intlLocale(), { day: "numeric", month: "short" });
+  return words.replace(/\s/gu, TIME_SPACE);
 }
 
 /** What a build in the history is called: "This chat turn" for the newest build, else by its day: "Loop from yesterday". */
@@ -301,6 +359,12 @@ function historyName(entry: HistoryEntry, newest: boolean, now: Date): string {
   return chat ? BUILD_HISTORY_WORDS.turnFrom(day) : BUILD_HISTORY_WORDS.loopFrom(day);
 }
 
+/** A build's state as its history label says it after its name; a finished build says none. */
+const HISTORY_STATE_WORDS: Readonly<Record<string, string>> = {
+  [RunState.Running]: t("running"),
+  [RunState.Paused]: t("paused"),
+};
+
 /**
  * A build in the history, in plain words: what it was and when, then its state unless it simply
  * finished ("Loop from yesterday · paused"). `newest`: it is the latest build in the history.
@@ -310,7 +374,8 @@ export function historyLabel(
   { newest, now = new Date() }: { newest: boolean; now?: Date },
 ): string {
   const name = historyName(entry, newest, now);
-  return entry.state === RunState.Finished ? name : `${name} · ${entry.state}`;
+  if (entry.state === RunState.Finished) return name;
+  return `${name} · ${HISTORY_STATE_WORDS[entry.state] ?? entry.state}`;
 }
 
 /**

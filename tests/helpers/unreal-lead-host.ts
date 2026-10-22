@@ -378,6 +378,8 @@ function opsOf(host: Internals): MomentOps {
     answers: async () => (await read().catch(() => null))?.answering === true,
     running: async () => (await read()).running,
     activity: async () => (await call("editor-activity")) as EditorActivity,
+    // The lead host's plays are the queue's checks, which end themselves: a save never ends one.
+    mayEndPlay: async () => false,
     save: async () => {
       const saved = (await call("save-all")) as { saved?: unknown; dirty?: unknown };
       return { saved: saved?.saved !== false, dirty: Array.isArray(saved?.dirty) ? saved.dirty.map(String) : [] };

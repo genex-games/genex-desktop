@@ -6,6 +6,7 @@
  */
 import type { ChangeEvent, CSSProperties, JSX, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import {
   addBackdropUpload,
   type BackdropPicture,
@@ -44,52 +45,57 @@ import { Input } from "../ui/input.tsx";
 import { ViewSwitcher } from "../ui/view-switcher.tsx";
 
 const MESSAGE = {
-  settings: "Settings",
-  picture: "Picture",
-  upload: "Upload",
-  addedPicture: (n: number) => `Added picture ${n}`,
-  remove: (label: string) => `Remove ${label}`,
-  color: "Color",
-  colors: "Colors",
-  main: "Main color",
-  accent: "Accent color",
-  useTheme: "Use theme",
-  grid: "Grid",
-  characters: "Characters",
+  settings: t("Settings"),
+  picture: t("Picture"),
+  upload: t("Upload"),
+  addedPicture: (number: number) => t("Added picture {number}", { number }),
+  remove: (name: string) => t("Remove {name}", { name }),
+  color: t("Color"),
+  colors: t("Colors"),
+  main: t("Main color"),
+  accent: t("Accent color"),
+  useTheme: t("Use theme"),
+  grid: t("Grid"),
+  characters: t("Characters"),
   problems: {
-    [UploadProblem.TooLarge]: "Choose a picture smaller than 40 MB.",
-    [UploadProblem.Unreadable]: "That file could not be read as a picture. Choose a JPG, PNG or WebP.",
-    [UploadProblem.Full]: `You have ${MAX_BACKDROP_UPLOADS} pictures. Remove one to add another.`,
-    [UploadProblem.Unsaved]: "The picture could not be saved. Free some disk space and try again.",
+    [UploadProblem.TooLarge]: t("Choose a picture smaller than 40 MB."),
+    [UploadProblem.Unreadable]: t("That file could not be read as a picture. Choose a JPG, PNG or WebP."),
+    [UploadProblem.Full]: t(
+      "You have {count, plural, one {# picture} other {# pictures}}. Remove one to add another.",
+      {
+        count: MAX_BACKDROP_UPLOADS,
+      },
+    ),
+    [UploadProblem.Unsaved]: t("The picture could not be saved. Free some disk space and try again."),
   } satisfies Record<UploadProblem, string>,
 } as const;
 
 const GRIDS = [
-  { key: DotGrid.Regular, label: "Regular" },
-  { key: DotGrid.Benday, label: "Ben-Day" },
+  { key: DotGrid.Regular, label: t("Regular") },
+  { key: DotGrid.Benday, label: t("Ben-Day") },
 ] as const;
 
 /** Each slider's name. */
 const LABELS: Record<BackdropNumber, string> = {
-  strength: "Strength",
-  blur: "Blur",
-  grain: "Grain",
-  gamma: "Gamma",
-  blackPoint: "Black point",
-  whitePoint: "White point",
-  lineColumns: "Columns",
-  lineRows: "Rows",
-  dotStep: "Grid size",
-  dotMin: "Smallest dot",
-  dotMax: "Largest dot",
-  dotAngle: "Angle",
-  dotCorner: "Corner radius",
-  dotNoise: "Noise",
-  threshold: "Threshold",
-  asciiColumns: "Columns",
-  speed: "Speed",
-  scale: "Size",
-  glow: "Glow",
+  strength: t("Strength"),
+  blur: t("Blur"),
+  grain: t("Grain"),
+  gamma: t("Gamma"),
+  blackPoint: t("Black point"),
+  whitePoint: t("White point"),
+  lineColumns: t("Columns"),
+  lineRows: t("Rows"),
+  dotStep: t("Grid size"),
+  dotMin: t("Smallest dot"),
+  dotMax: t("Largest dot"),
+  dotAngle: t("Angle"),
+  dotCorner: t("Corner radius"),
+  dotNoise: t("Noise"),
+  threshold: t("Threshold"),
+  asciiColumns: t("Columns"),
+  speed: t("Speed"),
+  scale: t("Size"),
+  glow: t("Glow"),
 };
 /** A live background's own sliders. */
 const LIVE_SLIDERS: readonly BackdropNumber[] = ["speed", "scale", "glow"];

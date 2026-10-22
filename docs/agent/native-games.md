@@ -221,3 +221,13 @@ through a host-level verified download cache (`download-cache.ts`, in every prof
 `denyWrite`); installs, prewarm and builds stay per profile. A developer profile may seed its prewarm
 from the normal profile's manifest-checked, relocatable outputs (`prewarm-seed.ts`), never the reverse.
 A live developer profile seeds its Rust stack from the dev store, digest-checked (`rust-seed.ts`).
+
+## Profiles and crash records
+
+A Rust game's `profile` verb answers
+`studio:native.profile` (Live's profile strip, polled only while open) and `preview.frameProfile`,
+checked by [`native-profile.ts`](../../src/substrate/native-profile.ts).
+[`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps a run's last `crash` record (or a
+host-made `hang` or `process-exit`) in the game's `.studio/crashes/` (at most 32, one per
+signature), appends `game_crashed` once, serves `game.crashes` and Live's crash card;
+`crash-symbolicate.ts` names frames with the sandboxed `genex-symbolicate`; nothing uploads.

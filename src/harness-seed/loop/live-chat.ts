@@ -13,6 +13,7 @@
  */
 import { leadLineOf, leadLinesChanged, type LeadLine } from "./director/lead-line.ts";
 import { attachedPicturesLine } from "./live-chat-prompts.ts";
+import { WRAPPING_UP_NOTE } from "./steer-switch-prompts.ts";
 import { RunEvent } from "./run-events.ts";
 import { SteerDelivery } from "./steer-delivery.ts";
 import { type ActiveRun, type Studio, heldRuns } from "./studio-state.ts";
@@ -25,8 +26,13 @@ const wordsOf = (action: QueueAction): string => String(action.text ?? "").trim(
 /** The game's folder the chat saves a message's pictures in (`references`, relative to the game). */
 const REFERENCES_FOLDER = "references";
 
-/** How many pictures travel with a message: the composer's stills, a commission's frames, or the log's count. */
+/**
+ * How many pictures travel with a message that the chat saves in the game: the ones the composer
+ * attached (`pickedImages`; the rest of its stills are files its words already name), else its
+ * stills, a commission's frames, or the log's count.
+ */
 function pictureCount(action: QueueAction): number {
+  if (typeof action.pickedImages === "number" && action.pickedImages >= 0) return action.pickedImages;
   if (Array.isArray(action.stills) && action.stills.length) return action.stills.length;
   if (Array.isArray(action.autopilot?.frames) && action.autopilot.frames.length) return action.autopilot.frames.length;
   const counted = Number(action.imageCount);
@@ -45,7 +51,9 @@ const isSavedReference = (file: unknown): file is string =>
 function savedPictures(action: QueueAction): string[] | null {
   const count = pictureCount(action);
   if (count === 0) return [];
-  const saved = Array.isArray(action.references) ? action.references.filter(isSavedReference) : [];
+  // Every file its pictures are saved as (a picture sent before included); an older app's added ones only.
+  const files = Array.isArray(action.pictureFiles) ? action.pictureFiles : action.references;
+  const saved = Array.isArray(files) ? files.filter(isSavedReference) : [];
   return saved.length >= count ? saved : null;
 }
 
@@ -79,32 +87,49 @@ export function openBuildOf(studio: Studio, threadId: string): ActiveRun | undef
  * marked as the lead's (`how: "lead"`) — once heard, or back with the chat, a later run of the
  * run never tells it again (run-inbox.ts), and the chat's own `resume_run` records its words anew.
  */
-function steerOf(line: LeadLine, item: QueueAction) {
+function steerOf(line: LeadLine, item: QueueAction, wrapping: boolean) {
+  const words = leadWordsOf(item);
   return [
     {
       event_type: RunEvent.RunSteering,
       payload: {
         runId: line.runId,
-        text: leadWordsOf(item),
+        text: wrapping ? `${words}\n\n${WRAPPING_UP_NOTE}` : words,
         sourceMessageId: item.messageId,
         how: SteerDelivery.Lead,
+        // Told, not delivered: the chat answers it once the run closes (the chat reads it here all the same).
+        ...(wrapping ? { kept: true } : {}),
         at: new Date().toISOString(),
       },
     },
   ];
 }
 
-/** The door to the lead of this chat's open build, when that lead takes this message now. */
+/**
+ * This copy's door keeps what a lead in its wrap-up is told (`LeadDoor.keeps`): a wrap-up only goes
+ * on hearing the chat when this and the queue both do (director/wake.ts), else its line shuts.
+ */
+export const DOOR_KEEPS_IN_WRAP_UP = true;
+
+/**
+ * The door to the lead of this chat's open build, when that lead takes this message now. In its
+ * wrap-up the lead still hears it, but the chat keeps it to answer once the run has closed (`keeps`):
+ * the build is ending, and new work is the chat's. A message the lead was told so has no door again.
+ */
 export function leadDoor(studio: Studio, threadId: string, action: QueueAction): LeadDoor | null {
   const build = openBuildOf(studio, threadId);
   const line = build ? leadLineOf(build.run.runId) : undefined;
   const takes = line?.threadId === threadId && line.open() && forTheLead(action);
   if (!line || !takes) return null;
+  // A kept older lead-line.ts has no wrap-up: its line shuts instead.
+  const wrapping = typeof line.wrapping === "function" && line.wrapping();
+  if (wrapping && action.toldLead === line.runId) return null;
   return {
     into: line.runId,
     open: () => line.open(),
-    records: (item) => steerOf(line, item),
+    records: (item) => steerOf(line, item, wrapping),
     handed: (item, giveBack) => line.hear(item, giveBack),
+    ...(wrapping ? { keeps: true } : {}),
   };
 }
 

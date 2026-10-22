@@ -1,6 +1,7 @@
 /** Genex desktop dialog, adapted from the source Radix branch (no mobile drawer). */
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Icon } from "./icons.tsx";
 import { cn } from "./cn.ts";
 import { prefersReducedMotion } from "./media-queries.ts";
@@ -31,6 +32,7 @@ export function DialogSurface({
   dismissible = true,
   headerHidden = false,
   layer = "base",
+  onBack,
 }: {
   title: string;
   /** A glyph after the title's words, such as Publish to the web's globe. */
@@ -48,6 +50,8 @@ export function DialogSurface({
   headerHidden?: boolean;
   /** `nested` for a dialog opened from inside another one. */
   layer?: keyof typeof layers;
+  /** A Back arrow before the title, for a dialog whose content has pages of its own. */
+  onBack?: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
@@ -59,6 +63,12 @@ export function DialogSurface({
       if (timer.current) clearTimeout(timer.current);
     },
     [],
+  );
+  const heading = (
+    <Dialog.Title className={cn("text-title font-medium text-foreground", titleIcon && "flex items-center gap-2")}>
+      {title}
+      {titleIcon}
+    </Dialog.Title>
   );
   function close() {
     if (!dismissible) return;
@@ -111,12 +121,21 @@ export function DialogSurface({
           )}
         >
           <div className={headerHidden ? "sr-only" : cn("flex min-w-0 flex-col gap-1.5", showClose && "pr-8")}>
-            <Dialog.Title
-              className={cn("text-title font-medium text-foreground", titleIcon && "flex items-center gap-2")}
-            >
-              {title}
-              {titleIcon}
-            </Dialog.Title>
+            {onBack ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-label={t("Back")}
+                  onClick={onBack}
+                  className="-ml-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-control-text-hover"
+                >
+                  <Icon name="chevron-left" />
+                </button>
+                {heading}
+              </div>
+            ) : (
+              heading
+            )}
             <Dialog.Description className={description ? "text-dialog-body text-muted-foreground" : "sr-only"}>
               {description ?? title}
             </Dialog.Description>
@@ -125,7 +144,7 @@ export function DialogSurface({
           {showClose && (
             <Dialog.Close
               disabled={!dismissible}
-              aria-label="Close"
+              aria-label={t("Close")}
               className="absolute top-3.5 right-3.5 inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-control-text-hover"
             >
               <Icon name="close" />

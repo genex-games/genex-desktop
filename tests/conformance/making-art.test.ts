@@ -1,8 +1,8 @@
 /**
- * The drawing on a card while its asset is made. What it promises: every kind draws, inside the
- * card's drawing area at every moment (it never grows past the card), the beam sweeps up and down
- * the subject leaving the part above it faint, a still frame is built with no beam, and the same
- * moment always draws the same frame.
+ * The drawing on a card while its asset is made, the Genex account's (Settings, Publish) and
+ * Multiplayer's. What it promises: every kind draws, inside the card's drawing area at every moment
+ * (it never grows past the card), the beam sweeps up and down the subject leaving the part above it
+ * faint, a still frame is built with no beam, and the same moment always draws the same frame.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -93,7 +93,14 @@ describe("the making drawing", () => {
   it("fills a solid's silhouette and a mark's face", () => {
     for (const drawing of [MakingDrawing.Character, MakingDrawing.Model, MakingDrawing.Texture])
       assert.ok(makingFrame(drawing, 1, false).fill.length > 0, drawing);
-    for (const drawing of [MakingDrawing.Image, MakingDrawing.Video, MakingDrawing.Sound])
+    for (const drawing of [
+      MakingDrawing.Image,
+      MakingDrawing.Video,
+      MakingDrawing.Sound,
+      MakingDrawing.Account,
+      MakingDrawing.Multiplayer,
+      MakingDrawing.Remix,
+    ])
       assert.ok(makingFrame(drawing, 1, false).face.length >= 2, `${drawing}'s face has its inner outlines`);
   });
 });

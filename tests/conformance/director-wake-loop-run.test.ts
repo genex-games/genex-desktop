@@ -665,6 +665,56 @@ describe("live chat during a build", () => {
     assert.equal(finishedEvent.stoppedBecause, "stopped by the user", "it ran until the user stopped it");
   });
 
+  /*
+   * The golf game's lead: Codex continuing the chat's own session, whose first turn ran on while
+   * "stop" sat unread for its whole 45 minutes. Its very first turn is cut for the words now.
+   */
+  it("L10. a lead continuing the chat's own session is cut short in its first turn for a stop, and told a stop is wrap_up", {
+    timeout: RIG_TIMEOUT_MS,
+  }, async () => {
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-first-cut");
+    // The chat already talked to Codex: the run's lead continues that session from its first turn.
+    await rig.core.append(
+      [
+        {
+          type: "custom",
+          event_type: "contractor_session",
+          payload: { project: project.name, engine: "codex", sessionId: "chat-1" },
+        },
+      ],
+      await rig.core.threadForGame(project.name),
+    );
+    const lead: DelegateRequest[] = [];
+    let working = false;
+    fakeEngine(rig, async (request) => {
+      if (!request.director) return hangUntilStopped(request, () => {});
+      lead.push(request);
+      if (lead.length === 1) {
+        // Its first turn, on the brief, works on and on.
+        working = true;
+        await aborted(request);
+        return stopped("chat-1");
+      }
+      speak(request, "Stopping: wrapping the build up.");
+      return turnResult("chat-1", "wrapping up");
+    });
+    const running = dispatch();
+    await until(() => working, "the lead's first turn to start");
+    const { thread, messageId } = await say(rig, project.name, "stop the build");
+    assert.equal((await stateOf(rig, thread, messageId))?.state, "delivered");
+    await until(() => lead.length === 2, "the first turn to be cut and resumed with the message");
+    await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
+    await finished();
+    await running;
+
+    assert.equal(lead[0]?.resume, "chat-1", "the first turn continues the chat's own session");
+    const resumed = lead[1];
+    assert.equal(resumed?.resume, "chat-1", "the same session, resumed");
+    assert.match(String(resumed?.prompt), /cut short/i, "it is told it was cut");
+    assert.match(String(resumed?.prompt), /stop or finish[^\n]*wrap_up/i, "and that a stop is wrap_up");
+    assert.match(String(resumed?.prompt), /THE USER SAYS[\s\S]*stop the build/);
+  });
+
   it("L3. an engine that reads input mid-turn takes the message in the running turn, and it is not said again", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {

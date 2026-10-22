@@ -21,11 +21,12 @@ import {
 import { partRows, Tone } from "../../src/renderer/run-steps.ts";
 import {
   buildsLayout,
+  endedOnNo,
   FinishLook,
   finishCheckFace,
   finishCheckLook,
   finishPanelTone,
-  reasonTone,
+  leftOf,
   roundNoteOf,
 } from "../../src/renderer/run-tree.ts";
 import { FINISH_CHECK_WORDS } from "../../src/renderer/words.ts";
@@ -123,7 +124,7 @@ describe("the finish check on the Builds graph", () => {
     assert.ok(box.x >= final.x + final.w, "right of the result");
   });
 
-  it("a no reads as not yet with its reasons and round, three no's as stopped, and no answer says so", () => {
+  it("a no reads as not yet with how many things are left, three no's as not finished, and no answer says so", () => {
     seq = 0;
     const opened = loopOpened();
     const checking = buildRunGraph([...opened, check(1, FinishCheckStep.Checking, { claim: CLAIM })]);
@@ -145,7 +146,7 @@ describe("the finish check on the Builds graph", () => {
     assert.equal(notYet.rejections, 1);
     assert.deepEqual(finishCheckFace(notYet), {
       name: FINISH_CHECK_WORDS.state.not_yet,
-      word: `2 reasons · round 1 of ${MAX_FINISH_REJECTIONS}`,
+      word: FINISH_CHECK_WORDS.leftWord(2),
     });
 
     const noAnswer = [
@@ -177,7 +178,7 @@ describe("the finish check on the Builds graph", () => {
     assert.equal(stopped.rejections, MAX_FINISH_REJECTIONS);
     assert.deepEqual(finishCheckFace(stopped), {
       name: FINISH_CHECK_WORDS.state.stopped,
-      word: FINISH_CHECK_WORDS.stoppedWord,
+      word: FINISH_CHECK_WORDS.leftWord(1),
     });
     assert.equal(stopped.rounds.length, 4);
 
@@ -239,8 +240,8 @@ describe("the finish check on the Builds graph", () => {
     );
     assert.deepEqual(
       fresh.rounds.map((round) => roundNoteOf(round, fresh)),
-      [null, null, { text: FINISH_CHECK_WORDS.reportInChat, quiet: true }],
-      "no earlier no promises more no's to the new ask",
+      [null, null, null],
+      "no earlier no says the Loop keeps working on the new ask",
     );
     const oneNo = [
       ...reopened,
@@ -250,7 +251,7 @@ describe("the finish check on the Builds graph", () => {
     const after = finishCheckOf(buildRunGraph(oneNo));
     assert.equal(after?.rejections, 1, "one no for the new ask");
     assert.equal(after?.state, FinishCheckState.NotYet);
-    assert.equal(after && finishCheckFace(after).word, `1 reason · round 1 of ${MAX_FINISH_REJECTIONS}`);
+    assert.equal(after && finishCheckFace(after).word, FINISH_CHECK_WORDS.leftWord(1));
   });
 
   it("a finished run reopened after an earlier ask's yes or unanswered round waits for the new ask's claim", () => {
@@ -306,7 +307,7 @@ describe("the finish check on the Builds graph", () => {
     assert.ok(running);
     assert.equal(running.over, false, "a running Loop still waits for its check");
     assert.deepEqual(roundNoteOf(running.rounds[0] as FinishRound, running), {
-      text: FINISH_CHECK_WORDS.moreNos(1),
+      text: FINISH_CHECK_WORDS.keepsWorking,
       quiet: true,
     });
     const paused = finishCheckOf(buildRunGraph([...firstNo, inRun(CustomEvent.RunFinished, { paused: true })]));
@@ -318,6 +319,71 @@ describe("the finish check on the Builds graph", () => {
       text: FINISH_CHECK_WORDS.endedAfterNo,
       quiet: true,
     });
+  });
+
+  it("a no the Loop ended on, however it ended, is where Keep building goes, as the chat's card offers it", () => {
+    seq = 0;
+    const firstNo = [
+      ...loopOpened(),
+      check(1, FinishCheckStep.Checking, { claim: CLAIM }),
+      check(1, FinishCheckStep.Rejected, { reasons: [NO_TIMER], rejections: 1, timeLeft: true }),
+    ];
+    const roundOf = (node: FinishCheckNode | null | undefined) => node?.rounds[0] as FinishRound;
+    const running = finishCheckOf(buildRunGraph(firstNo));
+    assert.ok(running);
+    assert.equal(endedOnNo(roundOf(running), running), false, "the Loop keeps working on it");
+    const paused = finishCheckOf(buildRunGraph([...firstNo, inRun(CustomEvent.RunFinished, { paused: true })]));
+    assert.ok(paused);
+    assert.equal(endedOnNo(roundOf(paused), paused), false, "a paused Loop keeps Resume");
+    for (const close of [{ victory: false }, { executionStatus: "cancelled" }]) {
+      const ended = finishCheckOf(buildRunGraph([...firstNo, inRun(CustomEvent.RunFinished, close)]));
+      assert.ok(ended);
+      assert.equal(
+        endedOnNo(roundOf(ended), ended),
+        true,
+        `a time-out or a Stop after the no: ${JSON.stringify(close)}`,
+      );
+    }
+  });
+
+  it("a no's card lists what is left, apart from the reviewer's reasons, and its done items; an older record lists its reasons", () => {
+    seq = 0;
+    const met = "The laps run and the finish screen shows, as accepted before.";
+    const goesOn = [
+      ...loopOpened(),
+      check(1, FinishCheckStep.Checking, { claim: CLAIM }),
+      check(1, FinishCheckStep.Rejected, {
+        reasons: [met],
+        done: ["Laps run"],
+        notDone: [NO_TIMER],
+        rejections: MAX_FINISH_REJECTIONS,
+        timeLeft: true,
+      }),
+    ];
+    const node = finishCheckOf(buildRunGraph(goesOn));
+    assert.ok(node);
+    assert.equal(node.state, FinishCheckState.NotYet, "a no with time left never reads as not finished");
+    const round = node.rounds[0] as FinishRound;
+    assert.deepEqual(
+      [round.reasons, round.done, round.notDone, round.timeLeft],
+      [[met], ["Laps run"], [NO_TIMER], true],
+    );
+    assert.deepEqual(leftOf(round), [NO_TIMER], "what is left, never what the reviewer checked");
+    assert.deepEqual(roundNoteOf(round, node), { text: FINISH_CHECK_WORDS.keepsWorking, quiet: true });
+    assert.equal(finishCheckFace(node).word, FINISH_CHECK_WORDS.leftWord(1));
+
+    const older = finishCheckOf(
+      buildRunGraph([
+        ...loopOpened(),
+        check(1, FinishCheckStep.Rejected, { reasons: [NO_TIMER], rejections: 3, stopped: true }),
+      ]),
+    );
+    assert.deepEqual(leftOf(older?.rounds[0] as FinishRound), [NO_TIMER], "a record with reasons alone lists them");
+    assert.equal(
+      roundNoteOf(older?.rounds[0] as FinishRound, older as FinishCheckNode),
+      null,
+      "a stop offers Keep building",
+    );
   });
 
   it("a lead that claims through a finish check is a tree from its start: nothing moves at its first claim", () => {
@@ -532,17 +598,12 @@ describe("the finish check's look", () => {
     assert.equal(finishPanelTone(node), Tone.Muted);
   });
 
-  it("the card's status and numbers take the state's colour", () => {
+  it("the card's status takes the state's colour", () => {
     assert.equal(finishPanelTone(placeholder()), Tone.Muted);
     assert.equal(finishPanelTone(rejected()), Tone.Orange);
     assert.equal(finishPanelTone(unanswered()), Tone.Orange);
     assert.equal(finishPanelTone(checking()), Tone.Accent);
     assert.equal(finishPanelTone(done()), Tone.Green);
     assert.equal(finishPanelTone(stopped()), Tone.Red);
-    const roundOf = (node: FinishCheckNode) => node.rounds.at(-1) as FinishRound;
-    assert.equal(reasonTone(roundOf(rejected())), Tone.Orange, "why not yet: amber numbers");
-    assert.equal(reasonTone(roundOf(stopped())), Tone.Red, "what isn't done: red numbers");
-    assert.equal(reasonTone(roundOf(done())), Tone.Green, "why yes: green numbers");
-    assert.equal(reasonTone(roundOf(checking())), Tone.Muted, "a round still being checked has no reasons yet");
   });
 });

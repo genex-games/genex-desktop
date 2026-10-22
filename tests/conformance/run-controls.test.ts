@@ -11,9 +11,10 @@ import {
   isStopping,
   requestChatStop,
   STOP_RETRY_MS,
+  type StopMark,
   stopSettled,
 } from "../../src/renderer/chat/chat-stop.ts";
-import type { EventEnvelope } from "../../src/shared/event-log.ts";
+import { EventKind, type EventEnvelope } from "../../src/shared/event-log.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 
 const root = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -175,6 +176,54 @@ describe("the chat's Stop, as the composer wires it", () => {
         ["cancelTurn", "chat-a"],
       ],
       "a Stop that was swallowed can be asked again",
+    );
+  });
+
+  it("a Stop pressed within STOP_RETRY_MS of the last one it acted on asks nothing, even once that work has ended", async () => {
+    // The stopped answer ends 2 s after the press and the message waiting behind it starts at
+    // once: a second press 4.6 s after the first must not stop that message before it begins.
+    const handedOver = [
+      ...seen,
+      event("e2", { type: EventKind.TurnEnded, status: "cancelled" }),
+      event("e3", { type: EventKind.TurnStarted }),
+    ];
+    const timelines = [
+      { name: "the stopped work ended at 2 s and the next message began", events: handedOver, stopping: false },
+      { name: "the stopped work is still Stopping", events: seen, stopping: true },
+    ];
+    for (const timeline of timelines) {
+      const studio = fakeStudioApi({ cancelTurn: async () => true }, { strict: true });
+      let mark: StopMark | null = null;
+      // As the composer's hook does: Stopping from the mark, and a Stop acted on becomes the mark.
+      const press = (now: number, events: readonly EventEnvelope[]) => {
+        const stopping = isStopping(mark, { threadId: "chat-a", running: true, events });
+        const next = requestChatStop(studio.api, { threadId: "chat-a", stopping, events, mark, now }, () =>
+          assert.fail("nothing refused"),
+        );
+        if (next) mark = next;
+        return { stopping, acted: next !== null };
+      };
+      assert.deepEqual(press(0, seen), { stopping: false, acted: true }, timeline.name);
+      assert.deepEqual(press(4_600, timeline.events), { stopping: timeline.stopping, acted: false }, timeline.name);
+      assert.deepEqual(press(5_100, timeline.events), { stopping: timeline.stopping, acted: true }, timeline.name);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(
+        studio.calls.map(({ method, args }) => [method, ...args]),
+        [
+          ["cancelTurn", "chat-a"],
+          ["cancelTurn", "chat-a"],
+        ],
+        timeline.name,
+      );
+    }
+  });
+
+  it("a Stop in another chat is its own, however recently this one was pressed", () => {
+    const studio = fakeStudioApi({ cancelTurn: async () => true }, { strict: true });
+    const mark = { thread: "chat-a", after: "e1", at: 0 };
+    assert.deepEqual(
+      requestChatStop(studio.api, { threadId: "chat-b", stopping: false, events: seen, mark, now: 1_000 }, () => {}),
+      { thread: "chat-b", after: "e1", at: 1_000 },
     );
   });
 

@@ -1,6 +1,7 @@
 /**
  * How the production ChatPanel moves while a person watches: a message sent, the work, its status
- * and clock, tools, a streamed reply, a permission question and a build, in a short and a long
+ * and clock, tools, a streamed reply, a permission question, a build and a message to a build's
+ * lead (its card holds still), in a short and a long
  * chat, with normal and reduced motion. Synthetic events in a disposable Electron profile; no
  * engine, account or network. Evidence: .studio-dev/evidence/chat-motion-<time>/report.json.
  */
@@ -56,7 +57,7 @@ app.whenReady().then(async()=>{
   const spent=(a,b)=>Object.fromEntries(['TaskDuration','ScriptDuration','LayoutDuration','RecalcStyleDuration'].map(k=>[k,Math.round((b[k]-a[k])*1000)]));
   for(const motion of ['no-preference','reduce']) {
    await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:motion}]});
-   for(const [scene,long] of [['turn',true],['turn',false],['question',true],['clock',true],['build',true],['longStream',true]]) {
+   for(const [scene,long] of [['turn',true],['turn',false],['question',true],['clock',true],['build',true],['longStream',true],['steer',true]]) {
     const before=await cpu();
     const result=await wc.executeJavaScript('window.runMotionScene('+JSON.stringify(scene)+','+long+')');
     const cost=spent(before,await cpu());
@@ -64,6 +65,8 @@ app.whenReady().then(async()=>{
     report.scenes.push({name,motion,long,cost,...result});
     console.log(name+': '+result.frames+' frames, '+result.jumps.length+' jumps, '+result.pops.length+' pops, '+result.flashes.length+' flashes, '+result.animatedFrames+' animated, '+result.longFrames+' long frames, '+result.longTasks+' long tasks ('+result.longTaskMs+' ms), main thread '+cost.TaskDuration+' ms (script '+cost.ScriptDuration+', layout '+cost.LayoutDuration+', style '+cost.RecalcStyleDuration+')');
     if(result.flashes.length) fail(name+': a status label flashed',result.flashes);
+    // Held still: on show in every frame, never moved by as much as the recorder's jump (6px).
+    if(result.held&&(result.held.missing>0||result.held.driftPx>=6)) fail(name+': the build card left or moved',result.held);
     if(motion==='reduce') {
      if(result.animatedFrames>0) fail(name+': reduced motion still animates',result.animatedFrames);
      continue;

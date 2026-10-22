@@ -10,6 +10,7 @@ import { test } from "node:test";
 import {
   APP_USER_MODEL_ID,
   appUserModelId,
+  installedWorkingDir,
   runSquirrelStep,
   SquirrelEvent,
   squirrelStartup,
@@ -20,14 +21,17 @@ const EXE = "C:\\Users\\ada\\AppData\\Local\\genex\\app-0.1.0\\genex.exe";
 const UPDATE_EXE = "C:\\Users\\ada\\AppData\\Local\\genex\\Update.exe";
 
 test("each Squirrel launch maps to its Update.exe step; other launches and other platforms have none", () => {
+  // Only an uninstall takes back the sandbox's entries Genex keeps between launches.
   const cases = [
-    { argv: [EXE, SquirrelEvent.Install, "0.1.0"], args: ["--createShortcut", "genex.exe"] },
-    { argv: [EXE, SquirrelEvent.Updated, "0.1.1"], args: ["--createShortcut", "genex.exe"] },
-    { argv: [EXE, SquirrelEvent.Uninstall, "0.1.1"], args: ["--removeShortcut", "genex.exe"] },
-    { argv: [EXE, SquirrelEvent.Obsolete, "0.1.0"], args: [] },
+    { argv: [EXE, SquirrelEvent.Install, "0.1.0"], args: ["--createShortcut", "genex.exe"], takeBack: false },
+    { argv: [EXE, SquirrelEvent.Updated, "0.1.1"], args: ["--createShortcut", "genex.exe"], takeBack: false },
+    { argv: [EXE, SquirrelEvent.Uninstall, "0.1.1"], args: ["--removeShortcut", "genex.exe"], takeBack: true },
+    { argv: [EXE, SquirrelEvent.Obsolete, "0.1.0"], args: [], takeBack: false },
   ];
-  for (const { argv, args } of cases)
-    assert.deepEqual(squirrelStartup("win32", argv, EXE), { updateExe: UPDATE_EXE, args }, argv[1]);
+  for (const { argv, args, takeBack } of cases) {
+    const expected = { updateExe: UPDATE_EXE, args, takeBackSandbox: takeBack };
+    assert.deepEqual(squirrelStartup("win32", argv, EXE), expected, argv[1]);
+  }
   assert.equal(squirrelStartup("win32", [EXE], EXE), null);
   assert.equal(squirrelStartup("win32", [EXE, "--squirrel-firstrun"], EXE), null, "the first run opens the app");
   assert.equal(squirrelStartup("darwin", ["/Applications/Genex.app/genex", SquirrelEvent.Install], EXE), null);
@@ -79,4 +83,10 @@ test("a Squirrel step runs Update.exe and settles whether it exits, fails to sta
   const none = fakeSpawn("exit");
   await runSquirrelStep({ updateExe: UPDATE_EXE, args: [] }, none.spawn, 5);
   assert.deepEqual(none.calls, [], "an obsolete copy only exits");
+});
+
+test("a packaged Windows app works from its install folder, wherever it was started; elsewhere the launch's folder stays", () => {
+  assert.equal(installedWorkingDir("win32", EXE, true), "C:\\Users\\ada\\AppData\\Local\\genex\\app-0.1.0");
+  assert.equal(installedWorkingDir("win32", EXE, false), null, "a development build keeps its checkout");
+  assert.equal(installedWorkingDir("darwin", "/Applications/Genex.app/Contents/MacOS/genex", true), null);
 });

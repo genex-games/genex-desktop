@@ -4,6 +4,7 @@
  * a quiet look stays quiet.
  */
 import { readsPicture } from "../../shared/backdrop-shader.ts";
+import { t } from "../../shared/i18n.ts";
 import type { MadeShader } from "./made-shaders.ts";
 import {
   BackdropEffect,
@@ -34,12 +35,12 @@ function preset(id: string, name: string, body: string): ShaderPreset {
 
 /** The bundled live backgrounds, in the gallery's order. */
 export const SHADER_PRESETS: readonly ShaderPreset[] = [
-  preset("thermal", "Thermal", THERMAL_SHADER),
-  preset("datamosh", "Datamosh", DATAMOSH_SHADER),
-  preset("phosphor", "Phosphor", PHOSPHOR_SHADER),
+  preset("thermal", t("Thermal"), THERMAL_SHADER),
+  preset("datamosh", t("Datamosh"), DATAMOSH_SHADER),
+  preset("phosphor", t("Phosphor"), PHOSPHOR_SHADER),
   preset("vhs", "VHS", VHS_SHADER),
-  preset("flare", "Flare", FLARE_SHADER),
-  preset("pixel-sort", "Pixel sort", PIXEL_SORT_SHADER),
+  preset("flare", t("Flare"), FLARE_SHADER),
+  preset("pixel-sort", t("Pixel sort"), PIXEL_SORT_SHADER),
 ];
 
 /** The bundled background `id` names, if it is one. */

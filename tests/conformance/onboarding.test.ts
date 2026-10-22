@@ -9,6 +9,7 @@ import {
   connectView,
   markState,
   shouldWelcome,
+  startTrouble,
   WELCOMED_KEY,
   type ConnectInput,
 } from "../../src/renderer/onboarding/state.ts";
@@ -48,6 +49,34 @@ const engine = (
 });
 
 describe("first launch", () => {
+  it("does not call a signed-in CLI connected while Genex cannot start it", () => {
+    const stuck = (state: "loading" | "ready" | "unavailable", refreshing = false): ConnectInput["engine"] => ({
+      status: { code: "ready", detail: "" },
+      account: { source: "none", afterSignOut: "signed-out", cli: { state: "ready" } },
+      catalog: { state, revision: 1, refreshing },
+    });
+    const claude = (input: Partial<ConnectInput>) => connectView("claude-code", { engine: stuck("ready"), ...input });
+    assert.deepEqual(claude({}), { kind: "on", label: "Claude Code connected" });
+    assert.deepEqual(claude({ engine: stuck("loading") }), { kind: "on", label: "Claude Code connected" });
+    assert.deepEqual(claude({ engine: stuck("unavailable") }), {
+      kind: "action",
+      action: "recheck",
+      label: "Check Claude Code again",
+    });
+    assert.deepEqual(claude({ engine: stuck("unavailable", true) }), {
+      kind: "busy",
+      label: "Checking…",
+      cancel: false,
+    });
+    assert.equal(
+      startTrouble("claude-code", stuck("unavailable")),
+      "Claude Code is signed in, but Genex couldn't start it.",
+    );
+    assert.equal(startTrouble("codex", stuck("unavailable")), "Codex is signed in, but Genex couldn't start it.");
+    assert.equal(startTrouble("claude-code", stuck("ready")), null);
+    assert.equal(startTrouble("claude-code", stuck("unavailable", true)), null, "said once the check ends");
+  });
+
   it("welcomes only an allowed session with an empty library that was never welcomed", () => {
     assert.equal(shouldWelcome(true, 0, storage(null)), true);
     assert.equal(shouldWelcome(true, 1, storage(null)), false, "someone with games already knows the app");

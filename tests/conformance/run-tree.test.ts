@@ -244,7 +244,7 @@ describe("a graph with its assets or its optimisation keeps today's layout and o
 });
 
 describe("the tree on the canvas", () => {
-  it("a tree runs from what you asked to the lead, then a row per worker into the result", () => {
+  it("a tree runs from what you asked to the lead and on into the result, its workers hanging off that line", () => {
     const { graph, summary, rows } = fold(loopWithWorkers());
     assert.equal(graph.tree, true);
     const layout = buildsLayout(graph, rows, summary);
@@ -258,9 +258,15 @@ describe("the tree on the canvas", () => {
     assert.equal(steps.length, 3, "a node per worker");
     for (const rect of steps) {
       assert.ok(rect);
-      assert.equal(rect.x, lead.x + lead.w + 2 * STEPS.busGap, "each worker's row starts past the lead's bus");
-      assert.ok(final.x > rect.x + rect.w, "the result is right of every row");
+      assert.equal(rect.x, lead.x + STEPS.pitch, "no save point yet: every worker hangs in the column after the lead");
+      assert.notEqual(rect.y + rect.h / 2, lead.y + lead.h / 2, "off the line, above or below it");
+      assert.ok(final.x > rect.x + rect.w, "the result is right of every worker");
     }
+    assert.equal(
+      Object.keys(layout.rects).filter((id) => id.startsWith("row:")).length,
+      0,
+      "no row spans the graph: a worker is its one node",
+    );
     for (const [a, ra] of boxes(layout.rects))
       for (const [b, rb] of boxes(layout.rects)) if (a < b) assert.equal(rectsOverlap(ra, rb), false, `${a} on ${b}`);
     const intoLead = layout.edges.find(
@@ -268,12 +274,12 @@ describe("the tree on the canvas", () => {
     );
     assert.equal(intoLead?.kind, StepEdgeKind.Solid, "a worker works, so the lead is not alone");
     assert.ok(
-      layout.edges.some((edge) => edge.d.startsWith(`M${lead.x + lead.w} `)),
-      "the bus into the rows leaves from the lead",
+      layout.edges.some((edge) => edge.d === `M${lead.x + lead.w} ${lead.y + lead.h / 2} H${final.x}`),
+      "one line from the lead into the result",
     );
   });
 
-  it("a worker that finished its task is on the line, joined to the result; one that did not, or was not used, is a ghost", () => {
+  it("a worker whose work was taken hangs on a solid line; one that did not finish, or was not used, is a ghost on a dotted one", () => {
     const { graph, summary, rows } = fold(
       loopWithWorkers([
         started(runScope, poolWorkerId("w5"), "Add rain", { isolation: WorkerIsolation.Copy }),
@@ -292,18 +298,19 @@ describe("the tree on the canvas", () => {
       ]),
     );
     const layout = buildsLayout(graph, rows, summary);
-    const look = (id: string) => {
-      const edge = (prefix: string) => layout.edges.find((line) => line.id === `${prefix}:${id}`)?.kind ?? null;
-      return [layout.ghosts.has(`session:${id}`), edge("in"), edge("out")];
-    };
-    const joined = [false, StepEdgeKind.Solid, StepEdgeKind.Solid];
-    assert.deepEqual(look(STUDY), joined, "a reader that finished");
-    assert.deepEqual(look(CAR), joined, "a copy the lead added");
-    assert.deepEqual(look(SOUND), joined, "work the lead used, not added yet");
+    const look = (id: string) => [
+      layout.ghosts.has(`session:${id}`),
+      layout.edges.find((line) => line.id === `hang:session:${id}`)?.kind ?? null,
+    ];
+    const taken = [false, StepEdgeKind.Solid];
+    assert.deepEqual(look(STUDY), taken, "a reader that finished");
+    assert.deepEqual(look(CAR), taken, "a copy the lead added");
+    assert.deepEqual(look(SOUND), taken, "work the lead used, not added yet");
+    assert.deepEqual(look(TRACK), [false, StepEdgeKind.Live], "a worker at work");
     const sound = rows.find((row) => row.facet.facetId === SOUND)?.steps[0];
     assert.ok(sound);
     assert.equal(stepWord(sound, graph.active), "Done");
-    const ghost = [true, StepEdgeKind.Dotted, null];
+    const ghost = [true, StepEdgeKind.Dotted];
     assert.deepEqual(look(poolWorkerId("w5")), ghost, "a worker that failed");
     assert.deepEqual(look(poolWorkerId("w6")), ghost, "a worker that was stopped");
     assert.deepEqual(look(poolWorkerId("w7")), ghost, "a worker the lead did not use");
@@ -323,18 +330,14 @@ describe("the tree on the canvas", () => {
     const look = (events: EventEnvelope[]) => {
       const { graph, summary, rows } = fold(events);
       const layout = buildsLayout(graph, rows, summary);
-      const edge = (prefix: string) => layout.edges.find((line) => line.id === `${prefix}:sky`)?.kind ?? null;
-      return [layout.ghosts.has("session:sky"), edge("in"), edge("out"), rows[0]?.steps[0]?.onLine];
+      const edge = layout.edges.find((line) => line.id === "hang:session:sky")?.kind ?? null;
+      return [layout.ghosts.has("session:sky"), edge, rows[0]?.steps[0]?.onLine];
     };
-    const ghost = [true, StepEdgeKind.Dotted, null, false];
+    const ghost = [true, StepEdgeKind.Dotted, false];
     assert.deepEqual(look(builder([])), ghost, "handed back, not integrated yet");
     assert.deepEqual(look(builder([inRun(CustomEvent.RunFinished, { status: "done" })])), ghost, "never integrated");
     const merged = inRun(CustomEvent.IntegrationMerge, { facetId: "sky", commit: "c1", head: "h1", conflict: false });
-    assert.deepEqual(
-      look(builder([merged])),
-      [false, StepEdgeKind.Solid, StepEdgeKind.Solid, true],
-      "integrated: in the build",
-    );
+    assert.deepEqual(look(builder([merged])), [false, StepEdgeKind.Solid, true], "integrated: in the build");
   });
 
   it("the line into the lead is live while the lead works alone", () => {
