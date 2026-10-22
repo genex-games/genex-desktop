@@ -5,7 +5,7 @@
  * signed-in account, or, signed out, this computer's own id, kept beside the installed games.
  */
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { type GalleryAnswer, PlayRoute } from "../../src/main/play/gallery.ts";
@@ -23,20 +23,25 @@ interface Sent {
 }
 
 /** A reporter over a fresh folder whose calls genex.games answers with `answer`, signed in with `token`. */
-async function reporter(options: { token?: string; answer?: () => Promise<GalleryAnswer>; root?: string } = {}) {
+async function reporter(
+  options: { token?: string; answer?: (sent: Sent) => Promise<GalleryAnswer>; root?: string } = {},
+) {
   const root = options.root ?? (await tmpDir("native-plays-"));
   const sent: Sent[] = [];
   const logs: string[] = [];
+  const refused: string[] = [];
   const plays = nativePlays({
     root,
     request: async (route, init) => {
-      sent.push({ route, method: init.method, body: init.body, token: init.token });
-      return options.answer ? options.answer() : { status: 200, body: { ok: true, counted: true } };
+      const one = { route, method: init.method, body: init.body, token: init.token };
+      sent.push(one);
+      return options.answer ? options.answer(one) : { status: 200, body: { ok: true, counted: true } };
     },
     token: async () => options.token,
+    refused: (token) => refused.push(token),
     log: (line) => logs.push(line),
   });
-  return { plays, root, sent, logs };
+  return { plays, root, sent, logs, refused };
 }
 
 /** The id each report sent, in order. */
@@ -66,9 +71,36 @@ describe("a downloaded game's play on genex.games", () => {
       ],
     );
 
+    const kept = JSON.parse(await readFile(path.join(first.root, "player.json"), "utf8"));
+    assert.deepEqual(kept, { playerId: id });
+
     const restarted = await reporter({ root: first.root });
     await restarted.plays.report("dust-runners");
     assert.deepEqual(playerIds(restarted.sent), [id], "the next start of Genex reads the same id");
+  });
+
+  it("ends a sign-in genex.games refuses, and counts the play as this computer's instead", async () => {
+    const answer = async (one: Sent): Promise<GalleryAnswer> =>
+      one.token ? { status: 401, body: { error: "Unauthorized" } } : { status: 200, body: { ok: true, counted: true } };
+    const { plays, sent, logs, refused } = await reporter({ token: TOKEN, answer });
+    await plays.report("dust-runners");
+    assert.deepEqual(refused, [TOKEN]);
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[0]?.body, { slug: "dust-runners" });
+    assert.equal(sent[1]?.token, undefined, "the second report carries no token");
+    assert.match(playerIds(sent)[1] ?? "", UUID);
+    assert.deepEqual(logs, []);
+  });
+
+  it("keeps a kept id it cannot read now, and drops that play instead of counting this computer again", async () => {
+    const root = await tmpDir("native-plays-");
+    const file = path.join(root, "player.json");
+    await symlink(file, file);
+    const { plays, sent, logs } = await reporter({ root });
+    await plays.report("dust-runners");
+    assert.deepEqual(sent, []);
+    assert.equal(logs.length, 1);
+    assert.equal(await readlink(file), file, "the kept file is as it was");
   });
 
   it("replaces a kept id that is not one it made", async () => {
@@ -82,7 +114,7 @@ describe("a downloaded game's play on genex.games", () => {
   });
 
   it("drops a refused or failed report with a log line that carries no token, and never throws", async () => {
-    const answers: Array<() => Promise<GalleryAnswer>> = [
+    const answers: Array<(sent: Sent) => Promise<GalleryAnswer>> = [
       async () => ({ status: 404, body: { error: "Not found" } }),
       async () => ({ status: 503, body: null }),
       async () => {

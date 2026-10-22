@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 20, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 22, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -133,8 +133,12 @@ from genex.games' CDN (cdn.genex.technology) and without your token; its size, c
 signature are checked before it opens. Installed games and their saves live in the app profile.
 Each game runs in a sandbox with no network that can write only its own saves, preferences and
 a scratch folder removed when it ends, and removing a game keeps its saves. At start and every six hours the app reads each installed
-game's page in the same way to tell you about a newer version. genex.games does not count plays
-of a Mac app yet.
+game's page in the same way to tell you about a newer version. Once a game's window is on screen
+(or it has run a minute without one the app can see), the app tells the Genex API which game was
+played, so genex.games counts the play the way it counts a web play: once per person per game.
+Signed in, it sends the account's token; signed out, or once genex.games no longer accepts the
+token, it sends a random id the app made for this computer, kept in the app profile beside the
+installed games. Nothing else goes with it.
 
 A game's comments are read from the Genex API without a sign-in, a page at a time while you scroll
 them, with each writer's name and picture. Signed in, the app also sends the account's token to

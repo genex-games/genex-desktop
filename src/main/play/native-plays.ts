@@ -3,15 +3,16 @@
  * Most native builds never sign in to Genex, so without this a game people install and play keeps a
  * play count of 0. genex.games counts each person once per game, as it does a web play: the
  * signed-in account, or, signed out, this computer's own random id, kept beside the installed games
- * and sent only while no account is signed in. Best-effort: a report that fails is logged and
- * dropped, never retried, and never holds the game. Electron-free: the call, the account's token and
- * the folder are deps.
+ * and sent only while no account is signed in. A token genex.games refuses (401) ends the sign-in,
+ * as on Play's other calls, and the play goes again as this computer's. Best-effort: a report that
+ * fails is logged and dropped, never retried, and never holds the game. Electron-free: the call, the
+ * account's token and the folder are deps.
  */
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isPlaySlug } from "../../shared/play.ts";
 import { atomicWriteJson, readJsonIfExists } from "../../substrate/fsx.ts";
-import { type GalleryRequest, PlayRoute } from "./gallery.ts";
+import { type GalleryRequest, HTTP_UNAUTHORIZED, PlayRoute } from "./gallery.ts";
 
 /** The file beside the installed games that keeps this computer's id for play counts. */
 const PLAYER_FILE = "player.json";
@@ -25,6 +26,8 @@ export interface NativePlayDeps {
   request: GalleryRequest;
   /** The unlocked Genex account's token, or undefined while there is none. */
   token(): Promise<string | undefined>;
+  /** genex.games answered 401 to `token`: its sign-in has ended (`GenexAccount.refused`). */
+  refused?(token: string): void;
   log(line: string): void;
 }
 
@@ -41,10 +44,21 @@ function keptId(value: unknown): string | null {
   return typeof playerId === "string" && PLAYER_ID.test(playerId) ? playerId : null;
 }
 
+/** The kept file's contents; one that is not JSON reads as none. Any other failure throws. */
+async function readKept(file: string): Promise<unknown> {
+  try {
+    return await readJsonIfExists<unknown>(file);
+  } catch (error) {
+    // Only a file that is not JSON is replaced: one that can't be read now may hold the id still.
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
 /** This computer's id for play counts: the kept one, or a new one, kept from now on. */
 async function computerId(root: string): Promise<string> {
   const file = path.join(root, PLAYER_FILE);
-  const kept = keptId(await readJsonIfExists<unknown>(file).catch(() => null));
+  const kept = keptId(await readKept(file));
   if (kept) return kept;
   const playerId = randomUUID();
   await atomicWriteJson(file, { playerId });
@@ -62,11 +76,18 @@ export function nativePlays(deps: NativePlayDeps): NativePlays {
     return id;
   };
 
-  const send = async (slug: string): Promise<number> => {
-    const token = await deps.token();
-    if (token) return (await deps.request(PlayRoute.NativePlay, { method: "POST", body: { slug }, token })).status;
+  const sendSignedOut = async (slug: string): Promise<number> => {
     const body = { slug, playerId: await playerId() };
     return (await deps.request(PlayRoute.NativePlay, { method: "POST", body })).status;
+  };
+
+  const send = async (slug: string): Promise<number> => {
+    const token = await deps.token();
+    if (!token) return sendSignedOut(slug);
+    const { status } = await deps.request(PlayRoute.NativePlay, { method: "POST", body: { slug }, token });
+    if (status !== HTTP_UNAUTHORIZED) return status;
+    deps.refused?.(token);
+    return sendSignedOut(slug);
   };
 
   const report = async (slug: string): Promise<void> => {

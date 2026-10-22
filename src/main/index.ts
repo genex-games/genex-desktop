@@ -1149,10 +1149,12 @@ function playSessionsFor(studio: StudioCore): NativeSessions | null {
 
 /** Where a native game's plays go: genex.games, once its window is on screen (`main/play/native-plays.ts`). */
 function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"]> {
+  const account = genexAccountFor(studio);
   const plays = nativePlays({
     root: studio.layout.installedGames,
     request: networkRequest(globalThis.fetch, playOrigin.api),
-    token: genexAccountFor(studio).token,
+    token: account.token,
+    refused: account.refused,
     log: (line) => studioLog.write("main", line),
   });
   return { started: (slug) => void plays.report(slug), ended: () => undefined };

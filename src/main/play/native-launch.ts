@@ -92,9 +92,9 @@ export interface NativeSessionsDeps {
   /** Opens a game's way to Genex (`main/play/genex-gateway.ts`); without it a game has no network. */
   genex?(slug: string): Promise<GameGenex | null>;
   /**
-   * Where a game's presence and plays go: started once its window is on screen, which reports the
-   * play to genex.games (`native-plays.ts`), and ended once a game that showed one ends (nothing
-   * yet: genex.games takes no presence from the app).
+   * Where a game's presence and plays go: started once it counts as running (its window on screen,
+   * or a minute up without one), which reports the play to genex.games (`native-plays.ts`), and
+   * ended once a running game ends (nothing yet: genex.games takes no presence from the app).
    */
   presence?: { started(slug: string): void; ended(slug: string): void };
 }
@@ -173,15 +173,19 @@ export class NativeSessions {
     return this.#live.get(slug) === one;
   }
 
-  /** Look for the game's window until it appears, it exits, or long enough has passed. */
+  /**
+   * Look for the game's window until it appears, it exits, it is being quit, or long enough has
+   * passed. A game quit while it starts is never brought forward, played or counted.
+   */
   async #awaitWindow(slug: string, one: Live): Promise<void> {
     const started = this.#deps.clock.now();
-    while (this.#current(slug, one)) {
+    const waiting = (): boolean => this.#current(slug, one) && !one.quitting;
+    while (waiting()) {
       const seen = await this.#deps.hasWindow(one.pid);
       if (seen || this.#deps.clock.now() - started >= WINDOW_WAIT_MS) break;
       await new Promise<void>((resolve) => this.#deps.clock.setTimeout(resolve, WINDOW_POLL_MS));
     }
-    if (!this.#current(slug, one)) return;
+    if (!waiting()) return;
     one.session = { ...one.session, phase: NativeSessionPhase.Running };
     this.#push();
     await this.#deps.show(one.pid);

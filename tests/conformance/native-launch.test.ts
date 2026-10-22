@@ -286,6 +286,33 @@ describe("native game sessions", () => {
     assert.deepEqual(sessions.sessions(), [], "a failure is forgotten when dismissed");
   });
 
+  it("counts a game still up a minute on as played, though no window of it was seen", async () => {
+    const { sessions, played, reported, clock } = await rig({ windowAfter: Number.POSITIVE_INFINITY });
+    await sessions.launch("dust-runners");
+    while (sessions.sessions()[0]?.phase !== NativeSessionPhase.Running) {
+      clock.fire();
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.deepEqual(played, ["dust-runners"]);
+    assert.deepEqual(reported, ["started dust-runners"]);
+  });
+
+  it("never brings forward, plays or counts a game quit while it starts, even as its window appears", async () => {
+    const { sessions, games, shown, played, reported, clock } = await rig({ windowAfter: 1 });
+    await sessions.launch("dust-runners");
+    await settle();
+    const quitting = sessions.quit("dust-runners");
+    clock.fire();
+    await settle();
+    await settle();
+    games[0]?.exit(0);
+    await quitting;
+    assert.deepEqual(shown, []);
+    assert.deepEqual(played, []);
+    assert.deepEqual(reported, []);
+    assert.deepEqual(sessions.sessions(), [], "a quit is no failure");
+  });
+
   it("fails a game that is not installed or whose sandbox does not start, and leaves no folder", async () => {
     const missing = await rig({ installed: [] });
     await missing.sessions.launch("dust-runners");
