@@ -8,47 +8,15 @@ use crate::graph::{BusGraph, VoiceStart, all_finite, person_db};
 use crate::meter::{AudioLevel, AudioMeter};
 use crate::music::Music;
 use crate::ops::{MixerOp, MusicId, MusicTrack, SoundId};
-/// Kept here too, so the decode and device modules name it where they always did.
-pub(crate) use crate::vocab::AudioErrorCode;
+/// Kept here too, so the decode and device modules name them where they always did.
+pub(crate) use crate::vocab::{AudioError, AudioErrorCode, FRAMES_PER_TICK, MIXER_RATE_HZ};
 use crate::vocab::{AudioSettings, Bus, PoolClass};
 use kira::Frame;
 use kira::backend::{Backend, Renderer};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
-use std::fmt;
 use std::sync::Arc;
 
-/// The rate the mixer runs at: the studio recipe's `nativeAudioRateHz`, so a Rust game's centroid
-/// is measured at the same rate a raylib game's is.
-pub const MIXER_RATE_HZ: u32 = 48_000;
-/// Frames one 60 Hz tick renders.
-pub const FRAMES_PER_TICK: usize = (MIXER_RATE_HZ / 60) as usize;
 const STEREO: usize = 2;
-
-/// A refused audio call.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AudioError {
-    code: AudioErrorCode,
-    detail: String,
-}
-
-impl AudioError {
-    pub(crate) fn new(code: AudioErrorCode, detail: impl Into<String>) -> AudioError {
-        AudioError { code, detail: detail.into() }
-    }
-
-    /// The typed code.
-    pub fn code(&self) -> AudioErrorCode {
-        self.code
-    }
-}
-
-impl fmt::Display for AudioError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code.as_str(), self.detail)
-    }
-}
-
-impl std::error::Error for AudioError {}
 
 /// A kira backend with no device: it keeps the renderer and renders when the runtime asks.
 pub(crate) struct DevicelessBackend {

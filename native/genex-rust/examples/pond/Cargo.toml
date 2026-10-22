@@ -34,7 +34,8 @@ studio = ["genex/studio"]
 
 [dependencies]
 genex = { workspace = true, features = ["physics"] }
-genex-audio = { workspace = true }
+# The splash plays through genex-audio's own mixer (its `mixer` feature, G6 AU-11).
+genex-audio = { workspace = true, features = ["mixer"] }
 genex-platform-web = { workspace = true }
 
 # The native self-test renders headless on the host GPU (Metal on the Mac).

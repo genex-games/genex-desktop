@@ -127,8 +127,44 @@ wire_vocabulary! {
         MemoryLimit => "memory-limit",
         /// A non-finite position, volume or pitch: the command was dropped.
         InvalidValue => "invalid-value",
+        /// The game is built with `[audio] enabled = false`: no mixer and no decoders, so every
+        /// sound and every piece of music is missing (AU-11).
+        Disabled => "audio-disabled",
     }
 }
+
+/// The rate the mixer runs at: the studio recipe's `nativeAudioRateHz`, so a Rust game's centroid
+/// is measured at the same rate a raylib game's is.
+pub const MIXER_RATE_HZ: u32 = 48_000;
+/// Frames one 60 Hz tick renders.
+pub const FRAMES_PER_TICK: usize = (MIXER_RATE_HZ / 60) as usize;
+
+/// A refused audio call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioError {
+    code: AudioErrorCode,
+    detail: String,
+}
+
+impl AudioError {
+    /// A refusal with its code and a detail for people.
+    pub fn new(code: AudioErrorCode, detail: impl Into<String>) -> AudioError {
+        AudioError { code, detail: detail.into() }
+    }
+
+    /// The typed code.
+    pub fn code(&self) -> AudioErrorCode {
+        self.code
+    }
+}
+
+impl std::fmt::Display for AudioError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code.as_str(), self.detail)
+    }
+}
+
+impl std::error::Error for AudioError {}
 
 wire_vocabulary! {
     /// Which physical voice pool a destination renders with. It never changes logical state, only

@@ -884,6 +884,7 @@ mod tests {
     /// a missing handle refused `not-at-reset` before the source is asked; inside it the same
     /// path decodes, and a later call outside it still refuses.
     #[test]
+    #[cfg(feature = "audio")]
     fn a_sound_outside_the_reset_is_missing_not_at_reset() {
         use crate::audio::SoundRefusal;
         let table: AssetTable = Box::leak(Box::new([("sfx/tone.wav", crate::audio::test_tone_wav())]));

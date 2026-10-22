@@ -8,9 +8,8 @@
 //! class, [`crate::prefill_ticks`]), a callback the queue cannot fill counts one underrun and
 //! re-arms the prefill, and past the capacity the oldest samples go.
 
-use crate::mixer::{FRAMES_PER_TICK, MIXER_RATE_HZ};
 use crate::output::{capacity_ticks, prefill_ticks};
-use crate::vocab::PoolClass;
+use crate::vocab::{FRAMES_PER_TICK, MIXER_RATE_HZ, PoolClass};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -66,6 +65,7 @@ impl SinkQueue {
     }
 
     /// Hold back the device until `class`'s prefill is queued (again, if it was playing).
+    #[cfg(feature = "mixer")]
     pub(crate) fn arm(&self, class: PoolClass) {
         let mut shared = self.lock();
         shared.prefill = ticks_to_samples(prefill_ticks(class)).min(self.capacity);

@@ -47,6 +47,8 @@ objc2-quartz-core = { workspace = true }
 # The spike's packaged game (M0a.16): `examples/pond_ios.rs` is the `.app` executable.
 [dev-dependencies]
 pond = { path = "../../examples/pond" }
+# The audio gate's rows play a tone: a game links audio by its own facade line (G6 AU-11).
+genex = { workspace = true, features = ["audio"] }
 
 [[example]]
 name = "pond_ios"

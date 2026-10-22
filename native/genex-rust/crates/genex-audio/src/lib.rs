@@ -16,13 +16,18 @@
 //! decodes while it plays ([`Music::stream`]). The iOS audio session and Android audio focus are
 //! their shells'.
 
+#[cfg(feature = "mixer")]
 mod decode;
+#[cfg(feature = "mixer")]
 mod device;
 mod director;
 mod events;
+#[cfg(feature = "mixer")]
 mod graph;
 mod meter;
+#[cfg(feature = "mixer")]
 mod mixer;
+#[cfg(feature = "mixer")]
 mod music;
 mod occlusion;
 mod ops;
@@ -33,34 +38,38 @@ mod vocab;
 mod voices;
 mod zones;
 
+#[cfg(feature = "mixer")]
 pub use decode::{MAX_CLAIMED_SECONDS, MAX_DECODED_FRAMES, MAX_SOUND_BYTES, decode_sound};
+#[cfg(feature = "mixer")]
 pub use device::{DeviceHealth, DeviceOutput, Resampler};
 pub use director::{Director, StepInput};
 pub use events::{AudioCounts, AudioEvent, EventLog};
 pub use meter::{AUDIO_WINDOW_FRAMES, AudioLevel, AudioMeter};
-pub use mixer::{AudioError, FRAMES_PER_TICK, MIXER_RATE_HZ, Mixer, Sound};
+#[cfg(feature = "mixer")]
+pub use mixer::{Mixer, Sound};
+#[cfg(feature = "mixer")]
 pub use music::{MUSIC_RING_FRAMES, MUSIC_WORKING_BYTES, Music};
 pub use occlusion::{OCCLUDED_CUTOFF_FLOOR_HZ, OCCLUDER_TRANSMISSION, OCCLUSION_TWEEN_S, Occluder, OcclusionScheduler};
 pub use ops::{
     AudioCommand, AudioSetup, Duck, Listener, LogicalVoice, MixerOp, MusicId, MusicOpts, MusicTrack, PRIORITY_DEFAULT, PRIORITY_UI,
     PhysicalSlot, PlayOpts, ReverbPreset, ReverbZone, SoundId, Spatial, Voice, ZoneId, ZoneShape,
 };
-pub use output::{
-    AudioOutput, CAPACITY_TICKS_DESKTOP, CAPACITY_TICKS_WEB_PHONE, DeviceFault, NullOutput, PREFILL_TICKS_DESKTOP,
-    PREFILL_TICKS_WEB_PHONE, capacity_ticks, prefill_ticks, stream_fault,
-};
+pub use output::{CAPACITY_TICKS_DESKTOP, CAPACITY_TICKS_WEB_PHONE, DeviceFault, PREFILL_TICKS_DESKTOP, PREFILL_TICKS_WEB_PHONE, capacity_ticks, prefill_ticks};
+#[cfg(feature = "mixer")]
+pub use output::{AudioOutput, NullOutput, stream_fault};
 pub use sink::SinkQueue;
 pub use spatial::{
     CUTOFF_FAR_HZ, CUTOFF_OPEN_HZ, DOPPLER_RATE_MAX, DOPPLER_RATE_MIN, SPEED_OF_SOUND_M_S, attenuation_db, distance_cutoff_hz,
     doppler_rate, pan, pan_gains,
 };
 pub use vocab::{
-    AUDIO_EVENTS_MAX, Attenuation, AudioErrorCode, AudioEventCode, AudioSettings, AudioSpan, Bus, LOGICAL_VOICES_MAX,
+    AUDIO_EVENTS_MAX, Attenuation, AudioError, AudioErrorCode, AudioEventCode, AudioSettings, AudioSpan, Bus, LOGICAL_VOICES_MAX,
     MAX_INSTANCES_DEFAULT, OCCLUSION_RAYS_PER_TICK, PHYSICAL_VOICES_DESKTOP, PHYSICAL_VOICES_PHONE, PHYSICAL_VOICES_WEB, PoolClass,
-    REVERB_ZONES_MAX, SOUNDS_DECODED_MAX_BYTES,
+    REVERB_ZONES_MAX, SOUNDS_DECODED_MAX_BYTES, FRAMES_PER_TICK, MIXER_RATE_HZ,
 };
 pub use voices::{SoundInfo, instance_victim, rank_for_pool, steal_victim};
 pub use zones::{SEND_OFF_DB, active_zone, send_db};
 
 /// Pinned re-export, so the runtime never names kira's version itself.
+#[cfg(feature = "mixer")]
 pub use kira;

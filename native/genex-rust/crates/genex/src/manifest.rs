@@ -30,6 +30,9 @@
 //! [physics]                 # optional: a game without physics is built without Rapier
 //! enabled = false           # default true
 //!
+//! [audio]                   # optional: a game without sound is built without the mixer and decoders
+//! enabled = false           # default true
+//!
 //! [[texture]]               # optional: a loose texture's usage, where no material slot tells it
 //! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 //! usage = "data"            # color | data | normal
@@ -563,6 +566,9 @@ pub struct GenexToml {
     /// Whether the game is built with physics.
     #[serde(default)]
     pub physics: PhysicsSection,
+    /// Whether the game is built with audio's mixer and decoders.
+    #[serde(default)]
+    pub audio: AudioSection,
     /// Loose textures' usages, read by the host's import step (C-10).
     #[serde(default)]
     pub texture: Vec<TextureRow>,
@@ -969,6 +975,25 @@ pub struct PhysicsSection {
 
 impl PhysicsSection {
     /// Whether the game is built with physics (the default).
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
+/// `[audio]`: a game that plays no sound turns it off and is built without the mixer and the
+/// decoders (the facade's `audio` feature: kira, cpal and symphonia; the host writes the facade line
+/// without default features). Its code compiles unchanged: every sound is missing
+/// (`audio-disabled`) and `ctx.audio` plays nothing. G6 AU-11.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioSection {
+    /// False builds the game without audio; none or true keeps it.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+impl AudioSection {
+    /// Whether the game is built with audio (the default).
     pub fn enabled(&self) -> bool {
         self.enabled.unwrap_or(true)
     }
