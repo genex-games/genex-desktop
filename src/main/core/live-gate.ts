@@ -77,11 +77,19 @@ function changedPaths(status: string): string[] {
 /**
  * A folder's state as far as the preview cares: its commit, what git says is uncommitted, and the
  * size and time of each such path. Null when git cannot read it, which the gate reads as changed.
- * `--no-optional-locks`: a look never rewrites the person's index.
+ * `--no-optional-locks`: a look never rewrites the person's index. Every untracked file is listed
+ * on its own (`--untracked-files=all`): git otherwise names only an untracked folder, whose time
+ * stays put when a file in it is written over in place (an imported texture replaced by `cp`).
  */
 export async function folderPrint(dir: string): Promise<string | null> {
   const head = await gitOrNull(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  const status = await gitOrNull(dir, ["--no-optional-locks", "status", "--porcelain=v1", "-z"]);
+  const status = await gitOrNull(dir, [
+    "--no-optional-locks",
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "-z",
+  ]);
   if (status === null) return null;
   const hash = createHash("sha1")
     .update(head ?? "")

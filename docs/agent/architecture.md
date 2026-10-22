@@ -336,13 +336,14 @@ is offered by commit, `offerBuild`, and a landing lands and offers the folder). 
 the live view, reaches the stand-in (`STAND_IN_HANDLE`, a hidden window outside the lease count,
 opened on first use with what Live shows, closed after two idle minutes); only a build with no
 headless capability drives Live. What the harness loads there, a checkpoint and a rewind
-reach `PreviewService.offerLive` (`core/live-gate.ts`): a game folder whose print (HEAD, status,
-uncommitted sizes and times) moved since Live loaded it, or a build Live is not showing (held by
-its commit), emits `live.behind`; the person's Reload (`reloadLive`) applies it and any live load
-that succeeded clears it. The event says which build Live shows (`shows`, whichever path
-loaded it), and the stage reads the whole state on mount (`studio:live.behind`). The renderer
-(`stage.ts`, `stage/live-behind.ts`) adds the run's newest healthy build Live does not show and
-a shown build found broken, applies what main holds when Live is not watched, and swaps only the
+reach `PreviewService.offerLive` (`core/live-gate.ts`): a game folder whose print (HEAD, status
+naming each untracked file, sizes and times) moved since Live loaded it, or a build Live is not
+showing (held by its commit), emits `live.behind`; the person's Reload (`reloadLive`) applies it
+and any live load that succeeded clears it. A Rust asset swap (`asset-watch.ts`) also needs the
+load-time print of files outside `assets/` unchanged, else Reload rebuilds. The event says which
+build Live shows (`shows`, whichever path loaded it), and the stage reads the whole state on
+mount (`studio:live.behind`). The renderer (`stage.ts`, `stage/live-behind.ts`) adds the run's
+newest healthy build Live does not show and a shown build found broken, applies what main holds when Live is not watched, and swaps only the
 empty scaffold's first healthy build by itself. Candidates load in a staging preview first; a
 candidate or session never borrows Live or the stand-in (a session gets an overflow lease, at most
 `OVERFLOW_WINDOWS_MAX` past the ceiling, then waits). The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in

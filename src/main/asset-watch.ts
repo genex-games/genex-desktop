@@ -10,7 +10,10 @@
  * `reloadAssets` op: the new bytes draw on its next frame, its state kept, no cargo run. Anything
  * else answers `rebuild` with a typed reason and Reload rebuilds as before: a change outside
  * `assets/` (code needs a build), a removed file, a file that needs the import step (a conversion,
- * a compressed mesh, a texture whose families the web page plans), more than one op names.
+ * a compressed mesh, a texture whose families the web page plans), more than one op names. A
+ * change outside `assets/` is found by the watcher and, as the assets are, by Reload itself: the
+ * folder's other files' print when Live loaded the game against theirs now, so code the watcher
+ * has not reported yet (FSEvents' latency, a missed event) never rides an asset swap.
  *
  * Placing a texture's new source drops the family files (`<stem>.<family>.ktx2`) the running
  * native game holds of it, so it draws the new image uncompressed until the next build encodes it
@@ -64,6 +67,9 @@ const ADMITTED_SUFFIX = ".admitted";
 const RECORD_MAX_BYTES = 16 * 1024 * 1024;
 /** Top-level folders a change in never asks for a build: git's, the studio's own records, build trees. */
 const IGNORED_FOLDERS: ReadonlySet<string> = new Set([".git", ".studio", ".genex", "target", "node_modules"]);
+/** The most files outside `assets/` a source print reads, and how deep it looks; past either it reads as moved. */
+const SOURCE_PRINT_MAX_FILES = 5000;
+const SOURCE_PRINT_MAX_DEPTH = 16;
 /** The raster textures the import step encodes into families (`import-plan.ts`). */
 const ENCODED_TEXTURES: ReadonlySet<string> = new Set(["png", "jpg", "jpeg"]);
 /** A served folder made writable for a moment, then read-only again (`native-bundle.ts` `makeReadOnly`). */
@@ -167,6 +173,71 @@ export const recursiveWatch: FolderWatch = (dir, listener) => {
   watcher.on("error", () => listener(null));
   return watcher;
 };
+
+/** One file's line in a source print: its kind, size and time (a link is its own entry, never followed). */
+function printLine(rel: string, stat: { size: number; mtimeMs: number; isSymbolicLink(): boolean }): string {
+  return `${rel}:${stat.isSymbolicLink() ? "link" : "file"}:${stat.size}:${stat.mtimeMs}\0`;
+}
+
+/** The entries a source print reads below `rel`: every one but the top-level `assets/` and the ignored folders. */
+async function sourceEntries(gameDir: string, rel: string): Promise<Array<{ rel: string; dir: boolean }>> {
+  const entries = await readdir(rel ? path.join(gameDir, ...rel.split("/")) : gameDir, { withFileTypes: true });
+  const kept = rel ? entries : entries.filter((e) => e.name !== ASSETS_DIR && !IGNORED_FOLDERS.has(e.name));
+  return kept
+    .map((e) => ({ rel: rel ? `${rel}/${e.name}` : e.name, dir: e.isDirectory() }))
+    .sort((a, b) => (a.rel < b.rel ? -1 : Number(a.rel > b.rel)));
+}
+
+/**
+ * The game folder's files outside `assets/` as Reload compares them: each one's path, kind, size
+ * and time (git's and Studio's own folders and build trees left out, links never followed). Null
+ * when the folder cannot be read or holds more than a print reads: then Reload rebuilds.
+ */
+export async function sourcePrint(gameDir: string): Promise<string | null> {
+  const hash = createHash("sha256");
+  const pending: Array<{ rel: string; depth: number }> = [{ rel: "", depth: 0 }];
+  let files = 0;
+  try {
+    for (let next = pending.pop(); next; next = pending.pop()) {
+      for (const entry of await sourceEntries(gameDir, next.rel)) {
+        if (entry.dir && next.depth >= SOURCE_PRINT_MAX_DEPTH) return null;
+        if (entry.dir) {
+          pending.push({ rel: entry.rel, depth: next.depth + 1 });
+          continue;
+        }
+        files += 1;
+        if (files > SOURCE_PRINT_MAX_FILES) return null;
+        hash.update(printLine(entry.rel, await lstat(path.join(gameDir, ...entry.rel.split("/")))));
+      }
+    }
+  } catch {
+    return null;
+  }
+  return hash.digest("hex");
+}
+
+/** What Reload knows before it plans a swap. */
+export interface SwapState {
+  /** Live shows a run or page of the game's own folder. */
+  shown: boolean;
+  /** That build serves `reloadAssets`. */
+  serves: boolean;
+  /** The watcher saw a change outside `assets/` since Live loaded the game. */
+  watchedSource: boolean;
+  /** The folder's files outside `assets/` differ from their print when Live loaded the game (or either print is unknown). */
+  sourceMoved: boolean;
+}
+
+/**
+ * The route of a Reload, before any asset is read: null when only assets can have changed, so the
+ * swap plans them and names them in one `reloadAssets`; otherwise the rebuild's reason.
+ */
+export function swapRefusal(state: SwapState): LiveAssetsRebuild | null {
+  if (!state.shown) return LiveAssetsRebuild.NoRun;
+  if (!state.serves) return LiveAssetsRebuild.NotServed;
+  if (state.watchedSource || state.sourceMoved) return LiveAssetsRebuild.Source;
+  return null;
+}
 
 /** How a changed asset can reach the running game. */
 const SwapRule = {
@@ -534,6 +605,8 @@ interface Watched {
   close(): void;
   touched: Set<string>;
   source: boolean;
+  /** The folder's files outside `assets/` when Live loaded the game ({@link sourcePrint}). */
+  sourcePrint: Promise<string | null>;
 }
 
 /** The watcher and the swap for the game Live shows. */
@@ -556,6 +629,11 @@ export class LiveAssets {
     return watched ? { touched: [...watched.touched].sort(), source: watched.source } : null;
   }
 
+  /** Resolves once the print of `project`'s files outside `assets/` taken at its load is read (tests wait on it). */
+  async settled(project: string): Promise<void> {
+    if (this.#watched?.project === project) await this.#watched.sourcePrint;
+  }
+
   /** Stops watching. */
   dispose(): void {
     this.#unwatch();
@@ -568,10 +646,17 @@ export class LiveAssets {
    */
   async reload(project: string): Promise<LiveAssetsAnswer> {
     const shown = this.#deps.shown(project);
-    if (!shown) return liveAssetsRebuild(LiveAssetsRebuild.NoRun);
-    if (!(await shown.serves())) return liveAssetsRebuild(LiveAssetsRebuild.NotServed);
-    const watched = this.#watched?.project === project ? this.#watched : this.#watch(project);
-    if (watched.source) return liveAssetsRebuild(LiveAssetsRebuild.Source);
+    const serves = shown !== null && (await shown.serves());
+    // Only a game Live shows, in a build that swaps, is watched: asking about another game never
+    // moves the watch off the one on the stage.
+    const watched = serves ? this.#watchedOrNew(project) : null;
+    const refusal = swapRefusal({
+      shown: shown !== null,
+      serves,
+      watchedSource: watched?.source === true,
+      sourceMoved: watched !== null && !watched.source && (await this.#sourceMoved(project, watched)),
+    });
+    if (refusal !== null || !shown || !watched) return liveAssetsRebuild(refusal ?? LiveAssetsRebuild.NoRun);
     const plan = await planAssetSwap(this.#deps.gameDir(project), shown.assetsDir, watched.touched);
     if (!plan.ok) return liveAssetsRebuild(plan.reason);
     if (plan.files.length === 0) return liveAssetsRebuild(LiveAssetsRebuild.Unchanged);
@@ -592,6 +677,18 @@ export class LiveAssets {
     return { outcome: LiveAssetsOutcome.Swapped, reason: null, reloaded: answer.reloaded, pending: answer.pending };
   }
 
+  /** The watch on `project`, or a new one from now when the watcher follows another game or none. */
+  #watchedOrNew(project: string): Watched {
+    return this.#watched?.project === project ? this.#watched : this.#watch(project);
+  }
+
+  /** Whether the game's files outside `assets/` moved since Live loaded it, as far as their prints say. */
+  async #sourceMoved(project: string, watched: Watched): Promise<boolean> {
+    const before = await watched.sourcePrint;
+    const now = await sourcePrint(this.#deps.gameDir(project));
+    return before === null || now === null || before !== now;
+  }
+
   /** Watch `project`'s folder from now on, forgetting what was seen before. */
   #watch(project: string): Watched {
     this.#unwatch();
@@ -604,7 +701,8 @@ export class LiveAssets {
     } catch (error) {
       this.#deps.log?.(`live asset watch: ${project}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const watched: Watched = { project, batcher, close, touched: new Set(), source: false };
+    const sourcePrinted = sourcePrint(this.#deps.gameDir(project));
+    const watched: Watched = { project, batcher, close, touched: new Set(), source: false, sourcePrint: sourcePrinted };
     this.#watched = watched;
     return watched;
   }
