@@ -9,7 +9,7 @@
  * world_size = [960, 540]   # optional, each side 64..=4096
  * save_name = "pond"        # optional: letters, digits, space, _ - .
  *
- * [crates]                  # optional: the reviewed allowlist (noise, fastrand) by requirement,
+ * [crates]                  # optional: the reviewed allowlist (noise, fastrand, pathfinding) by requirement,
  * noise = "0.9"             # or a crate the person approved for this game, at its exact version
  * tidy = "=1.0.0"
  *
@@ -63,6 +63,9 @@
  *
  * [audio]                   # optional: a game without sound leaves the mixer and decoders out of its build
  * enabled = false           # default true
+ *
+ * [nav]                     # optional: a game without walkers leaves navigation's engine out of its build
+ * enabled = false           # default true; [streaming] and [animation] switch their systems alike
  *
  * [[texture]]               # optional: a loose texture's usage, where no material slot tells it
  * path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP (`isTextureRowPath`)
@@ -280,7 +283,10 @@ export type WgslKind = (typeof WgslKind)[keyof typeof WgslKind];
  */
 export const RUST_ENGINE_FOLDER = "engine";
 
-/** Extra crates a game may name without a person's approval: genex's `GAME_CRATE_ALLOWLIST`. */
+/**
+ * Extra crates a game may name without a person's approval: genex's `GAME_CRATE_ALLOWLIST`, both
+ * held to `tests/fixtures/game-crate-allowlist.json` (owner call 8).
+ */
 export const GAME_CRATE_ALLOWLIST: readonly string[] = Object.freeze(["fastrand", "noise", "pathfinding"]);
 
 /**
@@ -491,6 +497,15 @@ export interface GenexToml {
    * kira, cpal and symphonia); every sound is missing `audio-disabled`. Absent or true keeps it (G6 AU-11).
    */
   audio?: boolean;
+  /**
+   * `[nav] enabled`: false links the facade without its `nav` feature, so the runtime links no
+   * navigation engine and `game.navigation` is refused `nav-disabled`. Absent or true keeps it (release R-1).
+   */
+  nav?: boolean;
+  /** `[streaming] enabled`: false links the facade without `streaming`; `game.streaming` is refused `streaming-disabled`. */
+  streaming?: boolean;
+  /** `[animation] enabled`: false links the facade without `animation`; an animator is refused `animation-disabled`. */
+  animation?: boolean;
   /** `[[texture]]` rows in file order: loose textures' usages (C-10); absent from a manifest built by hand. */
   textures?: readonly TextureRow[];
   /** `[[asset_group]]` rows in file order (C-30); absent from a manifest built by hand. */
@@ -687,6 +702,9 @@ const TOP_KEYS = [
   "web",
   "physics",
   "audio",
+  "nav",
+  "streaming",
+  "animation",
   "texture",
   "asset_group",
   "assets",
@@ -713,7 +731,7 @@ const GPU_KEYS = ["native_features"] as const;
 /** `[web]`'s keys (genex's `WebSection`). */
 const WebKey = { WasmBudgetMb: "wasm_budget_mb" } as const;
 const WEB_KEYS: readonly string[] = Object.values(WebKey);
-/** The one key of a build switch, `[physics]` or `[audio]` (genex's `PhysicsSection`, `AudioSection`). */
+/** The one key of a build switch, `[physics]`, `[audio]`, `[nav]`, `[streaming]` or `[animation]` (genex's `*Section`). */
 const SwitchKey = { Enabled: "enabled" } as const;
 const SWITCH_KEYS: readonly string[] = Object.values(SwitchKey);
 /** The `[net]` table's name, and its keys (genex's `NetSection`). */
@@ -830,6 +848,9 @@ function shapeManifest(document: TomlTable): Shaped {
       wasmBudgetMb: webBudget(document.web),
       physics: switchEnabled(document.physics, "physics"),
       audio: switchEnabled(document.audio, "audio"),
+      nav: switchEnabled(document.nav, "nav"),
+      streaming: switchEnabled(document.streaming, "streaming"),
+      animation: switchEnabled(document.animation, "animation"),
       assets: assetsTable(document.assets),
     };
     return { ok: true, manifest, featureNames, render, rawTextures, assetGroups };
@@ -1105,7 +1126,7 @@ function assetsTable(value: TomlValue | undefined): AssetsToml | null {
   };
 }
 
-/** A build switch's `enabled` (`[physics]`, `[audio]`), true when the file has no table or the table no key. */
+/** A build switch's `enabled` (`[physics]`, `[audio]`, `[nav]`, `[streaming]`, `[animation]`), true when the file has no table or the table no key. */
 function switchEnabled(value: TomlValue | undefined, name: string): boolean {
   if (value === undefined) return true;
   const section = table(value, `[${name}]`);

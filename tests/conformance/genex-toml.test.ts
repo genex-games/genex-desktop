@@ -127,6 +127,11 @@ const RENDER_ROWS = JSON.parse(
   fragments: { wgslRows: string; render: string; wgsl: string };
 };
 
+/** The crates a game names without approval, the one table both sides hold (owner call 8). */
+const CRATE_ALLOWLIST = JSON.parse(
+  await readFile(path.join(ROOT, "tests", "fixtures", "game-crate-allowlist.json"), "utf8"),
+) as { crates: string[] };
+
 /** The render vocabulary of the wire fixture genex-studio's `wire.rs` and genex's `manifest.rs` hold. */
 const WIRE_RENDER = (
   JSON.parse(await readFile(path.join(ROOT, "tests", "fixtures", "native-wire-v2.json"), "utf8")) as {
@@ -213,6 +218,24 @@ describe("genex.toml: the schema", () => {
     assert.deepEqual(manifest.crates, []);
     assert.deepEqual(manifest.wgsl, []);
     assert.deepEqual(manifest.nativeFeatures, []);
+    // Release R-2 (owner call E11): the template links only what it uses, so its web build fits
+    // 4 MiB; a game that adds walkers, a streamed world or an animated character turns one back on.
+    assert.deepEqual(
+      [manifest.physics, manifest.audio, manifest.nav, manifest.streaming, manifest.animation],
+      [true, true, false, false, false],
+    );
+  });
+
+  it("reads each game system's switch, and a file that names none keeps every system", () => {
+    for (const system of ["nav", "streaming", "animation"] as const) {
+      const manifest = accepted(`${GAME}[${system}]\nenabled = false\n`);
+      assert.equal(manifest[system], false, system);
+      const others = (["physics", "audio", "nav", "streaming", "animation"] as const).filter((name) => name !== system);
+      for (const other of others) assert.equal(manifest[other], true, `${system}: ${other} stays`);
+      assert.equal(accepted(`${GAME}[${system}]\n`)[system], true, `an empty [${system}] keeps it`);
+    }
+    const bare = accepted(GAME);
+    assert.deepEqual([bare.nav, bare.streaming, bare.animation], [true, true, true]);
   });
 
   it("reads every section of the documented example", () => {
@@ -271,6 +294,12 @@ describe("genex.toml: the schema", () => {
   it("decodes string escapes and keeps the allowlist the runtime keeps", () => {
     assert.equal(accepted('[game]\ntitle = "Pond \\u00e9 \\"deep\\""\n').title, 'Pond é "deep"');
     assert.deepEqual([...GAME_CRATE_ALLOWLIST].sort(), ["fastrand", "noise", "pathfinding"]);
+  });
+
+  // Release R-2 (owner call 8): one allowlist, held by both sides to one fixture (genex's
+  // `manifest.rs` reads it in `crates/genex/tests/manifest.rs`).
+  it("holds the allowlist to the fixture genex's manifest holds too", () => {
+    assert.deepEqual([...GAME_CRATE_ALLOWLIST], CRATE_ALLOWLIST.crates);
   });
 
   it("admits pathfinding at a version requirement without a person's approval, like noise", () => {

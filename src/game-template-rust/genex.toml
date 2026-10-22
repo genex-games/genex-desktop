@@ -21,3 +21,17 @@ tonemapper = "agx-punchy"
 exposure = "auto"
 ev_compensation = 0.5
 fog_density = 0.002
+
+# Game systems switched off stay out of the build, which keeps the web build small; their calls
+# still compile and are refused. Set `enabled = true` before using one (docs/api/genex-toml.md).
+# Walkers that find paths: game.navigation and sim.nav (docs/api/navigation.md).
+[nav]
+enabled = false
+
+# A big world streamed in cells around the player: game.streaming (docs/api/streaming.md).
+[streaming]
+enabled = false
+
+# Animated characters: gfx.character and the Animator (docs/api/animation.md).
+[animation]
+enabled = false
