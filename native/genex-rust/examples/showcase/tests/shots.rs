@@ -577,7 +577,11 @@ const TILE_QUARTILE_LEVELS_MAX: u8 = 32;
 /// without trails. Live is pinned to the reference class (high, TAA), as captures draw, and runs
 /// [`LIVE_TICKS`] ticks up to the shot's; its last picture is then within a few levels of a settled
 /// capture of that tick (one state re-rendered over a jitter cycle: nothing moves across its
-/// history), and no blob of pixels departs from it as a trail would.
+/// history), and no blob of pixels departs from it as a trail would. A settled capture first bakes
+/// the environment whole (`Renderer::environment_settled`), as the compared capture does: R-12
+/// found the 40-level "trails" of GE's closeup and wide rows (and forest's 31) were the cabin's
+/// irradiance volume, unbaked in Live after 25 frames (two cells a frame, then a 30-frame fade-in),
+/// darkening the outer log wall only in the capture, not TAA history.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_live_taa_frames_leave_no_trails_against_a_settled_capture() {
@@ -600,6 +604,12 @@ fn metal_live_taa_frames_leave_no_trails_against_a_settled_capture() {
         let reference_class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
         let change = RenderChange { device_class: Some(Some(reference_class)), ..RenderChange::default() };
         presenter.render_settings().expect("the game's settings attached").borrow_mut().apply(&change);
+        // A settled capture first, on its own history: it bakes the environment whole (Live
+        // would take about a hundred frames), and Live keeps its own history, exposure and sky.
+        presenter.set_capturing(true);
+        presenter.draw_view(&mut runtime, View::Named(name)).expect("a view").expect("drawn");
+        presenter.set_capturing(false);
+        assert!(presenter.resilient.renderer().renderer().environment_settled(), "{name}: the capture baked the environment whole");
         for _ in 0..LIVE_TICKS {
             runtime.step(FIXED_STEP_MS);
             presenter.draw_view(&mut runtime, View::Named(name)).expect("a view").expect("drawn");

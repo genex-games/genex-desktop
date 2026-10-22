@@ -68,6 +68,9 @@ struct TaaParams {
 
 // `post::taa::TaaFlags::CLIP`: rectify the history against the neighbourhood's colour box.
 const GX_TAA_FLAG_CLIP: u32 = 1u;
+// `post::taa::TaaFlags::SETTLE`: a settled capture's cycle takes every raw sample with the box's
+// weights while the accumulation is above its floor (R-12).
+const GX_TAA_FLAG_SETTLE: u32 = 2u;
 // `post::taa::HANDBACK_FLAG`: the history is TAA upscaling's last output (alpha a weight).
 const GX_TAA_FLAG_HANDBACK: u32 = 128u;
 // `post::taa::JITTER_CYCLE_SHIFT`: where `counts.w` keeps the jitter cycle's frames.
@@ -609,7 +612,16 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     // (pass-1 gate finding 05).
     let filtered = n.filtered.rgb / max(n.filtered.a, 1e-6);
     let at_floor = average <= gx_taa.params.x && !reset;
-    let unjittered = select(reactive, 1.0, (rejected && !reset) || at_floor);
+    // R-12: a capture's settling cycle (nothing moves across it) keeps every raw sample and the
+    // box's weights: its reset frame's no-history coverage took the filtered sample, which shrank
+    // that frame's share of a one-sample dither towards its neighbours' (the crossfade's stipple).
+    // Its history is rectified (`GX_TAA_FLAG_CLIP`) only while auto exposure meters the first
+    // frames, drawn at another pre-exposure (`Renderer::taa_row`).
+    let settling = (gx_taa.counts.w & GX_TAA_FLAG_SETTLE) != 0u && !at_floor;
+    let unjittered = select(select(reactive, 1.0, (rejected && !reset) || at_floor), 0.0, settling);
+    if settling && !reset {
+        weight = average;
+    }
     var current = mix(n.current, filtered, unjittered);
     // B.7: a pixel whose history lies off the screen takes a wider filter (only there: a branch
     // the frame's interior never takes).

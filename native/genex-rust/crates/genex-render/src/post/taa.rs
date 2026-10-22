@@ -56,7 +56,10 @@
 //! ([`crate::settings::TaaQuality`]). The jitter is Halton(2, 3) keyed to the frame index
 //! ([`crate::jitter`]); history starts over on every [`crate::settle::HistoryReset`] (a camera cut
 //! among them, [`resets_history`]), when the node's history was (re)allocated, and never on an
-//! exposure change. Captures settle one whole jitter cycle on capture-owned history (RQ5.4).
+//! exposure change. Captures settle one whole jitter cycle on capture-owned history (RQ5.4),
+//! flagged [`TaaFlags::SETTLE`]: every re-render takes its raw sample with the box's weight, and
+//! the history is rectified only while auto exposure meters, so a still capture is its cycle's mean
+//! (R-12).
 //!
 //! The renderer encodes nodes 15a and 17 since RQ5.6: the jitter reaches `FrameUniforms::jitter`
 //! and every camera depth writer's `gx_clip_position`, the histories are the renderer's
@@ -236,6 +239,18 @@ impl TaaFlags {
     /// The history's rectification against the colour box, with the locks and the luma
     /// instability (always on in the renderer).
     pub const CLIP: TaaFlags = TaaFlags(1);
+    /// A settled capture's cycle (`GX_TAA_FLAG_SETTLE`): while the accumulation is above its
+    /// floor every frame takes its raw sample with the box's weight `1 / (n + 1)`, the reset
+    /// frame's too. Nothing moves across a capture's re-renders, and the reset frame's no-history
+    /// coverage took the filtered sample, which shrank that frame's share of a one-sample dither
+    /// towards its neighbours' (R-12: the LOD crossfade's stipple, D22). The renderer drops
+    /// [`TaaFlags::CLIP`] beside it once auto exposure has metered, so the cycle is its exact mean.
+    pub const SETTLE: TaaFlags = TaaFlags(2);
+
+    /// Both switches.
+    pub const fn with(self, other: TaaFlags) -> TaaFlags {
+        TaaFlags(self.0 | other.0)
+    }
 
     /// The bits the shader reads.
     pub const fn bits(self) -> u32 {

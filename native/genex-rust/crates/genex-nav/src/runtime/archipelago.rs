@@ -17,20 +17,25 @@
 //!   its maps as `Map`/`Set` and its explore heap ordered by (distance, node)). GE (NAV-18): the
 //!   border tables it only looks up are genex-core `FastMap`/`FastSet`, and a node's unconnected
 //!   edges and crossings reuse one buffer each (the same edges in the same ascending order).
+//!   R-19 (the same bits): a walk asks a crossing's visibility only when the node could still be
+//!   queued nearer; each island's world vertices are made once per update and each vertex's ray
+//!   once per walk; the explored and queued sets are per-polygon walk tags; visible edges are
+//!   indexed by line id and carry their world points; the walk's buffers and every agent's
+//!   obstacles are kept across updates; and the per-update agent tables are `FastMap`s.
 //! - P14 (NAV-8): [`Gates`] shut areas and close links; on the update after a gate shuts, every
 //!   corridor through it is dropped and its agent repaths.
 //! - A paused agent, or one taking an animation link, wants no move (upstream kept its last one).
 
 use std::collections::{BinaryHeap, VecDeque};
 
-use genex_core::map::{FastMap, FastSet, Map, Set};
+use genex_core::map::{FastMap, FastSet, Set};
 use glam::{Vec2, Vec3, Vec3Swizzles};
 
 use super::agent::{Agent, AgentId, AgentState, ReachedAnimationLink, RepathResult, does_agent_need_repath};
 use super::avoidance::{Avoidance, AvoidanceAgent, AvoidanceBody, AvoidanceSettings};
 use super::character::{Character, CharacterId};
 use super::coords::{CoordinateSystem, CorePointSampleDistance, FromAgentRadius, GenexCoords, PointSampleDistance};
-use super::dodgy::{Obstacle, VisibilitySet};
+use super::dodgy::{ConeRay, Obstacle, VisibilitySet};
 use super::island::{Island, IslandId};
 use super::link::{AnimationLink, AnimationLinkId};
 use super::nav_data::{DEFAULT_EDGE_LINK_DISTANCE, IslandMut, KindedOffMeshLink, ModifiedNode, NavigationData, NodeRef, SetTypeIndexCostError};
@@ -123,13 +128,19 @@ pub struct Archipelago<CS: CoordinateSystem> {
     /// Discs agents steer around this update, in genex world space (centre, radius): the nav's
     /// avoid obstacles (NAV-12), set before each update.
     pub(crate) avoid_discs: Vec<(Vec3, f32)>,
+    /// The border walk's buffers, kept across updates so a tick allocates nothing for them
+    /// (R-19, NAV-18's update budget).
+    borders: BorderScratch,
+    /// Each agent's border obstacles from the last update, reused in place.
+    border_obstacles: Vec<Vec<Obstacle>>,
 }
 
-/// Where each agent and target was sampled this update.
+/// Where each agent and target was sampled this update. The tables are only filled in agent
+/// order and looked up, so their hash never reaches a result (R-19: `FastMap`, not `Map`).
 struct Sampled {
-    agent_nodes: Map<AgentId, (Vec3, NodeRef)>,
-    target_nodes: Map<AgentId, (Vec3, NodeRef)>,
-    character_points: Map<CharacterId, Vec3>,
+    agent_nodes: FastMap<AgentId, (Vec3, NodeRef)>,
+    target_nodes: FastMap<AgentId, (Vec3, NodeRef)>,
+    character_points: FastMap<CharacterId, Vec3>,
 }
 
 impl<CS: CoordinateSystem> Archipelago<CS> {
@@ -146,6 +157,8 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
             gates: Gates::new(),
             avoidance: Avoidance::new(),
             avoid_discs: Vec::new(),
+            borders: BorderScratch::default(),
+            border_obstacles: Vec::new(),
         }
     }
 
@@ -313,8 +326,8 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
         let sampled = self.sample();
 
         // Classify every agent, keeping or dropping paths; queue the ones that need a search.
-        let mut follow: Map<AgentId, (PathIndex, PathIndex)> = Map::default();
-        let mut needs_search: Set<AgentId> = Set::default();
+        let mut follow: FastMap<AgentId, (PathIndex, PathIndex)> = FastMap::default();
+        let mut needs_search: FastSet<AgentId> = FastSet::default();
         let nav_data = &self.nav_data;
         let gates = &self.gates;
         self.agents.for_each_mut(|agent_id, agent| {
@@ -363,7 +376,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
     /// Samples every active agent, its target and every character onto the meshes.
     fn sample(&self) -> Sampled {
         let distance = self.sample_distance();
-        let mut sampled = Sampled { agent_nodes: Map::default(), target_nodes: Map::default(), character_points: Map::default() };
+        let mut sampled = Sampled { agent_nodes: FastMap::default(), target_nodes: FastMap::default(), character_points: FastMap::default() };
         for (agent_id, agent) in self.agents.iter() {
             if agent.paused || agent.using_animation_link {
                 continue;
@@ -388,7 +401,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
     }
 
     /// Runs up to `searches_per_tick` searches for the oldest queued agents that still need one.
-    fn run_searches(&mut self, sampled: &Sampled, needs_search: &Set<AgentId>, follow: &mut Map<AgentId, (PathIndex, PathIndex)>) {
+    fn run_searches(&mut self, sampled: &Sampled, needs_search: &FastSet<AgentId>, follow: &mut FastMap<AgentId, (PathIndex, PathIndex)>) {
         let budget = self.archipelago_options.budget;
         let mut searches = 0;
         while searches < budget.searches_per_tick {
@@ -428,7 +441,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
 
     /// Agents still queued after the searches wait: they follow an old, still-valid corridor
     /// toward its old end, or stand still.
-    fn wait_or_follow_old(&mut self, sampled: &Sampled, needs_search: &Set<AgentId>, follow: &mut Map<AgentId, (PathIndex, PathIndex)>) {
+    fn wait_or_follow_old(&mut self, sampled: &Sampled, needs_search: &FastSet<AgentId>, follow: &mut FastMap<AgentId, (PathIndex, PathIndex)>) {
         for &agent_id in needs_search {
             if !self.queued.contains(&agent_id) {
                 continue;
@@ -453,7 +466,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
     }
 
     /// Each agent's desired move toward its next corner, its state, and any reached link.
-    fn steer(&mut self, sampled: &Sampled, follow: &Map<AgentId, (PathIndex, PathIndex)>) {
+    fn steer(&mut self, sampled: &Sampled, follow: &FastMap<AgentId, (PathIndex, PathIndex)>) {
         let nav_data = &self.nav_data;
         self.agents.for_each_mut(|agent_id, agent| {
             let Some(path) = &agent.current_path else {
@@ -515,8 +528,11 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
         let options = &self.archipelago_options;
         let mut ids = Vec::with_capacity(sampled.agent_nodes.len());
         let mut agents = Vec::with_capacity(sampled.agent_nodes.len());
-        let mut obstacles = Vec::with_capacity(sampled.agent_nodes.len());
-        let mut scratch = BorderScratch::default();
+        // Last update's buffers: the walk's, and each agent's obstacles to refill in place.
+        let mut scratch = std::mem::take(&mut self.borders);
+        scratch.islands.clear();
+        let mut obstacles = std::mem::take(&mut self.border_obstacles);
+        let mut walked = 0;
         for (agent_id, agent) in self.agents.iter() {
             let Some(&(point, node)) = sampled.agent_nodes.get(&agent_id) else {
                 continue;
@@ -531,9 +547,14 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
                 max_speed: agent.max_speed,
                 responsibility,
             });
-            obstacles.push(border_obstacles((point, node), &self.nav_data, options.neighbourhood, &mut scratch));
+            if obstacles.len() == walked {
+                obstacles.push(Vec::new());
+            }
+            border_obstacles((point, node), &self.nav_data, options.neighbourhood, &mut scratch, &mut obstacles[walked]);
+            walked += 1;
             ids.push(agent_id);
         }
+        obstacles.truncate(walked);
         let mut bodies: Vec<AvoidanceBody> = self
             .characters
             .iter()
@@ -558,6 +579,8 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
         };
         let mut velocities = Vec::with_capacity(agents.len());
         self.avoidance.step(&agents, &bodies, &obstacles, &settings, delta_time, &mut velocities);
+        self.borders = scratch;
+        self.border_obstacles = obstacles;
         for (agent_id, velocity) in ids.into_iter().zip(velocities) {
             if let Some(agent) = self.agents.get_mut(agent_id) {
                 agent.current_desired_move = CS::from_landmass(&GenexCoords::to_landmass(&velocity));
@@ -605,168 +628,304 @@ fn explore_node(distance_squared: f32, node: NodeRef) -> ExploreNode {
 /// A vertex of an island (or a modified node's new vertex) a border edge ends at.
 type BorderVertex = (Option<IslandId>, usize);
 
+/// A border edge's end: which vertex (what loops join on) and where it is in world space.
+type BorderEnd = (BorderVertex, Vec2);
+
+/// One island's vertices as a border walk sees them: in world space (made once per tick, the bits
+/// `Transform::apply` gives) and, per walk, as rays from the agent (made once per walk).
+#[derive(Default)]
+struct IslandBorders {
+    /// Every vertex of the island's mesh, world space, ground plane.
+    world: Vec<Vec2>,
+    /// Each vertex's ray from the walking agent, tagged with the walk that made it (a tag that is
+    /// not the current walk's is stale, so no walk clears the table).
+    rays: Vec<(u32, ConeRay)>,
+    /// Each polygon's walk tags: the walk's explored and queued sets, without hashing.
+    nodes: Vec<NodeTag>,
+}
+
+/// One polygon's place in the walks: explored in walk `explored`; queued in walk `queued` at the
+/// nearest score `bits` (a non-negative float's bits). A tag of an older walk means not yet.
+#[derive(Clone, Copy, Default)]
+struct NodeTag {
+    explored: u32,
+    queued: u32,
+    bits: u32,
+}
+
+impl IslandBorders {
+    /// The island's world vertices and empty ray and node tables.
+    fn new<CS: CoordinateSystem>(island: &Island<CS>) -> IslandBorders {
+        let apply = island.transform.applier();
+        let world: Vec<Vec2> = island.nav_mesh.vertices.iter().map(|&vertex| apply(vertex).xy()).collect();
+        let rays = vec![(0, ConeRay::default()); world.len()];
+        let nodes = vec![NodeTag::default(); island.nav_mesh.polygons.len()];
+        IslandBorders { world, rays, nodes }
+    }
+
+    /// Vertex `index`'s ray from `agent_point` in walk `walk`, made at its first use in the walk.
+    fn ray(&mut self, walk: u32, index: usize, agent_point: Vec2) -> ConeRay {
+        let (tag, ray) = &mut self.rays[index];
+        if *tag != walk {
+            *tag = walk;
+            *ray = ConeRay::from_point(self.world[index] - agent_point);
+        }
+        *ray
+    }
+}
+
+/// A crossing out of an explored node: its ends relative to the agent (dodgy's solid side on the
+/// left) and, for a mesh edge, the ends' vertex indices in the node's island.
+type Crossing = (Vec2, Vec2, Option<(usize, usize)>, NodeRef);
+
 /// The buffers [`border_obstacles`] fills for one agent, kept across a tick's agents so each walk
-/// reuses their memory (GE fix r2, NAV-18's update budget). Every walk starts them empty.
+/// reuses their memory (GE fix r2, NAV-18's update budget). Every walk starts them empty, except
+/// the per-island vertex tables, which hold for the whole tick (R-19).
 #[derive(Default)]
 struct BorderScratch {
     visibility_set: VisibilitySet,
-    border_edges: FastMap<u32, (BorderVertex, BorderVertex)>,
+    /// Each visible line's edge, indexed by its line id (the set hands out ids 0, 1, 2, ...).
+    border_edges: Vec<(BorderEnd, BorderEnd)>,
     new_vertices: Vec<Vec2>,
-    explored: FastSet<NodeRef>,
     remaining_edges: Vec<usize>,
-    crossings: Vec<(Vec2, Vec2, NodeRef)>,
+    crossings: Vec<Crossing>,
     next_nodes: BinaryHeap<ExploreNode>,
+    /// Each island a walk reached this tick: world vertices, rays and node tags (emptied once per
+    /// update).
+    islands: FastMap<IslandId, IslandBorders>,
+    /// The loops [`build_obstacles`] joins, and spare buffers for them.
+    loops: LoopBuffers,
+    /// The current walk's tag for [`IslandBorders::rays`] and [`IslandBorders::nodes`] (0 is never
+    /// a walk).
+    walk: u32,
 }
 
 impl BorderScratch {
-    /// Empty every buffer, keeping its memory.
+    /// Empty every per-walk buffer, keeping its memory, and start a new walk tag.
     fn clear(&mut self) {
         self.visibility_set.clear();
         self.border_edges.clear();
         self.new_vertices.clear();
-        self.explored.clear();
         self.remaining_edges.clear();
         self.crossings.clear();
         self.next_nodes.clear();
+        self.walk += 1;
     }
 }
 
-/// The mesh borders near the agent as dodgy obstacles, seen from the agent's node so floors above
-/// and below never count (landmass's `nav_mesh_borders_to_dodgy_obstacles`), walked in `scratch`.
-fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data: &NavigationData<CS>, distance_limit: f32, scratch: &mut BorderScratch) -> Vec<Obstacle> {
+/// The mesh borders near the agent as dodgy obstacles into `out` (its old obstacles' buffers are
+/// reused), seen from the agent's node so floors above and below never count (landmass's
+/// `nav_mesh_borders_to_dodgy_obstacles`), walked in `scratch`.
+fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data: &NavigationData<CS>, distance_limit: f32, scratch: &mut BorderScratch, out: &mut Vec<Obstacle>) {
     let distance_limit = distance_limit * distance_limit;
     scratch.clear();
-    let BorderScratch { visibility_set, border_edges, new_vertices, explored, remaining_edges, crossings, next_nodes } = scratch;
+    let BorderScratch { visibility_set, border_edges, new_vertices, remaining_edges, crossings, next_nodes, islands, loops, walk } = scratch;
+    let walk = *walk;
     next_nodes.push(explore_node(0.0, agent_node.1));
     let agent_point = agent_node.0.xy();
 
     while let Some(ExploreNode { node, .. }) = next_nodes.pop() {
-        if !explored.insert(node) {
-            continue;
-        }
+        // A node of a missing island is never explored, so it is never queued either.
         let Some(island) = nav_data.get_island(node.island_id) else {
             continue;
         };
+        let slot = island_slot(islands, node.island_id, island);
+        let tag = &mut islands[slot].nodes[node.polygon_index];
+        if tag.explored == walk {
+            continue;
+        }
+        tag.explored = walk;
         let polygon = &island.nav_mesh.polygons[node.polygon_index];
-        let apply = island.transform.applier();
-        let relative = |index: usize| apply(island.nav_mesh.vertices[index]).xy() - agent_point;
         // The node's unconnected edges, ascending.
         remaining_edges.clear();
         remaining_edges.extend((0..polygon.vertices.len()).filter(|&edge| !matches!(polygon.connectivity.get(edge), Some(Some(_)))));
         // Crossings out of the node: dodgy's solid side is the left, so each edge is reversed
         // to keep the node's outside solid.
         crossings.clear();
+        let world = &islands[slot].world;
         for (edge_index, connectivity) in polygon.connectivity.iter().enumerate() {
             let Some(connectivity) = connectivity else {
                 continue;
             };
             let (vertex_1, vertex_2) = polygon.get_edge_indices(edge_index);
             let next = NodeRef { island_id: node.island_id, polygon_index: connectivity.polygon_index };
-            crossings.push((relative(vertex_2), relative(vertex_1), next));
+            crossings.push((world[vertex_2] - agent_point, world[vertex_1] - agent_point, Some((vertex_2, vertex_1)), next));
         }
         if let Some(links) = nav_data.node_to_off_mesh_link_ids.get(&node) {
             for link in links.iter().filter_map(|id| nav_data.off_mesh_links.get(*id)) {
                 // Only boundary links count for visibility.
                 if matches!(link.kinded, KindedOffMeshLink::BoundaryLink { .. }) {
-                    crossings.push((link.portal.1.xy() - agent_point, link.portal.0.xy() - agent_point, link.destination_node));
+                    crossings.push((link.portal.1.xy() - agent_point, link.portal.0.xy() - agent_point, None, link.destination_node));
                 }
             }
         }
-        for &(vertex_1, vertex_2, next) in crossings.iter() {
-            if !visibility_set.is_line_visible(vertex_1, vertex_2) {
+        for &(vertex_1, vertex_2, indices, next) in crossings.iter() {
+            // The cheap tests first: a crossing past the limit, into an explored node or into a
+            // node already queued at least as near is never explored from here, so its
+            // visibility (the costly test) is never asked.
+            let score = vertex_1.length_squared().min(vertex_2.length_squared());
+            if score >= distance_limit {
                 continue;
             }
-            let score = vertex_1.length_squared().min(vertex_2.length_squared());
-            if score < distance_limit {
-                next_nodes.push(explore_node(score, next));
+            let next_slot = if next.island_id == node.island_id {
+                slot
+            } else {
+                let Some(next_island) = nav_data.get_island(next.island_id) else {
+                    continue;
+                };
+                island_slot(islands, next.island_id, next_island)
+            };
+            let bits = score.max(0.0).to_bits();
+            let next_tag = islands[next_slot].nodes[next.polygon_index];
+            if next_tag.explored == walk || (next_tag.queued == walk && next_tag.bits <= bits) {
+                continue;
             }
+            let (ray_1, ray_2) = match indices {
+                Some((index_1, index_2)) => (islands[slot].ray(walk, index_1, agent_point), islands[slot].ray(walk, index_2, agent_point)),
+                None => (ConeRay::from_point(vertex_1), ConeRay::from_point(vertex_2)),
+            };
+            if !visibility_set.is_ray_line_visible(ray_1, ray_2) {
+                continue;
+            }
+            islands[next_slot].nodes[next.polygon_index] = NodeTag { queued: walk, bits, ..next_tag };
+            next_nodes.push(explore_node(score, next));
         }
-        let modified_node = nav_data.modified_nodes.get(&node);
-        add_borders(visibility_set, border_edges, new_vertices, (node, island), modified_node, remaining_edges, agent_point);
+        // Most meshes carry no carved node: skip the lookup's hash then.
+        let modified_node = if nav_data.modified_nodes.is_empty() { None } else { nav_data.modified_nodes.get(&node) };
+        let walker = BorderWalker { walk, agent_point, borders: &mut islands[slot] };
+        add_borders(visibility_set, border_edges, new_vertices, (node, island), modified_node, remaining_edges, walker);
     }
-    build_obstacles(nav_data, visibility_set, border_edges, new_vertices)
+    build_obstacles(visibility_set, border_edges, loops, out);
+}
+
+/// `id`'s slot in `islands`, its tables made at its first walk of the update.
+fn island_slot<CS: CoordinateSystem>(islands: &mut FastMap<IslandId, IslandBorders>, id: IslandId, island: &Island<CS>) -> usize {
+    let entry = islands.entry(id);
+    let slot = entry.index();
+    entry.or_insert_with(|| IslandBorders::new(island));
+    slot
+}
+
+/// The agent a walk is for, and the island it is in.
+struct BorderWalker<'a> {
+    walk: u32,
+    agent_point: Vec2,
+    borders: &'a mut IslandBorders,
 }
 
 /// Adds one node's border edges to the visibility set: a modified node's new boundary, or the
 /// node's unconnected edges.
 fn add_borders<CS: CoordinateSystem>(
     visibility_set: &mut VisibilitySet,
-    border_edges: &mut FastMap<u32, (BorderVertex, BorderVertex)>,
+    border_edges: &mut Vec<(BorderEnd, BorderEnd)>,
     new_vertices: &mut Vec<Vec2>,
     (node, island): (NodeRef, &Island<CS>),
     modified_node: Option<&ModifiedNode>,
     remaining_edges: &[usize],
-    agent_point: Vec2,
+    walker: BorderWalker<'_>,
 ) {
+    let BorderWalker { walk, agent_point, borders } = walker;
     let mesh_vertices = island.nav_mesh.vertices.len();
-    let apply = island.transform.applier();
-    let world = |index: usize| apply(island.nav_mesh.vertices[index]).xy();
     let Some(modified_node) = modified_node else {
         let polygon = &island.nav_mesh.polygons[node.polygon_index];
         for &border_edge in remaining_edges {
             // Reversed, so the outside of the node is solid.
             let (border_vertex_2, border_vertex_1) = polygon.get_edge_indices(border_edge);
-            let line = visibility_set.add_line(world(border_vertex_1) - agent_point, world(border_vertex_2) - agent_point);
+            let line = visibility_set.add_ray_line(borders.ray(walk, border_vertex_1, agent_point), borders.ray(walk, border_vertex_2, agent_point));
             if let Some(line) = line {
-                border_edges.insert(line, ((Some(node.island_id), border_vertex_1), (Some(node.island_id), border_vertex_2)));
+                let end = |index: usize| ((Some(node.island_id), index), borders.world[index]);
+                record_edge(border_edges, line, (end(border_vertex_1), end(border_vertex_2)));
             }
         }
         return;
     };
-    let endpoint = |index: usize, new_vertices: &mut Vec<Vec2>| -> (Vec2, BorderVertex) {
+    let mut endpoint = |index: usize, new_vertices: &mut Vec<Vec2>| -> (ConeRay, BorderEnd) {
         if index >= mesh_vertices {
             let vertex = modified_node.new_vertices[index - mesh_vertices];
             new_vertices.push(vertex);
-            return (vertex - agent_point, (None, new_vertices.len() - 1));
+            return (ConeRay::from_point(vertex - agent_point), ((None, new_vertices.len() - 1), vertex));
         }
-        (world(index) - agent_point, (Some(node.island_id), index))
+        (borders.ray(walk, index, agent_point), ((Some(node.island_id), index), borders.world[index]))
     };
     for &(left, right) in &modified_node.new_boundary {
-        let (left_point, left_index) = endpoint(left, new_vertices);
-        let (right_point, right_index) = endpoint(right, new_vertices);
-        if let Some(line) = visibility_set.add_line(left_point, right_point) {
-            border_edges.insert(line, (left_index, right_index));
+        let (left_ray, left_index) = endpoint(left, new_vertices);
+        let (right_ray, right_index) = endpoint(right, new_vertices);
+        if let Some(line) = visibility_set.add_ray_line(left_ray, right_ray) {
+            record_edge(border_edges, line, (left_index, right_index));
         }
     }
 }
 
-/// Joins the visible border edges into loops: closed loops and open chains, as dodgy obstacles.
-fn build_obstacles<CS: CoordinateSystem>(
-    nav_data: &NavigationData<CS>,
+/// Records visible line `line`'s edge: the set hands out ids in order, so it is the next index.
+fn record_edge(border_edges: &mut Vec<(BorderEnd, BorderEnd)>, line: u32, edge: (BorderEnd, BorderEnd)) {
+    debug_assert_eq!(border_edges.len(), line as usize, "line ids come in order");
+    border_edges.push(edge);
+}
+
+/// The border loops [`build_obstacles`] joins, and spare buffers so a walk allocates nothing once
+/// the first walks have grown them.
+#[derive(Default)]
+struct LoopBuffers {
+    /// The visible line ids, ascending.
+    line_ids: Vec<u32>,
+    finished: Vec<Vec<BorderEnd>>,
+    unfinished: Vec<Vec<BorderEnd>>,
+    /// Empty loop buffers.
+    spare: Vec<Vec<BorderEnd>>,
+    /// Empty obstacle vertex buffers.
+    vertex_spare: Vec<Vec<Vec2>>,
+}
+
+/// Joins the visible border edges into loops: closed loops and open chains, as dodgy obstacles
+/// into `out` (emptied first; its vertex buffers are reused).
+fn build_obstacles(
     visibility_set: &VisibilitySet,
-    border_edges: &FastMap<u32, (BorderVertex, BorderVertex)>,
-    new_vertices: &[Vec2],
-) -> Vec<Obstacle> {
-    let mut finished_loops: Vec<Vec<BorderVertex>> = Vec::new();
-    let mut unfinished_loops: Vec<Vec<BorderVertex>> = Vec::new();
-    for line_id in visibility_set.get_visible_line_ids() {
-        let Some(&edge) = border_edges.get(&line_id) else {
+    border_edges: &[(BorderEnd, BorderEnd)],
+    loops: &mut LoopBuffers,
+    out: &mut Vec<Obstacle>,
+) {
+    let LoopBuffers { line_ids, finished, unfinished, spare, vertex_spare } = loops;
+    for obstacle in out.drain(..) {
+        let (Obstacle::Closed { mut vertices } | Obstacle::Open { mut vertices }) = obstacle;
+        vertices.clear();
+        vertex_spare.push(vertices);
+    }
+    visibility_set.visible_line_ids_into(line_ids);
+    for line_id in line_ids.iter() {
+        let Some(&edge) = border_edges.get(*line_id as usize) else {
             continue;
         };
-        let left_loop = unfinished_loops.iter().position(|edge_loop| edge_loop[edge_loop.len() - 1] == edge.0);
-        let right_loop = unfinished_loops.iter().position(|edge_loop| edge_loop[0] == edge.1);
+        let left_loop = unfinished.iter().position(|edge_loop| edge_loop[edge_loop.len() - 1].0 == edge.0.0);
+        let right_loop = unfinished.iter().position(|edge_loop| edge_loop[0].0 == edge.1.0);
         match (left_loop, right_loop) {
-            (None, None) => unfinished_loops.push(vec![edge.0, edge.1]),
-            (Some(left), None) => unfinished_loops[left].push(edge.1),
-            (None, Some(right)) => unfinished_loops[right].insert(0, edge.0),
-            (Some(left), Some(right)) if left == right => finished_loops.push(unfinished_loops.remove(left)),
+            (None, None) => {
+                let mut edge_loop = spare.pop().unwrap_or_default();
+                edge_loop.extend([edge.0, edge.1]);
+                unfinished.push(edge_loop);
+            }
+            (Some(left), None) => unfinished[left].push(edge.1),
+            (None, Some(right)) => unfinished[right].insert(0, edge.0),
+            (Some(left), Some(right)) if left == right => finished.push(unfinished.remove(left)),
             (Some(left), Some(right)) => {
-                let mut left_loop = unfinished_loops.swap_remove(left);
+                let mut left_loop = unfinished.swap_remove(left);
                 // swap_remove moved the last loop into `left`'s slot.
-                let right = if right == unfinished_loops.len() { left } else { right };
-                let right_loop = unfinished_loops.swap_remove(right);
-                left_loop.extend(right_loop);
-                unfinished_loops.push(left_loop);
+                let right = if right == unfinished.len() { left } else { right };
+                let mut right_loop = unfinished.swap_remove(right);
+                left_loop.append(&mut right_loop);
+                spare.push(right_loop);
+                unfinished.push(left_loop);
             }
         }
     }
-    let to_vec = |(island_id, index): BorderVertex| match island_id {
-        None => new_vertices[index],
-        Some(island_id) => nav_data.get_island(island_id).map_or(Vec2::ZERO, |island| island.transform.apply(island.nav_mesh.vertices[index]).xy()),
-    };
-    let closed = finished_loops.into_iter().map(|edge_loop| Obstacle::Closed { vertices: edge_loop.into_iter().rev().map(to_vec).collect() });
-    let open = unfinished_loops.into_iter().map(|edge_loop| Obstacle::Open { vertices: edge_loop.into_iter().rev().map(to_vec).collect() });
-    closed.chain(open).collect()
+    // Closed loops first, then open chains, each in the order it was made.
+    let closed = finished.drain(..).map(|edge_loop| (true, edge_loop));
+    for (is_closed, mut edge_loop) in closed.chain(unfinished.drain(..).map(|edge_loop| (false, edge_loop))) {
+        let mut vertices = vertex_spare.pop().unwrap_or_default();
+        vertices.extend(edge_loop.iter().rev().map(|&(_, point)| point));
+        out.push(if is_closed { Obstacle::Closed { vertices } } else { Obstacle::Open { vertices } });
+        edge_loop.clear();
+        spare.push(edge_loop);
+    }
 }
 
 #[cfg(test)]

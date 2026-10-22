@@ -1,7 +1,8 @@
 /**
  * The Genex promo after the welcome: it is queued only by a finished welcome, shows only while
  * Genex could still be connected, settles for good once an account exists or it is dismissed,
- * and its card walks through offer → waiting for the browser → connected (or a retry).
+ * and its card walks through offer → waiting for the browser → connected (or a retry). Over Live it
+ * rests nothing: the web game draws on under it, out of sight at the slot's size.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -15,7 +16,13 @@ import {
   queueGenexPromo,
   type PromoInput,
 } from "../../src/renderer/genex-promo.ts";
-import { Overlay, type StageCover, webViewBounds } from "../../src/renderer/panels/stage/native-bounds.ts";
+import {
+  Overlay,
+  type StageCover,
+  ViewCover,
+  webViewBounds,
+  webViewCover,
+} from "../../src/renderer/panels/stage/native-bounds.ts";
 import { STORAGE_KEYS } from "../../src/renderer/storage.ts";
 
 /** A rectangle as `getBoundingClientRect` reports it. */
@@ -107,40 +114,65 @@ describe("Genex promo", () => {
 });
 
 describe("Native game visibility", () => {
-  it("a floating promo over Live gives the view back to the DOM for Three.js and C++ web games", () => {
-    const slot = box(620, 48, 820, 852);
-    const promo = { kind: Overlay.Floating, rect: box(1064, 484, 360, 400) };
-    const live: StageCover = {
-      project: "my-first-game",
-      visible: true,
-      sidebarOverlay: false,
-      buildsOpen: false,
-      assetsOpen: false,
-      fileOpen: false,
-      showEmpty: false,
-      liveLoading: false,
-      toolbarOpen: false,
-      cardOnStage: false,
-      pluginCardOnStage: false,
-      stillsOnStage: false,
-      stopped: false,
-      watching: true,
-      native: false,
-    };
-    const shown = { x: 620, y: 48, width: 820, height: 852 };
-    const hidden = { x: 0, y: 0, width: 0, height: 0 };
-    assert.deepEqual(webViewBounds(live, slot, [promo]), hidden, "the game cannot paint over the floating promo");
+  const slot = box(620, 48, 820, 852);
+  /** The promo card bottom-right over the stage, as `overlaysNow` reads `[data-genex-promo]`. */
+  const promo = { kind: Overlay.Card, rect: box(1064, 484, 360, 400) };
+  const live: StageCover = {
+    project: "my-first-game",
+    visible: true,
+    sidebarOverlay: false,
+    buildsOpen: false,
+    assetsOpen: false,
+    fileOpen: false,
+    showEmpty: false,
+    liveLoading: false,
+    toolbarOpen: false,
+    cardOnStage: false,
+    pluginCardOnStage: false,
+    stillsOnStage: false,
+    stopped: false,
+    watching: true,
+    native: false,
+  };
+  const shown = { x: 620, y: 48, width: 820, height: 852 };
+  const hidden = { x: 0, y: 0, width: 0, height: 0 };
+  /** The view at the slot's size, out of the window: main keeps drawing it, and the card shows over the slot. */
+  const parked = { x: -820, y: -852, width: 820, height: 852 };
+
+  it("the promo over Live keeps the web game drawing at the slot's size, out of sight under the card", () => {
+    // Main counts a view with an area as on the stage, so the page stays visible and its frames advance.
+    assert.equal(webViewCover(slot, [promo], false), ViewCover.Card);
+    assert.deepEqual(webViewBounds(live, slot, [promo]), parked, "the game draws on under the promo");
     assert.deepEqual(
       webViewBounds({ ...live, project: "bounce-mac" }, slot, [promo]),
-      hidden,
-      "a C++ web build gives the same rectangle back",
+      parked,
+      "a C++ web build draws on the same way",
     );
-    const beside = { kind: Overlay.Floating, rect: box(1460, 484, 360, 400) };
-    assert.deepEqual(webViewBounds(live, slot, [beside]), shown, "a panel beside the stage keeps the web view");
+  });
+
+  it("a dialog or a popover still rests the game, with the promo up or not", () => {
+    const popover = { kind: Overlay.Floating, rect: box(700, 100, 200, 200) };
+    const modal = { kind: Overlay.Modal, rect: box(0, 0, 0, 0) };
+    for (const overlays of [[popover], [promo, popover], [promo, modal]]) {
+      assert.equal(webViewCover(slot, overlays, false), ViewCover.Rest, JSON.stringify(overlays));
+      assert.deepEqual(webViewBounds(live, slot, overlays), hidden);
+    }
+    assert.equal(webViewCover(slot, [promo], true), ViewCover.Rest, "a floating cover (a toolbar panel) rests it too");
+  });
+
+  it("a card beside the stage leaves the view in its slot, and Native never exposes the web view", () => {
+    const beside = { kind: Overlay.Card, rect: box(1460, 484, 360, 400) };
+    assert.equal(webViewCover(slot, [beside], false), ViewCover.None);
+    assert.deepEqual(webViewBounds(live, slot, [beside]), shown, "a card beside the stage keeps the web view");
     assert.deepEqual(
       webViewBounds({ ...live, project: "bounce-mac", native: true }, slot, [promo]),
       hidden,
-      "a C++ native canvas never exposes the web view",
+      "a native canvas never exposes the web view",
+    );
+    assert.deepEqual(
+      webViewBounds({ ...live, liveLoading: true }, slot, [promo]),
+      hidden,
+      "no game shown, nothing drawn",
     );
   });
 });

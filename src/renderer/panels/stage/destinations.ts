@@ -20,7 +20,12 @@ import {
   stackOf,
 } from "../../../shared/game-project.ts";
 import { DestinationBadge, runRefusal, TargetRefusal } from "../../../shared/game-targets.ts";
-import { type DestinationCheck, NativeRefusal, type NativeRunStatus } from "../../../shared/native-contract.ts";
+import {
+  type DestinationCheck,
+  NativeRefusal,
+  NativeRunState,
+  type NativeRunStatus,
+} from "../../../shared/native-contract.ts";
 import type { ToolchainStatus } from "../../../shared/toolchain.ts";
 import { missingForStack } from "../toolchain-view.ts";
 import type { UiEventMap } from "../../../shared/ui-events.ts";
@@ -250,6 +255,11 @@ export interface BadgeFacts {
    * (a Rust game) has its host's build shown by Live. Absent, the badges say what they always said.
    */
   stack?: CompiledStack;
+  /**
+   * Where Live's embedded run of the game's Mac build stands (a game with no window of its own);
+   * null or absent when Live has not run it this session.
+   */
+  macRun?: NativeRunState | null;
 }
 
 type Standing = Pick<DestinationBadgeView, "state" | "text" | "why">;
@@ -259,9 +269,49 @@ const OWN_WINDOW: Standing = { state: BadgeState.OwnWindow, text: MESSAGE.ownWin
 /** A host build Live shows itself (Web | Native), for a game with no window of its own. */
 const IN_LIVE_NATIVE: Standing = { state: BadgeState.InLive, text: DESTINATION_WORDS.inLiveNative, why: null };
 
-/** Where a build this host runs plays: in its own window, or in Live for a game with none (a Rust game). */
-function runsHere(stack: CompiledStack | undefined): Standing {
-  return stack && !playsInOwnWindow(stack) ? IN_LIVE_NATIVE : OWN_WINDOW;
+/** A host build Live ran this session and no longer shows: built, a choice of Native away. */
+const BUILT_FOR_LIVE: Standing = {
+  state: BadgeState.Built,
+  text: DESTINATION_WORDS.badge[DestinationBadge.Built],
+  why: DESTINATION_WORDS.nativeBuiltWhy,
+};
+
+/** A host build Live has not made yet: choosing Native builds it. */
+const NOT_BUILT_FOR_LIVE: Standing = {
+  state: BadgeState.NotBuilt,
+  text: DESTINATION_WORDS.badge[DestinationBadge.NotBuilt],
+  why: DESTINATION_WORDS.nativeNotBuiltWhy,
+};
+
+/** Embedded run states in which Live draws the Mac build, or is about to. */
+const DRAWN_IN_LIVE: ReadonlySet<NativeRunState> = new Set([
+  NativeRunState.Admitting,
+  NativeRunState.Starting,
+  NativeRunState.Ready,
+  NativeRunState.Paused,
+]);
+
+/** Embedded run states that leave a Mac build behind: it built and ran, then ended. */
+const LEFT_BUILT: ReadonlySet<NativeRunState> = new Set([
+  NativeRunState.Stopping,
+  NativeRunState.Stopped,
+  NativeRunState.Crashed,
+  NativeRunState.Killed,
+]);
+
+/** Where Live stands with a host build it shows itself: drawing it, it built earlier, or none yet. */
+function inLiveStanding(macRun: NativeRunState | null | undefined): Standing {
+  if (macRun && DRAWN_IN_LIVE.has(macRun)) return IN_LIVE_NATIVE;
+  return macRun && LEFT_BUILT.has(macRun) ? BUILT_FOR_LIVE : NOT_BUILT_FOR_LIVE;
+}
+
+/**
+ * Where a build this host runs plays: in its own window, or, for a game with none (a Rust game),
+ * in Live, which says In Live only while it draws that build.
+ */
+function runsHere(facts: Pick<BadgeFacts, "stack" | "macRun">): Standing {
+  const { stack } = facts;
+  return stack && !playsInOwnWindow(stack) ? inLiveStanding(facts.macRun) : OWN_WINDOW;
 }
 
 /** The badges a check may carry that say something of their own; the lane never records Building or NotBuilt. */
@@ -293,12 +343,12 @@ function checkWords(check: DestinationCheck, host: StudioPlatform | null): Stand
 function checkStanding(
   check: DestinationCheck | undefined,
   refusal: TargetRefusal | null,
-  facts: Pick<BadgeFacts, "host" | "stack">,
+  facts: Pick<BadgeFacts, "host" | "stack" | "macRun">,
 ): Standing | null {
   const { host } = facts;
   if (!check || !CHECK_SAYS.has(check.badge)) return null;
   if (check.badge !== DestinationBadge.Built) return checkWords(check, host);
-  if (refusal === null) return runsHere(facts.stack);
+  if (refusal === null) return runsHere(facts);
   return { ...checkWords(check, host), why: DESTINATION_WORDS.refusal[refusal] };
 }
 
@@ -316,7 +366,7 @@ function standing(target: BuildTarget, facts: BadgeFacts): Standing {
     return { state: BadgeState.MacBuildsNeedAMac, text: DESTINATION_WORDS.refusal[refusal], why: null };
   const checked = checkStanding(facts.checks?.[target], refusal, facts);
   if (checked) return checked;
-  if (refusal === null) return runsHere(facts.stack);
+  if (refusal === null) return runsHere(facts);
   return {
     state: BadgeState.NotBuilt,
     text: DESTINATION_WORDS.badge[DestinationBadge.NotBuilt],

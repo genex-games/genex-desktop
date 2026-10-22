@@ -801,9 +801,13 @@ motion prepass holds all of core's eight).
 The twins draw through faded pipelines (`renderer/variants.rs`: the `*_fade` entry points of
 `forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`, `GX_LOD_FADE`). The two levels of a crossfade
 cover each pixel, or each MSAA sample, exactly once by a dither threshold (`gx_lod_fade_*` in
-`common.wgsl`: interleaved gradient noise, turned by the golden ratio each frame on TAA paths):
+`common.wgsl`: interleaved gradient noise, turned each frame on TAA paths by the frame's base-2
+radical inverse over eight frames, the shortest jitter cycle):
 - MSAA covers samples with `sample_mask`, both levels in proportion, so a pixel shows no stipple;
-- TAA and a one-sample path keep or drop whole pixels, and the resolve averages the levels;
+- TAA and a one-sample path keep or drop whole pixels; any eight consecutive frames keep each
+  pixel's incoming level in `floor(8 s)` or `ceil(8 s)` of them, so the resolve's average shows
+  every pixel at its share and a settled crossfade steps from pixel to pixel no more than twice
+  MSAA's (`tests/lod_fade.rs`);
 - an `Equal` main pass and an alpha-tested batch's shading apply the cut their depth step or the
   prepass applied (coincident levels both pass the test); an alpha-tested batch keeps
   alpha-to-coverage and cuts whole pixels, never writing `sample_mask` beside it;

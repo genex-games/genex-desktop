@@ -300,6 +300,17 @@ const SAFE_PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const UNNAMED_PROJECT = "game";
 /** cargo's build profile per purpose: an export ships an optimized build. */
 const PROFILE = { dev: "dev", release: "release" } as const;
+/**
+ * Live's and judging's debug info (R-7): line tables only, which backtraces and the crash
+ * symbolicator read, instead of cargo's full variable info, which grows every dependency build in a
+ * live profile. A prewarm a build clones must be built with the same setting, or cargo rebuilds
+ * every dependency over the clone.
+ */
+export const RUST_LIVE_DEBUG_SETTING = 'profile.dev.debug="line-tables-only"';
+/** Every non-export build's profile settings: the store's dev profile, then {@link RUST_LIVE_DEBUG_SETTING} once. */
+const RUST_LIVE_PROFILE_SETTINGS: readonly string[] = [
+  ...new Set([...RUST_DEV_PROFILE_SETTINGS, RUST_LIVE_DEBUG_SETTING]),
+];
 
 /** Where the Rust toolchain a lock names is installed, as the store locates it (M2.3). */
 export interface RustToolchain {
@@ -567,6 +578,13 @@ export interface RustBuildsOptions {
    * session of its admitted output. Absent: no bakes.
    */
   bakes?: RustBakeOptions;
+  /**
+   * Fills a build folder's new target folder (`to`, absent) from the store's prewarmed one for the
+   * lock and destination (`cloneRustTarget`: copy-on-write clones on APFS, so the clone costs no
+   * blocks until cargo rewrites a file) and answers whether it did. Absent, failing or false: the
+   * first build starts from an empty target folder and compiles every dependency.
+   */
+  warmTarget?: (lock: ToolchainLock, target: BuildTarget, to: string) => Promise<boolean>;
   /** The clock progress, problems and receipts are stamped with (default: `Date.now`). */
   now?: () => number;
 }
@@ -1372,6 +1390,18 @@ export class RustBuilds implements GameBuildLane {
   }
 
   /**
+   * A build folder's first target folder, cloned from the store's prewarm for its lock and
+   * destination ({@link RustBuildsOptions.warmTarget}), so its first build compiles the game's own
+   * crates rather than every dependency. A folder that already has a target keeps it; a clone that
+   * fails, or leaves anything but a folder, leaves {@link ownFolder} an empty one of its own.
+   */
+  async #warmTarget(pending: Pending): Promise<void> {
+    const target = path.join(pending.bin, TARGET_DIR);
+    if (!this.options.warmTarget || (await lstat(target).catch(() => null))) return;
+    await this.options.warmTarget(pending.lock, pending.target, target).catch(() => false);
+  }
+
+  /**
    * The host-side folders of a build, every one a real folder: the build folder (with its target
    * and private TMPDIR), a fresh stage, a host-written CARGO_HOME and an empty HOME; and the
    * sandbox the build runs in.
@@ -1386,6 +1416,7 @@ export class RustBuilds implements GameBuildLane {
     await mkdir(path.dirname(root), { recursive: true });
     for (const dir of [root, path.dirname(pending.bin), pending.bin]) await ownFolder(dir);
     await atomicWriteText(`${pending.bin}${SOURCE_SUFFIX}`, pending.source);
+    await this.#warmTarget(pending);
     for (const dir of [TARGET_DIR, TMP_DIR]) await ownFolder(path.join(pending.bin, dir));
     const stage = stageDir(pending.bin);
     await rm(stage, { recursive: true, force: true });
@@ -1803,10 +1834,13 @@ function sharedArgs(plan: Plan, jobs: number): string[] {
   ];
 }
 
-/** Live's dev profile with optimized dependencies, cargo's release for an export, and a web export's size profile on top. */
+/**
+ * Live's dev profile with optimized dependencies and line tables only, cargo's release for an
+ * export, and a web export's size profile on top.
+ */
 function profileArgs(plan: Plan): string[] {
   const asConfig = (settings: readonly string[]) => settings.flatMap((setting) => ["--config", setting]);
-  if (profileOf(plan.purpose) !== PROFILE.release) return asConfig(RUST_DEV_PROFILE_SETTINGS);
+  if (profileOf(plan.purpose) !== PROFILE.release) return asConfig(RUST_LIVE_PROFILE_SETTINGS);
   const web = plan.target === BuildTarget.Web ? asConfig(RUST_WEB_EXPORT_PROFILE_SETTINGS) : [];
   const debug = plan.debug ? asConfig(EXPORT_DEBUG_SETTINGS[plan.debug.kind]) : [];
   return ["--release", ...web, ...debug];

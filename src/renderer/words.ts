@@ -4940,6 +4940,10 @@ export const DESTINATION_WORDS = {
   } satisfies Record<CompiledStack, string>,
   /** The badge of a Mac build Live shows itself (a game with no window of its own). */
   inLiveNative: "In Live · Native",
+  /** Why such a Mac build's badge says it is not built yet: choosing Native builds it. */
+  nativeNotBuiltWhy: "Choose Native to build it and play it here.",
+  /** Why such a Mac build's badge says Built while Live shows something else. */
+  nativeBuiltWhy: "Choose Native to play it here.",
 } as const;
 
 const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
