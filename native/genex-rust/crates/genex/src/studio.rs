@@ -1478,7 +1478,10 @@ mod metal {
     #[ignore = "needs the host GPU: run with --ignored metal"]
     fn metal_bake_assets_impostor_writes_each_advertised_rows_atlas() {
         let root = scratch("impostor-assets");
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/asset-import/lods-sphere.glb");
+        // Read at run time, not with `env!`: an ejected engine's sources may name no build variable
+        // but the facade's own (the stage refuses `env-not-fixed`).
+        let manifest = std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo test sets CARGO_MANIFEST_DIR");
+        let fixture = std::path::Path::new(&manifest).join("../../../../tests/fixtures/asset-import/lods-sphere.glb");
         std::fs::copy(fixture, root.join("sphere.glb")).expect("the sphere fixture");
         let presenter = match Presenter::open_with_root([96, 64], &[], Some(root.clone())) {
             Ok(presenter) => presenter,
