@@ -2,9 +2,10 @@
  * Publishing to Roblox: a place's first publish, and its updates. No Studio or plugin API publishes a
  * place, and Open Cloud's place publishing takes API keys Genex never asks for, so the person's own
  * computer control clicks File › Publish to Roblox in their Studio: Genex hands the game's chat that
- * task through `game.engine.assist`. The person approves every publish: the panel's press, or the
- * card the manifest declares on the agent's `first-publish` and `publish-update`, which the host
- * asks before the plugin runs.
+ * task through `game.engine.assist`. The person approves every publish: their press in the panel or
+ * on the strip's Publish card (no further card), or the card the manifest declares on the agent's
+ * `first-publish` and `publish-update`, which the host asks before the plugin runs. The card follows
+ * the publish through `publish-attempt.ts`.
  *
  * - **First publish** (`first-publish`): a place never published (its link has no `remote` ids)
  *   becomes a new game on Roblox under the name the person approved (the Genex game's title unless

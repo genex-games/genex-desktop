@@ -31,4 +31,7 @@ export const PUBLISH_PROMPTS = {
     `Nothing was clicked: Roblox wouldn't take that name as the card showed it (it needs one plain line of at most 50 characters, no double quotes). Call ${FIRST_PUBLISH} again with a name that fits, such as "${fits}"; the person approves it on a new card.`,
   AlreadyPublished: `This place is already on Roblox, so it has no first publish: call ${PUBLISH_UPDATE} to publish an update. Nothing was clicked.`,
   NoPlace: "This game doesn't build in a Roblox place yet, so there's nothing to publish.",
+  ResultNoted: "Noted: the person's publishing card shows it. Say the same to them in one line.",
+  NoAttempt:
+    "No publish is under way for this game, so nothing was noted. Call this only in the turn that publishes, once Studio has published or you stopped for the person.",
 } as const;

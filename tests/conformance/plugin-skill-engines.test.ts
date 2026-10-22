@@ -220,6 +220,7 @@ const ROBLOX_ONLY_TOOLS = [
   "roblox__import-model",
   "roblox__publish-update",
   "roblox__first-publish",
+  "roblox__publish-result",
   "roblox__places",
   "roblox__add-luau-checks",
 ];

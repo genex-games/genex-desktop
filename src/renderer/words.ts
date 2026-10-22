@@ -6930,3 +6930,31 @@ export const NET_WORDS = {
   players: (players: number, connected: number) =>
     connected < players ? `${plural(players, "player")} · ${connected} connected` : plural(players, "player"),
 } as const;
+
+/** Studio's Publish for a Roblox game: its card hands the publish to the game's agent and follows it to Roblox. */
+export const ROBLOX_PUBLISH_WORDS = {
+  title: t("Publish to Roblox"),
+  intro: t("Your game's agent publishes it in Roblox Studio while you keep working."),
+  name: t("Name on Roblox"),
+  publishFirst: t("Publish to Roblox"),
+  publishUpdate: t("Publish an update"),
+  updateLine: t("Everyone who plays gets this version."),
+  handing: t("Handing it to the agent…"),
+  chatAsks: t("If the chat asks to use computer control, answer it there."),
+  progress: t("Publishing to Roblox"),
+  stepAgent: t("To the agent"),
+  stepStudio: t("In Roblox Studio"),
+  stepRoblox: t("On Roblox"),
+  publishing: t("Publishing…"),
+  publishingLine: t("The agent is publishing in Roblox Studio. Closing this doesn't stop it."),
+  publishedFirst: t("Your game is on Roblox"),
+  publishedUpdate: t("The update is on Roblox"),
+  open: t("Open on Roblox"),
+  stoppedLine: t("The agent stopped before Studio published. The chat says why."),
+  tryAgain: t("Try again"),
+  noPlace: t("This game has no Roblox place yet. Set up Roblox Studio first."),
+  setUp: t("Set up Roblox Studio"),
+  byHand: t("Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:"),
+  done: t("Done"),
+  readFailed: t("Couldn't read where this game stands on Roblox."),
+} as const;

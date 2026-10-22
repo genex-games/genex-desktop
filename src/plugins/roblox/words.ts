@@ -112,7 +112,6 @@ export const MESSAGE = {
     Ready: () => t("Roblox Studio is open and answering Genex."),
   },
   Setup: {
-    Confirm: () => t("Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?"),
     StudioRunning: () =>
       t(
         "Roblox Studio is open. Genex changes Studio's settings only while it is closed: press Restart Studio, or turn the switch on yourself in Studio.",
@@ -135,15 +134,6 @@ export const MESSAGE = {
     TwiceNamed: (key: string) => t('The settings name "{key}" twice, so Genex leaves them alone.', { key }),
     NotSetUp: () => t("Genex hasn't set up Roblox Studio on this computer, so there's nothing to undo."),
     DocumentsNote: () => t("macOS may ask to let Genex use your Documents folder: Roblox keeps its plugins there."),
-    PlanHelper: (folder: string) => t("Add the Genex helper to {folder}.", { folder }),
-    PlanSwitch: (count: number) =>
-      t(
-        "Turn on Studio's MCP server in the settings of {count, plural, one {# Roblox account} other {# Roblox accounts}} on this computer.",
-        { count },
-      ),
-    PlanNoSettings: () =>
-      t("Studio hasn't saved its settings yet, so turn its MCP server on in Studio: {clicks}.", mcpClicks),
-    PlanUndo: () => t("Genex keeps what was there first, and Undo Set up takes these changes back."),
     Done: () => t("The Genex helper is in Studio's Plugins folder and Studio's MCP server is on."),
     DoneNoSettings: () =>
       t("The Genex helper is in Studio's Plugins folder. Turn Studio's MCP server on in Studio: {clicks}.", mcpClicks),
@@ -162,6 +152,12 @@ export const MESSAGE = {
   Choice: {
     RestartStudio: () => t("Restart Studio"),
     DoItForMe: () => t("Do it for me"),
+  },
+  /** Set it up for me's answers when it had nothing to run. */
+  ForMe: {
+    SignIn: () =>
+      t("Genex has done every step it can. Sign in to Roblox in Studio; once Studio answers, agents can build."),
+    Done: () => t("Roblox Studio is set up and answering Genex, and this game builds in its place."),
   },
   Assist: {
     /** The task the game's chat is asked to click, verbatim in the chat: the agent's, in English, then Studio's own click path. */
@@ -217,23 +213,6 @@ export const MESSAGE = {
     DefaultName: "My Roblox game",
   },
   Install: {
-    /** Get Roblox Studio's question, for this computer's installer size. */
-    Confirm: (megabytes: number) =>
-      t("Download Roblox Studio from Roblox (about {megabytes} MB), check that Roblox signed it, and install it?", {
-        megabytes,
-      }),
-    Plan: (host: string) =>
-      [
-        t("Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.", {
-          host,
-        }),
-        t(
-          "Roblox's installer then installs Studio and opens it. Studio asks you to sign in: Genex never sees your password.",
-        ),
-        t(
-          "Once you've signed in, that Studio closes by itself. Genex then adds its helper, turns on Studio's MCP server, and opens Studio again.",
-        ),
-      ].join("\n"),
     Started: () => t("Getting Roblox Studio. Studio asks you to sign in when it opens."),
     AlreadyInstalled: (version: string | undefined) =>
       version
@@ -248,7 +227,8 @@ export const MESSAGE = {
       checking: () => t("Checking that Roblox signed the installer."),
       installing: () => t("Roblox's installer is installing Studio."),
       "waiting-for-studio": () => t("Waiting for Roblox Studio to finish installing."),
-      "signing-in": () => t("Sign in to Roblox in the Studio that just opened. It closes by itself once you have."),
+      "signing-in": () =>
+        t("Sign in to Roblox in the Studio that just opened. Genex then closes it, sets it up and opens it again."),
       "setting-up": () => t("Setting Roblox Studio up for Genex."),
       opening: () => t("Opening Roblox Studio."),
       done: () => t("Roblox Studio is installed and set up."),
@@ -275,7 +255,7 @@ export const MESSAGE = {
         t("Roblox's installer finished, but Roblox Studio didn't appear. Press Get Roblox Studio to try again."),
       "still-open": () =>
         t(
-          "Roblox Studio is still open. Sign in there; once it has closed by itself, press Set up so Genex can finish.",
+          "Roblox Studio is still open, and nobody signed in to Roblox there in time. Sign in there, then press Set it up for me so Genex can finish.",
         ),
     },
   },
@@ -288,6 +268,10 @@ export const MESSAGE = {
         { count: open },
       ),
     AllDone: () => t("Everything Roblox Studio needs from you is done."),
+    /** After the intro while signing in is open: the one step that is the person's. */
+    SignInYours: () => t("Signing in to Roblox is yours; Genex does the rest."),
+    /** The card's own button: every step Genex can do now. */
+    ForMe: () => t("Set it up for me"),
     StudioDone: (version: string | undefined) =>
       version
         ? t("Roblox Studio {version} is on this computer", { version: shortVersion(version) })
@@ -309,7 +293,9 @@ export const MESSAGE = {
     OpenStudio: () => t("Open Studio"),
     Helper: () => t("Add the Genex helper"),
     HelperDetail: () =>
-      t("Set up adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed."),
+      t("Genex adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed."),
+    /** A step Genex does after the sign-in that Get Roblox Studio waits for. */
+    AfterSignIn: () => t("Genex does this once you've signed in."),
     HelperStudioOpen: () =>
       t(
         "Roblox Studio is open, and Genex adds its helper only while Studio is closed. Restart Studio closes it, sets it up and opens it again.",
@@ -319,7 +305,7 @@ export const MESSAGE = {
       t("It keeps your scripts as files in this game's folder and tells Genex which Studio is this game's."),
     SetUp: () => t("Set up"),
     Mcp: () => t("Turn on Studio's MCP server"),
-    McpLater: () => t("Set up turns it on while Studio is closed."),
+    McpLater: () => t("Genex turns it on while Studio is closed."),
     McpWhenOpen: () => t("Studio answers Genex once it's open."),
     McpOff: () => t("Studio was already open, so Genex couldn't switch it on by itself."),
     McpOnWaiting: () => t("It's switched on in Studio's settings. Studio answers once it has finished opening."),
@@ -333,9 +319,9 @@ export const MESSAGE = {
     /** The card's line for a step the panel shows Studio's own clicks for. */
     OrInStudio: (clicks: string) => t("Or in Studio: {clicks}.", { clicks }),
     Place: () => t("Choose this game's place"),
-    PlaceDetail: () => t("A place open in Roblox Studio, or a new one."),
-    /** The chat's card's line after the place step's: where to choose it. */
-    PlaceCardHint: () => t("Choose it with the Roblox Studio button."),
+    PlaceDetail: () => t("Genex makes a new place for this game."),
+    /** The chat's card's line after the place step's: where to choose one of the person's own instead. */
+    PlaceCardHint: () => t("To build in one of yours instead, choose it with the Roblox Studio button."),
     PlaceDone: () => t("This game builds in a Roblox place"),
     PlaceDoneNamed: (name: string) => t("This game builds in {name}", { name }),
     PlaceDoneDetail: () => t("Agents build in it in your Studio, and its scripts are files in this game's folder."),

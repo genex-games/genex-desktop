@@ -6,11 +6,13 @@
  * path, a note and what Genex is waiting for.
  *
  * The rows are Studio on this computer, signing in, the Genex helper, Studio's MCP server and the
- * game's place. Signing in is only ever the person's: Genex shows where, never does it, and never
- * sees their password. A Studio that answers Genex has a place open, which it opens only signed in,
- * so that ticks it.
+ * game's place. Signing in is only ever the person's, so the card marks it theirs: Genex shows
+ * where, never does it, and never sees their password. A Studio that answers Genex has a place
+ * open, which it opens only signed in, so that ticks it. Every other step is Genex's: the card's
+ * Set it up for me does whichever it can now, and the agent is told once all are done.
  */
 import { RobloxAction } from "./actions.ts";
+import { SETUP_PROMPTS } from "./setup-prompts.ts";
 import { LIVE_DATA_CLICK_PATH, MCP_SWITCH_CLICK_PATH, MESSAGE } from "./words.ts";
 
 /** Each step's id on the card and the panel. Wire values: the renderer and the panel key their rows by them. */
@@ -28,10 +30,30 @@ const CLICK_SEPARATOR = " › ";
 
 /** A step's button: the plugin action it runs with its arguments, and its label. */
 export type RobloxStepAction = { name: RobloxAction; args: Record<string, string>; label: string };
-/** One row of the card. */
-export type RobloxStep = { id: RobloxStepId; label: string; detail: string; done: boolean; action?: RobloxStepAction };
-/** The card: its heading, one line under it, its rows, and whether any step is still open. */
-export type RobloxSteps = { title: string; intro: string; steps: RobloxStep[]; open: boolean };
+/** One row of the card: `you` marks the person's own step (signing in), `working` one Genex is doing now. */
+export type RobloxStep = {
+  id: RobloxStepId;
+  label: string;
+  detail: string;
+  done: boolean;
+  action?: RobloxStepAction;
+  you?: true;
+  working?: true;
+};
+/**
+ * The card: its heading, one line under it, its rows, whether any step is still open, its own
+ * button for every step Genex can do now, and what the agent is told once all are done or when Get
+ * Roblox Studio stopped by itself.
+ */
+export type RobloxSteps = {
+  title: string;
+  intro: string;
+  steps: RobloxStep[];
+  open: boolean;
+  primary?: RobloxStepAction;
+  doneSays?: string;
+  stuckSays?: string;
+};
 
 /** A warning a done step still carries, with Studio's own clicks to act on it. */
 export type RobloxWarning = { text: string; clickPath: string[] };
@@ -55,10 +77,10 @@ export interface RobloxRow extends RobloxStep {
 export interface RobloxStepFacts {
   installed: boolean;
   version?: string;
-  /** Get Roblox Studio is under way, with what it is doing now. */
-  getting?: { detail: string };
-  /** Get Roblox Studio stopped before it finished, and why. */
-  failed?: { detail: string };
+  /** Get Roblox Studio is under way, with what it is doing now, and whether that is waiting for the sign-in. */
+  getting?: { detail: string; signingIn?: boolean };
+  /** Get Roblox Studio stopped before it finished, and why; `stopped` when the person stopped it. */
+  failed?: { detail: string; stopped?: boolean };
   setUp: boolean;
   running: boolean;
   answering: boolean;
@@ -100,22 +122,31 @@ function studioRow(facts: RobloxStepFacts): RobloxRow {
 
 function signInRow(facts: RobloxStepFacts): RobloxRow {
   const W = MESSAGE.Steps;
+  const done = facts.answering;
   const row: RobloxRow = {
     id: RobloxStepId.SignIn,
-    label: facts.answering ? W.SignedIn() : W.SignIn(),
-    detail: W.SignInDetail(),
-    done: facts.answering,
+    label: done ? W.SignedIn() : W.SignIn(),
+    detail: facts.getting?.signingIn ? facts.getting.detail : W.SignInDetail(),
+    done,
+    ...(done ? {} : { you: true as const }),
   };
   const canOpen = facts.installed && !facts.running && !facts.getting;
   return canOpen ? { ...row, action: button(RobloxAction.OpenStudio, W.OpenStudio()) } : row;
 }
+
+/** Get Roblox Studio sets Studio up only once its installer's Studio is here and the person has signed in there. */
+const waitsForSignIn = (facts: RobloxStepFacts) =>
+  Boolean(facts.getting) && (!facts.installed || facts.getting?.signingIn === true);
 
 function helperRow(facts: RobloxStepFacts): RobloxRow {
   const W = MESSAGE.Steps;
   const id = RobloxStepId.Helper;
   if (facts.setUp) return { id, label: W.HelperDone(), detail: W.HelperDoneDetail(), done: true };
   const row: RobloxRow = { id, label: W.Helper(), detail: W.HelperDetail(), done: false };
-  if (!facts.installed || facts.getting) return row;
+  if (waitsForSignIn(facts)) return { ...row, detail: W.AfterSignIn() };
+  // Get Roblox Studio sets it up now, after the sign-in.
+  if (facts.getting) return { ...row, detail: facts.getting.detail, busy: true };
+  if (!facts.installed) return row;
   // Set up writes Studio's settings only while it is closed, so an open Studio is restarted for it.
   if (facts.running)
     return {
@@ -141,7 +172,8 @@ function mcpRow(facts: RobloxStepFacts): RobloxRow {
   const W = MESSAGE.Steps;
   const id = RobloxStepId.Mcp;
   if (facts.answering) return { id, label: W.McpDone(), detail: W.McpDoneDetail(), done: true };
-  if (!facts.setUp) return { id, label: W.Mcp(), detail: W.McpLater(), done: false };
+  if (!facts.setUp)
+    return { id, label: W.Mcp(), detail: waitsForSignIn(facts) ? W.AfterSignIn() : W.McpLater(), done: false };
   if (!facts.running) return { id, label: W.Mcp(), detail: W.McpWhenOpen(), done: false };
   const restart = button(RobloxAction.RestartStudio, MESSAGE.Choice.RestartStudio());
   const row: RobloxRow = { id, label: W.Mcp(), detail: mcpWaitingDetail(facts), done: false, waiting: W.Waiting() };
@@ -178,6 +210,7 @@ export function robloxRows(facts: RobloxStepFacts): RobloxRow[] {
  */
 export function nowStep(facts: RobloxStepFacts): RobloxStepId | undefined {
   if (!facts.installed) return RobloxStepId.Studio;
+  if (facts.getting?.signingIn) return RobloxStepId.SignIn;
   if (!facts.setUp) return RobloxStepId.Helper;
   if (!facts.running) return RobloxStepId.SignIn;
   if (!facts.answering) return RobloxStepId.Mcp;
@@ -194,14 +227,49 @@ function cardHint(row: RobloxRow): string | undefined {
 function cardRow(row: RobloxRow): RobloxStep {
   const hint = cardHint(row);
   const detail = hint ? `${row.detail} ${hint}` : row.detail;
-  const step: RobloxStep = { id: row.id, label: row.label, detail, done: row.done };
+  const step: RobloxStep = {
+    id: row.id,
+    label: row.label,
+    detail,
+    done: row.done,
+    ...(row.you ? { you: true as const } : {}),
+    ...(row.busy ? { working: true as const } : {}),
+  };
   return row.action ? { ...step, action: row.action } : step;
+}
+
+/**
+ * Whether Genex has a step it can do now (Set it up for me): none while it gets Studio, and never
+ * signing in. A closed Studio, set up for a game with its place, waits for the person to open it and
+ * sign in, which the sign-in step's Open Studio offers.
+ */
+function genexCanDo(facts: RobloxStepFacts): boolean {
+  if (facts.getting) return false;
+  if (!facts.installed || !facts.setUp || !facts.linked) return true;
+  return facts.running && !facts.answering && !facts.mcpOn;
+}
+
+/** The line under the heading: how many steps are left and, while signing in is one, that it alone is the person's. */
+function introOf(steps: RobloxStep[], left: number): string {
+  if (left === 0) return MESSAGE.Steps.AllDone();
+  const signIn = steps.find((step) => step.id === RobloxStepId.SignIn);
+  return signIn?.done === false
+    ? `${MESSAGE.Steps.Intro(left)} ${MESSAGE.Steps.SignInYours()}`
+    : MESSAGE.Steps.Intro(left);
 }
 
 /** The card for where Studio stands now. */
 export function robloxSteps(facts: RobloxStepFacts): RobloxSteps {
   const steps = robloxRows(facts).map(cardRow);
   const left = steps.filter((step) => !step.done).length;
-  const intro = left === 0 ? MESSAGE.Steps.AllDone() : MESSAGE.Steps.Intro(left);
-  return { title: MESSAGE.Steps.Title(), intro, steps, open: left > 0 };
+  const stuck = facts.failed && !facts.failed.stopped ? SETUP_PROMPTS.GetStudioStopped(facts.failed.detail) : undefined;
+  return {
+    title: MESSAGE.Steps.Title(),
+    intro: introOf(steps, left),
+    steps,
+    open: left > 0,
+    ...(genexCanDo(facts) ? { primary: button(RobloxAction.FinishSetup, MESSAGE.Steps.ForMe()) } : {}),
+    doneSays: SETUP_PROMPTS.Ready,
+    ...(stuck ? { stuckSays: stuck } : {}),
+  };
 }

@@ -151,7 +151,6 @@ export default {
   "A pinball table where the ball is a tiny knight fighting monsters": "공 대신 작은 기사가 몬스터와 싸우는 핀볼",
   "A pirate ship battle with cannons that shoot fruit": "과일을 쏘는 대포로 싸우는 해적선 전투",
   "A pixel-art fishing game under a frozen lake": "얼어붙은 호수 아래에서 하는 픽셀 아트 낚시 게임",
-  "A place open in Roblox Studio, or a new one.": "Roblox Studio에 열려 있는 플레이스나 새 플레이스.",
   "A plan is ready for your review.": "계획이 준비됐어요. 검토해 주세요.",
   "A platformer where gravity flips every time you jump": "점프할 때마다 중력이 뒤집히는 플랫포머",
   "A plugin": "플러그인",
@@ -267,9 +266,6 @@ export default {
   "Add the Genex helper": "Genex 도우미 추가",
   "Add the Genex helper to Roblox Studio and turn on its MCP server.":
     "Roblox Studio에 Genex 도우미를 추가하고 Studio의 MCP 서버를 켜세요.",
-  "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?":
-    "Roblox Studio의 Plugins 폴더에 Genex 도우미를 추가하고 Studio의 MCP 서버를 켤까요?",
-  "Add the Genex helper to {folder}.": "{folder}에 Genex 도우미를 추가해요.",
   "Add to": "추가할 곳",
   "Add your OpenRouter API key in Settings › Model Providers.":
     "설정 › 모델 제공자에서 OpenRouter API 키를 추가하세요.",
@@ -696,7 +692,6 @@ export default {
   "Choose file…": "파일 선택…",
   "Choose game image": "게임 이미지 선택",
   "Choose image…": "이미지 선택…",
-  "Choose it with the Roblox Studio button.": "Roblox Studio 버튼으로 고르세요.",
   "Choose microphone": "마이크 선택",
   "Choose model": "모델 선택",
   "Choose one of the templates Genex shows.": "Genex가 보여 주는 템플릿 중 하나를 고르세요.",
@@ -1165,8 +1160,6 @@ export default {
     "Studio에서 쓸 Blender {version} 버전을 다운로드해요(약 {size}). 지금 있는 Blender는 그대로 남아요.",
   "Download Bonsai 2 to build locally": "로컬에서 만들려면 Bonsai 2 다운로드",
   "Download Genex {version}": "Genex {version} 다운로드",
-  "Download Roblox Studio from Roblox (about {megabytes} MB), check that Roblox signed it, and install it?":
-    "Roblox에서 Roblox Studio를 다운로드하고(약 {megabytes}MB), Roblox 서명을 확인한 다음 설치할까요?",
   "Download a local model": "로컬 모델 다운로드",
   "Download cancelled. Verified files and resumable partials are retained.":
     "다운로드를 취소했어요. 검증된 파일과 이어 받을 수 있는 부분은 남겨 뒀어요.",
@@ -1478,8 +1471,6 @@ export default {
     "Genex는 Windows에서만 이렇게 Godot를 다운로드해요. Mac에서는 ‘대신 해 주기’가 응용 프로그램 폴더에 설치해요.",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "Genex는 안전한 링크로만 Roblox Studio를 다운로드하는데, 이 링크는 안전하지 않아요. 아무것도 설치하지 않았어요.",
-  "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
-    "Genex가 {host}에서 Roblox 공식 설치 프로그램을 다운로드하고, 실행 전에 Roblox 서명을 확인해요.",
   "Genex downloads it from Roblox, checks that Roblox signed it, and installs it.":
     "Genex가 Roblox에서 다운로드하고, Roblox 서명을 확인한 다음 설치해요.",
   "Genex downloads the pinned releases only, checks each file's size and fingerprint, and keeps them in its own storage. They run on this computer to check scripts, outside Genex's sandbox, as copies you installed yourself would.":
@@ -1516,8 +1507,6 @@ export default {
     "Genex는 모든 파일을 그대로 두고 스타터 게임을 만들지 않아요",
   "Genex keeps it empty; your first message decides what it becomes":
     "Genex는 비워 둬요. 첫 메시지에 따라 무엇이 될지 정해져요",
-  "Genex keeps what was there first, and Undo Set up takes these changes back.":
-    "Genex는 원래 있던 것을 보관하고, ‘설정 되돌리기’로 이 변경을 되돌릴 수 있어요.",
   "Genex kept the current cover: it outranks an uploaded one.":
     "Genex가 현재 커버를 유지했어요. 업로드한 사진보다 우선순위가 높아요.",
   "Genex leaves it open until the Loop ends.": "Genex는 Loop가 끝날 때까지 열어 둬요.",
@@ -2422,8 +2411,6 @@ export default {
   "On this Mac · {size}": "이 Mac에 있음 · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
     "켜면 Genex의 다음 시점에 실행돼요: {steps}. 이 단계들은 미리 확인을 요청하지 않아요.",
-  "Once you've signed in, that Studio closes by itself. Genex then adds its helper, turns on Studio's MCP server, and opens Studio again.":
-    "로그인하면 그 Studio는 저절로 닫혀요. 그다음 Genex가 도우미를 추가하고 Studio의 MCP 서버를 켠 뒤 Studio를 다시 열어요.",
   "One account for hundreds of models. You pay OpenRouter for what you use.":
     "계정 하나로 수백 개 모델을 써요. 쓴 만큼만 OpenRouter에 내요.",
   "One bold move": "과감한 한 수",
@@ -3052,8 +3039,8 @@ export default {
     "Roblox Studio가 아직 열려 있어요. 플레이스를 저장할지 물었다면 답한 다음 ‘Studio 종료’를 다시 누르세요.",
   "Roblox Studio is still open. If it asked to save your place, answer it, then press Restart Studio again.":
     "Roblox Studio가 아직 열려 있어요. 플레이스를 저장할지 물었다면 답한 다음 ‘Studio 다시 시작’을 다시 누르세요.",
-  "Roblox Studio is still open. Sign in there; once it has closed by itself, press Set up so Genex can finish.":
-    "Roblox Studio가 아직 열려 있어요. 거기서 로그인하고, 저절로 닫히면 ‘설정하기’를 눌러 Genex가 마무리하게 하세요.",
+  "Roblox Studio is still open, and nobody signed in to Roblox there in time. Sign in there, then press Set it up for me so Genex can finish.":
+    "Roblox Studio가 아직 열려 있고, 제시간에 Roblox 로그인이 없었어요. 거기서 로그인한 다음 ‘대신 설정해 주기’를 눌러 Genex가 마무리하게 하세요.",
   "Roblox Studio isn't on this computer.": "이 컴퓨터에 Roblox Studio가 없어요.",
   "Roblox Studio isn't on this computer. Open this to get it.":
     "이 컴퓨터에 Roblox Studio가 없어요. 여기를 열어서 받으세요.",
@@ -3072,8 +3059,6 @@ export default {
   "Roblox's installer is installing Studio.": "Roblox 설치 프로그램이 Studio를 설치하고 있어요.",
   "Roblox's installer stopped before it finished. Press Get Roblox Studio to try again.":
     "Roblox 설치 프로그램이 끝나기 전에 멈췄어요. ‘Roblox Studio 받기’를 눌러 다시 시도하세요.",
-  "Roblox's installer then installs Studio and opens it. Studio asks you to sign in: Genex never sees your password.":
-    "그다음 Roblox 설치 프로그램이 Studio를 설치하고 열어요. Studio에서 로그인하라고 하는데, Genex는 비밀번호를 절대 보지 않아요.",
   "Rojo keeps your scripts in step, so Genex leaves them to it.":
     "Rojo가 스크립트를 동기화하고 있어서 Genex는 Rojo에 맡겨요.",
   "Roll the studio back to the moment before this change": "Studio를 이 변경 직전으로 되돌리기",
@@ -3225,14 +3210,11 @@ export default {
   "Set up Claude Code": "Claude Code 설치",
   "Set up Codex": "Codex 설치",
   "Set up OpenCode": "OpenCode 설치",
-  "Set up adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.":
-    "‘설정하기’를 누르면 Studio가 닫혀 있는 동안 도우미를 Studio의 Plugins 폴더에 추가하고 Studio의 MCP 서버를 켜요.",
   "Set up an Unreal project for Genex.": "Unreal 프로젝트를 Genex용으로 설정하세요.",
   "Set up and open": "설정하고 열기",
   "Set up for Genex": "Genex용으로 설정하기",
   "Set up the protected workspace": "보호된 작업 공간 설정",
   "Set up this game's Unity project": "이 게임의 Unity 프로젝트를 설정하세요",
-  "Set up turns it on while Studio is closed.": "‘설정하기’를 누르면 Studio가 닫혀 있는 동안 켜요.",
   "Set up {name} for Genex.": "{name} 프로젝트를 Genex용으로 설정하세요.",
   "Set up {name} for Genex?": "{name} 프로젝트를 Genex용으로 설정할까요?",
   "Set up {project} after it ends.": "Loop가 끝나면 {project} 프로젝트를 설정하세요.",
@@ -3321,8 +3303,8 @@ export default {
   "Sign in to Genex to see your friends.": "친구를 보려면 Genex에 로그인하세요.",
   "Sign in to Genex to see your game stats.": "Genex에 로그인하면 게임 통계를 볼 수 있어요.",
   "Sign in to Roblox": "Roblox에 로그인",
-  "Sign in to Roblox in the Studio that just opened. It closes by itself once you have.":
-    "방금 열린 Studio에서 Roblox에 로그인하세요. 로그인하면 저절로 닫혀요.",
+  "Sign in to Roblox in the Studio that just opened. Genex then closes it, sets it up and opens it again.":
+    "방금 열린 Studio에서 Roblox에 로그인하세요. 그러면 Genex가 Studio를 닫고, 설정한 뒤 다시 열어요.",
   "Sign in to Unity": "Unity 로그인",
   "Sign in to Unity Hub": "Unity Hub에 로그인하세요",
   "Sign in to a provider": "제공자 로그인",
@@ -3494,8 +3476,6 @@ export default {
   "Studio does not know where this plugin came from; load it again":
     "Studio가 이 플러그인의 출처를 몰라요. 다시 불러오세요",
   "Studio forgets this account": "Studio에서 이 계정을 지워요",
-  "Studio hasn't saved its settings yet, so turn its MCP server on in Studio: {clicks}.":
-    "Studio가 아직 설정을 저장하지 않았으니 Studio에서 MCP 서버를 직접 켜세요: {clicks}.",
   "Studio hit a problem.": "Studio에 문제가 생겼어요.",
   "Studio is building right now. Rewind when the build finishes.":
     "Studio가 지금 빌드 중이에요. 빌드가 끝나면 되감아 주세요.",
@@ -4145,8 +4125,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "Windows 서비스에서 보조 로그온(Secondary Logon)을 켜고(시작 유형: 수동) 다시 시도해 주세요.",
   "Turn on Studio's MCP server": "Studio의 MCP 서버 켜기",
-  "Turn on Studio's MCP server in the settings of {count, plural, one {# Roblox account} other {# Roblox accounts}} on this computer.":
-    "이 컴퓨터에 있는 {count, plural, other {Roblox 계정 #개}}의 설정에서 Studio의 MCP 서버를 켜요.",
   "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
     "컴퓨터 제어를 켤까요? 그러면 모든 채팅의 에이전트가 이 컴퓨터의 앱을 한 번에 하나씩 사용하겠다고 요청할 수 있어요.",
   "Turn on mic": "마이크 켜기",
@@ -5733,4 +5711,43 @@ export default {
   "It needs a Mac with Apple silicon.": "Apple 실리콘 Mac이 필요해요.",
   "It needs Rosetta to run on this Mac.": "이 Mac에서 실행하려면 Rosetta가 필요해요.",
   "It’s made for a different processor.": "다른 프로세서용으로 만들어졌어요.",
+  "Genex adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.":
+    "Studio가 닫혀 있는 동안 Genex가 도우미를 Studio의 Plugins 폴더에 추가하고 Studio의 MCP 서버를 켜요.",
+  "Genex does this once you've signed in.": "로그인하고 나면 Genex가 해요.",
+  "Genex turns it on while Studio is closed.": "Studio가 닫혀 있는 동안 Genex가 켜요.",
+  "Genex makes a new place for this game.": "Genex가 이 게임용 새 플레이스를 만들어요.",
+  "To build in one of yours instead, choose it with the Roblox Studio button.":
+    "내 플레이스에서 만들고 싶다면 Roblox Studio 버튼으로 고르세요.",
+  "Signing in to Roblox is yours; Genex does the rest.": "Roblox 로그인만 직접 하면 돼요. 나머지는 Genex가 해요.",
+  "Set it up for me": "대신 설정해 주기",
+  "Genex has done every step it can. Sign in to Roblox in Studio; once Studio answers, agents can build.":
+    "Genex가 할 수 있는 건 다 했어요. Studio에서 Roblox에 로그인하세요. Studio가 응답하면 에이전트가 만들 수 있어요.",
+  "Roblox Studio is set up and answering Genex, and this game builds in its place.":
+    "Roblox Studio가 설정되어 Genex에 응답하고 있고, 이 게임은 자기 플레이스에서 만들어져요.",
+  "Couldn't read where this game stands on Roblox.": "이 게임이 Roblox에서 어떤 상태인지 읽지 못했어요.",
+  "Everyone who plays gets this version.": "플레이하는 모두가 이 버전을 받아요.",
+  "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
+    "이 컴퓨터에서는 Genex가 Roblox Studio를 클릭할 수 없어요. Studio에서 직접 게시하세요:",
+  "Handing it to the agent…": "에이전트에게 넘기는 중…",
+  "If the chat asks to use computer control, answer it there.":
+    "채팅에서 컴퓨터 제어를 써도 되는지 물으면 거기서 답하세요.",
+  "In Roblox Studio": "Roblox Studio에서",
+  "Name on Roblox": "Roblox에서의 이름",
+  "On Roblox": "Roblox에",
+  "Open on Roblox": "Roblox에서 열기",
+  "Publish an update": "업데이트 게시",
+  "Publish to Roblox": "Roblox에 게시",
+  "Publishing to Roblox": "Roblox에 게시 중",
+  "Set up Roblox Studio": "Roblox Studio 설정",
+  "The agent is publishing in Roblox Studio. Closing this doesn't stop it.":
+    "에이전트가 Roblox Studio에서 게시하고 있어요. 이 창을 닫아도 멈추지 않아요.",
+  "The agent stopped before Studio published. The chat says why.":
+    "Studio가 게시하기 전에 에이전트가 멈췄어요. 이유는 채팅에 있어요.",
+  "The update is on Roblox": "업데이트가 Roblox에 올라갔어요",
+  "This game has no Roblox place yet. Set up Roblox Studio first.":
+    "이 게임에는 아직 Roblox 플레이스가 없어요. 먼저 Roblox Studio를 설정하세요.",
+  "To the agent": "에이전트에게",
+  "Your game is on Roblox": "게임이 Roblox에 올라갔어요",
+  "Your game's agent publishes it in Roblox Studio while you keep working.":
+    "작업을 계속하는 동안 게임의 에이전트가 Roblox Studio에서 게시해요.",
 } satisfies LocaleCatalog;

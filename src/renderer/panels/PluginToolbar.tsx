@@ -50,6 +50,8 @@ import { GenexPublishDialog, GenexSetupDialog, PublishSignInDialog } from "./plu
 import { webFolderOf } from "../../shared/project-workspace.ts";
 import { isGenexPublish, publishesWeb, stripEntries, studioPublishButton } from "./plugins/genex/genex-publish-view.ts";
 import { PublishTarget } from "../../shared/publish-platforms.ts";
+import { RobloxPublish } from "./plugins/roblox/RobloxPublish.tsx";
+import { robloxPublishShown } from "./plugins/roblox/roblox-publish-view.ts";
 import { makesApps } from "./plugins/genex/publish-platforms-view.ts";
 import { useAsyncEffect } from "../use-async-effect.ts";
 import { useCoverAfterTurns } from "./plugins/genex/use-cover-after-turns.ts";
@@ -508,6 +510,18 @@ function useReadyApps(project: string | null, web: boolean): boolean {
   return apps;
 }
 
+/**
+ * Publish for a Roblox game, where no other Publish stands: its card hands the publish to the game's
+ * agent. `card` is the game the card is open for.
+ */
+function useRobloxPublish(plugins: PluginInfo[], project: string | null, facts: readonly FactRef[], other: boolean) {
+  const [opened, setOpened] = useState(false);
+  const shown = !other && robloxPublishShown(plugins, project, facts);
+  const open = useCallback(() => setOpened(true), []);
+  const close = useCallback(() => setOpened(false), []);
+  return { shown, card: opened && shown ? project : null, open, close };
+}
+
 /** The strip's plugin buttons, with whether the game publishes as a web game or has ready apps to publish. */
 function useStripEntries(
   plugins: PluginInfo[],
@@ -581,6 +595,8 @@ export function PluginToolbar({
   useCoverAfterTurns(project, Boolean(genexPublish?.plugin.enabled) && !emptyGame);
   const studioPublish = useStudioPublish(plugins, project, { facts, holds, apps, destinations }, genexPublish);
   const publish = Boolean(genexPublish) || studioPublish.shown;
+  const roblox = useRobloxPublish(plugins, project, facts, publish);
+  const robloxCard = roblox.card;
   // A game published only as its apps runs no Genex web SDK: Multiplayer is for web games.
   const multiplayerShown = multiplayerOn(publish && web, emptyGame, game, { facts, holds });
   // Multiplayer is the plugin's: its Publish shows while it is off, but only an on Genex makes a game multiplayer.
@@ -590,9 +606,9 @@ export function PluginToolbar({
     genexPublish?.plugin.enabled ? genexPublish : undefined,
   );
   useEffect(() => {
-    onOpenChange(Boolean(panel) || studioPublish.setup || multiplayer.setup);
+    onOpenChange(Boolean(panel) || studioPublish.setup || multiplayer.setup || Boolean(robloxCard));
     return () => onOpenChange(false);
-  }, [panel, studioPublish.setup, multiplayer.setup, onOpenChange]);
+  }, [panel, studioPublish.setup, multiplayer.setup, robloxCard, onOpenChange]);
   useEffect(
     () => () =>
       setReview((r) => {
@@ -645,6 +661,7 @@ export function PluginToolbar({
       ))}
       {studioPublish.shown && multiplayerShown && <MultiplayerButton onPress={multiplayer.press} />}
       {studioPublish.shown && <StudioPublishButton onPress={studioPublish.open} />}
+      <RobloxPublish {...roblox} />
       {studioPublish.setup && <PublishSignInDialog onClose={studioPublish.close} />}
       {multiplayer.setup && <GenexSetupDialog genex={genexPlugin} onClose={multiplayer.close} />}
       {panel?.drawn && livePanelPlugin ? (

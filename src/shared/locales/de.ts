@@ -187,7 +187,6 @@ export default {
     "Ein Flipper, bei dem die Kugel ein winziger Ritter ist, der gegen Monster kämpft",
   "A pirate ship battle with cannons that shoot fruit": "Eine Piratenschiff-Schlacht mit Kanonen, die Obst verschießen",
   "A pixel-art fishing game under a frozen lake": "Ein Pixel-Art-Angelspiel unter einem zugefrorenen See",
-  "A place open in Roblox Studio, or a new one.": "Ein in Roblox Studio geöffneter Ort oder ein neuer.",
   "A plan is ready for your review.": "Ein Plan wartet auf deine Prüfung.",
   "A platformer where gravity flips every time you jump":
     "Ein Platformer, bei dem sich die Schwerkraft bei jedem Sprung umkehrt",
@@ -330,9 +329,6 @@ export default {
   "Add the Genex helper": "Genex-Plugin hinzufügen",
   "Add the Genex helper to Roblox Studio and turn on its MCP server.":
     "Füge das Genex-Plugin zu Roblox Studio hinzu und schalte seinen MCP-Server ein.",
-  "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?":
-    "Das Genex-Plugin in den Plugins-Ordner von Roblox Studio legen und den MCP-Server von Studio einschalten?",
-  "Add the Genex helper to {folder}.": "Das Genex-Plugin zu {folder} hinzufügen.",
   "Add to": "Hinzufügen zu",
   "Add your OpenRouter API key in Settings › Model Providers.":
     "Füge deinen OpenRouter-API-Schlüssel unter Einstellungen › Modellanbieter hinzu.",
@@ -767,7 +763,6 @@ export default {
   "Choose file…": "Datei wählen…",
   "Choose game image": "Spielbild auswählen",
   "Choose image…": "Bild auswählen…",
-  "Choose it with the Roblox Studio button.": "Wähle ihn über den Roblox-Studio-Button.",
   "Choose microphone": "Mikrofon wählen",
   "Choose model": "Modell wählen",
   "Choose one of the templates Genex shows.": "Wähl eine der Vorlagen, die Genex zeigt.",
@@ -1257,8 +1252,6 @@ export default {
     "Lade Blender {version} (etwa {size}) für Studio herunter. Dein Blender bleibt, wie es ist.",
   "Download Bonsai 2 to build locally": "Lade Bonsai 2 herunter, um lokal zu bauen",
   "Download Genex {version}": "Genex {version} herunterladen",
-  "Download Roblox Studio from Roblox (about {megabytes} MB), check that Roblox signed it, and install it?":
-    "Roblox Studio von Roblox herunterladen (etwa {megabytes} MB), prüfen, dass Roblox es signiert hat, und installieren?",
   "Download a local model": "Lokales Modell laden",
   "Download cancelled. Verified files and resumable partials are retained.":
     "Download abgebrochen. Geprüfte Dateien und fortsetzbare Teile bleiben erhalten.",
@@ -1575,8 +1568,6 @@ export default {
     "So lädt Genex Godot nur unter Windows herunter; auf einem Mac installiert „Mach das für mich“ es unter „Programme“.",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "Genex lädt Roblox Studio nur über einen sicheren Link herunter, und dieser ist es nicht. Es wurde nichts installiert.",
-  "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
-    "Genex lädt das offizielle Installationsprogramm von Roblox von {host} herunter und prüft vor dem Start, dass Roblox es signiert hat.",
   "Genex downloads it from Roblox, checks that Roblox signed it, and installs it.":
     "Genex lädt es von Roblox herunter, prüft, dass Roblox es signiert hat, und installiert es.",
   "Genex downloads the pinned releases only, checks each file's size and fingerprint, and keeps them in its own storage. They run on this computer to check scripts, outside Genex's sandbox, as copies you installed yourself would.":
@@ -1614,8 +1605,6 @@ export default {
     "Genex lässt jede Datei, wie sie ist, und schreibt kein Starter-Spiel",
   "Genex keeps it empty; your first message decides what it becomes":
     "Genex lässt ihn leer; deine erste Nachricht entscheidet, was daraus wird",
-  "Genex keeps what was there first, and Undo Set up takes these changes back.":
-    "Genex behält, was vorher da war, und „Einrichtung zurücknehmen“ nimmt diese Änderungen zurück.",
   "Genex kept the current cover: it outranks an uploaded one.":
     "Genex hat das aktuelle Cover behalten: Es hat Vorrang vor einem hochgeladenen.",
   "Genex leaves it open until the Loop ends.": "Genex lässt Unreal offen, bis der Loop endet.",
@@ -2551,8 +2540,6 @@ export default {
   "On this Mac · {size}": "Auf diesem Mac · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
     "Sobald es an ist, läuft es an festen Stellen in Genex: {steps}; diese Schritte fragen dich vorher nicht.",
-  "Once you've signed in, that Studio closes by itself. Genex then adds its helper, turns on Studio's MCP server, and opens Studio again.":
-    "Sobald du angemeldet bist, schließt sich dieses Studio von selbst. Dann fügt Genex sein Plugin hinzu, schaltet den MCP-Server von Studio ein und öffnet Studio wieder.",
   "One account for hundreds of models. You pay OpenRouter for what you use.":
     "Ein Konto für Hunderte Modelle. Du zahlst OpenRouter nur, was du nutzt.",
   "One bold move": "Ein mutiger Schritt",
@@ -3202,8 +3189,8 @@ export default {
     "Roblox Studio ist noch offen. Falls es gefragt hat, ob dein Ort gespeichert werden soll, antworte und drücke dann noch mal „Studio beenden“.",
   "Roblox Studio is still open. If it asked to save your place, answer it, then press Restart Studio again.":
     "Roblox Studio ist noch offen. Falls es gefragt hat, ob dein Ort gespeichert werden soll, antworte und drücke dann noch mal „Studio neu starten“.",
-  "Roblox Studio is still open. Sign in there; once it has closed by itself, press Set up so Genex can finish.":
-    "Roblox Studio ist noch offen. Melde dich dort an; sobald es sich von selbst geschlossen hat, drücke „Einrichten“, damit Genex fertig werden kann.",
+  "Roblox Studio is still open, and nobody signed in to Roblox there in time. Sign in there, then press Set it up for me so Genex can finish.":
+    "Roblox Studio ist noch offen, und niemand hat sich dort rechtzeitig bei Roblox angemeldet. Melde dich dort an und drücke dann „Richte es für mich ein“, damit Genex fertig werden kann.",
   "Roblox Studio isn't on this computer.": "Roblox Studio ist nicht auf diesem Computer.",
   "Roblox Studio isn't on this computer. Open this to get it.":
     "Roblox Studio ist nicht auf diesem Computer. Öffne das hier, um es zu holen.",
@@ -3222,8 +3209,6 @@ export default {
   "Roblox's installer is installing Studio.": "Das Installationsprogramm von Roblox installiert Studio.",
   "Roblox's installer stopped before it finished. Press Get Roblox Studio to try again.":
     "Das Installationsprogramm von Roblox hat vor dem Ende aufgehört. Drücke „Roblox Studio holen“, um es noch mal zu versuchen.",
-  "Roblox's installer then installs Studio and opens it. Studio asks you to sign in: Genex never sees your password.":
-    "Das Installationsprogramm von Roblox installiert dann Studio und öffnet es. Studio bittet dich, dich anzumelden: Genex sieht dein Passwort nie.",
   "Rojo keeps your scripts in step, so Genex leaves them to it.":
     "Rojo hält deine Skripte synchron, deshalb überlässt Genex sie Rojo.",
   "Roll the studio back to the moment before this change": "Studio auf den Stand vor dieser Änderung zurücksetzen",
@@ -3382,14 +3367,11 @@ export default {
   "Set up Claude Code": "Claude Code einrichten",
   "Set up Codex": "Codex einrichten",
   "Set up OpenCode": "OpenCode einrichten",
-  "Set up adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.":
-    "„Einrichten“ legt es in den Plugins-Ordner von Studio und schaltet den MCP-Server von Studio ein, solange Studio geschlossen ist.",
   "Set up an Unreal project for Genex.": "Ein Unreal-Projekt für Genex einrichten.",
   "Set up and open": "Einrichten und öffnen",
   "Set up for Genex": "Für Genex einrichten",
   "Set up the protected workspace": "Geschützten Arbeitsbereich einrichten",
   "Set up this game's Unity project": "Richte das Unity-Projekt dieses Spiels ein",
-  "Set up turns it on while Studio is closed.": "„Einrichten“ schaltet ihn ein, solange Studio geschlossen ist.",
   "Set up {name} for Genex.": "{name} für Genex einrichten.",
   "Set up {name} for Genex?": "{name} für Genex einrichten?",
   "Set up {project} after it ends.": "Richte {project} ein, wenn der Loop endet.",
@@ -3480,8 +3462,8 @@ export default {
   "Sign in to Genex to see your friends.": "Melde dich bei Genex an, um deine Freunde zu sehen.",
   "Sign in to Genex to see your game stats.": "Melde dich bei Genex an, um die Statistiken deiner Spiele zu sehen.",
   "Sign in to Roblox": "Bei Roblox anmelden",
-  "Sign in to Roblox in the Studio that just opened. It closes by itself once you have.":
-    "Melde dich in dem Studio, das sich gerade geöffnet hat, bei Roblox an. Es schließt sich von selbst, sobald du angemeldet bist.",
+  "Sign in to Roblox in the Studio that just opened. Genex then closes it, sets it up and opens it again.":
+    "Melde dich in dem Studio, das sich gerade geöffnet hat, bei Roblox an. Danach schließt Genex es, richtet es ein und öffnet es wieder.",
   "Sign in to Unity": "Bei Unity anmelden",
   "Sign in to Unity Hub": "Melde dich in Unity Hub an",
   "Sign in to a provider": "Bei einem Anbieter anmelden",
@@ -3658,8 +3640,6 @@ export default {
   "Studio does not know where this plugin came from; load it again":
     "Studio weiß nicht, woher dieses Plugin kommt; lade es erneut",
   "Studio forgets this account": "Studio vergisst dieses Konto",
-  "Studio hasn't saved its settings yet, so turn its MCP server on in Studio: {clicks}.":
-    "Studio hat seine Einstellungen noch nicht gespeichert, also schalte seinen MCP-Server in Studio ein: {clicks}.",
   "Studio hit a problem.": "Studio hatte ein Problem.",
   "Studio is building right now. Rewind when the build finishes.":
     "Studio baut gerade. Spul zurück, wenn der Build fertig ist.",
@@ -4345,8 +4325,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "Schalte die Sekundäre Anmeldung in den Windows-Diensten ein (Starttyp: Manuell) und versuch es erneut.",
   "Turn on Studio's MCP server": "MCP-Server von Studio einschalten",
-  "Turn on Studio's MCP server in the settings of {count, plural, one {# Roblox account} other {# Roblox accounts}} on this computer.":
-    "Den MCP-Server von Studio in den Einstellungen von {count, plural, one {# Roblox-Konto} other {# Roblox-Konten}} auf diesem Computer einschalten.",
   "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
     "Computersteuerung einschalten? Agenten in jedem Chat können dann fragen, ob sie Apps auf diesem Computer nutzen dürfen – immer eine App auf einmal.",
   "Turn on mic": "Mikro einschalten",
@@ -6004,4 +5982,44 @@ export default {
   "It needs a Mac with Apple silicon.": "Es braucht einen Mac mit Apple Silicon.",
   "It needs Rosetta to run on this Mac.": "Auf diesem Mac braucht es Rosetta.",
   "It’s made for a different processor.": "Es ist für einen anderen Prozessor gemacht.",
+  "Genex adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.":
+    "Genex legt es in den Plugins-Ordner von Studio und schaltet den MCP-Server von Studio ein, solange Studio geschlossen ist.",
+  "Genex does this once you've signed in.": "Genex macht das, sobald du angemeldet bist.",
+  "Genex turns it on while Studio is closed.": "Genex schaltet ihn ein, solange Studio geschlossen ist.",
+  "Genex makes a new place for this game.": "Genex macht einen neuen Ort für dieses Spiel.",
+  "To build in one of yours instead, choose it with the Roblox Studio button.":
+    "Willst du stattdessen in einem eigenen bauen, wähle ihn über den Roblox-Studio-Button.",
+  "Signing in to Roblox is yours; Genex does the rest.":
+    "Bei Roblox anmelden musst du dich selbst; den Rest macht Genex.",
+  "Set it up for me": "Richte es für mich ein",
+  "Genex has done every step it can. Sign in to Roblox in Studio; once Studio answers, agents can build.":
+    "Genex hat alles erledigt, was es kann. Melde dich in Studio bei Roblox an; sobald Studio antwortet, können Agenten bauen.",
+  "Roblox Studio is set up and answering Genex, and this game builds in its place.":
+    "Roblox Studio ist eingerichtet und antwortet Genex, und dieses Spiel wird in seinem Ort gebaut.",
+  "Couldn't read where this game stands on Roblox.": "Konnte nicht lesen, wie dieses Spiel auf Roblox steht.",
+  "Everyone who plays gets this version.": "Alle, die spielen, bekommen diese Version.",
+  "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
+    "Genex kann auf diesem Computer nicht in Roblox Studio klicken. Veröffentliche es selbst in Studio:",
+  "Handing it to the agent…": "Wird an den Agenten übergeben …",
+  "If the chat asks to use computer control, answer it there.":
+    "Wenn der Chat fragt, ob er den Computer steuern darf, antworte dort.",
+  "In Roblox Studio": "In Roblox Studio",
+  "Name on Roblox": "Name auf Roblox",
+  "On Roblox": "Auf Roblox",
+  "Open on Roblox": "Auf Roblox öffnen",
+  "Publish an update": "Update veröffentlichen",
+  "Publish to Roblox": "Auf Roblox veröffentlichen",
+  "Publishing to Roblox": "Wird auf Roblox veröffentlicht",
+  "Set up Roblox Studio": "Roblox Studio einrichten",
+  "The agent is publishing in Roblox Studio. Closing this doesn't stop it.":
+    "Der Agent veröffentlicht in Roblox Studio. Wenn du das hier schließt, läuft es weiter.",
+  "The agent stopped before Studio published. The chat says why.":
+    "Der Agent hat angehalten, bevor Studio veröffentlicht hat. Im Chat steht, warum.",
+  "The update is on Roblox": "Das Update ist auf Roblox",
+  "This game has no Roblox place yet. Set up Roblox Studio first.":
+    "Dieses Spiel hat noch keinen Roblox-Ort. Richte zuerst Roblox Studio ein.",
+  "To the agent": "An den Agenten",
+  "Your game is on Roblox": "Dein Spiel ist auf Roblox",
+  "Your game's agent publishes it in Roblox Studio while you keep working.":
+    "Der Agent deines Spiels veröffentlicht es in Roblox Studio, während du weiterarbeitest.",
 } satisfies LocaleCatalog;

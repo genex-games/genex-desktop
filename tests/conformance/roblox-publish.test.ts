@@ -242,7 +242,8 @@ describe("first-publish publishes a place never on Roblox, under the game's name
 });
 
 describe("the manifest's first publish", () => {
-  it("the panel's Publish to Roblox and the agent's first-publish both ask on a card, naming the game", async () => {
+  // Flipped: the person's own press is the go-ahead (Studio's Publish button hands it to the agent); only the agent's call asks.
+  it("the agent's first-publish asks on a card naming the game; the person's Publish to Roblox press asks nothing", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const action = manifest.actions?.find((entry) => entry.name === RobloxAction.FirstPublish);
     assert.ok(action);
@@ -253,17 +254,18 @@ describe("the manifest's first publish", () => {
     assert.deepEqual(tool.facts, ["roblox-project"]);
     assert.equal(tool.parameters.properties.name?.type, "string");
     assert.deepEqual(tool.confirmationInput, { parameter: "name", label: "Name on Roblox" });
-    for (const card of [action.confirmation ?? "", tool.confirmation ?? ""]) {
-      assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
-      assert.match(card, /your Roblox account/);
-      assert.match(card, /privacy/);
-      assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
-    }
+    assert.equal(action.confirmation, undefined);
+    const card = tool.confirmation ?? "";
+    assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
+    assert.match(card, /your Roblox account/);
+    assert.match(card, /privacy/);
+    assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
   });
 });
 
 describe("the manifest's Publish an update", () => {
-  it("the panel action and the agent tool both ask on a card; the action runs only in a real profile", async () => {
+  // Flipped: the person's press asks nothing; the agent's call still asks on a card.
+  it("the agent tool asks on a card, the person's press doesn't; the action runs only in a real profile", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const action = manifest.actions?.find((entry) => entry.name === RobloxAction.PublishUpdate);
     assert.ok(action);
@@ -273,11 +275,11 @@ describe("the manifest's Publish an update", () => {
     assert.ok(tool);
     assert.deepEqual(tool.facts, ["roblox-project"]);
     assert.equal(tool.needs, undefined, "the chat's next turn clicks it; the call itself waits on no one");
-    for (const card of [action.confirmation ?? "", tool.confirmation ?? ""]) {
-      assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
-      assert.match(card, /your Roblox account/);
-      assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
-    }
+    assert.equal(action.confirmation, undefined);
+    const card = tool.confirmation ?? "";
+    assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
+    assert.match(card, /your Roblox account/);
+    assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
   });
 });
 

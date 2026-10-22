@@ -14,7 +14,6 @@ import type {
   PluginContext,
   PluginEngineAssistAnswer,
   PluginEngineAssistRefusal,
-  PluginReview,
   PluginToolbarStatus,
 } from "../../src/plugin-sdk/index.d.ts";
 import {
@@ -531,16 +530,6 @@ describe("Set up, Restart Studio and Do it for me from the panel", () => {
     const clicked = String(await createRobloxBackend(fakeMac(STARTING).deps).tool?.("do-it-for-me", {}, refused));
     assert.ok(clicked.includes(MCP_SWITCH_CLICK_PATH), clicked);
   });
-
-  it("Set up's confirmation says what it does, naming the Documents prompt on a Mac", async () => {
-    const review = (await createRobloxBackend(fakeMac(NOT_SET_UP).deps).review?.(
-      "setup",
-      {},
-      context(),
-    )) as PluginReview;
-    assert.match(review.message ?? "", /Genex helper/);
-    assert.match(review.detail ?? "", /macOS may ask to let Genex use your Documents folder/);
-  });
 });
 
 /** The status once Get Roblox Studio has finished, or failed, polled as the panel polls it. */
@@ -610,21 +599,6 @@ describe("Get Roblox Studio and the steps card", () => {
       ],
     );
     assert.equal(card.open, false);
-  });
-
-  it("Get Roblox Studio's confirmation names Roblox, this computer's download size, and the sign-in", async () => {
-    const review = (await createRobloxBackend(fakeMac(MISSING).deps).review?.(
-      "get-studio",
-      {},
-      context(),
-    )) as PluginReview;
-    assert.equal(
-      review.message,
-      "Download Roblox Studio from Roblox (about 11 MB), check that Roblox signed it, and install it?",
-    );
-    assert.match(review.detail ?? "", /setup\.rbxcdn\.com/);
-    assert.match(review.detail ?? "", /Genex never sees your password/);
-    assert.doesNotMatch(`${review.message} ${review.detail}`, BANNED_WORDS);
   });
 
   it("is not run again when Studio is already here: nothing is downloaded", async () => {
@@ -738,15 +712,19 @@ describe("every panel action the person can press is also an agent tool", () => 
     "add-luau-checks": "add-luau-checks",
     "publish-update": "publish-update",
     "first-publish": "first-publish",
+    "finish-setup": "finish-setup",
   };
-  /** The tools that ask on a card though their panel press doesn't: an agent never closes Studio unasked. */
-  const ASKS_ONLY_AS_A_TOOL = new Set(["quit-studio"]);
+  /**
+   * The tools that ask on a card though their press doesn't: an agent never closes Studio or
+   * publishes unasked, while the person's own press is their go-ahead.
+   */
+  const ASKS_ONLY_AS_A_TOOL = new Set(["quit-studio", "publish-update", "first-publish"]);
   /** Words that hand the person a click Genex can do itself. */
   const HANDS_A_CLICK = /\bpress\b|click it yourself|turn it on yourself|in the Roblox Studio panel/i;
 
   it("the manifest declares a tool for each, asking on a card where its press asks (and before quitting Studio)", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
-    const read = new Set(["status", "toolbar-status", "steps"]);
+    const read = new Set(["status", "toolbar-status", "steps", "publish-status"]);
     const actions = (manifest.actions ?? []).filter((action) => !read.has(action.name));
     assert.deepEqual(actions.map((action) => action.name).sort(), Object.keys(PRESSABLE).sort());
     for (const action of actions) {

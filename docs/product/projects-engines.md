@@ -42,8 +42,8 @@ Godot 4.3+ (Mac, Windows; Do it for me installs it): makes a **New Godot game**
 (2D/3D, `godot/`), opens your editor (saving at save points, reloading after Rewind); **Change
 project** links one. **Multiplayer** joins web, native.
 
-**Roblox Studio** sets up your Studio; **New Roblox game** writes a Baseplate place, **Use in this
-game** links one per game. Unity sets up and opens its project; agents add packages,
+**Set it up for me** readies Roblox Studio and a new place (you sign in); **Use in this
+game** links yours. Unity sets up and opens its project; agents add packages,
 **Multiplayer**, build, play (keys, mouse: Input System). Publish lists Web, Mac, Windows and Linux builds.
 
 ## Live's views

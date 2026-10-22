@@ -41,6 +41,7 @@ const ROBLOX_NATIVE = [
   "restart-studio",
   "do-it-for-me",
   "get-studio",
+  "finish-setup",
   "open-studio",
   "quit-studio",
   "places",

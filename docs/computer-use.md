@@ -350,7 +350,7 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   cards. A computer with no driver (Linux, a development build without one) answers `unavailable`,
   and `game.engine.canAssist` tells a plugin so beforehand, so it shows its click path instead of the button. Roblox Studio's
   publishing is the one assist that is not a setup click ([plugins](plugins.md)): the person
-  presses Publish to Roblox or Publish an update, or approves the agent's `first-publish` card
+  presses Publish to Roblox or Publish an update (no card: the press is the go-ahead), or approves the agent's `first-publish` card
   (the game's name, editable on it) or `publish-update` card, and the turn answering the task
   clicks File › Publish to Roblox in their Studio itself, keeping Studio's privacy and settings and stopping at any age, ID,
   two-step, terms or payment question (elsewhere the answer gives that click path). Genex then

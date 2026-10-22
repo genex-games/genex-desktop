@@ -1,8 +1,8 @@
 /**
  * Get Roblox Studio from nothing, in the order Roblox's own installer sets: download Roblox's
  * installer, check Roblox signed it, run it, wait for Studio, let the person sign in in the Studio
- * the installer opens (it closes by itself once they have), set Studio up for Genex while it is
- * closed, and open it again once. Signing in stays the person's own step; Genex never sees it.
+ * the installer opens, quit that Studio normally once they have, set Studio up for Genex while it
+ * is closed, and open it again once. Signing in stays the person's own step; Genex never sees it.
  *
  * - The installer comes only from Roblox's per-system link on `setup.rbxcdn.com`, over HTTPS, with
  *   every redirect checked before it is followed, and only up to `MAX_INSTALLER_BYTES`. Roblox
@@ -17,14 +17,22 @@
  * - Nothing runs when a check fails, and the private temporary folder is always removed.
  * - The installer and Studio are the person's vendor apps, run outside Genex's process sandbox:
  *   installing for the person is the whole purpose, and Studio's sign-in must work. Every program
- *   is an argument list, never a shell string. Genex never closes Studio.
+ *   is an argument list, never a shell string. Genex never force-quits Studio: its one quit, after
+ *   the sign-in, is Studio's own, which asks the person to save.
  */
 import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { envValue } from "../../substrate/toolchain.ts";
-import { type LaunchDeps, openLaunch } from "./studio-launch.ts";
+import {
+  type Launch,
+  type LaunchDeps,
+  openLaunch,
+  openPlaceLaunch,
+  type PlaceTarget,
+  quitStudio,
+} from "./studio-launch.ts";
 import { isWindowsPath, locateStudio, type StudioInstall, studioRunning } from "./studio-locate.ts";
 import { MESSAGE } from "./words.ts";
 
@@ -57,7 +65,7 @@ export const INSTALLER_RUN_MS = 30 * MINUTE_MS;
 export const INSTALL_WAIT_MS = 10 * MINUTE_MS;
 /** How long Genex waits for the installer's Studio to open. */
 export const STUDIO_START_WAIT_MS = 2 * MINUTE_MS;
-/** How long the person has to sign in before Genex stops waiting for that Studio to close. */
+/** How long the person has to sign in before Genex stops waiting on the installer's Studio. */
 export const SIGN_IN_WAIT_MS = 30 * MINUTE_MS;
 /** How often the waits look again. */
 const INSTALL_POLL_MS = 2 * SECOND_MS;
@@ -99,7 +107,7 @@ export const InstallPhase = {
   Installing: "installing",
   /** The installer has run; Studio isn't on this computer yet. */
   WaitingForStudio: "waiting-for-studio",
-  /** The installer's Studio is open for the person to sign in; it closes by itself after. */
+  /** The installer's Studio is open for the person to sign in; Genex quits it normally after. */
   SigningIn: "signing-in",
   SettingUp: "setting-up",
   Opening: "opening",
@@ -122,7 +130,7 @@ export const InstallRefusal = {
   Cancelled: "cancelled",
   /** The installer ran but Studio didn't appear in time. */
   NotInstalled: "not-installed",
-  /** The installer's Studio stayed open: the person hasn't signed in yet. */
+  /** The installer's Studio stayed open and nobody signed in there in time. */
   StillOpen: "still-open",
 } as const;
 export type InstallRefusal = (typeof InstallRefusal)[keyof typeof InstallRefusal];
@@ -419,12 +427,28 @@ export async function installStudio(deps: InstallDeps, options: InstallOptions):
 export interface AfterInstallDeps extends LaunchDeps {
   /** Genex's Set up, run while Studio is closed; answers its plain words. */
   setUp(): Promise<string>;
+  /** The game's place Studio opens with once it is set up; Studio alone without one. */
+  place?: PlaceTarget;
+  /** Whether Genex's Set up already ran another way (Set up, Restart Studio) while the person signed in. */
+  setUpAlready(): Promise<boolean>;
+  /** Whether the person has signed in to Roblox in Studio since the installer's Studio opened. */
+  signedIn(): Promise<boolean>;
 }
 
-/** Studio set up and opened again after the installer. */
+/** Studio opened once it is set up: with the game's place when it has one Studio can open, else alone. */
+function reopenLaunch(deps: AfterInstallDeps, install: StudioInstall): Launch {
+  if (!deps.place) return openLaunch(deps.platform, install);
+  try {
+    return openPlaceLaunch(deps.platform, install, deps.place);
+  } catch {
+    return openLaunch(deps.platform, install);
+  }
+}
+
+/** Studio set up after the installer: opened again by Genex, or left open when it was set up meanwhile. */
 export interface AfterInstallDone {
   message: string;
-  reopened: true;
+  reopened: boolean;
   version?: string;
 }
 
@@ -452,9 +476,31 @@ async function installedStudio(deps: LaunchDeps, signal: AbortSignal): Promise<S
 }
 
 /**
+ * The installer's Studio, once open, until it is closed with the person signed in: closed by
+ * itself, or by Studio's own quit (which asks to save) once Genex sees the sign-in, tried once; a
+ * person who keeps it open at that quit closes it themselves. True when Studio was set up another
+ * way meanwhile: it is then left open as it is.
+ */
+async function closedAfterSignIn(deps: AfterInstallDeps, signal: AbortSignal): Promise<boolean> {
+  let quitAsked = false;
+  let setUpMeanwhile = false;
+  const ended = await waitFor(deps, signal, SIGN_IN_WAIT_MS, async () => {
+    if (!(await studioRunning(deps))) return true;
+    setUpMeanwhile = await deps.setUpAlready();
+    if (setUpMeanwhile) return true;
+    if (quitAsked || !(await deps.signedIn())) return false;
+    quitAsked = true;
+    return quitStudio(deps);
+  });
+  if (!ended) throw new InstallError(InstallRefusal.StillOpen);
+  return setUpMeanwhile;
+}
+
+/**
  * After the installer: waits for Studio; when the installer's Studio opens, waits for the person to
- * sign in there and for that Studio to close by itself (never closing it); sets Studio up while it
- * is closed; then opens Studio once. A Studio that closes again after that is the person's: it is
+ * sign in there, then quits that Studio normally (never force-quits it); sets Studio up while it is
+ * closed; then opens Studio once, with the game's place when there is one. A Studio set up another
+ * way meanwhile is left open as it is. A Studio that closes again after that is the person's: it is
  * never opened again from here.
  */
 export async function afterInstall(
@@ -467,17 +513,20 @@ export async function afterInstall(
   const opened = await waitFor(deps, signal, STUDIO_START_WAIT_MS, () => studioRunning(deps));
   if (opened) {
     options.onPhase?.(InstallPhase.SigningIn);
-    const closed = await waitFor(deps, signal, SIGN_IN_WAIT_MS, async () => !(await studioRunning(deps)));
-    if (!closed) throw new InstallError(InstallRefusal.StillOpen);
+    if (await closedAfterSignIn(deps, signal))
+      return withVersion({ message: MESSAGE.Install.Phase.done(), reopened: false }, install);
   }
   options.onPhase?.(InstallPhase.SettingUp);
   const setUp = await deps.setUp();
   throwIfStopped(signal);
   options.onPhase?.(InstallPhase.Opening);
-  await deps.open(openLaunch(deps.platform, install));
-  const done: AfterInstallDone = { message: `${setUp} ${MESSAGE.Install.Reopened()}`, reopened: true };
-  if (install.version) done.version = install.version;
-  return done;
+  await deps.open(reopenLaunch(deps, install));
+  return withVersion({ message: `${setUp} ${MESSAGE.Install.Reopened()}`, reopened: true }, install);
+}
+
+/** An answer with Studio's version, when it is known. */
+function withVersion(done: AfterInstallDone, install: StudioInstall): AfterInstallDone {
+  return install.version ? { ...done, version: install.version } : done;
 }
 
 /**

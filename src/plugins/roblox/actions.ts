@@ -1,3 +1,5 @@
+import { RobloxPublishAction } from "../../shared/roblox-publish.ts";
+
 /** The actions plugin.json declares, named once for the backend and the steps card. Wire values: never rename. */
 export const RobloxAction = {
   Status: "status",
@@ -15,7 +17,9 @@ export const RobloxAction = {
   UsePlace: "use-place",
   Create: "create",
   AddLuauChecks: "add-luau-checks",
-  PublishUpdate: "publish-update",
-  FirstPublish: "first-publish",
+  PublishUpdate: RobloxPublishAction.PublishUpdate,
+  FirstPublish: RobloxPublishAction.FirstPublish,
+  PublishStatus: RobloxPublishAction.PublishStatus,
+  FinishSetup: "finish-setup",
 } as const;
 export type RobloxAction = (typeof RobloxAction)[keyof typeof RobloxAction];

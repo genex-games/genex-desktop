@@ -157,15 +157,6 @@ export function setupPaths(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, ho
   throw refuse(SetupRefusal.OtherSystem, MESSAGE.Setup.OtherSystem());
 }
 
-/** What Set up will do, in plain words, for its confirmation: no folder is read for it. */
-export function planSetup(plan: { platform: NodeJS.Platform; paths: SetupPaths; settings: number }): string[] {
-  const lines: string[] = plan.platform === "darwin" ? [MESSAGE.Setup.DocumentsNote()] : [];
-  lines.push(MESSAGE.Setup.PlanHelper(plan.paths.plugins));
-  lines.push(plan.settings > 0 ? MESSAGE.Setup.PlanSwitch(plan.settings) : MESSAGE.Setup.PlanNoSettings());
-  lines.push(MESSAGE.Setup.PlanUndo());
-  return lines;
-}
-
 /**
  * The guarded folders are real folders and the Plugins folder, when there, is a real folder inside
  * the real Roblox folder; whether it is there.

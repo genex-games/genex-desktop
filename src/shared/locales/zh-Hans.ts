@@ -143,7 +143,6 @@ export default {
   "A pinball table where the ball is a tiny knight fighting monsters": "弹球台游戏，弹珠是一位和怪物战斗的小骑士",
   "A pirate ship battle with cannons that shoot fruit": "大炮发射水果的海盗船大战",
   "A pixel-art fishing game under a frozen lake": "在冰封湖面下钓鱼的像素风游戏",
-  "A place open in Roblox Studio, or a new one.": "在 Roblox Studio 中打开的地点，或一个新地点。",
   "A plan is ready for your review.": "计划已准备好，请查看。",
   "A platformer where gravity flips every time you jump": "每次跳跃重力都会翻转的平台跳跃游戏",
   "A plugin": "某个插件",
@@ -252,9 +251,6 @@ export default {
   "Add the Genex helper": "添加 Genex 辅助插件",
   "Add the Genex helper to Roblox Studio and turn on its MCP server.":
     "把 Genex 辅助插件添加到 Roblox Studio，并开启 Studio 的 MCP 服务器。",
-  "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?":
-    "要把 Genex 辅助插件添加到 Roblox Studio 的 Plugins 文件夹，并开启 Studio 的 MCP 服务器吗？",
-  "Add the Genex helper to {folder}.": "把 Genex 辅助插件添加到 {folder}。",
   "Add to": "添加到",
   "Add your OpenRouter API key in Settings › Model Providers.":
     "请在“设置 › 模型提供方”中添加你的 OpenRouter API 密钥。",
@@ -672,7 +668,6 @@ export default {
   "Choose file…": "选择文件…",
   "Choose game image": "选择游戏图片",
   "Choose image…": "选择图片…",
-  "Choose it with the Roblox Studio button.": "用 Roblox Studio 按钮来选择。",
   "Choose microphone": "选择麦克风",
   "Choose model": "选择模型",
   "Choose one of the templates Genex shows.": "请从 Genex 显示的模板中选择一个。",
@@ -1120,8 +1115,6 @@ export default {
     "为 Studio 下载 Blender {version}（约 {size}）。你现有的 Blender 保持不变。",
   "Download Bonsai 2 to build locally": "下载 Bonsai 2 以在本地制作",
   "Download Genex {version}": "下载 Genex {version}",
-  "Download Roblox Studio from Roblox (about {megabytes} MB), check that Roblox signed it, and install it?":
-    "要从 Roblox 下载 Roblox Studio（约 {megabytes} MB），确认它有 Roblox 的签名，然后安装吗？",
   "Download a local model": "下载本地模型",
   "Download cancelled. Verified files and resumable partials are retained.":
     "下载已取消。已校验的文件和可续传的部分已保留。",
@@ -1423,8 +1416,6 @@ export default {
     "只有在 Windows 上 Genex 才这样下载 Godot；在 Mac 上，“帮我完成”会把它安装到“应用程序”中。",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "Genex 只通过安全链接下载 Roblox Studio，而这个链接不安全。没有安装任何内容。",
-  "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
-    "Genex 会从 {host} 下载 Roblox 官方安装程序，并在运行前确认它有 Roblox 的签名。",
   "Genex downloads it from Roblox, checks that Roblox signed it, and installs it.":
     "Genex 会从 Roblox 下载它，确认有 Roblox 的签名，然后安装。",
   "Genex downloads the pinned releases only, checks each file's size and fingerprint, and keeps them in its own storage. They run on this computer to check scripts, outside Genex's sandbox, as copies you installed yourself would.":
@@ -1458,8 +1449,6 @@ export default {
   "Genex keeps every file as it is and writes no starter game": "Genex 会原样保留所有文件，不会写入初始游戏",
   "Genex keeps it empty; your first message decides what it becomes":
     "Genex 会让它保持为空；你的第一条消息决定它会变成什么",
-  "Genex keeps what was there first, and Undo Set up takes these changes back.":
-    "Genex 会保留原来的内容，“撤销设置”可以撤回这些更改。",
   "Genex kept the current cover: it outranks an uploaded one.": "Genex 保留了当前封面：它的优先级高于上传的图片。",
   "Genex leaves it open until the Loop ends.": "Genex 会让它保持打开，直到 Loop 结束。",
   "Genex makes new Unreal projects with Unreal {versions}, and this computer has Unreal {version}. Install {wanted} beside it in the Epic Games Launcher ({clickPath}), or make the project in Unreal's own New Project dialog and choose it from the Unreal button.":
@@ -2336,8 +2325,6 @@ export default {
   "On this Mac · {size}": "在这台 Mac 上 · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
     "启用后，它会在 Genex 的这些时刻运行：{steps}；这些步骤不会事先询问你。",
-  "Once you've signed in, that Studio closes by itself. Genex then adds its helper, turns on Studio's MCP server, and opens Studio again.":
-    "你登录后，那个 Studio 会自动关闭。然后 Genex 会添加辅助插件，开启 Studio 的 MCP 服务器，并重新打开 Studio。",
   "One account for hundreds of models. You pay OpenRouter for what you use.":
     "一个账号，数百个模型。用多少就付给 OpenRouter 多少。",
   "One bold move": "一个大胆的改动",
@@ -2953,8 +2940,8 @@ export default {
     "Roblox Studio 还开着。如果它问你是否保存地点，先回答，然后再点“退出 Studio”。",
   "Roblox Studio is still open. If it asked to save your place, answer it, then press Restart Studio again.":
     "Roblox Studio 还开着。如果它问你是否保存地点，先回答，然后再点“重启 Studio”。",
-  "Roblox Studio is still open. Sign in there; once it has closed by itself, press Set up so Genex can finish.":
-    "Roblox Studio 还开着。请在那里登录；等它自动关闭后，点击“设置”让 Genex 完成。",
+  "Roblox Studio is still open, and nobody signed in to Roblox there in time. Sign in there, then press Set it up for me so Genex can finish.":
+    "Roblox Studio 还开着，但没有人及时在那里登录 Roblox。请在那里登录，然后点击“帮我设置”让 Genex 完成。",
   "Roblox Studio isn't on this computer.": "这台电脑上没有 Roblox Studio。",
   "Roblox Studio isn't on this computer. Open this to get it.": "这台电脑上没有 Roblox Studio。打开这里来获取。",
   "Roblox Studio isn't on this computer. Press Get Roblox Studio first.":
@@ -2972,8 +2959,6 @@ export default {
   "Roblox's installer is installing Studio.": "Roblox 安装程序正在安装 Studio。",
   "Roblox's installer stopped before it finished. Press Get Roblox Studio to try again.":
     "Roblox 安装程序在完成前停止了。点击“获取 Roblox Studio”重试。",
-  "Roblox's installer then installs Studio and opens it. Studio asks you to sign in: Genex never sees your password.":
-    "然后 Roblox 安装程序会安装并打开 Studio。Studio 会要求你登录：Genex 永远看不到你的密码。",
   "Rojo keeps your scripts in step, so Genex leaves them to it.": "Rojo 会同步你的脚本，所以 Genex 交给它处理。",
   "Roll the studio back to the moment before this change": "将 Studio 回退到此更改之前",
   "Room for {room, plural, one {# file} other {# files}}, {out} will stay out":
@@ -3122,14 +3107,11 @@ export default {
   "Set up Claude Code": "安装 Claude Code",
   "Set up Codex": "安装 Codex",
   "Set up OpenCode": "安装 OpenCode",
-  "Set up adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.":
-    "“设置”会在 Studio 关闭时把它添加到 Studio 的 Plugins 文件夹，并开启 Studio 的 MCP 服务器。",
   "Set up an Unreal project for Genex.": "为 Genex 设置一个 Unreal 项目。",
   "Set up and open": "设置并打开",
   "Set up for Genex": "为 Genex 设置",
   "Set up the protected workspace": "设置受保护的工作区",
   "Set up this game's Unity project": "设置这个游戏的 Unity 项目",
-  "Set up turns it on while Studio is closed.": "“设置”会在 Studio 关闭时开启它。",
   "Set up {name} for Genex.": "为 Genex 设置 {name}。",
   "Set up {name} for Genex?": "要为 Genex 设置 {name} 吗？",
   "Set up {project} after it ends.": "等 Loop 结束后再设置 {project}。",
@@ -3217,8 +3199,8 @@ export default {
   "Sign in to Genex to see your friends.": "登录 Genex 即可查看你的好友。",
   "Sign in to Genex to see your game stats.": "登录 Genex 即可查看你的游戏统计。",
   "Sign in to Roblox": "登录 Roblox",
-  "Sign in to Roblox in the Studio that just opened. It closes by itself once you have.":
-    "请在刚打开的 Studio 中登录 Roblox。登录后它会自动关闭。",
+  "Sign in to Roblox in the Studio that just opened. Genex then closes it, sets it up and opens it again.":
+    "请在刚打开的 Studio 中登录 Roblox。之后 Genex 会关闭它、完成设置并重新打开。",
   "Sign in to Unity": "登录 Unity",
   "Sign in to Unity Hub": "登录 Unity Hub",
   "Sign in to a provider": "登录提供方",
@@ -3384,8 +3366,6 @@ export default {
   "Studio default": "Studio 默认",
   "Studio does not know where this plugin came from; load it again": "Studio 不知道这个插件来自哪里；请重新加载",
   "Studio forgets this account": "Studio 将不再记住这个账号",
-  "Studio hasn't saved its settings yet, so turn its MCP server on in Studio: {clicks}.":
-    "Studio 还没有保存设置，所以请在 Studio 里开启它的 MCP 服务器：{clicks}。",
   "Studio hit a problem.": "Studio 遇到了问题。",
   "Studio is building right now. Rewind when the build finishes.": "Studio 正在制作中。请等构建完成后再回退。",
   "Studio is offline in this profile": "Studio 在此配置文件中处于离线状态",
@@ -3996,8 +3976,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "在 Windows 服务中开启 Secondary Logon（启动类型：手动），然后重试。",
   "Turn on Studio's MCP server": "开启 Studio 的 MCP 服务器",
-  "Turn on Studio's MCP server in the settings of {count, plural, one {# Roblox account} other {# Roblox accounts}} on this computer.":
-    "在这台电脑上 {count, plural, other {# 个 Roblox 账号}}的设置中开启 Studio 的 MCP 服务器。",
   "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
     "要开启电脑控制吗？开启后，每个对话里的智能体都可以请求使用这台电脑上的应用，一次一个。",
   "Turn on mic": "打开麦克风",
@@ -5545,4 +5523,41 @@ export default {
   "It needs a Mac with Apple silicon.": "需要配备 Apple 芯片的 Mac。",
   "It needs Rosetta to run on this Mac.": "需要 Rosetta 才能在这台 Mac 上运行。",
   "It’s made for a different processor.": "它是为其他处理器制作的。",
+  "Genex adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.":
+    "Genex 会在 Studio 关闭时把它添加到 Studio 的 Plugins 文件夹，并开启 Studio 的 MCP 服务器。",
+  "Genex does this once you've signed in.": "你登录后，Genex 会完成这一步。",
+  "Genex turns it on while Studio is closed.": "Genex 会在 Studio 关闭时开启它。",
+  "Genex makes a new place for this game.": "Genex 会为这个游戏新建一个地点。",
+  "To build in one of yours instead, choose it with the Roblox Studio button.":
+    "想在你自己的地点里搭建，就用 Roblox Studio 按钮来选择。",
+  "Signing in to Roblox is yours; Genex does the rest.": "登录 Roblox 需要你自己来，其余的交给 Genex。",
+  "Set it up for me": "帮我设置",
+  "Genex has done every step it can. Sign in to Roblox in Studio; once Studio answers, agents can build.":
+    "Genex 已经完成了它能做的所有步骤。请在 Studio 中登录 Roblox；Studio 响应后，智能体就能开始搭建。",
+  "Roblox Studio is set up and answering Genex, and this game builds in its place.":
+    "Roblox Studio 已设置好并在响应 Genex，这个游戏在它自己的地点里搭建。",
+  "Couldn't read where this game stands on Roblox.": "无法读取这个游戏在 Roblox 上的状态。",
+  "Everyone who plays gets this version.": "所有玩家都会拿到这个版本。",
+  "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
+    "Genex 无法在这台电脑上点击 Roblox Studio。请在 Studio 中自己发布：",
+  "Handing it to the agent…": "正在交给智能体…",
+  "If the chat asks to use computer control, answer it there.": "如果聊天中询问是否使用电脑控制，请在那里回答。",
+  "In Roblox Studio": "在 Roblox Studio 中",
+  "Name on Roblox": "在 Roblox 上的名称",
+  "On Roblox": "在 Roblox 上",
+  "Open on Roblox": "在 Roblox 上打开",
+  "Publish an update": "发布更新",
+  "Publish to Roblox": "发布到 Roblox",
+  "Publishing to Roblox": "正在发布到 Roblox",
+  "Set up Roblox Studio": "设置 Roblox Studio",
+  "The agent is publishing in Roblox Studio. Closing this doesn't stop it.":
+    "智能体正在 Roblox Studio 中发布。关闭这里不会停止发布。",
+  "The agent stopped before Studio published. The chat says why.": "智能体在 Studio 发布前停下了。原因见聊天。",
+  "The update is on Roblox": "更新已上线 Roblox",
+  "This game has no Roblox place yet. Set up Roblox Studio first.":
+    "这个游戏还没有 Roblox 场景。请先设置 Roblox Studio。",
+  "To the agent": "交给智能体",
+  "Your game is on Roblox": "你的游戏已上线 Roblox",
+  "Your game's agent publishes it in Roblox Studio while you keep working.":
+    "你继续工作时，游戏的智能体会在 Roblox Studio 中发布它。",
 } satisfies LocaleCatalog;

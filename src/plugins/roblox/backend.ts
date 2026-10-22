@@ -10,7 +10,6 @@ import type {
   PluginContext,
   PluginEngineAssistRefusal,
   PluginEngineLink,
-  PluginReview,
   PluginToolbarStatus,
 } from "../../plugin-sdk/index.d.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -53,6 +52,7 @@ import { createProbes, type ProbeLuauFile, RobloxProbe } from "./probes.ts";
 import {
   firstPublish,
   firstPublishName,
+  type PublishAnswer,
   PublishAsker,
   type PublishDeps,
   type PublishPlace,
@@ -61,6 +61,7 @@ import {
   reviewPublish,
   unfitName,
 } from "./publish.ts";
+import { PUBLISH_PROMPTS } from "./publish-prompts.ts";
 import { crashAnswer, probeAnswer } from "./hook-answers.ts";
 import {
   createStudioWatch,
@@ -75,11 +76,10 @@ import {
   teamNoteAt,
   viewportStill,
 } from "./studio-moments.ts";
-import { planSwitches, readSwitches } from "./mcp-switch.ts";
+import { planSwitches } from "./mcp-switch.ts";
 import {
   HELPER_FILE,
   HelperChange,
-  planSetup,
   recordedHelper,
   type SetupDone,
   type SetupOptions,
@@ -94,19 +94,20 @@ import { createScriptSyncs, type ScriptSyncs, systemWatch } from "./script-sync.
 import { createStudioClient, type StudioClient, studioAnswers, systemStudioClientDeps } from "./studio-client.ts";
 import { type ShrinkShot, systemShrink } from "./studio-shot.ts";
 import {
-  ALLOWED_HOST,
   afterInstall,
   INSTALLER,
   type InstallDeps,
   InstallError,
   InstallPhase,
-  type InstallRefusal,
+  InstallRefusal,
   installStudio,
   systemInstallRun,
 } from "./studio-install.ts";
 import {
   createGame,
   engineStatus,
+  type GamePlace,
+  gamePlace,
   newGameTool,
   openStudio,
   type PlaceActionDeps,
@@ -119,7 +120,10 @@ import {
 import { insertAsset } from "./insert-asset.ts";
 import { checkModelTool, importModel } from "./model-import.ts";
 import { linkedPlace, listPlaces, type ScanCache, usePlace, usePlaceNamed } from "./places.ts";
-import { quitStudio, startingNow, systemOpener } from "./studio-launch.ts";
+import { type PlaceTarget, quitStudio, startingNow, systemOpener } from "./studio-launch.ts";
+import { signInWatch, studioLogFolder } from "./studio-logs.ts";
+import { attemptNow, endAttempt, readAttempt, writeAttempt } from "./publish-attempt.ts";
+import { RobloxPublishKind, RobloxPublishPhase, type RobloxPublishState } from "../../shared/roblox-publish.ts";
 import {
   type LocateDeps,
   locateStudio,
@@ -280,10 +284,11 @@ interface InstallJob extends InstallStatus {
   writes: Promise<void>;
 }
 
-/** The answer to Get Roblox Studio and its Stop. */
+/** The answer to Get Roblox Studio and its Stop; `place`, the file of a new place written for the game. */
 export interface GetStudioAnswer {
   started: boolean;
   message: string;
+  place?: string;
 }
 
 const isFinished = (job: InstallJob | undefined) =>
@@ -360,10 +365,24 @@ export function toolbarStatusOf(status: StudioStatus, install?: StudioInstall): 
   return { badge: badge(), tone, dot: true, title: titleOf(status, install) };
 }
 
+/** Genex's setup record when it is a plain file in the plugin's storage; undefined otherwise. */
+async function setupRecord(deps: RobloxDeps, storage: string) {
+  const stat = await deps.fs.lstat(path.join(storage, SETUP_RECORD));
+  return stat?.file && !stat.link ? stat : undefined;
+}
+
 /** Whether Genex's setup record is a plain file in the plugin's storage. */
 async function setUpIn(deps: RobloxDeps, storage: string): Promise<boolean> {
-  const stat = await deps.fs.lstat(path.join(storage, SETUP_RECORD));
-  return Boolean(stat?.file && !stat.link);
+  return Boolean(await setupRecord(deps, storage));
+}
+
+/** Whether Set up has run since this was made (a record new or rewritten), as another press runs it. */
+async function setUpSince(deps: RobloxDeps, storage: string): Promise<() => Promise<boolean>> {
+  const before = (await setupRecord(deps, storage))?.mtimeMs;
+  return async () => {
+    const now = (await setupRecord(deps, storage))?.mtimeMs;
+    return now !== undefined && now !== before;
+  };
 }
 
 /** Whether Genex can click in Studio here: the test's word, else the host's (never when it can't say). */
@@ -440,8 +459,9 @@ async function placeFacts(
 /** Where Get Roblox Studio stands, as the rows read it: under way, or stopped and why. */
 function installFacts(job: InstallJob | undefined): Pick<RobloxStepFacts, "getting" | "failed"> {
   if (!job) return {};
-  if (!isFinished(job)) return { getting: { detail: job.message } };
-  return job.phase === InstallPhase.Failed ? { failed: { detail: job.message } } : {};
+  if (!isFinished(job)) return { getting: { detail: job.message, signingIn: job.phase === InstallPhase.SigningIn } };
+  if (job.phase !== InstallPhase.Failed) return {};
+  return { failed: { detail: job.message, stopped: job.reason === InstallRefusal.Cancelled } };
 }
 
 /**
@@ -594,6 +614,67 @@ async function restartStudio(deps: RobloxDeps, context: PluginContext): Promise<
   return { ...answer, reopened: true, message: `${answer.message} ${MESSAGE.Setup.Reopened()}` };
 }
 
+/** Set up while Studio is closed, then the game's place opened in it, as Restart Studio does after its quit. */
+async function setUpThenOpen(deps: RobloxDeps, context: PluginContext): Promise<SetupAnswer> {
+  const answer = await runSetup(deps, context);
+  if (!answer.done) return answer;
+  const opened = await openStudio(deps, context);
+  return { ...answer, reopened: true, message: `${answer.message} ${opened.message}` };
+}
+
+/** What Set it up for me runs next. Never leaves the backend. */
+const ForMeStep = {
+  GetStudio: "get-studio",
+  SetUp: "set-up",
+  Restart: "restart",
+  Open: "open",
+  Click: "click",
+  SignIn: "sign-in",
+  Done: "done",
+} as const;
+type ForMeStep = (typeof ForMeStep)[keyof typeof ForMeStep];
+
+/**
+ * The step Set it up for me runs next, read now. A game with no place gets its new one on the way
+ * (Get Roblox Studio writes it itself), so Studio opens with it. Signing in is never Genex's: once
+ * only it is left, nothing runs.
+ */
+async function nextForMe(deps: RobloxDeps, context: PluginContext, snapshot: boolean): Promise<ForMeStep> {
+  if (!(await locateStudio(deps)).installed) return ForMeStep.GetStudio;
+  const place = await gamePlace(deps, context, { snapshot });
+  const storage = await context.host(PluginService.StorageRoot);
+  const running = await studioRunning(deps);
+  if (!(await setUpIn(deps, storage))) return running ? ForMeStep.Restart : ForMeStep.SetUp;
+  if (!running || place.written) return ForMeStep.Open;
+  if (await deps.answers()) return ForMeStep.Done;
+  const mcp = await mcpSwitch(deps);
+  // The switch is on: Studio waits for the person's sign-in.
+  if (mcp && mcp.on > 0) return ForMeStep.SignIn;
+  if (await canClickHere(deps, context)) return ForMeStep.Click;
+  // With no account's settings yet, Studio hasn't been signed in to: restarting it can't help.
+  return mcp?.settings ? ForMeStep.Restart : ForMeStep.SignIn;
+}
+
+/**
+ * Set it up for me, the steps card's own button: every step Genex can do now, run as its own press
+ * runs it, so the person only signs in. Restart Studio uses Studio's normal quit, which asks them to
+ * save first.
+ */
+async function finishSetup(deps: RobloxDeps, context: PluginContext, slot: InstallSlot): Promise<{ message: string }> {
+  // Get Roblox Studio under way finishes the setup itself: a quit now would cut off the sign-in.
+  if (slot.job && !isFinished(slot.job)) return { message: slot.job.message };
+  const run: Record<ForMeStep, () => Promise<{ message: string }>> = {
+    [ForMeStep.GetStudio]: () => getStudio(deps, context, slot, true),
+    [ForMeStep.SetUp]: () => setUpThenOpen(deps, context),
+    [ForMeStep.Restart]: () => restartStudio(deps, context),
+    [ForMeStep.Open]: () => openStudio(deps, context),
+    [ForMeStep.Click]: () => doItForMe(context),
+    [ForMeStep.SignIn]: async () => ({ message: MESSAGE.ForMe.SignIn() }),
+    [ForMeStep.Done]: async () => ({ message: MESSAGE.ForMe.Done() }),
+  };
+  return run[await nextForMe(deps, context, true)]();
+}
+
 /** Do it for me's refusals in the person's words, each said when it is shown. */
 const ASSIST_WORDS: Partial<Record<PluginEngineAssistRefusal, () => string>> = {
   unavailable: MESSAGE.Assist.Unavailable,
@@ -641,16 +722,21 @@ async function finish(job: InstallJob, storage: string, end: { phase: InstallPha
 
 /**
  * Get Roblox Studio, start to end: Roblox's installer downloaded, checked and run; Studio waited
- * for; the person's sign-in in the installer's Studio; Set up while that Studio is closed; Studio
- * opened again once.
+ * for; the person's sign-in in the installer's Studio, seen in Studio's log, then its normal quit;
+ * Set up while Studio is closed; Studio opened again once, with the game's place when it has one.
+ * A Studio set up another way meanwhile is left as it is.
  */
-async function getStudioJob(deps: RobloxDeps, job: InstallJob, storage: string): Promise<void> {
+async function getStudioJob(deps: RobloxDeps, job: InstallJob, storage: string, place?: PlaceTarget): Promise<void> {
   const signal = job.controller.signal;
   const onPhase = (phase: InstallPhase) => notePhase(job, storage, phase, deps.now());
+  // Only a Set up or a sign-in after this press counts: an earlier one is from before Studio was here.
+  const setUpAlready = await setUpSince(deps, storage);
+  const signedIn = signInWatch(studioLogFolder(deps.platform, deps.env, deps.home), deps.now());
   try {
     await installStudio({ ...deps.install, platform: deps.platform, env: deps.env }, { signal, onPhase });
-    const setUpStep = async () => (await runSetupWith(setupOptionsIn(deps, storage))).message;
-    const done = await afterInstall({ ...deps, setUp: setUpStep }, { signal, onPhase });
+    const setUp = async () => (await runSetupWith(setupOptionsIn(deps, storage))).message;
+    const after = { ...deps, setUp, setUpAlready, signedIn, ...(place ? { place } : {}) };
+    const done = await afterInstall(after, { signal, onPhase });
     await finish(job, storage, { phase: InstallPhase.Done, message: done.message, now: deps.now() });
   } catch (error) {
     if (error instanceof InstallError) job.reason = error.code;
@@ -666,15 +752,24 @@ interface InstallSlot {
 
 /**
  * Get Roblox Studio: starts the install and answers at once, so the panel follows it through
- * `status`. A Studio already here, or an install already going, is answered in words, not run.
+ * `status`. A game with no place gets its new one first, which Studio opens once set up; the
+ * person's press snapshots the game before writing it. A Studio already here, or an install
+ * already going, is answered in words, not run.
  */
-async function getStudio(deps: RobloxDeps, context: PluginContext, slot: InstallSlot): Promise<GetStudioAnswer> {
+async function getStudio(
+  deps: RobloxDeps,
+  context: PluginContext,
+  slot: InstallSlot,
+  snapshot: boolean,
+): Promise<GetStudioAnswer> {
   if (!isFinished(slot.job)) return { started: false, message: MESSAGE.Install.AlreadyGetting() };
   const location = await locateStudio(deps);
   if (location.installed)
     return { started: false, message: MESSAGE.Install.AlreadyInstalled(location.install.version) };
   if (!(deps.platform in INSTALLER)) return { started: false, message: MESSAGE.Install.Refused.unsupported() };
   const storage = await context.host(PluginService.StorageRoot);
+  // A place that can't be written now is left to the place step: Studio comes all the same.
+  const place = await gamePlace(deps, context, { snapshot }).catch(() => ({}) as GamePlace);
   const job: InstallJob = {
     phase: InstallPhase.Downloading,
     message: MESSAGE.Install.Phase.downloading(),
@@ -682,8 +777,9 @@ async function getStudio(deps: RobloxDeps, context: PluginContext, slot: Install
     writes: Promise.resolve(),
   };
   slot.job = job;
-  void getStudioJob(deps, job, storage);
-  return { started: true, message: MESSAGE.Install.Started() };
+  void getStudioJob(deps, job, storage, place.target);
+  const started: GetStudioAnswer = { started: true, message: MESSAGE.Install.Started() };
+  return place.written ? { ...started, place: place.written } : started;
 }
 
 /** Stop: ends the download or the wait under way. Roblox's installer, once running, finishes on its own. */
@@ -692,28 +788,6 @@ function cancelGetStudio(slot: InstallSlot): GetStudioAnswer {
   if (!job || isFinished(job)) return { started: false, message: MESSAGE.Install.NothingToStop() };
   job.controller.abort();
   return { started: false, message: MESSAGE.Install.Stopped() };
-}
-
-/** Get Roblox Studio's confirmation: this computer's download, where it comes from, and the sign-in. */
-function reviewGetStudio(deps: RobloxDeps): PluginReview {
-  if (!(deps.platform in INSTALLER)) return {};
-  const installer = INSTALLER[deps.platform as keyof typeof INSTALLER];
-  return { message: MESSAGE.Install.Confirm(installer.megabytes), detail: MESSAGE.Install.Plan(ALLOWED_HOST) };
-}
-
-/**
- * Set up's confirmation: what it will do on this computer, read from Studio's settings folder only.
- * It never reads Documents: macOS would ask the person before they have confirmed.
- */
-async function reviewSetup(deps: RobloxDeps): Promise<PluginReview> {
-  try {
-    const paths = setupPaths(deps.platform, deps.env, deps.home);
-    const settings = (await readSwitches(paths.settings)).length;
-    const detail = planSetup({ platform: deps.platform, paths, settings }).join("\n");
-    return { message: MESSAGE.Setup.Confirm(), detail };
-  } catch {
-    return {};
-  }
 }
 
 type Handler = (args: Record<string, unknown>, context: PluginContext) => Promise<unknown>;
@@ -941,8 +1015,66 @@ function publishHandler(deps: RobloxDeps, services: MomentServices, asker: Publi
     // A place just published by hand is linked first, so it gets its update and not a first publish.
     await relinkQuietly(deps, services, context, true);
     const place = await publishPlace(context);
-    return publishUpdate(place, publishDeps(deps, services, context, place), asker);
+    const answer = await publishUpdate(place, publishDeps(deps, services, context, place), asker);
+    return noteAttempt(deps, context, RobloxPublishKind.Update, answer);
   };
+}
+
+/** Records a publish the game's chat took, so Studio's publishing card follows it; the answer as it was. */
+async function noteAttempt(
+  deps: RobloxDeps,
+  context: PluginContext,
+  kind: RobloxPublishKind,
+  answer: PublishAnswer,
+): Promise<PublishAnswer> {
+  if (!answer.started || !context.project) return answer;
+  const storage = await context.host(PluginService.StorageRoot);
+  const attempt = {
+    phase: RobloxPublishPhase.Publishing,
+    kind,
+    at: deps.now(),
+    ...(answer.name ? { name: answer.name } : {}),
+  };
+  await writeAttempt(storage, context.project, attempt).catch(() => undefined);
+  return answer;
+}
+
+/**
+ * Where the game's place and its latest publish stand, for Studio's publishing card: a place just
+ * published is linked first, so a first publish shows as done once Roblox has it.
+ */
+async function publishStatus(
+  deps: RobloxDeps,
+  services: MomentServices,
+  context: PluginContext,
+): Promise<RobloxPublishState> {
+  await relinkQuietly(deps, services, context);
+  const place = await publishPlace(context);
+  const remote = place.link?.remote;
+  const state: RobloxPublishState = {
+    linked: Boolean(place.link),
+    published: Boolean(remote),
+    canClick: await canClickHere(deps, context),
+  };
+  if (remote) state.placeId = remote.placeId;
+  else if (place.link) state.name = firstPublishName(place);
+  if (!context.project) return state;
+  const recorded = await readAttempt(await context.host(PluginService.StorageRoot), context.project);
+  if (recorded) state.attempt = attemptNow(recorded, Boolean(remote), deps.now());
+  return state;
+}
+
+/**
+ * The publishing turn's word on how its publish ended, for Studio's publishing card: published, or
+ * stopped with what Roblox asked the person. Only a publish under way is ended.
+ */
+async function publishResult(deps: RobloxDeps, context: PluginContext, args: Record<string, unknown>) {
+  if (!context.project) return PUBLISH_PROMPTS.NoAttempt;
+  const storage = await context.host(PluginService.StorageRoot);
+  const end = { published: args.published === true, detail: args.detail };
+  return (await endAttempt(storage, context.project, end, deps.now()))
+    ? PUBLISH_PROMPTS.ResultNoted
+    : PUBLISH_PROMPTS.NoAttempt;
 }
 
 /**
@@ -957,7 +1089,9 @@ function firstPublishHandler(deps: RobloxDeps, services: MomentServices, asker: 
     const requested = requestedName(args);
     // The agent's card showed its name: a name Roblox would take otherwise is asked again, never changed.
     const unfit = asker === PublishAsker.Agent ? unfitName(place, requested) : undefined;
-    return unfit ?? firstPublish(place, publishDeps(deps, services, context, place), asker, requested);
+    if (unfit) return unfit;
+    const answer = await firstPublish(place, publishDeps(deps, services, context, place), asker, requested);
+    return noteAttempt(deps, context, RobloxPublishKind.First, answer);
   };
 }
 
@@ -1019,6 +1153,33 @@ function quitWords(answer: QuitAnswer): string {
   return SETUP_PROMPTS.QuitNotRunning;
 }
 
+/** Get Roblox Studio's answer in the agent's words, naming the game's new place when it wrote one. */
+function getStudioWords(answer: GetStudioAnswer): string {
+  if (!answer.started) return SETUP_PROMPTS.Words(answer.message);
+  return answer.place ? SETUP_PROMPTS.GettingPlace(path.basename(answer.place)) : SETUP_PROMPTS.Getting;
+}
+
+/** Set up's answer in the agent's words, saying to retry once Studio has started when Genex opened it. */
+async function reopenedWords(deps: RobloxDeps, context: PluginContext, answer: SetupAnswer): Promise<string> {
+  const words = setupWords(answer, await canClickHere(deps, context));
+  return answer.reopened ? SETUP_PROMPTS.Restarted(words) : words;
+}
+
+/** Set it up for me as the agent's tool: the same step, answered in its words. */
+async function finishSetupTool(deps: RobloxDeps, context: PluginContext, slot: InstallSlot): Promise<string> {
+  if (slot.job && !isFinished(slot.job)) return SETUP_PROMPTS.Getting;
+  const words: Record<ForMeStep, () => Promise<string>> = {
+    [ForMeStep.GetStudio]: async () => getStudioWords(await getStudio(deps, context, slot, false)),
+    [ForMeStep.SetUp]: async () => reopenedWords(deps, context, await setUpThenOpen(deps, context)),
+    [ForMeStep.Restart]: async () => reopenedWords(deps, context, await restartStudio(deps, context)),
+    [ForMeStep.Open]: async () => SETUP_PROMPTS.Opened((await openStudio(deps, context)).message),
+    [ForMeStep.Click]: () => doItForMeTool(deps, context),
+    [ForMeStep.SignIn]: async () => SETUP_PROMPTS.SignInLeft,
+    [ForMeStep.Done]: async () => SETUP_PROMPTS.ForMeDone,
+  };
+  return words[await nextForMe(deps, context, false)]();
+}
+
 /** Runs `then` once Studio is on this computer; otherwise the agent is told to get it. */
 async function installedThen(deps: RobloxDeps, then: () => Promise<string>): Promise<string> {
   return (await locateStudio(deps)).installed ? then() : SETUP_PROMPTS.NotInstalled;
@@ -1033,19 +1194,14 @@ function pressHandlers(deps: RobloxDeps, slot: InstallSlot, luau: LuauDeps) {
     [RobloxTool.DoItForMe]: (_args, context) => doItForMeTool(deps, context),
     [RobloxTool.Setup]: async (_args, context) =>
       setupWords(await setupAction(deps, context), await canClickHere(deps, context)),
-    [RobloxTool.RestartStudio]: async (_args, context) => {
-      const answer = await restartStudio(deps, context);
-      const words = setupWords(answer, await canClickHere(deps, context));
-      return answer.reopened ? SETUP_PROMPTS.Restarted(words) : words;
-    },
+    [RobloxTool.RestartStudio]: async (_args, context) =>
+      reopenedWords(deps, context, await restartStudio(deps, context)),
+    [RobloxTool.FinishSetup]: (_args, context) => finishSetupTool(deps, context, slot),
     [RobloxTool.UndoSetup]: async (_args, context) => (await undoAction(deps, context)).message,
     [RobloxTool.OpenStudio]: (_args, context) =>
       installedThen(deps, async () => SETUP_PROMPTS.Opened((await openStudio(deps, context)).message)),
     [RobloxTool.QuitStudio]: async (_args, context) => quitWords(await quitStudioAction(deps, context)),
-    [RobloxTool.GetStudio]: async (_args, context) => {
-      const answer = await getStudio(deps, context, slot);
-      return answer.started ? SETUP_PROMPTS.Getting : SETUP_PROMPTS.Words(answer.message);
-    },
+    [RobloxTool.GetStudio]: async (_args, context) => getStudioWords(await getStudio(deps, context, slot, false)),
     [RobloxTool.CancelGetStudio]: async () => cancelGetStudio(slot).message,
     [RobloxTool.Places]: async (_args, context) => ({
       ...(await listPlaces(deps, context)),
@@ -1080,7 +1236,7 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     },
     [RobloxAction.ToolbarStatus]: (_args, context) => toolbarStatus(deps, context),
     [RobloxAction.Steps]: (_args, context) => steps(deps, context, slot.job),
-    [RobloxAction.GetStudio]: (_args, context) => getStudio(deps, context, slot),
+    [RobloxAction.GetStudio]: (_args, context) => getStudio(deps, context, slot, true),
     [RobloxAction.CancelGetStudio]: async () => cancelGetStudio(slot),
     [RobloxAction.OpenStudio]: (_args, context) => openStudio(deps, context),
     [RobloxAction.QuitStudio]: (_args, context) => quitStudioAction(deps, context),
@@ -1095,6 +1251,8 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     [RobloxAction.AddLuauChecks]: (_args, context) => addLuauAction(deps, luau, context),
     [RobloxAction.PublishUpdate]: publishHandler(deps, services, PublishAsker.Person),
     [RobloxAction.FirstPublish]: firstPublishHandler(deps, services, PublishAsker.Person),
+    [RobloxAction.PublishStatus]: (_args, context) => publishStatus(deps, services, context),
+    [RobloxAction.FinishSetup]: (_args, context) => finishSetup(deps, context, slot),
   };
   const tools: Record<RobloxTool, Handler> = {
     [RobloxTool.StudioActivity]: async (_args, context) =>
@@ -1117,6 +1275,7 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     ...modelHandlers(deps, services),
     [RobloxTool.PublishUpdate]: publishHandler(deps, services, PublishAsker.Agent),
     [RobloxTool.FirstPublish]: firstPublishHandler(deps, services, PublishAsker.Agent),
+    [RobloxTool.PublishResult]: (args, context) => publishResult(deps, context, args),
     ...pressHandlers(deps, slot, luau),
     [RobloxTool.HeroShots]: async (_args, context) => {
       // As the viewport observer: the picture within the time Genex gives.
@@ -1139,12 +1298,11 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
       return tools[name](args, context);
     },
     async review(name, args, context) {
-      if (name === RobloxAction.GetStudio) return reviewGetStudio(deps);
       if (name === RobloxAction.AddLuauChecks) return reviewAddLuau(deps, luau, context);
       if (name === RobloxAction.PublishUpdate) return reviewPublish(await publishPlace(context));
-      if (name === RobloxAction.FirstPublish)
-        return reviewFirstPublish(await publishPlace(context), requestedName(args));
-      return name === RobloxAction.Setup ? reviewSetup(deps) : {};
+      return name === RobloxAction.FirstPublish
+        ? reviewFirstPublish(await publishPlace(context), requestedName(args))
+        : {};
     },
   };
 }

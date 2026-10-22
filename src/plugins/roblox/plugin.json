@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "roblox",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "icon": "icon.svg",
   "name": "Roblox Studio",
   "publisher": "Genex",
@@ -319,20 +319,42 @@
       }
     },
     {
+      "name": "publish-result",
+      "facts": ["roblox-project"],
+      "description": "Only in the turn that answers \"Roblox Studio asks: Publish …\": once Roblox Studio says the place is published, or you stopped for the person (an age, ID, two-step, terms or payment question, a sign-in, or a dialog you don't recognise), say so here, so the person's publishing card shows it. Call it once, at the end of that turn, and never otherwise.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "published": {
+            "type": "boolean",
+            "description": "true once Studio said the place is published; false when you stopped."
+          },
+          "detail": {
+            "type": "string",
+            "description": "One short plain sentence for the person: when you stopped, what Roblox or Studio asks of them and where; when published, anything Studio added."
+          }
+        },
+        "required": ["published"]
+      }
+    },
+    {
       "name": "do-it-for-me",
       "description": "Turn on Roblox Studio's MCP server with Genex's computer control, as Do it for me in the Roblox Studio panel does: this chat's next turn clicks Studio's switch (Assistant › ⋯ › Settings › MCP Servers). Call it yourself whenever Studio is open but its tools don't answer because the switch is off; never ask the person to click it. It clicks nothing when something else is missing and names the tool for that step instead. With computer control off, Genex asks the person once on a card. End your turn once it has started.",
       "parameters": { "type": "object", "properties": {} }
     },
     {
+      "name": "finish-setup",
+      "description": "Do the Roblox Studio setup steps Genex can do now, as Set it up for me on the setup card does: get Studio when it's missing, make this game a new place when it has none, set Studio up (restarting an open Studio normally, which asks the person to save) and open the game's place, or turn on the MCP switch. Call it whenever Studio isn't ready for this game; call it again after a step that started something finishes. Only signing in to Roblox is the person's: once only that is left, it says so and changes nothing.",
+      "parameters": { "type": "object", "properties": {} }
+    },
+    {
       "name": "setup",
-      "description": "Set Roblox Studio up for Genex, as Set up in the Roblox Studio panel does: add the Genex helper to Studio's Plugins folder and turn on Studio's MCP server. Genex does it only while Studio is closed; with Studio open, call restart-studio. On a Mac, macOS may ask the person to let Genex use the Documents folder. The person approves on a card.",
-      "confirmation": "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?",
+      "description": "Set Roblox Studio up for Genex, as Set up in the Roblox Studio panel does: add the Genex helper to Studio's Plugins folder and turn on Studio's MCP server. Genex does it only while Studio is closed; with Studio open, call restart-studio. On a Mac, macOS may ask the person to let Genex use the Documents folder.",
       "parameters": { "type": "object", "properties": {} }
     },
     {
       "name": "restart-studio",
-      "description": "Quit Roblox Studio normally (Studio asks the person to save, as it always does), set it up for Genex while it is closed (the helper and the MCP server switch), and open this game's place again, as Restart Studio in the panel does. Use it when Studio is open and the helper is missing, or its MCP server is off where do-it-for-me can't click. The person approves on a card.",
-      "confirmation": "Quit Roblox Studio, set it up for Genex while it is closed, and open it again? Studio asks you to save your place first, as it always does.",
+      "description": "Quit Roblox Studio normally (Studio asks the person to save, as it always does), set it up for Genex while it is closed (the helper and the MCP server switch), and open this game's place again, as Restart Studio in the panel does. Use it when Studio is open and the helper is missing, or its MCP server is off where do-it-for-me can't click.",
       "parameters": { "type": "object", "properties": {} }
     },
     {
@@ -342,8 +364,7 @@
     },
     {
       "name": "get-studio",
-      "description": "Get Roblox Studio when it isn't on this computer, as Get Roblox Studio in the panel does: Genex downloads it from Roblox, checks Roblox signed it, installs it and sets it up. The person approves the download on a card and signs in to Roblox in the Studio that opens (only they can). It answers at once; show-steps shows where it stands.",
-      "confirmation": "Download Roblox Studio from Roblox (about 11 MB on Mac, 14 MB on Windows), check that Roblox signed it, and install it?",
+      "description": "Get Roblox Studio when it isn't on this computer, as Get Roblox Studio in the panel does: Genex downloads it from Roblox, checks Roblox signed it, installs it and sets it up; a game with no place gets its new one first, which Studio opens once set up. The person signs in to Roblox in the Studio that opens (only they can). It answers at once; show-steps shows where it stands.",
       "parameters": { "type": "object", "properties": {} }
     },
     {
@@ -366,7 +387,7 @@
     {
       "name": "places",
       "facts": ["roblox-project"],
-      "description": "List the Roblox places this game could build in: the places open in Roblox Studio (with their published ids) and the place files Studio opened lately, each marked when this or another game builds in it. Link one with use-project, or make one with new-game. Nothing is changed.",
+      "description": "List the Roblox places this game could build in: the places open in Roblox Studio (with their published ids) and the place files Studio opened lately, each marked when this or another game builds in it. A game builds in a new place from new-game by default; link one of these with use-project only when the person named it or asked to use one of theirs. Nothing is changed.",
       "parameters": { "type": "object", "properties": {} }
     },
     {
@@ -406,7 +427,7 @@
     {
       "name": "use-project",
       "makes": ["roblox-project"],
-      "description": "Link this game to a Roblox place: one open in Roblox Studio, by its label from places (Place1, or Place1 (2) for a second Studio with that name), or a .rbxl or .rbxlx file by its full path. Call it yourself when this game has no place or Genex lost it (the Roblox Studio tools answer that it isn't linked); switch a game that has a place to another only when the person asks. A file in Documents, Desktop or Downloads that macOS guards is linked by its label once it is open in Studio. Later Roblox Studio calls in this game go to that place, and the chat shows the link with Undo. A place another game builds in is refused.",
+      "description": "Link this game to a Roblox place: one open in Roblox Studio, by its label from places (Place1, or Place1 (2) for a second Studio with that name), or a .rbxl or .rbxlx file by its full path. Use it when the person named a place of theirs for this game, or Genex lost the game's place (the Roblox Studio tools answer that it isn't linked); a game with no place gets a new one from new-game or finish-setup instead. Switch a game that has a place to another only when the person asks. A file in Documents, Desktop or Downloads that macOS guards is linked by its label once it is open in Studio. Later Roblox Studio calls in this game go to that place, and the chat shows the link with Undo. A place another game builds in is refused.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -430,7 +451,7 @@
       "name": "new-game",
       "makes": ["roblox-project"],
       "ready": "engine-status",
-      "description": "Make this game's Roblox place from Genex's Baseplate (a baseplate, a spawn point and daylight) in this game's folder as <game>.rbxlx: Genex links this game to it and opens it in Roblox Studio, as New Roblox game in the Roblox Studio panel does. Use it only when the person chose Roblox for this game and it has no Roblox place yet; a game that already builds in one is refused. Studio takes a moment to start: once the Roblox Studio tools answer, build the game there.",
+      "description": "Make this game's Roblox place from Genex's Baseplate (a baseplate, a spawn point and daylight) in this game's folder as <game>.rbxlx: Genex links this game to it and opens it in Roblox Studio, as New Roblox game in the Roblox Studio panel does. A game the person chose Roblox for that has no Roblox place yet gets one this way unless they named one of theirs; a game that already builds in one is refused. Studio takes a moment to start: once the Roblox Studio tools answer, build the game there.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -655,7 +676,7 @@
   "skills": [
     {
       "name": "roblox-studio",
-      "text": "This game is built in the person's own Roblox Studio, which stays open and visible; Genex attaches to this game's place through the Roblox Studio connection (its tools fill in which Studio and place, so never pick one yourself).\nScripts are files: write and change the game's code as .luau files under src/<Service>/ in the game folder, named as the luau skill says. Genex's helper keeps them in step with Studio both ways. Never edit a script's Source through execute_luau. Everything else in the place (parts, models, UI, lighting, settings) you read with the connection's read tools and change with execute_luau in Edit.\nPlay-testing: the computer tool plays the game in Studio's own play session as a player would, and judge_play hands it to a judge who never saw the code. The desktop tool never builds or play-tests in Studio; it is refused there except in the turn that answers a setup click or a publish the person asked for (Do it for me, Publish to Roblox, Publish an update), which clicks it itself.\nAsk first: Roblox's AI tools (mesh, texture, material and model generation, its playtest and explore agents), uploads and Creator Store inserts each show the person a card, because they run on the person's Roblox account and moderation penalties land on it. Never ask for Roblox API keys or passwords, never read cookies or sign-in files, never put bots in live servers, and never publish unasked: when the person asks, first-publish (a place never published, under the game's name) or publish-update (a place already on Roblox) shows them a card and the turn that answers its \"Roblox Studio asks: Publish …\" message clicks File › Publish to Roblox itself, as the publish skill says; Genex links the game to the published place by itself.\nSetup is yours: when Studio is missing, closed or not set up, its MCP server is off or this game has no place, call this plugin's tools for that step (get-studio, setup, restart-studio, open-studio, do-it-for-me, places, use-project, new-game) and never ask the person to click; only signing in to Roblox, macOS's own prompts and Studio's or Roblox's own questions (saving, age, ID, two-step, terms, payment) are theirs.\nThe person comes first: while they work in Studio, Genex's calls wait. Never close or force-quit Studio. Save points cover the scripts and the place; Rewind brings both back.\nRead the matching Roblox skill before that work: luau (code), remotes (anything a client sends), player-data (saving), purchases (Robux), ui-scale (any UI), assets (models, textures, sounds), get-started (Studio not connected or not set up), publish (a turn that publishes).",
+      "text": "This game is built in the person's own Roblox Studio, which stays open and visible; Genex attaches to this game's place through the Roblox Studio connection (its tools fill in which Studio and place, so never pick one yourself).\nScripts are files: write and change the game's code as .luau files under src/<Service>/ in the game folder, named as the luau skill says. Genex's helper keeps them in step with Studio both ways. Never edit a script's Source through execute_luau. Everything else in the place (parts, models, UI, lighting, settings) you read with the connection's read tools and change with execute_luau in Edit.\nPlay-testing: the computer tool plays the game in Studio's own play session as a player would, and judge_play hands it to a judge who never saw the code. The desktop tool never builds or play-tests in Studio; it is refused there except in the turn that answers a setup click or a publish the person asked for (Do it for me, Publish to Roblox, Publish an update), which clicks it itself.\nAsk first: Roblox's AI tools (mesh, texture, material and model generation, its playtest and explore agents), uploads and Creator Store inserts each show the person a card, because they run on the person's Roblox account and moderation penalties land on it. Never ask for Roblox API keys or passwords, never read cookies or sign-in files, never put bots in live servers, and never publish unasked: when the person asks in the chat, first-publish (a place never published, under the game's name) or publish-update (a place already on Roblox) shows them a card; their Publish button hands it over with no card. The turn that answers the \"Roblox Studio asks: Publish …\" message clicks File › Publish to Roblox itself, as the publish skill says, then calls publish-result; Genex links the game to the published place by itself.\nSetup is yours: when Studio is missing, closed or not set up, its MCP server is off or this game has no place, call finish-setup (or that step's own tool: get-studio, setup, restart-studio, open-studio, do-it-for-me, new-game), which make this game a new place unless the person named one of theirs (then places and use-project), and never ask the person to click or approve; only signing in to Roblox, macOS's own prompts and Studio's or Roblox's own questions (saving, age, ID, two-step, terms, payment) are theirs.\nThe person comes first: while they work in Studio, Genex's calls wait. Never close or force-quit Studio. Save points cover the scripts and the place; Rewind brings both back.\nRead the matching Roblox skill before that work: luau (code), remotes (anything a client sends), player-data (saving), purchases (Robux), ui-scale (any UI), assets (models, textures, sounds), get-started (Studio not connected or not set up), publish (a turn that publishes).",
       "facts": ["roblox-project"]
     },
     {
@@ -739,31 +760,17 @@
     { "name": "status", "label": "Roblox Studio status" },
     { "name": "toolbar-status", "label": "Roblox Studio connection" },
     { "name": "steps", "label": "Roblox Studio setup steps" },
-    {
-      "name": "setup",
-      "label": "Set up",
-      "confirmation": "Add the Genex helper to Roblox Studio's Plugins folder and turn on Studio's MCP server?",
-      "native": true
-    },
+    { "name": "setup", "label": "Set up", "native": true },
     {
       "name": "undo-setup",
       "label": "Undo Set up",
       "confirmation": "Take back what Genex set up in Roblox Studio: the Genex helper in its Plugins folder (and that folder, if Genex made it) and the MCP server switch Genex turned on. Anything changed since stays as it is.",
       "native": true
     },
-    {
-      "name": "restart-studio",
-      "label": "Restart Studio",
-      "confirmation": "Quit Roblox Studio, set it up for Genex while it is closed, and open it again? Studio asks you to save your place first, as it always does.",
-      "native": true
-    },
+    { "name": "restart-studio", "label": "Restart Studio", "native": true },
     { "name": "do-it-for-me", "label": "Do it for me", "native": true },
-    {
-      "name": "get-studio",
-      "label": "Get Roblox Studio",
-      "confirmation": "Download Roblox Studio from Roblox (about 11 MB on Mac, 14 MB on Windows), check that Roblox signed it, and install it?",
-      "native": true
-    },
+    { "name": "get-studio", "label": "Get Roblox Studio", "native": true },
+    { "name": "finish-setup", "label": "Set it up for me", "native": true },
     { "name": "cancel-get-studio", "label": "Stop getting Roblox Studio" },
     { "name": "open-studio", "label": "Open Studio", "native": true },
     { "name": "quit-studio", "label": "Quit Studio", "native": true },
@@ -776,18 +783,9 @@
       "confirmation": "Download luau-lsp, selene and StyLua from GitHub (about 15 MB) to check this game's scripts? Genex keeps them in its own storage; they run on this computer, outside Genex's sandbox.",
       "native": true
     },
-    {
-      "name": "publish-update",
-      "label": "Publish an update",
-      "confirmation": "Publish an update of this game's place to Roblox? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control. Everyone who plays the game gets the update, and it is published on your Roblox account.",
-      "native": true
-    },
-    {
-      "name": "first-publish",
-      "label": "Publish to Roblox",
-      "confirmation": "Publish this game to Roblox as a new game? This game's chat clicks File › Publish to Roblox in Roblox Studio with computer control and keeps the privacy Studio gives a new game. It is published on your Roblox account.",
-      "native": true
-    }
+    { "name": "publish-update", "label": "Publish an update", "native": true },
+    { "name": "first-publish", "label": "Publish to Roblox", "native": true },
+    { "name": "publish-status", "label": "Roblox publishing status" }
   ],
   "toolbar": [
     {

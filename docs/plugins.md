@@ -1220,8 +1220,8 @@ server lists an open Studio, asked through the one StudioMCP the backend keeps o
 panel's `status` reads `~/Documents`, where macOS asks the person first; the Mac Plugins folder
 (`~/Documents/Roblox/Plugins`) is only named there.
 
-Set up (`setup.ts`, `mcp-switch.ts`) runs only from the person's press and only while Studio is
-closed, because Studio rewrites its settings while it runs. It adds the Genex helper
+Set up (`setup.ts`, `mcp-switch.ts`) runs from the person's press or the agent's call, with no card,
+and only while Studio is closed, because Studio rewrites its settings while it runs. It adds the Genex helper
 `GenexStudioHelper.rbxmx` to Studio's Plugins folder (`~/Documents/Roblox/Plugins` on a Mac,
 `%LOCALAPPDATA%\Roblox\Plugins` on Windows), making that folder inside the real Roblox folder when
 Studio hasn't yet, and turns Studio's MCP server on (`"mcp-server": {"enabled": true}`) in every
@@ -1230,8 +1230,8 @@ Windows presumed under `%LOCALAPPDATA%\Roblox`, not yet run there). The switch i
 file's own text, so every other key keeps its bytes. Genex never makes a settings file or guesses
 an account: with none, the panel offers Do it for me and Studio's click path. A link, something
 other than a folder or file where one belongs, an unreadable or oversize settings file, or a
-running Studio refuses the whole step before anything is written. Set up's confirmation says macOS
-may ask to let Genex use the Documents folder, where Roblox keeps its plugins. The record
+running Studio refuses the whole step before anything is written. On a Mac the panel notes before
+Set up that macOS may ask to let Genex use the Documents folder, where Roblox keeps its plugins. The record
 `setup/record.json` lists each write with its bytes' hash or the switch value it replaced, and keeps
 a copy of a helper file that was there before; Undo Set up takes back only what still holds Genex's
 bytes, and the Plugins folder only when Genex made it and it is empty. The helper carries
@@ -1250,8 +1250,9 @@ which computer use never drives. The
 setup actions are `native`: they write outside the plugin's storage or quit and open Studio, so a
 fixture profile never runs them.
 
-**Get Roblox Studio** (`studio-install.ts`, native, after its card) installs Studio for a person
-who has none, in the order Roblox's installer sets. It downloads Roblox's own installer for the
+**Get Roblox Studio** (`studio-install.ts`, native, with no card) installs Studio for a person
+who has none, in the order Roblox's installer sets. In a game with no place it first writes and
+links the game's new place, as New Roblox game does (a press snapshots the game first). It downloads Roblox's own installer for the
 system (`https://setup.rbxcdn.com/mac/RobloxStudio.dmg`, `…/RobloxStudioInstaller.exe`) over HTTPS
 only, following a redirect only when it stays on exactly `setup.rbxcdn.com`, and stops past
 `MAX_INSTALLER_BYTES` (64 MB). Roblox changes its installers with every release, so nothing pins a
@@ -1265,9 +1266,11 @@ in a private temporary folder and always detached. On Windows Authenticode must 
 environment, never from the command text. A failed check runs nothing, and the temporary folder is
 always removed. The installer and Studio run outside the process sandbox, as argument lists: the
 install is the point, and Studio's sign-in must work. After the installer Genex waits for Studio,
-lets the person sign in in the Studio the installer opens (it closes by itself after; Genex never
-closes it and never sees the password), runs Set up while it is closed (the helper always; the
-switch when a settings file exists), and opens Studio once. The action answers at once; `status`
+lets the person sign in in the Studio the installer opens (Genex never sees the password), then
+quits that Studio with its own quit once Studio's log records the sign-in (`studio-logs.ts`: only
+Studio's own logs written since the press, read where they grew, never through a link; a Studio set
+up meanwhile by another press is left open as it is), runs Set up while it is closed (the helper always; the
+switch when a settings file exists), and opens Studio once, with the game's place when it has one. The action answers at once; `status`
 carries the phase (`install`) and `install/state.json` in storage keeps the last one, and **Stop**
 (`cancel-get-studio`) ends a download or a wait. The install has not been run live; it is proven
 with fakes.
@@ -1290,6 +1293,17 @@ the person's press. A linked place's block names the place, says when the person
 keeps the scripts, and warns when the last play found Studio can reach the game's live saved data
 (`live-data/<game>.json` in storage, which the play adapter writes), with Studio's switch to turn
 it off.
+
+Everything but signing in is Genex's. The card marks signing in as the person's (`you`), and while
+Get Roblox Studio waits for it, that row carries the install's words and the helper and MCP rows
+say Genex does them after. Its own button, **Set it up for me** (`finish-setup`, also an agent
+tool), runs the one step Genex can do now: Get Roblox Studio; a new place for a game with none (the
+default; a place of the person's only when they name it); Set up and the game's place opened, or
+Restart Studio while Studio is open; Do it for me, or Restart Studio, while the switch is off. With
+only signing in left it runs nothing and says so. The card offers it only then, never while Studio
+is being got; `doneSays` tells the agent once every row is ticked, so the chat goes on by itself,
+and `stuckSays` when Get Roblox Studio stopped by itself. Get Roblox Studio, Set up and Restart
+Studio ask on no card; Undo Set up, Add Luau checks, Quit Studio (as a tool) and publishing still do.
 
 Its connection `studio` (connector `roblox-studio`; the plugin page names it "Roblox Studio",
 "Your open Roblox Studio, where agents build Roblox games.") is Studio's own MCP server passed through. The node bridge (`studio-mcp.ts`, run per game in
@@ -1529,14 +1543,20 @@ comes in. When Studio can't add it, the answer names the checked file and Studio
 Import 3D.
 
 **Publishing** (`publish.ts`, the `publish` skill). No Studio or plugin API publishes a place, and
-Open Cloud's place publishing takes API keys Genex never asks for, so publishing is a Do it for me
-that the person approves on a card: the game's changed script files go to Studio first, then the
-game's chat is handed the task through `game.engine.assist`, and the turn that answers it (the
-agent's own turn when the message joins it) clicks File › Publish to Roblox in Studio itself, as
-the `publish` skill says. A place never published gets **Publish to
-Roblox** (the panel's `first-publish`, native, with a name field filled with the game's title, its
-card naming the name; the agent's `first-publish {name}`, whose card shows the name in a field the
-person may edit, `confirmationInput`): "Publish this place to Roblox as a new game named "<name>"…",
+Open Cloud's place publishing takes API keys Genex never asks for, so publishing is a Do it for me:
+the game's changed script files go to Studio first, then the game's chat is handed the task through
+`game.engine.assist`, and the turn that answers it (the agent's own turn when the message joins it)
+clicks File › Publish to Roblox in Studio itself, as the `publish` skill says. The person's press is
+their go-ahead: the actions ask on no card, while the agent's tools still do. A Roblox game's strip
+shows Genex's **Publish** (when no other Publish does), whose card (`RobloxPublish.tsx`) has one
+press and then follows the publish through `publish-status`: handed to the agent, in Studio, on
+Roblox, with the game's page once it is there. The publish under way is recorded
+(`publish-attempts/<game>.json`) when the chat takes it; the agent ends it with `publish-result`
+(published, or stopped with what Roblox asked, one plain line), a first publish also ends once Genex
+links the published place, and one never ended stops after 20 minutes. A place never published gets
+**Publish to Roblox** (`first-publish`, native, with a name field filled with the game's title; the
+agent's `first-publish {name}`, whose card shows the name in a field the person may edit,
+`confirmationInput`): "Publish this place to Roblox as a new game named "<name>"…",
 keeping Studio's privacy and settings and an empty description, stopping at any age, ID, two-step,
 terms or payment question. The name is one plain line of at most 50 characters (the game's title,
 else the place's name); the agent's `name` is required, and one Roblox wouldn't take as the card

@@ -4,10 +4,14 @@
  * state of Studio: plain words with no time words, the step that is next, Do it for me with Restart
  * Studio and Studio's own click path while Studio is open with its MCP server off, macOS's Documents
  * note before Set up on a Mac only, and the place block's live-saved-data warning and Rojo note.
+ * The card says Genex does every step but signing in, which it marks the person's; it offers Set it
+ * up for me while Genex has a step it can do, and tells the agent once all is done or Get Roblox
+ * Studio stopped.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { RobloxAction } from "../../src/plugins/roblox/actions.ts";
+import { SETUP_PROMPTS } from "../../src/plugins/roblox/setup-prompts.ts";
 import {
   nowStep,
   type RobloxRow,
@@ -50,9 +54,36 @@ const STATES: Record<string, RobloxStepFacts> = {
     answering: false,
     failed: { detail: "Genex couldn't download Roblox's installer." },
   },
+  "install stopped": {
+    ...BASE,
+    installed: false,
+    setUp: false,
+    running: false,
+    answering: false,
+    failed: { detail: "Stopped getting Roblox Studio.", stopped: true },
+  },
+  "signing in after the install": {
+    ...BASE,
+    setUp: false,
+    answering: false,
+    linked: true,
+    getting: {
+      detail: "Sign in to Roblox in the Studio that just opened. It closes by itself once you have.",
+      signingIn: true,
+    },
+  },
+  "setting up after the sign-in": {
+    ...BASE,
+    setUp: false,
+    running: false,
+    answering: false,
+    linked: true,
+    getting: { detail: "Setting Roblox Studio up for Genex." },
+  },
   "not set up, closed": { ...BASE, setUp: false, running: false, answering: false, mac: true },
   "not set up, open": { ...BASE, setUp: false, answering: false, mac: true },
   "set up, closed": { ...BASE, running: false, answering: false },
+  "set up, closed, place linked": { ...BASE, running: false, answering: false, linked: true },
   "open, switch off": { ...BASE, answering: false, mcpOn: false, canClick: true },
   "open, switch off, no clicking": { ...BASE, answering: false, mcpOn: false },
   "open, switch on": { ...BASE, answering: false, mcpOn: true, canClick: true },
@@ -67,9 +98,13 @@ const NEXT: Record<string, RobloxStepId | undefined> = {
   missing: RobloxStepId.Studio,
   getting: RobloxStepId.Studio,
   "install failed": RobloxStepId.Studio,
+  "install stopped": RobloxStepId.Studio,
+  "signing in after the install": RobloxStepId.SignIn,
+  "setting up after the sign-in": RobloxStepId.Helper,
   "not set up, closed": RobloxStepId.Helper,
   "not set up, open": RobloxStepId.Helper,
   "set up, closed": RobloxStepId.SignIn,
+  "set up, closed, place linked": RobloxStepId.SignIn,
   "open, switch off": RobloxStepId.Mcp,
   "open, switch off, no clicking": RobloxStepId.Mcp,
   "open, switch on": RobloxStepId.Mcp,
@@ -176,11 +211,97 @@ describe("the Roblox Studio setup rows", () => {
     assert.match(signIn.detail, /No Roblox account yet\? Choose Sign up on Studio's sign-in screen\./);
   });
 
-  it("the place step in the panel doesn't send the person to the button that opened it; the chat's card does", () => {
+  it("the place step says Genex makes a new place; only the chat's card sends the person to the button for one of theirs", () => {
     const facts = STATES["ready, no place"] as RobloxStepFacts;
+    assert.equal(row(facts, RobloxStepId.Place).detail, "Genex makes a new place for this game.");
     assert.doesNotMatch(row(facts, RobloxStepId.Place).detail, /Roblox Studio button/);
     const card = robloxSteps(facts).steps.find((step) => step.id === RobloxStepId.Place);
-    assert.match(card?.detail ?? "", /Choose it with the Roblox Studio button\./);
+    // Flipped: a new place is the default, so the card offers the button only for one of theirs.
+    assert.match(card?.detail ?? "", /To build in one of yours instead, choose it with the Roblox Studio button\./);
+  });
+
+  it("the helper and MCP steps say Genex does them, never a button for the person to press", () => {
+    const facts = STATES["not set up, closed"] as RobloxStepFacts;
+    assert.equal(
+      row(facts, RobloxStepId.Helper).detail,
+      "Genex adds it to Studio's Plugins folder and turns on Studio's MCP server while Studio is closed.",
+    );
+    assert.equal(row(facts, RobloxStepId.Mcp).detail, "Genex turns it on while Studio is closed.");
+  });
+
+  it("signing in is marked the person's while it is open, and no other step is", () => {
+    for (const [name, facts] of Object.entries(STATES))
+      for (const step of robloxSteps(facts).steps) {
+        const theirs = step.id === RobloxStepId.SignIn && !step.done;
+        assert.equal(step.you === true, theirs, `${name}: ${step.id}`);
+      }
+  });
+
+  it("while Genex waits for the sign-in after installing Studio, the card says so and that Genex does the rest after", () => {
+    const facts = STATES["signing in after the install"] as RobloxStepFacts;
+    const card = robloxSteps(facts);
+    const step = (id: RobloxStepId) => card.steps.find((candidate) => candidate.id === id);
+    assert.equal(step(RobloxStepId.SignIn)?.detail, facts.getting?.detail);
+    assert.equal(step(RobloxStepId.Helper)?.detail, "Genex does this once you've signed in.");
+    assert.equal(step(RobloxStepId.Mcp)?.detail, "Genex does this once you've signed in.");
+    assert.equal(step(RobloxStepId.Helper)?.action, undefined);
+    assert.equal(card.primary, undefined, "nothing to press while Genex waits");
+  });
+
+  it("while Genex sets Studio up after the sign-in, the helper step shows it working", () => {
+    const facts = STATES["setting up after the sign-in"] as RobloxStepFacts;
+    const helper = robloxSteps(facts).steps.find((step) => step.id === RobloxStepId.Helper);
+    assert.equal(helper?.working, true);
+    assert.equal(helper?.detail, "Setting Roblox Studio up for Genex.");
+    assert.equal(row(facts, RobloxStepId.Helper).busy, true, "the panel shows it working too");
+  });
+
+  it("the card's intro says signing in is the person's and Genex does the rest, while signing in is open", () => {
+    for (const [name, facts] of Object.entries(STATES)) {
+      const card = robloxSteps(facts);
+      const signInOpen = card.steps.some((step) => step.id === RobloxStepId.SignIn && !step.done);
+      assert.equal(card.intro.endsWith(" Signing in to Roblox is yours; Genex does the rest."), signInOpen, name);
+    }
+  });
+
+  /** Whether the card offers Set it up for me, by state: whenever Genex has a step it can do now. */
+  const FOR_ME: Record<string, boolean> = {
+    missing: true,
+    getting: false,
+    "install failed": true,
+    "install stopped": true,
+    "signing in after the install": false,
+    "setting up after the sign-in": false,
+    "not set up, closed": true,
+    "not set up, open": true,
+    "set up, closed": true,
+    "set up, closed, place linked": false,
+    "open, switch off": true,
+    "open, switch off, no clicking": true,
+    "open, switch on": true,
+    "open, switch on, place linked": false,
+    "ready, no place": true,
+    "ready, linked": false,
+    "linked, live data": false,
+    "linked, Rojo": false,
+  };
+  for (const [name, offered] of Object.entries(FOR_ME))
+    it(`${name}: the card ${offered ? "offers" : "doesn't offer"} Set it up for me`, () => {
+      const card = robloxSteps(STATES[name] as RobloxStepFacts);
+      const expected = offered ? { name: RobloxAction.FinishSetup, args: {}, label: "Set it up for me" } : undefined;
+      assert.deepEqual(card.primary, expected);
+    });
+
+  it("tells the agent once every step is done, and when Get Roblox Studio stopped by itself", () => {
+    assert.equal(robloxSteps(STATES["ready, linked"] as RobloxStepFacts).doneSays, SETUP_PROMPTS.Ready);
+    const failed = robloxSteps(STATES["install failed"] as RobloxStepFacts);
+    assert.equal(failed.stuckSays, SETUP_PROMPTS.GetStudioStopped("Genex couldn't download Roblox's installer."));
+    assert.equal(
+      robloxSteps(STATES["install stopped"] as RobloxStepFacts).stuckSays,
+      undefined,
+      "the person stopped it",
+    );
+    assert.equal(robloxSteps(STATES.missing as RobloxStepFacts).stuckSays, undefined);
   });
 
   it("Studio open before Set up: the helper step offers Restart Studio, since Set up waits for Studio to close", () => {

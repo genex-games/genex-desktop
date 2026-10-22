@@ -3,8 +3,9 @@
  * setup.rbxcdn.com and only up to its size cap, checked as signed by Roblox (codesign and Roblox's
  * team id on a Mac, Authenticode and Roblox's signer on Windows), and only then run. Every hostile
  * shape runs nothing and leaves no temporary folder behind. After the installer, Genex waits for
- * Studio, lets the person sign in in the installer's own Studio (which closes by itself), sets
- * Studio up while it is closed, and opens it again once. Programs, the network and time are fakes.
+ * Studio, lets the person sign in in the installer's own Studio, then quits that Studio normally
+ * (unless it closed by itself, or was set up another way meanwhile), sets Studio up while it is
+ * closed, and opens it again once. Programs, the network and time are fakes.
  */
 import assert from "node:assert/strict";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -469,12 +470,19 @@ interface Timeline {
   firstStudio?: { from: number; to?: number };
   /** How long Studio opened by Genex runs before closing again (the sign-in quit once more). */
   reopenedRunsFor?: number;
+  /** When the person has signed in to Roblox in the installer's Studio; never when undefined. */
+  signedInAt?: number;
+  /** When Genex's Set up has run another way (Restart Studio) while the person signed in. */
+  setUpAt?: number;
+  /** Studio's normal quit leaves it open: the person kept it, answering its save question so. */
+  quitKeepsOpen?: boolean;
 }
 
 function afterDeps(timeline: Timeline, setUpStep: (running: boolean) => Promise<string>) {
   let clock = 0;
   const opened: Launch[] = [];
   const setUps: boolean[] = [];
+  const quits: number[] = [];
   let reopened: { from: number; to: number } | undefined;
   const installed = () => timeline.installedAt !== undefined && clock >= timeline.installedAt;
   const running = () => {
@@ -486,8 +494,15 @@ function afterDeps(timeline: Timeline, setUpStep: (running: boolean) => Promise<
   const run: Run = async (file) => {
     if (file === "/usr/bin/plutil") return { code: 0, stdout: "0.743.0.7431133\n" };
     if (file === "/usr/bin/pgrep") return running() ? { code: 0, stdout: "4530\n" } : { code: 1, stdout: "" };
+    if (file === "/usr/bin/osascript") {
+      quits.push(clock);
+      const first = timeline.firstStudio;
+      if (first && !timeline.quitKeepsOpen) first.to = clock;
+      return { code: 0, stdout: "" };
+    }
     throw new Error(`spawn ${file} ENOENT`);
   };
+  const reached = (at: number | undefined) => at !== undefined && clock >= at;
   const files = new Set([`${STUDIO_MAC_APP}/Contents/MacOS/RobloxStudio`, `${STUDIO_MAC_APP}/Contents/Info.plist`]);
   const deps: AfterInstallDeps = {
     platform: "darwin",
@@ -517,8 +532,10 @@ function afterDeps(timeline: Timeline, setUpStep: (running: boolean) => Promise<
       setUps.push(running());
       return setUpStep(running());
     },
+    setUpAlready: async () => reached(timeline.setUpAt),
+    signedIn: async () => reached(timeline.signedInAt),
   };
-  return { deps, opened, setUps, clock: () => clock };
+  return { deps, opened, setUps, quits, clock: () => clock };
 }
 
 describe("after Roblox's installer: sign-in, Set up while Studio is closed, Studio opened again", () => {
@@ -588,7 +605,7 @@ describe("after Roblox's installer: sign-in, Set up while Studio is closed, Stud
     assert.deepEqual(after.opened, []);
   });
 
-  it("when the installer's Studio stays open, never closes it: a plain note to sign in, nothing set up", async () => {
+  it("when the person never signs in, never closes the installer's Studio: a plain note to sign in, nothing set up", async () => {
     const after = afterDeps({ installedAt: 0, firstStudio: { from: 1_000 } }, async () => "Set up.");
     const error = await refusal(afterInstall(after.deps, { signal: signal() }));
     assert.equal(error.code, InstallRefusal.StillOpen);
@@ -596,6 +613,51 @@ describe("after Roblox's installer: sign-in, Set up while Studio is closed, Stud
     assert.ok(after.clock() >= SIGN_IN_WAIT_MS);
     assert.deepEqual(after.setUps, []);
     assert.deepEqual(after.opened, []);
+    assert.deepEqual(after.quits, [], "Studio is never quit before the person signed in");
+  });
+
+  it("once the person has signed in and Studio stays open, quits it normally, sets up while closed and opens it once", async () => {
+    const after = afterDeps(
+      { installedAt: 0, firstStudio: { from: 2_000 }, signedInAt: 120_000 },
+      async () => "Set up.",
+    );
+    const phases: string[] = [];
+    const done = await afterInstall(after.deps, { signal: signal(), onPhase: (phase) => phases.push(phase) });
+    assert.equal(after.quits.length, 1, "one normal quit, which asks to save");
+    assert.ok((after.quits[0] ?? 0) >= 120_000, "never before the sign-in");
+    assert.ok(after.clock() < 200_000, "no wait for Studio to close by itself");
+    assert.deepEqual(after.setUps, [false], "Set up ran once, while Studio was closed");
+    assert.equal(after.opened.length, 1);
+    assert.equal(done.reopened, true);
+    assert.deepEqual(phases, [
+      InstallPhase.WaitingForStudio,
+      InstallPhase.SigningIn,
+      InstallPhase.SettingUp,
+      InstallPhase.Opening,
+    ]);
+  });
+
+  it("when Studio was set up another way while the person signed in, finishes at once and leaves Studio open", async () => {
+    const after = afterDeps({ installedAt: 0, firstStudio: { from: 2_000 }, setUpAt: 60_000 }, async () => "Set up.");
+    const done = await afterInstall(after.deps, { signal: signal() });
+    assert.ok(after.clock() < 70_000, "no wait out to the sign-in deadline");
+    assert.deepEqual(after.setUps, []);
+    assert.deepEqual(after.opened, []);
+    assert.deepEqual(after.quits, []);
+    assert.equal(done.reopened, false);
+    assert.doesNotMatch(done.message, BANNED_WORDS);
+  });
+
+  it("when the person keeps Studio open at its quit, asks once and waits for them to close it", async () => {
+    const after = afterDeps(
+      { installedAt: 0, firstStudio: { from: 2_000, to: 400_000 }, signedInAt: 10_000, quitKeepsOpen: true },
+      async () => "Set up.",
+    );
+    await afterInstall(after.deps, { signal: signal() });
+    assert.equal(after.quits.length, 1, "quit once, never again");
+    assert.ok(after.clock() >= 400_000);
+    assert.deepEqual(after.setUps, [false]);
+    assert.equal(after.opened.length, 1);
   });
 
   it("when Studio never opens by itself, sets up at once while it is closed and opens it once", async () => {
