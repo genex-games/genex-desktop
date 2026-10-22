@@ -11,7 +11,7 @@
  */
 import { chmod, lstat, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { readJsonForUpdate, writeFileNoFollow } from "../../substrate/fsx.ts";
+import { ensureDirBelow, readJsonForUpdate, writeFileInDir, writeFileNoFollow } from "../../substrate/fsx.ts";
 import { isInside } from "../../substrate/paths.ts";
 import { PROJECT_FILE } from "./game-project.ts";
 
@@ -133,7 +133,8 @@ const shellString = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 /**
  * The launcher: Godot from `GENEX_GODOT`, the install Genex found, the usual places or the PATH,
  * starting the project with Genex's play on, at a fixed 60 ticks a second in a window off every
- * screen (a headless Godot draws nothing to show).
+ * screen (a headless Godot draws nothing to show). Under Windows's Git Bash the game's root is
+ * named as Windows names it (`pwd -W`: `C:/…`), since Godot is a Windows program; elsewhere `pwd`.
  */
 export function launcherText(projectFromGame: string, godot: string | null): string {
   // The folder's own name is quoted whole, so nothing in it (a quote, `$`, a backtick) is read as shell.
@@ -144,7 +145,7 @@ export function launcherText(projectFromGame: string, godot: string | null): str
     "#!/bin/sh",
     "# Starts this game for Genex's computer tool, playtesters and judges (Genex Play Protocol).",
     "# Made by Genex's Godot plugin; set GENEX_GODOT to use another Godot.",
-    'root=$(cd "$(dirname "$0")/.." && pwd)',
+    'root=$(cd "$(dirname "$0")/.." && { pwd -W 2>/dev/null || pwd; })',
     `for godot in "$GENEX_GODOT" ${godot ? `${shellString(godot)} ` : ""}/Applications/Godot.app/Contents/MacOS/Godot "$HOME/Applications/Godot.app/Contents/MacOS/Godot" "$(command -v godot)"; do`,
     '  if [ -n "$godot" ] && [ -x "$godot" ]; then',
     `    exec "$godot" --path ${project} --no-header --fixed-fps 60 --max-fps 60 --position ${OFF_SCREEN} -- ${PLAY_FLAG} "$@"`,
@@ -198,10 +199,9 @@ export async function addonState(gameDir: string, project: string, source: strin
  * the person changed is kept beside it as `.mine`. Answers the names kept.
  */
 export async function installAddonFolder(project: string, source: string, addonFolder: string): Promise<string[]> {
-  const folder = path.join(project, addonFolder);
-  await assertNoLink(path.join(project, "addons"));
-  await assertNoLink(folder);
-  await mkdir(folder, { recursive: true });
+  // Each folder on the way made or found as a folder of its own (a link or a junction refused), and
+  // each file written only while that folder still resolves to itself: a link swapped in is refused.
+  const folder = await ensureDirBelow(project, addonFolder.split(/[\\/]/)).catch(linkRefused(addonFolder));
   const kept: string[] = [];
   for (const [name, text] of await shippedFiles(source)) {
     const file = path.join(folder, name);
@@ -209,13 +209,21 @@ export async function installAddonFolder(project: string, source: string, addonF
     const now = await textOf(file);
     if (now === text) continue;
     if (now !== null) {
-      await writeFileNoFollow(`${file}${MINE_SUFFIX}`, now);
+      await writeFileInDir(folder, `${name}${MINE_SUFFIX}`, now).catch(linkRefused(name));
       kept.push(name);
     }
-    await writeFileNoFollow(file, text);
+    await writeFileInDir(folder, name, text).catch(linkRefused(name));
   }
   return kept;
 }
+
+/** A write refused for a link on its way (ELOOP), as the addon's own refusal; any other failure as it was. */
+const linkRefused =
+  (name: string) =>
+  (error: NodeJS.ErrnoException): never => {
+    if (error.code === "ELOOP") throw new AddonError(MESSAGE.Link(path.basename(name)));
+    throw error;
+  };
 
 /** The autoload line and the editor plugin into `project.godot`, when they aren't there. */
 async function addToSettings(project: string): Promise<void> {

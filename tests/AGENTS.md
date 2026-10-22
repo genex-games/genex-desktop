@@ -67,7 +67,8 @@ through the JS API imports `@typescript/typescript6`.
   a game link kept as the host keeps it, and stand-in programs for a plugin's build, tests and package.
 - `godot-fake-engine.ts`: a fake Mac with Godot apps where the test puts them, a runner that
   records each Godot job and answers with Godot's recorded words (`fixtures/godot-cli/`), and the
-  Godot plugin's backend on both in an open game, its host calls recorded.
+  Godot plugin's backend on both in an open game, its host calls recorded; and a fake Windows PC
+  (`fakeWindows`, `godotWindowsFixture`) whose host plays the sandbox jobs and the pinned Godot.
 - `unity-editor-stand-in.ts`: a Unity project folder, the descriptor Unity's Pipeline package
   keeps in it while an editor has it open, and a stand-in for that editor's HTTP server (scripted
   answers, every request recorded, a clock only `sleep` moves) as the Unity plugin's `PipelineDeps`;
@@ -177,8 +178,8 @@ file from the list for it. The informational fast-group report (a Windows dispat
 
 Tests that read local projects or open the network are skipped unless opted in:
 `STUDIO_LOCAL_FIXTURES=1` for local projects, `STUDIO_NETWORK_TESTS=1` for real network and
-local Ollama probes (on Windows also Local Blender's real download and a sandboxed job,
-`blender-windows-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
+local Ollama probes (on Windows also Local Blender's and Godot's real downloads and sandboxed
+jobs, `blender-windows-live.test.ts` and `godot-windows-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
 (`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
 `fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`),
 `STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`

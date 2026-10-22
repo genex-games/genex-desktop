@@ -26,7 +26,7 @@ const PLUGIN = "cutdemo";
 const NOTICE = /^Studio notice: these calls were cut off before they answered/;
 /** Why a call made after its session's turn ended went unanswered, as the next session reads it. */
 const TURN_ENDED_WORDS =
-  "made after the session's turn had ended, so Genex could not answer it: a \"user doesn't want to take this action\" answer to it meant only that, and the person declined nothing";
+  "made after the session's turn had ended, so its answer could not reach you: it may have run anyway, so look at what it would have changed before calling it again; a \"user doesn't want to take this action\" answer to it meant only that, and the person declined nothing";
 /** What the test's engine notes for a compaction, which reads no prompt. */
 const COMPACTED = "(compacted)";
 

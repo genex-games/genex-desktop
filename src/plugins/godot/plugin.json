@@ -1,11 +1,11 @@
 {
   "apiVersion": 3,
   "id": "godot",
-  "version": "0.9.4",
+  "version": "0.11.0",
   "icon": "icon.svg",
   "name": "Godot",
   "publisher": "Genex",
-  "description": "Agents build your game in Godot 4 on this Mac: they make its project, write its scenes and GDScript, check it and look at it with Godot's own tools. Open it in your Godot editor any time.",
+  "description": "Agents build your game in Godot 4 on this computer: they make its project, write its scenes and GDScript, check it and look at it with Godot's own tools. Open it in your Godot editor any time.",
   "backend": "backend.mjs",
   "capabilities": ["game-engine", "native-runtime"],
   "detect": [
@@ -26,7 +26,7 @@
   "tools": [
     {
       "name": "show-steps",
-      "description": "Show the user the Godot setup card in this game's chat: Genex installs Godot 4 for them (Do it for me). Use it when the user wants a Godot game and this Mac has no Godot 4.3 or newer (new-game refuses, or the engine question says Godot needs installing first); then tell them in one line and end your reply, and the chat tells you when Godot is ready. It does nothing when Godot is installed.",
+      "description": "Show the user the Godot setup card in this game's chat: Genex installs Godot 4 for them (Do it for me). Use it when the user wants a Godot game and this computer has no Godot 4.3 or newer (new-game refuses, or the engine question says Godot needs installing first); then tell them in one line and end your reply, and the chat tells you when Godot is ready. It does nothing when Godot is installed.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -34,6 +34,7 @@
     },
     {
       "name": "new-game",
+      "timeoutMs": 540000,
       "description": "Make this game's Godot project from a template, in the game's godot/ folder: 2d (a player square that moves, a Camera2D) or 3d (a capsule player that walks and jumps, a floor, a sky and a hero camera). Use it once, when the user picks Godot for a game with no project yet. It needs Godot 4 installed; it refuses when the game already has a Godot project.",
       "parameters": {
         "type": "object",
@@ -55,6 +56,7 @@
     },
     {
       "name": "check",
+      "timeoutMs": 540000,
       "description": "Import this game's Godot project and load every script, scene and resource in it, so Godot names each parse error, missing file and broken reference with its file and line. Call it after every change; fix what it finds before you say a change works. Changes nothing in the project but Godot's .godot cache.",
       "parameters": {
         "type": "object",
@@ -64,6 +66,7 @@
     },
     {
       "name": "run-scene",
+      "timeoutMs": 540000,
       "description": "Play a scene of this game's Godot project headless for a few seconds of game time at a fixed 60 frames a second, pressing keys when you give them, and answer what it printed (print()) and the errors it raised, by file and line. Use it to see that game logic and controls run; it shows nothing.",
       "parameters": {
         "type": "object",
@@ -86,6 +89,7 @@
     },
     {
       "name": "screenshot",
+      "timeoutMs": 540000,
       "description": "See this game playing: play a scene of its Godot project in a window off the screen, press keys when you give them, and answer what each camera in the genex_shot group sees (else the scene's own camera) at a moment of play, as pictures you look at; frames adds a short recording up to that moment. Use it to check controls, motion and what a player sees.",
       "parameters": {
         "type": "object",
@@ -116,6 +120,7 @@
     },
     {
       "name": "class-reference",
+      "timeoutMs": 540000,
       "description": "Godot's API exactly as the installed version has it: ask for a class (CharacterBody3D) to get what it extends and all its properties, methods with their types, signals and constants; ask for a word (velocity) to get the classes and members whose names hold it. Use it instead of guessing from older Godot versions.",
       "parameters": {
         "type": "object",
@@ -130,15 +135,32 @@
     },
     {
       "name": "web-export",
+      "timeoutMs": 540000,
       "facts": ["godot-project"],
-      "description": "Export the game for the web with Godot's own Web export into web/ at the game's root: Live's Web game tab plays it and Publish puts it online. Call it when the person wants to play the game in Genex's web preview or publish it, and again after changing the project. Needs Godot's Web export template for this Godot version (Editor → Manage Export Templates in Godot).",
+      "description": "Export the game for the web with Godot's own Web export into web/ at the game's root: Live's Web game tab plays it and Publish puts it online. Call it when the person wants to play the game in Genex's web preview or publish it, and again after changing the project. It fetches Godot's Web export template for this Godot version when it is missing (10 MB).",
       "parameters": {
         "type": "object",
         "properties": {}
       }
     },
     {
+      "name": "export-templates",
+      "timeoutMs": 540000,
+      "facts": ["godot-project"],
+      "description": "Get Godot's export templates for this Godot version so Godot's own command line can export the game as an app: web, windows and mac (comma-separated; all three when left out). Genex fetches only those templates from Godot's own release (web 10 MB, Windows 40 MB, Mac 125 MB) into the person's templates folder; on Windows it also puts them where Genex's sandbox, and so your shell, reads them. For mac it sets project.godot to import ETC2/ASTC textures, which a Mac export needs. Call it once before exporting an app with godot --headless --export-release; for the web, call web-export instead, which fetches its own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platforms": {
+            "type": "string",
+            "description": "The platforms to export for: web, windows, mac, comma-separated. All three when left out."
+          }
+        }
+      }
+    },
+    {
       "name": "multiplayer",
+      "timeoutMs": 540000,
       "facts": ["godot-project"],
       "description": "Make this Godot game playable online with Genex multiplayer, on the web and in native builds alike (web and native players meet in the same rooms): adds Genex's multiplayer addon and its GenexMultiplayer autoload, the Colyseus GDExtension native builds connect with (a one-time download, about 100 MB, kept by Genex), the game's Genex project in project.godot's [genex] section, its matchmaking in genex.json, and Genex's Web preset loading the multiplayer bridge. Call it once when the person wants people to play together, then read the godot-multiplayer skill and write the online play; call it again with slug after the first publish. Never add npm, a package.json or an HTML shell to a Godot game for this.",
       "parameters": {
@@ -158,6 +180,7 @@
     },
     {
       "name": "set-up",
+      "timeoutMs": 540000,
       "description": "Set this game's existing Godot project up for Genex's play, so Genex's computer tool, playtesters and judges can start it, press keys, point, step its clock and read its state: adds Genex's addon (addons/genex, a script that sleeps unless Genex starts the game) and its autoload, bin/play and studio.json's runtime. A game New Godot game made is set up already. The person confirms first.",
       "parameters": {
         "type": "object",
@@ -169,7 +192,7 @@
     {
       "name": "engine-status",
       "audience": "harness",
-      "description": "Whether this Mac's Godot can make a new Godot game now, and the words the engine question offers it with.",
+      "description": "Whether this computer's Godot can make a new Godot game now, and the words the engine question offers it with.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -248,7 +271,7 @@
   "actions": [
     {
       "name": "status",
-      "label": "Godot on this Mac"
+      "label": "Godot on this computer"
     },
     {
       "name": "create",
@@ -291,7 +314,13 @@
     { "name": "steps", "label": "Godot setup" },
     { "name": "install-godot", "label": "Install Godot", "native": true },
     { "name": "stop-install", "label": "Stop installing Godot", "native": true },
-    { "name": "skip", "label": "Don't use Godot", "native": true }
+    { "name": "skip", "label": "Don't use Godot", "native": true },
+    {
+      "name": "download-godot",
+      "label": "Download Godot 4.7.2",
+      "confirmation": "Download Godot 4.7.2 (86 MB) from Godot's own releases into Genex's folder? Genex checks the download, and any Godot you have stays as it is.",
+      "native": true
+    }
   ],
   "toolbar": [
     {
@@ -376,7 +405,33 @@
         "args": ["--version"],
         "pattern": "^(\\d+\\.\\d+(?:\\.\\d+)?)\\.",
         "minimum": "4.3.0"
-      }
+      },
+      "install": {
+        "platform": "win32-x64",
+        "action": "download-godot",
+        "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip",
+        "sha256": "731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953",
+        "bytes": 86013866,
+        "unpackedBytes": 200000000,
+        "format": "zip",
+        "entry": "Godot_v4.7.2-stable_win64.exe",
+        "executable": "Godot_v4.7.2-stable_win64.exe",
+        "notices": []
+      },
+      "installs": [
+        {
+          "platform": "win32-arm64",
+          "action": "download-godot",
+          "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_windows_arm64.exe.zip",
+          "sha256": "2d206e0b1d2366eb3508971c670c52333dcd7218b818102d77ca7ceaa86892ba",
+          "bytes": 84263370,
+          "unpackedBytes": 210000000,
+          "format": "zip",
+          "entry": "Godot_v4.7.2-stable_windows_arm64.exe",
+          "executable": "Godot_v4.7.2-stable_windows_arm64.exe",
+          "notices": []
+        }
+      ]
     }
   ],
   "nativeJobs": []

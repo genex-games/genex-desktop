@@ -38,7 +38,7 @@ is a host project with the plugin in `Plugins/`; its tools build, test and packa
 
 ## Godot, Roblox, Unity
 
-Godot 4.3+, Mac only (on Windows, Get Godot opens its download page): makes a **New Godot game**
+Godot 4.3+ (Mac, Windows; Do it for me installs it): makes a **New Godot game**
 (2D/3D, `godot/`), opens your editor (saving at save points, reloading after Rewind); **Change
 project** links one. **Multiplayer** joins web, native.
 

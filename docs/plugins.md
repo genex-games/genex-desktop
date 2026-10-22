@@ -159,6 +159,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[]` | 1 | `{name, description, parameters}`; scalar properties only; agent-invoked as `<id>__<name>` |
 | `tools[].confirmation` | 2 | 1–300 characters. The tool needs the user's consent before it runs; see the consent model below |
 | `tools[].confirmationInput` | 3 | `{parameter, label}`, with `confirmation`: one of the tool's string parameters the person may edit on the card, under a one-line label of at most 60 characters; see the consent model below |
+| `tools[].timeoutMs` | 3 | 1,000–540,000: the longest one call may run in the backend when that is longer than the host's 190-second ceiling (a game engine's import or export), within an agent's own call deadline |
 | `tools[].host` | 3 | A program Studio runs for the tool instead of the backend; reserved for the bundled Genex plugin (see [First-party privileges](#first-party-privileges)) |
 | `tools[].facts`, `tools[].makes` | 3 | The facts of the games whose sessions get the tool, and (agent tools) the facts it makes in a game's folder; see [Scope by facts](#scope-by-facts) |
 | `skills[]` | 1 | Guidance for agents while the plugin is enabled: inline `{name, text}`, or (API 3) a file skill `{name, summary, file, references?}`, either (API 3) with `facts` (or the older `engines`) and `tools`; see [Skills](#skills) |
@@ -220,7 +221,9 @@ it is not. Studio serves it from the installed package and never writes it into 
   one of them reaches the session too ([Scope by facts](#scope-by-facts)). `engines`, a non-empty
   list of `GameEngine` values (`web`, `unreal`) each named once, is the older spelling: `web`
   reads as `web-game` and `unreal` as `unreal-project` (`skillScope`); `facts` wins when both are
-  given. Without either a skill reaches every game. The bundled Local Blender skill (GLTFLoader)
+  given. Without either a skill reaches every game. A Unity or Godot game's web export in `web/`
+  is its engine's build, so a skill reaches the game through it for no fact
+  (`withoutEngineWebVersion`). The bundled Local Blender skill (GLTFLoader)
   and Genex's three.js multiplayer, embed sign-in, publishing, play-time model and shop skills say
   `["web"]`; the Unreal editor skill names `unreal-project` and its three editor tools. API 1 and
   2 ignore the keys.
@@ -3410,7 +3413,33 @@ sandbox (`runNativeProcess` in `godot-run.ts`) rather than `native.run`, because
 still needs the whole project, not staged inputs: each job reads Genex's shipped GDScript, writes
 only the project (Godot's `.godot/` cache) and the job's own folder, gets a private home (a game's
 `user://` and Godot's caches) and a deadline, and a still is drawn in a window off every screen
-(`gpu`). Its observer is a `card` whose `stage-status` says where the game stands (get Godot, set
+(`gpu`). On Windows each job is a host sandbox job instead (`sandbox.run`, `windowsRunner`):
+ProcessSandbox as the sandbox user, reading Godot's folder, writing the project
+(one inside the game: a project linked from elsewhere is refused there, and the panel offers and
+links only projects inside the game); at most two at once, the host's limit, the others waiting
+their turn;
+a folder it writes outside the game (a capture's stills, the class reference) waits in the
+project's `.godot/genex-jobs/`, and so do Genex's own scripts (the plugin's package is in the
+person's profile, which the sandbox user can't read) and any other file it reads from outside the
+game (with no project yet, as for the class reference, in a folder of the
+job's own at the game's root, `genex-godot-job-*`, which the game's `.gitignore` names so no save
+point keeps it; a stage Windows still holds is removed again a few times, and what a crash left is
+cleared before the plugin's first job in that game) and is copied out (a file it reads from outside,
+copied in), and its CRLF, coloured output is read as a Mac's. The backend runs as the person, so it
+makes and lists a stage only through real folders (a link or a junction in place of `.godot`,
+`genex-jobs` or a stage stops the job and is never followed), copies out only its stills and class
+reference pages, one plain file at a time (`.png`, `.xml`, opened without following a link and kept
+only while their folder still resolves to itself and their name still names the very file read), and never removes a stage itself: a sandbox job
+runs Windows's `rd /s /q`, which removes a link rather than what it points to, as the sandbox user,
+so even a junction swapped in mid-walk reaches only what that user may write (an empty folder `rd`
+leaves goes by itself; one still there after its tries is a line in the backend's log, and the next
+sweep tries again). The sweep takes only stages Genex named (a UUID). A job that waited for its
+turn starts with what its call's budget leaves (`web-export`'s), or not at all. Godot's own spelling
+of a stage's path (forward slashes) is named as its folder too. The Genex addon's folders
+(`addons/genex`, `addons/genex_multiplayer`) are made one at a time as folders of their own, and
+each file is written only while its folder still resolves to itself. A save point's or the observer's
+stills that fail answer nothing, as the checkpoint's check does.
+Its observer is a `card` whose `stage-status` says where the game stands (get Godot, set
 it up for Genex's play, open it, or open in the person's Godot) and its manifest has no lock: it never drives the person's editor.
 On a Mac without Godot 4.3 or newer, `show-steps` (and the refusals of `new-game` and the engine
 question's note, which point to it) puts the Godot setup card in the chat (`godot-setup.ts`): one
@@ -3420,7 +3449,13 @@ GitHub releases, unpacked in the plugin's storage, `Godot.app` copied into Appli
 Gatekeeper accepts it; an older `Godot.app` there goes to the person's Trash, and the download is
 removed whether the install ends well or not), Stop (`stop-install`: it ends the download, the
 unpacking or the copy) and Don't use Godot (`skip`) in Hide's place, and `doneSays` once Godot is
-found.
+found. On Windows Do it for me (and the panel's Get Godot) is `download-godot`, which the person
+confirms: the host installs the manifest's pinned Godot (the 4.7.2 x64 or arm64 zip, its sha256
+checked) into `native-runtimes`, which the sandbox reads from its start, and the card follows the
+host's install record; Stop cancels it. Windows finds Godot there (`runtime.detect`), in Program
+Files, in every Steam library (`libraryfolders.vdf`) and on the PATH, never elsewhere in the person's profile, which the sandbox user
+can't read. The editor opens as a window of its own and is found by its command line
+(`windows-processes.ts`).
 Set up (and New Godot game) also turns on the addon's editor plugin (`addons/genex/editor_bridge.gd`,
 `[editor_plugins]` in `project.godot`). Its hooks reach the person's open editor through files in the
 project's `.godot/genex/` (`editor-bridge.ts`; no port): the editor writes a heartbeat each second
@@ -3445,11 +3480,24 @@ session, leads, workers and Genex's play engine reach that folder.
 at the game's root (`web-export.ts`): Genex's own `Genex Web` preset (no threads) added to
 `export_presets.cfg` beside the person's, `web/.gdignore`, and the person's Web template for that
 version (`export_templates/<version>.<status>[.mono]/web_nothreads_release.zip`, installed by
-Godot's Export Template Manager) linked read-only into the job's private home; without it the tool
-is refused before Godot runs. `keep-web-build` at `turn.end` and `restore.after` makes it again
+Godot's Export Template Manager in Godot's data folder, a Mac's Application Support or Windows's
+`%APPDATA%`) linked read-only into a Mac job's private home; on Windows a Godot job of Genex's
+(`genex_data.gd`) first copies it into the sandbox user's own data folder, where that user's Godot
+looks, and the export stops with a plain message when that copy fails. A missing template is
+fetched first (`export-templates.ts`): for an official stable Godot, the release's templates archive
+is read by byte ranges (its central directory, then only the template, 10 MB of 1.3 GB), each file
+checked against the archive's CRC-32 and size; when that fails the tool is refused before Godot
+runs, naming Godot's Template Manager. Only a 206 answer naming the range asked is read (a server
+that sends the whole archive is refused, its body cancelled); each request has a deadline by its
+size and the call's stop, and is tried up to three times. `web-export` fits the fetch, the copy and
+Godot's export in its one call, and starts no export with less than a minute left. Windows's Do it for me fetches the Web template with Godot, and its Stop stops that fetch too.
+`export-templates {platforms}` (web, windows, mac) does the same for an app export the agent runs
+with Godot's command line, puts them where the sandbox user's Godot reads them on Windows, and for
+mac sets `textures/vram_compression/import_etc2_astc` (new games from either template have it).
+The tools that run Godot declare `timeoutMs` of nine minutes. `keep-web-build` at `turn.end` and `restore.after` makes it again
 whenever the project changed since the last build (its `.pck` older than the project's newest file,
 `.godot/` left out), so Live's Web game tab and Publish follow the game; with no Web template it does
-nothing, and a failure is a note. The plugin's `detect` names the folder `godot-web-export` (a folder
+nothing (it never fetches one), and a failure is a note. The plugin's `detect` names the folder `godot-web-export` (a folder
 with `index.pck`); a plugin's web build is no new kind (the seed's `web-build.ts` `kindKey`), so a
 turn that only exported never continues as one for a new kind, and the session's end tells the app's
 game list its facts changed (`delegation.ts` `#announceKindTaken`). A game with no web game at its root plays and publishes its first web game in a

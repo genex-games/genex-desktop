@@ -187,7 +187,8 @@ is.
   range, given up after a minute without a byte), its sha256 checked, its zip directory read before
   anything is unpacked (`native-zip.ts`: no entry or link outside it, nothing written through a
   link, no more than the stated size), unpacked with `ditto --noqtn`, every link resolved inside it,
-  the app's signature (ad hoc is enough) and processor checked, then its bundle id set to
+  its program made runnable (an app packed on Windows carries no execute bit), the app's signature
+  (ad hoc is enough) and processor checked, then its bundle id set to
   `games.genex.play.<slug>` and signed again ad hoc, so it can only write its own preferences. Each
   game keeps `installed-games/<slug>/<version>/` and `saves/`; `index.json` lists them. Removing a
   game (refused while it runs) keeps its saves; an update keeps the running version until it quits.

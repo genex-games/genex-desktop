@@ -243,8 +243,11 @@ conflict, base and facet builders, the Unreal lead's typed workers; `loop/worker
 classic Autopilot's builders keep their own brief. A folder with no
 kind yet is told to start web with `start_web_game` or find a plugin with `plugins_find` (a folder of
 notes is told to read them first); with an engine plugin's kind on offer (`plugins.tools`'s
-`kinds`) every fresh brief until it has a kind asks with the question card, and a brief without the
-card (a local turn's too) names each kind's tool for a request that names that engine. A folder of its own files of a kind no
+`kinds`) every fresh brief until it has a kind asks with the question card (a request naming an
+engine none of its options covers goes to `plugins_find` instead), a resumed session keeps the card
+while the folder has no kind, and a brief without the card (a local turn's too) names each kind's
+tool for a request that names that engine. The web starter's rules reach such a brief as the web
+answer's only. A folder of its own files of a kind no
 rule knows is told to look through them first. Each kind gets its own rules, named by folder when
 there are several. A kind no plugin that is on covers (Unity, Blender, an Unreal plugin, a Godot or
 Unreal project with its plugin off, an unknown one) calls `plugins_find` first, shows the card with
@@ -1412,7 +1415,9 @@ command (`engines/claude-code.ts` `studioShell`, `engines/session-commands.ts`).
 Claude Code's would have been: the worker's roots (in Bypass the home folder too), the sign-in homes
 and the never-touch list denied, no network. The host reads the tool as `Bash` (its question card,
 the never-touch screen, the log). Its commands run under Git Bash, one at a time, nothing in the
-background, and a saved "always allow" rule for `Bash` does not cover them. Where a CLI still refuses
+background, and a saved "always allow" rule for `Bash` does not cover them. A chat's session runs
+its commands in Bash on a turn the person answers and through `run_command` on an unattended one, so
+a resumed session is told which shell this turn has (`SHELL_THIS_TURN`). Where a CLI still refuses
 its box, it refuses the session before the model says anything, and the engine reports it
 as `StopReason.SandboxUnavailable` with the CLI's own words (`engines/claude-code.ts`
 `sandboxRefusal`); a session that already replied keeps its ordinary failure. The refusal holds that

@@ -129,8 +129,8 @@ export function pendingKindRule(
   asked = true,
 ): string[] {
   const offered = kinds ?? [];
-  if (asked && offered.length > 0)
-    return [engineChoiceRule(engine, unreal, offered), findRule(engine, "none of those options covers")];
+  // The engine question sends another engine to `plugins_find` itself, before it asks.
+  if (asked && offered.length > 0) return [engineChoiceRule(engine, unreal, offered)];
   const start = toolCall(engine, ProjectTool.StartWebGame);
   return [
     `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build on its starter.`,

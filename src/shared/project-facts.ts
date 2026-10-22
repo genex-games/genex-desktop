@@ -293,6 +293,16 @@ export function engineWebFolderOf(game: GameKind): string | null {
 }
 
 /**
+ * A game as its skills read it: a Unity or Godot game's web version left out, since it is the build
+ * its engine exports and no web game's know-how fits it. Any other game is as it is.
+ */
+export function withoutEngineWebVersion(game: GameKind): GameKind {
+  const web = engineWebFolderOf(game);
+  if (web === null) return game;
+  return { ...game, facts: game.facts.filter((fact) => fact.id !== CoreFact.WebGame || fact.path !== web) };
+}
+
+/**
  * A Unity or Godot game's web version among `found` (the folder's facts before settling, which drops
  * a web game below another): its web game in `ENGINE_WEB_FOLDER`; null for any other game.
  */

@@ -57,6 +57,9 @@ const ZIP_ROOT = "addons/colyseus";
 /** The plugin storage folder holding the checked release and what was unpacked from it. */
 const STORAGE_FOLDER = "multiplayer";
 const UNZIP = "/usr/bin/unzip";
+/** Windows's own folder when its environment names none; its `tar` (bsdtar) reads a zip. */
+const WINDOWS_ROOT = "C:\\Windows";
+const WINDOWS_TAR = ["System32", "tar.exe"];
 const UNZIP_MS = 2 * MINUTE_MS;
 
 /** The page file the Web preset loads the SDK's bridge from, beside the exported page. */
@@ -210,6 +213,23 @@ async function sha256Of(file: string): Promise<string> {
 }
 
 /**
+ * The program that unpacks `entries` of a zip into a folder that exists: a Mac's `unzip`, or
+ * Windows's own `tar` by its full path under SystemRoot, so neither PATH nor the current folder
+ * stands in (Git's `tar` would read `C:` as a host).
+ */
+export function unzipCall(
+  zip: string,
+  entries: readonly string[],
+  into: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = process.env,
+): { command: string; args: string[] } {
+  if (platform !== "win32") return { command: UNZIP, args: ["-q", "-o", zip, ...entries, "-d", into] };
+  const root = env.SystemRoot && path.win32.isAbsolute(env.SystemRoot) ? env.SystemRoot : WINDOWS_ROOT;
+  return { command: path.win32.join(root, ...WINDOWS_TAR), args: ["-xf", zip, "-C", into, ...entries] };
+}
+
+/**
  * The pinned Colyseus release, unpacked once into the plugin's storage: downloaded, checked against
  * its sha256 and only then unpacked (the files a project takes, no debug builds). Answers the
  * unpacked `addons/colyseus` folder. A download that isn't the pinned release is removed, never used.
@@ -219,6 +239,7 @@ export async function colyseusRelease(
   storage: string,
   signal: AbortSignal,
   release: ColyseusRelease = COLYSEUS_GODOT,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
   const folder = path.join(storage, STORAGE_FOLDER, `colyseus-godot-${release.version}`);
   const unpacked = path.join(folder, "unpacked");
@@ -235,7 +256,9 @@ export async function colyseusRelease(
   }
   await rename(partial, zip);
   const entries = [...COLYSEUS_FILES, ...Object.values(COLYSEUS_LIBRARIES)].map((name) => `${ZIP_ROOT}/${name}`);
-  await deps.run(UNZIP, ["-q", "-o", zip, ...entries, "-d", unpacked], UNZIP_MS, signal);
+  await mkdir(unpacked, { recursive: true });
+  const unzip = unzipCall(zip, entries, unpacked, platform);
+  await deps.run(unzip.command, unzip.args, UNZIP_MS, signal);
   await rm(zip, { force: true });
   return ready;
 }

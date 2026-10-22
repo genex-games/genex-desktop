@@ -1019,6 +1019,7 @@ export default {
     "Impossible de trouver {model} dans la bibliothèque Ollama. Vérifie le nom et le tag après les deux-points.",
   "Couldn't hold {input}": "Impossible de maintenir {input}",
   "Couldn't import {asset}": "Impossible d’importer {asset}",
+  "Couldn't install Godot ({why}). Try again.": "Impossible d’installer Godot ({why}). Réessaie.",
   "Couldn't lay the terrain": "Impossible de poser le terrain",
   "Couldn't let go of every input": "Impossible de relâcher toutes les commandes",
   "Couldn't let the game settle": "Impossible d’attendre que le jeu se stabilise",
@@ -1442,6 +1443,8 @@ export default {
   Free: "Gratuit",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "Gratuit et open source, environ 170 Mo. Genex l’installe dans Applications.",
+  "Free and open source, about 86 MB. Genex keeps it in its own folder.":
+    "Gratuit et open source, environ 86 Mo. Genex le garde dans son propre dossier.",
   "Free and private. Runs on this Mac.": "Gratuit et privé. Tourne sur ce Mac.",
   "Free and private. Slower than Claude or ChatGPT.": "Gratuit et privé. Plus lent que Claude ou ChatGPT.",
   "Free model to build with": "Modèle gratuit pour créer",
@@ -1555,6 +1558,8 @@ export default {
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex n’a rien publié. Pour le publier toi-même dans Studio : {clicks}.",
   "Genex didn’t take that. Try again in a moment.": "Genex n’a pas accepté. Réessaie dans un instant.",
+  "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
+    "Genex ne télécharge Godot ainsi que sur Windows ; sur un Mac, « Fais-le pour moi » l’installe dans Applications.",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "Genex télécharge Roblox Studio uniquement via un lien sécurisé, et celui-ci ne l’est pas. Rien n’a été installé.",
   "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
@@ -2508,6 +2513,10 @@ export default {
   On: "Activé",
   "On Genex": "Sur Genex",
   "On Play": "Dans « Jouer »",
+  "On Windows, Genex builds a Godot project only inside the game's folder: choose one there, or make a new one.":
+    "Sur Windows, Genex ne crée un projet Godot que dans le dossier du jeu : choisis-en un là, ou crées-en un nouveau.",
+  "On Windows, Genex downloads Godot itself: press Get Godot in the Godot panel, or Do it for me on the setup card.":
+    "Sur Windows, Genex télécharge Godot lui-même : appuie sur « Installer Godot » dans le panneau Godot, ou sur « Fais-le pour moi » dans la carte de configuration.",
   "On this Mac": "Sur ce Mac",
   "On this Mac · {size}": "Sur ce Mac · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
@@ -2803,7 +2812,8 @@ export default {
   "Playing the level": "Lance le niveau",
   "Playing {part}": "Joue à {part}",
   Plays: "Parties",
-  "Plays in Godot 4, which isn't on this Mac yet.": "Se joue dans Godot 4, qui n’est pas encore sur ce Mac.",
+  "Plays in Godot 4, which isn't on this computer yet.":
+    "Se joue dans Godot 4, qui n’est pas encore sur cet ordinateur.",
   "Plays in Godot {version}.": "Se joue dans Godot {version}.",
   "Plays in Godot. Set it up so Genex's playtesters and judges can play it too.":
     "Se joue dans Godot. Configure-le pour que les testeurs et les juges de Genex puissent aussi y jouer.",

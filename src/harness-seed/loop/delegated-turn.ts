@@ -190,6 +190,11 @@ interface Handoff {
    * question card bridged in (unreal-prompts.ts `engineChoiceRule`).
    */
   engineChoice: boolean;
+  /**
+   * The question card is bridged in: whenever the brief asks the engine question, and on a resumed
+   * session of a folder that still has no kind, whose first brief named the card (`offersCard`).
+   */
+  questionCard: boolean;
   /** The kinds the plugins on offer this game (`plugins.tools`'s `kinds`): the question card's options. */
   kinds: PluginKindOffer[];
   /** The folder holds an Unreal project and the Unreal plugin is off: its brief says it has no Unreal tools. */
@@ -563,7 +568,7 @@ async function finishTurn(
   const resume = options.afterLoopRun ? resumeAsked(options.afterLoopRun, recorded) : null;
   if (resume) return handBack(ctx, options, result, MESSAGE.resumedAnyway, { resumeRun: resume });
   // A Loop chat may ask or launch; any chat asked to choose its engine may ask.
-  const calls = launchTool || handoff.engineChoice ? recorded : [];
+  const calls = launchTool || handoff.questionCard ? recorded : [];
   const question = calls.find((c) => c.name === askUser.name);
   const launch = calls.find((c) => c.name === launchTool?.name);
   // A question is not approval to start. Even if the model also recorded a launch, wait for
@@ -661,7 +666,15 @@ async function waitUntilReady(ctx: HarnessCtx, options: DelegatedOptions, handof
  */
 async function withFactsNow(ctx: HarnessCtx, handoff: Handoff, game: Handoff["descriptor"]): Promise<Handoff> {
   const offer = await pluginOffer(ctx, handoff.project, game);
-  return { ...handoff, descriptor: game, scaffolded: false, fresh: false, engineChoice: false, ...offer };
+  return {
+    ...handoff,
+    descriptor: game,
+    scaffolded: false,
+    fresh: false,
+    engineChoice: false,
+    questionCard: false,
+    ...offer,
+  };
 }
 
 /**
@@ -748,6 +761,7 @@ type ChatReading = Omit<
   | "scaffolded"
   | "fresh"
   | "engineChoice"
+  | "questionCard"
   | "kinds"
   | "pluginsOff"
   | "folderLabel"
@@ -898,6 +912,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
       scaffolded: false,
       fresh: await isFreshGame(ctx, chat, descriptor),
       engineChoice: asksKind(options, chat, descriptor, offer.kinds),
+      questionCard: offersCard(options, descriptor, offer.kinds),
       ...offer,
       folderLabel: folderLabelOf(projectDir, chat.project),
       extraReads,
@@ -924,6 +939,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
     fresh: true,
     // A game the studio just made has no kind yet: with an engine plugin on, the user picks first.
     engineChoice: offer.kinds.length > 0,
+    questionCard: offer.kinds.length > 0,
     ...offer,
     folderLabel: folderLabelOf(created.dir, project),
     extraReads,
@@ -962,8 +978,21 @@ function asksKind(
   descriptor: GameProject | null,
   kinds: readonly PluginKindOffer[],
 ): boolean {
-  if (!kindPending(descriptor) || chat.resume || options.runId) return false;
-  return kinds.length > 0;
+  if (chat.resume) return false;
+  return offersCard(options, descriptor, kinds);
+}
+
+/**
+ * Whether the question card is bridged in: on a folder that still has no kind while an engine plugin
+ * offers one, outside a run's own turn. A resumed session keeps it: its first brief named the card,
+ * and a session that remembers it would otherwise call a tool it no longer has.
+ */
+function offersCard(
+  options: DelegatedOptions,
+  descriptor: GameProject | null,
+  kinds: readonly PluginKindOffer[],
+): boolean {
+  return kindPending(descriptor) && !options.runId && kinds.length > 0;
 }
 
 /** What the plugins on offer a game's session: the kinds their tools make, and whether its Unreal project has no plugin on for it. */
@@ -1210,7 +1239,7 @@ const autoLaunchSpec = (tool: HarnessTool): StudioToolSpec => ({
 
 /** The question card alone, for an Auto chat asked to choose its new game's engine. */
 function questionCard(handoff: Handoff): StudioToolSpec[] {
-  return handoff.engineChoice ? [bridged(askUser)] : [];
+  return handoff.questionCard ? [bridged(askUser)] : [];
 }
 
 /**

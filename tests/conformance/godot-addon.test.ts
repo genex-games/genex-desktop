@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
@@ -188,6 +188,13 @@ describe("the Genex addon in a Godot project", () => {
     const outside = await realpath(await tmpDir("studio-godot-outside-"));
     const rows: Array<[string, (dir: string) => Promise<void>]> = [
       ["addons", (dir) => symlink(outside, path.join(dir, "godot", "addons"))],
+      [
+        "addons/genex",
+        async (dir) => {
+          await mkdir(path.join(dir, "godot", "addons"), { recursive: true });
+          await symlink(outside, path.join(dir, "godot", ADDON_FOLDER));
+        },
+      ],
       ["studio.json", (dir) => symlink(path.join(outside, "studio.json"), path.join(dir, "studio.json"))],
       ["bin", (dir) => symlink(outside, path.join(dir, "bin"))],
       [
@@ -205,6 +212,7 @@ describe("the Genex addon in a Godot project", () => {
       await assert.rejects(setUpGame(dir, project, ADDON, null), AddonError, label);
     }
     assert.equal(await readFile(path.join(outside, "project.godot"), "utf8"), SETTINGS, "the linked settings stay");
+    assert.deepEqual((await readdir(outside)).sort(), ["project.godot"], "no addon file written through a link");
     const elsewhere = await game();
     await assert.rejects(setUpGame(elsewhere.dir, outside, ADDON, null), AddonError, "a project outside the game");
   });

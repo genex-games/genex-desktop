@@ -36,6 +36,7 @@ import {
   isPluginSetup,
   PLUGIN_SETUP_STEP_CHARS,
   PLUGIN_SETUP_STEPS,
+  PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
   PluginToolAudience,
@@ -67,6 +68,8 @@ const KIB = 1024;
 /** The Genex blender server's own per-call ceiling is 15 minutes; 30 is the outer bound. */
 const MAX_CALL_TIMEOUT_MS = 1_800_000;
 const MIN_CALL_TIMEOUT_MS = 1_000;
+/** The shortest deadline a tool may declare for one call. */
+const MIN_TOOL_TIMEOUT_MS = 1_000;
 /** How many folders a package inspection lists at once. */
 const PACKAGE_WALK_FOLDERS = 16;
 const hostname = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*$/i;
@@ -188,6 +191,7 @@ const MESSAGE = {
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
+  InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
@@ -362,6 +366,19 @@ function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.audience !== undefined) validateAudience(t, m);
 }
 
+/** A tool's own call deadline (API 3): whole milliseconds, from a second to the most a tool may declare. */
+function toolTimeout(t: PluginManifestTool, m: PluginManifest): number {
+  const value = t.timeoutMs;
+  const valid =
+    m.apiVersion === 3 &&
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_TOOL_TIMEOUT_MS &&
+    value <= PLUGIN_TOOL_MAX_TIMEOUT_MS;
+  if (!valid) throw new Error(MESSAGE.InvalidToolTimeout);
+  return value as number;
+}
+
 /** One tool in canonical form; `names` holds the tool names already declared. */
 function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<string>): PluginManifestTool {
   assertName("tool", t?.name);
@@ -383,6 +400,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
   if (t.audience === PluginToolAudience.Harness) tool.audience = t.audience;

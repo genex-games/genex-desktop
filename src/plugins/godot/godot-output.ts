@@ -31,6 +31,8 @@ const ENGINE_AT = /^\s+at: /;
 const CHECKED = /^GENEX_CHECKED (\d+)$/m;
 const SHOT = /^GENEX_SHOT (\S+) (\d+) (.+\.png)$/gm;
 const PLAYED = /^GENEX_PLAYED (\d+)$/m;
+const DATA_COPIED = /^GENEX_DATA_COPIED (.+)$/m;
+const DATA_FAILED = /^GENEX_DATA_FAILED (.+)$/m;
 /**
  * Lines Godot prints about its own surroundings, never about the project: the macOS sandbox Genex
  * runs it in keeps it from the system's certificates, which a game that never goes online ignores.
@@ -95,6 +97,12 @@ export function savedShots(output: string): SavedShot[] {
 export function playedFrames(output: string): number | null {
   const found = PLAYED.exec(output);
   return found?.[1] ? Number(found[1]) : null;
+}
+
+/** Whether Genex's data copy (`genex_data.gd`) says it put its file in place, and else why not ("" when it never said). */
+export function dataCopied(output: string): { copied: boolean; why: string } {
+  if (DATA_COPIED.test(output)) return { copied: true, why: "" };
+  return { copied: false, why: DATA_FAILED.exec(output)?.[1]?.trim() ?? "" };
 }
 
 /** The problems as one line each, for an answer an agent reads: `file:line: message`. */

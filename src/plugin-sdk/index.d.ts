@@ -203,6 +203,11 @@ export interface PluginManifestTool extends PluginTool {
   confirmationInput?: { parameter: string; label: string };
   /** API 3, agent tools only: the kind of asset a call makes. */
   asset?: PluginToolAsset;
+  /**
+   * API 3: the longest one call may run, in whole milliseconds, when that is longer than the host's
+   * ceiling (190 s): a game engine's import or export. At most 9 minutes.
+   */
+  timeoutMs?: number;
 }
 
 /**

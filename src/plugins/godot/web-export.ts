@@ -12,7 +12,7 @@ import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { writeFileNoFollow } from "../../substrate/fsx.ts";
 import { type GodotInstall, type GodotVersion, versionName } from "./find-godot.ts";
-import { type GodotCall, GodotJob } from "./godot-run.ts";
+import { dataCopyCall, type GodotCall, GodotJob } from "./godot-run.ts";
 import { BRIDGE_LICENSES_FILE, BRIDGE_PAGE_FILE, COLYSEUS_FOLDER, godotString } from "./multiplayer.ts";
 
 /** The game's folder the export goes into, at the game's root. */
@@ -26,8 +26,9 @@ export const WEB_PRESET = "Genex Web";
 const PRESETS_FILE = "export_presets.cfg";
 /** Godot's Web template without threads: a page that needs no cross-origin isolation. */
 export const WEB_TEMPLATE = "web_nothreads_release.zip";
-/** Where Godot's Export Template Manager keeps templates, in the person's home. */
-const TEMPLATES_HOME = "Library/Application Support/Godot/export_templates";
+/** Where Godot's Export Template Manager keeps templates, in Godot's data folder (a Mac's job links it into its private home). */
+const TEMPLATES_IN_DATA = path.join("Godot", "export_templates");
+const TEMPLATES_HOME = path.join("Library", "Application Support", TEMPLATES_IN_DATA);
 /** Tells Godot to leave a folder out of the project, should the export sit inside it. */
 const GDIGNORE = ".gdignore";
 /**
@@ -35,23 +36,23 @@ const GDIGNORE = ".gdignore";
  * temporary folder for the user whatever TMPDIR says: the one file there an export may write.
  */
 export const EXPORT_SETTINGS_TEMP = "tmpproject.binary";
-/** An export imports the whole project first, the first time with every asset. */
-const EXPORT_TIMEOUT_MS = 10 * MINUTE_MS;
+/** An export imports the whole project first, the first time with every asset; within the tool's own nine minutes. */
+const EXPORT_TIMEOUT_MS = 8 * MINUTE_MS;
 
 /** The template folder Godot looks in for a version: `4.6.1.stable`, `4.3.stable.mono`. */
 export function templateVersion(version: GodotVersion): string {
   return `${versionName(version)}.${version.status}${version.mono ? ".mono" : ""}`;
 }
 
-/** The person's template folder for a Godot, and the Web template in it. */
-export function webTemplates(home: string, install: GodotInstall): { folder: string; template: string } {
-  const folder = path.join(home, TEMPLATES_HOME, templateVersion(install.version));
+/** The person's template folder for a Godot, in Godot's data folder (`GodotEnv.dataHome`), and the Web template in it. */
+export function webTemplates(dataHome: string, install: GodotInstall): { folder: string; template: string } {
+  const folder = path.join(dataHome, TEMPLATES_IN_DATA, templateVersion(install.version));
   return { folder, template: path.join(folder, WEB_TEMPLATE) };
 }
 
 /** Whether the Web template is installed: a regular file, not a link. */
-export async function hasWebTemplate(home: string, install: GodotInstall): Promise<boolean> {
-  return (await lstat(webTemplates(home, install).template).catch(() => null))?.isFile() === true;
+export async function hasWebTemplate(dataHome: string, install: GodotInstall): Promise<boolean> {
+  return (await lstat(webTemplates(dataHome, install).template).catch(() => null))?.isFile() === true;
 }
 
 /** Genex's preset as Godot writes one, numbered after the project's own. */
@@ -174,8 +175,9 @@ export async function prepareWebFolder(game: string, linkMessage: string): Promi
 
 /**
  * The export: Godot imports the project and writes Genex's Web preset's page and files into
- * `folder`, with the person's Web template linked into the job's private home, and the one file
- * Godot writes (under names of its own) in the user's own temporary folder.
+ * `folder`, with the person's Web template linked into a Mac job's private home (on Windows a job
+ * of its own puts it in the sandbox user's data folder first: `templateCopyCall`), and the one file
+ * Godot writes on a Mac (under names of its own) in the user's own temporary folder.
  */
 export function webExportCall(
   project: string,
@@ -195,4 +197,20 @@ export function webExportCall(
     gpu: false,
     homeLinks: [{ at: path.join(TEMPLATES_HOME, templates.version), to: templates.folder }],
   };
+}
+
+/**
+ * Windows's: one of the person's templates for a Godot (the Web template unless named) put where
+ * the sandbox user's Godot looks for it, in that user's own data folder, by a Godot job of Genex's
+ * (`dataCopyCall`), before an export.
+ */
+export function templateCopyCall(
+  project: string,
+  scripts: string,
+  dataHome: string,
+  install: GodotInstall,
+  name: string = WEB_TEMPLATE,
+): GodotCall {
+  const to = path.join(TEMPLATES_IN_DATA, templateVersion(install.version), name);
+  return dataCopyCall(project, scripts, path.join(webTemplates(dataHome, install).folder, name), to);
 }

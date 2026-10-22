@@ -79,6 +79,7 @@ import {
   CLAUDE_CAPTURE_TOOL,
   intakeToolReply,
   RUN_COMMAND_TOOL,
+  SHELL_THIS_TURN,
   STUDIO_MCP_SERVER,
   STUDIO_SHELL_TOOL,
   STUDIO_TOOL_PREFIX,
@@ -1265,7 +1266,8 @@ export class ClaudeCodeEngine implements Engine {
     // The running session, for what an answer asks of it after the answer (claude-permissions.ts).
     const running: RunningSession = { stream: null };
     const options = await this.#delegateOptions(request, { cliInstallation, login, controller, running, run });
-    const stream = query({ prompt: sessionPrompt(request, steer, run, controller.signal), options } as never);
+    const told = withShellLine(request, Boolean(run.shell), this.#platform);
+    const stream = query({ prompt: sessionPrompt(told, steer, run, controller.signal), options } as never);
     this.#catalogEpoch.set(stream, this.#catalog.epoch());
     running.stream = stream as RunningSession["stream"];
     // The mode picker reaches a running turn of a session that asks (the chat's own, a lead's, the
@@ -2199,6 +2201,19 @@ function sessionPrompt(
   if (!steer) return delegatePrompt(request);
   run.feed = steerFeed(steer, userFrame(request.prompt, briefImages(request)), signal, () => run.sessionId);
   return run.feed.prompt;
+}
+
+/**
+ * The brief of a resumed Windows session with the line naming this turn's shell after it: its turns
+ * may run commands in Genex's sandbox or in Bash (`studioShell`), and it remembers the other. A new
+ * session's tools say it, a Mac's never changes, and a session with no shell has none to name.
+ */
+function withShellLine(request: DelegateRequest, genexShell: boolean, platform: NodeJS.Platform): DelegateRequest {
+  if (platform !== "win32" || !request.resume || request.blind) return request;
+  const bash = !disallowedToolsFor(request, genexShell).includes(SHELL_TOOL);
+  if (!genexShell && !bash) return request;
+  const line = genexShell ? SHELL_THIS_TURN.Studio : SHELL_THIS_TURN.Bash;
+  return { ...request, prompt: `${request.prompt}\n\n${line}` };
 }
 
 /** The stills a brief carries. */

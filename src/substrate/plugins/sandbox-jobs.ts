@@ -25,6 +25,7 @@ import path from "node:path";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import {
+  PLUGIN_SANDBOX_MAX_RUNNING,
   PLUGIN_SANDBOX_MAX_TIMEOUT_MS,
   PLUGIN_SANDBOX_MIN_TIMEOUT_MS,
   PLUGIN_SANDBOX_OUTPUT_CHARS,
@@ -40,8 +41,6 @@ import { mixedPath } from "../windows-sandbox.ts";
 
 /** The variable a command script's line reaches cmd.exe in. */
 export const COMMAND_LINE_ENV = "GENEX_COMMAND_LINE";
-/** How many of one plugin's jobs may run at once. */
-const MAX_RUNNING_PER_PLUGIN = 2;
 /** How many of one plugin's ended jobs are kept for `sandbox.result`. */
 const MAX_ENDED_PER_PLUGIN = 8;
 /** The most folders a job may name to read, and to write. */
@@ -87,7 +86,7 @@ const MESSAGE = {
   Program: "The job's program isn't a real file inside a folder it reads",
   Args: `A sandbox job's arguments are at most ${MAX_ARGS} strings of at most ${MAX_ARG_CHARS} characters, on one line`,
   Env: `A sandbox job's variables are at most ${MAX_ENV} names of its own, each with one line of text`,
-  Busy: `This plugin already runs ${MAX_RUNNING_PER_PLUGIN} sandbox jobs; wait for one or stop it`,
+  Busy: `This plugin already runs ${PLUGIN_SANDBOX_MAX_RUNNING} sandbox jobs; wait for one or stop it`,
   NoId: "Name the job by its id",
   Unknown: "Unknown sandbox service",
 } as const;
@@ -272,7 +271,7 @@ export class PluginSandboxJobs {
   async #run(plugin: string, args: unknown, binding: PluginBinding | undefined): Promise<{ id: string }> {
     const checked = await checkedRun(args, binding, this.#deps.home ?? os.homedir());
     const { command, env } = this.#command(checked.program, checked.args);
-    if (this.#running(plugin) >= MAX_RUNNING_PER_PLUGIN) throw new Error(MESSAGE.Busy);
+    if (this.#running(plugin) >= PLUGIN_SANDBOX_MAX_RUNNING) throw new Error(MESSAGE.Busy);
     const id = randomUUID();
     const dir = path.join(this.#deps.scratch, id);
     const tmp = path.join(dir, SCRATCH_TMP);

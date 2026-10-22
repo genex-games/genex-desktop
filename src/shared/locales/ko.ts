@@ -940,6 +940,7 @@ export default {
     "Ollama 라이브러리에 {model} 모델이 없어요. 이름과 콜론 뒤의 태그를 확인하세요.",
   "Couldn't hold {input}": "{input} 누르고 있지 못했어요",
   "Couldn't import {asset}": "{asset} 가져오지 못했어요",
+  "Couldn't install Godot ({why}). Try again.": "Godot를 설치하지 못했어요({why}). 다시 시도하세요.",
   "Couldn't lay the terrain": "지형을 만들지 못했어요",
   "Couldn't let go of every input": "모든 입력을 떼지 못했어요",
   "Couldn't let the game settle": "게임이 안정되길 기다리지 못했어요",
@@ -1352,6 +1353,8 @@ export default {
   Free: "무료",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "무료 오픈 소스이고 약 170MB예요. Genex가 응용 프로그램 폴더에 설치해요.",
+  "Free and open source, about 86 MB. Genex keeps it in its own folder.":
+    "무료 오픈 소스이고 약 86MB예요. Genex가 자체 폴더에 보관해요.",
   "Free and private. Runs on this Mac.": "무료이고 프라이버시가 지켜져요. 이 Mac에서 실행돼요.",
   "Free and private. Slower than Claude or ChatGPT.": "무료이고 프라이버시가 지켜져요. Claude나 ChatGPT보다는 느려요.",
   "Free model to build with": "만들 때 쓸 무료 모델",
@@ -1463,6 +1466,8 @@ export default {
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex가 아무것도 게시하지 않았어요. Studio에서 직접 게시하려면: {clicks}.",
   "Genex didn’t take that. Try again in a moment.": "Genex가 받아들이지 않았어요. 잠시 후 다시 시도해 주세요.",
+  "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
+    "Genex는 Windows에서만 이렇게 Godot를 다운로드해요. Mac에서는 ‘대신 해 주기’가 응용 프로그램 폴더에 설치해요.",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "Genex는 안전한 링크로만 Roblox Studio를 다운로드하는데, 이 링크는 안전하지 않아요. 아무것도 설치하지 않았어요.",
   "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
@@ -2390,6 +2395,10 @@ export default {
   On: "켜짐",
   "On Genex": "Genex에 올라감",
   "On Play": "플레이에 공개됨",
+  "On Windows, Genex builds a Godot project only inside the game's folder: choose one there, or make a new one.":
+    "Windows에서 Genex는 게임 폴더 안의 Godot 프로젝트만 만들 수 있어요. 거기서 고르거나 새로 만드세요.",
+  "On Windows, Genex downloads Godot itself: press Get Godot in the Godot panel, or Do it for me on the setup card.":
+    "Windows에서는 Genex가 직접 Godot를 다운로드해요. Godot 패널의 ‘Godot 받기’나 설정 카드의 ‘대신 해 주기’를 누르세요.",
   "On this Mac": "이 Mac",
   "On this Mac · {size}": "이 Mac에 있음 · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
@@ -2676,7 +2685,7 @@ export default {
   "Playing the level": "레벨을 플레이하는 중",
   "Playing {part}": "{part} 플레이 중",
   Plays: "플레이 수",
-  "Plays in Godot 4, which isn't on this Mac yet.": "Godot 4에서 실행되는데, 이 Mac에는 아직 없어요.",
+  "Plays in Godot 4, which isn't on this computer yet.": "Godot 4에서 실행되는데, 이 컴퓨터에는 아직 없어요.",
   "Plays in Godot {version}.": "Godot {version}에서 실행돼요.",
   "Plays in Godot. Set it up so Genex's playtesters and judges can play it too.":
     "Godot에서 실행돼요. Genex의 플레이테스터와 심사위원도 플레이할 수 있게 설정하세요.",

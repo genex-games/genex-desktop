@@ -340,6 +340,31 @@ describe("Claude Code on Windows runs its commands in Genex's sandbox", () => {
     assert.equal(asked[0]?.input.command, "npm test");
   });
 
+  it("a resumed session hears which shell this turn has: an unattended turn the studio's, one the person answers Bash", async () => {
+    const f = await fixture();
+    const person = {
+      mode: PermissionMode.Auto,
+      allow: [],
+      directories: [],
+      protectWrites: [],
+      ask: async (): Promise<PermissionReply> => ({ decision: "allow" }),
+    };
+    const promptOf = async (request: Record<string, unknown>, platform: NodeJS.Platform = "win32") =>
+      String((await session(f, platform, request)).scripted.prompt);
+    assert.match(
+      await promptOf({ resume: "s1" }),
+      /This turn your shell is mcp__studio__run_command[^\n]*Bash and PowerShell are off/,
+    );
+    assert.match(
+      await promptOf({ resume: "s1", permissions: person }),
+      /This turn your shell is Bash[^\n]*run_command is not here/,
+    );
+    assert.equal(await promptOf({}), "build the scene", "a new session's tools say it");
+    assert.equal(await promptOf({ resume: "s1" }, "darwin"), "build the scene", "a Mac's shell never changes");
+    const reader = await promptOf({ resume: "s1", worker: seat(f, PermissionMode.Plan) });
+    assert.doesNotMatch(reader, /This turn your shell/, "a reader has no shell to name");
+  });
+
   it("macOS and Linux keep Claude Code's own sandbox and its Bash (characterization)", async () => {
     const f = await fixture();
     for (const platform of ["darwin", "linux"] as const) {

@@ -130,6 +130,15 @@ describe("the first message on a project with no kind", () => {
     assert.deepEqual(both.bridged, [AUTO_LOOP, "ask_user"]);
   });
 
+  it("a project with no kind hears the web starter's rules as the web answer's, never as every kind's", async () => {
+    for (const on of [NONE_ON, UNREAL_ON]) {
+      const { lines } = await firstMessage(game([]), on);
+      const web = lines.filter((line) => line.includes("window.__studio"));
+      assert.equal(web.length, 1, "said once");
+      assert.match(web[0] ?? "", /^For a game that plays in Genex \(the web answer\)/, "and only for the web answer");
+    }
+  });
+
   it("a project still with no kind is offered the kinds on every message, not only the chat's first", async () => {
     const later = [
       { role: "user", content: "hi" },

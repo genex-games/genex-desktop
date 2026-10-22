@@ -37,6 +37,15 @@ export const RUN_COMMAND_TOOL = {
   failed: (why: string) => `The command could not run: ${why}`,
 } as const;
 
+/**
+ * The shell a resumed Windows session has this turn: an unattended turn runs its commands in Genex's
+ * sandbox and one the person answers in Bash, so a session may remember the other one.
+ */
+export const SHELL_THIS_TURN = {
+  Studio: `This turn your shell is ${STUDIO_SHELL_TOOL} (Genex's sandbox, Git Bash syntax): Bash and PowerShell are off for this turn, whatever this session used before.`,
+  Bash: `This turn your shell is Bash (Git Bash): ${STUDIO_SHELL_TOOL} is not here this turn, whatever this session used before.`,
+} as const;
+
 /** `checkpoint`: the contractor decides which moments are worth showing. */
 export const CHECKPOINT_TOOL = {
   description:

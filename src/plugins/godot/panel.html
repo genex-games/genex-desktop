@@ -161,7 +161,7 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
       <div class="pad"><p id="get-how" data-t>Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.</p></div>
       <div class="foot"><button type="button" id="get-godot" class="primary external" data-t>Get Godot</button><button type="button" id="recheck" data-t>Check again</button></div>
     </div>
-    <p id="get-waiting" class="waiting"><span class="orb" aria-hidden="true"></span><span data-t>Waiting for Godot in Applications. This page moves on by itself.</span></p>
+    <p id="get-waiting" class="waiting" role="status"><span class="orb" aria-hidden="true"></span><span id="get-waiting-text" data-t>Waiting for Godot in Applications. This page moves on by itself.</span></p>
   </section>
 
   <section id="pick" hidden aria-labelledby="pick-title">
@@ -261,11 +261,16 @@ const Action = {
   Create: "create",
   OpenEditor: "open-editor",
   GetGodot: "get-godot",
+  DownloadGodot: "download-godot",
   SetUp: "set-up",
   WebExport: "web-export",
   UseProject: "use-project",
 };
 const Tone = { Ok: "ok", Unset: "unset", Quiet: "" };
+/** Where Genex's install of Godot is (the backend's `GodotJobState`), and why a request failed (Studio's `PanelErrorCode`). Wire values: never rename. */
+const JobState = { Running: "running", Failed: "failed" };
+const ErrorCode = { Cancelled: "cancelled" };
+const MEGABYTE = 1024 * 1024;
 /** The folder Godot keeps its projects in, as a path: never translated. */
 const PROJECTS_FOLDER = "Documents › Godot Projects";
 /** Godot's own menus to its export templates, in Godot's English: never translated. */
@@ -275,13 +280,30 @@ const WORDS = {
   getHow: t(
     "Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.",
   ),
-  notMacWhy: t("Genex builds Godot games on a Mac only for now."),
-  notMacHow: t("You can still download Godot 4 from godotengine.org and use it on its own. It's free and open source."),
+  getHowWindows: t(
+    "Genex downloads Godot 4 from Godot's own releases into its own folder. It's free and open source, about 86 MB.",
+  ),
+  elsewhereWhy: t("Genex builds Godot games on a Mac or a Windows PC."),
+  elsewhereHow: t("You can still download Godot 4 from godotengine.org and use it on its own. It's free and open source."),
   older: (version) =>
     t(
       "This Mac has Godot {version}. Genex builds with Godot 4.3 or newer in the 4 line: get a current Godot 4 and put it in Applications beside yours.",
       { version },
     ),
+  olderWindows: (version) =>
+    t(
+      "This PC has Godot {version}. Genex builds with Godot 4.3 or newer in the 4 line: get a current Godot 4 beside it.",
+      { version },
+    ),
+  waitMac: t("Waiting for Godot in Applications. This page moves on by itself."),
+  downloading: (done, total) =>
+    t("Downloading Godot, {done} of {total} MB. This page moves on by itself.", {
+      done: Math.round(done / MEGABYTE),
+      total: Math.round(total / MEGABYTE),
+    }),
+  installing: t("Installing Godot. This page moves on by itself."),
+  get: t("Get Godot"),
+  tryAgain: t("Try again"),
   notSetUp: t("Not set up"),
   notOpen: t("Not open"),
   ready: t("Ready"),
@@ -341,18 +363,60 @@ function show(id) {
   for (const section of ["checking", View.Get, View.Pick, View.New, View.Project]) $(section).hidden = section !== id;
 }
 
-/** Why Get Godot shows: the Godot Genex needs on a Mac; elsewhere, that Genex builds Godot games on a Mac only. */
+/** Whether Genex builds Godot games on this computer: a Mac or a Windows PC. */
+const buildsHere = (s) => Boolean(s.mac || s.windows);
+
+/** Why Get Godot shows: the Godot Genex needs, the older one this computer has, or that it builds elsewhere. */
 function getWhy(s) {
-  if (s.mac === false) return WORDS.notMacWhy;
-  return s.version ? WORDS.older(s.version) : WORDS.getWhy;
+  if (!buildsHere(s)) return WORDS.elsewhereWhy;
+  if (!s.version) return WORDS.getWhy;
+  return s.windows ? WORDS.olderWindows(s.version) : WORDS.older(s.version);
 }
 
-/** Get Godot: where to put Godot on a Mac, and the wait for it; elsewhere nothing to wait for. */
+/** How to get Godot: into Applications on a Mac, Genex's download on Windows, on its own elsewhere. */
+function getHow(s) {
+  if (s.windows) return WORDS.getHowWindows;
+  return s.mac ? WORDS.getHow : WORDS.elsewhereHow;
+}
+
+/** The wait under Get Godot: for Godot in Applications on a Mac; on Windows, how far Genex's download got. */
+function waitText(s) {
+  if (!s.windows) return WORDS.waitMac;
+  const job = s.installing;
+  if (job?.unpacking) return WORDS.installing;
+  return job?.total ? WORDS.downloading(job.done ?? 0, job.total) : WORDS.installing;
+}
+
+/**
+ * Get Godot: on a Mac, where to put Godot and the wait for it; on Windows, Genex's own download,
+ * its progress while it runs and Try again after it stopped; elsewhere nothing to get or wait for.
+ */
 function renderGet(s) {
-  const mac = s.mac !== false;
+  const running = s.installing?.state === JobState.Running;
+  const failed = s.installing?.state === JobState.Failed;
   setText($("get-why"), getWhy(s));
-  setText($("get-how"), mac ? WORDS.getHow : WORDS.notMacHow);
-  $("get-waiting").hidden = !mac;
+  setText($("get-how"), getHow(s));
+  setText($("get-godot"), failed ? WORDS.tryAgain : WORDS.get);
+  $("get-godot").classList.toggle("external", !s.windows);
+  $("get-godot").hidden = !buildsHere(s);
+  $("get-godot").disabled = running;
+  $("get-waiting").hidden = s.windows ? !running : !s.mac;
+  setText($("get-waiting-text"), waitText(s));
+  if (s.windows && failed && !s.installing.stopped) showError(s.installing.why);
+}
+
+/**
+ * Windows's Get Godot: Genex's download, which Studio asks the person to confirm first. It answers
+ * once Godot is in place; the page follows it meanwhile, so this never holds the page busy.
+ */
+async function downloadGodot() {
+  showError(null);
+  try {
+    await api.call("action", Action.DownloadGodot, {});
+  } catch (e) {
+    if (e?.code !== ErrorCode.Cancelled) showError(e);
+  }
+  await refresh();
 }
 
 /** A project's tag: In use, Outside game, or none. */
@@ -551,7 +615,7 @@ async function webExport() {
   $("note").hidden = false;
 }
 
-$("get-godot").onclick = () => void act($("get-godot"), Action.GetGodot);
+$("get-godot").onclick = () => void (last?.windows ? downloadGodot() : act($("get-godot"), Action.GetGodot));
 $("recheck").onclick = () => void refresh();
 $("back").onclick = () => go(View.Project);
 $("change").onclick = () => go(View.Pick);

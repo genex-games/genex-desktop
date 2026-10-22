@@ -953,6 +953,8 @@ export default {
     "Ollamaライブラリに{model}が見つかりませんでした。名前とコロンの後のタグを確認してください。",
   "Couldn't hold {input}": "{input}を押し続けられませんでした",
   "Couldn't import {asset}": "{asset}をインポートできませんでした",
+  "Couldn't install Godot ({why}). Try again.":
+    "Godotをインストールできませんでした（{why}）。もう一度試してください。",
   "Couldn't lay the terrain": "地形を作成できませんでした",
   "Couldn't let go of every input": "すべての入力を離せませんでした",
   "Couldn't let the game settle": "ゲームが落ち着くのを待てませんでした",
@@ -1378,6 +1380,8 @@ export default {
   Free: "無料",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "無料のオープンソースで、約170 MB。Genexが「アプリケーション」にインストールします。",
+  "Free and open source, about 86 MB. Genex keeps it in its own folder.":
+    "無料のオープンソースで、約86 MB。Genexが専用のフォルダーに置きます。",
   "Free and private. Runs on this Mac.": "無料でプライベート。このMacで動きます。",
   "Free and private. Slower than Claude or ChatGPT.": "無料でプライベート。ClaudeやChatGPTより遅めです。",
   "Free model to build with": "つくるのに使う無料モデル",
@@ -1492,6 +1496,8 @@ export default {
     "Genexは何も公開しませんでした。Studioで自分で公開するには：{clicks}。",
   "Genex didn’t take that. Try again in a moment.":
     "Genexが受け付けませんでした。少し待ってからもう一度試してください。",
+  "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
+    "この方法でGodotをダウンロードするのはWindowsだけです。Macでは「おまかせ」で「アプリケーション」にインストールします。",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "GenexはRoblox Studioを安全なリンクからしかダウンロードしませんが、このリンクは安全ではありません。何もインストールされていません。",
   "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
@@ -2446,6 +2452,10 @@ export default {
   On: "オン",
   "On Genex": "Genexに公開済み",
   "On Play": "「プレイ」で共有済み",
+  "On Windows, Genex builds a Godot project only inside the game's folder: choose one there, or make a new one.":
+    "WindowsではGenexはゲームのフォルダー内のGodotプロジェクトだけを作れます。そこから選ぶか、新しく作ってください。",
+  "On Windows, Genex downloads Godot itself: press Get Godot in the Godot panel, or Do it for me on the setup card.":
+    "WindowsではGenexがGodotをダウンロードします。Godotパネルの「Godotを入手」か、セットアップカードの「おまかせ」を押してください。",
   "On this Mac": "このMacで",
   "On this Mac · {size}": "このMac · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
@@ -2741,7 +2751,7 @@ export default {
   "Playing the level": "レベルをプレイしています",
   "Playing {part}": "{part}をプレイ中",
   Plays: "プレイ数",
-  "Plays in Godot 4, which isn't on this Mac yet.": "Godot 4で動きますが、このMacにはまだありません。",
+  "Plays in Godot 4, which isn't on this computer yet.": "Godot 4で動きますが、このコンピューターにはまだありません。",
   "Plays in Godot {version}.": "Godot {version}で動きます。",
   "Plays in Godot. Set it up so Genex's playtesters and judges can play it too.":
     "Godotで動きます。Genexのテストプレイヤーと審査員もプレイできるように、セットアップしてください。",

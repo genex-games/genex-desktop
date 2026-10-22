@@ -1,6 +1,6 @@
 /**
  * The Godot project a game builds in: the one its engine link names (`game.engine.read`, kind
- * `godot`: a project chosen in the panel, wherever it is on this Mac), else the one in its own
+ * `godot`: a project chosen in the panel, wherever it is on this computer), else the one in its own
  * folder (`game-project.ts`). Linking (`game.engine.link`) records a chosen project's
  * `project.godot` by its real path; the host keeps the record, its chat line and its Undo.
  */
@@ -49,7 +49,7 @@ export async function requireProject(context: PluginContext): Promise<string> {
   return project;
 }
 
-/** Whether the project lies outside the game's folder (a linked project elsewhere on this Mac). */
+/** Whether the project lies outside the game's folder (a linked project elsewhere on this computer). */
 export async function outsideGame(gameDir: string, project: string): Promise<boolean> {
   const root = await realpath(gameDir).catch(() => path.resolve(gameDir));
   return root !== project && !isInside(root, project);

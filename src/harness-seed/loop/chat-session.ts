@@ -286,6 +286,9 @@ export function isResumeFailure(err: any): boolean {
 const TEMPLATE_RULE =
   "When you build, follow CLAUDE.md in the workspace root: keep window.__studio (seed/start/pause/step/state/debugCamera) working, keep gameplay deterministic (rng from reset(seed), never Math.random), assets come from procedural code, imports, or the currently enabled plugin tools. Follow the selected tool’s returned file paths and verification guidance.";
 
+/** The web starter's rule as a folder with no kind yet hears it: for its web answer only, never an engine's. */
+const PENDING_TEMPLATE_RULE = `For a game that plays in Genex (the web answer): ${TEMPLATE_RULE.charAt(0).toLowerCase()}${TEMPLATE_RULE.slice(1)}`;
+
 /**
  * …and the same rule for a game that came with its own shape: what it already is stays, the
  * contract is installed into its own entry, and its build is run before the turn ends. The
@@ -328,7 +331,7 @@ const USER_COMMAND_FENCE = "bash";
 
 /** Where a web game's work happens: this workspace, and no other copy or game. */
 const WORKSPACE_RULE =
-  "The game's work happens in this workspace: never in another copy of this game or in another game's folder, and a path the user named is a stills folder to look at, not a parent to walk. When the user asks about something elsewhere on their Mac (another folder, their Downloads, their disk), that is the ask: what you may reach is your session's permissions, not this brief.";
+  "The game's work happens in this workspace: never in another copy of this game or in another game's folder, and a path the user named is a stills folder to look at, not a parent to walk. When the user asks about something elsewhere on their computer (another folder, their Downloads, their disk), that is the ask: what you may reach is your session's permissions, not this brief.";
 
 /**
  * What a brief knows about the game: what its folder holds (`facts`; `[]`: none, and then `holds`
@@ -426,7 +429,7 @@ function factRules(
   { offered, asked }: { offered: readonly PluginKindOffer[]; asked: boolean },
 ): string[] {
   if (kindUnknown(game)) return unknownKindRules(engine, game.holds);
-  if (kindPending(game)) return [...pendingKindRule(engine, offered, null, game.holds, asked), TEMPLATE_RULE];
+  if (kindPending(game)) return [...pendingKindRule(engine, offered, null, game.holds, asked), PENDING_TEMPLATE_RULE];
   const several = game.facts.length > 1;
   // The kinds the plugins that are on make: their plugin is on already, nothing to look for.
   const made = new Set(offered.flatMap((kind) => (Array.isArray(kind.makes) ? kind.makes : [])));
@@ -464,7 +467,7 @@ function contractorRules(engine: string | undefined, game: GameBuild, app: AppLa
     "Before you build or change how the game looks, if the folder has a references/ or ref/ directory with stills, look at those pictures — they are the visual bar, not files to load as textures.",
     workspaceRule(game),
     "When your shell is sandboxed, it rejects commands it cannot statically analyze — avoid $-expansions, escaped whitespace, heredocs and long && chains; run one simple command at a time, and put multi-step logic in a script file you then run with node.",
-    `When a sandbox blocks a step only the user's own Mac can do (an install or download that needs the network, such as brew or pip, a system tool, a sign-in), do not work around it: end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why. The chat shows it with a Run button; how it went comes back as the user's next message. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
+    `When a sandbox blocks a step only the user's own computer can do (an install or download that needs the network, such as brew, winget or pip, a system tool, a sign-in), do not work around it: end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why. The chat shows it with a Run button; how it went comes back as the user's next message. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
     "When the user named a tool, app or plugin to use (Blender, an engine, a package) and its status or a call says it can't run here, never carry on without it in silence: say so in your reply, in plain words, with the fix its answer names, before a long build starts. A plugin's own install tool (its name ends in __install) asks the user on a card: call it when its status says to.",
     // The Reload a checkpoint lights is the web preview's: any other kind is seen in its own app.
     ...(servedAsWeb(game)

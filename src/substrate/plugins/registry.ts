@@ -1481,13 +1481,15 @@ export class PluginRegistry {
   }
   /**
    * The longest one call of a plugin tool (by agent name) may run in its backend: the host's
-   * ceiling, or its plugin's longest native job and a margin. The ceiling for an unknown name.
+   * ceiling, the tool's own (`timeoutMs`), or its plugin's longest native job and a margin. The
+   * ceiling for an unknown name.
    */
   callCeilingOf(agentName: string): number {
-    const [id = ""] = agentName.split("__");
+    const [id = "", tool = ""] = agentName.split("__");
     const p = this.#installed.get(id);
     const nativeJobTimeouts = (p?.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    return Math.max(PLUGIN_CALL_TIMEOUT_MS, ...nativeJobTimeouts);
+    const declared = p?.manifest.tools.find((t) => t.name === tool)?.timeoutMs ?? 0;
+    return Math.max(PLUGIN_CALL_TIMEOUT_MS, declared, ...nativeJobTimeouts);
   }
   /**
    * The `project` locks of the enabled plugins that one of their agent tools or connectors reaching
@@ -2078,7 +2080,7 @@ export class PluginRegistry {
         return this.#runHostTool(id, host, args, binding, signal);
       };
     const nativeJobTimeouts = (p.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, ...nativeJobTimeouts);
+    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, declaration.timeoutMs ?? 0, ...nativeJobTimeouts);
     // The person's edit on the card (`confirmationInput`) is the call's value for that parameter.
     const parameter = declaration.confirmationInput?.parameter;
     const callArgs = parameter && input !== undefined ? { ...args, [parameter]: input } : args;

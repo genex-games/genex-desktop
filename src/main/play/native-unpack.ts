@@ -6,13 +6,15 @@
  * signed again ad hoc, so the game can only ever read and write its own preferences.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { InstallFailure, type NativeBuild, NativeArch, type NativeHost } from "../../shared/play-native.ts";
 import { InstallError } from "./native-download.ts";
 import { listZip, ZipError, ZipRefusal } from "./native-zip.ts";
 
+/** The execute bits a game's program needs, for its owner and everyone. */
+const RUNNABLE = 0o111;
 /** How long one tool may run on a game: unpacking or signing a large one takes a while. */
 const TOOL_TIMEOUT_MS = 20 * MINUTE_MS;
 /** How much larger than the catalog says the unpacked game may be: block rounding and metadata. */
@@ -147,6 +149,15 @@ async function appOf(run: ToolRun, staging: string, entry: string): Promise<{ ap
   return { app, executable };
 }
 
+/**
+ * The app's program set runnable: a Mac app packed on Windows (a Godot game exported and published
+ * there) carries no execute bit, since Windows's disks keep none. A signature doesn't cover it.
+ */
+async function makeRunnable(program: string): Promise<void> {
+  const { mode } = await lstat(program);
+  if ((mode & RUNNABLE) !== RUNNABLE) await chmod(program, mode | RUNNABLE);
+}
+
 /** Whether the binary runs on `host`: its own processor, or Intel through Rosetta. */
 async function assertRunsOn(run: ToolRun, program: string, host: NativeHost): Promise<void> {
   const archs = (await tool(run, TOOL.Lipo, ["-archs", program], InstallFailure.UnsupportedOs)).trim().split(/\s+/);
@@ -176,6 +187,7 @@ export async function unpackMacBuild(
   await tool(run, TOOL.Ditto, ["-x", "-k", "--noqtn", archive, staging], InstallFailure.UnsafeArchive);
   await assertContained(staging);
   const { app, executable } = await appOf(run, staging, top);
+  await makeRunnable(path.join(app, executable));
   await tool(run, TOOL.Codesign, ["--verify", "--deep", "--strict", app], InstallFailure.Unsigned);
   await assertRunsOn(run, path.join(app, executable), game.host);
   const plist = path.join(app, "Contents", "Info.plist");

@@ -3,7 +3,7 @@ import type { EngineCatalog, EngineDeclaration, EngineId, GameEngine } from "./g
 import type { RuntimeInstallPhase } from "./model-install.ts";
 import type { ObserveContext, PluginObserver } from "./observers.ts";
 import type { HookContext, PluginHook, PluginLock } from "./plugin-hooks.ts";
-import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches } from "./project-facts.ts";
+import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches, withoutEngineWebVersion } from "./project-facts.ts";
 import type { WorkerIsolation } from "./workers.ts";
 import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
 import { MINUTE_MS } from "./duration.ts";
@@ -268,6 +268,11 @@ export interface PluginManifestTool extends PluginTool {
   asset?: PluginToolAsset;
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
+  /**
+   * API 3: the longest one call may run in the backend when that is longer than the host's ceiling
+   * (a game engine's import or export), at most {@link PLUGIN_TOOL_MAX_TIMEOUT_MS}.
+   */
+  timeoutMs?: number;
 }
 /** Whether agents are handed a manifest tool: every one but those only the harness calls. */
 export const isAgentTool = (tool: Pick<PluginManifestTool, "audience">): boolean =>
@@ -361,8 +366,8 @@ export interface PluginReach {
 /**
  * What of one plugin reaches a session for a game (`{ facts: [] }`: no kind yet, served as a web
  * game; one of a kind Genex can't name is served by no fact), narrowed to `offered` when the session was: the agent tools whose `facts` reach; the skills
- * whose scope reaches and, when they name tools, one of those reaches too (a skill follows its
- * tools); the skill reader while a file skill reaches. A narrowed session none of whose offered
+ * whose scope reaches, never through a Unity or Godot game's web export, and, when they name tools,
+ * one of those reaches too (a skill follows its tools); the skill reader while a file skill reaches. A narrowed session none of whose offered
  * tools the plugin has gets nothing of it, not even its skills. The registry's snapshot and the
  * capability facts both read this one rule.
  */
@@ -376,8 +381,9 @@ export function pluginReach(
   );
   if (offered && !tools.length) return { tools, skills: [], skillTool: false };
   const reaching = new Set(tools.map((t) => t.name));
+  const known = withoutEngineWebVersion(game);
   const skills = manifest.skills.filter(
-    (s) => scopeReaches(skillScope(s), game) && (!s.tools || s.tools.some((name) => reaching.has(name))),
+    (s) => scopeReaches(skillScope(s), known) && (!s.tools || s.tools.some((name) => reaching.has(name))),
   );
   return { tools, skills, skillTool: skills.some(isFileSkill) };
 }
@@ -1099,8 +1105,12 @@ export const PluginService = {
 } as const;
 export type PluginService = (typeof PluginService)[keyof typeof PluginService];
 
+/** The longest one call of a plugin tool may declare (`timeoutMs`): within an agent's own call deadline. */
+export const PLUGIN_TOOL_MAX_TIMEOUT_MS = 9 * MINUTE_MS;
 /** The longest a plugin's sandbox job may be given: an Unreal plugin's package takes up to 45 minutes. */
 export const PLUGIN_SANDBOX_MAX_TIMEOUT_MS = 60 * MINUTE_MS;
+/** How many of one plugin's sandbox jobs may run at once; another is refused until one ends. */
+export const PLUGIN_SANDBOX_MAX_RUNNING = 2;
 /** The shortest deadline a sandbox job may ask for. */
 export const PLUGIN_SANDBOX_MIN_TIMEOUT_MS = 1000;
 /** How much of each of a sandbox job's stdout and stderr the host keeps, in characters, from its end. */

@@ -904,6 +904,7 @@ export default {
     "在 Ollama 库中找不到 {model}。请检查名称和冒号后的标签。",
   "Couldn't hold {input}": "无法按住 {input}",
   "Couldn't import {asset}": "无法导入 {asset}",
+  "Couldn't install Godot ({why}). Try again.": "无法安装 Godot（{why}）。请重试。",
   "Couldn't lay the terrain": "无法铺设地形",
   "Couldn't let go of every input": "无法松开所有输入",
   "Couldn't let the game settle": "无法等待游戏稳定",
@@ -1301,6 +1302,8 @@ export default {
   Free: "免费",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "免费开源，约 170 MB。Genex 会将它安装到“应用程序”中。",
+  "Free and open source, about 86 MB. Genex keeps it in its own folder.":
+    "免费开源，约 86 MB。Genex 会把它放在自己的文件夹中。",
   "Free and private. Runs on this Mac.": "免费、私密，在这台 Mac 上运行。",
   "Free and private. Slower than Claude or ChatGPT.": "免费且私密。比 Claude 或 ChatGPT 慢。",
   "Free model to build with": "用于制作的免费模型",
@@ -1409,6 +1412,8 @@ export default {
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex 没有发布任何内容。要在 Studio 中自己发布：{clicks}。",
   "Genex didn’t take that. Try again in a moment.": "Genex 没能完成这个操作。请稍后再试。",
+  "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
+    "只有在 Windows 上 Genex 才这样下载 Godot；在 Mac 上，“帮我完成”会把它安装到“应用程序”中。",
   "Genex downloads Roblox Studio only over a secure link, and this one isn't. Nothing was installed.":
     "Genex 只通过安全链接下载 Roblox Studio，而这个链接不安全。没有安装任何内容。",
   "Genex downloads Roblox's own installer from {host} and checks that Roblox signed it before it runs.":
@@ -2305,6 +2310,10 @@ export default {
   On: "已开启",
   "On Genex": "已在 Genex 上",
   "On Play": "已在“游玩”中",
+  "On Windows, Genex builds a Godot project only inside the game's folder: choose one there, or make a new one.":
+    "在 Windows 上，Genex 只能在游戏的文件夹里制作 Godot 项目：请在那里选一个，或新建一个。",
+  "On Windows, Genex downloads Godot itself: press Get Godot in the Godot panel, or Do it for me on the setup card.":
+    "在 Windows 上，Genex 会自己下载 Godot：在 Godot 面板中点“获取 Godot”，或在设置卡片上点“帮我完成”。",
   "On this Mac": "在这台 Mac 上",
   "On this Mac · {size}": "在这台 Mac 上 · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
@@ -2585,7 +2594,7 @@ export default {
   "Playing the level": "正在试玩关卡",
   "Playing {part}": "正在试玩 {part}",
   Plays: "游玩次数",
-  "Plays in Godot 4, which isn't on this Mac yet.": "在 Godot 4 中运行，但这台 Mac 上还没有它。",
+  "Plays in Godot 4, which isn't on this computer yet.": "在 Godot 4 中运行，但这台电脑上还没有它。",
   "Plays in Godot {version}.": "在 Godot {version} 中运行。",
   "Plays in Godot. Set it up so Genex's playtesters and judges can play it too.":
     "在 Godot 中运行。设置后，Genex 的试玩员和评审也能游玩。",

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
@@ -263,6 +263,20 @@ describe("Play's native installer", { skip: SKIP }, () => {
       "--strict",
       path.join(root, "dust-runners", "1.0", "Dust Runners.app"),
     ]);
+  });
+
+  it("installs an app packed on Windows, whose program lost its execute bit, ready to run", async () => {
+    const work = await tmpDir("native-app-");
+    const app = await makeApp(work, "Dust Runners");
+    await chmod(path.join(app, "Contents", "MacOS", "Game"), 0o644);
+    const archive = await zipApp(app, path.join(work, "mac.zip"));
+    const build = buildOf("dust-runners", archive);
+    const { installs, root, outcomes } = await installer({ "dust-runners": [build] }, new Map([[build.url, archive]]));
+    await installs.install("dust-runners");
+    await installs.idle();
+    assert.equal(outcomes[0]?.failure, null);
+    const program = path.join(root, "dust-runners", "1.0", "Dust Runners.app", "Contents", "MacOS", "Game");
+    assert.equal((await stat(program)).mode & 0o111, 0o111);
   });
 
   it("fails each bad archive with its reason and leaves no game folder", async () => {

@@ -373,6 +373,8 @@ Two different things, both asked by the host and never by the plugin or the agen
   request must not be repeated. API 3: `confirmationInput: {parameter, label}` names one of the
   tool's string parameters the person may edit on the card before Allow (a game's name, say); the
   call runs with their edit.
+- **`tools[].timeoutMs`** (API 3) — whole milliseconds, 1,000 to 540,000: how long one call may
+  run when that is longer than the host's 190-second ceiling, such as an engine's import or export.
 - **`actions[].confirmation`** — a user-invoked action behind a Studio-owned review and a native
   dialog. Your optional `review` returns `{message, detail, images:[{label, dataUrl}]}`: `message`
   (at most 2,000 characters) is the dialog's question instead of the manifest's `confirmation`, and
