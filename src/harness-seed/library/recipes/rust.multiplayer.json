@@ -1,0 +1,47 @@
+{
+  "id": "rust.multiplayer",
+  "runtime": "rust-wgpu",
+  "title": "Online play that feels local: a menu before connecting, yourself moved locally, rules on raw state, a loopback demo, in Rust",
+  "tags": [
+    "multiplayer",
+    "online",
+    "network",
+    "net",
+    "coop",
+    "versus",
+    "players",
+    "remote",
+    "host",
+    "lobby",
+    "matchmaking",
+    "room",
+    "relay",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "net",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Online play is sim.net: connect only after Play online, move yourself locally, draw remotes from state(), rule on state_raw(), host-only shared keys.",
+  "intent": "Multiplayer is sim.net, read like input. Register game.net(NetConfig::new().publish_hz(15).decimals(2).interp_delay_ticks(6)) once and set [net] enabled = true in genex.toml; without it every build is offline (net-disabled), so the game must still play locally. Never connect on boot: sim.net.connect() or sim.net.matchmake() only after the player picks Play online, and sim.net.leave() when they go back. Move yourself on the input tick and publish with sim.net.set_me(json!(..)) (coalesced; snap_me for a respawn); never wait for your echo. Draw sim.net.remotes() from state() (smoothed, drawing only); every gameplay rule (hits, scores) reads .state_raw(). Teams, rounds and scores are sim.net.set_shared keys only the host writes (sim.net.is_host()); write an object only after an accepted sim.net.claim. Read sim.net.events() every tick and pause a round while sim.net.connected() is below its minimum. A refused write answers a NetError whose code() is typed (net-not-joined, net-not-host). Prove it with a demo: driver.net() joins scripted players in Studio's loopback room. Online play is proved only on the published draft in two windows; until then say multiplayer was not exercised.",
+  "sketch": "// src/facets/online.rs — the facet's own module; src/main.rs adds its two FACET WIRING lines.\n// World (src/main.rs) holds online: bool, x: f32 and tags: u32; genex.toml has [net] enabled = true.\nuse super::World;\nuse genex::net::{NetConfig, NetEvent, NetStatus};\nuse genex::prelude::*;\n\n/// The connected players a round needs; below it the round waits.\nconst MIN_PLAYERS: usize = 2;\n/// A demo's step: three ticks.\nconst STEP_MS: u32 = 50;\n\n/// A player's `x`, from its smoothed `state()` (drawing) or its `state_raw()` (rules).\nfn x_of(state: &Value) -> Option<f32> {\n    state.get(\"x\").and_then(Value::as_f64).map(|x| x as f32)\n}\n\npub fn wire(game: &mut Game<World>) {\n    game.net(NetConfig::new().publish_hz(15).decimals(2).interp_delay_ticks(6));\n    game.on_update(|sim, ctx| {\n        // The commitment point: Enter on the menu is \"Play online\"; nothing connects on boot.\n        if !sim.world.online && ctx.keys.pressed(Key::Enter) {\n            sim.world.online = true;\n        }\n        if !sim.world.online {\n            return; // the local mode never touches sim.net\n        }\n        if ctx.keys.pressed(Key::Escape) {\n            sim.world.online = false;\n            sim.net.leave(); // on purpose: no auto-reconnect\n            return;\n        }\n        if sim.net.status() == NetStatus::Offline {\n            sim.net.connect();\n        }\n        // Yourself: moved on the input tick and published (coalesced); never wait for the echo.\n        if ctx.keys.down(Key::KeyD) {\n            sim.world.x += 0.1;\n        }\n        sim.net.set_me(json!({ \"x\": sim.world.x })).ok();\n        for event in sim.net.events() {\n            if matches!(event, NetEvent::Closed { .. }) {\n                sim.world.online = false; // replaced or closed: show it, never rejoin by itself\n            }\n        }\n        // A rule reads state_raw(); only the host keeps the score, in a shared key.\n        let me = sim.world.x;\n        let touching = sim.net.remotes().any(|p| x_of(p.state_raw()).is_some_and(|x| (x - me).abs() < 1.0));\n        if touching && sim.net.is_host() && sim.net.connected() >= MIN_PLAYERS {\n            sim.world.tags += 1;\n            sim.net.set_shared(\"tags\", json!(sim.world.tags)).ok();\n        }\n    });\n    game.on_draw(|sim, frame, _| {\n        frame.tag(\"me\").sphere(vec3(sim.world.x, 0.5, 0.0), 0.5, Color::WHITE); // local, never the echo\n        for remote in sim.net.remotes() {\n            let x = x_of(remote.state()).unwrap_or(0.0); // smoothed: drawing only\n            frame.tag(\"remote\").sphere(vec3(x, 0.5, 2.0), 0.5, Color::BLUE);\n        }\n    });\n    game.probe(\"players\", |sim| json!({ \"connected\": sim.net.connected(), \"tags\": sim.world.tags }));\n    // Studio's loopback room: Play online seats you as host, then a scripted player joins.\n    game.demo(\"two_players\", |driver| {\n        driver.inject(Input::key_tap(Key::Enter));\n        driver.advance_ms(STEP_MS);\n        driver.net().join(\"ana\");\n        driver.advance_ms(STEP_MS * 4);\n        json!({ \"connected\": driver.sim().net.connected(), \"tags\": driver.sim().world.tags })\n    });\n}\n",
+  "port": "One facet owns game.net, the menu's commitment point and the room's events; other facets read sim.net and write only their own objects.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Multiplayer)",
+      "note": "sim.net reads and writes, the loopback room in Studio, scripted players through driver.net(), the refusals and the feel rules."
+    },
+    {
+      "source": "src/game-template-rust/docs/api/net.md (The feel rules)",
+      "note": "Menu before online, render yourself locally, test raw, host-only shared state, claim before host simulation, quorum."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

@@ -17292,3 +17292,90 @@ describe("the language of Genex's own turns", () => {
       );
   });
 });
+
+/** Every call spelling the facade vocabulary fixture pins: each block's `calls`, the Level-2 calls and the temporal calls. */
+function pinnedFacadeCalls(fixture: Record<string, unknown>): string[] {
+  const spellings = (entry: unknown): string[] => {
+    if (Array.isArray(entry) || !entry || typeof entry !== "object") return [];
+    const calls = (entry as { calls?: unknown }).calls;
+    return Array.isArray(calls) ? calls.map(String) : [];
+  };
+  const lists = ["levelTwoCalls", "temporalCalls"].flatMap((key) => (fixture[key] as string[] | undefined) ?? []);
+  return [...lists, ...Object.values(fixture).flatMap(spellings)];
+}
+
+/** The facade crate and the game-system crates whose types it re-exports to a game (`genex::nav`, `genex::ui`, ...). */
+const FACADE_CRATES = [
+  "genex",
+  "genex-anim",
+  "genex-audio",
+  "genex-core",
+  "genex-input",
+  "genex-nav",
+  "genex-net",
+  "genex-profile",
+  "genex-save",
+  "genex-stream",
+  "genex-ui",
+];
+
+/** The public functions and methods (`pub fn`, `pub const fn`) of the facade's crates: the core calls and hooks the fixture's blocks predate. */
+async function facadeFunctionNames(): Promise<string[]> {
+  const crates = path.join(process.cwd(), "native", "genex-rust", "crates");
+  const names = await Promise.all(
+    FACADE_CRATES.map(async (crate) => {
+      const root = path.join(crates, crate, "src");
+      const files = (await readdir(root, { recursive: true })).filter((name) => name.endsWith(".rs"));
+      const texts = await Promise.all(files.map((name) => readFile(path.join(root, name), "utf8")));
+      return texts.flatMap((text) =>
+        [...text.matchAll(/\bpub\s+(?:const\s+)?fn\s+([a-z_][a-z0-9_]*)/g)].map((m) => m[1] ?? ""),
+      );
+    }),
+  );
+  return names.flat();
+}
+
+describe("a Rust recipe's sketch, held to the facade's pinned calls (R-31)", () => {
+  it("RP1. a seed Rust recipe whose sketch called a name the facade does not pin passed the library: the library names it, and no seed sketch calls one", async () => {
+    const { loadRecipes, unpinnedSketchCalls } = await import("../../src/harness-seed/loop/library.ts");
+    const fixture = JSON.parse(
+      await readFile(new URL("../fixtures/rust-facade-vocabulary.json", import.meta.url), "utf8"),
+    ) as Record<string, unknown>;
+    const pinned = [...pinnedFacadeCalls(fixture), ...(await facadeFunctionNames())];
+    assert.ok(pinned.includes("nav.move_to") && pinned.includes(".sim_radius"), "the fixture's calls are read");
+    assert.ok(pinned.includes("on_update") && pinned.includes("cube_with"), "the facade's own functions are read");
+    const sketched = (sketch: string, runtime: GameStack = GameStack.RustWgpu) =>
+      unpinnedSketchCalls({ runtime, sketch }, pinned);
+    const table: Array<[string, string, string[]]> = [
+      ["a call no facade has", "nav.teleport_agent(agent, at);", ["teleport_agent"]],
+      ["a pinned call", "nav.move_to(agent, target);", []],
+      ["a pinned builder step", "Streaming::grid(64.0).sim_radius(2).view_radius(4)", []],
+      ["a pinned call behind a getter", "gfx.assets().compound(&parts)", []],
+      ["an unpinned constructor", "let s = Streaming::warp(4.0);", ["warp"]],
+      ["Rust's own methods and the hooks", "game.on_update(|sim, _| { let v = sim.world.list.clone(); });", []],
+      ["a call in a comment is still copied", "// then sim.net.fly(me) for the dash", ["fly"]],
+      ["a space before the bracket", "nav.zap (agent);", ["zap"]],
+      ["each name once, sorted", "nav.zap(); nav.bop(); nav.zap();", ["bop", "zap"]],
+      ["a turbofish", "let d = sim.facets.get_mut::<Dash>(); Thing::conjure::<u8>();", ["conjure"]],
+      ["a function the sketch defines", "fn plan_route(w: &mut World) {} sim.stream.plan_route(w);", []],
+      ["a method of the game's World", "sim.world.plan_path(id, ctx); world.spawn_wave(3);", []],
+      ["a Rust type's own function", "let mut queue = VecDeque::new(); let names = Vec::with_capacity(4);", []],
+      ["a facade type's unpinned function", "let agent = NavAgent::summon(1.0);", ["summon"]],
+    ];
+    for (const [what, sketch, expected] of table) assert.deepEqual(sketched(sketch), expected, what);
+    assert.deepEqual(sketched("scene.teleport(mesh);", GameStack.ThreeJs), [], "a three.js recipe is not a Rust one");
+
+    const seed = path.join(process.cwd(), "src", "harness-seed");
+    const rust = (await loadRecipes(seed)).filter((recipe) => recipe.runtime === GameStack.RustWgpu);
+    const ids = rust.map((recipe) => recipe.id);
+    for (const id of ["rust.terrain", "rust.multiplayer", "rust.crash-records"])
+      assert.ok(ids.includes(id), `${id} is a Rust recipe in the seed`);
+    const unpinned = Object.fromEntries(
+      rust.flatMap((recipe) => {
+        const names = unpinnedSketchCalls(recipe, pinned);
+        return names.length ? [[recipe.id, names]] : [];
+      }),
+    );
+    assert.deepEqual(unpinned, {}, "seed Rust sketches call only pinned or plain names");
+  });
+});
