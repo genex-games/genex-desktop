@@ -567,6 +567,37 @@ describe("the vendored set's inventory refuses what nobody reviewed", () => {
     );
   });
 
+  it("holds a release tree that carries the workspace's own crates to their entries, both ways", async () => {
+    const own = new Set(["genex-save-0.1.0"]);
+    const listed = {
+      ...FIXTURE_INVENTORY.crates,
+      "genex-save-0.1.0": { nonSource: ["tests/goldens/deflate-300k.sav"] },
+    };
+    const release = await fixtureVendor({ crates: listed });
+    await writeCrates(release.vendor, {
+      "genex-save-0.1.0": {
+        "Cargo.toml": plainManifest("genex-save", "0.1.0"),
+        "tests/goldens/deflate-300k.sav": "\u0000\u0001binary",
+      },
+    });
+    await checkVendor(release.vendor, release.inventoryFile, own);
+    await writeCrates(release.vendor, {
+      "genex-save-0.1.0": { "tests/goldens/other.sav": "\u0000\u0002binary" },
+    });
+    await assert.rejects(
+      checkVendor(release.vendor, release.inventoryFile, own),
+      refusedWith(VendorRefusal.InventoryNew, /genex-save-0\.1\.0: non-source file tests\/goldens\/other\.sav/),
+    );
+    const stale = await fixtureVendor({ crates: listed });
+    await writeCrates(stale.vendor, {
+      "genex-save-0.1.0": { "Cargo.toml": plainManifest("genex-save", "0.1.0") },
+    });
+    await assert.rejects(
+      checkVendor(stale.vendor, stale.inventoryFile, own),
+      refusedWith(VendorRefusal.InventoryStale, /genex-save-0\.1\.0/),
+    );
+  });
+
   it("reads the workspace's own crates from a lock: the packages without a checksum", async () => {
     const lock = path.join(await tmpDir("studio-rust-vendor-lock-"), "Cargo.lock");
     const registry = 'source = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "00"\n';

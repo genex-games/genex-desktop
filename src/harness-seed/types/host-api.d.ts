@@ -2254,7 +2254,7 @@ export interface NativeCapabilityReceipt {
   savesApi?: number;
   /** The `uiSettings` verb's version this game serves; absent: a build without the verb. */
   uiSettingsApi?: number;
-  /** The bakes a dev build registered (`game.nav_bake`), each once; the build's bake step sends `bakeAssets` for each. */
+  /** The bakes a dev build registered (`game.nav_bake`, `game.impostor_bake`), each once; the build's bake step sends `bakeAssets` for each. */
   bakes?: NativeBakeRef[];
 }
 // ↑ src/shared/native-contract.ts

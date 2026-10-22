@@ -183,6 +183,9 @@ const DT = {
   RelrSz: 35,
   Relr: 36,
   RelrEnt: 37,
+  AndroidRelr: 0x6fffe000,
+  AndroidRelrSz: 0x6fffe001,
+  AndroidRelrEnt: 0x6fffe003,
   GnuHash: 0x6ffffef5,
   DepAudit: 0x6ffffefb,
   Audit: 0x6ffffefc,
@@ -265,6 +268,18 @@ const EXECUTABLE_TAGS: ReadonlySet<number> = new Set([
   DT.VerDefNum,
   DT.VerNeed,
   DT.VerNeedNum,
+]);
+
+/**
+ * The tags an Android game's linker writes besides those: NDK r30's lld at API 29 packs relative
+ * relocations as `DT_ANDROID_RELR`, `DT_ANDROID_RELRSZ` and `DT_ANDROID_RELRENT` (bionic reads
+ * them like `DT_RELR`), so only the Android policy admits them.
+ */
+const ANDROID_TAGS: ReadonlySet<number> = new Set([
+  ...EXECUTABLE_TAGS,
+  DT.AndroidRelr,
+  DT.AndroidRelrSz,
+  DT.AndroidRelrEnt,
 ]);
 
 /** What kind of loadable ELF a file is: an executable (`ET_EXEC`, or a PIE) or a shared object. */
@@ -960,15 +975,17 @@ const rustGl: RustElfCheck = (image) => {
 };
 
 /** Refuses a library loaded through a filter or auditor tag, and any tag no linker writes into a game. */
-const rustTags: RustElfCheck = (image) => {
-  const load = image.tagLoads[0];
-  if (load !== undefined) {
-    return rustRefused(NativeRefusal.ExtraSharedObject, RustAdmissionProblem.LoadsByTag, MESSAGE.TagLoad(load));
-  }
-  const unknown = image.dynamicTags.find((tag) => !EXECUTABLE_TAGS.has(tag));
-  if (unknown === undefined) return null;
-  return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.Unreadable, MESSAGE.UnknownTag(unknown));
-};
+const rustTags =
+  (allowed: ReadonlySet<number>): RustElfCheck =>
+  (image) => {
+    const load = image.tagLoads[0];
+    if (load !== undefined) {
+      return rustRefused(NativeRefusal.ExtraSharedObject, RustAdmissionProblem.LoadsByTag, MESSAGE.TagLoad(load));
+    }
+    const unknown = image.dynamicTags.find((tag) => !allowed.has(tag));
+    if (unknown === undefined) return null;
+    return rustRefused(NativeRefusal.NotAnExecutable, RustAdmissionProblem.Unreadable, MESSAGE.UnknownTag(unknown));
+  };
 
 /** Refuses a `DT_NEEDED` outside `allowed`. */
 const rustImports =
@@ -1028,7 +1045,7 @@ function rustLinuxChecks(floor: { text: string; parts: number[] }, requireOrigin
     rustExecutable,
     rustInterpreter([LINUX_INTERPRETER]),
     rustGl,
-    rustTags,
+    rustTags(EXECUTABLE_TAGS),
     rustImports([...GLIBC_SONAMES, ...RUST_LINUX_LIBRARIES]),
     rustSearchPath(runpaths),
     rustGlibc(floor),
@@ -1040,7 +1057,7 @@ const ANDROID_CHECKS: readonly RustElfCheck[] = [
   rustMachine(ANDROID_AARCH64_MACHINE),
   rustInterpreter([null, ANDROID_INTERPRETER]),
   rustGl,
-  rustTags,
+  rustTags(ANDROID_TAGS),
   rustImports(ANDROID_LIBRARIES),
   rustSearchPath([[]]),
   androidAlignment,
@@ -1083,8 +1100,8 @@ export function admitRustLinuxElf(
 /**
  * Admits a Rust · wgpu game's Android binary from its bytes (M3.5): AArch64 bionic, a shared object
  * (packaged as `libmain.so`) or an executable started through {@link ANDROID_INTERPRETER}, linking
- * only {@link ANDROID_LIBRARIES}, no GL, no search path, and every `PT_LOAD` aligned to 16 KB.
- * Pure; never throws.
+ * only {@link ANDROID_LIBRARIES}, no GL, no search path, no dynamic tag but a linker's own (NDK
+ * r30's Android RELR tags included), and every `PT_LOAD` aligned to 16 KB. Pure; never throws.
  */
 export function admitAndroidElf(bytes: Uint8Array): RustElfAdmission {
   return admitRustElf(bytes, ANDROID_CHECKS);

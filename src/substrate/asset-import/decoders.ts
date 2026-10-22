@@ -44,6 +44,8 @@ export type ImportDecoder = (typeof ImportDecoder)[keyof typeof ImportDecoder];
 export const IMPORTER_TOOLS_ENV = "GENEX_IMPORTER_TOOLS";
 /** The folder the build stages the tools into, under the app's resources (what the host names in {@link IMPORTER_TOOLS_ENV}). */
 export const IMPORTER_TOOLS_RESOURCES_FOLDER = "importer-tools";
+/** Where the build bundles the importer (`worker.ts`), under the app's resources: a built app has no `src/`. */
+export const IMPORTER_WORKER_RESOURCE = "asset-import/worker.mjs";
 
 /** The folder of each tool under the importer tools folder. */
 export const ImporterToolFolder = {

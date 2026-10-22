@@ -169,7 +169,9 @@ Use the built-in system before writing your own; each page holds the how and its
   its capsule at the feet and draw the model at the capsule, never placed by its centre.
 - **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
   tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
-  cards past their last level, declared once in `on_reset` (`docs/api/drawing.md`).
+  cards past their last level, declared once in `on_reset`. A model only streamed cells draw
+  bakes its card only if `wire` registers it with `game.impostor_bake(..)`; otherwise it keeps
+  its last level, named `impostor-not-baked` (`docs/api/drawing.md`).
 - **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
   `state().volatile.audio`, never by ear (`docs/api/audio.md`).
 - **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`); multiplayer is

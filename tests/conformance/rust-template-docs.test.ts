@@ -119,6 +119,7 @@ const FACADE = JSON.parse(
   particles: { calls: string[]; refusals: string[] };
   audio: { calls: string[]; refusals: string[] };
   input: { calls: string[]; refusals: string[] };
+  lod: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
   probes: { calls: string[] };
   decals: { calls: string[] };
@@ -1029,10 +1030,10 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "gfx.assets().compound",
     ".with_impostor",
     "Impostor::hemi",
-    ".not_before",
     ".with_levels",
     ".with_lod_bias",
     ".lod_refusal",
+    "game.impostor_bake",
   ],
   "rust.input-controls": [
     "game.input",
@@ -1135,6 +1136,16 @@ describe("the seed's game-systems recipes (EP-R1)", () => {
     const skill = readFileSync(LADDER_SKILL, "utf8");
     for (const word of ["state().hud.widgets", "ctx.slots()", "lastLoad.checksumMatch", "docs/api/saves.md"])
       assert.ok(skill.includes(word), `the ladder skill names ${word}`);
+  });
+
+  it("name every LOD refusal and the registration a streamed model's impostor needs (LOD-23)", () => {
+    const { intent } = seedRecipe("rust.lod-impostors");
+    for (const refusal of FACADE.lod.refusals)
+      assert.ok(intent.includes(refusal), `rust.lod-impostors names ${refusal}`);
+    assert.ok(intent.includes("game.impostor_bake("), "rust.lod-impostors names game.impostor_bake");
+    assert.ok(seedRecipe("rust.streamed-world").intent.includes("game.impostor_bake("), "the streamed world names it");
+    const rules = section(read("CLAUDE.md"), "Game systems");
+    assert.ok(rules.includes("game.impostor_bake("), "the guide's far things name game.impostor_bake");
   });
 
   it("sketch genex.toml rows the build accepts", () => {

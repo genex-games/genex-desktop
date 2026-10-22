@@ -114,11 +114,19 @@ const shared = {
 };
 
 /**
- * The utility processes main forks, bundled on their own as CommonJS: the terminal host and the
- * native supervisor (which `src/main/index.ts` forks only when its bundle exists).
+ * The utility processes main forks, bundled on their own: the terminal host and the native
+ * supervisor as CommonJS (main forks the supervisor only when its bundle exists), and the Rust
+ * asset importer as ESM (`resources/asset-import/worker.mjs`, IMPORTER_WORKER_RESOURCE in
+ * `src/substrate/asset-import/decoders.ts`), which main starts in its sandbox: a built app has no
+ * `src/` to start `worker.ts` from.
  */
 export function nodeBundles(repo, out) {
   return [
+    {
+      entry: path.join(repo, "src", "substrate", "asset-import", "worker.ts"),
+      outfile: path.join(out, "resources", "asset-import", "worker.mjs"),
+      format: "esm",
+    },
     {
       entry: path.join(repo, "src", "main", "terminal-host.ts"),
       outfile: path.join(out, "resources", "terminal", "host.cjs"),

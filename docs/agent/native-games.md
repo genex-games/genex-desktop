@@ -87,7 +87,9 @@ its genex release). New games default by
 [harness runtime](../harness-runtime.md)). After staging, the lane's import step
 (`importStagedAssets` in [`rust-assets.ts`](../../src/main/rust-assets.ts), jobs in
 `layout.assetJobs`) plans every staged `assets/**` file for the destination and runs each
-importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. A job whose
+importable one as its own sandboxed job, at most `IMPORT_JOBS_MAX` (4) at once. A built app runs
+the importer the build bundled into `resources/asset-import/worker.mjs` (`importerWorker`); only a
+process running from `src/` starts `worker.ts` itself. A job whose
 importer was killed by a signal runs once more (the importer is a pure function of its job), and a
 refused file's row names why in `detail`: the importer's own line, its exit or timeout with the end
 of its stderr, or the sandbox's error. The outputs
@@ -165,7 +167,7 @@ build is waiting on it. Other destinations take the cache only. The cache is
 `<asset-cache>/bakes/<project digest>/<input>/` (`bakeCacheFolder`). The step reads each output from the
 run's `state/bakes/` without following a link, checks its size and FNV-1a 64, writes it into the
 cache and `out/` (admitted again) and records lock `derived` rows; an unchanged rebuild spawns
-nothing, a game whose `src/` names no `nav_bake` is never started to ask, and a hostile name or a
+nothing, a game whose `src/` names neither `nav_bake` nor `impostor_bake` is never started to ask, and a hostile name or a
 linked folder refuses that bake with nothing written. Outputs never reach the game folder, and a
 failed bake never fails the build (`NavMesh::from_bytes_for` bakes at reset). An export keeps line tables outside it ([`rust-debug-files.ts`](../../src/substrate/rust-debug-files.ts)):
 a dSYM (Apple, debug map stripped), the unstripped executable (ELF/PE, shipped through

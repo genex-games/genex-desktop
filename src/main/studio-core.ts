@@ -246,6 +246,7 @@ import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
 import {
   defaultImporterCommand,
+  importerWorker,
   type RustAssetImportDeps,
   rustImportSandboxes,
   rustStageImporter,
@@ -1285,7 +1286,10 @@ export class StudioCore {
       sandboxFor: rustImportSandboxes({ enabled: this.options.sandbox ?? true, alongside: this.sandbox }),
       secretPaths: this.#protectedPaths(),
       denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
-      importer: defaultImporterCommand(path.join(this.options.paths.resources, IMPORTER_TOOLS_RESOURCES_FOLDER)),
+      importer: defaultImporterCommand(
+        path.join(this.options.paths.resources, IMPORTER_TOOLS_RESOURCES_FOLDER),
+        importerWorker(this.options.paths.resources),
+      ),
     };
   }
 
