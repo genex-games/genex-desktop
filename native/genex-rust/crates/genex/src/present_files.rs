@@ -4,9 +4,9 @@
 //! executable (`../Resources/assets/` inside a Mac app bundle, as the C++ runtime's `platform.cpp`
 //! finds them). A dev-flavour build (feature `studio`) with no `assets/` beside it, such as a plain
 //! `cargo run` from `target/debug`, reads `$CARGO_MANIFEST_DIR/assets` instead; an export never
-//! does. Models are loaded once per path; a path outside the asset-path rule, a link, or a file
-//! whose real path leaves the asset folder is never read. The sim's reads (`gfx.assets().bytes`)
-//! go through the same [`AssetFiles`], attached before the first reset.
+//! does. Models are loaded once per path; a path outside the asset-path rule, or one with a link
+//! at any of its names below the asset folder, is never read. The sim's reads
+//! (`gfx.assets().bytes`) go through the same [`AssetFiles`], attached before the first reset.
 
 #[cfg(feature = "studio")]
 use std::ffi::OsString;
@@ -29,12 +29,12 @@ const MANIFEST_DIR_ENV: &str = "CARGO_MANIFEST_DIR";
 
 /// A native destination's assets, for the sim's reads and the presenter's: the compiled table
 /// first, then files under the asset folder. A file is read only under the asset-path rule, never
-/// through a link at its name, and only when its real path stays inside the folder's own (the rule
-/// of genex-assets' `AssetRoot`), as a regular file of at most [`ASSET_READ_MAX_BYTES`].
+/// through a link at its name or at a folder on the way to it (so it stays inside the folder), as a
+/// regular file of at most [`ASSET_READ_MAX_BYTES`].
 #[doc(hidden)]
 pub struct AssetFiles {
     table: AssetTable,
-    /// The asset folder; None for the table only. Its real path is taken at each read, so a folder
+    /// The asset folder; None for the table only. It is looked at again at each read, so a folder
     /// made after the game started (the studio's first import) is read as before.
     root: Option<PathBuf>,
     groups: AssetGroups,
@@ -62,8 +62,9 @@ impl AssetFiles {
         self
     }
 
-    /// The real path of `path` under the folder, a regular file, and its size; or why not. Nothing
-    /// is opened. The streamed reads (`stream_source.rs`) check their paths here too.
+    /// The path of `path` under the folder, reached through no link below it, a regular file, and
+    /// its size; or why not. Nothing is opened. The streamed reads (`stream_source.rs`) check their
+    /// paths here too.
     pub(crate) fn file(&self, path: &str) -> Result<(PathBuf, u64), AssetError> {
         if !is_safe_asset_path(path) {
             return Err(refused(AssetErrorCode::UnsafePath, path, "not a plain path under assets/"));
@@ -71,25 +72,31 @@ impl AssetFiles {
         let Some(folder) = self.root.as_ref() else {
             return Err(refused(AssetErrorCode::Missing, path, "no asset folder"));
         };
-        // The folder's own links are resolved here; every link below it is checked against it.
-        let root = std::fs::canonicalize(folder).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
-        let named = path.split('/').fold(root.clone(), |named, segment| named.join(segment));
-        let link = std::fs::symlink_metadata(&named).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
-        if link.file_type().is_symlink() {
-            return Err(refused(AssetErrorCode::UnsafePath, path, "a link"));
+        // The folder itself may be reached through links (a temporary folder's `/var`, a Mac
+        // bundle's `MacOS/..`). Below it each name is looked at without following it and a link is
+        // refused, so a path that never climbs (the asset-path rule) stays inside the folder. No
+        // real path is taken: inside a Mac game's sandbox the folders above its bundle cannot be
+        // read, so `realpath` fails there and Native Live drew no bundled asset (GE live-app r2).
+        let root = std::fs::metadata(folder).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+        if !root.is_dir() {
+            return Err(refused(AssetErrorCode::Missing, path, "the asset folder is not a folder"));
         }
-        let real = std::fs::canonicalize(&named).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
-        if !real.starts_with(&root) || real == root {
-            return Err(refused(AssetErrorCode::UnsafePath, path, "leaves the asset folder"));
+        let mut named = folder.clone();
+        let mut last = root;
+        for segment in path.split('/') {
+            named.push(segment);
+            last = std::fs::symlink_metadata(&named).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
+            if last.file_type().is_symlink() {
+                return Err(refused(AssetErrorCode::UnsafePath, path, "a link"));
+            }
         }
-        let meta = std::fs::metadata(&real).map_err(|error| refused(AssetErrorCode::Missing, path, error))?;
-        if !meta.is_file() {
+        if !last.is_file() {
             return Err(refused(AssetErrorCode::Missing, path, "not a file"));
         }
-        if meta.len() > ASSET_READ_MAX_BYTES {
-            return Err(refused(AssetErrorCode::TooLarge, path, format!("{} bytes", meta.len())));
+        if last.len() > ASSET_READ_MAX_BYTES {
+            return Err(refused(AssetErrorCode::TooLarge, path, format!("{} bytes", last.len())));
         }
-        Ok((real, meta.len()))
+        Ok((named, last.len()))
     }
 }
 
@@ -264,7 +271,7 @@ mod tests {
     }
 
     /// A link inside `assets/` that leads out of it (a file link or a folder link) reads nothing:
-    /// the presenter's reads go through the real path, as the sim's do.
+    /// the presenter's reads refuse every link below the folder, as the sim's do.
     #[cfg(unix)]
     #[test]
     fn a_link_inside_the_assets_folder_that_leaves_it_reads_nothing() {
@@ -280,5 +287,182 @@ mod tests {
             assert_eq!(source.model_bytes(hostile), None, "{hostile:?}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The asset-folder hostile table, each refused by its code before anything is opened: a link
+    /// at the name (inside or out), `..`, an absolute path, a folder link whose real path leaves
+    /// the folder, and a file over the read cap (sparse, so nothing is written).
+    #[cfg(unix)]
+    #[test]
+    fn the_hostile_asset_table_is_refused_before_any_read() {
+        let dir = std::env::temp_dir().join(format!("genex-present-hostile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let assets = dir.join("assets");
+        hostile_folder(&dir, &assets);
+        let source = AssetFiles::new(&[], Some(assets));
+        for (path, code) in HOSTILE_ROWS {
+            let refusal = AssetSource::read(&source, path).err().map(|error| error.code());
+            assert_eq!(refusal, Some(*code), "{path:?}");
+        }
+        assert_eq!(AssetSource::read(&source, "models/a.glb").map(|bytes| bytes.len()).ok(), Some(4));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The hostile rows and the code each is refused with.
+    #[cfg(unix)]
+    const HOSTILE_ROWS: &[(&str, AssetErrorCode)] = &[
+        ("alias.glb", AssetErrorCode::UnsafePath),
+        ("leak.glb", AssetErrorCode::UnsafePath),
+        ("leaks/secret.glb", AssetErrorCode::UnsafePath),
+        ("../secret.glb", AssetErrorCode::UnsafePath),
+        ("models/../../secret.glb", AssetErrorCode::UnsafePath),
+        ("/etc/hosts", AssetErrorCode::UnsafePath),
+        ("huge.bin", AssetErrorCode::TooLarge),
+    ];
+
+    /// `assets` with `models/a.glb`, `textures/a.png` and every hostile row's file; `dir/outside`
+    /// holds the secret the links lead to.
+    #[cfg(unix)]
+    fn hostile_folder(dir: &Path, assets: &Path) {
+        std::fs::create_dir_all(assets.join("models")).expect("models folder");
+        std::fs::create_dir_all(assets.join("textures")).expect("textures folder");
+        std::fs::create_dir_all(dir.join("outside")).expect("outside folder");
+        std::fs::write(assets.join("models/a.glb"), b"glTF").expect("model");
+        std::fs::write(assets.join("textures/a.png"), b"\x89PNG-one").expect("texture");
+        std::fs::write(dir.join("outside/secret.glb"), b"secret").expect("outside file");
+        std::fs::write(dir.join("secret.glb"), b"secret").expect("climbing file");
+        std::os::unix::fs::symlink(assets.join("models/a.glb"), assets.join("alias.glb")).expect("link inside");
+        std::os::unix::fs::symlink(dir.join("outside/secret.glb"), assets.join("leak.glb")).expect("file link");
+        std::os::unix::fs::symlink(dir.join("outside"), assets.join("leaks")).expect("folder link");
+        let huge = std::fs::File::create(assets.join("huge.bin")).expect("huge file");
+        huge.set_len(ASSET_READ_MAX_BYTES + 1).expect("sparse length");
+    }
+
+    /// A Mac game's reads from inside the game sandbox: the bundle a Native Live run stages, run
+    /// under the profile `gameSandboxProfile` writes (src/substrate/game-sandbox-profile.ts).
+    #[cfg(target_os = "macos")]
+    mod sandboxed {
+        use super::*;
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+
+        /// Set in the child: this test binary, copied into the bundle, answers the rows from inside.
+        const CHILD_ENV: &str = "GENEX_PRESENT_FILES_SANDBOX_CHILD";
+        /// The child's test, by its full name in this binary.
+        const CHILD_TEST: &str = "present_files::tests::sandboxed::child_reads_rows";
+        const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
+        /// The headless game profile's file and process rules as `gameSandboxProfile({ mode:
+        /// "headless" })` writes them: reads of `/`, the system library and the bundle only, writes
+        /// to the state folder only (its GPU and Mach lines are left out: the child draws nothing).
+        const GAME_PROFILE: &str = r#"(version 1)
+(deny default (with message (param "RUN_TAG")))
+(allow process-exec (literal (param "EXE")))
+(allow sysctl-read (sysctl-name "hw.ephemeral_storage") (sysctl-name "hw.memsize") (sysctl-name "hw.ncpu") (sysctl-name "hw.pagesize_compat") (sysctl-name "hw.perflevel0.logicalcpu") (sysctl-name "hw.perflevel1.logicalcpu") (sysctl-name "kern.bootargs") (sysctl-name "kern.iossupportversion") (sysctl-name "kern.osproductversion") (sysctl-name "kern.osrelease") (sysctl-name "kern.osvariant_status") (sysctl-name "security.mac.lockdown_mode_state") (sysctl-name "sysctl.proc_translated"))
+(allow file-read* (literal "/") (subpath "/System/Library") (subpath (param "BUNDLE")))
+(allow file-read* file-write* (subpath (param "STATE")))
+(deny file-read* (subpath "/System/Library/Extensions/AppleMetalOpenGLRenderer.bundle") (subpath "/System/Library/Frameworks/OpenGL.framework"))
+(deny network*)
+"#;
+        /// The rows the child reads twice: once as staged, once after the host swapped the PNG.
+        const RESIDENT: [&str; 2] = ["models/a.glb", "textures/a.png"];
+
+        /// One row's answer: `ok <length>` or the refusal's wire code.
+        fn answer(files: &AssetFiles, path: &str) -> String {
+            match AssetSource::read(files, path) {
+                Ok(bytes) => format!("ok {}", bytes.len()),
+                Err(error) => error.code().wire().to_owned(),
+            }
+        }
+
+        /// The child: `asset_root()` from where it runs (`Game.app/Contents/MacOS`), every row, then
+        /// a line from the parent, then the resident rows again.
+        #[test]
+        fn child_reads_rows() {
+            if std::env::var_os(CHILD_ENV).is_none() {
+                return;
+            }
+            let files = AssetFiles::for_process(&[]);
+            let rows = RESIDENT.iter().copied().chain(HOSTILE_ROWS.iter().map(|(path, _)| *path));
+            let first: Vec<String> = rows.map(|path| answer(&files, path)).collect();
+            println!("FIRST {}", first.join("|"));
+            std::io::stdout().flush().expect("flush");
+            let mut swapped = String::new();
+            std::io::stdin().lock().read_line(&mut swapped).expect("the parent's go-ahead");
+            let again: Vec<String> = RESIDENT.iter().map(|path| answer(&files, path)).collect();
+            println!("AGAIN {}", again.join("|"));
+        }
+
+        /// What follows `marker` on the first line holding it (libtest prints the test's name on the
+        /// same line); "" when the child ended without it.
+        fn marked(lines: impl Iterator<Item = std::io::Result<String>>, marker: &str) -> String {
+            let mut found = lines.map_while(Result::ok).filter_map(|line| line.split_once(marker).map(|(_, rest)| rest.to_owned()));
+            found.next().unwrap_or_default()
+        }
+
+        /// A Native Live run's folder (`<run>/bundle/Game.app/Contents/{MacOS/game,
+        /// Resources/assets/}` and `<run>/state`), this test binary as its executable; the hostile
+        /// files sit in `Resources/`, inside what the profile lets the game read.
+        fn run_dir(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+            let run = std::fs::canonicalize(dir).expect("the run folder's real path");
+            let contents = run.join("bundle/Game.app/Contents");
+            std::fs::create_dir_all(contents.join("MacOS")).expect("MacOS");
+            std::fs::create_dir_all(run.join("state")).expect("state");
+            let assets = contents.join("Resources/assets");
+            hostile_folder(&contents.join("Resources"), &assets);
+            let exe = contents.join("MacOS/game");
+            std::fs::copy(std::env::current_exe().expect("this test binary"), &exe).expect("the game executable");
+            (run, exe, assets)
+        }
+
+        /// Native Live's game reads its bundled GLB and PNG from inside the game sandbox (GE
+        /// live-app r2 red 1: the checker and an untextured PNG), refuses the hostile table there
+        /// as outside it, and reads a PNG the host swapped in by rename while it runs (the native
+        /// `reloadAssets` file swap, no rebuild).
+        #[test]
+        fn a_sandboxed_mac_game_reads_its_bundled_assets_and_a_swapped_png() {
+            if std::env::var_os(CHILD_ENV).is_some() {
+                return;
+            }
+            let dir = std::env::temp_dir().join(format!("genex-present-sandbox-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("run folder");
+            let (run, exe, assets) = run_dir(&dir);
+            let profile = dir.join("game.sb");
+            std::fs::write(&profile, GAME_PROFILE).expect("profile");
+            let define = |name: &str, value: &Path| format!("{name}={}", value.display());
+            let defines = [define("EXE", &exe), define("BUNDLE", &run.join("bundle")), define("STATE", &run.join("state"))];
+            let mut child = Command::new(SANDBOX_EXEC)
+                .arg("-f")
+                .arg(&profile)
+                .args(["-D", "RUN_TAG=present-files"])
+                .args(defines.iter().flat_map(|value| ["-D", value.as_str()]))
+                .arg(&exe)
+                .args(["--exact", CHILD_TEST, "--nocapture", "--test-threads=1"])
+                .env_clear()
+                .env(CHILD_ENV, "1")
+                .current_dir(run.join("state"))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("sandbox-exec");
+            let mut lines = std::io::BufReader::new(child.stdout.take().expect("stdout")).lines();
+            let first = marked(lines.by_ref(), "FIRST ");
+            // The host's swap: the new bytes written beside, renamed over the old name.
+            let swapped = assets.join("textures/.a.png.swap");
+            std::fs::write(&swapped, b"\x89PNG-second-version").expect("new texture");
+            std::fs::rename(&swapped, assets.join("textures/a.png")).expect("swap");
+            writeln!(child.stdin.take().expect("stdin")).expect("go-ahead");
+            // Read to the end, so the child's last lines never meet a closed pipe.
+            let rest: Vec<std::io::Result<String>> = lines.collect();
+            let again = marked(rest.into_iter(), "AGAIN ");
+            let output = child.wait_with_output().expect("the child's end");
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            let _ = std::fs::remove_dir_all(&dir);
+            let refusals: Vec<&str> = HOSTILE_ROWS.iter().map(|(_, code)| code.wire()).collect();
+            assert_eq!(first, format!("ok 4|ok 8|{}", refusals.join("|")), "{stderr}");
+            assert_eq!(again, "ok 4|ok 19", "{stderr}");
+            assert!(output.status.success(), "{stderr}");
+        }
     }
 }

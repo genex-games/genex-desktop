@@ -1,0 +1,47 @@
+{
+  "id": "rust.crash-records",
+  "runtime": "rust-wgpu",
+  "title": "Code whose crash record says what broke: named expects, guards, scopes and input through the tick, in Rust",
+  "tags": [
+    "crash",
+    "crashes",
+    "panic",
+    "record",
+    "expect",
+    "unwrap",
+    "guard",
+    "replay",
+    "export",
+    "phone",
+    "web",
+    "debug",
+    "profile",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "crash",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "A crash record is only as useful as the code: expect names the broken rule, guards keep panics real, scopes and actions fill its summary and replay.",
+  "intent": "A panic, an uncaught GPU error or a lost device ends a run with one genex-crash/1 record: its kind, message, file:line, frames, seed, tick, the last profile summary and the input that led to it (replay). Write code whose record says what broke. Use expect(\"..\") naming the rule that broke (\"the wave stops at the last speed\"), never a bare unwrap, and guard what may be missing with let-else, so every crash is a real bug. Time suspects with genex::profile_scope! so the summary names them. Read input only through ctx.actions or ctx.keys in the tick, so replay holds it. Never catch_unwind, spawn a thread or read a clock: catching loses the record and leaves the state broken, and nondeterminism makes the seed and tick useless. A record stays where its run wrote it: Studio keeps the last in .studio/crashes/ (read with game.crashes), the web page's crashes member answers from IndexedDB, a desktop export writes genex-crash/ under its save root, and a phone writes genex-self-test/crash-<n>.json with frames as image offsets, not symbols. Nothing uploads a record. Reproduce and fix one with debug.crash-replay, then keep a demo that walks the path and a probe of its end state.",
+  "sketch": "// src/facets/waves.rs — the facet's own module; src/main.rs adds its two FACET WIRING lines.\n// World (src/main.rs) holds lane: usize, wave: usize, z: f32, targets: Vec<Vec3> and near: bool;\n// the game's ActionMap binds SWITCH to Space.\nuse super::World;\nuse genex::actions::ActionId;\nuse genex::prelude::*;\nuse genex::profile::ScopeName;\n\nconst SWITCH: ActionId = ActionId::new(\"switch\");\nconst WAVE: ScopeName = ScopeName::new(\"wave\");\nconst LANES: usize = 3;\n/// Each wave's speed; the world's wave never passes the last.\nconst SPEEDS: [f32; 3] = [4.0, 6.0, 9.0];\n/// Ticks between waves.\nconst WAVE_TICKS: u64 = 600;\n\npub fn wire(game: &mut Game<World>) {\n    game.on_update(|sim, ctx| {\n        genex::profile_scope!(\"waves\"); // the record's profile summary names this scope\n        // Input only through the tick (actions or keys), so the record's replay holds it.\n        if ctx.actions.fired(SWITCH) {\n            sim.world.lane = (sim.world.lane + 1) % LANES;\n        }\n        if ctx.tick % WAVE_TICKS == WAVE_TICKS - 1 && sim.world.wave + 1 < SPEEDS.len() {\n            sim.world.wave += 1;\n        }\n        // A broken rule panics naming the rule: the record's message and line say what broke.\n        let speed = *SPEEDS.get(sim.world.wave).expect(\"the wave stops at the last speed\");\n        sim.world.z += speed * ctx.dt;\n        genex::profile::counter(WAVE, sim.world.wave as f64);\n        // What may be missing is guarded, never unwrapped: a crash is then always a real bug.\n        let Some(target) = sim.world.targets.first() else { return };\n        sim.world.near = (target.z - sim.world.z).abs() < 1.0;\n    });\n    game.probe(\"waves\", |sim| json!({ \"wave\": sim.world.wave, \"lane\": sim.world.lane }));\n    // After a fix: walk the input path the record kept, so every later look replays it.\n    game.demo(\"switch-past-a-wave\", |d| {\n        d.inject(Input::key_tap(Key::Space));\n        d.advance_ms(10_500); // past tick 600, where the wave changes\n        json!({ \"wave\": d.sim().world.wave, \"lane\": d.sim().world.lane })\n    });\n}\n",
+  "port": "The facet whose rule can break owns its expect messages, guards and scope; the facet a record names owns the fix and the demo.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Profiling)",
+      "note": "Crash records: the kinds, the seed, tick, summary and replay a record keeps, and where each destination writes it."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Determinism)",
+      "note": "No clock, thread or unseeded randomness, so a record's seed and tick reproduce the crash."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}
