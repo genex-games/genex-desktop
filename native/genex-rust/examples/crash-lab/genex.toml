@@ -1,0 +1,7 @@
+# crash-lab's manifest: a procedural lab, no physics, no assets.
+[game]
+title = "Crash lab"
+world_size = [960, 540]
+
+[physics]
+enabled = false
