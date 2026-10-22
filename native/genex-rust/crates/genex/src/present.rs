@@ -112,6 +112,7 @@ use genex_render::settings::{Environment, Quality};
 use genex_render::extension::native_features;
 use genex_render::immediate::HUD_TAG;
 use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, GlbSidecars, MeshData, SPHERE_TRIANGLES, decode_image};
+use genex_render::mesh_lod_runtime::{RUNTIME_LOD_MAX_TRIANGLES, RuntimeLodOutcome, add_runtime_chains};
 use genex_render::meshlet::MeshletSet;
 use genex_render::motion::DrawId;
 use genex_render::letterbox::{letterbox, output_for_window};
@@ -1185,6 +1186,20 @@ fn with_authored_levels(parts: ModelParts, levels: &[(ModelParts, f32)]) -> Mode
     parts
 }
 
+/// `parts` with their runtime chain when the GLB brought none (LOD-21, [`add_runtime_chains`]).
+fn with_runtime_chains(mut parts: ModelParts) -> ModelParts {
+    add_runtime_chains(&mut parts);
+    parts
+}
+
+/// Tell the load's log when a model was too big for its runtime chain (LOD-21); a chain built,
+/// an imported chain or a small model is the ordinary case and says nothing.
+fn log_runtime_chains(path: &str, outcome: RuntimeLodOutcome, log: &mut dyn FnMut(&str)) {
+    if outcome == RuntimeLodOutcome::OverBudget {
+        log(&format!("model {path:?}: over {RUNTIME_LOD_MAX_TRIANGLES} triangles, so no levels of detail were built at load; drawing it whole"));
+    }
+}
+
 /// The smallest sphere around two (centre xyz, radius); a radius that is not positive is none.
 fn union_sphere(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     let positive = |radius: f32| radius > 0.0;
@@ -1247,14 +1262,23 @@ fn load_model_levels(
     // Every part in one upload: the renderer writes the model's own rows once, not once a material.
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
-    let model_parts: ModelParts = glb.model_parts();
+    let mut model_parts: ModelParts = glb.model_parts();
     let sphere = parts_sphere(&model_parts);
     let mismatch = levels.iter().any(|(level, _)| level.len() != model_parts.len());
     let refused = refused.or(mismatch.then_some(LodRefusalCode::LevelsMismatch));
+    let authored = refused.is_none() && !levels.is_empty();
+    // A GLB the import step did not simplify gets its chain at load (LOD-21); a model whose
+    // authored levels were refused draws whole, as before.
+    let runtime = refused.is_none() && levels.is_empty();
+    if runtime {
+        log_runtime_chains(path, add_runtime_chains(&mut model_parts), log);
+    }
     let still = source.static_bytes(path);
     let added = match still {
         // Authored levels (LOD-07) upload merged parts, which a replay keeps as they are.
-        _ if refused.is_none() && !levels.is_empty() => uploads.add_model_parts(with_authored_levels(model_parts, &levels)),
+        _ if authored => uploads.add_model_parts(with_authored_levels(model_parts, &levels)),
+        // A replay builds the same runtime chain again: it is a pure function of the GLB.
+        Some(bytes) if runtime => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes).map(with_runtime_chains))),
         Some(bytes) => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes))),
         None => uploads.add_model_parts(model_parts),
     };
