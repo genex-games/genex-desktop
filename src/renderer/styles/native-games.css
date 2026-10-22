@@ -18,6 +18,22 @@
 .native-badge .gi {
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.35));
 }
+/* ── Not installed: the systems' marks on one small glass plate in the cover's top corner ── */
+.native-keys {
+  position: absolute;
+  inset-inline-start: 12px;
+  inset-block-start: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 26px;
+  padding-inline: 9px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.55);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+  color: #fff;
+  backdrop-filter: blur(4px);
+}
 .native-progress {
   position: absolute;
   inset-inline-start: 0;

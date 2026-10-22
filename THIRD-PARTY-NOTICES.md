@@ -48,6 +48,10 @@ licenses and terms of included third-party software.
   13.21.0, CC0-1.0), only to identify Unity, which the Unity plugin runs. Unity and the Unity logo
   are trademarks or registered trademarks of Unity Technologies or its affiliates in the U.S. and
   elsewhere. Genex is not affiliated with or endorsed by Unity Technologies.
+- The `linux` glyph in `src/renderer/ui/icons.tsx` draws Tux, Linux's penguin (its path from
+  Simple Icons 16.35.0, CC0-1.0, without the feet lines), only to show that a game has a
+  Linux version. Tux was drawn by Larry Ewing with The GIMP. Linux is a registered trademark of
+  Linus Torvalds.
 
 ## Routed tool marks
 

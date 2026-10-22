@@ -27,8 +27,9 @@ import {
   NativePlatform,
   type NativeSession,
   NativeSessionPhase,
+  WhyNotHere,
 } from "../../src/shared/play-native.ts";
-import { NATIVE_WORDS, nativeHereWords } from "../../src/renderer/words.ts";
+import { NATIVE_WORDS, nativeHereWords, notHereWords } from "../../src/renderer/words.ts";
 
 const HOST: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.Arm64, osVersion: "15.0" };
 
@@ -125,6 +126,37 @@ describe("a native game's page", () => {
     assert.equal(gameStanding(windowsOnly, installs(), []).phase, GamePhase.Elsewhere);
     assert.equal(gameStanding(game(), installs({ host: null }), []).phase, GamePhase.Elsewhere, "no native games here");
     assert.equal(gameStanding(windowsOnly, installs({ installed: [installed()] }), []).phase, GamePhase.Ready);
+    assert.deepEqual(gameStanding(windowsOnly, installs(), []).notHere, { why: WhyNotHere.NoBuild });
+    assert.equal(gameStanding(game(), installs(), []).notHere, null, "it installs here");
+    assert.equal(gameStanding(game(), installs({ host: null }), []).notHere, null, "nothing to say before main has");
+  });
+
+  it("says plainly why it can't install here, in place of Install", () => {
+    const WINDOWS = NativePlatform.Windows;
+    const MAC = NativePlatform.Mac;
+    const LINUX = NativePlatform.Linux;
+    assert.deepEqual(notHereWords({ why: WhyNotHere.System, elsewhere: [MAC] }, [MAC, WINDOWS], WINDOWS), {
+      title: "Can’t play on Windows",
+      line: "Genex can only run it on Mac.",
+    });
+    assert.deepEqual(notHereWords({ why: WhyNotHere.System, elsewhere: [] }, [WINDOWS], WINDOWS), {
+      title: "Can’t play on Windows",
+      line: "Genex can’t run downloaded games on Windows.",
+    });
+    assert.deepEqual(notHereWords({ why: WhyNotHere.NoBuild }, [WINDOWS], MAC), {
+      title: "Only on Windows",
+      line: "There’s no Mac version of this game yet.",
+    });
+    assert.deepEqual(notHereWords({ why: WhyNotHere.OldSystem, minOs: "15.4" }, [MAC], MAC), {
+      title: "Not for this Mac",
+      line: "It needs macOS 15.4 or later.",
+    });
+    assert.equal(notHereWords({ why: WhyNotHere.AppleSilicon }, [MAC], MAC).line, "It needs a Mac with Apple silicon.");
+    assert.equal(notHereWords({ why: WhyNotHere.Rosetta }, [MAC], MAC).line, "It needs Rosetta to run on this Mac.");
+    assert.deepEqual(notHereWords({ why: WhyNotHere.Processor }, [LINUX], LINUX), {
+      title: "Not for this computer",
+      line: "It’s made for a different processor.",
+    });
   });
 
   it("opens its page only for a game with no web build", () => {

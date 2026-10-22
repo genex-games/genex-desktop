@@ -280,6 +280,67 @@ export function buildFor(builds: readonly NativeBuild[], host: NativeHost): Nati
   return own ?? universal ?? intel ?? null;
 }
 
+/** Why no build of a game installs on this computer. Wire-free: only the game page's words read it. */
+export const WhyNotHere = {
+  /** Genex launches no native game on this system (Windows). */
+  System: "system",
+  /** No build was made for this system. */
+  NoBuild: "no-build",
+  /** Its builds for this system ask for a newer one. */
+  OldSystem: "old-system",
+  /** Its Mac builds are for Apple silicon only, and this Mac is an Intel one. */
+  AppleSilicon: "apple-silicon",
+  /** Its only Mac builds are for Intel, and this Apple silicon Mac has no Rosetta. */
+  Rosetta: "rosetta",
+  /** Its builds for this system are for another processor. */
+  Processor: "processor",
+} as const;
+export type WhyNotHere = (typeof WhyNotHere)[keyof typeof WhyNotHere];
+
+/** Why nothing installs here, with what its words name: where it plays instead, the system it needs. */
+export type NotHere =
+  | { why: typeof WhyNotHere.System; elsewhere: NativePlatform[] }
+  | { why: typeof WhyNotHere.OldSystem; minOs: string }
+  | { why: Exclude<WhyNotHere, typeof WhyNotHere.System | typeof WhyNotHere.OldSystem> };
+
+/** Whether `host`'s processor runs a build: its own, a universal Mac app, or Intel through Rosetta. */
+const archFits = (build: NativeBuild, host: NativeHost): boolean =>
+  build.arch === host.arch ||
+  build.arch === NativeArch.Universal ||
+  (build.arch === NativeArch.X64 && translatesIntel(host));
+
+/** The reason this processor runs none of a Mac's or Linux computer's builds. */
+function wrongChip(host: NativeHost): NotHere {
+  if (host.platform !== NativePlatform.Mac) return { why: WhyNotHere.Processor };
+  return { why: host.arch === NativeArch.X64 ? WhyNotHere.AppleSilicon : WhyNotHere.Rosetta };
+}
+
+/** The lowest system any of `builds` asks for. */
+const lowestMinOs = (builds: readonly NativeBuild[]): string =>
+  builds
+    .map((build) => build.minOs ?? "")
+    .sort(compareOsVersions)
+    .at(0) ?? "";
+
+/**
+ * Why `builds` offer this computer nothing (`buildFor` is null), or null when one installs: the
+ * system first (and where Genex plays it instead), then no build for it, then the processor, then
+ * the system's version.
+ */
+export function whyNotHere(builds: readonly NativeBuild[], host: NativeHost): NotHere | null {
+  if (buildFor(builds, host)) return null;
+  if (!launchesOn(host)) {
+    const built = new Set(builds.map((build) => build.platform));
+    const elsewhere = NATIVE_PLATFORMS.filter((platform) => built.has(platform) && LAUNCH_PLATFORMS.has(platform));
+    return { why: WhyNotHere.System, elsewhere };
+  }
+  const forHere = builds.filter((build) => build.platform === host.platform);
+  if (forHere.length === 0) return { why: WhyNotHere.NoBuild };
+  const fits = forHere.filter((build) => archFits(build, host));
+  if (fits.length === 0) return wrongChip(host);
+  return { why: WhyNotHere.OldSystem, minOs: lowestMinOs(fits) };
+}
+
 /** Whether a game plays on `host` at all: in the viewer, or as a build this computer installs. */
 export const playableHere = (game: WithNative, host: NativeHost): boolean =>
   hasWebBuild(game) || buildFor(game.native?.builds ?? [], host) !== null;

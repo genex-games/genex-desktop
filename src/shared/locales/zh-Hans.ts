@@ -5530,4 +5530,10 @@ export default {
   "Remove from this computer": "从这台电脑移除",
   "{title} is removed from this computer. Its saves stay.": "{title} 已从这台电脑移除。存档仍会保留。",
   "Ready to play on this computer.": "可以在这台电脑上游玩了。",
+  "Can’t play on {platform}": "无法在 {platform} 上玩",
+  "Genex can only run it on {platforms}.": "Genex 只能在 {platforms} 上运行它。",
+  "Genex can’t run downloaded games on {platform}.": "Genex 无法在 {platform} 上运行下载的游戏。",
+  "It needs a Mac with Apple silicon.": "需要配备 Apple 芯片的 Mac。",
+  "It needs Rosetta to run on this Mac.": "需要 Rosetta 才能在这台 Mac 上运行。",
+  "It’s made for a different processor.": "它是为其他处理器制作的。",
 } satisfies LocaleCatalog;

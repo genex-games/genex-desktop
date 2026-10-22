@@ -1,8 +1,9 @@
 /**
- * A native game's marks: the Apple, Windows and Linux marks of the systems it was built for, and the badge
- * on its card's cover (canvas board "Main"): the marks alone while it is not installed, how far its
- * download has come with a line along the cover's foot, On this Mac (or computer) once installed, or an update
- * waiting with its size. A game with a web build shows nothing new until it is installed here.
+ * A native game's marks: the Apple, Windows and Linux marks of the systems it was built for, and the
+ * badge on its card's cover (canvas board "Main"): the systems' marks on one small glass plate in
+ * the cover's top corner while it is not installed (Rab, 2026-10-22), how far its download has come with a
+ * line along the cover's foot, On this Mac (or computer) once installed, or an update waiting with
+ * its size. A game with a web build shows nothing new until it is installed here.
  */
 import type { JSX } from "react";
 import { sizeWords } from "../../shared/byte-size.ts";
@@ -41,12 +42,15 @@ export function CardNativeBadge({ badge }: { badge: CardBadgeState }): JSX.Eleme
     case CardBadge.Platforms:
       return (
         <span
-          className="native-badge"
+          className="native-keys"
           role="img"
           aria-label={platformNames(badge.platforms)}
+          title={platformNames(badge.platforms)}
           data-native-badge="platforms"
         >
-          <PlatformMarks platforms={badge.platforms} />
+          {badge.platforms.map((platform) => (
+            <Icon key={platform} name={MARK[platform]} size={14} />
+          ))}
         </span>
       );
     case CardBadge.Downloading:

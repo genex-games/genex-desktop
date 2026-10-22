@@ -39,7 +39,14 @@ import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plu
 import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
 import type { GenexPublishPhase } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayRemixRefusal, PlayShelf, RemixStep } from "../shared/play.ts";
-import { InstallFailure, LaunchFailure, NativeArch, NativePlatform } from "../shared/play-native.ts";
+import {
+  InstallFailure,
+  LaunchFailure,
+  NativeArch,
+  NativePlatform,
+  type NotHere,
+  WhyNotHere,
+} from "../shared/play-native.ts";
 import { PublishTarget } from "../shared/publish-platforms.ts";
 import { CreditKind } from "../shared/play-credits.ts";
 import { PurchaseProblem } from "../shared/play-purchase.ts";
@@ -5523,6 +5530,12 @@ export const NATIVE_WORDS = {
   onlyOnTitle: (platform: string) => t("Only on {platform}", { platform }),
   noVersionFor: (platform: string) => t("There’s no {platform} version of this game yet.", { platform }),
   needsMacOs: (version: string) => t("It needs macOS {version} or later.", { version }),
+  cantPlayOn: (platform: string) => t("Can’t play on {platform}", { platform }),
+  onlyRunsOn: (platforms: string) => t("Genex can only run it on {platforms}.", { platforms }),
+  runsNoGamesOn: (platform: string) => t("Genex can’t run downloaded games on {platform}.", { platform }),
+  needsAppleSilicon: t("It needs a Mac with Apple silicon."),
+  needsRosetta: t("It needs Rosetta to run on this Mac."),
+  otherProcessor: t("It’s made for a different processor."),
   tryAgain: t("Try again"),
   /** Why an install failed, one sentence each; no space says how much to free, on this computer (`here`). */
   installFailed: INSTALL_FAILED,
@@ -5532,6 +5545,8 @@ export const NATIVE_WORDS = {
   madeWith: (engine: string) => t("Made with {engine}", { engine }),
   /** Engine ids as people say them; another id is shown as it is spelled. */
   engine: { unity: "Unity", godot: "Godot", unreal: "Unreal" } as Readonly<Record<string, string>>,
+  /** The game page's systems tile; its marks say which, and its hover names them. */
+  platformsTile: t("Platforms"),
   appleSiliconOnly: t("Apple silicon only"),
   failedToLoad: t("Couldn’t load this game."),
   // The card menu's local items.
@@ -5542,6 +5557,43 @@ export const NATIVE_WORDS = {
   playApp: (platform: string) => t("Play {platform} app", { platform }),
   installAppLabel: (platform: string, size: string) => t("Install the {platform} app, {size}", { platform, size }),
 } as const;
+
+/** The systems' names as one phrase: "Mac and Windows". */
+const platformsPhrase = (platforms: readonly NativePlatform[]): string =>
+  NATIVE_WORDS.platforms(platforms.map((platform) => NATIVE_WORDS.platform[platform]));
+
+/**
+ * What a game's page says in place of Install when nothing installs on this computer (`here`): a
+ * title and why, from `whyNotHere`. `platforms` are the systems the game was built for.
+ */
+export function notHereWords(
+  notHere: NotHere,
+  platforms: readonly NativePlatform[],
+  here: NativePlatform,
+): { title: string; line: string } {
+  const words = NATIVE_WORDS;
+  const notForHere = nativeHereWords(here).notForHere;
+  switch (notHere.why) {
+    case WhyNotHere.System:
+      return {
+        title: words.cantPlayOn(words.platform[here]),
+        line:
+          notHere.elsewhere.length > 0
+            ? words.onlyRunsOn(platformsPhrase(notHere.elsewhere))
+            : words.runsNoGamesOn(words.platform[here]),
+      };
+    case WhyNotHere.NoBuild:
+      return { title: words.onlyOnTitle(platformsPhrase(platforms)), line: words.noVersionFor(words.platform[here]) };
+    case WhyNotHere.OldSystem:
+      return { title: notForHere, line: words.needsMacOs(notHere.minOs) };
+    case WhyNotHere.AppleSilicon:
+      return { title: notForHere, line: words.needsAppleSilicon };
+    case WhyNotHere.Rosetta:
+      return { title: notForHere, line: words.needsRosetta };
+    default:
+      return { title: notForHere, line: words.otherProcessor };
+  }
+}
 
 /** Who took a check, for the sources that played the build. */
 export const PLAYED_SOURCE_WORDS: Record<InteractionSource, string> = {

@@ -194,7 +194,10 @@ is.
   else, on Apple silicon with Rosetta installed, an Intel-only one, where its `minOs` is met
   (`buildFor`). Games launch on the Mac and on Linux; nothing is launched on Windows until its
   sandbox can show a program's window. Play names the computer "this Mac" on a Mac and "this
-  computer" elsewhere (`nativeHereWords`). A game with no web
+  computer" elsewhere (`nativeHereWords`). When nothing installs, the game page says why in place of
+  Install (`whyNotHere`): this system runs no downloaded games (naming where Genex can run it), no
+  build for this system, one for a different processor (Apple silicon, Rosetta), or a newer macOS
+  needed. A card not installed shows its systems' marks on one plate. A game with no web
   build and no build for this computer is left out of the tabs and search; its maker's profile
   still lists it.
 - Installing (`main/play/native-installs.ts`, `studio:play.install`, progress as

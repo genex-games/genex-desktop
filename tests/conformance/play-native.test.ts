@@ -26,6 +26,8 @@ import {
   parseNativeBuilds,
   platformsOf,
   playableHere,
+  whyNotHere,
+  WhyNotHere,
 } from "../../src/shared/play-native.ts";
 import { thisComputer } from "../../src/main/play/native-host.ts";
 
@@ -266,6 +268,34 @@ describe("The build for this computer", () => {
     assert.equal(playableHere(nativeOnly([windows]), MAC_ARM), false);
     assert.equal(playableHere(nativeOnly([]), MAC_ARM), false);
     assert.equal(playableHere({ native: { web: true, engine: null, builds: [windows] } }, MAC_ARM), true);
+  });
+
+  it("says why nothing installs here: no game runs on this system, none was made for it, or this computer can't run it", () => {
+    const linuxX64 = build({ platform: NativePlatform.Linux, arch: NativeArch.X64, entry: "Dust/Dust.x86_64" });
+    assert.equal(whyNotHere([universal, windows], MAC_ARM), null, "a build installs");
+    assert.deepEqual(whyNotHere([universal, windows], WINDOWS), {
+      why: WhyNotHere.System,
+      elsewhere: [NativePlatform.Mac],
+    });
+    assert.deepEqual(whyNotHere([windows], WINDOWS), { why: WhyNotHere.System, elsewhere: [] });
+    assert.deepEqual(whyNotHere([universal, linuxX64, windows], WINDOWS), {
+      why: WhyNotHere.System,
+      elsewhere: [NativePlatform.Mac, NativePlatform.Linux],
+    });
+    assert.deepEqual(whyNotHere([windows], MAC_ARM), { why: WhyNotHere.NoBuild });
+    assert.deepEqual(whyNotHere([], LINUX), { why: WhyNotHere.NoBuild });
+    assert.deepEqual(whyNotHere([build({ minOs: "16.0" }), build({ minOs: "15.4", version: "b" })], MAC_ARM), {
+      why: WhyNotHere.OldSystem,
+      minOs: "15.4",
+    });
+    assert.deepEqual(whyNotHere([arm], MAC_INTEL), { why: WhyNotHere.AppleSilicon });
+    assert.deepEqual(whyNotHere([intel], MAC_ARM), { why: WhyNotHere.Rosetta });
+    assert.deepEqual(
+      whyNotHere([{ ...arm, minOs: "16.0" }], MAC_INTEL),
+      { why: WhyNotHere.AppleSilicon },
+      "the chip first",
+    );
+    assert.deepEqual(whyNotHere([linuxX64], { ...LINUX, arch: NativeArch.Arm64 }), { why: WhyNotHere.Processor });
   });
 
   it("compares OS versions by their numbers", () => {

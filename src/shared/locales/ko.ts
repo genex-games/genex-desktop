@@ -5717,4 +5717,10 @@ export default {
   "{title} is removed from this computer. Its saves stay.":
     "{title} 게임을 이 컴퓨터에서 제거했어요. 저장 데이터는 남아 있어요.",
   "Ready to play on this computer.": "이 컴퓨터에서 플레이할 수 있어요.",
+  "Can’t play on {platform}": "{platform}에서는 플레이할 수 없어요",
+  "Genex can only run it on {platforms}.": "Genex는 {platforms}에서만 실행할 수 있어요.",
+  "Genex can’t run downloaded games on {platform}.": "Genex는 {platform}에서 다운로드한 게임을 실행할 수 없어요.",
+  "It needs a Mac with Apple silicon.": "Apple 실리콘 Mac이 필요해요.",
+  "It needs Rosetta to run on this Mac.": "이 Mac에서 실행하려면 Rosetta가 필요해요.",
+  "It’s made for a different processor.": "다른 프로세서용으로 만들어졌어요.",
 } satisfies LocaleCatalog;

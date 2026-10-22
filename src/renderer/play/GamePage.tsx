@@ -28,7 +28,7 @@ import { richText } from "../rich-text.tsx";
 import { ToastTone } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { NATIVE_WORDS, nativeHereWords, PLAY_CARD_MENU_WORDS, PLAY_WORDS } from "../words.ts";
+import { NATIVE_WORDS, nativeHereWords, notHereWords, PLAY_CARD_MENU_WORDS, PLAY_WORDS } from "../words.ts";
 import { formatCount } from "./play-model.ts";
 import { GamePhase, type GameStanding, gameStanding, installPercent, minutesSince } from "./native-model.ts";
 import { PlayPageFrame } from "./PlayPageFrame.tsx";
@@ -169,16 +169,12 @@ function Failed({ game, standing }: { game: PlayGameDetail; standing: GameStandi
   );
 }
 
-/** No build for this computer: where it plays instead. */
-function Elsewhere({ game, here }: { game: PlayGameDetail; here: NativePlatform }): JSX.Element {
-  const platforms = platformsOf(game);
-  const builtForHere = platforms.includes(here);
-  const title = builtForHere ? nativeHereWords(here).notForHere : WORDS.onlyOnTitle(platformNames(platforms));
-  const macMinimum =
-    here === NativePlatform.Mac ? game.native?.builds.find((build) => build.platform === here)?.minOs : undefined;
-  const line = builtForHere && macMinimum ? WORDS.needsMacOs(macMinimum) : WORDS.noVersionFor(WORDS.platform[here]);
+/** No build installs on this computer: in place of Install, why not, in one title and one line. */
+function Elsewhere({ game, standing }: { game: PlayGameDetail; standing: GameStanding }): JSX.Element | null {
+  if (!standing.notHere) return null;
+  const { title, line } = notHereWords(standing.notHere, platformsOf(game), standing.here);
   return (
-    <div className="game-elsewhere" data-game-note="elsewhere">
+    <div className="game-elsewhere" data-game-note="elsewhere" role="status">
       <span className="game-elsewhere-title">{title}</span>
       <span className="game-elsewhere-line">{line}</span>
     </div>
@@ -209,7 +205,7 @@ function PrimaryBlock({
     case GamePhase.Failed:
       return <Failed game={game} standing={standing} />;
     case GamePhase.Elsewhere:
-      return <Elsewhere game={game} here={standing.here} />;
+      return <Elsewhere game={game} standing={standing} />;
     case GamePhase.Ready:
       return (
         <>
@@ -318,11 +314,13 @@ function Pills({ game }: { game: PlayGameDetail }): JSX.Element {
   );
 }
 
-/** One tile: its mark and one line, never a second. */
-function Tile({ mark, text, hook }: { mark: JSX.Element; text: string; hook: string }): JSX.Element {
+/** One tile: its mark and one line, never a second; `label` names a mark that says more than the line. */
+function Tile({ mark, text, hook, label }: { mark: JSX.Element; text: string; hook: string; label?: string }) {
   return (
-    <div className="game-tile" data-game-tile={hook}>
-      <span className="game-tile-mark">{mark}</span>
+    <div className="game-tile" data-game-tile={hook} title={label}>
+      <span className="game-tile-mark" role={label ? "img" : undefined} aria-label={label}>
+        {mark}
+      </span>
       <span className="game-tile-text">{text}</span>
     </div>
   );
@@ -340,7 +338,8 @@ function Tiles({ game, standing }: { game: PlayGameDetail; standing: GameStandin
       <Tile
         hook="platforms"
         mark={<PlatformMarks platforms={platforms} />}
-        text={`${platformNames(platforms)}${armOnly}`}
+        text={WORDS.platformsTile}
+        label={`${platformNames(platforms)}${armOnly}`}
       />
       {bytes > 0 && <Tile hook="size" mark={<Icon name="drive" />} text={sizeWords(bytes)} />}
       <Tile

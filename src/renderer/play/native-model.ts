@@ -19,7 +19,9 @@ import {
   NativePlatform,
   type NativeSession,
   NativeSessionPhase,
+  type NotHere,
   platformsOf,
+  whyNotHere,
 } from "../../shared/play-native.ts";
 
 /** Where a native game stands on this computer, as its page's primary block says. */
@@ -51,6 +53,8 @@ export interface GameStanding {
   failure: GameFailure | null;
   /** The kind of computer this is, as the builds name it: what its words call it. */
   here: NativePlatform;
+  /** Why no build installs here, once main has said what this computer is; null when one does. */
+  notHere: NotHere | null;
 }
 
 /** Whether an install is still going. */
@@ -86,7 +90,8 @@ export function gameStanding(
   const session = sessions.find((one) => one.slug === game.slug) ?? null;
   const failure = failureOf(progress, session);
   const here = installs.host?.platform ?? NativePlatform.Mac;
-  const standing = { build, installed, progress, session, failure, here };
+  const notHere = installs.host ? whyNotHere(game.native?.builds ?? [], installs.host) : null;
+  const standing = { build, installed, progress, session, failure, here, notHere };
   if (live(session)) return { ...standing, phase: GamePhase.Playing };
   if (installing(progress)) return { ...standing, phase: GamePhase.Installing };
   if (failure) return { ...standing, phase: GamePhase.Failed };

@@ -5923,4 +5923,10 @@ export default {
   "{title} is removed from this computer. Its saves stay.":
     "{title} foi removido deste computador. Os saves ficam guardados.",
   "Ready to play on this computer.": "Pronto para jogar neste computador.",
+  "Can’t play on {platform}": "Não dá para jogar no {platform}",
+  "Genex can only run it on {platforms}.": "O Genex só consegue rodar este jogo no {platforms}.",
+  "Genex can’t run downloaded games on {platform}.": "O Genex não consegue rodar jogos baixados no {platform}.",
+  "It needs a Mac with Apple silicon.": "Precisa de um Mac com Apple silicon.",
+  "It needs Rosetta to run on this Mac.": "Precisa do Rosetta para rodar neste Mac.",
+  "It’s made for a different processor.": "Foi feito para outro processador.",
 } satisfies LocaleCatalog;
