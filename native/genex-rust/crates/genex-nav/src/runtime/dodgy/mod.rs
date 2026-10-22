@@ -18,6 +18,10 @@
 //! - `VisibilitySet` rebuilds its cone list in a spare buffer it keeps, instead of a new `Vec`
 //!   grown from empty for every added cone, and makes an overlap's cone (its related angle) only
 //!   where it keeps one (GE, NAV-18's update budget; the same bits).
+//! - R-19 (NAV-18's update budget, the same bits): `VisibilitySet` also takes a line as two
+//!   [`ConeRay`]s a caller made once per point and reuses, an overlap makes its cone's related
+//!   angle's sine once for both of its rays, and a cone apart from an added one is kept before any
+//!   ray of it is made.
 //! - The `debug` feature and its `DebugData` are left out.
 //! - Tests are dodgy's own (`*_test.rs` beside each file), with a key on every agent.
 //!
@@ -59,7 +63,7 @@ use obstacles::get_lines_for_agent_to_obstacle;
 pub use obstacles::Obstacle;
 
 pub use simulator::{AgentParameters, Simulator, SimulatorMargin};
-pub use visibility_set::VisibilitySet;
+pub use visibility_set::{ConeRay, VisibilitySet};
 
 /// A single agent in the simulation.
 #[derive(Clone, PartialEq, Debug)]

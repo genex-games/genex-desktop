@@ -35,6 +35,12 @@ impl VisibilitySet {
 
     /// Whether any part of the segment would be visible past the lines already added.
     pub fn is_line_visible(&self, start_point: Vec2, end_point: Vec2) -> bool {
+        self.is_ray_line_visible(ConeRay::from_point(start_point), ConeRay::from_point(end_point))
+    }
+
+    /// [`VisibilitySet::is_line_visible`] of the segment between two points already made rays
+    /// (the same bits): a walk that meets one vertex in several lines makes its ray once.
+    pub fn is_ray_line_visible(&self, start: ConeRay, end: ConeRay) -> bool {
         if self.cones.is_empty() {
             return true;
         }
@@ -84,7 +90,8 @@ impl VisibilitySet {
 
         // A line seen through a gap needs no related angle (an `atan2`): the gaps are compared by
         // angle alone, and the cone is made, as `create_from_line` makes it, only past them.
-        let (mut left_ray, mut right_ray) = (ConeRay::from_point(start_point), ConeRay::from_point(end_point));
+        let (start_point, end_point) = (start.point, end.point);
+        let (mut left_ray, mut right_ray) = (start, end);
         if left_ray.angle > right_ray.angle {
             swap(&mut left_ray, &mut right_ray);
         }
@@ -95,7 +102,7 @@ impl VisibilitySet {
             let related_angle = Cone::derive_related_angle(start_point, end_point);
             return visible_past_the_cones(self, Cone { left_ray, right_ray, line_id: 0, related_angle });
         }
-        match Cone::create_from_line(start_point, end_point, 0) {
+        match Cone::create_from_line(start, end, 0) {
             LineToCone::One(cone) => is_cone_visible(self, cone),
             LineToCone::Two(cone_1, cone_2) => {
                 is_cone_visible(self, cone_1) || is_cone_visible(self, cone_2)
@@ -104,11 +111,13 @@ impl VisibilitySet {
     }
 
     /// Adds a segment; its id when any part of it is visible, `None` when it is hidden.
-    pub fn add_line(
-        &mut self,
-        start_point: Vec2,
-        end_point: Vec2,
-    ) -> Option<u32> {
+    pub fn add_line(&mut self, start_point: Vec2, end_point: Vec2) -> Option<u32> {
+        self.add_ray_line(ConeRay::from_point(start_point), ConeRay::from_point(end_point))
+    }
+
+    /// [`VisibilitySet::add_line`] of the segment between two points already made rays (the
+    /// same bits).
+    pub fn add_ray_line(&mut self, start: ConeRay, end: ConeRay) -> Option<u32> {
         fn add_cone(set: &mut VisibilitySet, new_cone: Cone) -> bool {
             let mut visible = false;
 
@@ -150,6 +159,11 @@ impl VisibilitySet {
             }
 
             for &blocking_cone in &old_cones {
+                // Most cones lie apart from the new one: kept as they are, before any ray is made.
+                if !new_cone.overlaps_cone(blocking_cone) {
+                    set.cones.push(blocking_cone);
+                    continue;
+                }
                 // The overlaps' rays; a cone of them (its related angle) is made only where one is
                 // kept.
                 let Some(new_overlap) = new_cone.overlapping_rays(blocking_cone) else {
@@ -261,12 +275,12 @@ impl VisibilitySet {
             visible
         }
 
-        if start_point == end_point {
+        if start.point == end.point {
             return None;
         }
 
         let visible =
-            match Cone::create_from_line(start_point, end_point, self.next_id) {
+            match Cone::create_from_line(start, end, self.next_id) {
                 LineToCone::One(cone) => add_cone(self, cone),
                 LineToCone::Two(cone_1, cone_2) => {
                     // Use | to perform an OR without short circuiting.
@@ -285,10 +299,17 @@ impl VisibilitySet {
 
     /// The ids of the lines still visible, ascending.
     pub fn get_visible_line_ids(&self) -> Vec<u32> {
-        let mut ids: Vec<u32> = self.cones.iter().map(|cone| cone.line_id).collect();
+        let mut ids = Vec::new();
+        self.visible_line_ids_into(&mut ids);
+        ids
+    }
+
+    /// [`VisibilitySet::get_visible_line_ids`] into `ids` (emptied first, its memory kept).
+    pub fn visible_line_ids_into(&self, ids: &mut Vec<u32>) {
+        ids.clear();
+        ids.extend(self.cones.iter().map(|cone| cone.line_id));
         ids.sort_unstable();
         ids.dedup();
-        ids
     }
 }
 
@@ -312,16 +333,8 @@ enum LineToCone {
 }
 
 impl Cone {
-    fn create_from_line(
-        start_point: Vec2,
-        end_point: Vec2,
-        line_id: u32,
-    ) -> LineToCone {
-        let mut partial_cone = Cone::create_from_rays(
-            ConeRay::from_point(start_point),
-            ConeRay::from_point(end_point),
-            line_id,
-        );
+    fn create_from_line(start: ConeRay, end: ConeRay, line_id: u32) -> LineToCone {
+        let mut partial_cone = Cone::create_from_rays(start, end, line_id);
 
         if partial_cone.left_ray.angle > partial_cone.right_ray.angle {
             swap(&mut partial_cone.left_ray, &mut partial_cone.right_ray);
@@ -371,6 +384,12 @@ impl Cone {
     }
 
     fn distance_at_angle(&self, angle: f32) -> f32 {
+        self.distance_at_angle_with(angle, sin(self.related_angle))
+    }
+
+    /// [`Cone::distance_at_angle`] given `sin(self.related_angle)`, so a caller that asks for
+    /// two angles of one cone makes that sine once (the same bits).
+    fn distance_at_angle_with(&self, angle: f32, sin_related: f32) -> f32 {
         let relative_angle = {
             let mut relative_angle = angle - self.left_ray.angle;
             if relative_angle < 0.0 {
@@ -379,11 +398,12 @@ impl Cone {
             relative_angle
         };
 
-        self.left_ray.distance * sin(self.related_angle) / sin(relative_angle + self.related_angle)
+        self.left_ray.distance * sin_related / sin(relative_angle + self.related_angle)
     }
 
-    fn ray_at_angle(&self, angle: f32) -> ConeRay {
-        let distance = self.distance_at_angle(angle);
+    /// The ray at `angle`, given `sin(self.related_angle)`.
+    fn ray_at_angle_with(&self, angle: f32, sin_related: f32) -> ConeRay {
+        let distance = self.distance_at_angle_with(angle, sin_related);
         ConeRay { angle, distance, point: distance * Vec2::from_angle(angle) }
     }
 
@@ -403,18 +423,22 @@ impl Cone {
         if !self.overlaps_cone(other) {
             return None;
         }
+        let contains_left = self.left_ray.angle < other.left_ray.angle;
+        let contains_right = other.right_ray.angle < self.right_ray.angle;
+        // The related angle's sine, made once when either ray needs it.
+        let sin_related = if contains_left || contains_right { sin(self.related_angle) } else { 0.0 };
 
-        let left_ray = if self.left_ray.angle < other.left_ray.angle {
+        let left_ray = if contains_left {
             // `self` contains `other.left_ray`.
-            self.ray_at_angle(other.left_ray.angle)
+            self.ray_at_angle_with(other.left_ray.angle, sin_related)
         } else {
             // `self` does not contain `other.left_ray`.
             self.left_ray
         };
 
-        let right_ray = if other.right_ray.angle < self.right_ray.angle {
+        let right_ray = if contains_right {
             // `self` contains `other.right_ray`.
-            self.ray_at_angle(other.right_ray.angle)
+            self.ray_at_angle_with(other.right_ray.angle, sin_related)
         } else {
             // `self` does not contain `other.right_ray`.
             self.right_ray
@@ -428,8 +452,11 @@ impl Cone {
         if !self.overlaps_cone(other) {
             return None;
         }
-        let left = if self.left_ray.angle < other.left_ray.angle { self.distance_at_angle(other.left_ray.angle) } else { self.left_ray.distance };
-        let right = if other.right_ray.angle < self.right_ray.angle { self.distance_at_angle(other.right_ray.angle) } else { self.right_ray.distance };
+        let contains_left = self.left_ray.angle < other.left_ray.angle;
+        let contains_right = other.right_ray.angle < self.right_ray.angle;
+        let sin_related = if contains_left || contains_right { sin(self.related_angle) } else { 0.0 };
+        let left = if contains_left { self.distance_at_angle_with(other.left_ray.angle, sin_related) } else { self.left_ray.distance };
+        let right = if contains_right { self.distance_at_angle_with(other.right_ray.angle, sin_related) } else { self.right_ray.distance };
         Some((left, right))
     }
 }
@@ -449,15 +476,18 @@ impl OverlapRays {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ConeRay {
+/// A point seen from the origin: its angle (`0..2π`), its distance and the point. A line's ends
+/// are rays; a caller that meets one point in several lines makes its ray once.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ConeRay {
     angle: f32,
     distance: f32,
     point: Vec2,
 }
 
 impl ConeRay {
-    fn from_point(point: Vec2) -> ConeRay {
+    /// The ray to `point` (an `atan2` and a square root).
+    pub fn from_point(point: Vec2) -> ConeRay {
         let angle = point.to_angle();
         ConeRay {
             angle: if angle >= 0.0 { angle } else { 2.0 * PI + angle },
