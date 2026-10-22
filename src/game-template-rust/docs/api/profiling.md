@@ -42,18 +42,37 @@ game.on_update(|sim, ctx| {
 - **Studio's `profile` verb** reads the summary, a `ProfileReport` v2 of the last frames (with the
   hitches kept), arms per-node GPU timing, or writes a Chrome trace into `state/profile/`. The
   project's CONTRACT.md lists each action. An agent reads these, and a game never calls them.
-- **Crash records.** When a panic happens, the record names the seed, the tick it happened on
-  and the last summary, so an agent can replay it with `seed` and `step`. A desktop export writes
-  its records under the save root's `genex-crash/` (the newest 16 are kept). A phone build writes
-  them as `genex-self-test/crash-<n>.json` beside its self-test records (the newest 16), and at the
-  next launch also records what the panic hook could not see, each once: on iOS every MetricKit
-  crash diagnostic (a native fault, or a memory kill as `out-of-memory`), on Android the last exit
-  when it was a native crash (with the tombstone's frames from Android 12) or a low-memory kill.
-  Their frames are image offsets, not symbols.
 
-What the renderer's features cost: on an M4 Max at 1080p (GPU p50) HDR with tonemap and exposure
-costs about 0.1 ms, bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact shadows 0.15-0.3, TAA 0.2,
-EASU with RCAS under 0.3 and `ultra`'s sun shadows about 0.6.
+What the renderer's features (`docs/api/rendering.md`) cost: on an M4 Max at 1080p (GPU p50) HDR
+with tonemap and exposure costs about 0.1 ms, bloom 0.25-0.4, AO 0.45-0.6 (1.4 at `ultra`), contact
+shadows 0.15-0.3, TAA 0.2, EASU with RCAS under 0.3 and `ultra`'s sun shadows about 0.6.
+
+## Crash records
+
+A panic, an uncaught GPU error or a lost device becomes one `genex-crash/1` record: its `kind`
+(`panic`, `gpu-validation`, `device-lost`, and from the shell, the platform or the host
+`wasm-trap`, `native-fault`, `out-of-memory`, `hang` and `process-exit`), the message, the file and
+line, the raw frames, the seed and tick it happened on, the last profile summary and the input
+that led to it (`replay`). Where it goes depends on the run:
+
+- **A Studio run** sends it to Studio, which keeps the run's last record in the game's
+  `.studio/crashes/` (at most 32; the same crash again is counted, not stored twice), names its
+  frames from the build's debug files, shows it on Live's crash card and hands its kind, line and
+  tick to the agent that looks next. Agents read them with `game.crashes`.
+- **The web page** keeps up to 16 in the browser's IndexedDB, which the page's `crashes` member
+  answers (`docs/CONTRACT.md`).
+- **A desktop export** writes its records under the save root's `genex-crash/` (the newest 16).
+- **A phone build** writes them as `genex-self-test/crash-<n>.json` beside its self-test records
+  (the newest 16), and at the next launch also records what the panic hook could not see, each
+  once: on iOS every MetricKit crash diagnostic (a native fault, or a memory kill as
+  `out-of-memory`), on Android the last exit when it was a native crash (with the tombstone's
+  frames from Android 12) or a low-memory kill. Their frames are image offsets, not symbols.
+
+To reproduce one, seed its seed, pause and step to its tick; when `replay` holds input, a demo that
+injects the same input after the seed walks the crash path. A crash that does not come back on
+that path is nondeterminism (a clock, a thread, a hash map), not the line it named. Fix the cause
+and never catch the panic: catching loses the record and leaves the state broken. Nothing uploads
+a record; each stays where its run wrote it.
 
 ## The player overlay
 

@@ -601,6 +601,48 @@
       "commands": ["check:static", "test", "test:rust-spike"]
     },
     {
+      "id": "profile-crash",
+      "sources": [
+        "src/shared/crash-record.ts",
+        "src/shared/frame-profile.ts",
+        "src/main/core/game-crashes.ts",
+        "src/main/core/crash-symbolicate.ts",
+        "src/main/harness-rpc/game-crashes.ts",
+        "src/main/ipc/game-crashes.ts",
+        "src/main/ipc/native-profile.ts",
+        "src/substrate/native-profile.ts",
+        "src/substrate/rust-debug-files.ts",
+        "src/renderer/live-profile.ts",
+        "src/renderer/state/live-profile.ts",
+        "src/renderer/panels/stage/ProfileStrip.tsx",
+        "src/renderer/panels/stage/CrashCard.tsx",
+        "src/harness-seed/loop/crash-facts.ts",
+        "src/harness-seed/library/recipes/debug.crash-replay.json",
+        "src/harness-seed/library/recipes/perf.hitch-scopes.json",
+        "native/genex-rust/crates/genex-profile/**",
+        "native/genex-rust/crates/genex-crash/**",
+        "native/genex-rust/crates/genex/src/profile.rs",
+        "native/genex-rust/crates/genex/src/crash.rs",
+        "native/genex-rust/crates/genex-hud/src/profile_overlay.rs",
+        "native/genex-rust/crates/genex-platform-web/src/crash.rs",
+        "tests/conformance/crash-record.test.ts",
+        "tests/conformance/frame-profile.test.ts",
+        "tests/conformance/game-crashes.test.ts",
+        "tests/conformance/crash-symbolicate.test.ts",
+        "tests/conformance/rust-debug-files.test.ts",
+        "tests/conformance/native-profile.test.ts",
+        "tests/conformance/live-profile.test.ts",
+        "tests/conformance/rust-web-crash.test.ts"
+      ],
+      "documents": [
+        "docs/product/builds-live.md",
+        "native/genex-rust/docs/api/profiling.md",
+        "docs/agent/architecture.md",
+        "docs/tool-permissions.md"
+      ],
+      "commands": ["check:static", "test", "test:rust-spike"]
+    },
+    {
       "id": "stack-identity",
       "sources": [
         "src/shared/game-project.ts",
