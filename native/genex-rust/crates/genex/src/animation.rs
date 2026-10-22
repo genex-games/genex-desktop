@@ -48,6 +48,20 @@ pub use genex_anim::params::{BoolParam, Condition, FloatParam, TriggerParam, Vec
 pub use genex_anim::root_motion::{MotionAxes, MotionSettings, RootMotion};
 pub use genex_anim::simple::{CROSSFADE_LADDER_SECONDS, SIMPLE_CLIPS_MAX};
 
+/// Whether this build links animation (the facade's `animation` feature; `[animation] enabled =
+/// false` in a game's genex.toml leaves it out, release R-1).
+pub(crate) const ANIMATION_BUILT: bool = cfg!(feature = "animation");
+
+/// `Ok` in a build with animation. In one without, `gfx.character`, `gfx.node_clips` and every
+/// animator are refused `animation-disabled`, so no rig is parsed and nothing is posed; the
+/// surface stays and the game's code compiles unchanged.
+pub(crate) fn built() -> Result<(), AnimationError> {
+    if ANIMATION_BUILT {
+        return Ok(());
+    }
+    Err(AnimationError::disabled("the game is built with [animation] enabled = false; turn it on in genex.toml"))
+}
+
 impl CharacterAsset {
     /// A graph builder over this character's skeleton and clips: parameters, layers, states,
     /// transitions and events (`.build()` refuses `animation-graph-invalid`).
@@ -70,6 +84,7 @@ impl CharacterAsset {
     /// layer's first state. Refused `animation-graph-invalid` when `graph` was built over another
     /// character's clips or skeleton.
     pub fn animator(&self, graph: &AnimGraph) -> Result<Animator, AnimationError> {
+        built()?;
         let rig = Rig::new(Arc::clone(self.set()), graph)?;
         Ok(Animator { asset: self.clone(), rig })
     }

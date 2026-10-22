@@ -449,6 +449,9 @@ impl StreamTick {
         assets: &Assets,
         budget: &mut HoldBudget,
     ) -> Result<(), Held> {
+        if !crate::stream::STREAMING_BUILT {
+            return Ok(());
+        }
         let Some((next, moved)) = sim.stream.next() else { return Ok(()) };
         for cell in &moved.entered {
             self.ensure(*cell, Priority::Sim);
@@ -496,6 +499,9 @@ impl StreamTick {
         assets: &Assets,
         budget: &mut HoldBudget,
     ) -> Result<bool, Held> {
+        if !crate::stream::STREAMING_BUILT {
+            return Ok(false);
+        }
         let Some(restored) = sim.stream.restored.clone() else { return Ok(false) };
         let Some(before) = sim.stream.cells.as_ref().map(|cells| cells.active().clone()) else { return Ok(false) };
         let moved = grid::diff(&before, &restored);
@@ -603,6 +609,9 @@ impl StreamTick {
     /// After the tick's hooks: start the builds the next commit enters (`Sim`) and the prefetch
     /// ring (`Prefetch`), and drop builds no longer wanted.
     pub(crate) fn prefetch<W>(&mut self, sim: &Sim<W>) {
+        if !crate::stream::STREAMING_BUILT {
+            return;
+        }
         let Some((_, moved)) = sim.stream.next() else { return };
         let Some(cells) = sim.stream.cells.as_ref() else { return };
         let ring = cells.prefetch(&sim.stream.anchor_cells()).unwrap_or_default();

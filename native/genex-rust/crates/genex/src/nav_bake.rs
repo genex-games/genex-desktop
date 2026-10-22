@@ -38,6 +38,11 @@ impl std::fmt::Debug for NavBakes {
 }
 
 impl NavBakes {
+    /// Whether the game registered no bake.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
     /// The registered names, in registration order (the receipt's `bakes`).
     pub(crate) fn names(&self) -> Vec<String> {
         self.list.iter().map(|bake| bake.name.clone()).collect()
@@ -49,7 +54,8 @@ impl<W: Default + 'static> Game<W> {
     /// with a letter or digit): `input` builds what it is cut from
     /// (it may read assets, as a reset does). The dev build bakes it with `game.navigation`'s
     /// config; load the result with `NavMesh::from_bytes_for`. `install` refuses a name that is not
-    /// a bake name, or one registered twice (`invalid-name`).
+    /// a bake name, or one registered twice (`invalid-name`), and any bake in a game built with
+    /// `[nav] enabled = false` (`nav-disabled`).
     pub fn nav_bake(&mut self, name: &str, input: impl Fn(&Gfx) -> NavInput + 'static) -> &mut Self {
         self.nav_bakes.list.push(Bake { name: name.to_owned(), input: Box::new(input) });
         self
@@ -83,8 +89,12 @@ pub(crate) fn check<W>(game: &Game<W>) -> Result<(), (InstallErrorCode, String)>
 /// did not register; refused `nav-config-invalid` without `game.navigation`, and as
 /// `NavMesh::bake` refuses.
 pub(crate) fn bake<W>(game: &Game<W>, gfx: &Gfx, name: &str) -> Option<Result<Vec<u8>, NavError>> {
+    if !crate::nav::NAV_BUILT {
+        // `install` refused every bake of a build without navigation: nothing to run.
+        return None;
+    }
     let bake = game.nav_bakes.list.iter().find(|bake| bake.name == name)?;
-    let Some(config) = game.navigation.as_ref() else {
+    let Some(config) = game.nav_config() else {
         return Some(Err(NavError::config_invalid("a nav bake needs game.navigation's config")));
     };
     gfx.assets().set_at_reset(true);

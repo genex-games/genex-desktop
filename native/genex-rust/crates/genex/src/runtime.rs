@@ -175,11 +175,17 @@ pub enum InstallErrorCode {
     /// A second `game.settings`, a game option off the Game tab or with a reserved prefix, or a
     /// preset that does not fit its tab's options.
     SettingsInvalid,
+    /// `game.navigation` or `game.nav_bake` in a game built with `[nav] enabled = false` (release
+    /// R-1): the build links no navigation.
+    NavDisabled,
+    /// `game.streaming` in a game built with `[streaming] enabled = false` (release R-1): the build
+    /// links no streaming.
+    StreamingDisabled,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 26] = [
+    pub const ALL: [InstallErrorCode; 28] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -206,6 +212,8 @@ impl InstallErrorCode {
         InstallErrorCode::DuplicateNet,
         InstallErrorCode::NetConfigInvalid,
         InstallErrorCode::SettingsInvalid,
+        InstallErrorCode::NavDisabled,
+        InstallErrorCode::StreamingDisabled,
     ];
 
     /// The typed code's wire spelling.
@@ -237,6 +245,8 @@ impl InstallErrorCode {
             InstallErrorCode::DuplicateNet => "duplicate-net",
             InstallErrorCode::NetConfigInvalid => "net-config-invalid",
             InstallErrorCode::SettingsInvalid => "settings-invalid",
+            InstallErrorCode::NavDisabled => "nav-disabled",
+            InstallErrorCode::StreamingDisabled => "streaming-disabled",
         }
     }
 }
@@ -430,7 +440,7 @@ impl<W: Default + 'static> Runtime<W> {
             tally: Tally::default(),
             render: Rc::new(RefCell::new(RenderControl::new(game.render.clone(), (game.world_size[0], game.world_size[1])))),
             g6: crate::g6::G6::default(),
-            stream: crate::stream_tick::StreamTick::new(game.streaming.first(), &game.cell_contents),
+            stream: crate::stream_tick::StreamTick::new(game.stream_registration(), &game.cell_contents),
             rows: VecDeque::new(),
         };
         let mut runtime = Runtime { game, core };
@@ -515,7 +525,7 @@ impl<W> Runtime<W> {
     /// What the presenter's streamed view set reads (STR-16): the registration, the cell builders
     /// and the seed; None without `game.streaming`.
     pub(crate) fn stream_view(&self) -> Option<crate::present_stream::ViewInputs> {
-        let streaming = self.game.streaming.first()?;
+        let streaming = self.game.stream_registration()?;
         Some(crate::present_stream::ViewInputs::new(streaming, &self.game.cell_contents, self.core.seed))
     }
 
@@ -785,7 +795,7 @@ impl<W> Runtime<W> {
             volatile.set(name, CoreValue::from(&value));
         }
         state.set(session::VOLATILE_KEY, volatile);
-        if !self.game.streaming.is_empty() {
+        if self.game.stream_registration().is_some() {
             let active = core.sim.stream.active().collect();
             state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value(&active));
             let mut volatile = state[session::VOLATILE_KEY].clone();
@@ -1329,8 +1339,8 @@ pub(crate) fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
         world,
         physics: fresh_physics(),
         facets: FacetState::fresh(&game.facets),
-        nav: crate::nav::fresh(game.navigation.as_ref()),
-        stream: crate::stream_tick::StreamState::fresh(game.streaming.first()),
+        nav: crate::nav::fresh(game.nav_config()),
+        stream: crate::stream_tick::StreamState::fresh(game.stream_registration()),
         net: crate::net::Net::fresh(crate::net::build_mode(studio_run()), &game.g6.net.config()),
     }
 }
@@ -1591,6 +1601,7 @@ fn check_audio<W>(game: &Game<W>) -> Result<(), InstallError> {
 
 fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_world_size(game.world_size)?;
+    check_switches(game)?;
     check_single(&game.cameras, InstallErrorCode::DuplicateCamera, "a second camera needs .camera_override()")?;
     check_single(&game.players, InstallErrorCode::DuplicatePlayer, "a second player needs .player_override()")?;
     check_probes(game)?;
@@ -1598,7 +1609,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(cameras, InstallErrorCode::DuplicateCameraName, &[DEFAULT_CAMERA])?;
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
-    check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
+    check_streaming(&game.streaming, &game.cell_contents, game.nav_config())?;
     check_input(game)?;
     check_audio(game)?;
     crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
@@ -1611,6 +1622,19 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
         if !facets.insert(facet.type_id) {
             return Err(InstallError::new(InstallErrorCode::DuplicateFacetState, facet.type_name));
         }
+    }
+    Ok(())
+}
+
+/// A registration of a system the game's genex.toml switched off (release R-1): refused, so a
+/// switch never silently drops what the game asked for. The detail names the key to turn on.
+fn check_switches<W>(game: &Game<W>) -> Result<(), InstallError> {
+    let wants_nav = game.navigation.is_some() || !game.nav_bakes.is_empty();
+    if wants_nav && !crate::nav::NAV_BUILT {
+        return Err(InstallError::new(InstallErrorCode::NavDisabled, "game.navigation and game.nav_bake need [nav] enabled = true"));
+    }
+    if !game.streaming.is_empty() && !crate::stream::STREAMING_BUILT {
+        return Err(InstallError::new(InstallErrorCode::StreamingDisabled, "game.streaming needs [streaming] enabled = true"));
     }
     Ok(())
 }

@@ -585,7 +585,7 @@ pub(crate) fn swap_in<W>(game: &Game<W>, state: &mut State, running: Running<'_,
             let restored = result.is_ok();
             // A streamed world's checksum is compared once its cells are rebuilt: the probes may
             // read streamed colliders or the active set, which the slot does not hold.
-            if restored && !game.streaming.is_empty() {
+            if restored && game.stream_registration().is_some() {
                 state.awaiting_cells = true;
             } else {
                 driver.restored(result);
@@ -639,11 +639,11 @@ fn restore_into<W>(game: &Game<W>, envelope: Envelope, running: Running<'_, W>) 
 
 /// The built-in sections, then the game's in registration order, onto the fresh `sim`.
 fn restore_sections<W>(game: &Game<W>, sim: &mut Sim<W>, sections: &Map<String, Value>, gfx: &Gfx) -> Result<(), SaveError> {
-    if game.navigation.is_some() {
+    if game.nav_config().is_some() {
         let snapshot = CoreValue::from(section(sections, NAV_SECTION)?);
         sim.nav.restore(&snapshot).map_err(|error| SaveError::section_invalid(format!("{NAV_SECTION}: {error}")))?;
     }
-    if !game.streaming.is_empty() {
+    if game.stream_registration().is_some() {
         let snapshot = section(sections, STREAM_SECTION)?;
         sim.stream.restore(snapshot).map_err(|error| SaveError::section_invalid(format!("{STREAM_SECTION}: {}", error.detail)))?;
     }
@@ -693,10 +693,10 @@ pub(crate) fn suspend_save<W>(game: &Game<W>, state: &mut State, view: &SaveView
 /// The running game as a slot reads it: read hooks only, so the checksum never moves.
 fn snapshot<W>(game: &Game<W>, view: &SaveView<'_, W>) -> Result<Snapshot, SaveError> {
     let mut sections = Map::new();
-    if game.navigation.is_some() {
+    if game.nav_config().is_some() {
         sections.insert(NAV_SECTION.to_owned(), Value::from(&view.sim.nav.snapshot()));
     }
-    if !game.streaming.is_empty() {
+    if game.stream_registration().is_some() {
         sections.insert(STREAM_SECTION.to_owned(), view.sim.stream.snapshot());
     }
     for entry in &game.save_sections.list {

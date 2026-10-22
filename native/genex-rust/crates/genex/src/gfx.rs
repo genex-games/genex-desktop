@@ -721,8 +721,10 @@ impl Gfx {
     /// shared across seeds. Refused `animation-asset-invalid`: an unsafe path, a file the build
     /// does not have or cannot read now, or one that is not a GLB with a usable skin (no skinned
     /// mesh node, more than 256 joints, a broken node tree, a non-finite transform). A refusal
-    /// never crashes; the model handle of the same path draws the checker.
+    /// never crashes; the model handle of the same path draws the checker. Refused
+    /// `animation-disabled` in a game built with `[animation] enabled = false`.
     pub fn character(&self, path: &str) -> Result<CharacterAsset, AnimationError> {
+        crate::animation::built()?;
         let (rig, set) = self.assets.rig(path)?;
         Ok(CharacterAsset { path: Arc::from(path), rig, set })
     }
@@ -731,8 +733,10 @@ impl Gfx {
     /// animations, in `on_reset` (an asset of the boot or sim group, as [`Assets::bytes`] reads).
     /// Refused `animation-asset-invalid`: an unsafe path, a file the build does not have or cannot
     /// read now, or one that is not a usable GLB; `animation-clip-missing`: a GLB with no
-    /// animations. Draw it with `frame.model_posed`.
+    /// animations; `animation-disabled` in a game built with `[animation] enabled = false`. Draw
+    /// it with `frame.model_posed`.
     pub fn node_clips(&self, path: &str) -> Result<crate::node_anim::NodeClips, AnimationError> {
+        crate::animation::built()?;
         let bytes = self.assets.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path:?}: {error}")))?;
         crate::node_anim::NodeClips::from_glb(path, &bytes)
     }

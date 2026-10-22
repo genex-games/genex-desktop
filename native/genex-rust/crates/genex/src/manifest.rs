@@ -33,6 +33,9 @@
 //! [audio]                   # optional: a game without sound is built without the mixer and decoders
 //! enabled = false           # default true
 //!
+//! [nav]                     # optional: [streaming] and [animation] alike; a game that never uses
+//! enabled = false           # the system is built without it (default true)
+//!
 //! [[texture]]               # optional: a loose texture's usage, where no material slot tells it
 //! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 //! usage = "data"            # color | data | normal
@@ -569,6 +572,15 @@ pub struct GenexToml {
     /// Whether the game is built with audio's mixer and decoders.
     #[serde(default)]
     pub audio: AudioSection,
+    /// Whether the game is built with navigation (release R-1).
+    #[serde(default)]
+    pub nav: SystemSwitch,
+    /// Whether the game is built with world streaming (release R-1).
+    #[serde(default)]
+    pub streaming: SystemSwitch,
+    /// Whether the game is built with animation (release R-1).
+    #[serde(default)]
+    pub animation: SystemSwitch,
     /// Loose textures' usages, read by the host's import step (C-10).
     #[serde(default)]
     pub texture: Vec<TextureRow>,
@@ -994,6 +1006,25 @@ pub struct AudioSection {
 
 impl AudioSection {
     /// Whether the game is built with audio (the default).
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
+/// `[nav]`, `[streaming]` and `[animation]`: a game that never uses the system turns it off and is
+/// built without it (the facade feature of the same name; the host writes the facade line without
+/// default features). Its code compiles unchanged and what the system would do is refused
+/// (`nav-disabled`, `streaming-disabled`, `animation-disabled`). Release R-1.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SystemSwitch {
+    /// False builds the game without the system; none or true keeps it.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+impl SystemSwitch {
+    /// Whether the game is built with the system (the default).
     pub fn enabled(&self) -> bool {
         self.enabled.unwrap_or(true)
     }

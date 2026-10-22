@@ -428,6 +428,9 @@ impl StreamView {
     /// `game.streaming`. A lost device stops the frame (`device-lost`): the load it was finishing
     /// waits for the next frame.
     pub fn update<W>(&mut self, runtime: &Runtime<W>, camera: &Camera, io: ViewIo<'_>) -> Result<(), RenderError> {
+        if !crate::stream::STREAMING_BUILT {
+            return Ok(());
+        }
         let Some(inputs) = runtime.stream_view() else { return Ok(()) };
         if self.seed != Some(inputs.seed) {
             self.forget_cells();
@@ -452,6 +455,9 @@ impl StreamView {
     /// Append the frame's view-set draws to `frame` (module doc), and the cell overlay when the
     /// frame asked for it ([`Frame::cells_debug`]).
     pub fn draw_into(&mut self, frame: &mut Frame) {
+        if !crate::stream::STREAMING_BUILT {
+            return;
+        }
         let mut loading = 0u32;
         let mut drew_any = false;
         for cell in self.cells.values() {

@@ -289,7 +289,8 @@ impl<W: Default + 'static> Game<W> {
     /// `duplicate-streaming`, and a cell size, radius or anchor count outside its caps or a sim set
     /// past `STREAM_SIM_BYTES_MAX` `streaming-invalid`). Every tick starts with the commit slot,
     /// which moves `sim.stream` to its anchors; while it is registered `state()` carries the
-    /// display-only key `__stream`.
+    /// display-only key `__stream`. A game built with `[streaming] enabled = false` is refused at
+    /// `install` (`streaming-disabled`).
     pub fn streaming(&mut self, streaming: crate::stream::Streaming) -> &mut Self {
         self.streaming.push(streaming);
         self
@@ -323,9 +324,32 @@ impl<W: Default + 'static> Game<W> {
     }
 
     /// Give the world a navigation mesh walkers of `config` use: every seed rebuilds `sim.nav`
-    /// for it (the runtime owns the nav, as it owns physics).
+    /// for it (the runtime owns the nav, as it owns physics). A game built with `[nav] enabled =
+    /// false` is refused at `install` (`nav-disabled`).
     pub fn navigation(&mut self, config: crate::nav::NavConfig) -> &mut Self {
         self.navigation = Some(config);
         self
+    }
+}
+
+impl<W> Game<W> {
+    /// The walker config the runtime builds, bakes, saves and restores `sim.nav` for: the
+    /// `game.navigation` one, never one in a build without the `nav` feature (constant `None`
+    /// there, so none of genex-nav's engine is linked).
+    pub(crate) fn nav_config(&self) -> Option<&crate::nav::NavConfig> {
+        if !crate::nav::NAV_BUILT {
+            return None;
+        }
+        self.navigation.as_ref()
+    }
+
+    /// The streaming registration the runtime commits, builds, saves and draws: the
+    /// `game.streaming` one, never one in a build without the `streaming` feature (constant
+    /// `None` there, so the commit slot and the view set compile to nothing).
+    pub(crate) fn stream_registration(&self) -> Option<&crate::stream::Streaming> {
+        if !crate::stream::STREAMING_BUILT {
+            return None;
+        }
+        self.streaming.first()
     }
 }
