@@ -1,8 +1,8 @@
 /**
  * L4: the stage strip over a compiled game in real Chromium, over a fake host API
  * (`stage-fixture.tsx`). A Rust · wgpu game's destinations get badges like a C++ game's: standing,
- * Browser and Mac are Live's (a Rust game has no window of its own, so Live shows its Mac build);
- * while its Mac build runs, the badge says Building out loud and its tooltip names the Rust build
+ * Browser is Live's and its Mac build is not built yet (a Rust game has no window of its own, so
+ * Native builds it); while Live draws it the Mac badge says In Live · Native; while its Mac build runs, the badge says Building out loud and its tooltip names the Rust build
  * stage, never C++; with no Rust tools in, both badges say they need tools. A C++ game keeps its own
  * window and names its own build stage. Light and dark screenshots of each, with the tooltip open.
  */
@@ -22,9 +22,19 @@ const steps = String.raw`
  await theme('light');
  await show(rust);await until(badge('macos'));
  check('a Rust game shows its destination badges',await js('Boolean('+badge('web')+'&&'+badge('macos')+')'));
- check('standing, its Mac build is Live’s, not a window of its own',(await js(badge('macos')+'.dataset.destinationState'))==='in-live'&&(await js(badge('macos')+'.innerText')).includes('In Live · Native'),await js(badge('macos')+'.innerText'));
+ check('standing with no Mac build, its Mac badge says Not built yet, never In Live',(await js(badge('macos')+'.dataset.destinationState'))==='not-built'&&!(await js(badge('macos')+'.innerText')).includes('In Live'),await js(badge('macos')+'.innerText'));
+ const notBuiltSaid=await tooltip();
+ check('its tooltip says Native builds it',notBuiltSaid.includes('Choose Native to build it'),notBuiltSaid);
+ await blur();
  check('the kind chip names Rust · wgpu',(await js(strip+'.querySelector("[data-stage-kind]").title')).includes('Rust · wgpu'));
  await capture('rust-standing-light');
+
+ await show({...rust,macRun:'ready'});await until(badge('macos')+'.dataset.destinationState==="in-live"');
+ check('while Live draws its Mac build, the badge says In Live · Native',(await js(badge('macos')+'.innerText')).includes('In Live · Native'),await js(badge('macos')+'.innerText'));
+ await capture('rust-in-live-light');
+ await show({...rust,macRun:'stopped'});await until(badge('macos')+'.dataset.destinationState==="built"');
+ check('once Live’s Mac run ended, the badge says Built',(await js(badge('macos')+'.innerText')).includes('Built'),await js(badge('macos')+'.innerText'));
+ await capture('rust-built-light');
 
  await show({...rust,building:true});await until(badge('macos')+'.dataset.destinationState==="building"');
  check('a running Rust build says Building out loud',(await js(badge('macos')+'.innerText')).includes('Building'));

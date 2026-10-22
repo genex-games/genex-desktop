@@ -3,8 +3,8 @@
  * Genex making assets, three lines on what it does and one button that connects it. Over home it
  * sits bottom-left, clear of home's composer, and moves nothing beneath it; over a game it sits
  * bottom-right, over the stage, away from the chat's composer. It never covers the welcome or
- * Plugins or a dialog, settles for good once dismissed or connected, and hands a running game's
- * rectangle back to the DOM while it is up (`stage/native-bounds.ts`).
+ * Plugins or a dialog, settles for good once dismissed or connected, and lets a running web game
+ * draw on under it, out of sight with its frames held in the stage (`stage/native-bounds.ts`).
  */
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";

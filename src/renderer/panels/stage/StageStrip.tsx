@@ -558,6 +558,8 @@ function DestinationControls({
   const ownWindow = loaded !== null && playsInOwnWindow(stackOf(loaded.shape));
   const macPlay = ownWindow && playOnMacShown(targets, host) ? project : null;
   const facts = useBadgeFacts(macPlay, targets, buildProblem, toolchain, compiled);
+  /** Live's embedded run of a game with no window of its own: its Mac badge says In Live only while Live draws it. */
+  const macRun = useNative((state) => (ownWindow ? null : (nativeEmbedOf(state, project).status?.state ?? null)));
   return (
     <>
       {liveView ? <NativeViewToggle choice={liveView} /> : null}
@@ -573,6 +575,7 @@ function DestinationControls({
             ...facts,
             checks: loaded.nativeChecks,
             stack: compiled,
+            macRun,
           })}
           phase={stagePhase(runs, facts.failed)}
         />
