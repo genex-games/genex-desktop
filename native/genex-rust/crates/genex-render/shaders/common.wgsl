@@ -97,17 +97,25 @@ const GX_INSTANCE_FADE_WHOLE: f32 = 1.0;
 // the survivor's fade (the instance fade table's x, `mesh::lod_row_keep`): fading out (0 <= fade
 // < 1) keeps the thresholds below it, fading in (fade = -share) those at or above 1 - share, so
 // the two levels of one crossfade cover each pixel exactly once; whole (1) keeps every pixel.
-// The threshold is interleaved gradient noise of the pixel (Jimenez 2014), turned by the golden
-// ratio's fraction each frame on temporal paths so the resolve blends the two levels.
-const GX_LOD_FADE_TURN: f32 = 0.618034;
-// The turns repeat after this many frames (keeps the walk's float exact).
-const GX_LOD_FADE_FRAMES: u32 = 64u;
+// The threshold is interleaved gradient noise of the pixel (Jimenez 2014), turned each frame on
+// temporal paths so the resolve blends the two levels: by frame k's base-2 radical inverse of
+// k mod GX_LOD_FADE_FRAMES (0, 1/2, 1/4, 3/4, ...), so any GX_LOD_FADE_FRAMES consecutive frames
+// turn each pixel through evenly spaced thresholds and keep its incoming level in floor(8 s) or
+// ceil(8 s) of them (R-12, D22: the golden-ratio walk left a pixel up to three eighths off its
+// share, a stipple the settled capture showed), and the halves alternate so a running average
+// sees no slow beat.
+// The turns' period: the shortest TAA jitter cycle (`settings::JitterCycle::Eight`), which every
+// longer cycle holds whole runs of.
+const GX_LOD_FADE_FRAMES: u32 = 8u;
+// log2(GX_LOD_FADE_FRAMES): the bits of the frame's radical inverse.
+const GX_LOD_FADE_FRAME_BITS: u32 = 3u;
 
 // The dither threshold of the pixel at `pixel` (framebuffer coordinates) on frame `frame_key`
 // (0 on a path that does not turn it), in [0, 1).
 fn gx_lod_fade_threshold(pixel: vec2<f32>, frame_key: u32) -> f32 {
     let ign = fract(52.9829189 * fract(dot(floor(pixel), vec2<f32>(0.06711056, 0.00583715))));
-    return fract(ign + GX_LOD_FADE_TURN * f32(frame_key % GX_LOD_FADE_FRAMES));
+    let turn = reverseBits(frame_key % GX_LOD_FADE_FRAMES) >> (32u - GX_LOD_FADE_FRAME_BITS);
+    return fract(ign + f32(turn) / f32(GX_LOD_FADE_FRAMES));
 }
 
 // Whether a survivor of fade `fade` keeps threshold `threshold`. `1.0 + fade` is the fade-out

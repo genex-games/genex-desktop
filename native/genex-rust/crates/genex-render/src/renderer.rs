@@ -166,7 +166,7 @@ use crate::meshlet_cull::{
 };
 use crate::motion::{GpuMotionFrame, MotionHistory, MotionNode, MotionStep};
 use crate::post::fsr::{FsrNode, FsrPass, FsrPasses};
-use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveNode, TaaInput};
+use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveNode, TaaFlags, TaaInput};
 use crate::post::taau::{GpuTaauParams, TaauInput};
 use crate::post::tonemap::{MsaaResolve, ResolveNode, TonemapNode, TonemapPass, TonemapSource, f16_to_f32};
 use crate::prepass::{ExtensionDemand, GpuPrepassDraw, PrepassConsumers, PrepassDraw, PrepassInfo};
@@ -3324,6 +3324,18 @@ impl Renderer {
         self.last_path
     }
 
+    /// Whether the environment's time-sliced work has caught up: every reflection probe captured
+    /// and every irradiance volume baked, current and faded in. Live spreads that work over many
+    /// frames (`irradiance::CELLS_PER_FRAME`, `irradiance::FADE_IN_FRAMES`) while a settled capture
+    /// bakes it whole, so a Live picture compared with a capture waits for this first (R-12: the
+    /// cabin's volume, half baked, read as a 40-level "trail" on the Lakeside wall).
+    pub fn environment_settled(&self) -> bool {
+        let maps = self.environment.borrow();
+        let grid = maps.irradiance().schedule();
+        let faded_in = (0..).take_while(|slot| grid.published(*slot)).all(|slot| grid.presence(slot) >= 1.0);
+        maps.probes().schedule().settled() && grid.settled() && faded_in
+    }
+
     /// The last frame's depth, top row first: `Depth32Float` values, 1 for the far plane with
     /// standard Z and 0 with reverse-Z. Refused unless [`Renderer::set_depth_readback`] was on for
     /// that frame and it was single-sampled (a multisampled texture cannot be copied out).
@@ -4426,7 +4438,18 @@ impl Renderer {
     /// value moves by a small step per tick) and whether history starts over.
     fn taa_row(&self) -> GpuTaaParams {
         let (config, prev_jitter, ratio) = self.taa_inputs();
-        GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject)
+        let row = GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject);
+        if self.history_set != HistorySet::Capture {
+            return row;
+        }
+        // A settled capture's cycle averages its raw re-renders with the box's weights (R-12).
+        // Its history is rectified only while auto exposure meters (the first re-renders are drawn
+        // at another pre-exposure, which the row's ratio of 1 does not undo): after that nothing
+        // changes across the cycle, and clipping a few frames' history to one frame's box biased
+        // every pixel a one-sample dither covers (the LOD crossfade's stipple, D22).
+        let metering = auto_exposure(&self.look, &self.quality) && self.frame_index < u64::from(crate::settle::GRADED_EXPOSURE_SETTLE_FRAMES);
+        let flags = if metering { TaaFlags::CLIP.with(TaaFlags::SETTLE) } else { TaaFlags::SETTLE };
+        row.with_flags(flags)
     }
 
     /// TAA upscaling's row for the frame being drawn (B.8): [`Renderer::taa_row`]'s inputs at the
