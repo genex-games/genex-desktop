@@ -111,6 +111,8 @@ async function rig(
     spawnFails?: boolean;
     record?: Partial<InstallRecord>;
     genex?: "open" | "fails";
+    /** The game ends as it is brought forward, and bringing it forward returns only once its end is handled. */
+    endsOnShow?: boolean;
   } = {},
 ) {
   const root = await realpath(await tmpDir("native-launch-"));
@@ -160,6 +162,9 @@ async function rig(
     },
     show: async (pid) => {
       shown.push(pid);
+      if (!options.endsOnShow) return;
+      games.find((game) => game.pid === pid)?.exit(0);
+      await until(() => ended.length > 0);
     },
     kill: (pid, signal) => {
       signals.push([pid, signal]);
@@ -284,6 +289,16 @@ describe("native game sessions", () => {
     assert.deepEqual(reported, [], "a game that never showed a window was not played");
     await sessions.quit("dust-runners");
     assert.deepEqual(sessions.sessions(), [], "a failure is forgotten when dismissed");
+  });
+
+  it("reports a game's start before its end, even when it ends as it is brought forward", async () => {
+    const { sessions, reported, clock } = await rig({ windowAfter: 1, endsOnShow: true });
+    await sessions.launch("dust-runners");
+    while (reported.length < 2) {
+      clock.fire();
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.deepEqual(reported, ["started dust-runners", "ended dust-runners"]);
   });
 
   it("counts a game still up a minute on as played, though no window of it was seen", async () => {

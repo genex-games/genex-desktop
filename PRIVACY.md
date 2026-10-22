@@ -133,12 +133,14 @@ from genex.games' CDN (cdn.genex.technology) and without your token; its size, c
 signature are checked before it opens. Installed games and their saves live in the app profile.
 Each game runs in a sandbox with no network that can write only its own saves, preferences and
 a scratch folder removed when it ends, and removing a game keeps its saves. At start and every six hours the app reads each installed
-game's page in the same way to tell you about a newer version. Once a game's window is on screen
-(or it has run a minute without one the app can see), the app tells the Genex API which game was
-played, so genex.games counts the play the way it counts a web play: once per person per game.
-Signed in, it sends the account's token; signed out, or once genex.games no longer accepts the
-token, it sends a random id the app made for this computer, kept in the app profile beside the
-installed games. Nothing else goes with it.
+game's page in the same way to tell you about a newer version. Each time a game starts running
+(its window on screen, or a minute up without one the app can see), the app tells the Genex API
+which game was played. genex.games counts each person once per game, as it counts web plays, and
+keeps each report with its time, as it does for a web play. Signed in, the report carries the
+account's token; signed out, or once genex.games no longer accepts the token, it carries a random
+id the app made for this computer instead. That id is kept in the app profile beside the installed
+games and stays the same until the profile is removed; it says nothing else about you or the
+computer.
 
 A game's comments are read from the Genex API without a sign-in, a page at a time while you scroll
 them, with each writer's name and picture. Signed in, the app also sends the account's token to
@@ -213,7 +215,8 @@ deletion are governed by the service, not by deletion of the desktop profile.
 
 ## Analytics and shared build metrics
 
-Studio itself sends no usage analytics, session recordings or crash reports.
+Apart from a downloaded game's play report (see Play), Studio itself sends no usage analytics,
+session recordings or crash reports.
 
 **Share build metrics** (Settings → Privacy) is off by default and is a consent of its own.
 When it is on, each finished build becomes one row of anonymous numbers sent to the Genex API

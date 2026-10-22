@@ -90,6 +90,13 @@ describe("a downloaded game's play on genex.games", () => {
     assert.equal(sent[1]?.token, undefined, "the second report carries no token");
     assert.match(playerIds(sent)[1] ?? "", UUID);
     assert.deepEqual(logs, []);
+
+    await plays.report("iron-tide");
+    assert.deepEqual(
+      sent.slice(2).map((one) => one.token),
+      [undefined],
+      "the next play goes signed out at once, never with the refused token",
+    );
   });
 
   it("keeps a kept id it cannot read now, and drops that play instead of counting this computer again", async () => {

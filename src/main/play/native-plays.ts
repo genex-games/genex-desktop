@@ -68,6 +68,8 @@ async function computerId(root: string): Promise<string> {
 /** The reporter over `deps`: one computer id per start of Genex, read or made once. */
 export function nativePlays(deps: NativePlayDeps): NativePlays {
   let id: Promise<string> | null = null;
+  /** The token genex.games last refused: while the account still holds it, reports go signed out. */
+  let refusedToken: string | null = null;
   const playerId = (): Promise<string> => {
     id ??= computerId(deps.root).catch((error: unknown) => {
       id = null;
@@ -83,9 +85,10 @@ export function nativePlays(deps: NativePlayDeps): NativePlays {
 
   const send = async (slug: string): Promise<number> => {
     const token = await deps.token();
-    if (!token) return sendSignedOut(slug);
+    if (!token || token === refusedToken) return sendSignedOut(slug);
     const { status } = await deps.request(PlayRoute.NativePlay, { method: "POST", body: { slug }, token });
     if (status !== HTTP_UNAUTHORIZED) return status;
+    refusedToken = token;
     deps.refused?.(token);
     return sendSignedOut(slug);
   };

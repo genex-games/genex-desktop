@@ -188,9 +188,10 @@ export class NativeSessions {
     if (!waiting()) return;
     one.session = { ...one.session, phase: NativeSessionPhase.Running };
     this.#push();
+    // Before the awaits: a game that ends while it is brought forward reports its end after its start.
+    this.#deps.presence?.started(slug);
     await this.#deps.show(one.pid);
     await this.#deps.played(slug).catch(() => undefined);
-    this.#deps.presence?.started(slug);
   }
 
   /** What happens once a game's process ends: running, it was played; starting, it failed. */
