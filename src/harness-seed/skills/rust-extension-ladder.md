@@ -53,6 +53,12 @@ loosens the sandbox.
   conformance suite's two renderer rows, `render-presets` (every preset and the phone classes,
   one look on all, pinned captures) and `render-extensions` (no refused custom pass), run with
   `check_conformance` like the rest: a fork that breaks either names the check.
+- Menus and saves never need a level above 0. The kit's `Menu`, `Dialog` and lists move by pad
+  or keys, and each widget's key (`pause.save`) is in `state().hud.widgets`, so a check walks a
+  menu by key. `game.saves(..)` with `ctx.slots()` saves and loads slots (`docs/api/saves.md`);
+  never write a save format of your own with `ctx.save`. Prove a save works: save a slot, load
+  it, then read `state().volatile.saves.lastLoad.checksumMatch`. False means some state a probe
+  reads is in no save section.
 - A recurring need (the same crate, the same eject reason across games) is a missing genex
   feature: say so in your summary.
 
