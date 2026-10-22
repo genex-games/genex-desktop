@@ -24,6 +24,8 @@ mod director;
 mod events;
 #[cfg(feature = "mixer")]
 mod graph;
+#[cfg(feature = "mixer")]
+mod lowpass;
 mod meter;
 #[cfg(feature = "mixer")]
 mod mixer;

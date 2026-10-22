@@ -19,7 +19,7 @@ use genex::prelude::*;
 use genex::saves::SaveConfig;
 use genex::{FIXED_STEP_MS, Runtime};
 use genex_core::saves::mirror;
-use genex_platform_web::saves::{saves_state, set_persistent, with_saves};
+use genex_platform_web::web_saves::{saves_state, set_persistent, with_saves};
 
 const SAVE_TICK: u64 = 120;
 const LOAD_TICK: u64 = 200;
@@ -202,7 +202,7 @@ fn a_body_the_store_does_not_keep_is_save_slot_missing_at_once() {
     let held = rt.tick();
     assert_eq!(rt.step(FIXED_STEP_MS).ticks, 0);
     assert_eq!(mirror::take_requests(), vec![name.clone()]);
-    assert!(genex_platform_web::saves::provide(&name, None), "a missing body settles the request");
+    assert!(genex_platform_web::web_saves::provide(&name, None), "a missing body settles the request");
     assert_eq!(rt.step(FIXED_STEP_MS).ticks, 1, "the load refused; the tick runs");
     assert_eq!(rt.tick(), held + 1);
     assert_eq!(last_load(&rt), serde_json::Value::Null);
@@ -215,12 +215,12 @@ fn a_body_the_store_does_not_keep_is_save_slot_missing_at_once() {
 fn the_shell_cannot_plant_or_drop_a_resident_file_through_provide() {
     mirror::preload(vec![("best.bin".to_owned(), vec![1, 2])]);
     mirror::preload_index(vec![("slots/a.sav".to_owned(), 3)]);
-    assert!(!genex_platform_web::saves::provide("best.bin", None), "a resident file is not lazy");
-    assert!(!genex_platform_web::saves::provide("best.bin", Some(vec![9])));
-    assert!(!genex_platform_web::saves::provide("slots/unknown.sav", Some(vec![9])), "an unknown body is not planted");
-    assert!(!genex_platform_web::saves::provide("../x.sav", None));
+    assert!(!genex_platform_web::web_saves::provide("best.bin", None), "a resident file is not lazy");
+    assert!(!genex_platform_web::web_saves::provide("best.bin", Some(vec![9])));
+    assert!(!genex_platform_web::web_saves::provide("slots/unknown.sav", Some(vec![9])), "an unknown body is not planted");
+    assert!(!genex_platform_web::web_saves::provide("../x.sav", None));
     assert_eq!(mirror::status().files, 2);
-    assert!(genex_platform_web::saves::provide("slots/a.sav", Some(vec![7, 7, 7])));
+    assert!(genex_platform_web::web_saves::provide("slots/a.sav", Some(vec![7, 7, 7])));
     assert!(mirror::is_resident("slots/a.sav"));
 }
 

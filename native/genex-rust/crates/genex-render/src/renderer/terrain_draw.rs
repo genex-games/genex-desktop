@@ -55,6 +55,8 @@ pub(super) struct TerrainPipelines {
     prepass: Option<(PrepassKey, Compiled<RenderPipeline>)>,
     /// The casters into `depth32float` and `depth16unorm` maps.
     casters: Option<[Compiled<RenderPipeline>; 2]>,
+    /// Terrain pipelines made so far, kept across terrains ([`Renderer::terrain_pipeline_builds`]).
+    builds: u32,
 }
 
 /// What the last frame drew of the terrain.
@@ -106,15 +108,18 @@ impl Renderer {
         let detail = self.terrain_pipelines.detail;
         let Some((desc, version)) = terrain else {
             self.terrain = None;
-            self.terrain_pipelines = TerrainPipelines { detail, ..TerrainPipelines::default() };
+            let builds = self.terrain_pipelines.builds;
+            self.terrain_pipelines = TerrainPipelines { detail, builds, ..TerrainPipelines::default() };
             return self.set_grass(None);
         };
         if self.terrain.as_ref().is_some_and(|held| held.version() == version) {
             return Ok(());
         }
         let quality = self.terrain_quality();
+        // Every terrain binds the same layout (`layout_entries`, which wgpu shares between equal
+        // layouts), so the held terrain's pipelines draw the new one: a game moving its patch
+        // compiles nothing (GE fix r2, EP-X1).
         self.terrain = Some(TerrainGpu::new(&gpu.device, &gpu.queue, desc, quality, version)?);
-        self.terrain_pipelines = TerrainPipelines { detail, ..TerrainPipelines::default() };
         self.set_grass(Some(desc))
     }
 
@@ -129,6 +134,12 @@ impl Renderer {
     fn terrain_quality(&self) -> TerrainQuality {
         let quality = TerrainQuality::of(&self.quality);
         TerrainQuality { detail: self.terrain_pipelines.detail.unwrap_or(quality.detail), ..quality }
+    }
+
+    /// Terrain pipelines made so far (diagnostics: a frame that makes one compiles shaders, a
+    /// hitch; a new terrain of the same layout makes none).
+    pub fn terrain_pipeline_builds(&self) -> u32 {
+        self.terrain_pipelines.builds
     }
 
     /// The version of the terrain drawn (None: no terrain).
@@ -170,17 +181,20 @@ impl Renderer {
         if self.terrain_pipelines.world.as_ref().is_none_or(|(made, _)| *made != world) {
             let pipeline = self.terrain_world_pipeline(&world)?;
             self.terrain_pipelines.world = Some((world, pipeline));
+            self.terrain_pipelines.builds += 1;
         }
         if prepass.is_some() {
             let key = PrepassKey { reversed: path.depth_reversed, motion };
             if self.terrain_pipelines.prepass.as_ref().is_none_or(|(made, _)| *made != key) {
                 let pipeline = self.terrain_prepass_pipeline(key)?;
                 self.terrain_pipelines.prepass = Some((key, pipeline));
+                self.terrain_pipelines.builds += 1;
             }
         }
         if plan.cascades.is_some() && self.terrain_pipelines.casters.is_none() {
             let caster = |format: ShadowFormat| self.terrain_caster_pipeline(format.texture_format());
             self.terrain_pipelines.casters = Some([caster(ShadowFormat::Depth32)?, caster(ShadowFormat::Depth16)?]);
+            self.terrain_pipelines.builds += 2;
         }
         Ok(())
     }

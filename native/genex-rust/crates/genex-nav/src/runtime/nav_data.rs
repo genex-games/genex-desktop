@@ -23,7 +23,7 @@
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 
-use genex_core::map::{Map, Set};
+use genex_core::map::{FastMap, Map, Set};
 use glam::{Vec2, Vec3, Vec3Swizzles};
 
 use super::clip::{portal_strip, subtract_strips};
@@ -131,7 +131,7 @@ pub struct NavigationData<CS: CoordinateSystem> {
     /// The off-mesh links.
     pub(crate) off_mesh_links: Arena<OffMeshLinkId, OffMeshLink>,
     /// The links that can be taken from each node.
-    pub(crate) node_to_off_mesh_link_ids: Map<NodeRef, Set<OffMeshLinkId>>,
+    pub(crate) node_to_off_mesh_link_ids: FastMap<NodeRef, Set<OffMeshLinkId>>,
     /// The nodes boundary links cut.
     pub(crate) modified_nodes: Map<NodeRef, ModifiedNode>,
     deleted_islands: Set<IslandId>,
@@ -188,7 +188,7 @@ fn portal_segment(portal: (Vec3, Vec3), interval: (f32, f32)) -> (Vec3, Vec3) {
 /// Where off-mesh links are written.
 struct LinkSink<'a> {
     off_mesh_links: &'a mut Arena<OffMeshLinkId, OffMeshLink>,
-    node_to_off_mesh_link_ids: &'a mut Map<NodeRef, Set<OffMeshLinkId>>,
+    node_to_off_mesh_link_ids: &'a mut FastMap<NodeRef, Set<OffMeshLinkId>>,
 }
 
 impl LinkSink<'_> {
@@ -272,7 +272,7 @@ impl<CS: CoordinateSystem> NavigationData<CS> {
             region_connections: DisjointSet::new(),
             root_region_number_to_possible_links: Map::default(),
             off_mesh_links: Arena::new(),
-            node_to_off_mesh_link_ids: Map::default(),
+            node_to_off_mesh_link_ids: FastMap::default(),
             modified_nodes: Map::default(),
             deleted_islands: Set::default(),
             new_animation_links: Set::default(),

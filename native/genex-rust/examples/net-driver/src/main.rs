@@ -8,6 +8,11 @@
 //!   pnpm --filter @genex/netcode-bench test:conformance
 //! ```
 
+// Host tooling (a stdio process on the wall clock), never a game: a wasm32 build, as the
+// six-destination check makes of every example, is an empty program.
+#![cfg_attr(target_arch = "wasm32", no_main)]
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::{Duration, Instant};

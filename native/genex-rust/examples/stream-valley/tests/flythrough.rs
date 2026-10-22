@@ -15,7 +15,7 @@
 //!   the class's pool at every frame; the last two fail when the view set finished no model
 //!   (nothing streamed, nothing measured). The record is written to `GENEX_FLY_OUT` (default
 //!   `.studio-dev/evidence/rust-renderer/perf/stream-flythrough.json`). Timings are the gate's on a
-//!   quiet machine (GE); a lane's run is advisory.
+//!   quiet machine (GE); a lane's run is advisory. A debug build skips the row.
 //!
 //! ```text
 //! node scripts/toolchains/rust-env.ts -- cargo test -p stream-valley --offline --test flythrough
@@ -296,6 +296,11 @@ fn out_path() -> PathBuf {
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_flythrough_fits_each_class_budget_with_zero_stalls_and_content_within_the_pool() {
+    // The frame budgets are release figures: a debug build (the workspace's `--ignored metal`
+    // sweep) would run the whole ride unoptimised, fail every frame and write the record anyway.
+    if cfg!(debug_assertions) {
+        return eprintln!("skipped: a debug build; the frame budgets are release rows (run with --release)");
+    }
     let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
     if let Err(error) = Presenter::open(WORLD_SIZE, assets()) {
         assert!(!require, "GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}");

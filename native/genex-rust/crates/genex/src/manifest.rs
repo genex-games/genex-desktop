@@ -251,12 +251,12 @@ pub const NAV_CALLS: [&str; 64] = [
     "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
 ];
 /// The input calls of the facade (IN-11, IN-12).
-pub const INPUT_CALLS: [&str; 30] = [
+pub const INPUT_CALLS: [&str; 31] = [
     "game.input", "game.touch_controls", "ActionMap::new", ".context", "Context::new", ".button", ".axis1", ".axis2",
     ".when", ".modify", ".pass_through", ".starts_off", "ctx.actions.down", "ctx.actions.pressed",
     "ctx.actions.released", "ctx.actions.fired", "ctx.actions.value", "ctx.actions.axis2", "ctx.actions.held_ticks",
     "ctx.actions.device", "ctx.actions.glyph", "ctx.actions.is_on", "ctx.actions.enable", "ctx.actions.disable",
-    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel",
+    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel", "glyph_ui",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling and `.triangle_count` counts a model's triangles.
@@ -268,9 +268,9 @@ pub const ASSET_CALLS: [&str; 10] = [
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
 /// The level-of-detail calls of the facade (LOD-07; a class's crossfade threshold, LOD-06, pinned at
 /// gate GI).
-pub const LOD_CALLS: [&str; 13] = [
+pub const LOD_CALLS: [&str; 12] = [
     ".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound", ".lod_at", "LodConfig::new",
-    ".threshold_px", ".with_impostor", ".impostor", "Impostor::hemi", "Impostor::sphere", ".not_before",
+    ".threshold_px", ".with_impostor", ".impostor", "Impostor::hemi", "Impostor::sphere",
     "game.impostor_bake",
 ];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.

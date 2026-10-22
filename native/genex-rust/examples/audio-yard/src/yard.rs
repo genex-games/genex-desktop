@@ -11,6 +11,8 @@ pub const TOUR_TICKS: u64 = 1200;
 const CORNERS: [Vec3; 4] = [Vec3::new(-12.0, 0.0, 8.0), Vec3::new(12.0, 0.0, 8.0), Vec3::new(12.0, 0.0, -8.0), Vec3::new(-12.0, 0.0, -8.0)];
 /// The walk's length, metres.
 const TOUR_METRES: f32 = 80.0;
+/// The HUD's distance from the screen's edges, in points.
+const HUD_INSET: f32 = 16.0;
 /// The ears' height above the walker's feet.
 const EAR_HEIGHT: f32 = 1.7;
 
@@ -373,7 +375,7 @@ fn ui(sim: &mut Sim<World>, ui: &mut egui::Ui, ctx: &Ctx<'_>) {
     let world = &mut sim.world;
     let mut talk = false;
     let mut fire = false;
-    egui::Frame::new().fill(egui::Color32::from_black_alpha(160)).inner_margin(8.0).show(ui, |ui| {
+    egui::Frame::new().fill(egui::Color32::from_black_alpha(160)).inner_margin(8.0).outer_margin(HUD_INSET).show(ui, |ui| {
         ui.horizontal(|ui| {
             talk = ui.button("Talk (T)").clicked();
             fire = ui.button("Fire (F)").clicked();

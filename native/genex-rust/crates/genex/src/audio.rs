@@ -175,7 +175,7 @@ mod engine {
 
 /// Every audio call the reference's audio page teaches, in its order (the vocabulary fixture's
 /// `audio.calls`, AU-9).
-pub const AUDIO_CALLS: [&str; 25] = [
+pub const AUDIO_CALLS: [&str; 26] = [
     "gfx.sound",
     "gfx.music",
     "game.audio",
@@ -198,6 +198,7 @@ pub const AUDIO_CALLS: [&str; 25] = [
     "ctx.audio.add_zone",
     "ctx.audio.remove_zone",
     "PlayOpts::ui",
+    ".max_instances",
     "sound.refusal",
     "sound.is_missing",
     "sound.seconds",

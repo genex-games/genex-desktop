@@ -9,6 +9,8 @@ with the cut, the journal, the write queue and the relay mapping in the path.
 It is host tooling, not a game: it reads the wall clock and runs a stdin reader thread
 (`clippy.toml` says so). The bench names the endpoint, game id, name and token, so `connect`
 installs a `RelayBackend` over a `BenchConnector` in place of the export's baked guest door.
+It has no web build: for wasm32 (the six-destination check builds every example) the library and
+the program compile empty.
 
 ## Build and run
 

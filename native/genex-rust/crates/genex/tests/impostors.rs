@@ -360,10 +360,7 @@ fn impostor_invalid_on_an_empty_model() {
 #[test]
 fn impostor_options_and_wire_spellings() {
     assert_eq!(Impostor::hemi().layout(), ImpostorLayout::Hemi);
-    assert_eq!(Impostor::hemi().not_before(40.0).not_before_m(), 40.0);
-    for hostile in [f32::NAN, -1.0, 0.0, f32::INFINITY] {
-        assert_eq!(Impostor::sphere().not_before(hostile), Impostor::sphere(), "{hostile} keeps no floor");
-    }
+    assert_eq!(Impostor::sphere().layout(), ImpostorLayout::Sphere);
     let wire: Vec<&str> = ImpostorLayout::ALL.iter().map(|layout| layout.wire()).collect();
     assert_eq!(wire, ["hemi", "sphere"]);
     assert_eq!(LodRefusalCode::ImpostorInvalid.wire(), "impostor-invalid");

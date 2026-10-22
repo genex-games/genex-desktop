@@ -4,11 +4,11 @@
 //! made when a slot first plays on that bus and kept while the slot stays there, so the pool never
 //! renders more than the class's physical voices. Rebuilding the graph (a seed) drops every tail.
 
+use crate::lowpass::{LowPassBuilder, LowPassHandle};
 use crate::mixer::{AudioError, DevicelessBackend, Sound};
 use crate::music::{Music, MusicPlayback};
 use crate::ops::{MusicOpts, MusicTrack, PhysicalSlot, ReverbPreset};
 use crate::vocab::{AudioErrorCode, Bus, PoolClass};
-use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::effect::reverb::{ReverbBuilder, ReverbHandle};
 use kira::sound::PlaybackPosition;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
@@ -67,7 +67,7 @@ pub(crate) fn all_finite(values: &[f32]) -> bool {
 struct VoiceTrack {
     bus: Bus,
     track: TrackHandle,
-    filter: FilterHandle,
+    filter: LowPassHandle,
     sound: Option<StaticSoundHandle>,
 }
 
@@ -184,7 +184,7 @@ impl BusGraph {
                 .sound_capacity(VOICE_TRACK_SOUNDS)
                 .persist_until_sounds_finish(true)
                 .with_send(self.reverb.id(), clamp_db(send_db));
-            let filter = builder.add_effect(FilterBuilder::new().mode(FilterMode::LowPass).cutoff(f64::from(CUTOFF_MAX_HZ)));
+            let filter = builder.add_effect(LowPassBuilder::new(f64::from(CUTOFF_MAX_HZ)));
             let track = self.buses[bus.index()].add_sub_track(builder).map_err(refused)?;
             self.slots[index] = Some(VoiceTrack { bus, track, filter, sound: None });
         }

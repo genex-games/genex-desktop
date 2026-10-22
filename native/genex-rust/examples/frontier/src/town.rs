@@ -21,12 +21,12 @@ use genex::animation::{BoolParam, FloatParam, LayerId, Motion, MotionSettings};
 use genex::nav::{AgentId, Nav, NavAgent, NavDebug, NavIslands, NavLink, NavLinkId, NavLinkKind, NavStatus, StreamedNav};
 use genex::prelude::*;
 use genex::render::Environment;
-use genex::{CellId, EnteredCell, FIXED_STEP_MS, NodeAnimator, StreamColliders, StreamCommit, Streaming, Terrain};
+use genex::{CellId, EnteredCell, FIXED_STEP_MS, NodeAnimator, StreamColliders, StreamCommit, Streaming};
 use genex_core::digest::{fnv1a64_from, hex64};
 
 use crate::mannequin::MANNEQUIN;
 use crate::props::{DOOR, DOOR_CLOSE, DOOR_OPEN, PINE};
-use crate::world::{self, CELL, IslandPart, KIND_HUT, KIND_STONE, KIND_TOWER, Spot, cell_of, params, patch, patch_block};
+use crate::world::{self, CELL, IslandPart, KIND_HUT, KIND_STONE, KIND_TOWER, Patch, Spot, cell_of, params, patch, patch_block};
 
 /// Agents in the town.
 pub const AGENTS: usize = 20;
@@ -165,8 +165,8 @@ pub struct World {
     /// The rider and the way it faces on the ground.
     at: Vec3,
     heading: Vec3,
-    /// The drawn terrain patch and the block it is centred on.
-    patch: Option<(Terrain, [i32; 2])>,
+    /// The drawn terrain patch.
+    patch: Option<Patch>,
     /// Things entered by kind, and a digest over every entered thing in commit order.
     huts: u32,
     stones: u32,
@@ -300,8 +300,8 @@ fn follow(sim: &mut Sim<World>, tick: u64) {
     sim.world.at = at;
     sim.stream.set_anchor(ANCHOR, at).expect("the road is inside the world");
     let block = patch_block(at);
-    if sim.world.patch.as_ref().is_none_or(|(_, drawn)| *drawn != block) {
-        sim.world.patch = Some((patch(block), block));
+    if sim.world.patch.as_ref().is_none_or(|drawn| drawn.block != block) {
+        sim.world.patch = Some(patch(block, sim.world.patch.as_ref()));
     }
 }
 
@@ -693,8 +693,8 @@ fn draw(sim: &Sim<World>, frame: &mut Frame, _: &Camera) {
     let world = &sim.world;
     frame.clear(SKY).ambient(Color::rgb(170, 190, 220), 0.3).sun(SUN_TOWARDS, Color::WHITE, 3.0);
     frame.environment(Environment::sky());
-    if let Some((terrain, _)) = &world.patch {
-        frame.tag("terrain").terrain(terrain);
+    if let Some(patch) = &world.patch {
+        frame.tag("terrain").terrain(&patch.terrain);
     }
     if sim.stream.is_active(cell_of(LADDER.0)) {
         let mid = 0.5 * (LADDER.0 + LADDER.1);

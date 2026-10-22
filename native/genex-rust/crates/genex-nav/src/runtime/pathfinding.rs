@@ -128,13 +128,14 @@ impl<CS: CoordinateSystem> AStarProblem for ArchipelagoPathProblem<'_, CS> {
         PathNode::Start
     }
 
-    fn successors(&self, state: &PathNode) -> Vec<(f32, PathStep, PathNode)> {
+    fn successors(&self, state: &PathNode, out: &mut Vec<(f32, PathStep, PathNode)>) {
         let (node_ref, point, ignore_step) = self.state_origin(state);
         let island = self.nav_data.get_island(node_ref.island_id).expect("a searched node's island");
         let polygon = &island.nav_mesh.polygons[node_ref.polygon_index];
         let current_node_cost = self.walk_cost(polygon.type_index);
         if node_ref == self.end_node {
-            return vec![(point.distance(self.end_point) * current_node_cost, PathStep::GoToEnd, PathNode::End)];
+            out.push((point.distance(self.end_point) * current_node_cost, PathStep::GoToEnd, PathNode::End));
+            return;
         }
         let empty = Set::default();
         let off_mesh_links = self.nav_data.node_to_off_mesh_link_ids.get(&node_ref).map_or(Cow::Owned(empty), Cow::Borrowed);
@@ -174,7 +175,7 @@ impl<CS: CoordinateSystem> AStarProblem for ArchipelagoPathProblem<'_, CS> {
             let cost = point.distance(link.portal.0.midpoint(link.portal.1)) * current_node_cost + link_cost;
             Some((cost, PathStep::OffMeshLink(link_id), PathNode::OffMeshLink(link_id)))
         });
-        edges.chain(links).collect()
+        out.extend(edges.chain(links));
     }
 
     fn heuristic(&self, state: &PathNode) -> f32 {

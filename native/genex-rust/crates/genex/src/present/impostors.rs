@@ -38,11 +38,15 @@ use super::{AssetCache, ModelSource, rgba, surface};
 use crate::frame::{Color, Frame};
 use crate::lod::{BAKED_IMPOSTOR_FOLDER, ImpostorLayout, LodRefusalCode, impostor_bake_name};
 
+/// The least error an impostor level switches at: none, so it switches where its error allows (a
+/// game holds detail with `Model::with_lod_bias`; the ladder cut a per-impostor distance).
+const NO_FLOOR: f32 = 0.0;
+
 /// Bakes a Live frame takes at most (the rest wait for later frames).
 pub const LIVE_BAKES_PER_FRAME: usize = 1;
 
 /// One model's impostor: its cache key, its path (as `volatile.render.lod` names it), its parts
-/// with their materials, its layout, its LOD sphere's radius and its floor, and what its bake did.
+/// with their materials, its layout, its LOD sphere's radius, and what its bake did.
 #[derive(Clone, Debug, PartialEq)]
 struct Job {
     key: String,
@@ -50,7 +54,6 @@ struct Job {
     parts: Vec<(MeshId, Material)>,
     layout: ImpostorLayout,
     radius: f32,
-    floor: f32,
     /// The FNV-1a 64 of the files it is drawn from (None when one did not read): a build-time
     /// atlas loads only when it was baked from the same (LOD-23).
     digest: Option<u64>,
@@ -136,9 +139,8 @@ impl Impostors {
                 continue;
             }
             let radius = loaded.iter().fold([0.0; 4], |sphere, loaded| super::union_sphere(sphere, loaded.sphere))[3];
-            let floor = crate::lod::switch_error(impostor.not_before_m());
             let digest = model_digest(key, model, source);
-            self.jobs.push(Job { key: key.to_owned(), model: path, parts, layout: impostor.layout(), radius, floor, digest, streamed, state: JobState::Pending });
+            self.jobs.push(Job { key: key.to_owned(), model: path, parts, layout: impostor.layout(), radius, digest, streamed, state: JobState::Pending });
         }
     }
 
@@ -169,7 +171,7 @@ impl Impostors {
         }
         let mut ran = 0u32;
         for job in self.jobs.iter_mut().filter(|job| job.state == JobState::Pending) {
-            let install = ImpostorInstall { parts: &job.parts, layout: job.layout.render(), class, radius: job.radius, floor: job.floor };
+            let install = ImpostorInstall { parts: &job.parts, layout: job.layout.render(), class, radius: job.radius, floor: NO_FLOOR };
             // LOD-23: a build-time atlas of the same inputs loads without a bake or its budget.
             if let Some(atlas) = prebaked(job, class, source)
                 && let Some(row) = renderer.install_baked_impostor(gpu, &install, &atlas)?
@@ -205,7 +207,7 @@ impl Impostors {
         let Some(model_digest) = job.digest else { return Ok(None) };
         let meshes: Vec<MeshId> = self.jobs.iter().flat_map(|job| job.parts.iter().map(|(mesh, _)| *mesh)).collect();
         renderer.reset_impostors(gpu, class, 1, &meshes);
-        let install = ImpostorInstall { parts: &job.parts, layout: job.layout.render(), class, radius: job.radius, floor: job.floor };
+        let install = ImpostorInstall { parts: &job.parts, layout: job.layout.render(), class, radius: job.radius, floor: NO_FLOOR };
         let baked = renderer.install_impostor(gpu, &install)?;
         let digest = baked_atlas_digest(model_digest, class, job.layout.render());
         let atlas = match baked {

@@ -14,14 +14,16 @@
 //!   search counts as `NoPath` for an agent.
 //! - Avoidance is NAV-6's [`Avoidance`] step (sorted neighbours, no k-d tree); this file builds
 //!   its inputs and the border obstacles (landmass's `nav_mesh_borders_to_dodgy_obstacles`, with
-//!   its maps as `Map`/`Set` and its explore heap ordered by (distance, node)).
+//!   its maps as `Map`/`Set` and its explore heap ordered by (distance, node)). GE (NAV-18): the
+//!   border tables it only looks up are genex-core `FastMap`/`FastSet`, and a node's unconnected
+//!   edges and crossings reuse one buffer each (the same edges in the same ascending order).
 //! - P14 (NAV-8): [`Gates`] shut areas and close links; on the update after a gate shuts, every
 //!   corridor through it is dropped and its agent repaths.
 //! - A paused agent, or one taking an animation link, wants no move (upstream kept its last one).
 
 use std::collections::{BinaryHeap, VecDeque};
 
-use genex_core::map::{Map, Set};
+use genex_core::map::{FastMap, FastSet, Map, Set};
 use glam::{Vec2, Vec3, Vec3Swizzles};
 
 use super::agent::{Agent, AgentId, AgentState, ReachedAnimationLink, RepathResult, does_agent_need_repath};
@@ -514,6 +516,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
         let mut ids = Vec::with_capacity(sampled.agent_nodes.len());
         let mut agents = Vec::with_capacity(sampled.agent_nodes.len());
         let mut obstacles = Vec::with_capacity(sampled.agent_nodes.len());
+        let mut scratch = BorderScratch::default();
         for (agent_id, agent) in self.agents.iter() {
             let Some(&(point, node)) = sampled.agent_nodes.get(&agent_id) else {
                 continue;
@@ -528,7 +531,7 @@ impl<CS: CoordinateSystem> Archipelago<CS> {
                 max_speed: agent.max_speed,
                 responsibility,
             });
-            obstacles.push(border_obstacles((point, node), &self.nav_data, options.neighbourhood));
+            obstacles.push(border_obstacles((point, node), &self.nav_data, options.neighbourhood, &mut scratch));
             ids.push(agent_id);
         }
         let mut bodies: Vec<AvoidanceBody> = self
@@ -602,18 +605,40 @@ fn explore_node(distance_squared: f32, node: NodeRef) -> ExploreNode {
 /// A vertex of an island (or a modified node's new vertex) a border edge ends at.
 type BorderVertex = (Option<IslandId>, usize);
 
+/// The buffers [`border_obstacles`] fills for one agent, kept across a tick's agents so each walk
+/// reuses their memory (GE fix r2, NAV-18's update budget). Every walk starts them empty.
+#[derive(Default)]
+struct BorderScratch {
+    visibility_set: VisibilitySet,
+    border_edges: FastMap<u32, (BorderVertex, BorderVertex)>,
+    new_vertices: Vec<Vec2>,
+    explored: FastSet<NodeRef>,
+    remaining_edges: Vec<usize>,
+    crossings: Vec<(Vec2, Vec2, NodeRef)>,
+    next_nodes: BinaryHeap<ExploreNode>,
+}
+
+impl BorderScratch {
+    /// Empty every buffer, keeping its memory.
+    fn clear(&mut self) {
+        self.visibility_set.clear();
+        self.border_edges.clear();
+        self.new_vertices.clear();
+        self.explored.clear();
+        self.remaining_edges.clear();
+        self.crossings.clear();
+        self.next_nodes.clear();
+    }
+}
+
 /// The mesh borders near the agent as dodgy obstacles, seen from the agent's node so floors above
-/// and below never count (landmass's `nav_mesh_borders_to_dodgy_obstacles`).
-fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data: &NavigationData<CS>, distance_limit: f32) -> Vec<Obstacle> {
+/// and below never count (landmass's `nav_mesh_borders_to_dodgy_obstacles`), walked in `scratch`.
+fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data: &NavigationData<CS>, distance_limit: f32, scratch: &mut BorderScratch) -> Vec<Obstacle> {
     let distance_limit = distance_limit * distance_limit;
-    let mut visibility_set = VisibilitySet::new();
-    let mut border_edges: Map<u32, (BorderVertex, BorderVertex)> = Map::default();
-    let mut new_vertices: Vec<Vec2> = Vec::new();
-    let mut explored: Set<NodeRef> = Set::default();
-    let mut next_nodes = BinaryHeap::new();
+    scratch.clear();
+    let BorderScratch { visibility_set, border_edges, new_vertices, explored, remaining_edges, crossings, next_nodes } = scratch;
     next_nodes.push(explore_node(0.0, agent_node.1));
     let agent_point = agent_node.0.xy();
-    let relative = |island: &Island<CS>, index: usize, origin: Vec2| island.transform.apply(island.nav_mesh.vertices[index]).xy() - origin;
 
     while let Some(ExploreNode { node, .. }) = next_nodes.pop() {
         if !explored.insert(node) {
@@ -623,18 +648,21 @@ fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data:
             continue;
         };
         let polygon = &island.nav_mesh.polygons[node.polygon_index];
-        let mut remaining_edges: Set<usize> = (0..polygon.vertices.len()).collect();
+        let apply = island.transform.applier();
+        let relative = |index: usize| apply(island.nav_mesh.vertices[index]).xy() - agent_point;
+        // The node's unconnected edges, ascending.
+        remaining_edges.clear();
+        remaining_edges.extend((0..polygon.vertices.len()).filter(|&edge| !matches!(polygon.connectivity.get(edge), Some(Some(_)))));
         // Crossings out of the node: dodgy's solid side is the left, so each edge is reversed
         // to keep the node's outside solid.
-        let mut crossings: Vec<(Vec2, Vec2, NodeRef)> = Vec::new();
+        crossings.clear();
         for (edge_index, connectivity) in polygon.connectivity.iter().enumerate() {
             let Some(connectivity) = connectivity else {
                 continue;
             };
-            remaining_edges.shift_remove(&edge_index);
             let (vertex_1, vertex_2) = polygon.get_edge_indices(edge_index);
             let next = NodeRef { island_id: node.island_id, polygon_index: connectivity.polygon_index };
-            crossings.push((relative(island, vertex_2, agent_point), relative(island, vertex_1, agent_point), next));
+            crossings.push((relative(vertex_2), relative(vertex_1), next));
         }
         if let Some(links) = nav_data.node_to_off_mesh_link_ids.get(&node) {
             for link in links.iter().filter_map(|id| nav_data.off_mesh_links.get(*id)) {
@@ -644,7 +672,7 @@ fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data:
                 }
             }
         }
-        for (vertex_1, vertex_2, next) in crossings {
+        for &(vertex_1, vertex_2, next) in crossings.iter() {
             if !visibility_set.is_line_visible(vertex_1, vertex_2) {
                 continue;
             }
@@ -654,24 +682,25 @@ fn border_obstacles<CS: CoordinateSystem>(agent_node: (Vec3, NodeRef), nav_data:
             }
         }
         let modified_node = nav_data.modified_nodes.get(&node);
-        add_borders(&mut visibility_set, &mut border_edges, &mut new_vertices, (node, island), modified_node, &remaining_edges, agent_point);
+        add_borders(visibility_set, border_edges, new_vertices, (node, island), modified_node, remaining_edges, agent_point);
     }
-    build_obstacles(nav_data, &visibility_set, &border_edges, &new_vertices)
+    build_obstacles(nav_data, visibility_set, border_edges, new_vertices)
 }
 
 /// Adds one node's border edges to the visibility set: a modified node's new boundary, or the
 /// node's unconnected edges.
 fn add_borders<CS: CoordinateSystem>(
     visibility_set: &mut VisibilitySet,
-    border_edges: &mut Map<u32, (BorderVertex, BorderVertex)>,
+    border_edges: &mut FastMap<u32, (BorderVertex, BorderVertex)>,
     new_vertices: &mut Vec<Vec2>,
     (node, island): (NodeRef, &Island<CS>),
     modified_node: Option<&ModifiedNode>,
-    remaining_edges: &Set<usize>,
+    remaining_edges: &[usize],
     agent_point: Vec2,
 ) {
     let mesh_vertices = island.nav_mesh.vertices.len();
-    let world = |index: usize| island.transform.apply(island.nav_mesh.vertices[index]).xy();
+    let apply = island.transform.applier();
+    let world = |index: usize| apply(island.nav_mesh.vertices[index]).xy();
     let Some(modified_node) = modified_node else {
         let polygon = &island.nav_mesh.polygons[node.polygon_index];
         for &border_edge in remaining_edges {
@@ -705,7 +734,7 @@ fn add_borders<CS: CoordinateSystem>(
 fn build_obstacles<CS: CoordinateSystem>(
     nav_data: &NavigationData<CS>,
     visibility_set: &VisibilitySet,
-    border_edges: &Map<u32, (BorderVertex, BorderVertex)>,
+    border_edges: &FastMap<u32, (BorderVertex, BorderVertex)>,
     new_vertices: &[Vec2],
 ) -> Vec<Obstacle> {
     let mut finished_loops: Vec<Vec<BorderVertex>> = Vec::new();

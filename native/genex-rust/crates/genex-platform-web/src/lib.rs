@@ -22,7 +22,7 @@
 //!   recorded length and FNV-1a 64; the `web` module's `studio_assets_*` exports are the shell's
 //!   side of it.
 //!
-//! - [`saves`]: what `state()` says about the web's saves, kept in genex-core's in-memory mirror
+//! - [`web_saves`]: what `state()` says about the web's saves, kept in genex-core's in-memory mirror
 //!   that the shell fills from IndexedDB before the first reset and drains write-behind (M2.9);
 //!   the `web` module's `studio_saves_*` exports are the shell's side of it.
 //!
@@ -41,13 +41,15 @@
 //! and lifecycle beyond the saves flush are not wired yet.
 
 pub mod assets;
-pub mod audio;
 pub mod crash;
 pub mod draw;
 pub mod handle;
-pub mod saves;
 pub mod selftest;
 pub mod studio;
+// Not `audio` or `saves`: a web game's `genex::audio` and `genex::saves` are the facade's modules
+// (through `pub use genex::*` below), and a shell module of the same name would shadow them.
+pub mod web_audio;
+pub mod web_saves;
 
 #[cfg(target_arch = "wasm32")]
 mod web;

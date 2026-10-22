@@ -196,6 +196,9 @@ pub use glam;
 #[cfg(feature = "physics")]
 pub use rapier3d;
 pub use serde_json::{Value, json};
+/// serde, for a world `game.save_world()` keeps: a game crate cannot name serde itself, so it
+/// derives through this one with `#[serde(crate = "genex::serde")]` (`docs/api/saves.md`).
+pub use serde;
 
 /// The physics world every [`Sim`] carries: Rapier 3D with `enhanced-determinism`, stepped by the
 /// runtime once per tick after the update hooks.
@@ -226,6 +229,8 @@ pub mod prelude {
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
+    // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.
+    pub use serde::{Deserialize, Serialize};
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.

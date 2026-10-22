@@ -126,39 +126,28 @@ impl ImpostorLayout {
 
 /// A model's impostor (`Model::with_impostor`, game systems LOD-16): past its last mesh level the
 /// model draws as a camera-facing card baked from its own parts on the GPU, sized by the device
-/// class. The distance is kept as bits so the handle stays `Eq + Hash`.
+/// class. It switches where its error allows; a game holds a model's detail further with
+/// `Model::with_lod_bias` or the game-wide `LodConfig` (the extension ladder cut a per-impostor
+/// distance, PLAN 3.5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Impostor {
     layout: ImpostorLayout,
-    not_before: u32,
 }
 
 impl Impostor {
     /// Hemi-octahedral: seen from the side and above (the default for foliage and buildings).
     pub const fn hemi() -> Impostor {
-        Impostor { layout: ImpostorLayout::Hemi, not_before: 0 }
+        Impostor { layout: ImpostorLayout::Hemi }
     }
 
     /// Full octahedral: seen from every side.
     pub const fn sphere() -> Impostor {
-        Impostor { layout: ImpostorLayout::Sphere, not_before: 0 }
-    }
-
-    /// Never before `metres` from the camera (nominal view, as `Model::with_levels` measures),
-    /// even when its error allows it; a distance that is not finite and positive keeps none.
-    pub fn not_before(self, metres: f32) -> Impostor {
-        let usable = metres.is_finite() && metres > 0.0;
-        Impostor { not_before: if usable { metres.to_bits() } else { 0 }, ..self }
+        Impostor { layout: ImpostorLayout::Sphere }
     }
 
     /// Its layout.
     pub const fn layout(self) -> ImpostorLayout {
         self.layout
-    }
-
-    /// The nearest it draws, in metres (0: wherever its error allows).
-    pub fn not_before_m(self) -> f32 {
-        f32::from_bits(self.not_before)
     }
 }
 

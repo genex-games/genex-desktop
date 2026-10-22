@@ -11,7 +11,7 @@ use core::cmp::Ordering;
 use core::f32::consts::PI;
 use std::sync::Arc;
 
-use genex_core::map::{Map, Set};
+use genex_core::map::{FastMap, Map, Set};
 use glam::{Vec2, Vec3};
 
 use super::super::coords::{CoordinateSystem, CorePointSampleDistance, PointSampleDistance3d, XY, XYZ};
@@ -150,7 +150,7 @@ fn node_ref_to_num(node_ref: &NodeRef, island_order: &[IslandId]) -> u32 {
 
 fn clone_sort_round_links(
     boundary_links: &Arena<OffMeshLinkId, OffMeshLink>,
-    node_to_boundary_link_ids: &Map<NodeRef, Set<OffMeshLinkId>>,
+    node_to_boundary_link_ids: &FastMap<NodeRef, Set<OffMeshLinkId>>,
     island_order: &[IslandId],
     round_amount: f32,
 ) -> Vec<(NodeRef, Vec<OffMeshLink>)> {
@@ -265,7 +265,7 @@ fn link_edges_between_islands_links_touching_islands() {
     let island_2_edge_bbh = island_edges_bbh(&island_2);
 
     let mut boundary_links = Arena::new();
-    let mut node_to_boundary_link_ids = Map::default();
+    let mut node_to_boundary_link_ids = FastMap::default();
     let mut modified_node_refs_to_update = Set::default();
 
     link_edges_between_islands(
@@ -490,7 +490,7 @@ fn link_edges_between_islands_links_touching_islands() {
     );
 
     boundary_links = Arena::new();
-    node_to_boundary_link_ids = Map::default();
+    node_to_boundary_link_ids = FastMap::default();
     modified_node_refs_to_update = Set::default();
 
     link_edges_between_islands(

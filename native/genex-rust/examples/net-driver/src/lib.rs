@@ -18,6 +18,10 @@
 //! host claim by a guest), answers as the relay's control result; the rest answer with the
 //! facade's error code.
 
+// Host tooling (a stdio process on the wall clock), never a game: a wasm32 build, as the
+// six-destination check makes of every example, is an empty crate.
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use genex::net::{NetClose, NetControl, NetErrorCode, NetEvent, NetFrame, NetStatus};

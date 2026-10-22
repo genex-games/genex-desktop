@@ -12,7 +12,7 @@
 //!   camera follows it. Things that enter are counted by kind in cell order, so two runs agree.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use genex::math::{self, Vec2, Vec3, vec2, vec3};
 use genex::render::Environment;
@@ -160,8 +160,8 @@ pub fn tiles() -> TerrainTiles {
 /// The game's world.
 #[derive(Debug, Default)]
 pub struct World {
-    /// The drawn terrain patch and the block it is centred on.
-    pub patch: Option<(Terrain, [i32; 2])>,
+    /// The drawn terrain patch.
+    pub patch: Option<Patch>,
     /// Where the anchor is.
     pub at: Vec3,
     /// The direction the anchor drives, on the ground plane.
@@ -248,11 +248,49 @@ fn patch_block(at: Vec3) -> [i32; 2] {
     [math::round(at.x / PATCH_BLOCK) as i32, math::round(at.z / PATCH_BLOCK) as i32]
 }
 
-fn patch(block: [i32; 2]) -> Terrain {
+/// The drawn terrain patch: the block it is centred on, [`height`] at each of its grid points (row
+/// after row, as `Terrain::from_fn` samples them) and the terrain made of them.
+pub struct Patch {
+    /// The block it is centred on.
+    pub block: [i32; 2],
+    heights: Arc<[f32]>,
+    /// The terrain drawn.
+    pub terrain: Terrain,
+}
+
+impl std::fmt::Debug for Patch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Patch").field("block", &self.block).finish_non_exhaustive()
+    }
+}
+
+/// Samples a block moves the patch by on each axis.
+const PATCH_BLOCK_SAMPLES: i64 = (PATCH_BLOCK / PATCH_SPACING) as i64;
+
+/// The drawn terrain patch centred on `block`. The heights `previous` already sampled where the
+/// two overlap are taken from it (the same grid points, so the same bits; GE fix r2: sampling all
+/// 591k points was a 6-7 ms tick each time the camera crossed a block) and only the rest are
+/// sampled.
+fn patch(block: [i32; 2], previous: Option<&Patch>) -> Patch {
     let half = (PATCH_SAMPLES - 1) as f32 * PATCH_SPACING * 0.5;
     let origin = vec2(block[0] as f32 * PATCH_BLOCK - half, block[1] as f32 * PATCH_BLOCK - half);
-    let terrain = Terrain::from_fn([PATCH_SAMPLES, PATCH_SAMPLES], origin, PATCH_SPACING, height).expect("the patch is within the sample cap");
-    terrain.with_layers(vec![TerrainLayer::flat(MEADOW).with_roughness(0.95)]).expect("one layer")
+    let side = PATCH_SAMPLES as i64;
+    // Where sample (x, z) of this patch sits in `previous`, when it has it.
+    let shift = previous.map(|old| ((block[0] - old.block[0]) as i64 * PATCH_BLOCK_SAMPLES, (block[1] - old.block[1]) as i64 * PATCH_BLOCK_SAMPLES, &old.heights));
+    let mut heights = Vec::with_capacity((side * side) as usize);
+    for z in 0..side {
+        for x in 0..side {
+            let kept = shift.and_then(|(dx, dz, old)| {
+                let (ox, oz) = (x + dx, z + dz);
+                let inside = (0..side).contains(&ox) && (0..side).contains(&oz);
+                inside.then(|| old[(oz * side + ox) as usize])
+            });
+            heights.push(kept.unwrap_or_else(|| height(origin.x + x as f32 * PATCH_SPACING, origin.y + z as f32 * PATCH_SPACING)));
+        }
+    }
+    let terrain = Terrain::from_heights([PATCH_SAMPLES, PATCH_SAMPLES], origin, PATCH_SPACING, &heights).expect("the patch is within the sample cap");
+    let terrain = terrain.with_layers(vec![TerrainLayer::flat(MEADOW).with_roughness(0.95)]).expect("one layer");
+    Patch { block, heights: heights.into(), terrain }
 }
 
 fn follow(sim: &mut Sim<World>, tick: u64) {
@@ -262,8 +300,8 @@ fn follow(sim: &mut Sim<World>, tick: u64) {
     sim.world.at = at;
     sim.stream.set_anchor(ANCHOR, at).expect("the ring road is inside the world");
     let block = patch_block(at);
-    if sim.world.patch.as_ref().is_none_or(|(_, drawn)| *drawn != block) {
-        sim.world.patch = Some((patch(block), block));
+    if sim.world.patch.as_ref().is_none_or(|drawn| drawn.block != block) {
+        sim.world.patch = Some(patch(block, sim.world.patch.as_ref()));
     }
 }
 
@@ -295,7 +333,7 @@ pub fn camera(world: &World) -> Camera {
 fn draw(sim: &Sim<World>, frame: &mut Frame, _camera: &Camera) {
     frame.clear(SKY).ambient(Color::rgb(170, 190, 220), 0.3).sun(SUN_TOWARDS, Color::WHITE, 3.0);
     frame.environment(Environment::sky());
-    if let Some((terrain, _)) = &sim.world.patch {
+    if let Some(Patch { terrain, .. }) = &sim.world.patch {
         frame.tag("terrain").terrain(terrain);
     }
 }
@@ -331,4 +369,22 @@ pub fn wire(game: &mut Game<World>) {
     game.named_camera(OVERVIEW, |sim| Camera::look_at(sim.world.at + OVERVIEW_OFFSET, sim.world.at));
     game.on_draw(draw);
     game.probe("valley", probe);
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    /// GE fix r2: a patch made from its neighbour's heights holds every height a patch sampled
+    /// whole holds, bit for bit, for each way the camera can cross into the next block.
+    #[test]
+    fn a_patch_made_from_its_neighbour_equals_one_sampled_whole() {
+        let start = patch([0, 0], None);
+        for block in [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [3, 2]] {
+            let moved = patch(block, Some(&start));
+            let whole = patch(block, None);
+            let bits = |patch: &Patch| patch.heights.iter().map(|h| h.to_bits()).collect::<Vec<u32>>();
+            assert_eq!(bits(&moved), bits(&whole), "block {block:?}");
+        }
+    }
 }

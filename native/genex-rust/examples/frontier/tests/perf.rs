@@ -3,7 +3,7 @@
 //! (tick, draw and GPU completion) over the class's frame interval (D7: 16.7 ms on desktop-high) and
 //! zero stalls (`volatile.__stream.stalls`). The record goes to `GENEX_FRONTIER_PERF_OUT` (default
 //! `.studio-dev/evidence/rust-renderer/perf/frontier-ride.json`). Timings are the gate's on a quiet
-//! machine (GE); a lane's run is advisory.
+//! machine (GE); a lane's run is advisory. A debug build skips the row.
 //!
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p frontier \
 //!     --release --offline --test perf -- --ignored metal --nocapture
@@ -117,6 +117,11 @@ fn out_path() -> PathBuf {
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_ride_fits_each_class_frame_budget_with_zero_stalls() {
+    // The frame budgets are release figures: a debug build (the workspace's `--ignored metal`
+    // sweep) would run the whole ride unoptimised, fail every frame and write the record anyway.
+    if cfg!(debug_assertions) {
+        return eprintln!("skipped: a debug build; the frame budgets are release rows (run with --release)");
+    }
     let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
     if let Err(error) = Presenter::open(WORLD_SIZE, assets()) {
         assert!(!require, "GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}");

@@ -1,11 +1,16 @@
 # Saves
 
 `game.saves(SaveConfig::schema(1))` gives the game save slots, and `game.save_world()` puts the
-whole world in each slot through serde (`World` derives `Serialize` and `Deserialize`). A hook
-asks `ctx.slots()` to save, load or delete a slot. The save types live in `genex::saves`:
+whole world in each slot through serde. A game crate does not name serde: `World` derives
+`Serialize` and `Deserialize` from the prelude through the facade's copy. A hook asks
+`ctx.slots()` to save, load or delete a slot. The save types live in `genex::saves`:
 `use genex::saves::{SaveConfig, SlotOp};`.
 
 ```rust
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "genex::serde")]
+pub struct World { coins: u32, door_open: bool, toast: u32 }
+
 game.saves(SaveConfig::schema(2).migrate(1, |mut sections| {
     sections["world"]["coins"] = sections["world"]["gold"].take();
     Ok(sections)

@@ -70,6 +70,11 @@ impl MeshId {
     pub const fn generation(self) -> u32 {
         self.generation
     }
+
+    /// Its slot and generation as one integer (distinct ids, distinct values).
+    pub(crate) const fn packed(self) -> u64 {
+        ((self.index as u64) << 32) | self.generation as u64
+    }
 }
 
 /// Where a mesh sits in the shared vertex and index buffers, and its model-space bounds.

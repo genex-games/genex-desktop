@@ -261,6 +261,13 @@ impl<CS: CoordinateSystem> Transform<CS> {
         Quat::from_rotation_z(self.rotation) * point + CS::to_landmass(&self.translation)
     }
 
+    /// [`Transform::apply`] with its rotation made once, for many points (the same bits).
+    pub(crate) fn applier(&self) -> impl Fn(Vec3) -> Vec3 + use<CS> {
+        let rotation = Quat::from_rotation_z(self.rotation);
+        let translation = CS::to_landmass(&self.translation);
+        move |point| rotation * point + translation
+    }
+
     /// Undoes the transformation.
     pub fn apply_inverse(&self, point: Vec3) -> Vec3 {
         Quat::from_rotation_z(-self.rotation) * (point - CS::to_landmass(&self.translation))

@@ -36,6 +36,8 @@ struct Message {
     restart: &'static str,
 }
 
+/// The HUD's distance from the screen's edges, in points.
+const HUD_INSET: f32 = 16.0;
 /// The pause menu's width, in points.
 const MENU_WIDTH: f32 = 420.0;
 /// The pause menu's height, in points (the Controls panel scrolls inside it).
@@ -47,21 +49,23 @@ pub fn hud(sim: &mut Sim<World>, ui: &mut egui::Ui, ctx: &Ctx) {
     remember_prompts(world, ctx);
     // On a touch screen the controls themselves are on screen, so the prompts step aside.
     let prompts = ctx.actions.device() != Device::Touch;
-    ui.horizontal(|ui| {
-        ui.label(format!("{} {}   {} {}", MESSAGE.score, world.score, MESSAGE.hp, world.hp));
-        if prompts {
-            prompt(ui, ctx, MESSAGE.fire, FIRE);
-            prompt(ui, ctx, MESSAGE.dash, DASH);
-            prompt(ui, ctx, MESSAGE.pause, PAUSE);
+    egui::Frame::NONE.inner_margin(HUD_INSET).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(format!("{} {}   {} {}", MESSAGE.score, world.score, MESSAGE.hp, world.hp));
+            if prompts {
+                prompt(ui, ctx, MESSAGE.fire, FIRE);
+                prompt(ui, ctx, MESSAGE.dash, DASH);
+                prompt(ui, ctx, MESSAGE.pause, PAUSE);
+            }
+        });
+        if world.over {
+            ui.horizontal(|ui| {
+                ui.label(MESSAGE.over);
+                glyph_ui(ui, &ctx.actions.glyph(FIRE));
+                ui.label(MESSAGE.restart);
+            });
         }
     });
-    if world.over {
-        ui.horizontal(|ui| {
-            ui.label(MESSAGE.over);
-            glyph_ui(ui, &ctx.actions.glyph(FIRE));
-            ui.label(MESSAGE.restart);
-        });
-    }
     world.shown.focused = None;
     if world.paused {
         pause_menu(world, ui, ctx);

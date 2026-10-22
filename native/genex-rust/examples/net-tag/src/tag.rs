@@ -32,6 +32,8 @@ const BOT_SPAWNS: [[f32; 2]; 3] = [[-7.0, -7.0], [7.0, -7.0], [0.0, -9.0]];
 const TAG_SPAWN: [f32; 2] = [0.0, 0.0];
 /// Where the camera looks from.
 const CAMERA_EYE: [f32; 3] = [0.0, 20.0, 15.0];
+/// The HUD's distance from the screen's edges, in points.
+const HUD_INSET: f32 = 16.0;
 /// A demo's step: three ticks.
 const DEMO_STEP_MS: u32 = 50;
 const GROUND: Color = Color::rgb(46, 74, 52);
@@ -365,6 +367,11 @@ fn draw(sim: &Sim<World>, frame: &mut Frame, _camera: &Camera) {
 }
 
 fn hud(sim: &mut Sim<World>, ui: &mut egui::Ui, _ctx: &Ctx) {
+    egui::Frame::NONE.inner_margin(HUD_INSET).show(ui, |ui| hud_rows(sim, ui));
+}
+
+/// The HUD's rows: the menu, or the mode and score.
+fn hud_rows(sim: &mut Sim<World>, ui: &mut egui::Ui) {
     let world = &mut sim.world;
     match world.mode {
         Mode::Menu => {

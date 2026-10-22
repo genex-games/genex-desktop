@@ -15,7 +15,7 @@
 //!   pines with a build-time impostor (`game.impostor_bake`) and a far field.
 
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use genex::math::{self, Vec2, Vec3, vec2, vec3};
 use genex::nav::{NavArea, NavConfig, NavInput, NavIsland};
@@ -64,8 +64,6 @@ const ROAD_CLEARING: f32 = 14.0;
 const TOWN_CLEARING: f32 = 24.0;
 /// The forest's far field: past `start` metres fewer, larger copies, a quarter at `end`.
 const FAR_FIELD: (f32, f32) = (220.0, 700.0);
-/// Pines keep their mesh nearer than this, metres.
-const IMPOSTOR_NOT_BEFORE: f32 = 60.0;
 /// The drawn terrain patch: samples a side, their spacing and the block it snaps to.
 const PATCH_SAMPLES: u32 = 769;
 const PATCH_SPACING: f32 = 2.0;
@@ -100,12 +98,42 @@ pub fn patch_block(at: Vec3) -> [i32; 2] {
     [math::round(at.x / PATCH_BLOCK) as i32, math::round(at.z / PATCH_BLOCK) as i32]
 }
 
-/// The drawn terrain patch centred on `block`.
-pub fn patch(block: [i32; 2]) -> Terrain {
+/// The drawn terrain patch: the block it is centred on, [`height`] at each of its grid points (row
+/// after row, as `Terrain::from_fn` samples them) and the terrain made of them.
+pub struct Patch {
+    /// The block it is centred on.
+    pub block: [i32; 2],
+    heights: Arc<[f32]>,
+    /// The terrain drawn.
+    pub terrain: Terrain,
+}
+
+/// Samples a block moves the patch by on each axis.
+const PATCH_BLOCK_SAMPLES: i64 = (PATCH_BLOCK / PATCH_SPACING) as i64;
+
+/// The drawn terrain patch centred on `block`. The heights `previous` already sampled where the
+/// two overlap are taken from it (the same grid points, so the same bits; GE fix r2: sampling all
+/// 591k points was a 6 ms tick each time the camera crossed a block) and only the rest are sampled.
+pub fn patch(block: [i32; 2], previous: Option<&Patch>) -> Patch {
     let half = (PATCH_SAMPLES - 1) as f32 * PATCH_SPACING * 0.5;
     let origin = vec2(block[0] as f32 * PATCH_BLOCK - half, block[1] as f32 * PATCH_BLOCK - half);
-    let terrain = Terrain::from_fn([PATCH_SAMPLES, PATCH_SAMPLES], origin, PATCH_SPACING, height).expect("the patch is within the sample cap");
-    terrain.with_layers(vec![TerrainLayer::flat(MEADOW).with_roughness(0.95)]).expect("one layer")
+    let side = PATCH_SAMPLES as i64;
+    // Where sample (x, z) of this patch sits in `previous`, when it has it.
+    let shift = previous.map(|old| ((block[0] - old.block[0]) as i64 * PATCH_BLOCK_SAMPLES, (block[1] - old.block[1]) as i64 * PATCH_BLOCK_SAMPLES, &old.heights));
+    let mut heights = Vec::with_capacity((side * side) as usize);
+    for z in 0..side {
+        for x in 0..side {
+            let kept = shift.and_then(|(dx, dz, old)| {
+                let (ox, oz) = (x + dx, z + dz);
+                let inside = (0..side).contains(&ox) && (0..side).contains(&oz);
+                inside.then(|| old[(oz * side + ox) as usize])
+            });
+            heights.push(kept.unwrap_or_else(|| height(origin.x + x as f32 * PATCH_SPACING, origin.y + z as f32 * PATCH_SPACING)));
+        }
+    }
+    let terrain = Terrain::from_heights([PATCH_SAMPLES, PATCH_SAMPLES], origin, PATCH_SPACING, &heights).expect("the patch is within the sample cap");
+    let terrain = terrain.with_layers(vec![TerrainLayer::flat(MEADOW).with_roughness(0.95)]).expect("one layer");
+    Patch { block, heights: heights.into(), terrain }
 }
 
 /// The capsule every agent uses.
@@ -269,7 +297,7 @@ fn island_of(cell: CellId) -> Option<NavIsland> {
 
 /// The pine every cell scatters, with its impostor (baked when the game is built).
 pub fn pine(model: Model) -> Model {
-    model.with_impostor(Impostor::hemi().not_before(IMPOSTOR_NOT_BEFORE))
+    model.with_impostor(Impostor::hemi())
 }
 
 fn forest_rule() -> Scatter {
@@ -301,6 +329,24 @@ pub fn cell_content(tiles: TerrainTiles) -> impl Fn(CellId, &CellInputs) -> Cell
         match group {
             Ok(group) if !group.is_empty() => build.group(group),
             _ => build,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GE fix r2: a patch made from its neighbour's heights holds every height a patch sampled
+    /// whole holds, bit for bit, for each way the camera can cross into the next block.
+    #[test]
+    fn a_patch_made_from_its_neighbour_equals_one_sampled_whole() {
+        let start = patch([0, 0], None);
+        for block in [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [4, 0]] {
+            let moved = patch(block, Some(&start));
+            let whole = patch(block, None);
+            let bits = |patch: &Patch| patch.heights.iter().map(|h| h.to_bits()).collect::<Vec<u32>>();
+            assert_eq!(bits(&moved), bits(&whole), "block {block:?}");
         }
     }
 }

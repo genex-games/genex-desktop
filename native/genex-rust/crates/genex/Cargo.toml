@@ -29,8 +29,9 @@ physics = ["dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-str
 audio = ["genex-audio/mixer"]
 # Multiplayer (G6 MP-4a), chosen by the build for a game with `[net]` in its genex.toml: `net` links
 # the relay (exports and the web draft; a run Studio serves still uses the loopback room),
-# `net-loopback` the in-process room only (Live, dev, judge and device-launch builds). Neither:
-# `sim.net` compiles and stays offline (`net-disabled`).
+# `net-loopback` the in-process room only (Live, dev, judge and device-launch builds). Both (only a
+# workspace's merged features): the loopback room. Neither: `sim.net` compiles and stays offline
+# (`net-disabled`).
 net = ["genex-net/relay"]
 net-loopback = ["genex-net/loopback"]
 

@@ -22,8 +22,8 @@ use crate::texture::TextureKind;
 
 /// One impostor to install: the model's parts with the materials they draw with, its layout, the
 /// radius of the sphere its levels are measured from (the model's, a compound's around all its
-/// members) and the least error, in object space, its level may switch at (the game's
-/// `not_before`, converted).
+/// members) and the least error, in object space, its level may switch at (0 from the facade: the
+/// level switches where its error allows).
 #[derive(Clone, Debug)]
 pub struct ImpostorInstall<'a> {
     /// The parts, the lead (whose card draws) first.

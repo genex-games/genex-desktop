@@ -5,9 +5,11 @@
 //! The GPU rows skip without a WebGPU-core adapter unless `GENEX_REQUIRE_METAL=1`; with
 //! `GENEX_RENDER_EVIDENCE_DIR` set they write their captures there (`an-27/<name>/captures`).
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::sync::LazyLock;
 
+#[cfg(not(target_arch = "wasm32"))]
 use genex::present::Presenter;
 use genex::prelude::*;
 use genex::{AnimationErrorCode, AssetTable, NodeAnimator, Runtime, Shape, View};
@@ -268,9 +270,80 @@ fn six_hundred_ticks_replay_bit_exact() {
     assert_ne!(first[2].0["door"], first[3].0["door"], "the looping door moves");
 }
 
-// ---------------------------------------------------------------------------------------------
-// GPU rows.
+/// The door's posed palette in `rt`'s game view, every float as its bits.
+fn palette_bits(rt: &mut Runtime<World>) -> Vec<u32> {
+    let frame = rt.frame(View::Game).expect("the game's view");
+    frame
+        .draws()
+        .iter()
+        .filter_map(|draw| match &draw.shape {
+            Shape::Posed { palette, .. } => Some(palette.iter().flatten().map(|f| f.to_bits()).collect::<Vec<u32>>()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
 
+/// Red first (GE fix, plan 4.4 rule 5): a door saved mid-swing restores exactly. The snapshot is
+/// taken at tick 300 (looping), written out as text as a save section would be, the door is
+/// stopped, and the restored door then plays on to tick 600 with the uninterrupted run's probes,
+/// checksum and palette.
+#[test]
+fn a_door_restored_mid_swing_replays_the_uninterrupted_run() {
+    let mut straight = runtime(true, false);
+    straight.step(600.0 * genex::FIXED_STEP_MS);
+    let mut restored = runtime(true, false);
+    restored.step(300.0 * genex::FIXED_STEP_MS);
+    let door = restored.sim_mut().world.door.as_mut().expect("the door");
+    let saved = door.snapshot().to_string();
+    assert_eq!(door.probe()["clip"], "open", "the door swings at tick 300");
+    door.stop();
+    let section: Value = serde_json::from_str(&saved).expect("the snapshot reads back");
+    door.restore(&section).expect("the snapshot restores");
+    restored.step(300.0 * genex::FIXED_STEP_MS);
+    assert_eq!(restored.probes(), straight.probes(), "the restored door continues where it was");
+    assert_eq!(restored.checksum(), straight.checksum());
+    assert_eq!(palette_bits(&mut restored), palette_bits(&mut straight));
+}
+
+/// Red first (GE fix): a snapshot of another file's door, of another version, naming a clip the
+/// file lacks or holding a time that is not a finite, non-negative float is refused
+/// `animation-asset-invalid`, and the door keeps its state.
+#[test]
+fn a_snapshot_the_door_cannot_take_is_refused_and_changes_nothing() {
+    let mut rt = runtime(true, false);
+    rt.step(200.0 * genex::FIXED_STEP_MS);
+    let door = rt.sim_mut().world.door.as_mut().expect("the door");
+    let good = door.snapshot();
+    let before = door.probe();
+    let with = |key: &str, value: Value| {
+        let mut snapshot = good.clone();
+        snapshot[key] = value;
+        snapshot
+    };
+    let refused = [
+        ("not an object", json!(3)),
+        ("another file", with("file", json!("props/gate.glb"))),
+        ("another version", with("version", json!(99))),
+        ("a missing clip", with("clip", json!("close"))),
+        ("a NaN time", with("time", json!(f32::NAN.to_bits()))),
+        ("a negative time", with("time", json!((-1.0f32).to_bits()))),
+        ("a time that is not bits", with("time", json!("soon"))),
+        ("no once flag", with("once", Value::Null)),
+    ];
+    for (case, snapshot) in refused {
+        let error = door.restore(&snapshot).expect_err(case);
+        assert_eq!(error.code, AnimationErrorCode::AssetInvalid, "{case}");
+        assert_eq!(door.probe(), before, "{case}: the door keeps its state");
+    }
+    door.restore(&good).expect("its own snapshot restores");
+    assert_eq!(door.probe(), before);
+}
+
+// ---------------------------------------------------------------------------------------------
+// GPU rows (not on wasm32: the presenter is the host's).
+
+#[cfg(not(target_arch = "wasm32"))]
 fn open_presenter() -> Option<Presenter> {
     let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
     match Presenter::open(WORLD, table()) {
@@ -281,6 +354,7 @@ fn open_presenter() -> Option<Presenter> {
 }
 
 /// One capture of `runtime` as BGRA (written to the evidence folder when one is set).
+#[cfg(not(target_arch = "wasm32"))]
 fn capture(presenter: &mut Presenter, runtime: &mut Runtime<World>, name: &str) -> Vec<u8> {
     presenter.set_capturing(true);
     presenter.draw_view(runtime, View::Game).expect("game view").expect("drawn");
@@ -295,6 +369,7 @@ fn capture(presenter: &mut Presenter, runtime: &mut Runtime<World>, name: &str) 
 }
 
 /// The share of pixels of two BGRA captures differing by more than `step` in a channel.
+#[cfg(not(target_arch = "wasm32"))]
 fn share_past(a: &[u8], b: &[u8], step: u8) -> f64 {
     let past = a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0).filter(|(p, q)| (0..3).any(|c| p[c].abs_diff(q[c]) > step)).count();
     past as f64 / (a.len() / 4) as f64
@@ -303,6 +378,7 @@ fn share_past(a: &[u8], b: &[u8], step: u8) -> f64 {
 /// Red first (AN-27): at t = 1 s the posed door draws like the same door baked open, while the
 /// door drawn as a plain model stays shut (node animations frozen, as before AN-27).
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn the_posed_door_draws_open_at_one_second_and_the_plain_model_stays_shut() {
     let Some(mut presenter) = open_presenter() else { return };
     let opened = |posed: bool, reference: bool| {

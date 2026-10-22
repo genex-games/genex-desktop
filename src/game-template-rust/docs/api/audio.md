@@ -51,8 +51,8 @@ The buses are `music`, `sfx`, `ui`, `voice` and `ambience`; the settings menu's 
 person's volume for each, outside the simulation.
 
 A play keeps at most 4 voices of one sound (`MAX_INSTANCES_DEFAULT`): another play of it steals the
-oldest. The play option `max_instances` sets the cap, and 0 removes it, as a ring of looping
-emitters of one sound needs.
+oldest. `ctx.audio.play_with(&steps, PlayOpts::default().max_instances(8))` sets the cap, and
+`.max_instances(0)` removes it, as a ring of looping emitters of one sound needs.
 
 ## Setup
 

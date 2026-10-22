@@ -220,6 +220,49 @@ impl Heightfield {
         [n[0] / length, n[1] / length, n[2] / length]
     }
 
+    /// [`Heightfield::normal_at`] of every sample, row after row: the same arithmetic over the
+    /// heights dequantized once instead of four times a sample, its rows split over threads on a
+    /// large field (GE fix r2: a moving 769 x 769 patch spent 7 ms here on the frame it moved).
+    /// Each sample is a pure function of the heights, so the same bits on every split.
+    fn base_normals(&self) -> Vec<[f32; 3]> {
+        let (w, d) = self.samples;
+        let heights: Vec<f32> = (0..d).flat_map(|z| (0..w).map(move |x| (x, z))).map(|(x, z)| self.sample(x, z)).collect();
+        let rows = |from: u32, to: u32| -> Vec<[f32; 3]> {
+            let mut out = Vec::with_capacity((to - from) as usize * w as usize);
+            for z in from..to {
+                self.normal_row(&heights, z, &mut out);
+            }
+            out
+        };
+        let threads = normal_threads(w as usize * d as usize).min(d as usize);
+        if threads <= 1 {
+            return rows(0, d);
+        }
+        let per = d.div_ceil(threads as u32);
+        let bands: Vec<Vec<[f32; 3]>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..d).step_by(per as usize).map(|from| scope.spawn(move || rows(from, (from + per).min(d)))).collect();
+            handles.into_iter().map(|handle| handle.join().expect("a normal band")).collect()
+        });
+        bands.concat()
+    }
+
+    /// The normals of row `z` (as [`Heightfield::normal_at`] makes them) over `heights`, the
+    /// dequantized samples, appended to `out`.
+    fn normal_row(&self, heights: &[f32], z: u32, out: &mut Vec<[f32; 3]>) {
+        let (w, d) = self.samples;
+        let at = |x: u32, z: u32| heights[z as usize * w as usize + x as usize];
+        let (zl, zr) = (z.saturating_sub(1), (z + 1).min(d - 1));
+        let dz_run = (zr - zl).max(1) as f32 * self.spacing;
+        for x in 0..w {
+            let (xl, xr) = (x.saturating_sub(1), (x + 1).min(w - 1));
+            let dx = (at(xr, z) - at(xl, z)) / ((xr - xl).max(1) as f32 * self.spacing);
+            let dz = (at(x, zr) - at(x, zl)) / dz_run;
+            let n = [-dx, 1.0, -dz];
+            let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            out.push([n[0] / length, n[1] / length, n[2] / length]);
+        }
+    }
+
     /// The normal pyramid: level 0 each sample's unit normal, each level above it the mean of the
     /// (up to) four texels below, left unnormalized: its length is how much the normals under it
     /// agree, which the shader folds into roughness (Toksvig), so a far pixel that covers many
@@ -227,12 +270,7 @@ impl Heightfield {
     /// levels, the last 1 x 1 or the cap.
     pub fn normal_levels(&self) -> Vec<NormalLevel> {
         let (w, d) = self.samples;
-        let mut base = Vec::with_capacity(w as usize * d as usize);
-        for z in 0..d {
-            for x in 0..w {
-                base.push(self.normal_at(x, z));
-            }
-        }
+        let base = self.base_normals();
         let sizes = normal_level_sizes(self.samples);
         let mut levels = vec![((w, d), base)];
         for &(lw, ld) in &sizes[1..] {
@@ -262,13 +300,50 @@ impl Heightfield {
     /// vector three 10-bit snorms in a word (x low; [`normal_level_offsets`] gives each level's
     /// first word).
     pub fn packed_normals(&self) -> Vec<u32> {
-        self.normal_levels().iter().flat_map(|(_, level)| level.iter().map(|v| pack_normal(*v))).collect()
+        let levels = self.normal_levels();
+        let mut words = Vec::with_capacity(levels.iter().map(|(_, level)| level.len()).sum());
+        for (_, level) in &levels {
+            pack_normals_into(level, &mut words);
+        }
+        words
     }
 
     /// The quantized heights packed two to a word (sample `i` in the low half of word `i / 2`
     /// when `i` is even), as the GPU table holds them.
     pub fn packed_heights(&self) -> Vec<u32> {
         self.heights.chunks(2).map(|pair| u32::from(pair[0]) | (u32::from(pair.get(1).copied().unwrap_or(0)) << 16)).collect()
+    }
+}
+
+/// Samples a field needs before its normals are split over threads.
+const NORMAL_THREADS_FROM_SAMPLES: usize = 1 << 16;
+/// The most threads a field's normals are split over.
+const NORMAL_THREADS_MAX: usize = 8;
+
+/// Threads a field of `samples` makes its normals on: one below [`NORMAL_THREADS_FROM_SAMPLES`]
+/// and on the web (no threads), else the host's parallelism up to [`NORMAL_THREADS_MAX`].
+fn normal_threads(samples: usize) -> usize {
+    if cfg!(target_arch = "wasm32") || samples < NORMAL_THREADS_FROM_SAMPLES {
+        return 1;
+    }
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get).min(NORMAL_THREADS_MAX)
+}
+
+/// [`pack_normal`] of each of `values`, in order, appended to `words`: split over threads on a
+/// large level ([`normal_threads`]), the same words on every split.
+fn pack_normals_into(values: &[[f32; 3]], words: &mut Vec<u32>) {
+    let threads = normal_threads(values.len());
+    if threads <= 1 {
+        words.extend(values.iter().map(|v| pack_normal(*v)));
+        return;
+    }
+    let per = values.len().div_ceil(threads);
+    let bands: Vec<Vec<u32>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = values.chunks(per).map(|band| scope.spawn(move || band.iter().map(|v| pack_normal(*v)).collect::<Vec<u32>>())).collect();
+        handles.into_iter().map(|handle| handle.join().expect("a packed band")).collect()
+    });
+    for band in bands {
+        words.extend(band);
     }
 }
 

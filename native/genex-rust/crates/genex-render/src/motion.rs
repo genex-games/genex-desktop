@@ -337,11 +337,23 @@ pub struct MotionHistory {
     view_proj: Option<[f32; 16]>,
 }
 
-/// Last frame's rows by key: their indices sorted by key, made on the first row that is not at
-/// its own index.
+/// Last frame's rows by key: their packed keys and indices sorted by key, made on the first row
+/// that is not at its own index.
 struct RowIndex<'a> {
     rows: &'a [(MotionKey, PrevRow)],
-    sorted: Option<Vec<u32>>,
+    sorted: Option<Vec<(u128, u32)>>,
+}
+
+/// `key` as one integer, distinct for distinct keys: the scope's variant, its id or mesh, its
+/// kind or skinned flag, then the ordinal. The row index sorts and searches these instead of the
+/// keys themselves (GE fix r2: sorting the frontier's rows by `MotionKey`, through their indices,
+/// was a fifth of a frame's CPU draw), and a sorted search finds the same row either way.
+fn packed(key: &MotionKey) -> u128 {
+    let (variant, id, flag) = match key.scope {
+        MotionScope::Id { id, skinned } => (0u128, u128::from(id.0), u128::from(skinned)),
+        MotionScope::Mesh { mesh, kind } => (1u128, u128::from(mesh.packed()), kind.column() as u128),
+    };
+    (variant << 98) | (id << 34) | (flag << 32) | u128::from(key.ordinal)
 }
 
 impl<'a> RowIndex<'a> {
@@ -355,12 +367,13 @@ impl<'a> RowIndex<'a> {
             return Some(prev);
         }
         let sorted = self.sorted.get_or_insert_with(|| {
-            let mut sorted: Vec<u32> = (0..rows.len() as u32).collect();
-            sorted.sort_unstable_by_key(|i| rows[*i as usize].0);
+            let mut sorted: Vec<(u128, u32)> = rows.iter().enumerate().map(|(at, (key, _))| (packed(key), at as u32)).collect();
+            sorted.sort_unstable_by_key(|(key, _)| *key);
             sorted
         });
-        let found = sorted.binary_search_by_key(key, |i| rows[*i as usize].0).ok()?;
-        Some(&rows[sorted[found] as usize].1)
+        let wanted = packed(key);
+        let found = sorted.binary_search_by_key(&wanted, |(key, _)| *key).ok()?;
+        Some(&rows[sorted[found].1 as usize].1)
     }
 }
 

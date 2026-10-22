@@ -5,8 +5,10 @@
 //!   a GLB with no animations is refused `animation-clip-missing`, one that is not a usable GLB
 //!   `animation-asset-invalid`.
 //! - A [`NodeAnimator`] is simulation state: the clip playing and its time, nothing else, so it is
-//!   deterministic, saved like any field and listed by [`NodeAnimator::probe`]. `play` loops,
-//!   `play_once` holds the last frame; `update(dt)` advances it in `on_update`.
+//!   deterministic and listed by [`NodeAnimator::probe`]. It holds the file's clips, so a save
+//!   carries [`NodeAnimator::snapshot`] (a save section) and [`NodeAnimator::restore`] puts it back
+//!   exactly. `play` loops, `play_once` holds the last frame; `update(dt)` advances it in
+//!   `on_update`.
 //! - `frame.model_posed(&model, &animator, transform)` draws the model with every node at the
 //!   animator's pose: one logical draw. The presenter draws it through the skinned path, every
 //!   vertex bound to its node at weight 1 (`SkinnedModel::rigid_from_glb`); a file the presenter
@@ -21,6 +23,9 @@ use genex_anim::AnimationError;
 use genex_anim::sample::{Wrap, wrap_time};
 use genex_render::skin::{Animation, Skeleton, SkinnedModel};
 use serde_json::{Value, json};
+
+/// The [`NodeAnimator::snapshot`] layout this build writes and reads.
+const SNAPSHOT_VERSION: u64 = 1;
 
 /// A GLB's node tree and its clips (`gfx.node_clips`), shared by `Arc` (cloning is cheap).
 #[derive(Clone, Debug)]
@@ -157,6 +162,50 @@ impl NodeAnimator {
     /// The state for a probe: `{clip, time, once, finished}` (`clip` null at rest).
     pub fn probe(&self) -> Value {
         json!({ "clip": self.playing(), "time": self.time, "once": self.once, "finished": self.finished() })
+    }
+
+    /// The whole state as a value for a save section: `{version, file, clip, time, once}`, the
+    /// time as its float bits. [`NodeAnimator::restore`] on an animator of the same file continues
+    /// exactly where this one is.
+    pub fn snapshot(&self) -> Value {
+        json!({ "version": SNAPSHOT_VERSION, "file": self.clips.path(), "clip": self.playing(), "time": self.time.to_bits(), "once": self.once })
+    }
+
+    /// Restore a [`NodeAnimator::snapshot`]. Refused `animation-asset-invalid`, with the animator
+    /// unchanged: not a snapshot of this version, taken from another file's animator, a clip the
+    /// file does not have, a field missing or of the wrong kind, or a time that is not a finite,
+    /// non-negative float.
+    pub fn restore(&mut self, snapshot: &Value) -> Result<(), AnimationError> {
+        let (playing, time, once) = self.restored(snapshot).map_err(|problem| AnimationError::asset_invalid(format!("node animator snapshot: {problem}")))?;
+        self.playing = playing;
+        self.time = time;
+        self.once = once;
+        Ok(())
+    }
+
+    fn restored(&self, snapshot: &Value) -> Result<(Option<usize>, f32, bool), String> {
+        if !snapshot.is_object() {
+            return Err("not an object".to_owned());
+        }
+        let version = snapshot["version"].as_u64();
+        if version != Some(SNAPSHOT_VERSION) {
+            return Err(format!("version {}, this build reads {SNAPSHOT_VERSION}", snapshot["version"]));
+        }
+        if snapshot["file"].as_str() != Some(self.clips.path()) {
+            return Err(format!("taken from an animator of {}, not {:?}", snapshot["file"], self.clips.path()));
+        }
+        let playing = match &snapshot["clip"] {
+            Value::Null => None,
+            Value::String(name) => Some(self.clips.find(name).ok_or_else(|| format!("{:?} has no clip {name:?}", self.clips.path()))?),
+            other => return Err(format!("clip {other} is not a name")),
+        };
+        let bits = snapshot["time"].as_u64().and_then(|bits| u32::try_from(bits).ok()).ok_or("time is not float bits")?;
+        let time = f32::from_bits(bits);
+        if !(time.is_finite() && time >= 0.0) {
+            return Err(format!("time {time} is not a finite, non-negative float"));
+        }
+        let once = snapshot["once"].as_bool().ok_or("once is not a flag")?;
+        Ok((playing, time, once))
     }
 
     /// The node joint matrices of the pose, in node order (the presenter's skinning palette).

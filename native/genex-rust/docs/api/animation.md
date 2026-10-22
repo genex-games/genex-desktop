@@ -164,8 +164,10 @@ door.update(ctx.dt);
 if let Some(door) = &sim.world.door { frame.model_posed(&sim.world.door_model, door, transform); }
 ```
 
-- The animator is the clip and its time: simulation state, saved and replayed like any field,
-  and `door.probe()` (`{clip, time, once, finished}`) for a probe. `.finished()` says a clip played
+- The animator is the clip and its time: simulation state that replays exactly, and
+  `door.probe()` (`{clip, time, once, finished}`) for a probe. It holds the file's clips, so it is
+  not a serde field: save `door.snapshot()` in a save section and put it back with
+  `.restore(..)`, which continues mid-swing exactly. `.finished()` says a clip played
   once reached its end; `.clips()` names the file's clips (`.clip_names()`).
 - `frame.model_posed` is one logical draw with every node at the pose, its GLB's materials, its
   shadows; a model of another file than the animator's draws at rest, as `frame.model` does.

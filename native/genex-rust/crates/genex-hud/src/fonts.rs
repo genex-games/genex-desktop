@@ -12,7 +12,7 @@
 //! the text fonts in both families, so Latin text never changes face. Their bytes are checked
 //! before egui sees them: egui panics on a font it cannot parse.
 
-use egui::{FontData, FontDefinitions, FontFamily, Pos2, Rect, Response, Shape, Stroke, Ui, Vec2, emath::Rot2, vec2};
+use egui::{FontData, FontDefinitions, FontFamily, Rect, Response, Shape, Stroke, Ui, Vec2, emath::Rot2, vec2};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -29,6 +29,8 @@ const TOOTH_LENGTH: f32 = 0.32;
 const TOOTH_WIDTH: f32 = 0.38;
 const HUB_HOLE: f32 = 0.38;
 const ICON_GAP: f32 = 8.0;
+/// The id salt of the gear's place in the settings button's layout.
+const GEAR_ATOM: &str = "genex-settings-gear";
 /// The most locale fonts a HUD holds.
 pub const MAX_LOCALE_FONTS: usize = 8;
 /// The largest locale font, in bytes (a full CJK face is about 20 MB).
@@ -136,14 +138,17 @@ pub fn install_fonts(ctx: &egui::Context) {
 /// The settings button: a drawn gear and `label` (checks find it in `state().hud.items`), at least
 /// a large tap target. Answers its response (`clicked()` toggles a game's panel).
 pub fn settings_button(ui: &mut Ui, label: &str) -> Response {
-    let response = ui.add(egui::Button::new(label).min_size(BUTTON_MIN));
-    let color = ui.style().interact(&response).text_color();
-    let font = egui::TextStyle::Button.resolve(ui.style());
-    let galley_width = ui.ctx().fonts_mut(|fonts| fonts.layout_no_wrap(label.to_owned(), font, color).size().x);
-    // The gear sits left of the centred label, inside the button.
-    let centre_x = response.rect.center().x - galley_width / 2.0 - ICON_GAP - GEAR_POINTS / 2.0;
-    let gear = Rect::from_center_size(Pos2::new(centre_x.max(response.rect.left() + GEAR_POINTS), response.rect.center().y), Vec2::splat(GEAR_POINTS));
-    ui.painter().extend(gear_shapes(gear, color));
+    // The gear is an atom before the label, so the layout keeps the label beside it, never under
+    // it; a growing atom each side centres the pair in a button wider than they are.
+    let gear_id = ui.id().with(GEAR_ATOM);
+    let atoms = (egui::Atom::grow(), egui::Atom::custom(gear_id, Vec2::splat(GEAR_POINTS)), label, egui::Atom::grow());
+    let laid_out = egui::Button::new(atoms).min_size(BUTTON_MIN).gap(ICON_GAP).atom_ui(ui);
+    let gear = laid_out.rect(gear_id);
+    let response = laid_out.response;
+    if let Some(gear) = gear {
+        let color = ui.style().interact(&response).text_color();
+        ui.painter().extend(gear_shapes(gear, color));
+    }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -167,6 +172,7 @@ pub fn gear_shapes(rect: Rect, color: egui::Color32) -> Vec<Shape> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::Pos2;
 
     /// Owner decision D11: the HUD links egui's text fonts only; the two emoji fonts are gone.
     #[test]
@@ -193,5 +199,31 @@ mod tests {
         let shapes = output.shapes.len();
         assert!(shapes >= GEAR_TEETH + 2, "the gear's teeth, its ring and the label: {shapes}");
         assert_eq!(gear_shapes(Rect::from_center_size(Pos2::ZERO, Vec2::splat(16.0)), egui::Color32::WHITE).len(), GEAR_TEETH + 1);
+    }
+
+    /// Red first (GE visual): the gear never covers the label, however long the label is (the
+    /// showcase's gear sat over "Se" of "Settings").
+    #[test]
+    fn the_settings_gear_stays_clear_of_its_label() {
+        for label in ["Settings", "Graphics and sound settings", "Réglages"] {
+            let ctx = egui::Context::default();
+            install_fonts(&ctx);
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 200.0))), ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| {
+                settings_button(ui, label);
+            });
+            output.textures_delta.clear();
+            let mut text = Rect::NOTHING;
+            let mut gear = Rect::NOTHING;
+            for clipped in &output.shapes {
+                match &clipped.shape {
+                    Shape::Text(shape) => text = text.union(shape.visual_bounding_rect()),
+                    Shape::Path(_) | Shape::Circle(_) => gear = gear.union(clipped.shape.visual_bounding_rect()),
+                    _ => {}
+                }
+            }
+            assert!(text.is_positive() && gear.is_positive(), "{label}: a label and a gear ({text:?}, {gear:?})");
+            assert!(gear.right() <= text.left(), "{label}: the gear {gear:?} ends left of the label {text:?}");
+        }
     }
 }

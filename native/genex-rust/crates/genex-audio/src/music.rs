@@ -313,7 +313,19 @@ impl MusicStream {
 
     fn mark(&mut self, state: PlaybackState) {
         self.state = state;
-        self.stopped.store(state == PlaybackState::Stopped, Ordering::SeqCst);
+        let stopped = state == PlaybackState::Stopped;
+        self.stopped.store(stopped, Ordering::SeqCst);
+        if stopped {
+            self.release();
+        }
+    }
+
+    /// Free the working set (the decoder, its reader and the ring) once the track stopped: kira
+    /// drops a finished sound only later, so a crossfade every few seconds would otherwise hold a
+    /// third working set (GE fix r2, AU-10's crossfade row). A stopped stream reads no frame again.
+    fn release(&mut self) {
+        self.feeder.track = None;
+        self.ring = VecDeque::new();
     }
 
     /// kira's `PlaybackStateManager::update` for the states music uses.
