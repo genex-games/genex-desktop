@@ -1,11 +1,16 @@
 # Saves
 
 `game.saves(SaveConfig::schema(1))` gives the game save slots, and `game.save_world()` puts the
-whole world in each slot through serde (`World` derives `Serialize` and `Deserialize`). A hook
-asks `ctx.slots()` to save, load or delete a slot. The save types live in `genex::saves`:
+whole world in each slot through serde. A game crate does not name serde: `World` derives
+`Serialize` and `Deserialize` from the prelude through the facade's copy. A hook asks
+`ctx.slots()` to save, load or delete a slot. The save types live in `genex::saves`:
 `use genex::saves::{SaveConfig, SlotOp};`.
 
 ```rust
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "genex::serde")]
+pub struct World { coins: u32, door_open: bool, toast: u32 }
+
 game.saves(SaveConfig::schema(2).migrate(1, |mut sections| {
     sections["world"]["coins"] = sections["world"]["gold"].take();
     Ok(sections)
@@ -38,9 +43,10 @@ game.on_update(|sim, ctx| {
 - **Sections.** `game.save_world()` is the section `world`. `game.save_section(name, save, load)`
   adds any other: `save` reads the `Sim` and returns JSON, `load` writes it back onto the restored
   `Sim`. Physics bodies, facet state and anything outside `sim.world` need their own section. With
-  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot), and with `game.streaming`
-  it adds `genex.stream` (`sim.stream.snapshot()`: anchors, kept cells and active cells). A slot
-  holds at most 62 game sections; names are at most 48 characters.
+  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot, `docs/api/navigation.md`),
+  and with `game.streaming` it adds `genex.stream` (`docs/api/streaming.md`;
+  `sim.stream.snapshot()`: anchors, kept cells and active cells). A slot holds at most 62 game
+  sections; names are at most 48 characters.
 - **Saving.** `slots.save(slot, label)` queues a save written at the end of the tick, after
   physics. A save only reads, so it never changes the checksum. A slot name is 1 to 32 of
   `[a-z0-9-]` with no leading dash; `autosave-*` is the ring's. A label is at most 64 characters.
@@ -83,3 +89,8 @@ game.on_update(|sim, ctx| {
   and delete slots through the dev `saves` verb; a load answers once it applied, with
   `checksumMatch`.
 - `ctx.save(file, bytes)` and `ctx.load(file)` stay for a game's own files beside the slots.
+
+`native/genex-rust/examples/menus-saves` saves and loads through slot lists in its menus (an
+overwrite asks first, Continue loads the newest slot, and the ring autosaves every minute of
+play). A check saves by key, loads, then reads `state().volatile.saves.lastLoad.checksumMatch`:
+its rows also pin one envelope that native, x86_64 and wasm32 write byte for byte.

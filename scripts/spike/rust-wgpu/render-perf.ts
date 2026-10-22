@@ -21,8 +21,9 @@
  *   shared machine contention only adds time, so a real regression is slower at its best too). Scenes
  *   whose runs disagree by more than 25% are measured again, alone, up to four more times.
  * - `--compare` exits 1 when a scene of profile `off` has a p95 above 1.10 x the baseline's, or is
- *   missing from the run. Other profiles, and the Lakeside scenes' `off` rows (remastered content,
- *   `INFORMATIONAL_OFF_SCENES`), report their ratios and never fail the gate.
+ *   missing from the run. Other profiles, and the Lakeside scenes' `off` rows against a baseline
+ *   built before the Lakeside content (`INFORMATIONAL_OFF_SCENES`, `lakesideGatedFor`), report their
+ *   ratios and never fail the gate.
  * - Records from different adapters, power sources or thermal states are never compared (refusal
  *   exit 78); the baseline is a local evidence file (`.studio-dev/evidence/rust-renderer/perf/baseline.json`).
  * - `--ab <tier>` interleaves runs of the saved executable `perf/bin/<tier>/` (`perf_matrix`, or the
@@ -267,6 +268,11 @@ export interface CompareOptions {
   profiles?: readonly string[];
   /** Only these scenes (default: every scene of the baseline). */
   rows?: readonly string[];
+  /**
+   * The baseline draws the current Lakeside content ({@link lakesideGatedFor}), so its Lakeside
+   * `off` rows gate like every other (default false: {@link INFORMATIONAL_OFF_SCENES} apply).
+   */
+  lakesideGated?: boolean;
 }
 
 function profileOf(row: PerfRow): string {
@@ -461,14 +467,52 @@ export const INFORMATIONAL_OFF_SCENES: ReadonlySet<string> = new Set([
   "lakeside-cabin-interior",
 ]);
 
+/**
+ * The commit that last changed what the Lakeside scenes draw (renderer pass 2's Lakeside v2: four
+ * new shots and the cabin's room). A baseline built from it or a later commit draws the same
+ * scenes as the current build.
+ */
+export const LAKESIDE_CONTENT_COMMIT = "9177556a1925e322576b41be8e2642ed669e78f0";
+
+/**
+ * Whether a baseline built from `baseSha` draws the current Lakeside content, so its Lakeside `off`
+ * rows are gated: it descends from {@link LAKESIDE_CONTENT_COMMIT}. `isAncestor` answers whether
+ * `ancestor` is an ancestor of `sha` (null: unknown); an unknown or missing commit keeps the
+ * exemption.
+ */
+export function lakesideGatedFor(
+  baseSha: string,
+  isAncestor: (ancestor: string, sha: string) => boolean | null,
+): boolean {
+  if (baseSha === "") return false;
+  return isAncestor(LAKESIDE_CONTENT_COMMIT, baseSha) === true;
+}
+
+/** Whether `ancestor` is an ancestor of `sha` in this repository (null: either is unknown). */
+function gitIsAncestor(ancestor: string, sha: string): boolean | null {
+  const result = spawnSync("git", ["merge-base", "--is-ancestor", ancestor, sha], { cwd: REPO });
+  if (result.status === 0) return true;
+  return result.status === 1 ? false : null;
+}
+
+/** Whether a scene's rows are information only: an exempt Lakeside scene, unless gated. */
+function isInformational(row: { row: string }, lakesideGated: boolean): boolean {
+  return !lakesideGated && INFORMATIONAL_OFF_SCENES.has(row.row);
+}
+
 /** Whether a row's ratio is gated: an `off` row of a scene the rule covers. */
-function isGated(row: { row: string; profile: string }): boolean {
-  return row.profile === OFF && !INFORMATIONAL_OFF_SCENES.has(row.row);
+function isGated(row: { row: string; profile: string }, lakesideGated: boolean): boolean {
+  return row.profile === OFF && !isInformational(row, lakesideGated);
 }
 
 /** What a row's ratio comes to: only gated rows ({@link isGated}) can regress. */
-function gatedVerdict(row: { row: string; profile: string }, ratio: number, maxRatio: number): RowVerdict {
-  if (!isGated(row)) return RowVerdict.Info;
+function gatedVerdict(
+  row: { row: string; profile: string },
+  ratio: number,
+  maxRatio: number,
+  lakesideGated: boolean,
+): RowVerdict {
+  if (!isGated(row, lakesideGated)) return RowVerdict.Info;
   return ratio > maxRatio ? RowVerdict.Regressed : RowVerdict.Ok;
 }
 
@@ -480,6 +524,7 @@ function gatedVerdict(row: { row: string; profile: string }, ratio: number, maxR
  */
 export function compareRecords(baseline: PerfRecord, candidate: PerfRecord, options: CompareOptions = {}): Comparison {
   const maxRatio = options.maxRatio ?? MAX_OFF_RATIO;
+  const lakesideGated = options.lakesideGated ?? false;
   const statistic = options.statistic ?? Statistic.Median;
   const wantProfiles = options.profiles ? new Set(options.profiles) : null;
   const wantRows = options.rows ? new Set(options.rows) : null;
@@ -495,7 +540,7 @@ export function compareRecords(baseline: PerfRecord, candidate: PerfRecord, opti
     const header = { row: base.row, profile, size: base.size };
     const other = byKey.get(rowKey(base));
     // A row of an informational scene the candidate lacks is information too.
-    const absent = INFORMATIONAL_OFF_SCENES.has(base.row) ? RowVerdict.Info : RowVerdict.Missing;
+    const absent = isInformational(base, lakesideGated) ? RowVerdict.Info : RowVerdict.Missing;
     if (other === undefined) {
       return {
         ...header,
@@ -521,13 +566,13 @@ export function compareRecords(baseline: PerfRecord, candidate: PerfRecord, opti
       };
     }
     const ratio = b / a;
-    const verdict = gatedVerdict(header, ratio, maxRatio);
+    const verdict = gatedVerdict(header, ratio, maxRatio, lakesideGated);
     const noisy = Math.max(rowSpread(base, metric), rowSpread(other, metric)) > NOISE_SPREAD;
     const runs = pairedRuns(base, other, metric);
     return { ...header, metric, baselineP95: a, candidateP95: b, ratio, verdict, noisy, runs };
   });
   const failures = rows.filter((r) => r.verdict === RowVerdict.Regressed || r.verdict === RowVerdict.Missing);
-  const offRatios = rows.filter((r) => isGated(r) && r.ratio !== null).map((r) => r.ratio ?? 0);
+  const offRatios = rows.filter((r) => isGated(r, lakesideGated) && r.ratio !== null).map((r) => r.ratio ?? 0);
   return {
     refusals,
     rows,
@@ -852,10 +897,10 @@ function fmt(value: number | null, digits = 3): string {
   return value === null ? "-" : value.toFixed(digits);
 }
 
-/** The label of an `off` row the gate reads as information ({@link INFORMATIONAL_OFF_SCENES}). */
+/** The label of an `off` row the gate read as information ({@link INFORMATIONAL_OFF_SCENES}). */
 function informationalNote(row: RowComparison): string {
-  const informational = row.profile === OFF && INFORMATIONAL_OFF_SCENES.has(row.row);
-  return informational ? " (informational: content remastered at bf0920e1, not gated)" : "";
+  const informational = row.verdict === RowVerdict.Info && row.profile === OFF && INFORMATIONAL_OFF_SCENES.has(row.row);
+  return informational ? " (informational: the baseline predates the Lakeside content, not gated)" : "";
 }
 
 /** A row's runs as one report line: each side's run p95s, the paired run ratios, and what was gated. */
@@ -1110,6 +1155,7 @@ function runAb(tier: string, exe: string, setup: RunSetup, runs: number, tag: st
     statistic,
     minFrames: gateFrames(setup),
     rows: [...new Set(common)],
+    lakesideGated: lakesideGatedFor(a.build.sha, gitIsAncestor),
   });
   printComparison(
     `A/B ${tier} (${a.build.sha}) vs current (${b.build.sha}), ${statistic} of ${runs} interleaved runs`,
@@ -1138,6 +1184,7 @@ function runCompare(
     rows: setup.rows?.split(","),
     statistic,
     minFrames: gateFrames(setup),
+    lakesideGated: lakesideGatedFor(baseline.build.sha, gitIsAncestor),
   });
   printComparison(
     `current (${candidate.build.sha}) vs ${path.basename(baselinePath)} (${baseline.build.sha}), ${statistic} of ${runs} runs`,

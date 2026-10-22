@@ -592,6 +592,21 @@ pub enum Shape {
         /// Replaces the materials its GLB names; `None` keeps them.
         material: Option<Material>,
     },
+    /// A model whose nodes a [`crate::NodeAnimator`] poses (`frame.model_posed`, AN-27): one
+    /// logical draw, every node at the animator's pose.
+    #[non_exhaustive]
+    Posed {
+        /// The model (the magenta checker when it is missing).
+        model: Model,
+        /// The GLB the pose's nodes are (the animator's clips' file).
+        nodes: Arc<str>,
+        /// Each node's joint matrix, in the file's node order.
+        palette: Arc<[[f32; 16]]>,
+        /// Where the model stands.
+        transform: Transform,
+        /// Multiplied into its base colours.
+        tint: Color,
+    },
 }
 
 /// The mesh a custom material draws: a model from the game's assets, or a built-in shape.
@@ -746,6 +761,16 @@ impl Frame {
     /// Draw a model with a tint multiplied into its GLB's base colours.
     pub fn model_tinted(&mut self, model: &Model, transform: Transform, tint: Color) -> &mut Self {
         self.push(Shape::Model { model: model.clone(), transform, tint, material: None })
+    }
+
+    /// Draw a model with its nodes at `animator`'s pose (game systems AN-27): a door, a platform or
+    /// a prop whose GLB animates its nodes. One logical draw; the materials its GLB names. A model
+    /// whose file is not the animator's, or that the renderer cannot pose, draws as
+    /// [`Frame::model`] does (its rest pose).
+    pub fn model_posed(&mut self, model: &Model, animator: &crate::NodeAnimator, transform: Transform) -> &mut Self {
+        let nodes: Arc<str> = Arc::from(animator.clips().path());
+        let palette: Arc<[[f32; 16]]> = animator.palette().into();
+        self.push(Shape::Posed { model: model.clone(), nodes, palette, transform, tint: Color::WHITE })
     }
 
     /// Draw a model with `material` instead of the materials its GLB names.

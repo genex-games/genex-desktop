@@ -5,7 +5,7 @@
 
 use genex_core::paths::{Destination, GameIdentity};
 use genex_core::saves::{MAX_SAVE_BYTES, Saves, mirror};
-use genex_platform_web::saves::{SAVES_STORE, saves_state, with_saves};
+use genex_platform_web::web_saves::{SAVES_STORE, saves_state, with_saves};
 
 const GAME: GameIdentity<'static> = GameIdentity { name: "web-saves", bundle_id: "" };
 

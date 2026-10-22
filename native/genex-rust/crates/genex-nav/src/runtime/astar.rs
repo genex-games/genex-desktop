@@ -10,12 +10,22 @@
 //! - P12: [`find_path_capped`] stops after `max_explored` expansions and hands back the path to
 //!   the explored node closest to the goal by its heuristic (Detour's `DT_PARTIAL_RESULT`), so a
 //!   search costs at most that many expansions however large the mesh is.
+//! - GE (NAV-18 search budget): the best-estimate table is a `FastMap` (genex-core's fixed-seed
+//!   Fx-style hash) instead of a SipHash `Map`, and successors are written into one buffer the
+//!   search reuses instead of a new `Vec` per expansion. The table is only looked up, never
+//!   iterated, so the hash cannot change a path.
 
 use core::cmp::{Ordering, Reverse};
 use core::hash::Hash;
 use std::collections::BinaryHeap;
 
-use genex_core::map::Map;
+use genex_core::map::FastMap;
+
+/// The best estimate per state, hashed with genex-core's [`FastHasher`](genex_core::map::FastHasher).
+type Estimates<S> = FastMap<S, f32>;
+
+/// A successor: the action's cost, the action, and the state it leads to.
+pub(crate) type Successor<P> = (f32, <P as AStarProblem>::ActionType, <P as AStarProblem>::StateType);
 
 /// A generic A* problem.
 pub(crate) trait AStarProblem {
@@ -27,8 +37,9 @@ pub(crate) trait AStarProblem {
     /// The initial state.
     fn initial_state(&self) -> Self::StateType;
 
-    /// Every state one action from `state`: the action's cost, the action, and the state.
-    fn successors(&self, state: &Self::StateType) -> Vec<(f32, Self::ActionType, Self::StateType)>;
+    /// Every state one action from `state`, appended to `out` (empty on entry): the action's
+    /// cost, the action, and the state.
+    fn successors(&self, state: &Self::StateType, out: &mut Vec<(f32, Self::ActionType, Self::StateType)>);
 
     /// An estimate of the cost from `state` to a goal: never negative, 0 at a goal.
     fn heuristic(&self, state: &Self::StateType) -> f32;
@@ -114,7 +125,7 @@ pub(crate) struct PathResult<ActionType> {
 
 /// The open heap, the node chain and the best estimate per state.
 struct Search<P: AStarProblem> {
-    best_estimates: Map<P::StateType, f32>,
+    best_estimates: Estimates<P::StateType>,
     nodes: Vec<Node<P>>,
     open: BinaryHeap<Reverse<OpenEntry<P::StateType>>>,
 }
@@ -144,7 +155,8 @@ pub(crate) fn find_path<P: AStarProblem>(problem: &P) -> PathResult<P::ActionTyp
 /// capped search returns no path and a partial path to the explored node nearest the goal.
 pub(crate) fn find_path_capped<P: AStarProblem>(problem: &P, max_explored: u32) -> PathResult<P::ActionType> {
     let mut stats = PathStats { explored_nodes: 0, capped: false };
-    let mut search = Search::<P> { best_estimates: Map::default(), nodes: Vec::new(), open: BinaryHeap::new() };
+    let mut search = Search::<P> { best_estimates: Estimates::default(), nodes: Vec::new(), open: BinaryHeap::new() };
+    let mut successors: Vec<Successor<P>> = Vec::new();
     search.try_add(problem, Node { cost: 0.0, state: problem.initial_state(), previous_node: None });
     // (heuristic, cost, node index) of the explored node nearest the goal.
     let mut nearest: Option<(f32, f32, usize)> = None;
@@ -173,7 +185,9 @@ pub(crate) fn find_path_capped<P: AStarProblem>(problem: &P, max_explored: u32) 
 
         let current_cost = node.cost;
         let state = node.state.clone();
-        for (action_cost, action, next) in problem.successors(&state) {
+        successors.clear();
+        problem.successors(&state, &mut successors);
+        for (action_cost, action, next) in successors.drain(..) {
             let next_node = Node { cost: current_cost + action_cost, state: next, previous_node: Some((entry.index, action)) };
             search.try_add(problem, next_node);
         }

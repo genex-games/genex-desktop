@@ -1,0 +1,54 @@
+# The audio-yard example (G6 AU-10): a walk round a yard that plays every part of genex::audio.
+# Footsteps capped by `max_instances`, a rapid-fire gun that steals its own oldest shot, radio
+# dialogue that ducks the music, a music crossfade at the cave mouth, a cave reverb zone, a wall
+# that occludes a generator, a drone flying by with Doppler, and UI clicks. One crate serves every
+# destination, as the pond does: the `audio-yard` binary is the native build and the library is
+# also a `cdylib` for the web shell. Its sounds are synthesized into WAV by `build.rs`; its music
+# and beacon are the repo's own FFmpeg-generated tones (`assets/README.md`). No third-party audio.
+[package]
+name = "audio-yard"
+description = "The audio-yard example game (G6 AU-10)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[lib]
+# Not `audio_yard`: on wasm32 the library and the binary would both be `audio-yard.wasm`.
+name = "audio_yard_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "audio-yard"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+# Physics: the occluding wall is a Rapier collider the audio rays hit. Audio: the mixer and
+# decoders, which a game links only by naming the feature (AU-11).
+genex = { workspace = true, features = ["physics", "audio"] }
+genex-platform-web = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/budgets.rs streams the music through genex-audio's own mixer to measure what it holds;
+# tests/captures.rs writes the settled captures as PNG evidence on the host GPU.
+[dev-dependencies]
+genex-audio = { workspace = true, features = ["mixer"] }
+image = { workspace = true }
+
+# src/parity.rs runs under `wasm-bindgen-test-runner` (Node) on wasm32.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }

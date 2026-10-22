@@ -115,6 +115,8 @@ export interface ElfRowSpec {
   type?: number;
   /** Every PT_LOAD's `p_align`. */
   align?: number;
+  /** Extra dynamic entries before `DT_NULL`, as `[tag, value]`. */
+  extraDynamic?: Array<[number, number]>;
   trailer?: string;
 }
 
@@ -132,6 +134,7 @@ export function linuxBinary(spec: ElfRowSpec = {}): Buffer {
     runpath: spec.runpath ?? [],
     rpath: spec.rpath ?? [],
     versionNeeds: spec.versionNeeds ?? M2.linux.versionNeeds,
+    extraDynamic: spec.extraDynamic ?? [],
   });
   return withTrailer(bytes, spec.trailer);
 }
@@ -146,6 +149,7 @@ export function androidBinary(spec: ElfRowSpec = {}): Buffer {
     runpath: spec.runpath ?? [],
     rpath: spec.rpath ?? [],
     versionNeeds: spec.versionNeeds ?? [],
+    extraDynamic: spec.extraDynamic ?? [],
   });
   const align = spec.align ?? M2.android.loadAlignments[0] ?? 0;
   bytes.writeBigUInt64LE(BigInt(align), programHeaderField(layout, layout.segment.load, ELF_PROGRAM_HEADER.Align));

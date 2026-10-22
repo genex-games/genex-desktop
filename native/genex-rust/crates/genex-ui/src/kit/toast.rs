@@ -138,12 +138,15 @@ impl Toasts {
         Toasts::len(ctx) == 0
     }
 
-    /// Draw the queue for this tick and advance it one tick; a toast clicked slides out.
+    /// Draw the queue at the top right of `ui`'s rect for this tick and advance it one tick; a
+    /// toast clicked slides out.
     pub fn show(ui: &egui::Ui) {
         let ctx = ui.ctx().clone();
         let id = egui::Id::new(QUEUE_ID);
         let mut queue = ctx.data(|data| data.get_temp::<Queue>(id)).unwrap_or_default();
-        let frame = ctx.content_rect();
+        // The caller's rect, so a safe-area child keeps toasts clear of a notch; a root ui's rect
+        // is the whole frame.
+        let frame = ui.max_rect();
         let mut top = frame.top() + MARGIN.y;
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, id));
         for toast in &mut queue.toasts {

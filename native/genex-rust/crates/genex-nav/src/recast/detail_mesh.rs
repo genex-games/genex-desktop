@@ -971,11 +971,11 @@ fn dist_pt_tri(p: Vec3A, a: Vec3A, b: Vec3A, c: Vec3A) -> Option<f32> {
 }
 
 fn get_jitter_x(i: usize) -> f32 {
-    (((i * 0x8da6b343) & 0xffff) as f32 / 65535.0 * 2.0) - 1.0
+    ((i.wrapping_mul(0x8da6b343) & 0xffff) as f32 / 65535.0 * 2.0) - 1.0
 }
 
 fn get_jitter_y(i: usize) -> f32 {
-    (((i * 0xd8163841) & 0xffff) as f32 / 65535.0 * 2.0) - 1.0
+    ((i.wrapping_mul(0xd8163841) & 0xffff) as f32 / 65535.0 * 2.0) - 1.0
 }
 
 fn dist_to_poly(nvert: usize, verts: &[Vec3A], p: Vec3A) -> f32 {
@@ -1509,5 +1509,22 @@ impl Bounds {
     #[inline]
     fn height(&self) -> u16 {
         self.zmax - self.zmin
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Defect (game systems STR-28): Recast multiplies in a 32-bit unsigned int that wraps, so a
+    /// debug build on wasm32 (a 32-bit `usize`) panicked with an overflow at the third sample. A
+    /// 64-bit index past 2^33 overflows the same way on the host; the low 16 bits are the same at
+    /// any width, so release output does not change.
+    #[test]
+    fn the_jitter_wraps_as_recast_does_and_never_overflows() {
+        let wide = 1_usize << 40;
+        assert_eq!(get_jitter_x(wide), -1.0);
+        assert_eq!(get_jitter_y(wide), -1.0);
+        assert_eq!(get_jitter_x(2), ((2_usize.wrapping_mul(0x8da6b343) & 0xffff) as f32 / 65535.0 * 2.0) - 1.0);
     }
 }

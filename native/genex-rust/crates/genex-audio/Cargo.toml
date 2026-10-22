@@ -14,11 +14,18 @@ repository.workspace = true
 [lints]
 workspace = true
 
+# The mixer, the device output and the decoders (kira, cpal, symphonia). Without it the crate is
+# its logical side only: the Director, the vocabulary, the meter and the sink queue, which a game
+# built with `[audio] enabled = false` still names (the facade's `audio` feature turns it on, AU-11).
+[features]
+default = ["mixer"]
+mixer = ["dep:kira", "dep:cpal", "dep:symphonia"]
+
 [dependencies]
 genex-core = { workspace = true }
-kira = { workspace = true }
-cpal = { workspace = true }
-symphonia = { workspace = true }
+kira = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+symphonia = { workspace = true, optional = true }
 libm = { workspace = true }
 glam = { workspace = true }
 serde = { workspace = true }

@@ -36,6 +36,8 @@ import {
   RunMode,
   runPlan,
   switchedOn,
+  LAKESIDE_CONTENT_COMMIT,
+  lakesideGatedFor,
 } from "../../scripts/spike/rust-wgpu/render-perf.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -203,6 +205,46 @@ describe("render perf Lakeside v2 scenes", () => {
       assert.equal(verdictOf(comparison, name, "off", 1080), RowVerdict.Info, name);
       assert.equal(comparison.passed, true, name);
     }
+  });
+});
+
+describe("render perf Lakeside rows against a baseline that draws the same Lakeside", () => {
+  // GE perf: the exemption covers baselines drawn before the Lakeside content they would be compared
+  // on (Lakeside v2, renderer pass 2). An A/B against a saved side built after it (gs-head) draws the
+  // same scenes, so its Lakeside off rows gate like the bench rows.
+  it("gates the Lakeside off rows when the baseline descends from the Lakeside content commit", async () => {
+    const base = await fixture("baseline.json");
+    const lakeside = (record: PerfRecord, factor: number) => {
+      const copy = structuredClone(record);
+      const extra = structuredClone(copy.rows.filter((r) => r.row === "bench-outdoor" && r.profile === "off"));
+      for (const row of extra) {
+        row.row = "lakeside-forest";
+        if (row.gpuMs) row.gpuMs.p95 *= factor;
+      }
+      copy.rows.push(...extra);
+      return copy;
+    };
+    const slower = lakeside(await fixture("candidate-same.json"), 1.88);
+    const gated = compareRecords(lakeside(base, 1), slower, { minFrames: MIN_GATE_FRAMES, lakesideGated: true });
+    assert.equal(verdictOf(gated, "lakeside-forest", "off", 1080), RowVerdict.Regressed);
+    assert.equal(gated.passed, false);
+    const lacking = structuredClone(await fixture("candidate-same.json"));
+    const missing = compareRecords(lakeside(base, 1), lacking, { minFrames: MIN_GATE_FRAMES, lakesideGated: true });
+    assert.equal(verdictOf(missing, "lakeside-forest", "off", 1080), RowVerdict.Missing);
+    assert.equal(missing.passed, false);
+  });
+
+  it("decides it from the baseline's commit: gated only when it descends from Lakeside v2", () => {
+    const seen: string[][] = [];
+    const ancestry = (answer: boolean | null) => (ancestor: string, sha: string) => {
+      seen.push([ancestor, sha]);
+      return answer;
+    };
+    assert.equal(lakesideGatedFor("980b6491", ancestry(true)), true);
+    assert.equal(lakesideGatedFor("0e46c323", ancestry(false)), false);
+    assert.equal(lakesideGatedFor("0e46c323", ancestry(null)), false, "an unknown commit keeps the exemption");
+    assert.equal(lakesideGatedFor("", ancestry(true)), false, "a record with no commit keeps the exemption");
+    assert.ok(seen.every(([ancestor]) => ancestor === LAKESIDE_CONTENT_COMMIT));
   });
 });
 

@@ -260,6 +260,10 @@ fn refusing_game() -> Game<Refusals> {
         let chain = gfx.character("chain.glb").expect("the chain");
         let unmapped = hero.with_retargeted_clips(&chain).expect_err("a chain is not a humanoid");
         codes.push(unmapped.code.wire().to_owned());
+        // AN-27: a node clip the file does not have.
+        let mut nodes = gfx.node_clips("hero.glb").expect("the hero's node clips").animator();
+        let clip = nodes.play("no-such-clip").expect_err("a clip the file does not have refuses");
+        codes.push(clip.code.wire().to_owned());
         let shape = Character::on_ground(vec3(f32::NAN, 0.0, 0.0), CharacterParams::default()).expect_err("feet that are not finite refuse");
         codes.push(shape.code.wire().to_owned());
     });

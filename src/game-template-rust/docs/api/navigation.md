@@ -17,10 +17,10 @@ game.on_reset(|sim, _, _, _| {
 game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
 ```
 
-- **Config.** `NavConfig::walker(r, h)` has climb 0.4 m, slope 45°, cells 0.2 m by 0.1 m and
-  32 m tiles. Change them with `with_climb`, `with_slope`, `with_cells(cell, height)` and
-  `with_tile(metres)`. A tile is a whole number of cells. With streaming, the stream cell size
-  must be a whole number of tiles, or `install` refuses `streaming-invalid`.
+- **Config.** `NavConfig::walker(r, h)` has climb 0.4 m, slope 45°, cells 0.2 m by 0.1 m and 32 m
+  tiles. Change them with `with_climb`, `with_slope`, `with_cells(cell, height)` and
+  `with_tile(metres)`. A tile is a whole number of cells. With streaming (`docs/api/streaming.md`),
+  the stream cell size must be a whole number of tiles, or `install` refuses `streaming-invalid`.
 - **Input.** `NavInput::new()` takes `with_triangles`, `with_mesh`, `with_box`, `with_terrain`,
   `with_area_volume(outline, min_y, max_y, area)` and `with_bounds`. Areas are `NavArea::WALK`,
   `ROAD`, `GRASS`, `WATER`, `DOOR` and `NavArea::custom(8..=62)`. With physics,
@@ -67,9 +67,9 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   `moving`, `waiting` (the tick's search budget is spent), `arrived`, `at-link`, `on-link`,
   `no-path`, `off-mesh` (its tile streamed out: it stands still) or `target-off-mesh`;
   `nav.next_corner(agent)` is where it heads next.
-- **Characters.** There is no nav driver: the character controller moves the body. Bake with
-  `character.nav_config()` (its climb and slope), then every tick, in this order:
-  `sim.nav.update(ctx.dt)` once; per agent, `nav.desired_velocity(agent)` into the animator's
+- **Characters.** There is no nav driver: the character controller (`docs/api/characters.md`) moves
+  the body. Bake with `character.nav_config()` (its climb and slope), then every tick, in this
+  order: `sim.nav.update(ctx.dt)` once; per agent, `nav.desired_velocity(agent)` into the animator's
   speed parameter; `animator.update(ctx.dt)`; `character.drive(&mut sim.physics,
   CharacterMotion::Mixed { root, wish, jump: false, root_share }, ctx.dt)`; then
   `nav.set_position(agent, character.feet(), character.velocity())`. Capsules move at the physics

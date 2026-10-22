@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use genex_crash::{CRASH_RECORD_MAX_BYTES, CrashKind, CrashRecord, CrashSource, Installed};
 use genex_platform_web::crash::{CRASH_DATABASE_PREFIX, WebCrashOutlets, console_text, crash_database, install_with};
-use genex_platform_web::saves::SAVES_DATABASE_PREFIX;
+use genex_platform_web::web_saves::SAVES_DATABASE_PREFIX;
 
 /// What reached each outlet, in the order it arrived.
 static ARRIVED: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());

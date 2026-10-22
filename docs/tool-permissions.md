@@ -774,6 +774,15 @@ game file or `genex.toml` key reaches it, so an agent can only suggest it in cha
   The browser preview of an ejected game is not gated: it runs inside the Chromium renderer's
   sandbox, and the native Live run beside it is.
 
+## Crash records
+
+A game's crash records stay on this computer and nothing uploads them. The host keeps a native
+run's records in the game's own `.studio/crashes/` (made by real path, a link on the way refused;
+at most 32), and the harness reads them only through `game.crashes`. A record never names a file
+the host opens: symbolication reads only debug files the host chose, with `genex-symbolicate` in
+`ProcessSandbox`, no network and nothing writable
+([architecture](agent/architecture.md#projects-builds-and-previews)).
+
 ## Residual risks
 
 - The conformance gate of an ejected game does not judge Live's ring yet: the app's callers

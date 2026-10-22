@@ -42,7 +42,8 @@ over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` ra
 32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
 `invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
-Rapier (a fifth of the web build) out.
+Rapier (a fifth of the web build) out; one that plays no sound sets `[audio] enabled = false`,
+which leaves the mixer and decoders out.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
@@ -155,14 +156,22 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 Use the built-in system before writing your own; each page holds the how and its refusals.
 
 - **Input**: name actions once with `game.input(ActionMap::new()..)` and read `ctx.actions`, so
-  keys, pads and on-screen touch controls drive the same action (`docs/api/ctx.md`).
+  keys, pads and on-screen touch controls drive the same action; `controls_panel(ui)` rebinds,
+  and a prompt's label is display text, never kept in the world (`docs/api/input.md`; raw
+  keys, touches and pads are `docs/api/ctx.md`).
 - **UI and settings**: text, locales and the kit's menus through `game.ui(..)` and `genex::ui`
   (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
   (`docs/api/settings.md`).
 - **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`).
 - **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
-  `Animator` for rigged models (`docs/api/animation.md`).
+  `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn
+  its capsule at the feet and draw the model at the capsule, never placed by its centre.
+- **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
+  tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
+  cards past their last level, declared once in `on_reset`. A model only streamed cells draw
+  bakes its card only if `wire` registers it with `game.impostor_bake(..)`; otherwise it keeps
+  its last level, named `impostor-not-baked` (`docs/api/drawing.md`).
 - **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
   `state().volatile.audio`, never by ear (`docs/api/audio.md`).
 - **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`); multiplayer is

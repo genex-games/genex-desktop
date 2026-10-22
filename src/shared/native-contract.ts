@@ -524,6 +524,10 @@ export const NativeOpError = {
   BadArgument: "bad-argument",
   /** The game is still applying an earlier `reloadAssets`: ask again once it settles. */
   Busy: "busy",
+  /** `bakeAssets` named a bake the game did not register. */
+  UnknownBake: "unknown-bake",
+  /** A bake's output passed `NATIVE_BAKE_MAX_BYTES`: nothing was written. */
+  BakeTooLarge: "bake-too-large",
 } as const;
 export type NativeOpError = (typeof NativeOpError)[keyof typeof NativeOpError];
 
@@ -1174,6 +1178,19 @@ export interface NativeCapabilityReceipt {
   savesApi?: number;
   /** The `uiSettings` verb's version this game serves; absent: a build without the verb. */
   uiSettingsApi?: number;
+  /** The bakes a dev build registered (`game.nav_bake`, `game.impostor_bake`), each once; the build's bake step sends `bakeAssets` for each. */
+  bakes?: NativeBakeRef[];
+}
+
+/** One bake a dev build's receipt advertises: its kind and its registered name (`isBakeName`). */
+export interface NativeBakeRef {
+  kind: BakeKind;
+  name: string;
+}
+
+/** Whether `value` is one advertised bake: a known kind and a bake name. */
+export function isNativeBakeRef(value: unknown): value is NativeBakeRef {
+  return isRecord(value) && typeof value.kind === "string" && BAKE_KINDS.has(value.kind) && isBakeName(value.name);
 }
 
 /** The extension API versions a receipt serves: its list, or `[extensionApi]` for a receipt without one. */
@@ -1575,6 +1592,8 @@ const LIFECYCLES: ReadonlySet<string> = new Set<NativeLifecycle>(Object.values(N
 const API_VERSION_MAX = 0xffff;
 /** The most API versions one receipt list names. */
 const API_VERSIONS_MAX = 16;
+/** The most bakes one receipt advertises. */
+const RECEIPT_BAKES_MAX = 256;
 /** A safe-area inset is at most this many physical pixels (an 8K screen's side, twice over). */
 const SAFE_AREA_INSET_MAX_PX = 16_384;
 /** A touch id is a uint32 the sender chose. */
@@ -1651,13 +1670,14 @@ function receiptRendererFields(
   extensionApi: number,
   customPassApi: number,
 ): Partial<NativeCapabilityReceipt> | null {
-  const { extensionApis, customPassApis, rendererFeatures, renderInputs } = value;
+  const { extensionApis, customPassApis, rendererFeatures, renderInputs, bakes } = value;
   const lists =
     isOptional(extensionApis, (list) => isApiList(list, extensionApi)) &&
     isOptional(customPassApis, (list) => isApiList(list, customPassApi));
   const named =
     isOptional(rendererFeatures, (list) => isDistinctList(list, isRendererFeature)) &&
-    isOptional(renderInputs, (list) => isDistinctList(list, isRenderInput));
+    isOptional(renderInputs, (list) => isDistinctList(list, isRenderInput)) &&
+    isOptional(bakes, isBakeList);
   const versions = RECEIPT_VERB_VERSIONS.every((key) => isOptional(value[key], isApiVersion));
   if (!lists || !named || !versions) return null;
   const fields: Partial<NativeCapabilityReceipt> = {};
@@ -1665,6 +1685,7 @@ function receiptRendererFields(
   if (Array.isArray(customPassApis)) fields.customPassApis = customPassApis.filter(isApiVersion);
   if (Array.isArray(rendererFeatures)) fields.rendererFeatures = rendererFeatures.filter(isRendererFeature);
   if (Array.isArray(renderInputs)) fields.renderInputs = renderInputs.filter(isRenderInput);
+  if (Array.isArray(bakes)) fields.bakes = bakes.map((bake: NativeBakeRef) => ({ kind: bake.kind, name: bake.name }));
   for (const key of RECEIPT_VERB_VERSIONS) {
     const version = value[key];
     if (isApiVersion(version)) fields[key] = version;
@@ -1682,6 +1703,12 @@ function isApiList(value: unknown, highest: number): boolean {
     (version, index) => isApiVersion(version) && (index === 0 || version > value[index - 1]),
   );
   return ascending && value.at(-1) === highest;
+}
+
+/** A receipt's `bakes`: at most {@link RECEIPT_BAKES_MAX}, each a bake ref, no kind and name twice. */
+function isBakeList(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > RECEIPT_BAKES_MAX || !value.every(isNativeBakeRef)) return false;
+  return new Set(value.map((bake: NativeBakeRef) => `${bake.kind}/${bake.name}`)).size === value.length;
 }
 
 /** A list of distinct names, each one `known` accepts. */

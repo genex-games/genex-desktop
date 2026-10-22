@@ -243,6 +243,13 @@ struct Run {
     /// [`FLICKER_LEVELS`] from every value within the radius in the frame before (on a still
     /// camera, the pass-1 row's per-pixel flicker; on a moving one, what the motion does not explain).
     flickers: Vec<Vec<u32>>,
+    /// The pixels that stepped into each frame from the last: a luma more than [`POP_LEVELS`] from
+    /// every value within the radius in the frame before (a hard level switch's step, which never
+    /// comes back and so is no one-frame pop).
+    steps: Vec<Vec<u32>>,
+    /// The pixels that moved into each frame by more than [`SCENE_STEP_LEVELS`] (the steps' test
+    /// at half the levels): what a frozen-levels run changed, for attributing a switching run's.
+    half_steps: Vec<Vec<u32>>,
     /// Every pixel that popped in any frame (the evidence map).
     popped: Vec<bool>,
     /// The last frame.
@@ -259,7 +266,7 @@ struct Run {
 impl Run {
     /// A run whose frames move values by at most `radius` pixels a frame.
     fn new(radius: usize) -> Run {
-        Run { radius, pops: Vec::new(), excursions: Vec::new(), flickers: Vec::new(), popped: Vec::new(), last: None, window: Vec::new(), frames: None, fast: None }
+        Run { radius, pops: Vec::new(), excursions: Vec::new(), flickers: Vec::new(), steps: Vec::new(), half_steps: Vec::new(), popped: Vec::new(), last: None, window: Vec::new(), frames: None, fast: None }
     }
 
     /// [`Run::new`], keeping every frame.
@@ -289,6 +296,10 @@ impl Run {
                 .map(|i| i as u32)
                 .collect();
             self.flickers.push(flickered);
+            let stepped = (0..next.luma.len()).filter(|i| judged(&fast, *i) && !previous.holds(*i, next.luma[*i], POP_LEVELS)).map(|i| i as u32).collect();
+            self.steps.push(stepped);
+            let moved = (0..next.luma.len()).filter(|i| judged(&fast, *i) && !previous.holds(*i, next.luma[*i], SCENE_STEP_LEVELS)).map(|i| i as u32).collect();
+            self.half_steps.push(moved);
         }
         if let [before, now] = self.window.as_slice() {
             let popped: Vec<u32> = (0..next.luma.len())
@@ -443,11 +454,20 @@ fn cabin_truck(k: f32) -> (Vec3, Vec3) {
     (over_ground(at.x, at.z, CABIN_EYE_HEIGHT), origin + turn * vec3(across, 1.2, 0.0))
 }
 
-/// How a Lakeside run is drawn: the preset, the class it emulates and the features switched off.
+/// How a Lakeside run is drawn: the preset, the class it emulates, the features switched off and,
+/// for a frozen-levels run, the eye every tree keeps its level from.
 struct Drawn {
     preset: QualityPreset,
     class: DeviceClass,
     off: Vec<RenderFeature>,
+    levels_from: Option<Vec3>,
+}
+
+impl Drawn {
+    /// `preset` on `class` with `off` switched off, every tree choosing its level from the camera.
+    fn new(preset: QualityPreset, class: DeviceClass, off: Vec<RenderFeature>) -> Drawn {
+        Drawn { preset, class, off, levels_from: None }
+    }
 }
 
 /// The features both runs of a shadow row switch off, so the pair differs by the shadows alone.
@@ -486,6 +506,7 @@ fn lakeside_run_at(path: Path, radius: usize, drawn: &Drawn, keep: bool, window:
         world.mode = CameraMode::Free;
         world.hud_hidden = true;
         world.free = FreeCam::looking(eye, target);
+        world.lod_eye = drawn.levels_from;
     };
     pose(&mut runtime, 0.0);
     presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("drawn");
@@ -531,8 +552,8 @@ fn fast_pixels(presenter: &Presenter, (width, height): (u32, u32), radius: usize
 /// One Lakeside row: `path` drawn as `drawn` with and without `shadows`; the record and, when the
 /// shadows add pops, the problem.
 fn lakeside_row(name: &str, (path, radius): (Path, usize), preset: QualityPreset, class: DeviceClass, shadows: &'static [RenderFeature]) -> Option<(String, Option<String>)> {
-    let on = lakeside_run(path, radius, &Drawn { preset, class, off: SHADOW_ROW_ISOLATED.to_vec() }, true)?;
-    let off = lakeside_run(path, radius, &Drawn { preset, class, off: [shadows, SHADOW_ROW_ISOLATED].concat() }, false)?;
+    let on = lakeside_run(path, radius, &Drawn::new(preset, class, SHADOW_ROW_ISOLATED.to_vec()), true)?;
+    let off = lakeside_run(path, radius, &Drawn::new(preset, class, [shadows, SHADOW_ROW_ISOLATED].concat()), false)?;
     let label = format!("{name}-{}-{}", preset.wire(), class.wire());
     Some(judge_row(&label, radius, &on, &off, class))
 }
@@ -640,6 +661,147 @@ fn metal_lakeside_shadows_add_no_one_frame_pops_on_a_pan_an_orbit_or_a_dolly() {
     finish("lakeside-paths", &records, &problems);
 }
 
+/// A frozen-levels run's change that excuses a switching run's step at the same pixel and frame,
+/// luma levels: half of [`POP_LEVELS`], so a revealed background (a near post sliding past the
+/// woods) that the runs' differing far trees put on either side of the step threshold is the
+/// scene's, not a switch's.
+const SCENE_STEP_LEVELS: f64 = POP_LEVELS * 0.5;
+
+/// The largest block a frame's level-switch pops may fill on a desktop class, pixels a side (game
+/// systems LOD-08: "at most a 2x2 block of one-frame pops").
+const LEVEL_POP_BLOCK_PX: usize = 2;
+
+/// The (preset, class) pairs the level-switch dolly is drawn at: desktop medium and high, and each
+/// phone class at its own preset (D9's share holds there).
+fn level_row_draws() -> [(QualityPreset, DeviceClass); 5] {
+    let mobile = |tier| DeviceClass::new(FormFactor::Mobile, tier);
+    [
+        (QualityPreset::Medium, desktop_high()),
+        (QualityPreset::High, desktop_high()),
+        (QualityPreset::Medium, mobile(PerformanceTier::High)),
+        (QualityPreset::Low, mobile(PerformanceTier::Mid)),
+        (QualityPreset::Low, mobile(PerformanceTier::Low)),
+    ]
+}
+
+/// Whether `pixels` (x, y) fit in a block of [`LEVEL_POP_BLOCK_PX`] a side.
+fn within_block(pixels: &[(usize, usize)]) -> bool {
+    let span = |pick: fn(&(usize, usize)) -> usize| {
+        let (low, high) = pixels.iter().map(pick).fold((usize::MAX, 0), |(low, high), v| (low.min(v), high.max(v)));
+        high.saturating_sub(low) < LEVEL_POP_BLOCK_PX
+    };
+    pixels.is_empty() || (span(|p| p.0) && span(|p| p.1))
+}
+
+/// The record of a level-switch row (`switching` chooses the trees' levels from the camera; each
+/// of `frozen` keeps every tree's level from one eye, the path's first and its last, and so never
+/// switches) and, when the switches change more than a 2x2 block of pixels by more than
+/// [`POP_LEVELS`] in one frame (beyond what the motion explains) on a desktop class, or more than
+/// D9's share of a phone frame, the problem. A hard switch is such a step; a crossfade spreads it
+/// over the band's frames. Attributed the D12 way: a change at a pixel either frozen run changes by
+/// more than [`SCENE_STEP_LEVELS`] (or pops) at the same frame, or on a desktop class one within
+/// the motion radius of the frame's edge, is the scene's, not the switch's. The switching run's
+/// levels lie between the two frozen runs' (nearer the first eye's early on, the last eye's late),
+/// so what either does without a switch is the scene's: two frozen runs alone, judged against each
+/// other, stepped past a 2x2 block in three frames at desktop medium and two at high (measured
+/// 2026-10-22). One-frame pops are attributed and recorded the same way.
+fn judge_levels_row(label: &str, radius: usize, switching: &Run, frozen: [&Run; 2], class: DeviceClass) -> (String, Option<String>) {
+    write_png(&out_dir().join(format!("level-pops-{label}.png")), &switching.pop_map());
+    let width = switching.last.as_ref().map_or(1, |last| last.width() as usize);
+    let height = switching.last.as_ref().map_or(1, |last| last.height() as usize);
+    let pixels = switching.popped.len();
+    let mut scene_steps = by_frame(frozen.iter().map(|run| run.half_steps.iter().zip(off_pops(run)).map(|(steps, pops)| steps.iter().copied().chain(pops).collect()).collect()));
+    let mut scene_pops = by_frame(frozen.iter().map(|run| off_pops(run)));
+    if class.form == FormFactor::Desktop {
+        add_frame_edge(&mut scene_steps, &switching.steps, (width, height), radius);
+        add_frame_edge(&mut scene_pops, &switching.pops, (width, height), radius);
+    }
+    let pops: usize = attributed(&switching.pops, &scene_pops, pixels).iter().sum();
+    let steps = attributed(&switching.steps, &scene_steps, pixels);
+    let worst = steps.iter().copied().max().unwrap_or(0);
+    let worst_frame = steps.iter().position(|count| *count == worst).unwrap_or(0);
+    let total: usize = steps.iter().sum();
+    let unblocked: Vec<usize> = (0..steps.len()).filter(|frame| !within_block(&attributed_pixels(&switching.steps, &scene_steps, *frame, width))).collect();
+    write_level_step(label, switching, &scene_steps, worst_frame);
+    let listed: Vec<String> = attributed_pixels(&switching.steps, &scene_steps, worst_frame, width).iter().map(|(x, y)| format!("[{x}, {y}]")).collect();
+    let record = format!(
+        "{{\"row\": \"{label}\", \"frames\": {PATH_FRAMES}, \"radiusPx\": {radius}, \"popsSwitching\": {}, \"popsFrozen\": {}, \"popsFrozenLast\": {}, \"levelPops\": {pops}, \"levelSteps\": {total}, \"worstLevelSteps\": {worst}, \"worstFrame\": {worst_frame}, \"framesOverBlock\": {}, \"worstPixels\": [{}]}}",
+        switching.total_pops(),
+        frozen[0].total_pops(),
+        frozen[1].total_pops(),
+        unblocked.len(),
+        listed.join(", ")
+    );
+    eprintln!("{record}");
+    let over = if class.form == FormFactor::Desktop { !unblocked.is_empty() } else { worst as f64 / switching.pixels() > MOBILE_SHADOW_POP_SHARE_MAX };
+    let problem = over.then(|| format!("{label}: the tree levels step {worst} pixels in one frame at frame {worst_frame} ({total} over the path, {} frames past a {LEVEL_POP_BLOCK_PX}x{LEVEL_POP_BLOCK_PX} block)", unblocked.len()));
+    (record, problem)
+}
+
+/// The pixels any of `runs` flags in each frame.
+fn by_frame(runs: impl Iterator<Item = Vec<Vec<u32>>>) -> Vec<Vec<u32>> {
+    let mut union: Vec<Vec<u32>> = Vec::new();
+    for run in runs {
+        union.resize(union.len().max(run.len()), Vec::new());
+        for (frame, flagged) in union.iter_mut().zip(run) {
+            frame.extend(flagged);
+        }
+    }
+    union
+}
+
+/// Write the frame after the level switches' worst step (`step` is the change from frame `step`
+/// to the next) with the pixels they changed painted magenta.
+fn write_level_step(label: &str, switching: &Run, scene: &[Vec<u32>], step: usize) {
+    let Some(frames) = &switching.frames else { return };
+    let Some(after) = frames.get(step + 1) else { return };
+    let mut excused = vec![false; switching.popped.len()];
+    for i in scene.get(step).into_iter().flatten() {
+        excused[*i as usize] = true;
+    }
+    let mut bgra = after.bgra().to_vec();
+    for i in switching.steps[step].iter().filter(|i| !excused[**i as usize]) {
+        let at = *i as usize * 4;
+        bgra[at..at + 4].copy_from_slice(&[255, 0, 255, 255]);
+    }
+    write_png(&out_dir().join(format!("level-step-{label}.png")), &Capture::new(after.width(), after.height(), bgra).expect("a capture of the same size"));
+}
+
+/// Game systems LOD-08 (D9/D12 dolly): the cabin dolly walks the woods behind the cabin through the
+/// trees' level distances (24 and 58 m at the showcase's view), drawn three times at the same
+/// exposure: once with every tree choosing its level from the camera, and twice with each tree
+/// held at the level it had from the dolly's first eye and from its last. What the switches change
+/// at once in any frame is at most a 2x2 block at desktop medium and high, and D9's 0.01% on the
+/// phone classes. Red on the game's hard switches at desktop high (71 steps, 10 frames past the
+/// block); the medium and phone rows do not see them, since their foliage's own pops (some 80 a
+/// frame in every run) excuse a switch's step there, so those rows bound what the switches add
+/// beyond the foliage, not the switches alone.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_lakeside_tree_level_switches_add_no_one_frame_steps_on_the_dolly() {
+    if gpu().is_none() {
+        return;
+    }
+    let eyes = [dolly(0.0).0, dolly(PATH_FRAMES as f32).0];
+    let mut records = Vec::new();
+    let mut problems = Vec::new();
+    for (preset, class) in level_row_draws() {
+        let switching = Drawn::new(preset, class, SHADOW_ROW_ISOLATED.to_vec());
+        let Some(on) = lakeside_run(dolly, DOLLY_RADIUS, &switching, true) else { return };
+        let mut frozen = Vec::new();
+        for eye in eyes {
+            let held = Drawn { levels_from: Some(eye), ..Drawn::new(preset, class, SHADOW_ROW_ISOLATED.to_vec()) };
+            let Some(run) = lakeside_run(dolly, DOLLY_RADIUS, &held, false) else { return };
+            frozen.push(run);
+        }
+        let label = format!("dolly-levels-{}-{}", preset.wire(), class.wire());
+        let (record, problem) = judge_levels_row(&label, DOLLY_RADIUS, &on, [&frozen[0], &frozen[1]], class);
+        records.push(record);
+        problems.extend(problem);
+    }
+    finish("lakeside-dolly-levels", &records, &problems);
+}
+
 /// The most pixels the bloom may change in a single frame beyond what the motion explains, as a
 /// share of the frame: the shadows' step bound ([`SHADOW_STEP_SHARE_MAX`]).
 const GLARE_STEP_SHARE_MAX: f64 = SHADOW_STEP_SHARE_MAX;
@@ -658,8 +820,8 @@ fn metal_lakeside_the_sun_s_glare_enters_the_pan_without_a_step() {
     let mut records = Vec::new();
     let mut problems = Vec::new();
     for preset in [QualityPreset::High, QualityPreset::Ultra] {
-        let Some(on) = lakeside_run(pan, PAN_RADIUS, &Drawn { preset, class: desktop_high(), off: Vec::new() }, false) else { return };
-        let Some(off) = lakeside_run(pan, PAN_RADIUS, &Drawn { preset, class: desktop_high(), off: vec![RenderFeature::Bloom] }, false) else { return };
+        let Some(on) = lakeside_run(pan, PAN_RADIUS, &Drawn::new(preset, desktop_high(), Vec::new()), false) else { return };
+        let Some(off) = lakeside_run(pan, PAN_RADIUS, &Drawn::new(preset, desktop_high(), vec![RenderFeature::Bloom]), false) else { return };
         let steps: Vec<f64> = attributed(&on.flickers, &off.flickers, on.popped.len()).iter().map(|count| *count as f64 / on.pixels()).collect();
         let worst = steps.iter().copied().fold(0.0, f64::max);
         let frame = steps.iter().position(|share| *share == worst).unwrap_or(0);
@@ -741,7 +903,7 @@ fn metal_lakeside_motion_paths_at_1440p_are_written_for_the_owner() {
                     mp4.push(capture);
                 }
             };
-            let drawn = Drawn { preset, class: desktop_high(), off: Vec::new() };
+            let drawn = Drawn::new(preset, desktop_high(), Vec::new());
             let Some(run) = lakeside_run_at(path, radius * scale, &drawn, false, Some(SEQUENCE_WINDOW), &mut sink) else { return };
             if let Some(mp4) = mp4 {
                 mp4.finish();
@@ -972,8 +1134,8 @@ fn metal_harbour_street_shadows_add_no_one_frame_pops_on_a_pan_or_a_creep() {
     for (name, path, radius) in paths {
         for preset in [QualityPreset::High, QualityPreset::Ultra] {
             let class = desktop_high();
-            let Some(on) = harbour_run(path, radius, &Drawn { preset, class, off: SHADOW_ROW_ISOLATED.to_vec() }, true) else { return };
-            let Some(off) = harbour_run(path, radius, &Drawn { preset, class, off: [SUN_SHADOWS, SHADOW_ROW_ISOLATED].concat() }, false) else { return };
+            let Some(on) = harbour_run(path, radius, &Drawn::new(preset, class, SHADOW_ROW_ISOLATED.to_vec()), true) else { return };
+            let Some(off) = harbour_run(path, radius, &Drawn::new(preset, class, [SUN_SHADOWS, SHADOW_ROW_ISOLATED].concat()), false) else { return };
             let (record, problem) = judge_row(&format!("{name}-{}-{}", preset.wire(), class.wire()), radius, &on, &off, class);
             records.push(record);
             problems.extend(problem);

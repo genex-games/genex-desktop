@@ -16,12 +16,18 @@
 //!
 //! Audio never enters the checksum. `state().volatile.audio` shows it once the game asked for a
 //! sound or registered `game.audio`; a game that does neither runs no audio work at all.
+//!
+//! A game with `[audio] enabled = false` is built without the facade's `audio` feature (AU-11):
+//! no kira, cpal or symphonia. This module keeps its whole surface, so the game's code compiles
+//! unchanged, but every sound and piece of music is missing (`audio-disabled`), `ctx.audio` plays
+//! nothing ([`Voice::NONE`], `playing` false), no device opens, and `state().volatile.audio` is
+//! `{ enabled: false, issues }` once the game asked for a sound.
 
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use genex_audio as ga;
-use genex_audio::{AudioCommand, Director, Mixer, MixerOp, MusicId, SoundId, SoundInfo, StepInput};
+use genex_audio::{AudioCommand, Director, MixerOp, MusicId, SoundId, SoundInfo, StepInput};
 use genex_core::json::Value as CoreValue;
 use genex_core::paths::is_safe_asset_path;
 
@@ -37,12 +43,139 @@ pub use genex_audio::{
     REVERB_ZONES_MAX, ReverbPreset, ReverbZone, SOUNDS_DECODED_MAX_BYTES, SinkQueue, Spatial, Voice, ZoneId, ZoneShape,
 };
 
+use engine::Mixer;
+
 /// The `state().volatile` key audio reports under.
 pub const VOLATILE_AUDIO_KEY: &str = "audio";
+/// Whether this build links the mixer, the decoders and the device output (the `audio` feature).
+const AUDIO_BUILT: bool = cfg!(feature = "audio");
+
+/// The mixer, the decoders and the device output: genex-audio's own in a build with the `audio`
+/// feature.
+#[cfg(feature = "audio")]
+mod engine {
+    pub(super) use genex_audio::{AudioOutput, Mixer, Music, Sound, decode_sound};
+}
+
+/// Stand-ins for a game built with `[audio] enabled = false` (AU-11): every decode is refused
+/// `audio-disabled`, so no sound, music, mixer or output is ever made; the types are empty and
+/// their methods unreachable.
+#[cfg(not(feature = "audio"))]
+mod engine {
+    use genex_audio::{AudioError, AudioErrorCode, AudioLevel, AudioSettings, DeviceFault, MixerOp, PoolClass, SinkQueue};
+    use std::sync::Arc;
+
+    /// The refusal every decode and mixer answers.
+    fn disabled() -> AudioError {
+        AudioError::new(AudioErrorCode::Disabled, "the game is built with [audio] enabled = false")
+    }
+
+    /// Refused: this build has no decoders.
+    pub(super) fn decode_sound(_bytes: &[u8], _ext: &str) -> Result<Sound, AudioError> {
+        Err(disabled())
+    }
+
+    /// A decoded sound: never made in this build.
+    #[derive(Clone, Debug)]
+    pub(super) enum Sound {}
+
+    impl Sound {
+        pub(super) fn frames(&self) -> usize {
+            match *self {}
+        }
+
+        pub(super) fn seconds(&self) -> f64 {
+            match *self {}
+        }
+
+        pub(super) fn sample_rate(&self) -> u32 {
+            match *self {}
+        }
+    }
+
+    /// Music: never made in this build.
+    #[derive(Clone, Debug)]
+    pub(super) enum Music {}
+
+    impl Music {
+        /// Refused: this build has no decoders.
+        pub(super) fn stream(_bytes: Arc<[u8]>, _ext: &str) -> Result<Music, AudioError> {
+            Err(disabled())
+        }
+
+        pub(super) fn from_sound(sound: Sound) -> Music {
+            match sound {}
+        }
+
+        pub(super) fn seconds(&self) -> f64 {
+            match *self {}
+        }
+
+        pub(super) fn sample_rate(&self) -> u32 {
+            match *self {}
+        }
+    }
+
+    /// The mixer: never made in this build.
+    pub(super) enum Mixer {}
+
+    impl Mixer {
+        /// Refused: this build has no mixer.
+        pub(super) fn new(_class: PoolClass) -> Result<Mixer, AudioError> {
+            Err(disabled())
+        }
+
+        pub(super) fn reset(&mut self) -> Result<(), AudioError> {
+            match *self {}
+        }
+
+        pub(super) fn set_settings(&mut self, _settings: AudioSettings) {
+            match *self {}
+        }
+
+        pub(super) fn set_muted(&mut self, _muted: bool) {
+            match *self {}
+        }
+
+        pub(super) fn add_sound(&mut self, _sound: Sound) {
+            match *self {}
+        }
+
+        pub(super) fn add_music(&mut self, _music: Music) {
+            match *self {}
+        }
+
+        pub(super) fn apply(&mut self, _ops: &[MixerOp]) {
+            match *self {}
+        }
+
+        pub(super) fn tick(&mut self) -> &[f32] {
+            match *self {}
+        }
+
+        pub(super) fn level(&self) -> AudioLevel {
+            match *self {}
+        }
+    }
+
+    /// A device output: never opened in this build.
+    pub(super) enum AudioOutput {}
+
+    impl AudioOutput {
+        /// Refused: this build opens no device.
+        pub(super) fn open(_queue: SinkQueue, _class: PoolClass) -> Result<AudioOutput, DeviceFault> {
+            Err(DeviceFault::NoDevice)
+        }
+
+        pub(super) fn fault(&self) -> Option<DeviceFault> {
+            match *self {}
+        }
+    }
+}
 
 /// Every audio call the reference's audio page teaches, in its order (the vocabulary fixture's
 /// `audio.calls`, AU-9).
-pub const AUDIO_CALLS: [&str; 25] = [
+pub const AUDIO_CALLS: [&str; 26] = [
     "gfx.sound",
     "gfx.music",
     "game.audio",
@@ -65,6 +198,7 @@ pub const AUDIO_CALLS: [&str; 25] = [
     "ctx.audio.add_zone",
     "ctx.audio.remove_zone",
     "PlayOpts::ui",
+    ".max_instances",
     "sound.refusal",
     "sound.is_missing",
     "sound.seconds",
@@ -213,9 +347,9 @@ struct BankInner {
     sounds: Map<String, Entry>,
     musics: Map<String, Entry>,
     /// Decoded sounds in id order (the mixer's and the Director's ids).
-    decoded: Vec<(Arc<str>, ga::Sound)>,
+    decoded: Vec<(Arc<str>, engine::Sound)>,
     /// Music in id order.
-    music: Vec<(Arc<str>, ga::Music)>,
+    music: Vec<(Arc<str>, engine::Music)>,
     decoded_bytes: usize,
     /// Refusals in first-request order (`volatile.audio.issues`).
     issues: Vec<(Arc<str>, SoundRefusal)>,
@@ -260,7 +394,7 @@ impl Bank {
                 Entry::Refused(refusal) => missing(refusal),
             };
         }
-        let decoded = ga::decode_sound(&bytes, &extension(path)).map_err(|error| SoundRefusal::Audio(error.code()));
+        let decoded = engine::decode_sound(&bytes, &extension(path)).map_err(|error| SoundRefusal::Audio(error.code()));
         let mut inner = self.inner.borrow_mut();
         let admitted = decoded.and_then(|sound| {
             let total = inner.decoded_bytes.saturating_add(sound.frames().saturating_mul(STEREO_FRAME_BYTES));
@@ -310,7 +444,7 @@ impl Bank {
             };
         }
         let ext = extension(path);
-        let opened = if ext == "ogg" { ga::Music::stream(bytes.shared(), &ext) } else { ga::decode_sound(&bytes, &ext).map(ga::Music::from_sound) };
+        let opened = if ext == "ogg" { engine::Music::stream(bytes.shared(), &ext) } else { engine::decode_sound(&bytes, &ext).map(engine::Music::from_sound) };
         let mut inner = self.inner.borrow_mut();
         let entry = match opened {
             Ok(music) => {
@@ -485,8 +619,11 @@ impl State {
 
     /// After the reset hooks: start audio once the game uses it, and hand the sounds and music
     /// the reset decoded to the mixer and the Director (ids in bank order on both).
+    /// A build without the `audio` feature never starts: it only keeps the bank's refusals.
+    #[cfg_attr(not(feature = "audio"), expect(unreachable_code, reason = "a build without audio decodes no sound to hand over"))]
     pub(crate) fn sync(&mut self, setup: &Setup, bank: &Bank) {
-        if !self.active() && (setup.setup().is_some() || bank.used()) {
+        let wanted = setup.setup().is_some() || bank.used();
+        if AUDIO_BUILT && wanted && !self.active() {
             self.activate(setup);
         }
         let inner = bank.inner.borrow();
@@ -594,10 +731,11 @@ impl State {
         self.queue.borrow().director.as_ref().map_or(0, Director::logical_hash)
     }
 
-    /// `state().volatile.audio`, once audio is in use.
+    /// `state().volatile.audio`, once audio is in use; in a build without audio, once the game
+    /// asked for a sound.
     pub(crate) fn volatile_value(&self) -> Option<CoreValue> {
         let queue = self.queue.borrow();
-        let director = queue.director.as_ref()?;
+        let Some(director) = queue.director.as_ref() else { return self.disabled_value() };
         let mut audio = CoreValue::object();
         audio.set("pool", self.pool_value(director));
         audio.set("voices", CoreValue::Array(director.voices().iter().map(|voice| self.voice_value(voice)).collect()));
@@ -609,6 +747,17 @@ impl State {
         audio.set("counts", counts_value(director.events().counts()));
         audio.set("person", person_value(&self.settings));
         audio.set("device", self.device_value());
+        audio.set("issues", CoreValue::Array(self.issues.iter().map(|(path, refusal)| issue_value(path, *refusal)).collect()));
+        Some(audio)
+    }
+
+    /// `{ enabled: false, issues }` in a build without the `audio` feature, once there are issues.
+    fn disabled_value(&self) -> Option<CoreValue> {
+        if AUDIO_BUILT || self.issues.is_empty() {
+            return None;
+        }
+        let mut audio = CoreValue::object();
+        audio.set("enabled", CoreValue::from(false));
         audio.set("issues", CoreValue::Array(self.issues.iter().map(|(path, refusal)| issue_value(path, *refusal)).collect()));
         Some(audio)
     }
@@ -764,7 +913,7 @@ pub const fn may_open_device(headless: bool, forbidden: bool) -> bool {
 #[doc(hidden)]
 #[derive(Default)]
 pub struct Device {
-    output: Option<ga::AudioOutput>,
+    output: Option<engine::AudioOutput>,
     tried: bool,
     refused: Option<DeviceFault>,
 }
@@ -783,17 +932,18 @@ impl Device {
     }
 
     /// [`Device::open_once`] with the process's marker given: `forbidden` opens nothing (and
-    /// never calls `queue`), as a process marked `GENEX_NO_WINDOW=1` does.
+    /// never calls `queue`), as a process marked `GENEX_NO_WINDOW=1` does, and neither does a
+    /// build without the `audio` feature.
     pub fn open_once_where(&mut self, forbidden: bool, queue: impl FnOnce() -> (SinkQueue, PoolClass)) -> bool {
         if self.tried {
             return self.is_open();
         }
         self.tried = true;
-        if forbidden {
+        if forbidden || !AUDIO_BUILT {
             return false;
         }
         let (queue, class) = queue();
-        match ga::AudioOutput::open(queue, class) {
+        match engine::AudioOutput::open(queue, class) {
             Ok(output) => self.output = Some(output),
             Err(fault) => self.refused = Some(fault),
         }
@@ -812,7 +962,7 @@ impl Device {
 
     /// The open's refusal, else the last fault the device reported.
     pub fn fault(&self) -> Option<DeviceFault> {
-        self.refused.or_else(|| self.output.as_ref().and_then(ga::AudioOutput::fault))
+        self.refused.or_else(|| self.output.as_ref().and_then(engine::AudioOutput::fault))
     }
 
     /// Open on `runtime`'s queue (once) and report the device to its `volatile.audio.device`.
@@ -949,6 +1099,7 @@ impl CtxAudio<'_> {
 /// peak 4095) as a 16-bit PCM WAV, synthesized for unit tests: a forked engine crate's sources may
 /// not include a file outside the crate (the eject stage refuses `include-escape`).
 #[cfg(test)]
+#[cfg_attr(not(feature = "audio"), allow(dead_code, reason = "the rows that decode it need the audio feature"))]
 pub(crate) fn test_tone_wav() -> &'static [u8] {
     const RATE: u32 = 48_000;
     const FRAMES: u32 = RATE / 2;

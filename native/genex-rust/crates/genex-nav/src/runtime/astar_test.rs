@@ -23,11 +23,8 @@ impl AStarProblem for AdjacencyListProblem {
         self.start
     }
 
-    fn successors(
-        &self,
-        state: &Self::StateType,
-    ) -> Vec<(f32, Self::ActionType, Self::StateType)> {
-        self.states[*state].adjacency.clone()
+    fn successors(&self, state: &Self::StateType, out: &mut Vec<(f32, Self::ActionType, Self::StateType)>) {
+        out.extend_from_slice(&self.states[*state].adjacency);
     }
 
     fn heuristic(&self, state: &Self::StateType) -> f32 {

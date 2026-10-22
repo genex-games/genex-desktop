@@ -27,7 +27,7 @@ import { assetExtension } from "../shared/game-assets.ts";
 import { type BuildTarget, GameStack } from "../shared/game-project.ts";
 import { readRegularFile, writeNewFile } from "../substrate/fsx.ts";
 import type { TextureUsage } from "../substrate/asset-import/basis-encoder.ts";
-import { IMPORTER_TOOLS_ENV } from "../substrate/asset-import/decoders.ts";
+import { IMPORTER_TOOLS_ENV, IMPORTER_WORKER_RESOURCE } from "../substrate/asset-import/decoders.ts";
 import { isGlb, readGlb } from "../substrate/asset-import/glb.ts";
 import {
   AssetImportRefusal,
@@ -130,12 +130,25 @@ export interface ImporterCommand {
   env?: Record<string, string>;
 }
 
+/** The importer's source, which a process running from this checkout's `src/` starts. */
+const SOURCE_WORKER = fileURLToPath(new URL("../substrate/asset-import/worker.ts", import.meta.url));
+
 /**
- * This process's Node (Electron's, as Node) running `worker.ts`, reading its tools from `toolsDir`
- * (the app's `resources/importer-tools`, `IMPORTER_TOOLS_ENV`) when given.
+ * The importer script to start: the source `worker.ts` when this module runs from source (tests, a
+ * checkout), else the copy the build bundled into `resources` ({@link IMPORTER_WORKER_RESOURCE}),
+ * because a bundled main (`dist/main/main.mjs`, a packaged app) has no `src/` beside it.
  */
-export function defaultImporterCommand(toolsDir?: string): ImporterCommand {
-  const worker = fileURLToPath(new URL("../substrate/asset-import/worker.ts", import.meta.url));
+export function importerWorker(resources: string, moduleUrl: string = import.meta.url): string {
+  if (moduleUrl.endsWith(".ts")) return SOURCE_WORKER;
+  return path.join(resources, ...IMPORTER_WORKER_RESOURCE.split("/"));
+}
+
+/**
+ * This process's Node (Electron's, as Node) running `worker` (the source `worker.ts` by default;
+ * {@link importerWorker} for the app), reading its tools from `toolsDir` (the app's
+ * `resources/importer-tools`, `IMPORTER_TOOLS_ENV`) when given.
+ */
+export function defaultImporterCommand(toolsDir?: string, worker: string = SOURCE_WORKER): ImporterCommand {
   const electron = typeof process.versions.electron === "string";
   const env: Record<string, string> = {
     ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),

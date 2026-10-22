@@ -134,12 +134,13 @@ var<workgroup> scan_transmittance: array<vec3<f32>, 32>;
 
 @compute @workgroup_size(32, 1, 1)
 fn cs_aerial_perspective(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) slice: u32) {
-    // The ray through the column's pixel centre (v down): a point on the near plane (1 under
-    // reverse-Z, 0 under standard Z), as sky_draw.wgsl unprojects.
+    // The ray through the column's pixel centre (v down): a point on the far plane (0 under
+    // reverse-Z, 1 under standard Z) with its w kept, as sky_draw.wgsl unprojects (an infinite far
+    // plane gives w 0 and the ray itself, exact kilometres from the origin).
     let uv = (vec2<f32>(group.xy) + 0.5) / f32(AERIAL_SLICES);
-    let near = select(0.0, 1.0, frame.depth_reversed == 1u);
-    let world = frame.inv_view_proj * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, near, 1.0);
-    let dir = normalize(world.xyz / world.w - frame.camera_pos.xyz);
+    let far = select(1.0, 0.0, frame.depth_reversed == 1u);
+    let world = frame.inv_view_proj * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, far, 1.0);
+    let dir = normalize(world.xyz - frame.camera_pos.xyz * world.w);
     let sun = normalize(atmosphere.sun_dir.xyz);
 
     let bottom = atmosphere.radii.x;

@@ -15,6 +15,9 @@
 //!   come from glam's libm math, so every destination gets the same bits.
 //! - Two agents whose responsibilities sum to 0 (an agent set to 0 meeting a body) each take
 //!   the whole avoidance; dodgy divided by zero there.
+//! - `VisibilitySet` rebuilds its cone list in a spare buffer it keeps, instead of a new `Vec`
+//!   grown from empty for every added cone, and makes an overlap's cone (its related angle) only
+//!   where it keeps one (GE, NAV-18's update budget; the same bits).
 //! - The `debug` feature and its `DebugData` are left out.
 //! - Tests are dodgy's own (`*_test.rs` beside each file), with a key on every agent.
 //!

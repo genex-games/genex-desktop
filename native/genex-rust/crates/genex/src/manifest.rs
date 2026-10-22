@@ -30,6 +30,9 @@
 //! [physics]                 # optional: a game without physics is built without Rapier
 //! enabled = false           # default true
 //!
+//! [audio]                   # optional: a game without sound is built without the mixer and decoders
+//! enabled = false           # default true
+//!
 //! [[texture]]               # optional: a loose texture's usage, where no material slot tells it
 //! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 //! usage = "data"            # color | data | normal
@@ -150,10 +153,20 @@ pub const LIGHT_CALLS: [&str; 7] =
     ["frame.point_light", "frame.spot_light", "frame.spot_light_with", "SpotLight::new", "Material::emissive", ".with_emissive", ".with_emissive_texture"];
 /// The retained instance group calls of the facade (renderer pass 2 A.0b), as agents call them:
 /// a group made once (`InstanceGroup::cubes(..)`, `::spheres(..)`, `::models(..)`,
-/// `::models_with(..)`), changed by range (`group.update(..)`) and drawn each frame
-/// (`frame.group(..)`).
-pub const INSTANCE_GROUP_CALLS: [&str; 6] =
-    ["InstanceGroup::cubes", "InstanceGroup::spheres", "InstanceGroup::models", "InstanceGroup::models_with", "group.update", "frame.group"];
+/// `::models_with(..)`), changed by range (`group.update(..)`), drawn each frame
+/// (`frame.group(..)`) and thinned far from the camera
+/// (`group.with_far(Far::thin(..).fading_out(..))`).
+pub const INSTANCE_GROUP_CALLS: [&str; 9] = [
+    "InstanceGroup::cubes",
+    "InstanceGroup::spheres",
+    "InstanceGroup::models",
+    "InstanceGroup::models_with",
+    "group.update",
+    "frame.group",
+    "group.with_far",
+    "Far::thin",
+    ".fading_out",
+];
 /// The particle calls of the facade (renderer pass 2 A.11), as agents call them: an emitter made
 /// once from a kind (`Particles::steam(..)`, `Particles::rain(..)`, `Particles::fountain(..)`),
 /// changed (`.with_rate(..)`, `.with_soft(..)`, `.with_sorted(..)`, `.with_collision(..)`,
@@ -194,7 +207,7 @@ pub const FOG_CALLS: [&str; 8] =
 /// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26; the
 /// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
 /// a ragdoll view's `.apply`, pinned at gate GI).
-pub const ANIMATION_CALLS: [&str; 81] = [
+pub const ANIMATION_CALLS: [&str; 86] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
@@ -205,7 +218,7 @@ pub const ANIMATION_CALLS: [&str; 81] = [
     "CharacterDraw::new", ".tint", ".material", "Motion::clip", ".once", ".above", ".below", ".at_end", ".synced",
     ".inertialize", ".priority", ".interruptible", ".layer_mask", ".event", ".vec2", ".bool", ".set_vec2", ".set_bool",
     ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
-    ".socket", ".apply",
+    ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
@@ -238,12 +251,12 @@ pub const NAV_CALLS: [&str; 64] = [
     "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
 ];
 /// The input calls of the facade (IN-11, IN-12).
-pub const INPUT_CALLS: [&str; 30] = [
+pub const INPUT_CALLS: [&str; 31] = [
     "game.input", "game.touch_controls", "ActionMap::new", ".context", "Context::new", ".button", ".axis1", ".axis2",
     ".when", ".modify", ".pass_through", ".starts_off", "ctx.actions.down", "ctx.actions.pressed",
     "ctx.actions.released", "ctx.actions.fired", "ctx.actions.value", "ctx.actions.axis2", "ctx.actions.held_ticks",
     "ctx.actions.device", "ctx.actions.glyph", "ctx.actions.is_on", "ctx.actions.enable", "ctx.actions.disable",
-    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel",
+    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel", "glyph_ui",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling and `.triangle_count` counts a model's triangles.
@@ -255,12 +268,13 @@ pub const ASSET_CALLS: [&str; 10] = [
 pub const ASSET_REFUSALS: [&str; 6] = ["unsafe-path", "missing", "too-large", "malformed", "not-at-reset", "not-preloaded"];
 /// The level-of-detail calls of the facade (LOD-07; a class's crossfade threshold, LOD-06, pinned at
 /// gate GI).
-pub const LOD_CALLS: [&str; 7] = [
+pub const LOD_CALLS: [&str; 12] = [
     ".with_levels", ".with_lod_bias", ".lod_refusal", "gfx.assets().compound", ".lod_at", "LodConfig::new",
-    ".threshold_px",
+    ".threshold_px", ".with_impostor", ".impostor", "Impostor::hemi", "Impostor::sphere",
+    "game.impostor_bake",
 ];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
-pub const LOD_REFUSALS: [&str; 3] = ["levels-invalid", "levels-mismatch", "compound-invalid"];
+pub const LOD_REFUSALS: [&str; 5] = ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid", "impostor-not-baked"];
 /// The settings menu's calls (UIS-11).
 pub const SETTINGS_CALLS: [&str; 12] = [
     "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",
@@ -552,6 +566,9 @@ pub struct GenexToml {
     /// Whether the game is built with physics.
     #[serde(default)]
     pub physics: PhysicsSection,
+    /// Whether the game is built with audio's mixer and decoders.
+    #[serde(default)]
+    pub audio: AudioSection,
     /// Loose textures' usages, read by the host's import step (C-10).
     #[serde(default)]
     pub texture: Vec<TextureRow>,
@@ -958,6 +975,25 @@ pub struct PhysicsSection {
 
 impl PhysicsSection {
     /// Whether the game is built with physics (the default).
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
+/// `[audio]`: a game that plays no sound turns it off and is built without the mixer and the
+/// decoders (the facade's `audio` feature: kira, cpal and symphonia; the host writes the facade line
+/// without default features). Its code compiles unchanged: every sound is missing
+/// (`audio-disabled`) and `ctx.audio` plays nothing. G6 AU-11.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioSection {
+    /// False builds the game without audio; none or true keeps it.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+impl AudioSection {
+    /// Whether the game is built with audio (the default).
     pub fn enabled(&self) -> bool {
         self.enabled.unwrap_or(true)
     }

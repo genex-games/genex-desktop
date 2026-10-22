@@ -879,6 +879,87 @@ pub struct RenderStatus {
     pub gpu_ms: Option<f32>,
     /// CPU encode and submit time per Live frame, p50 of the window.
     pub cpu_ms: Option<f32>,
+    /// What levels of detail Live frames run with (`volatile.render.lod`, game systems LOD-16).
+    pub lod: LodStatus,
+    /// What the last drawn frame's characters did (`volatile.render.characters`, game systems
+    /// AN-23).
+    pub characters: CharactersStatus,
+}
+
+/// `state().volatile.render.characters` (game systems AN-23): the last drawn frame's characters,
+/// how many were posed and held (AN-17's rate bands), and how many the renderer skinned by compute
+/// and in the vertex stage under the device class's compute cap. Outside the checksum; never
+/// compared.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CharactersStatus {
+    /// Characters drawn skinned.
+    pub drawn: u32,
+    /// Of them, poses evaluated for the frame.
+    pub evaluated: u32,
+    /// Of them, poses held from an earlier tick.
+    pub held: u32,
+    /// Skinned instances the renderer skinned by compute.
+    pub compute_skinned: u32,
+    /// Skinned instances it skinned in the vertex stage (small on screen, or past the cap).
+    pub vertex_skinned: u32,
+    /// The device class's compute cap (None before the renderer knows its class).
+    pub compute_max: Option<u32>,
+}
+
+impl CharactersStatus {
+    /// The wire object: `{drawn, evaluated, held, computeSkinned, vertexSkinned, computeMax}`
+    /// (`computeMax` null without a cap).
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "drawn": self.drawn,
+            "evaluated": self.evaluated,
+            "held": self.held,
+            "computeSkinned": self.compute_skinned,
+            "vertexSkinned": self.vertex_skinned,
+            "computeMax": self.compute_max,
+        })
+    }
+}
+
+/// `state().volatile.render.lod` (game systems LOD-16): the Live quality's level-of-detail
+/// threshold and crossfade band, and the impostors baked on the renderer in use. Outside the
+/// checksum; never compared.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LodStatus {
+    /// The error a drawn level may show, in output pixels.
+    pub threshold_px: f32,
+    /// The crossfade band, as a share of the threshold.
+    pub fade_band: f32,
+    /// Whether impostors draw.
+    pub impostors_on: bool,
+    /// The most impostor species this session's atlas class holds (past it a model keeps its last
+    /// mesh level).
+    pub species_cap: u32,
+    /// The impostors baked, in first-draw order.
+    pub impostors: Vec<crate::present::ImpostorStat>,
+}
+
+impl LodStatus {
+    /// The wire object: `{thresholdPx, fadeBand, impostorsOn, species, speciesCap, impostors:
+    /// [{model, layout, frames, framePx, bytes, bakeMs, prebaked}]}` (`prebaked`: loaded from a
+    /// build-time atlas, LOD-23).
+    pub fn to_json(&self) -> serde_json::Value {
+        let impostors: Vec<serde_json::Value> = self
+            .impostors
+            .iter()
+            .map(|stat| {
+                serde_json::json!({ "model": stat.model, "layout": stat.layout.wire(), "frames": stat.frames, "framePx": stat.frame_px, "bytes": stat.bytes, "bakeMs": stat.bake_ms, "prebaked": stat.prebaked })
+            })
+            .collect();
+        serde_json::json!({
+            "thresholdPx": self.threshold_px,
+            "fadeBand": self.fade_band,
+            "impostorsOn": self.impostors_on,
+            "species": self.impostors.len(),
+            "speciesCap": self.species_cap,
+            "impostors": impostors,
+        })
+    }
 }
 
 /// A capture's `render` provenance: the pinned settings it was drawn with.
@@ -988,6 +1069,10 @@ pub struct RenderControl {
     last_gpu_ms: Option<f32>,
     scale: f32,
     pass_over_budget: Vec<String>,
+    /// The impostors the presenter baked on the renderer in use (LOD-16, `volatile.render.lod`).
+    impostors: Vec<crate::present::ImpostorStat>,
+    /// The last drawn frame's characters (AN-23, `volatile.render.characters`).
+    characters: CharactersStatus,
     pipeline_deferred: bool,
     ldr_reason: Option<LdrReason>,
     /// Whether the renderer holds the spot atlas layer (the game asked for a shadowed spot under a
@@ -1138,6 +1223,8 @@ impl RenderControl {
             last_gpu_ms: None,
             scale: 1.0,
             pass_over_budget: Vec::new(),
+            impostors: Vec::new(),
+            characters: CharactersStatus::default(),
             pipeline_deferred: false,
             ldr_reason: None,
             spot_atlas: false,
@@ -1271,6 +1358,16 @@ impl RenderControl {
     /// which frame came first, and the budget counts what is allocated.
     pub fn texture_arrays(&self) -> (DeviceClass, TextureQuality) {
         self.textures
+    }
+
+    /// The impostor atlas row every frame of this session bakes at (game systems LOD-16): the
+    /// session's class (the material arrays') at the preset the game's own layer resolves to there;
+    /// never Live's emulation or a capture's profile, so a capture's impostors never depend on
+    /// which frame baked them.
+    pub fn impostor_class(&self) -> genex_render::impostor::ImpostorClass {
+        let (class, _) = self.textures;
+        let preset = profile(&self.facts, class, &self.config.quality, None).preset;
+        genex_render::impostor::impostor_class(preset, class)
     }
 
     /// [`RenderControl::texture_arrays`] computed from the probe and the game's layer.
@@ -1529,7 +1626,25 @@ impl RenderControl {
             degraded,
             gpu_ms: summary.gpu_p50,
             cpu_ms: summary.cpu_p50,
+            lod: LodStatus {
+                threshold_px: quality.lod.threshold_px,
+                fade_band: quality.lod.fade_band,
+                impostors_on: quality.lod.impostors,
+                species_cap: self.impostor_class().spec().species_cap,
+                impostors: self.impostors.clone(),
+            },
+            characters: self.characters,
         }
+    }
+
+    /// Note what the last drawn frame's characters did (AN-23, `volatile.render.characters`).
+    pub fn note_characters(&mut self, characters: CharactersStatus) {
+        self.characters = characters;
+    }
+
+    /// Note the impostors the presenter baked on the renderer in use (LOD-16).
+    pub fn note_impostors(&mut self, impostors: Vec<crate::present::ImpostorStat>) {
+        self.impostors = impostors;
     }
 
     /// Whether an explicit change came after the last Live frame (GF round 2: right after the verb

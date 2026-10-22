@@ -280,6 +280,12 @@ impl ImmediateFrame {
         self
     }
 
+    /// The far rule `rule` as the following draws name it ([`crate::scene::Scene::far_rule`],
+    /// game systems LOD-19).
+    pub fn far_rule(&mut self, rule: crate::lod_rows::GpuFarRule) -> u32 {
+        self.scene.far_rule(rule)
+    }
+
     /// The draw id the following draws carry (`frame.id(key)` in the facade), or none: under TAA
     /// a moving object keeps its motion history by its id while other draws come and go
     /// ([`Scene::set_id`]).

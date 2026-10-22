@@ -1,0 +1,49 @@
+# The crash-lab example (G6 PROFILE, PROF-9): a small lab that times its own blocks with game
+# scopes, reports counters, and crashes on purpose so a check can judge the crash path end to end:
+# a panic at tick 300 while Overload (F) is held, and a WebAssembly `unreachable` trap on the web,
+# both behind demo names. The GPU validation error, the device loss and the job panic are host
+# rows in tests/crashes.rs: a game cannot reach the device or the job pool (extension ladder). One
+# crate serves every destination, as the pond does: the `crash-lab` binary is the native build and
+# the library is also a `cdylib` for the web shell. No assets: the scene is procedural.
+[package]
+name = "crash-lab"
+description = "The crash-lab example game (G6 PROFILE, PROF-9)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `crash_lab`: on wasm32 the library and the binary would both be `crash-lab.wasm`.
+name = "crash_lab_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "crash-lab"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true }
+genex-platform-web = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/crashes.rs installs the crash hook with a sink that keeps every record (genex-crash), and
+# forces the GPU rows on a headless device with the renderer's own device watch (genex-render,
+# wgpu), as a shell's presenter would.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+genex-crash = { workspace = true }
+genex-render = { workspace = true }
+wgpu = { workspace = true }

@@ -1,7 +1,10 @@
 //! Which line segments are visible from the origin, nearest first, from dodgy_2d's
 //! `visibility_set.rs` (MIT OR Apache-2.0). Changed: [`VisibilitySet::get_visible_line_ids`]
 //! returns sorted ids rather than a `HashSet`, and the angles come from glam (libm), not the
-//! platform's `atan2` and `sin`.
+//! platform's `atan2` and `sin`, and each added cone rebuilds the cone list in a spare buffer the
+//! set keeps (GE, NAV-18's update budget). GE fix r2 (NAV-18): an overlap whose cone is never kept
+//! is compared by its rays or distances alone, so its related angle (an `atan2`) and its points are
+//! computed only where a cone of it is pushed; every kept cone has the same bits as before.
 
 use std::{f32::consts::PI, mem::swap};
 
@@ -12,13 +15,22 @@ use crate::runtime::dodgy::common::time_to_intersect_lines;
 /// Line segments seen from the origin, as angular cones; a segment behind nearer ones is hidden.
 pub struct VisibilitySet {
     cones: Vec<Cone>,
+    /// The previous cone list's buffer, kept for the next rebuild (always empty between calls).
+    spare: Vec<Cone>,
     next_id: u32,
 }
 
 impl VisibilitySet {
     /// An empty set: everything is visible.
     pub fn new() -> VisibilitySet {
-        VisibilitySet { cones: Vec::new(), next_id: 0 }
+        VisibilitySet { cones: Vec::new(), spare: Vec::new(), next_id: 0 }
+    }
+
+    /// Empty again (everything visible, ids from 0), keeping the buffers' memory.
+    pub fn clear(&mut self) {
+        self.cones.clear();
+        self.spare.clear();
+        self.next_id = 0;
     }
 
     /// Whether any part of the segment would be visible past the lines already added.
@@ -27,56 +39,42 @@ impl VisibilitySet {
             return true;
         }
 
-        fn is_cone_visible(set: &VisibilitySet, check_cone: Cone) -> bool {
+        /// Whether the angles `left..right` overlap a gap between the cones (compared by angle
+        /// alone).
+        fn visible_through_a_gap(set: &VisibilitySet, left: f32, right: f32) -> bool {
             for i in -1..set.cones.len() as isize {
-                let free_cone = Cone {
-                    left_ray: ConeRay {
-                        angle: if i == -1 {
-                            0.0
-                        } else {
-                            set.cones[i as usize].right_ray.angle
-                        },
-                        distance: 0.0,
-                        point: Vec2::ZERO,
-                    },
-                    right_ray: ConeRay {
-                        angle: if i == set.cones.len() as isize - 1 {
-                            2.0 * PI
-                        } else {
-                            set.cones[(i + 1) as usize].left_ray.angle
-                        },
-                        distance: 0.0,
-                        point: Vec2::ZERO,
-                    },
-                    line_id: 0,
-                    related_angle: 0.0,
-                };
-
-                if free_cone.left_ray.angle == free_cone.right_ray.angle {
+                let gap_left = if i == -1 { 0.0 } else { set.cones[i as usize].right_ray.angle };
+                let gap_right = if i == set.cones.len() as isize - 1 { 2.0 * PI } else { set.cones[(i + 1) as usize].left_ray.angle };
+                if gap_left == gap_right {
                     continue;
                 }
-
-                if free_cone.overlaps_cone(check_cone) {
+                // `Cone::overlaps_cone` of the gap and the line's cone.
+                if left < gap_right && gap_left < right {
                     return true;
                 }
             }
+            false
+        }
 
+        fn is_cone_visible(set: &VisibilitySet, check_cone: Cone) -> bool {
+            visible_through_a_gap(set, check_cone.left_ray.angle, check_cone.right_ray.angle) || visible_past_the_cones(set, check_cone)
+        }
+
+        /// Whether part of `check_cone` lies nearer than the cones it overlaps.
+        fn visible_past_the_cones(set: &VisibilitySet, check_cone: Cone) -> bool {
             for blocking_cone in set.cones.iter() {
-                let check_overlap_cone =
-                    match check_cone.overlapping_cone(*blocking_cone) {
-                        None => continue,
-                        Some(overlap_cone) => overlap_cone,
-                    };
+                // Only the overlaps' end distances are compared: no rays, no related angles.
+                let Some((check_left, check_right)) =
+                    check_cone.overlapping_distances(*blocking_cone)
+                else {
+                    continue;
+                };
 
-                let blocking_overlap_cone = blocking_cone
-                    .overlapping_cone(check_cone)
+                let (blocking_left, blocking_right) = blocking_cone
+                    .overlapping_distances(check_cone)
                     .expect("Cones definitely overlap.");
 
-                if check_overlap_cone.left_ray.distance
-                    < blocking_overlap_cone.left_ray.distance
-                    || check_overlap_cone.right_ray.distance
-                        < blocking_overlap_cone.right_ray.distance
-                {
+                if check_left < blocking_left || check_right < blocking_right {
                     return true;
                 }
             }
@@ -84,6 +82,19 @@ impl VisibilitySet {
             false
         }
 
+        // A line seen through a gap needs no related angle (an `atan2`): the gaps are compared by
+        // angle alone, and the cone is made, as `create_from_line` makes it, only past them.
+        let (mut left_ray, mut right_ray) = (ConeRay::from_point(start_point), ConeRay::from_point(end_point));
+        if left_ray.angle > right_ray.angle {
+            swap(&mut left_ray, &mut right_ray);
+        }
+        if right_ray.angle - left_ray.angle < PI {
+            if visible_through_a_gap(self, left_ray.angle, right_ray.angle) {
+                return true;
+            }
+            let related_angle = Cone::derive_related_angle(start_point, end_point);
+            return visible_past_the_cones(self, Cone { left_ray, right_ray, line_id: 0, related_angle });
+        }
         match Cone::create_from_line(start_point, end_point, 0) {
             LineToCone::One(cone) => is_cone_visible(self, cone),
             LineToCone::Two(cone_1, cone_2) => {
@@ -101,7 +112,7 @@ impl VisibilitySet {
         fn add_cone(set: &mut VisibilitySet, new_cone: Cone) -> bool {
             let mut visible = false;
 
-            let mut old_cones = Vec::new();
+            let mut old_cones = std::mem::take(&mut set.spare);
             swap(&mut set.cones, &mut old_cones);
 
             for i in -1..old_cones.len() as isize {
@@ -138,27 +149,36 @@ impl VisibilitySet {
                 }
             }
 
-            for blocking_cone in old_cones {
-                let new_overlap_cone = match new_cone.overlapping_cone(blocking_cone) {
-                    None => {
-                        set.cones.push(blocking_cone);
-                        continue;
-                    }
-                    Some(overlap_cone) => overlap_cone,
+            for &blocking_cone in &old_cones {
+                // The overlaps' rays; a cone of them (its related angle) is made only where one is
+                // kept.
+                let Some(new_overlap) = new_cone.overlapping_rays(blocking_cone) else {
+                    set.cones.push(blocking_cone);
+                    continue;
                 };
 
                 let blocking_overlap_cone = blocking_cone
-                    .overlapping_cone(new_cone)
+                    .overlapping_rays(new_cone)
                     .expect("Cones definitely overlap.");
 
-                let left_in_front = new_overlap_cone.left_ray.distance
-                    < blocking_overlap_cone.left_ray.distance;
-                let right_in_front = new_overlap_cone.right_ray.distance
-                    < blocking_overlap_cone.right_ray.distance;
+                let left_in_front = new_overlap.0.distance
+                    < blocking_overlap_cone.0.distance;
+                let right_in_front = new_overlap.1.distance
+                    < blocking_overlap_cone.1.distance;
                 if !left_in_front && !right_in_front {
                     set.cones.push(blocking_cone);
                     continue;
                 }
+                let new_overlap_cone = OverlapRays {
+                    left_ray: new_overlap.0,
+                    right_ray: new_overlap.1,
+                    line_id: new_cone.line_id,
+                };
+                let blocking_overlap_cone = OverlapRays {
+                    left_ray: blocking_overlap_cone.0,
+                    right_ray: blocking_overlap_cone.1,
+                    line_id: blocking_cone.line_id,
+                };
 
                 if blocking_cone.left_ray.angle < blocking_overlap_cone.left_ray.angle {
                     set.cones.push(Cone {
@@ -184,7 +204,7 @@ impl VisibilitySet {
                     blocking_overlap_cone.right_ray.point,
                 ) {
                     None => {
-                        set.cones.push(new_overlap_cone);
+                        set.cones.push(new_overlap_cone.cone());
                         visible = true;
                         continue;
                     }
@@ -196,7 +216,7 @@ impl VisibilitySet {
                     || intersect_times.y <= 0.0
                     || 1.0 <= intersect_times.y
                 {
-                    set.cones.push(new_overlap_cone);
+                    set.cones.push(new_overlap_cone.cone());
                     visible = true;
                     continue;
                 }
@@ -235,6 +255,8 @@ impl VisibilitySet {
             }
 
             set.cones.sort_by(|a, b| a.left_ray.angle.total_cmp(&b.left_ray.angle));
+            old_cones.clear();
+            set.spare = old_cones;
 
             visible
         }
@@ -370,7 +392,14 @@ impl Cone {
             && self.left_ray.angle < other.right_ray.angle
     }
 
+    /// The part of `self` inside `other`'s angles as a cone (`None` when they do not overlap).
     fn overlapping_cone(&self, other: Cone) -> Option<Cone> {
+        let (left_ray, right_ray) = self.overlapping_rays(other)?;
+        Some(Cone::create_from_rays(left_ray, right_ray, self.line_id))
+    }
+
+    /// [`Cone::overlapping_cone`]'s rays alone, without the cone's related angle.
+    fn overlapping_rays(&self, other: Cone) -> Option<(ConeRay, ConeRay)> {
         if !self.overlaps_cone(other) {
             return None;
         }
@@ -391,7 +420,32 @@ impl Cone {
             self.right_ray
         };
 
-        Some(Cone::create_from_rays(left_ray, right_ray, self.line_id))
+        Some((left_ray, right_ray))
+    }
+
+    /// [`Cone::overlapping_rays`]'s distances alone, the same bits.
+    fn overlapping_distances(&self, other: Cone) -> Option<(f32, f32)> {
+        if !self.overlaps_cone(other) {
+            return None;
+        }
+        let left = if self.left_ray.angle < other.left_ray.angle { self.distance_at_angle(other.left_ray.angle) } else { self.left_ray.distance };
+        let right = if other.right_ray.angle < self.right_ray.angle { self.distance_at_angle(other.right_ray.angle) } else { self.right_ray.distance };
+        Some((left, right))
+    }
+}
+
+/// An overlap's rays and the line they belong to (a cone without its related angle).
+#[derive(Clone, Copy)]
+struct OverlapRays {
+    left_ray: ConeRay,
+    right_ray: ConeRay,
+    line_id: u32,
+}
+
+impl OverlapRays {
+    /// The cone of these rays, as `Cone::overlapping_cone` makes it.
+    fn cone(self) -> Cone {
+        Cone::create_from_rays(self.left_ray, self.right_ray, self.line_id)
     }
 }
 

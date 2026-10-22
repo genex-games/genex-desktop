@@ -193,7 +193,7 @@ impl<W: Default + 'static> DesktopGame<W> {
     fn paint_loading(&mut self, target: &wgpu::TextureView, format: wgpu::TextureFormat, size: [u32; 2], frame_ms: f64) {
         let Some(loading) = self.loading.as_mut() else { return };
         loading.screen.advance((frame_ms / 1000.0) as f32);
-        let progress = crate::loading::compiling(compile_tally().since(loading.base));
+        let progress = crate::loading::preparing(compile_tally().since(loading.base), self.presenter.impostor_tally());
         let gpu = self.presenter.gpu();
         let ratio = self.shell_surface.as_ref().map_or(1.0, ShellSurface::scale);
         let pixels_per_point = genex_hud::pixels_per_point(ratio);

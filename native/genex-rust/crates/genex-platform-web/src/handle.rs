@@ -25,7 +25,7 @@ pub trait GameHandle {
     /// Inject input for the next tick; answers the keys now held.
     fn inject(&mut self, input: Input) -> Vec<String>;
     /// The `state()` verb's answer; on the web it carries the saves mirror's account
-    /// ([`crate::saves::with_saves`]).
+    /// ([`crate::web_saves::with_saves`]).
     fn state(&self) -> Value;
     /// The non-volatile probe leaves, in registration order.
     fn probes(&self) -> Value;
@@ -137,7 +137,7 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
         if !self.saves().is_mirrored() {
             return state;
         }
-        crate::saves::with_saves(state, &mirror::status())
+        crate::web_saves::with_saves(state, &mirror::status())
     }
 
     fn probes(&self) -> Value {

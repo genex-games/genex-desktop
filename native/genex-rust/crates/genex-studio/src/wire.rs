@@ -108,7 +108,7 @@ pub const OP_BAKE_ASSETS: &str = "bakeAssets";
 pub enum BakeKind {
     /// A navmesh (`game.nav_bake`), loaded with `NavMesh::from_bytes_for`.
     Nav,
-    /// An impostor atlas of a model that opted in.
+    /// An impostor atlas of a model that opted in (`game.impostor_bake`).
     Impostor,
 }
 
@@ -506,8 +506,9 @@ pub struct Receipt {
     pub saves_api: Option<u32>,
     /// The `uiSettings` version served; None for a build without the verb.
     pub ui_settings_api: Option<u32>,
-    /// The bakes the game registered (`game.nav_bake`), which the build's bake step sends
-    /// `bakeAssets` for after a dev build (NAV-14); empty, and absent on the wire, without any.
+    /// The bakes the game registered (`game.nav_bake`, `game.impostor_bake`), which the build's
+    /// bake step sends `bakeAssets` for after a dev build (NAV-14, LOD-23); empty, and absent on
+    /// the wire, without any.
     pub bakes: Vec<(BakeKind, String)>,
 }
 

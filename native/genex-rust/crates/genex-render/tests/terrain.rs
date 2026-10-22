@@ -86,6 +86,28 @@ fn a_flat_height_field_has_one_level_and_up_normals() {
     assert_eq!(TerrainTree::new(&flat).lods(), 1);
 }
 
+/// GE fix r2: the pyramid's level 0 (made in one pass over the heights) is `normal_at` of every
+/// sample, bit for bit, on square, long, thin and rough fields.
+#[test]
+fn the_normal_pyramids_first_level_is_normal_at_of_every_sample_bit_for_bit() {
+    let fields = [
+        Heightfield::from_fn((2, 2), [0.0, 0.0], 1.0, |x, z| x * 0.3 - z).expect("2 x 2"),
+        Heightfield::from_fn((17, 3), [-4.0, 2.0], 0.5, |x, z| libm::sinf(x) * 3.0 + z).expect("long"),
+        Heightfield::from_fn((3, 29), [1.0, -7.0], 2.0, |x, z| libm::cosf(z * 0.7) * x).expect("thin"),
+        rough_hills(257, 0.5),
+    ];
+    for field in fields {
+        let (w, d) = field.samples();
+        let levels = field.normal_levels();
+        let bits = |v: [f32; 3]| v.map(f32::to_bits);
+        for z in 0..d {
+            for x in 0..w {
+                assert_eq!(bits(levels[0].1[(z * w + x) as usize]), bits(field.normal_at(x, z)), "{w} x {d}: sample ({x}, {z})");
+            }
+        }
+    }
+}
+
 #[test]
 fn the_normal_pyramid_keeps_how_much_the_normals_below_agree() {
     let heights = rough_hills(65, 0.5);
@@ -757,6 +779,42 @@ fn metal_the_terrain_shots_for_the_look_review() {
             write_capture(&format!("look-{}-{shot}", preset.wire()), &capture);
         }
     }
+}
+
+/// At most one pixel in this many may settle one level apart between a swapped and a fresh renderer.
+const SWAP_DIFFERING_PER: u32 = 1000;
+
+/// GE fix r2 (EP-X1's ride): a game that moves its terrain patch hands the renderer a new terrain
+/// of the same layout every few hundred metres. The swap keeps the terrain's pipelines (the
+/// frontier's 21 ms frames were their shader compiles), and the new terrain draws as a renderer
+/// that only ever held it draws it.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_new_terrain_of_the_same_layout_keeps_its_pipelines_and_draws_as_a_fresh_one() {
+    let Some(gpu) = gpu() else { return };
+    let quality = steady(QualityPreset::High);
+    let size = (320, 180);
+    let mut swapped = renderer(&gpu, size, &quality, false);
+    let first = terrain(&gpu, &mut swapped, 257, 0.5);
+    swapped.set_terrain(&gpu, Some((&first, 1))).expect("the first terrain");
+    let view = scene(walker(&first, 0.0, 0.6));
+    settled(&gpu, &mut swapped, &view, 4);
+    let builds = swapped.terrain_pipeline_builds();
+    assert!(builds > 0, "the first terrain made its pipelines");
+    let mut fresh = renderer(&gpu, size, &quality, false);
+    let second = terrain_of(&gpu, &mut fresh, hills(257, 0.5, 0.2));
+    let second_swapped = terrain_of(&gpu, &mut swapped, hills(257, 0.5, 0.2));
+    swapped.set_terrain(&gpu, Some((&second_swapped, 2))).expect("the second terrain");
+    let after = settled(&gpu, &mut swapped, &view, 24);
+    assert_eq!(swapped.terrain_pipeline_builds(), builds, "the swap made no terrain pipeline");
+    fresh.set_terrain(&gpu, Some((&second, 2))).expect("the second terrain, fresh");
+    let reference = settled(&gpu, &mut fresh, &view, 24);
+    // Two renderers with different histories settle to within one level here, with the old swap
+    // that rebuilt the pipelines too (9 pixels at 1 level when this row was written).
+    let differing = after.bgra().chunks(4).zip(reference.bgra().chunks(4)).filter(|(a, b)| a != b).count();
+    let worst = after.bgra().iter().zip(reference.bgra()).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+    let most = (size.0 * size.1 / SWAP_DIFFERING_PER) as usize;
+    assert!(worst <= 1 && differing <= most, "the swapped renderer draws the new terrain as a fresh one: {differing} pixels differ (at most {most}), by up to {worst} levels");
 }
 
 /// A pixel pops when its luma (0..255) jumps by more than this for exactly one frame (SH-15, the

@@ -9,7 +9,7 @@ all of it.
 ## The simple animator (start here)
 
 ```rust
-// on_reset (it returns nothing, so a refusal returns early; `assets.md` shows reading its code)
+// on_reset (it returns nothing, so a refusal returns early; `docs/api/assets.md` shows reading its code)
 let Ok(hero) = gfx.character("characters/hero.glb") else { return };   // animation-asset-invalid
 let (Some(idle), Some(walk), Some(slash)) = (hero.clip("Idle"), hero.clip("Walk"), hero.clip("Sword_Attack")) else { return };
 let Ok(mut animator) = Animator::simple(&hero) else { return };
@@ -126,9 +126,52 @@ frame.skeleton_debug(hero, at);
   stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
   skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the
   same picture as the compute pass, including the shadows and the motion vectors.
+- Each device class skins at most so many characters by compute in a frame: 128 on
+  `desktop-ultra`, 100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on
+  `mobile-high`, 12 on `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the
+  smallest on screen are skinned in the vertex stage too (masked, double-sided and transparent ones
+  stay on compute), so a crowd keeps its picture and holds no more skinned memory.
+  `state().volatile.render.characters` shows the last frame's `drawn`, `evaluated` and `held`
+  characters and its `computeSkinned` and `vertexSkinned` counts against `computeMax`; it is never
+  part of the checksum.
+- A character GLB with simplified levels (the Studio's import writes them on every primitive of a
+  model of 512 or more triangles, skinned ones included) skins only the level its distance picks,
+  with the screen-size metric and crossfades models use: the compute pass near, the vertex stage
+  far. During a crossfade both levels are skinned by the compute pass. Every level keeps the
+  joints and weights of the vertices it uses and poses with the same skeleton, so nothing changes
+  in the animator. A file whose parts' levels do not line up draws whole.
 - `frame.character_with(..)` takes a `CharacterDraw`: `.tint(..)`, and `.material(..)` to replace
   the GLB's materials.
 - `frame.skeleton_debug(..)` draws every bone as one line batch (one logical draw).
+
+## Rigid node clips (doors, platforms, props)
+
+A GLB without a skin whose nodes move by its own animations (a door, a lift, a turning sign)
+plays through a node animator, not a character:
+
+```rust
+// on_reset (a refusal returns early)
+let Ok(clips) = gfx.node_clips("props/door.glb") else { return }; // animation-clip-missing: no animations
+sim.world.door = Some(clips.animator());
+sim.world.door_model = gfx.assets().model("props/door.glb");
+
+// on_update
+let Some(door) = sim.world.door.as_mut() else { return };
+if opening { let _ = door.play_once("open"); } // .play("open") loops; .stop() rests
+door.update(ctx.dt);
+
+// on_draw
+if let Some(door) = &sim.world.door { frame.model_posed(&sim.world.door_model, door, transform); }
+```
+
+- The animator is the clip and its time: simulation state that replays exactly, and
+  `door.probe()` (`{clip, time, once, finished}`) for a probe. It holds the file's clips, so it is
+  not a serde field: save `door.snapshot()` in a save section and put it back with
+  `.restore(..)`, which continues mid-swing exactly. `.finished()` says a clip played
+  once reached its end; `.clips()` names the file's clips (`.clip_names()`).
+- `frame.model_posed` is one logical draw with every node at the pose, its GLB's materials, its
+  shadows; a model of another file than the animator's draws at rest, as `frame.model` does.
+- `frame.model` of the same file stays at rest: node animations play only through the animator.
 
 ## Refusals
 
@@ -137,6 +180,8 @@ frame.skeleton_debug(hero, at);
 - `animation-graph-invalid`: a graph that cannot run (no layer, a layer without a state, a
   transition across layers, a duplicate name, a NaN or negative time), or one built over another
   character.
+- `animation-clip-missing`: `gfx.node_clips` of a GLB with no animations, or a clip name the
+  file does not have (`play`, `play_once`).
 - `animation-retarget-unmapped`: a retarget where either character lacks a humanoid bone (the
   toes are optional). It names the bone and the character.
 - `ragdoll-profile-invalid` and `character-shape-invalid`: see `docs/api/characters.md`.

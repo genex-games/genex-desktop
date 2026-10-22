@@ -85,11 +85,22 @@ const STUDIO_FEATURE = "studio";
 export const RustNetFeature = { Loopback: "net-loopback", Relay: "net" } as const;
 export type RustNetFeature = (typeof RustNetFeature)[keyof typeof RustNetFeature];
 /**
- * The crate the facade's default `physics` feature links (genex's and genex-platform-web's): a
- * game with `[physics] enabled = false` links the facade without default features, and its lock
- * leaves this crate's edge out, as cargo's resolve of that manifest does.
+ * The facade's default features (genex's and genex-platform-web's), each a build switch in
+ * genex.toml: a game that turns one off links the facade without default features and names the
+ * ones it keeps. Wire values: the facade's cargo feature names.
+ */
+const FacadeFeature = { Physics: "physics", Audio: "audio" } as const;
+/**
+ * The crate the facade's default `physics` feature links: a game with `[physics] enabled = false`
+ * leaves this crate's edge out of its lock, as cargo's resolve of that manifest does.
  */
 const PHYSICS_CRATE = "rapier3d";
+/**
+ * The crate holding audio's logical side, and the crates its `mixer` feature (the facade's
+ * `audio`) links: a game with `[audio] enabled = false` leaves those edges out of its lock (G6 AU-11).
+ */
+const AUDIO_CRATE = "genex-audio";
+const AUDIO_MIXER_CRATES: readonly string[] = ["kira", "cpal", "symphonia"];
 /** The name every game's code calls the facade by (`genex::install`, `genex::prelude`). */
 const FACADE_NAME = "genex";
 
@@ -232,7 +243,13 @@ export function cargoManifest(
   const linked = netEnabled(manifest) ? net : null;
   const line = (dependency: { name: string; version: string }) =>
     dependency === genex
-      ? facadeLine(genex.version, { flavour, facade, physics: manifest.physics ?? true, net: linked })
+      ? facadeLine(genex.version, {
+          flavour,
+          facade,
+          physics: manifest.physics ?? true,
+          audio: manifest.audio ?? true,
+          net: linked,
+        })
       : `${dependency.name} = ${quote(dependency.version)}`;
   return [
     "# Written by Genex from genex.toml before every build: a game folder holds no cargo manifest.",
@@ -267,26 +284,34 @@ function forkPatch(fork: EngineFork | null): string[] {
   return ["[patch.crates-io]", ...crates.map(row), ""];
 }
 
-/** How the facade is linked: its flavour and package, whether physics stays, and the network feature (null: none). */
+/** How the facade is linked: its flavour and package, whether physics and audio stay, and the network feature (null: none). */
 interface FacadeLink {
   flavour: RustFlavour;
   facade: RustFacadePackage;
   physics: boolean;
+  audio: boolean;
   net: RustNetFeature | null;
 }
 
 /**
  * The `genex = …` line: the facade at the pinned version, with its `studio` feature in the dev
- * flavour, or the web shell's crate under the facade's name for a web build; then a networked
- * game's feature. A line with nothing but the version stays the bare requirement.
+ * flavour, or the web shell's crate under the facade's name for a web build; then the default
+ * features a game that turned one off keeps, and a networked game's feature. A line with nothing
+ * but the version stays the bare requirement.
  */
 function facadeLine(version: string, link: FacadeLink): string {
   const studio = link.facade === RustFacadePackage.Native && link.flavour === RustFlavour.Dev;
-  const features = [...(studio ? [STUDIO_FEATURE] : []), ...(link.net === null ? [] : [link.net])];
+  const defaults = link.physics && link.audio;
+  const kept = [...(link.physics ? [FacadeFeature.Physics] : []), ...(link.audio ? [FacadeFeature.Audio] : [])];
+  const features = [
+    ...(studio ? [STUDIO_FEATURE] : []),
+    ...(defaults ? [] : kept),
+    ...(link.net === null ? [] : [link.net]),
+  ];
   const fields = [
     ...(link.facade === RustFacadePackage.Native ? [] : [`package = ${quote(link.facade)}`]),
     `version = ${quote(version)}`,
-    ...(link.physics ? [] : ["default-features = false"]),
+    ...(defaults ? [] : ["default-features = false"]),
     ...(features.length === 0 ? [] : [`features = [${features.map(quote).join(", ")}]`]),
   ];
   if (fields.length === 1) return `${FACADE_NAME} = ${quote(version)}`;
@@ -306,6 +331,21 @@ function withoutPhysics(packages: readonly LockPackage[]): LockPackage[] {
   }));
 }
 
+/**
+ * The lock line's packages as a game without audio resolves them: genex-audio's edges to its
+ * mixer crates left out (the facade's `audio` feature), so the closure drops kira, cpal and
+ * symphonia and every crate only they reach.
+ */
+function withoutAudio(packages: readonly LockPackage[]): LockPackage[] {
+  const mixerEdge = (entry: string) =>
+    AUDIO_MIXER_CRATES.some((crate) => entry === crate || entry.startsWith(`${crate} `));
+  return packages.map((found) =>
+    found.name === AUDIO_CRATE
+      ? { ...found, dependencies: found.dependencies.filter((entry) => !mixerEdge(entry)) }
+      : found,
+  );
+}
+
 /** A game's lock and its sha256, or why the lock line cannot give one. */
 export type GameLock =
   | { ok: true; text: string; digest: string }
@@ -322,7 +362,8 @@ export function gameCargoLock(
   const read = readLock(pins.baseLock);
   if (read === null) return lockRefusal(RustManifestCode.LockUnreadable, "the store's lock line");
   const linked = fork === null ? read : read.map((found) => asForked(found, fork));
-  const packages = manifest.physics === false ? withoutPhysics(linked) : linked;
+  const physical = manifest.physics === false ? withoutPhysics(linked) : linked;
+  const packages = manifest.audio === false ? withoutAudio(physical) : physical;
   const facade = pins.facade ?? RustFacadePackage.Native;
   const genex = packages.find((found) => found.name === facade && found.version === version);
   if (genex === undefined) return lockRefusal(RustManifestCode.GenexNotInLock, `${facade} ${version}`);

@@ -518,7 +518,7 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
   });
 
   // Renderer pass 2 (owner decision D11): a game without physics opts out of Rapier, about a fifth
-  // of a web build's code. The facade is linked without its default `physics` feature, and the lock
+  // of a web build's code. The facade is linked without its default `physics` feature (keeping `audio`), and the lock
   // drops rapier3d and every crate only it reaches, as cargo's own resolve does (--locked holds).
   it("a game that opts out of physics links the facade without it, and its lock drops Rapier's closure", async () => {
     const workspaceLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
@@ -529,12 +529,15 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     );
     assert.match(
       web.cargoToml,
-      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false \}\n/,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["audio"\] \}\n/,
     );
     const mac = staged(
       await stageRustGame({ source: without, stage: await stagePath(), target: BuildTarget.Mac, pins }),
     );
-    assert.match(mac.cargoToml, /\ngenex = \{ version = "=0\.1\.0", default-features = false \}\n/);
+    assert.match(
+      mac.cargoToml,
+      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["audio"\] \}\n/,
+    );
     for (const lock of [web.cargoLock ?? "", mac.cargoLock ?? ""]) {
       assert.doesNotMatch(lock, /\nname = "rapier3d"\n/);
       assert.doesNotMatch(lock, /\nname = "parry3d"\n/);
@@ -544,6 +547,45 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
       await stageRustGame({ source: await makeGame(), stage: await stagePath(), target: BuildTarget.Web, pins }),
     );
     assert.match(withPhysics.cargoLock ?? "", /\nname = "rapier3d"\n/, "a game that says nothing keeps physics");
+  });
+
+  // G6 AU-11: a game without audio opts out of the mixer and the decoders, the web build's largest
+  // game-system share. The facade keeps physics by its own feature, and the lock drops kira, cpal and
+  // symphonia and every crate only they reach, as cargo's resolve of that manifest does.
+  it("a game that opts out of audio links the facade without it, and its lock drops kira, cpal and symphonia", async () => {
+    const workspaceLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
+    const pins = { genexVersion: GENEX_VERSION, baseLock: workspaceLock };
+    const silent = await makeGame({ "genex.toml": '[game]\ntitle = "Puzzle"\n\n[audio]\nenabled = false\n' });
+    const web = staged(
+      await stageRustGame({ source: silent, stage: await stagePath(), target: BuildTarget.Web, pins }),
+    );
+    assert.match(
+      web.cargoToml,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["physics"\] \}\n/,
+    );
+    const mac = staged(
+      await stageRustGame({ source: silent, stage: await stagePath(), target: BuildTarget.Mac, pins }),
+    );
+    assert.match(
+      mac.cargoToml,
+      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["physics"\] \}\n/,
+    );
+    for (const lock of [web.cargoLock ?? "", mac.cargoLock ?? ""]) {
+      for (const crate of ["kira", "cpal", "symphonia"]) assert.doesNotMatch(lock, new RegExp(`\nname = "${crate}"\n`));
+      assert.match(lock, /\nname = "genex-audio"\n/, "the logical side stays");
+      assert.match(lock, /\nname = "rapier3d"\n/, "physics stays");
+    }
+    const neither = await makeGame({
+      "genex.toml": '[game]\ntitle = "Puzzle"\n\n[physics]\nenabled = false\n\n[audio]\nenabled = false\n',
+    });
+    const bare = staged(
+      await stageRustGame({ source: neither, stage: await stagePath(), target: BuildTarget.Mac, pins }),
+    );
+    assert.match(bare.cargoToml, /\ngenex = \{ version = "=0\.1\.0", default-features = false \}\n/);
+    const withAudio = staged(
+      await stageRustGame({ source: await makeGame(), stage: await stagePath(), target: BuildTarget.Web, pins }),
+    );
+    assert.match(withAudio.cargoLock ?? "", /\nname = "kira"\n/, "a game that says nothing keeps audio");
   });
 
   // G6 MP-5b: the lane says what a [net] game links in this build; the stage writes it beside the

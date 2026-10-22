@@ -246,11 +246,13 @@ import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
 import {
   defaultImporterCommand,
+  importerWorker,
   type RustAssetImportDeps,
   rustImportSandboxes,
   rustStageImporter,
 } from "./rust-assets.ts";
 import { type AssetCache, cachedImporter, openAssetCache } from "./asset-cache.ts";
+import { bakeCacheFolder, nativeBakeSessions } from "./rust-bake.ts";
 import { LiveAssets, shownLiveGame } from "./asset-watch.ts";
 import { IMPORTER_TOOLS_RESOURCES_FOLDER } from "../substrate/asset-import/decoders.ts";
 import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
@@ -1284,7 +1286,10 @@ export class StudioCore {
       sandboxFor: rustImportSandboxes({ enabled: this.options.sandbox ?? true, alongside: this.sandbox }),
       secretPaths: this.#protectedPaths(),
       denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
-      importer: defaultImporterCommand(path.join(this.options.paths.resources, IMPORTER_TOOLS_RESOURCES_FOLDER)),
+      importer: defaultImporterCommand(
+        path.join(this.options.paths.resources, IMPORTER_TOOLS_RESOURCES_FOLDER),
+        importerWorker(this.options.paths.resources),
+      ),
     };
   }
 
@@ -1342,6 +1347,16 @@ export class StudioCore {
       // asset-jobs folder, the importer reading its pinned tools from this build's resources (C-1),
       // each file looked up in the content-addressed cache first (C-3), which deliveries warm (C-5).
       importAssets: rustStageImporter(this.#assetImportDeps(), { importFile: cachedImporter(this.#assetCache()) }),
+      // The bake step (NAV-14b): each build places the profile cache's bakes for its input; a dev Mac
+      // build that misses it bakes in a headless run of its admitted output, under the game profile.
+      bakes: {
+        cache: (project) => bakeCacheFolder(this.layout.assetCache, project),
+        ...nativeBakeSessions({
+          runs: () => this.nativeRuns,
+          runsRoot: this.layout.nativeRuns,
+          targets: ios === null && process.platform === StudioPlatform.Mac ? [BuildTarget.Mac] : [],
+        }),
+      },
     });
   }
 

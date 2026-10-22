@@ -25,18 +25,19 @@ Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a
 hidden). A newer healthy build, a changed game folder (checkpoint, landing, rewind), a chat's show
 or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
 in at once; Rust `assets/`-only changes swap in mid-play. The
-preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
+preview reaches only public library CDNs; Open Game names other hosts. Other folders:
 [projects](projects-engines.md#lives-views).
 
 **Compiled games** (C++ · raylib; Rust · wgpu on Apple-silicon Macs or Linux x64) build per
 destination, sandboxed; **Web | Native** shows the Mac build in Live. Rust needs WebGPU. Only your
 **On a device** press installs a phone build ([feature map](../agent/feature-map.md)).
-Rust `[net]` multiplayer is a Live loopback room; test it on the Genex draft in two windows.
+A crash shows its card. Rust adds a profile strip and a `[net]` loopback room (test
+multiplayer in two Genex draft windows).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
-hangs below. Tries a pause cut off show Paused until added. An eye opens the reviewers'
-notes. A new build is “Checking it starts…” until it has run. A working node shows its agent's
+hangs below. Tries a pause cut off show Paused until added. An eye opens reviewers'
+notes. A new build is “Checking it starts…” until it runs. A working node shows its agent's
 screen; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
 Earlier builds open from chat cards. A Loop's lead, workers and jobs make a tree ending in the finish check (Checking, Not
 yet, Done or Stopped; [feature map](../agent/feature-map.md)); a chat message's workers get a graph.
@@ -48,7 +49,7 @@ report missing checks and coverage limits.
 ## Continuation and interruption
 
 After a chat-led build, its session takes follow-ups: game edits, resuming a paused run
-with its time left, starting over only when asked. With Loop on, small changes are made directly;
+with its time left, starting over only when asked. With Loop on, small changes go direct;
 more work reopens the build until checked (other projects start anew); a chat that cannot, like
 Ollama's, answers as with Loop off, saying so once. **Stop** interrupts at once, keeping finished
 work: a stopped Loop shows one Stopped line with Resume, and Builds or a chat request makes it live. Limit, outage and crash pauses resume twice unless stopped (Settings → Harness); sign-in
@@ -61,5 +62,5 @@ pauses wait. A crash or restart settles abandoned activity from saved state.
   folds steps that [RunGraph](../../src/renderer/panels/RunGraph.tsx) and
   [RunInspector](../../src/renderer/panels/RunInspector.tsx) draw.
 - [Conversation coordinator](../conversation-coordinator.md): queue, continuation and Stop.
-- [Architecture](../agent/architecture.md) and [Verification](../agent/verification.md): the run,
+- [Architecture](../agent/architecture.md) and [Verification](../agent/verification.md): run,
   preview and recovery contracts.

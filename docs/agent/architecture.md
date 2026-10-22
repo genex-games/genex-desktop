@@ -97,21 +97,17 @@ config home [partly](../tool-permissions.md#rules-at-their-real-paths)), the Cod
 and native plugin jobs deny. `ProcessSandbox`
 adds its base deny-read list (`baseDenyRead` in `spawn.ts`): sign-in stores such as `~/.ssh`,
 `~/.aws` and `~/Library/Keychains`, and on Linux the desktop secret stores. Beside it,
-`phoneDenyRead` keeps `ProcessSandbox` commands and unattended Claude Code contractors away from
-phones: the phone sign-ins and keys (`mobileCredentialHomes`: `~/.android`, the emulator's
-discovery files, `~/.gradle`, App Store Connect keys, provisioning profiles, cargo's registry
-tokens) and the SDK's `platform-tools` and `emulator` folders, which are also dropped from every
-child's and C++ session's PATH. On macOS, `closeDeviceBridges` rewrites sandbox-runtime's
-localhost grant inside the profile so the adb server's port 5037 and the emulator ports 5554-5585
-and 8554-8585 can be denied on loopback, and denies starting any program from the device-tool
-folders; on Linux the sandbox's network namespace already hides the host's loopback. Codex
+`phoneDenyRead` keeps `ProcessSandbox` commands and unattended Claude Code contractors from the
+phone sign-ins and keys (`mobileCredentialHomes`) and the SDK's device-tool folders (also off
+every child's and C++ session's PATH); on macOS `closeDeviceBridges` denies the adb and
+emulator ports on loopback
+([devices](../tool-permissions.md#devices-and-emulators)). Codex
 contractors and asking sessions are outside it ([residual risks](../tool-permissions.md#residual-risks)).
 
 **Windows sandbox.** Commands run as the local `srt-sandbox` user under Git Bash through
 sandbox-runtime's srt-win backend
 ([`src/substrate/windows-sandbox.ts`](../../src/substrate/windows-sandbox.ts)). Its grants, deny
-list (`windowsDenyRead`) and residual risks are in
-[Windows sandbox](../windows-sandbox.md).
+list (`windowsDenyRead`) and residual risks: [Windows sandbox](../windows-sandbox.md).
 
 **Contractor bridge and locks.** The bridge
 ([`src/substrate/engines/studio-bridge.ts`](../../src/substrate/engines/studio-bridge.ts)) checks
@@ -814,6 +810,14 @@ share one navigation. Each action emits `preview.frame` and `preview.screen`.
 
 **Native preview layering.** Modal dialogs hide the WebContentsView, popovers while
 over the Live slot; identical bounds skip IPC.
+
+**Native profiles and crash records.** A Rust game's `profile` verb answers
+`studio:native.profile` (Live's profile strip, polled only while open) and `preview.frameProfile`,
+checked by [`native-profile.ts`](../../src/substrate/native-profile.ts).
+[`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps a run's last `crash` record (or a
+host-made `hang` or `process-exit`) in the game's `.studio/crashes/` (at most 32, one per
+signature), appends `game_crashed` once, serves `game.crashes` and Live's crash card;
+`crash-symbolicate.ts` names frames with the sandboxed `genex-symbolicate`; nothing uploads.
 
 ## Plugins, MCP and Genex
 

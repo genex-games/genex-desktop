@@ -93,7 +93,7 @@ game.on_update(|sim, _| {
   `streaming-invalid`.
 - `game.stream_commit(hook)` runs a `StreamCommit` hook for each cell that leaves (descending,
   hooks in reverse order) or enters (ascending, in order) inside the commit. Engine areas plug in
-  here (streamed colliders, nav islands); a game rarely needs one.
+  here (streamed colliders, nav islands: `docs/api/navigation.md`); a game rarely needs one.
 - `game.stream_colliders()` streams static colliders (physics builds only): a builder adds them
   with `.part(CellColliders::new().with(collider))`, each a Rapier `ColliderBuilder`. They enter
   `sim.physics` with their cell (cells ascending, then in build order) and leave with it in
@@ -127,11 +127,11 @@ game.on_update(|sim, _| {
 - `sim.stream.keep(cell)` keeps a cell in the simulated set wherever the anchors go (a cell the
   game changed and still simulates), from the next commit until `sim.stream.release(cell)` or a
   reseed; `sim.stream.kept()` lists them. At most 64 cells.
-- `sim.stream.snapshot()` is a `Value` for the game's save: the anchors, the kept cells and the
-  simulated cells, never their content (at most about 62 KB of JSON).
+- `sim.stream.snapshot()` is a `Value` for the game's save (`docs/api/saves.md`): the anchors, the
+  kept cells and the simulated cells, never their content (at most about 62 KB of JSON).
   `sim.stream.restore(&value)` restores it; the next commit leaves the cells it does not hold and
-  enters the ones it does, so builders and `game.stream_colliders()` rebuild them in order. The
-  game restores its own world beside it.
+  enters the ones it does, so builders and `game.stream_colliders()` rebuild them in order. The game
+  restores its own world beside it.
 - Two restores of one save replay equal on every destination. A scene of streamed static
   colliders and kinematic characters also replays equal to the run that never restored. A scene
   with dynamic bodies does not: Rapier's slot generations, contacts and sleep state are not saved,

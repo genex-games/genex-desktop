@@ -5,6 +5,9 @@
 //! header claiming 2^40 frames, an Opus stream named `.ogg`, a small file that decodes past the
 //! sound budget) are typed refusals, never a panic.
 
+// These rows drive the mixer, device output or decoders (the `mixer` feature, AU-11).
+#![cfg(feature = "mixer")]
+
 use genex_audio::{AudioErrorCode, MAX_DECODED_FRAMES, Mixer, decode_sound};
 use std::fs;
 use std::path::{Path, PathBuf};

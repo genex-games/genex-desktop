@@ -71,11 +71,11 @@
 //! on the browser's device under error scopes and answers what each reported.
 
 use crate::assets::WebAssets;
-use crate::audio::{UNLOCK_EVENTS, Unlock, level_answer};
+use crate::web_audio::{UNLOCK_EVENTS, Unlock, level_answer};
 use genex::audio::Device;
 use crate::draw::AssetTable;
 use crate::handle::GameHandle;
-use crate::saves::{SAVES_DATABASE_PREFIX, saves_state};
+use crate::web_saves::{SAVES_DATABASE_PREFIX, saves_state};
 use crate::selftest::{self, CaptureDigest, SelfTestPlan};
 use crate::studio::{HandleGame, Held, Painter, Screen, WebSource, verb_changes_frame};
 use genex::present::{Drain, DrainStep, Presenter, STREAM_DRAIN_MAX_MS};
@@ -1356,7 +1356,7 @@ pub fn studio_saves_requests() -> js_sys::Array {
 /// for changes nothing.
 #[wasm_bindgen]
 pub fn studio_saves_provide(name: &str, bytes: Option<js_sys::Uint8Array>) {
-    crate::saves::provide(name, bytes.map(|bytes| bytes.to_vec()));
+    crate::web_saves::provide(name, bytes.map(|bytes| bytes.to_vec()));
 }
 
 /// The files the game removed since the last take, for the shell to delete from IndexedDB with its
@@ -1370,7 +1370,7 @@ pub fn studio_saves_take_removed() -> js_sys::Array {
 /// `state().volatile.saves.persistent`.
 #[wasm_bindgen]
 pub fn studio_saves_persistent(persistent: bool) {
-    crate::saves::set_persistent(persistent);
+    crate::web_saves::set_persistent(persistent);
 }
 
 /// The page is hidden or left (`visibilitychange` → hidden, `pagehide`): the game writes its

@@ -1,0 +1,52 @@
+{
+  "id": "rust.lod-impostors",
+  "runtime": "rust-wgpu",
+  "title": "Far things in Rust: model levels, compounds and impostors declared once, checked in volatile.render.lod",
+  "tags": [
+    "lod",
+    "levels",
+    "detail",
+    "impostor",
+    "impostors",
+    "billboard",
+    "far",
+    "distance",
+    "horizon",
+    "forest",
+    "trees",
+    "tree",
+    "buildings",
+    "city",
+    "performance",
+    "fps",
+    "triangles",
+    "phone",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Let imports give big models levels, compound a tree's parts, put impostors on trees and buildings in on_reset, and check volatile.render.lod and lodRefused.",
+  "intent": "Far things should cost little, never be culled by a hand-made distance check. The Studio's import gives every model of 512 or more triangles simplified levels, and each copy draws the level its screen size picks, shadows too. Name your own with model.with_levels(&[(lod1, 24.0), (lod2, 58.0)]) and hold a hero prop's detail with .with_lod_bias(2.0). A tree of two GLBs is gfx.assets().compound(&[&wood, &leaves]): its parts switch together. Past the last level, model.with_impostor(Impostor::hemi()) draws trees, bushes and buildings as a baked card (Impostor::sphere() seen from below); .with_lod_bias keeps a model's mesh further. Declare them once in on_reset: Live bakes one model a frame after it loads. A model only streamed cells draw needs game.impostor_bake(|gfx| ..) in wire, or it keeps its last level. A refused option draws whole and is named in state().__render.lodRefused (levels-invalid, levels-mismatch, compound-invalid, impostor-invalid, impostor-not-baked). state().volatile.render.lod shows the threshold, species and baked impostors. Phones get their own lod_threshold_px and far_density in [render.class.<class>]; capture far away at high and as mobile-mid.",
+  "sketch": "# genex.toml: low phones switch levels sooner and keep half the far copies\n[render.class.mobile-low]\nlod_threshold_px = 3.0\nfar_density = 0.5\n\n// src/game.rs — World holds oak, tower, statue: Model; oaks: Vec<Transform>.\nuse genex::prelude::*;\nuse genex::Impostor;\n\npub fn wire(game: &mut Game<World>) {\n    // Declared once, at reset: Live bakes one impostor a frame after its model loads.\n    game.on_reset(|sim, _, _, gfx| {\n        let assets = gfx.assets();\n        let (wood, leaves) = (assets.model(\"trees/oak-wood.glb\"), assets.model(\"trees/oak-leaves.glb\"));\n        // Wood and leaves switch together and bake into one card where its error allows.\n        sim.world.oak = gfx.assets().compound(&[&wood, &leaves]).with_impostor(Impostor::hemi());\n        // Authored levels: lod1 from 24 m, lod2 from 58 m (scale 1 at the nominal view), then a card.\n        let levels = [(assets.model(\"buildings/tower-lod1.glb\"), 24.0), (assets.model(\"buildings/tower-lod2.glb\"), 58.0)];\n        sim.world.tower = assets.model(\"buildings/tower.glb\").with_levels(&levels).with_impostor(Impostor::hemi());\n        // The landmark the player walks up to keeps its detail twice as far.\n        sim.world.statue = assets.model(\"props/statue.glb\").with_lod_bias(2.0);\n    });\n    game.on_draw(|sim, frame, _| {\n        frame.tag(\"trees\");\n        for at in &sim.world.oaks {\n            frame.model(&sim.world.oak, *at);\n        }\n        frame.tag(\"tower\").model(&sim.world.tower, Transform::from_xyz(0.0, 0.0, -120.0));\n        frame.tag(\"statue\").model(&sim.world.statue, Transform::from_xyz(0.0, 0.0, -10.0));\n    });\n    // A model only streamed cells draw: the build bakes its card, or it keeps its last level (impostor-not-baked).\n    game.impostor_bake(|gfx| gfx.assets().model(\"trees/pine.glb\").with_impostor(Impostor::hemi()));\n    // Which option, if any, was refused (it then draws whole): a check reads this, never a picture.\n    game.probe(\"lodRefused\", |sim| json!(sim.world.tower.lod_refusal().map(|code| code.wire())));\n}\n",
+  "port": "The facet that loads a model declares its levels, compound and impostor where it loads it; no other facet re-wraps that model.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/drawing.md",
+      "note": "Imported levels, with_levels, with_lod_bias, compound, with_impostor (hemi, sphere), game.impostor_bake for streamed models, lodRefused codes, volatile.render.lod, the per-class lod_threshold_px and far_density."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Rendering)",
+      "note": "The lod-fade and impostors features per preset; renderSettings as mobile-mid to test as a phone."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

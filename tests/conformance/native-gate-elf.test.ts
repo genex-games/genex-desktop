@@ -1169,6 +1169,30 @@ describe("Rust · wgpu ELF admission for Linux and Android (M3.5)", () => {
     assert.deepEqual(admission.image.loadAlignments, [ANDROID_LOAD_ALIGN_BYTES]);
   });
 
+  // What NDK r30's lld writes at API 29 for packed relative relocations: DT_ANDROID_RELR,
+  // DT_ANDROID_RELRSZ and DT_ANDROID_RELRENT (read from a real r30 link with llvm-readelf -d).
+  const ANDROID_RELR: Array<[number, number]> = [
+    [0x6fffe000, 0x9a8],
+    [0x6fffe001, 0x90],
+    [0x6fffe003, 0x8],
+  ];
+
+  it("admits an Android build the pinned NDK r30 linked, with its Android RELR tags", () => {
+    assert.equal(android(androidBinary({ extraDynamic: ANDROID_RELR })), "admitted");
+  });
+
+  it("refuses the Android RELR tags anywhere but Android, and Android tags no r30 link writes", () => {
+    const unknownTag = `${NativeRefusal.NotAnExecutable}/${RustAdmissionProblem.Unreadable}`;
+    assert.equal(linux(linuxBinary({ extraDynamic: ANDROID_RELR })), unknownTag);
+    for (const [label, tag] of [
+      ["DT_ANDROID_RELRCOUNT", 0x6fffe005],
+      ["DT_ANDROID_RELA (Android's packed format)", 0x60000011],
+      ["DT_ANDROID_REL", 0x6000000f],
+    ] as const) {
+      assert.equal(android(androidBinary({ extraDynamic: [...ANDROID_RELR, [tag, 0]] })), unknownTag, label);
+    }
+  });
+
   const linuxHostile: Array<[string, Uint8Array, string]> = [
     [
       "a libGL import",

@@ -97,6 +97,7 @@ fn audio_error_codes_keep_the_old_spellings_and_add_the_new_ones() {
         (AudioErrorCode::SoundMissing, "sound-missing"),
         (AudioErrorCode::MemoryLimit, "memory-limit"),
         (AudioErrorCode::InvalidValue, "invalid-value"),
+        (AudioErrorCode::Disabled, "audio-disabled"),
     ];
     for (code, wire) in rows {
         assert_eq!(code.as_str(), wire);

@@ -2,6 +2,9 @@
 //! fixed mixer rate) is a pure function of what the game played and the ticks run, with no audio
 //! device, in one process or across two.
 
+// These rows drive the mixer, device output or decoders (the `mixer` feature, AU-11).
+#![cfg(feature = "mixer")]
+
 use genex_audio::{
     AUDIO_WINDOW_FRAMES, AudioLevel, AudioMeter, FRAMES_PER_TICK, MIXER_RATE_HZ, Mixer, SinkQueue, Sound,
 };

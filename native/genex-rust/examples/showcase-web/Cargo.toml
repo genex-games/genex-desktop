@@ -18,11 +18,13 @@ repository.workspace = true
 name = "showcase-web"
 path = "../showcase/game/src/main.rs"
 
-# As a game's genex.toml `[physics] enabled` does: `--no-default-features` builds it without Rapier
-# (the size rows of renderer pass 2, D11).
+# As a game's genex.toml `[physics] enabled` and `[audio] enabled` do: `--no-default-features`
+# builds it without Rapier (the size rows of renderer pass 2, D11) and without the mixer and
+# decoders (G6 AU-11); `--features physics` keeps Rapier alone.
 [features]
-default = ["physics"]
+default = ["physics", "audio"]
 physics = ["genex/physics"]
+audio = ["genex/audio"]
 
 [dependencies]
 genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web", default-features = false }

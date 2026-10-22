@@ -47,6 +47,8 @@ wasm-bindgen = { workspace = true }
 [dev-dependencies]
 image = { workspace = true }
 
-# tests/valley.rs replays the anchor's drive on 1 and 8 stream threads.
+# tests/valley.rs replays the anchor's drive on 1 and 8 stream threads; tests/flythrough.rs waits
+# for each Live frame's GPU work (STR-26b).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 genex-render = { workspace = true }
+wgpu = { workspace = true }

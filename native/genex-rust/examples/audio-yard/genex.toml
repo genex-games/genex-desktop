@@ -1,0 +1,4 @@
+# audio-yard's manifest: physics stays on (the occluding wall is a collider the audio rays hit).
+[game]
+title = "Audio yard"
+world_size = [1280, 720]

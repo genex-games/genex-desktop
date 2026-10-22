@@ -37,7 +37,8 @@ max, step, default)` or `SettingDef::choice(key, label, &options, default)`. The
 on the Game tab and take no reserved prefix (`audio.`, `ui.`, `input.`, `graphics.`); a preset may
 set any tab's options. Install refuses a second `game.settings`, an option off the Game tab or with
 a reserved prefix, and a preset that does not fit (`settings-invalid`). Labels and option names are
-text keys looked up in the game's catalog; the built-in ones fall back to English. A row shows a
+text keys looked up in the game's catalog; the built-in ones fall back to English, and
+`docs/api/text.md` lists them so a game can translate the whole menu. A row shows a
 0-to-1 slider as a whole percent and any other slider as its number.
 
 The person's choices are saved as `genex-settings.json` in the game's saves (a preset per tab plus
@@ -48,3 +49,6 @@ longer exist are skipped with `settings-key-unknown`, and a value of the wrong t
 with `settings-value-invalid`. A Genex run never reads the saved file, so judged runs start from the
 defaults. Nothing here enters the checksum: anything that changes play, such as difficulty, belongs
 in the world and its save, not in settings.
+
+`native/genex-rust/examples/menus-saves` opens the menu from its title and pause menus and
+closes it on `menu_answer(ui).back`.

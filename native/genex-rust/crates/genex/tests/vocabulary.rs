@@ -135,7 +135,7 @@ fn the_instance_group_calls_and_refusals_are_the_fixtures() {
     use genex::InstanceGroupErrorCode;
     let pinned = fixture();
     assert_eq!(names(&pinned["instanceGroups"]["calls"]), genex::manifest::INSTANCE_GROUP_CALLS);
-    let refusals = [InstanceGroupErrorCode::TooManyInstances, InstanceGroupErrorCode::RangeOutOfGroup].map(InstanceGroupErrorCode::wire);
+    let refusals = [InstanceGroupErrorCode::TooManyInstances, InstanceGroupErrorCode::RangeOutOfGroup, InstanceGroupErrorCode::FarInvalid].map(InstanceGroupErrorCode::wire);
     assert_eq!(names(&pinned["instanceGroups"]["refusals"]), refusals);
 }
 
@@ -215,6 +215,13 @@ fn the_net_block_is_the_fixtures() {
     let refusals: Vec<&str> = genex::net::NetErrorCode::ALL.iter().map(|code| code.wire()).collect();
     assert_eq!(names(&pinned["refusals"]), refusals);
     assert_eq!(names(&pinned["calls"]), genex::net::NET_CALLS);
+    // The `__net` view's spellings, which Studio's net row restates (MP-7).
+    let modes: Vec<&str> = genex::net::NetMode::ALL.iter().map(|mode| mode.wire()).collect();
+    let statuses: Vec<&str> = genex::net::NetStatus::ALL.iter().map(|status| status.wire()).collect();
+    let offline: Vec<&str> = genex::net::NetOffline::ALL.iter().map(|reason| reason.wire()).collect();
+    assert_eq!(names(&pinned["modes"]), modes);
+    assert_eq!(names(&pinned["statuses"]), statuses);
+    assert_eq!(names(&pinned["offline"]), offline);
     // Every pinned name is a real call, written as the net page teaches it.
     let mut game = genex::Game::new(());
     game.net(genex::net::NetConfig::new().publish_hz(15).decimals(3).interp_delay_ticks(6));

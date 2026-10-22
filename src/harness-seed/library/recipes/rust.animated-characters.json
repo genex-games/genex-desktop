@@ -1,0 +1,60 @@
+{
+  "id": "rust.animated-characters",
+  "runtime": "rust-wgpu",
+  "title": "Animated characters in Rust: a rigged GLB on an animator, stood on the ground by its feet",
+  "tags": [
+    "character",
+    "characters",
+    "animation",
+    "animated",
+    "animator",
+    "rigged",
+    "skinned",
+    "clip",
+    "clips",
+    "walk",
+    "run",
+    "idle",
+    "attack",
+    "crossfade",
+    "hero",
+    "enemy",
+    "npc",
+    "feet",
+    "grounded",
+    "ground",
+    "float",
+    "capsule",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "characters",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Load a rigged GLB with gfx.character, start on Animator::simple, advance it only in on_update, and draw it at its capsule's feet with frame.character.",
+  "intent": "A rigged GLB moves on the built-in animator, never a hand-rolled bone loop. In on_reset gfx.character(path) loads it (animation-asset-invalid: no usable skin or clips; hero.clip_names() lists the clips), and Animator::simple(&hero) is the start: .play(idle), .crossfade(walk, 0.25) every tick, .play_once(slash) for an attack. Move to hero.graph() only for parameters, layers or events. Only on_update advances it, with animator.update(ctx.dt); a draw or probe hook cannot. Stand it on the ground by its feet, never its centre: Character::spawn(&mut sim.physics, feet, CharacterParams::default()) puts a capsule there (Character::on_ground and drive_on a height function without physics); drive it with CharacterMotion::Velocity { wish, jump } and draw frame.character(&animator, character.transform().into()), so the model's feet are the capsule's. Probe Animator::probe and the feet's height beside the ground's so a check proves it moves and stands; capture it near and far.",
+  "sketch": "// src/facets/hero.rs — the facet's own module; src/main.rs adds its two FACET WIRING lines.\n// World (src/main.rs) holds hero: Option<Animator>, body: Option<Character>, clips: Option<HeroClips>,\n// wish: Vec3 and attack: bool (the controls facet sets the last two each tick).\nuse super::{HeroClips, World};\nuse genex::prelude::*;\nuse genex::CharacterParams;\n\npub fn wire(game: &mut Game<World>) {\n    game.on_reset(|sim, _, _, gfx| {\n        let Ok(hero) = gfx.character(\"characters/hero.glb\") else { return }; // animation-asset-invalid\n        let (Some(idle), Some(walk), Some(slash)) = (hero.clip(\"Idle\"), hero.clip(\"Walk\"), hero.clip(\"Sword_Attack\")) else { return };\n        let Ok(mut animator) = Animator::simple(&hero) else { return };\n        animator.play(idle);\n        // Placed by its feet on the floor (y 0 here), never by its centre.\n        let Ok(body) = Character::spawn(&mut sim.physics, vec3(0.0, 0.0, 4.0), CharacterParams::default()) else { return };\n        sim.world.hero = Some(animator);\n        sim.world.body = Some(body);\n        sim.world.clips = Some(HeroClips { idle, walk, slash });\n    });\n    game.on_update(|sim, ctx| {\n        let (world, physics) = sim.split();\n        let (Some(animator), Some(body), Some(clips)) = (world.hero.as_mut(), world.body.as_mut(), world.clips) else { return };\n        // The capsule walks, slides along walls and climbs steps; the model follows it.\n        body.drive(physics, CharacterMotion::Velocity { wish: world.wish, jump: false }, ctx.dt);\n        animator.crossfade(if world.wish.length() > 0.1 { clips.walk } else { clips.idle }, 0.25); // every tick is fine\n        if world.attack {\n            animator.play_once(clips.slash); // blends back into walk or idle at its end\n        }\n        animator.update(ctx.dt); // only the simulation moves an animator\n    });\n    game.on_draw(|sim, frame, _| {\n        let (Some(animator), Some(body)) = (&sim.world.hero, &sim.world.body) else { return };\n        frame.tag(\"hero\");\n        frame.character(animator, body.transform().into()); // the model's feet are the capsule's\n    });\n    game.probe(\"hero\", |sim| sim.world.hero.as_ref().map_or(Value::Null, Animator::probe));\n    // Grounded: the feet's height beside the floor's, which a check compares.\n    game.probe(\"heroFeet\", |sim| json!({ \"feet\": sim.world.body.as_ref().map(|body| body.feet().y), \"ground\": 0.0 }));\n}\n",
+  "port": "The facet that owns a character owns its animator, its capsule and its probes; another facet sets the wish it walks by, never the animator.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Animation)",
+      "note": "gfx.character, Animator::simple's play, crossfade and play_once, update only in on_update, frame.character, Animator::probe."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Characters)",
+      "note": "Character::spawn at the feet, drive with CharacterMotion, character.transform().into() to draw, feet() to read; on_ground and drive_on without physics."
+    },
+    {
+      "source": "src/game-template-rust/CLAUDE.md (Game systems)",
+      "note": "Moving things: gfx.character with an Animator for rigged models, Character::spawn for the body."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

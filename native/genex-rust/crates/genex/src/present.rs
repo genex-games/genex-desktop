@@ -85,6 +85,8 @@
 
 mod characters;
 mod hud_history;
+mod impostors;
+mod posed;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;
 
@@ -110,6 +112,7 @@ use genex_render::settings::{Environment, Quality};
 use genex_render::extension::native_features;
 use genex_render::immediate::HUD_TAG;
 use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, GlbSidecars, MeshData, SPHERE_TRIANGLES, decode_image};
+use genex_render::mesh_lod_runtime::{RUNTIME_LOD_MAX_TRIANGLES, RuntimeLodOutcome, add_runtime_chains};
 use genex_render::meshlet::MeshletSet;
 use genex_render::motion::DrawId;
 use genex_render::letterbox::{letterbox, output_for_window};
@@ -125,6 +128,8 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier, Targe
 use genex_render::{CullPath, Gpu, GpuCounters, ImmediateFrame, RenderCode, RenderError, RenderOptions, WORLD_FORMAT};
 
 /// The streamed view set the presenter draws for a game that registered `game.streaming` (STR-16).
+/// The impostor bakes (game systems LOD-16).
+pub use impostors::{BakeTally, ImpostorStat, LIVE_BAKES_PER_FRAME};
 pub use characters::{CharacterStats, RATE_FULL_PX, RATE_HALF_PX, RATE_QUARTER_PX, RateBand, palette_digest, rate_band};
 pub use crate::present_stream::{
     STREAM_LOADS_DESKTOP, STREAM_LOADS_PHONE, STREAM_LOADS_WEB, STREAM_VIEW_CELL_MODELS_MAX, STREAM_VIEW_MODEL_ESTIMATE_BYTES, StreamView, ViewIo,
@@ -134,6 +139,8 @@ pub use crate::present_stream::{
 pub use crate::present_stream::{Drain, DrainClock, DrainReport, DrainStep, STREAM_DRAIN_MAX_MS, STREAM_DRAIN_POLL, drain_blocking};
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::present_stream::WallDrainClock;
+/// Where build-time impostor atlases are served from and each one's name (game systems LOD-23).
+pub use crate::lod::{BAKED_IMPOSTOR_FOLDER, impostor_bake_name};
 
 /// The renderer's planes for a facade camera, which carries none.
 const NEAR_PLANE: f32 = 0.1;
@@ -537,6 +544,10 @@ pub struct AssetCache {
     /// What became of the authored levels of each model loaded with them (LOD-07), by cache key:
     /// every GLB it read (a change to any reloads it) and the load's refusal.
     leveled: Vec<Leveled>,
+    /// The impostor bake jobs (LOD-16).
+    impostors: impostors::Impostors,
+    /// The node-posed models' rigid skins (AN-27).
+    posed: posed::Posed,
 }
 
 /// A model loaded with authored levels (LOD-07): its cache key, the GLBs it read and the load's
@@ -716,9 +727,13 @@ impl AssetCache {
             dropped.models.extend(loaded);
         }
         self.models = kept;
+        // LOD-16: a job over a dropped model's meshes is queued again with its new ones.
+        let dropped_meshes: Vec<MeshId> = dropped.models.iter().flat_map(|model| model.parts.iter().map(|part| part.mesh)).collect();
+        self.impostors.forget_meshes(&dropped_meshes);
         let models = &self.models;
         self.leveled.retain(|leveled| models.iter().any(|(key, _)| *key == leveled.key));
         self.characters.forget(|path| touched(path, touches_model));
+        self.posed.forget(|path| touched(path, touches_model));
         self.textures.retain(|cached| !touched(&cached.path, touches_texture));
         let environments = self.environments.len();
         self.environments.retain(|(path, _)| !changed.contains(&path.as_str()));
@@ -807,6 +822,12 @@ impl AssetCache {
             self.models.push((key.to_owned(), loaded));
         }
         self.characters.load(frame, source, uploads, log)?;
+        // AN-27: node-posed models as rigid skins.
+        self.posed.load(frame, source, uploads, log)?;
+        // LOD-16: a model with an impostor whose parts are loaded becomes a bake job.
+        let mut impostors = std::mem::take(&mut self.impostors);
+        impostors.queue(frame, self, source);
+        self.impostors = impostors;
         // A file used as several kinds (a base colour that is also a mask) is read once, and its
         // family files are looked for once.
         let mut read: Vec<(&str, Option<TextureData>)> = Vec::new();
@@ -892,7 +913,7 @@ fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
 /// The model a shape or custom draw names, if it names one (a character's is not a [`Model`]).
 fn shape_model(shape: &Shape) -> Option<&Model> {
     match shape {
-        Shape::Model { model, .. } => Some(model),
+        Shape::Model { model, .. } | Shape::Posed { model, .. } => Some(model),
         Shape::Group { group } => match group.shape() {
             crate::GroupShape::Model(model) => Some(model),
             crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
@@ -940,6 +961,8 @@ fn lod_refusals(frame: &Frame, assets: &AssetCache) -> Vec<LodRefused> {
         let member_codes = members.filter_map(|member| member.lod_refusal().map(|code| (member, code)));
         let loads = model.drawn_members().iter().filter_map(|member| Some((member, assets.lod_refusal(member.key()?)?)));
         let own = model.lod_refusal().map(|code| (model, code));
+        // LOD-16: an impostor with nothing to bake.
+        let own = own.or_else(|| Some((model, assets.impostors.refusal(model.key()?)?)));
         for (named, code) in own.into_iter().chain(member_codes).chain(loads) {
             let entry = LodRefused { model: named.path().unwrap_or_default().to_owned(), code };
             if !refused.contains(&entry) {
@@ -956,7 +979,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         Shape::Model { material, .. } | Shape::Character { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
         Shape::Group { group } => group.material(),
-        Shape::Line { .. } | Shape::Lines { .. } => None,
+        Shape::Line { .. } | Shape::Lines { .. } | Shape::Posed { .. } => None,
     });
     let drawn = materials.flat_map(|material| {
         let slots = [
@@ -1038,7 +1061,7 @@ pub fn texture_facts(frame: &Frame, assets: &AssetCache) -> (Vec<TextureFact>, V
 fn models_with_own_materials(frame: &Frame) -> impl Iterator<Item = (&str, &str)> {
     frame.draws().iter().flat_map(|draw| {
         let (models, character): (&[Model], Option<&str>) = match &draw.shape {
-            Shape::Model { model, material: None, .. } => (model.drawn_members(), None),
+            Shape::Model { model, material: None, .. } | Shape::Posed { model, .. } => (model.drawn_members(), None),
             Shape::Character { animator, material: None, .. } => (&[], Some(animator.asset().path())),
             Shape::Group { group } if group.material().is_none() => match group.shape() {
                 crate::GroupShape::Model(model) => (model.drawn_members(), None),
@@ -1163,6 +1186,20 @@ fn with_authored_levels(parts: ModelParts, levels: &[(ModelParts, f32)]) -> Mode
     parts
 }
 
+/// `parts` with their runtime chain when the GLB brought none (LOD-21, [`add_runtime_chains`]).
+fn with_runtime_chains(mut parts: ModelParts) -> ModelParts {
+    add_runtime_chains(&mut parts);
+    parts
+}
+
+/// Tell the load's log when a model was too big for its runtime chain (LOD-21); a chain built,
+/// an imported chain or a small model is the ordinary case and says nothing.
+fn log_runtime_chains(path: &str, outcome: RuntimeLodOutcome, log: &mut dyn FnMut(&str)) {
+    if outcome == RuntimeLodOutcome::OverBudget {
+        log(&format!("model {path:?}: over {RUNTIME_LOD_MAX_TRIANGLES} triangles, so no levels of detail were built at load; drawing it whole"));
+    }
+}
+
 /// The smallest sphere around two (centre xyz, radius); a radius that is not positive is none.
 fn union_sphere(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     let positive = |radius: f32| radius > 0.0;
@@ -1225,14 +1262,23 @@ fn load_model_levels(
     // Every part in one upload: the renderer writes the model's own rows once, not once a material.
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
-    let model_parts: ModelParts = glb.model_parts();
+    let mut model_parts: ModelParts = glb.model_parts();
     let sphere = parts_sphere(&model_parts);
     let mismatch = levels.iter().any(|(level, _)| level.len() != model_parts.len());
     let refused = refused.or(mismatch.then_some(LodRefusalCode::LevelsMismatch));
+    let authored = refused.is_none() && !levels.is_empty();
+    // A GLB the import step did not simplify gets its chain at load (LOD-21); a model whose
+    // authored levels were refused draws whole, as before.
+    let runtime = refused.is_none() && levels.is_empty();
+    if runtime {
+        log_runtime_chains(path, add_runtime_chains(&mut model_parts), log);
+    }
     let still = source.static_bytes(path);
     let added = match still {
         // Authored levels (LOD-07) upload merged parts, which a replay keeps as they are.
-        _ if refused.is_none() && !levels.is_empty() => uploads.add_model_parts(with_authored_levels(model_parts, &levels)),
+        _ if authored => uploads.add_model_parts(with_authored_levels(model_parts, &levels)),
+        // A replay builds the same runtime chain again: it is a pure function of the GLB.
+        Some(bytes) if runtime => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes).map(with_runtime_chains))),
         Some(bytes) => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes))),
         None => uploads.add_model_parts(model_parts),
     };
@@ -1897,6 +1943,7 @@ impl Presenter {
         hud: &mut HudPaint,
     ) -> Result<Drawn, RenderError> {
         self.load(frame)?;
+        self.bake_impostors()?;
         self.admit(frame)?;
         self.light(frame)?;
         self.terrain(frame)?;
@@ -2130,6 +2177,10 @@ impl Presenter {
         handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
+        // The impostors baked on the renderer in use (LOD-16, `volatile.render.lod`).
+        handle.borrow_mut().note_impostors(self.assets.impostors.stats());
+        // What the frame's characters did and how the renderer skinned them (AN-23).
+        handle.borrow_mut().note_characters(self.characters_status());
         if let Ok(drawn) = &drawn {
             runtime.note_triangles(drawn.triangles, &drawn.by_tag);
             runtime.note_missing_models(&drawn.missing_models);
@@ -2286,6 +2337,60 @@ impl Presenter {
         let _ = self.passes.rebuild(self.resilient.gpu(), passes);
         self.failed = None;
         Ok(true)
+    }
+
+    /// Run the impostor bake jobs (LOD-16, `present/impostors.rs`): every pending one for a
+    /// capture, [`LIVE_BAKES_PER_FRAME`] for a Live frame; none on a quality with impostors off
+    /// (the installed levels come off). The atlas class is the session's
+    /// ([`crate::render::RenderControl::impostor_class`]).
+    fn bake_impostors(&mut self) -> Result<(), RenderError> {
+        let class = match &self.render {
+            Some(handle) => handle.borrow().impostor_class(),
+            None => genex_render::impostor::impostor_class(genex_render::settings::QualityPreset::High, genex_render::device_class::classify(self.resilient.gpu().device_facts())),
+        };
+        let budget = if self.capturing { usize::MAX } else { LIVE_BAKES_PER_FRAME };
+        let enabled = self.resilient.renderer().renderer().quality().lod.impostors;
+        let clock = Arc::clone(&self.clock);
+        let (gpu, renderer) = self.resilient.parts_mut();
+        self.assets.impostors.bake((gpu, renderer.renderer_mut()), class, enabled, (budget, &clock, &*self.source))?;
+        Ok(())
+    }
+
+    /// Bake `model`'s impostor alone at `class` and answer it as a build-time atlas file (LOD-23:
+    /// the dev build's `bakeAssets` kind `impostor`): the model is loaded first, as a frame
+    /// drawing it would load it; the impostors drawn before bake (or load) again at the next
+    /// frame. Refused `impostor-invalid` for a model with no impostor or nothing to bake, and with
+    /// a render error's code (`device-lost` included).
+    pub fn bake_impostor_atlas(&mut self, model: &Model, class: genex_render::impostor::ImpostorClass) -> Result<Vec<u8>, &'static str> {
+        let invalid = crate::lod::LodRefusalCode::ImpostorInvalid.wire();
+        let Some(key) = model.key().filter(|_| model.impostor().is_some()).map(str::to_owned) else { return Err(invalid) };
+        let mut frame = Frame::default();
+        frame.model(model, crate::frame::Transform::IDENTITY);
+        self.load(&frame).map_err(|error| error.code().wire())?;
+        let (gpu, renderer) = self.resilient.parts_mut();
+        let atlas = self.assets.impostors.bake_atlas((gpu, renderer.renderer_mut()), &key, class).map_err(|error| error.code().wire())?;
+        atlas.map(|atlas| atlas.to_ktx2()).ok_or(invalid)
+    }
+
+    /// Build-time impostor atlases loaded since the presenter opened, in place of a bake (LOD-23).
+    pub fn impostor_loads(&self) -> u32 {
+        self.assets.impostors.loads()
+    }
+
+    /// How far the impostor bakes are (LOD-16): the boot's `pipelines` stage counts them
+    /// ([`crate::loading::preparing`]).
+    pub fn impostor_tally(&self) -> BakeTally {
+        self.assets.impostors.tally()
+    }
+
+    /// The impostors baked on the renderer in use (`state().volatile.render.lod.impostors`).
+    pub fn impostor_stats(&self) -> Vec<ImpostorStat> {
+        self.assets.impostors.stats()
+    }
+
+    /// Impostor bakes run since the presenter opened (a device loss bakes again).
+    pub fn impostor_bakes(&self) -> u32 {
+        self.assets.impostors.bakes()
     }
 
     /// Load every model and material texture `frame` draws that was never tried; a refusal is
@@ -2914,6 +3019,8 @@ trait WorldSink: characters::SkinSink {
     fn lighting(&mut self) -> &mut Lighting;
     /// How the following meshes choose their levels (LOD-07): a bias and a compound's sphere.
     fn lod(&mut self, lod: DrawLod);
+    /// The far rule `rule` as the following draws name it (LOD-19, `Scene::far_rule`).
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32;
 }
 
 impl WorldSink for Scene {
@@ -2945,6 +3052,10 @@ impl WorldSink for Scene {
 
     fn lod(&mut self, lod: DrawLod) {
         self.set_lod(lod);
+    }
+
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        Scene::far_rule(self, rule)
     }
 }
 
@@ -2981,6 +3092,10 @@ impl WorldSink for ImmediateFrame {
 
     fn lod(&mut self, lod: DrawLod) {
         self.set_lod(lod);
+    }
+
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        ImmediateFrame::far_rule(self, rule)
     }
 }
 
@@ -3055,6 +3170,11 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             let character = characters::CharacterShape { animator, transform: *transform, tint: *tint, material: material.as_ref() };
             characters::push(sink, assets, missing, character)
         }
+        // AN-27: skinned at its node pose; a model it cannot pose draws at rest.
+        Shape::Posed { model, nodes, palette, transform, tint } => {
+            let posed = posed::PosedShape { model, nodes, palette, transform: *transform, tint: *tint };
+            posed::push(sink, assets, missing, posed)
+        }
     }
 }
 
@@ -3064,8 +3184,13 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
 fn draw_lod(model: &Model, assets: &AssetCache) -> Option<DrawLod> {
     let lod = model.lod_options()?;
     let compound = !lod.members.is_empty();
-    let sphere = lod.members.iter().filter_map(|member| assets.model(member.key()?)).fold([0.0; 4], |sphere, loaded| union_sphere(sphere, loaded.sphere));
-    let origin = (compound && sphere[3] > 0.0).then_some(sphere);
+    let loaded: Vec<&LoadedModel> = model.drawn_members().iter().filter_map(|member| assets.model(member.key()?)).collect();
+    let sphere = loaded.iter().fold([0.0; 4], |sphere, loaded| union_sphere(sphere, loaded.sphere));
+    // LOD-16: a model of several parts with an impostor measures every part from its one sphere,
+    // so the card replaces all of them at once.
+    let parts: usize = loaded.iter().map(|loaded| loaded.parts.len()).sum();
+    let shared = compound || (lod.drawn_impostor().is_some() && parts > 1);
+    let origin = (shared && sphere[3] > 0.0).then_some(sphere);
     let bias = lod.bias();
     let differs = origin.is_some() || bias != crate::lod::LOD_BIAS_DEFAULT;
     differs.then_some(DrawLod { origin, bias, ..DrawLod::OWN })
@@ -3075,6 +3200,27 @@ fn draw_lod(model: &Model, assets: &AssetCache) -> Option<DrawLod> {
 /// each mesh it draws, with the material the matching single draw would take; answers its
 /// triangles (every transform's).
 fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, group: &crate::InstanceGroup) -> u32 {
+    // LOD-19: the group's far field, one of the frame's far rules, thins every copy it draws.
+    let far_rule = group.far().map_or(genex_render::lod_rows::FAR_RULE_NONE, |far| sink.far_rule(far.rule()));
+    // LOD-07: a model's bias and a compound's sphere hold for every copy.
+    let model_lod = match group.shape() {
+        crate::GroupShape::Model(model) => draw_lod(model, assets),
+        _ => None,
+    };
+    let thinned = far_rule != genex_render::lod_rows::FAR_RULE_NONE;
+    let lod = model_lod.or(thinned.then_some(DrawLod::OWN)).map(|lod| DrawLod { far_rule, ..lod });
+    if let Some(lod) = lod {
+        sink.lod(lod);
+    }
+    let triangles = push_group_shape(sink, assets, missing, group);
+    if lod.is_some() {
+        sink.lod(DrawLod::OWN);
+    }
+    triangles
+}
+
+/// [`push_group`]'s draws, under the LOD its caller set.
+fn push_group_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, group: &crate::InstanceGroup) -> u32 {
     let count = group.len() as u32;
     let white = crate::Material::color(Color::WHITE);
     let own = || surface(group.material().unwrap_or(&white), Color::WHITE, assets);
@@ -3088,11 +3234,6 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             SPHERE_TRIANGLES.saturating_mul(count)
         }
         crate::GroupShape::Model(model) => {
-            // LOD-07: the model's bias and a compound's sphere hold for every copy.
-            let lod = draw_lod(model, assets);
-            if let Some(lod) = lod {
-                sink.lod(lod);
-            }
             let mut triangles = 0u32;
             for member in model.drawn_members() {
                 let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
@@ -3109,9 +3250,6 @@ fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                     sink.group(&group.render_group(part.mesh), drawn_with);
                 }
                 triangles = triangles.saturating_add(loaded.triangles.saturating_mul(count));
-            }
-            if lod.is_some() {
-                sink.lod(DrawLod::OWN);
             }
             triangles
         }

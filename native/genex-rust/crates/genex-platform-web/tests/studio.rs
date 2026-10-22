@@ -189,7 +189,7 @@ fn tone_runtime() -> Runtime<Option<genex::audio::Sound>> {
 /// mutes only the device: `volatile.audio.device.muted` turns true and the level stays.
 #[test]
 fn the_page_audio_probe_reads_the_tone_and_its_mute_leaves_the_level() {
-    use genex_platform_web::audio::level_answer;
+    use genex_platform_web::web_audio::level_answer;
     let (mut studio, mut painter) = (Studio::web(), Counting::default());
     studio.mark_ready();
     let mut game = tone_runtime();

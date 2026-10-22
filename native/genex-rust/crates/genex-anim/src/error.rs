@@ -21,11 +21,20 @@ pub enum AnimationErrorCode {
     /// A retarget between rigs one of which lacks a humanoid bone the retarget needs (every
     /// profile bone but the toes), named with the rig it is missing from (AN-12).
     RetargetUnmapped,
+    /// A clip name the asset does not have, or an asset with no clips where clips are needed (a
+    /// node-animated GLB with no animations, AN-27).
+    ClipMissing,
 }
 
 impl AnimationErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [AnimationErrorCode; 4] = [AnimationErrorCode::AssetInvalid, AnimationErrorCode::GraphInvalid, AnimationErrorCode::RagdollProfileInvalid, AnimationErrorCode::RetargetUnmapped];
+    pub const ALL: [AnimationErrorCode; 5] = [
+        AnimationErrorCode::AssetInvalid,
+        AnimationErrorCode::GraphInvalid,
+        AnimationErrorCode::RagdollProfileInvalid,
+        AnimationErrorCode::RetargetUnmapped,
+        AnimationErrorCode::ClipMissing,
+    ];
 
     /// The code's wire spelling.
     pub const fn wire(self) -> &'static str {
@@ -34,6 +43,7 @@ impl AnimationErrorCode {
             AnimationErrorCode::GraphInvalid => "animation-graph-invalid",
             AnimationErrorCode::RagdollProfileInvalid => "ragdoll-profile-invalid",
             AnimationErrorCode::RetargetUnmapped => "animation-retarget-unmapped",
+            AnimationErrorCode::ClipMissing => "animation-clip-missing",
         }
     }
 }
@@ -61,6 +71,11 @@ impl AnimationError {
     /// An `animation-retarget-unmapped` refusal.
     pub fn retarget_unmapped(detail: impl Into<String>) -> AnimationError {
         AnimationError { code: AnimationErrorCode::RetargetUnmapped, detail: detail.into() }
+    }
+
+    /// An `animation-clip-missing` refusal.
+    pub fn clip_missing(detail: impl Into<String>) -> AnimationError {
+        AnimationError { code: AnimationErrorCode::ClipMissing, detail: detail.into() }
     }
 
     /// An `animation-graph-invalid` refusal.

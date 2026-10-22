@@ -11,7 +11,8 @@
  *   (`inventory-new-entry`), an entry for something the tree no longer holds
  *   (`inventory-stale-entry`), a GL backend crate (`vendor-gl-crate`: WebGPU core is the floor) and
  *   anything in the tree that is not a plain folder or file (`vendor-not-plain-file`: a link, a
- *   FIFO), which it never follows or opens. The default tree is the installed toolchain's.
+ *   FIFO), which it never follows or opens. The default tree is the installed toolchain's; a
+ *   release tree's `vendor/` (which also carries the workspace's own crates) checks the same way.
  * - `inventory` rewrites the inventory from the tree: a release change a person reviews.
  * - `archive` builds the release inputs into `--out` (publishing them is an owner step): the
  *   vendored tree re-vendored offline from the allowlist through `rust-env.ts` (`cargo vendor`
@@ -275,7 +276,8 @@ export async function readInventory(file: string): Promise<Inventory> {
 /**
  * Refuse a vendored tree that holds anything the inventory does not list, or lacks anything it lists.
  * `own` names the workspace's own crate folders (`name-version`): a registry tree never holds them,
- * so their entries are left to `rust-release.ts cut`, which holds the release tree to all of them.
+ * so their entries are left to `rust-release.ts cut`; a release tree does, and each own crate folder
+ * it holds is held to its entries like any other.
  */
 export async function checkVendor(
   vendor: string,
@@ -283,7 +285,9 @@ export async function checkVendor(
   own: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const inventory = await readInventory(inventoryFile);
-  const crates = Object.fromEntries(Object.entries(inventory.crates).filter(([crate]) => !own.has(crate)));
+  const held = new Set(await readdir(vendor).catch(() => []));
+  const kept = ([crate]: [string, CrateEntry]) => !own.has(crate) || held.has(crate);
+  const crates = Object.fromEntries(Object.entries(inventory.crates).filter(kept));
   const { added, stale } = compareInventory(await scanVendor(vendor), { crates });
   if (added.length > 0) throw new VendorRefused(VendorRefusal.InventoryNew, MESSAGE.New(added));
   if (stale.length > 0) throw new VendorRefused(VendorRefusal.InventoryStale, MESSAGE.Stale(stale));

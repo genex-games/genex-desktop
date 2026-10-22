@@ -32,6 +32,8 @@ serde_json = { workspace = true }
 log = { workspace = true }
 # The OS locale the phone shell reports to the game (G6 UIS-12; MIT OR Apache-2.0).
 sys-locale = { workspace = true }
+# Crash records under genex-self-test and the platform readers' records (game systems CRASH-4).
+genex-crash = { workspace = true }
 
 # The audio session, its interruptions, GCController gamepads and the thermal state go through the
 # Objective-C runtime (objc2, objc2-foundation's NSString); the soft keyboard is winit's own
@@ -45,6 +47,8 @@ objc2-quartz-core = { workspace = true }
 # The spike's packaged game (M0a.16): `examples/pond_ios.rs` is the `.app` executable.
 [dev-dependencies]
 pond = { path = "../../examples/pond" }
+# The audio gate's rows play a tone: a game links audio by its own facade line (G6 AU-11).
+genex = { workspace = true, features = ["audio"] }
 
 [[example]]
 name = "pond_ios"

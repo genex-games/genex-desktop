@@ -34,30 +34,32 @@ needs Ctx and Drawing).
 
 | Topic | Page | What it covers |
 |-|-|-|
-| Ctx | `docs/api/ctx.md` | What a tick reads: actions, keys, touches, pads, pointer, look, wheel, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
-| UI | `docs/api/ui.md` | `on_ui`: the egui HUD and menus, a game's only UI path. |
+| Ctx | `docs/api/ctx.md` | Raw keys, touches, pads, pointer, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
+| Input | `docs/api/input.md` | Actions, touch controls, rebinding, prompts, replays. |
+| Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines, the clear colour, models from `assets/`. |
+| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, the stable checksum. |
+| UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |
+| Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
-| Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines and the clear colour, and loading models from `assets/`. |
-| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, its refusals and why the checksum stays the same everywhere. |
-| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
-| Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
-| Animation | `docs/api/animation.md` | Clips, graphs, animators and `frame.character`. |
+| Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
+| Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
+| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
+| Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
+| Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
+| Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
 | Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
-| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
-| Grading and the lens | `docs/api/grading.md` | The order a look is built in, the grade, white balance, LUTs, depth of field and motion blur. |
+| Grading and the lens | `docs/api/grading.md` | Build order, grade, white balance, LUTs, depth of field, motion blur. |
 | Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
 | Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once and drawn as a group. |
-| Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
-| Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
-| Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
 | Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
+| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
 | genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: the game, physics, crates, WGSL sources, native features and the web. |
 
 ## Hooks
@@ -118,7 +120,7 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
   `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second registration), `streaming-invalid` (the
-  Streaming and Navigation pages say when), `input-invalid` (the Ctx page explains it),
+  Streaming and Navigation pages say when), `input-invalid` (the Input page explains it),
   `audio-zone-limit` (more than 16 reverb zones),
   `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`,
   `ui-locale-invalid`, `net-config-invalid` (`game.net` caps) and `settings-invalid`.

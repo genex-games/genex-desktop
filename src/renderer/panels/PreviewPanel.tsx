@@ -110,6 +110,7 @@ import { EngineRows, type EngineRowsToggle, useEngineRows } from "./stage/Engine
 import { NativeRunCard } from "./stage/NativeRunCard.tsx";
 import { CrashCard } from "./stage/CrashCard.tsx";
 import { ProfileStrip } from "./stage/ProfileStrip.tsx";
+import { NetRow } from "./stage/NetRow.tsx";
 import { type LiveViewChoice, StageStrip, useLaneRuns } from "./stage/StageStrip.tsx";
 import { type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
 import { StillsStage } from "./stage/StillsStage.tsx";
@@ -780,6 +781,7 @@ function StageAbove({
       ) : null}
       {onStage && stage.loaded ? <DeviceLaunch game={stage.loaded} onNotice={onNotice} /> : null}
       {onStage && stage.loaded ? <CrashCard game={stage.loaded} /> : null}
+      {onStage && stage.loaded ? <NetRow game={stage.loaded} webPage={!native} /> : null}
       {onStage && stage.loaded ? <ProfileStrip game={stage.loaded} onNotice={onNotice} /> : null}
       {onStage && stage.loaded && engine?.open ? <EngineRows game={stage.loaded} onNotice={onNotice} /> : null}
       {tools.sheet}

@@ -6,7 +6,7 @@ use genex::prelude::*;
 use genex::render::{Clouds, Environment, HdriEnvironment, SkyParams};
 use genex::{Gfx, Model, Terrain, TerrainLayer};
 
-use crate::layout::{TreeLod, layout, tree_asset};
+use crate::layout::{TreeLod, layout, tree_asset, tree_level_metres};
 
 /// Ticks per second of simulated time.
 pub const TICKS_PER_SECOND: f32 = 60.0;
@@ -224,7 +224,9 @@ impl Backdrop {
     }
 }
 
-/// One tree mesh pair: its wood and its foliage.
+/// One tree mesh pair: its wood and its foliage, each with its coarser levels
+/// ([`TreeLod::ALL`], `Model::with_levels` at [`tree_level_metres`]) the renderer chooses
+/// between and crossfades.
 #[derive(Clone, Debug, Default)]
 pub struct TreeMeshes {
     /// The trunk and branches.
@@ -238,10 +240,10 @@ pub struct TreeMeshes {
 pub struct Models {
     /// The ground: the renderer's built-in terrain over the layout's heights ([`terrain`]).
     pub terrain: Option<Terrain>,
-    /// Broadleaf meshes: per variant, per level of detail ([`TreeLod::ALL`]).
-    pub broadleaf: Vec<Vec<TreeMeshes>>,
-    /// Pine meshes: per variant, per level of detail.
-    pub pine: Vec<Vec<TreeMeshes>>,
+    /// Broadleaf meshes, per variant.
+    pub broadleaf: Vec<TreeMeshes>,
+    /// Pine meshes, per variant.
+    pub pine: Vec<TreeMeshes>,
     /// Rock variants.
     pub rock: Vec<Model>,
     /// The beach's pebbles and the path's stones, scattered on the terrain's layers
@@ -318,12 +320,12 @@ impl Models {
     /// Every handle, from the game's `assets/`.
     pub fn load(gfx: &Gfx) -> Models {
         let assets = gfx.assets();
-        let tree = |pine: bool, variant: u32| -> Vec<TreeMeshes> {
-            TreeLod::ALL
-                .iter()
-                .map(|lod| TreeMeshes { wood: assets.model(&tree_asset(pine, variant, *lod, false)), foliage: assets.model(&tree_asset(pine, variant, *lod, true)) })
-                .collect()
+        let leveled = |pine: bool, variant: u32, foliage: bool| -> Model {
+            let [near, middle, far] = TreeLod::ALL.map(|lod| assets.model(&tree_asset(pine, variant, lod, foliage)));
+            let [middle_metres, far_metres] = tree_level_metres();
+            near.with_levels(&[(middle, middle_metres), (far, far_metres)])
         };
+        let tree = |pine: bool, variant: u32| TreeMeshes { wood: leveled(pine, variant, false), foliage: leveled(pine, variant, true) };
         let rock: Vec<Model> = (0..3).map(|i| assets.model(&format!("rock-{i}.glb"))).collect();
         let surfaces = crate::draw::Surfaces::new();
         Models {
@@ -366,6 +368,10 @@ pub struct World {
     /// once, so the draw calls `frame.camera_cut()` there (the free camera starts where the camera
     /// was, so switching to it is no cut).
     pub cut_at: Option<u64>,
+    /// The eye whose levels the trees hold, when set: the motion rows' frozen-levels run draws each
+    /// tree with a level-of-detail bias that keeps the level the renderer chose for it from this
+    /// eye (`draw::frozen_bias`). None: the renderer chooses from the camera.
+    pub lod_eye: Option<Vec3>,
 }
 
 impl World {

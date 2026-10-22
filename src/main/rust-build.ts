@@ -115,6 +115,16 @@ import {
   reservedAssetName,
 } from "./rust-package-assets.ts";
 import { AssetLockState, readAssetLock } from "./asset-db.ts";
+import {
+  BAKED_ASSETS_FOLDER,
+  BakeSource,
+  type BakeRunReport,
+  bakeInputDigest,
+  bakeInSession,
+  placeCachedBakes,
+  type RustBakeOptions,
+  recordBakesInLock,
+} from "./rust-bake.ts";
 import type { AssetLockEntry } from "../shared/asset-db.ts";
 import { RUST_ENGINE_FOLDER, RustFlavour, RustNetFeature } from "./rust-manifest.ts";
 import { type GameTrust, ownBuildScripts, UNTRUSTED } from "./rust-trust.ts";
@@ -551,6 +561,12 @@ export interface RustBuildsOptions {
    * assets go out as delivered.
    */
   importAssets?: RustStageImport;
+  /**
+   * The bake step (NAV-14b, `rust-bake.ts`): every build places the profile cache's outputs for its
+   * input into `out/assets/baked/`, and a dev build that misses the cache bakes in a headless
+   * session of its admitted output. Absent: no bakes.
+   */
+  bakes?: RustBakeOptions;
   /** The clock progress, problems and receipts are stamped with (default: `Date.now`). */
   now?: () => number;
 }
@@ -693,6 +709,10 @@ interface Plan extends Pending {
   netFeature: RustNetFeature;
   /** The slug a networked export bakes in; null for every other build or when the binding gives none fit to bake. */
   gameSlug: string | null;
+  /** The stage's bake input digest (`bakeInputDigest`), before the import step; null when the lane bakes nothing. */
+  bakeInput: string | null;
+  /** What the bake step did; null until it placed or baked anything. */
+  bakes: BakeRunReport | null;
 }
 
 /** An export's debug files: how they are kept, and the toolchain's `llvm-objcopy` for a kind that strips. */
@@ -925,6 +945,8 @@ export class RustBuilds implements GameBuildLane {
         net: null,
         netFeature: rustNetFeatureOf(pending.purpose, pending.builder.triple),
         gameSlug: null,
+        bakeInput: null,
+        bakes: null,
       };
       return await this.#steps(plan, signal, lastGood);
     } catch (error) {
@@ -968,6 +990,8 @@ export class RustBuilds implements GameBuildLane {
       });
     }
     adoptStaged(plan, staged);
+    // Before the import step, which rewrites assets per destination: one input for every destination.
+    if (this.options.bakes) plan.bakeInput = await bakeInputDigest(stageDir(plan.bin), plan.lock.digest);
     plan.gameSlug = await this.#gameSlug(plan);
     const outside = staged.dependencies.filter(
       (name) => name !== FACADE_CRATE && !Object.hasOwn(RUST_CRATE_ALLOWLIST, name) && !plan.grant.names.includes(name),
@@ -1121,7 +1145,9 @@ export class RustBuilds implements GameBuildLane {
       if (signal.aborted) return this.#outcome(plan, BuildProblemCode.Cancelled, { lastGood, ran: true });
       return this.#outcome(plan, BuildProblemCode.CommandFailed, { ...web.refusal, lastGood, ran: true });
     }
-    const written = await writeOutput(plan, shipped, web ? path.join(plan.bin, WEB_DIR) : null, this.options.admit);
+    const bakeCache = this.options.bakes?.cache(plan.game.project) ?? null;
+    const webDir = web ? path.join(plan.bin, WEB_DIR) : null;
+    const written = await writeOutput(plan, shipped, webDir, this.options.admit, bakeCache);
     if (!written.ok && "packageRefused" in written) {
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
         lines: [written.packageRefused],
@@ -1140,7 +1166,7 @@ export class RustBuilds implements GameBuildLane {
         admission: { file, refusal, problem },
       });
     }
-    const { outputs } = written;
+    const outputs = await this.#bake(plan, written.outputs, bakeCache, signal);
     const receipt = this.#receipt(plan, compiler, outputs, web?.receipt ?? null, written.package);
     await atomicWriteText(`${plan.bin}${RECEIPT_SUFFIX}`, `${JSON.stringify(receipt, null, 2)}\n`);
     await this.#keepDebug(plan, inside, outputs);
@@ -1155,6 +1181,60 @@ export class RustBuilds implements GameBuildLane {
       ran: true,
       rust: { refusal: null, diagnostics: [], receipt },
     };
+  }
+
+  /**
+   * The bake step after admission (NAV-14b): a dev build the cache missed bakes in a headless
+   * session of its admitted `out/`, whose new files are admitted again and digested; the outputs
+   * are recorded in the game's lock for a build of the game folder. Answers the admitted files.
+   * A bake never fails the build: an output the admission refuses is removed again.
+   */
+  async #bake(
+    plan: Plan,
+    outputs: RustBuildReceipt["outputs"],
+    cache: string | null,
+    signal: AbortSignal,
+  ): Promise<RustBuildReceipt["outputs"]> {
+    const admitted = (await this.#bakeInSession(plan, cache, outputs, signal)) ? await this.#readmit(plan) : outputs;
+    const baked = plan.bakes?.baked ?? [];
+    if (plan.game.recordLock && plan.bakes && baked.length)
+      await recordBakesInLock(plan.source, baked, plan.bakes.input).catch(() => false);
+    return admitted;
+  }
+
+  /**
+   * A dev build's bakes in a headless session of its admitted `out/` (`outputs`, its digests), when
+   * the cache placed none and the destination has a session: true when the session wrote outputs
+   * into `out/`, which then needs admitting again.
+   */
+  async #bakeInSession(
+    plan: Plan,
+    cache: string | null,
+    outputs: RustBuildReceipt["outputs"],
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const open = this.options.bakes?.open;
+    const opens = open !== undefined && (this.options.bakes?.opensFor?.(plan.target) ?? true);
+    const dev = rustFlavourOf(plan.purpose, plan.target) === RustFlavour.Dev;
+    if (!opens || !dev || cache === null || plan.bakeInput === null || plan.bakes !== null) return false;
+    const out = `${plan.bin}${OUT_SUFFIX}`;
+    const run = { project: plan.game.project, target: plan.target, out, lock: plan.lock, outputs, signal };
+    const stage = stageDir(plan.bin);
+    plan.bakes = await bakeInSession({ out, stage, input: plan.bakeInput, cache, signal, open: () => open(run) });
+    return plan.bakes.source === BakeSource.Session && plan.bakes.baked.length > 0;
+  }
+
+  /** `out/` admitted again after the bake step wrote into it, and its digests recorded; a refusal removes the bakes. */
+  async #readmit(plan: Plan): Promise<RustBuildReceipt["outputs"]> {
+    const out = `${plan.bin}${OUT_SUFFIX}`;
+    const admitted = await this.options.admit?.(out, plan.target, { servesStudio: true });
+    if (admitted && !admitted.ok) {
+      await rm(path.join(out, ASSETS_DIR, BAKED_ASSETS_FOLDER), { recursive: true, force: true });
+      if (plan.bakes) plan.bakes = { ...plan.bakes, baked: [] };
+    }
+    const outputs = await digestTree(out);
+    await atomicWriteText(`${plan.bin}${ADMITTED_SUFFIX}`, `${JSON.stringify(outputs)}\n`);
+    return outputs;
   }
 
   /**
@@ -1897,6 +1977,7 @@ async function writeOutput(
   exe: string,
   web: string | null,
   admit: RustOutputAdmit | undefined,
+  bakeCache: string | null,
 ): Promise<WrittenOutput> {
   const out = `${plan.bin}${OUT_SUFFIX}`;
   const fresh = `${out}.new`;
@@ -1922,6 +2003,9 @@ async function writeOutput(
     await rm(fresh, { recursive: true, force: true });
     return { ok: false, packageRefused: overCeiling };
   }
+  // The cache's bakes for this input (NAV-14b), before the web map and the admission read the folder.
+  if (bakeCache !== null && plan.bakeInput !== null)
+    plan.bakes = await placeCachedBakes(fresh, bakeCache, plan.bakeInput);
   // A browser cannot list `assets/`: the page fetches by this map, and the module checks each file.
   if (web) await writeWebAssetMap(fresh);
   const servesStudio = rustFlavourOf(plan.purpose, plan.target) === RustFlavour.Dev;

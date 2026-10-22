@@ -15,17 +15,23 @@ workspace = true
 # genex-render renderer for captures and, on a Mac, Live's frames through genex-frames. An export
 # is built without it and never links genex-studio (the admission symbol scan proves that).
 [features]
-default = ["physics"]
+default = ["physics", "audio"]
 studio = ["dep:genex-studio", "dep:genex-frames"]
 # Rapier 3D, stepped once per tick (`Sim::physics`). A game with `[physics] enabled = false` in its
 # genex.toml is built without it: about a fifth of a web build's code (renderer pass 2, D11).
 # The area crates' Rapier parts (characters, ragdolls, collider nav input, streamed colliders)
 # follow it.
 physics = ["dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-stream/physics"]
+# Sounds and music (G6 AU-11): genex-audio's mixer, device output and decoders (kira, cpal and
+# symphonia). A game with `[audio] enabled = false` in its genex.toml is built without them:
+# `genex::audio` keeps its whole surface, every sound is missing (`audio-disabled`) and `ctx.audio`
+# plays nothing, so the game's code compiles unchanged.
+audio = ["genex-audio/mixer"]
 # Multiplayer (G6 MP-4a), chosen by the build for a game with `[net]` in its genex.toml: `net` links
 # the relay (exports and the web draft; a run Studio serves still uses the loopback room),
-# `net-loopback` the in-process room only (Live, dev, judge and device-launch builds). Neither:
-# `sim.net` compiles and stays offline (`net-disabled`).
+# `net-loopback` the in-process room only (Live, dev, judge and device-launch builds). Both (only a
+# workspace's merged features): the loopback room. Neither: `sim.net` compiles and stays offline
+# (`net-disabled`).
 net = ["genex-net/relay"]
 net-loopback = ["genex-net/loopback"]
 
@@ -54,8 +60,8 @@ genex-hud = { workspace = true }
 # Input actions (G6 input): action maps, bindings files, touch controls, the journal; `panel` for
 # the Controls panel and the prompt glyphs (egui, already the HUD's).
 genex-input = { workspace = true, features = ["panel"] }
-# Sounds, music and spatial audio (G6 audio): the logical Director, the deviceless kira mixer, the
-# symphonia decoders and the device queue a shell's output drains.
+# Sounds, music and spatial audio (G6 audio): the logical Director and the device queue a shell's
+# output drains; the deviceless kira mixer and the symphonia decoders with the `audio` feature.
 genex-audio = { workspace = true }
 # Save slots (G6 saves): the envelope, migrations, the slot index, autosave and the slot driver.
 genex-save = { workspace = true }

@@ -79,11 +79,14 @@ const JOURNAL_BYTES: usize = NET_JOURNAL_BYTES_PHONE;
 const JOURNAL_BYTES: usize = NET_JOURNAL_BYTES_DESKTOP;
 
 /// The backend this build links when nothing overrides it: the relay with `net` (the loopback
-/// room in a run Studio serves), the loopback room with `net-loopback`, else off.
+/// room in a run Studio serves), the loopback room with `net-loopback`, else off. A build that
+/// links both plays in the loopback room: the product picks one feature per build, so both means
+/// cargo merged a workspace's features (the net-tag example's tests beside net-driver's relay),
+/// and a dev build must never reach the relay.
 pub(crate) fn build_mode(studio_run: bool) -> NetMode {
     let relay = cfg!(feature = "net");
     let loopback = cfg!(feature = "net-loopback");
-    if relay && !studio_run {
+    if relay && !loopback && !studio_run {
         return NetMode::Relay;
     }
     if relay || loopback {
@@ -347,6 +350,7 @@ mod tests {
         assert_ne!(build_mode(true), NetMode::Relay);
         let linked = cfg!(feature = "net") || cfg!(feature = "net-loopback");
         assert_eq!(build_mode(true), if linked { NetMode::Loopback } else { NetMode::Off });
-        assert_eq!(build_mode(false) == NetMode::Relay, cfg!(feature = "net"));
+        let relay_only = cfg!(feature = "net") && !cfg!(feature = "net-loopback");
+        assert_eq!(build_mode(false) == NetMode::Relay, relay_only, "a linked loopback room wins over the relay");
     }
 }

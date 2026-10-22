@@ -112,7 +112,7 @@ pub use frame::{
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use particles::{PARTICLES_MAX, ParticleFlipbook, Particles, ParticlesError, ParticlesErrorCode};
-pub use group::{GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
+pub use group::{Far, GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
 pub use terrain::{GRASS_DENSITY_MAX, GRASS_HEIGHT_MAX, Grass, Scatter, TERRAIN_LAYER_MAX, TERRAIN_SAMPLES_MAX, Terrain, TerrainError, TerrainErrorCode, TerrainLayer, TerrainTexel};
 /// The look a terrain's layers share (macro variation, wetness, the height blend's depth).
 pub use genex_render::terrain::TerrainLook;
@@ -125,7 +125,7 @@ pub use gfx::{
 };
 /// A model's levels of detail (game systems LOD-07): `Model::with_levels`, `Model::with_lod_bias`,
 /// `Assets::compound` and their refusals (`state().__render.lodRefused`).
-pub use lod::{LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
+pub use lod::{Impostor, ImpostorLayout, LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
 /// Why `gfx.character` refused (`error.code.wire()`, `error.detail`) and the skeleton a
 /// [`CharacterAsset`] describes, so a game names them without naming genex-anim.
 pub use genex_anim::skeleton::Skeleton;
@@ -133,6 +133,8 @@ pub use genex_anim::{AnimationError, AnimationErrorCode};
 /// The animator a world holds and how `frame.character_with` draws it (the rest of the surface is
 /// in [`animation`]).
 pub use animation::{Animator, CharacterDraw};
+/// Rigid GLB node clips (AN-27): `gfx.node_clips`, the animator a world holds, `frame.model_posed`.
+pub use node_anim::{NodeAnimator, NodeClips};
 /// The character controller (genex-anim, AN-19): `Character::spawn` / `drive` through
 /// `sim.physics`, `Character::on_ground` / `drive_on` over a height function in any build.
 pub use character::{
@@ -194,6 +196,9 @@ pub use glam;
 #[cfg(feature = "physics")]
 pub use rapier3d;
 pub use serde_json::{Value, json};
+/// serde, for a world `game.save_world()` keeps: a game crate cannot name serde itself, so it
+/// derives through this one with `#[serde(crate = "genex::serde")]` (`docs/api/saves.md`).
+pub use serde;
 
 /// The physics world every [`Sim`] carries: Rapier 3D with `enhanced-determinism`, stepped by the
 /// runtime once per tick after the update hooks.
@@ -224,6 +229,8 @@ pub mod prelude {
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
+    // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.
+    pub use serde::{Deserialize, Serialize};
 }
 
 /// Start the runtime with this game. Required, once, at the end of the game's `main`.

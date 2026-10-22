@@ -24,6 +24,8 @@
 
 pub mod audio_session;
 pub mod game_controller;
+/// MetricKit crash diagnostics as crash records (game systems CRASH-4).
+pub mod metric_kit;
 pub mod mobile;
 pub mod refusal_layer;
 pub mod thermal_state;
@@ -108,6 +110,12 @@ pub fn run<W: Default + 'static>(name: &'static str, game: Game<W>, demo: &str, 
         log::set_max_level(log::LevelFilter::Info);
     }
     let records = documents_dir().map(|dir| Records::new(&dir, PLATFORM));
+    // Panics leave `genex-self-test/crash-<n>.json` from here on, and MetricKit's reports of a
+    // native fault or a memory kill the hook never saw are recorded as they come (CRASH-4).
+    if let Some(records) = &records {
+        mobile::crash::install(records.clone());
+        metric_kit::subscribe(records.clone());
+    }
     // The sim reads the compiled table, then the bundle's `assets/` beside the executable (game
     // systems STR-15), from its first reset on, as the presenter draws from them.
     let runtime = match Runtime::with_assets(game, Box::new(AssetFiles::for_process(assets))) {

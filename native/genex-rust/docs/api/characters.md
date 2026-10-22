@@ -37,7 +37,8 @@ let step = world.hero.drive(physics, CharacterMotion::Velocity { wish, jump }, c
 ## Ragdolls (physics)
 
 `Ragdoll::build(&mut sim.physics, &animator, model, &RagdollProfile::humanoid().with_mass(70.0))`
-makes 11 bodies and 10 joints at the animator's pose, all animated (kinematic).
+makes 11 bodies and 10 joints at the animator's pose (`docs/api/animation.md`), all animated
+(kinematic).
 
 - Each tick after the animator, `ragdoll.follow(physics, &animator, model)`.
 - `ragdoll.go_limp(physics, RagdollPart::Whole, velocity)` (or

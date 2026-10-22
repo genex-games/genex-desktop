@@ -118,6 +118,8 @@ const FACADE = JSON.parse(
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
   audio: { calls: string[]; refusals: string[] };
+  input: { calls: string[]; refusals: string[] };
+  lod: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
   probes: { calls: string[] };
   decals: { calls: string[] };
@@ -170,6 +172,7 @@ const RECIPE_SKETCH_CALLS = [
 /** The topic pages of the game systems (stage 2), each of which the template guide routes an agent to. */
 const GAME_SYSTEMS_PAGES = [
   "ctx",
+  "input",
   "ui",
   "settings",
   "streaming",
@@ -314,6 +317,7 @@ const PINNED_CALL_PAGES = [
   "assets",
   "audio",
   "characters",
+  "input",
   "navigation",
   "net",
   "profiling",
@@ -361,6 +365,7 @@ const NOT_GAME_SYSTEMS_CALLS = new Set([
   "unwrap_or",
   "on_draw",
   "on_reset",
+  "on_ui",
   "on_update",
   "painter",
   "settings_button",
@@ -576,6 +581,23 @@ describe("GENEX_API.md is the facade's reference", () => {
     assert.ok(names.size >= 6);
     for (const name of names) assert.ok(rules.includes(name), `the determinism rules do not name ${name}`);
     assert.ok(rules.includes("f32"), "the transcendental rule names f32's methods");
+  });
+});
+
+describe("the Input page (IN-15)", () => {
+  it("teaches every input call and refusal on the Input page the index lists (IN-15)", () => {
+    const page = read(pageOf("Input"));
+    for (const call of FACADE.input.calls) assert.ok(page.includes(`${call}(`), `input.md teaches ${call}(..)`);
+    for (const refusal of FACADE.input.refusals)
+      assert.ok(page.includes(`\`${refusal}\``), `input.md names ${refusal}`);
+    assert.ok(read(pageOf("Ctx")).includes("docs/api/input.md"), "the Ctx page links the Input page");
+  });
+
+  it("states on the Input page that a prompt is display text and what a replay promises (IN-15)", () => {
+    const page = read(pageOf("Input"));
+    assert.match(page, /display text/, "a glyph's label is display text");
+    assert.match(page, /never (?:keep|store|copy)[^.]*(?:label|glyph)[^.]*world/i, "a label never goes into the world");
+    assert.match(page, /\(seed, bindings digest, `TickInput` rows\)/, "the replay promise names its three inputs");
   });
 });
 
@@ -945,5 +967,199 @@ describe("the seed's asset recipes (C-24)", () => {
     const cc0 = seedRecipe("rust.cc0-assets");
     for (const word of ["cc0__search", "cc0__fetch", "missingModels", "gfx.assets().model"])
       assert.ok(`${cc0.intent}\n${cc0.sketch}`.includes(word), `rust.cc0-assets names ${word}`);
+  });
+});
+
+/**
+ * The seed's game-systems recipes (EP-R1): one Rust technique per area, and the pinned calls its
+ * sketch makes, each of which the reference teaches.
+ */
+const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
+  "rust.animated-characters": [
+    "gfx.character",
+    ".clip",
+    "Animator::simple",
+    ".play",
+    ".crossfade",
+    ".play_once",
+    ".update",
+    "Character::spawn",
+    ".drive",
+    "frame.character",
+    ".transform",
+    ".feet",
+  ],
+  "rust.nav-agents": [
+    "game.navigation",
+    ".nav_config",
+    "NavInput::new",
+    ".with_static_colliders",
+    "NavMesh::bake",
+    "nav.add_mesh",
+    "NavAgent::new",
+    "nav.add_agent",
+    "nav.move_to",
+    "nav.update",
+    "nav.desired_velocity",
+    "nav.set_position",
+    "nav.status",
+    "frame.nav_debug",
+    "NavDebug::mesh",
+    ".with_paths",
+    "nav.probe",
+  ],
+  "rust.streamed-world": [
+    "TerrainTiles::procedural",
+    "game.streaming",
+    "Streaming::grid",
+    ".sim_radius",
+    ".view_radius",
+    "game.cell_content",
+    "CellBuild::default",
+    ".thing",
+    "inputs.scatter",
+    ".group",
+    ".colliders_content",
+    "game.stream_colliders",
+    "sim.stream.set_anchor",
+    "sim.stream.entered",
+    "cell.cell",
+    "sim.stream.left",
+  ],
+  "rust.lod-impostors": [
+    "gfx.assets().compound",
+    ".with_impostor",
+    "Impostor::hemi",
+    ".with_levels",
+    ".with_lod_bias",
+    ".lod_refusal",
+    "game.impostor_bake",
+  ],
+  "rust.input-controls": [
+    "game.input",
+    "ActionMap::new",
+    ".context",
+    "Context::new",
+    ".button",
+    ".axis2",
+    ".when",
+    "game.touch_controls",
+    "TouchControls::new",
+    ".stick",
+    ".show",
+    "ctx.actions.axis2",
+    "ctx.actions.fired",
+    "ctx.actions.glyph",
+    "ctx.actions.enable",
+    "ctx.actions.disable",
+    "controls_panel",
+  ],
+  "rust.menus-saves": [
+    "game.ui",
+    "UiConfig::new",
+    ".locales",
+    "game.saves",
+    "SaveConfig::schema",
+    ".autosave",
+    "game.save_world",
+    "ctx.slots",
+    "slots.events",
+    "slots.save",
+    "slots.load",
+    "Menu::new",
+    ".item",
+    ".back",
+    "Toasts::push",
+    "Toasts::show",
+    "ui.ctx",
+  ],
+};
+
+/** The seed skill a Rust game's lead reads before reaching past the facade (UIS-19 adds its menu and save lines). */
+const LADDER_SKILL = path.join(REPO, "src", "harness-seed", "skills", "rust-extension-ladder.md");
+
+/**
+ * Names the game-systems sketches call that the reference shows no call of: Rust's own methods
+ * (`clone`, `count`, `is_err`, `is_none_or`) and `genex::math`'s, which the determinism rules name
+ * without calling (`round`, `sin`, `cos`).
+ */
+const SKETCH_STD_CALLS = new Set(["clone", "count", "is_err", "is_none_or", "round", "sin", "cos"]);
+
+describe("the seed's game-systems recipes (EP-R1)", () => {
+  it("ship as Rust techniques the library keeps whole", () => {
+    for (const id of Object.keys(GAME_SYSTEMS_RECIPES)) {
+      assert.ok(existsSync(path.join(RECIPES, `${id}.json`)), `${id} is in the seed`);
+      const recipe = seedRecipe(id);
+      assert.equal(recipe.id, id);
+      assert.equal(recipe.runtime, GameStack.RustWgpu, `${id} is a Rust recipe`);
+      assert.deepEqual([recipe.pack, recipe.kind, recipe.origin], ["rust", "technique", "seed"], id);
+      assert.ok(recipe.note.length <= RECIPE_NOTE_CHARS_MAX, `${id}'s note is ${recipe.note.length} characters`);
+      assert.ok(recipe.intent.length <= RECIPE_INTENT_CHARS_MAX, `${id}'s intent is ${recipe.intent.length}`);
+      assert.ok(
+        recipe.evidence.some(({ source }) => /GENEX_API\.md \(/.test(source)),
+        `${id} cites the reference`,
+      );
+    }
+  });
+
+  it("sketch each area's pinned calls, every one of which the reference teaches", () => {
+    const pinned = new Set(pinnedCallGroups().flatMap(([, calls]) => calls));
+    const text = api();
+    for (const [id, calls] of Object.entries(GAME_SYSTEMS_RECIPES)) {
+      const { sketch } = seedRecipe(id);
+      for (const call of calls) {
+        assert.ok(pinned.has(call), `${id}: ${call} is a pinned facade call`);
+        assert.ok(text.includes(`${call}(`), `${id}: the reference does not teach ${call}(..)`);
+        assert.ok(sketch.includes(`${call}(`), `${id}'s sketch does not call ${call}(..)`);
+      }
+    }
+  });
+
+  it("call nothing in their sketches the reference does not name", () => {
+    // A name the reference calls (`.x(`, `T::x(`) or writes as a builder step in prose (`` `with_speed(..)` ``).
+    const builderSteps = ticked(api()).flatMap((token) => /^([a-z_][a-z0-9_]*)\(/.exec(token)?.[1] ?? []);
+    const taught = new Set([...calledNames(api()), ...builderSteps]);
+    for (const id of Object.keys(GAME_SYSTEMS_RECIPES)) {
+      const sketch = seedRecipe(id).sketch;
+      const called = [...sketch.matchAll(/(?:\.|::)([a-z_][a-z0-9_]*)\s*\(/g)].map((match) => match[1] ?? "");
+      const unknown = [...new Set(called)].filter(
+        (name) => !taught.has(name) && !NOT_GAME_SYSTEMS_CALLS.has(name) && !SKETCH_STD_CALLS.has(name),
+      );
+      assert.deepEqual(unknown, [], `${id} calls names the reference never calls`);
+    }
+  });
+
+  it("teach a menu walked by key, a slot saved and loaded, and the load's checksumMatch (UIS-19)", () => {
+    const { intent } = seedRecipe("rust.menus-saves");
+    for (const word of ["state().hud.widgets", "ctx.slots()", "lastLoad.checksumMatch"])
+      assert.ok(intent.includes(word), `rust.menus-saves names ${word}`);
+    const skill = readFileSync(LADDER_SKILL, "utf8");
+    for (const word of ["state().hud.widgets", "ctx.slots()", "lastLoad.checksumMatch", "docs/api/saves.md"])
+      assert.ok(skill.includes(word), `the ladder skill names ${word}`);
+  });
+
+  it("name every LOD refusal and the registration a streamed model's impostor needs (LOD-23)", () => {
+    const { intent } = seedRecipe("rust.lod-impostors");
+    for (const refusal of FACADE.lod.refusals)
+      assert.ok(intent.includes(refusal), `rust.lod-impostors names ${refusal}`);
+    assert.ok(intent.includes("game.impostor_bake("), "rust.lod-impostors names game.impostor_bake");
+    assert.ok(seedRecipe("rust.streamed-world").intent.includes("game.impostor_bake("), "the streamed world names it");
+    const rules = section(read("CLAUDE.md"), "Game systems");
+    assert.ok(rules.includes("game.impostor_bake("), "the guide's far things name game.impostor_bake");
+  });
+
+  it("sketch genex.toml rows the build accepts", () => {
+    const toml = seedRecipe("rust.lod-impostors").sketch.split(RUST_SKETCH_FILE)[0] ?? "";
+    assert.ok(toml.includes("lod_threshold_px") && toml.includes("far_density"), "the per-class LOD keys");
+    const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${toml.replace(/^#.*\n/, "")}`);
+    assert.ok(parsed.ok, JSON.stringify(parsed));
+  });
+
+  it("are what the template guide's Game systems rules point at", () => {
+    const rules = section(read("CLAUDE.md"), "Game systems");
+    assert.ok(rules.includes("docs/api/drawing.md"), "far things route to the Drawing page");
+    assert.ok(rules.includes(".with_impostor("), "the guide names impostors");
+    assert.match(rules, /by (?:its|their) feet/, "the guide says a character stands by its feet");
+    assert.ok(rules.includes("docs/api/input.md"), "input routes to the Input page");
   });
 });

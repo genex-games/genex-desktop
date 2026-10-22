@@ -3,6 +3,9 @@
 //! ops applied and the ticks run (in one process or across two), a reset equals a fresh mixer bit
 //! for bit, and a hostile op is dropped with no side effect.
 
+// These rows drive the mixer, device output or decoders (the `mixer` feature, AU-11).
+#![cfg(feature = "mixer")]
+
 use genex_audio::{
     AudioLevel, AudioSettings, Bus, MIXER_RATE_HZ, Mixer, MixerOp, Music, MusicOpts, MusicTrack, PhysicalSlot, PoolClass,
     ReverbPreset, SEND_OFF_DB, Sound, SoundId,

@@ -77,6 +77,8 @@ pub struct Game<W> {
     pub(crate) save_sections: crate::saves::Sections<W>,
     /// `game.nav_bake` registrations, in registration order (NAV-14).
     pub(crate) nav_bakes: crate::nav_bake::NavBakes,
+    /// `game.impostor_bake` registrations, in registration order (LOD-23).
+    pub(crate) impostor_bakes: crate::lod::ImpostorBakes,
 }
 
 /// The handle `game.camera(..)` returns; `.camera_override()` lets this camera replace an
@@ -139,6 +141,7 @@ impl<W: Default + 'static> Game<W> {
             g6: crate::g6::G6Setup::default(),
             save_sections: crate::saves::Sections::default(),
             nav_bakes: crate::nav_bake::NavBakes::default(),
+            impostor_bakes: crate::lod::ImpostorBakes::default(),
         }
     }
 
