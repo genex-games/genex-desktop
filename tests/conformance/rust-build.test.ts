@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -690,10 +690,12 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
-  it("builds Live with the engine and its dependencies optimized and the game crate not (K6); an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
+  it("builds Live with the engine and its dependencies optimized and the game crate not (K6), line tables only (R-7); an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
     const depsOptimized = 'profile.dev.package."*".opt-level=1';
+    // Flipped from [depsOptimized] (R-7): Live keeps line tables only, what a backtrace and the symbolicator read.
+    const lineTablesOnly = 'profile.dev.debug="line-tables-only"';
     for (const [purpose, expected] of [
-      [CppBuildPurpose.Live, [depsOptimized]],
+      [CppBuildPurpose.Live, [depsOptimized, lineTablesOnly]],
       [CppBuildPurpose.Export, EXPORT_DEBUG_SETTINGS[DebugFileKind.Dsym]],
     ] as const) {
       const parent = await realpath(await tmpDir("rust-dev-profile-"));
@@ -974,5 +976,73 @@ describe("the lane's sweep keeps the build folders of every lock a game recorded
     const { root, project } = await builtOnThreeLocks();
     assert.equal(await sweeper(root).sweep(), 2);
     assert.deepEqual(await left(project), [`macos-${CURRENT.slice(0, 12)}`]);
+  });
+});
+
+describe("the Rust lane starts a new build folder from the store's prewarm (R-7)", { skip: SKIP_ON_WINDOWS }, () => {
+  it("starts a build folder's first build from the store's prewarmed target folder, once (R-7)", async () => {
+    const parent = await realpath(await tmpDir("rust-warm-target-"));
+    const open = openSandboxes();
+    const calls: { lock: string; target: BuildTarget; to: string }[] = [];
+    const warmTarget: RustBuildsOptions["warmTarget"] = async (lock, target, to) => {
+      calls.push({ lock: lock.digest, target, to });
+      await mkdir(path.join(to, "debug"), { recursive: true });
+      await writeFile(path.join(to, "debug", "warm"), "prewarmed");
+      return true;
+    };
+    const onBuild = 'cat "$CARGO_TARGET_DIR/debug/warm" > "$CARGO_TARGET_DIR/../saw-warm" || true';
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild }, warmTarget });
+    const game = gameOf(await rustGame(parent));
+    const first = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(first.ok, true, JSON.stringify(first.problem));
+    const [spec] = open.specs;
+    assert.ok(spec);
+    assert.deepEqual(calls, [{ lock: LOCK.digest, target: BuildTarget.Mac, to: path.join(spec.bin, "target") }]);
+    assert.equal(await readFile(path.join(spec.bin, "saw-warm"), "utf8"), "prewarmed", "cargo ran over the clone");
+    await writeFile(path.join(game.dir, "src", "main.rs"), "fn main() { let _ = 1; }\n");
+    const second = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(second.ok, true, JSON.stringify(second.problem));
+    assert.equal(calls.length, 1, "a folder that has its own target keeps it");
+  });
+
+  it("builds from an empty target folder of its own when the prewarm clone fails or plants a link, touching nothing outside (R-7)", async () => {
+    const outside = await realpath(await tmpDir("rust-warm-outside-"));
+    await writeFile(path.join(outside, "keep"), "kept");
+    const hostile: [string, NonNullable<RustBuildsOptions["warmTarget"]>][] = [
+      ["refused", async () => false],
+      [
+        "throws",
+        async () => {
+          throw new Error("clone failed");
+        },
+      ],
+      [
+        "plants a link",
+        async (_lock, _target, to) => {
+          await symlink(outside, to);
+          return true;
+        },
+      ],
+      [
+        "plants a file",
+        async (_lock, _target, to) => {
+          await writeFile(to, "not a folder");
+          return true;
+        },
+      ],
+    ];
+    for (const [label, warmTarget] of hostile) {
+      const parent = await realpath(await tmpDir("rust-warm-hostile-"));
+      const open = openSandboxes();
+      const { builds } = await lane(parent, open.sandbox, { warmTarget });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+      assert.equal(outcome.ok, true, `${label}: ${JSON.stringify(outcome.problem)}`);
+      const [spec] = open.specs;
+      assert.ok(spec);
+      const target = await lstat(path.join(spec.bin, "target"));
+      assert.equal(target.isDirectory() && !target.isSymbolicLink(), true, `${label}: a real folder of its own`);
+      assert.deepEqual(await readdir(outside), ["keep"], `${label}: nothing written outside`);
+      assert.equal(await readFile(path.join(outside, "keep"), "utf8"), "kept", label);
+    }
   });
 });

@@ -62,6 +62,18 @@ again): with less free space it adds nothing and logs `failed` with `disk-space`
 same profile again with `--reuse` instead of making a new one per round. Fixture profiles
 keep their stub store; release builds and the normal profile never seed.
 
+Live and judging builds keep line tables only (`--config profile.dev.debug="line-tables-only"`,
+`RUST_LIVE_DEBUG_SETTING` in `rust-build.ts`): backtraces and the crash symbolicator still name
+files and lines, and the dependency builds are a fraction of full debug info. A game's build
+folder starts its first build from a copy-on-write clone of the profile's prewarm for that lock
+and destination (`warmTarget`, `cloneRustTarget`), so it compiles the game's crates, not the
+engine, and on APFS the clone costs no disk until cargo rewrites a file. Measure a live profile
+by allocated blocks (`df` before and after, not `du`, which counts every clone in full).
+
+A developer checkout needs no flag for the same: the engine workspace's own `[profile.dev]`
+(`native/genex-rust/Cargo.toml`) already keeps line tables only with incremental folders off
+(owner call G11), so `rust-env.ts -- cargo …` builds lean by default.
+
 A development profile opens the Rust gate (`developmentStacksOpen`), so Create game offers Three.js
 and Rust · wgpu on an Apple-silicon Mac or Linux x64 once the Rust toolchain is installed or
 reachable, starting on Rust; elsewhere it makes a browser game. To prove the rollback, set
