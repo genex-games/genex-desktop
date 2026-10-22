@@ -77,7 +77,7 @@ genex-hud = { path = "crates/genex-hud", version = "0.1.0" }
 genex-frames = { path = "crates/genex-frames", version = "0.1.0" }
 genex-gpu-memory = { path = "crates/genex-gpu-memory", version = "0.1.0" }
 genex-assets = { path = "crates/genex-assets", version = "0.1.0" }
-genex-audio = { path = "crates/genex-audio", version = "0.1.0" }
+genex-audio = { path = "crates/genex-audio", version = "0.1.0", default-features = false }
 # Each without Rapier: the facade's `physics` feature turns theirs on.
 genex-anim = { path = "crates/genex-anim", version = "0.1.0" }
 genex-nav = { path = "crates/genex-nav", version = "0.1.0" }

@@ -20,8 +20,10 @@ workspace = true
 # A web game links Rapier unless its genex.toml turns physics off (the host writes the facade line
 # without default features then).
 [features]
-default = ["physics"]
+default = ["physics", "audio"]
 physics = ["genex/physics"]
+# A web game links the mixer and decoders unless its genex.toml turns audio off (AU-11).
+audio = ["genex/audio"]
 # Multiplayer (G6 MP-5b): the host writes a `[net]` game's web line with one of these, as it writes
 # the native facade's: the in-process room for Live, the relay (the page's JS bridge) for an export.
 net = ["genex/net"]

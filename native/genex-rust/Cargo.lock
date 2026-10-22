@@ -639,6 +639,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "crash-lab"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-crash",
+ "genex-platform-web",
+ "genex-render",
+ "wasm-bindgen",
+ "wgpu",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

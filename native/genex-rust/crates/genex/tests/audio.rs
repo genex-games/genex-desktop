@@ -1,6 +1,7 @@
 //! The facade's audio (AU-7): `gfx.sound` at reset, `ctx.audio` from the hooks, `game.audio`,
 //! the runtime's tick wiring and the host glue the shells and the studio call. Audio is decided
 //! logically (genex-audio's Director) and never enters the checksum; `audioLevel` reads the mix.
+#![cfg(feature = "audio")]
 
 use genex::audio::{AudioSetup, AudioSettings, Bus, PlayOpts, PoolClass, Sound, SoundRefusal};
 use genex::prelude::*;

@@ -1,9 +1,12 @@
 //! The device side: an [`AudioOutput`] drains a [`SinkQueue`] on the destination's audio device
 //! (the cpal [`crate::DeviceOutput`] on all six destinations), with a prefill and a capacity per
 //! pool class and typed faults. A [`NullOutput`] drains it the same way with no device, for tests
-//! and headless checks: `AudioOutput::open` is never called under `cargo test`.
+//! and headless checks: `AudioOutput::open` is never called under `cargo test`. Without the
+//! `mixer` feature only the faults and the queue sizes are here (there is no device to open).
 
+#[cfg(feature = "mixer")]
 use crate::device::{DeviceHealth, DeviceOutput, Resampler};
+#[cfg(feature = "mixer")]
 use crate::sink::SinkQueue;
 use crate::vocab::{PoolClass, wire_vocabulary};
 
@@ -45,6 +48,7 @@ pub const fn capacity_ticks(class: PoolClass) -> usize {
     }
 }
 
+#[cfg(feature = "mixer")]
 /// The fault a cpal stream error is, or `None` when the stream goes on (a reroute to the new
 /// default device, a refused real-time priority).
 pub fn stream_fault(kind: cpal::ErrorKind) -> Option<DeviceFault> {
@@ -55,12 +59,14 @@ pub fn stream_fault(kind: cpal::ErrorKind) -> Option<DeviceFault> {
     }
 }
 
+#[cfg(feature = "mixer")]
 /// An open audio output; dropping it stops the sound.
 pub struct AudioOutput {
     device: DeviceOutput,
     queue: SinkQueue,
 }
 
+#[cfg(feature = "mixer")]
 impl AudioOutput {
     /// Open the destination's default output and play `queue` on it once `class`'s prefill is
     /// queued. Opened only for a run a person sees; never called by tests.
@@ -91,6 +97,7 @@ impl AudioOutput {
     }
 }
 
+#[cfg(feature = "mixer")]
 /// An output with no device: [`NullOutput::pull`] is one device callback, drained and resampled
 /// exactly as [`AudioOutput`]'s callback is.
 #[derive(Debug)]
@@ -100,6 +107,7 @@ pub struct NullOutput {
     channels: usize,
 }
 
+#[cfg(feature = "mixer")]
 impl NullOutput {
     /// A `channels`-channel device at `rate` Hz draining `queue` once `class`'s prefill is queued.
     pub fn open(queue: SinkQueue, class: PoolClass, rate: u32, channels: usize) -> NullOutput {
