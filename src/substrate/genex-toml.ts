@@ -61,6 +61,9 @@
  * [physics]                 # optional: a game without physics leaves Rapier out of its build
  * enabled = false           # default true
  *
+ * [audio]                   # optional: a game without sound leaves the mixer and decoders out of its build
+ * enabled = false           # default true
+ *
  * [[texture]]               # optional: a loose texture's usage, where no material slot tells it
  * path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP (`isTextureRowPath`)
  * usage = "data"            # color | data | normal (`asset-import/texture-usage.ts`)
@@ -483,6 +486,11 @@ export interface GenexToml {
    * fifth of a web build's code; absent or true keeps it (renderer pass 2, owner decision D11).
    */
   physics?: boolean;
+  /**
+   * `[audio] enabled`: false links the facade without its mixer and decoders (its `audio` feature:
+   * kira, cpal and symphonia); every sound is missing `audio-disabled`. Absent or true keeps it (G6 AU-11).
+   */
+  audio?: boolean;
   /** `[[texture]]` rows in file order: loose textures' usages (C-10); absent from a manifest built by hand. */
   textures?: readonly TextureRow[];
   /** `[[asset_group]]` rows in file order (C-30); absent from a manifest built by hand. */
@@ -678,6 +686,7 @@ const TOP_KEYS = [
   "render",
   "web",
   "physics",
+  "audio",
   "texture",
   "asset_group",
   "assets",
@@ -704,8 +713,9 @@ const GPU_KEYS = ["native_features"] as const;
 /** `[web]`'s keys (genex's `WebSection`). */
 const WebKey = { WasmBudgetMb: "wasm_budget_mb" } as const;
 const WEB_KEYS: readonly string[] = Object.values(WebKey);
-const PhysicsKey = { Enabled: "enabled" } as const;
-const PHYSICS_KEYS: readonly string[] = Object.values(PhysicsKey);
+/** The one key of a build switch, `[physics]` or `[audio]` (genex's `PhysicsSection`, `AudioSection`). */
+const SwitchKey = { Enabled: "enabled" } as const;
+const SWITCH_KEYS: readonly string[] = Object.values(SwitchKey);
 /** The `[net]` table's name, and its keys (genex's `NetSection`). */
 const NET_TABLE = "net";
 const NetKey = { Enabled: "enabled", Matchmaking: "matchmaking" } as const;
@@ -818,7 +828,8 @@ function shapeManifest(document: TomlTable): Shaped {
       engine: engineRow(document.engine),
       render: null,
       wasmBudgetMb: webBudget(document.web),
-      physics: physicsEnabled(document.physics),
+      physics: switchEnabled(document.physics, "physics"),
+      audio: switchEnabled(document.audio, "audio"),
       assets: assetsTable(document.assets),
     };
     return { ok: true, manifest, featureNames, render, rawTextures, assetGroups };
@@ -1094,14 +1105,14 @@ function assetsTable(value: TomlValue | undefined): AssetsToml | null {
   };
 }
 
-/** `[physics] enabled`, true when the file has no table or the table no key. */
-function physicsEnabled(value: TomlValue | undefined): boolean {
+/** A build switch's `enabled` (`[physics]`, `[audio]`), true when the file has no table or the table no key. */
+function switchEnabled(value: TomlValue | undefined, name: string): boolean {
   if (value === undefined) return true;
-  const physics = table(value, "[physics]");
-  onlyKeys(physics, PHYSICS_KEYS, "[physics]");
-  const enabled = physics[PhysicsKey.Enabled];
+  const section = table(value, `[${name}]`);
+  onlyKeys(section, SWITCH_KEYS, `[${name}]`);
+  const enabled = section[SwitchKey.Enabled];
   if (enabled === undefined) return true;
-  if (typeof enabled !== "boolean") throw new ShapeError(`physics.${PhysicsKey.Enabled} must be true or false`);
+  if (typeof enabled !== "boolean") throw new ShapeError(`${name}.${SwitchKey.Enabled} must be true or false`);
   return enabled;
 }
 

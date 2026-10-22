@@ -759,6 +759,18 @@ node). `select_lod` picks the coarsest level whose error projects to at most a p
 compared as `error * pixels_per_unit <= threshold_px * distance` so `gx_lod_select`
 (`shaders/geometry/lod_select.wgsl`) picks the same level on every GPU.
 
+A GLB without `genex_lods` (it skipped the import step) gets its chain at load:
+`mesh_lod_runtime::add_runtime_chains` (game systems LOD-21), called by the facade's model load
+(`genex::present`) and again by a device-loss replay. It uses the importer's parameters (half
+the triangles a level, at most 0.1 of the mesh's extent, the chain's length the largest part's,
+levels stop when one keeps more than 0.85 of the one before, vertices where parts meet locked,
+each error at least how far the part's vertices lie from the level) with Genex's port of
+meshoptimizer's simplifier, one run carried from level to level. All or nothing per model: a model
+with an imported or authored chain, under 512 triangles, over `RUNTIME_LOD_MAX_TRIANGLES`
+(100,000) or with geometry it cannot read is left whole (`RuntimeLodOutcome`). The result is a
+pure function of the GLB (no hashing, no threads, IEEE `sqrt` only), so every destination builds
+the same bits.
+
 Drawn: `MeshLibrary::add_part` keeps each level as a mesh of its own (the vertices it uses), with
 the part's bounding sphere. A frame plans a batch per level of a mesh drawn whole; each holds all
 of the mesh's instance rows (`GpuBatch::first_row`) in slots of its own in the visible list

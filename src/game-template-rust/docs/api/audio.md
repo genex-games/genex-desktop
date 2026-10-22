@@ -50,6 +50,10 @@ the ears (never an observer or debug camera). `PlayOpts::ui()` plays menu sounds
 The buses are `music`, `sfx`, `ui`, `voice` and `ambience`; the settings menu's Audio tab (`docs/api/settings.md`) sets the
 person's volume for each, outside the simulation.
 
+A play keeps at most 4 voices of one sound (`MAX_INSTANCES_DEFAULT`): another play of it steals the
+oldest. The play option `max_instances` sets the cap, and 0 removes it, as a ring of looping
+emitters of one sound needs.
+
 ## Setup
 
 `game.audio(AudioSetup { .. })` registers ducking rules, reverb zones present from the first tick
@@ -75,6 +79,7 @@ through `sound.refusal()`, a play through a `refused` event in `volatile.audio.e
 | `sound-missing` | The sound was missing or refused at reset. |
 | `memory-limit` | Decoded sounds would pass 48 MiB. |
 | `invalid-value` | A position, volume or pitch that is not finite: the command is dropped. |
+| `audio-disabled` | The game is built with `[audio] enabled = false`: every sound and piece of music is missing. |
 
 ## Determinism
 
@@ -83,6 +88,12 @@ logically: the same seed, input and ticks give the same `volatile.audio` on ever
 device class (48 rendered voices on desktop, 32 on the web, 24 on phones, 64 logical; the others
 are virtual and resume at the right offset). Rendered samples differ by target and are display
 only.
+
+`native/genex-rust/examples/audio-yard` plays every call on this page along a 20 s walk: footsteps
+and a gun burst capped by `max_instances`, dialogue ducking the music, a crossfade at a cave's
+reverb zone, a wall occluding a generator, a Doppler fly-by and UI clicks. Its rows pin one logical
+digest that native, x86_64 and wasm32 reach at all three pool sizes, and its captures equal those of
+the same game with every audio call left out.
 
 ## Checking sound
 
@@ -100,6 +111,15 @@ Check sound with the state and the meter, never by ear:
   `centroid`, over the last 2048 frames, before the mute. The page's answer also carries
   `available`: false only for a build made before the level probe or a level it could not read,
   and then it is never judged.
+
+## Building without audio
+
+A game that plays no sound sets `[audio] enabled = false` in `genex.toml`: it builds without the
+mixer and the decoders, the largest audio share of a web build. Its code compiles unchanged, but
+every `gfx.sound` and `gfx.music` handle is missing (`audio-disabled`), `ctx.audio.play` answers
+`Voice::NONE`, `playing` is false, no device opens, and `state().volatile.audio` is
+`{ "enabled": false, "issues": [...] }` once the game asked for a sound. Turn it back on before
+adding sound.
 
 ## Devices
 

@@ -687,7 +687,7 @@ SOFTWARE.
 ## Rust game systems ports
 
 The game systems crates (`native/genex-rust/crates/genex-anim`, `genex-audio`, `genex-input`, `genex-nav`, `genex-profile`, `genex-stream`,
-`genex-ui`, the web crash hook of `genex-platform-web` and the mesh arena and terrain tile atlas of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
+`genex-ui`, the web crash hook of `genex-platform-web` and the mesh arena and terrain tile atlas of `genex-render`, the runtime LOD simplifier of `genex-render`, Genex's own code, MIT) port this code or these rules. They ship inside every
 Rust game that links the crate, and in its ejected source. Each file credits its source in a
 comment; each Apache 2.0 port carries the upstream notice and lists Genex's changes (§4(b)).
 
@@ -713,6 +713,7 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-stream/src/residency.rs` (`Residency`, `ResidencyLimits`) | The residency policy: per-requester reference counts, an unload queue of unreferenced entries in release order, drained while resident bytes exceed a byte cap under a time limit, a cap on loads in flight, and `forbidHoles` (keep the coarser parent until every wanted child is resident) | cesium-native (https://github.com/CesiumGS/cesium-native), `Cesium3DTilesSelection/src/TilesetContentManager.cpp` (`unloadCachedTiles`, the tile reference counts and the unload list) and `Cesium3DTilesSelection/include/Cesium3DTilesSelection/TilesetOptions.h` (`maximumCachedBytes`, `maximumSimultaneousTileLoads`, `tileCacheUnloadTimeLimit`, `forbidHoles`) | CesiumGS, Inc. and Contributors | Apache 2.0 (see [Apache License 2.0](#apache-license-20); cesium-native ships no NOTICE file) |
 | `crates/genex-render/src/mesh_arena.rs` (`MeshArena::grow`, `move_to`) | Growing a full GPU buffer by remaking it twice as large and copying its live prefix buffer to buffer (the rule only; no code was copied) | Bevy (https://github.com/bevyengine/bevy), `crates/bevy_render/src/slab_allocator.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-render/src/terrain/atlas.rs` (`TileAtlas`, `TileAtlas::best_tile`) | The terrain tile atlas: a request count per tile, released tiles kept in their slots with the slots queued oldest-first and revived on a re-request, a new tile taking the front slot, and the walk up the parents to the nearest loaded tile. Changed (listed in the file's header): slot exhaustion refuses `stream-arena-full` instead of panicking, a completion for a tile that is not loading is dropped, a `BTreeMap` instead of hashing, no file IO or Bevy resources, slots sized by form factor and the 128 MiB binding | bevy_terrain (https://github.com/kurtkuehnert/bevy_terrain), `src/terrain_data/tile_atlas.rs` (`TileAtlasState`) | Kurt Kühnert | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `crates/genex-render/src/mesh_lod_runtime.rs` (`simplify`, `simplify_levels`) | Runtime LOD chains (game systems LOD-21): edge-collapse simplification on position quadrics (triangle planes weighted by the square root of their area, border and seam edge planes), vertices classed manifold, border, seam or locked, collapses ranked by quadric error and applied in passes that move no vertex twice, and the triangle-flip check. Genex's port from the algorithm; it leaves out attribute quadrics, the complex class, `Prune`, `ErrorClamped` and `PreserveFolds`, sorts collapses exactly, stops a level within 1/32 of its target and carries one run from level to level | meshoptimizer (https://github.com/zeux/meshoptimizer), `src/simplifier.cpp` | Arseny Kapoulkine | MIT (see [meshoptimizer](#meshoptimizer)) |
 | `crates/genex-profile/src/gpu_lane.rs` (`GpuLane::spans`) | GPU query results laid out as begin/end spans with depth, stream range and scope count (sequential node brackets; not registered with puffin's global profiler) | wgpu-profiler 0.28.0 (https://github.com/Wumpf/wgpu-profiler), `src/puffin.rs` (`collect_stream_info_recursive`) | Andreas Reich and wgpu-profiler contributors | MIT OR Apache-2.0, used under MIT (see [wgpu-profiler](#wgpu-profiler)) |
 | `crates/genex-profile/src/trace.rs` (`chrome_trace`) | Chrome trace JSON: a `traceEvents` array of `X` events with microsecond `ts` and `dur`, one `tid` per lane (written with serde_json, frames laid out by interval) | wgpu-profiler 0.28.0, `src/chrometrace.rs` | Andreas Reich and wgpu-profiler contributors | MIT OR Apache-2.0, used under MIT (see [wgpu-profiler](#wgpu-profiler)) |
 | `crates/genex-nav/src/runtime/dodgy/` (every file, with dodgy's own tests as `*_test.rs`) | ORCA local avoidance: velocity obstacles from neighbours and polygon obstacles, the 2D and 3D linear programs, the visibility set. Changed (§4(b), listed in `dodgy/mod.rs`): the `rand` direction for two agents on one spot is hashed from their keys, `Simulator::step` has no `HashMap` and keeps its near neighbours, visible line ids come back sorted, angles use libm, a zero responsibility sum no longer divides by zero, no `debug` feature | dodgy_2d 0.5.5 (https://github.com/andriyDev/dodgy, crates.io sha256 `d35627725e918aa4593ca54937cd8ef58078d3b9ab0fd060aee60c9bc3a2050e`), itself ported from RVO2 (https://gamma.cs.unc.edu/RVO2/) `Agent.cc` | andriyDev; RVO2: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin, Dinesh Manocha, 2008 University of North Carolina at Chapel Hill | MIT OR Apache-2.0, used under Apache 2.0; RVO2 Apache 2.0 (see [Apache License 2.0](#apache-license-20) and [RVO2](#rvo2)) |
@@ -727,8 +728,9 @@ comment; each Apache 2.0 port carries the upstream notice and lists Genex's chan
 | `crates/genex-nav/src/recast/` (every file but `error.rs`; `ops.rs` keeps only `floor`, `ceil`, `abs`, `cos`), `tests/recast_parity.rs` (from `tests/cpp_comparison.rs` and `crates/test_utils`) | Recast navmesh generation: heightfield rasterization, span filters, compact heightfield, erosion, convex area volumes, the watershed distance field and regions, contours, polygon mesh and detail mesh, with the C++ parity test. Changed (listed in `recast/mod.rs`, each file's header and `crates/genex-nav/PORTS.md`): glam 0.33, slotmap replaced by Genex's arena, thiserror and bitflags written out by hand, one typed `RecastError` in place of anyhow, `cos` always through libm, no tracing, serde or bevy_reflect, std instead of no_std. An altered version of both rerecast and Recast | rerecast 0.5.0 (https://github.com/janhohenheim/rerecast, tag `v0.5.0`, tarball sha256 `1ed9c37afa1ccca1121b16bed89afd33dab05cf5668bbeeac58dc4d7054fc2d0`), `crates/rerecast/src/*`, itself a port of Recast Navigation (https://github.com/recastnavigation/recastnavigation) | Jan Hohenheim and rerecast contributors; Mikko Mononen and Recast Navigation contributors | MIT OR Apache-2.0, used under MIT (see [rerecast](#rerecast)); Zlib (see [Recast Navigation](#recast-navigation)) |
 | `crates/genex-nav/tests/fixtures/recast/dungeon/*.json` | Recast's dungeon demo level and C++ Recast's dumps of its config, area volumes, contour set, polygon mesh and detail mesh, byte for byte | rerecast 0.5.0, `assets/test/dungeon/`; the level is Recast Navigation's `RecastDemo/Bin/Meshes/dungeon.obj` ("Dungeon level copyrighted by John Ratcliff for use in recast algorithm testing", rerecast's `assets/models/license.md`) | John Ratcliff (level); Jan Hohenheim (dumps) | Zlib (Recast Navigation); MIT OR Apache-2.0 (rerecast) |
 | `crates/genex-nav/src/bake.rs` (`bake_tile`) | The per-tile build: a border of `walkableRadius + 3` cells, regions partitioned with the border kept out, heights counted from one floor for every tile. The steps only; no code was copied | Recast Navigation, `RecastDemo/Source/Sample_TileMesh.cpp` (`Sample_TileMesh::buildTileMesh`) | Mikko Mononen and Recast Navigation contributors | Zlib (see [Recast Navigation](#recast-navigation)) |
-| `crates/genex-input/src/map.rs` (`Context`, `ActionMap`), `src/state.rs` (`ActionState`), `src/condition.rs` (`Condition`) | Input contexts with a priority that consume the inputs their actions read unless they pass them through, and the action conditions (hold, tap, pulse, toggle, cooldown, block-by) restated in ticks. The semantics only; no code was copied | bevy_enhanced_input 0.27.0 (https://github.com/simgine/bevy_enhanced_input), `src/condition/*.rs` and its context model | simgine and bevy_enhanced_input contributors | MIT OR Apache-2.0, used under MIT (the rules only, so no licence text is carried) |
-| `crates/genex-input/src/modifier.rs` (`Modifier`, `radial`, `axial`) | The radial stick dead zone (zero inside, normalized past the outer edge, the length remapped between them), the axial dead zone and the 0.75 press / 0.65 release button hysteresis, and the negate, swizzle, scale and exponential-curve modifiers. The formulas and defaults only; no code was copied | Godot Engine 4.5-stable, `core/input/input.cpp` (`Input::get_vector`); Bevy 0.17.2, `crates/bevy_input/src/gamepad.rs` (`AxisSettings`, `ButtonSettings`); bevy_enhanced_input 0.27.0, `src/modifier/*.rs` | Godot Engine contributors; Bevy contributors; simgine and bevy_enhanced_input contributors | MIT (see [Godot Engine](#godot-engine)); MIT OR Apache-2.0, used under MIT (Bevy, bevy_enhanced_input) |
+| `crates/genex-input/src/modifier.rs` (`Modifier::DeadZone` with `DeadZoneKind::Radial`, `radial`) | The radial stick dead zone: zero inside the dead zone, normalized past length 1, otherwise the length inverse-lerped from the dead zone to the edge (Genex takes the outer edge as a parameter instead of a fixed 1 and computes in libm) | Godot Engine 4.5-stable (https://github.com/godotengine/godot, commit 876b290332ec6f2e6d173d08162a02aa7e6ca46d), `core/input/input.cpp` (`Input::get_vector`) | Godot Engine contributors | MIT (see [Godot Engine](#godot-engine)) |
+| `crates/genex-input/src/modifier.rs` (`DeadZoneKind::Axial`, `Modifier::Hysteresis`, `BUTTON_PRESS`, `BUTTON_RELEASE`) | The per-axis dead zone remap between the dead zone and the live zone, and the button hysteresis defaults (press at 0.75, release at 0.65) | Bevy v0.17.2 (https://github.com/bevyengine/bevy, commit 566358363126dd69f6e457e47f306c68f8041d2a), `crates/bevy_input/src/gamepad.rs` (`AxisSettings`, `ButtonSettings`) | Bevy contributors | MIT OR Apache-2.0, used under MIT (see [Bevy](#bevy)) |
+| `crates/genex-input/src/modifier.rs` (`Modifier::{Negate, Swizzle, Scale, Curve}`), `src/condition.rs` (`Condition::{Hold, Tap, Pulse, Toggle, Cooldown, BlockBy}`), `src/map.rs` and `src/state.rs` (context priority, consume-when-actuated, pass-through) | Input modifiers, input conditions and context layering. The modifiers follow the source; for the conditions and contexts only the rules were taken and no code was copied (Genex counts every window in ticks instead of seconds, steps conditions on its own hold counter and evaluates from genex-core's merged tick input) | bevy_enhanced_input v0.27.0 (https://github.com/simgine/bevy_enhanced_input, commit d7be47fd91184c1bb1ff1f5a40d073d36a18547e), `src/modifier/*.rs`, `src/condition/*.rs` | Hennadii Chernyshchyk and bevy_enhanced_input contributors | MIT OR Apache-2.0, used under MIT (see [Bevy Enhanced Input](#bevy-enhanced-input)) |
 | `crates/genex-ui/src/kit/toast.rs` (`Toasts`, `ToastKind`) | The toast queue: top-right stack with 8 px margin and spacing and 10 px padding, the `1 - (1 - x)^3` slide, a countdown that pauses under the pointer, the 4 px progress line. Changed (listed in the file's header): time counted in simulation ticks instead of `stable_dt`, the queue kept in egui memory (a seed forgets it), level icons drawn as shapes, the close cross dropped (a click anywhere dismisses), a capped queue, AccessKit labels and keys | egui-notify 0.23 (https://github.com/ItsEthra/egui-notify), `src/lib.rs` | ItsEthra | MIT (see [egui-notify](#egui-notify)) |
 | `crates/genex-audio/src/music.rs` (`MusicStream`, `Resampler`), `src/decode.rs` (`decode_sound`, `append_frames`) | Playing a sound from a frame source: kira's static-sound process loop (per-frame volume and fade interpolation, the fractional position advanced by the source rate, the 4-point resampler fed one source frame at a time, the stop fade and the end once the resampler empties) and its decode loop and sample conversion over symphonia buffers. Changed (listed in the files' headers): frames come from a ring that symphonia packets fill inline instead of a decoded array; loops wrap by an accurate seek plus a priming packet or by reopening; no pause, resume, rate, panning or seek commands; the decode is capped and guarded against panics | kira 0.12.5 (https://github.com/tesselode/kira), `src/sound/static_sound/sound.rs`, `src/sound/static_sound/sound/resampler.rs`, `src/sound/static_sound/data/from_file.rs`, `src/sound/symphonia.rs` | Andrew Minnich and kira contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `crates/genex-platform-web/src/crash.rs` (`console_text`, `console_hook`, the `Error().stack` binding) | The panic hook's console text: the panic, `\n\nStack:\n\n`, the stack of a fresh `Error`, `\n\n` | console_error_panic_hook 0.1.7 (https://github.com/rustwasm/console_error_panic_hook), `src/lib.rs` `hook_impl` | Nick Fitzgerald and the Rust and WebAssembly Working Group | MIT OR Apache-2.0, used under MIT (text below) |
@@ -981,6 +983,63 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### Bevy
+
+The MIT side of Bevy's licence, under which genex-input ports bevy_input's dead zone remap and
+button hysteresis (table above). Bevy's `LICENSE-MIT` names no copyright holder; the authors are
+the Bevy contributors.
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Bevy Enhanced Input
+
+The MIT side of bevy_enhanced_input's licence, whose modifiers, conditions and context rules
+genex-input ports (table above).
+
+```
+MIT License
+
+Copyright (c) 2023 Hennadii Chernyshchyk
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Rust showcase environment map

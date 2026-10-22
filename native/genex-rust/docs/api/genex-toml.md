@@ -28,6 +28,9 @@ wasm_budget_mb = 8        # 1..=32, default 4
 [physics]                 # optional: a game with no physics builds without Rapier
 enabled = false           # default true
 
+[audio]                   # optional: a game with no sound builds without the mixer and decoders
+enabled = false           # default true
+
 [[texture]]               # optional: how a loose texture is used, when no model's material says
 path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 usage = "data"            # color | data | normal
@@ -78,6 +81,10 @@ Rapier is about a fifth of a web build's code. A game that never touches `sim.ph
 `genex::physics` sets `[physics] enabled = false`: it builds without Rapier, `sim.physics` is an
 empty stand-in that is never stepped, and code that reaches for Rapier does not compile until
 physics is turned back on.
+
+A game that plays no sound sets `[audio] enabled = false`: it builds without the mixer and the
+decoders, and its code compiles unchanged, with every sound missing `audio-disabled`
+(`docs/api/audio.md`).
 
 A `[[texture]]` row tells Studio how a loose image your code samples itself is used (a flow map, a
 mask, a custom material's normal map). A texture a model's material samples needs no row. The usage

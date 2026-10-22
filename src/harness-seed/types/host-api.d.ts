@@ -2209,6 +2209,16 @@ export type RendererFeature = 'timestamp-query' | 'rg11b10ufloat-renderable' | '
 export type RenderInput = 'depth' | 'normals' | 'motion' | 'environment' | 'hdr-scene';
 // ↑ src/shared/render-quality.ts
 
+export type BakeKind = 'nav' | 'impostor';
+// ↑ src/shared/native-contract.ts
+
+/** One bake a dev build's receipt advertises: its kind and its registered name (`isBakeName`). */
+export interface NativeBakeRef {
+  kind: BakeKind;
+  name: string;
+}
+// ↑ src/shared/native-contract.ts
+
 /**
  * What a Rust · wgpu game's `ready` reports about its GPU (contract v2, inline in `ready`): tier
  * core, the backend, the adapter, the native-enhanced features the adapter offers (offered, not
@@ -2244,6 +2254,8 @@ export interface NativeCapabilityReceipt {
   savesApi?: number;
   /** The `uiSettings` verb's version this game serves; absent: a build without the verb. */
   uiSettingsApi?: number;
+  /** The bakes a dev build registered (`game.nav_bake`), each once; the build's bake step sends `bakeAssets` for each. */
+  bakes?: NativeBakeRef[];
 }
 // ↑ src/shared/native-contract.ts
 

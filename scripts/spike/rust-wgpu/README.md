@@ -30,6 +30,10 @@ script's header names the work package that replaces it.
   profile, `wasm-bindgen`, `wasm-opt -Oz`), so its gzip size is the export's;
   `web-cold-start.ts` times a packaged web build's first lit frame in headless Chromium, cold
   (`--cold-shaders`: no shader cache answers) and with its pipelines pre-warmed asynchronously.
+- `crash-rows.sh` runs crash-lab's forced-crash rows on this host (PROF-9): the record rows and
+  the journal-tail replay, the Metal GPU rows, the wasm32 build and, with `--cross`, compile checks
+  for Linux and Windows. Devices stay on the owner's checklist; its rows and evidence land in
+  `<out>/rows.tsv` and `<out>/evidence`.
 
 `rustfmt` is not pinned: no check formats Rust yet. It joins the pins with the store's Rust
 components when a formatting gate needs it.

@@ -189,7 +189,6 @@ fn replaying_the_journal_tail_from_the_records_seed_reproduces_kind_location_and
 }
 
 #[test]
-#[ignore = "RED (PROF-9 cross-lane): the facade registers no ReplaySource over the input journal, so a record's replay is null"]
 fn the_tick_300_record_carries_the_journal_tail_as_its_replay() {
     let _serial = serial();
     let before = records_with(PANIC_MESSAGE).len();

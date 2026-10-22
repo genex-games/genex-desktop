@@ -33,7 +33,9 @@ model without tangents MikkTSpace ones (split at mirrored UV seams) and orders i
 the GPU's vertex cache; at runtime an attribute
 stored in any other layout than core glTF's is refused, never misread. A
 model of 512 or more triangles gets simplified levels at import, and each drawn copy far from the
-camera draws a coarser one, in its shadows too.
+camera draws a coarser one, in its shadows too. A GLB that reaches the game without them (it
+skipped the import step) gets them at load the same way, up to 100,000 triangles; a bigger one
+draws whole and the load's log says so.
 
 A game names its own levels with `model.with_levels(&[(lod1, 24.0), (lod2, 58.0)])` (each level a
 GLB with the model's part count, its parts drawn with the model's parts' materials, at most

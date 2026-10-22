@@ -81,7 +81,7 @@ describe("cargo manifest: a [net] game's facade features (G6 MP-5b)", () => {
     const line = facadeLine(
       cargoManifest(noPhysics, GENEX_VERSION, RustFlavour.Export, RustFacadePackage.Native, null, RustNetFeature.Relay),
     );
-    assert.equal(line, 'genex = { version = "=0.1.0", default-features = false, features = ["net"] }');
+    assert.equal(line, 'genex = { version = "=0.1.0", default-features = false, features = ["audio", "net"] }');
   });
 
   it("writes a game without networking the same manifest as before, whatever the build would link", () => {
