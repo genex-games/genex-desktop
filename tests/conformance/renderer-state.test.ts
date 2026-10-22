@@ -173,6 +173,25 @@ const studioThread = thread("studio", { kind: "studio" });
 const pond = thread("pond-chat", { kind: "game", project: "pond" }, "2026-09-03T00:00:00Z");
 const rift = thread("rift-chat", { kind: "game", project: "rift" }, "2026-09-02T00:00:00Z");
 
+function countedLibrary() {
+  const games = Array.from({ length: 64 }, (_, index) => gameProject(`game-${index}`));
+  const records = Array.from({ length: 512 }, (_, index) =>
+    thread(
+      `thread-${index}`,
+      { kind: "game", project: `game-${index % games.length}` },
+      new Date(Date.UTC(2026, 0, 1) + ((index * 23) % 512) * 60_000).toISOString(),
+    ),
+  );
+  let reads = 0;
+  const counted = new Proxy(records, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  return { games, records: counted, reads: () => reads };
+}
+
 describe("createRefresher: one read at a time, stale answers dropped, failures caught", () => {
   it("queues exactly one follow-up behind a read in flight, and applies both in order", async () => {
     const reads: Array<ReturnType<typeof deferred<number>>> = [];
@@ -383,6 +402,53 @@ describe("the threads store: the open game is derived from the open chat", () =>
     const state = { ...loaded, lastGameThreadId: "rift-chat" };
     assert.equal(returnTarget(state, games), "rift-chat");
     assert.equal(returnTarget(state, [gameProject("pond")]), "pond-chat", "a removed game's chat is not returned to");
+  });
+
+  it("indexes sidebar activity without rescanning every thread inside the sort", () => {
+    const { games, records, reads } = countedLibrary();
+    assert.equal(sidebarGames(games, records).length, games.length);
+    assert.ok(reads() <= records.length * 2, `sidebar visited ${reads()} thread slots for ${records.length} records`);
+  });
+
+  it("indexes the rail's live chats without rescanning every thread for every game", () => {
+    const { games, records, reads } = countedLibrary();
+    assert.equal(railThreadIds(records, games).length, games.length);
+    assert.ok(reads() <= records.length * 2, `rail visited ${reads()} thread slots for ${records.length} records`);
+  });
+
+  it("keeps sidebar date fallbacks and title ties, including archived activity", () => {
+    const games = [
+      gameProject("zebra", { createdAt: "invalid" }),
+      gameProject("amber", { createdAt: "invalid" }),
+      gameProject("old", { createdAt: "1960-01-01T00:00:00Z" }),
+      gameProject("archived"),
+    ];
+    const records = [
+      thread("old", { kind: "game", project: "old" }, "1961-01-01T00:00:00Z"),
+      thread("archived", { kind: "game", project: "archived", archived: true }, "2026-10-01T00:00:00Z"),
+    ];
+    assert.deepEqual(
+      sidebarGames(games, records).map((game) => game.name),
+      ["archived", "amber", "zebra", "old"],
+    );
+  });
+
+  it("keeps the rail's primary chat, freshest fallback and later-input timestamp ties", () => {
+    const records = [
+      studioThread,
+      thread("first", { kind: "game", project: "pond" }),
+      thread("later", { kind: "game", project: "pond" }),
+      thread("archived", { kind: "game", project: "pond", archived: true }, "2026-10-01T00:00:00Z"),
+      thread("other", { kind: "game", project: "rift" }),
+    ];
+    const games = [
+      gameProject("pond", { primaryThreadId: "first" }),
+      gameProject("pond"),
+      gameProject("pond", { primaryThreadId: "archived" }),
+      gameProject("rift", { primaryThreadId: "first" }),
+      gameProject("empty"),
+    ];
+    assert.deepEqual(railThreadIds(records, games), ["studio", "first", "later", "later", "other"]);
   });
 
   it("reads thread metadata field by field", () => {

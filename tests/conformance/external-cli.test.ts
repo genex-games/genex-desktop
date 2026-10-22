@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, chmod, symlink, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createServer, type Socket } from "node:net";
 import {
   cliVersion,
   codingCliBinary,
@@ -23,6 +24,15 @@ const FLAGS =
   "--json --output-schema --ignore-user-config --skip-git-repo-check --input-format --output-format --strict-mcp-config --setting-sources --permission-mode --mcp-config --allowedTools --disallowedTools";
 const exe = cliName;
 const launcher = writeCliLauncher;
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
 test("fixture host discovery does not execute a provider from the inherited PATH", async () => {
   const bin = path.join(root, "inherited-provider");
   const marker = path.join(root, "must-not-run");
@@ -313,16 +323,22 @@ test("a new session reuses the login shell's PATH and an unchanged CLI's answers
  * the CLI reports) in `node_modules`, and on PATH a link to its script, or npm's `.cmd` shim on
  * Windows. Every question it is asked is noted in `calls` beside it.
  */
-async function npmInstalledCli(prefix: string, version: string) {
+async function npmInstalledCli(prefix: string, version: string, heldHelpPort?: number) {
   const modules = WINDOWS ? path.join(prefix, "node_modules") : path.join(prefix, "lib", "node_modules");
   const pkg = path.join(modules, "fake-codex");
   const script = path.join(pkg, "bin", "codex.js");
   const calls = path.join(prefix, "calls");
   await mkdir(path.dirname(script), { recursive: true });
   await writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "fake-codex", version }));
+  const answer = heldHelpPort
+    ? `if (process.argv[2] !== "--version" && version === "1.0.0") {
+  const socket = require("node:net").connect(${heldHelpPort}, "127.0.0.1");
+  socket.once("data", () => { console.log(answer); socket.end(); });
+} else console.log(answer);`
+    : "console.log(answer);";
   await writeFile(
     script,
-    `#!/usr/bin/env node\nconst fs = require("node:fs");\nfs.appendFileSync(${JSON.stringify(calls)}, process.argv[2] + "\\n");\nconst { version } = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(pkg, "package.json"))}, "utf8"));\nconsole.log(process.argv[2] === "--version" ? "fake " + version : ${JSON.stringify(FLAGS)});\n`,
+    `#!/usr/bin/env node\nconst fs = require("node:fs");\nfs.appendFileSync(${JSON.stringify(calls)}, process.argv[2] + "\\n");\nconst { version } = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(pkg, "package.json"))}, "utf8"));\nconst answer = process.argv[2] === "--version" ? "fake " + version : ${JSON.stringify(FLAGS)};\n${answer}\n`,
     { mode: 0o755 },
   );
   let bin: string;
@@ -355,6 +371,151 @@ async function npmInstalledCli(prefix: string, version: string) {
     writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "fake-codex", version: next }));
   return { bin, asked, update };
 }
+
+test("concurrent cold UI resolutions share CLI probes and return independent copies", async () => {
+  const installed = await npmInstalledCli(path.join(root, "concurrent-prefix"), "1.0.0");
+  configureCodingClis(path.join(root, "concurrent-host/settings.json"), [], {
+    ...options,
+    loginPath: [installed.bin, path.dirname(process.execPath)].join(path.delimiter),
+  });
+  try {
+    const found = await Promise.all(Array.from({ length: 8 }, () => resolveCodingCli("codex")));
+    assert.ok(found.every((value) => value.status.version === "fake 1.0.0"));
+    assert.equal(await installed.asked(), 2, "one version and one help process serve all eight readers");
+    const [first, second] = found;
+    assert.ok(first && second);
+    first.status.detail = "changed by one caller";
+    first.env.PATH = "changed by one caller";
+    assert.notEqual(second.status.detail, first.status.detail);
+    assert.notEqual(second.env.PATH, first.env.PATH);
+    const cached = await resolveCodingCli("codex");
+    assert.notEqual(cached.status.detail, first.status.detail);
+    assert.notEqual(cached.env.PATH, first.env.PATH);
+  } finally {
+    configureCodingClis(path.join(root, "settings.json"), [], options);
+  }
+});
+
+test("concurrent resolutions keep explicit executables and persisted fallback separate", async () => {
+  const automatic = await cli("concurrent-selections/auto/codex", "automatic 1.0");
+  const broken = await cli("concurrent-selections/broken/codex");
+  const other = await cli("concurrent-selections/other/codex", "other 2.0");
+  await launcher(broken, "#!/bin/sh\necho old-version\n", 'console.log("old-version");\n');
+  configureCodingClis(path.join(root, "concurrent-selections/settings.json"), [], {
+    ...options,
+    loginPath: path.dirname(automatic),
+  });
+  try {
+    await setCodingCliOverride("codex", broken);
+    const [saved, explicit, independent] = await Promise.all([
+      resolveCodingCli("codex"),
+      resolveCodingCli("codex", broken),
+      resolveCodingCli("codex", other),
+    ]);
+    assert.equal(saved.status.path, automatic, "a broken saved selection yields to automatic discovery");
+    assert.equal(explicit.status.path, broken, "an explicit selection never inherits that fallback");
+    assert.equal(explicit.status.state, "incompatible");
+    assert.equal(independent.status.path, other);
+    assert.equal(independent.status.version, "other 2.0");
+    assert.equal((await resolveCodingCli("codex", broken)).status.state, "incompatible");
+  } finally {
+    configureCodingClis(path.join(root, "settings.json"), [], options);
+  }
+});
+
+test("an invalidated or reconfigured discovery cannot replace a newer cached answer", async () => {
+  const old = await cli("concurrent-generations/old/codex", "old 1.0");
+  const newer = await cli("concurrent-generations/new/codex", "new 2.0");
+  for (const change of ["invalidate", "configure"] as const) {
+    const entered = deferred<void>();
+    const release = deferred<string | null>();
+    let shells = 0;
+    configureCodingClis(path.join(root, `concurrent-generations/${change}/settings.json`), [], {
+      ...options,
+      loginPath: undefined,
+      loginShell: () => {
+        shells++;
+        if (shells > 1) return Promise.resolve(path.dirname(newer));
+        entered.resolve();
+        return release.promise;
+      },
+    });
+    const pending = resolveCodingCli("codex");
+    try {
+      await entered.promise;
+      if (change === "invalidate") invalidateCodingCli("codex");
+      else
+        configureCodingClis(path.join(root, "concurrent-generations/reconfigured/settings.json"), [], {
+          ...options,
+          loginPath: path.dirname(newer),
+        });
+      assert.equal((await resolveCodingCli("codex")).status.version, "new 2.0", change);
+      release.resolve(path.dirname(old));
+      assert.equal((await pending).status.version, "old 1.0", "the first caller can finish its original lookup");
+      assert.equal((await resolveCodingCli("codex")).status.version, "new 2.0", "its obsolete answer is not cached");
+    } finally {
+      release.resolve(path.dirname(old));
+      await pending;
+      configureCodingClis(path.join(root, "settings.json"), [], options);
+    }
+  }
+});
+
+test("a failed shared discovery is released so the next read can retry", async () => {
+  const binary = await cli("concurrent-retry/codex", "retry 1.0");
+  let fail = true;
+  configureCodingClis(path.join(root, "concurrent-retry/settings.json"), [], {
+    ...options,
+    loginPath: undefined,
+    loginShell: () => {
+      if (fail) throw new Error("fixture discovery failure");
+      return Promise.resolve(path.dirname(binary));
+    },
+  });
+  try {
+    const failed = await Promise.allSettled(Array.from({ length: 4 }, () => resolveCodingCli("codex")));
+    assert.ok(failed.every((result) => result.status === "rejected"));
+    fail = false;
+    const retried = await Promise.all(Array.from({ length: 4 }, () => resolveCodingCli("codex")));
+    assert.ok(retried.every((result) => result.status.version === "retry 1.0"));
+  } finally {
+    configureCodingClis(path.join(root, "settings.json"), [], options);
+  }
+});
+
+test("a forced CLI refresh keeps its newer answer when an earlier shared probe finishes last", async () => {
+  const held = deferred<Socket>();
+  const server = createServer((socket) => held.resolve(socket));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const installed = await npmInstalledCli(path.join(root, "concurrent-forced-prefix"), "1.0.0", address.port);
+  configureCodingClis(path.join(root, "concurrent-forced-host/settings.json"), [], {
+    ...options,
+    loginPath: [installed.bin, path.dirname(process.execPath)].join(path.delimiter),
+  });
+  const pending = resolveCodingCli("codex");
+  let socket: Socket | undefined;
+  try {
+    socket = await Promise.race([
+      held.promise,
+      pending.then(() => {
+        throw new Error("the old help process did not wait for its release");
+      }),
+    ]);
+    await installed.update("2.0.0");
+    assert.equal((await resolveCodingCli("codex", undefined, undefined, true)).status.version, "fake 2.0.0");
+    socket.end("release");
+    assert.equal((await pending).status.version, "fake 1.0.0", "the old caller receives its original probe's answer");
+    assert.equal((await resolveCodingCli("codex")).status.version, "fake 2.0.0", "the newer cached answer wins");
+    assert.equal(await installed.asked(), 4, "two versions and two help probes; the last read uses the new cache");
+  } finally {
+    if (socket && !socket.writableEnded) socket.end("release");
+    await pending.catch(() => {});
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    configureCodingClis(path.join(root, "settings.json"), [], options);
+  }
+});
 
 test("a relaunch reuses an unchanged npm CLI's answers on every platform; an update or Recheck asks again", async () => {
   const prefix = path.join(root, "npm-prefix");

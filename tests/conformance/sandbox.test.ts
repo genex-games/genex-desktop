@@ -294,7 +294,7 @@ describe("sandboxed spawn", () => {
       command: "printf 'from-opened' > note.txt && cat note.txt",
       cwd: extra,
     });
-    assert.equal(result.code, 0);
+    assert.equal(result.code, 0, JSON.stringify(result));
     assert.equal(await readFile(path.join(extra, "note.txt"), "utf8"), "from-opened");
 
     const denied = await sandbox.run({

@@ -306,7 +306,8 @@ arguments (and the current project binding) when the toolbar mounts, on every `p
 debounced to once per second, whenever the open game's own record changes (`game.changed` without a
 file, as a link to an engine project does), when a turn of the open game's chat finishes
 (`delegation.finished`), and every 30 s while a project is open; switching games
-clears the old game's words at once. It returns a
+clears the old game's words at once. Status batches run sequentially; events during a pending
+batch coalesce into one follow-up, and unmounting drops late answers and scheduled work. It returns a
 `PluginToolbarStatus` — `{badge?, disabled?, title?, tone?: ok | warn | err | info, attention?, dot?, shown?}`
 — sanitized by `toolbarStatusFrom` (badge ≤ 16 characters, title ≤ 120, unknown tones dropped,
 `attention`, `dot` and `shown` booleans). The badge is a word in its tone, or with `dot` a 6 px dot in it

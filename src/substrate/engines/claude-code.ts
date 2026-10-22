@@ -1588,7 +1588,7 @@ export class ClaudeCodeEngine implements Engine {
     if (aborted || run.deadlineHit) return this.#partial(interruption(aborted), partialState());
     const unboxed = sandboxRefusal(run, (err as Error)?.message);
     if (unboxed) return this.#partial(unboxed, partialState());
-    const classified = this.#classify(err as Error);
+    const classified = this.#delegateFailure(err, run);
     if (classified.kind === EngineFailureKind.Auth) this.#authFailure = classified.message;
     // A limit that arrived as an error result: the text names it, the throw does not. Read the
     // text before treating the throw as "some error" — a session limit must reach the run as
@@ -1680,6 +1680,14 @@ export class ClaudeCodeEngine implements Engine {
   /** A build that ended early but left real work behind: an outcome to report, not an error. */
   #partial(ending: DelegateEnding, state: PartialDelegateState): DelegateResult {
     return partialDelegateResult(this.id, ending, state);
+  }
+
+  /** The CLI's error result carries the cause when the SDK only says that its process exited. */
+  #delegateFailure(error: unknown, run: RunState): EngineError {
+    if (error instanceof EngineError) return error;
+    const failure = this.#classify(error as Error);
+    if (failure.kind !== EngineFailureKind.Other || !run.errorText) return failure;
+    return this.#classify(new Error(run.errorText));
   }
 
   #classify(err: Error): EngineError {

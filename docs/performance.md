@@ -115,10 +115,21 @@ counters carry the regression gates.
   bottom margins until the renderer measures again (`main/preview-anchor.ts`).
 - Coding-CLI discovery reads the login shell's PATH once and asks an unchanged binary for
   `--version`/`--help` once, an answer kept across launches; sessions reuse both until Recheck.
+  Concurrent ordinary readers share discovery; cancellable and forced reads keep their own work.
+  Only the latest request in the current settings generation may replace its cached answer.
 - The launch's bootstrap does not wait for the engine checks: it carries the engines the last
   launch checked while this launch's checks run (`main/engine-boot.ts`).
 - Plugin packages are inspected from directory listings, several folders at a time; event bodies
   are read through a sliding window.
+- Sidebar ordering and keyboard navigation index conversation activity in one history pass;
+  sort comparisons do not scan the history. Bounded event pages materialize only their selected
+  references, including the placeholder rows for damaged bodies.
+- Concurrent run-summary readers share a matching evidence-version scan; a subsequent read
+  still validates the files. Toolbar status batches run one at a time, with at most one queued
+  refresh after a burst; teardown cancels timers and ignores late answers.
+- Log email scrubbing begins only at the start of a possible local part, so long non-address
+  words do not cause repeated scans. Job logs respect the writer's backpressure until their cap;
+  their exit watcher distinguishes buffered output from an idle orphan pipe.
 - The launch's seed upgrade (`substrate/seed-upgrade.ts`) hashes the seed and the harness
   workspace, and rewrites renamed names, 32 files at a time rather than one after another.
 - Each harness boot (launch, restart, self-edit reload) runs with `NODE_COMPILE_CACHE` in the

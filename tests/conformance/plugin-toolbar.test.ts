@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { build } from "esbuild";
+import { rendererBuildOptions } from "../../scripts/renderer-build.mjs";
 import {
   MultiplayerPress,
   multiplayerPress,
@@ -16,7 +18,7 @@ import {
 } from "../../src/shared/plugin-toolbar.ts";
 import { PLUGIN_TOOLBAR_WORDS } from "../../src/renderer/words.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
-import type { PluginInfo, PluginManifest, PluginToolbarItem } from "../../src/shared/plugins.ts";
+import type { PluginInfo, PluginManifest, PluginToolbarItem, PluginToolbarStatus } from "../../src/shared/plugins.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import type { GameKind } from "../../src/shared/project-facts.ts";
 
@@ -50,6 +52,117 @@ const plugin = (id: string, toolbar: PluginToolbarItem[] | undefined, over: Part
   health: "stopped",
   state: "enabled",
   ...over,
+});
+
+async function compiledStatusWatcher() {
+  const result = await build({
+    stdin: {
+      contents: 'export { watchToolbarStatus } from "./src/renderer/panels/PluginToolbar.tsx";',
+      resolveDir: process.cwd(),
+      loader: "tsx",
+    },
+    bundle: true,
+    write: false,
+    format: "esm",
+    jsx: "automatic",
+    logLevel: "silent",
+    platform: "browser",
+    ...rendererBuildOptions(),
+  });
+  const code = result.outputFiles[0]?.text ?? "";
+  return import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+}
+
+function deferredStatus() {
+  let resolve: (value: unknown) => void = () => {};
+  const promise = new Promise<unknown>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function heldToolbar(t: TestContext) {
+  const { watchToolbarStatus } = await compiledStatusWatcher();
+  const pending: Array<ReturnType<typeof deferredStatus>> = [];
+  const received: Array<Array<readonly [string, PluginToolbarStatus | null]>> = [];
+  let live = 0;
+  let peak = 0;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      studio: {
+        pluginAction() {
+          live++;
+          peak = Math.max(peak, live);
+          const answer = deferredStatus();
+          pending.push(answer);
+          return answer.promise.finally(() => live--);
+        },
+      },
+    },
+  });
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const entries = toolbarItems([plugin("a", [item({ status: "read-status" })])], "game");
+  const watcher = watchToolbarStatus({ current: entries }, "game", (results: (typeof received)[number]) =>
+    received.push(results),
+  );
+  t.after(async () => {
+    watcher.stop();
+    for (const answer of pending) answer.resolve(null);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  return { ...watcher, pending, received, peak: () => peak };
+}
+
+test("toolbar status reads serialize slow batches and coalesce events into one follow-up", async (t) => {
+  const toolbar = await heldToolbar(t);
+  toolbar.refresh();
+  toolbar.refresh();
+  t.mock.timers.tick(1000);
+  assert.equal(toolbar.pending.length, 1, "the initial event burst shares its debounce");
+  for (let index = 0; index < 3; index++) {
+    toolbar.refresh();
+    t.mock.timers.tick(1000);
+  }
+  assert.equal(toolbar.peak(), 1, "a slow plugin never has overlapping status batches");
+  assert.equal(toolbar.pending.length, 1, "events during a read queue one follow-up");
+  toolbar.pending[0]?.resolve({ badge: "Old" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(toolbar.pending.length, 2, "the queued read runs once the previous batch settles");
+  toolbar.pending[1]?.resolve({ badge: "Current" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    toolbar.received.map((batch: Array<readonly [string, PluginToolbarStatus | null]>) => batch[0]?.[1]?.badge),
+    ["Old", "Current"],
+  );
+  t.mock.timers.tick(1000);
+  assert.equal(toolbar.pending.length, 2, "the burst leaves no extra read behind");
+});
+
+test("toolbar teardown drops a slow result and every queued or future refresh", async (t) => {
+  const toolbar = await heldToolbar(t);
+  t.mock.timers.tick(1000);
+  toolbar.refresh();
+  t.mock.timers.tick(1000);
+  toolbar.stop();
+  for (const answer of toolbar.pending) answer.resolve({ badge: "Stale" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  toolbar.refresh();
+  t.mock.timers.tick(120_000);
+  assert.equal(toolbar.pending.length, 1, "neither queued work nor the periodic tick survives teardown");
+  assert.deepEqual(toolbar.received, [], "a reply after unmount cannot change the toolbar");
+});
+
+test("toolbar teardown cancels the initial debounce before any plugin is called", async (t) => {
+  const toolbar = await heldToolbar(t);
+  toolbar.stop();
+  toolbar.refresh();
+  t.mock.timers.tick(120_000);
+  assert.equal(toolbar.pending.length, 0);
+  assert.deepEqual(toolbar.received, []);
 });
 
 test("toolbarItems keeps enabled installed plugins only and honours requiresProject", () => {

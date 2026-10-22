@@ -59,6 +59,7 @@ interface CachedSummary {
 export class RunSummaryCache {
   readonly #cache = new Map<string, CachedSummary>();
   readonly #pending = new Map<string, PendingSummary>();
+  readonly #probes = new Map<string, Map<EventEnvelope[], Promise<string>>>();
   readonly #fold: typeof summarizeRun;
   readonly #version: typeof evidenceVersion;
   readonly #supplement: typeof supplementRunEvidence;
@@ -77,7 +78,7 @@ export class RunSummaryCache {
   /** Return a stable summary until either persisted source changes. */
   async read(events: EventEnvelope[], project: string, runId: string, runs: string): Promise<RunSummary> {
     const key = JSON.stringify([project, runId, path.resolve(runs)]);
-    const version = await this.#version(runs, runId);
+    const version = await this.#readVersion(key, events, runs, runId);
     const cached = this.#cache.get(key);
     if (cached && cached.events === events && cached.version === version) {
       this.#cache.delete(key);
@@ -95,6 +96,23 @@ export class RunSummaryCache {
       return summary;
     } finally {
       if (this.#pending.get(key) === request) this.#pending.delete(key);
+    }
+  }
+
+  /** Share concurrent matching scans; a later request always checks the evidence files afresh. */
+  async #readVersion(key: string, events: EventEnvelope[], runs: string, runId: string): Promise<string> {
+    let probes = this.#probes.get(key);
+    const pending = probes?.get(events);
+    if (pending) return pending;
+    probes ??= new Map();
+    this.#probes.set(key, probes);
+    const result = Promise.resolve().then(() => this.#version(runs, runId));
+    probes.set(events, result);
+    try {
+      return await result;
+    } finally {
+      probes.delete(events);
+      if (probes.size === 0) this.#probes.delete(key);
     }
   }
 

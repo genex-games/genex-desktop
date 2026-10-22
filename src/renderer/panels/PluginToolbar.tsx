@@ -36,6 +36,7 @@ import { composeInChat } from "../compose-in-chat.ts";
 import { type PluginReviewRequest, runPluginAction } from "../plugin-actions.ts";
 import { PLUGIN_SETUP_EVENT } from "../plugin-setup.ts";
 import { type Notify, ToastTone } from "../state/toasts.ts";
+import { createRefresher } from "../state/refresher.ts";
 import { Button } from "../ui/Button.tsx";
 import { cn } from "../ui/cn.ts";
 import { openPluginsAt } from "../ui/ComposerAddMenu.tsx";
@@ -115,42 +116,16 @@ function useToolbarStatus(entriesRef: { current: PluginToolbarEntry[] }, members
   useEffect(() => setStatus((current) => (Object.keys(current).length > 0 ? {} : current)), [project]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: membership stands for the entries, read through their ref
   useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const run = async () => {
-      timer = null;
-      const wanted = entriesRef.current.flatMap((e) => (e.item.status ? [{ entry: e, action: e.item.status }] : []));
-      const results = await Promise.all(
-        wanted.map(
-          async ({ entry, action }) =>
-            [
-              entry.key,
-              toolbarStatusFrom(
-                await window.studio
-                  .pluginAction(entry.plugin.manifest.id, action, {}, project ?? undefined)
-                  .catch(() => null),
-              ),
-            ] as const,
-        ),
-      );
-      if (cancelled) return;
+    const watcher = watchToolbarStatus(entriesRef, project, (results) => {
       setStatus((current) => {
         const next: Record<string, PluginToolbarStatus> = {};
         for (const [key, value] of results) next[key] = value ?? current[key] ?? {};
         return next;
       });
-    };
-    const schedule = () => {
-      if (cancelled || timer) return;
-      timer = setTimeout(() => void run(), STATUS_DEBOUNCE_MS);
-    };
-    refreshRef.current = schedule;
-    schedule();
-    const tick = project ? setInterval(schedule, STATUS_TICK_MS) : null;
+    });
+    refreshRef.current = watcher.refresh;
     return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      if (tick) clearInterval(tick);
+      watcher.stop();
       refreshRef.current = () => {};
     };
   }, [membership, project]);
@@ -167,6 +142,50 @@ function useToolbarStatus(entriesRef: { current: PluginToolbarEntry[] }, members
     [],
   );
   return { status, refreshRef };
+}
+
+/** Keep the toolbar's statuses fresh until its game or plugin membership changes, or it unmounts. */
+export function watchToolbarStatus(
+  entriesRef: { current: PluginToolbarEntry[] },
+  project: string | null,
+  received: (results: Array<readonly [string, PluginToolbarStatus | null]>) => void,
+) {
+  let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const reader = createRefresher(() => {
+    const wanted = entriesRef.current.flatMap((e) => (e.item.status ? [{ entry: e, action: e.item.status }] : []));
+    return Promise.all(
+      wanted.map(
+        async ({ entry, action }) =>
+          [
+            entry.key,
+            toolbarStatusFrom(
+              await window.studio
+                .pluginAction(entry.plugin.manifest.id, action, {}, project ?? undefined)
+                .catch(() => null),
+            ),
+          ] as const,
+      ),
+    );
+  }, received);
+  const schedule = () => {
+    if (cancelled || timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void reader.request();
+    }, STATUS_DEBOUNCE_MS);
+  };
+  schedule();
+  const tick = project ? setInterval(schedule, STATUS_TICK_MS) : null;
+  return {
+    refresh: schedule,
+    stop() {
+      cancelled = true;
+      reader.reset();
+      if (timer) clearTimeout(timer);
+      if (tick) clearInterval(tick);
+    },
+  };
 }
 
 /** What a finished action says: its own message when it returned one, else that it is done. */

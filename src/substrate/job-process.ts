@@ -7,6 +7,7 @@
 import { type ChildProcess, type ExecFileException, execFile } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { once } from "node:events";
+import type { Writable } from "node:stream";
 import { SECOND_MS } from "../shared/duration.ts";
 import path from "node:path";
 import { envValue, isWindows } from "./toolchain.ts";
@@ -23,6 +24,7 @@ const WINDOWS_PROBE_TIMEOUT_MS = 20 * SECOND_MS;
 
 const MESSAGE = {
   logCapped: "\n[Genex: the log stopped here at its size cap; the job keeps running]\n",
+  logFailed: "Job log write failed",
 } as const;
 
 /** Reads a process's start time, to tell it from a later process given the same id. */
@@ -112,7 +114,7 @@ export async function openJobLog(file: string): Promise<WriteStream> {
 }
 
 /** End a job's log and wait until everything written to it is on disk. */
-export async function closeJobLog(log: WriteStream): Promise<void> {
+export async function closeJobLog(log: Writable): Promise<void> {
   if (log.closed) return;
   const closed = once(log, "close").catch(() => {});
   log.end();
@@ -122,38 +124,81 @@ export async function closeJobLog(log: WriteStream): Promise<void> {
 /**
  * Pipe a job's stdout and stderr into its log until `maxBytes`, then write one line saying the
  * log stopped and keep reading (a pipe nobody reads would stall the job). `onBytes` hears the
- * bytes written so far and whether the cap was reached.
+ * bytes written so far and whether the cap was reached. A slow disk pauses both pipes until
+ * the writer drains; after the cap, output is discarded without pausing the job. The returned
+ * predicate tells the exit watcher when a slow writer still owns buffered output.
  */
 export function pipeJobOutput(
   child: ChildProcess,
-  log: WriteStream,
+  log: Writable,
   maxBytes: number,
   onBytes: (bytes: number, capped: boolean) => void,
-): void {
+): () => boolean {
   let bytes = 0;
   let capped = false;
+  let paused = false;
+  const streams = [child.stdout, child.stderr];
+  const resume = () => {
+    if (!paused) return;
+    paused = false;
+    for (const stream of streams) stream?.resume();
+  };
+  const detach = () => {
+    log.off("drain", resume);
+    log.off("finish", detach);
+    log.off("close", detach);
+    log.off("error", failed);
+    for (const stream of streams) stream?.off("data", take);
+    resume();
+  };
+  const failed = (error: Error) => {
+    detach();
+    console.error(MESSAGE.logFailed, error);
+  };
   const take = (chunk: Buffer) => {
-    if (capped) return;
+    const unavailable = capped || log.destroyed || log.writableEnded;
+    if (unavailable) return;
     const room = maxBytes - bytes;
     const part = chunk.length > room ? chunk.subarray(0, room) : chunk;
-    if (part.length > 0) log.write(part);
+    const writable = part.length === 0 || log.write(part);
     bytes += part.length;
     if (chunk.length > room) {
       capped = true;
       log.write(MESSAGE.logCapped);
     }
+    const needsPause = !writable && !capped && !paused;
+    if (needsPause) {
+      paused = true;
+      for (const stream of streams) stream?.pause();
+      log.once("drain", resume);
+    }
     onBytes(bytes, capped);
   };
   child.stdout?.on("data", take);
   child.stderr?.on("data", take);
+  log.once("finish", detach);
+  log.once("close", detach);
+  log.once("error", failed);
+  return () => {
+    const finished = capped || log.destroyed || log.writableEnded;
+    if (finished) return false;
+    return paused || log.writableLength > 0 || streams.some((stream) => (stream?.readableLength ?? 0) > 0);
+  };
 }
 
 /**
  * How the job's process ended: when its output closes, or when it fails to start. `onExit` runs
  * as soon as the process itself exits, before its output closes; a process it left that holds
- * the output open past `drainMs` (on `clock`) does not keep the job from ending.
+ * the output open past `drainMs` (on `clock`) does not keep the job from ending. Output still
+ * waiting for the log's writer is drained first, rather than mistaken for an idle orphan pipe.
  */
-export function jobEnd(child: ChildProcess, onExit: () => void, clock: JobClock, drainMs: number): Promise<JobExit> {
+export function jobEnd(
+  child: ChildProcess,
+  onExit: () => void,
+  clock: JobClock,
+  drainMs: number,
+  isDraining?: () => boolean,
+): Promise<JobExit> {
   return new Promise((resolve) => {
     let done = false;
     let drain: unknown;
@@ -163,9 +208,17 @@ export function jobEnd(child: ChildProcess, onExit: () => void, clock: JobClock,
       if (drain !== undefined) clock.clearTimeout(drain);
       resolve(exit);
     };
+    const finishOrWait = (exit: JobExit) => {
+      if (done) return;
+      if (isDraining?.()) {
+        drain = clock.setTimeout(() => finishOrWait(exit), drainMs);
+        return;
+      }
+      finish(exit);
+    };
     child.once("exit", (code, signal) => {
       onExit();
-      drain = clock.setTimeout(() => finish({ exitCode: code, signal }), drainMs);
+      drain = clock.setTimeout(() => finishOrWait({ exitCode: code, signal }), drainMs);
     });
     child.once("close", (code, signal) => finish({ exitCode: code, signal }));
     child.once("error", () => finish({ exitCode: child.exitCode, signal: child.signalCode }));

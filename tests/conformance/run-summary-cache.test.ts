@@ -12,6 +12,14 @@ import { RunSummaryCache } from "../../src/main/run-summary-cache.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 
+function deferred() {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve: () => resolve() };
+}
+
 test("summary folds once per history/evidence version and refreshes independent evidence", async () => {
   let folds = 0;
   let version = "one";
@@ -37,6 +45,7 @@ test("summary folds once per history/evidence version and refreshes independent 
 
 test("concurrent identical summary requests share one fold and supplement", async () => {
   let folds = 0;
+  let versions = 0;
   let supplements = 0;
   let release: (() => void) | undefined;
   const held = new Promise<void>((resolve) => {
@@ -47,7 +56,10 @@ test("concurrent identical summary requests share one fold and supplement", asyn
       folds++;
       return summarizeRun(...args);
     },
-    version: async () => "one",
+    version: async () => {
+      versions++;
+      return "one";
+    },
     supplement: async () => {
       supplements++;
       await held;
@@ -58,18 +70,107 @@ test("concurrent identical summary requests share one fold and supplement", asyn
   await new Promise<void>((resolve) => setImmediate(resolve));
   release?.();
   const results = await Promise.all(reads);
+  assert.equal(versions, 1, "the concurrent requests share one filesystem fingerprint");
   assert.equal(folds, 1);
   assert.equal(supplements, 1);
   assert.ok(results.every((result) => result === results[0]));
+  assert.equal(await cache.read(events, "game", "run", "/runs"), results[0]);
+  assert.equal(versions, 2, "a later request freshly validates the evidence files");
 });
 
 test("a separate evidence root never reuses another root's summary", async () => {
-  const cache = new RunSummaryCache({ version: async () => "", supplement: async () => {} });
+  let versions = 0;
+  const cache = new RunSummaryCache({
+    version: async () => {
+      versions++;
+      return "";
+    },
+    supplement: async () => {},
+  });
   const events: EventEnvelope[] = [];
-  const first = await cache.read(events, "game", "run", "/one");
-  const second = await cache.read(events, "game", "run", "/two");
+  const [first, second] = await Promise.all([
+    cache.read(events, "game", "run", "/one"),
+    cache.read(events, "game", "run", "/two"),
+  ]);
+  assert.equal(versions, 2, "different roots do not share an evidence probe");
   assert.notEqual(first, second);
   assert.equal(second.runDirectory, path.join("/two", "run"));
+});
+
+test("a shared rejected evidence probe is discarded so the next request retries", async () => {
+  const failure = new Error("temporary metadata failure");
+  let versions = 0;
+  const cache = new RunSummaryCache({
+    version: async () => {
+      if (++versions === 1) throw failure;
+      return "recovered";
+    },
+    supplement: async () => {},
+  });
+  const events: EventEnvelope[] = [];
+  const results = await Promise.allSettled(
+    Array.from({ length: 20 }, () => cache.read(events, "game", "run", "/runs")),
+  );
+  assert.equal(versions, 1);
+  assert.ok(results.every((result) => result.status === "rejected" && result.reason === failure));
+  await cache.read(events, "game", "run", "/runs");
+  assert.equal(versions, 2);
+});
+
+test("concurrent different histories validate independently while matching histories share", async () => {
+  let probes = 0;
+  const held = deferred();
+  const cache = new RunSummaryCache({
+    version: async () => {
+      probes++;
+      await held.promise;
+      return "one";
+    },
+    supplement: async () => {},
+  });
+  const oldEvents: EventEnvelope[] = [];
+  const newEvents: EventEnvelope[] = [];
+  const reads = Array.from({ length: 20 }, (_, index) =>
+    cache.read(index % 2 ? oldEvents : newEvents, "game", "run", "/runs"),
+  );
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(probes, 2, "each history identity owns its in-flight evidence snapshot");
+  } finally {
+    held.resolve();
+  }
+  await Promise.all(reads);
+});
+
+test("new evidence is validated while an earlier supplement is still pending", async () => {
+  let version = "old";
+  let probes = 0;
+  let supplements = 0;
+  const held = deferred();
+  const cache = new RunSummaryCache({
+    version: async () => {
+      probes++;
+      return version;
+    },
+    supplement: async () => {
+      if (++supplements === 1) await held.promise;
+    },
+  });
+  const events: EventEnvelope[] = [];
+  const older = cache.read(events, "game", "run", "/runs");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  version = "new";
+  const newer = cache.read(events, "game", "run", "/runs");
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(probes, 2, "only active probes are shared, not a completed probe's pending supplement");
+    assert.equal(supplements, 2);
+  } finally {
+    held.resolve();
+  }
+  const [oldSummary, newSummary] = await Promise.all([older, newer]);
+  assert.notEqual(oldSummary, newSummary);
+  assert.equal(await cache.read(events, "game", "run", "/runs"), newSummary);
 });
 
 test("graph transport drops trace payloads without changing graph ordering or timestamps", async () => {

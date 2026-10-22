@@ -408,11 +408,11 @@ export class JobService {
   /** Watch a spawned job to its end, write its record, arm its time limit and announce it. */
   #run(record: JobRecord, child: ChildProcess, log: WriteStream, limitMs: number): Promise<JobRecord> {
     child.stdin?.end();
-    pipeJobOutput(child, log, this.#logMaxBytes, (bytes, capped) => {
+    const draining = pipeJobOutput(child, log, this.#logMaxBytes, (bytes, capped) => {
       record.logBytes = bytes;
       if (capped) record.logCapped = true;
     });
-    const exit = jobEnd(child, () => this.#clearLeftovers(live), this.#clock, JOB_DRAIN_MS);
+    const exit = jobEnd(child, () => this.#clearLeftovers(live), this.#clock, JOB_DRAIN_MS, draining);
     const arm = () => {
       live.deadline = this.#clock.setTimeout(() => void this.#stopLive(live, { state: JobState.TimedOut }), limitMs);
     };

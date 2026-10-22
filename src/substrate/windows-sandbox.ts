@@ -1936,7 +1936,10 @@ export class WindowsSandboxSession {
         read,
       ),
     };
-    const routes = own ? this.#ownRoutes(grants, deny) : { grants, deny, own: [] };
+    // A reset replaces the launcher's entries too: srt-win's fallback must regrant those folders.
+    const routes = own
+      ? this.#ownRoutes(grants, deny)
+      : { grants: grantUnion([grants, { write: [], read: [...(this.#deps.launchDirs ?? [])] }]), deny, own: [] };
     const config = {
       ...latest,
       // srt-win marks its write grants safe for Git (dubious ownership); Genex's own need it said.

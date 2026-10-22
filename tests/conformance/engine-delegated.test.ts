@@ -215,6 +215,47 @@ describe("claude code delegated engine", () => {
     await assert.rejects((await engineWithLogin(signedOut.fn)).delegate(await workerRequest()), { kind: "auth" });
   });
 
+  it("preserves a result's auth failure when the SDK only throws its exit code", async () => {
+    for (const platform of ["win32", "darwin"] as const) {
+      const sdk = fakeQuery(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["not logged in"],
+            num_turns: 0,
+          },
+        ],
+        { throwAfter: new Error("Claude Code process exited with code 1") },
+      );
+      await assert.rejects((await engineWithLogin(sdk.fn, platform)).delegate(await workerRequest()), { kind: "auth" });
+    }
+  });
+
+  it("keeps a typed SDK failure ahead of an earlier result's auth text", async () => {
+    for (const kind of ["auth", "rate_limit", "usage_limit", "unavailable", "timeout", "aborted"] as const) {
+      const failure = new EngineError(kind, "claude-code", `fixture ${kind}`);
+      const sdk = fakeQuery(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["not logged in"],
+            num_turns: 0,
+          },
+        ],
+        { throwAfter: failure },
+      );
+      await assert.rejects(
+        (await engineWithLogin(sdk.fn)).delegate(await workerRequest()),
+        (error) => error === failure,
+        kind,
+      );
+    }
+  });
+
   it("streams only reply text, preserves long completed replies, and retains tool results", async () => {
     const text = "The bridge and lights are ready. ".repeat(200);
     const { fn, seen } = fakeQuery([

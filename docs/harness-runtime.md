@@ -360,6 +360,10 @@ outlives its session's turn and a harness restart, and stops when its run settle
 `run.settled`), when its worker's chat turn returns, or when Genex quits. The harness neither starts
 one nor writes its `job_started` / `job_ended` records; a start follows the chat's mode at the call
 ([tool permissions](tool-permissions.md#jobs)).
+Job output pauses both pipes when the log writer is full, resumes when it drains, and keeps
+draining without retaining output after the size cap. A normal exit waits for buffered output
+before closing the log; the orphan-pipe deadline still ends an idle or already-capped pipe.
+A failed writer reports its error and releases its pipes rather than leaving a paused job behind.
 So is `app_look`, look-only and in every mode, which a seated reader worker gets as its one host
 tool ([looking at apps](tool-permissions.md#looking-at-apps)).
 

@@ -1045,15 +1045,13 @@ managed local runtime; core has no Blender tool of its own.
   context reading independently of history. A missing, legacy or pre-rewind checkpoint is rebuilt
   from one log read without its rewound ranges, then extended in 256-event batches. Bootstrap carries the host thread-status map separately; a
   non-ready harness clears it.
-- **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) is a pure
-  reporting projection, never an execution gate; main rebuilds summaries from uncapped project
-  conversations ([`src/main/run-summary-reader.ts`](../../src/main/run-summary-reader.ts)) without
-  creating a chat. Unknown coverage stays unknown; while a summary is pending the UI shows no totals.
-  `onRunSummary` shares one feed per run (`run-summary-feed.ts`): one fetch at a time, 250 ms
-  apart, asking only for the memoized (`run-summary-cache.ts`) graph events from the held last one,
-  which comes again with its compaction tail.
-  The reader keeps the histories of at most four recently opened projects (LRU) plus the Studio
-  conversation.
+- **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) reports work;
+  it never gates execution. [`run-summary-reader.ts`](../../src/main/run-summary-reader.ts) reads
+  uncapped project conversations without creating chats. Unknown coverage stays unknown; pending
+  summaries show no totals. `onRunSummary` shares one feed per run (`run-summary-feed.ts`): serial
+  fetches 250 ms apart reuse the memoized graph (`run-summary-cache.ts`), including its compaction
+  tail. Concurrent cache reads with matching history and root share an evidence metadata scan;
+  later reads validate afresh. The reader keeps four recent project histories (LRU) plus Studio.
 - **Studio activity.** [`src/shared/studio-activity.ts`](../../src/shared/studio-activity.ts) projects
   the whole log; `StudioCore.activityEvents()` keeps per-thread cursors and only events
   `feedsActivity` says can change the projection.

@@ -203,17 +203,23 @@ describe("cua-driver as the desktop driver", () => {
   });
 
   it("runs the driver bundled with the app, and an installed one only where none is bundled", async () => {
+    const windows = process.platform === "win32";
+    const executable = windows ? "cua-driver.exe" : "cua-driver";
     const home = await tmpDir("cua-home-");
-    const bundled = path.join(await tmpDir("cua-resources-"), "cua-driver", "cua-driver");
+    const bundled = path.join(await tmpDir("cua-resources-"), "cua-driver", executable);
     assert.equal(await findCuaDriver({ bundled, home }).then((found) => found?.startsWith(home) ?? false), false);
-    const wrapper = path.join(home, ".local", "bin", "cua-driver");
+    const wrapper = windows
+      ? path.join(home, "AppData", "Local", "Programs", "Cua", "cua-driver", "bin", executable)
+      : path.join(home, ".local", "bin", executable);
     await mkdir(path.dirname(wrapper), { recursive: true });
     await writeFile(wrapper, "#!/bin/sh\n");
     await chmod(wrapper, 0o755);
     assert.equal(await findCuaDriver({ bundled, home }), wrapper, "a development build: the installed one");
     await mkdir(path.dirname(bundled), { recursive: true });
     await writeFile(bundled, "#!/bin/sh\n");
-    assert.equal(await findCuaDriver({ bundled, home }), wrapper, "a bundled file that cannot run is not the driver");
+    // Windows has no POSIX executable mode: chmod cannot make this file unrunnable there.
+    if (!windows)
+      assert.equal(await findCuaDriver({ bundled, home }), wrapper, "a bundled file that cannot run is not the driver");
     await chmod(bundled, 0o755);
     assert.equal(await findCuaDriver({ bundled, home }), bundled, "the app's own, ahead of an installed one");
   });

@@ -2384,12 +2384,17 @@ describe("deny paths Genex sets itself", () => {
   it("grants with srt-win and its launcher where Genex cannot set entries itself", async () => {
     const runtime = fakeSessionRuntime();
     const own = fakeOwnEntries(runtime.calls, { available: false });
+    const install = at("AppData", "Local", "genex", "app-0.1.13");
+    const broker = "D:\\Tools\\srt-win";
+    const npm = at("AppData", "Roaming", "npm");
+    const denyRead = [at(".ssh")];
+    const denyWrite = [at(".config")];
     const value = new WindowsSandboxSession({
       runtime: runtime.runtime,
       profile: PROFILE,
       ancestors: fakeAncestors().ancestors,
       own: own.entries,
-      launchDirs: [at("AppData", "Local", "genex", "app-0.1.13")],
+      launchDirs: [install, broker.toUpperCase().replaceAll("\\", "/")],
       launcher: async () => {
         runtime.calls.push("launcher");
         return () => {};
@@ -2397,10 +2402,33 @@ describe("deny paths Genex sets itself", () => {
       keepDenies: (paths) => [...paths],
       exists: () => true,
     });
-    await value.join({}, { grants: { write: [PONG], read: [] }, config: BASE_CONFIG });
-    assert.deepEqual(runtime.last().filesystem.allowWrite, [PONG]);
-    assert.equal(runtime.last().git, undefined);
+    const owner = {};
+    await value.join(owner, {
+      grants: { write: [PONG], read: [npm] },
+      config: { ...BASE_CONFIG, filesystem: { ...BASE_CONFIG.filesystem, denyRead, denyWrite } },
+    });
+    const assertConfig = (write: string[]) => {
+      const sent = runtime.last();
+      const read = sent.filesystem.allowRead ?? [];
+      assert.equal(read.length, 3, "only the member's read root and the launch folders are readable");
+      for (const dir of [install, broker, npm]) {
+        assert.ok(
+          read.some((root) => insideWindowsPath(root, dir) && insideWindowsPath(dir, root)),
+          `the session keeps the read grant on ${dir}`,
+        );
+      }
+      assert.deepEqual(sent.filesystem.allowWrite, write);
+      assert.deepEqual(sent.filesystem.denyRead, denyRead);
+      assert.deepEqual(sent.filesystem.denyWrite, denyWrite);
+      assert.equal(sent.git, undefined);
+    };
+    assertConfig([PONG]);
     assert.deepEqual(runtime.calls, ["own entries", "launcher", "initialize"]);
+    value.update(owner, { write: [PONG, LATE], read: [npm] });
+    await value.settled();
+    assertConfig([PONG, LATE]);
+    assert.deepEqual(runtime.calls, ["own entries", "launcher", "initialize", "reset", "own entries", "initialize"]);
+    await value.dispose();
   });
 
   it("leaves srt-win a grant root that is gone, a drive root or a share", () => {

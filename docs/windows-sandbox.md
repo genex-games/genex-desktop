@@ -59,6 +59,7 @@ the setup screen opens on `git-missing`. What differs from macOS:
   grants the install folder (and srt-win's, when apart) for reading first, among Genex's own grants
   or, where Genex cannot set them, with srt-win's (`grantLauncherFolders`), and a packaged app
   works from its install folder (`installedWorkingDir`).
+  In that fallback, the session keeps those launch folders in srt-win's read grants across resets.
   It asks srt-win for the user's SID up to three times; without that grant the check fails with
   "CreateProcessWithLogonW(srt-sandbox): Access is denied" (0x80070005), so the log says why one
   was not made. srt-win's words add "ensure the Secondary Logon service is running", but a disabled

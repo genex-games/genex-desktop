@@ -130,33 +130,54 @@ export const studioThreadOf = (state: ThreadsState): ConversationRecord | null =
  * was made), then by title. Opening a game is not work: a row never moves because it was selected.
  */
 export function sidebarGames(games: readonly GameProject[], records: readonly ConversationRecord[]): GameProject[] {
-  const recent = (game: GameProject) =>
-    Math.max(
-      Date.parse(game.createdAt) || 0,
-      ...records
-        .filter((thread) => threadMeta(thread).project === game.name)
-        .map((thread) => Date.parse(thread.updated_at) || 0),
-    );
+  const activity = new Map<string, number>();
+  for (const thread of records) {
+    const project = threadMeta(thread).project;
+    if (typeof project !== "string") continue;
+    const updated = Date.parse(thread.updated_at) || 0;
+    activity.set(project, Math.max(activity.get(project) ?? -Infinity, updated));
+  }
+  const recent = new Map(
+    games.map((game) => [game, Math.max(Date.parse(game.createdAt) || 0, activity.get(game.name) ?? -Infinity)]),
+  );
   return [...games].sort((a, b) => {
     if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
-    return recent(b) - recent(a) || a.title.localeCompare(b.title);
+    return (recent.get(b) ?? 0) - (recent.get(a) ?? 0) || a.title.localeCompare(b.title);
   });
+}
+
+function railChats(records: readonly ConversationRecord[]) {
+  let studio: ConversationRecord | undefined;
+  const byProject = new Map<string, { freshest: ConversationRecord; ids: Set<string> }>();
+  for (const thread of records) {
+    const meta = threadMeta(thread);
+    if (meta.kind !== ThreadKind.Game) {
+      studio ??= thread;
+      continue;
+    }
+    if (!isLiveGameChat(meta) || typeof meta.project !== "string") continue;
+    const chats = byProject.get(meta.project);
+    if (!chats) {
+      byProject.set(meta.project, { freshest: thread, ids: new Set([thread.id]) });
+      continue;
+    }
+    chats.ids.add(thread.id);
+    // Equal timestamps used to sort the later input first.
+    if (thread.updated_at >= chats.freshest.updated_at) chats.freshest = thread;
+  }
+  return { studio, byProject };
 }
 
 /** The rail's order for Alt-↑/↓: Studio, then each game's primary (else freshest) chat. */
 export function railThreadIds(records: readonly ConversationRecord[], games: readonly GameProject[]): string[] {
   const ids: string[] = [];
-  const studio = records.find((thread) => !isGameThread(thread));
+  const { studio, byProject } = railChats(records);
   if (studio) ids.push(studio.id);
   for (const game of games) {
-    const chats = records
-      .filter((thread) => {
-        const meta = threadMeta(thread);
-        return isLiveGameChat(meta) && meta.project === game.name;
-      })
-      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
-    const chat = chats.find((thread) => thread.id === game.primaryThreadId) ?? chats[0];
-    if (chat) ids.push(chat.id);
+    const chats = byProject.get(game.name);
+    if (!chats) continue;
+    const primary = game.primaryThreadId;
+    ids.push(primary !== undefined && chats.ids.has(primary) ? primary : chats.freshest.id);
   }
   return ids;
 }
