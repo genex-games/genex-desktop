@@ -4,6 +4,9 @@
 //! underrun however short it fell, the queue reports what it holds in milliseconds, and every cpal
 //! stream error is a typed [`DeviceFault`] (or no fault) by a table. No test opens a device.
 
+// These rows drive the mixer, device output or decoders (the `mixer` feature, AU-11).
+#![cfg(feature = "mixer")]
+
 use genex_audio::{
     AudioOutput, DeviceFault, FRAMES_PER_TICK, MIXER_RATE_HZ, NullOutput, PoolClass, SinkQueue, capacity_ticks, prefill_ticks,
     stream_fault,

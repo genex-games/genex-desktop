@@ -9,6 +9,9 @@
 //! stereo at 48 kHz, `tone-44k.ogg` a 2 s 440 Hz sine at 44.1 kHz and `silence-3min.ogg` three
 //! minutes of stereo silence.
 
+// These rows drive the mixer, device output or decoders (the `mixer` feature, AU-11).
+#![cfg(feature = "mixer")]
+
 use genex_audio::{
     AudioErrorCode, MUSIC_WORKING_BYTES, Mixer, MixerOp, Music, MusicId, MusicOpts, MusicTrack, decode_sound,
 };

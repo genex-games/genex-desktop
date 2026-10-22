@@ -15,9 +15,10 @@
 //!   runner (Linux, Windows, iOS and Android on their own runners, named at the gates).
 //!
 //! Every row is new behaviour (section 0 of the game systems plan). A game built without physics
-//! has no colliders to occlude: this file is not compiled then.
+//! has no colliders to occlude, and one built without audio plays nothing (AU-11): this file is
+//! not compiled then.
 
-#![cfg(feature = "physics")]
+#![cfg(all(feature = "physics", feature = "audio"))]
 
 use genex::audio::{PoolClass, Sound};
 use genex::physics::ColliderBuilder;

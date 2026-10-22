@@ -35,8 +35,9 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-# Physics: the occluding wall is a Rapier collider the audio rays hit.
-genex = { workspace = true, features = ["physics"] }
+# Physics: the occluding wall is a Rapier collider the audio rays hit. Audio: the mixer and
+# decoders, which a game links only by naming the feature (AU-11).
+genex = { workspace = true, features = ["physics", "audio"] }
 genex-platform-web = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -45,7 +46,7 @@ wasm-bindgen = { workspace = true }
 # tests/budgets.rs streams the music through genex-audio's own mixer to measure what it holds;
 # tests/captures.rs writes the settled captures as PNG evidence on the host GPU.
 [dev-dependencies]
-genex-audio = { workspace = true }
+genex-audio = { workspace = true, features = ["mixer"] }
 image = { workspace = true }
 
 # src/parity.rs runs under `wasm-bindgen-test-runner` (Node) on wasm32.

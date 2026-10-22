@@ -3,6 +3,9 @@
 //! functions of the commands and the ticks: equal in two processes, equal at every pool size, and
 //! a restored snapshot replays like the uninterrupted run.
 
+// These rows drive the mixer, device output or decoders (the `mixer` feature, AU-11).
+#![cfg(feature = "mixer")]
+
 use genex_audio::{
     AudioCommand, AudioErrorCode, AudioEvent, AudioEventCode, AudioSetup, Bus, Director, Duck, LOGICAL_VOICES_MAX, Listener,
     LogicalVoice, MIXER_RATE_HZ, Mixer, MixerOp, Music, MusicId, MusicOpts, MusicTrack, PRIORITY_DEFAULT, PlayOpts, PoolClass,
