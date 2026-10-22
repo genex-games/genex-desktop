@@ -76,9 +76,18 @@ export async function noteWorkerQuestions(loopRun: LoopRun, now: number): Promis
   }
 }
 
-/** Says one thing into the turn under way, never cutting it short; whether the session took it. */
+/**
+ * Says one thing into the turn under way, never cutting it short; whether the session took it. The
+ * words are Genex's (`byGenex`), so a call waiting for the person goes on waiting.
+ */
 async function steer(loopRun: LoopRun, id: string, text: string): Promise<boolean> {
-  const params = { threadId: loopRun.threadId, into: loopRun.run.runId, messages: [{ id, text }], interrupt: false };
+  const params = {
+    threadId: loopRun.threadId,
+    into: loopRun.run.runId,
+    messages: [{ id, text }],
+    interrupt: false,
+    byGenex: true,
+  };
   const answer = await loopRun.ctx.call(HostMethod.EngineSteer, params).catch(() => null);
   return Boolean(answer?.accepted?.includes(id));
 }

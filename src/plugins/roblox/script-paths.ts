@@ -134,6 +134,14 @@ export function scriptFile(ref: ScriptRef, options: ScriptFileOptions = {}): str
   return [...segments, leaf].join("/");
 }
 
+/** Whether a file below `src/` is a script that holds its folder: `init` plus a script kind (Rojo's container). */
+export function holdsFolder(file: string): boolean {
+  const leaf = file.split("/").pop() ?? "";
+  if (!leaf.endsWith(SCRIPT_EXTENSION)) return false;
+  const stem = leaf.slice(0, -SCRIPT_EXTENSION.length);
+  return KINDS.some((kind) => stem === `${CONTAINER_NAME}${kind.marker}`);
+}
+
 /** The script a file below `src/` holds, or undefined when it holds none of the game's scripts. */
 export function scriptRefOf(file: string): ScriptRef | undefined {
   const segments = file.split("/");

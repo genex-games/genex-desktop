@@ -1010,6 +1010,10 @@ describe("the one Loop's news", () => {
         host.steered.every((s) => s.interrupt === false),
         "news never cuts a turn short",
       );
+      assert.ok(
+        host.steered.every((s) => s.byGenex === true),
+        "news is Genex's own words: a call waiting for the person goes on waiting",
+      );
       const next = String(host.prompts()[1]);
       assert.doesNotMatch(next, /Survey done/, "news the turn took is not told again");
       assert.doesNotMatch(next, /Export/);

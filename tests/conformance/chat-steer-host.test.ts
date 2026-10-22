@@ -309,6 +309,15 @@ describe("a session that cannot read a message mid-turn is cut only between tool
     await steerIntoChat(refused.delegations, { ...ask, interrupt: false }, heldClock().sleep);
     assert.equal(refused.wrote.current.signal.aborted, false, "nothing taken: nothing ends");
   });
+
+  it("Genex's own words read mid-turn (a save-point reminder) end no wait for a lock: only the person's do", async () => {
+    const native = chatSession(EngineId.ClaudeCode, { steer: nativeDoor().door });
+    const waiting = native.wrote.current.signal;
+    const reminder = { ...ask, interrupt: false, byGenex: true };
+    const answer = await steerIntoChat(native.delegations, reminder, heldClock().sleep);
+    assert.deepEqual(answer, { how: "native", accepted: ["ducks"] }, "the session still reads it");
+    assert.equal(waiting.aborted, false, "a call waiting for Roblox Studio goes on waiting");
+  });
 });
 
 describe("the host reads what a delegated session reports", () => {

@@ -142,12 +142,32 @@ export const HelperMessage = {
   PlayPause: "play.pause",
   PlayEnd: "play.end",
   Activity: "activity",
+  ActivityWhy: "activity.why",
   Team: "team",
   DeviceSet: "device.set",
   GuiLayout: "gui.layout",
   ModelImport: "model.import",
 } as const;
 export type HelperMessage = (typeof HelperMessage)[keyof typeof HelperMessage];
+
+/** What the helper counted as the person's work in Studio. Wire values: never rename. */
+export const ActivitySignal = {
+  Selection: "selection",
+  Undo: "undo",
+  Redo: "redo",
+  /** A change history recording not named `Genex: …` (its name is the detail). */
+  Recording: "recording",
+  /** Typing in a script editor (the script's full name is the detail). */
+  Typing: "typing",
+} as const;
+export type ActivitySignal = (typeof ActivitySignal)[keyof typeof ActivitySignal];
+
+/** The last thing the helper counted as the person's work: what kind, and which. */
+export interface ActivityWhy {
+  /** Null while it has counted nothing since it started. */
+  signal: ActivitySignal | null;
+  detail: string;
+}
 
 /** Why a message from the helper was refused. Wire values: never rename. */
 export const HelperRefusal = {
@@ -243,8 +263,12 @@ export interface HelperRequestBodies {
   [HelperMessage.SessionMark]: { session: string };
   [HelperMessage.ScriptsList]: Record<string, never>;
   [HelperMessage.ScriptsRead]: { scripts: ScriptRef[] };
-  /** `base`, when given, is the hash Studio's source must still have: otherwise a `conflict`. */
-  [HelperMessage.ScriptsWrite]: { script: ScriptRef; source: string; base?: string };
+  /**
+   * `base`, when given, is the hash Studio's source must still have: otherwise a `conflict`.
+   * `holds`: the script holds its folder (Rojo's `init`), so a Folder of its name beside it (made
+   * for scripts that came first) gives it its children and goes.
+   */
+  [HelperMessage.ScriptsWrite]: { script: ScriptRef; source: string; base?: string; holds?: boolean };
   /** Removed only while Studio's source still has `hash`: otherwise a `conflict`. */
   [HelperMessage.ScriptsRemove]: { script: ScriptRef; hash: string };
   /**
@@ -261,6 +285,8 @@ export interface HelperRequestBodies {
   [HelperMessage.GuiLayout]: Record<string, never>;
   /** Whether the person is working in Studio now (the helper also says so unasked). */
   [HelperMessage.Activity]: Record<string, never>;
+  /** What the helper last counted as the person's work; a helper before version 3 answers `unsupported`. */
+  [HelperMessage.ActivityWhy]: Record<string, never>;
   /** Who else is in a Team Create place now (the helper also says so unasked). */
   [HelperMessage.Team]: Record<string, never>;
   /** The model's checked file was sent before as `data.chunk`s of this request's transfer. */
@@ -289,6 +315,7 @@ export interface HelperResults {
   [HelperMessage.DeviceSet]: { device: string };
   [HelperMessage.GuiLayout]: { elements: GuiElement[] };
   [HelperMessage.Activity]: { editing: boolean };
+  [HelperMessage.ActivityWhy]: ActivityWhy;
   [HelperMessage.Team]: { others: string[] };
   [HelperMessage.ModelImport]: { instance: string };
 }
@@ -516,6 +543,10 @@ const RESULTS: { [T in HelperRequest]: Check<HelperResults[T]> } = {
   [HelperMessage.DeviceSet]: record({ device: text(MAX_NAME_CHARS) }),
   [HelperMessage.GuiLayout]: record({ elements: list(guiElement, MAX_GUI_ELEMENTS) }),
   [HelperMessage.Activity]: record({ editing: bool }),
+  [HelperMessage.ActivityWhy]: record<ActivityWhy>({
+    signal: (value) => (value === null ? null : oneOf(Object.values(ActivitySignal))(value)),
+    detail: text(MAX_NAME_CHARS),
+  }),
   [HelperMessage.Team]: record({ others: list(text(MAX_NAME_CHARS), MAX_OTHERS) }),
   [HelperMessage.ModelImport]: record({ instance: text(MAX_PATH_CHARS) }),
 };

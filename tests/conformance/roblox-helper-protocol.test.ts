@@ -405,6 +405,8 @@ test("a plain script change from the bound helper reaches the sink as Studio nam
 });
 
 /** What the real helper in Studio sent on Genex's socket, and what it was asked. */
+/** The helper version these frames were recorded from; a later Genex reads them all the same. */
+const RECORDED_HELPER = 2;
 const RECORDED = JSON.parse(
   await readFile(path.resolve(import.meta.dirname, "../fixtures/roblox-studio/helper-recorded.json"), "utf8"),
 ) as { frames: Array<{ from?: "helper"; text?: string; to?: "helper"; id?: number; type?: string }> };
@@ -421,7 +423,8 @@ test("everything the real helper sent replays through the reader: its hello, ans
   const messages = reads.flatMap((read) => (read.ok ? [read.message] : []));
   const hello = messages[0];
   assert.ok(hello?.kind === "event" && hello.event.type === HelperMessage.Hello);
-  assert.deepEqual(hello.event.body, { helper: HELPER_VERSION, place: { id: "0", name: "p16-s9b.rbxlx" } });
+  assert.deepEqual(hello.event.body, { helper: RECORDED_HELPER, place: { id: "0", name: "p16-s9b.rbxlx" } });
+  assert.ok(RECORDED_HELPER <= HELPER_VERSION, "recorded from a helper no newer than the one Genex ships");
   const answers = messages.flatMap((message) => (message.kind === "answer" ? [message.answer] : []));
   assert.deepEqual(
     answers.map((answer) => (answer.ok ? answer.type : answer.error.code)),

@@ -17,7 +17,9 @@
  * - `hero-shots` (`checkpoint.after`, the viewport observer): Studio's viewport picture.
  * - `open-for-run` (`run.prepare`): Studio connected for the place, opening the place when it isn't.
  * - `studio-activity` (the lock's probe): the person's activity the helper reported in the last
- *   {@link PERSON_ACTIVE_MS}, the agent's own work (`agent-marks.ts`) discounted.
+ *   {@link PERSON_ACTIVE_MS}, the agent's own work (`agent-marks.ts`) discounted. When it counts as
+ *   the person's, what the helper last saw (a selection, a recording by name, typing in a script)
+ *   goes to the backend's log, once per source, so a wait nobody caused names its cause.
  *
  * Answers and their words are `hook-answers.ts`'s. Git stays Genex's: nothing here snapshots or
  * restores files. Deadlines are never lengthened: each step's longest path is a constant below
@@ -28,7 +30,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { type HookAnswer, type HookContext, HookEvent } from "../../shared/plugin-hooks.ts";
 import { type AgentMarks, agentsAt } from "./agent-marks.ts";
 import { type HelperAsk, HelperLinkError, HelperLinkFailure } from "./helper-link.ts";
-import { HelperErrorCode, HelperMessage } from "./helper-protocol.ts";
+import { type ActivityWhy, HelperErrorCode, HelperMessage } from "./helper-protocol.ts";
 import {
   inRun,
   type LoadRead,
@@ -64,6 +66,8 @@ import type { ReconcileOptions } from "./script-sync.ts";
 export const PERSON_ACTIVE_MS = 15 * SECOND_MS;
 /** How long the helper has to answer a ping before Studio counts as not answering. */
 export const STUDIO_PING_MS = 5 * SECOND_MS;
+/** How long the helper has to say what it counted as the person's work; the probe's answer never waits on it longer. */
+export const ACTIVITY_WHY_MS = 2 * SECOND_MS;
 /** How long Studio's MCP server has to list its Studios. */
 export const STUDIO_LIST_MS = 5 * SECOND_MS;
 /** How long asking whether Studio's process runs may take (`pgrep` or `tasklist`). */
@@ -113,6 +117,8 @@ export interface StudioWatch {
   team(game: string, others: string[]): void;
   /** When the helper reported the person's work within the last {@link PERSON_ACTIVE_MS}. */
   seen(game: string): number[];
+  /** What the helper said it counted as the person's work, logged when it differs from the last said for the game. */
+  explain(game: string, why: ActivityWhy): void;
   /** Who else is in the place, when the helper said. */
   others(game: string): string[] | undefined;
   /** Who the last Team Create note named, and noting it. */
@@ -123,9 +129,10 @@ export interface StudioWatch {
   connected(game: string): void;
 }
 
-/** The backend's watch of every game, on its clock. */
-export function createStudioWatch(now: () => number): StudioWatch {
+/** The backend's watch of every game, on its clock; `log` hears what activity counted as the person's. */
+export function createStudioWatch(now: () => number, log: (line: string) => void = () => {}): StudioWatch {
   const seen = new Map<string, number[]>();
+  const explained = new Map<string, string>();
   const others = new Map<string, string[]>();
   const noted = new Map<string, string[]>();
   const unbound = new Map<string, number>();
@@ -136,6 +143,13 @@ export function createStudioWatch(now: () => number): StudioWatch {
     },
     team: (game, list) => void others.set(game, [...list]),
     seen: recent,
+    explain(game, why) {
+      if (!why.signal) return;
+      const line = `studio activity in ${game} counted as the person's: ${why.signal} ${JSON.stringify(why.detail)}`;
+      if (explained.get(game) === line) return;
+      explained.set(game, line);
+      log(line);
+    },
     others: (game) => others.get(game),
     noted: (game) => noted.get(game),
     note: (game, list) => void noted.set(game, [...list]),
@@ -418,5 +432,16 @@ export async function personActive(ops: MomentOps): Promise<boolean> {
   if (!seen.length) return false;
   const now = ops.now();
   const marks = await ops.marks();
-  return seen.some((at) => !agentsAt(marks, at, now));
+  const active = seen.some((at) => !agentsAt(marks, at, now));
+  if (active) await explainActivity(ops);
+  return active;
+}
+
+/** Asks the helper what it counted as the person's work, for the log; an older helper can't say, and nothing changes. */
+async function explainActivity(ops: MomentOps): Promise<void> {
+  try {
+    ops.watch.explain(ops.game, await ops.ask(HelperMessage.ActivityWhy, {}, { timeoutMs: ACTIVITY_WHY_MS }));
+  } catch {
+    // A helper before version 3, or one that didn't answer in time: the probe's answer stands.
+  }
 }

@@ -398,6 +398,33 @@ test("a src folder that is a link is refused: nothing is asked of Studio and not
   assert.equal(watcher.watching.length, 0);
 });
 
+test("a script that holds its folder (init.server.luau) is pushed saying so, so Studio's folder of that name goes inside it", async () => {
+  const game: ScriptRef = {
+    path: ["ServerScriptService", "Game"],
+    class: ScriptClass.Script,
+    runContext: RunContext.Legacy,
+  };
+  const props = module("ServerScriptService", "Game", "Props");
+  const world = await setUp({
+    files: { "src/ServerScriptService/Game/Props.luau": "return {}\n" },
+    studio: [{ ref: props, source: "return {}\n" }],
+  });
+  await world.sync.start();
+  await writeFile(path.join(world.folder, "src/ServerScriptService/Game/init.server.luau"), "require(script.Props)\n");
+  await world.settle();
+  await writeFile(path.join(world.folder, "src/ServerScriptService/Game/Props.luau"), "return { 1 }\n");
+  await world.settle();
+  const writes = world.helper.writes().map((entry) => entry.body as { script: ScriptRef; holds?: boolean });
+  assert.deepEqual(
+    writes.map((body) => [body.script, body.holds]),
+    [
+      [game, true],
+      [props, undefined],
+    ],
+    "only the script that holds its folder says so; Props stays a module inside it",
+  );
+});
+
 test("links inside src are never followed: a linked folder or file is neither read nor written", async (t) => {
   if (process.platform === "win32") return t.skip("creating links needs a privilege the Windows runner may lack");
   const world = await setUp({ studio: [] });
