@@ -131,6 +131,17 @@ describe("a native game's page", () => {
     assert.equal(gameStanding(game(), installs({ host: null }), []).notHere, null, "nothing to say before main has");
   });
 
+  it("offers no Install where Genex launches no native game, and says why", () => {
+    const windows = installs({
+      host: { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.26100" },
+    });
+    const both = game([build(), build({ platform: NativePlatform.Windows, arch: NativeArch.X64, entry: "Dust.exe" })]);
+    const standing = gameStanding(both, windows, []);
+    assert.equal(standing.build, null);
+    assert.equal(standing.phase, GamePhase.Elsewhere);
+    assert.deepEqual(standing.notHere, { why: WhyNotHere.System, elsewhere: [NativePlatform.Mac] });
+  });
+
   it("says plainly why it can't install here, in place of Install", () => {
     const WINDOWS = NativePlatform.Windows;
     const MAC = NativePlatform.Mac;

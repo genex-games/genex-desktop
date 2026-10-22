@@ -16,6 +16,7 @@ import { registerUpdateIpc } from "../../src/main/ipc/update.ts";
 import { registerStorageIpc } from "../../src/main/ipc/storage.ts";
 import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 import { gameLinks } from "../../src/main/play/game-links.ts";
 import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
@@ -1147,7 +1148,7 @@ describe("the in-window update prompt", () => {
 
 describe("Play's share menu", () => {
   /** Play's channels with only Share… and game links live: every menu it pops is kept. */
-  function shareRig(web: string, links = gameLinks()) {
+  function shareRig(web: string, links = gameLinks(), here: NativeHost | null = null) {
     const { handle, invoke } = registrar();
     const shared: Array<[string, unknown]> = [];
     const unused = {} as unknown;
@@ -1158,6 +1159,7 @@ describe("Play's share menu", () => {
       remixReady: async () => ({}),
       viewer: () => null,
       installs: () => null,
+      here: () => here,
       sessions: () => null,
       reveal: () => {},
       people: unused as PlayIpcDeps["people"],
@@ -1177,6 +1179,15 @@ describe("Play's share menu", () => {
     links.arrive("genex://game/iron-tide");
     assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: "iron-tide" });
     assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+  });
+
+  it("names this computer even where Genex installs no native game, so a page can say why", async () => {
+    const windows: NativeHost = { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.26100" };
+    const { invoke } = shareRig("https://genex.games", gameLinks(), windows);
+    assert.deepEqual(await invoke("studio:play.installs"), {
+      ok: true,
+      value: { installed: [], progress: [], host: windows },
+    });
   });
 
   it("pops for a page of the website Play links to, by the button that asked", async () => {

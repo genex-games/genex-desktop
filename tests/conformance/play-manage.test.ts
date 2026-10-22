@@ -424,6 +424,7 @@ describe("Play's manage channels", () => {
       remixReady: async () => ({}),
       viewer: () => null,
       installs: () => null,
+      here: () => null,
       sessions: () => null,
       reveal: () => {},
       people: unused as PlayIpcDeps["people"],

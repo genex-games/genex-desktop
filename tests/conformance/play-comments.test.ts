@@ -237,6 +237,7 @@ describe("Who may answer a purchase sheet", () => {
       web: PLAY_ORIGIN.web,
       share: () => {},
       installs: () => null,
+      here: () => null,
       sessions: () => null,
       reveal: () => {},
     });

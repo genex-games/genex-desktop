@@ -12,7 +12,7 @@ import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
 import { forgetNativeIdentity } from "../play/native-identity.ts";
 import type { PlayManage } from "../play/manage.ts";
 import type { NativeInstaller } from "../play/native-installs.ts";
-import { isSessionAction, NO_INSTALLS, SessionAction } from "../../shared/play-native.ts";
+import { isSessionAction, NO_INSTALLS, type NativeHost, SessionAction } from "../../shared/play-native.ts";
 import type { NativeSessions } from "../play/native-launch.ts";
 import { onWebsite } from "../play/origins.ts";
 import type { PlayPeople } from "../play/people.ts";
@@ -63,6 +63,8 @@ export interface PlayIpcDeps {
   share(url: string, at: PlayPoint | undefined): void;
   /** Native games' installs on this computer; null where Genex runs no native game. */
   installs(): NativeInstaller | null;
+  /** This computer as Play names it, even where Genex runs no native game; null where it has no name. */
+  here(): NativeHost | null;
   /** Native games being played; null where Genex runs no native game. */
   sessions(): NativeSessions | null;
   /** Show a file in Finder (`shell.showItemInFolder`). */
@@ -138,7 +140,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   // The purchase sheet's answer: the viewer reads it, and pays or cancels only the purchase it holds.
   handle("studio:play.purchase", async (payload) => viewer()?.answerPurchase(payload));
   registerCommentsIpc(handle, viewer);
-  registerInstallsIpc(handle, deps.installs, gallery);
+  registerInstallsIpc(handle, deps, gallery);
   registerSessionsIpc(handle, deps.sessions);
   registerGameIpc(handle, deps);
 }
@@ -181,7 +183,7 @@ function registerGameIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
 /** A native game's install: the renderer names a game by its slug; main reads its build from the catalog. */
 function registerInstallsIpc(
   handle: IpcHandle,
-  installs: PlayIpcDeps["installs"],
+  { installs, here }: Pick<PlayIpcDeps, "installs" | "here">,
   gallery: Pick<PlayGallery, "forgetIdentity">,
 ): void {
   const installer = (): NativeInstaller => {
@@ -195,7 +197,8 @@ function registerInstallsIpc(
   };
   handle("studio:play.install", (payload) => installer().install(slugOf(payload)));
   handle("studio:play.install-cancel", (payload) => installer().cancel(slugOf(payload)));
-  handle("studio:play.installs", async () => (await installs()?.state()) ?? NO_INSTALLS);
+  // Where nothing installs, the computer is still named, so a game's page can say why not.
+  handle("studio:play.installs", async () => (await installs()?.state()) ?? { ...NO_INSTALLS, host: here() });
   handle("studio:play.uninstall", (payload) => installer().uninstall(slugOf(payload)));
   handle("studio:play.forget-identity", (payload) => {
     const slug = slugOf(payload);

@@ -315,10 +315,21 @@ function Pills({ game }: { game: PlayGameDetail }): JSX.Element {
 }
 
 /** One tile: its mark and one line, never a second; `label` names a mark that says more than the line. */
-function Tile({ mark, text, hook, label }: { mark: JSX.Element; text: string; hook: string; label?: string }) {
+function Tile({
+  mark,
+  text,
+  hook,
+  label,
+}: {
+  mark: JSX.Element;
+  text: string;
+  hook: string;
+  label?: string;
+}): JSX.Element {
+  const named = label ? { role: "img", "aria-label": label } : {};
   return (
     <div className="game-tile" data-game-tile={hook} title={label}>
-      <span className="game-tile-mark" role={label ? "img" : undefined} aria-label={label}>
+      <span className="game-tile-mark" {...named}>
         {mark}
       </span>
       <span className="game-tile-text">{text}</span>

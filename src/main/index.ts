@@ -1892,6 +1892,7 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
     web: playOrigin.web,
     share: popShareMenu,
     installs: () => playInstallsFor(studio),
+    here: () => thisComputer() ?? null,
     sessions: () => playSessionsFor(studio),
     reveal: (file) => shell.showItemInFolder(file),
     gameLinks: gameLinkQueue,
