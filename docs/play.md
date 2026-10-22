@@ -231,8 +231,9 @@ is.
     the play itself (`POST /api/embed/native-play`): genex.games counts the signed-in account, or,
     signed out, this computer's own random id (`installed-games/player.json`, sent only with no
     account), once per game, like a web play. A refused token (401) ends the sign-in and the report
-    goes again as this computer's, as do later ones while the account still holds that token. A game quit before it was running, or a failed report, counts
-    nothing; a failed report is logged. A fixture launch reports nothing.
+    goes again as this computer's, as do later ones while the account still holds that token. A
+    game quit before it was running, or a failed report, counts nothing; a failed report is logged.
+    A fixture launch reports nothing.
 - Links (`main/play/game-links.ts`): the website's Open in Genex sends `genex://game/<slug>`.
   The packaged app declares the scheme (`protocols` in `forge.config.cjs`, the Linux packages'
   `x-scheme-handler/genex`) and registers it at start; macOS hands a link over `open-url`, Windows

@@ -24,7 +24,11 @@ interface Sent {
 
 /** A reporter over a fresh folder whose calls genex.games answers with `answer`, signed in with `token`. */
 async function reporter(
-  options: { token?: string; answer?: (sent: Sent) => Promise<GalleryAnswer>; root?: string } = {},
+  options: {
+    token?: string | (() => string | undefined);
+    answer?: (sent: Sent) => Promise<GalleryAnswer>;
+    root?: string;
+  } = {},
 ) {
   const root = options.root ?? (await tmpDir("native-plays-"));
   const sent: Sent[] = [];
@@ -37,7 +41,7 @@ async function reporter(
       sent.push(one);
       return options.answer ? options.answer(one) : { status: 200, body: { ok: true, counted: true } };
     },
-    token: async () => options.token,
+    token: async () => (typeof options.token === "function" ? options.token() : options.token),
     refused: (token) => refused.push(token),
     log: (line) => logs.push(line),
   });
@@ -99,25 +103,20 @@ describe("a downloaded game's play on genex.games", () => {
     );
   });
 
-  it("keeps a kept id it cannot read now, and drops that play instead of counting this computer again", async () => {
-    const root = await tmpDir("native-plays-");
-    const file = path.join(root, "player.json");
-    await symlink(file, file);
-    const { plays, sent, logs } = await reporter({ root });
+  it("counts under the account again once it signs in anew after a refusal", async () => {
+    let current = TOKEN;
+    const answer = async (one: Sent): Promise<GalleryAnswer> =>
+      one.token === TOKEN ? { status: 401, body: { error: "Unauthorized" } } : { status: 200, body: { ok: true } };
+    const { plays, sent } = await reporter({ token: () => current, answer });
     await plays.report("dust-runners");
-    assert.deepEqual(sent, []);
-    assert.equal(logs.length, 1);
-    assert.equal(await readlink(file), file, "the kept file is as it was");
-  });
-
-  it("replaces a kept id that is not one it made", async () => {
-    const root = await tmpDir("native-plays-");
-    for (const kept of ["not json", JSON.stringify({ playerId: "../../etc" }), JSON.stringify({ playerId: 7 })]) {
-      await writeFile(path.join(root, "player.json"), kept);
-      const { plays, sent } = await reporter({ root });
-      await plays.report("dust-runners");
-      assert.match(playerIds(sent)[0] ?? "", UUID, kept);
-    }
+    current = "tok_fresh_fedcba9876543210";
+    await plays.report("iron-tide");
+    assert.deepEqual(sent.at(-1), {
+      route: PlayRoute.NativePlay,
+      method: "POST",
+      body: { slug: "iron-tide" },
+      token: "tok_fresh_fedcba9876543210",
+    });
   });
 
   it("drops a refused or failed report with a log line that carries no token, and never throws", async () => {
@@ -142,5 +141,28 @@ describe("a downloaded game's play on genex.games", () => {
     const { plays, sent } = await reporter({ token: TOKEN });
     await plays.report("../dust-runners");
     assert.deepEqual(sent, []);
+  });
+});
+
+describe("this computer's kept id for play counts", () => {
+  it("keeps a kept id it cannot read now, and drops that play instead of counting this computer again", async () => {
+    const root = await tmpDir("native-plays-");
+    const file = path.join(root, "player.json");
+    await symlink(file, file);
+    const { plays, sent, logs } = await reporter({ root });
+    await plays.report("dust-runners");
+    assert.deepEqual(sent, []);
+    assert.equal(logs.length, 1);
+    assert.equal(await readlink(file), file, "the kept file is as it was");
+  });
+
+  it("replaces a kept id that is not one it made", async () => {
+    const root = await tmpDir("native-plays-");
+    for (const kept of ["not json", JSON.stringify({ playerId: "../../etc" }), JSON.stringify({ playerId: 7 })]) {
+      await writeFile(path.join(root, "player.json"), kept);
+      const { plays, sent } = await reporter({ root });
+      await plays.report("dust-runners");
+      assert.match(playerIds(sent)[0] ?? "", UUID, kept);
+    }
   });
 });
