@@ -1187,7 +1187,7 @@ function helperServices(client: StudioClient, stopped: AbortSignal): HelperServi
   let link: HelperLink | undefined;
   let syncs: ScriptSyncs | undefined;
   const log = (line: string) => process.stderr.write(`${line}\n`);
-  const watch = createStudioWatch(SYSTEM_CLOCK.now);
+  const watch = createStudioWatch(SYSTEM_CLOCK.now, log);
   const askFor =
     (game: string): HelperAsk =>
     (type, body, options) =>

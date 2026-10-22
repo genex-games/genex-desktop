@@ -708,7 +708,7 @@ hand (a lone lead rests until it is back): the person's words still wake the lea
 `finish` are refused meanwhile, the turn's end keeps and restores nothing, and only the way back takes
 the git-write queue. Once the Loop begins to close it stops at its next step (its waits for the app
 too), says nothing and keeps no journal; the teardown waits for it a while (`settleRecovery`). A
-closing Loop's lead hears no more news. While a turn works, `open/news.ts` steers (`interrupt: false`, once each) a pool
+closing Loop's lead hears no more news. While a turn works, `open/news.ts` steers (`interrupt: false`, `byGenex: true` so no plugin wait for the person ends, once each) a pool
 worker's end and question (`NoteKind.WorkerAsks`), a job's end, the app's crash
 (`NoteKind.AppCrashed`) and a reminder `SAVE_REMINDER_MS` after the last save point; a line the
 session read (`DelegateResult.steered`) is not told again, one it never read rides the next digest:

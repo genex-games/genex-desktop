@@ -35,7 +35,7 @@ import { MESSAGE } from "./words.ts";
 /** The helper's file name, in the package and in Studio's Plugins folder. */
 export const HELPER_FILE = "GenexStudioHelper.rbxmx";
 /** The shipped helper's version; the file carries the same number as `GENEX_HELPER_VERSION`. */
-export const HELPER_VERSION = 2;
+export const HELPER_VERSION = 3;
 const HELPER_VERSION_MARK = /\bGENEX_HELPER_VERSION\s*=\s*(\d{1,6})\b/;
 /** The largest helper file Genex reads back: the shipped one is a few kilobytes. */
 const HELPER_MAX_BYTES = 4 * 1024 * 1024;

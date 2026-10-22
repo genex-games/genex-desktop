@@ -241,6 +241,7 @@ async function robloxHelperConstants(root, version) {
     MAX_PLAYERS: MAX_PLAY_PLAYERS,
     Message: protocol.HelperMessage,
     ErrorCode: protocol.HelperErrorCode,
+    Signal: protocol.ActivitySignal,
   };
   const fields = Object.keys(values)
     .sort()

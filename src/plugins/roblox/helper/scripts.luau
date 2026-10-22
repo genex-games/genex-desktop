@@ -7,6 +7,10 @@
 -- ScriptEditorService so an open editor gets the change too), removes one only while its source
 -- is still what Genex last saw, and tells Genex when a script changes in Studio. A script Studio's
 -- Script Sync keeps in a file of its own is listed as synced and never written.
+--
+-- A script that holds its folder (a file's `init.server.luau`, as Rojo names it) may arrive after
+-- the scripts inside it, which were given a Folder of its name on the way: that Folder hands its
+-- children to the script and goes. A Folder a removed script leaves empty goes with it.
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local RunService = game:GetService("RunService")
@@ -209,6 +213,32 @@ local function create(ref: Ref): Instance
 	return instance
 end
 
+-- The script holds its folder: a Folder of its name beside it gives it every child and goes.
+local function adoptFolder(holder: Instance)
+	local parent = holder.Parent
+	if not parent then
+		return
+	end
+	for _, sibling in parent:GetChildren() do
+		if sibling ~= holder and sibling.ClassName == "Folder" and sibling.Name == holder.Name then
+			for _, child in sibling:GetChildren() do
+				child.Parent = holder
+			end
+			sibling.Parent = nil
+		end
+	end
+end
+
+-- Folders left with nothing in them, from `folder` up to the service.
+local function pruneEmpty(folder: Instance?)
+	local current = folder
+	while current and current.ClassName == "Folder" and #current:GetChildren() == 0 do
+		local parent = current.Parent
+		current.Parent = nil
+		current = parent
+	end
+end
+
 local function remember(instance: Instance, ref: Ref, hash: string)
 	known[instance] = { key = keyOf(ref), ref = ref, hash = hash }
 	pending[instance] = nil
@@ -287,9 +317,13 @@ function scripts.write(request: any): { [string]: any }
 		protocol.fail(ErrorCode.Refused, "Studio's Script Sync keeps this script in a file of its own.")
 	end
 	local target = instance
+	local holds = request.body.holds == true
 	recorded("Genex: update a script", function()
 		local made = target or create(ref)
 		target = made
+		if holds then
+			adoptFolder(made)
+		end
 		ScriptEditorService:UpdateSourceAsync(made :: any, function()
 			return source
 		end)
@@ -317,7 +351,9 @@ function scripts.remove(request: any): { [string]: any }
 	known[instance] = nil
 	pending[instance] = nil
 	recorded("Genex: remove a script", function()
+		local folder = instance.Parent
 		instance.Parent = nil
+		pruneEmpty(folder)
 	end)
 	return { removed = true }
 end

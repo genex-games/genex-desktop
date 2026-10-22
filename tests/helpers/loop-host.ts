@@ -113,8 +113,8 @@ export type LoopHost = {
    * cut the turn for (an engine that takes no input as it works); `native` by default.
    */
   steerHow: "native" | "interrupt";
-  /** What was steered into the lead's turns, in order. */
-  steered: Array<{ id: string; text: string; interrupt: unknown }>;
+  /** What was steered into the lead's turns, in order, and whether Genex said it (`byGenex`). */
+  steered: Array<{ id: string; text: string; interrupt: unknown; byGenex: unknown }>;
   /** The run's jobs, as `jobs.list` answers them. */
   jobs: Array<Record<string, unknown>>;
   /** The calls in order (`tool:<plugin>__<tool>` for a moment's step, the snapshot where it is taken). */
@@ -401,7 +401,8 @@ function handlers(host: Internals) {
     },
     "engine.steer": (params: Record<string, unknown>) => {
       const messages = (params.messages ?? []) as Array<{ id: string; text: string }>;
-      for (const message of messages) host.steered.push({ ...message, interrupt: params.interrupt });
+      for (const message of messages)
+        host.steered.push({ ...message, interrupt: params.interrupt, byGenex: params.byGenex });
       if (!host.steerTakes) return { how: null, accepted: [] };
       const how = host.steerHow === "interrupt" && params.interrupt === true ? "interrupt" : "native";
       return { how, accepted: messages.map((message) => message.id) };
