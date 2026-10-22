@@ -18,6 +18,7 @@ import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
 import type { NativeLogBatch, NativeRunStatus } from "./native-contract.ts";
+import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
 import type { NativeInstalls, NativeSession } from "./play-native.ts";
@@ -108,6 +109,8 @@ export interface UiEventMap {
   "engines.changed": { engine?: string };
   "engine.auth": { engine?: string; message?: string };
   "engine.fallback": { from?: string; to?: string; kind?: string; role?: string };
+  /** Every subscription's plan limits as they stand now, sent whenever one of them changes. */
+  "provider.usage": { reports: ProviderUsageReport[] };
   "model.install": ModelInstallJob;
   /** An in-app Claude Code or Codex install started, finished or failed. */
   "cli.install": CliInstallJob;
@@ -280,6 +283,7 @@ export const UiEvent = {
   EnginesChanged: "engines.changed",
   EngineAuth: "engine.auth",
   EngineFallback: "engine.fallback",
+  ProviderUsage: "provider.usage",
   ModelInstall: "model.install",
   CliInstall: "cli.install",
   ToolchainInstall: "toolchain.install",

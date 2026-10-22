@@ -473,19 +473,28 @@ See `claude-telemetry.test.ts` and `context-policy.test.ts` for the regression b
 
 ### Plan limits
 
-`studio:provider-usage` asks each ready subscription engine for `readUsage()` and returns
-sanitized `ProviderUsageReport`s (plan and limit windows; never account identifiers). Neither read
+Main keeps every subscription's limits as one live state (`main/core/provider-usage.ts`) and pushes
+each change as `provider.usage`; the renderer's `state/provider-usage.ts` is the one copy the
+composer reads. `studio:provider-usage` answers with the state as it stands and starts a read; each
+subscription is read on its own and pushes its own answer, so a slow Claude read never holds Codex
+back. A report's `state` is `checking`, `ready`, `not_shared` (the provider answered with no
+limits), `failed` (the read threw or ran out of time) or `signed_out` (a shown subscription whose
+login lapsed), and its `usage` always belongs to `account`, the account in use: a refresh of the
+same account keeps the last numbers while it reads, a switch never shows the last account's. An
+`engines.changed` (sign-in, switch, recheck) reads again the subscriptions already shown. Reports
+never carry emails or credentials. Neither read
 starts a turn. Claude opens an SDK session whose prompt never yields, in the judges' empty
 directory with no settings or MCP servers, calls the account-usage control and closes it;
 `normalizeClaudeUsage` keeps the 5-hour, weekly and per-model (`model_scoped`, e.g. Fable)
 windows. Codex starts `codex app-server` with the login's `CODEX_HOME` and profile arguments,
 sends `initialize` and one `account/rateLimits/read`, then closes stdin; `normalizeCodexUsage`
 names windows by length and scopes non-default buckets. Claude sessions at work never read plan
-usage (see Native context telemetry). Each engine reuses a reading under a
-minute old, shares an in-flight read and falls
-back to its last reading on failure; a Recheck clears it. The composer asks when its ring panel
-opens or the ring is hovered, and every minute while open; until the first reading it draws each
-plan this setup uses at full size with shimmering bars for its limits. The panel leaves the
+usage (see Native context telemetry). `readUsage()` answers null when the plan shares no limits and
+throws when they could not be read; each engine reuses a reading under a minute old and shares an
+in-flight read; a Recheck clears it. The composer asks when its ring panel opens or the ring is
+hovered, and every minute while open; until the first answer it draws each plan this setup uses
+at full size with shimmering bars, and a plan being read with no numbers yet does the same. A
+failed read shows one orange line with Try again, a signed-out plan Sign in again. The panel leaves the
 `model_scoped` windows out (`shownLimits`; `SHOW_MODEL_LIMITS` in `usage-words.ts` brings them back). Its
 last row opens Settings → Model Providers. Fixture engines report fixed limits.
 `promptbar-redesign.test.ts` covers both normalizers; account access is proven only against a

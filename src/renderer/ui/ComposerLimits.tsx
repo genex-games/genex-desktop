@@ -1,4 +1,4 @@
-import { type JSX, useEffect, useRef, useState } from "react";
+import { type JSX, useEffect, useState } from "react";
 import { t } from "../../shared/i18n.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { ComposerTip } from "./PickerPanel.tsx";
@@ -13,28 +13,26 @@ import {
   resetWords,
   shownLimits,
 } from "./usage-words.ts";
-import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { MINUTE_MS } from "../../shared/duration.ts";
 import { usePolling } from "../use-polling.ts";
 import { GenexCredits } from "../panels/plugins/genex/GenexCredits.tsx";
-import type { ProviderUsage, ProviderUsageReport } from "../../shared/provider-usage.ts";
+import { type ProviderUsage, type ProviderUsageReport, UsageState } from "../../shared/provider-usage.ts";
 import type { ContextUsage } from "../../shared/context.ts";
 import { selectedCompact } from "../chat/compact-control.ts";
 import { COMPACT_WORDS, PROVIDER_ACCOUNT_WORDS } from "../words.ts";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
 import type { SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
 import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
+import { useEngines, useProviderUsage } from "../state/hooks.ts";
+import { studio } from "../state/studio.ts";
 export type { ContextUsage };
 /** The ring's circumference: a circle of radius 6. */
 const RING = 2 * Math.PI * 6;
 const ROLE_WORDS: Record<RoleKey, string> = { planner: t("Main agent"), builder: t("Workers"), judge: t("Reviewers") };
-/** A usage reading younger than this is not asked for again on hover. */
-const USAGE_FRESH_MS = 30 * SECOND_MS;
 /** While the panel is open, usage is read again this often. */
 const USAGE_POLL_MS = MINUTE_MS;
 /** From this full (percent), the context ring and meter show as full. */
 const CONTEXT_FULL = 85;
-/** The last reading, painted at once when the panel opens again while a fresh one is fetched. */
-let lastReports: ProviderUsageReport[] | null = null;
 
 /** Which roles a plan serves: all of them, some by name, or none. */
 function rolesWords(roles: RoleKey[], allRoles: number): string {
@@ -94,13 +92,9 @@ function PlanAccounts({
   const [open, setOpen] = useState(false);
   const inUse = activeAccount(accounts);
   const others = accounts.filter((account) => !account.active);
-  const signIn = async (opts: { account: string }): Promise<void> => {
-    await window.studio.subscriptionSignIn({ engine, ...opts });
-    openSettings(SettingsSection.Providers);
-  };
   const pick = (account: string): void => {
     setOpen(false);
-    void switchAccount(engine, account, signIn)
+    void switchAccount(engine, account, (opts) => signInAgain(engine, opts.account))
       .catch(() => {})
       .finally(onSwitched);
   };
@@ -126,27 +120,92 @@ function PlanAccounts({
   );
 }
 
+/** Start an account's web sign-in and open Model Providers, where that sign-in shows. */
+async function signInAgain(engine: string, account: string | null): Promise<void> {
+  await window.studio.subscriptionSignIn({ engine, ...(account ? { account } : {}) });
+  openSettings(SettingsSection.Providers);
+}
+
+/** A plan's one problem line and its one action: Try again, or Sign in again (the accent's). */
+function PlanProblem({
+  words,
+  action,
+  primary = false,
+  onAction,
+}: {
+  words: string;
+  action: string;
+  primary?: boolean;
+  onAction: () => void;
+}) {
+  return (
+    <div className="usage-problem" data-usage-problem>
+      <span className="min-w-0 flex-1 truncate">{words}</span>
+      <button type="button" className="usage-problem-action" data-primary={primary || undefined} onClick={onAction}>
+        {action}
+      </button>
+    </div>
+  );
+}
+
+/** What a plan shows under its name, by where its limits stand. */
+function PlanBody({ report, onRetry }: { report: ProviderUsageReport; onRetry: () => void }): JSX.Element {
+  const limits = shownLimits(report.usage?.windows ?? []);
+  const brand = PLAN_PROVIDERS[report.engine]?.brand ?? report.engine;
+  if (report.state === UsageState.SignedOut)
+    return (
+      <PlanProblem
+        words={t("This account is signed out")}
+        action={t("Sign in again")}
+        primary
+        onAction={() => void signInAgain(report.engine, report.account).catch(() => {})}
+      />
+    );
+  if (report.state === UsageState.NotShared)
+    return <p className="usage-note">{t("{brand} doesn’t share limits for this plan", { brand })}</p>;
+  if (!limits.length && report.state === UsageState.Checking)
+    return (
+      <div role="status" aria-busy="true" aria-label={t("Checking plan usage…")}>
+        <SkeletonLimit name={92} />
+        <SkeletonLimit name={130} />
+      </div>
+    );
+  return (
+    <>
+      {limits.map((window) => (
+        <LimitWindow key={window.id} window={window} />
+      ))}
+      {report.state === UsageState.Failed && (
+        <PlanProblem words={t("Couldn’t check your limits")} action={t("Try again")} onAction={onRetry} />
+      )}
+    </>
+  );
+}
+
 function PlanLimits({
   report,
   roles,
   showRoles,
   allRoles,
   onSwitched,
+  onRetry,
 }: {
   report: ProviderUsageReport;
   roles: RoleKey[];
   showRoles: boolean;
   allRoles: number;
-  /** Another account runs now: read usage again, and the accounts with it. */
+  /** Another account runs now: read the accounts again (main pushes the new limits itself). */
   onSwitched: (reloadAccounts: () => void) => void;
+  onRetry: () => void;
 }) {
   const usage: ProviderUsage | null = report.usage;
   const page = PLAN_PROVIDERS[report.engine]?.usagePage;
   const title = planWords(report.engine, usage?.plan);
-  const limits = shownLimits(usage?.windows ?? []);
-  const { accounts, reload } = useSubscriptionAccounts(report.engine, report);
+  // The accounts are read again when the account in use or the engine's sign-in changes.
+  const status = useEngines((s) => s.list.find((engine) => engine.id === report.engine)?.status.code);
+  const { accounts, reload } = useSubscriptionAccounts(report.engine, `${report.account}:${status}`);
   return (
-    <section className="usage-plan" data-usage-engine={report.engine}>
+    <section className="usage-plan" data-usage-engine={report.engine} data-usage-state={report.state}>
       <div className="usage-plan-head">
         {page ? (
           <button
@@ -170,37 +229,20 @@ function PlanLimits({
       {accounts.length > 1 && (
         <PlanAccounts engine={report.engine} accounts={accounts} onSwitched={() => onSwitched(reload)} />
       )}
-      {limits.map((window) => (
-        <LimitWindow key={window.id} window={window} />
-      ))}
-      {!usage?.windows.length && <p className="usage-note">{t("Usage not reported")}</p>}
+      <PlanBody report={report} onRetry={onRetry} />
     </section>
   );
 }
 
 /**
- * The subscriptions' plan usage: the last reading at once, a fresh one on hover or focus (unless
- * one is recent), and a poll while the panel is open.
+ * The subscriptions' plan usage, as main keeps it: asked for on hover or focus (unless asked just
+ * now) and every minute while the panel is open; each answer arrives as main pushes it.
  */
 function usePlanUsage(open: boolean) {
-  const [reports, setReports] = useState<ProviderUsageReport[] | null>(
-    () => lastReports ?? ("providerUsage" in (window.studio ?? {}) ? null : []),
-  );
-  // A read that failed with no earlier reading to show: the panel says so instead of checking forever.
-  const [failed, setFailed] = useState(false);
-  const fetchedAt = useRef(0);
-  const refresh = (force = false) => {
-    if (!force && Date.now() - fetchedAt.current < USAGE_FRESH_MS) return;
-    fetchedAt.current = Date.now();
-    void window.studio
-      .providerUsage?.()
-      .then((next) => {
-        lastReports = next;
-        setReports(next);
-        setFailed(false);
-      })
-      .catch(() => setFailed(true));
-  };
+  const reports = useProviderUsage((s) => s.reports);
+  const failed = useProviderUsage((s) => s.failed);
+  const refresh = (force = false): void => studio().providerUsage.refresh(force);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a read when the panel opens, not per render
   useEffect(() => {
     if (open) refresh();
   }, [open]);
@@ -259,11 +301,13 @@ function PlanUsage({
   failed,
   usedBy,
   onSwitched,
+  onRetry,
 }: {
   reports: ProviderUsageReport[] | null;
   failed: boolean;
   usedBy: Record<string, RoleKey[]>;
   onSwitched: (reloadAccounts: () => void) => void;
+  onRetry: () => void;
 }): JSX.Element {
   if (reports === null && failed)
     return <p className="usage-note usage-divider">{t("Plan usage isn’t available right now.")}</p>;
@@ -281,6 +325,7 @@ function PlanUsage({
           showRoles={plans.length > 1}
           allRoles={Object.values(usedBy).flat().length}
           onSwitched={onSwitched}
+          onRetry={onRetry}
         />
       ))}
     </>
@@ -403,10 +448,8 @@ export function ComposerLimits({
           reports={reports}
           failed={failed}
           usedBy={usedBy}
-          onSwitched={(reloadAccounts) => {
-            refresh(true);
-            reloadAccounts();
-          }}
+          onSwitched={(reloadAccounts) => reloadAccounts()}
+          onRetry={() => refresh(true)}
         />
         <GenexCredits project={project} open={open} />
         <button

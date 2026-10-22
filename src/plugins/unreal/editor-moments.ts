@@ -119,6 +119,11 @@ export type MomentOps = {
   mayEndPlay(): Promise<boolean>;
   /** Saves the editor's work (a play session ended first), each editor call within its moment's limit; throws its refusal. */
   save(): Promise<Saved>;
+  /**
+   * Sets the linked project up in this profile when it has no set-up record here (another profile
+   * set it up), quitting Unreal first when that changes its files; throws its refusal.
+   */
+  setUp(): Promise<void>;
   /** Ends the project's editor; throws when it couldn't. */
   end(): Promise<unknown>;
   /** Starts reopening the game's Unreal in the background, updating an outdated helper while it is closed when asked. */
@@ -403,12 +408,18 @@ async function closedUpdate(ops: MomentOps): Promise<{ note: string; ended: bool
 }
 
 /**
- * `open-for-run` at a run's start: Unreal open, with the plugin's Genex editor helper and the
+ * `open-for-run` at a run's start: the linked project set up in this profile (one another profile
+ * set up is recorded as it is), Unreal open, with the plugin's Genex editor helper and the
  * template's facts exported. Blocked when Unreal can't be opened or the project has no helper (the
  * Loop can't save or capture it). No snapshot is taken before a helper update: the update replaces
  * only the helper's folder, which the game's history holds.
  */
 export async function openForRun(ops: MomentOps): Promise<HookAnswer> {
+  const notSetUp = await ops.setUp().then(
+    () => null,
+    (failure: unknown) => errorMessage(failure),
+  );
+  if (notSetUp !== null) return { block: MOMENT_WORDS.NotSetUp(notSetUp) };
   // Unreal answers Genex only through its helper: a project without one is told so before any open.
   const before = await ops.state().catch(() => null);
   if (before?.helper === HelperState.Missing) return { block: MOMENT_WORDS.NoHelper };

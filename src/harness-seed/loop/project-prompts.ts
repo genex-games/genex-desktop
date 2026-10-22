@@ -21,6 +21,7 @@ const FACT_NAMES = {
   [CoreFact.UnrealPlugin]: "Unreal Engine plugin",
   [CoreFact.GodotProject]: "Godot project",
   [CoreFact.UnityProject]: "Unity project",
+  [CoreFact.RobloxProject]: "Roblox place",
   [CoreFact.BlenderAssets]: "Blender files",
 } as const satisfies Record<CoreFact, string>;
 
@@ -31,6 +32,7 @@ export const FACT_WORDS = {
   [CoreFact.UnrealPlugin]: "an Unreal Engine plugin (a .uplugin), the engine's own kind of plugin, not a Genex plugin",
   [CoreFact.GodotProject]: "a Godot project",
   [CoreFact.UnityProject]: "a Unity project",
+  [CoreFact.RobloxProject]: "a Roblox place",
   [CoreFact.BlenderAssets]: "Blender files",
 } as const satisfies Record<CoreFact, string>;
 

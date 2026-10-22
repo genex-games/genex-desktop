@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
-import { readClaudeTelemetry, withClaudeModelCapabilities } from "../../src/substrate/engines/claude-telemetry.ts";
+import {
+  readClaudeTelemetry,
+  readClaudeUsage,
+  withClaudeModelCapabilities,
+} from "../../src/substrate/engines/claude-telemetry.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { DelegateEventType, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { ContextSource } from "../../src/shared/context.ts";
@@ -258,4 +262,28 @@ test("plan usage read for the account before a switch is never shown or kept for
   assert.equal((await after)?.windows[0]?.percent, 80, "the read after the switch asks the new account");
   assert.equal((await before)?.windows[0]?.percent, 80, "the earlier read answers with the new account's limits");
   assert.equal(engine.usageSnapshot()?.windows[0]?.percent, 80, "the old account's limits are never kept");
+});
+
+test("plan usage that never answers is a failed read, not a plan without limits", async () => {
+  await assert.rejects(readClaudeUsage(sessionStream({ [USAGE_CONTROL]: never }, []), 20));
+});
+
+test("a CLI without the usage control, or a plan that shares no limits, answers no limits", async () => {
+  assert.equal(await readClaudeUsage(sessionStream({}, []), 20), null);
+  const unshared = sessionStream({ [USAGE_CONTROL]: async () => ({ rate_limits_available: false }) }, []);
+  assert.equal(await readClaudeUsage(unshared, 20), null);
+});
+
+test("an engine whose usage read fails says so, and never answers with no limits", async () => {
+  const engine = await engineWithStream(
+    sessionStream(
+      {
+        [USAGE_CONTROL]: async () => {
+          throw new Error("control channel closed");
+        },
+      },
+      [],
+    ),
+  );
+  await assert.rejects(engine.readUsage());
 });

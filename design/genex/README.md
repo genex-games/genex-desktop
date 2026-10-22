@@ -36,11 +36,14 @@ for principles and skill routing.
   a faster start sees only the page), fades out in 200ms and never returns, and the window can be
   dragged by it. Reduced motion shows it at once and still. A failed start shows each
   area's failure and Retry, which stays up, busy (**Retrying…**), while it runs.
-- **Loading:** there are no skeletons, except, at the owner's request, Play's grid: a tab on its
-  way draws eight cards' shapes (cover tile, title and author bars) shimmering in a faint ink tint,
-  fading in after 120ms, still under reduced motion. Elsewhere a region whose content is on its way uses `Pending`: nothing
-  for 400ms (the local reads behind chats, settings, activity and files usually finish unseen),
-  then its label ("Loading conversation…") shimmering in ink-3, still under reduced motion.
+- **Loading:** a region whose content is on its way uses `Pending`: nothing for 400ms (the local
+  reads behind chats, settings, activity and files usually finish unseen), then the shape of what
+  is coming, never words: `Skeleton` blocks in the hover fill, the size of the lines, pictures and
+  controls that come, breathing slowly together (2.4s), still under reduced motion. Each place draws
+  its own shape (a chat's message, reply and card over a quiet composer; Builds' parts on the graph's
+  dots; settings rows; asset tiles); the label is only announced. Real work being started (checking
+  Blender, a terminal starting) is `Pending working`: the chat's orb beside one 12px shimmering line.
+  Play's grid, the @ picker and comments keep their own shimmering card shapes.
   Nothing claims to be empty (No matches, No screenshot, stripes for a missing still) before its
   read has answered, and a read that fails says so instead of checking forever. Media keeps a
   plain inset tile of its final size while it loads; an agent's turn keeps `LoadingState`; actions

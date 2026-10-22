@@ -103,8 +103,9 @@ export const MOMENT_WORDS = {
   NotReady: (project: string | null) =>
     `Unreal didn't finish opening ${project ?? "this game's project"}. Open it from the Unreal button above the game, then send a message to go on.`,
   // A run's start.
+  NotSetUp: (why: string) => `Genex couldn't set this game's Unreal project up for the Loop: ${why}`,
   NoHelper:
-    "This game's Unreal project has no Genex editor helper, so the Loop can't save or capture it. Set the project up from the Unreal panel.",
+    "This game's Unreal project has no Genex editor helper, so the Loop can't save or capture it. Link it again with unreal__use-project, which sets it up.",
   HelperUpdated: (to: string) => `Updated this game's Genex editor helper to ${to} before the Loop.`,
   HelperNotUpdated: (reason: string) =>
     `The Genex editor helper couldn't be updated (${reason}); the Loop goes on with it.`,

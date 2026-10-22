@@ -375,6 +375,20 @@ test("every bundled plugin that makes a kind of project keeps its buttons off a 
   }
 });
 
+test("each bundled engine's editor button wears its engine's own mark", () => {
+  const marks: Array<[string, string]> = [
+    ["unreal", "unreal"],
+    ["unity", "unity"],
+    ["godot", "godot"],
+    ["roblox", "roblox"],
+  ];
+  for (const [id, mark] of marks) {
+    const raw = JSON.parse(readFileSync(`src/plugins/${id}/plugin.json`, "utf8")) as PluginManifest;
+    const icons = (validateManifest(raw).toolbar ?? []).map((button) => button.icon);
+    assert.deepEqual(icons, [mark], `${id}'s button`);
+  }
+});
+
 test("toolbarStatusFrom keeps shown as a boolean", () => {
   assert.deepEqual(toolbarStatusFrom({ shown: true }), { shown: true });
   assert.deepEqual(toolbarStatusFrom({ shown: 0, title: "Make this game in Unreal" }), {

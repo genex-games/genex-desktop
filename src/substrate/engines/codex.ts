@@ -599,9 +599,9 @@ export class CodexEngine implements Engine {
   }
 
   /**
-   * The plan's limits for the composer, read at most once a minute from the account itself. A read
-   * that a login recheck overtook is dropped, and its callers wait for a read of the account
-   * signed in now.
+   * The plan's limits for the composer, read at most once a minute from the account itself. Null
+   * when the plan shares none; a throw when they could not be read. A read that a login recheck
+   * overtook is dropped, and its callers wait for a read of the account signed in now.
    */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
@@ -611,10 +611,13 @@ export class CodexEngine implements Engine {
     const read: Promise<ProviderUsage | null> = this.#askUsage()
       .then((usage) => {
         if (!current()) return this.readUsage();
-        if (usage) this.#usage = usage;
-        return usage ?? this.#usage;
+        this.#usage = usage;
+        return usage;
       })
-      .catch(() => (current() ? this.#usage : this.readUsage()))
+      .catch((error: unknown) => {
+        if (current()) throw error;
+        return this.readUsage();
+      })
       .finally(() => {
         if (this.#usageRead === read) this.#usageRead = null;
       });

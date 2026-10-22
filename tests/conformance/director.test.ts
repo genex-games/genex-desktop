@@ -6023,7 +6023,8 @@ describe("a director's run through the real core and harness", () => {
             assert.match(request.prompt, /Keep going and land the saved sign/);
             assert.deepEqual(
               (request.interviewTools ?? []).map((tool) => tool.name),
-              ["resume_run"],
+              // Named flip: a new Loop's start, for one asked in words, sits beside the resume.
+              ["start_autopilot", "resume_run"],
             );
             return {
               ok: true,

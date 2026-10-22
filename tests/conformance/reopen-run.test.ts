@@ -904,16 +904,22 @@ describe("the chat's message, from the queue to the reopened run (chat-dispatch.
     assert.equal("autopilot" in loopOn, false, "a message for a paused build drops its Loop");
     assert.equal(steersInto({ ...action, messageId: "m10", autopilot: { hours: 2 } }, loopOn), false);
     assert.equal(steersInto({ ...action, messageId: "m10" }, loopOn), true);
+    // Named flip: the session after a paused build now also holds the start of a new Loop, for one
+    // the user asks for in words; the paused build itself is still only resumed, never reopened.
     assert.deepEqual(
       (paused.requests[0]?.interviewTools ?? []).map((tool: { name: string }) => tool.name),
-      ["resume_run"],
+      ["start_autopilot", "resume_run"],
     );
 
     const loopOff = chatAfter(finishedJournal(), finishedLog(), [
       { name: "reopen_run", args: { text: "add enemies" } },
     ]);
     await handleUserMessage(loopOff.studio as never, { ...action } as never);
-    assert.equal(loopOff.requests[0]?.interviewTools, undefined);
+    // Named flip: with Loop off the session now holds only the start of a Loop asked for in words.
+    assert.deepEqual(
+      (loopOff.requests[0]?.interviewTools ?? []).map((tool: { name: string }) => tool.name),
+      ["start_autopilot"],
+    );
     await sleep(20);
     const registrations = loopOff.log.filter((entry) => entry.data.event_type === "run_registered");
     assert.equal(registrations.length, 1, "nothing reopened");

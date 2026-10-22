@@ -6,9 +6,29 @@ export interface ProviderUsage {
   plan?: string;
   windows: Array<{ id: string; label: string; percent: number | null; resetsAt?: string }>;
 }
-/** One signed-in subscription and its plan limits; `usage` is null when the provider reports none. */
+/** Where a subscription's plan limits stand: the one answer the panel, the picker and Settings show. */
+export const UsageState = {
+  /** A reading is on its way; `usage` is the last one of this same account, if any. */
+  Checking: "checking",
+  Ready: "ready",
+  /** The provider answered and shares no limits for this plan. */
+  NotShared: "not_shared",
+  /** The read failed or ran out of time; Try again asks once more. */
+  Failed: "failed",
+  /** The account in use is signed out; Sign in again brings it back. */
+  SignedOut: "signed_out",
+} as const;
+export type UsageState = (typeof UsageState)[keyof typeof UsageState];
+
+/**
+ * One subscription and where its plan limits stand. `usage` always belongs to `account`, the
+ * account in use: a switch never shows the last account's numbers.
+ */
 export interface ProviderUsageReport {
   engine: string;
+  state: UsageState;
+  /** The account in use (`terminal`, `studio`, `account-N`), or null when the engine names none. */
+  account: string | null;
   usage: ProviderUsage | null;
 }
 

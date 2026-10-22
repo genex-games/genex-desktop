@@ -682,6 +682,7 @@ export default {
   "Checking the sign-in…": "Проверяем вход…",
   "Checking your ChatGPT connection…": "Проверяем подключение к ChatGPT…",
   "Checking your Genex account…": "Проверяем аккаунт Genex…",
+  "Checking your {brand} account…": "Проверяем твой аккаунт {brand}…",
   "Checking {what} in the preview": "Проверяет в превью: {what}",
   "Checking…": "Проверяем…",
   Checkpoint: "Чекпоинт",
@@ -1040,6 +1041,7 @@ export default {
   "Couldn’t change your name.": "Не удалось сменить имя.",
   "Couldn’t check this nickname. Check your connection.": "Не удалось проверить ник. Проверь подключение.",
   "Couldn’t check your Genex account": "Не удалось проверить аккаунт Genex",
+  "Couldn’t check your limits": "Не удалось проверить лимиты",
   "Couldn’t copy the link.": "Не удалось скопировать ссылку.",
   "Couldn’t delete the game.": "Не удалось удалить игру.",
   "Couldn’t delete your comment": "Не удалось удалить комментарий",
@@ -1072,6 +1074,7 @@ export default {
   "Couldn’t prepare the plan": "Не получилось подготовить план",
   "Couldn’t reach Genex. Nothing was deleted; try again later.":
     "Не удалось связаться с Genex. Ничего не удалено, попробуй позже.",
+  "Couldn’t reach {brand}": "Не удалось связаться с {brand}",
   "Couldn’t read your credits.": "Не удалось загрузить кредиты.",
   "Couldn’t regenerate your avatar.": "Не удалось заново сгенерировать аватар.",
   "Couldn’t remove the game. Quit it first if it’s running.":
@@ -1630,6 +1633,7 @@ export default {
     "Roblox Studio устанавливается. Когда Studio откроется, он попросит тебя войти.",
   "Getting started": "Начинаем",
   "Getting your games and the protected workspace ready.": "Готовим твои игры и защищённое рабочее пространство.",
+  "Getting your models ready…": "Готовим твои модели…",
   "GitHub answered with a commit Studio can’t read": "GitHub вернул коммит, который Studio не может прочитать",
   "GitHub answered with a release Studio can’t read": "GitHub вернул релиз, который Studio не может прочитать",
   "GitHub answered with a repository Studio can’t read": "GitHub вернул репозиторий, который Studio не может прочитать",
@@ -3974,6 +3978,7 @@ export default {
     "Этот шаблон Unreal не подходит: нет его общего пакета {pack}.",
   "This Unreal template can't be used: its shared pack {pack} names files outside the engine.":
     "Этот шаблон Unreal не подходит: его общий пакет {pack} ссылается на файлы вне движка.",
+  "This account is signed out": "Нужно снова войти в этот аккаунт",
   "This audio codec could not be played. Try a WAV, MP3 or Ogg export.":
     "Этот аудиокодек не воспроизводится. Попробуй экспорт в WAV, MP3 или Ogg.",
   "This build": "Эта сборка",
@@ -4372,7 +4377,6 @@ export default {
   Uploading: "Загружаем",
   "Uploading…": "Загрузка…",
   "Usage limit": "Лимит",
-  "Usage not reported": "Нет данных о лимитах",
   Use: "Использовать",
   "Use #RGB or #RRGGBB.": "Используй #RGB или #RRGGBB.",
   "Use Xcode for builds": "Собирать через Xcode",
@@ -4650,6 +4654,8 @@ export default {
     "Твои игры, точки сохранения, приостановленные сборки и последняя сборка каждой игры останутся.",
   "Your invite link": "Твоя ссылка-приглашение",
   "Your latest generations and refunds": "Твои последние генерации и возвраты",
+  "Your message is safe.": "Твоё сообщение никуда не делось.",
+  "Your message sends as soon as you’re back.": "Сообщение отправится, как только войдёшь.",
   "Your microphones are listed once the mic is on": "Список микрофонов появится, когда микрофон включится",
   "Your mix": "Твой микс",
   "Your next message goes to the build as a note about {about}":
@@ -4659,6 +4665,8 @@ export default {
   "Your one-time code": "Твой одноразовый код",
   "Your open Unity editor, where agents build Unity games.":
     "Твой открытый редактор Unity, где агенты собирают игры на Unity.",
+  "Your open Roblox Studio, where agents build Roblox games.":
+    "Твой открытый Roblox Studio, где агенты собирают игры на Roblox.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "Твой открытый Unreal Editor, где агенты собирают игры на Unreal.",
   "Your own answer": "Свой ответ",
@@ -5270,6 +5278,8 @@ export default {
   "{amount} credits, open Credits": "Кредиты: {amount}, открыть «Кредиты»",
   "{amount} more needed": "Не хватает: {amount}",
   "{app} settings": "Настройки {app}",
+  "{brand} doesn’t share limits for this plan": "{brand} не показывает лимиты для этого плана",
+  "{brand} is signed out": "Нужно снова войти в {brand}",
   "{brand} plan": "Тариф {brand}",
   "{brand} {plan} plan": "Тариф {brand} {plan}",
   "{camera} · captured {time}": "{camera} · снято в {time}",

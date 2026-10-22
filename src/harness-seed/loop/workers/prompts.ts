@@ -25,6 +25,7 @@ const ENGINE_PROJECTS: ReadonlySet<string> = new Set([
   CoreFact.UnrealProject,
   CoreFact.UnityProject,
   CoreFact.GodotProject,
+  CoreFact.RobloxProject,
 ]);
 
 /** Whether a project holds a game engine's project, whose editor its lead drives. */

@@ -129,10 +129,12 @@ describe("the director's tool schemas stay small", () => {
     // `wrap_up` (18,498 to 18,876, after trimming finish's user_asked): the user's ask to finish
     // had no tool, and words in the chat alone never stopped a worker. Computer use then spent 219
     // bytes (18,876 to 19,095) on playtest's goal_state, the state a blind judge plays to and the
-    // studio verifies, also deliberately. The 15,000-byte target is NOT met; what is left is the
-    // fifteen tool descriptions themselves, and cutting those is its own change.
+    // studio verifies, also deliberately. So is wrap_up's next_goal and next_hours (19,095 to
+    // 19,291): "stop it and start a new one" had no way to start the new Loop without the person.
+    // The 15,000-byte target is NOT met; what is left is the fifteen tool descriptions themselves,
+    // and cutting those is its own change.
     const size = JSON.stringify(DIRECTOR_TOOLS).length;
-    assert.ok(size <= 19_100, `DIRECTOR_TOOLS serialises to ${size} bytes, over the ratchet`);
+    assert.ok(size <= 19_300, `DIRECTOR_TOOLS serialises to ${size} bytes, over the ratchet`);
 
     // What the worker_start checks description is meant to become: the same grammar, one line
     // per kind, with no helper enumeration a tool schema cannot afford.
@@ -198,11 +200,11 @@ describe("the pages a builder is handed", () => {
 
   it("leaves the Three.js template's prompt pages byte for byte as they were before C++ games", () => {
     // A C++ game reads the pages of its own template (src/game-template-cpp); a C++ rule that
-    // leaked into these would reach every Three.js game. sha256 at origin/dev cf4b2c56, before the
-    // compiled stacks were ported to it.
+    // leaked into these would reach every Three.js game. sha256 at origin/dev 22b48e13, the dev
+    // merged into the compiled stacks (FLIPPED from cf4b2c56: dev's own later edits).
     const PRE_NATIVE = {
-      "CLAUDE.md": "1b6849a0ca188babbcea75b52fb1c71dcd457c9683b5755721fb706998539fd8",
-      "CLAUDE.own.md": "23299e919408e4149e17f8a8d8cac45ed125078a868691526f51e597154b7d98",
+      "CLAUDE.md": "0ccad3e39687e04e0ce70eeedf1223d71099bb4007daf3d5bfb2f2d75a54f8a9",
+      "CLAUDE.own.md": "deffbcfbf2e34c88c1300df9df950564c7feede1921d4381b6c5678354fb4653",
       "docs/CONTRACT.md": "50f69a4e8a16e3e2f658aa01f3cbd573a31a4de02e0f768ea17bf404ccf07f18",
       "NOTES.md": "d29179017b5a5a5b3093fa7888a3a489063a4c1865267cec85f91362293fd167",
       "NOTES.own.md": "03bfcddcca36dad3c106dce717a19af8ecd6ec13de96afe3145b5060876be3fa",

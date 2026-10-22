@@ -66,6 +66,7 @@ import { appsLabel, gateByPlugin, makesApps, nothingToPublish, onlyApps } from "
 import type { PublishPlatform } from "../../../../shared/publish-platforms.ts";
 import { PublishShareLine } from "./PublishShare.tsx";
 import { useShareWhenLive } from "./use-publish-share.ts";
+import { Skeleton } from "../../../ui/Skeleton.tsx";
 
 const WORDS = GENEX_WORDS.publish;
 const ACCOUNT = GENEX_WORDS.account;
@@ -572,8 +573,19 @@ function ConnectStep({
         </Ask>
       );
     default:
-      return <Pending label={ACCOUNT.checking} className="genex-checking" spinner />;
+      return <PublishSkeleton />;
   }
+}
+
+/** Publish's shape while the account is checked: the cover, the name field and the button. */
+function PublishSkeleton(): JSX.Element {
+  return (
+    <Pending label={ACCOUNT.checking} className="flex flex-col gap-3.5">
+      <Skeleton height={108} radius={12} />
+      <Skeleton height={30} radius={8} />
+      <Skeleton width={96} height={30} radius={8} className="self-end" />
+    </Pending>
+  );
 }
 
 /** The Genex plugin's name as a link to its page in Plugins; the dialog closes on the way. */
@@ -701,7 +713,7 @@ export function GenexPublishDialog({
             {record.readError}
           </p>
         ) : (
-          <Pending label={ACCOUNT.checking} className="genex-checking" spinner />
+          <PublishSkeleton />
         )}
       </PublishFrame>
     );

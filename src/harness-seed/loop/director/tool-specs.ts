@@ -440,6 +440,11 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
       type: "object",
       properties: {
         user_asked: { type: "string", description: "Their words asking to finish, quoted exactly." },
+        next_goal: {
+          type: "string",
+          description: "Asked to start a new Loop after: what it builds (it starts once this run closes).",
+        },
+        next_hours: { type: "string", description: "Its hours, if named." },
       },
       required: ["user_asked"],
     },

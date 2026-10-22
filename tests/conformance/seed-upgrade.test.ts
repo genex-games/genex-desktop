@@ -2693,14 +2693,14 @@ describe("seed upgrade across the review fixes", () => {
 
 /**
  * The native contract (C++ · raylib) joins a seed whose every module an installed harness may keep
- * from before it. The vintage is every module's exports at origin/dev e5da06dc, the public seed the
+ * from before it. The vintage is every module's exports at origin/dev 22b48e13, the public seed the
  * native work was last merged with (an installed harness may hold any module of it; dev's own newer
  * exports, such as `loop/finish-check.ts`'s, would refuse a vintage from before them). New names live in new modules (`loop/native-contract.ts`); a raylib night refuses to run
  * on a part kept from before (no `SERVES_NATIVE`), and the host refuses a raylib preview to a
  * lease that names no target, which only a harness from before native support acquires.
  */
 describe("seed upgrade across native", () => {
-  const VINTAGE_COMMIT = "e5da06dc";
+  const VINTAGE_COMMIT = "22b48e13";
   const vintage = JSON.parse(
     readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-native.json", import.meta.url)), "utf8"),
   ) as { about: string; modules: Record<string, string[]> };

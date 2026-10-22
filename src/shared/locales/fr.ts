@@ -718,6 +718,7 @@ export default {
   "Checking the sign-in…": "Vérification de la connexion…",
   "Checking your ChatGPT connection…": "Vérification de ta connexion ChatGPT…",
   "Checking your Genex account…": "Vérification de ton compte Genex…",
+  "Checking your {brand} account…": "Vérification de ton compte {brand}…",
   "Checking {what} in the preview": "Vérifie {what} dans l’aperçu",
   "Checking…": "Vérification…",
   Checkpoint: "Point de contrôle",
@@ -1083,6 +1084,7 @@ export default {
   "Couldn’t change your name.": "Impossible de changer ton nom.",
   "Couldn’t check this nickname. Check your connection.": "Impossible de vérifier ce pseudo. Vérifie ta connexion.",
   "Couldn’t check your Genex account": "Impossible de vérifier ton compte Genex",
+  "Couldn’t check your limits": "Impossible de vérifier tes limites",
   "Couldn’t copy the link.": "Impossible de copier le lien.",
   "Couldn’t delete the game.": "Impossible de supprimer le jeu.",
   "Couldn’t delete your comment": "Impossible de supprimer ton commentaire",
@@ -1117,6 +1119,7 @@ export default {
   "Couldn’t prepare the plan": "Impossible de préparer le plan",
   "Couldn’t reach Genex. Nothing was deleted; try again later.":
     "Impossible de joindre Genex. Rien n’a été supprimé ; réessaie plus tard.",
+  "Couldn’t reach {brand}": "Impossible de joindre {brand}",
   "Couldn’t read your credits.": "Impossible de lire tes crédits.",
   "Couldn’t regenerate your avatar.": "Impossible de régénérer ton avatar.",
   "Couldn’t remove the game. Quit it first if it’s running.":
@@ -1679,6 +1682,7 @@ export default {
     "Installation de Roblox Studio. Studio te demande de te connecter à son ouverture.",
   "Getting started": "C’est parti",
   "Getting your games and the protected workspace ready.": "Préparation de tes jeux et de l’espace de travail protégé.",
+  "Getting your models ready…": "Préparation de tes modèles…",
   "GitHub answered with a commit Studio can’t read": "GitHub a renvoyé un commit que Studio ne peut pas lire",
   "GitHub answered with a release Studio can’t read": "GitHub a renvoyé une version que Studio ne peut pas lire",
   "GitHub answered with a repository Studio can’t read": "GitHub a renvoyé un dépôt que Studio ne peut pas lire",
@@ -4061,6 +4065,7 @@ export default {
     "Impossible d’utiliser ce modèle Unreal : son pack partagé {pack} est manquant.",
   "This Unreal template can't be used: its shared pack {pack} names files outside the engine.":
     "Impossible d’utiliser ce modèle Unreal : son pack partagé {pack} cite des fichiers en dehors du moteur.",
+  "This account is signed out": "Ce compte est déconnecté",
   "This audio codec could not be played. Try a WAV, MP3 or Ogg export.":
     "Ce codec audio ne peut pas être lu. Essaie un export en WAV, MP3 ou Ogg.",
   "This build": "Ce build",
@@ -4465,7 +4470,6 @@ export default {
   Uploading: "Envoi",
   "Uploading…": "Importation…",
   "Usage limit": "Limite d’utilisation",
-  "Usage not reported": "Utilisation non communiquée",
   Use: "Utiliser",
   "Use #RGB or #RRGGBB.": "Utilise #RGB ou #RRGGBB.",
   "Use Xcode for builds": "Utiliser Xcode pour compiler",
@@ -4745,6 +4749,8 @@ export default {
     "Tes jeux, points de sauvegarde, builds en pause et le dernier build de chaque jeu sont conservés.",
   "Your invite link": "Ton lien d’invitation",
   "Your latest generations and refunds": "Tes dernières générations et remboursements",
+  "Your message is safe.": "Ton message est en sécurité.",
+  "Your message sends as soon as you’re back.": "Ton message part dès que tu reviens.",
   "Your microphones are listed once the mic is on": "Tes micros apparaissent une fois le micro activé",
   "Your mix": "Ton mix",
   "Your next message goes to the build as a note about {about}":
@@ -4754,6 +4760,8 @@ export default {
   "Your one-time code": "Ton code à usage unique",
   "Your open Unity editor, where agents build Unity games.":
     "Ton éditeur Unity ouvert, où les agents créent des jeux Unity.",
+  "Your open Roblox Studio, where agents build Roblox games.":
+    "Ton Roblox Studio ouvert, où les agents créent des jeux Roblox.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "Ton Unreal Editor ouvert, où les agents créent des jeux Unreal.",
   "Your own answer": "Ta propre réponse",
@@ -5373,6 +5381,8 @@ export default {
   "{amount} credits, open Credits": "{amount} crédits, ouvrir Crédits",
   "{amount} more needed": "Il manque {amount}",
   "{app} settings": "Réglages de {app}",
+  "{brand} doesn’t share limits for this plan": "{brand} ne partage pas les limites de ce forfait",
+  "{brand} is signed out": "{brand} est déconnecté",
   "{brand} plan": "Forfait {brand}",
   "{brand} {plan} plan": "Forfait {brand} {plan}",
   "{camera} · captured {time}": "{camera} · capturée à {time}",

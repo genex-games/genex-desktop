@@ -36,6 +36,7 @@ import {
 } from "./connectors/draft.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { PLUGINS_WORDS } from "../words.ts";
+import { SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** What the plugins page's Add menu can ask of the card. */
 export interface ConnectorActions {
@@ -200,7 +201,11 @@ function CardNotices({
   const noServers = views !== null && !views.some((view) => !isPluginServer(view)) && !drafting;
   return (
     <>
-      {views === null && !error && <Pending label={t("Loading MCP servers…")} className="extensions-empty" />}
+      {views === null && !error && (
+        <Pending label={t("Loading MCP servers…")} className="py-3">
+          <SkeletonRows count={2} icon />
+        </Pending>
+      )}
       {noServers && (
         <div className="extension-row extension-servers-empty">
           <span className="extension-icon extension-icon-row extension-icon-make" aria-hidden="true">

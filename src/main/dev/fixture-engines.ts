@@ -24,6 +24,7 @@ import { BACKDROP_SYSTEM_PROMPT, REPAIR_OPENING } from "../core/backdrop-generat
 import { GAME_NAME_SYSTEM_PROMPT } from "../core/game-naming-prompts.ts";
 import { FIXTURE_MODEL } from "./fixture-kit.ts";
 import { setTimeout as sleep } from "node:timers/promises";
+import { readFileSync } from "node:fs";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 
 const DAY_MS = 24 * HOUR_MS;
@@ -51,6 +52,39 @@ const FIXTURE_SERVER: LocalServerInfo = {
 };
 /** The status each fixture starts with when the session names none: ready, but for the local server. */
 const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = { [EngineId.LocalServer]: NO_LOCAL_SERVER };
+/**
+ * How each subscription's plan limits answer, read again on every read so a reviewer can change it
+ * while the window is open: a JSON file named by `STUDIO_FIXTURE_USAGE_FILE`, for example
+ * `{"claude-code":"slow","codex":"failed"}`. `slow` answers after `SLOW_USAGE_MS`, `failed` throws,
+ * `none` shares no limits, `signed_out` also makes the subscription signed out; anything else, or
+ * no file, answers the fixed limits at once.
+ */
+const FixtureUsage = { Slow: "slow", Failed: "failed", None: "none", SignedOut: "signed_out" } as const;
+const SLOW_USAGE_MS = 8000;
+const SIGNED_OUT_STATUS: EngineStatus = { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; signed out" };
+
+/** How `id`'s plan limits answer now (`STUDIO_FIXTURE_USAGE_FILE`). */
+function fixtureUsageMode(id: string): string | null {
+  const file = process.env.STUDIO_FIXTURE_USAGE_FILE;
+  if (!file) return null;
+  try {
+    const modes: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const mode = modes && typeof modes === "object" ? (modes as Record<string, unknown>)[id] : null;
+    return typeof mode === "string" ? mode : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A subscription stand-in's plan limits, as `STUDIO_FIXTURE_USAGE_FILE` says they answer. */
+async function readFixtureUsage(id: EngineId) {
+  const mode = fixtureUsageMode(id);
+  if (mode === FixtureUsage.Failed) throw new Error("fixture: the plan's limits could not be read");
+  if (mode === FixtureUsage.None) return null;
+  if (mode === FixtureUsage.Slow) await sleep(SLOW_USAGE_MS);
+  return fixtureUsage(id);
+}
+
 /** How long naming a game takes, so home's Naming step can be seen. */
 const NAMING_DELAY_MS = 2500;
 /** How long making a background takes, so the panel's progress can be seen. */
@@ -130,7 +164,10 @@ function fixtureEngine(
     supportsSessions: !(directChat && local),
     // Claude Code reads the person's messages mid-turn; Codex is interrupted and resumed instead.
     ...(id === EngineId.ClaudeCode ? { steersMidTurn: true } : {}),
-    status: async () => statuses[id] ?? DEFAULT_STATUS[id] ?? READY_STATUS,
+    status: async () =>
+      fixtureUsageMode(id) === FixtureUsage.SignedOut
+        ? SIGNED_OUT_STATUS
+        : (statuses[id] ?? DEFAULT_STATUS[id] ?? READY_STATUS),
     // A local server stand-in names its server only while the session has it ready.
     ...(id === EngineId.LocalServer
       ? {
@@ -155,7 +192,7 @@ function fixtureEngine(
     defaultModel: async () => FIXTURE_MODEL,
     // Deterministic plan limits so the composer's usage panel has something honest to show; only a
     // subscription has a plan.
-    ...(isSubscriptionFixture(id) ? { readUsage: async () => fixtureUsage(id) } : {}),
+    ...(isSubscriptionFixture(id) ? { readUsage: () => readFixtureUsage(id) } : {}),
     complete: (request: CompleteRequest) => completeFixture(id, request),
     delegate: (request: DelegateRequest) => delegateFixture(id, request, pendingSessions),
   };

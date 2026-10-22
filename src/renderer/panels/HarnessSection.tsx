@@ -11,6 +11,7 @@ import { DiagnosticsRow } from "./DiagnosticsRow.tsx";
 import { AUTO_RESUME_SETTING_WORDS, problemWords } from "../words.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { t } from "../../shared/i18n.ts";
+import { SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** What the auto-apply switch means, given whether the harness learns at all. */
 function applyWords(learning: boolean, selfImproving: boolean): string {
@@ -50,7 +51,9 @@ export function HarnessSection(): JSX.Element {
             {error}
           </p>
         ) : (
-          <Pending label={t("Loading…")} />
+          <Pending label={t("Loading…")}>
+            <SkeletonRows count={4} />
+          </Pending>
         )}
       </div>
     );

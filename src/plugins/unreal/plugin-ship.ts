@@ -182,14 +182,14 @@ const MESSAGE = {
     `Genex runs one job at a time for a project, and ${doing}. Read plugin-status, or stop it with stop: true.`,
   NotAFolder: (where: string) => `${where} isn't a plain folder in the project, so Genex wrote nothing there.`,
   OtherEditor:
-    "Unreal is open, but this game's project isn't answering, so Genex didn't quit it to build the plugin. Quit Unreal, then try again.",
+    "Unreal is open, but this game's project isn't answering, so Genex can't save its work and didn't quit it to build the plugin. When it is this game's Unreal, call unreal__open-editor with restart: true (work not saved in it is lost), then try again; when it is another project's, ask the user to quit it.",
   NotSaved: (why: string) =>
     `Genex couldn't save your work in Unreal (${why}), so it left Unreal open and built nothing.`,
   NoSaveAnswer: "the Genex editor helper didn't answer",
   Unsaved: (names: string) => `Unreal didn't save ${names}, so Genex left it open and built nothing.`,
-  NotClosed: `Unreal didn't close within ${QUIT_WAIT_MS / SECOND_MS} s, so Genex built nothing. Close it from its own window, then try again.`,
+  NotClosed: `Unreal didn't close within ${QUIT_WAIT_MS / SECOND_MS} s, so Genex built nothing. Call unreal__quit-editor, then try again.`,
   NotBuilt: (why: string) => `${why}\nUnreal stays closed; fix the errors and call plugin-build again.`,
-  NotAnswering: `Genex built the plugin, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening it. Open the game from the Unreal button.`,
+  NotAnswering: `Genex built the plugin, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening it. Call unreal__open-editor to open it again.`,
   Stopped: "Stopped.",
   Lost: "Genex no longer knows this package job (it restarted, or the plugin was turned off); package again.",
   Restarting:

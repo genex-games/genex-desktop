@@ -1017,6 +1017,29 @@ export async function setUpProject(
   return inspectProject(file, options);
 }
 
+/**
+ * Records a project whose files are already set up (another Genex profile on this computer set it
+ * up, and its set-up record stays in that profile's storage) without writing a byte of the project
+ * or asking for Unreal to be closed: Epic's plugins and toolsets on, its server starting on a port
+ * of Genex's block that no other project set up here holds, and a Genex editor helper in it (an
+ * outdated one is updated by the usual Open). The record names what this profile changed: nothing,
+ * so an Undo only forgets it. Answers the project's state once recorded (an already recorded one as
+ * it is), or undefined while it still needs setup's changes.
+ */
+export async function adoptSetUp(file: string, options: SetupOptions): Promise<ProjectState | undefined> {
+  const state = await inspectProject(file, options);
+  if (state.undoable) return state;
+  const { port } = state;
+  const filesSetUp = state.plugins && state.toolsets && state.autoStart && state.helper !== HelperState.Missing;
+  if (!filesSetUp || port === null) return undefined;
+  const others = await listSetUpProjects(options.storage);
+  if (others.some((other) => other.project !== state.real && other.port === port)) return undefined;
+  const project = await resolveProject(file);
+  const record: SetupRecord = { project: project.file, port, uproject: { added: [], enabled: [] } };
+  await atomicWriteJson(path.join(recordFolder(options.storage, project), SetupStorage.Record), record);
+  return inspectProject(file, options);
+}
+
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 /** Each file of the shipped helper with the sha256 of its bytes. */

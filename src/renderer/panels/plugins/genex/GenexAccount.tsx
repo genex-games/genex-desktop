@@ -24,6 +24,7 @@ import {
   genexAccountView,
 } from "./genex-view.ts";
 import type { GenexLive } from "./use-genex-status.ts";
+import { Skeleton } from "../../../ui/Skeleton.tsx";
 
 const WORDS = GENEX_WORDS.account;
 
@@ -153,12 +154,30 @@ function Connected({
   );
 }
 
+/** A connected account's shape while it is read: its title, who it is, and its balance. */
+function AccountSkeleton(): JSX.Element {
+  return (
+    <span className="skeleton-lines">
+      <Skeleton width="40%" height={14} />
+      <Skeleton width="64%" height={8} />
+      <span className="skeleton-row">
+        <Skeleton width={35} height={35} />
+        <Skeleton width={90} height={14} />
+      </span>
+    </span>
+  );
+}
+
 /** Each state's words and actions; Connected has its own component. `busy`: an action is under way. */
 function StateBody({ view, live, busy }: { view: GenexAccountView; live: GenexLive; busy: boolean }): JSX.Element {
   const connect = () => void live.act(GenexAction.Connect);
   switch (view.kind) {
     case GenexAccountKind.Loading:
-      return <Pending label={WORDS.loading} className="genex-checking" />;
+      return (
+        <Pending label={WORDS.loading} className="self-stretch">
+          <AccountSkeleton />
+        </Pending>
+      );
     case GenexAccountKind.SignedOut:
       return <ConnectOffer retry={view.retry} busy={busy} onConnect={connect} />;
     case GenexAccountKind.SigningIn:
@@ -192,7 +211,11 @@ function StateBody({ view, live, busy }: { view: GenexAccountView; live: GenexLi
         </Prompt>
       );
     case GenexAccountKind.Checking:
-      return <Pending label={WORDS.checking} className="genex-checking" />;
+      return (
+        <Pending label={WORDS.checking} className="self-stretch">
+          <AccountSkeleton />
+        </Pending>
+      );
     case GenexAccountKind.Attention:
       return (
         <Prompt

@@ -16,7 +16,9 @@ import { describe, it } from "node:test";
 import type { PluginContext, PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { rememberAnswers } from "../../src/plugins/unreal/editor-port.ts";
+import { EditorControlToolName } from "../../src/plugins/unreal/editor-control.ts";
 import { ReopenState } from "../../src/plugins/unreal/editor-reopen.ts";
+import { EditorStart } from "../../src/plugins/unreal/editor-status.ts";
 import { EditorHealth, type HealthRead, healthAnswer } from "../../src/plugins/unreal/hook-answers.ts";
 import { createLoopTools, LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { HelperState, type SetupEnv } from "../../src/plugins/unreal/setup.ts";
@@ -78,6 +80,10 @@ type Options = {
   platform?: NodeJS.Platform;
   /** Whether the project holds an older Genex editor helper than the plugin ships. */
   outdatedHelper?: boolean;
+  /** The game's editor's answer to a Genex editor helper tool; none answers without it. */
+  editorCall?: (tool: string, events: string[]) => unknown;
+  /** Where Genex's own start of the game's project stands. */
+  starting?: EditorStart;
 };
 
 type Paths = { home: string; project: string; crashes: string; ours: string; other: string; elsewhere: string };
@@ -173,8 +179,10 @@ async function reopenWorld(options: Options = {}) {
       return options.compile ? options.compile(compile) : BUILT;
     },
     editorCall: async (_storage, _game, tool) => {
+      if (options.editorCall) return options.editorCall(tool, events);
       throw new Error(`no stand-in for ${tool}`);
     },
+    ...(options.starting ? { starting: async () => options.starting ?? null } : {}),
     editorAnswers: () => (options.remembered ? remembered(PORT, project) : asked()),
     restart: {
       editors: async () => rows.filter(isEditor).length,
@@ -228,7 +236,10 @@ async function reopenWorld(options: Options = {}) {
   /** A tool called at one of Genex's moments. */
   const atMoment = (name: string, hook: PluginHookContext) =>
     tools.call(name as LoopToolName, {}, { ...context, hook }, storage);
-  return { paths, rows, events, signals, clock, state, reopen, reopened, editorState, endEditor, atMoment };
+  /** One of the agent's editor tools, as a chat calls it. */
+  const agentCall = (name: string, args: Record<string, unknown> = {}) =>
+    tools.call(name as LoopToolName, args, context, storage);
+  return { paths, rows, events, signals, clock, state, reopen, reopened, editorState, endEditor, atMoment, agentCall };
 }
 
 /** A setup env for the project's helper: this stand-in computer, where nothing else runs. */
@@ -477,6 +488,8 @@ describe("reopen-editor's build and wait", () => {
     const end = await w.reopened();
     assert.equal(end.reopening.state, ReopenState.Failed);
     assert.match(end.reopening.error ?? "", /answer/);
+    assert.match(end.reopening.error ?? "", /unreal__open-editor with restart: true/, "the agent reopens it itself");
+    assert.doesNotMatch(end.reopening.error ?? "", /Unreal button/);
     assert.ok(w.clock.at >= OPEN_LIMIT_MS && w.clock.at < OPEN_LIMIT_MS + 60_000, `waited ${w.clock.at} ms`);
   });
 
@@ -812,5 +825,132 @@ describe("at Genex's moments", () => {
     assert.deepEqual(await crashed.atMoment(LoopToolName.ReopenEditor, { on: HookEvent.Crash, runId: "run-7" }), {});
     await crashed.reopened();
     assert.ok(crashed.events.includes(`open ${NAME}.uproject`), "a crash still reopens Unreal");
+  });
+});
+
+/** This game's own editor, running with its project open. */
+const ownEditor = (p: Paths): Row => ({ pid: 8000, exec: EDITOR_EXEC, args: `${EDITOR_EXEC} ${p.project}` });
+/** The Genex editor helper's answers to a save: a play state with no play, then save_all leaving `dirty`. */
+const saves =
+  (dirty: string[] = []) =>
+  (tool: string, events: string[]) => {
+    if (tool === "play_state") return { pie: false };
+    if (tool !== "save_all") throw new Error(`no stand-in for ${tool}`);
+    events.push("save");
+    return { saved: true, dirty, ms: 12 };
+  };
+
+describe("the agent's open-editor", () => {
+  it("answers that Unreal answers, and touches nothing, when it already does", async () => {
+    const w = await reopenWorld({ answering: true, rows: (p) => [ownEditor(p)] });
+    assert.deepEqual(await w.agentCall(EditorControlToolName.OpenEditor), { answering: true });
+    assert.deepEqual([w.events, w.signals], [[], []]);
+  });
+
+  it("opens a game whose Unreal isn't running, ending a crash reporter left behind and building nothing; editor-status waits until it answers", async () => {
+    const w = await reopenWorld();
+    assert.deepEqual(await w.agentCall(EditorControlToolName.OpenEditor), { started: true });
+    const state = (await w.agentCall(EditorControlToolName.EditorStatus, { seconds: 170 })) as EditorState;
+    assert.equal(state.answering, true);
+    assert.equal(state.reopening.state, ReopenState.Done, state.reopening.error);
+    assert.deepEqual(w.signals, [[7900, "SIGTERM"]], "the crash reporter keeps the project's port");
+    assert.deepEqual(
+      w.events,
+      [`forget ${NAME}.uproject`, `open ${NAME}.uproject`],
+      "no build: Unreal's own Open builds",
+    );
+    assert.ok(w.clock.at >= OPEN_TAKES_MS && w.clock.at < OPEN_TAKES_MS + 30_000, `waited ${w.clock.at} ms`);
+  });
+
+  it("leaves an editor of the game that runs without answering, and ends and reopens it only with restart: true", async () => {
+    const w = await reopenWorld({ rows: (p) => [ownEditor(p)] });
+    const busy = (await w.agentCall(EditorControlToolName.OpenEditor)) as { busy: boolean; next: string };
+    assert.equal(busy.busy, true);
+    assert.match(busy.next, /unreal__editor-status/);
+    assert.match(busy.next, /restart: true/);
+    assert.deepEqual([w.events, w.signals], [[], []], "a busy editor keeps its work");
+    assert.deepEqual(await w.agentCall(EditorControlToolName.OpenEditor, { restart: true }), { started: true });
+    const end = await w.reopened();
+    assert.equal(end.reopening.state, ReopenState.Done, end.reopening.error);
+    assert.deepEqual(w.events, [`quit ${NAME}.uproject`, `forget ${NAME}.uproject`, `open ${NAME}.uproject`]);
+  });
+
+  it("ends at once an editor whose own log says its port is blocked", async () => {
+    const w = await reopenWorld({ rows: (p) => [ownEditor(p)], starting: EditorStart.PortBlocked });
+    assert.deepEqual(await w.agentCall(EditorControlToolName.OpenEditor), { started: true });
+    assert.equal((await w.reopened()).reopening.state, ReopenState.Done);
+    assert.equal(w.events[0], `quit ${NAME}.uproject`);
+  });
+
+  it("opens nothing while Genex is already opening the game's project", async () => {
+    const w = await reopenWorld({ rows: (p) => [ownEditor(p)], starting: EditorStart.Starting });
+    assert.deepEqual(await w.agentCall(EditorControlToolName.OpenEditor), { starting: true });
+    assert.deepEqual([w.events, w.signals], [[], []]);
+  });
+
+  it("refuses a game without a linked project, naming the tool that links one", async () => {
+    const w = await reopenWorld({ unlinked: true });
+    await assert.rejects(w.agentCall(EditorControlToolName.OpenEditor), /unreal__use-project/);
+    await assert.rejects(w.agentCall(EditorControlToolName.QuitEditor), /unreal__use-project/);
+    assert.deepEqual([w.events, w.signals], [[], []]);
+  });
+});
+
+describe("the agent's quit-editor", () => {
+  it("saves the editor's work, then quits it by Unreal's own quit, never a signal", async () => {
+    const w = await reopenWorld({ answering: true, rows: (p) => [ownEditor(p)], editorCall: saves() });
+    assert.deepEqual(await w.agentCall(EditorControlToolName.QuitEditor), { closed: true });
+    assert.deepEqual(w.events, ["save", `quit ${NAME}.uproject`], "saved before the normal quit");
+    assert.deepEqual(w.signals, [], "nothing is terminated or killed");
+    assert.deepEqual(
+      w.rows.map((row) => row.pid),
+      [7900],
+      "the editor quit; a crash reporter is open-editor's to end",
+    );
+  });
+
+  it("leaves an editor that doesn't close after the quit open, sending no signal, and says why", async () => {
+    const w = await reopenWorld({
+      answering: true,
+      rows: (p) => [ownEditor(p)],
+      stubborn: { 8000: { quit: true } },
+      editorCall: saves(),
+    });
+    await assert.rejects(w.agentCall(EditorControlToolName.QuitEditor), (error: Error) => {
+      assert.match(error.message, /still open/);
+      assert.match(error.message, /unreal__quit-editor/);
+      return true;
+    });
+    assert.deepEqual(w.signals, [], "never terminated or killed: work made since the save stays");
+    assert.ok(
+      w.rows.some((row) => row.pid === 8000),
+      "Unreal stays open",
+    );
+  });
+
+  it("leaves Unreal open, ending nothing, when its work stays unsaved", async () => {
+    const w = await reopenWorld({
+      answering: true,
+      rows: (p) => [ownEditor(p)],
+      editorCall: saves(["/Game/Maps/Main"]),
+    });
+    await assert.rejects(w.agentCall(EditorControlToolName.QuitEditor), /didn't save \/Game\/Maps\/Main/);
+    assert.deepEqual([w.events, w.signals, w.rows.length], [["save"], [], 2]);
+  });
+
+  it("never ends an editor that doesn't answer, whose work it can't save, and names the tool that can", async () => {
+    const w = await reopenWorld({ rows: (p) => [ownEditor(p)], editorCall: saves() });
+    await assert.rejects(w.agentCall(EditorControlToolName.QuitEditor), (error: Error) => {
+      assert.match(error.message, /unreal__open-editor with restart: true/);
+      assert.doesNotMatch(error.message, /Unreal button|ask the user/i);
+      return true;
+    });
+    assert.deepEqual([w.events, w.signals], [[], []]);
+  });
+
+  it("answers that Unreal is closed, quitting and ending nothing, when no editor of the game runs", async () => {
+    const w = await reopenWorld();
+    assert.deepEqual(await w.agentCall(EditorControlToolName.QuitEditor), { closed: true });
+    assert.deepEqual([w.events, w.signals], [[], []]);
   });
 });

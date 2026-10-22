@@ -1,5 +1,5 @@
 {
-  "about": "Every value name each seed module exported before the native contract (origin/dev at e5da06dc, the public seed the compiled stacks were last merged with, read with Object.keys of the imported module). A seed upgrade keeps any of them once the in-app agent edited it, so the native contract (loop/native-contract.ts and the modules that join it) may import only these names from an existing module: a name a raylib night needs comes from a module of its own.",
+  "about": "Every value name each seed module exported before the native contract (origin/dev at 22b48e13, the public seed the compiled stacks were last merged with, read with Object.keys of the imported module). A seed upgrade keeps any of them once the in-app agent edited it, so the native contract (loop/native-contract.ts and the modules that join it) may import only these names from an existing module: a name a raylib night needs comes from a module of its own.",
   "modules": {
     "loop/after-loop-run-prompts.ts": ["MESSAGE","SERVES_REOPEN","afterLoopRunNote"],
     "loop/after-loop-run.ts": ["RESUME_RUN","afterLeadLoopRun","afterLoopRunGrant","resumeAfterReply","resumeAsked","resumeStopped","servesAfterLoopRun"],
@@ -28,7 +28,7 @@
     "loop/compaction-log.ts": ["COMPACTING_PHASE","appendCustom","compactedSummary","endedByCompaction","endsSessions","latestCompaction"],
     "loop/completion-policy.ts": ["CompletionPolicy"],
     "loop/computer-loop.ts": ["PlayPacing","PlayRole","describeComputer","playWithComputer"],
-    "loop/config.ts": ["BUILD_TURN_MAX_ROUNDS","DEFAULT_WALL_CLOCK_MS","GIT_TIMEOUT_MS","LIGHT_EFFORT","LOAD_RACE_RETRY_MS","MAX_ACTION_MS","MAX_PLAY_SCRIPT","MAX_RUN_HOURS","MIN_DELEGATE_TIMEOUT_MS","MIN_RUN_HOURS","OBSERVATION_RETRY_MS","PAGE_SEED","PLAN_REVIEW_WAIT_MS","RACE_RETRY_MS","RECIPE_ID_CHARS","WINDOW_RETRIES_MS","clampRunHours"],
+    "loop/config.ts": ["BUILD_TURN_MAX_ROUNDS","DEFAULT_WALL_CLOCK_MS","GIT_TIMEOUT_MS","LIGHT_EFFORT","LOAD_RACE_RETRY_MS","MAX_ACTION_MS","MAX_PLAY_SCRIPT","MAX_RUN_HOURS","MIN_DELEGATE_TIMEOUT_MS","MIN_RUN_HOURS","OBSERVATION_RETRY_MS","PAGE_SEED","PLAN_REVIEW_WAIT_MS","RACE_RETRY_MS","RECIPE_ID_CHARS","WINDOW_RETRIES_MS","clampRunHours","hoursNamed"],
     "loop/contract-kept.ts": ["keptContractWords"],
     "loop/contract-lessons.ts": ["CONTRACT_LESSONS_FILE","LESSONS_HEADER","LESSONS_SKILL","MAX_CONTRACT_LESSONS","StagedTarget","isLessonsRecord","lessonEdits","lessonLine","lessonsInEdits","pendingLessons","refusedLessons","renderContractLessons"],
     "loop/coordinator-prompts.ts": ["COORDINATOR_RECORD_CHARS","COORDINATOR_SYSTEM","SERVES_REOPEN","coordinatorPrompt"],
@@ -224,6 +224,8 @@
     "loop/model-roles.ts": ["BONSAI_ENGINE","BRIDGE_TOOL_CMD","CLAUDE_CODE_ENGINE","CLAUDE_CODE_MODELS","CODEX_ENGINE","CODEX_MODELS","DELEGATED_ENGINES","ENGINE_LABELS","ENGINE_MODELS","EngineId","FABLE","OPUS","ROLES","RoleKey","SERVES_LOCAL_ROLES","SOL","TERRA","chosenEffort","crossesTo","describeRoles","engineLabel","hasSessionRoles","isDelegated","modelOn","modelsFor","normalizeRoles","plannerModel","resolveRoles","roleEffort","roleEngine","roleName","supportsSessions","takesRoles","toolCall","toolSyntax","withRoles"],
     "loop/motion-intent.ts": ["MOTION_WORDS","judgedOnMotion"],
     "loop/narrow-prompts.ts": ["NARROW_TO_THE_ASK"],
+    "loop/next-loop-record.ts": ["nextLoopFrom","nextLoopOf"],
+    "loop/next-loop.ts": ["startNextLoop"],
     "loop/observers.ts": ["PLUGIN_OBSERVERS","PREVIEW_STILLS","RECORDING_FRAMES","REVIEW_IMAGES_MAX_BYTES","REVIEW_PICTURE_MAX_BYTES","captureImages","captureOfEvidence","observeGame","pickedImages","recordCaptures"],
     "loop/open-loop-parts.ts": ["openLoopServed"],
     "loop/open-loop-prompts.ts": ["OPEN_LAUNCH_WORDS","OPEN_LOOP_REFUSAL","OPEN_QUICK_IS_A_BUILD","openBuildWords","openStillsWords"],

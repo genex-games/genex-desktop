@@ -482,6 +482,7 @@ function contractorRules(engine: string | undefined, game: GameBuild, app: AppLa
   return [
     languageRule(app),
     "Helper scripts of your own (an inspector, a syntax check, a probe) go under .studio/ (gitignored); source scripts for generated assets live under assets/src/.",
+    "Render a video's frames (a trailer, a flythrough) into your temporary folder (TMPDIR) or .studio/, never elsewhere in the game folder, and keep only the finished video in the game.",
     "Before you build or change how the game looks, if the folder has a references/ or ref/ directory with stills, look at those pictures — they are the visual bar, not files to load as textures.",
     workspaceRule(game),
     "When your shell is sandboxed, it rejects commands it cannot statically analyze — avoid $-expansions, escaped whitespace, heredocs and long && chains; run one simple command at a time, and put multi-step logic in a script file you then run with node.",

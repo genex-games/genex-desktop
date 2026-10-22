@@ -58,8 +58,9 @@ import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-mod
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
 import { type ReferenceFrame, useReferenceFrames } from "./run-stills.ts";
-import { StageLoading } from "./stage/LiveLoaderArt.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { Skeleton, SkeletonLines } from "../ui/Skeleton.tsx";
 
 export { gateWords } from "./run-graph/gates.tsx";
 export { assetsStatus } from "./inspector/asset-jobs.ts";
@@ -261,15 +262,18 @@ function turnActions(graph: BuildsModel["graph"], onShowLive: Props["onShowLive"
   return { hasBuild, play: (): void => onShowLive?.(), openJob: (): void => {} };
 }
 
-/** Over the hidden canvas until the run's recorded outcome arrives: the stage's loader. */
+/** Over the hidden canvas until the run's recorded outcome arrives: the graph's shape, on its dots. */
 function OutcomePending(): JSX.Element {
   return (
-    <div
-      data-builds-loading
-      className="stage-loader-late absolute inset-0 grid place-items-center p-8"
-      style={{ visibility: "visible" }}
-    >
-      <StageLoading label={t("Loading builds")} />
+    <div data-builds-loading className="absolute inset-0 bg-canvas" style={{ visibility: "visible" }}>
+      <Pending label={t("Loading builds")} className="skeleton-graph">
+        <SkeletonLines widths={[50, 110]} className="w-[110px]" />
+        <span className="skeleton-graph-column">
+          <Skeleton width={208} height={124} radius={14} />
+          <Skeleton width={208} height={124} radius={14} />
+        </span>
+        <Skeleton width={208} height={124} radius={14} />
+      </Pending>
     </div>
   );
 }

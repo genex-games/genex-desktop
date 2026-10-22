@@ -115,7 +115,7 @@ function notReadyWords(runtime: LocalBlenderStatus["runtime"], pinned: string, s
 /** The card's body for where Blender stands: ready, downloading, or missing (or too old) with Download. */
 function RuntimeBody({ blender }: { blender: ReturnType<typeof useBlenderStatus> }) {
   const { status } = blender;
-  if (!status) return <Pending label={WORDS.checking} className="genex-checking" spinner />;
+  if (!status) return <Pending label={WORDS.checking} working />;
   // The download Genex pins for this computer, as the host found it; none where it pins none.
   const install = status.runtime.download;
   const pinned = /(\d+\.\d+\.\d+)/.exec(install?.url ?? "")?.[1] ?? "";

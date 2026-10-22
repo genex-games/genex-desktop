@@ -19,8 +19,8 @@ import {
 import { Button } from "../../ui/Button.tsx";
 import { useAsyncEffect } from "../../use-async-effect.ts";
 import { UNREAL_PLUGIN_ID } from "../../unreal-game.ts";
-import { UNITY_PLUGIN_ID } from "../../../shared/observers.ts";
-import { PLUGINS_WORDS, UNITY_WORDS, UNREAL_WORDS, consentToolWords } from "../../words.ts";
+import { ROBLOX_PLUGIN_ID, UNITY_PLUGIN_ID } from "../../../shared/observers.ts";
+import { PLUGINS_WORDS, ROBLOX_WORDS, UNITY_WORDS, UNREAL_WORDS, consentToolWords } from "../../words.ts";
 import { isActive, pluginAccount, pluginIconUrl } from "./labels.ts";
 import { type PluginsPage, usePluginServers } from "./page.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
@@ -82,6 +82,7 @@ const firstSentence = (text: string): string => /^.*?[.!?](?=\s|$)/s.exec(text)?
 const OWN_NAMES: Readonly<Record<string, Readonly<Record<string, ConnectionNames>>>> = {
   [UNREAL_PLUGIN_ID]: { editor: UNREAL_WORDS.connection },
   [UNITY_PLUGIN_ID]: { editor: UNITY_WORDS.connection },
+  [ROBLOX_PLUGIN_ID]: { studio: ROBLOX_WORDS.connection },
 };
 
 /**

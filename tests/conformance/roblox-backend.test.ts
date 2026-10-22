@@ -867,7 +867,7 @@ describe("the built Roblox Studio plugin", () => {
     assert.match(panel, /Not affiliated with Roblox Corporation\. For people 18 and over\./);
   });
 
-  it("is seeded off: no Roblox button until it is turned on, then Roblox Studio on a Roblox game only, with the box glyph and a word", async () => {
+  it("is seeded off: no Roblox button until it is turned on, then Roblox Studio on a Roblox game only, with its roblox mark and a word", async () => {
     const lite = await coreLite();
     const roblox = lite.core.plugins.list().find((p) => p.manifest.id === "roblox");
     assert.equal(roblox?.enabled, false, "the plugin ships turned off");
@@ -882,7 +882,7 @@ describe("the built Roblox Studio plugin", () => {
         );
       assert.equal(on({ facts: [{ id: "web-game", path: "." }] }), undefined, "a web game shows no Roblox button");
       const entry = on({ facts: [{ id: "roblox-project", path: "." }] });
-      assert.deepEqual([entry?.item.label, entry?.item.icon], ["Roblox Studio", "box"]);
+      assert.deepEqual([entry?.item.label, entry?.item.icon], ["Roblox Studio", "roblox"]);
       const status = (await lite.core.plugins.action("roblox", "toolbar-status", {})) as PluginToolbarStatus;
       const words = STATES.map(([, , badge]) => badge);
       assert.ok(words.includes(status.badge ?? ""), `a status word: ${JSON.stringify(status)}`);

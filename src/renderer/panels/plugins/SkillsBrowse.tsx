@@ -18,6 +18,7 @@ import {
   studioSkillsSection,
 } from "./skills-sections.ts";
 import { Pending } from "../../ui/Pending.tsx";
+import { SkeletonControl, SkeletonRows } from "../../ui/Skeleton.tsx";
 
 const NO_MATCH = t("No skills match your search.");
 
@@ -197,7 +198,11 @@ export function SkillsBrowse({
     <>
       {game && <GameSkills game={game} page={page} query={query} onSkill={onSkill} />}
       <RowsSection view={studioSkillsSection(builtins)} page={page} query={query} onSkill={onSkill} />
-      {skillsLoading && <Pending label={t("Reading provider skills…")} />}
+      {skillsLoading && (
+        <Pending label={t("Reading provider skills…")} className="py-3">
+          <SkeletonRows icon control={SkeletonControl.None} />
+        </Pending>
+      )}
       {providerInventory?.map((provider) => (
         <ProviderSkills key={provider.provider} provider={provider} page={page} query={query} onSkill={onSkill} />
       ))}

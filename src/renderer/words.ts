@@ -6617,6 +6617,12 @@ export const UNITY_WORDS = {
   connection: { title: t("Editor"), text: t("Your open Unity editor, where agents build Unity games.") },
 } as const;
 
+/** The Roblox Studio plugin's words in Studio's own UI. */
+export const ROBLOX_WORDS = {
+  /** The plugin page's name and line for the Roblox Studio plugin's connection to Studio. */
+  connection: { title: "Roblox Studio", text: t("Your open Roblox Studio, where agents build Roblox games.") },
+} as const;
+
 // ── Genex account settings and avatars ─────────────────────────────────────────────────────
 
 /** Settings → Genex account: the avatar (generated or a photo) and the name, used everywhere on Genex. */

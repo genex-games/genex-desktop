@@ -1,8 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { agentPlayFolder, agentPlayMarker } from "../../src/plugins/unity/agent-play.ts";
 import { createUnityBackend, UnityTool } from "../../src/plugins/unity/backend.ts";
 import { type Launch, openProjectLaunch } from "../../src/plugins/unity/editor-launch.ts";
 import type { UnityEditor } from "../../src/plugins/unity/editors.ts";
@@ -27,6 +28,7 @@ import {
   pluginContext,
   processRow,
   processTable,
+  type Reply,
   refusedConnection,
   STAND_IN,
   editor as standInEditor,
@@ -365,5 +367,147 @@ describe("restart-editor", () => {
     const bound = pluginContext(await realTmp("unity-storage-"), { project: "lantern", directory: game });
     assert.match(String(await backend.tool?.(UnityTool.RestartEditor, {}, bound)), /Unity could not be ended/);
     assert.deepEqual(launches, [], "a second editor is never opened beside one that would not end");
+  });
+});
+
+/** The editor's list of its open scenes: each by its path (empty: never saved) and whether it has unsaved work. */
+const sceneList = (...listed: Array<[string, boolean]>) =>
+  ok({ scenes: listed.map(([scenePath, isDirty]) => ({ path: scenePath, isDirty, isLoaded: true })) });
+const playingLook = () => json(200, { status: "playing", playMode: "playing" });
+const MAIN_SCENE = "Assets/Scenes/Main.unity";
+/** The C# Genex's clean exit runs in the editor. */
+const EXIT = "UnityEditor.EditorApplication.Exit(0);";
+const codesSent = (seen: { body: unknown }[]) =>
+  seen.map((request) => (request.body as { parameters?: { code?: string } } | undefined)?.parameters?.code);
+
+/** A game whose set-up project an editor has open, its server answering with what the test pushes onto `replies`. */
+async function openUnity() {
+  const replies: Reply[] = [];
+  const backend = await backendOn(["6000.3.10f1"], replies);
+  const root = await withProject(backend.game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION });
+  await backend.openIn(root);
+  /** Unity's answer to Genex's clean exit: the editor is gone before it can say more. */
+  const exits = () => () => {
+    backend.table.end(STAND_IN.pid);
+    return ok();
+  };
+  return { ...backend, root, replies, exits };
+}
+
+describe("quit-editor", () => {
+  it("saves every scene with unsaved work and the assets through Unity, then quits it cleanly", async () => {
+    const unity = await openUnity();
+    unity.replies.push(
+      look(),
+      sceneList([MAIN_SCENE, true], ["Assets/Scenes/Menu.unity", false]),
+      ok({ saved: true }),
+      ok(),
+      look(),
+      unity.exits(),
+    );
+    const answer = String(await unity.call(UnityTool.QuitEditor));
+    assert.match(answer, /Saved 1 scene in Unity, then quit it\. .*unity__open-editor/);
+    assert.deepEqual(commandsSent(unity.seen), ["list_open_scenes", "save_scene", "eval", "eval"]);
+    assert.equal(codesSent(unity.seen).at(-1), EXIT, "Unity's own exit, after the save");
+    assert.deepEqual(unity.table.running(), []);
+    assert.deepEqual(unity.table.sent, [], "a saved editor exits by itself and is never signalled");
+    assert.deepEqual(unity.launches, []);
+  });
+
+  it("stops the agent's own play before it saves, and refuses the person's", async () => {
+    const agents = await openUnity();
+    await agentPlayMarker(agentPlayFolder(agents.storage, "lantern") ?? "", () => NOW().getTime()).started();
+    agents.replies.push(playingLook(), ok(), sceneList([MAIN_SCENE, false]), ok(), look(), agents.exits());
+    assert.match(String(await agents.call(UnityTool.QuitEditor)), /quit it/);
+    assert.deepEqual(commandsSent(agents.seen), ["editor_stop", "list_open_scenes", "eval", "eval"]);
+
+    const person = await openUnity();
+    person.replies.push(playingLook());
+    await assert.rejects(async () => person.call(UnityTool.QuitEditor), /user is playing the game in Unity/);
+    assert.deepEqual([person.table.running(), commandsSent(person.seen)], [[STAND_IN.pid], []]);
+  });
+
+  it("leaves Unity open when work stays unsaved: a scene that has no file, or a save Unity refused", async () => {
+    const untitled = await openUnity();
+    untitled.replies.push(look(), sceneList(["", true]), ok());
+    await assert.rejects(
+      async () => untitled.call(UnityTool.QuitEditor),
+      /never been saved.*save_scene.*Genex left Unity open/,
+    );
+    assert.deepEqual(untitled.table.running(), [STAND_IN.pid]);
+    assert.ok(!codesSent(untitled.seen).includes(EXIT), "no exit is sent");
+
+    const refused = await openUnity();
+    refused.replies.push(
+      look(),
+      sceneList([MAIN_SCENE, true]),
+      json(400, { success: false, error: "Command Execution Failed", errorDetails: "read-only file" }),
+    );
+    await assert.rejects(
+      async () => refused.call(UnityTool.QuitEditor),
+      /couldn't save .*read-only file.*left Unity open/,
+    );
+    assert.deepEqual([refused.table.running(), refused.table.sent], [[STAND_IN.pid], []]);
+  });
+
+  it("never quits an editor it can't ask to save, and says what to call instead", async () => {
+    const stalled = await openUnity();
+    stalled.replies.push(new Error("no answer"));
+    stalled.deps.timeout = () => AbortSignal.abort();
+    await assert.rejects(
+      async () => stalled.call(UnityTool.QuitEditor),
+      /can't save its work, so Genex didn't quit it.*unity__restart-editor/,
+    );
+    assert.deepEqual([stalled.table.running(), stalled.table.sent], [[STAND_IN.pid], []]);
+  });
+
+  it("has nothing to quit when no editor has the project open", async () => {
+    const closed = await backendOn(["6000.3.10f1"]);
+    await withProject(closed.game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION });
+    assert.match(String(await closed.call(UnityTool.QuitEditor)), /Unity doesn't have this game's project open/);
+    assert.deepEqual([closed.seen, closed.launches, closed.table.sent], [[], [], []]);
+  });
+});
+
+describe("restart-editor on an editor that answers", () => {
+  it("saves its work through Unity first, its play stopped, then ends it cleanly and opens the project again", async () => {
+    const unity = await openUnity();
+    unity.replies.push(
+      playingLook(),
+      ok(),
+      sceneList([MAIN_SCENE, true]),
+      ok({ saved: true }),
+      ok(),
+      unity.exits(),
+      ready(),
+      look(),
+      ok(),
+    );
+    assert.match(String(await unity.call(UnityTool.RestartEditor)), /Ended Unity and opened this game's project again/);
+    assert.deepEqual(commandsSent(unity.seen), [
+      "editor_stop",
+      "list_open_scenes",
+      "save_scene",
+      "eval",
+      "eval",
+      "set_autotick",
+    ]);
+    assert.deepEqual(unity.table.sent, [], "a saved editor exits by itself and is never signalled");
+    assert.equal(unity.launches.length, 1);
+  });
+});
+
+describe("setup of a project Unity never opened", () => {
+  it("opens it in its own Unity without waiting, Unity writes its manifest, and says to call setup again", async () => {
+    const { call, game, launches } = await backendOn(["6000.3.10f1"], [settling()]);
+    const root = await withProject(game, "6000.3.10f1");
+    await rm(path.join(root, "Packages", "manifest.json"));
+    const answer = String(await call(UnityTool.Setup));
+    assert.match(
+      answer,
+      /had no Packages\/manifest\.json yet, so Genex opened it in Unity 6000\.3\.10f1.*Call unity__setup again/,
+    );
+    assert.doesNotMatch(answer, /ask the user/);
+    assert.equal(launches.length, 1);
   });
 });

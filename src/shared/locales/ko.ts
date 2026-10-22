@@ -651,6 +651,7 @@ export default {
   "Checking the sign-in…": "로그인 확인 중…",
   "Checking your ChatGPT connection…": "ChatGPT 연결을 확인하는 중…",
   "Checking your Genex account…": "Genex 계정 확인 중…",
+  "Checking your {brand} account…": "{brand} 계정을 확인하는 중…",
   "Checking {what} in the preview": "미리보기에서 확인 중: {what}",
   "Checking…": "확인 중…",
   Checkpoint: "체크포인트",
@@ -1004,6 +1005,7 @@ export default {
   "Couldn’t change your name.": "이름을 바꾸지 못했어요.",
   "Couldn’t check this nickname. Check your connection.": "이 닉네임을 확인하지 못했어요. 인터넷 연결을 확인하세요.",
   "Couldn’t check your Genex account": "Genex 계정을 확인할 수 없어요",
+  "Couldn’t check your limits": "한도를 확인하지 못했어요",
   "Couldn’t copy the link.": "링크를 복사하지 못했어요.",
   "Couldn’t delete the game.": "게임을 삭제하지 못했어요.",
   "Couldn’t delete your comment": "댓글을 삭제하지 못했어요",
@@ -1036,6 +1038,7 @@ export default {
   "Couldn’t prepare the plan": "계획을 준비하지 못했어요",
   "Couldn’t reach Genex. Nothing was deleted; try again later.":
     "Genex에 연결할 수 없어요. 아무것도 삭제되지 않았어요. 나중에 다시 시도해 주세요.",
+  "Couldn’t reach {brand}": "{brand}에 연결하지 못했어요",
   "Couldn’t read your credits.": "크레딧을 불러올 수 없어요.",
   "Couldn’t regenerate your avatar.": "아바타를 다시 생성하지 못했어요.",
   "Couldn’t remove the game. Quit it first if it’s running.": "게임을 제거하지 못했어요. 실행 중이면 먼저 종료하세요.",
@@ -1583,6 +1586,7 @@ export default {
     "Roblox Studio를 받고 있어요. Studio가 열리면 로그인하라고 해요.",
   "Getting started": "시작하는 중",
   "Getting your games and the protected workspace ready.": "게임과 보호된 작업 공간을 준비하고 있어요.",
+  "Getting your models ready…": "모델을 준비하는 중…",
   "GitHub answered with a commit Studio can’t read": "GitHub가 Studio가 읽을 수 없는 커밋을 보냈어요",
   "GitHub answered with a release Studio can’t read": "GitHub가 Studio가 읽을 수 없는 릴리스를 보냈어요",
   "GitHub answered with a repository Studio can’t read": "GitHub가 Studio가 읽을 수 없는 저장소를 보냈어요",
@@ -3897,6 +3901,7 @@ export default {
     "이 Unreal 템플릿은 쓸 수 없어요: 공유 팩({pack})이 없어요.",
   "This Unreal template can't be used: its shared pack {pack} names files outside the engine.":
     "이 Unreal 템플릿은 쓸 수 없어요: 공유 팩({pack})이 엔진 밖의 파일을 가리켜요.",
+  "This account is signed out": "이 계정은 로그아웃됐어요",
   "This audio codec could not be played. Try a WAV, MP3 or Ogg export.":
     "이 오디오 코덱은 재생할 수 없어요. WAV, MP3, Ogg로 내보내 보세요.",
   "This build": "이 빌드",
@@ -4291,7 +4296,6 @@ export default {
   Uploading: "업로드 중",
   "Uploading…": "업로드 중…",
   "Usage limit": "사용 한도",
-  "Usage not reported": "사용량 정보 없음",
   Use: "사용",
   "Use #RGB or #RRGGBB.": "#RGB 또는 #RRGGBB 형식으로 입력하세요.",
   "Use Xcode for builds": "빌드에 Xcode 사용",
@@ -4565,6 +4569,8 @@ export default {
     "게임, 저장 지점, 일시 정지된 빌드, 각 게임의 최신 빌드는 그대로 남아요.",
   "Your invite link": "내 초대 링크",
   "Your latest generations and refunds": "최근 생성 및 환불 내역",
+  "Your message is safe.": "메시지는 그대로 있어요.",
+  "Your message sends as soon as you’re back.": "다시 로그인하면 바로 메시지를 보내요.",
   "Your microphones are listed once the mic is on": "마이크를 켜면 마이크 목록이 표시돼요",
   "Your mix": "나의 조합",
   "Your next message goes to the build as a note about {about}": "다음 메시지는 {about}에 대한 메모로 빌드에 전달돼요",
@@ -4573,6 +4579,8 @@ export default {
   "Your one-time code": "일회용 코드",
   "Your open Unity editor, where agents build Unity games.":
     "열려 있는 Unity 에디터예요. 에이전트가 여기서 Unity 게임을 만들어요.",
+  "Your open Roblox Studio, where agents build Roblox games.":
+    "열려 있는 Roblox Studio예요. 에이전트가 여기서 Roblox 게임을 만들어요.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "열려 있는 Unreal 에디터예요. 에이전트가 여기서 Unreal 게임을 만들어요.",
   "Your own answer": "직접 쓴 답변",
@@ -5174,6 +5182,8 @@ export default {
   "{amount} credits, open Credits": "{amount} 크레딧, 크레딧 열기",
   "{amount} more needed": "{amount} 더 필요해요",
   "{app} settings": "{app} 설정",
+  "{brand} doesn’t share limits for this plan": "{brand}은(는) 이 요금제의 한도를 알려주지 않아요",
+  "{brand} is signed out": "{brand}에서 로그아웃됐어요",
   "{brand} plan": "{brand} 요금제",
   "{brand} {plan} plan": "{brand} {plan} 요금제",
   "{camera} · captured {time}": "{camera} · {time}에 캡처",

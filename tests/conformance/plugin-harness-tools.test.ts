@@ -12,6 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { UnrealLivePluginTool, UnrealLoopTool } from "../../src/harness-seed/loop/unreal/live-contract.ts";
 import { MotionToolName } from "../../src/plugins/unreal/motion-tools.ts";
+import { EditorControlToolName } from "../../src/plugins/unreal/editor-control.ts";
 import { type PluginManifest, PluginToolAudience } from "../../src/shared/plugins.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
@@ -105,7 +106,10 @@ test("the registry hands agents every tool but a harness one, and still runs tha
 
 /** The Unreal plugin's tools an agent is handed in any game: the chat's. */
 const AGENT_TOOLS = ["unreal__use-project", "unreal__show-steps", "unreal__new-game", "unreal__new-plugin"];
-/** And, once the game holds an Unreal project, a builder's gate and lookups besides, and its C++ module's tools. */
+/**
+ * And, once the game holds an Unreal project, a builder's gate and lookups besides, its C++ module's
+ * tools, and opening, quitting and reading the game's editor.
+ */
 const UNREAL_PROJECT_TOOLS = [
   ...AGENT_TOOLS,
   UnrealLoopTool.BlueprintGuide,
@@ -115,6 +119,7 @@ const UNREAL_PROJECT_TOOLS = [
   UnrealLoopTool.AddCppModule,
   `unreal__${MotionToolName.Status}`,
   `unreal__${MotionToolName.Add}`,
+  ...Object.values(EditorControlToolName).map((name) => `unreal__${name}`),
 ];
 /** The steps only the Unreal Loop's runner and the live builder's checkpoint take, through the harness's own plugin calls. */
 const RUNNER_TOOLS = [

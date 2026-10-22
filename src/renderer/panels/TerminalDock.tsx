@@ -381,7 +381,7 @@ export function TerminalDock({ project, onReveal }: { project: string | null; on
       <div className="relative min-h-0 flex-1">
         {sessions.map((session) => (
           <div key={session.id} hidden={session.id !== current?.id} className="h-full min-h-0">
-            <Suspense fallback={<Pending label={t("Loading terminal…")} className="px-3 text-xs" />}>
+            <Suspense fallback={<Pending label={t("Loading terminal…")} className="px-3 py-2" working />}>
               <TerminalView session={session} visible={visible && session.id === current?.id} onError={setError} />
             </Suspense>
           </div>

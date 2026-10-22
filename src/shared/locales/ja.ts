@@ -657,6 +657,7 @@ export default {
   "Checking the sign-in…": "サインインを確認中…",
   "Checking your ChatGPT connection…": "ChatGPTとの接続を確認しています…",
   "Checking your Genex account…": "Genexアカウントを確認しています…",
+  "Checking your {brand} account…": "{brand} アカウントを確認中…",
   "Checking {what} in the preview": "プレビューで{what}を確認しています",
   "Checking…": "確認中…",
   Checkpoint: "チェックポイント",
@@ -1020,6 +1021,7 @@ export default {
   "Couldn’t check this nickname. Check your connection.":
     "このニックネームを確認できませんでした。接続を確認してください。",
   "Couldn’t check your Genex account": "Genexアカウントを確認できませんでした",
+  "Couldn’t check your limits": "上限を確認できませんでした",
   "Couldn’t copy the link.": "リンクをコピーできませんでした。",
   "Couldn’t delete the game.": "ゲームを削除できませんでした。",
   "Couldn’t delete your comment": "コメントを削除できませんでした",
@@ -1055,6 +1057,7 @@ export default {
   "Couldn’t prepare the plan": "プランを準備できませんでした",
   "Couldn’t reach Genex. Nothing was deleted; try again later.":
     "Genexに接続できませんでした。何も削除されていません。後でもう一度試してください。",
+  "Couldn’t reach {brand}": "{brand} に接続できませんでした",
   "Couldn’t read your credits.": "クレジットを読み込めませんでした。",
   "Couldn’t regenerate your avatar.": "アバターを再生成できませんでした。",
   "Couldn’t remove the game. Quit it first if it’s running.":
@@ -1616,6 +1619,7 @@ export default {
     "Roblox Studioを入手しています。Studioが開くとサインインを求められます。",
   "Getting started": "取りかかっています",
   "Getting your games and the protected workspace ready.": "ゲームと保護されたワークスペースを準備しています。",
+  "Getting your models ready…": "モデルを準備中…",
   "GitHub answered with a commit Studio can’t read": "GitHubから返ってきたコミットをStudioが読み取れません",
   "GitHub answered with a release Studio can’t read": "GitHubから返ってきたリリースをStudioが読み取れません",
   "GitHub answered with a repository Studio can’t read": "GitHubから返ってきたリポジトリをStudioが読み取れません",
@@ -3990,6 +3994,7 @@ export default {
     "このUnrealテンプレートは使えません：共有パック{pack}がありません。",
   "This Unreal template can't be used: its shared pack {pack} names files outside the engine.":
     "このUnrealテンプレートは使えません：共有パック{pack}がエンジン外のファイルを指しています。",
+  "This account is signed out": "このアカウントはサインアウトしています",
   "This audio codec could not be played. Try a WAV, MP3 or Ogg export.":
     "このオーディオコーデックは再生できません。WAV、MP3、Oggで書き出してみてください。",
   "This build": "このビルド",
@@ -4398,7 +4403,6 @@ export default {
   Uploading: "アップロード中",
   "Uploading…": "アップロード中…",
   "Usage limit": "使用上限",
-  "Usage not reported": "使用状況のデータがありません",
   Use: "使う",
   "Use #RGB or #RRGGBB.": "#RGBか#RRGGBBの形式で入力してください。",
   "Use Xcode for builds": "ビルドにXcodeを使う",
@@ -4676,6 +4680,8 @@ export default {
     "ゲーム、セーブポイント、一時停止中のビルド、各ゲームの最新ビルドは残ります。",
   "Your invite link": "あなたの招待リンク",
   "Your latest generations and refunds": "最近の生成と返金",
+  "Your message is safe.": "メッセージは残っています。",
+  "Your message sends as soon as you’re back.": "戻ったらすぐにメッセージを送ります。",
   "Your microphones are listed once the mic is on": "マイクをオンにすると、マイクの一覧が表示されます",
   "Your mix": "あなたのミックス",
   "Your next message goes to the build as a note about {about}":
@@ -4685,6 +4691,8 @@ export default {
   "Your one-time code": "ワンタイムコード",
   "Your open Unity editor, where agents build Unity games.":
     "開いているUnityエディターです。エージェントはここでUnityのゲームをつくります。",
+  "Your open Roblox Studio, where agents build Roblox games.":
+    "開いているRoblox Studioです。エージェントはここでRobloxのゲームをつくります。",
   "Your open Unreal Editor, where agents build Unreal games.":
     "開いているUnreal Editorです。エージェントはここでUnrealのゲームをつくります。",
   "Your own answer": "自分の答え",
@@ -5291,6 +5299,8 @@ export default {
   "{amount} credits, open Credits": "{amount}クレジット、クレジットを開く",
   "{amount} more needed": "あと{amount}必要",
   "{app} settings": "{app}の設定",
+  "{brand} doesn’t share limits for this plan": "{brand} はこのプランの上限を公開していません",
+  "{brand} is signed out": "{brand} からサインアウトしています",
   "{brand} plan": "{brand}プラン",
   "{brand} {plan} plan": "{brand} {plan}プラン",
   "{camera} · captured {time}": "{camera} · {time}に撮影",

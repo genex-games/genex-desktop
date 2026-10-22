@@ -15,7 +15,8 @@ import { type FollowScroll, useFollowScroll } from "./use-follow-scroll.ts";
 import { type ReplyingAbout, useReplyAbout } from "./use-reply-about.ts";
 import { useCommandResults } from "./use-command-results.ts";
 import { useComposeInChat } from "./use-compose-in-chat.ts";
-import { useLaunchHandover } from "./use-launch-handover.ts";
+import { type LaunchHandover, useLaunchHandover } from "./use-launch-handover.ts";
+import { useEngines } from "../state/hooks.ts";
 import { useKeepBuilding } from "./use-keep-building.ts";
 import { type Report, type Send, useReport, useSubmit } from "./use-submit.ts";
 
@@ -39,6 +40,8 @@ export interface ChatParts {
   reply: ReplyingAbout;
   rewind: ChatRewind;
   stream: StreamShowing;
+  /** A game's first message from home while it cannot go yet, and its one action. */
+  handover: LaunchHandover;
 }
 
 /** The chat panel's state: the parts it draws, its composer handle and the header's export. */
@@ -68,7 +71,15 @@ export function useChatPanel(props: ChatPanelProps) {
   useKeepBuilding(chat.threadId, sendAnswered, props.onNotice, composerRef);
   useComposeInChat(chat.threadId, chat.project, composer.drafts, composerRef, sendAnswered);
   const report = useReport(props, chat, composer);
-  useLaunchHandover(chat.threadId, loading, submit, composerRef);
+  const enginesRead = useEngines((s) => s.list.length > 0);
+  const handover = useLaunchHandover({
+    threadId: chat.threadId,
+    loading,
+    send: sendAnswered,
+    composer: composerRef,
+    ready: { enginesRead, hasModel: composer.model.selected !== null, needsSignIn: composer.gate.needsSignIn },
+    signIn: composer.gate.signIn,
+  });
   useCommandResults(chat.threadId ?? null, !chat.isStudioThread, report, props.onNotice);
   const rewind = useChatRewind({
     threadId: chat.threadId,
@@ -93,6 +104,7 @@ export function useChatPanel(props: ChatPanelProps) {
     reply,
     rewind,
     stream,
+    handover,
   };
   return { parts, composerRef, chatExport };
 }

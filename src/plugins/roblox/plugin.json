@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "roblox",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "icon": "icon.svg",
   "name": "Roblox Studio",
   "publisher": "Genex",
@@ -794,7 +794,7 @@
       "id": "studio",
       "label": "Roblox Studio",
       "ariaLabel": "Roblox Studio",
-      "icon": "box",
+      "icon": "roblox",
       "facts": ["roblox-project"],
       "target": { "kind": "panel", "id": "setup" },
       "status": "toolbar-status"

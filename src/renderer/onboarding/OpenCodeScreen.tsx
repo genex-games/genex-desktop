@@ -252,7 +252,7 @@ function SignInCard({ code, session }: { code: OpenCode; session: TerminalSessio
           </Button>
         </div>
         <div className="onboarding-terminal-body">
-          <Suspense fallback={<Pending label={WORDS.terminal} className="px-3 text-xs" />}>
+          <Suspense fallback={<Pending label={WORDS.terminal} className="px-3 py-2" working />}>
             <TerminalView session={session} visible onError={code.setTerminalError} />
           </Suspense>
         </div>

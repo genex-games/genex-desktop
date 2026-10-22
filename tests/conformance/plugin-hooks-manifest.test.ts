@@ -342,7 +342,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
   it("the bundled Unreal manifest is valid and its lock's probe needs no lock", () => {
     const raw = JSON.parse(readFileSync("src/plugins/unreal/plugin.json", "utf8")) as PluginManifest;
     const unreal = validateManifest(raw);
-    assert.equal(unreal.version, "0.17.8");
+    assert.equal(unreal.version, "0.17.9");
     assert.deepEqual(unreal.locks, [
       { id: "editor", label: "Unreal", per: LockScope.Project, personFirst: "editor-activity" },
     ]);
@@ -380,7 +380,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     const raw = JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest;
     const roblox = validateManifest(raw);
     // A change to the plugin raises its version above the one dev has (check-plugin-versions).
-    assert.equal(roblox.version, "0.1.6", "one step above the version dev has");
+    assert.equal(roblox.version, "0.1.7", "one step above the version dev has");
     assert.deepEqual(roblox.locks, [
       { id: "studio", label: "Roblox Studio", per: LockScope.Project, personFirst: "studio-activity" },
     ]);
@@ -392,7 +392,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
         id: "studio",
         label: "Roblox Studio",
         ariaLabel: "Roblox Studio",
-        icon: "box",
+        icon: "roblox",
         facts: ["roblox-project"],
         target: { kind: "panel", id: "setup" },
         status: "toolbar-status",
@@ -532,6 +532,9 @@ const UNREAL_EDITOR_STEPS = [
   "run-part",
   "rollback-part",
   "reload-level",
+  // The agent's own Open and Quit, which may end the editor.
+  "open-editor",
+  "quit-editor",
   // The computer's play in the editor (`shared/engine-play.ts`): each call waits for the lock.
   ...ENGINE_PLAY_TOOLS,
 ];

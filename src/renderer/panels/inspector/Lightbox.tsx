@@ -7,6 +7,7 @@ import { Button } from "../../ui/Button.tsx";
 import { PanelButton } from "./chrome.tsx";
 import type { LightItem } from "./types.ts";
 import { Pending } from "../../ui/Pending.tsx";
+import { Skeleton } from "../../ui/Skeleton.tsx";
 
 /** One still over the Builds tab, with its title and caption. */
 export function Lightbox({
@@ -49,7 +50,9 @@ export function Lightbox({
         {src ? (
           <img src={src} alt="" className="block max-h-full max-w-full object-contain" draggable={false} />
         ) : (
-          <Pending label={t("Loading…")} className="px-16 py-24 text-micro" />
+          <Pending label={t("Loading…")}>
+            <Skeleton width={240} height={160} radius={14} className="skeleton-on-dark" />
+          </Pending>
         )}
       </div>
       <div className="flex items-center gap-2.5" onClick={(event) => event.stopPropagation()}>

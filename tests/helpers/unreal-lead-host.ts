@@ -388,6 +388,8 @@ function opsOf(host: Internals): MomentOps {
       await call("end-editor");
       if (host.editor.answering) throw new Error("it still answers after Genex ended it");
     },
+    // The lead host's project is set up in this profile.
+    setUp: async () => {},
     reopen: () => call("reopen-editor"),
     state: read,
     start: async () => null,

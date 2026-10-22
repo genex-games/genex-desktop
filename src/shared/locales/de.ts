@@ -718,6 +718,7 @@ export default {
   "Checking the sign-in…": "Anmeldung wird geprüft…",
   "Checking your ChatGPT connection…": "ChatGPT-Verbindung wird geprüft…",
   "Checking your Genex account…": "Genex-Konto wird geprüft…",
+  "Checking your {brand} account…": "Dein {brand}-Konto wird geprüft…",
   "Checking {what} in the preview": "Prüft {what} in der Vorschau",
   "Checking…": "Wird geprüft…",
   Checkpoint: "Checkpoint",
@@ -1088,6 +1089,7 @@ export default {
   "Couldn’t check this nickname. Check your connection.":
     "Dieser Nickname konnte nicht geprüft werden. Prüf deine Verbindung.",
   "Couldn’t check your Genex account": "Genex-Konto konnte nicht geprüft werden",
+  "Couldn’t check your limits": "Limits konnten nicht geprüft werden",
   "Couldn’t copy the link.": "Link konnte nicht kopiert werden.",
   "Couldn’t delete the game.": "Das Spiel konnte nicht gelöscht werden.",
   "Couldn’t delete your comment": "Dein Kommentar konnte nicht gelöscht werden",
@@ -1123,6 +1125,7 @@ export default {
   "Couldn’t prepare the plan": "Plan konnte nicht erstellt werden",
   "Couldn’t reach Genex. Nothing was deleted; try again later.":
     "Genex ist nicht erreichbar. Es wurde nichts gelöscht; versuch es später noch mal.",
+  "Couldn’t reach {brand}": "{brand} ist nicht erreichbar",
   "Couldn’t read your credits.": "Deine Credits konnten nicht geladen werden.",
   "Couldn’t regenerate your avatar.": "Dein Avatar konnte nicht neu generiert werden.",
   "Couldn’t remove the game. Quit it first if it’s running.":
@@ -1684,6 +1687,7 @@ export default {
   "Getting started": "Los geht’s",
   "Getting your games and the protected workspace ready.":
     "Deine Spiele und der geschützte Arbeitsbereich werden vorbereitet.",
+  "Getting your models ready…": "Deine Modelle werden vorbereitet…",
   "GitHub answered with a commit Studio can’t read": "GitHub hat einen Commit geliefert, den Studio nicht lesen kann",
   "GitHub answered with a release Studio can’t read": "GitHub hat ein Release geliefert, das Studio nicht lesen kann",
   "GitHub answered with a repository Studio can’t read":
@@ -4084,6 +4088,7 @@ export default {
     "Diese Unreal-Vorlage ist nicht nutzbar: Ihr gemeinsames Paket {pack} fehlt.",
   "This Unreal template can't be used: its shared pack {pack} names files outside the engine.":
     "Diese Unreal-Vorlage ist nicht nutzbar: Ihr gemeinsames Paket {pack} nennt Dateien außerhalb der Engine.",
+  "This account is signed out": "Dieses Konto ist abgemeldet",
   "This audio codec could not be played. Try a WAV, MP3 or Ogg export.":
     "Dieser Audio-Codec kann nicht abgespielt werden. Versuch einen Export als WAV, MP3 oder Ogg.",
   "This build": "Dieser Build",
@@ -4495,7 +4500,6 @@ export default {
   Uploading: "Wird hochgeladen",
   "Uploading…": "Wird hochgeladen…",
   "Usage limit": "Nutzungslimit",
-  "Usage not reported": "Keine Nutzungsdaten",
   Use: "Verwenden",
   "Use #RGB or #RRGGBB.": "Nutze #RGB oder #RRGGBB.",
   "Use Xcode for builds": "Xcode für Builds nutzen",
@@ -4778,6 +4782,8 @@ export default {
     "Deine Spiele, Speicherpunkte, pausierte Builds und der letzte Build jedes Spiels bleiben.",
   "Your invite link": "Dein Einladungslink",
   "Your latest generations and refunds": "Deine letzten Generierungen und Erstattungen",
+  "Your message is safe.": "Deine Nachricht ist sicher.",
+  "Your message sends as soon as you’re back.": "Deine Nachricht geht raus, sobald du wieder drin bist.",
   "Your microphones are listed once the mic is on": "Deine Mikrofone erscheinen, sobald das Mikro an ist",
   "Your mix": "Dein Mix",
   "Your next message goes to the build as a note about {about}":
@@ -4787,6 +4793,8 @@ export default {
   "Your one-time code": "Dein Einmalcode",
   "Your open Unity editor, where agents build Unity games.":
     "Dein offener Unity-Editor, in dem Agenten Unity-Spiele bauen.",
+  "Your open Roblox Studio, where agents build Roblox games.":
+    "Dein offenes Roblox Studio, in dem Agenten Roblox-Spiele bauen.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "Dein offener Unreal Editor, in dem Agenten Unreal-Spiele bauen.",
   "Your own answer": "Deine eigene Antwort",
@@ -5407,6 +5415,8 @@ export default {
   "{amount} credits, open Credits": "{amount} Credits, Credits öffnen",
   "{amount} more needed": "Noch {amount} nötig",
   "{app} settings": "{app}-Einstellungen",
+  "{brand} doesn’t share limits for this plan": "{brand} zeigt für diesen Plan keine Limits",
+  "{brand} is signed out": "{brand} ist abgemeldet",
   "{brand} plan": "{brand}-Abo",
   "{brand} {plan} plan": "{brand}-{plan}-Abo",
   "{camera} · captured {time}": "{camera} · aufgenommen um {time}",

@@ -462,6 +462,7 @@ export const TOOLBAR_ICON_NAMES = [
   "unreal",
   "godot",
   "unity",
+  "roblox",
 ] as const;
 export type ToolbarIconName = (typeof TOOLBAR_ICON_NAMES)[number];
 export const isToolbarIconName = (value: unknown): value is ToolbarIconName =>

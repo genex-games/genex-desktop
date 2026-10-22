@@ -571,9 +571,17 @@ describe("Godot on Windows: jobs in Genex's sandbox", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let holdIn: () => void = () => undefined;
+    const bothHeld = new Promise<void>((resolve) => {
+      holdIn = resolve;
+    });
+    let holds = 0;
     const fixture = await windowsProject({
       sandbox: async (request) => {
-        if (request.args.includes("hold")) await gate;
+        if (!request.args.includes("hold")) return {};
+        holds += 1;
+        if (holds === 2) holdIn();
+        await gate;
         return {};
       },
     });
@@ -590,8 +598,8 @@ describe("Godot on Windows: jobs in Genex's sandbox", () => {
       timeoutMs: 8 * MINUTE,
       gpu: false,
     });
-    const scope = (budget?: GodotJobScope["budget"]): GodotJobScope => ({
-      signal: new AbortController().signal,
+    const scope = (budget?: GodotJobScope["budget"], signal = new AbortController().signal): GodotJobScope => ({
+      signal,
       host: fixture.context().host,
       game: fixture.gameDir,
       project: fixture.project,
@@ -600,15 +608,31 @@ describe("Godot on Windows: jobs in Genex's sandbox", () => {
     const budget = { until: 2 * MINUTE, now: () => clock.at, least: MINUTE, refusal: "no time left" };
     await run(OWN_GODOT, call("first"), scope(budget));
     assert.equal(fixture.requests.at(-1)?.timeoutMs, 2 * MINUTE, "what the budget leaves, not the job's own 8 minutes");
-    // Both turns held: a third job waits, and the call's clock moves on meanwhile.
+    // Both turns held: a third job waits, and the call's clock moves on meanwhile. Each job stages
+    // its folders on disk before it asks for a turn, so the late job starts only once both holds
+    // are in the sandbox: started with them, it could take a turn first, on the old clock.
     const holding = [run(OWN_GODOT, call("hold"), scope()), run(OWN_GODOT, call("hold"), scope())];
-    // Its refusal is awaited from the start, so it never lands unawaited while the others end.
-    const refused = assert.rejects(run(OWN_GODOT, call("late"), scope(budget)), /no time left/);
-    for (let turns = 0; turns < 20; turns += 1) await turnOver();
+    await bothHeld;
+    // A job listens for a stop only while it waits its turn (jobTurns in godot-run.ts): then, and
+    // only then, the clock moves.
+    const lateStop = new AbortController();
+    const waiting = new Promise<"waiting">((resolve) => {
+      const listen = lateStop.signal.addEventListener.bind(lateStop.signal);
+      lateStop.signal.addEventListener = (...args: Parameters<typeof listen>) => {
+        if (args[0] === "abort") resolve("waiting");
+        listen(...args);
+      };
+    });
+    const late = run(OWN_GODOT, call("late"), scope(budget, lateStop.signal));
+    const ended = late.then(
+      () => "ran" as const,
+      () => "ended" as const,
+    );
+    assert.equal(await Promise.race([waiting, ended]), "waiting", "the late job waits its turn behind both holds");
     clock.at = 1.5 * MINUTE;
     release();
     await Promise.all(holding);
-    await refused;
+    await assert.rejects(late, /no time left/);
     assert.equal(
       fixture.requests.some((request) => request.args.includes("late")),
       false,

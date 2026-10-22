@@ -39,6 +39,10 @@ import { SelectionBar } from "./assets/SelectionBar.tsx";
 import { ShareDialog } from "./assets/ShareDialog.tsx";
 import { ViewerActions } from "./assets/ViewerActions.tsx";
 import { t } from "../../shared/i18n.ts";
+import { Skeleton } from "../ui/Skeleton.tsx";
+
+/** How wide each waiting tile's name is: six tiles, as many as a first look usually shows. */
+const ASSET_TILE_NAMES = ["70%", "55%", "62%", "48%", "66%", "40%"] as const;
 
 const NO_WAITING: MakingJob[] = [];
 const NOTHING_PICKED: ReadonlySet<string> = new Set();
@@ -269,7 +273,17 @@ function EmptyAssets({
         </Button>
       </div>
     );
-  if (!loaded) return <Pending label={t("Loading assets…")} className="text-body-sm" />;
+  if (!loaded)
+    return (
+      <Pending label={t("Loading assets…")} className="skeleton-tiles">
+        {ASSET_TILE_NAMES.map((width) => (
+          <span key={width} className="skeleton-tile">
+            <Skeleton height={90} radius={12} />
+            <Skeleton width={width} height={8} />
+          </span>
+        ))}
+      </Pending>
+    );
   return (
     <EmptyState
       data-assets-empty=""

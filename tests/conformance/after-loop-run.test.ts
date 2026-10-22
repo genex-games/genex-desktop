@@ -503,18 +503,29 @@ describe("the chat's own session after a finished build, with Loop on (reopen-ru
     assert.doesNotMatch(prompt, /you do not start one/);
   });
 
-  it("A10. no reopen without Loop, for a build the chat may not reopen, or after a paused run — and no launch after a run unless the reopen is offered", async () => {
+  it("A10. no reopen without Loop, for a build the chat may not reopen, or after a paused run — but the Loop asked for in words can always start", async () => {
+    // Named flip: after a run the chat led, with no reopen offered, the session used to get no
+    // launch at all, so "rerun the loop on 1h" was answered with "turn Loop on". It now holds the
+    // start of a Loop asked for in words, Loop switch on or off.
     const rows = [
-      { label: "a finished build the chat may reopen, Loop off", loopRun: finished, commission: null, tools: [] },
-      // Named flip: a Loop commission after a run the chat may not reopen (a kept older part, or
-      // an interview question's commission restored onto the reply) used to bridge start_autopilot.
+      {
+        label: "a finished build the chat may reopen, Loop off",
+        loopRun: finished,
+        commission: null,
+        tools: ["start_autopilot"],
+      },
       {
         label: "a finished build the chat may not reopen, Loop on",
         loopRun: { ...finished, reopenable: undefined },
         commission: { hours: 2 },
-        tools: [],
+        tools: ["start_autopilot"],
       },
-      { label: "a paused build, Loop on", loopRun: paused, commission: { hours: 2 }, tools: ["resume_run"] },
+      {
+        label: "a paused build, Loop on",
+        loopRun: paused,
+        commission: { hours: 2 },
+        tools: ["start_autopilot", "resume_run"],
+      },
     ];
     const seen: Array<{ label: string; tools: string[] }> = [];
     for (const { label, loopRun, commission } of rows)
@@ -529,6 +540,44 @@ describe("the chat's own session after a finished build, with Loop on (reopen-ru
     });
     assert.doesNotMatch(String(request?.prompt), /changing it substantially|reopen_run/);
     assert.match(String(request?.prompt), /no build starts for it/, "the session does the work itself");
+  });
+
+  it("A10b. \"rerun the loop on 1h\" after the chat's run, Loop off or on: a new Loop starts for the hours named, else the switch's", async () => {
+    const inPlace = { ...finished, reopenable: undefined, inPlace: true };
+    const ask = { goal: "the dragon attack", direction: "Skyrim at dusk" };
+    const rows = [
+      { label: "Loop off, 1h named", loopRun: inPlace, commission: null, hours: "1h", wallClock: 1 },
+      { label: "Loop off, 30m named", loopRun: inPlace, commission: null, hours: "30m", wallClock: 0.5 },
+      { label: "Loop on 2h, none named", loopRun: inPlace, commission: { hours: 2 }, hours: undefined, wallClock: 2 },
+      { label: "Loop on 2h, 1h named", loopRun: inPlace, commission: { hours: 2 }, hours: 1, wallClock: 1 },
+      { label: "a paused build, a new Loop", loopRun: paused, commission: null, hours: 3, wallClock: 3 },
+      { label: "Loop on 2h, until done said", loopRun: inPlace, commission: { hours: 2 }, hours: 0, wallClock: 24 },
+    ];
+    const seen: Array<{ label: string; stopped: unknown; hours: unknown }> = [];
+    // Every session engine: the start is bridged in and spelled for each (its own call syntax).
+    const engines = ["codex", "claude-code", "opencode", "local-server"];
+    for (const [index, { label, loopRun, commission, hours }] of rows.entries()) {
+      const args = { ...ask, ...(hours === undefined ? {} : { hours }) };
+      const engine = engines[index % engines.length];
+      const { outcome, request } = await sessionTurn({
+        loopRun,
+        commission,
+        engine,
+        recorded: [{ name: "start_autopilot", args }],
+      });
+      assert.ok(
+        request?.interviewTools?.some((tool) => tool.name === "start_autopilot"),
+        `${label}: ${engine} holds the start`,
+      );
+      const prompt = String(request?.prompt);
+      assert.match(prompt, /You start Loops yourself/, `${label}: the session is told it starts Loops`);
+      assert.doesNotMatch(prompt, /Loop is off\.|[Aa]sk the user to turn/, `${label}: never sent to the switch`);
+      seen.push({ label, stopped: outcome.stopped, hours: (outcome.details?.run as { hours?: unknown })?.hours });
+    }
+    assert.deepEqual(
+      seen,
+      rows.map(({ label, wallClock }) => ({ label, stopped: "launch_run", hours: wallClock })),
+    );
   });
 
   it("A11. the reopen recorded goes back to the chat with its words and the Loop's hours: only a finished build's, a question first, then the reopen before a launch", async () => {

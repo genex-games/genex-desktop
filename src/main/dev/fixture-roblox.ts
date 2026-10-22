@@ -9,10 +9,8 @@
  */
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import { ROBLOX_PLUGIN_ID } from "../../shared/observers.ts";
 import type { StudioCore } from "../studio-core.ts";
-
-/** The bundled plugin's id, as its manifest declares it. */
-const ROBLOX_PLUGIN_ID = "roblox";
 
 /** The stand-in place: an empty place in Roblox's XML format, at the game's top as Roblox keeps one. */
 const PLACE_FILE = "FixtureGame.rbxlx";

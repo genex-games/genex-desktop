@@ -111,6 +111,12 @@ export const CORE_WORKSPACE = {
     copySkip: [],
     assets: [{ folder: "Assets", formats: MEDIA_FORMATS }],
   },
+  // A Roblox game's assets live in its place and on Roblox: its media keeps the default folders.
+  [CoreFact.RobloxProject]: {
+    ignore: [],
+    copySkip: [],
+    assets: [],
+  },
   [CoreFact.BlenderAssets]: {
     ignore: ["**/*.blend1", "**/*.blend2"],
     copySkip: [],

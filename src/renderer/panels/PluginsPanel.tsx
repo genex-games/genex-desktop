@@ -48,6 +48,8 @@ import type { ShownSkill } from "./plugins/skills-sections.ts";
 import { useAsyncEffect } from "../use-async-effect.ts";
 import { PLUGINS_WORDS, SKILLS_WORDS } from "../words.ts";
 import { GithubInstallDialog } from "./plugins/GithubInstallDialog.tsx";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 
 interface Props {
   project?: string | null;
@@ -187,7 +189,15 @@ function SkillView({ skill, onViewPlugin }: { skill: ShownSkill; onViewPlugin: (
             {error}
           </p>
         )}
-        <pre className="skill-instructions">{text ?? SKILLS_WORDS.loadingFile}</pre>
+        {text !== undefined ? (
+          <pre className="skill-instructions">{text}</pre>
+        ) : (
+          !error && (
+            <Pending label={SKILLS_WORDS.loadingFile}>
+              <SkeletonLines widths={["100%", "94%", "98%", "72%", "88%", "40%"]} />
+            </Pending>
+          )
+        )}
       </Section>
       {skill.plugin && <Button onClick={() => onViewPlugin(skill.plugin)}>{t("View plugin")}</Button>}
     </>

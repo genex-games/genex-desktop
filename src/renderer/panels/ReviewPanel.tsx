@@ -28,6 +28,7 @@ import { intlLocale, t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { ACTIVITY_WORDS, problemWords } from "../words.ts";
 import { Pending } from "../ui/Pending.tsx";
+import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** How many runs the list shows at first, and how many more each "Show earlier runs" adds. */
 const RUNS_PAGE = 20;
@@ -649,7 +650,11 @@ function ActivityNotices({
           </Button>
         </div>
       )}
-      {activity.loading && <Pending label={t("Loading activity…")} />}
+      {activity.loading && (
+        <Pending label={t("Loading activity…")}>
+          <SkeletonRows icon control={SkeletonControl.None} />
+        </Pending>
+      )}
       {problem && (
         <div role="alert" data-studio-problem className="flex flex-col gap-1 rounded-card bg-red-tint px-4 py-3">
           <p className="font-medium text-ink">{t("Harness couldn’t restore itself after a failed update")}</p>

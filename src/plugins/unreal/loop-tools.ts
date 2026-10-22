@@ -20,7 +20,9 @@
  * `end-editor` ends this project's editor for a cold restore, and `update-helper` updates the
  * project's Genex editor helper while Unreal is closed. And ({@link LeadLoopToolName})
  * `editor-activity` says whether a play session runs and how much is unsaved, before any save, and
- * `hero-shots` takes the level's hero cameras' stills for a save point's thumbnails.
+ * `hero-shots` takes the level's hero cameras' stills for a save point's thumbnails. Agents in a
+ * chat open and quit the game's Unreal themselves with `open-editor` and `quit-editor`
+ * (`editor-control.ts`), over the same reopen jobs, and read `editor-status`.
  */
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -67,6 +69,7 @@ import {
   reopenAtMoment,
   saveAtMoment,
 } from "./editor-moments.ts";
+import { createEditorControl, EditorControlToolName } from "./editor-control.ts";
 import { createReopenTools, type ProcessEnv } from "./editor-reopen.ts";
 import type { RunProgram } from "./automation-tests.ts";
 import { createMotionTools, MotionToolName } from "./motion-tools.ts";
@@ -362,6 +365,12 @@ export type LoopToolsDeps = {
   editorAnswers(storage: string, game: string): Promise<boolean>;
   /** How many editors run, and quitting and opening the game's, for adding its C++ module and reopening it. */
   restart: EditorRestart;
+  /**
+   * Sets the game's linked project up in this profile when it has no set-up record here (another
+   * profile set it up): the backend's own, which quits Unreal first only when `mayQuit` (else it
+   * refuses while Unreal has the project open); without it nothing is set up.
+   */
+  setUpLinked?(storage: string, game: string, mayQuit: boolean): Promise<void>;
   /** Starts watching the game's editor for a crash (its log and its process); without it the queue sees none. */
   watchCrash?(storage: string, game: string): Promise<CrashCheck>;
   /** This computer's processes, for ending a crashed editor and its crash reporter; without them none is ended. */
@@ -736,6 +745,7 @@ export function createLoopTools(deps: LoopToolsDeps) {
     [MomentToolName.OpenForRun]: async (_args, context, storage) => openForRun(moments.ops(context, storage)),
     [MotionToolName.Status]: (_args, context, storage) => motion.status(storage, game(context)),
     [MotionToolName.Add]: (_args, context, storage) => motion.add(storage, game(context), context.directory),
+    ...controlHandlers(deps, reopen),
     ...play.handlers,
   };
   return {
@@ -745,12 +755,43 @@ export function createLoopTools(deps: LoopToolsDeps) {
   };
 }
 
+/** `open-editor`'s set-up of a project this profile has no record of: it holds the editor lock, so it may quit Unreal. */
+const setUpThenOpen =
+  (setUpLinked: NonNullable<LoopToolsDeps["setUpLinked"]>) =>
+  (storage: string, game: string): Promise<void> =>
+    setUpLinked(storage, game, true);
+
+/** The agent's own editor tools (`editor-control.ts`) over the reopen jobs: open, quit and where it stands. */
+function controlHandlers(
+  deps: LoopToolsDeps,
+  reopen: ReturnType<typeof createReopenTools>,
+): Record<EditorControlToolName, Handler> {
+  const control = createEditorControl({
+    project: deps.project,
+    editorAnswers: deps.editorAnswers,
+    ...(deps.starting ? { starting: deps.starting } : {}),
+    ...(deps.setUpLinked ? { setUp: setUpThenOpen(deps.setUpLinked) } : {}),
+    save: (storage, game) => saveAll(deps, storage, game),
+    quit: deps.restart.quit,
+    reopen,
+    now: deps.now,
+    sleep: deps.sleep,
+  });
+  return {
+    [EditorControlToolName.OpenEditor]: (args, context, storage) => control.open(storage, gameOf(context), args),
+    [EditorControlToolName.QuitEditor]: (_args, context, storage) => control.quit(storage, gameOf(context)),
+    [EditorControlToolName.EditorStatus]: (args, context, storage) =>
+      control.state(storage, gameOf(context), args, context.signal),
+  };
+}
+
 /** Any of the Loop's tools: the part tools, the harness's, the lead's and the moments' own. */
 export type AnyLoopToolName =
   | LoopToolName
   | LiveLoopToolName
   | LeadLoopToolName
   | MomentToolName
+  | EditorControlToolName
   | ShipToolName
   | MotionToolName
   | EnginePlayTool;
@@ -945,6 +986,8 @@ function editorOps(
     save: () =>
       saveAll(deps, storage, game, context.hook?.on === HookEvent.CheckpointBefore ? CHECKPOINT_SAVE : MOMENT_SAVE),
     end: () => reopen.end(storage, game),
+    // At a Loop's start Unreal is never quit to set the project up: the agent links it itself.
+    setUp: async () => deps.setUpLinked?.(storage, game, false),
     reopen: (helper) => reopen.reopen(storage, game, helper),
     state: () => reopen.state(storage, game),
     start: async () => (deps.starting ? deps.starting(storage, game) : null),

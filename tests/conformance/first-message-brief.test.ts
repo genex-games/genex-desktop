@@ -483,6 +483,15 @@ describe("every worker's brief", () => {
       inputs: [],
     });
     assert.match(onUnreal, /The game engine's editor is the lead's alone: you have none of its tools/);
+    const onRoblox = workerBrief({
+      identity: { folderLabel: "AI Games/obby", facts: [fact(CoreFact.RobloxProject)] as never },
+      task: "write the checkpoint script",
+      isolation: WorkerIsolation.Copy,
+      research: false,
+      typeDescription: null,
+      inputs: [],
+    });
+    assert.match(onRoblox, /The game engine's editor is the lead's alone/, "Roblox Studio is the lead's too");
 
     const single = singleWorkerBrief({
       run: RUN,

@@ -3051,6 +3051,8 @@ export class StudioCore {
     if (!project) return undefined;
     const directory = this.games.dirFor(project);
     await this.assertProjectAllowed(directory);
+    // A game opened from another Genex brings its engine link: adopted before any plugin reads its storage.
+    await this.engineLinks?.adopt(project).catch(() => undefined);
     return { project, directory, threadId };
   }
 

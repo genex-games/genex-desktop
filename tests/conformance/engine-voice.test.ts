@@ -622,7 +622,7 @@ describe("a C++ · raylib game's briefs", () => {
 describe("the computer tool's words", () => {
   const view = { width: 1280, height: 720 };
   const cameras = " Known cameras: default, eye:here.";
-  it("are dev's own for every Three.js session (sha256 at origin/dev e5da06dc, merged into the stack)", () => {
+  it("are dev's own for every Three.js session (sha256 at origin/dev 22b48e13, merged into the stack)", () => {
     const PRE_NATIVE = {
       builder: "cf4ed221939c17ef",
       director: "ccf42b3ea6270766",
@@ -645,7 +645,7 @@ describe("the computer tool's words", () => {
 
 /**
  * Every Three.js brief, rendered from fixed arguments, and the first 16 hex of its sha256 in
- * origin/dev e5da06dc's seed, the dev merged into the compiled stacks: the C++ and Rust
+ * origin/dev 22b48e13's seed, the dev merged into the compiled stacks: the C++ and Rust
  * variants branch beside these texts, never through them.
  */
 const PRE_NATIVE_BRIEFS = {
@@ -654,9 +654,9 @@ const PRE_NATIVE_BRIEFS = {
     baseBriefStart: "73fe6a14005c24a1",
     baseBriefOwn: "9a2cabce6cd93d4f",
     contractWiringAsk: "08bd1fab4144a340",
-    contractorFresh: "aa11594e43055c7b",
-    contractorFollowUp: "b0fa3cca28ac0df3",
-    contractorOwn: "5ec74a5246eac4c7",
+    contractorFresh: "483fd78abac3c5bc",
+    contractorFollowUp: "a1638ae780be5553",
+    contractorOwn: "68c1d359e5b24270",
     contractorResume: "aa77e9e84b29a6cf",
     interview: "ccfc8e18264c12f3",
     spikeBrief: "3981c09354d6e4f8",
@@ -669,9 +669,9 @@ const PRE_NATIVE_BRIEFS = {
     baseBriefStart: "73fe6a14005c24a1",
     baseBriefOwn: "8e36d19e777dc2f6",
     contractWiringAsk: "08bd1fab4144a340",
-    contractorFresh: "44599eeba906e7b8",
-    contractorFollowUp: "56c66e08c9418f79",
-    contractorOwn: "8b7018139d5a1f7a",
+    contractorFresh: "f378e33651aa5823",
+    contractorFollowUp: "27859766cbb34f0d",
+    contractorOwn: "696d1c7308df2bf5",
     contractorResume: "aa77e9e84b29a6cf",
     interview: "ccfc8e18264c12f3",
     spikeBrief: "7279d5ca7f175080",

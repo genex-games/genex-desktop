@@ -258,10 +258,6 @@
     padding: 4px 20px 20px;
   }
 }
-.genex-checking {
-  font-size: 14px;
-  line-height: 22px;
-}
 .genex-off {
   margin-block-start: 28px;
   color: var(--ink-3);

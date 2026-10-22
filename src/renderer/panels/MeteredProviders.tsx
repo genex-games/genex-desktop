@@ -243,7 +243,7 @@ function SignInTerminal({ session, onError }: { session: TerminalSession; onErro
       data-sign-in-terminal
       className="h-[26rem] min-h-0 overflow-hidden rounded-lg border border-line bg-base pt-2"
     >
-      <Suspense fallback={<Pending label={WORDS.signingIn} className="px-3 text-xs" />}>
+      <Suspense fallback={<Pending label={WORDS.signingIn} className="px-3 py-2" working />}>
         <TerminalView session={session} visible onError={onError} />
       </Suspense>
     </div>

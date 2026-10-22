@@ -2,7 +2,7 @@
 import { modelProgress } from "../model-progress.ts";
 import { SUBSCRIPTION_ENGINES, type StudioCore } from "../studio-core.ts";
 import { type ModelPullProgress, UiEvent } from "../../shared/ui-events.ts";
-import type { ProviderUsageReport } from "../../shared/provider-usage.ts";
+import type { ProviderUsageService } from "../core/provider-usage.ts";
 import { isBonsaiModelId } from "../../substrate/bonsai/manifest.ts";
 import { BonsaiEngine } from "../../substrate/engines/bonsai.ts";
 import { LocalServerEngine } from "../../substrate/engines/local-server.ts";
@@ -15,7 +15,7 @@ import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import type { EngineStatus } from "../../shared/engine-descriptor.ts";
 
 /** The engines whose model list Settings may ask to refresh. */
 const REFRESHABLE: ReadonlySet<string> = new Set([
@@ -57,11 +57,13 @@ export interface ModelsIpcDeps {
   pushUiEvent(event: UiEvent): void;
   /** OpenRouter's browser sign-in, which hands the key it gets to the engine. */
   openRouterLogin: OpenRouterLogin;
+  /** The subscriptions' plan limits, kept live (`core/provider-usage.ts`). */
+  usage: Pick<ProviderUsageService, "snapshot" | "refresh">;
 }
 
 export function registerModelsIpc(
   handle: IpcHandle,
-  { core, subscription, pushUiEvent, openRouterLogin }: ModelsIpcDeps,
+  { core, subscription, pushUiEvent, openRouterLogin, usage }: ModelsIpcDeps,
 ): void {
   handle("studio:engines", async () => core.engines.describe());
   handle("studio:models.refresh", async (payload) => {
@@ -73,17 +75,11 @@ export function registerModelsIpc(
   });
   registerApiKeyIpc(handle, { core, pushUiEvent, openRouterLogin });
   registerLocalServerIpc(handle, { core, pushUiEvent });
-  // The composer's plan limits: every signed-in subscription, read without starting a turn.
+  // The plan limits as they stand, at once; a fresh read starts, and each subscription's answer
+  // arrives as a `provider.usage` push.
   handle("studio:provider-usage", async () => {
-    const reports = await Promise.all(
-      SUBSCRIPTION_ENGINES.map(async (id): Promise<ProviderUsageReport | null> => {
-        if (!core.engines.has(id)) return null;
-        const engine = core.engines.get(id);
-        if ((await engine.status().catch(() => null))?.code !== EngineStatusCode.Ready) return null;
-        return { engine: id, usage: (await engine.readUsage?.().catch(() => null)) ?? null };
-      }),
-    );
-    return reports.filter((report): report is ProviderUsageReport => report !== null);
+    void usage.refresh().catch(() => {});
+    return usage.snapshot();
   });
   handle("studio:hardware", async () => hardwareReport());
   handle("studio:engines.recheck", async (payload) => {

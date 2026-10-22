@@ -256,6 +256,7 @@ import { NATIVE_TIMERS, StudioCore, type StudioCoreOptions } from "./studio-core
 import { devRustSeedFrom } from "./core/rust-dev-seed.ts";
 import { appLookAccess } from "./app-look-access.ts";
 import { layoutFor } from "./core/layout.ts";
+import { createProviderUsage, engineUsageSource } from "./core/provider-usage.ts";
 import { appLookRun, macAppLook, stubAppLook, unsupportedAppLook } from "../substrate/app-look.ts";
 import { TerminalService, type TerminalHost } from "./terminal-service.ts";
 import { windowControlsPainter } from "./window-chrome.ts";
@@ -278,7 +279,7 @@ import { errorMessage } from "../shared/errors.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { CustomEvent, customEventData } from "../shared/custom-events.ts";
 import { EVAL_LANE_EXIT } from "../shared/eval-lane.ts";
-import { EngineId } from "../shared/providers.ts";
+import { EngineId, SUBSCRIPTION_ENGINES } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
 import {
   cppAcceptanceLaunch,
@@ -737,8 +738,24 @@ function subscription(id: string): SubscriptionEngine | null {
   return null;
 }
 
+/** The subscriptions' plan limits, one live state the renderer is pushed (`core/provider-usage.ts`). */
+const providerUsage = createProviderUsage({
+  engines: SUBSCRIPTION_ENGINES,
+  source: (id) => {
+    if (!core?.engines.has(id)) return null;
+    return engineUsageSource(core.engines.get(id), subscription(id)?.accounts ?? null);
+  },
+  push: (reports) => pushUiEvent({ type: UiEvent.ProviderUsage, payload: { reports } }),
+});
+
+/** A sign-in, account switch or recheck may change a plan already shown: read it again. */
+function followEngineChanges(event: UiEvent): void {
+  if (event.type === UiEvent.EnginesChanged) void providerUsage.refreshShown().catch(() => {});
+}
+
 function pushUiEvent(event: UiEvent): void {
   evalLaneUiTap?.(event);
+  followEngineChanges(event);
   if (event.type === UiEvent.SettingsChanged)
     void applyMainLanguage(event.payload.language).then((changed) => changed && languageChanged());
   if (event.type !== UiEvent.HarnessLog) harnessLogBatch.flush();
@@ -2019,7 +2036,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
   registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
-  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin });
+  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin, usage: providerUsage });
   registerPreviewIpc(handle, {
     core: studio,
     preview: () => preview,

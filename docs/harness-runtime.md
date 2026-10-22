@@ -1297,6 +1297,14 @@ wrap-up invites no claim). `finish user_asked=` still stops everything at once. 
 `wrap_up` too, and starts no worker once anybody asked to finish; its wrap-up starts when the turn
 that recorded the ask ends.
 
+An ask to stop and start a new Loop is `wrap_up` with `next_goal` (and `next_hours` when named):
+the new Loop rides on the same `run_control` record (`next-loop-record.ts`), and once the run has
+closed `handleRunStart` starts it on the same game with the run's engine, model and roles, as a
+launch from the chat would (`next-loop.ts`); a Stop pressed since starts nothing. Outside a run, the
+chat's own turn always holds the Loop's start for one asked in words (`delegated-turn.ts`
+`autoLaunchFor`), with the Loop switch on or off and after a run it led, finished or paused: the
+hours named win, else the switch's, else until done.
+
 The art director is the one absolute judge (`loop/ship-review.ts`, rubric `judge/ship-review.md`):
 one build, every frame the evidence pass took of a registered camera, the player's eyes and each
 demo's end, then the first, middle and last motion frames and the reference (at most 14), captured

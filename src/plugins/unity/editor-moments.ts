@@ -24,10 +24,10 @@ import { atomicWriteJson, isJsonObject, readJsonIfExists } from "../../substrate
 import { decodePng } from "../../substrate/png.ts";
 import { agentPlaying, agentPlayStarting, forgetAgentPlay, sawAgentPlay } from "./agent-play.ts";
 import { agentsSetting, firstWentAhead } from "../../substrate/engine-agents.ts";
-import { editorCommand, editorRuns, endEditor, openScenes, saveWork } from "./editor-life.ts";
+import { editorCommand, editorRuns, endEditor, isPlaying, openScenes, saveWork, stopPlaying } from "./editor-life.ts";
 import { runEnded, runGoesOn, rememberLaunch } from "./editor-idle.ts";
 import { launched, type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
-import { editorStatus, PIPELINE_PACKAGE, PipelineProblem, PLAY_STOPPED } from "./pipeline.ts";
+import { editorStatus, PIPELINE_PACKAGE, PipelineProblem } from "./pipeline.ts";
 import type { UnityProject } from "./project-folder.ts";
 import { pipelineVersionOf } from "./setup.ts";
 
@@ -42,7 +42,6 @@ const RUN_OPEN_WAIT_MS = 150 * SECOND_MS;
 /** The still a checkpoint and the reviewer get. */
 const STILL = { source: "camera", width: 1280, height: 720 } as const;
 const CAPTURE = "capture_game_view";
-const STOP_PLAY = "editor_stop";
 /** The folders in the plugin's storage holding each game's record of an editor closed for a restore, and of a stall. */
 const Records = { Restore: "restore", Health: "health" } as const;
 /** A game id as Genex names a game's record: a plain folder name, never a path. */
@@ -146,8 +145,8 @@ async function playMayEnd(moment: Moment, deps: MomentDeps): Promise<boolean> {
 }
 
 /** Ends the editor's play, and with it any record that the play was the agent's. */
-async function stopPlay(moment: Moment, root: string, deps: MomentDeps): Promise<void> {
-  await editorCommand(root, deps, STOP_PLAY, {}, moment.signal);
+export async function stopPlay(moment: Moment, root: string, deps: MomentDeps): Promise<void> {
+  await stopPlaying(root, deps, moment.signal);
   await forgetAgentPlay(moment.storage, moment.game);
 }
 
@@ -157,7 +156,7 @@ export async function saveAll(moment: Moment, deps: MomentDeps): Promise<PluginH
   if (!root || !(await editorRuns(root, deps))) return {};
   const look = await editorStatus(root, deps.pipeline, { signal: moment.signal });
   if (!look.ok) return unsaved(moment, look.problem === PipelineProblem.Stalled ? WORDS.Stalled : WORDS.CantAsk);
-  const playing = look.result.playMode !== "" && look.result.playMode !== PLAY_STOPPED;
+  const playing = isPlaying(look.result);
   // A restore closes the editor anyway, the agent's own play is its to end, and a run's save point
   // may end the person's while agents may use Unity as they play: the play ends first, so what was
   // edited before it is saved. Otherwise the person's play is theirs to stop.
@@ -286,7 +285,7 @@ export async function editorActivity(moment: Moment, deps: MomentDeps): Promise<
   if (!look.ok && look.problem === PipelineProblem.Stalled && (await nobodyThere(deps)))
     return { personActive: false, unsaved: 0 };
   if (!look.ok) return {};
-  const playing = look.result.playMode !== "" && look.result.playMode !== PLAY_STOPPED;
+  const playing = isPlaying(look.result);
   const now = deps.now().getTime();
   const agents = await agentPlaying(moment.storage, moment.game, now);
   if (playing && agents) await sawAgentPlay(moment.storage, moment.game, now);

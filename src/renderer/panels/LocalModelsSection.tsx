@@ -14,6 +14,7 @@ import { Icon } from "../ui/icons.tsx";
 import type { ModelSettingsProps } from "./ModelsSection.tsx";
 import { Pending } from "../ui/Pending.tsx";
 import { LOCAL_SERVER_WORDS } from "../words.ts";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 
 /** Where the Add from Ollama hint sends the user to find a model's name. */
 const OLLAMA_LIBRARY_URL = "https://ollama.com/search";
@@ -513,7 +514,12 @@ function HardwareLine({
         {t("Could not load local models. Reopen Settings to try again. {error}", { error: hardwareError })}
       </p>
     );
-  if (!hardware) return <Pending label={t("Detecting this Mac…")} className="py-3 text-body-sm" />;
+  if (!hardware)
+    return (
+      <Pending label={t("Detecting this Mac…")} className="py-1.5">
+        <SkeletonLines widths={["56%"]} />
+      </Pending>
+    );
   return (
     <p className="text-body-sm text-muted-foreground">
       {t("{cpu} · {memory} GB memory · about {usable} GB available for models", {

@@ -177,7 +177,7 @@ export function openWakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }
     "HOW THIS LOOP WORKS — ONE DECISION PER TURN:",
     `- Act, then end your turn; a turn lasts at most ${minutes(OPEN_TURN_MS)} minutes, and one cut there goes on at once. Between your turns nothing of yours runs; your workers and jobs keep working.`,
     `- Genex wakes you in this same session when something happens — the person speaks or asks to finish, a worker ends or asks, a job ends, the project's app stops — and every ${heartbeatMinutes} minutes while workers run. News that comes while you work reaches you mid-turn when your session can take it in, otherwise when your turn ends: a long turn hears late.`,
-    `- The person outranks the goal: answer them in the chat, directly and briefly, and act on what they ask. An ask to stop or finish the Loop is ${DirectorTool.WrapUp} first, quoting their words; a question alone stops no worker.`,
+    `- The person outranks the goal: answer them in the chat, directly and briefly, and act on what they ask. An ask to stop or finish the Loop is ${DirectorTool.WrapUp} first, quoting their words (with next_goal when they also want a new Loop after it); a question alone stops no worker.`,
     `- Each wake opens with what happened. Use ${WorkerTool.Wait} only when you need a worker's answer within this turn.`,
   ].join("\n");
 }

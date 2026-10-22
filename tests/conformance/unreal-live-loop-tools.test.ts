@@ -1301,6 +1301,7 @@ describe("a restore's wait for a busy editor keeps to its window (editor-moments
         now += PS_TIMEOUT_MS;
         return true;
       },
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, looks, now: () => now };
   }
@@ -1333,6 +1334,7 @@ describe("a checkpoint's save during a play session (editor-moments.ts)", () => 
         saves.push("save");
         return { saved: true, dirty: [] };
       },
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, saves };
   }
@@ -1362,6 +1364,7 @@ describe("open-for-run's own wait for a reopened Unreal (editor-moments.ts)", ()
       running: async () => false,
       reopen,
       state: async () => ({ answering: false, running: false, reopening: reopening(), helper: HelperState.Current }),
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, now: () => now };
   }
@@ -1449,6 +1452,7 @@ describe("open-for-run's own wait for a reopened Unreal (editor-moments.ts)", ()
         reopening: { state: ReopenState.Idle },
         helper: HelperState.Outdated,
       }),
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, did };
   }

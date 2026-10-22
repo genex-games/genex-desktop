@@ -2,7 +2,7 @@
  * The Genex icon set: line glyphs on one 24-unit grid with a 1.75 stroke, round caps and joins.
  * Parts marked `a-*` move once when the enclosing control is hovered or focused; the motion
  * lives in styles/icons.css and stops under Reduce Motion. Dots, carets and the marks of Unity,
- * Apple and Windows are the only fills.
+ * Roblox, Apple and Windows are the only fills.
  */
 import type { JSX, ReactNode } from "react";
 
@@ -172,6 +172,16 @@ const glyphs = {
     <path
       transform="translate(3.6 3.6) scale(.7)"
       d="m12.9288 4.2939 3.7997 2.1929c.1366.077.1415.2905 0 .3675l-4.515 2.6076a.4192.4192 0 0 1-.4246 0L7.274 6.8543c-.139-.0745-.1415-.293 0-.3675l3.7972-2.193V0L1.3758 5.5977V16.793l3.7177-2.1456v-4.3858c-.0025-.1565.1813-.2682.318-.1838l4.5148 2.6076a.4252.4252 0 0 1 .2136.3676v5.2127c.0025.1565-.1813.2682-.3179.1838l-3.7996-2.1929-3.7178 2.1457L12 24l9.6954-5.5977-3.7178-2.1457-3.7996 2.1929c-.1341.082-.3229-.0248-.3179-.1838V13.053c0-.1565.087-.2956.2136-.3676l4.5149-2.6076c.134-.082.3228.0224.3179.1838v4.3858l3.7177 2.1456V5.5977L12.9288 0Z"
+      fill="currentColor"
+      stroke="none"
+    />
+  ),
+  // Roblox's tilted square with its square hole, as the Roblox Studio plugin's picture draws it, filled.
+  roblox: (
+    <path
+      transform="rotate(15 12 12)"
+      fillRule="evenodd"
+      d="M5.5 5.5h13v13h-13zM10.25 10.25v3.5h3.5v-3.5z"
       fill="currentColor"
       stroke="none"
     />

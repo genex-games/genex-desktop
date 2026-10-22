@@ -41,11 +41,11 @@ if(!window.studio)Object.defineProperty(window,'studio',{value:{
  // Two subscriptions with fixed plan limits: one high, one nearly spent, and an exhausted model
  // bucket the panel leaves out.
  providerUsage:async()=>[
-  {engine:'claude-code',usage:{measuredAt:new Date().toISOString(),plan:'max',windows:[
+  {engine:'claude-code',state:'ready',account:'terminal',usage:{measuredAt:new Date().toISOString(),plan:'max',windows:[
    {id:'five_hour',label:'5-hour limit',percent:0,resetsAt:new Date(Date.now()+(3*60+54)*60_000+30_000).toISOString()},
    {id:'seven_day',label:'Weekly · all models',percent:95,resetsAt:new Date(Date.now()+5*86_400_000).toISOString()},
    {id:'model:fable',label:'Weekly · Fable',percent:100,resetsAt:new Date(Date.now()+5*86_400_000).toISOString()}]}},
-  {engine:'codex',usage:{measuredAt:new Date().toISOString(),plan:'pro',windows:[
+  {engine:'codex',state:'ready',account:'terminal',usage:{measuredAt:new Date().toISOString(),plan:'pro',windows:[
    {id:'codex:10080',label:'Weekly limit',percent:76,resetsAt:new Date(Date.now()+2*86_400_000).toISOString()}]}},
  ],
  openUrl:async(url:string)=>{document.body.dataset.openedUrl=url;},

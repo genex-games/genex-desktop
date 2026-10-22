@@ -257,6 +257,9 @@ describe("a plugin's scaffolds", () => {
     const detected = ownKindRules("claude-code", fact(pluginFactSource("toys"))).join("\n");
     assert.doesNotMatch(detected, /plugins_find/, "one its plugin's detect found has that plugin on");
     assert.match(ownKindRules("claude-code", { id: CoreFact.GodotProject, path: "." }).join("\n"), /plugins_find/);
+    const roblox = ownKindRules("claude-code", { id: CoreFact.RobloxProject, path: ".", source: FactSource.Core });
+    assert.match(roblox.join("\n"), /plugins_find/, "a Roblox place with Roblox Studio off looks for it first");
+    assert.match(roblox.join("\n"), /holds a Roblox place/, "and names it in words");
     const brief = buildContractorBrief({ ask: "go on", engine: "claude-code", facts: [fact(FactSource.Scaffold)] });
     assert.match(brief, /plugins_find/, "the chat's brief keeps the fact's source");
   });

@@ -73,13 +73,13 @@ const MESSAGE = {
   UnknownTool: (name: string) => `Unknown tool ${name}.`,
   NoProject:
     "Genex has not found a Unity project in this game's folder (a folder holding ProjectSettings/ProjectVersion.txt). Tell the user; retrying will not help.",
-  [PipelineProblem.NotOpen]: `This game's Unity project is not open in Unity, or it has no Pipeline package (${PIPELINE_PACKAGE}). Ask the user to open the project in Unity with that package added, then call again.`,
+  [PipelineProblem.NotOpen]: `This game's Unity project is not open in Unity, or it has no Pipeline package (${PIPELINE_PACKAGE}). Call unity__open-editor, which opens it (when it says the project has no Pipeline package, call unity__setup first; the user confirms it), then call again.`,
   [PipelineProblem.NotAnswering]:
-    "Unity did not answer. It may still be starting or reloading scripts: wait a little and call again, and if it stays silent ask the user to look at the editor.",
+    "Unity did not answer. It may still be starting or reloading scripts: wait a little and call again; if it stays silent, call unity__open-editor, which says whether Unity has the project open and opens it when it doesn't.",
   [PipelineProblem.Busy]: (reason: string) =>
     `Unity stayed busy${reason ? ` (${reason})` : ""} for the whole wait. Call again in a moment; if it is showing a dialog, ask the user to answer it in the editor.`,
   [PipelineProblem.Refused]:
-    "Unity refused Genex's token. Ask the user to close and reopen the project in Unity, then call again.",
+    "Unity refused Genex's token. Call unity__restart-editor, which ends Unity and opens the project again (the user confirms it; say first that unsaved editor work is lost), then call again.",
   [PipelineProblem.Failed]: (command: string, detail: string) => `${command} failed: ${detail}`,
   [PipelineProblem.Unknown]: (command: string) =>
     `${command} was sent and Unity gave no answer, so whether it took effect is unknown. Look before you repeat it.`,
@@ -93,7 +93,7 @@ const MESSAGE = {
   [GateRefusal.NotParameters]:
     "parameters must be an object (for batch: operations is a list of { id?, command, params }).",
   [GateRefusal.Denied]: (command: string) =>
-    `${command} is not available to agents: running C# text that is in no file (eval, eval_file), quitting Unity or opening another project in it (quit, or such a menu item), Pipeline's authoring root and runtime settings, and a batch inside a batch are left out, in a batch's operations too. To run code, write a C# file into the project and call run_script on it, or let Unity compile it; to start Unity over, call unity__restart-editor.`,
+    `${command} is not available to agents: running C# text that is in no file (eval, eval_file), quitting Unity or opening another project in it (quit, or such a menu item), Pipeline's authoring root and runtime settings, and a batch inside a batch are left out, in a batch's operations too. To run code, write a C# file into the project and call run_script on it, or let Unity compile it; to quit Unity, call unity__quit-editor, which saves first; to start it over, call unity__restart-editor.`,
   [GateRefusal.PathOutside]: (parameter: string) =>
     `${parameter} must name a file or folder inside this game's folder (in a batch, spelled out, not taken from an earlier operation).`,
   Cut: (chars: number) => `\n[cut: the result was ${chars} characters]`,

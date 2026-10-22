@@ -29,6 +29,7 @@ import { GENEX_WORDS } from "../../../words.ts";
 import { GenexTool } from "../../../../shared/asset-making.ts";
 import { accountCreditsOf, CreditsKind } from "./genex-view.ts";
 import { ICON_TOOLS, markIsLight, toolMark } from "./routed-tools.ts";
+import { Skeleton, SkeletonControl, SkeletonRows } from "../../../ui/Skeleton.tsx";
 
 const WORDS = GENEX_WORDS.creditsTab;
 /** Credits read with the reader's own digit grouping. */
@@ -292,7 +293,20 @@ export function GenexCreditsTab(): JSX.Element {
         </Button>
       </div>
     );
-  if (!credits) return <Pending label={WORDS.loading} className="genex-checking" spinner />;
+  if (!credits)
+    return (
+      <Pending label={WORDS.loading} className="flex flex-col gap-8">
+        <span className="skeleton-row">
+          <Skeleton width={35} height={35} />
+          <span className="skeleton-row-text">
+            <Skeleton width={120} height={18} />
+            <Skeleton width={90} height={8} />
+          </span>
+          <Skeleton width={110} height={30} radius={8} />
+        </span>
+        <SkeletonRows count={4} control={SkeletonControl.None} />
+      </Pending>
+    );
   return (
     <div className="credits-tab" data-credits-tab>
       <Balance credits={credits} />

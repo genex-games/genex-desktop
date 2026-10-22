@@ -16,6 +16,8 @@ import { prefersReducedMotion } from "../ui/media-queries.ts";
 import { hostPlatform } from "../platform.ts";
 import { ASSET_IMPORT_WORDS, ASSET_WORDS, fileManagerWords } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { Skeleton } from "../ui/Skeleton.tsx";
 
 /** How much of a text file the preview decodes. */
 const TEXT_PREVIEW_BYTES = 256 * 1024;
@@ -338,6 +340,8 @@ export function AssetPreview({
   const { mode, model, ready, error } = source;
   const shown = ready && !error;
   const loading = !ready && !error && mode !== "unsupported";
+  // A video or a sound draws its own player while it loads; the shape would cover its controls.
+  const drawsWhileLoading = mode === "video" || mode === "audio";
   const animated = source.animations.length > 0;
   const name = asset.file.split("/").pop() ?? t("Asset preview");
   const note = importNote(asset.import);
@@ -376,12 +380,9 @@ export function AssetPreview({
           </p>
         )}
         {loading && (
-          <div
-            role="status"
-            className="stage-loader-late pointer-events-none absolute inset-0 grid place-items-center text-body-sm text-ink-3"
-          >
-            {ASSET_WORDS.loading}
-          </div>
+          <Pending label={ASSET_WORDS.loading} className="pointer-events-none absolute inset-0 grid place-items-center">
+            {!drawsWhileLoading && <Skeleton width={220} height={220} radius={20} />}
+          </Pending>
         )}
         {error && (
           <div role="alert" className="max-w-md text-center text-body-sm text-ink-2">

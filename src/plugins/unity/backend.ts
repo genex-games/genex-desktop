@@ -11,8 +11,9 @@
  *   gives it a saved first scene (`editor-life.ts`).
  * - `setup` and `undo-setup`: add Unity's Pipeline package to an existing project's manifest, or
  *   take it back out (`setup.ts`); the person confirms each.
- * - `open-editor` and `restart-editor`: open the game's project in the Unity it was saved with
- *   (`editor-open.ts`), or end a stalled editor first; the person confirms a restart.
+ * - `open-editor`, `quit-editor` and `restart-editor`: open the game's project in the Unity it was
+ *   saved with (`editor-open.ts`), save its editor's work and quit it (`editor-quit.ts`), or end a
+ *   stalled editor first, saving what an answering one can; the person confirms a restart.
  * - `save-all`, `end-editor`, `reopen-editor`, `editor-state`, `open-for-run`, `after-run`,
  *   `scene-shots` and `editor-activity`: the steps at Genex's moments and the editor lock's probe
  *   (`editor-moments.ts`). Once a run ended, the backend looks every half minute for an editor Genex
@@ -40,6 +41,7 @@ import type { Activate, PluginActivation, PluginContext } from "../../plugin-sdk
 import { getUnityLaunch, systemOpener, UnitySource } from "./editor-launch.ts";
 import { createComputerPlay } from "./computer-play.ts";
 import { endEditor, firstSetup } from "./editor-life.ts";
+import { quitEditor } from "./editor-quit.ts";
 import { CLOSE_IDLE_SETTING, closeIdleEditors, IDLE_LOOK_MS } from "./editor-idle.ts";
 import {
   afterRun,
@@ -95,6 +97,7 @@ export const UnityTool = {
   UndoSetup: "undo-setup",
   OpenEditor: "open-editor",
   RestartEditor: "restart-editor",
+  QuitEditor: "quit-editor",
   SaveAll: "save-all",
   EndEditor: "end-editor",
   ReopenEditor: "reopen-editor",
@@ -222,9 +225,9 @@ const MESSAGE = {
   [SetupRefusal.NeedsUnity6]: (version: string) =>
     `This project was saved with Unity ${version}, and Unity's Pipeline package needs Unity 6 or later: ask the user to upgrade the project in Unity Hub first.`,
   [SetupRefusal.NoManifest]:
-    "This project has no Packages/manifest.json yet: ask the user to open it in Unity once, then call again.",
+    "This project has no Packages/manifest.json yet: Unity writes one the first time it opens the project.",
   [SetupRefusal.Unreadable]:
-    "This project's Packages/manifest.json can't be read as Unity writes it (it is no plain file of the project, or no JSON object): ask the user to fix it, then call again.",
+    "This project's Packages/manifest.json can't be read as Unity writes it (it is no plain file of the project, or no JSON object): fix the file so it is one JSON object with a dependencies object, then call again. Only a manifest that is a link out of the project is the user's to fix.",
   [SetupRefusal.InvalidGame]: "Invalid game",
   Made: (version: string) =>
     `Made this game's Unity project in ${GAME_PROJECT_FOLDER}/ for Unity ${version}, empty but for Unity's Pipeline package, the standard built-in modules and the UI package`,
@@ -243,6 +246,8 @@ const MESSAGE = {
     "Unity has this project open: bring Unity to the front so it loads the package (ask the user to), then call unity-editor__list_commands.",
   NotEnded:
     "Unity could not be ended, so it was not opened again: ask the user to quit Unity, then call unity__open-editor.",
+  OpenedForManifest: (version: string) =>
+    `This project had no Packages/manifest.json yet, so Genex opened it in Unity ${version}, which writes one as it loads the project. Call unity__setup again in a minute or two, once Unity has opened it.`,
   StepsShown:
     "The Unity setup card is in the chat: Genex can install Unity Hub and Unity 6 for the user, who only signs in. Tell them in one line, then end your reply; the chat tells you when Unity is ready.",
   StepsDone: "Unity 6 is installed and signed in here; there is no setup card to show. Call unity__new-game.",
@@ -413,8 +418,8 @@ async function newGame(deps: UnityBackendDeps, context: PluginContext): Promise<
 function setupRefused(error: unknown, project: UnityProject, words: RefusalWords): Error {
   if (!(error instanceof SetupError)) return error instanceof Error ? error : new Error(errorMessage(error));
   if (error.code === SetupRefusal.NeedsUnity6)
-    return new Error(words[SetupRefusal.NeedsUnity6](project.editorVersion ?? UNKNOWN_VERSION));
-  return new Error(words[error.code]);
+    return new Error(words[SetupRefusal.NeedsUnity6](project.editorVersion ?? UNKNOWN_VERSION), { cause: error });
+  return new Error(words[error.code], { cause: error });
 }
 
 /** How an opening is asked for a call: its stop, and where scene backups a killed editor left are kept. */
@@ -454,10 +459,34 @@ async function setUpAndOpen(deps: UnityBackendDeps, context: PluginContext, word
   return { changed, version, opening: await openProject(deps, project, await openingOf(deps, context, id)) };
 }
 
-/** The agent's `setup`: what it came to, in words. */
+/**
+ * Opens a project Unity never opened, so that Unity writes its manifest, without waiting: a project
+ * with no Pipeline package never answers Genex.
+ */
+async function openForManifest(deps: UnityBackendDeps, context: PluginContext): Promise<string> {
+  const { id, project } = await projectOf(deps, context);
+  const opening = await openProject(deps, project, { ...(await openingOf(deps, context, id)), waitMs: 0 });
+  const refused = opening.opened === Opened.NoEditor || opening.opened === Opened.Failed;
+  if (refused) return `${MESSAGE[SetupRefusal.NoManifest]} ${OPENING[opening.opened](opening)}`;
+  return `${MESSAGE.OpenedForManifest(opening.version)}${setAsideWords(opening)}`;
+}
+
+/** Whether a setup was refused because Unity never wrote the project's manifest. */
+const noManifest = (error: unknown): boolean =>
+  error instanceof Error && error.cause instanceof SetupError && error.cause.code === SetupRefusal.NoManifest;
+
+/**
+ * The agent's `setup`: what it came to, in words. A project Unity never opened has no manifest to
+ * add the package to: Genex opens it (setup's confirmation covers opening it), and Unity writes one.
+ */
 async function setup(deps: UnityBackendDeps, context: PluginContext): Promise<string> {
-  const { changed, version, opening } = await setUpAndOpen(deps, context, MESSAGE);
-  return afterChange(changed ? MESSAGE.SetUp(version) : MESSAGE.AlreadySetUp(version), opening, changed);
+  try {
+    const { changed, version, opening } = await setUpAndOpen(deps, context, MESSAGE);
+    return afterChange(changed ? MESSAGE.SetUp(version) : MESSAGE.AlreadySetUp(version), opening, changed);
+  } catch (error) {
+    if (!noManifest(error)) throw error;
+    return openForManifest(deps, context);
+  }
 }
 
 /** An undo of setup, once the person confirmed: exactly the line setup added, taken back. */
@@ -498,13 +527,13 @@ async function openEditor(deps: UnityBackendDeps, context: PluginContext): Promi
 type Restarted = { ended: boolean; opening?: Opening };
 
 /**
- * A restart, once the person confirmed: the game's editor ended, a stalled one included (unsaved
- * editor work is lost), and its project opened again. An editor that would not end gets no second
- * one beside it.
+ * A restart, once the person confirmed: the game's editor ended, its work saved first when it
+ * answers (its play stopped), a stalled one included (its unsaved work is lost), and its project
+ * opened again. An editor that would not end gets no second one beside it.
  */
 async function endAndOpen(deps: UnityBackendDeps, context: PluginContext, words: RefusalWords): Promise<Restarted> {
   const { id, project } = await projectOf(deps, context, words);
-  if (!(await endEditor(project.root, deps))) return { ended: false };
+  if (!(await endEditor(project.root, deps, { save: true, signal: context.signal }))) return { ended: false };
   const options = { ...(await openingOf(deps, context, id)), waitMs: RESTART_OPEN_WAIT_MS };
   return { ended: true, opening: await openProject(deps, project, options) };
 }
@@ -605,6 +634,7 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     [UnityTool.UndoSetup]: (context) => undo(deps, context),
     [UnityTool.OpenEditor]: (context) => openEditor(deps, context),
     [UnityTool.RestartEditor]: (context) => restartEditor(deps, context),
+    [UnityTool.QuitEditor]: atMoment(quitEditor),
     [UnityTool.SaveAll]: atMoment(saveAll),
     [UnityTool.EndEditor]: atMoment(endForRestore),
     [UnityTool.ReopenEditor]: atMoment(reopenEditor),

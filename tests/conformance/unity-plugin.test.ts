@@ -123,6 +123,7 @@ describe("the bundled Unity plugin", () => {
         ...ENGINE_PLAY_TOOLS,
         UnityTool.EndEditor,
         UnityTool.OpenForRun,
+        UnityTool.QuitEditor,
         UnityTool.ReopenEditor,
         UnityTool.SaveAll,
         UnityTool.SceneShots,
@@ -140,6 +141,8 @@ describe("the bundled Unity plugin", () => {
       undefined,
       "and once they confirm, it never waits for a lock whose probe a stalled editor can't answer",
     );
+    assert.equal(tool(UnityTool.QuitEditor)?.confirmation, undefined, "a quit saves first and never loses work");
+    assert.equal(tool(UnityTool.QuitEditor)?.audience, undefined, "the agent quits Unity itself");
     assert.deepEqual(unity.observers, [
       { id: "viewport", facts: [CoreFact.UnityProject], tool: UnityTool.SceneShots, live: "stills" },
     ]);
@@ -244,7 +247,7 @@ describe("the bundled Unity plugin", () => {
   it("refuses a tool or an action it does not have", async () => {
     const backend = backendAt(NOW);
     const context = contextFor(await tmpDir("unity-storage-"));
-    await assert.rejects(async () => backend.tool?.("quit-editor", {}, context), /Unknown Unity tool quit-editor/);
+    await assert.rejects(async () => backend.tool?.("close-editor", {}, context), /Unknown Unity tool close-editor/);
     await assert.rejects(async () => backend.action?.("create", {}, context), /Unknown Unity action create/);
   });
 
@@ -303,6 +306,7 @@ describe("the bundled Unity plugin", () => {
           "unity__undo-setup",
           "unity__open-editor",
           "unity__restart-editor",
+          "unity__quit-editor",
           // Its file skill (unity-multiplayer) is read through the synthetic skill tool.
           "unity__skill",
         ],

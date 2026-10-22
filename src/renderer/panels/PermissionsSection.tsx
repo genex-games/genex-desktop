@@ -32,6 +32,7 @@ import { computerControlOffered } from "../../shared/computer-control.ts";
 import { useComputerControl } from "../use-computer-control.ts";
 import { usePermissionSettings } from "../use-permission-settings.ts";
 import { COMPUTER_CONTROL_SETTING_WORDS, computerControlDetail, permissionRuleWords, problemWords } from "../words.ts";
+import { SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** The section's own words. */
 const WORDS = {
@@ -296,7 +297,9 @@ export function PermissionsSection(): JSX.Element {
             {error}
           </p>
         ) : (
-          <Pending label={WORDS.loading} />
+          <Pending label={WORDS.loading}>
+            <SkeletonRows />
+          </Pending>
         )}
       </div>
     );

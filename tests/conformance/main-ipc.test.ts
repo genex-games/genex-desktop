@@ -6,12 +6,15 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { setImmediate as tick } from "node:timers/promises";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { KEEP_AWAKE_FALLBACK_MS, KeepAwake, type FallbackTimers } from "../../src/main/keep-awake.ts";
 import { registerRunsIpc, extFromMime, safeLabel, type RunsIpcDeps } from "../../src/main/ipc/runs.ts";
 import { registerLoginIpc, type LoginIpcDeps } from "../../src/main/ipc/login.ts";
 import { badgeText, registerNotificationsIpc } from "../../src/main/ipc/notifications.ts";
 import { registerModelsIpc, type ModelsIpcDeps } from "../../src/main/ipc/models.ts";
+import { createProviderUsage } from "../../src/main/core/provider-usage.ts";
+import { type ProviderUsageReport, UsageState } from "../../src/shared/provider-usage.ts";
 import { registerUpdateIpc } from "../../src/main/ipc/update.ts";
 import { registerStorageIpc } from "../../src/main/ipc/storage.ts";
 import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
@@ -719,35 +722,42 @@ describe("both sign-in paths go through the controllers", () => {
 });
 
 describe("the composer's plan limits", () => {
-  it("come from every ready subscription and never from a signed-out, missing or failing one", async () => {
+  it("answer with the limits as they stand at once, and push each subscription's fresh read", async () => {
     const usage = {
       measuredAt: "2026-09-24T00:00:00.000Z",
       windows: [{ id: "five_hour", label: "5-hour limit", percent: 12 }],
     };
-    const engines: Record<string, { status(): Promise<{ code: string }>; readUsage?(): Promise<unknown> }> = {
-      "claude-code": { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-      codex: {
-        status: async () => ({ code: "needs_login" }),
-        readUsage: async () => {
-          throw new Error("must not be asked");
-        },
-      },
-      ollama: { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-    };
-    const core = {
-      engines: { has: (id: string) => id in engines, get: (id: string) => engines[id] },
-    } as unknown as ModelsIpcDeps["core"];
+    const pushed: ProviderUsageReport[][] = [];
+    let answer: (value: typeof usage) => void = () => {};
+    const service = createProviderUsage({
+      engines: ["claude-code"],
+      source: () => ({
+        status: async () => ({ code: "ready" }),
+        account: async () => "terminal",
+        readUsage: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      }),
+      push: (reports) => pushed.push(reports),
+    });
+    const core = { engines: { has: () => false, get: () => null } } as unknown as ModelsIpcDeps["core"];
     const { handle, invoke } = registrar();
-    registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "claude-code", usage }] });
-    engines.codex = {
-      status: async () => ({ code: "ready" }),
-      readUsage: async () => {
-        throw new Error("offline");
-      },
-    };
-    delete engines["claude-code"];
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "codex", usage: null }] });
+    registerModelsIpc(handle, {
+      core,
+      subscription: () => null,
+      pushUiEvent: () => {},
+      openRouterLogin: noSignIn,
+      usage: service,
+    });
+    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [] }, "the panel never waits on a read");
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Checking)) await tick();
+    answer(usage);
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Ready)) await tick();
+    assert.deepEqual(await invoke("studio:provider-usage"), {
+      ok: true,
+      value: [{ engine: "claude-code", state: UsageState.Ready, account: "terminal", usage }],
+    });
   });
 });
 
@@ -857,7 +867,13 @@ it("model refresh validates provider identities before invoking discovery", asyn
   // Only the registrar's engine registry is needed; no profile or credentials are opened.
   const core = { engines };
   const { handle, invoke } = registrar();
-  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
+  registerModelsIpc(handle, {
+    core,
+    subscription: () => null,
+    pushUiEvent: () => {},
+    openRouterLogin: noSignIn,
+    usage: noUsage,
+  });
   for (const provider of [undefined, null, 7, {}, "../codex", "ollama", ""]) {
     assert.equal((await invoke("studio:models.refresh", { provider })).ok, false);
     assert.equal(calls, 0);
@@ -1960,6 +1976,7 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
   registerModelsIpc(handle, {
     core: { engines },
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -1970,6 +1987,9 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
 });
 
 /** A browser sign-in that is never started: the registrars under test do not reach it. */
+/** No subscription's limits: the tests that use it never ask for them. */
+const noUsage: ModelsIpcDeps["usage"] = { snapshot: () => [], refresh: async () => {} };
+
 const noSignIn: ModelsIpcDeps["openRouterLogin"] = {
   start: async () => {
     throw new Error("no browser sign-in in this test");
@@ -1997,6 +2017,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: noSignIn,
     });
@@ -2062,6 +2083,7 @@ it("the browser sign-in hands its key to the engine, and only how it ended comes
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: {
         start: (saveKey) => login.start(saveKey),
@@ -2103,6 +2125,7 @@ it("deleting a model asks the local engine that owns it and announces the change
   registerModelsIpc(handle, {
     core,
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });

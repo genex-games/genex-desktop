@@ -296,6 +296,30 @@ describe("native Codex login", () => {
     assert.equal((await engine.resolveLogin()).source, "isolated");
   });
 
+  it("plan usage that cannot be read fails, and a plan with no buckets shares no limits", async () => {
+    const root = await tmpDir("studio-usage-fail-");
+    const home = path.join(root, "codex");
+    await mkdir(home);
+    await writeFile(path.join(home, "studio-login.json"), "{}");
+    await writeFile(path.join(home, "auth.json"), "{}");
+    const answers: Array<() => Promise<unknown>> = [
+      async () => {
+        throw new Error("app server did not answer");
+      },
+      async () => ({}),
+    ];
+    const engine = new CodexEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: home,
+      systemHome: path.join(root, "system"),
+      executable: "/bundled/codex",
+      authStatusFn: async () => ({ loggedIn: true, method: "chatgpt", detail: "native status" }),
+      readRateLimits: () => (answers.shift() ?? (async () => ({})))(),
+    });
+    await assert.rejects(engine.readUsage(), "a failed read is never reported as no limits");
+    assert.equal(await engine.readUsage(), null);
+  });
+
   it("plan usage read for the account before a switch is never shown or kept for the next one", async () => {
     const root = await tmpDir("studio-usage-switch-");
     const home = path.join(root, "codex");

@@ -22,6 +22,7 @@ import { type NativeGame, type NativeState, type NativeStore, nativeOf, nativeSt
 import type { PeopleState } from "./people.ts";
 import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
+import type { ProviderUsageState } from "./provider-usage.ts";
 import type { SharingState } from "./sharing.ts";
 import { type SessionState, SessionStatus } from "./session.ts";
 import { studio } from "./studio.ts";
@@ -57,6 +58,8 @@ export const useLaunch = <T>(select: Selector<LaunchState, T>): T => useStore(st
 export const useUpdate = <T>(select: Selector<UpdateState, T>): T => useStore(studio().update, select);
 export const useAgentsStart = <T>(select: Selector<AgentsStartState, T>): T => useStore(studio().agentsStart, select);
 export const useModelPicker = <T>(select: Selector<ModelPickerState, T>): T => useStore(studio().modelPicker, select);
+export const useProviderUsage = <T>(select: Selector<ProviderUsageState, T>): T =>
+  useStore(studio().providerUsage, select);
 /** The boot store lives beside the studio, not in it: it decides whether the studio starts at all. */
 export const useBoot = <T>(store: BootStore, select: Selector<BootStoreState, T>): T => useStore(store, select);
 

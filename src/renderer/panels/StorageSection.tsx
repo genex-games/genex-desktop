@@ -15,6 +15,7 @@ import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { DataFolderCard } from "./DataFolderCard.tsx";
 import type { DataFolderState } from "../../shared/data-folder.ts";
 import { InstalledGamesSection } from "./InstalledGamesSection.tsx";
+import { Skeleton } from "../ui/Skeleton.tsx";
 
 /** The one button: how much it frees, with what goes and what stays in its tooltip. */
 function FreeUpButton({
@@ -110,7 +111,11 @@ export function StorageSection(): JSX.Element {
         {space ? (
           <FreeUpButton space={space} freeing={freeing} onChoose={() => setConfirming(true)} />
         ) : (
-          !error && <Pending label={STORAGE_WORDS.measuring} />
+          !error && (
+            <Pending label={STORAGE_WORDS.measuring}>
+              <Skeleton width={64} height={12} />
+            </Pending>
+          )
         )}
       </section>
       {space && <StorageKinds space={space} />}

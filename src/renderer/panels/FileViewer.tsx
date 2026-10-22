@@ -17,6 +17,7 @@ import { type BesideTarget, besideName } from "../open-beside.ts";
 import { hostPlatform } from "../platform.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { t } from "../../shared/i18n.ts";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 
 /** Where reading the file stands. */
 const LoadState = {
@@ -120,7 +121,12 @@ export function FileViewer({
 /** The file as the viewer shows it: opening, its problem, a document, highlighted code, an image, or a refusal. */
 function FileBody({ loaded, name, code }: { loaded: Loaded; name: string; code: string }): JSX.Element {
   if (loaded.state === LoadState.Loading)
-    return <Pending label={t("Opening {name}", { name })} className="px-11 py-7 text-chat" />;
+    return (
+      <Pending label={t("Opening {name}", { name })} className="flex flex-col gap-7 px-11 py-7">
+        <SkeletonLines widths={["100%", "96%", "62%"]} />
+        <SkeletonLines widths={["100%", "88%", "92%", "40%"]} />
+      </Pending>
+    );
   if (loaded.state === LoadState.Failed)
     return (
       <p role="alert" className="m-0 px-11 py-7 text-chat text-ink-2">
