@@ -91,7 +91,11 @@ export interface NativeSessionsDeps {
   log(line: string): void;
   /** Opens a game's way to Genex (`main/play/genex-gateway.ts`); without it a game has no network. */
   genex?(slug: string): Promise<GameGenex | null>;
-  /** Where presence and plays will be reported once genex.games takes them from the app; unused until then. */
+  /**
+   * Where a game's presence and plays go: started once its window is on screen, which reports the
+   * play to genex.games (`native-plays.ts`), and ended once a game that showed one ends (nothing
+   * yet: genex.games takes no presence from the app).
+   */
   presence?: { started(slug: string): void; ended(slug: string): void };
 }
 

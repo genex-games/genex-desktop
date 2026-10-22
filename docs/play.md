@@ -225,6 +225,11 @@ is.
     Genex first (`DELETE`, `studio:play.forget-identity`) and then here; the next launch asks again.
   - **Failure and shutdown.** A gateway that can't open leaves the game offline, not unplayable. The
     gateway closes when the game ends. A fixture launch opens none.
+  - **Its play count** (`main/play/native-plays.ts`). Most native builds never redeem the ticket, so
+    once a game's window is on screen Play reports the play itself (`POST /api/embed/native-play`):
+    genex.games counts the signed-in account, or, signed out, this computer's own random id
+    (`installed-games/player.json`, sent only with no account), once per game, like a web play. A
+    failed report is logged and dropped. A fixture launch reports nothing.
 - Links (`main/play/game-links.ts`): the website's Open in Genex sends `genex://game/<slug>`.
   The packaged app declares the scheme (`protocols` in `forge.config.cjs`, the Linux packages'
   `x-scheme-handler/genex`) and registers it at start; macOS hands a link over `open-url`, Windows

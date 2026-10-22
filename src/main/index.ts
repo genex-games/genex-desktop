@@ -164,7 +164,8 @@ import { IDENTITY_QUESTION, nativeTicket } from "./play/native-identity.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
 import { checkNativeUpdates } from "./play/native-updates.ts";
 import { runTool } from "./play/native-unpack.ts";
-import { type GameGenex, type NativeSessions, nativeSessions } from "./play/native-launch.ts";
+import { type GameGenex, type NativeSessions, type NativeSessionsDeps, nativeSessions } from "./play/native-launch.ts";
+import { nativePlays } from "./play/native-plays.ts";
 import { hasGameWindow, showGameWindow } from "./play/native-windows.ts";
 import { spawnNativeGame } from "../substrate/plugins/native-process.ts";
 import { psProbe, SYSTEM_CLOCK } from "../substrate/job-process.ts";
@@ -1138,10 +1139,23 @@ function playSessionsFor(studio: StudioCore): NativeSessions | null {
     played: (slug) => installs.played(slug),
     ended: (slug) => installs.sweep(slug),
     log: (line) => studioLog.write("main", line),
-    // A fixture launch has no Genex to reach: its games stay offline.
-    ...(fixtureNativePolicy ? {} : { genex: (slug: string) => openGameGenex(studio, slug) }),
+    // A fixture launch has no Genex to reach: its games stay offline, and their plays uncounted.
+    ...(fixtureNativePolicy
+      ? {}
+      : { genex: (slug: string) => openGameGenex(studio, slug), presence: playsFor(studio) }),
   });
   return nativeLauncher;
+}
+
+/** Where a native game's plays go: genex.games, once its window is on screen (`main/play/native-plays.ts`). */
+function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"]> {
+  const plays = nativePlays({
+    root: studio.layout.installedGames,
+    request: networkRequest(globalThis.fetch, playOrigin.api),
+    token: genexAccountFor(studio).token,
+    log: (line) => studioLog.write("main", line),
+  });
+  return { started: (slug) => void plays.report(slug), ended: () => undefined };
 }
 
 /**

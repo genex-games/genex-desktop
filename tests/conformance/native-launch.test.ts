@@ -120,6 +120,7 @@ async function rig(
   const killed: number[] = [];
   const played: string[] = [];
   const ended: string[] = [];
+  const reported: string[] = [];
   const logs: string[] = [];
   const pushes: NativeSession[][] = [];
   const starts = new Map<number, string>();
@@ -175,6 +176,10 @@ async function rig(
     ended: async (slug) => {
       ended.push(slug);
     },
+    presence: {
+      started: (slug) => reported.push(`started ${slug}`),
+      ended: (slug) => reported.push(`ended ${slug}`),
+    },
     log: (line) => logs.push(line),
   });
   return {
@@ -186,6 +191,7 @@ async function rig(
     killed,
     played,
     ended,
+    reported,
     logs,
     pushes,
     clock,
@@ -197,7 +203,7 @@ async function rig(
 
 describe("native game sessions", () => {
   it("starts a game, finds its window, brings it forward and counts it as played", async () => {
-    const { sessions, games, shown, played, pushes, clock } = await rig({ windowAfter: 1 });
+    const { sessions, games, shown, played, reported, pushes, clock } = await rig({ windowAfter: 1 });
     await sessions.launch("dust-runners");
     assert.equal(sessions.sessions()[0]?.phase, NativeSessionPhase.Starting);
     await settle();
@@ -209,7 +215,11 @@ describe("native game sessions", () => {
     }
     assert.deepEqual(shown, [games[0]?.pid]);
     assert.deepEqual(played, ["dust-runners"]);
+    assert.deepEqual(reported, ["started dust-runners"], "genex.games hears of the play once its window is up");
     assert.ok(pushes.some((state) => state[0]?.phase === NativeSessionPhase.Running));
+    games[0]?.exit(0);
+    await until(() => reported.length === 2);
+    assert.deepEqual(reported, ["started dust-runners", "ended dust-runners"]);
   });
 
   it("opens a game full screen with its engine's own argument, and in a window when its app asks for one", async () => {
@@ -262,7 +272,7 @@ describe("native game sessions", () => {
   });
 
   it("fails a game that quits before its window, logging its last words, not showing them", async () => {
-    const { sessions, games, logs } = await rig({ windowAfter: 1000 });
+    const { sessions, games, logs, reported } = await rig({ windowAfter: 1000 });
     await sessions.launch("dust-runners");
     games[0]?.stderr.write("dyld: Library not loaded: @rpath/UnityPlayer.dylib\n");
     games[0]?.exit(6);
@@ -271,6 +281,7 @@ describe("native game sessions", () => {
     assert.equal(failed?.phase, NativeSessionPhase.Failed);
     assert.equal(failed?.failure, LaunchFailure.QuitEarly);
     assert.match(logs.join("\n"), /UnityPlayer\.dylib/);
+    assert.deepEqual(reported, [], "a game that never showed a window was not played");
     await sessions.quit("dust-runners");
     assert.deepEqual(sessions.sessions(), [], "a failure is forgotten when dismissed");
   });

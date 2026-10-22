@@ -93,6 +93,8 @@ export const PlayRoute = {
   Corpus: "/api/gallery/search-corpus",
   Online: "/api/gallery/online",
   Ticket: "/api/embed/ticket",
+  /** A downloaded game's play, once its window is on screen (`native-plays.ts`). */
+  NativePlay: "/api/embed/native-play",
   Referral: "/api/referrals/me",
   world: (slug: string) => `/api/gallery/world/${encodeURIComponent(slug)}`,
   like: (id: string) => `/api/projects/${encodeURIComponent(id)}/like`,
