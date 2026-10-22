@@ -31,6 +31,7 @@ const OWN_PROVIDER = "opencode";
  * refreshes its token on auth.openai.com). A provider missing here reaches only its listed address.
  */
 const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
+  [OWN_PROVIDER]: ["opencode.ai"],
   openai: ["api.openai.com", "chatgpt.com", "auth.openai.com"],
   anthropic: ["api.anthropic.com"],
   google: ["generativelanguage.googleapis.com"],
@@ -177,6 +178,11 @@ function runsBuilds(listed: ListedModel): boolean {
   if (listed.capabilities?.toolcall !== true || listed.status === DEPRECATED) return false;
   const output = Object.entries(listed.capabilities.output ?? {});
   return output.every(([modality, on]) => modality === "text" || on !== true);
+}
+
+/** The hosts a model's provider answers on with no listing to name its address: its built-in hosts. */
+export function builtInHosts(model: string): string[] {
+  return [...(PROVIDER_HOSTS[model.slice(0, model.indexOf("/"))] ?? [])];
 }
 
 /** The hosts a provider answers on: the address its listing names, and its built-in hosts. */

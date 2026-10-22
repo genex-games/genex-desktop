@@ -30,6 +30,7 @@ import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, mcpToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import {
   OPENCODE_AGENT,
+  builtInHosts,
   OpenCodeAccess,
   OpenCodeDialect,
   openCodeConfig,
@@ -528,10 +529,14 @@ export class OpenCodeEngine implements Engine {
     return row?.efforts?.includes(effort) ? effort : null;
   }
 
-  /** The hosts a session may reach: its model's provider, or every listed provider when OpenCode picks. */
+  /**
+   * The hosts a session may reach: its model's provider, or every listed provider when OpenCode
+   * picks. A model the listing has not named yet (a session started before the list was read, or
+   * after it failed) still reaches its provider's built-in hosts.
+   */
   #domains(model: string | undefined): string[] {
     const listed = this.#shown().hosts;
-    const hosts = model ? (listed.get(model) ?? []) : [...listed.values()].flat();
+    const hosts = model ? (listed.get(model) ?? builtInHosts(model)) : [...listed.values()].flat();
     return [...new Set([...hosts, ...CATALOG_HOSTS])];
   }
 

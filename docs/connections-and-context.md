@@ -183,8 +183,9 @@ list and the free ones wait in Settings; a paid provider not yet set up shows no
 no sandbox of its own, so each session runs in `ProcessSandbox`: the workspace (a scratch folder
 when read-only) plus OpenCode's state and cache are writable, its own data folder is exempt from the
 credential denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked model's
-provider hosts (the address OpenCode lists, or for a built-in provider listed with none, its known
-API and browser sign-in hosts) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are
+provider hosts (the address OpenCode lists, plus a built-in provider's known API and browser
+sign-in hosts, OpenCode Zen's `opencode.ai` among them, which a session started before the list was
+read still gets) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are
 reachable. `OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, never ask, denies web
 fetch, skills and other folders to a build, and lets a read-only session run only the studio bridge
 (`node .studio/bridge/tool.mjs`), which carries the studio's tools as it does for Codex. On 2.x,

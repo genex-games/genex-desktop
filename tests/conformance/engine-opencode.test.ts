@@ -599,6 +599,35 @@ describe("OpenCode sessions", () => {
     assert.equal(unpicked.errorText, "Bad Request: not supported", "with no pick there is no model to blame");
   });
 
+  it("opens OpenCode Zen to a session that starts before the model list was read", async () => {
+    const { engine, seen } = await engineWith(() => replay([]));
+    await engine.delegate({ cwd: await game(), prompt: "go on", model: "opencode/big-pickle" });
+    assert.deepEqual(seen[0]?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+  });
+
+  it("opens OpenCode Zen when the listing names no address for its models", async () => {
+    const root = await tmpDir("opencode-zen-");
+    const listing = `opencode/free-one\n${JSON.stringify(
+      { id: "free-one", providerID: "opencode", capabilities: { toolcall: true }, cost: { input: 0, output: 0 } },
+      null,
+      2,
+    )}`;
+    const seen: OpenCodeInvocation[] = [];
+    const engine = new OpenCodeEngine({
+      scratchRoot: path.join(root, "scratch"),
+      protectedPaths: [path.join(root, "secrets")],
+      resolveCli: ready,
+      listModels: async () => listing,
+      execFn: (invocation) => {
+        seen.push(invocation);
+        return replay([]);
+      },
+    });
+    await engine.refreshModels(true);
+    await engine.delegate({ cwd: await game(), prompt: "go on", model: "opencode/free-one" });
+    assert.deepEqual(seen[0]?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+  });
+
   it("says the sandbox kept OpenCode from a provider whose address it does not know, never to sign in again", async () => {
     const root = await tmpDir("opencode-hosts-");
     const listing = `unheard-of/m\n${JSON.stringify(
