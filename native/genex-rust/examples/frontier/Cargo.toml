@@ -1,0 +1,59 @@
+# The cross-area acceptance scene `frontier` (EP-X1): a 2 x 2 km valley of 64 m cells streamed round
+# an anchor that rides out of a frontier town and back. Procedural terrain tiles with colliders; the
+# town's huts, the watchtower, waystones and rock fields come from a placement file
+# (`world/frontier.cells.json`) compiled by the host's C-28 compiler into the cell pack under
+# `assets/frontier/` (`world/compile.ts`); the town cells' nav islands are baked offline into
+# `assets/islands/` (`tests/islands.rs`) and enter through `StreamNav`; 20 agents drive animated
+# `Character`s through the documented loop with root motion, one of them over a ladder link; a door
+# swings on its node clip; an impostor forest with a far field covers the hills. Every model is
+# written in code (procedural, no third-party content). One crate serves every destination, as the
+# pond does: the `frontier` binary is the native build and the library is also a `cdylib` for the
+# web shell.
+[package]
+name = "frontier"
+description = "The cross-area acceptance scene (EP-X1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Not `frontier`: on wasm32 the library and the binary would both be `frontier.wasm`.
+name = "frontier_game"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "frontier"
+path = "src/main.rs"
+
+# The dev flavour serves the studio through `genex::install`; the export flavour is built with
+# `--no-default-features` and never links genex-studio.
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true, features = ["physics"] }
+# The cell pack reader (C-28's output) and the digests, below the facade: the facade has no
+# `Streaming::cells_from` yet, so the example reads its built-in pack itself (as stream-valley does).
+genex-core = { workspace = true }
+genex-stream = { workspace = true, features = ["physics"] }
+genex-platform-web = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# tests/captures.rs writes the captures as PNG evidence on the host GPU.
+[dev-dependencies]
+image = { workspace = true }
+
+# tests/frontier.rs replays the ride on 1 and 8 stream workers and the inline pool (the web's);
+# tests/perf.rs waits for each Live frame's GPU work.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+genex-render = { workspace = true }
+wgpu = { workspace = true }

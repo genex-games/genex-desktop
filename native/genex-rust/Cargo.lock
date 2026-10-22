@@ -1089,6 +1089,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
+name = "frontier"
+version = "0.1.0"
+dependencies = [
+ "genex",
+ "genex-core",
+ "genex-platform-web",
+ "genex-render",
+ "genex-stream",
+ "image",
+ "wasm-bindgen",
+ "wgpu",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
