@@ -272,10 +272,10 @@ async function delegatedPlaytest(
   { run, spec, root, entry, handle, deadline, iteration, maxActions = 20 }: PlaytestOptions,
   { engineId, model: playModel, prompt }: { engineId: string; model: string | undefined; prompt: string },
 ): Promise<Played> {
-  const timeoutMs = Math.max(
-    MIN_DELEGATE_TIMEOUT_MS,
-    Math.min(PLAYTEST_MAX_MS, (deadline ?? Date.now() + PLAYTEST_MAX_MS) - Date.now()),
-  );
+  // The budget is measured before the window is built: a build is never play time.
+  const budgetMs = (deadline ?? Date.now() + PLAYTEST_MAX_MS) - Date.now();
+  if (handle) await readyWindow(ctx, { project: run.project, root, entry, handle });
+  const timeoutMs = Math.max(MIN_DELEGATE_TIMEOUT_MS, Math.min(PLAYTEST_MAX_MS, budgetMs));
   const result = await ctx.call(HostMethod.EngineDelegate, {
     engine: engineId,
     prompt,
@@ -302,6 +302,22 @@ async function delegatedPlaytest(
     readOnly: true,
   });
   return { actions: result.turns ?? 0, transcript: result.summary ?? "" };
+}
+
+/**
+ * Build and load the build under test in the playtester's own window and wait until it is ready,
+ * before the session's clock starts: a fresh folder's first build can take minutes, and a session
+ * whose first look waits on it plays nothing. A window that does not come ready still plays: the
+ * playtester then sees and reports what it shows.
+ */
+async function readyWindow(
+  ctx: HarnessCtx,
+  { project, root, entry, handle }: { project: string; root: string; entry?: string; handle: string },
+): Promise<void> {
+  await ctx
+    .call(HostMethod.PreviewLoad, { project, ...(root ? { root } : {}), ...(entry ? { entry } : {}), handle })
+    .catch(() => null);
+  await ctx.call(HostMethod.PreviewReady, { handle }).catch(() => null);
 }
 
 /** What the direct-engine session is handed. */

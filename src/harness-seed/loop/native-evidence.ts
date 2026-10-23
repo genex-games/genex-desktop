@@ -956,6 +956,12 @@ async function drive(
   lease: { handle?: string; target: BuildTarget },
 ): Promise<Drive> {
   const h = lease.handle ? { handle: lease.handle } : {};
+  const native = lease.target !== BuildTarget.Web;
+  // A native run is stepped on the default camera from the start: the captures before the first
+  // drive leave it on their last camera, and a frame keeps what it was stepped under (temporal
+  // history, cells streamed around the camera), so a replay that switched only for the picture
+  // never matched the second run, which starts on the default.
+  if (native) await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: DEFAULT_CAMERA, ...h });
   await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Seed, arg: request.seed, ...h });
   await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Pause, ...h });
   for (let tick = 0; tick < CROSS_TARGET_TICKS; tick++) {
@@ -964,8 +970,7 @@ async function drive(
     await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: TICK_MS, ...h });
   }
   const state = await ctx.call(HostMethod.PreviewState, { ...h });
-  if (lease.target === BuildTarget.Web) return { state, digest: null };
-  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: DEFAULT_CAMERA, ...h });
+  if (!native) return { state, digest: null };
   const shot = await ctx.call(HostMethod.PreviewScreenshot, {
     runId: request.run.runId,
     label: `parity/${lease.target}/replay`,

@@ -8917,6 +8917,110 @@ describe("C++ · raylib on the web lane (M3a)", () => {
     assert.match(failure?.reason ?? "", /9 GiB memory cap/, "and the cap");
   });
 
+  it("PLAYTEST-WINDOW-FIRST. a delegated playtester's first screenshot waited on its window building the game from scratch and its few minutes ran out with no action and no report: the window is built and ready before its clock starts", async (t) => {
+    const { runPlaytest } = await import("../../src/harness-seed/loop/playtester.ts");
+    t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+    const budgetMs = 180_000;
+    const buildMs = 150_000;
+    const described = [
+      {
+        id: "claude-code",
+        label: "Claude Code",
+        kind: "delegated",
+        supportsSessions: true,
+        status: { code: "ready", detail: "" },
+        defaultModel: null,
+        models: [{ id: "opus", label: "Opus", contextWindow: 200_000, supportsTools: true, supportsVision: true }],
+      },
+    ];
+    const answer = JSON.stringify({ answers: { ragdolls: { answer: "yes" } }, report: "ghouls flew" });
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.describe": () => described,
+        "engine.delegate": () => ({ summary: answer, turns: 9 }),
+        // The window builds the game (a fresh folder) before it can show anything.
+        "preview.load": () => {
+          t.mock.timers.tick(buildMs);
+          return { ok: true };
+        },
+        "preview.ready": () => ({ ready: true }),
+        "preview.call": () => null,
+      },
+    });
+    await runPlaytest(recorder.ctx as never, {
+      run: {
+        runId: "run_horde",
+        project: "ashen-horde",
+        engine: "claude-code",
+        model: "opus",
+        judgeEngine: "claude-code",
+        judgeModel: "opus",
+      } as never,
+      checks: [{ id: "ragdolls", kind: "play", ask: "Did the ghouls fly as ragdolls?", weight: "normal" }] as never,
+      root: "/fake/play-5",
+      handle: "play-5",
+      deadline: Date.now() + budgetMs,
+      maxActions: 4,
+    });
+    const order = recorder.calls.map((call) => call.method);
+    const loaded = order.indexOf("preview.load");
+    const delegated = order.indexOf("engine.delegate");
+    assert.ok(loaded >= 0 && loaded < delegated, `the window is loaded before the session: ${order.join(", ")}`);
+    assert.equal(recorder.calls[loaded]?.params.handle, "play-5", "on the playtester's own window");
+    const timeoutMs = Number(recorder.calls[delegated]?.params.timeoutMs);
+    assert.ok(timeoutMs >= budgetMs, `the playtester keeps its whole budget after the build: ${timeoutMs}`);
+  });
+
+  it('PARITY-REPLAY-CAMERA. the parity gate stepped its first replay run on the last camera the captures left ("top") and the second on the default, so a game whose frame depends on the camera it ran under never matched: both replay runs step on the default camera', async () => {
+    let camera = "default";
+    let steppedUnder = "default";
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.NativeBuild]: () => ({
+          ok: true,
+          admission: { target: BuildTarget.Mac, refusal: null, detail: null, imports: [], rpaths: [] },
+        }),
+        [HostMethod.PreviewAcquire]: () => ({ handle: "native" }),
+        [HostMethod.PreviewReady]: () => ({ ready: true }),
+        [HostMethod.PreviewLoad]: () => true,
+        [HostMethod.PreviewReload]: (params) => {
+          if (params.handle === "native") camera = "default";
+          return true;
+        },
+        [HostMethod.PreviewCall]: (params) => {
+          if (params.handle !== "native") return { ok: true };
+          if (params.method === PageMethod.DebugCamera) camera = String(params.arg);
+          if (params.method === PageMethod.Seed) steppedUnder = camera;
+          if (params.method === PageMethod.Step && camera !== "default") steppedUnder = camera;
+          return { ok: true };
+        },
+        [HostMethod.PreviewInput]: () => ({ ok: true }),
+        [HostMethod.PreviewWitness]: () => ({ frameBefore: 0, frameAfter: 1, simulatedMs: 16, drawCalls: 4 }),
+        // A temporal picture: the frame carries the camera the run was stepped under, as TAA
+        // history and streaming around the camera do, not only the camera it is looking through.
+        [HostMethod.PreviewScreenshot]: (params) => ({
+          base64: Buffer.from(`${camera}|${params.label === "parity/macos/replay" ? steppedUnder : ""}`).toString(
+            "base64",
+          ),
+          stats: { litFraction: 0.4, meanLuma: 0.5, canvas: true, drawCalls: 4 },
+        }),
+        [HostMethod.PreviewState]: () => ({ player: { x: 0 } }),
+        [HostMethod.PreviewRelease]: () => true,
+      },
+    });
+    const verdict = await runParityGate(recorder.ctx as never, {
+      run: { runId: "run_storm", project: "stormvale", stack: GameStack.RustWgpu } as never,
+      target: BuildTarget.Mac,
+      webHandle: "web",
+      seed: 1234,
+      cameras: ["default", "top"],
+      retriesMs: [],
+      tolerances: { read: async () => null, write: async () => {} },
+    });
+    const replay = verdict.rows.find((row) => row.row === ParityRow.Replay);
+    assert.equal(replay?.pass, true, JSON.stringify(replay));
+  });
+
   it("RUST-PARITY-LEASE. a Rust game's Mac parity gate borrowed its native lease without naming the stacks it serves, and the host refused every one \"this harness predates them\": the gate's lease declares them", async () => {
     serveStacksFrom(() => stacksServed({ native: true, rust: true }));
     try {
