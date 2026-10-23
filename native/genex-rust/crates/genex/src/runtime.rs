@@ -523,6 +523,14 @@ impl<W> Runtime<W> {
         self.core.stream.loading()
     }
 
+    /// The cells the simulation streams around its anchors now (active, entering at the next
+    /// commit, and the prefetch ring), ascending: what a shell that fetches a pack's cell bodies and
+    /// terrain tiles while playing asks for (the web's). Empty without `game.streaming`. Display and
+    /// scheduling only: it never changes the simulation.
+    pub fn streamed_cells(&self) -> Vec<genex_core::cell::CellId> {
+        self.core.sim.stream.around()
+    }
+
     /// What the presenter's streamed view set reads (STR-16): the registration, the cell builders
     /// and the seed; None without `game.streaming`.
     pub(crate) fn stream_view(&self) -> Option<crate::present_stream::ViewInputs> {

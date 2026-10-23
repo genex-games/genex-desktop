@@ -316,6 +316,19 @@ impl StreamState {
         let moved = grid::diff(cells.active(), &next);
         Some((next, moved))
     }
+
+    /// The cells around the anchors, ascending: the active set, the set the next commit makes and
+    /// the prefetch ring past it (what the builders build). A shell that fetches cell files while
+    /// playing (the web's) asks for these; empty without `game.streaming`.
+    pub(crate) fn around(&self) -> Vec<CellId> {
+        let Some(cells) = self.cells.as_ref() else { return Vec::new() };
+        let mut around: BTreeSet<CellId> = cells.active().clone();
+        if let Some((next, _)) = self.next() {
+            around.extend(next);
+        }
+        around.extend(cells.prefetch(&self.anchor_cells()).unwrap_or_default());
+        around.into_iter().collect()
+    }
 }
 
 /// Report a commit that follows a slot load's rebuild against the set before the load: `entered`

@@ -10,6 +10,8 @@ use genex::{Camera, Frame, Input, Runtime, StepResult, UnknownName, Value, View}
 use genex_core::saves::mirror;
 use genex_render::RenderError;
 
+use crate::web_stream::StreamWants;
+
 /// What a shell drives a game through: the facade [`Runtime`] behind a trait object.
 pub trait GameHandle {
     /// Rebuild the simulation on `seed`.
@@ -95,6 +97,9 @@ pub trait GameHandle {
     /// Open `device` on the game's audio queue (once: a run a person sees) and report it to
     /// `state().volatile.audio.device`; an open device's last fault is reported again each call.
     fn follow_device(&mut self, device: &mut Device);
+    /// What the game streams now: the named groups it requires and the cells around its anchors
+    /// (the web shell fetches their files while playing, `crate::web_stream`).
+    fn stream_wants(&self) -> StreamWants;
 }
 
 /// The facade view a studio camera name resolves to: the game's own for None, a named camera, or
@@ -257,5 +262,15 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
             return;
         }
         device.open_for(self);
+    }
+
+    fn stream_wants(&self) -> StreamWants {
+        let groups = self.sim().stream.required_groups().map(str::to_owned).collect();
+        // A build without streaming has no cells to fetch, and leaves the cell read out.
+        #[cfg(feature = "streaming")]
+        let cells = self.streamed_cells();
+        #[cfg(not(feature = "streaming"))]
+        let cells = Vec::new();
+        StreamWants { groups, cells }
     }
 }

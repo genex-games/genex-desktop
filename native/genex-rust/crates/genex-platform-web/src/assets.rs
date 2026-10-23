@@ -525,12 +525,32 @@ impl WebAssets {
     }
 
     /// Whether `path` has all its bytes admitted: the whole file, or every planned range.
-    fn resident(&self, path: &str) -> bool {
+    pub fn resident(&self, path: &str) -> bool {
         let Ok(planned) = self.find(path) else { return false };
         if planned.ranges.is_empty() {
             return self.get(path).is_some();
         }
         planned.ranges.iter().all(|range| self.range(path, range.offset).is_some())
+    }
+
+    /// The whole file `path` once it is [`WebAssets::resident`]: its admitted bytes, or for a file
+    /// fetched by ranges every range copied to its offset in a buffer of the file's length (bytes no
+    /// range covers, a KTX2's alignment padding, are zero). None until then.
+    pub fn resident_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        if !self.resident(path) {
+            return None;
+        }
+        let planned = self.find(path).ok()?;
+        if planned.ranges.is_empty() {
+            return self.get(path).map(<[u8]>::to_vec);
+        }
+        let mut whole = vec![0; usize::try_from(planned.bytes).ok()?];
+        for range in &planned.ranges {
+            let start = usize::try_from(range.offset).ok()?;
+            let piece = self.range(path, range.offset)?;
+            whole.get_mut(start..start + piece.len())?.copy_from_slice(piece);
+        }
+        Some(whole)
     }
 
     /// What stays with the shell once the preloaded files moved to the game at boot: the plan of

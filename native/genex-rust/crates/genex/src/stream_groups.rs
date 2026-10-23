@@ -8,9 +8,10 @@
 //!   `t + `[`STREAM_GROUP_PREFETCH_TICKS`], before the update hooks: never sooner, whatever the
 //!   loading did. A member that is not resident then holds the frame, as a late cell build does:
 //!   the tick waits and runs once the member arrives, so the group is ready on the same tick on
-//!   every native destination and at any thread count. The web runtime does not fetch a named
-//!   group yet: nothing asks `WebAssets::want_group` for `required_groups()` and the sim's assets
-//!   never see what the shell fetches while playing, so a web build loads what it needs up front.
+//!   every native destination and at any thread count. On the web the shell asks for each group
+//!   in `required_groups()` every frame (genex-platform-web's `web_stream`) and hands the members
+//!   to the sim's source at the next frame boundary, so the held tick runs once they arrived and
+//!   the group is ready on the native tick there too.
 //! - The handles ([`GroupHandles`]) carry each member's bytes and a model handle for each model
 //!   member; they work in `on_update` with no reset. Releasing a group and requiring it again gives
 //!   equal handles.
