@@ -669,6 +669,9 @@ export default {
   "Checking plan usage…": "Проверяем лимиты тарифа…",
   "Checking play": "Проверяет игру",
   "Checking preservation": "Проверяет, что ничего не потерялось",
+  "Checking that Epic signed the installer…": "Проверяем, что установщик подписан Epic…",
+  "Checking that Microsoft signed Unreal's runtime installer…":
+    "Проверяем, что установщик среды выполнения из Unreal подписан Microsoft…",
   "Checking that Roblox signed the installer.": "Genex проверяет, что установщик подписан Roblox.",
   "Checking the game files…": "Проверка файлов игры…",
   "Checking the key…": "Проверяем ключ…",
@@ -1181,6 +1184,8 @@ export default {
   "Dismiss remaining imports": "Скрыть оставшиеся импорты",
   Dividers: "Разделители",
   "Do it for me": "Сделать за меня",
+  "Do it for me opens the launcher, and this chat installs it there with computer control. About 45 GB. Only you sign in to Epic, when it asks.":
+    "«Сделать за меня» откроет лаунчер, а чат установит Unreal там, управляя компьютером. Около 45 ГБ. Войти в Epic, когда попросят, можешь только ты.",
   "Does it feel alive? {score} of {max}": "Чувствуется жизнь? {score} из {max}",
   "Does what you ask, then stops.": "Делает, что просишь, и останавливается.",
   "Don't allow": "Не разрешать",
@@ -1217,6 +1222,7 @@ export default {
   "Downloading Roblox's installer.": "Genex скачивает установщик Roblox.",
   "Downloading Unity Hub": "Скачивается Unity Hub",
   "Downloading models": "Скачиваем модели",
+  "Downloading the Epic Games Launcher from Epic…": "Скачиваем Epic Games Launcher с сайта Epic…",
   "Downloading {model}": "Загрузка {model}",
   "Downloading {model} · {percent}%": "Скачиваем {model} · {percent}%",
   "Downloading {name}": "Загрузка {name}",
@@ -1265,8 +1271,19 @@ export default {
   "Enter the server's address, like 127.0.0.1:5000.": "Введи адрес сервера, например 127.0.0.1:5000.",
   "Environment variables": "Переменные окружения",
   "Environment variables: name": "Переменные окружения: имя",
+  "Epic's download led somewhere other than Epic, so Genex stopped.":
+    "Загрузка Epic вела не на сайт Epic, поэтому Genex остановился.",
+  "Epic's download link wasn't secure, so Genex didn't download it.":
+    "Ссылка Epic на загрузку была небезопасной, поэтому Genex ничего не скачал.",
+  "Epic's download page is opening in your browser.": "Страница загрузки Epic открывается в браузере.",
+  "Epic's download was far bigger than its installer, so Genex stopped.":
+    "Загрузка Epic оказалась намного больше установщика, поэтому Genex остановился.",
+  "Epic's free app that installs Unreal. Do it for me downloads it from Epic and installs it: choose Yes when Windows asks.":
+    "Бесплатное приложение Epic, которое устанавливает Unreal. «Сделать за меня» скачает его с сайта Epic и установит: нажми «Да», когда Windows спросит.",
   "Epic's free app that installs Unreal. Genex opens Epic's download page.":
     "Бесплатное приложение Epic, которое устанавливает Unreal. Genex откроет страницу загрузки Epic.",
+  "Epic's installer didn't download. Check your internet connection and try again.":
+    "Установщик Epic не скачался. Проверь подключение к интернету и попробуй ещё раз.",
   Error: "Ошибка",
   "Error copied.": "Ошибка скопирована.",
   "Every game chat and Loop run is recorded under Recent runs.":
@@ -1469,6 +1486,8 @@ export default {
     "Genex не может нажимать в Roblox Studio на этом компьютере. Опубликуй вручную в Studio: {clicks}.",
   "Genex can't click in Roblox Studio on this computer. Turn it on yourself: {clicks}.":
     "Genex не может нажимать в Roblox Studio на этом компьютере. Включи вручную: {clicks}.",
+  "Genex can't click in the launcher on this computer. Install Unreal {version} yourself: {clicks}.":
+    "Genex не может нажимать в лаунчере на этом компьютере. Установи Unreal {version} сам: {clicks}.",
   "Genex can't find this computer's Roblox folders: its home folder isn't a full path of this system.":
     "Genex не может найти папки Roblox на этом компьютере: путь к домашней папке не полный для этой системы.",
   "Genex can't read {file} as Roblox Studio's settings, so it changes no settings file. Turn Studio's MCP server on in Studio: {clicks}.":
@@ -1503,6 +1522,8 @@ export default {
   "Genex cover": "Обложка Genex",
   "Genex credits": "Кредиты Genex",
   "Genex decides from crash reports": "Genex решает по отчётам о сбоях",
+  "Genex didn't click anything. Install Unreal {version} yourself in the launcher: {clicks}.":
+    "Genex ничего не нажимал. Установи Unreal {version} в лаунчере сам: {clicks}.",
   "Genex didn't click anything. Turn it on yourself: {clicks}.": "Genex ничего не нажимал. Включи вручную: {clicks}.",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex ничего не опубликовал. Опубликовать вручную можно в Studio: {clicks}.",
@@ -1528,6 +1549,7 @@ export default {
     "Genex не настраивал этот проект, так что отменять нечего.",
   "Genex hasn’t confirmed it yet. {game} finishes the purchase once it does. You won’t be charged twice.":
     "Genex ещё не подтвердил оплату. Игра «{game}» завершит покупку, как только это случится. Повторно ничего не спишется.",
+  "Genex installs Epic's launcher itself on Windows only.": "Genex сам устанавливает лаунчер Epic только на Windows.",
   "Genex installs Unity Hub on a Mac only: get it from Unity's page.":
     "Genex устанавливает Unity Hub только на Mac: скачай его на сайте Unity.",
   "Genex is already getting Roblox Studio.": "Genex уже устанавливает Roblox Studio.",
@@ -1780,6 +1802,7 @@ export default {
   "Install Codex": "Установить Codex",
   "Install Codex, then check again.": "Установи Codex и проверь ещё раз.",
   "Install Genex plugin": "Установить плагин Genex",
+  "Install Microsoft's Visual C++ runtime": "Установить среду выполнения Microsoft Visual C++",
   "Install Ollama": "Установить Ollama",
   "Install OpenCode": "Установить OpenCode",
   "Install OpenCode from Settings › Model Providers.": "Установи OpenCode в разделе «Настройки › Провайдеры моделей».",
@@ -1817,10 +1840,14 @@ export default {
   "Installed.": "Установлено.",
   "Installing Blender {version}": "Устанавливаем Blender {version}",
   "Installing Godot {version}": "Устанавливается Godot {version}",
+  "Installing Microsoft's Visual C++ runtime. Choose Yes when Windows asks.":
+    "Устанавливаем среду выполнения Microsoft Visual C++. Нажми «Да», когда Windows спросит.",
   "Installing OpenCode. This can take a minute.": "Устанавливаем OpenCode. Это может занять минуту.",
   "Installing Unity Hub": "Устанавливается Unity Hub",
   "Installing Unity {version}": "Устанавливается Unity {version}",
   "Installing packages": "Устанавливаем пакеты",
+  "Installing the Epic Games Launcher. Choose Yes when Windows asks.":
+    "Устанавливаем Epic Games Launcher. Нажми «Да», когда Windows спросит.",
   "Installing {name} took too long. Try again.": "Установка {name} заняла слишком много времени. Попробуй снова.",
   "Installing {name}. This can take a minute.": "Устанавливаем {name}. Это может занять минуту.",
   "Installing {title}": "Установка «{title}»",
@@ -2178,6 +2205,7 @@ export default {
   "Merging a worker's work": "Добавляет работу помощника",
   "Mic didn’t start": "Микрофон не включился",
   Microphone: "Микрофон",
+  "Microsoft's Visual C++ runtime is installed.": "Среда выполнения Microsoft Visual C++ установлена.",
   Mine: "Мои",
   Minimize: "Свернуть",
   "Mobile support": "Поддержка телефонов",
@@ -2398,6 +2426,7 @@ export default {
   "Nothing changes until you apply.": "Ничего не изменится, пока не применишь.",
   "Nothing is added to this folder.": "В эту папку ничего не добавится.",
   "Nothing is failing.": "Проваленных проверок нет.",
+  "Nothing is installing.": "Сейчас ничего не устанавливается.",
   "Nothing is online for this game yet": "Для этой игры пока ничего не опубликовано",
   "Nothing kept yet": "Пока ничего не оставлено",
   "Nothing made": "Ничего не сделано",
@@ -2406,6 +2435,8 @@ export default {
   "Nothing new to suggest.": "Новых предложений нет.",
   "Nothing spent yet": "Пока ничего не потрачено",
   "Nothing to free up": "Нечего освобождать",
+  "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
+    "Ничего не нажато. Установи Unreal {version} в лаунчере сам: {clicks}.",
   "Nothing was clicked. Turn it on yourself: {clicks}.": "Ничего не нажато. Включи вручную: {clicks}.",
   "Nothing was ever sent from this launch.": "С этого запуска ничего не отправлялось.",
   "Nothing was published. To publish it yourself in Studio: {clicks}.":
@@ -2504,6 +2535,8 @@ export default {
   "Open a game before starting its terminal.": "Открой игру, прежде чем запускать её терминал.",
   "Open a game first, so its chat can click it for you, or turn it on yourself: {clicks}.":
     "Сначала открой игру, чтобы её чат нажал за тебя, или включи вручную: {clicks}.",
+  "Open a game first, so its chat can install Unreal for you, or install Unreal {version} yourself in the launcher: {clicks}.":
+    "Сначала открой игру, чтобы её чат установил Unreal за тебя, или установи Unreal {version} в лаунчере сам: {clicks}.",
   "Open a game first, then choose the place it builds in.": "Сначала открой игру, потом выбери её плейс.",
   "Open a game first: Unity works on the open game's project.":
     "Сначала открой игру: Unity работает с проектом открытой игры.",
@@ -3139,6 +3172,8 @@ export default {
   "Run the setup scripts this game’s packages came with":
     "Запустить скрипты установки, которые пришли с пакетами этой игры",
   "Run this game’s setup scripts?": "Запустить скрипты установки этой игры?",
+  "Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder to install Microsoft's Visual C++ runtime.":
+    "Запусти vc_redist.x64.exe из папки Unreal Engine › Extras › Redist › en-us, чтобы установить среду выполнения Microsoft Visual C++.",
   "Run {command}": "Запуск {command}",
   "Run {command} for {connector}?": "Запустить {command} для {connector}?",
   Running: "Выполняется",
@@ -3508,6 +3543,7 @@ export default {
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Установка Roblox Studio остановлена. Всё, что установщик Roblox уже поставил на этот компьютер, останется.",
   "Stopped play": "Игра остановлена",
+  "Stopped.": "Остановлено.",
   "Stopped. Everything built so far is kept.": "Остановлено. Всё, что успели собрать, сохранено.",
   "Stopped. What it built is in your game now.": "Остановлено. Всё собранное уже в игре.",
   "Stopped. What it built is kept in your project.": "Остановлено. Всё собранное сохранено в твоём проекте.",
@@ -3680,6 +3716,7 @@ export default {
   "The CLI returned an invalid control response.": "Некорректный управляющий ответ от CLI.",
   "The CLI returned an invalid model list.": "CLI вернул некорректный список моделей.",
   "The Epic Games Launcher is installed": "Epic Games Launcher установлен",
+  "The Epic Games Launcher is installed. Sign in to Epic in it.": "Epic Games Launcher установлен. Войди в нём в Epic.",
   "The Genex helper is in Studio": "Плагин Genex в Studio",
   "The Genex helper is in Studio's Plugins folder and Studio's MCP server is on.":
     "Плагин Genex лежит в папке Plugins в Studio, и MCP-сервер Studio включён.",
@@ -3761,6 +3798,10 @@ export default {
     "Установщик подписан не Roblox, а кем-то другим, поэтому Genex его не запустил. Ничего не установлено.",
   "The installer isn't signed as Roblox's, so Genex didn't run it. Nothing was installed.":
     "Установщик не подписан Roblox, поэтому Genex его не запустил. Ничего не установлено.",
+  "The installer isn't signed by its maker, so Genex didn't run it.":
+    "Установщик подписан не его создателем, поэтому Genex его не запустил.",
+  "The installer isn't signed, so Genex didn't run it.": "Установщик не подписан, поэтому Genex его не запустил.",
+  "The installer stopped before it finished. Try again.": "Установщик остановился, не закончив. Попробуй ещё раз.",
   "The instructions this suggestion changes are gone. Discard it.":
     "Инструкций, которые меняет это предложение, больше нет. Отклони его.",
   "The judge didn't play": "Судья не играл",
@@ -4037,6 +4078,8 @@ export default {
     "Чат этой игры нажмёт {clicks} в Roblox Studio через управление компьютером. Обновление получат все, кто играет в игру, а опубликуется оно в твоём аккаунте Roblox.",
   "This game's chat clicks {clicks} in Roblox Studio with computer control. It keeps the privacy and settings Studio gives a new game and leaves the description empty. It is published on your Roblox account; if Roblox asks for your age, ID, a two-step code, terms or a payment, Genex stops and leaves that to you.":
     "Чат этой игры нажмёт {clicks} в Roblox Studio через управление компьютером. Он оставит приватность и настройки, которые Studio даёт новой игре, а описание — пустым. Игра опубликуется в твоём аккаунте Roblox; если Roblox запросит возраст, документ, код двухэтапной проверки, согласие с условиями или оплату, Genex остановится и оставит это тебе.",
+  "This game's chat is installing Unreal in the Epic Games Launcher. If Genex asks you something first, answer it in this game's chat, and sign in to Epic if the launcher asks.":
+    "Чат этой игры устанавливает Unreal в Epic Games Launcher. Если Genex сначала что-то спросит, ответь в чате этой игры, а если лаунчер попросит, войди в Epic.",
   "This game's chat is publishing the update in Roblox Studio. If Genex asks you something first, answer it in this game's chat, then watch Studio.":
     "Чат этой игры публикует обновление в Roblox Studio. Если Genex сначала что-то спросит, ответь в чате этой игры, а потом смотри в Studio.",
   "This game's chat is publishing {name} to Roblox in Studio. If Genex asks you something first, answer it in this game's chat, then watch Studio.":
@@ -4213,7 +4256,6 @@ export default {
     "Открыты два редактора Unreal. Закрой нужный в его собственном окне.",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "В двух открытых Studio есть плейс с именем {name}, и Genex не может их различить. Сохрани один из них в Studio под другим именем и выбери снова.",
-  "Two steps before the agent can build in Unreal.": "Осталось два шага, и агент сможет собирать игру в Unreal.",
   "Type a name.": "Введи название.",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "Введи почту и пароль в окне Unity Hub и добавь лицензию Unity (Personal — бесплатно, если условия Unity тебе это позволяют). Как только войдёшь, Genex продолжит сам.",
@@ -4302,9 +4344,17 @@ export default {
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {wanted} from Apple's downloads: put it in Applications beside Xcode {current}; this card then shows the one command to select it.":
     "Unreal {engine} работает с Xcode от {min} до {max}. Оставь Xcode {version} и добавь Xcode {wanted} со страницы загрузок Apple: положи его в «Программы» рядом с Xcode {current}, и эта карточка покажет одну команду, чтобы его выбрать.",
   "Unreal {engine} is set up for {project}": "Unreal {engine} настроен для проекта {project}",
+  "Unreal {version} and everything it needs are on this computer.":
+    "Unreal {version} и всё, что ему нужно, уже есть на этом компьютере.",
   "Unreal {version} is installed": "Unreal {version} установлен",
   "Unreal {version}'s editor isn't where Epic's launcher says. Verify the install in the Epic Games Launcher.":
     "Редактор Unreal {version} не там, где указывает лаунчер Epic. Проверь установку в Epic Games Launcher.",
+  "Unreal's copy of Microsoft's runtime installer is missing. In the Epic Games Launcher, verify Unreal.":
+    "В Unreal нет копии установщика среды выполнения Microsoft. Проверь Unreal в Epic Games Launcher (Verify).",
+  "Unreal's editor needs it to start, and it isn't on this computer. Do it for me runs Unreal's own copy: choose Yes when Windows asks.":
+    "Без неё редактор Unreal не запустится, а на этом компьютере её нет. «Сделать за меня» запустит копию из Unreal: нажми «Да», когда Windows спросит.",
+  "Unreal's editor needs it to start. Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder.":
+    "Без неё редактор Unreal не запустится. Запусти vc_redist.x64.exe из папки Unreal Engine › Extras › Redist › en-us.",
   "Unrecognized Genex page link": "Неизвестная ссылка на страницу Genex",
   "Unsafe runtime archive": "Небезопасный архив среды выполнения",
   "Unsupported TOML value. Use quoted strings, booleans or arrays of strings.":
@@ -4504,6 +4554,8 @@ export default {
   "Why the lead stopped it": "Почему главный агент её остановил",
   Window: "Окно",
   "Windows app": "Windows-приложение",
+  "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
+    "Windows не получил разрешения на установку. Нажми «Сделать за меня» ещё раз и выбери «Да», когда Windows спросит.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows нужно один раз настроить защищённое рабочее пространство с разрешения администратора.",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
@@ -5782,6 +5834,8 @@ export default {
   "{source} needs your permission": "{source} просит разрешения",
   "{state} · from {plugin}": "{state} · из {plugin}",
   "{status} · newer than Genex has tested": "{status} · новее версии, проверенной в Genex",
+  "{steps, plural, =2 {Two steps before the agent can build in Unreal.} =3 {Three steps before the agent can build in Unreal.} other {# steps before the agent can build in Unreal.}}":
+    "{steps, plural, =2 {Осталось два шага, и агент сможет собирать игру в Unreal.} =3 {Осталось три шага, и агент сможет собирать игру в Unreal.} one {Остался # шаг, и агент сможет собирать игру в Unreal.} few {Осталось # шага, и агент сможет собирать игру в Unreal.} many {Осталось # шагов, и агент сможет собирать игру в Unreal.} other {Осталось # шага, и агент сможет собирать игру в Unreal.}}",
   "{task} in {engine}…": "{task} в {engine}…",
   "{task} · working": "{task} · в работе",
   "{task}: didn't finish.": "{task}: не завершено.",

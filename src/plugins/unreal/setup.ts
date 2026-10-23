@@ -32,6 +32,7 @@ import { containedReal } from "../../substrate/paths.ts";
 import { envValue } from "../../substrate/toolchain.ts";
 import { crashReporterHolds, editorHoldsLog, heldProjectNames } from "./editor-holds.ts";
 import { type EditorLog, editorLogPath, readEditorLog } from "./editor-log.ts";
+import { loadEpicText } from "./epic-files.ts";
 import { isProjectPath, projectName } from "./project-file.ts";
 import {
   choosePort,
@@ -106,6 +107,11 @@ const HELPER_VERSION = /^\d{1,4}(?:\.\d{1,4}){0,3}$/;
 const RECENT_PROJECTS_CAP = 12;
 const RECORD_KEY_CHARS = 16;
 const COMMAND_TIMEOUT_MS = 5 * SECOND_MS;
+/** An install record of Epic's launcher is a few KB; one far bigger isn't one. */
+const LAUNCHER_RECORD_MAX_BYTES = 64 * 1024;
+/** The install records read at most: a launcher with every Epic game and plugin installed keeps a few hundred. */
+const LAUNCHER_RECORDS_CAP = 1000;
+const LAUNCHER_RECORD = ".item";
 const RECENT_LINE = /^RecentlyOpenedProjectFiles=\(ProjectName="([^"]+)",LastOpenTime=([\d.-]+)\)/;
 const ENGINE_APP = /^UE_(\d+)\.(\d+)$/;
 const ENGINE_BUILD = /^\d+\.\d+\.\d+/;
@@ -400,9 +406,18 @@ function editorConfigFolder(env: SetupEnv): string {
   return isWindows(env) ? "WindowsEditor" : "MacEditor";
 }
 
+/** Where Epic's launcher keeps its own files: ProgramData on Windows, Application Support on a Mac. */
+function launcherData(env: SetupEnv): string {
+  return isWindows(env) ? path.join(env.programData, "Epic") : epicFolder(env);
+}
+
 function launcherList(env: SetupEnv): string {
-  const root = isWindows(env) ? path.join(env.programData, "Epic") : epicFolder(env);
-  return path.join(root, "UnrealEngineLauncher", "LauncherInstalled.dat");
+  return path.join(launcherData(env), "UnrealEngineLauncher", "LauncherInstalled.dat");
+}
+
+/** The folder of the launcher's install records: one `<id>.item` per install, kept up to date by the launcher. */
+function launcherRecords(env: SetupEnv): string {
+  return path.join(launcherData(env), "EpicGamesLauncher", "Data", "Manifests");
 }
 
 function engineSettings(env: SetupEnv, version: string): string {
@@ -446,31 +461,74 @@ function isSupported(major: number, minor: number): boolean {
   return major > MIN_ENGINE.major || (major === MIN_ENGINE.major && minor >= MIN_ENGINE.minor);
 }
 
+/**
+ * The engine an entry of the launcher's list or one of its install records names; undefined for
+ * anything else (a game, one of Epic's plugins). The list spells the build `AppVersion`, a record
+ * `AppVersionString`.
+ */
 function engineFrom(item: unknown): Engine | undefined {
   if (!isJsonObject(item) || typeof item.InstallLocation !== "string") return undefined;
   const app = ENGINE_APP.exec(String(item.AppName ?? ""));
   if (!app) return undefined;
   const [major, minor] = [Number(app[1]), Number(app[2])];
   const version = `${major}.${minor}`;
-  const build = ENGINE_BUILD.exec(String(item.AppVersion ?? ""))?.[0] ?? version;
+  const build = ENGINE_BUILD.exec(String(item.AppVersion ?? item.AppVersionString ?? ""))?.[0] ?? version;
   return { version, build, directory: item.InstallLocation, supported: isSupported(major, minor) };
 }
 
-function installationList(text: string): unknown[] {
+/** Whether an install record says the launcher is still installing (or updating) what it names. */
+const stillInstalling = (item: unknown) => isJsonObject(item) && item.bIsIncompleteInstall === true;
+
+function parseJson(text: string): unknown {
   try {
-    const parsed: unknown = JSON.parse(text);
-    return isJsonObject(parsed) && Array.isArray(parsed.InstallationList) ? parsed.InstallationList : [];
+    return JSON.parse(text);
   } catch {
-    return [];
+    return undefined;
   }
 }
 
-/** The engines Epic's launcher installed and that are still there, newest first. */
+function installationList(text: string): unknown[] {
+  const parsed = parseJson(text);
+  return isJsonObject(parsed) && Array.isArray(parsed.InstallationList) ? parsed.InstallationList : [];
+}
+
+/**
+ * The launcher's install records, read as Epic writes them (any byte order mark), each a plain file
+ * of a record's size: a link, a folder or anything bigger is skipped unread.
+ */
+async function installRecords(env: SetupEnv): Promise<unknown[]> {
+  const folder = launcherRecords(env);
+  const names = (await readdir(folder).catch(() => [] as string[]))
+    .filter((name) => lower(name).endsWith(LAUNCHER_RECORD))
+    .sort()
+    .slice(0, LAUNCHER_RECORDS_CAP);
+  const records: unknown[] = [];
+  for (const name of names) {
+    const bytes = await readRegularFile(path.join(folder, name), LAUNCHER_RECORD_MAX_BYTES).catch(() => null);
+    if (bytes) records.push(parseJson(loadEpicText(bytes)));
+  }
+  return records;
+}
+
+/** One spelling of an engine's folder: Windows and macOS ignore case in names. */
+const folderKey = (directory: string) => lower(path.resolve(directory));
+
+/**
+ * The engines Epic's launcher installed and that are still there, newest first. They come from its
+ * install records and its list (`LauncherInstalled.dat`): the Windows launcher of 2025 on records
+ * engines only in the first and leaves the list empty, so a freshly installed Unreal is there alone.
+ * A folder both name is listed once, from its record, the launcher's current word; one whose record
+ * says it is still installing or updating is not an engine yet.
+ */
 export async function findEngines(env: SetupEnv): Promise<Engine[]> {
+  const listed = installationList(await readFile(launcherList(env), "utf8").catch(() => ""));
+  const seen = new Set<string>();
   const engines: Engine[] = [];
-  for (const item of installationList(await readFile(launcherList(env), "utf8").catch(() => ""))) {
+  for (const item of [...(await installRecords(env)), ...listed]) {
     const engine = engineFrom(item);
-    if (engine && (await isDirectory(engine.directory))) engines.push(engine);
+    if (!engine || seen.has(folderKey(engine.directory))) continue;
+    seen.add(folderKey(engine.directory));
+    if (!stillInstalling(item) && (await isDirectory(engine.directory))) engines.push(engine);
   }
   return engines.sort((a, b) => compareVersions(b.build, a.build));
 }

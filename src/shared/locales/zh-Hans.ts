@@ -615,6 +615,9 @@ export default {
   "Checking plan usage…": "正在检查套餐用量…",
   "Checking play": "正在检查试玩",
   "Checking preservation": "正在检查是否保持原样",
+  "Checking that Epic signed the installer…": "正在确认安装程序由 Epic 签名…",
+  "Checking that Microsoft signed Unreal's runtime installer…":
+    "正在确认 Unreal 自带的运行库安装程序由 Microsoft 签名…",
   "Checking that Roblox signed the installer.": "正在确认安装程序有 Roblox 的签名。",
   "Checking the game files…": "正在检查游戏文件…",
   "Checking the key…": "正在检查密钥…",
@@ -1096,6 +1099,8 @@ export default {
   "Dismiss remaining imports": "忽略其余导入",
   Dividers: "分隔线",
   "Do it for me": "帮我完成",
+  "Do it for me opens the launcher, and this chat installs it there with computer control. About 45 GB. Only you sign in to Epic, when it asks.":
+    "“帮我完成”会打开启动器，由这个对话通过电脑控制在里面安装 Unreal。约 45 GB。需要登录 Epic 时，只有你本人能登录。",
   "Does it feel alive? {score} of {max}": "感觉有生气吗？{score}/{max}",
   "Does what you ask, then stops.": "按你说的做，然后停下。",
   "Don't allow": "不允许",
@@ -1131,6 +1136,7 @@ export default {
   "Downloading Roblox's installer.": "正在下载 Roblox 安装程序。",
   "Downloading Unity Hub": "正在下载 Unity Hub",
   "Downloading models": "正在下载模型",
+  "Downloading the Epic Games Launcher from Epic…": "正在从 Epic 下载 Epic Games Launcher…",
   "Downloading {model}": "正在下载 {model}",
   "Downloading {model} · {percent}%": "正在下载 {model} · {percent}%",
   "Downloading {name}": "正在下载 {name}",
@@ -1175,8 +1181,18 @@ export default {
   "Enter the server's address, like 127.0.0.1:5000.": "请输入服务器地址，例如 127.0.0.1:5000。",
   "Environment variables": "环境变量",
   "Environment variables: name": "环境变量：名称",
+  "Epic's download led somewhere other than Epic, so Genex stopped.":
+    "Epic 的下载指向了 Epic 以外的地方，所以 Genex 停止了。",
+  "Epic's download link wasn't secure, so Genex didn't download it.": "Epic 的下载链接不安全，所以 Genex 没有下载。",
+  "Epic's download page is opening in your browser.": "正在浏览器中打开 Epic 的下载页面。",
+  "Epic's download was far bigger than its installer, so Genex stopped.":
+    "Epic 的下载比它的安装程序大得多，所以 Genex 停止了。",
+  "Epic's free app that installs Unreal. Do it for me downloads it from Epic and installs it: choose Yes when Windows asks.":
+    "Epic 的免费应用，用来安装 Unreal。“帮我完成”会从 Epic 下载并安装它：Windows 询问时请选“是”。",
   "Epic's free app that installs Unreal. Genex opens Epic's download page.":
     "Epic 的免费应用，用来安装 Unreal。Genex 会打开 Epic 的下载页面。",
+  "Epic's installer didn't download. Check your internet connection and try again.":
+    "Epic 的安装程序没有下载成功。请检查网络连接后再试一次。",
   Error: "错误",
   "Error copied.": "错误信息已复制。",
   "Every game chat and Loop run is recorded under Recent runs.":
@@ -1370,6 +1386,8 @@ export default {
     "Genex 无法在这台电脑上点击 Roblox Studio。请在 Studio 中自己发布：{clicks}。",
   "Genex can't click in Roblox Studio on this computer. Turn it on yourself: {clicks}.":
     "Genex 无法在这台电脑上点击 Roblox Studio。请自己开启：{clicks}。",
+  "Genex can't click in the launcher on this computer. Install Unreal {version} yourself: {clicks}.":
+    "Genex 无法在这台电脑上点击启动器。请自己安装 Unreal {version}：{clicks}。",
   "Genex can't find this computer's Roblox folders: its home folder isn't a full path of this system.":
     "Genex 找不到这台电脑的 Roblox 文件夹：它的主文件夹不是这个系统的完整路径。",
   "Genex can't read {file} as Roblox Studio's settings, so it changes no settings file. Turn Studio's MCP server on in Studio: {clicks}.":
@@ -1404,6 +1422,8 @@ export default {
   "Genex cover": "Genex 封面",
   "Genex credits": "Genex 积分",
   "Genex decides from crash reports": "Genex 根据崩溃报告决定",
+  "Genex didn't click anything. Install Unreal {version} yourself in the launcher: {clicks}.":
+    "Genex 没有点击任何东西。请在启动器中自己安装 Unreal {version}：{clicks}。",
   "Genex didn't click anything. Turn it on yourself: {clicks}.": "Genex 没有点击任何内容。请自己开启：{clicks}。",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex 没有发布任何内容。要在 Studio 中自己发布：{clicks}。",
@@ -1428,6 +1448,7 @@ export default {
   "Genex hasn't set up this project, so there's nothing to undo.": "Genex 没有设置过这个项目，所以没有可撤销的内容。",
   "Genex hasn’t confirmed it yet. {game} finishes the purchase once it does. You won’t be charged twice.":
     "Genex 尚未确认。确认后，{game} 会完成这次购买。你不会被重复扣费。",
+  "Genex installs Epic's launcher itself on Windows only.": "Genex 只在 Windows 上自己安装 Epic 的启动器。",
   "Genex installs Unity Hub on a Mac only: get it from Unity's page.":
     "Genex 只在 Mac 上安装 Unity Hub：请从 Unity 的页面获取。",
   "Genex is already getting Roblox Studio.": "Genex 已经在获取 Roblox Studio。",
@@ -1663,6 +1684,7 @@ export default {
   "Install Codex": "安装 Codex",
   "Install Codex, then check again.": "请安装 Codex，然后再检查一次。",
   "Install Genex plugin": "安装 Genex 插件",
+  "Install Microsoft's Visual C++ runtime": "安装 Microsoft Visual C++ 运行库",
   "Install Ollama": "安装 Ollama",
   "Install OpenCode": "安装 OpenCode",
   "Install OpenCode from Settings › Model Providers.": "请在“设置 › 模型提供方”中安装 OpenCode。",
@@ -1697,10 +1719,14 @@ export default {
   "Installed.": "已安装。",
   "Installing Blender {version}": "正在安装 Blender {version}",
   "Installing Godot {version}": "正在安装 Godot {version}",
+  "Installing Microsoft's Visual C++ runtime. Choose Yes when Windows asks.":
+    "正在安装 Microsoft Visual C++ 运行库。Windows 询问时请选“是”。",
   "Installing OpenCode. This can take a minute.": "正在安装 OpenCode，可能需要一分钟。",
   "Installing Unity Hub": "正在安装 Unity Hub",
   "Installing Unity {version}": "正在安装 Unity {version}",
   "Installing packages": "正在安装依赖包",
+  "Installing the Epic Games Launcher. Choose Yes when Windows asks.":
+    "正在安装 Epic Games Launcher。Windows 询问时请选“是”。",
   "Installing {name} took too long. Try again.": "{name} 安装耗时过长。请重试。",
   "Installing {name}. This can take a minute.": "正在安装 {name}，可能需要一分钟。",
   "Installing {title}": "正在安装 {title}",
@@ -2047,6 +2073,7 @@ export default {
   "Merging a worker's work": "正在合并助手的工作",
   "Mic didn’t start": "麦克风未能启动",
   Microphone: "麦克风",
+  "Microsoft's Visual C++ runtime is installed.": "Microsoft Visual C++ 运行库已安装。",
   Mine: "我的",
   Minimize: "最小化",
   "Mobile support": "移动端支持",
@@ -2262,6 +2289,7 @@ export default {
   "Nothing changes until you apply.": "应用之前不会有任何改变。",
   "Nothing is added to this folder.": "不会向此文件夹添加任何内容。",
   "Nothing is failing.": "没有失败的检查。",
+  "Nothing is installing.": "当前没有正在安装的内容。",
   "Nothing is online for this game yet": "此游戏还没有任何在线内容",
   "Nothing kept yet": "暂未保留任何内容",
   "Nothing made": "没有产出",
@@ -2270,6 +2298,8 @@ export default {
   "Nothing new to suggest.": "暂无新建议。",
   "Nothing spent yet": "尚无消费",
   "Nothing to free up": "没有可释放的空间",
+  "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
+    "没有点击任何东西。请在启动器中自己安装 Unreal {version}：{clicks}。",
   "Nothing was clicked. Turn it on yourself: {clicks}.": "没有点击任何内容。请自己开启：{clicks}。",
   "Nothing was ever sent from this launch.": "此次启动从未发送过任何内容。",
   "Nothing was published. To publish it yourself in Studio: {clicks}.":
@@ -2363,6 +2393,8 @@ export default {
   "Open a game before starting its terminal.": "请先打开一个游戏，再启动它的终端。",
   "Open a game first, so its chat can click it for you, or turn it on yourself: {clicks}.":
     "先打开一个游戏，让它的对话替你点击；或者自己开启：{clicks}。",
+  "Open a game first, so its chat can install Unreal for you, or install Unreal {version} yourself in the launcher: {clicks}.":
+    "请先打开一个游戏，让它的对话帮你安装 Unreal；或者在启动器中自己安装 Unreal {version}：{clicks}。",
   "Open a game first, then choose the place it builds in.": "请先打开一个游戏，再选择它要在其中制作的地点。",
   "Open a game first: Unity works on the open game's project.": "请先打开一个游戏：Unity 会处理当前打开的游戏的项目。",
   "Open a game folder": "打开游戏文件夹",
@@ -2976,6 +3008,8 @@ export default {
   "Run status unavailable": "构建状态不可用",
   "Run the setup scripts this game’s packages came with": "运行这个游戏的依赖包自带的安装脚本",
   "Run this game’s setup scripts?": "要运行这个游戏的安装脚本吗？",
+  "Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder to install Microsoft's Visual C++ runtime.":
+    "运行 Unreal 的 Engine › Extras › Redist › en-us 文件夹中的 vc_redist.x64.exe，安装 Microsoft Visual C++ 运行库。",
   "Run {command}": "运行 {command}",
   "Run {command} for {connector}?": "要为 {connector} 运行 {command} 吗？",
   Running: "运行中",
@@ -3333,6 +3367,7 @@ export default {
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "已停止获取 Roblox Studio。Roblox 安装程序已经放到这台电脑上的内容会保留。",
   "Stopped play": "已停止试玩",
+  "Stopped.": "已停止。",
   "Stopped. Everything built so far is kept.": "已停止。目前做好的内容都已保留。",
   "Stopped. What it built is in your game now.": "已停止。做好的内容已进入你的游戏。",
   "Stopped. What it built is kept in your project.": "已停止。做好的内容保留在你的项目中。",
@@ -3496,6 +3531,7 @@ export default {
   "The CLI returned an invalid control response.": "CLI 返回的控制响应无效。",
   "The CLI returned an invalid model list.": "CLI 返回的模型列表无效。",
   "The Epic Games Launcher is installed": "Epic Games Launcher 已安装",
+  "The Epic Games Launcher is installed. Sign in to Epic in it.": "Epic Games Launcher 已安装。请在其中登录 Epic。",
   "The Genex helper is in Studio": "Genex 辅助插件已在 Studio 中",
   "The Genex helper is in Studio's Plugins folder and Studio's MCP server is on.":
     "Genex 辅助插件已在 Studio 的 Plugins 文件夹中，Studio 的 MCP 服务器也已开启。",
@@ -3571,6 +3607,10 @@ export default {
     "安装程序的签名者不是 Roblox，所以 Genex 没有运行它。没有安装任何内容。",
   "The installer isn't signed as Roblox's, so Genex didn't run it. Nothing was installed.":
     "安装程序没有 Roblox 的签名，所以 Genex 没有运行它。没有安装任何内容。",
+  "The installer isn't signed by its maker, so Genex didn't run it.":
+    "安装程序不是由其发布者签名的，所以 Genex 没有运行它。",
+  "The installer isn't signed, so Genex didn't run it.": "安装程序没有签名，所以 Genex 没有运行它。",
+  "The installer stopped before it finished. Try again.": "安装程序没有完成就停止了。请再试一次。",
   "The instructions this suggestion changes are gone. Discard it.": "这条建议要修改的指令已经不存在了。请丢弃它。",
   "The judge didn't play": "评审没有游玩",
   "The judge's moves were replayed on this build, and the goal held.": "评审的操作已在这个构建上重放，目标依然达成。",
@@ -3816,6 +3856,8 @@ export default {
     "这个游戏的对话会用电脑控制在 Roblox Studio 中点击 {clicks}。所有玩这个游戏的人都会收到更新，更新会发布在你的 Roblox 账号上。",
   "This game's chat clicks {clicks} in Roblox Studio with computer control. It keeps the privacy and settings Studio gives a new game and leaves the description empty. It is published on your Roblox account; if Roblox asks for your age, ID, a two-step code, terms or a payment, Genex stops and leaves that to you.":
     "这个游戏的对话会用电脑控制在 Roblox Studio 中点击 {clicks}。它会保留 Studio 给新游戏的隐私和设置，描述留空。游戏会发布在你的 Roblox 账号上；如果 Roblox 要求你的年龄、身份证件、两步验证码、同意条款或付款，Genex 会停下来交给你处理。",
+  "This game's chat is installing Unreal in the Epic Games Launcher. If Genex asks you something first, answer it in this game's chat, and sign in to Epic if the launcher asks.":
+    "这个游戏的对话正在 Epic Games Launcher 中安装 Unreal。如果 Genex 先问你问题，请在这个游戏的对话里回答；启动器要求时请登录 Epic。",
   "This game's chat is publishing the update in Roblox Studio. If Genex asks you something first, answer it in this game's chat, then watch Studio.":
     "这个游戏的对话正在 Roblox Studio 中发布更新。如果 Genex 先问你问题，请在这个游戏的对话里回答，然后看着 Studio。",
   "This game's chat is publishing {name} to Roblox in Studio. If Genex asks you something first, answer it in this game's chat, then watch Studio.":
@@ -3984,7 +4026,6 @@ export default {
     "有两个 Unreal 编辑器开着。请在你要退出的那个编辑器窗口中退出它。",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "两个打开的 Studio 中都有名为 {name} 的地点，所以 Genex 无法区分它们。请在 Studio 中把其中一个另存为其他名字，然后重新选择。",
-  "Two steps before the agent can build in Unreal.": "还差两步，智能体就能在 Unreal 中制作游戏了。",
   "Type a name.": "请输入名称。",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "在 Unity Hub 窗口中输入邮箱和密码，并添加 Unity 许可证（如果 Unity 的条款允许，Personal 版免费）。登录后 Genex 会自动继续。",
@@ -4068,9 +4109,16 @@ export default {
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {wanted} from Apple's downloads: put it in Applications beside Xcode {current}; this card then shows the one command to select it.":
     "Unreal {engine} 需要用 Xcode {min} 到 {max} 构建。保留 Xcode {version}，并从 Apple 的下载页面添加 Xcode {wanted}：把它放到“应用程序”中 Xcode {current} 的旁边，之后这张卡片会显示选择它的那条命令。",
   "Unreal {engine} is set up for {project}": "Unreal {engine} 已为 {project} 设置好",
+  "Unreal {version} and everything it needs are on this computer.": "Unreal {version} 及其所需的一切都已在这台电脑上。",
   "Unreal {version} is installed": "Unreal {version} 已安装",
   "Unreal {version}'s editor isn't where Epic's launcher says. Verify the install in the Epic Games Launcher.":
     "Unreal {version} 的编辑器不在 Epic 启动器所说的位置。请在 Epic Games Launcher 中验证安装。",
+  "Unreal's copy of Microsoft's runtime installer is missing. In the Epic Games Launcher, verify Unreal.":
+    "Unreal 自带的 Microsoft 运行库安装程序不见了。请在 Epic Games Launcher 中验证（Verify）Unreal。",
+  "Unreal's editor needs it to start, and it isn't on this computer. Do it for me runs Unreal's own copy: choose Yes when Windows asks.":
+    "Unreal 编辑器需要它才能启动，而这台电脑上没有。“帮我完成”会运行 Unreal 自带的副本：Windows 询问时请选“是”。",
+  "Unreal's editor needs it to start. Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder.":
+    "Unreal 编辑器需要它才能启动。请运行 Unreal 的 Engine › Extras › Redist › en-us 文件夹中的 vc_redist.x64.exe。",
   "Unrecognized Genex page link": "无法识别的 Genex 页面链接",
   "Unsafe runtime archive": "不安全的运行时压缩包",
   "Unsupported TOML value. Use quoted strings, booleans or arrays of strings.":
@@ -4263,6 +4311,8 @@ export default {
   "Why the lead stopped it": "主智能体停止它的原因",
   Window: "窗口",
   "Windows app": "Windows 应用",
+  "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
+    "Windows 没有获得安装许可。请再按一次“帮我完成”，并在 Windows 询问时选“是”。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows 需要一次性设置受保护的工作区，并由管理员批准。",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
@@ -5427,6 +5477,8 @@ export default {
   "{source} needs your permission": "{source} 需要你的许可",
   "{state} · from {plugin}": "{state} · 来自 {plugin}",
   "{status} · newer than Genex has tested": "{status} · 比 Genex 测试过的版本更新",
+  "{steps, plural, =2 {Two steps before the agent can build in Unreal.} =3 {Three steps before the agent can build in Unreal.} other {# steps before the agent can build in Unreal.}}":
+    "{steps, plural, =2 {还差两步，智能体就能在 Unreal 中制作游戏了。} =3 {还差三步，智能体就能在 Unreal 中制作游戏了。} other {还差 # 步，智能体就能在 Unreal 中制作游戏了。}}",
   "{task} in {engine}…": "{task}（{engine}）…",
   "{task} · working": "{task} · 进行中",
   "{task}: didn't finish.": "{task}：未完成。",

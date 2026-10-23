@@ -28,7 +28,7 @@ const { createIpcHandle } = await import("../../src/main/ipc-handle.ts");
 const { registerPluginsIpc } = await import("../../src/main/ipc/plugins.ts");
 
 /** Get Xcode opens the App Store page or the Xcode app, so it is native too. */
-const NATIVE = ["create", "open-editor", "quit-editor", "get-unreal", "skip", "get-xcode"];
+const NATIVE = ["create", "open-editor", "quit-editor", "get-unreal", "skip", "install-for-me", "get-xcode"];
 
 /**
  * Roblox's actions that quit, open or click in Studio, write its Plugins folder and settings,

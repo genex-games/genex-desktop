@@ -381,6 +381,7 @@ describe("engine-status, in the words the card shows (the Unreal plugin)", () =>
     assert.match(none.note, /don't call unreal__new-game/);
     assert.match(none.note, /call unreal__show-steps, which puts the Unreal setup card in the chat/);
     assert.match(none.note, /brings the Unreal button out above the game/);
+    assert.match(none.note, /then unreal__install-unreal, which starts installing it for them/, "never asks them to");
 
     const newer = readinessAnswer({ engine: EngineReadiness.NewerOnly, version: "5.9" });
     assert.equal(newer.ready, false);

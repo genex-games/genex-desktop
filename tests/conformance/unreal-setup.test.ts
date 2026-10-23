@@ -154,6 +154,43 @@ async function fakeEpic(home: string, platform: "darwin" | "win32", recent: Arra
   );
 }
 
+/** An install record of Epic's launcher (`<id>.item`), as it writes one for an engine or for one of its plugins. */
+const launcherRecord = (app: string, version: string, folder: string, more: Record<string, unknown> = {}) => ({
+  FormatVersion: 0,
+  bIsIncompleteInstall: false,
+  LaunchExecutable: "Engine/Binaries/Win64/UnrealEditor.exe",
+  AppCategories: ["engines/ue5", "engines"],
+  DisplayName: "Unreal Engine",
+  InstallLocation: folder,
+  AppName: app,
+  AppVersionString: version,
+  MainGameAppName: "",
+  ...more,
+});
+
+/** Where Epic's launcher keeps its install records on a fake computer. */
+const recordsFolder = (home: string, platform: "darwin" | "win32") =>
+  platform === "win32"
+    ? path.join(home, "ProgramData", "Epic", "EpicGamesLauncher", "Data", "Manifests")
+    : path.join(home, "Library", "Application Support", "Epic", "EpicGamesLauncher", "Data", "Manifests");
+
+/** Epic's install records, by file name: a record as JSON in Epic's tab layout, or a string as it is. */
+async function fakeRecords(home: string, platform: "darwin" | "win32", records: Record<string, unknown>) {
+  const folder = recordsFolder(home, platform);
+  await mkdir(path.join(folder, "Pending"), { recursive: true });
+  for (const [name, record] of Object.entries(records))
+    await writeFile(path.join(folder, name), typeof record === "string" ? record : JSON.stringify(record, null, "\t"));
+  return folder;
+}
+
+/** Epic's launcher on a Windows PC since 2025: its list of engines empty, each install only in its own record. */
+async function fakeRecordsOnly(home: string, records: Record<string, unknown>) {
+  const list = path.join(home, "ProgramData", "Epic", "UnrealEngineLauncher", "LauncherInstalled.dat");
+  await mkdir(path.dirname(list), { recursive: true });
+  await writeFile(list, '{\r\n\t"InstallationList": []\r\n}');
+  return fakeRecords(home, "win32", records);
+}
+
 async function fakeProject(root: string, name = "Drift", options: { ini?: string } = {}) {
   const directory = path.join(root, name);
   await mkdir(directory, { recursive: true });
@@ -260,6 +297,114 @@ describe("Set up Unreal finds", () => {
     );
     assert.match(ini, new RegExp(`ServerPortNumber=${derivedPort(await realpath(project.file))}`));
   });
+
+  it("finds an engine Epic's launcher keeps only in its install record, as the Windows launcher does since 2025", async () => {
+    const home = await tmpDir("studio-unreal-home-");
+    const ue58 = path.join(home, "Program Files", "Epic Games", "UE_5.8");
+    await mkdir(ue58, { recursive: true });
+    await fakeRecordsOnly(home, {
+      "4D983583C6D582563E072E4E19204751.item": launcherRecord(
+        "UE_5.8",
+        "5.8.4-58902052+++UE5+Release-5.8-Windows",
+        ue58,
+      ),
+      // Epic's plugins installed into the engine have records of their own, under their own names.
+      "56B46A5BE520EE48809A6CF66158186.item": launcherRecord("QuixelBridge_5.8", "5.8.0-55116800-Windows", ue58, {
+        MainGameAppName: "UE_5.8",
+        AppCategories: ["plugins/engine", "plugins"],
+      }),
+      "4D983583C6D582563E072E4E19204751.manifest": "Epic's chunk manifest, not a record",
+    });
+    const engines = await findEngines(fakeEnv(home, { platform: "win32" }));
+    assert.deepEqual(
+      engines.map((e) => [e.version, e.build, e.directory, e.supported]),
+      [["5.8", "5.8.4", ue58, true]],
+    );
+  });
+
+  it("reads an install record Epic wrote with a byte order mark, and Mac records beside the Mac list, each engine once", async () => {
+    const home = await tmpDir("studio-unreal-home-");
+    await fakeEpic(home, "darwin", []);
+    const ue58 = path.join(home, "Engines", "UE_5.8");
+    const record = JSON.stringify(launcherRecord("UE_5.8", "5.8.4-58902052+++UE5+Release-5.8-Mac", ue58));
+    await fakeRecords(home, "darwin", { "A.item": `﻿${record}` });
+    const engines = await findEngines(fakeEnv(home));
+    assert.deepEqual(
+      engines.map((e) => [e.version, e.build]),
+      [
+        ["5.8", "5.8.4"],
+        ["5.7", "5.7.1"],
+      ],
+      "the record is the launcher's current word on the folder its list also names",
+    );
+  });
+
+  /** Each row: what Epic's folders hold, the engines still found (newest first), and why it can't run here. */
+  const notEngines: Array<[string, (home: string, folders: string) => Promise<unknown>, string[], string | false]> = [
+    [
+      "an engine still installing, even while Epic's list names its folder",
+      async (home) => {
+        await fakeEpic(home, "win32", []);
+        const record = launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(home, "Engines", "UE_5.8"), {
+          bIsIncompleteInstall: true,
+        });
+        await fakeRecords(home, "win32", { "A.item": record });
+      },
+      ["5.7"],
+      false,
+    ],
+    [
+      "an engine whose folder is gone",
+      (home, folders) =>
+        fakeRecordsOnly(home, { "A.item": launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8")) }),
+      [],
+      false,
+    ],
+    [
+      "records that aren't JSON objects, a folder named like a record, and one far bigger than a record",
+      async (home, folders) => {
+        await mkdir(path.join(folders, "UE_5.8"), { recursive: true });
+        const records = await fakeRecordsOnly(home, {
+          "A.item": "{ not json",
+          "B.item": JSON.stringify([launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8"))]),
+          "C.item": JSON.stringify({
+            ...launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8")),
+            Padding: "x".repeat(200 * 1024),
+          }),
+        });
+        await mkdir(path.join(records, "D.item"));
+      },
+      [],
+      false,
+    ],
+    [
+      "a record that links to a file outside Epic's folder",
+      async (home, folders) => {
+        await mkdir(path.join(folders, "UE_5.8"), { recursive: true });
+        const records = await fakeRecordsOnly(home, {});
+        const outside = path.join(home, "planted.item");
+        await writeFile(
+          outside,
+          JSON.stringify(launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8"))),
+        );
+        await symlink(outside, path.join(records, "A.item"));
+      },
+      [],
+      process.platform === "win32" && "links need privileges on Windows",
+    ],
+  ];
+  for (const [name, arrange, found, skip] of notEngines)
+    it(`finds no engine in ${name}, and changes nothing`, { skip }, async () => {
+      const home = await tmpDir("studio-unreal-home-");
+      await arrange(home, path.join(home, "Program Files", "Epic Games"));
+      const before = await tree(home);
+      const engines = await findEngines(fakeEnv(home, { platform: "win32" }));
+      assert.deepEqual(
+        engines.map((e) => e.version),
+        found,
+      );
+      assert.deepEqual(await tree(home), before);
+    });
 });
 
 describe("Set up Unreal on a project", () => {
@@ -1323,19 +1468,24 @@ describe("On Windows, the Unreal plugin's console tools", () => {
     const parent = {
       SystemRoot: "D:\\Windows",
       ProgramData: "D:\\ProgramData",
+      ProgramFiles: "E:\\Program Files",
       "ProgramFiles(x86)": "D:\\Program Files (x86)",
       PATH: "D:\\Windows\\System32",
     };
     const env = pluginBackendEnv(parent, "win32");
     assert.equal(systemSetupEnv(env, "win32").programData, "D:\\ProgramData");
     assert.equal(systemLaunchEnv("win32", env).applications, "D:\\Program Files (x86)");
+    assert.equal(systemLaunchEnv("win32", env).programFiles, "E:\\Program Files", "where the 64-bit launcher installs");
   });
 
   it("without those variables, takes the folders from SystemRoot's drive, and C: only with nothing at all", () => {
     assert.equal(systemSetupEnv({ SystemRoot: "D:\\Windows" }, "win32").programData, "D:\\ProgramData");
     assert.equal(systemLaunchEnv("win32", { SystemRoot: "D:\\Windows" }).applications, "D:\\Program Files (x86)");
+    assert.equal(systemLaunchEnv("win32", { SystemRoot: "D:\\Windows" }).programFiles, "D:\\Program Files");
     assert.equal(systemSetupEnv({}, "win32").programData, "C:\\ProgramData");
     assert.equal(systemLaunchEnv("win32", {}).applications, "C:\\Program Files (x86)");
+    assert.equal(systemLaunchEnv("win32", {}).programFiles, "C:\\Program Files");
+    assert.equal(systemLaunchEnv("darwin", {}).programFiles, undefined, "a Mac has one Applications folder");
   });
 });
 

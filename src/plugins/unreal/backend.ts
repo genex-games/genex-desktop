@@ -1,4 +1,5 @@
 import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { agentsSetting, setAgentsSetting } from "../../substrate/engine-agents.ts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,7 @@ import type {
   Activate,
   PluginActivation,
   PluginContext,
+  PluginEngineAssistRefusal,
   PluginEngineLink,
   PluginEngineRun,
   PluginReview,
@@ -75,7 +77,27 @@ import { type ProcessEnv, systemProcesses } from "./editor-reopen.ts";
 import { pollUntil } from "./editor-queue.ts";
 import { QUIT_WAIT_MS, RESTART_POLL_MS } from "./editor-restart.ts";
 import { type AnyLoopTool, createLoopTools, type LoopToolsDeps, TOOLSET_OF } from "./loop-tools.ts";
-import { type UnrealSteps, unrealInstallCard, unrealSteps, XcodeStep } from "./engine-steps.ts";
+import {
+  type ForMeWork,
+  InstallCardAction,
+  launcherInstallPath,
+  UnrealStepId,
+  type UnrealSteps,
+  unrealInstallCard,
+  unrealSteps,
+  XcodeStep,
+} from "./engine-steps.ts";
+import {
+  type EpicInstallDeps,
+  EpicInstallError,
+  EpicInstallKind,
+  EpicInstallPhase,
+  hasUnrealRuntime,
+  installEpicLauncher,
+  installUnrealRuntime,
+  systemEpicRun,
+  systemFolder,
+} from "./epic-install.ts";
 import {
   assertGameFolderFree,
   GAME_PROJECT_FOLDER,
@@ -153,6 +175,8 @@ const HostService = {
   GameSnapshot: "game.snapshot",
   GameCreate: "game.create",
   EngineRuns: "game.engine.runs",
+  EngineAssist: "game.engine.assist",
+  EngineCanAssist: "game.engine.canAssist",
 } as const;
 /** The actions plugin.json declares. */
 const UnrealAction = {
@@ -172,6 +196,8 @@ const UnrealAction = {
   StageStatus: "stage-status",
   RayTracingOff: "ray-tracing-off",
   Skip: "skip",
+  ForMe: InstallCardAction.ForMe,
+  StopForMe: InstallCardAction.StopForMe,
   Agents: "agents",
   AgentsGoAhead: "agents-go-ahead",
   AgentsWait: "agents-wait",
@@ -187,6 +213,7 @@ const UnrealTool = {
   NewPlugin: "new-plugin",
   WaitEditor: "wait-editor",
   EngineStatus: "engine-status",
+  InstallUnreal: "install-unreal",
 } as const;
 type UnrealTool = (typeof UnrealTool)[keyof typeof UnrealTool];
 const TOOL_NAMES: ReadonlySet<string> = new Set(Object.values(UnrealTool));
@@ -259,7 +286,29 @@ const MESSAGE = {
     `${name} was made in Unreal ${from}, and switching it to ${to} is the user's choice. Ask the user to press Set up in the Unreal panel, then call unreal__use-project again.`,
   StepsShown: "The Unreal setup card is in the chat.",
   InstallCardShown: (version: string) =>
-    `The Unreal setup card is in the chat, and the Unreal button is above the game: it gets Epic's launcher, and the user installs Unreal ${version} in it (only they can sign in to Epic). Tell them in one line, then end your reply; the chat tells you when Unreal is installed.`,
+    `The Unreal setup card is in the chat, and the Unreal button is above the game: its Do it for me gets Epic's launcher and installs Unreal ${version} in it with computer control (only the user signs in to Epic). Call unreal__install-unreal to start that yourself, or tell them in one line; then end your reply. The chat tells you when Unreal is installed.`,
+  /** The task Do it for me hands the game's chat: one plain line, at most 300 characters. */
+  InstallTask: (version: string) =>
+    `Install Unreal Engine ${version} in the Epic Games Launcher Genex opened: Unreal Engine › Library › + beside Engine Versions › ${version} (not a newer one) › Install, default folder. If Epic asks to sign in or anything else, stop and ask the person.`,
+  ForMeLauncher: (version: string) =>
+    `Genex is downloading Epic's launcher from Epic and installing it (Windows asks the person for permission); the setup card shows where it stands. End your reply now. Once the card says the launcher is installed, call unreal__install-unreal again to install Unreal ${version} in it.`,
+  ForMeDownloadPage:
+    "Epic's download page is open in the person's browser: on this computer they install Epic's launcher themselves. Tell them in one line and end your reply; once it is installed, call unreal__install-unreal again.",
+  ForMeEngine: (version: string) =>
+    `Genex opened the Epic Games Launcher and handed the install to this chat: the message "Unreal Engine asks: Install Unreal Engine ${version}…" is done by the turn that answers it, with the desktop tool on the launcher. End your reply now. Unreal is about 45 GB; the chat tells you when it is installed.`,
+  ForMeEngineRefused: (version: string, reason: string) =>
+    `Genex couldn't hand the install to this chat (${reason}). The Epic Games Launcher is open: tell the person in one line to install Unreal ${version} there (Library, + beside Engine Versions, ${version}, Install), then end your reply; the chat tells you when it is installed.`,
+  ForMeRuntime:
+    "Genex is installing Microsoft's Visual C++ runtime, which Unreal's editor needs, from Unreal's own copy (Windows asks the person for permission). End your reply now; the chat tells you when it is done.",
+  ForMeRuntimeYourself:
+    "Unreal's editor needs Microsoft's Visual C++ runtime, which isn't on this computer, and Genex can't install it here. Ask the person to run vc_redist.x64.exe from Unreal's Engine/Extras/Redist/en-us folder.",
+  ForMeRunning: (words: string) => `Do it for me is already installing; the card says: ${words} End your reply now.`,
+  ForMeDone: (version: string) =>
+    `Unreal ${version} and everything it needs are on this computer: call unreal__new-game if this game has no Unreal project yet.`,
+  ForMeStuck: (words: string) =>
+    `Do it for me stopped; the card says: ${words} Tell the person in one line, and offer to try again with unreal__install-unreal.`,
+  NoRuntime:
+    "Unreal's editor needs Microsoft's Visual C++ runtime, which isn't on this computer, so Genex made no project: Unreal couldn't open it. Call unreal__install-unreal, which installs the runtime from Unreal's own copy (Windows asks the person for permission), end your reply, and call new-game again once the chat says it is done.",
   ButtonOut: (version: string) =>
     `The Unreal button is now above the game. Ask the user to press it: it shows how to get Unreal Engine ${version} free from Epic and notices when it's installed. They send a message once it is.`,
   NewGame: (file: string) =>
@@ -339,6 +388,65 @@ const WORDS = {
     ),
 } as const;
 
+/** Where Epic's launcher installs an engine version, as the person clicks it there. */
+const engineClicks = (version: string) => ({ version, clicks: launcherInstallPath(version) });
+
+/** Where each install Do it for me runs stands, in the person's words; a stop says its own. */
+const PHASE_WORDS: Record<EpicInstallKind, Partial<Record<EpicInstallPhase, () => string>>> = {
+  [EpicInstallKind.Launcher]: {
+    [EpicInstallPhase.Downloading]: () => t("Downloading the Epic Games Launcher from Epic…"),
+    [EpicInstallPhase.Checking]: () => t("Checking that Epic signed the installer…"),
+    [EpicInstallPhase.Installing]: () => t("Installing the Epic Games Launcher. Choose Yes when Windows asks."),
+    [EpicInstallPhase.Done]: () => t("The Epic Games Launcher is installed. Sign in to Epic in it."),
+  },
+  [EpicInstallKind.Runtime]: {
+    [EpicInstallPhase.Checking]: () => t("Checking that Microsoft signed Unreal's runtime installer…"),
+    [EpicInstallPhase.Installing]: () => t("Installing Microsoft's Visual C++ runtime. Choose Yes when Windows asks."),
+    [EpicInstallPhase.Done]: () => t("Microsoft's Visual C++ runtime is installed."),
+  },
+};
+
+/** What Do it for me says to the person about each press. */
+const FOR_ME_WORDS = {
+  Failed: () => t("The installer stopped before it finished. Try again."),
+  DownloadPage: () => t("Epic's download page is opening in your browser."),
+  EngineStarted: () =>
+    t(
+      "This game's chat is installing Unreal in the Epic Games Launcher. If Genex asks you something first, answer it in this game's chat, and sign in to Epic if the launcher asks.",
+    ),
+  EngineUnavailable: (version: string) =>
+    t(
+      "Genex can't click in the launcher on this computer. Install Unreal {version} yourself: {clicks}.",
+      engineClicks(version),
+    ),
+  EngineDeclined: (version: string) =>
+    t("Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.", engineClicks(version)),
+  EngineNoChat: (version: string) =>
+    t(
+      "Open a game first, so its chat can install Unreal for you, or install Unreal {version} yourself in the launcher: {clicks}.",
+      engineClicks(version),
+    ),
+  EngineNotStarted: (version: string) =>
+    t(
+      "Genex didn't click anything. Install Unreal {version} yourself in the launcher: {clicks}.",
+      engineClicks(version),
+    ),
+  RuntimeYourself: () =>
+    t(
+      "Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder to install Microsoft's Visual C++ runtime.",
+    ),
+  AllThere: (version: string) => t("Unreal {version} and everything it needs are on this computer.", { version }),
+  Stopped: () => t("Stopped."),
+  NothingToStop: () => t("Nothing is installing."),
+} as const;
+
+/** The engine step's refusals in the person's words; any other reads as not started. */
+const ENGINE_REFUSED: Partial<Record<PluginEngineAssistRefusal, (version: string) => string>> = {
+  unavailable: FOR_ME_WORDS.EngineUnavailable,
+  declined: FOR_ME_WORDS.EngineDeclined,
+  "no-chat": FOR_ME_WORDS.EngineNoChat,
+};
+
 /**
  * What setup needs from the computer and where the shipped editor helper is; `projects` is where
  * new games go (Documents › Unreal Projects unless a test or the live run names its own folder);
@@ -357,6 +465,14 @@ export type UnrealBackendDeps = {
   stopped?: AbortSignal;
   /** The programs a plugin's build, tests and package and a game's package run; UBT, the headless editor and UAT unless a test stands in. */
   programs?: Pick<LoopToolsDeps, "compile" | "runProgram" | "runCommand" | "prepareSandbox" | "runUat">;
+  /**
+   * What Do it for me installs Epic's launcher and Microsoft's runtime with on Windows (the network,
+   * PowerShell's signature check, the installers); without it, the launcher's step opens Epic's
+   * download page and the runtime is the person's to install.
+   */
+  install?: EpicInstallDeps;
+  /** Whether Windows has the Visual C++ runtime Unreal's editor loads; counted as there without it. */
+  runtime?: () => Promise<boolean>;
 };
 
 type ProjectError = { code: SetupErrorCode | null; message: string };
@@ -814,7 +930,7 @@ async function status(
     helperNewer: state?.helper === HelperState.Newer,
     firstStart: firstStart(opened, where.opening),
     /** Whether Epic's launcher is installed, asked only while no supported Unreal is (the Get Unreal view); else null. */
-    launcher: engine ? null : Boolean(await findLauncher(env.platform, deps.launch.applications)),
+    launcher: engine ? null : Boolean(await findLauncher(env.platform, deps.launch)),
     engineMissing: match === EngineMatch.Missing,
     editor: { running, answering, editors },
     /** Unreal has the shown project itself open, so setup and undo wait for it to quit. */
@@ -1236,23 +1352,221 @@ async function skipFile(deps: UnrealBackendDeps, context: PluginContext): Promis
   return path.join(storage, SKIPPED_FOLDER, encodeURIComponent(context.project));
 }
 
+/** What Do it for me runs next. Never leaves the backend. */
+const ForMeStep = { Launcher: "launcher", Engine: "engine", Runtime: "runtime", Done: "done" } as const;
+type ForMeStep = (typeof ForMeStep)[keyof typeof ForMeStep];
+/**
+ * Why a press of Do it for me started nothing of its own: the person's to do here (Epic's download
+ * page, the runtime by hand), an install already running, or the chat not started for an unnamed
+ * reason. The assist's own refusals pass through as they are. Wire values of the card's answer.
+ */
+const ForMeMiss = {
+  DownloadPage: "download-page",
+  Yourself: "yourself",
+  Running: "running",
+  NotStarted: "not-started",
+} as const;
+type ForMeMiss = (typeof ForMeMiss)[keyof typeof ForMeMiss];
+
+/**
+ * One install Do it for me runs: what it installs, where it stands in the person's words, and its
+ * Stop; `stopped` once the person pressed it, so the agent isn't told of a stop they asked for.
+ */
+type ForMeJob = {
+  kind: EpicInstallKind;
+  phase: EpicInstallPhase;
+  message: string;
+  controller: AbortController;
+  stopped?: boolean;
+};
+/** The one install this backend runs at a time; the last one stays, so its card can say how it ended. */
+type ForMeSlot = { job?: ForMeJob };
+/** What a press of Do it for me did: the step it ran, whether that started, why not, in the person's words. */
+type ForMeAnswer = {
+  step: ForMeStep;
+  started: boolean;
+  message: string;
+  reason?: ForMeMiss | PluginEngineAssistRefusal;
+};
+
+const isRunning = (job: ForMeJob | undefined): job is ForMeJob =>
+  job !== undefined && job.phase !== EpicInstallPhase.Done && job.phase !== EpicInstallPhase.Failed;
+
+/** Whether Genex installs the launcher and the runtime itself here: Windows, with the installers to hand. */
+const installsHere = (deps: UnrealBackendDeps): deps is UnrealBackendDeps & { install: EpicInstallDeps } =>
+  deps.env.platform === "win32" && deps.install !== undefined;
+
+/** Whether Unreal's editor has the Windows runtime it loads; counted as there where nothing can tell. */
+const runtimeReady = async (deps: UnrealBackendDeps): Promise<boolean> =>
+  deps.env.platform !== "win32" || !deps.runtime || (await deps.runtime());
+
+/** The step Do it for me runs next, read now. */
+async function nextForMe(deps: UnrealBackendDeps): Promise<ForMeStep> {
+  if (await canMakeGames(deps)) return (await runtimeReady(deps)) ? ForMeStep.Done : ForMeStep.Runtime;
+  return (await findLauncher(deps.env.platform, deps.launch)) ? ForMeStep.Engine : ForMeStep.Launcher;
+}
+
+/**
+ * Starts an install Do it for me runs, answering at once: the card follows it through the slot. The
+ * launcher, once installed, is opened for the person's sign-in.
+ */
+function startInstall(
+  deps: UnrealBackendDeps,
+  slot: ForMeSlot,
+  kind: EpicInstallKind,
+  install: (options: { signal: AbortSignal; onPhase: (phase: EpicInstallPhase) => void }) => Promise<void>,
+): ForMeJob {
+  const phase = kind === EpicInstallKind.Launcher ? EpicInstallPhase.Downloading : EpicInstallPhase.Checking;
+  const job: ForMeJob = { kind, phase, message: PHASE_WORDS[kind][phase]?.() ?? "", controller: new AbortController() };
+  const note = (next: EpicInstallPhase, message = PHASE_WORDS[kind][next]?.() ?? job.message) => {
+    job.phase = next;
+    job.message = message;
+  };
+  slot.job = job;
+  void install({ signal: job.controller.signal, onPhase: note })
+    .then(async () => {
+      // Opened before the card says done, so whoever sees it done finds the launcher on its way.
+      if (kind === EpicInstallKind.Launcher) await getUnreal(deps.env, deps.launch).catch(() => undefined);
+      note(EpicInstallPhase.Done);
+    })
+    .catch((error: unknown) =>
+      note(EpicInstallPhase.Failed, error instanceof EpicInstallError ? error.message : FOR_ME_WORDS.Failed()),
+    );
+  return job;
+}
+
+/** The launcher: installed by Genex on Windows, else Epic's download page opened for the person. */
+async function launcherForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<ForMeAnswer> {
+  if (!installsHere(deps)) {
+    await getUnreal(deps.env, deps.launch);
+    return {
+      step: ForMeStep.Launcher,
+      started: false,
+      message: FOR_ME_WORDS.DownloadPage(),
+      reason: ForMeMiss.DownloadPage,
+    };
+  }
+  const { install } = deps;
+  const job = startInstall(deps, slot, EpicInstallKind.Launcher, (options) => installEpicLauncher(install, options));
+  return { step: ForMeStep.Launcher, started: true, message: job.message };
+}
+
+/**
+ * Unreal itself: the launcher opened, then the install handed to the game's chat, whose answering
+ * turn clicks it with the person's computer control. Refused, the launcher stays open for the person.
+ */
+async function engineForMe(deps: UnrealBackendDeps, context: PluginContext): Promise<ForMeAnswer> {
+  const version = installEngineVersion();
+  await getUnreal(deps.env, deps.launch).catch(() => undefined);
+  const answer = await context.host(HostService.EngineAssist, { task: MESSAGE.InstallTask(version) });
+  if (answer.started) return { step: ForMeStep.Engine, started: true, message: FOR_ME_WORDS.EngineStarted() };
+  const words = answer.reason ? ENGINE_REFUSED[answer.reason] : undefined;
+  const message = words ? words(version) : FOR_ME_WORDS.EngineNotStarted(version);
+  return { step: ForMeStep.Engine, started: false, message, reason: answer.reason ?? ForMeMiss.NotStarted };
+}
+
+/** Microsoft's runtime, from the installed engine's own copy, on Windows. */
+async function runtimeForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<ForMeAnswer> {
+  const engine = (await findEngines(deps.env)).find(canCreateWith);
+  if (!installsHere(deps) || !engine)
+    return {
+      step: ForMeStep.Runtime,
+      started: false,
+      message: FOR_ME_WORDS.RuntimeYourself(),
+      reason: ForMeMiss.Yourself,
+    };
+  const { install } = deps;
+  const run = (options: { signal: AbortSignal; onPhase: (phase: EpicInstallPhase) => void }) =>
+    installUnrealRuntime(install, engine.directory, options);
+  const job = startInstall(deps, slot, EpicInstallKind.Runtime, run);
+  return { step: ForMeStep.Runtime, started: true, message: job.message };
+}
+
+/**
+ * Do it for me, on the install card and as the agent's `install-unreal`: the next step Genex can do
+ * now, each as its own press. An install already running is answered in words, not run again.
+ */
+async function doItForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
+  if (isRunning(slot.job))
+    return { step: ForMeStep.Done, started: false, message: slot.job.message, reason: ForMeMiss.Running };
+  const step = await nextForMe(deps);
+  if (step === ForMeStep.Launcher) return launcherForMe(deps, slot);
+  if (step === ForMeStep.Engine) return engineForMe(deps, context);
+  if (step === ForMeStep.Runtime) return runtimeForMe(deps, slot);
+  return { step, started: false, message: FOR_ME_WORDS.AllThere(installEngineVersion()) };
+}
+
+/** Stop: ends the download or check under way; an installer Windows already runs finishes on its own. */
+function stopForMe(slot: ForMeSlot): { stopped: boolean; message: string } {
+  if (!isRunning(slot.job)) return { stopped: false, message: FOR_ME_WORDS.NothingToStop() };
+  slot.job.stopped = true;
+  slot.job.controller.abort();
+  return { stopped: true, message: FOR_ME_WORDS.Stopped() };
+}
+
+/** What the agent's `install-unreal` reads of a press: English, naming what to do next. */
+function forMeSays(answer: ForMeAnswer): string {
+  const version = installEngineVersion();
+  if (answer.reason === ForMeMiss.Running) return MESSAGE.ForMeRunning(answer.message);
+  if (answer.step === ForMeStep.Launcher)
+    return answer.started ? MESSAGE.ForMeLauncher(version) : MESSAGE.ForMeDownloadPage;
+  if (answer.step === ForMeStep.Engine)
+    return answer.started ? MESSAGE.ForMeEngine(version) : MESSAGE.ForMeEngineRefused(version, answer.reason ?? "");
+  if (answer.step === ForMeStep.Runtime) return answer.started ? MESSAGE.ForMeRuntime : MESSAGE.ForMeRuntimeYourself;
+  return MESSAGE.ForMeDone(version);
+}
+
+/** The step a running install shows on the card. */
+const workOf = (job: ForMeJob): ForMeWork => ({
+  step: job.kind === EpicInstallKind.Launcher ? UnrealStepId.GetLauncher : UnrealStepId.InstallRuntime,
+  message: job.message,
+});
+
 /**
  * The card the chat reads: in a game with no Unreal project, the install card while no Unreal that
- * makes games is here (or once it came, when this game's chat chose Unreal: closed, so the agent is
- * told); otherwise the Xcode card.
+ * makes games is here, or its Windows runtime is missing (or once they came, when this game's chat
+ * chose Unreal: closed, so the agent is told); otherwise the Xcode card. Do it for me shows where it
+ * can do the next step, and a stopped install is told to the agent once.
  */
-async function cardFor(deps: UnrealBackendDeps, context: PluginContext): Promise<UnrealSteps> {
+async function cardFor(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<UnrealSteps> {
   const project = await gameProject(deps, context);
   if (project || !context.project) return stepsFor(deps.env, project);
   const installed = await canMakeGames(deps);
   const { storage } = await setupOptions(deps, context);
   if (installed && !(await wantsUnreal(storage, context.project))) return stepsFor(deps.env, project);
-  const launcher = Boolean(await findLauncher(deps.env.platform, deps.launch.applications));
+  const launcher = Boolean(await findLauncher(deps.env.platform, deps.launch));
   const skipped = await stat(await skipFile(deps, context)).then(
     () => true,
     () => false,
   );
-  return unrealInstallCard({ launcher, version: installEngineVersion(), installed, skipped });
+  const canAssist = await context.host(HostService.EngineCanAssist).catch(() => false);
+  const forMe = { launcher: installsHere(deps), engine: canAssist === true, runtime: installsHere(deps) };
+  const { job } = slot;
+  const card = unrealInstallCard({
+    launcher,
+    version: installEngineVersion(),
+    installed,
+    skipped,
+    runtime: !installed || (await runtimeReady(deps)),
+    forMe,
+    ...(isRunning(job) ? { working: workOf(job) } : {}),
+  });
+  const stuck = job?.phase === EpicInstallPhase.Failed && !job.stopped;
+  return stuck ? { ...card, stuckSays: MESSAGE.ForMeStuck(job.message) } : card;
+}
+
+/** Whether a new game made here opens: an Unreal that makes games, with the Windows runtime its editor loads. */
+const readyToMake = async (deps: UnrealBackendDeps): Promise<boolean> =>
+  (await canMakeGames(deps)) && (await runtimeReady(deps));
+
+/**
+ * Refuses a new game whose editor couldn't start for want of Microsoft's runtime, before anything
+ * is made; the game's chat chose Unreal, so its strip shows the Unreal button, whose card installs it.
+ */
+async function refuseWithoutRuntime(deps: UnrealBackendDeps, context: PluginContext): Promise<void> {
+  if (await runtimeReady(deps)) return;
+  await rememberChoiceOfUnreal(deps, context);
+  throw new Error(MESSAGE.NoRuntime);
 }
 
 /** Don't use Unreal: closes the install card for this game, which tells the agent. */
@@ -1269,7 +1583,7 @@ async function skip(deps: UnrealBackendDeps, context: PluginContext): Promise<vo
  */
 async function showSteps(deps: UnrealBackendDeps, context: PluginContext): Promise<string> {
   const project = await gameProject(deps, context);
-  if (!project && context.project && !(await canMakeGames(deps))) {
+  if (!project && context.project && !(await readyToMake(deps))) {
     await rememberChoiceOfUnreal(deps, context);
     await rm(await skipFile(deps, context), { force: true });
     const shown = await context.host(HostService.EngineSteps);
@@ -1474,6 +1788,7 @@ async function newGame(deps: UnrealBackendDeps, args: Record<string, unknown>, c
   if (!gameFolderOf(context)) throw new Error(MESSAGE.NoGame);
   // Refused below for want of Unreal: the game's strip still shows the Unreal button, which gets it.
   if (!(await canMakeGames(deps))) await rememberChoiceOfUnreal(deps, context);
+  else await refuseWithoutRuntime(deps, context);
   const made = await create(deps, args, context);
   const opened = await openForUser(deps, made.project, context).then(
     () => undefined,
@@ -1594,6 +1909,7 @@ async function launchOptions(deps: UnrealBackendDeps, context: PluginContext): P
 export function createUnrealBackend(deps: UnrealBackendDeps): PluginActivation {
   // One scan of the Unreal Projects folder answers the panel's refreshes for a few seconds.
   const scanned = keepFor(SCAN_KEEP_MS, deps.launch.now, async () => scanProjectsFolder(await projectsFolder(deps)));
+  const forMe: ForMeSlot = {};
   const actions: Record<UnrealAction, ActionHandler> = {
     [UnrealAction.Status]: (args, context) => status(deps, args, context, scanned),
     [UnrealAction.Setup]: async (args, context) => setUp(projectArg(args), await setupOptions(deps, context)),
@@ -1608,8 +1924,10 @@ export function createUnrealBackend(deps: UnrealBackendDeps): PluginActivation {
     [UnrealAction.ToolbarStatus]: async (_args, context) =>
       toolbarStatus(deps.env, (await setupOptions(deps, context)).storage, deps.launch.now(), context.project),
     [UnrealAction.UseProject]: (args, context) => linkGame(deps, projectArg(args), context),
-    [UnrealAction.Steps]: async (_args, context) => cardFor(deps, context),
+    [UnrealAction.Steps]: async (_args, context) => cardFor(deps, context, forMe),
     [UnrealAction.Skip]: async (_args, context) => skip(deps, context),
+    [UnrealAction.ForMe]: (_args, context) => doItForMe(deps, context, forMe),
+    [UnrealAction.StopForMe]: async () => stopForMe(forMe),
     [UnrealAction.GetXcode]: (args) => getXcode(deps, args),
     [UnrealAction.StageStatus]: (_args, context) => stageStatus(deps, context, scanned),
     [UnrealAction.RayTracingOff]: async (args, context) =>
@@ -1631,6 +1949,7 @@ export function createUnrealBackend(deps: UnrealBackendDeps): PluginActivation {
     [UnrealTool.NewPlugin]: (args, context) => newPlugin(deps, args, context),
     [UnrealTool.WaitEditor]: (args, context) => waitEditor(deps, args, context),
     [UnrealTool.EngineStatus]: async () => readinessAnswer(engineReadiness(await findEngines(deps.env))),
+    [UnrealTool.InstallUnreal]: async (_args, context) => forMeSays(await doItForMe(deps, context, forMe)),
   };
   return {
     async action(name, args, context) {
@@ -1682,5 +2001,7 @@ export const activate: Activate = () => {
     launch: systemLaunchEnv(),
     processes: systemProcesses(env.home),
     stopped: backendStopped(),
+    install: { platform: process.platform, env: process.env, fetch, run: systemEpicRun, tempRoot: os.tmpdir() },
+    runtime: () => hasUnrealRuntime(systemFolder(process.env)),
   });
 };
