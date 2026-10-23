@@ -181,6 +181,8 @@ pub use terrain_tiles::{
     TERRAIN_HEIGHT_RANGE_DEFAULT, TERRAIN_INDEX_BYTES_MAX, TERRAIN_TILE_BYTES_MAX, TERRAIN_TILE_SAMPLES, TERRAIN_TILES_FORMAT, TERRAIN_TILES_MAX,
     TERRAIN_TILES_VERSION, TerrainTiles,
 };
+/// Named asset groups loaded during play (STR-29): `sim.stream.require`, `ready`, `release_group`.
+pub use stream_groups::{GroupHandles, STREAM_GROUP_PREFETCH_TICKS, STREAM_GROUPS_REQUIRED_MAX};
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 #[cfg(feature = "physics")]
 /// A cell's static colliders and the ledger of streamed colliders (STR-10).

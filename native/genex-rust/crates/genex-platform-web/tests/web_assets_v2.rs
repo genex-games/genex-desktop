@@ -274,3 +274,47 @@ fn the_maps_groups_reach_the_sims_reads_as_studio_boot_wires_them() {
     let runtime = genex::Runtime::with_assets(game, Box::new(source)).expect("valid game");
     assert_eq!(runtime.sim().world.outcome, ["ok", "not-preloaded"]);
 }
+
+/// A named group's members, one in another group, and a sim file (release R-9, STR-29 on the web).
+fn named_set() -> (Vec<u8>, [Vec<u8>; 3]) {
+    let (chair, room, tree) = (file(30), file(20), file(10));
+    let named = |path: &str, bytes: &[u8], name: &str| json!({"path": path, "bytes": bytes.len(), "fnv1a64": digest(bytes), "group": "named", "name": name});
+    let files = vec![
+        named("interior/chair.glb", &chair, "interior"),
+        named("interior/room.json", &room, "interior"),
+        named("forest/tree.glb", &tree, "forest"),
+        entry("levels/one.json", &file(40), "sim"),
+    ];
+    (map(2, files), [chair, room, tree])
+}
+
+#[test]
+fn a_named_group_is_wanted_whole_resident_once_every_member_arrived_and_released_together() {
+    // New behaviour (release R-9): the shell fetches what `sim.stream.require` names by group.
+    let (map, [chair, room, _]) = named_set();
+    let mut assets = WebAssets::plan(&map).expect("map").streaming_part();
+    assert!(!assets.group_resident("interior"), "nothing fetched yet");
+    assert_eq!(assets.want_group("interior").expect("a planned group"), 2, "its two members");
+    let whole = |path: &str, bytes: u64| Fetch { path: path.to_owned(), offset: 0, bytes };
+    assert_eq!(assets.take_wanted(), [whole("interior/chair.glb", 30), whole("interior/room.json", 20)], "in plan order, the other group untouched");
+    assets.admit("interior/chair.glb", chair.clone()).expect("a member");
+    assert!(!assets.group_resident("interior"), "one member is still on its way");
+    assets.admit("interior/room.json", room).expect("a member");
+    assert!(assets.group_resident("interior"), "every member arrived");
+    assert!(!assets.group_resident("forest"));
+    assets.release_group("interior").expect("a planned group");
+    assert!(!assets.group_resident("interior") && assets.get("interior/chair.glb").is_none(), "released together");
+    assert_eq!(assets.want_group("interior").expect("again"), 2, "and wanted again");
+    assets.admit("interior/chair.glb", chair).expect("arrives again");
+}
+
+#[test]
+fn an_unknown_group_is_refused_with_no_side_effect() {
+    let (map, _) = named_set();
+    let mut assets = WebAssets::plan(&map).expect("map");
+    let before = state(&assets);
+    assert_eq!(assets.want_group("attic").expect_err("no such group").code(), AssetRefusal::GroupInvalid);
+    assert_eq!(assets.release_group("attic").expect_err("no such group").code(), AssetRefusal::GroupInvalid);
+    assert!(!assets.group_resident("attic") && !assets.group_resident(""));
+    assert_eq!(state(&assets), before, "nothing planned, queued or loaded changed");
+}

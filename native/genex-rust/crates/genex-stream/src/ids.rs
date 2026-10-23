@@ -9,4 +9,9 @@ impl StreamTicket {
     pub const fn raw(self) -> u32 {
         self.0
     }
+
+    /// The ticket numbered `raw`: what the facade's named groups hand out (release R-9).
+    pub const fn from_raw(raw: u32) -> StreamTicket {
+        StreamTicket(raw)
+    }
 }

@@ -587,6 +587,17 @@ impl Assets {
         Ok(bytes)
     }
 
+    /// The bytes of `path` outside the reset window and the group rule, for the runtime's own reads
+    /// (a named group's members once resident, STR-29; the asset index): the cached bytes, else
+    /// one read through the source, kept for later seeds.
+    pub(crate) fn read_cached(&self, path: &str) -> Result<AssetBytes, AssetError> {
+        if !is_safe_asset_path(path) {
+            return Err(AssetError::new(AssetErrorCode::UnsafePath, path.to_owned()));
+        }
+        let cached = self.reads.borrow().bytes.get(path).cloned();
+        cached.map_or_else(|| self.read(path), Ok)
+    }
+
     /// Read `path` from the source once and keep it for later seeds.
     fn read(&self, path: &str) -> Result<AssetBytes, AssetError> {
         let bytes = self.source.read(path)?;

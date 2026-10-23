@@ -486,6 +486,53 @@ impl WebAssets {
         Ok(())
     }
 
+    /// The planned members of the named group `name` (`genex.toml`'s `[[asset_group]]`), in plan
+    /// order; `asset-group-invalid` when the map plans none.
+    fn members(&self, name: &str) -> Result<Vec<String>, AssetError> {
+        let members: Vec<String> =
+            self.planned.iter().filter(|asset| asset.group == AssetGroup::Named && asset.name.as_deref() == Some(name)).map(|asset| asset.path.clone()).collect();
+        if members.is_empty() {
+            return Err(AssetError::new(AssetRefusal::GroupInvalid, format!("no named group {name:?} in the map")));
+        }
+        Ok(members)
+    }
+
+    /// Queue the fetches every member of the named group `name` still needs (release R-9: what
+    /// `sim.stream.require` names); answers how many members it has. A group the map does not plan
+    /// is refused `asset-group-invalid` and nothing is queued.
+    pub fn want_group(&mut self, name: &str) -> Result<usize, AssetError> {
+        let members = self.members(name)?;
+        for path in &members {
+            self.want(path)?;
+        }
+        Ok(members.len())
+    }
+
+    /// Whether every member of the named group `name` has all its bytes admitted (false for a group
+    /// the map does not plan): the tick a group is due on waits for this.
+    pub fn group_resident(&self, name: &str) -> bool {
+        let Ok(members) = self.members(name) else { return false };
+        members.iter().all(|path| self.resident(path))
+    }
+
+    /// Drop every member's admitted bytes and queued fetches (`sim.stream.release_group`), so the
+    /// group can be wanted again. A group the map does not plan is refused `asset-group-invalid`.
+    pub fn release_group(&mut self, name: &str) -> Result<(), AssetError> {
+        for path in self.members(name)? {
+            self.release(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Whether `path` has all its bytes admitted: the whole file, or every planned range.
+    fn resident(&self, path: &str) -> bool {
+        let Ok(planned) = self.find(path) else { return false };
+        if planned.ranges.is_empty() {
+            return self.get(path).is_some();
+        }
+        planned.ranges.iter().all(|range| self.range(path, range.offset).is_some())
+    }
+
     /// What stays with the shell once the preloaded files moved to the game at boot: the plan of
     /// the streamed and named files, with nothing admitted or queued.
     pub fn streaming_part(&self) -> WebAssets {
