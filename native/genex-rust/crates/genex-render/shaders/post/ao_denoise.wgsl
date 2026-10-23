@@ -400,5 +400,14 @@ fn fs_ao_temporal(in: AoOut) -> @location(0) vec4<f32> {
             term = vec4<f32>(select(term.xyz, normalize(blended), dot(blended, blended) > 1e-8), term.w);
         }
     }
+    if gx_ao_gi() && gx_ao.history.x > 0.0 {
+        // A frame that blends history found none here (a disocclusion): the least light the
+        // window's estimates gathered, not their mean, and the history builds it up from there
+        // (release R-13, D9/D12). The mean of one frame's raw window lit a newly revealed pixel of
+        // a shadowed trunk with the meadow's green for one frame, and the next frame's clamp took
+        // it away again: the Lakeside's ultra dolly popped 2 px under the shadows (0 with this).
+        // A settled capture's first frame blends none (`history.x` 0) and keeps the mean.
+        term = vec4<f32>(window.light_low, term.w);
+    }
     return gx_ao_encode(term);
 }

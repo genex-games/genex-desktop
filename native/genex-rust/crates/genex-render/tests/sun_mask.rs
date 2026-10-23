@@ -336,7 +336,7 @@ fn the_fence_scene_draws_soft_shadows_at_high_and_ultra_and_static_pcf_at_medium
     use genex_render::settings::ShadowFilter;
     assert_eq!(quality(QualityPreset::High, true).shadows.filter, ShadowFilter::PcssLite);
     assert_eq!(quality(QualityPreset::Ultra, true).shadows.filter, ShadowFilter::Pcss);
-    assert_eq!(quality(QualityPreset::Medium, true).shadows.filter, ShadowFilter::Pcf3x3);
+    assert_eq!(quality(QualityPreset::Medium, true).shadows.filter, ShadowFilter::Pcf5x5);
     assert_eq!(quality(QualityPreset::Medium, true).anti_aliasing, AntiAliasing::Msaa4);
     assert!(quality(QualityPreset::High, true).anti_aliasing.temporal());
     assert!(!quality(QualityPreset::High, false).shadows.enabled && !quality(QualityPreset::High, false).contact_shadows);

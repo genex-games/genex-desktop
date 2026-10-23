@@ -58,9 +58,16 @@ pub const MOBILE_LOW_PRESET_SHADOW_MAP_PX: u32 = 768;
 /// Far cascades redraw every this many frames on phones and the low tier (the nearest cascade
 /// draws every frame), once there is more than one cascade.
 pub const CHEAP_CLASS_FAR_CADENCE: u8 = 2;
-/// The farthest a phone draws the sun's shadows, world units, whatever the preset or the request
-/// (the legacy reach: 50 units measured +0.03 ms GPU p95 on the mobile-high proxy, at its line).
+/// The farthest a mid or low tier phone draws the sun's shadows, world units, whatever the preset
+/// or the request (the legacy reach: 50 units measured +0.03 ms GPU p95 on the mobile-high proxy,
+/// at its line).
 pub const MOBILE_MAX_SHADOW_DISTANCE_M: u16 = 40;
+/// The farthest a high or ultra tier phone draws the sun's shadows, world units: desktop `high`'s
+/// reach (release R-13), so each preset keeps its own row there (`medium` 50 units, its default;
+/// `high` and `ultra` 80). At 40 units an elevated game camera saw its near houses and trees past
+/// the reach or inside the end fade on mobile-high (frontier, stream-valley). Raising the default
+/// `medium` to 80 cost the mobile-high proxy about 1.5 ms GPU p95, so it stays the preset's.
+pub const MOBILE_HIGH_SHADOW_DISTANCE_M: u16 = HIGH_REACH.distance;
 
 /// The shadow row of each preset (plan §2.4, RQ3 review): how far the shadows reach (world units),
 /// the split's logarithmic weight (a longer reach leans more logarithmic, so the nearest cascade
@@ -479,10 +486,11 @@ fn low_row(quality: &mut Quality, form: FormFactor) {
     // more depth pass (the far one redraws every other frame on the low tier and phones,
     // `cap_shadows`). A phone's two are [`MOBILE_LOW_PRESET_SHADOW_MAP_PX`] (the weakest phone's
     // [`MOBILE_LOW_SHADOW_MAP_PX`]).
-    // Desktops filter 3x3 (one hardware tap stair-steps the texels, for about 0.1 ms at 1080p);
-    // phones keep the one tap.
+    // Desktops filter 5x5 (one hardware tap stair-steps the texels, for about 0.1 ms at 1080p, and
+    // 3x3 left a straight edge 0.37 texels off its line, D22; the 5x5 reads nine gathers where
+    // 3x3 read nine taps); phones keep the one tap.
     let (filter, map_size) = match form {
-        FormFactor::Desktop => (ShadowFilter::Pcf3x3, 1024),
+        FormFactor::Desktop => (ShadowFilter::Pcf5x5, 1024),
         FormFactor::Mobile => (ShadowFilter::Hardware2x2, MOBILE_LOW_PRESET_SHADOW_MAP_PX),
     };
     quality.shadows = shadows(2, map_size, filter, ShadowFormat::Depth16, &LOW_REACH);
@@ -501,7 +509,9 @@ fn medium_row(quality: &mut Quality) {
     quality.environment.clouds = Some(crate::clouds::MEDIUM_GRID);
     quality.environment.reflection_probes = PROBES_PER_PRESET[1];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[1];
-    quality.shadows = shadows(2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth32, &MEDIUM_REACH);
+    // 5x5 PCF (release R-13, D22): 3x3 drew a straight edge's texel staircase (0.37 texels off its
+    // line against 0.16) for the same nine reads.
+    quality.shadows = shadows(2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth32, &MEDIUM_REACH);
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 1, steps: 4, temporal: false };
     quality.lights = lights(256, 32, 0);
@@ -543,10 +553,12 @@ fn high_row(quality: &mut Quality) {
 
 fn ultra_row(quality: &mut Quality, form: FormFactor) {
     high_row(quality);
-    quality.anti_aliasing = AntiAliasing::TaaSharpen;
-    // RCAS after TAA at scale 1 sharpens gently (RQ5 review: at the 0.2-stop default it doubled
-    // the high-frequency energy of flat regions; noise detection is on as everywhere).
-    quality.rcas = quality.rcas.with_sharpness(TAA_SHARPEN_RCAS_SHARPNESS);
+    // Plain TAA, as `high` (release R-13, D9/D12): RCAS after TAA at scale 1 (`TaaSharpen`, 0.75
+    // stops) lifted sub-pixel canopy specks under the shadows past the pop threshold for one frame
+    // (the Lakeside's ultra pan and orbit rows: 1 and 2 px; 0 without it, and at 1.25 stops still
+    // 1), and the RQ5 review had already found it turning the noise TAA cannot integrate into
+    // grain. A game may still ask for `TaaSharpen`.
+    quality.anti_aliasing = AntiAliasing::Taa;
     // Sixteen jitter positions (plan §2.7): a settled capture on ultra re-renders sixteen times.
     quality.taa = quality.taa.with_jitter_cycle(JitterCycle::Sixteen);
     // An HDR map's detail is worth a 512 px cube on ultra (plan §2.4); the smooth sky is not.
@@ -650,16 +662,17 @@ fn drop_second_geometry_pass(quality: &mut Quality) {
 }
 
 /// The shadow caps of `class` (plan §2.4), for any preset and any request: phones draw at most 2
-/// cascades of 1536 px with no PCSS (the weakest phone class 512 px ones) up to
-/// [`MOBILE_MAX_SHADOW_DISTANCE_M`]; phones and the low tier draw `Depth16Unorm` cascades and
-/// redraw far cascades every [`CHEAP_CLASS_FAR_CADENCE`]th frame. Desktop ultra, high and mid keep
+/// cascades of 1536 px with 5x5 PCF in place of PCSS (the weakest phone class 512 px ones) up to
+/// [`MOBILE_MAX_SHADOW_DISTANCE_M`] ([`MOBILE_HIGH_SHADOW_DISTANCE_M`] on the high and ultra
+/// tiers); phones and the low tier draw `Depth16Unorm` cascades and redraw far cascades every
+/// [`CHEAP_CLASS_FAR_CADENCE`]th frame. Desktop ultra, high and mid keep
 /// `Depth32` and every-frame cascades.
 pub fn cap_shadows(shadows: &mut ShadowQuality, class: DeviceClass) {
     let mobile = class.form == FormFactor::Mobile;
     if mobile {
-        shadows.distance = shadows.distance.min(MOBILE_MAX_SHADOW_DISTANCE_M);
+        shadows.distance = shadows.distance.min(mobile_shadow_distance_max(class));
         if matches!(shadows.filter, ShadowFilter::Pcss | ShadowFilter::PcssLite) {
-            shadows.filter = ShadowFilter::Pcf3x3;
+            shadows.filter = ShadowFilter::Pcf5x5;
         }
         shadows.cascades = shadows.cascades.min(MOBILE_MAX_SHADOW_CASCADES);
         shadows.map_size = shadows.map_size.min(MOBILE_MAX_SHADOW_MAP_PX);
@@ -673,6 +686,12 @@ pub fn cap_shadows(shadows: &mut ShadowQuality, class: DeviceClass) {
             shadows.far_cadence = shadows.far_cadence.max(CHEAP_CLASS_FAR_CADENCE);
         }
     }
+}
+
+/// The farthest `class`, a phone, draws the sun's shadows, world units: a high or ultra tier
+/// phone [`MOBILE_HIGH_SHADOW_DISTANCE_M`], the others [`MOBILE_MAX_SHADOW_DISTANCE_M`].
+fn mobile_shadow_distance_max(class: DeviceClass) -> u16 {
+    if class.tier >= PerformanceTier::High { MOBILE_HIGH_SHADOW_DISTANCE_M } else { MOBILE_MAX_SHADOW_DISTANCE_M }
 }
 
 /// The local-light caps of `class` (plan §2.4, RQ6 review), for any preset and any request: with
