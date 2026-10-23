@@ -616,6 +616,47 @@ describe("Quaternius' download host (owner call AN-21)", () => {
     await nothingWritten(host);
   });
 
+  it("delivers a curated row pinned on it by its sha256, and refuses one off the curated hosts", async () => {
+    const glb = encode("glTF-the-universal-animation-library");
+    const url = "https://opengameart.org/sites/default/files/UAL_Standard.glb";
+    const row = (at: string): CuratedManifest => ({
+      assets: [
+        {
+          id: "quaternius-ual",
+          kind: "model",
+          licence: "CC0-1.0",
+          page: "https://opengameart.org/content/universal-animation-library",
+          authors: ["Quaternius"],
+          files: [{ name: "UAL_Standard.glb", url: at, bytes: glb.byteLength, sha256: sha256(glb), map: "model" }],
+        },
+      ],
+      held: [],
+    });
+    const host = await fakeHost();
+    const { net } = stubNet({}, { [url]: glb });
+    const result = await call(
+      createCc0Plugin({ net, curated: row(url) }),
+      Cc0Tool.Fetch,
+      { source: "curated", id: "quaternius-ual" },
+      host.ctx,
+    );
+    const [only] = result.files as Array<{ sha256: string }>;
+    assert.equal(only?.sha256, sha256(glb));
+    const elsewhere = await fakeHost();
+    const off = stubNet({}, {});
+    await assert.rejects(
+      call(
+        createCc0Plugin({ net: off.net, curated: row("https://evil.example/UAL_Standard.glb") }),
+        Cc0Tool.Fetch,
+        { source: "curated", id: "quaternius-ual" },
+        elsewhere.ctx,
+      ),
+      /host-not-allowed/,
+    );
+    assert.deepEqual(off.asked, []);
+    await nothingWritten(elsewhere);
+  });
+
   it("is declared in the plugin's network hosts", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(path.join(PLUGIN_DIR, "plugin.json"), "utf8")));
     assert.ok(manifest.network?.hosts.includes("opengameart.org"));

@@ -2,8 +2,9 @@
  * CC0 assets fetched by sha256: renderer pass 2's showcase fetch rules (owner decision D6) as one
  * module, so `scripts/showcase-assets.ts` and a game-facing CC0 library share them.
  *
- * - A URL is https on an allowlisted CC0 host (Poly Haven's and ambientCG's download servers), with
- *   no credentials, port or redirect.
+ * - A URL is https on an allowlisted CC0 host (Poly Haven's and ambientCG's download servers, and
+ *   OpenGameArt's file store, where Quaternius publishes CC0 packs), with no credentials, port or
+ *   redirect.
  * - An asset is CC0-1.0, and every asset id, file name and zip member name is a plain name.
  * - A download is checked against its manifest size, then its md5 where the source publishes one,
  *   then its sha256 pin (recorded only on an explicit pin), and only then written: beside its
@@ -29,8 +30,12 @@ export const ZIP_MAX_EXPANDED_BYTES = 1024 * 1024 * 1024;
 /** How much compressed data one inflate step reads, so a bomb is stopped within one step's output. */
 const INFLATE_STEP_BYTES = 16 * 1024;
 
-/** The hosts a manifest URL may name: Poly Haven's and ambientCG's official download servers. */
-export const ALLOWED_HOSTS: ReadonlySet<string> = new Set(["dl.polyhaven.org", "ambientcg.com"]);
+/**
+ * The hosts a manifest URL may name: Poly Haven's and ambientCG's official download servers, and
+ * OpenGameArt's file store for Quaternius' CC0 packs (owner call AN-21). OpenGameArt also hosts
+ * other licences: only a reviewed row, pinned by sha256, names it.
+ */
+export const ALLOWED_HOSTS: ReadonlySet<string> = new Set(["dl.polyhaven.org", "ambientcg.com", "opengameart.org"]);
 /** The only licence a fetched asset may carry. */
 export const CC0 = "CC0-1.0";
 /** A plain file or folder name: no separators, no `.` or `..`, no leading dot. */

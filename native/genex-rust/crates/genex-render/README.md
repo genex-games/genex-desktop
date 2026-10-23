@@ -648,8 +648,8 @@ On the frame it is graph node 17 under `Quality::taau` (`high` and `ultra`): a T
 depth key the convert's disocclusion test reads, so the step keeps the history; a step back to
 scale 1 starts TAA over), the jitter
 and mip bias follow `taau::frame_jitter` and `taau::frame_texture_lod_bias`, exposure, bloom and the
-tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (ultra's RCAS
-does, at output size) and a settled capture re-renders one cycle of its phases (within the wire's
+tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (nor RCAS, unless
+a game asks for `TaaSharpen`) and a settled capture re-renders one cycle of its phases (within the wire's
 16). A frame whose depth of field, motion blur or `post-hdr` passes read the scene at render size
 keeps TAA at render size and EASU. At scale 1 nothing changes. `tests/frame_hooks.rs` holds 4K from
 0.67 within 10% of native 4K's sharpness (TAA then EASU kept 0.89 of it).

@@ -4056,6 +4056,11 @@ impl Renderer {
             if self.taa.get_mut().is_none() {
                 *self.taa.get_mut() = Some(TaaHistories::on_device(&self.device, &self.queue)?);
             }
+            // TAAU's pipelines compile with TAA's (R-20): a dynamic-resolution step below scale 1
+            // then compiles nothing on the frame thread.
+            if self.quality.taau && path.hdr && let Some(histories) = self.taa.get_mut().as_mut() {
+                histories.upscale_on(&self.device, &self.queue, HistorySet::Live)?;
+            }
             if self.reactive.as_ref().is_none_or(|reactive| reactive.reversed != path.depth_reversed) {
                 // One node (one jitter group layout) for the session; its pipeline per convention.
                 let node = match self.reactive.take() {

@@ -21,7 +21,7 @@ use genex_core::digest::hex64;
 use genex_core::input::{PAD_BUTTONS, TickInput as CoreTick};
 use genex_core::json::Value as CoreValue;
 use genex_core::saves::Saves;
-use genex_input::glyph::{KeyLabels, action_glyph, hint};
+use genex_input::glyph::{KeyLabels, action_glyph_with, hint};
 use genex_input::panel::{ControlsChange, ControlsPanel, ControlsView};
 use genex_input::state::{ActionState, Devices, evaluate_with};
 use glam::Vec2;
@@ -98,13 +98,15 @@ pub struct Actions {
     family: PadFamily,
     labels: KeyLabels,
     free: Vec<Touch>,
+    /// The game's on-screen layout, which names its controls' prompts.
+    touch: Option<TouchControls>,
 }
 
 impl Default for Actions {
     fn default() -> Actions {
         let map = ActionMap::new();
         let state = ActionState::new(&map);
-        Actions { map, state, family: PadFamily::Generic, labels: KeyLabels::new(), free: Vec::new() }
+        Actions { map, state, family: PadFamily::Generic, labels: KeyLabels::new(), free: Vec::new(), touch: None }
     }
 }
 
@@ -153,7 +155,7 @@ impl Actions {
     /// The prompt for `action` on the device in use ("Space", "Cross"): display text, never part of
     /// the simulation.
     pub fn glyph(&self, action: ActionId) -> Glyph {
-        action_glyph(&self.map, action, self.device_with_family(), &self.labels)
+        action_glyph_with(&self.map, action, self.device_with_family(), &self.labels, self.touch.as_ref())
     }
 
     /// Whether `context` is on this tick.
@@ -241,6 +243,11 @@ impl State {
         self.saved = map.digest();
         self.actions.state = ActionState::new(&map);
         self.actions.map = map;
+    }
+
+    /// The game's on-screen layout (`game.touch_controls`), for the touch prompts.
+    pub(crate) fn set_touch(&mut self, layout: Option<&TouchControls>) {
+        self.actions.touch = layout.cloned();
     }
 
     /// Whether `game.input` is registered.

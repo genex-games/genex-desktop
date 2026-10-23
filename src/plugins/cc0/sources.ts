@@ -6,7 +6,7 @@
  */
 import { Cc0Error, Cc0Refusal, CC0, checkedName } from "../../substrate/cc0-fetch.ts";
 import { CURATED, type CuratedManifest } from "./curated.ts";
-import { type Cc0Net, checkedHost, DOWNLOAD_HOSTS } from "./net.ts";
+import { type Cc0Net, checkedHost, DOWNLOAD_HOSTS, FETCH_HOSTS } from "./net.ts";
 
 /** Where a fetch comes from. Wire values: the tools' `source` argument. */
 export const Cc0Source = { PolyHaven: "polyhaven", AmbientCg: "ambientcg", Curated: "curated" } as const;
@@ -280,7 +280,7 @@ function curatedPlan(request: Cc0Request, manifest: CuratedManifest): FetchPlan 
   if (!asset) throw invalid(`${request.id}: no curated pack has this id`);
   if (asset.licence !== CC0) throw new Cc0Error(Cc0Refusal.NotCc0, `${asset.id}: ${asset.licence}`);
   const files = asset.files.map((entry) => {
-    checkedHost(entry.url, DOWNLOAD_HOSTS);
+    checkedHost(entry.url, FETCH_HOSTS);
     return { name: checkedName(entry.name), url: entry.url, bytes: entry.bytes, sha256: entry.sha256, map: entry.map };
   });
   const kind = Object.values(Cc0Kind).find((value) => value === asset.kind) ?? Cc0Kind.Model;

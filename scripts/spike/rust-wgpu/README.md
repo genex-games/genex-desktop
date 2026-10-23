@@ -23,7 +23,9 @@ script's header names the work package that replaces it.
   `perf/baseline.json` under the renderer evidence folder (a developer's quick check), runs the
   interleaved A/B against saved executables (`--ab`, `--save-bin`) and prints feature costs against the
   plan's budgets. The gate is the A/B: `off` p95 within 1.10x of the saved `rq0-head` executable on the
-  bench and stress scenes, judged on the median of 5 interleaved runs (Lakeside rows informational). Its
+  bench and stress scenes, judged on the median of 5 interleaved runs (Lakeside rows informational
+  unless the saved side's `SOURCE_SHA` descends from the Lakeside v2 commit; the saved side is named
+  from its folder, never from the checkout it runs in). Its
   rows, including the real-GPU gate under `GENEX_REQUIRE_METAL=1`, are
   `tests/conformance/render-perf-gate.test.ts`.
 - `web-showcase.sh` packages Lakeside for the web as a web export is built (the lane's size

@@ -226,7 +226,7 @@ pub const ANIMATION_CALLS: [&str; 86] = [
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
 /// active set, the commit, scatter rules and the tiles' readers the page teaches, pinned at gate GI).
-pub const STREAM_CALLS: [&str; 53] = [
+pub const STREAM_CALLS: [&str; 69] = [
     "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
     "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
     "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
@@ -236,6 +236,7 @@ pub const STREAM_CALLS: [&str; 53] = [
     "cell.refused", "Scatter::new", ".with_scale", ".following_ground", "sim.stream.active", "sim.stream.is_active",
     "sim.stream.kept", "game.stream_commit", ".cell_size", ".samples", ".is_procedural", ".authored_cells",
     ".tile_heights", ".tile", ".collider", ".cell_colliders",
+    "CellPacks::from_table", "CellPacks::read", "packs.cell", "packs.cells", "packs.world", "packs.digest", "digest::fnv1a64", "digest::fnv1a64_from", "digest::hex64", "sim.stream.require", "sim.stream.ready", "sim.stream.group_refusal", "sim.stream.release_group", "sim.stream.required_groups", "handles.bytes", "handles.paths",
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
 /// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14; tiles, triangle input,
@@ -254,12 +255,12 @@ pub const NAV_CALLS: [&str; 64] = [
     "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
 ];
 /// The input calls of the facade (IN-11, IN-12).
-pub const INPUT_CALLS: [&str; 31] = [
+pub const INPUT_CALLS: [&str; 32] = [
     "game.input", "game.touch_controls", "ActionMap::new", ".context", "Context::new", ".button", ".axis1", ".axis2",
     ".when", ".modify", ".pass_through", ".starts_off", "ctx.actions.down", "ctx.actions.pressed",
     "ctx.actions.released", "ctx.actions.fired", "ctx.actions.value", "ctx.actions.axis2", "ctx.actions.held_ticks",
     "ctx.actions.device", "ctx.actions.glyph", "ctx.actions.is_on", "ctx.actions.enable", "ctx.actions.disable",
-    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel", "glyph_ui",
+    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".label", ".show", "controls_panel", "glyph_ui",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling and `.triangle_count` counts a model's triangles.

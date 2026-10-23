@@ -141,8 +141,8 @@ Sun shadows are a row of the preset table, per device class, drawn as listed (th
 
 | preset | cascades x side | filter | depth, far cascades | reach | cascade blend, end fade |
 | --- | --- | --- | --- | --- | --- |
-| `low` | 2 x 1024 (phones: 2 x 768) | PCF 3x3 (phones: hardware 2x2) | 16-bit, every frame | 50 units | none, last 15 % |
-| `medium` | 2 x 1536 | PCF 3x3 | 32-bit, every frame | 50 units | 10 %, last 10 % |
+| `low` | 2 x 1024 (phones: 2 x 768) | PCF 5x5 (phones: hardware 2x2) | 16-bit, every frame | 50 units | none, last 15 % |
+| `medium` | 2 x 1536 | PCF 5x5 | 32-bit, every frame | 50 units | 10 %, last 10 % |
 | `high` | 3 x 2048 | PCSS-lite (soft contact shadows) | 32-bit, every frame | 80 units | 10 %, last 10 % |
 | `ultra` | 4 x 4096 | PCSS | 32-bit, every frame | 80 units | 10 %, last 10 % |
 
@@ -152,8 +152,12 @@ moves: the band lerps both cascades on every frame, PCSS finds the same blockers
 and the depth bias is one world-space distance per cascade, so a contact gap never changes size as
 other objects come into view. At `high` and `ultra` under TAA an opaque surface's soft sun shadow
 comes from a screen mask that averages PCSS over frames and filters it edge-aware, so a penumbra
-holds still on a pan; transparent surfaces filter inline. Phones are held to 2 cascades of at
-most 1536 px, no PCSS, 16-bit depth and 40 units, and the far cascade redraws every second frame
+holds still on a pan; transparent surfaces filter inline. A contact shadow's edge (PCSS's
+narrowest kernel, three texels) runs straight across the shadow map's texels instead of following
+their staircase. Phones are held to 2 cascades of at most 1536 px, 5x5 PCF in place of PCSS,
+16-bit depth and 40 units (on the high and ultra phone classes each preset's own reach up to 80
+units: `medium` 50, `high` and `ultra` 80, and a game may ask for up to 80), and the far cascade
+redraws every second frame
 (and on every frame something in it moves, so a walking character's shadow never steps at half
 rate); the weakest phone class draws 512 px cascades. A Live frame does not redraw a shadow map
 whose objects all stood still for a few frames (a mesh counts as still when every instance does);

@@ -446,6 +446,7 @@ impl<W: Default + 'static> Runtime<W> {
         let mut runtime = Runtime { game, core };
         // The player's bindings are read once, before the first seed (IN-11).
         runtime.core.g6.input.install(&runtime.game.g6.input, runtime.core.gfx.saves(), studio_run());
+        runtime.core.g6.input.set_touch(runtime.game.g6.touch.layout());
         // And the person's UI layer (locale), which a Genex run ignores (UIS-10).
         runtime.core.g6.ui.rebase(&runtime.game.g6.ui, runtime.core.gfx.saves(), studio_run());
         // Then the settings menu's (UIS-11), which routes the person's volumes and UI layer.

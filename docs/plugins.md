@@ -3445,9 +3445,11 @@ A refusal is the fetch core's typed code (`host-not-allowed`, `hash-mismatch`, â
 in the error text as `cc0 <code>: <detail>`. Every request names `Genex-CC0/<version>` in its
 User-Agent, as Poly Haven's API terms ask, and Poly Haven's live results carry
 `credit: "Powered by Poly Haven"`, which the plugin's panel shows under its search results.
-`source: "curated"` fetches a sha256-pinned pack from `curated.ts`; packs that cannot be fetched
-under the rules yet are listed as held with a typed reason (`no-stable-host`: Quaternius's itch.io
-links are signed per download; `zip-nested`: Kenney's kits nest their files in folders).
+`source: "curated"` fetches a sha256-pinned pack from `curated.ts`. A curated row may also name a
+curated host, `opengameart.org`, where Quaternius publishes the Universal Animation Library as CC0;
+an API answer never reaches it. Packs that cannot be fetched under the rules yet are listed as held
+with a typed reason (`unpinned`: the host is allowed but the pack's sha256 is not recorded yet;
+`zip-nested`: Kenney's kits nest their files in folders).
 
 ## Deferred work
 
