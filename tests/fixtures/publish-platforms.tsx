@@ -38,7 +38,7 @@ async function settle(frames = 10) {
 }
 
 /** What the game folder holds in each scene, and how its last Publish's apps went (`apps*`). */
-type Scene = "engine" | "stale" | "web" | "apps" | "appsSending" | "appsSent" | "appsFailed" | "appsOnly" | "appsHeld" | "unityNoApp" | "unitySoon" | "unityOldPlugin" | "unreal" | "unrealCloud" | "unrealBuilding";
+type Scene = "engine" | "stale" | "web" | "apps" | "appsSending" | "appsSent" | "appsFailed" | "appsOnly" | "appsHeld" | "unityNoApp" | "unitySoon" | "unityOldPlugin" | "unreal" | "unrealCloud" | "unrealBuilding" | "unrealWindows";
 
 const web = (uploads: boolean): PublishPlatform => ({
   target: PublishTarget.Web,
@@ -91,6 +91,8 @@ const SCENES: Record<Scene, () => PublishPlatform[]> = {
   // A Mac's Unreal game whose Windows app Genex can build: offered, then building.
   unrealCloud: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
   unrealBuilding: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
+  // On Windows: no Mac app, and the Linux app the agent packages here with Epic's toolchain.
+  unrealWindows: () => [web(false), mac(PublishPlatformState.Missing), windows, linux()],
 };
 
 /** The publish record's apps in each scene: none sent yet, going now, on Genex, or refused. */
@@ -201,7 +203,8 @@ const engineOf = (fact: CoreFact) => ({
 });
 
 /** Open the dialog in `theme` on the scene's game: made in an engine unless the scene is a web game. */
-async function open(options: { theme?: "dark" | "light"; scene?: Scene } = {}) {
+async function open(options: { theme?: "dark" | "light"; scene?: Scene; platform?: string } = {}) {
+  document.documentElement.dataset.platform = options.platform ?? "darwin";
   const mode = options.theme === "light" ? AppearanceMode.Light : AppearanceMode.Dark;
   updateAppearance((appearance) => ({ ...appearance, mode }));
   scene = options.scene ?? "engine";

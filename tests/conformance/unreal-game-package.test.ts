@@ -11,6 +11,8 @@ import { describe, it } from "node:test";
 import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
 import {
   buildCookRunArgs,
+  linuxToolchainFor,
+  PackageSystem,
   createGamePackageTools,
   type GamePackageDeps,
   GamePackageState,
@@ -40,12 +42,18 @@ const contextIn = (game: string): PluginContext =>
   ({ project: "dust", directory: game, host: async () => undefined }) as unknown as PluginContext;
 
 /** Deps over a project, an editor that answers or not, and a RunUAT the test scripts; every launch and save recorded. */
-function depsFor(project: string, runUat: RunUat, options: { answers?: boolean; saved?: boolean } = {}) {
+function depsFor(
+  project: string,
+  runUat: RunUat,
+  options: { answers?: boolean; saved?: boolean; platform?: NodeJS.Platform; toolchain?: string } = {},
+) {
   const launches: string[][] = [];
+  const envs: Array<Record<string, string> | undefined> = [];
   const saves: string[] = [];
   const deps: GamePackageDeps = {
-    platform: "darwin",
+    platform: options.platform ?? "darwin",
     engine: async () => ({ version: "5.8", directory: ENGINE }),
+    linuxToolchain: async () => options.toolchain,
     project: async () => project,
     xcode: async () => ({ state: XcodeState.Ready }),
     editorAnswers: async () => options.answers ?? false,
@@ -56,10 +64,11 @@ function depsFor(project: string, runUat: RunUat, options: { answers?: boolean; 
     now: () => 0,
     runUat: async (launch, run) => {
       launches.push([launch.file, ...launch.args]);
+      envs.push(launch.env);
       return runUat(launch, run);
     },
   };
-  return { deps, launches, saves };
+  return { deps, launches, saves, envs };
 }
 
 /** `package-status` until the job is no longer running. */
@@ -247,5 +256,122 @@ describe("packaging an Unreal game", () => {
       packageErrors("Result: Success - 0 error(s)\nall good\ndone", (t) => t),
       ["Result: Success - 0 error(s)", "all good", "done"],
     );
+  });
+});
+
+/** The folder Epic's installer makes for Unreal 5.7 and 5.8's Linux cross-compile toolchain, in `root`. */
+async function toolchainIn(root: string, name = "v26_clang-20.1.8-rockylinux8"): Promise<string> {
+  const dir = path.join(root, "UnrealToolchains", name);
+  await mkdir(path.join(dir, "x86_64-unknown-linux-gnu"), { recursive: true });
+  return dir;
+}
+
+/** A RunUAT stand-in that stages a Linux package of Dust: its starter script and its program. */
+const stagesLinux: RunUat = async (launch) => {
+  // On Windows the arguments are one cmd.exe line, each path whole in quotes.
+  const line = launch.args.join(" ");
+  const found = /-stagingdirectory=(?:"([^"]+)"|(\S+))/.exec(line);
+  const staging = found?.[1] ?? found?.[2] ?? "";
+  const linux = path.join(staging, "Linux");
+  await mkdir(path.join(linux, "Dust", "Binaries", "Linux"), { recursive: true });
+  await writeFile(path.join(linux, "Dust.sh"), "#!/bin/sh");
+  await writeFile(path.join(linux, "Dust", "Binaries", "Linux", "Dust-Linux-Shipping"), "\x7fELF");
+  return { code: 0, output: PACKAGED, timedOut: false };
+};
+
+describe("packaging an Unreal game for Linux on Windows", () => {
+  it("asks BuildCookRun for Linux, cooked by Windows' own editor, only from Windows", () => {
+    const windows = {
+      projectFile: "C:\\Games\\Dust\\unreal\\Dust.uproject",
+      stagingDir: "C:\\Games\\Dust\\unreal\\Builds",
+      engineDir: "C:\\Program Files\\Epic Games\\UE_5.8",
+      platform: "win32" as const,
+    };
+    const linux = buildCookRunArgs({ ...windows, system: PackageSystem.Linux });
+    assert.ok(linux.includes("-platform=Linux"));
+    assert.ok(
+      linux.includes("-unrealexe=C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe"),
+    );
+    assert.ok(buildCookRunArgs(windows).includes("-platform=Win64"), "Windows' own app stays the default");
+    const mac = { projectFile: "/p", stagingDir: "/a", engineDir: ENGINE, platform: "darwin" as const };
+    assert.throws(() => buildCookRunArgs({ ...mac, system: PackageSystem.Linux }), /can't package/);
+    assert.throws(() => buildCookRunArgs({ ...windows, system: PackageSystem.Mac }), /can't package/);
+  });
+
+  it("knows Epic's Linux toolchain for each Unreal Genex makes games with", () => {
+    for (const version of ["5.7", "5.8"])
+      assert.deepEqual(linuxToolchainFor(version), {
+        name: "v26_clang-20.1.8-rockylinux8",
+        url: "https://cdn.unrealengine.com/CrossToolchain_Linux/v26_clang-20.1.8-rockylinux8.exe",
+      });
+    for (const version of ["5.9", "4.27", "", "5.8.1"]) assert.equal(linuxToolchainFor(version), null, version);
+  });
+
+  it("packages the Linux app with the toolchain handed to RunUAT, staged where Publish looks", async () => {
+    const { game, project } = await gameWithProject();
+    const toolchain = await toolchainIn(await tmpDir("toolchain-"));
+    const { deps, launches, envs } = depsFor(project, stagesLinux, { platform: "win32", toolchain });
+    const tools = createGamePackageTools(deps);
+    const context = contextIn(game);
+    const linux = { system: PackageSystem.Linux };
+    assert.deepEqual(await tools.handlers["package-game"](linux, context, "/s"), { started: true, system: "Linux" });
+    const done = await settled(() => tools.handlers["package-status"](linux, context, "/s"));
+    assert.equal(done.state, GamePackageState.Done, done.line);
+    assert.equal(done.app, "unreal/Builds/Linux/Dust.sh");
+    assert.ok(launches[0]?.some((arg) => arg.includes("-platform=Linux")));
+    assert.deepEqual(envs, [{ LINUX_MULTIARCH_ROOT: toolchain }], "RunUAT finds the toolchain the installer set");
+    const idle = await createGamePackageTools(deps).handlers["package-status"](linux, context, "/s");
+    assert.deepEqual(idle, { state: GamePackageState.Idle, system: "Linux", app: "unreal/Builds/Linux/Dust.sh" });
+    const own = await createGamePackageTools(deps).handlers["package-status"]({}, context, "/s");
+    assert.deepEqual(own, { state: GamePackageState.Idle, system: "Windows" }, "Windows' own build folder is apart");
+  });
+
+  it("refuses a system this computer can't make, and a toolchain that isn't the right one, packaging nothing", async () => {
+    const { game, project } = await gameWithProject();
+    const root = await tmpDir("toolchain-");
+    const right = await toolchainIn(root);
+    const older = await toolchainIn(root, "v25_clang-18.1.0-rockylinux8");
+    const link = path.join(root, "linked");
+    await symlink(right, link);
+    const context = contextIn(game);
+    const cases: Array<[string, { platform: NodeJS.Platform; toolchain?: string }, Record<string, unknown>, RegExp]> = [
+      ["Linux on a Mac", { platform: "darwin", toolchain: right }, { system: "linux" }, /can't package/],
+      ["a Mac app on Windows", { platform: "win32", toolchain: right }, { system: "mac" }, /can't package/],
+      ["a system that isn't one", { platform: "win32", toolchain: right }, { system: "../linux" }, /can't package/],
+      ["a system that isn't a word", { platform: "win32", toolchain: right }, { system: 7 }, /can't package/],
+      ["no toolchain", { platform: "win32" }, { system: "linux" }, /v26_clang-20\.1\.8-rockylinux8\.exe/],
+      ["another Unreal's toolchain", { platform: "win32", toolchain: older }, { system: "linux" }, /v26_clang/],
+      [
+        "a relative toolchain path",
+        { platform: "win32", toolchain: "UnrealToolchains\\v26_clang-20.1.8-rockylinux8" },
+        { system: "linux" },
+        /v26_clang/,
+      ],
+      ["a toolchain behind a link", { platform: "win32", toolchain: link }, { system: "linux" }, /v26_clang/],
+      [
+        "a toolchain on a network share",
+        { platform: "win32", toolchain: "\\\\server\\v26_clang-20.1.8-rockylinux8" },
+        { system: "linux" },
+        /v26_clang/,
+      ],
+      [
+        "a toolchain cmd.exe can't carry",
+        { platform: "win32", toolchain: path.join(root, "100%", "v26_clang-20.1.8-rockylinux8") },
+        { system: "linux" },
+        /v26_clang/,
+      ],
+      [
+        "a toolchain that isn't there",
+        { platform: "win32", toolchain: path.join(root, "gone", "v26_clang-20.1.8-rockylinux8") },
+        { system: "linux" },
+        /v26_clang/,
+      ],
+    ];
+    for (const [why, options, args, refusal] of cases) {
+      const { deps, launches, saves } = depsFor(project, stagesLinux, { ...options, answers: true });
+      await assert.rejects(createGamePackageTools(deps).handlers["package-game"](args, context, "/s"), refusal, why);
+      assert.deepEqual([launches, saves], [[], []], `${why}: nothing saved or launched`);
+    }
+    assert.deepEqual(await readdir(path.join(game, "unreal")), ["Dust.uproject"], "no build folder was made");
   });
 });

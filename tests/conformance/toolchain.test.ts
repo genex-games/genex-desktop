@@ -12,6 +12,7 @@ import {
   expandWindowsVariables,
   mergePathsFor,
   parseRegistryPath,
+  parseRegistryValue,
   readLoginPath,
   readRegistryPath,
   resolveToolchain,
@@ -58,6 +59,25 @@ describe("the toolchain on Windows", () => {
       "C:\\Users\\Ada\\.bun\\bin",
       "C:\\Users\\Ada\\scoop\\shims",
     ]);
+  });
+
+  it("reads one named value out of a registry key, and nothing for a name it only contains", () => {
+    const output = [
+      "",
+      "HKEY_CURRENT_USER\\Environment",
+      "    OLD_LINUX_MULTIARCH_ROOT    REG_SZ    C:\\Old\\",
+      "    LINUX_MULTIARCH_ROOT    REG_SZ    C:\\UnrealToolchains\\v26_clang-20.1.8-rockylinux8\\",
+      "",
+    ].join("\r\n");
+    assert.equal(
+      parseRegistryValue(output, "LINUX_MULTIARCH_ROOT"),
+      "C:\\UnrealToolchains\\v26_clang-20.1.8-rockylinux8\\",
+    );
+    assert.equal(parseRegistryValue(output, "MULTIARCH_ROOT"), null);
+    assert.equal(
+      parseRegistryValue("ERROR: The system was unable to find the specified registry key or value.", "X"),
+      null,
+    );
   });
 
   it("reads the registry's PATH value and expands its variables", () => {

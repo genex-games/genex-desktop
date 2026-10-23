@@ -23,7 +23,7 @@ import { Icon, type IconName } from "../../../ui/icons.tsx";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
 import { PUBLISH_PLATFORM_WORDS } from "../../../words.ts";
 import {
-  appsMadeOnly,
+  appsMadeHere,
   failureLines,
   listingLine,
   listsPlatforms,
@@ -210,7 +210,7 @@ export function PublishPlatforms({
     Date.now(),
     native,
     webOffer,
-    appsMadeOnly(facts ?? [], hostPlatform()),
+    appsMadeHere(facts ?? [], hostPlatform()),
     onGenex,
   );
   const builds = (target: PublishTarget): number =>

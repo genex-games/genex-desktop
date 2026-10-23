@@ -149,6 +149,12 @@ app.whenReady().then(async()=>{
   const building=await step('unrealBuilding','window.platformsRig.open({scene:"unrealBuilding",theme:"light"})');
   assert.deepEqual([building.rows[2].detail,building.rows[2].end],['Building on Genex · 12 min so far','Building…']);
   report.unrealBuilding=await capture('light-unreal-building');
+  // On Windows the agent packages an Unreal game's Linux app too; only the Mac app is made elsewhere.
+  const onWindows=await step('unrealWindows','window.platformsRig.open({scene:"unrealWindows",platform:"win32"})');
+  assert.deepEqual(onWindows.rows.slice(1).map((row)=>[row.detail,row.end]),[['Package it on a Mac',null],['Not made yet','Make with agent'],['Not made yet','Make with agent']]);
+  const linuxAsk=await step('makeLinux','window.platformsRig.make("linux")');
+  assert.deepEqual(linuxAsk.composed,[{project:'dust-runners',text:'Make a Linux app of Dust Runners so I can publish it for Linux players.',send:true}]);
+  report.unrealWindows=await capture('dark-unreal-windows');
   const soon=await step('unitySoon','window.platformsRig.open({scene:"unitySoon"})');
   assert.equal(soon.primaryDisabled,true);
   assert.equal(soon.rows[1].end,'Coming soon');

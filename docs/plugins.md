@@ -2479,11 +2479,18 @@ its report is a failed run, its summary naming the exit code, the counts so far 
 `unreal__plugin-status` answers each job's state and results and `proof`: the summary, the note and
 `unreal/Saved/Genex/Shots/<Plugin>-window.jpg` (kept by `app_look`'s `save`) that exist, the summary
 and note only for a run that finished, relative to the game, read from disk after a restart.
-Any Unreal game also gets `unreal__package-game {stop?}` and `unreal__package-status`
-(`game-package.ts`): the app players install, for this computer's system only (Unreal makes no app
-for another one). The person's open Unreal saves first (play ended; one that answers but can't save
-leaves nothing packaged), then `RunUAT BuildCookRun -platform=Mac|Win64 -clientconfig=Shipping -build
--cook -stage -pak -stagingdirectory=…` stages into `unreal/Builds/<Mac|Windows>/` (emptied first, never
+Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
+(`game-package.ts`): the app players install, for this computer's own system, or on Windows a Linux
+one with `system: "linux"` (`PackageSystem`, `HOST_SYSTEMS`; Unreal makes a Mac app only on a Mac and a
+Windows one only on Windows; anything else is refused before anything runs). A Linux package needs
+Epic's cross-compile toolchain for the engine's version (`LINUX_TOOLCHAINS`: 5.7 and 5.8 take
+`v26_clang-20.1.8-rockylinux8`), whose installer the person runs: Genex reads `LINUX_MULTIARCH_ROOT`
+from the registry (the user's over the machine's, `readRegistryVariable`, so no restart is needed),
+takes it only as a plain local folder named for that toolchain (never a link, a share or a path
+cmd.exe can't carry), and hands it to RunUAT; without it the call refuses with the installer's link
+for the agent to give the person. One package runs per game at a time. The person's open Unreal saves first (play ended; one that answers but can't save
+leaves nothing packaged), then `RunUAT BuildCookRun -platform=Mac|Win64|Linux -clientconfig=Shipping -build
+-cook -stage -pak -stagingdirectory=…` stages into `unreal/Builds/<Mac|Windows|Linux>/` (emptied first, never
 through a link; ignored by the game's history; never `-archive`, which copies a Mac app without its
 cooked content), the cook run by the engine's `UnrealEditor-Cmd`, within 120
 minutes. A Mac needs Xcode: a template's plugins make even a Blueprint game build code there. Like
@@ -2493,8 +2500,9 @@ editor's derived data, Zen store and shader workers, all of which UnrealBuildToo
 On Windows `RunUAT.bat` runs through cmd.exe with every path whole in quotes (`quotedScriptLine`); a
 path with a quote, `%` or `!`, or on a network share, is refused first. `package-status` answers the
 state, the app relative to the game, the seconds and a failure's first error lines with the
-computer's paths taken out; after a restart, idle with the app found on disk. Publish then finds the
-app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole
+computer's paths taken out; after a restart, idle with the app found on disk (a Linux package's
+starter `<Game>.sh`). On Windows the Publish dialog's Linux row of an Unreal game offers Make with
+agent (`appsMadeHere`). Publish then finds the app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole
 build (no program inside a Windows build's folder is a build of its own, and Unreal's
 `UEPrereqSetup` is a helper) and never a project's own `Binaries` beside its `.uproject`, which hold
 no cooked content. A chat build of a game still with no kind, with the plugin on, first asks the

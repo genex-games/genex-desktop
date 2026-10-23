@@ -66,21 +66,23 @@ export function webOfferFor(facts: readonly FactRef[]): WebOffer {
   return facts.some((fact) => fact.id === CoreFact.UnrealProject) ? WebOffer.Unavailable : WebOffer.Quiet;
 }
 
-/** The rows of each computer's own system, in `process.platform` spelling. */
-const HOST_TARGET: Readonly<Record<string, PublishTarget>> = {
-  darwin: PublishTarget.Mac,
-  win32: PublishTarget.Windows,
-  linux: PublishTarget.Linux,
+/**
+ * The apps of an Unreal game each computer packages, in `process.platform` spelling: a Mac app on a
+ * Mac; a Windows one on Windows, and a Linux one there too with Epic's cross-compile toolchain.
+ */
+const UNREAL_MADE_HERE: Readonly<Record<string, ReadonlySet<PublishTarget>>> = {
+  darwin: new Set([PublishTarget.Mac]),
+  win32: new Set([PublishTarget.Windows, PublishTarget.Linux]),
 };
 
 /**
- * The only system a game's apps are made on here, or null when the agent makes any: an Unreal game
- * is packaged on the system it is for (Unreal makes no Mac app on Windows, nor a Windows or Linux one
- * on a Mac), so the other rows say where it is made instead of offering "Make with agent".
+ * The systems a game's apps are made for here, or null when the agent makes any: an Unreal game is
+ * packaged only for what this computer packages (`UNREAL_MADE_HERE`), so the other rows say where it
+ * is made instead of offering "Make with agent". Null too on a computer Genex packages no Unreal game on.
  */
-export function appsMadeOnly(facts: readonly FactRef[], hostPlatform: string): PublishTarget | null {
+export function appsMadeHere(facts: readonly FactRef[], hostPlatform: string): ReadonlySet<PublishTarget> | null {
   if (!facts.some((fact) => fact.id === CoreFact.UnrealProject)) return null;
-  return HOST_TARGET[hostPlatform] ?? null;
+  return Object.hasOwn(UNREAL_MADE_HERE, hostPlatform) ? (UNREAL_MADE_HERE[hostPlatform] ?? null) : null;
 }
 
 /** One platform's row as the dialog draws it. */
@@ -138,9 +140,9 @@ function webWords(row: PublishPlatform, offer: WebOffer): { detail: string; end:
   return { detail, end: PlatformEnd.None };
 }
 
-/** Whether a native row is an app this computer can't make (`appsMadeOnly`) and has none ready to send. */
-const madeElsewhere = (row: PublishPlatform, madeOnly: PublishTarget | null): boolean =>
-  madeOnly !== null && row.target !== madeOnly && row.state !== PublishPlatformState.Ready;
+/** Whether a native row is an app this computer can't make (`appsMadeHere`) and has none ready to send. */
+const madeElsewhere = (row: PublishPlatform, madeHere: ReadonlySet<PublishTarget> | null): boolean =>
+  madeHere !== null && !madeHere.has(row.target) && row.state !== PublishPlatformState.Ready;
 
 /** A native row this computer can't make: where it is made while missing, else why it is old; no press. */
 const elsewhereWords = (row: PublishPlatform & { target: NativeTarget }, now: number) => ({
@@ -198,8 +200,8 @@ function cloudWords(
 
 /**
  * The rows in the order they come, each as words; `native` is how the last Publish's apps went,
- * `webOffer` what a game with no web version is offered for one, `madeOnly` the one system this
- * computer makes the game's apps for (`appsMadeOnly`), `onGenex` whether the game has a page on
+ * `webOffer` what a game with no web version is offered for one, `madeHere` the systems this
+ * computer makes the game's apps for (`appsMadeHere`), `onGenex` whether the game has a page on
  * Genex, which an app Genex builds goes on.
  */
 export function platformRows(
@@ -207,7 +209,7 @@ export function platformRows(
   now: number,
   native?: GenexNativeRecord,
   webOffer: WebOffer = WebOffer.Quiet,
-  madeOnly: PublishTarget | null = null,
+  madeHere: ReadonlySet<PublishTarget> | null = null,
   onGenex = false,
 ): PlatformRow[] {
   return platforms.map((row) => {
@@ -219,7 +221,7 @@ export function platformRows(
         size: null,
         state: row.state,
       };
-    const words = madeElsewhere(row, madeOnly)
+    const words = madeElsewhere(row, madeHere)
       ? (cloudWords(row, native, now, onGenex) ?? elsewhereWords(row, now))
       : { detail: nativeDetail(row, now), end: nativeEnd(row, native) };
     return {

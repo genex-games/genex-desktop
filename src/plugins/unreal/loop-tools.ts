@@ -347,6 +347,8 @@ export type LoopToolsDeps = {
   project(storage: string, game: string): Promise<string | undefined>;
   /** Where Xcode stands against the engine in `engineDir` (C++ compiles only when Ready on a Mac), and its app. */
   xcode(engineDir: string | undefined): Promise<Pick<XcodeStatus, "state"> & Partial<Pick<XcodeStatus, "app">>>;
+  /** Windows: `LINUX_MULTIARCH_ROOT` as Epic's Linux toolchain installer set it, for a Linux package. */
+  linuxToolchain?(): Promise<string | undefined>;
   /** Compiles a game copy's editor target; UnrealBuildTool's own unless a test stands in. */
   compile?(options: CompileOptions): Promise<CompileResult>;
   /** Writes a Blueprint project's C++ module; `addCppModule` unless a test stands in. */

@@ -25,7 +25,7 @@ import {
   PublishTarget,
 } from "../../src/shared/publish-platforms.ts";
 import {
-  appsMadeOnly,
+  appsMadeHere,
   appsUpToDate,
   appsLabel,
   failureLines,
@@ -214,6 +214,9 @@ describe("Publish's platform rows from the game folder", () => {
 });
 
 const NOW = T0 + 5 * MINUTE_MS;
+/** What an Unreal game's apps are made on a Mac, and on Windows. */
+const ON_MAC: ReadonlySet<PublishTarget> = new Set([PublishTarget.Mac]);
+const ON_WINDOWS: ReadonlySet<PublishTarget> = new Set([PublishTarget.Windows, PublishTarget.Linux]);
 const WEB: PublishPlatform = {
   target: PublishTarget.Web,
   state: PublishPlatformState.Ready,
@@ -276,9 +279,14 @@ describe("Publish's platform rows as the dialog says them", () => {
 
   it("says where an Unreal game's app for another system is packaged, and offers no agent for it", () => {
     const unreal = [{ id: CoreFact.UnrealProject, path: "unreal" }];
-    assert.equal(appsMadeOnly(unreal, "darwin"), PublishTarget.Mac);
-    assert.equal(appsMadeOnly(unreal, "win32"), PublishTarget.Windows);
-    assert.equal(appsMadeOnly([{ id: CoreFact.UnityProject, path: "unity" }], "darwin"), null, "Unity builds any");
+    assert.deepEqual(appsMadeHere(unreal, "darwin"), new Set([PublishTarget.Mac]));
+    assert.deepEqual(
+      appsMadeHere(unreal, "win32"),
+      new Set([PublishTarget.Windows, PublishTarget.Linux]),
+      "Windows cross-compiles Linux with Epic's toolchain",
+    );
+    assert.equal(appsMadeHere(unreal, "linux"), null, "Genex packages no Unreal game on Linux");
+    assert.equal(appsMadeHere([{ id: CoreFact.UnityProject, path: "unity" }], "darwin"), null, "Unity builds any");
     const missingMac = { ...MAC, state: PublishPlatformState.Missing, arch: null, bytes: 0, builtAt: null };
     const staleLinux = { ...LINUX, state: PublishPlatformState.Stale };
     const onMac = platformRows(
@@ -286,7 +294,7 @@ describe("Publish's platform rows as the dialog says them", () => {
       NOW,
       undefined,
       WebOffer.Unavailable,
-      PublishTarget.Mac,
+      appsMadeHere(unreal, "darwin"),
     );
     assert.deepEqual(
       onMac.slice(1).map((row) => [row.name, row.detail, row.end]),
@@ -296,20 +304,22 @@ describe("Publish's platform rows as the dialog says them", () => {
         ["Linux app", "Built before your last change", PlatformEnd.None],
       ],
     );
+    const missingLinux = { ...LINUX, state: PublishPlatformState.Missing, arch: null, bytes: 0, builtAt: null };
     const onWindows = platformRows(
-      [missingMac, WINDOWS_READY],
+      [missingMac, WINDOWS_READY, missingLinux],
       NOW,
       undefined,
       WebOffer.Unavailable,
-      PublishTarget.Windows,
+      appsMadeHere(unreal, "win32"),
     );
     assert.deepEqual(
       onWindows.map((row) => [row.detail, row.end]),
       [
         ["Package it on a Mac", PlatformEnd.None],
         ["64-bit PCs · built 5 min ago", PlatformEnd.None],
+        ["Not made yet", PlatformEnd.Make],
       ],
-      "this computer's own app goes as before",
+      "this computer's own app goes as before, and the agent packages the Linux one here",
     );
   });
 
@@ -384,7 +394,7 @@ describe("Publish's platform rows as the dialog says them", () => {
       ...over,
     });
     const windowsRow = (native?: GenexNativeRecord, onGenex = true) => {
-      const row = platformRows([WEB, MAC, WINDOWS], NOW, native, WebOffer.Unavailable, PublishTarget.Mac, onGenex)[2];
+      const row = platformRows([WEB, MAC, WINDOWS], NOW, native, WebOffer.Unavailable, ON_MAC, onGenex)[2];
       return [row?.detail, row?.end];
     };
     assert.deepEqual(
@@ -432,7 +442,7 @@ describe("Publish's platform rows as the dialog says them", () => {
       NOW,
       cloud([]),
       WebOffer.Unavailable,
-      PublishTarget.Windows,
+      ON_WINDOWS,
       true,
     );
     assert.deepEqual(
@@ -440,14 +450,7 @@ describe("Publish's platform rows as the dialog says them", () => {
       ["Package it on a Mac", PlatformEnd.None],
       "Genex builds no Mac app",
     );
-    const builtHere = platformRows(
-      [WEB, MAC, WINDOWS_READY],
-      NOW,
-      cloud([]),
-      WebOffer.Unavailable,
-      PublishTarget.Mac,
-      true,
-    );
+    const builtHere = platformRows([WEB, MAC, WINDOWS_READY], NOW, cloud([]), WebOffer.Unavailable, ON_MAC, true);
     assert.equal(builtHere[2]?.end, PlatformEnd.None, "a Windows build in the folder goes with Publish as before");
   });
 
