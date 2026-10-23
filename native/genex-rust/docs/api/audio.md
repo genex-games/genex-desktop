@@ -118,8 +118,8 @@ A game that plays no sound sets `[audio] enabled = false` in `genex.toml`: it bu
 mixer and the decoders, the largest audio share of a web build. Its code compiles unchanged, but
 every `gfx.sound` and `gfx.music` handle is missing (`audio-disabled`), `ctx.audio.play` answers
 `Voice::NONE`, `playing` is false, no device opens, and `state().volatile.audio` is
-`{ "enabled": false, "issues": [...] }` once the game asked for a sound. Turn it back on before
-adding sound.
+`{ "enabled": false, "issues": [...] }` once the game asked for a sound. The template ships audio
+off: set `[audio] enabled = true` in the change that adds the first sound.
 
 ## Devices
 

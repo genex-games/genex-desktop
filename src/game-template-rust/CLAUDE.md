@@ -196,8 +196,9 @@ write your own system around it.
   cards past their last level, declared once in `on_reset`. A model only streamed cells draw
   bakes its card only if `wire` registers it with `game.impostor_bake(..)`; otherwise it keeps
   its last level, named `impostor-not-baked` (`docs/api/drawing.md`).
-- **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
-  `state().volatile.audio`, never by ear (`docs/api/audio.md`).
+- **Sound**: switch `[audio]` on (the template ships it off), `gfx.sound(..)` in `on_reset`,
+  `ctx.audio` to play; prove it played from `state().volatile.audio`, never by ear
+  (`docs/api/audio.md`).
 - **Ground** across the world is one `Terrain` made in `on_reset` and drawn with
   `frame.terrain(..)`; stand things on it with `terrain.height(x, z)` (`docs/api/terrain.md`).
 - **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`). With `game.input` a slot

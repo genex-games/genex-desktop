@@ -78,12 +78,13 @@ describe("cargo manifest: the game systems a genex.toml switches off (release R-
     }
   });
 
-  it("the template switches off navigation, streaming and animation and keeps physics and audio", async () => {
+  // Flipped at gate GR: the starter plays no sound, so audio is off too and only physics stays.
+  it("the template switches off audio, navigation, streaming and animation and keeps physics", async () => {
     const text = await readFile(path.join(ROOT, "src", "game-template-rust", "genex.toml"), "utf8");
     const manifest = manifestOf(text.replace("__GAME_TITLE__", "Pond"));
     assert.equal(
       facadeLine(cargoManifest(manifest, GENEX_VERSION, RustFlavour.Export, RustFacadePackage.Web)),
-      'genex = { package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics", "audio"] }',
+      'genex = { package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics"] }',
     );
   });
 });

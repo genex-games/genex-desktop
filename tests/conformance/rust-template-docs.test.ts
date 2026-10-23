@@ -1232,6 +1232,8 @@ const RECIPE_SWITCHES: Record<string, readonly string[]> = {
   "rust.streamed-world": ["streaming"],
   "rust.nav-agents": ["nav", "animation"],
   "rust.animated-characters": ["animation"],
+  // Gate GR: the template ships audio off too, so its web export stays under 90% of the budget.
+  "rust.audio-checks": ["audio"],
 };
 
 describe("the in-app agent knows every game system and its switch (R-32)", () => {

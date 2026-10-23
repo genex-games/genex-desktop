@@ -497,19 +497,20 @@ describe("a build on a retained lock stages the genex release that lock vendored
 
   it("pins the release the lock's vendored set is, not the newer one the updated app ships", async () => {
     // Flipped (release R-2): the template switches nav, streaming and animation off, so the line keeps its other defaults.
+    // Flipped again (gate GR): audio is off too, so physics is the one default kept.
     assert.equal(
       await stagedGenex(lockVendoring("0.0.9")),
-      'genex = { version = "=0.0.9", default-features = false, features = ["physics", "audio"] }',
+      'genex = { version = "=0.0.9", default-features = false, features = ["physics"] }',
     );
   });
 
   it("a development vendored set (a pre-release version) stages the app's shipped release, as before", async () => {
     const shipped = await shippedGenexRelease(rustPayloadDir((await coreLite({ init: false })).resources));
     assert.ok(shipped);
-    // Flipped (release R-2): the template's switches write the facade line with its kept defaults.
+    // Flipped (release R-2, again at gate GR): the template's switches write the facade line with its kept defaults.
     assert.equal(
       await stagedGenex(lockVendoring("0.0.0-dev")),
-      `genex = { version = "=${shipped}", default-features = false, features = ["physics", "audio"] }`,
+      `genex = { version = "=${shipped}", default-features = false, features = ["physics"] }`,
     );
   });
 });

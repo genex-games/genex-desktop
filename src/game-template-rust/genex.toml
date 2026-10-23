@@ -24,6 +24,11 @@ fog_density = 0.002
 
 # Game systems switched off stay out of the build, which keeps the web build small; their calls
 # still compile and are refused. Set `enabled = true` before using one (docs/api/genex-toml.md).
+# Sounds and music: gfx.sound and ctx.audio (docs/api/audio.md). Off, every sound is missing
+# `audio-disabled`.
+[audio]
+enabled = false
+
 # Walkers that find paths: game.navigation and sim.nav (docs/api/navigation.md).
 [nav]
 enabled = false

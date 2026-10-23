@@ -392,10 +392,10 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
       net: null,
     });
     // Flipped (release R-2): the template switches off nav, streaming and animation, so the facade
-    // is linked without default features and keeps physics and audio.
+    // is linked without default features. Flipped again (gate GR): audio is off too, keeping physics.
     assert.match(
       await readFile(path.join(into, "Cargo.toml"), "utf8"),
-      /^genex = \{ version = "=0\.1\.0", default-features = false, features = \["physics", "audio"\] \}$/m,
+      /^genex = \{ version = "=0\.1\.0", default-features = false, features = \["physics"\] \}$/m,
     );
   });
 

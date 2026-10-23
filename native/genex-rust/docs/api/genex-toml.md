@@ -101,8 +101,8 @@ code compiles unchanged. A switched-off system refuses what it would do: `game.n
 `game.nav_bake` fail install `nav-disabled`, `game.streaming` fails install `streaming-disabled`,
 and `gfx.character`, `gfx.node_clips` and every animator are refused `animation-disabled`;
 `sim.nav` and `sim.stream` stay, empty. The switches apply in Live as in the export. The template
-switches all three off, so a new game's web build stays small; set `enabled = true` (or delete
-the line) before adding walkers, a streamed world or an animated character.
+switches all three off, and audio too, so a new game's web build stays small; set `enabled = true`
+(or delete the line) before adding walkers, a streamed world, an animated character or a sound.
 
 A `[[texture]]` row tells Studio how a loose image your code samples itself is used (a flow map, a
 mask, a custom material's normal map). A texture a model's material samples needs no row. The usage

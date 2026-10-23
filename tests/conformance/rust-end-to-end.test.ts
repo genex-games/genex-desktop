@@ -187,13 +187,13 @@ async function stagedGenex(output: string): Promise<string | undefined> {
 /**
  * The facade's two spellings: the dev flavour with the studio, an export without it. Flipped
  * (release R-2): the template switches nav, streaming and animation off, so each line names the
- * defaults it keeps.
+ * defaults it keeps. Flipped again (gate GR): audio is off too, so only physics stays.
  */
-const DEV_FACADE = '{ version = "=0.1.0", default-features = false, features = ["studio", "physics", "audio"] }';
-const EXPORT_FACADE = '{ version = "=0.1.0", default-features = false, features = ["physics", "audio"] }';
-/** A web build's facade: the web shell's crate under the facade's name, never the studio feature (flipped with R-2). */
+const DEV_FACADE = '{ version = "=0.1.0", default-features = false, features = ["studio", "physics"] }';
+const EXPORT_FACADE = '{ version = "=0.1.0", default-features = false, features = ["physics"] }';
+/** A web build's facade: the web shell's crate under the facade's name, never the studio feature (flipped with R-2 and GR). */
 const WEB_FACADE =
-  '{ package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics", "audio"] }';
+  '{ package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics"] }';
 
 describe("host-only: game.scaffold → the core's Rust lane → fd 3 → capture", { skip: SKIP_UNLESS_MAC }, () => {
   it("builds the scaffolded game in the dev flavour, which serves protocol 2 and a capture the host verifies", async () => {

@@ -220,9 +220,10 @@ describe("genex.toml: the schema", () => {
     assert.deepEqual(manifest.nativeFeatures, []);
     // Release R-2 (owner call E11): the template links only what it uses, so its web build fits
     // 4 MiB; a game that adds walkers, a streamed world or an animated character turns one back on.
+    // Gate GR: the starter plays no sound, so audio is off too and the export stays under 90% of 4 MiB.
     assert.deepEqual(
       [manifest.physics, manifest.audio, manifest.nav, manifest.streaming, manifest.animation],
-      [true, true, false, false, false],
+      [true, false, false, false, false],
     );
   });
 
