@@ -96,6 +96,21 @@ npm run studio:dev -- stop --profile manual-review
 npm run studio:dev -- start --profile manual-review --providers live --reuse
 ```
 
+To make Rust games by hand there, build the Rust dev store first and set
+`GENEX_RUST_TOOLCHAIN_DIR` (above); the first start then seeds and prewarms for several minutes.
+If start fails `Renderer bundle <n> exceeds <cap> byte budget`, the development renderer is over
+`DEVELOPMENT_ENTRY_MAX_BYTES` (`scripts/renderer-build.mjs`): start with `STUDIO_REACT=production`,
+which builds production React. Home's **Rust game…** opens New Rust game on Rust · wgpu. Live
+builds the web page first; **Web | Native** builds the Mac app and draws it, with its bundled
+`assets/`, and the Mac badge says In Live only while Live draws it. A saved change under `assets/`
+lights Reload, which swaps it in mid-play on either view; any other change rebuilds. Nav,
+streaming and animation are off in the starter: `[nav]`, `[streaming]` or `[animation]`
+`enabled = true` in `genex.toml` links them (calls into one left off are refused `nav-disabled`,
+`streaming-disabled`, `animation-disabled`). **Export game… → Browser (web folder)** writes
+`size.json`; `withinBudget` holds the optimized module's gzip to 4 MiB, and a game that switches
+a system on may pass it (the export still completes, warning `wasm-over-target`). A phone
+run stays the person's **On a device** press.
+
 To meet the app as a new account does, with no Claude Code, Codex or sign-in to borrow, add
 `--fresh-machine` to the live start. That profile is disposable: its app gets an empty home in
 the temporary folder as HOME (outside the checkout, where the app never takes a CLI from; it
