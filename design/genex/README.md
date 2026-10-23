@@ -751,7 +751,9 @@ the secondary C++ game… action there.
 After the welcome, the Genex promo is a 360px surface card floating 16px from a bottom corner
 (above the workspace, beneath dialogs and toasts) that moves nothing beneath it: bottom-left while
 home is up, clear of home's composer, and bottom-right over a game's stage, away from the chat's
-composer. It waits while a dialog is open. It holds a 19:10 muted looping
+composer. It waits while a dialog is open. Over a game's stage the game draws on under it:
+Live's web view keeps the slot's size out of sight and the slot shows its newest frames
+(`stage/native-bounds.ts`); a dialog or popover still rests the game. It holds a 19:10 muted looping
 film (`src/renderer/media`, rendered with Remotion from `design/genex-promo-video/`; its poster
 under Reduce Motion), a 28px translucent close over it, a 13px ink-3 eyebrow, a 17px title,
 three 18px-glyph rows (14px medium title, one 13px ink-3 line: models, sound and art, publishing

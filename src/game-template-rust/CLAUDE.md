@@ -43,7 +43,10 @@ over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` ra
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
 `invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
 Rapier (a fifth of the web build) out; one that plays no sound sets `[audio] enabled = false`,
-which leaves the mixer and decoders out.
+which leaves the mixer and decoders out. This game starts with `[nav]`, `[streaming]` and
+`[animation]` switched off in `genex.toml`: set that table's `enabled = true` before using
+walkers, a streamed world or an animated character, or the call is refused `nav-disabled`,
+`streaming-disabled` or `animation-disabled`.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
@@ -174,10 +177,15 @@ Use the built-in system before writing your own; each page holds the how and its
   its last level, named `impostor-not-baked` (`docs/api/drawing.md`).
 - **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
   `state().volatile.audio`, never by ear (`docs/api/audio.md`).
-- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`); multiplayer is
-  `docs/api/net.md`.
+- **Ground** across the world is one `Terrain` made in `on_reset` and drawn with
+  `frame.terrain(..)`; stand things on it with `terrain.height(x, z)` (`docs/api/terrain.md`).
+- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`).
+- **Multiplayer**: `game.net(..)` and `sim.net`; connect only after the player picks Play
+  online, move yourself locally and rule on `.state_raw()`. Only the published draft in two
+  windows proves online play (`docs/api/net.md`).
 - **A hitch**: time the suspects with `genex::profile_scope!` and read `volatile.profile`
-  (`docs/api/profiling.md`).
+  (`docs/api/profiling.md`). **A crash** leaves a record naming its line, seed and tick: give
+  each `expect` the rule that broke and never catch a panic.
 
 ## Extension ladder
 

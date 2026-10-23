@@ -184,4 +184,6 @@ if let Some(door) = &sim.world.door { frame.model_posed(&sim.world.door_model, d
   file does not have (`play`, `play_once`).
 - `animation-retarget-unmapped`: a retarget where either character lacks a humanoid bone (the
   toes are optional). It names the bone and the character.
+- `animation-disabled`: `gfx.character`, `gfx.node_clips` or an animator in a game whose
+  genex.toml sets `[animation] enabled = false`. Turn animation back on.
 - `ragdoll-profile-invalid` and `character-shape-invalid`: see `docs/api/characters.md`.

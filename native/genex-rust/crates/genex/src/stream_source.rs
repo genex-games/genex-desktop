@@ -12,7 +12,7 @@
 //! STR-14): the compiled table first, as a slice of the program's own bytes with no copy, then
 //! files under `assets/` read on the job pool ([`genex_render::jobs::Pool`]). A file's path is
 //! checked by the same code as the sim's reads and the presenter's ([`AssetFiles`]: the asset-path
-//! rule, no link at the name, the real path inside the folder, a regular file within
+//! rule, no link at the name or on the way to it, a regular file within
 //! [`ASSET_READ_MAX_BYTES`]), and its range against the file's size, all before anything is
 //! opened: a FIFO, a device or a range past the end is refused without opening it.
 

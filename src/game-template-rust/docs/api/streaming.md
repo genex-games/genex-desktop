@@ -7,6 +7,10 @@ things and checksum on every destination and with any number of worker threads. 
 names its own use line beside the prelude: `use genex::{CellBuild, Streaming};` (`StreamCommit`,
 `CellColliders` and `StreamColliders` come from `genex` too).
 
+A game whose genex.toml sets `[streaming] enabled = false` is built without streaming:
+`game.streaming` fails install `streaming-disabled`. Delete that line (or set it to `true`) to
+use this page.
+
 ```rust
 #[derive(Clone)]
 struct Rock { x: f32, z: f32 }

@@ -1073,6 +1073,38 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "Toasts::show",
     "ui.ctx",
   ],
+  "rust.terrain": [
+    "Terrain::from_fn",
+    ".with_layers",
+    "TerrainLayer::flat",
+    "Grass::meadow",
+    ".with_grass",
+    "TerrainTexel::blend",
+    ".with_control",
+    "Scatter::new",
+    "terrain.scatter",
+    "terrain.height",
+    "frame.terrain",
+  ],
+  "rust.multiplayer": [
+    "game.net",
+    "NetConfig::new",
+    ".publish_hz",
+    ".decimals",
+    ".interp_delay_ticks",
+    "sim.net.status",
+    "sim.net.connect",
+    "sim.net.leave",
+    "sim.net.set_me",
+    "sim.net.events",
+    "sim.net.remotes",
+    ".state_raw",
+    "sim.net.is_host",
+    "sim.net.connected",
+    "sim.net.set_shared",
+    "driver.net",
+  ],
+  "rust.crash-records": ["genex::profile_scope!", "ScopeName::new", "genex::profile::counter"],
 };
 
 /** The seed skill a Rust game's lead reads before reaching past the facade (UIS-19 adds its menu and save lines). */
@@ -1083,7 +1115,22 @@ const LADDER_SKILL = path.join(REPO, "src", "harness-seed", "skills", "rust-exte
  * (`clone`, `count`, `is_err`, `is_none_or`) and `genex::math`'s, which the determinism rules name
  * without calling (`round`, `sin`, `cos`).
  */
-const SKETCH_STD_CALLS = new Set(["clone", "count", "is_err", "is_none_or", "round", "sin", "cos"]);
+const SKETCH_STD_CALLS = new Set([
+  "abs",
+  "and_then",
+  "clone",
+  "count",
+  "first",
+  "get",
+  "is_err",
+  "is_none_or",
+  "is_some",
+  "is_some_and",
+  "min",
+  "round",
+  "sin",
+  "cos",
+]);
 
 describe("the seed's game-systems recipes (EP-R1)", () => {
   it("ship as Rust techniques the library keeps whole", () => {

@@ -27,6 +27,8 @@ Rust · wgpu games. Every mode (director, autopilot, facet loop, gauntlet, spike
 control flow and takes its stack's text from one table (`stackPlannerLines`, `facetLinesFor`,
 `loop/rust-briefs.ts`): the planner's rules, the builder and contract-wiring briefs, the facet's
 recipes (`library/recipes/rust.*.json`) and the code reviewer's rubric (`judge/code-review-rust.md`).
+A seed Rust recipe's sketch calls only names the facade pins or defines: `unpinnedSketchCalls`
+(`loop/library.ts`) names any other call, and `npm run verify:harness` refuses a seed recipe with one.
 Checks follow `STACK_CHECK_SUPPORT`: scene checks are unmeasured and a look with no captured frame
 fails its vision and play checks. A web build refused `gpu-unsupported` (a preview without WebGPU)
 leaves parity unavailable, not failed, and the gate is weighed over the other destinations. Tolerances

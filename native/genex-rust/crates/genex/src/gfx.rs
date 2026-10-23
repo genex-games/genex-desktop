@@ -203,7 +203,7 @@ pub const ASSET_READ_MAX_BYTES: u64 = 256 * 1024 * 1024;
 #[non_exhaustive]
 pub enum AssetErrorCode {
     /// The path breaks the asset-path rule (absolute, `..`, `.`, an empty segment, a backslash,
-    /// NUL), or is a link, or leads out of the asset folder once its links are followed.
+    /// NUL), or is a link or passes through one below the asset folder.
     UnsafePath,
     /// The build has no asset at the path.
     Missing,

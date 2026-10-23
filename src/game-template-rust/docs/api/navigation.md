@@ -7,6 +7,10 @@
 `use genex::nav::{NavArea, NavConfig, NavInput, NavMesh};` (`NavObstacle`, `NavMeshSource`,
 `NavBudget` and the caps are there too).
 
+A game whose genex.toml sets `[nav] enabled = false` is built without navigation:
+`game.navigation` and `game.nav_bake` fail install `nav-disabled`. Delete that line (or set it
+to `true`) to use this page.
+
 ```rust
 game.navigation(NavConfig::walker(0.4, 1.8).with_tile(16.0));
 game.on_reset(|sim, _, _, _| {

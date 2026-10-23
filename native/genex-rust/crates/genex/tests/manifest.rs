@@ -145,6 +145,17 @@ fn the_crate_codes_keep_the_hosts_wire_spellings() {
     assert_eq!(ManifestErrorCode::InvalidCrateRequest.as_str(), "invalid-crate-request");
 }
 
+/// The crates a game names without approval, the one table the host holds too (release R-2).
+#[test]
+fn the_crate_allowlist_is_the_fixtures() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/game-crate-allowlist.json");
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the fixture")).expect("the fixture is JSON");
+    let crates: Vec<&str> =
+        fixture["crates"].as_array().expect("crates").iter().map(|c| c.as_str().expect("a name")).collect();
+    assert_eq!(crates, manifest::GAME_CRATE_ALLOWLIST.to_vec());
+}
+
 fn request(prefix: &str, name: &str, version: &str, reason: Option<&str>) -> String {
     let reason = reason.map(|reason| format!("reason = '{reason}'\n")).unwrap_or_default();
     format!("{prefix}[[crate_request]]\nname = '{name}'\nversion = '{version}'\n{reason}")

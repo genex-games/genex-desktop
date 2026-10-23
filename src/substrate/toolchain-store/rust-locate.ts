@@ -78,8 +78,12 @@ export const RUST_TARGET_DIR = "target";
  * link, copy, digest and admission scan) and Live runs optimized engine code, while the game crate
  * keeps cargo's unoptimized, incremental dev settings and its debug info. A prewarm built without
  * them is another dependency build: a game's build cloning it would rebuild every dependency.
+ * Debug info is line tables only (R-7), which backtraces and the symbolicator read.
  */
-export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze(['profile.dev.package."*".opt-level=1']);
+export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze([
+  'profile.dev.package."*".opt-level=1',
+  'profile.dev.debug="line-tables-only"',
+]);
 /** In a destination's folder: the warm project's lock, as it was resolved offline. */
 export const RUST_WARM_LOCK_FILE = "Cargo.lock";
 /** The host-made naga validator (`rust-prewarm.ts`), in the tools folder. */

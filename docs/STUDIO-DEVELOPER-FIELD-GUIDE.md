@@ -42,8 +42,9 @@ app's Rust lane (`src/main/core/rust-lane.ts`) builds over that store for the Ma
 (the WebGPU page Live and browser exports use); the phones' builders build on a Mac (never run
 by an agent or a check), Windows and Linux are refused `target-unbuilt` until their cross components are pinned; Mac embedded and headless runs start from the admitted bytes, and only window runs and Mac exports are `lane-missing`. Real Rust rows read
 `GENEX_RUST_TOOLCHAIN_DIR` and the Rust dev store (`node scripts/toolchains/dev-store.ts --stack rust-wgpu`).
-The stage, create dialog and Toolchain sheet have rendered review runners over the real components
-(`npm run test:ui -- stage-ui`, `create-game-ui`, `toolchain-ui`; light and dark captures). A device
+The stage, the promo over a stage, create dialog and Toolchain sheet have rendered review runners
+over the real components (`npm run test:ui -- stage-ui`, `promo-stage-ui`, `create-game-ui`,
+`toolchain-ui`; light and dark captures). A device
 launch is the person's press (`studio:native.launchDevice`, native-classified, refused in every fixture
 profile): never start a Simulator, emulator or phone from an agent or a check, and never run `adb`.
 Device launches are proven by the owner on a live profile, not here.

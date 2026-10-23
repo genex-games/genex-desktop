@@ -31,6 +31,15 @@ enabled = false           # default true
 [audio]                   # optional: a game with no sound builds without the mixer and decoders
 enabled = false           # default true
 
+[nav]                     # optional: a game without walkers builds without navigation's engine
+enabled = false           # default true
+
+[streaming]               # optional: a game without a streamed world builds without its engine
+enabled = false           # default true
+
+[animation]               # optional: a game without animated characters builds without its engine
+enabled = false           # default true
+
 [[texture]]               # optional: how a loose texture is used, when no model's material says
 path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
 usage = "data"            # color | data | normal
@@ -85,6 +94,15 @@ physics is turned back on.
 A game that plays no sound sets `[audio] enabled = false`: it builds without the mixer and the
 decoders, and its code compiles unchanged, with every sound missing `audio-disabled`
 (`docs/api/audio.md`).
+
+Navigation, world streaming and animation switch off alike: `[nav]`, `[streaming]` and
+`[animation]` with `enabled = false` leave that system's engine out of the build, and the game's
+code compiles unchanged. A switched-off system refuses what it would do: `game.navigation` and
+`game.nav_bake` fail install `nav-disabled`, `game.streaming` fails install `streaming-disabled`,
+and `gfx.character`, `gfx.node_clips` and every animator are refused `animation-disabled`;
+`sim.nav` and `sim.stream` stay, empty. The switches apply in Live as in the export. The template
+switches all three off, so a new game's web build stays small; set `enabled = true` (or delete
+the line) before adding walkers, a streamed world or an animated character.
 
 A `[[texture]]` row tells Studio how a loose image your code samples itself is used (a flow map, a
 mask, a custom material's normal map). A texture a model's material samples needs no row. The usage

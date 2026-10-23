@@ -531,8 +531,9 @@ vocabulary! {
     }
 }
 
-/// Extra crates a game may name without a person's approval (plan "Agent policy").
-pub const GAME_CRATE_ALLOWLIST: [&str; 2] = ["fastrand", "noise"];
+/// Extra crates a game may name without a person's approval (plan "Agent policy"), held with the
+/// host's copy to `tests/fixtures/game-crate-allowlist.json` (`tests/manifest.rs`).
+pub const GAME_CRATE_ALLOWLIST: [&str; 3] = ["fastrand", "noise", "pathfinding"];
 const MAX_TITLE_CHARS: usize = 80;
 const MAX_SAVE_NAME_CHARS: usize = 64;
 /// The longest crate name: a letter, then letters, digits, `-` and `_`.

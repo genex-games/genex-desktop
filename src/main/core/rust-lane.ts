@@ -30,6 +30,7 @@ import {
 import { crateOverlayLayout } from "../../substrate/toolchain-store/crate-overlay.ts";
 import { readCurrentLock } from "../../substrate/toolchain-store/lock.ts";
 import { locateRust } from "../../substrate/toolchain-store/rust-locate.ts";
+import { cloneRustTarget } from "../../substrate/toolchain-store/rust-prewarm.ts";
 import { FIXTURE_STORE_MARKER } from "../dev/fixture-toolchains.ts";
 import {
   RustBuilds,
@@ -266,5 +267,10 @@ export function createCoreRustBuilds(options: CoreRustLaneOptions): RustBuilds {
     currentLock: () => readCurrentLock(store, GameStack.RustWgpu),
     stage: shippedRustStage(payload),
     webShell: shippedWebShell(resources),
+    warmTarget: (lock, target, to) =>
+      cloneRustTarget(store, lock, target, to).then(
+        () => true,
+        () => false,
+      ),
   });
 }
