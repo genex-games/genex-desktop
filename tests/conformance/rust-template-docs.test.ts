@@ -1255,22 +1255,37 @@ describe("the in-app agent knows every game system and its switch (R-32)", () =>
       assert.ok(rules().includes(call), `the rules name ${call}`);
   });
 
-  it("the Streaming page states the web's named-group and cell gaps the rules state, and promises no web fetch", () => {
-    // Gate GR: the web runtime queues no fetch while playing yet (nothing calls `WebAssets::want`),
-    // so no text may promise a named group's files, a pack's cells or its terrain tiles on the web.
-    const gap = "On the web a named group is not fetched yet";
-    const cellGap = "a pack's cells and terrain tiles";
+  it("the Streaming page and the rules teach the web's fetches while playing, and state no web gap", () => {
+    // Gate GR, wired by WS: each frame the web shell wants every group the game requires and the
+    // cell bodies and terrain tiles around its anchors, and hands what arrived to the sim's reads,
+    // so no text may still say the web fetches none of them, or send a streamed world to Native.
+    const groups = "On the web a required group is fetched while playing";
+    const cells = "On the web a pack's cells and terrain tiles around the anchors are fetched while playing";
     const rulesText = rules().replace(/\s+/g, " ");
-    assert.ok(rulesText.includes(gap), "the rules state the gap");
-    assert.ok(rulesText.includes(`nor are ${cellGap}`), "the rules state the cell gap");
+    assert.ok(
+      rulesText.includes(
+        "On the web a required group and a pack's cells and terrain tiles around the player are fetched while playing",
+      ),
+      "the rules teach the web's fetches",
+    );
     const page = read(`${API_PAGES}/streaming.md`).replace(/\s+/g, " ");
-    assert.ok(page.includes(gap), "the Streaming page states the gap");
-    assert.ok(page.includes(`On the web ${cellGap} are not fetched yet`), "the Streaming page states the cell gap");
-    assert.ok(!page.includes("each named group's files arrive while playing"), "the page promises no web group fetch");
-    assert.ok(!page.includes("(on the web, still being fetched)"), "the page promises no web group fetch");
-    assert.ok(!page.includes(`${cellGap} arrive while playing`), "the page promises no web cell fetch");
+    assert.ok(page.includes(groups), "the Streaming page teaches the group fetch");
+    assert.ok(page.includes(cells), "the Streaming page teaches the cell fetch");
+    assert.ok(page.includes("`state().volatile.webStream`"), "the Streaming page names the receipt");
     const shell = read("web/shell.html").replace(/\s+/g, " ");
-    assert.ok(!shell.includes(`${cellGap} are fetched while playing`), "the shell promises no web cell fetch");
+    for (const [name, text] of [
+      ["the rules", rulesText],
+      ["the Streaming page", page],
+      ["the shell", shell],
+    ] as const) {
+      assert.ok(!text.includes("not fetched yet"), `${name} state no web fetch gap`);
+      assert.ok(
+        !text.includes("judged on a native run") && !text.includes("judge a streamed world on a native run"),
+        `${name} send no streamed world to Native`,
+      );
+      assert.ok(!text.includes("loads what it needs up front"), `${name} ask no web game to load everything up front`);
+    }
+    assert.ok(!shell.includes("none is fetched yet"), "the shell states no fetch gap");
   });
 
   it("the Game systems rules teach only calls the fixture pins", () => {

@@ -88,9 +88,13 @@ game.on_update(|sim, _| {
   `timeout: "stream-drain-timeout"` until a drain settles.
 - `frame.cells_debug()` outlines the view's cells on the ground. Green: drawn. Yellow: loading.
   Grey: building. Red: refused.
-- On the web a pack's cells and terrain tiles are not fetched yet: the build plans them to arrive
-  while playing (by `Range`, a KTX2's small levels first), but nothing asks for them, so judge a
-  streamed world on a native run. A reset that reads one is refused `not-preloaded`, as natively.
+- On the web a pack's cells and terrain tiles around the anchors are fetched while playing: each
+  frame the page asks for the body and tile of every cell in the sim set, the next commit's set and
+  the prefetch ring (by `Range`), hands what arrived to the sim's asset reads at the next frame,
+  and drops a cell's files once it leaves. `state().volatile.webStream` (`files`, `bytes`,
+  `inFlight`, `cells`) lists the cells whose files are resident. No call reads a cell's body while
+  playing: read the pack from the compiled table (below) or a named group. A reset that reads a
+  streamed file is refused `not-preloaded`, as natively.
 - Caps per cell, all builders together: 256 things, 64 colliders, 4096 group instances. A cell
   past one enters empty (`cell.refused()` is `stream-invalid`), nothing of it is kept, and
   `state().volatile.__stream.refused` names it.
@@ -200,8 +204,8 @@ loading interiors.
   `handles.model(path)` a model member's handle (draw it with `frame.model`), both usable in
   `on_update`. `handles.paths()` lists the members.
 - A member that is not loaded by then holds the frame, as a late cell build does, so the group is
-  ready on the same tick on every native destination. On the web a named group is not fetched yet,
-  so a game with a web build loads what it needs up front.
+  ready on the same tick on every destination. On the web a required group is fetched while
+  playing: the frames before its members arrive are held, and it is ready on the native tick.
 - `sim.stream.release_group("interior")` lets it go; requiring it again gives equal handles.
   `sim.stream.required_groups()` lists the groups required now.
 - Required groups are not part of a save: a loaded game requires its groups again.

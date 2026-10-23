@@ -31,12 +31,12 @@
 
       Streaming (game systems STR-14b): the plan holds only the map's boot and sim groups (a cell
       pack's index, everything outside the streamed groups). A pack's cells and terrain tiles and a
-      named group's files are planned to arrive while playing, but none is fetched yet (the runtime
-      wants none, so studio_assets_wanted answers nothing), so a game with a web build loads what it
-      needs up front. Each frame, before the
-      game's, the shell hands the module the pieces fetched since (studio_assets_arrived, oldest first, at most
-      STREAM_HANDOFF_BYTES a frame but always one), then asks studio_assets_wanted for the pieces
-      the game wants now and fetches each with a Range request, at most ASSET_FETCHES at once. A
+      named group's files arrive while playing, when the game wants them: the cells around its
+      anchors and the groups it requires. Each frame, before the game's, the shell hands the module
+      the pieces fetched since (studio_assets_arrived, oldest first, at most STREAM_HANDOFF_BYTES a
+      frame but always one), then asks studio_assets_wanted (which first hands the files that
+      arrived to the sim's reads) for the pieces the game wants now and has not asked for before,
+      and fetches each with a Range request, at most ASSET_FETCHES at once. A
       server that ignores Range answers the whole file, which is read up to the piece's end and
       sliced. A piece over STREAM_FETCH_MAX_BYTES is refused unfetched (asset-too-large); a refused
       fetch or a piece the module refuses is logged and the game plays on. Fetched bytes wait in the
