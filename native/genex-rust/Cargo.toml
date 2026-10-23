@@ -139,12 +139,11 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 png = { version = "0.18.1" }
 
 # Core, protocol, saves. serde_json keeps object members in insertion order, as the C++ json.h
-# does, so probes merge in registration order and the checksum dump is order-stable;
-# `float_roundtrip` parses every float correctly rounded, so the ryu text a save writes reads
-# back to the same bits (its default parser can land an ulp off, and the slot then loads
-# `save-corrupt`). It adds no crate.
+# does, so probes merge in registration order and the checksum dump is order-stable. Its default
+# float parser can land an ulp off the ryu text it wrote; genex-save's envelope decode re-parses
+# each float correctly rounded itself, so serde_json's larger `float_roundtrip` parser stays off.
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["preserve_order", "float_roundtrip"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
 postcard = { version = "1.1.3", features = ["alloc"] }
 indexmap = { version = "2.14.2", features = ["serde"] }
 libm = "0.2.16"

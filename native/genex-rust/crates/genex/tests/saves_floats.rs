@@ -2,14 +2,15 @@
 //! f32 and f64 fields, and a `game.save_section` of body poses as plain f32 numbers (the physics
 //! page's shape), each filled with random bit patterns from `ctx.rng`, load at tick 300 and replay
 //! to the uninterrupted run's checksum. A NaN in the World saves as `null`, and its load is refused
-//! `save-section-invalid` with the running game untouched.
+//! `save-section-invalid` with the running game untouched. The Studio's `saves` read of a float
+//! slot hands back the stored floats, so writing that document back seeds a slot that loads equal.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use genex::digest;
 use genex::prelude::*;
-use genex::saves::{SaveConfig, SaveErrorCode, SlotOp};
+use genex::saves::{HostSavesCall, SaveConfig, SaveErrorCode, SlotOp};
 use genex::{FIXED_STEP_MS, Runtime};
 use serde::{Deserialize, Serialize};
 
@@ -170,4 +171,17 @@ fn a_nan_in_the_world_saves_as_null_and_its_load_is_refused_with_the_game_untouc
     assert_eq!(rt.tick(), twin.tick(), "the refused load rewound nothing");
     assert_eq!(rt.checksum(), twin.checksum(), "the running game is untouched");
     assert_eq!(rt.state()["volatile"]["saves"]["lastLoad"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_host_read_of_a_float_slot_writes_back_as_a_slot_that_loads_equal() {
+    let log = Log::default();
+    let mut rt = runtime(floats_game(&log, false), "host");
+    run_to(&mut rt, SAVE_TICK + 1);
+    let read = rt.host_saves(HostSavesCall::Read(SLOT.into())).expect("read");
+    let document = serde_json::to_vec(&read).expect("json");
+    let seeded = rt.host_saves(HostSavesCall::Write("seeded".into(), document)).expect("the read document is the stored one");
+    assert_eq!(seeded["tick"].as_u64(), Some(SAVE_TICK));
+    let loaded = rt.host_saves(HostSavesCall::Load("seeded".into())).expect("loaded");
+    assert_eq!(loaded["checksumMatch"], json!(true), "{loaded}");
 }

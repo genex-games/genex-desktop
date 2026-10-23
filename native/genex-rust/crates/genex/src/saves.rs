@@ -858,7 +858,7 @@ fn read_envelope(driver: &SlotDriver, saves: &Saves, slot: &str) -> Result<Value
         let digest = genex_core::digest::hex64(genex_core::digest::fnv1a64(&document));
         return Ok(json!({ "tooLarge": true, "bytes": document.len(), "digest": digest }));
     }
-    serde_json::from_slice(&document).map_err(|error| SaveError::corrupt(format!("not JSON: {error}")))
+    genex_save::envelope::parse_document(&document)
 }
 
 /// Seed a named slot with `document` once it decodes as a save of this game that the schema's

@@ -2,8 +2,13 @@
 //! world widens to f64 through serde) encodes, decodes to the same bits and re-encodes to the same
 //! bytes. A non-finite float has no JSON number: serde_json writes it as `null`, which decodes as
 //! `null` (the facade's typed load then refuses it, see the genex saves rows).
+//!
+//! The decode re-parses each float from its own number token, so the hostile rows put the text a
+//! token scanner could trip on (digits, `-` and `e` in strings, escaped quotes and backslashes,
+//! unicode escapes, nesting, integer extremes) beside a float serde_json's default parser misreads.
 
-use genex_save::envelope::{Envelope, SaveMeta, decode, encode};
+use genex_save::envelope::{Envelope, SaveMeta, decode, encode, parse_document};
+use genex_save::error::SaveErrorCode;
 use serde_json::{Map, Value, json};
 
 /// Random bit patterns drawn per width.
@@ -139,5 +144,82 @@ fn a_non_finite_float_has_no_json_number_and_round_trips_as_null() {
         assert_eq!(original.sections["world"]["v"], Value::Null, "{x} becomes null before encoding");
         let bytes = encode(&original).expect("encodes");
         assert_eq!(decode(&bytes).expect("decodes"), original);
+    }
+}
+
+/// f32::MAX widened: a float serde_json's default parser lands an ulp off.
+const MISREAD: f64 = 3.402_823_466_385_288_6e38;
+
+/// Section values whose strings, keys, nesting and integers sit beside floats the decode re-parses.
+fn hostile_token_rows() -> Vec<(&'static str, Value)> {
+    vec![
+        ("digits in a string", json!(["1.5e300", MISREAD, "-0.0", MISREAD])),
+        ("an escaped quote before digits", json!(["a\"1.25\"", MISREAD])),
+        ("an escaped backslash ends a string", json!(["\\", MISREAD, "\\\"9\\", MISREAD])),
+        ("a unicode escape with digits", json!(["\u{1}\u{1f}2", MISREAD, "é1e5", MISREAD])),
+        ("digits in keys", json!({ "1.5e3": MISREAD, "-2": { "e-7\"": MISREAD } })),
+        ("nested arrays and objects", json!([[[MISREAD, [{ "a": [MISREAD] }]], {}], [], MISREAD])),
+        ("integers at their extremes", json!([u64::MAX, MISREAD, i64::MIN, MISREAD, 0, -1])),
+        ("past u64 as a float", json!([18_446_744_073_709_551_616.0_f64, MISREAD])),
+        ("exponents", json!([1e300, 5e-324, MISREAD, -1e-300, 1e22])),
+        ("negative zero", json!([-0.0, MISREAD, 0.0, -0.0])),
+        ("literals between floats", json!([true, MISREAD, null, MISREAD, false, MISREAD])),
+    ]
+}
+
+#[test]
+fn floats_beside_hostile_tokens_round_trip_byte_identical() {
+    for (what, value) in hostile_token_rows() {
+        let original = envelope(value);
+        let bytes = encode(&original).unwrap_or_else(|error| panic!("{what}: encode refused {error:?}"));
+        let decoded = decode(&bytes).unwrap_or_else(|error| panic!("{what}: decode refused {error:?}"));
+        assert_eq!(decoded, original, "{what}");
+        let text = |envelope: &Envelope| serde_json::to_string(&envelope.sections).unwrap_or_default();
+        assert_eq!(text(&decoded), text(&original), "{what}: every float's bits, -0.0 included");
+        assert_eq!(encode(&decoded).ok(), Some(bytes), "{what}: re-encodes byte-identical");
+    }
+}
+
+#[test]
+fn a_parsed_document_keeps_integers_and_reads_each_float_from_its_own_token() {
+    let text = br#"{"s":"1.5\"2e3\\","n":[3.4028234663852886e38,{"k\u00221":-0.0}],"u":18446744073709551615,"i":-9223372036854775808,"big":18446744073709551616,"t":5e-324,"x":1e300}"#;
+    let document = parse_document(text).expect("JSON");
+    assert_eq!(document["s"], json!("1.5\"2e3\\"));
+    assert_eq!(document["n"][0].as_f64().map(f64::to_bits), Some(MISREAD.to_bits()));
+    assert_eq!(document["n"][1]["k\"1"].as_f64().map(f64::to_bits), Some((-0.0_f64).to_bits()));
+    assert_eq!((document["u"].as_u64(), document["i"].as_i64()), (Some(u64::MAX), Some(i64::MIN)));
+    assert_eq!(document["big"].as_f64(), Some(18_446_744_073_709_551_616.0));
+    assert_eq!((document["t"].as_f64(), document["x"].as_f64()), (Some(5e-324), Some(1e300)));
+}
+
+#[test]
+fn hostile_text_around_floats_is_refused_corrupt_and_never_panics() {
+    let bytes = encode(&envelope(json!(["a\"1\\", MISREAD, { "k": [0.1, MISREAD] }]))).expect("encodes");
+    let text = String::from_utf8(bytes.clone()).expect("a small body is plain JSON");
+    let refused: [(&str, Vec<u8>); 3] = [
+        ("a duplicate member", text.replacen(r#"{"v":"#, r#"{"v":0.30000000000000004,"v":"#, 1).into_bytes()),
+        ("a float in another spelling", text.replacen("3.4028234663852886e+38", "3.40282346638528860e+38", 1).into_bytes()),
+        ("a dangling escape", br#"{"genex":"save","s":"\"#.to_vec()),
+    ];
+    for (what, stored) in refused {
+        assert!(stored != bytes, "{what} changes the body");
+        assert_eq!(decode(&stored).map_err(|error| error.code), Err(SaveErrorCode::Corrupt), "{what}");
+    }
+    // Every cut, and each byte turned into a quote, a backslash, a minus or an `e`: refused, or
+    // (a label or game name is outside the digest) a canonical save that loads as its exact bytes.
+    let mut swept: Vec<(String, Vec<u8>)> = (1..bytes.len()).map(|end| (format!("cut at {end}"), bytes[..end].to_vec())).collect();
+    for at in 0..bytes.len() {
+        for &byte in br#""\-e"# {
+            let mut mutated = bytes.clone();
+            mutated[at] = byte;
+            swept.push((format!("{} at {at}", char::from(byte)), mutated));
+        }
+    }
+    let codes = [SaveErrorCode::Corrupt, SaveErrorCode::FormatUnknown];
+    for (what, stored) in swept {
+        match decode(&stored) {
+            Ok(decoded) => assert_eq!(encode(&decoded).ok(), Some(stored), "{what}: loads only as its exact bytes"),
+            Err(refused) => assert!(codes.contains(&refused.code), "{what}: {refused:?}"),
+        }
     }
 }
