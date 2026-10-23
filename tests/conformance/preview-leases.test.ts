@@ -8,7 +8,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { realpath } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { OVERFLOW_WINDOWS_MAX, PreviewPool } from "../../src/substrate/preview-pool.ts";
+import {
+  OVERFLOW_WINDOWS_MAX,
+  PERSON_WINDOWS_MAX,
+  PreviewActor,
+  PreviewPool,
+} from "../../src/substrate/preview-pool.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
 interface FakePort {
@@ -220,5 +225,113 @@ describe("windows past the pool's ceiling", () => {
     const pool = new PreviewPool({ live: {} as never, createHeadless: ports.create, max: 1 });
     await pool.acquire({ label: "builder" });
     await assert.rejects(pool.acquire({ label: "facet" }), /exhausted/);
+  });
+});
+
+/**
+ * The person's own action (a run card's Play, Play latest) test-loads a build in a hidden window
+ * of its own, past the agents' share: a run that holds every builder's and lead's window never
+ * refuses the person's click. Only an acquire typed `by: PreviewActor.Person` reaches it; a label,
+ * an owner or any other value is an agent's, held to the share as before.
+ */
+describe("the person's window", () => {
+  const full = async (max = 2) => {
+    const ports = fakePorts();
+    const pool = new PreviewPool({ live: {} as never, createHeadless: ports.create, max });
+    for (let i = 0; i < max; i++) await pool.acquire({ label: "builder", owner: "harness:1" });
+    return { ports, pool };
+  };
+
+  it("opens for the person while agents hold the whole share, and leaves the share as it was", async () => {
+    const { ports, pool } = await full();
+    const person = await pool.acquire({ label: "preview-candidate:pong", by: PreviewActor.Person });
+    assert.equal(ports.open(), 3);
+    assert.equal(pool.personLeaseCount, PERSON_WINDOWS_MAX);
+    assert.equal(pool.leaseCount, 2, "the agents' share still counts only theirs");
+    assert.equal(pool.leases().find((lease) => lease.handle === person.handle)?.label, "preview-candidate:pong");
+    await assert.rejects(
+      pool.acquire({ label: "facet" }),
+      /exhausted \(2\/2 leased\)/,
+      "agents still stop at their share",
+    );
+  });
+
+  it("refuses a second person window while the first is open and the share is full; release frees it", async () => {
+    const { ports, pool } = await full();
+    const first = await pool.acquire({ label: "preview-candidate:a", by: PreviewActor.Person });
+    await assert.rejects(pool.acquire({ label: "preview-candidate:b", by: PreviewActor.Person }), /exhausted/);
+    assert.equal(ports.made.length, 3, "the refused one opened nothing");
+    await pool.release(first.handle);
+    assert.equal(pool.personLeaseCount, 0);
+    const again = await pool.acquire({ label: "preview-candidate:b", by: PreviewActor.Person });
+    assert.equal(pool.personLeaseCount, 1);
+    await assert.rejects(pool.acquire({ label: "facet" }), /exhausted \(2\/2 leased\)/);
+    await pool.release(again.handle);
+    assert.equal(ports.open(), 2);
+  });
+
+  it("a second person window while the first is open takes a free window of the share", async () => {
+    const ports = fakePorts();
+    const pool = new PreviewPool({ live: {} as never, createHeadless: ports.create, max: 1 });
+    await pool.acquire({ label: "preview-candidate:a", by: PreviewActor.Person });
+    await pool.acquire({ label: "preview-candidate:b", by: PreviewActor.Person });
+    assert.equal(pool.personLeaseCount, 1);
+    assert.equal(pool.leaseCount, 1);
+    await assert.rejects(pool.acquire({ label: "facet" }), /exhausted \(1\/1 leased\)/);
+  });
+
+  it("gives the person's window back when it fails to open", async () => {
+    let fail = true;
+    const ports = fakePorts();
+    const pool = new PreviewPool({
+      live: {} as never,
+      createHeadless: async () => {
+        if (fail) throw new Error("window failed");
+        return ports.create();
+      },
+      max: 0,
+    });
+    await assert.rejects(pool.acquire({ label: "preview-candidate:a", by: PreviewActor.Person }), /window failed/);
+    assert.equal(pool.personLeaseCount, 0);
+    fail = false;
+    await pool.acquire({ label: "preview-candidate:a", by: PreviewActor.Person });
+    assert.equal(pool.personLeaseCount, 1);
+  });
+
+  const AGENT_ASKS: Array<[string, Record<string, unknown>]> = [
+    ["a candidate's label", { label: "preview-candidate:pong" }],
+    ["a person-looking label", { label: "person" }],
+    ["by left out", { label: "facet", by: undefined }],
+    ["by an agent", { label: "facet", by: PreviewActor.Agent }],
+    ["by in other case", { label: "facet", by: "Person" }],
+    ["by padded", { label: "facet", by: " person" }],
+    ["by unknown", { label: "facet", by: "human" }],
+    ["by not a string", { label: "facet", by: { valueOf: () => "person" } }],
+    ["owner person", { label: "facet", owner: "person" }],
+    ["purpose person", { label: "facet", purpose: "person" }],
+  ];
+  for (const [name, asked] of AGENT_ASKS) {
+    it(`an agent never takes it: ${name}`, async () => {
+      const { ports, pool } = await full();
+      await assert.rejects(pool.acquire(asked as never), /exhausted \(2\/2 leased\)/);
+      assert.equal(ports.made.length, 2, "nothing opened");
+      assert.equal(pool.personLeaseCount, 0);
+      await pool.acquire({ label: "preview-candidate:pong", by: PreviewActor.Person });
+      assert.equal(pool.personLeaseCount, 1, "the person's window is still there");
+    });
+  }
+
+  it("windows past the ceiling never take it, and the person's window takes none of theirs", async () => {
+    const ports = fakePorts();
+    const pool = new PreviewPool({ live: {} as never, createHeadless: ports.create, max: 0 });
+    await pool.acquire({ label: "preview-candidate:pong", by: PreviewActor.Person });
+    for (let i = 0; i < OVERFLOW_WINDOWS_MAX; i++) await pool.acquire({ label: "s", overflow: true });
+    assert.equal(ports.open(), 1 + OVERFLOW_WINDOWS_MAX, "every overflow window opened beside the person's");
+    const ended = new AbortController();
+    const waiting = pool.acquire({ label: "late", overflow: true, signal: ended.signal });
+    await setImmediate();
+    assert.equal(ports.open(), 1 + OVERFLOW_WINDOWS_MAX, "the next session waits");
+    ended.abort(new Error("the session ended"));
+    await assert.rejects(waiting, /the session ended/);
   });
 });

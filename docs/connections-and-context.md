@@ -830,8 +830,10 @@ Implementation evidence: real Blender 4.5.4 imported a retained 5.9 MB generated
 the public native transform recipe, exported a derivative and two renders, preserving the
 original SHA-256. This proves staged import/export, not in-game use or hosted readiness. Retain the actual observation in local evidence and summarize its limits in the PR.
 
-Reliability acceptance also guards preview-pool exhaustion and candidate load failure without
-Live navigation (`preview-candidate.test.ts`), renamed native derivative provenance, and
+Reliability acceptance also guards the person's candidate window while agents hold the whole
+preview pool, a second Play refused without Live navigation when that window and the pool are
+both taken, and candidate load failure without Live navigation (`preview-candidate.test.ts`),
+renamed native derivative provenance, and
 macOS canonical workspace aliases at the asset-checkpoint boundary. Build smoke currently
 covers the default expanded history and compact header/details layout. Real retained-asset
 acceptance reports live under `.studio-dev/evidence/<task>/`, with selected evidence shared in the PR.

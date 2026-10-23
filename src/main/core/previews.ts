@@ -47,7 +47,7 @@ import type { ReferenceFrame } from "../../shared/protocol.ts";
 import type { Revision } from "../../shared/optimization.ts";
 import { capActions } from "../../substrate/preview-input.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
-import { LIVE_HANDLE, PreviewPool, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
+import { LIVE_HANDLE, PreviewActor, PreviewPool, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture, type ReadyResult } from "../../substrate/preview-ready.ts";
 import { COMPUTER_VIEW, setupReached, type PreviewSetup } from "../../substrate/computer-tool.ts";
 import {
@@ -1282,11 +1282,13 @@ export class PreviewService {
     await ensureDir(path.dirname(showDir));
     await this.#core.snapshots.worktreeAt(project, resolved, showDir, await this.nestedPolicy(projectDir));
     const previous = this.#x.servedRoots.get(LIVE_HANDLE);
-    // A preview candidate may never borrow the user's Live window.
+    // A preview candidate may never borrow the user's Live window. It is the person's own window
+    // past the agents' share: every caller plays a build the person asked for (their Play or Reload,
+    // or the lead's show_build answering their own message), so a run holding every window never refuses it.
     let candidateHandle: string | undefined;
     let liveAttempted = false;
     try {
-      const lease = await this.pool().acquire({ label: `preview-candidate:${project}` });
+      const lease = await this.pool().acquire({ label: `preview-candidate:${project}`, by: PreviewActor.Person });
       candidateHandle = lease.handle;
       const port = this.pool().port(lease.handle);
       const candidate = await this.loadServed(port, project, showDir);
