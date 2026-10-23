@@ -417,3 +417,74 @@ fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the
     let leaf = Material::color(Color::rgb(60, 110, 30)).with_subsurface(Subsurface::new([0.2, 0.3, 0.05], 0.15).with_transmission(0.6));
     assert!(leaf.subsurface().is_some());
 }
+
+/// The Physics page's calls (lane PH): Rapier 0.36 through `genex::physics`, as `docs/api/physics.md`
+/// teaches them. They are Rapier's own names, pinned so the page, the physics recipe and the
+/// template guide teach only calls this chain makes.
+#[cfg(feature = "physics")]
+#[test]
+fn the_physics_calls_are_the_fixtures_and_each_is_a_call_of_rapier() {
+    use genex::physics::{
+        Ball, ColliderBuilder, Pose, QueryFilter, Ray, RevoluteJointBuilder, RigidBodyBuilder, RopeJointBuilder,
+    };
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "physics"),
+        [
+            "RigidBodyBuilder::dynamic", "RigidBodyBuilder::fixed", "RigidBodyBuilder::kinematic_position_based",
+            ".translation", ".linvel", ".linear_damping", ".ccd_enabled", "ColliderBuilder::cuboid", "ColliderBuilder::ball",
+            "ColliderBuilder::cylinder", ".mass", ".density", ".friction", ".restitution", "physics.insert",
+            "physics.insert_body", "physics.remove_body", "physics.bodies.get", "physics.bodies.get_mut",
+            "physics.colliders.get", "body.set_next_kinematic_translation", "body.apply_impulse",
+            "body.apply_impulse_at_point", "body.translation", "body.rotation", "body.linvel", "body.angvel",
+            "body.is_sleeping", "body.is_dynamic", "physics.active_bodies", "Ray::new", "ray.point_at", "physics.cast_ray",
+            "QueryFilter::default", "QueryFilter::only_dynamic", ".exclude_rigid_body", "physics.intersect_shape", "Pose::from_translation",
+            "Ball::new", "collider.parent", "physics.contact_pair", "pair.has_any_active_contact",
+            "RopeJointBuilder::new", "RevoluteJointBuilder::new", ".local_anchor2", ".limits",
+            "physics.insert_impulse_joint", "handle.into_raw_parts", "body.set_position", "Pose::from_parts",
+            "body.set_linvel", "body.set_angvel",
+        ]
+    );
+    // Every pinned name is a real call, chained as the Physics page teaches it.
+    let mut physics = PhysicsWorld::default();
+    let ground = ColliderBuilder::cuboid(20.0, 0.5, 20.0).friction(0.8);
+    let (_, floor) = physics.insert(RigidBodyBuilder::fixed().translation(vec3(0.0, -0.5, 0.0)), ground);
+    let crate_box = ColliderBuilder::cuboid(0.5, 0.5, 0.5).mass(20.0).friction(0.7).restitution(0.05);
+    let (handle, _) = physics.insert(RigidBodyBuilder::dynamic().translation(vec3(0.0, 0.5, 0.0)), crate_box);
+    let barrel = ColliderBuilder::cylinder(0.6, 0.4).density(300.0);
+    let (_, barrel_collider) = physics.insert(RigidBodyBuilder::dynamic().translation(vec3(3.0, 0.6, 0.0)), barrel);
+    let shot = RigidBodyBuilder::dynamic().translation(vec3(0.0, 1.0, 8.0)).linvel(vec3(0.0, 0.0, -60.0)).ccd_enabled(true);
+    let (shot, _) = physics.insert(shot, ColliderBuilder::ball(0.1).density(7800.0));
+    let trolley = physics.insert_body(RigidBodyBuilder::kinematic_position_based().translation(vec3(-8.0, 12.0, 0.0)));
+    let wrecking = RigidBodyBuilder::dynamic().translation(vec3(-8.0, 4.5, 0.0)).linear_damping(0.05);
+    let (ball, _) = physics.insert(wrecking, ColliderBuilder::ball(1.0).mass(600.0));
+    physics.insert_impulse_joint(trolley, ball, RopeJointBuilder::new(8.0));
+    let post = physics.insert_body(RigidBodyBuilder::fixed().translation(vec3(6.0, 1.05, 0.0)));
+    let door = physics.insert(RigidBodyBuilder::dynamic().translation(vec3(6.5, 1.05, 0.0)), ColliderBuilder::cuboid(0.5, 1.0, 0.05));
+    let hinge = RevoluteJointBuilder::new(Vec3::Y).local_anchor2(vec3(-0.5, 0.0, 0.0)).limits([-1.57, 1.57]);
+    physics.insert_impulse_joint(post, door.0, hinge);
+    if let Some(body) = physics.bodies.get_mut(trolley) {
+        body.set_next_kinematic_translation(vec3(-7.0, 12.0, 0.0));
+    }
+    physics.step();
+    let near: Vec<_> = physics
+        .intersect_shape(Pose::from_translation(Vec3::ZERO), &Ball::new(4.0), QueryFilter::only_dynamic())
+        .filter_map(|(_, collider)| collider.parent())
+        .collect();
+    assert!(near.contains(&handle), "the crate is in the blast");
+    let ray = Ray::new(vec3(0.0, 0.5, 6.0), vec3(0.0, 0.0, -1.0));
+    let (hit, toi) = physics.cast_ray(&ray, 100.0, true, QueryFilter::default().exclude_rigid_body(shot)).expect("the crate");
+    let point = ray.point_at(toi);
+    assert_eq!(physics.colliders.get(hit).and_then(|collider| collider.parent()), Some(handle));
+    let touching = physics.contact_pair(floor, barrel_collider).is_some_and(|pair| pair.has_any_active_contact());
+    let body = physics.bodies.get_mut(handle).expect("the crate");
+    body.apply_impulse(vec3(0.0, 100.0, 0.0), true);
+    body.apply_impulse_at_point(vec3(0.0, 0.0, -50.0), point, true);
+    let state = (body.translation(), *body.rotation(), body.linvel(), body.angvel(), body.is_sleeping());
+    body.set_position(Pose::from_parts(state.0, state.1), true);
+    body.set_linvel(state.2, true);
+    body.set_angvel(state.3, true);
+    let (slot, generation) = handle.into_raw_parts();
+    assert!(touching && !state.4 && body.is_dynamic() && physics.active_bodies().count() > 0 && slot + generation < u32::MAX);
+    assert!(physics.bodies.get(handle).is_some() && physics.remove_body(handle).is_some());
+}

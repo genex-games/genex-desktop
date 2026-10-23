@@ -42,8 +42,10 @@ game.on_update(|sim, ctx| {
   count.
 - **Sections.** `game.save_world()` is the section `world`. `game.save_section(name, save, load)`
   adds any other: `save` reads the `Sim` and returns JSON, `load` writes it back onto the restored
-  `Sim`. Physics bodies, facet state and anything outside `sim.world` need their own section. With
-  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot, `docs/api/navigation.md`),
+  `Sim`. Physics bodies (`docs/api/physics.md`), facet state and anything outside `sim.world` need
+  their own section. Write floats as bits: a float that does not read back to the same text makes
+  the slot load `save-corrupt`. With `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s
+  snapshot, `docs/api/navigation.md`),
   and with `game.streaming` it adds `genex.stream` (`docs/api/streaming.md`;
   `sim.stream.snapshot()`: anchors, kept cells and active cells). With `game.input` it adds
   `genex.input` (the evaluated actions and the pad family in use), so a load mid-hold reads the

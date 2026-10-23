@@ -28,9 +28,8 @@ scripts, cargo configuration or renderer internals.
 
 ## Topics
 
-This index holds the hooks and the rules every game follows. Every other topic is a page of its
-own beside it in `docs/api/`: read the page of each topic a change touches (nearly every game
-needs Ctx and Drawing).
+This index holds the hooks and rules; each other topic is a page in `docs/api/`. Read each one a
+change touches (nearly every game needs Ctx and Drawing).
 
 | Topic | Page | What it covers |
 |-|-|-|
@@ -42,6 +41,7 @@ needs Ctx and Drawing).
 | Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
+| Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |

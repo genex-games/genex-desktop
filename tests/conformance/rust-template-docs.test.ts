@@ -132,10 +132,12 @@ const FACADE = JSON.parse(
 
 /** Every call group the fixture pins (a top-level entry with a `calls` list), by its key. */
 function pinnedCallGroups(): Array<[string, string[]]> {
-  return Object.entries(FACADE as Record<string, unknown>).flatMap(([key, entry]) => {
+  const groups = Object.entries(FACADE as Record<string, unknown>).flatMap(([key, entry]) => {
     const calls = (entry as { calls?: unknown } | null)?.calls;
     return Array.isArray(calls) ? [[key, calls as string[]] as [string, string[]]] : [];
   });
+  // The draw-id calls are a flat list, pinned all the same: the Physics page draws every body under one.
+  return [...groups, ["temporalCalls", FACADE.temporalCalls]];
 }
 
 /**
@@ -184,6 +186,7 @@ const GAME_SYSTEMS_PAGES = [
   "saves",
   "net",
   "profiling",
+  "physics",
 ] as const;
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -321,6 +324,7 @@ const PINNED_CALL_PAGES = [
   "input",
   "navigation",
   "net",
+  "physics",
   "profiling",
   "saves",
   "settings",
@@ -329,12 +333,14 @@ const PINNED_CALL_PAGES = [
 ] as const;
 
 /**
- * Names those pages call that are not the game systems' facade calls: Rust's and serde_json's own
- * methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
- * `frame.sphere`, `genex::render::settings_button`), egui's `ui.painter` and a game's own helper
- * in the profiling example (`enemy.think`).
+ * Names those pages call that are not the game systems' facade calls: Rust's, glam's and serde's
+ * own methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
+ * `frame.sphere`, `frame.cube`, `Color::rgb`, `Transform`'s `.with_rotation`,
+ * `genex::render::settings_button`), egui's `ui.painter` and a game's own helper in the profiling
+ * example (`enemy.think`).
  */
 const NOT_GAME_SYSTEMS_CALLS = new Set([
+  "and_then",
   "any",
   "as_bool",
   "as_f64",
@@ -364,12 +370,27 @@ const NOT_GAME_SYSTEMS_CALLS = new Set([
   "to_owned",
   "to_vec",
   "unwrap_or",
+  "clone",
+  "deserialize",
+  "filter",
+  "filter_map",
+  "flat_map",
+  "from_xyzw",
+  "map_err",
+  "min",
+  "normalize_or_zero",
+  "to_string",
+  "zip",
   "on_draw",
   "on_reset",
   "on_ui",
   "on_update",
+  "probe_volatile",
   "painter",
   "settings_button",
+  "cube",
+  "rgb",
+  "with_rotation",
   "sphere",
   "split",
   "tag",
@@ -1325,5 +1346,25 @@ describe("the in-app agent knows every game system and its switch (R-32)", () =>
       assert.ok(own.includes(code), `CLAUDE.own.md names ${code}`);
       assert.ok(skill.includes(code), `the ladder skill names ${code}`);
     }
+  });
+});
+
+describe("the in-app agent is taught general physics (lane PH)", () => {
+  const page = () => read(`${API_PAGES}/physics.md`).replace(/\s+/g, " ");
+
+  it("the index lists the Physics page and the Game systems rules route to it", () => {
+    assert.equal(pageOf("Physics"), "docs/api/physics.md");
+    assert.ok(section(read("CLAUDE.md"), "Game systems").includes("docs/api/physics.md"));
+  });
+
+  it("the Physics page states when physics steps, the switch, and what a save does not restore", () => {
+    const text = page();
+    assert.match(text, /once per tick, after the `on_update` and `on_ui` hooks/, "when the runtime steps");
+    assert.ok(
+      text.includes("`[physics] enabled = false`") && text.includes("`build-failed`"),
+      "the switch and its answer",
+    );
+    assert.match(text, /contacts and sleep are not (?:saved|restored)/, "a loaded pile settles again");
+    assert.ok(text.includes("frame.id("), "moving bodies are drawn under draw ids");
   });
 });

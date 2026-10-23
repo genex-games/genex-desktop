@@ -192,6 +192,10 @@ write your own system around it.
   its capsule at the feet, draw the model at the capsule, never placed by its centre, and call
   `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground
   (`docs/api/animation.md`).
+- **Physics**: crates, debris, a wrecking ball on a rope, a door on a hinge are Rapier bodies in
+  `sim.physics`, built in `on_reset` and stepped by the runtime after `on_update`; never step it
+  yourself. Draw each moving body in `on_draw` under its own `frame.id(..)`, save each body's pose
+  and velocities in a section of its own, and probe each mechanic (`docs/api/physics.md`).
 - **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
   tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
   cards past their last level, declared once in `on_reset`. A model only streamed cells draw
