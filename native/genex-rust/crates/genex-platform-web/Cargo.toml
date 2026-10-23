@@ -69,3 +69,9 @@ crate-type = ["cdylib"]
 [[example]]
 name = "web_crash"
 crate-type = ["cdylib"]
+
+# The streaming sample `tests/conformance/rust-web-streamed-world.test.ts` packages for the browser:
+# a streamed world whose far cell arrives after a teleport, and a named group (empty off wasm32).
+[[example]]
+name = "web_stream"
+crate-type = ["cdylib"]
