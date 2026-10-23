@@ -129,6 +129,51 @@ export function gameFullScreen(deps: FullScreenDeps) {
 /** The game's full screen as `gameFullScreen` makes it. */
 export type GameFullScreen = ReturnType<typeof gameFullScreen>;
 
+/**
+ * The game Live's Native view draws (the Mac build's canvas, part of the studio's own page) as a
+ * full screen's game: filling it tells the page its canvas covers the window (`native.full-screen`),
+ * and the keyboard stays with the page, where the canvas's hidden field takes it.
+ */
+export function nativeCanvasGame(page: { emit(on: boolean): void; focus(): void }): FullScreenDeps["game"] {
+  return { fill: (bounds) => page.emit(bounds !== null), focus: () => page.focus() };
+}
+
+/**
+ * Live's two full screens, one at a time: the web game view's and the Native view's canvas. Both
+ * behave alike (the window, the exit button, the held Esc); entering one ends the other, and the
+ * window's changes and keys reach whichever is on.
+ */
+export function liveFullScreens(screens: { web: GameFullScreen; native: GameFullScreen }) {
+  const { web, native } = screens;
+  const both = [web, native] as const;
+  return {
+    /** Whether the web game view fills the screen (the slot it measures is then ignored). */
+    active: (): boolean => web.active(),
+    /** Whether Live's Native view fills the screen. */
+    nativeActive: (): boolean => native.active(),
+    enter: (view: { native: boolean }): void => {
+      const [on, off] = view.native ? [native, web] : [web, native];
+      off.exit();
+      on.enter();
+    },
+    exit: (): void => {
+      for (const screen of both) screen.exit();
+    },
+    resized: (): void => {
+      for (const screen of both) screen.resized();
+    },
+    windowLeft: (): void => {
+      for (const screen of both) screen.windowLeft();
+    },
+    key: (input: FullScreenKey): void => {
+      for (const screen of both) screen.key(input);
+    },
+  };
+}
+
+/** Live's full screens as `liveFullScreens` makes them. */
+export type LiveFullScreens = ReturnType<typeof liveFullScreens>;
+
 /** The key the exit button names: a key's own name, the same in every language. */
 const EXIT_KEY = "esc";
 /** Stands in for the key while the sentence around it is escaped; no translation holds it. */

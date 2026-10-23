@@ -757,8 +757,22 @@ export interface StudioApi {
   stopPreview(): Promise<boolean>;
   /** Play a stopped Live game again: the same page, from the top. */
   playPreview(): Promise<boolean>;
-  /** Full screen: the window goes full screen with the Live game over all of it; holding Esc, or its exit button, ends it. */
-  previewFullScreen(): Promise<boolean>;
+  /**
+   * Full screen: the window goes full screen with the Live game over all of it; holding Esc, or its
+   * exit button, ends it. `native` fills it with Live's Native view (the Mac build's canvas) instead
+   * of the web game view.
+   */
+  previewFullScreen(options?: { native?: boolean }): Promise<boolean>;
+  /**
+   * After the game folder changed under a compiled game's Live, build it for the view the person
+   * has (Web for the web view, Mac for Native) without touching Live: its Reload then plays the
+   * build at once. `Skipped` when Live shows another folder, the game builds no such destination,
+   * or it is not compiled.
+   */
+  prepareLiveBuild(
+    project: string,
+    target: import("./live-behind.ts").LivePrepareTarget,
+  ): Promise<import("./live-behind.ts").LivePrepare>;
   /** What waits for this game's Live Reload and the build Live shows, as `live.behind` says it: read on mount. */
   liveBehind(project: string): Promise<LiveBehindEvent>;
   /**

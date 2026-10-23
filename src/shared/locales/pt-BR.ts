@@ -160,6 +160,7 @@ export default {
     "Um jogo de tiro arcade neon onde suas balas ricocheteiam nas paredes",
   "A new build is ready to play.": "Um novo build está pronto para jogar.",
   "A new build is ready — reload to play it": "Um build novo está pronto — recarregue para jogar",
+  "A new build is ready.": "Um novo build está pronto.",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
     "Uma nova versão está sendo baixada. O Genex vai oferecer reiniciar quando ela estiver pronta.",
   "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.":
@@ -527,6 +528,7 @@ export default {
   Background: "Fundo",
   Backgrounds: "Fundos",
   Before: "Antes",
+  "Back to your game": "Voltar ao seu jogo",
   "Before a build can be reviewed": "Antes de revisar um build",
   "Before the Loop calls it done, a second AI looks at your game.":
     "Antes de o Loop dar como concluído, uma segunda IA olha o seu jogo.",
@@ -597,8 +599,11 @@ export default {
   "Build with workers": "Crie com ajudantes",
   Building: "Criando",
   "Building the Mac version of this build… {clock}": "Criando a versão para Mac deste build… {clock}",
+  "Building the Mac version of your changes… {clock}": "Criando a versão para Mac das suas mudanças… {clock}",
   "Building the Mac version… {clock}": "Criando a versão para Mac… {clock}",
+  "Building the browser version of your changes… {clock}": "Criando a versão para navegador das suas mudanças… {clock}",
   "Building the game": "Criando o jogo",
+  "Building the game for the lead… {clock}": "Criando o jogo para o agente principal… {clock}",
   "Building the starting point": "Criando o ponto de partida",
   "Building the starting point…": "Criando o ponto de partida…",
   "Building your game": "Criando seu jogo",
@@ -4044,6 +4049,7 @@ export default {
     "Esta versão do Studio ainda não consegue fazer um build com tempo — seu briefing está salvo acima, e enviá-lo de novo depois que o Studio se atualizar vai iniciar o build. (O código de loop dela é anterior aos builds com tempo: é preciso mesclar nele o harness-seed/loop da base, ou restaurar as cópias da base para que a próxima abertura as atualize.)",
   "This build turned out not to run — reload to go back to your game":
     "Este build não roda — recarregue para voltar ao seu jogo",
+  "This build turned out not to run.": "Este build acabou não rodando.",
   "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.":
     "Os ajudantes ou revisores deste build rodam em um modelo local, que o código de loop do Studio ainda não suporta — seu briefing está salvo acima. Escolha o mesmo tipo de agente para todas as tarefas e envie de novo, ou peça ao Studio para mesclar o harness-seed/loop da base no próprio código de loop (ou restaurar as cópias da base) para que a próxima abertura as atualize.",
   "This change no longer differs from what Harness has now.":
@@ -4688,11 +4694,14 @@ export default {
   "Your balance": "Seu saldo",
   "Your browser should show": "Seu navegador deve mostrar",
   "Your build": "Seu build",
+  "Your changes are built.": "O build das suas mudanças está pronto.",
+  "Your changes didn’t build.": "O build das suas mudanças falhou.",
   "Your coding provider": "Seu provedor de modelos",
   "Your coin arrived. Review the purchase, then pay.": "Suas moedas chegaram. Revise a compra e pague.",
   "Your files": "Seus arquivos",
   "Your game appears here": "Seu jogo aparece aqui",
   "Your game as it was when the run started.": "Seu jogo como estava quando o build começou.",
+  "Your game changed.": "Seu jogo mudou.",
   "Your game folder has edits of its own, and the studio will not write over them — save or undo them, then try again.":
     "A pasta do seu jogo tem edições próprias, e o Studio não vai sobrescrevê-las — salve ou desfaça essas edições e tente de novo.",
   "Your game is as you left it — {why}": "Seu jogo está como você deixou — {why}",
@@ -6225,6 +6234,7 @@ export default {
     "O Live não conseguiu iniciar o jogo. Tente de novo ou use Abrir à parte.",
   "Live shows browser builds, and this game has none. Play it in its own window instead.":
     "O Live mostra builds para navegador, e este jogo não tem nenhum. Jogue na janela dele.",
+  "Live still shows the earlier version.": "O Live ainda mostra a versão anterior.",
   "Live stopped showing the game, so it was stopped.": "O Live parou de mostrar o jogo, então ele foi parado.",
   "Live stopped showing the game. Try again or use Pop out.":
     "O Live parou de mostrar o jogo. Tente de novo ou use Abrir à parte.",

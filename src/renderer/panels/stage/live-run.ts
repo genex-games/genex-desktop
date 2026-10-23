@@ -26,9 +26,21 @@ export function liveRun(at: { stopped: boolean; stopping: boolean; starting: boo
   return at.stopped ? LiveRun.Stopped : LiveRun.Running;
 }
 
-/** Full screen has something to fill only while the running game itself is on the stage. */
-export function fullScreenOffered(stage: { run: LiveRun; live: boolean; loading: boolean; empty: boolean }): boolean {
-  return stage.run === LiveRun.Running && stage.live && !stage.loading && !stage.empty;
+/**
+ * Full screen has something to fill only while the running game itself is on the stage: the web
+ * game's page, or with `native` Live's Native view while its game plays (the web page's loader and
+ * Stop say nothing about that one).
+ */
+export function fullScreenOffered(stage: {
+  run: LiveRun;
+  live: boolean;
+  loading: boolean;
+  empty: boolean;
+  native?: { playing: boolean };
+}): boolean {
+  if (!stage.live || stage.empty) return false;
+  if (stage.native) return stage.native.playing;
+  return stage.run === LiveRun.Running && !stage.loading;
 }
 
 /**
@@ -87,13 +99,22 @@ export function useLiveRun(
 export function useStageControls(
   project: string | null,
   live: ReturnType<typeof useLiveLoad>,
-  stage: { onLive: boolean; loading: boolean; empty: boolean; firstPlan: boolean },
+  stage: {
+    onLive: boolean;
+    loading: boolean;
+    empty: boolean;
+    firstPlan: boolean;
+    /** Live shows its Native view: whether its game plays (full screen then fills with Live's canvas). */
+    native?: { playing: boolean };
+  },
   onNotice: Notify,
 ) {
   const { run, toggle } = useLiveRun(project, live, onNotice);
   const sound = useGameSound();
   const loader = useLoaderPresence(stage.loading);
   const { onLive, empty } = stage;
+  const nativePlaying = stage.native?.playing;
+  const native = useMemo(() => (nativePlaying === undefined ? undefined : { playing: nativePlaying }), [nativePlaying]);
   const covering = loader.covering;
   // The Planner covers an empty stage, or a page still loading, while the first plan is written.
   const nothingYet = empty || (stage.firstPlan && stage.loading);
@@ -104,10 +125,10 @@ export function useStageControls(
       sound,
       loader,
       fullScreen: {
-        offered: fullScreenOffered({ run, live: onLive, loading: covering, empty }),
-        enter: () => void window.studio.previewFullScreen(),
+        offered: fullScreenOffered({ run, live: onLive, loading: covering, empty, native }),
+        enter: () => void window.studio.previewFullScreen(native ? { native: true } : undefined),
       },
     }),
-    [run, toggle, sound, loader, onLive, covering, empty, nothingYet],
+    [run, toggle, sound, loader, onLive, covering, empty, nothingYet, native],
   );
 }

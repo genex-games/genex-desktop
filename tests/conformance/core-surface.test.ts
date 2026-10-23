@@ -76,6 +76,8 @@ const METHODS = [
   // The stage strip's Play/Stop (studio:preview.play, studio:preview.stop).
   "playLive",
   "pluginBinding",
+  // Live's background build of a compiled game's changed folder (studio:live.prepare).
+  "prepareLiveBuild",
   "presentProjectAssets",
   "previewProjectAsset",
   "projectAssets",

@@ -29,6 +29,17 @@ test("full screen is offered only while the running game is on the stage", () =>
   assert.equal(fullScreenOffered({ ...shown, empty: true }), false);
 });
 
+test("Live's Native view offers full screen while its game plays, as the web view does while it runs", () => {
+  const shown = { run: LiveRun.Running, live: true, loading: false, empty: false };
+  assert.equal(fullScreenOffered({ ...shown, native: { playing: true } }), true);
+  assert.equal(fullScreenOffered({ ...shown, native: { playing: false } }), false, "starting, building or ended");
+  assert.equal(fullScreenOffered({ ...shown, live: false, native: { playing: true } }), false, "out of sight");
+  assert.equal(fullScreenOffered({ ...shown, empty: true, native: { playing: true } }), false);
+  // The web page's own loader and Stop say nothing about the Native view's game.
+  assert.equal(fullScreenOffered({ ...shown, loading: true, native: { playing: true } }), true);
+  assert.equal(fullScreenOffered({ ...shown, run: LiveRun.Stopped, native: { playing: true } }), true);
+});
+
 test("Play/Stop and the sound wait for a game with something to run", () => {
   assert.equal(gameControlsShown({ run: LiveRun.Running, nothingYet: false }), true);
   // Planning the first build, an empty scene, a game with no kind yet: nothing runs to stop.

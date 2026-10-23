@@ -1796,6 +1796,11 @@ export interface GameProject {
   awaitingFirstBuild?: true;
   /** The game loads Genex's multiplayer: its package.json names it, or its page maps Studio's copy. */
   multiplayer?: true;
+  /**
+   * The game is played with mouse look (studio.json `game.mouseLook`, as its kind or plan declared
+   * it): a click into Live's Native view locks the pointer and its moves turn the camera.
+   */
+  mouseLook?: true;
 }
 // ↑ src/shared/game-project.ts
 

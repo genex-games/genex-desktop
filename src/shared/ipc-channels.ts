@@ -260,6 +260,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:preview.fullscreen": "previewFullScreen",
   "studio:live.behind": "liveBehind",
   "studio:live.reloadAssets": "reloadLiveAssets",
+  "studio:live.prepare": "prepareLiveBuild",
   "studio:preview.state": "previewState",
   "studio:preview.live": "previewLive",
   "studio:preview.cover-still": "previewCoverStill",
@@ -552,9 +553,10 @@ export interface StudioInvokePayloads {
   "studio:preview.reload": { retry: boolean };
   "studio:preview.stop": undefined;
   "studio:preview.play": undefined;
-  "studio:preview.fullscreen": undefined;
+  "studio:preview.fullscreen": Arg<"previewFullScreen", 0>;
   "studio:live.behind": { project: string };
   "studio:live.reloadAssets": { project: string };
+  "studio:live.prepare": { project: string; target: Arg<"prepareLiveBuild", 1> };
   "studio:preview.state": undefined;
   "studio:preview.live": undefined;
   "studio:preview.cover-still": undefined;

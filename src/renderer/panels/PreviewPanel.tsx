@@ -54,7 +54,7 @@ import { type RunGraph as RunGraphModel, runBuilding, runIdOf } from "../run-gra
 import { kindPendingGame, type StageWatch, StageView, watchingLive } from "../stage.ts";
 import { threadLog } from "../state/event-log.ts";
 import { useEventLog, useLaunch, useNative, useNativeRun, useShallow, useThreads } from "../state/hooks.ts";
-import { nativeStoreFor, NativeView, nativeViewOf } from "../state/native.ts";
+import { nativeEmbedOf, nativeStoreFor, NativeView, nativeViewOf } from "../state/native.ts";
 import { isWorkingStatus } from "../state/threads.ts";
 import { studio } from "../state/studio.ts";
 import type { EngineDescriptor, GameProject } from "../types.ts";
@@ -99,7 +99,9 @@ import {
   showsBuildBanner,
 } from "./stage/destinations.ts";
 import { nativeCardView } from "./stage/native-card.ts";
-import { embedRefusalWords } from "./stage/native-live.ts";
+import { embedPlays, embedRefusalWords } from "./stage/native-live.ts";
+import { type LiveFresh, useLiveFresh } from "./stage/live-fresh.ts";
+import { LiveFreshLine } from "./stage/LiveFreshLine.tsx";
 import { type CanvasBuild, NativeLiveCanvas } from "./stage/NativeLiveCanvas.tsx";
 import { DeviceLaunch } from "./stage/DeviceLaunch.tsx";
 import { EngineRows, type EngineRowsToggle, useEngineRows } from "./stage/EngineRows.tsx";
@@ -694,14 +696,22 @@ function LiveCanvas({
   active,
   choice,
 }: {
-  game: string | null;
+  /** The game Native shows, and whether it is played with mouse look (`GameProject.mouseLook`). */
+  game: { name: string; mouseLook: boolean } | null;
   build: CanvasBuild;
   active: boolean;
   choice: LiveViewChoice | null;
 }): JSX.Element | null {
   if (!game) return null;
   return (
-    <NativeLiveCanvas key={game} project={game} active={active} build={build} onPopOut={choice?.onPopOut ?? null} />
+    <NativeLiveCanvas
+      key={game.name}
+      project={game.name}
+      active={active}
+      build={build}
+      mouseLook={game.mouseLook}
+      onPopOut={choice?.onPopOut ?? null}
+    />
   );
 }
 
@@ -753,9 +763,12 @@ function StageAbove({
   native,
   tools,
   engine,
+  fresh,
   onNotice,
 }: {
   onStage: boolean;
+  /** Live's status line (`LiveFreshLine`), right under the build trouble; its Update is the strip's Reload. */
+  fresh: { line: LiveFresh | null; onUpdate: () => void };
   stage: ReturnType<typeof useStageTrouble>;
   card: LiveCard | null;
   macGame: string | null;
@@ -778,6 +791,7 @@ function StageAbove({
           onInstallTools={tools.show}
         />
       ) : null}
+      {onStage ? <LiveFreshLine fresh={fresh.line} onUpdate={fresh.onUpdate} /> : null}
       {onStage && macGame ? (
         <NativeRunCard project={macGame} onNotice={onNotice} onInstallTools={tools.showMac} />
       ) : null}
@@ -821,11 +835,13 @@ function useLiveStage(input: {
   const surface = useCompiledSurface({ flags: input.stage.flags, loaded, host, onNotice });
   const { flags, covered } = surface;
   const native = surface.nativeView.native;
-  // Full screen is the web page's: the Mac build in Live's canvas is not one.
+  // Full screen fills with the web page, or with Live's canvas while Native's game plays.
+  const nativePlaying = useNative((state) => native && project !== null && embedPlays(nativeEmbedOf(state, project)));
   const shown = {
-    onLive: flags.previewOnStage && visible && !native,
+    onLive: flags.previewOnStage && visible,
     loading: flags.liveLoading,
     empty: flags.showEmpty,
+    native: native ? { playing: nativePlaying } : undefined,
   };
   const controls = useStageControls(project, live, { ...shown, firstPlan }, onNotice);
   const liveLoading = controls.loader.covering;
@@ -850,7 +866,8 @@ function useStageNative(
   const { macGame, windowShown } = useNativeWindow(loaded, host);
   const engine = useEngineRows(loaded);
   /** The game whose Mac build Live's canvas shows, while Native is chosen for it. */
-  const canvasGame = loaded && nativeCanvasShown(shown.cover) ? loaded.name : null;
+  const canvasGame =
+    loaded && nativeCanvasShown(shown.cover) ? { name: loaded.name, mouseLook: loaded.mouseLook === true } : null;
   /** What its Mac build is made of: the build copy Live shows (Play latest, a run card's Play), or the game folder. */
   const stack = loaded ? stackOf(loaded.shape) : null;
   const canvasBuild: CanvasBuild = { copy: shown.copy, stack: stack !== null && isCompiledStack(stack) ? stack : null };
@@ -1090,7 +1107,11 @@ function usePreviewStage(input: {
   const stageReload = useNativeReload(project, liveStage.nativeView.native, liveBehind.reload);
   const copy = liveBehind.shownBuild !== null;
   const stageNative = useStageNative(loaded, liveStage.host, { cover: liveStage.cover, copy });
-  return { ...surface, firstPlan, liveStage, liveBehind, stageReload, stageNative };
+  const compiled = loaded !== null && isCompiledStack(stackOf(loaded.shape));
+  const native = liveStage.nativeView.native;
+  const line = useLiveFresh({ project, behind: liveBehind.behind, compiled, native });
+  const fresh = { line, onUpdate: stageReload };
+  return { ...surface, firstPlan, liveStage, liveBehind, stageReload, stageNative, fresh };
 }
 
 export function PreviewPanel({
@@ -1116,7 +1137,7 @@ export function PreviewPanel({
   const live = useLiveLoad(project);
   const pending = useLoadOnceStarted({ project, pending: kindPendingGame(loaded), noPage: !preview }, live.loadLive);
   const stageInputs = { project, view, onView, onNotice, threadId, runsRoot, status, visible, sidebarOverlay, beside };
-  const { run, pressedView, firstPlan, liveStage, liveBehind, stageReload, stageNative } = usePreviewStage({
+  const { run, pressedView, firstPlan, liveStage, liveBehind, stageReload, stageNative, fresh } = usePreviewStage({
     props: stageInputs,
     loaded,
     liveView,
@@ -1163,7 +1184,7 @@ export function PreviewPanel({
         {...liveStage.badgeFacts}
         liveView={nativeView.choice}
       />
-      <StageAbove {...{ stage, card, macGame, tools, engine, native, onNotice }} onStage={previewOnStage} />
+      <StageAbove {...{ stage, card, macGame, tools, engine, native, fresh, onNotice }} onStage={previewOnStage} />
       <div className="relative min-h-0 flex-1 overflow-hidden bg-base">
         <div ref={slot} data-preview-slot className="absolute inset-0" />
         <LiveCanvas

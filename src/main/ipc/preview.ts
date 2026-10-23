@@ -26,8 +26,11 @@ export interface PreviewIpcDeps {
   /** The window's live preview; replaced when the window is. */
   preview(): GamePreview | null;
   previewBoundsSeen: PreviewBoundsRecord;
-  /** The game's full screen (`game-full-screen.ts`); absent where there is no window to fill. */
-  fullScreen?: { enter(): void; active(): boolean };
+  /**
+   * Live's full screens (`game-full-screen.ts`): the web game view's, or with `native` the Native
+   * canvas's; `active` is the web view's alone. Absent where there is no window to fill.
+   */
+  fullScreen?: { enter(view: { native: boolean }): void; active(): boolean };
 }
 
 export function registerPreviewIpc(
@@ -83,8 +86,9 @@ export function registerPreviewIpc(
     await core.playLive();
     return true;
   });
-  handle("studio:preview.fullscreen", async () => {
-    fullScreen?.enter();
+  handle("studio:preview.fullscreen", async (payload) => {
+    // Anything but a plain `true` is the web game view's full screen, as it always was.
+    fullScreen?.enter({ native: payload?.native === true });
     return true;
   });
   // Anything but a plain `false` leaves the sound on.

@@ -129,6 +129,7 @@ export default {
   "A neon arcade shooter where your bullets bounce off the walls": "총알이 벽에 튕기는 네온 아케이드 슈팅",
   "A new build is ready to play.": "새 빌드를 플레이할 수 있어요.",
   "A new build is ready — reload to play it": "새 빌드가 준비됐어요 — 새로 고침해서 플레이하세요",
+  "A new build is ready.": "새 빌드가 준비됐어요.",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
     "새 버전을 다운로드하고 있어요. 준비되면 Genex가 다시 시작을 안내해요.",
   "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.":
@@ -466,6 +467,7 @@ export default {
   Background: "배경",
   Backgrounds: "배경",
   Before: "이전",
+  "Back to your game": "게임으로 돌아가기",
   "Before a build can be reviewed": "빌드를 리뷰하기 전에",
   "Before the Loop calls it done, a second AI looks at your game.":
     "Loop가 끝났다고 하기 전에 두 번째 AI가 게임을 살펴봐요.",
@@ -535,8 +537,11 @@ export default {
   "Build with workers": "작업자와 함께 만들기",
   Building: "만드는 중",
   "Building the Mac version of this build… {clock}": "이 빌드의 Mac 버전을 빌드하는 중… {clock}",
+  "Building the Mac version of your changes… {clock}": "변경 사항의 Mac 버전을 빌드하는 중… {clock}",
   "Building the Mac version… {clock}": "Mac 버전을 빌드하는 중… {clock}",
+  "Building the browser version of your changes… {clock}": "변경 사항의 브라우저 버전을 빌드하는 중… {clock}",
   "Building the game": "게임 빌드 중",
+  "Building the game for the lead… {clock}": "메인 에이전트를 위해 게임을 빌드하는 중… {clock}",
   "Building the starting point": "시작점을 만드는 중",
   "Building the starting point…": "시작점을 만드는 중…",
   "Building your game": "게임을 만드는 중",
@@ -3899,6 +3904,7 @@ export default {
     "이 버전의 Studio는 아직 시간 제한 빌드를 실행할 수 없어요 — 지시는 위에 저장돼 있으니, Studio가 스스로 업데이트한 뒤 다시 보내면 빌드가 시작돼요. (자체 루프 코드가 시간 제한 빌드보다 오래됐어요. 기본 파일의 harness-seed/loop를 여기에 병합하거나, 기본 파일 사본을 복원해 다음 실행 때 업데이트되게 해야 해요.)",
   "This build turned out not to run — reload to go back to your game":
     "이 빌드는 실행되지 않아요 — 새로 고침해서 게임으로 돌아가세요",
+  "This build turned out not to run.": "이 빌드는 실행되지 않았어요.",
   "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.":
     "이 빌드의 작업자나 리뷰어가 로컬 모델에서 실행되는데, Studio의 자체 루프 코드는 아직 이를 지원하지 않아요 — 지시는 위에 저장돼 있어요. 모든 작업을 같은 종류의 엔진으로 골라 다시 보내거나, Studio에 기본 파일의 harness-seed/loop를 자체 루프 코드에 병합해 달라고(또는 기본 파일 사본을 복원해 달라고) 요청해 다음 실행 때 업데이트되게 하세요.",
   "This change no longer differs from what Harness has now.":
@@ -4530,11 +4536,14 @@ export default {
   "Your balance": "내 잔액",
   "Your browser should show": "브라우저에 표시될 코드",
   "Your build": "내 빌드",
+  "Your changes are built.": "변경 사항 빌드가 끝났어요.",
+  "Your changes didn’t build.": "변경 사항을 빌드하지 못했어요.",
   "Your coding provider": "사용 중인 모델 제공자",
   "Your coin arrived. Review the purchase, then pay.": "코인이 들어왔어요. 구매 내용을 확인하고 결제하세요.",
   "Your files": "내 파일",
   "Your game appears here": "여기에 게임이 표시돼요",
   "Your game as it was when the run started.": "빌드를 시작했을 때의 게임이에요.",
+  "Your game changed.": "게임이 바뀌었어요.",
   "Your game folder has edits of its own, and the studio will not write over them — save or undo them, then try again.":
     "게임 폴더에 따로 수정한 내용이 있어서 Studio가 덮어쓰지 않아요 — 저장하거나 되돌린 다음 다시 시도하세요.",
   "Your game is as you left it — {why}": "게임은 그대로예요 — {why}",
@@ -6015,6 +6024,7 @@ export default {
     "Live가 게임을 시작하지 못했어요. 다시 시도하거나 따로 열기를 쓰세요.",
   "Live shows browser builds, and this game has none. Play it in its own window instead.":
     "Live는 브라우저 빌드를 보여 주는데, 이 게임에는 없어요. 대신 별도 창에서 플레이하세요.",
+  "Live still shows the earlier version.": "Live에는 아직 이전 버전이 보여요.",
   "Live stopped showing the game, so it was stopped.": "Live가 게임 표시를 멈춰서 게임을 멈췄어요.",
   "Live stopped showing the game. Try again or use Pop out.":
     "Live가 게임 표시를 멈췄어요. 다시 시도하거나 따로 열기를 쓰세요.",

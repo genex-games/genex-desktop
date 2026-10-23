@@ -22,12 +22,14 @@ import {
   embedSizeOf,
   FrameVerdict,
   heldAfter,
+  lookAction,
   mouseButtonOf,
   NO_HELD,
   padAction,
   padChanges,
   pointerOnRing,
   pointerOnSurface,
+  pointerMoveAction,
   queueAction,
   releaseActions,
   releasesCapture,
@@ -276,6 +278,42 @@ describe("captured input on its way to the game", () => {
       { type: NativeInputKind.Gamepad, index: 1, buttons: [0], axes: [0] },
     ]);
     assert.deepEqual(releaseActions(NO_HELD), [], "nothing held, nothing sent");
+  });
+});
+
+describe("mouse look while the pointer is locked", () => {
+  const RECT = { left: 0, top: 0, width: 800, height: 450 };
+  const RING = { width: 1600, height: 900 };
+
+  it("a locked pointer's motion is look, in device pixels as the web shell sends it", () => {
+    assert.deepEqual(lookAction({ x: 3, y: -2 }, 2), { type: "look", dx: 6, dy: -4 });
+    assert.equal(lookAction({ x: 0, y: 0 }, 2), null, "no motion, nothing sent");
+    assert.ok(parseNativeInput([lookAction({ x: 3, y: -2 }, 2)]), "main accepts it");
+  });
+
+  it("locked, a move is look and never a place; unlocked, it is the place and never look", () => {
+    const event = { clientX: 400, clientY: 225, movementX: 5, movementY: 1 };
+    assert.deepEqual(pointerMoveAction(event, { locked: true, rect: RECT, ring: RING, dpr: 2 }), {
+      type: "look",
+      dx: 10,
+      dy: 2,
+    });
+    assert.deepEqual(pointerMoveAction(event, { locked: false, rect: RECT, ring: RING, dpr: 2 }), {
+      type: "move",
+      x: 800,
+      y: 450,
+      px: true,
+    });
+  });
+
+  it("sums look within a frame, so a fast turn is one action and nothing is lost", () => {
+    let queue: NativeInputAction[] = [];
+    queue = queueAction(queue, { type: "look", dx: 4, dy: 1 });
+    queue = queueAction(queue, { type: "look", dx: 6, dy: -3 });
+    assert.deepEqual(queue, [{ type: "look", dx: 10, dy: -2 }]);
+    queue = queueAction(queue, { type: "mousedown", button: "left" });
+    queue = queueAction(queue, { type: "look", dx: 1, dy: 1 });
+    assert.equal(queue.length, 3, "a press between turns keeps its order");
   });
 });
 

@@ -134,6 +134,8 @@ export interface UiEventMap {
   "native.status": NativeRunStatus;
   /** A native run's stderr lines, cut and batched (`NativeRuns`). */
   "native.log": NativeLogBatch;
+  /** Full screen of Live's Native view began (`on`) or ended: its canvas covers the window meanwhile (`game-full-screen.ts`). */
+  "native.full-screen": { on: boolean };
   "game.archived": { project: string; trash: boolean };
   "delegation.started": { project: string; engine: string; active: number };
   "delegation.finished": { project: string; engine: string; active: number };
@@ -292,6 +294,7 @@ export const UiEvent = {
   BuildProgress: "build.progress",
   NativeStatus: "native.status",
   NativeLog: "native.log",
+  NativeFullScreen: "native.full-screen",
   GameArchived: "game.archived",
   DelegationStarted: "delegation.started",
   DelegationFinished: "delegation.finished",
@@ -408,6 +411,7 @@ const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
   UiEvent.ToolchainInstall,
   UiEvent.NativeStatus,
   UiEvent.NativeLog,
+  UiEvent.NativeFullScreen,
 ]);
 
 /** Whether a harness notification names an event only the host sends. */

@@ -289,6 +289,8 @@ const FIXTURE_SAFE = [
   // The app's own window over its own game view: no account, dialog or other app is reached.
   "studio:preview.fullscreen",
   "studio:live.behind",
+  // Builds the game's own folder in its sandbox, as Reload does, and leaves Live as it is.
+  "studio:live.prepare",
   "studio:preview.state",
   "studio:preview.live",
   "studio:build.preview",

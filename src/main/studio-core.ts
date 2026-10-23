@@ -55,7 +55,7 @@ import type { NativeTimers } from "../shared/native-contract.ts";
 import type { LiveAssetsAnswer } from "../shared/live-assets.ts";
 import { hostOf } from "../shared/game-targets.ts";
 import { StudioPlatform } from "../shared/boot.ts";
-import type { WebBuildLoad } from "../shared/live-behind.ts";
+import type { LivePrepare, LivePrepareTarget, WebBuildLoad } from "../shared/live-behind.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -3212,6 +3212,11 @@ export class StudioCore {
   /** The stage's Play on a stopped game. */
   playLive(): Promise<void> {
     return this.#previews.playLive();
+  }
+
+  /** Live's background build of a compiled game's folder after it changed under Live (`PreviewService.prepareLiveBuild`). */
+  prepareLiveBuild(project: string, target: LivePrepareTarget): Promise<LivePrepare> {
+    return this.#previews.prepareLiveBuild(project, target);
   }
 
   /** Live loads the game's finished web build in a folder when it holds another page of the game (`PreviewService.loadWebBuild`). */

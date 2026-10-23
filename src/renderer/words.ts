@@ -1901,6 +1901,37 @@ export function liveBehindLabel(reason: LiveBehindReason, note: string | null): 
   return note ? `${words}: ${note}` : words;
 }
 
+/**
+ * Live's status line above the game (`live-fresh.ts`): what a view shows while a newer version
+ * waits. Live never swaps the picture while the person watches, so the line says it is the
+ * earlier version, what is being made, and offers Update once there is something to bring in.
+ */
+export const LIVE_FRESH_WORDS = {
+  /** The background build of the person's changes, for the view they have, and for how long so far ("1:12"). */
+  building: {
+    [BuildTarget.Web]: (clock: string) => t("Building the browser version of your changes… {clock}", { clock }),
+    [BuildTarget.Mac]: (clock: string) => t("Building the Mac version of your changes… {clock}", { clock }),
+  },
+  built: t("Your changes are built."),
+  failed: t("Your changes didn’t build."),
+  ready: {
+    [LiveBehindReason.Changed]: t("Your game changed."),
+    [LiveBehindReason.Build]: t("A new build is ready."),
+    [LiveBehindReason.Broken]: t("This build turned out not to run."),
+  } satisfies Record<LiveBehindReason, string>,
+  /** Beside every state but a broken build: the picture is the one from before. */
+  earlier: t("Live still shows the earlier version."),
+  update: t("Update"),
+  tryAgain: t("Try again"),
+  backToGame: t("Back to your game"),
+} as const;
+
+/** The chat's build card while a run's start builds the game, before its lead's first turn (`chat/setup-build.ts`). */
+export const SETUP_BUILD_WORDS = {
+  /** For how long so far ("1:12"), as Live counts its builds. */
+  building: (clock: string) => t("Building the game for the lead… {clock}", { clock }),
+} as const;
+
 /** The stage strip's tabs, Play/Stop and full screen, as their tooltips and accessible names say them. */
 export const STAGE_WORDS = {
   stop: t("Stop game"),

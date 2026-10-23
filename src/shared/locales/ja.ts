@@ -127,6 +127,7 @@ export default {
   "A neon arcade shooter where your bullets bounce off the walls": "弾が壁で跳ね返るネオンのアーケードシューティング",
   "A new build is ready to play.": "新しいビルドをプレイできます。",
   "A new build is ready — reload to play it": "新しいビルドができました。再読み込みでプレイできます",
+  "A new build is ready.": "新しいビルドの準備ができました。",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
     "新しいバージョンをダウンロード中です。準備ができたら、Genexが再起動を案内します。",
   "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.":
@@ -469,6 +470,7 @@ export default {
   Background: "背景",
   Backgrounds: "背景",
   Before: "変更前",
+  "Back to your game": "ゲームに戻る",
   "Before a build can be reviewed": "ビルドをレビューする前に",
   "Before the Loop calls it done, a second AI looks at your game.":
     "Loopが完了とする前に、別のAIがゲームを確認します。",
@@ -539,8 +541,11 @@ export default {
   "Build with workers": "ワーカーとつくる",
   Building: "制作中",
   "Building the Mac version of this build… {clock}": "このビルドのMac版をビルド中… {clock}",
+  "Building the Mac version of your changes… {clock}": "変更のMac版をビルド中… {clock}",
   "Building the Mac version… {clock}": "Mac版をビルド中… {clock}",
+  "Building the browser version of your changes… {clock}": "変更のブラウザ版をビルド中… {clock}",
   "Building the game": "ゲームをビルド中",
+  "Building the game for the lead… {clock}": "メインエージェントのためにゲームをビルド中… {clock}",
   "Building the starting point": "土台をつくっています",
   "Building the starting point…": "土台をつくっています…",
   "Building your game": "ゲームをつくっています",
@@ -3995,6 +4000,7 @@ export default {
     "このバージョンのStudioは、まだ時間指定ビルドを実行できません。指示は上に保存されています。Studioが自身をアップデートしたあとにもう一度送信すると、ビルドが始まります。（ループのコードが時間指定ビルドより古いためです。ベースのharness-seed/loopをそこにマージするか、ベースのコピーを復元して次回の起動で更新されるようにする必要があります。）",
   "This build turned out not to run — reload to go back to your game":
     "このビルドは動きませんでした。再読み込みでゲームに戻れます",
+  "This build turned out not to run.": "このビルドは動きませんでした。",
   "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.":
     "このビルドのワーカーまたはレビュアーはローカルモデルで動いていますが、Studioのループのコードはまだ対応していません。指示は上に保存されています。すべての役割を同じ種類のエンジンにしてもう一度送信するか、ベースのharness-seed/loopを自身のループのコードにマージする（またはベースのコピーを復元する）ようStudioに頼んで、次回の起動で更新されるようにしてください。",
   "This change no longer differs from what Harness has now.": "この変更は、今のHarnessの内容ともう違いがありません。",
@@ -4641,11 +4647,14 @@ export default {
   "Your balance": "残高",
   "Your browser should show": "ブラウザに表示されるコード",
   "Your build": "あなたのビルド",
+  "Your changes are built.": "変更のビルドが完了しました。",
+  "Your changes didn’t build.": "変更のビルドに失敗しました。",
   "Your coding provider": "お使いのモデルプロバイダー",
   "Your coin arrived. Review the purchase, then pay.": "コインが届きました。購入内容を確認して支払ってください。",
   "Your files": "あなたのファイル",
   "Your game appears here": "ここにゲームが表示されます",
   "Your game as it was when the run started.": "ビルドを始めたときのゲームの状態です。",
+  "Your game changed.": "ゲームが変わりました。",
   "Your game folder has edits of its own, and the studio will not write over them — save or undo them, then try again.":
     "ゲームフォルダーに別の編集が入っていて、Studioはそれを上書きしません。保存するか元に戻してから、もう一度試してください。",
   "Your game is as you left it — {why}": "ゲームは元のままです（{why}）",
@@ -6145,6 +6154,7 @@ export default {
     "Liveでゲームを起動できませんでした。もう一度試すか、「別ウインドウで開く」を使ってください。",
   "Live shows browser builds, and this game has none. Play it in its own window instead.":
     "Liveはブラウザ向けビルドを表示しますが、このゲームにはありません。専用のウインドウで遊んでください。",
+  "Live still shows the earlier version.": "Liveには以前のバージョンが表示されています。",
   "Live stopped showing the game, so it was stopped.": "Liveがゲームの表示をやめたため、ゲームを停止しました。",
   "Live stopped showing the game. Try again or use Pop out.":
     "Liveがゲームの表示をやめました。もう一度試すか、「別ウインドウで開く」を使ってください。",

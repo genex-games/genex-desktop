@@ -122,6 +122,7 @@ export default {
   "A neon arcade shooter where your bullets bounce off the walls": "子弹会在墙上反弹的霓虹街机射击游戏",
   "A new build is ready to play.": "新构建已可以游玩。",
   "A new build is ready — reload to play it": "新构建已就绪——重新加载即可游玩",
+  "A new build is ready.": "新的构建已就绪。",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
     "正在下载新版本。准备好后 Genex 会提示你重启。",
   "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.":
@@ -444,6 +445,7 @@ export default {
   Background: "背景",
   Backgrounds: "背景",
   Before: "之前",
+  "Back to your game": "回到你的游戏",
   "Before a build can be reviewed": "审查构建前需要处理",
   "Before the Loop calls it done, a second AI looks at your game.":
     "在 Loop 宣布完成之前，会有第二个 AI 查看你的游戏。",
@@ -513,8 +515,11 @@ export default {
   "Build with workers": "与助手一起制作",
   Building: "制作中",
   "Building the Mac version of this build… {clock}": "正在构建这个构建的 Mac 版本… {clock}",
+  "Building the Mac version of your changes… {clock}": "正在构建你所做更改的 Mac 版本… {clock}",
   "Building the Mac version… {clock}": "正在构建 Mac 版本… {clock}",
+  "Building the browser version of your changes… {clock}": "正在构建你所做更改的浏览器版本… {clock}",
   "Building the game": "正在构建游戏",
+  "Building the game for the lead… {clock}": "正在为主智能体构建游戏… {clock}",
   "Building the starting point": "正在制作起点",
   "Building the starting point…": "正在制作起点…",
   "Building your game": "正在制作你的游戏",
@@ -3760,6 +3765,7 @@ export default {
   "This build of the studio can't run a timed build yet — your brief is saved above, and sending it again once the studio has updated itself will start the build. (Its own loop code predates timed builds: the seed's harness-seed/loop needs to be merged into it, or the seed copies restored so the next launch upgrades them.)":
     "此版本的 Studio 还无法运行定时构建——你的任务说明已保存在上方，等 Studio 自行更新后再次发送即可开始构建。（它的循环代码早于定时构建：需要把基础文件中的 harness-seed/loop 合并进去，或恢复基础文件副本，让下次启动时更新它们。）",
   "This build turned out not to run — reload to go back to your game": "这个构建无法运行——重新加载即可回到你的游戏",
+  "This build turned out not to run.": "这个构建最终没能运行。",
   "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.":
     "此构建的助手或审查员使用本地模型运行，而 Studio 自身的循环代码还不支持——你的任务说明已保存在上方。请为所有任务选择同一类引擎后再次发送，或让 Studio 把基础文件中的 harness-seed/loop 合并到它自己的循环代码中（或恢复基础文件副本），让下次启动时更新它们。",
   "This change no longer differs from what Harness has now.": "这项更改与 Harness 现在的内容已经没有区别了。",
@@ -4370,11 +4376,14 @@ export default {
   "Your balance": "你的余额",
   "Your browser should show": "浏览器中应显示",
   "Your build": "你的构建",
+  "Your changes are built.": "你的更改已构建完成。",
+  "Your changes didn’t build.": "你的更改构建失败。",
   "Your coding provider": "你的模型提供方",
   "Your coin arrived. Review the purchase, then pay.": "金币已到账。请确认购买内容，然后支付。",
   "Your files": "你的文件",
   "Your game appears here": "你的游戏会显示在这里",
   "Your game as it was when the run started.": "构建开始时，你的游戏是这个样子。",
+  "Your game changed.": "游戏已更改。",
   "Your game folder has edits of its own, and the studio will not write over them — save or undo them, then try again.":
     "你的游戏文件夹里有自己的修改，Studio 不会覆盖它们——请保存或撤销后再试。",
   "Your game is as you left it — {why}": "你的游戏保持原样——{why}",
@@ -5812,6 +5821,7 @@ export default {
   "Live couldn’t start the game. Try again or use Pop out.": "实时无法启动游戏。再试一次或使用“单独打开”。",
   "Live shows browser builds, and this game has none. Play it in its own window instead.":
     "实时显示浏览器构建，而这个游戏没有。请在它自己的窗口中游玩。",
+  "Live still shows the earlier version.": "Live 仍显示之前的版本。",
   "Live stopped showing the game, so it was stopped.": "实时停止显示游戏，所以游戏已停止。",
   "Live stopped showing the game. Try again or use Pop out.": "实时停止显示游戏。再试一次或使用“单独打开”。",
   "Loading assets": "正在加载素材",

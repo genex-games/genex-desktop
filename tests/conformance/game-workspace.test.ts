@@ -15,6 +15,7 @@ import {
   GameStack,
   GameValidationCode,
   ContractWord,
+  declaresMouseLook,
   ProjectKind,
   stackOf,
 } from "../../src/shared/game-project.ts";
@@ -528,5 +529,35 @@ describe("a kind only a newer Genex knows", () => {
     const shape = await readProjectShape(dir);
     assert.equal(shape.readOnly, undefined);
     assert.equal(shape.kind, ProjectKind.Canvas2d);
+  });
+});
+
+describe("a game played with mouse look", () => {
+  it("is listed with mouseLook from studio.json's game block, as the harness writes it", async () => {
+    const { games } = await library();
+    const game = await games.scaffold("ashen-horde", { title: "Ashen Horde" });
+    assert.equal(game.mouseLook, undefined, "a new game declares nothing");
+    const file = path.join(game.dir, "studio.json");
+    const meta = JSON.parse(await readFile(file, "utf8"));
+    const block = { kind: "first-person", hud: true, mouseLook: true, keyboardMove: true };
+    await writeFile(file, JSON.stringify({ ...meta, game: block }));
+    const listed = (await games.list()).find((item) => item.name === game.name);
+    assert.equal(listed?.mouseLook, true);
+  });
+
+  it("only a plain true counts: anything else keeps the cursor free", () => {
+    assert.equal(declaresMouseLook({ game: { mouseLook: true } }), true);
+    for (const meta of [
+      null,
+      "game",
+      {},
+      { game: null },
+      { game: "first-person" },
+      { game: { mouseLook: "true" } },
+      { game: { mouseLook: 1 } },
+      { game: { kind: "top-down", mouseLook: false } },
+      { mouseLook: true },
+    ])
+      assert.equal(declaresMouseLook(meta), false, JSON.stringify(meta));
   });
 });

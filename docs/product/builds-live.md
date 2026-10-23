@@ -22,14 +22,16 @@ Play/Reload. An empty scaffold shows “Ready for your first idea”, or
 “Building your game” with Watch progress, then Play latest; the first healthy build shows itself.
 Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
 hidden) or a finished Unity/Godot `web/` build. A newer healthy build, a changed folder
-(checkpoint, landing, rewind), a chat's show or a broken shown build lights Reload; hidden and not
-stopped, all but a new build go in at once; Rust `assets/`-only changes swap in mid-play. The
+(checkpoint, landing, rewind), a chat's show or a broken shown build lights Reload and a line
+above the game with Update (a compiled game's changed folder builds first, timed, for the view
+shown); hidden and not stopped, all but a new build go in at once; Rust `assets/`-only changes swap in mid-play. The
 preview reaches only public library CDNs; Open Game names other hosts. Other folders:
 [projects](projects-engines.md#lives-views).
 
 **Compiled games** (C++ · raylib; Rust · wgpu, needing WebGPU, on Apple-silicon Macs or Linux
 x64) build per destination, sandboxed; **Web | Native** shows the Mac build in Live (of what Live
-shows: a played build's copy, else the folder; the card counts its build time), a crash its card, Rust a profile strip and `[net]` room; only **On a device** installs a phone build
+shows: a played build's copy, else the folder; the card counts its build time; Full screen; `game.mouseLook`
+locks the pointer), a crash its card, Rust a profile strip and `[net]` room; only **On a device** installs a phone build
 ([more](../agent/feature-map.md)). Rust's `genex.toml` turns on nav, streaming and animation (off
 in the starter).
 

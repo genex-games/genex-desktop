@@ -211,6 +211,11 @@ export interface GameProject {
   awaitingFirstBuild?: true;
   /** The game loads Genex's multiplayer: its package.json names it, or its page maps Studio's copy. */
   multiplayer?: true;
+  /**
+   * The game is played with mouse look (studio.json `game.mouseLook`, as its kind or plan declared
+   * it): a click into Live's Native view locks the pointer and its moves turn the camera.
+   */
+  mouseLook?: true;
 }
 
 /**
@@ -556,4 +561,13 @@ export interface AttachReport {
   reason: string | null;
   loadError: string | null;
   consoleErrors: number | null;
+}
+
+/**
+ * Whether a studio.json record declares mouse look: its `game` block's `mouseLook`, which the
+ * harness writes with every trait decided (`writeDeclaredGame`). Only a plain `true` counts.
+ */
+export function declaresMouseLook(meta: unknown): boolean {
+  const game: unknown = typeof meta === "object" && meta !== null ? Reflect.get(meta, "game") : undefined;
+  return typeof game === "object" && game !== null && Reflect.get(game, "mouseLook") === true;
 }

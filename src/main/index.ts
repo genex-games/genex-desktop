@@ -43,7 +43,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { type ThreadStatusMap, UiEvent } from "../shared/ui-events.ts";
 import { onSoundShortcut } from "./game-sound.ts";
-import type { GameFullScreen } from "./game-full-screen.ts";
+import type { LiveFullScreens } from "./game-full-screen.ts";
 import { wireGameFullScreen } from "./full-screen-view.ts";
 import { HarnessState } from "../shared/protocol.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
@@ -563,7 +563,7 @@ let marketplace: PluginMarketplace | null = null;
 let window: BrowserWindow | null = null;
 let preview: GamePreview | null = null;
 /** The Live game's full screen in the current window. */
-let gameScreen: GameFullScreen | null = null;
+let gameScreen: LiveFullScreens | null = null;
 /** Play's catalog, made with the core: the dashboard's reads and the viewer's likes and tickets. */
 let playCatalog: PlayGallery | null = null;
 let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCredits; library: AssetLibrary } | null =
@@ -2041,7 +2041,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     core: studio,
     preview: () => preview,
     previewBoundsSeen,
-    fullScreen: { enter: () => gameScreen?.enter(), active: () => gameScreen?.active() ?? false },
+    fullScreen: { enter: (view) => gameScreen?.enter(view), active: () => gameScreen?.active() ?? false },
   });
   registerRunsIpc(handle, { core: studio, runSummaryReader, keepAwake, pushUiEvent, appendErrorDurably });
   registerLearningIpc(handle, {

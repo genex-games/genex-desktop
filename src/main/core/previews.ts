@@ -106,7 +106,7 @@ import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { type LiveAssetsPage, servedOutputOf } from "../asset-watch.ts";
 import { buildFinished, LiveGate, type LiveLoad, type LiveOffer, readBuild } from "./live-gate.ts";
-import { type LiveBehindEvent, WebBuildLoad } from "../../shared/live-behind.ts";
+import { type LiveBehindEvent, LivePrepare, type LivePrepareTarget, WebBuildLoad } from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
 import {
   type GameWindowFocus,
@@ -2368,6 +2368,42 @@ export class PreviewService {
         return WebBuildLoad.Kept;
       }
     });
+  }
+
+  /**
+   * Live's background build of a compiled game's folder for `target` after the folder changed
+   * under it (a checkpoint, a landing, the person's edits): Web for its web view, Mac for its Native
+   * view, through the same lane, purpose, folder and lock as the load (or the embedded run) that
+   * Reload then makes, so that one finds the build made or joins the one under way. Live itself is
+   * left as it is. Only while Live runs this game's own folder, for a destination the game names.
+   */
+  async prepareLiveBuild(project: string, target: LivePrepareTarget): Promise<LivePrepare> {
+    const served = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (served?.project !== project || served.root !== null) return LivePrepare.Skipped;
+    const game = await this.#game(project);
+    const stack = game ? stackOf(game.shape) : null;
+    const builds = game && stack !== null && isCompiledStack(stack) && destinationsOf(game).targets.includes(target);
+    if (!game || !builds) return LivePrepare.Skipped;
+    const receipt = await this.#x.gameBuilds.ensure(
+      {
+        project,
+        dir: this.#core.games.dirFor(project),
+        shape: game.shape,
+        destinations: destinationsOf(game),
+        lock: await this.#prepareLock(project, game.shape, target),
+        recordLock: true,
+      },
+      target,
+      CppBuildPurpose.Live,
+    );
+    return receipt.outcome?.ok ? LivePrepare.Built : LivePrepare.Failed;
+  }
+
+  /** The lock Live's Reload builds `target` on: the web load's (`#gameLock`), or the embedded run's (the stack's current lock, `native-prepare.ts`). */
+  async #prepareLock(project: string, shape: ProjectShape, target: LivePrepareTarget): Promise<ToolchainLock | null> {
+    const stack = stackOf(shape);
+    if (target === BuildTarget.Web || !isCompiledStack(stack)) return this.#gameLock(project, shape);
+    return this.#core.toolchains.currentLock(stack, project).catch(() => null);
   }
 
   /**

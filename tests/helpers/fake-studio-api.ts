@@ -240,6 +240,7 @@ const METHODS = [
   "playPreview",
   "previewFullScreen",
   "liveBehind",
+  "prepareLiveBuild",
   "reloadLiveAssets",
   "previewState",
   "previewLive",

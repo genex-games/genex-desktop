@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
 import { describe, it, mock } from "node:test";
 import { BuildProblemCode } from "../../src/shared/build-problem.ts";
+import { LivePrepare } from "../../src/shared/live-behind.ts";
 import { PreviewIdentityState } from "../../src/main/core/internals.ts";
 import {
   BuildTarget,
@@ -295,6 +296,61 @@ describe("Play of a C++ game's snapshot", () => {
     await assert.rejects(lite.core.playGameSnapshot(v1.snapshot_id, "pong"), /not made for the browser/);
     assert.deepEqual(live.loads, []);
     assert.deepEqual(ensured, []);
+  });
+});
+
+describe("Live's background build after the game folder changed", () => {
+  it("builds the folder for the web view through Live's own lane and purpose, and leaves Live as it is", async () => {
+    const { lite, live, ensured } = await stage();
+    const dir = await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    const loads = live.loads.length;
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Web), LivePrepare.Built);
+    const asked = ensured.at(-1);
+    assert.equal(asked?.target, BuildTarget.Web);
+    assert.equal(asked?.purpose, CppBuildPurpose.Live);
+    assert.equal(asked?.dir, dir, "the game folder itself, as Reload builds it");
+    assert.equal(live.loads.length, loads, "nothing reaches Live: the person's Update does");
+  });
+
+  it("builds the Mac version for the Native view the way its embedded run does", async () => {
+    const { lite, live, ensured } = await stage();
+    const dir = await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    const loads = live.loads.length;
+    await lite.core.prepareLiveBuild("pong", BuildTarget.Mac);
+    const asked = ensured.at(-1);
+    assert.equal(asked?.target, BuildTarget.Mac);
+    assert.equal(asked?.purpose, CppBuildPurpose.Live);
+    assert.equal(asked?.dir, dir);
+    assert.equal(asked?.recordLock, true);
+    assert.equal(live.loads.length, loads);
+  });
+
+  it("says a failed build, so the stage keeps the earlier version and offers Try again", async () => {
+    const { lite } = await stage();
+    await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    const problem = { code: BuildProblemCode.CommandFailed, target: BuildTarget.Web, lines: [], at: "" };
+    mock.method(lite.core.cppBuilds, "ensure", async () => ({
+      ok: false,
+      output: null,
+      lastGood: null,
+      problem,
+      ran: true,
+    }));
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Web), LivePrepare.Failed);
+  });
+
+  it("builds nothing for a game Live does not show, a destination it lacks, or a Three.js game", async () => {
+    const { lite, ensured } = await stage();
+    await raylibGame(lite, MAC_ONLY);
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Mac), LivePrepare.Skipped, "Live holds nothing");
+    await lite.core.loadPreview({ project: "pong" });
+    const before = ensured.length;
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Web), LivePrepare.Skipped, "not a destination");
+    assert.equal(await lite.core.prepareLiveBuild("tetris", BuildTarget.Web), LivePrepare.Skipped, "another game");
+    assert.equal(ensured.length, before);
   });
 });
 

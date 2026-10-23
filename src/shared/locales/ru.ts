@@ -141,6 +141,7 @@ export default {
     "Неоновый аркадный шутер, где пули отскакивают от стен",
   "A new build is ready to play.": "Новая сборка готова — можно играть.",
   "A new build is ready — reload to play it": "Новая сборка готова — перезагрузи, чтобы поиграть",
+  "A new build is ready.": "Новая сборка готова.",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
     "Новая версия скачивается. Genex предложит перезапуск, когда она будет готова.",
   "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.":
@@ -496,6 +497,7 @@ export default {
   Background: "Фон",
   Backgrounds: "Фоны",
   Before: "До",
+  "Back to your game": "Вернуться к игре",
   "Before a build can be reviewed": "Что нужно для проверки сборки",
   "Before the Loop calls it done, a second AI looks at your game.":
     "Прежде чем Loop скажет «готово», второй ИИ посмотрит на твою игру.",
@@ -565,8 +567,11 @@ export default {
   "Build with workers": "Собирай с помощниками",
   Building: "Собирает",
   "Building the Mac version of this build… {clock}": "Собираем версию для Mac из этой сборки… {clock}",
+  "Building the Mac version of your changes… {clock}": "Собираем версию для Mac с твоими изменениями… {clock}",
   "Building the Mac version… {clock}": "Собираем версию для Mac… {clock}",
+  "Building the browser version of your changes… {clock}": "Собираем версию для браузера с твоими изменениями… {clock}",
   "Building the game": "Собираем игру",
+  "Building the game for the lead… {clock}": "Собираем игру для главного агента… {clock}",
   "Building the starting point": "Собирает основу",
   "Building the starting point…": "Собирает основу…",
   "Building your game": "Собираем твою игру",
@@ -3977,6 +3982,7 @@ export default {
     "Эта версия Studio пока не умеет запускать сборку по времени — твоё задание сохранено выше: отправь его снова, когда Studio обновится, и сборка начнётся. (Её код цикла старше сборок по времени: нужно влить в него harness-seed/loop из эталона или восстановить эталонные копии, чтобы следующий запуск их обновил.)",
   "This build turned out not to run — reload to go back to your game":
     "Эта сборка не запускается — перезагрузи, чтобы вернуться к своей игре",
+  "This build turned out not to run.": "Эта сборка так и не запустилась.",
   "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.":
     "Помощники или проверяющие этой сборки работают на локальной модели, а код цикла Studio пока это не поддерживает — твоё задание сохранено выше. Выбери для всех задач один вид движка и отправь снова или попроси Studio влить harness-seed/loop из эталона в свой код цикла (или восстановить эталонные копии), чтобы следующий запуск их обновил.",
   "This change no longer differs from what Harness has now.":
@@ -4615,11 +4621,14 @@ export default {
   "Your balance": "Твой баланс",
   "Your browser should show": "Браузер должен показать",
   "Your build": "Твоя сборка",
+  "Your changes are built.": "Изменения собраны.",
+  "Your changes didn’t build.": "Изменения не собрались.",
   "Your coding provider": "Твой провайдер моделей",
   "Your coin arrived. Review the purchase, then pay.": "Монеты поступили. Проверь покупку и оплати.",
   "Your files": "Твои файлы",
   "Your game appears here": "Здесь появится твоя игра",
   "Your game as it was when the run started.": "Твоя игра такой, какой она была в начале сборки.",
+  "Your game changed.": "Игра изменилась.",
   "Your game folder has edits of its own, and the studio will not write over them — save or undo them, then try again.":
     "В папке игры есть свои правки, и Studio не будет их перезаписывать — сохрани или отмени их и попробуй снова.",
   "Your game is as you left it — {why}": "Игра осталась как была — {why}",
@@ -6194,6 +6203,7 @@ export default {
     "Live не смог запустить игру. Попробуй снова или используй «Открыть отдельно».",
   "Live shows browser builds, and this game has none. Play it in its own window instead.":
     "Live показывает сборки для браузера, а у этой игры их нет. Играй в неё в отдельном окне.",
+  "Live still shows the earlier version.": "В Live пока прежняя версия.",
   "Live stopped showing the game, so it was stopped.": "Live перестал показывать игру, поэтому она остановлена.",
   "Live stopped showing the game. Try again or use Pop out.":
     "Live перестал показывать игру. Попробуй снова или используй «Открыть отдельно».",

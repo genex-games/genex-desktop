@@ -47,6 +47,7 @@ import {
   CreationRefusal,
   DEFAULT_DESTINATIONS,
   DESKTOP_TARGETS,
+  declaresMouseLook,
   type FolderInspection,
   type FolderPreflight,
   type GameCandidate,
@@ -1569,6 +1570,7 @@ export class GameWorkspaces {
       web: hasFact(facts, CoreFact.WebGame, "."),
       ...presentationFlags(presentation),
       ...((await usesGenexMultiplayer(dir)) ? { multiplayer: true } : {}),
+      ...(declaresMouseLook(meta) ? { mouseLook: true } : {}),
     };
   }
 
