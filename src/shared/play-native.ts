@@ -18,11 +18,14 @@ export type NativeArch = (typeof NativeArch)[keyof typeof NativeArch];
 export const NATIVE_PLATFORMS: readonly NativePlatform[] = Object.values(NativePlatform);
 
 /**
- * Where Genex can run a native game today: the Mac (Seatbelt) and Linux (bubblewrap). Windows has
- * no sandbox that gives a program a window yet (`docs/windows-sandbox.md`), and no game runs
- * outside one, so Windows does not launch.
+ * Where Genex can run a native game: the Mac (Seatbelt), Linux (bubblewrap) and Windows (an
+ * AppContainer of the game's own, `substrate/plugins/windows-game.ts`). No game runs outside one.
  */
-const LAUNCH_PLATFORMS: ReadonlySet<NativePlatform> = new Set([NativePlatform.Mac, NativePlatform.Linux]);
+const LAUNCH_PLATFORMS: ReadonlySet<NativePlatform> = new Set([
+  NativePlatform.Mac,
+  NativePlatform.Linux,
+  NativePlatform.Windows,
+]);
 
 /**
  * The hosts a build archive downloads from: genex.games' CDN, which already serves Play's covers

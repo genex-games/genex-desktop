@@ -5,14 +5,15 @@
  * for this Mac's processor), then given a bundle id of Genex's own (`games.genex.play.<slug>`) and
  * signed again ad hoc, so the game can only ever read and write its own preferences. A Linux build
  * is unpacked by the app itself (`unpackZip`), checked the same way, and its program must be an ELF
- * binary for this computer's processor; Linux has no signature or bundle to check.
+ * binary for this computer's processor; Linux has no signature or bundle to check. A Windows build
+ * is unpacked the same way, and its program must be a PE `.exe` for this computer's processor.
  */
 import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { InstallFailure, type NativeBuild, NativeArch, type NativeHost } from "../../shared/play-native.ts";
-import { elfArch } from "../core/native-builds.ts";
+import { elfArch, peArch } from "../core/native-builds.ts";
 import { InstallError } from "./native-download.ts";
 import { listZip, unpackZip, ZipEntryKind, ZipError, ZipRefusal } from "./native-zip.ts";
 
@@ -41,8 +42,8 @@ export const WINDOWED_KEY = "GenexWindowed";
 /** The prefix of every installed game's bundle id: Genex's own preference domains. */
 export const GAME_BUNDLE_PREFIX = "games.genex.play.";
 
-/** A Linux game's app inside its version folder: the folder itself. */
-const LINUX_APP = ".";
+/** A Linux or Windows game's app inside its version folder: the folder itself. */
+const FOLDER_APP = ".";
 
 /** A finished tool run. */
 export interface ToolResult {
@@ -239,10 +240,40 @@ export async function unpackLinuxBuild(
   if (arch !== game.host.arch) throw refused(InstallFailure.UnsupportedOs, arch ?? "not an ELF program");
   await makeRunnable(program);
   return {
-    entry: LINUX_APP,
+    entry: FOLDER_APP,
     executable: build.entry,
     bundleId: `${GAME_BUNDLE_PREFIX}${game.slug}`,
     bundleName: path.posix.basename(build.entry),
+    windowed: false,
+  };
+}
+
+/**
+ * Unpack the verified `archive` of a Windows `build` into `staging` (a new, empty folder): checked
+ * before and after unpacking, its program (the build's entry) a regular file and a PE program for
+ * this computer's processor. The whole version folder is the game's app. Throws
+ * {@link InstallError} with the failure it is.
+ */
+export async function unpackWindowsBuild(
+  archive: string,
+  staging: string,
+  build: NativeBuild,
+  game: { slug: string; host: NativeHost },
+): Promise<UnpackedApp> {
+  const listing = await checkedListing(archive, build);
+  const named = listing.entries.find((entry) => entry.name === build.entry);
+  if (named?.kind !== ZipEntryKind.File) throw refused(InstallFailure.EntryMissing, build.entry);
+  await zipStep(() => unpackZip(archive, staging, unpackedCap(build)));
+  await assertContained(staging);
+  const program = path.join(staging, build.entry);
+  if (!(await lstat(program).catch(() => null))?.isFile()) throw refused(InstallFailure.EntryMissing, build.entry);
+  const arch = await peArch(program);
+  if (arch !== game.host.arch) throw refused(InstallFailure.UnsupportedOs, arch ?? "not a Windows program");
+  return {
+    entry: FOLDER_APP,
+    executable: build.entry,
+    bundleId: `${GAME_BUNDLE_PREFIX}${game.slug}`,
+    bundleName: path.posix.basename(build.entry, path.posix.extname(build.entry)),
     windowed: false,
   };
 }

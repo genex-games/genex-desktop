@@ -197,8 +197,7 @@ is.
   redirecting elsewhere, and answers `Range`. A row with anything off is dropped, the rest kept.
 - The build a computer installs is its platform's for its own processor, else a universal Mac app,
   else, on Apple silicon with Rosetta installed, an Intel-only one, where its `minOs` is met
-  (`buildFor`). Games launch on the Mac and on Linux; nothing is launched on Windows until its
-  sandbox can show a program's window. Play names the computer "this Mac" on a Mac and "this
+  (`buildFor`). Games launch on the Mac, on Linux and on Windows. Play names the computer "this Mac" on a Mac and "this
   computer" elsewhere (`nativeHereWords`). When nothing installs, the game page says why in place of
   Install (`whyNotHere`): this system runs no downloaded games (naming where Genex can run it), no
   build for this system, one for a different processor (Apple silicon, Rosetta), or a newer macOS
@@ -216,7 +215,9 @@ is.
   `games.genex.play.<slug>` and signed again ad hoc, so it can only write its own preferences. A
   Linux build is unpacked by the app itself (`unpackZip`: the same checks, each file no larger than
   its record, execute bits kept, links last) and its `entry` must be a regular file, an ELF program
-  for this computer's processor, made runnable; the whole version folder is its app (`entry` `.`). Each
+  for this computer's processor, made runnable; the whole version folder is its app (`entry` `.`). A
+  Windows build is unpacked the same way, and its `entry` must be a PE `.exe` for this computer's
+  processor (`unpackWindowsBuild`). Each
   game keeps `installed-games/<slug>/<version>/` and `saves/`; `index.json` lists them. Removing a
   game (refused while it runs) keeps its saves; an update keeps the running version until it quits.
 - Playing (`main/play/native-launch.ts`): one copy per game, in the game sandbox (`spawnNativeGame`:
@@ -230,7 +231,19 @@ is.
   GPU's `/sys`, the PulseAudio or PipeWire socket and `/dev/input`, and a network namespace of its
   own. Linux has no window list every session shares, so a game counts as on screen once it has
   kept running for three seconds (`native-windows-linux.ts`), and the window manager brings it
-  forward. A game opens full screen with its engine's own argument
+  forward. On Windows (`windowsGames`, `substrate/plugins/windows-game.ts`) srt-win can't serve:
+  it puts every program on a desktop of its own, with no window on screen. A game runs instead
+  through Genex's game host (`windows-game-host.ts`, compiled once with .NET Framework's `csc.exe`
+  into `<userData>/game-host/`) in an AppContainer of its own (`Genex.Play.<slug>`, no
+  capabilities). It reads its version folder, writes only `saves/` and its scratch folder (each an
+  ACL entry for the container's SID, plus a Low integrity label on the write folders), and its
+  AppData goes to the container's own folder. It reads none of the person's files and reaches no
+  network: an AppContainer reaches no loopback port without an administrator's exemption, so a
+  Windows game has no way to Genex yet. It gets the person's desktop, GPU, sound and input. It runs
+  in a job killed with the host (also with no other desktops, logging off, clipboard reads or system
+  settings); the host ends it when Genex's process or the host's stdin ends, says when its window
+  is up (Genex counts it as on screen then), brings that window forward once, and passes Quit on as
+  `WM_CLOSE`. A game opens full screen with its engine's own argument
   (`launchArgs`: Unity `-screen-fullscreen 1`, Godot `--fullscreen`, Unreal `-fullscreen`; the
   engine is the catalog's, kept in the install record), unless its app sets `GenexWindowed` in its
   Info.plist (read at unpack, `WINDOWED_KEY`); the page's Quit asks it to quit, then ends its process tree;
