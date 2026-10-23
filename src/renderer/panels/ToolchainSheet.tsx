@@ -27,6 +27,7 @@ import {
   type ToolchainStatus,
 } from "../../shared/toolchain.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { t } from "../../shared/i18n.ts";
 import { Button } from "../ui/Button.tsx";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Pending } from "../ui/Pending.tsx";
@@ -50,8 +51,8 @@ import {
 
 /** The sheet's own words. */
 const MESSAGE = {
-  loading: "Checking what is installed…",
-  progress: "Install progress",
+  loading: t("Checking what is installed…"),
+  progress: t("Install progress"),
 } as const;
 
 /** How often the sheet asks again whether Apple's install has finished, once the person started it. */

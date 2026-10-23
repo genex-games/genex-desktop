@@ -39,21 +39,22 @@ import { Button } from "../ui/Button.tsx";
 import { DialogSurface } from "../ui/dialog.tsx";
 import type { GameLocation, GameProject } from "../types.ts";
 import { DESTINATION_WORDS, problemWords } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 import { ToolchainSheet } from "./ToolchainSheet.tsx";
 
 /** The dialog's words. */
 const MESSAGE = {
-  title: "New game",
-  rustTitle: "New Rust game",
-  name: "Game name",
-  untitled: "Untitled game",
-  savedTo: "Saved to",
-  change: "Change…",
-  choosing: "Choosing…",
-  cancel: "Cancel",
-  create: "Create game",
-  creating: "Creating…",
-  noDestination: "Choose at least one place to play.",
+  title: t("New game"),
+  rustTitle: t("New Rust game"),
+  name: t("Game name"),
+  untitled: t("Untitled game"),
+  savedTo: t("Saved to"),
+  change: t("Change…"),
+  choosing: t("Choosing…"),
+  cancel: t("Cancel"),
+  create: t("Create game"),
+  creating: t("Creating…"),
+  noDestination: t("Choose at least one place to play."),
 } as const;
 
 /** The operation the dialog is waiting for. */

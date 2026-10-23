@@ -5875,4 +5875,683 @@ export default {
   "Your game is on Roblox": "ゲームがRobloxに公開されました",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "作業を続けている間に、ゲームのエージェントがRoblox Studioで公開します。",
+  " (tick {tick})": "（tick {tick}）",
+  " at {file}:{line}": "（{file}:{line}）",
+  "A download address was not secure, so nothing was downloaded.":
+    "ダウンロード元のアドレスが安全ではなかったため、何もダウンロードしていません。",
+  "A download did not match its pinned checksum and was thrown away.":
+    "ダウンロードが固定されたチェックサムと一致しなかったため、破棄しました。",
+  "A download failed. Check the connection and try again.":
+    "ダウンロードに失敗しました。接続を確認して、もう一度試してください。",
+  "A download held files outside its own folder, so it was not unpacked.":
+    "ダウンロードに自分のフォルダー外のファイルが含まれていたため、展開していません。",
+  "A file couldn’t be packed safely, so nothing was exported.":
+    "ファイルを安全にパッケージできなかったため、何も書き出していません。",
+  "A file held a secret key, so nothing was exported.": "ファイルに秘密鍵が含まれていたため、何も書き出していません。",
+  "A game": "ゲーム",
+  "A game asked for a crate beyond Genex’s reviewed set. You decide. Genex reads the crate and checks it offline only after you approve: a known security advisory, a licence Genex doesn’t allow or a banned crate, in it or in a crate it brings in, stops it. Audits are shown for your information. Added crates are for that game only.":
+    "ゲームがGenexのレビュー済みセット外のcrateを求めています。決めるのはあなたです。Genexはあなたが承認してから初めてcrateを読み、オフラインでチェックします。既知のセキュリティアドバイザリ、Genexが許可しないライセンス、禁止crateが、そのcrateか依存するcrateにあれば止まります。監査結果は参考として表示します。追加したcrateはそのゲーム専用です。",
+  "A game keeps the stack it was made with. Add destinations it can already build for.":
+    "ゲームは作ったときのスタックのままです。すでにビルドできる行き先を追加してください。",
+  "A known security advisory ({advisory}) affects it, so it wasn’t added even with your approval.":
+    "既知のセキュリティアドバイザリ（{advisory}）の影響を受けるため、承認があっても追加していません。",
+  "A known security advisory affects it, or a crate it brings in, so it wasn’t added even with your approval.":
+    "このcrateか依存するcrateが既知のセキュリティアドバイザリの影響を受けるため、承認があっても追加していません。",
+  "A licence the export must include couldn’t be read, so nothing was exported.":
+    "書き出しに含めるべきライセンスを読めなかったため、何も書き出していません。",
+  "A newer version of Genex made this game, so this one opens it read-only.":
+    "このゲームは新しいバージョンのGenexで作られたため、このバージョンでは読み取り専用で開きます。",
+  "A tool was installed but did not run.": "ツールはインストールされましたが、起動しませんでした。",
+  "ANGLE for Linux": "Linux用ANGLE",
+  "ANGLE for Mac": "Mac用ANGLE",
+  "ANGLE for Windows": "Windows用ANGLE",
+  "Accept the Android SDK License before installing Android’s tools.":
+    "Androidのツールをインストールする前に、Android SDKのライセンスに同意してください。",
+  "Accept the license": "ライセンスに同意する",
+  "Add it in a terminal instead": "ターミナルで追加する",
+  "Added for this game": "このゲームに追加済み",
+  Advisories: "アドバイザリ",
+  "Advisory list": "アドバイザリ一覧",
+  "Allow build scripts": "ビルドスクリプトを許可",
+  "Allow proc macros": "プロシージャルマクロを許可",
+  "An earlier re-take of this part is still where this one would go.":
+    "このパーツの以前の取り戻しが、今回の保存先にまだ残っています。",
+  "Android NDK": "Android NDK",
+  "Android SDK License": "Android SDKライセンス",
+  "Android SDK platform": "Android SDKプラットフォーム",
+  "Android app": "Androidアプリ",
+  "Android build tools": "Androidビルドツール",
+  "Android phone": "Androidスマホ",
+  "Android’s SDK, build tools and NDK are installed under Google’s Android Software Development Kit License Agreement. Read it, then accept it here. Genex never accepts it for you.":
+    "Android SDK、ビルドツール、NDKは、GoogleのAndroid Software Development Kitライセンス契約のもとでインストールされます。読んでから、ここで同意してください。Genexがあなたの代わりに同意することはありません。",
+  "Another version is installed. Builds need {version}; Android’s SDK manager installs it.":
+    "別のバージョンがインストールされています。ビルドには{version}が必要です。AndroidのSDKマネージャーでインストールできます。",
+  "App Store or ad hoc (.ipa)": "App Storeまたはアドホック（.ipa）",
+  "AppArmor can’t name the folder Genex is in. Move Genex to a folder whose path has none of {characters}, then open it again.":
+    "AppArmorはGenexがあるフォルダーを指定できません。パスに{characters}のどれも含まないフォルダーにGenexを移動して、開き直してください。",
+  "Apple Command Line Tools": "Apple Command Line Tools",
+  "Apple’s Command Line Tools are needed first.": "先にAppleのCommand Line Toolsが必要です。",
+  "Approved, checking…": "承認済み、チェック中…",
+  "Audited by {sources}": "{sources}が監査済み",
+  Audits: "監査",
+  Banned: "禁止",
+  "Bring to front": "手前に表示",
+  Browser: "ブラウザ",
+  "Browser (web folder)": "ブラウザ（Webフォルダー）",
+  "Build in Live": "Liveのビルド",
+  "Building for Mac": "Mac向けにビルド中",
+  "Building for Mac needs Apple’s Command Line Tools.": "Mac向けのビルドにはAppleのCommand Line Toolsが必要です。",
+  Built: "ビルド済み",
+  "Built here, but it can’t run on this computer": "ここでビルドしたが、このコンピューターでは動かせない",
+  "Built on the starting point": "スタート地点からビルド",
+  "Built, not run here": "ビルド済み、ここでは未実行",
+  "Built, not run on this Mac": "ビルド済み、このMacでは未実行",
+  "C++ games can’t be built on this computer yet.": "C++のゲームはまだこのコンピューターでビルドできません。",
+  "C++ games can’t load .{ext} files. Use PNG or JPEG pictures, OGG, WAV or MP3 sound, and glTF or OBJ models.":
+    "C++のゲームは.{ext}ファイルを読み込めません。画像はPNGかJPEG、音声はOGG、WAV、MP3、モデルはglTFかOBJを使ってください。",
+  "C++ games can’t load this format, so builds leave it out.":
+    "C++のゲームはこの形式を読み込めないため、ビルドから外します。",
+  "CI smoke passed": "CIのスモークテストに合格",
+  "CPU {cpu} ms": "CPU {cpu} ms",
+  "CPU {cpu} ms · GPU {gpu} ms": "CPU {cpu} ms · GPU {gpu} ms",
+  Cancelled: "キャンセルしました",
+  "Checked by": "チェックに使ったもの",
+  "Checking disk space": "ディスクの空き容量を確認中",
+  "Checking the build": "ビルドを確認中",
+  "Checking the downloads": "ダウンロードを確認中",
+  "Checking the tools run": "ツールが動くか確認中",
+  "Checking what is installed…": "インストール済みのものを確認中…",
+  "Choose Native to build it and play it here.": "ここでビルドして遊ぶには「ネイティブ」を選んでください。",
+  "Choose Native to play it here.": "ここで遊ぶには「ネイティブ」を選んでください。",
+  "Choose at least one place to play.": "遊ぶ場所を少なくとも1つ選んでください。",
+  "Choose what to make. Builds signed with your own identity or keystore are yours alone: the agent never makes them.":
+    "何を作るか選んでください。あなた自身のIDやキーストアで署名したビルドはあなただけのものです。エージェントが作ることはありません。",
+  "Choose…": "選ぶ…",
+  "Click to play": "クリックしてプレイ",
+  Closed: "終了",
+  "Copy the engine into this game’s engine folder? The game stops getting engine updates, and Live and export wait until each new build passes the conformance checks.":
+    "エンジンをこのゲームのエンジンフォルダーにコピーしますか？ゲームはエンジンのアップデートを受け取らなくなり、Liveと書き出しは新しいビルドごとに適合チェックの合格を待ちます。",
+  "Copy the removal command": "削除コマンドをコピー",
+  "Copy the terminal command": "ターミナルのコマンドをコピー",
+  "Couldn’t read the frame profile.": "フレームプロファイルを読めませんでした。",
+  "Crates games asked for": "ゲームが求めたcrate",
+  "Creating…": "作成中…",
+  Decline: "断る",
+  "Development APK": "開発用APK",
+  Downloading: "ダウンロード中",
+  "Downloading the game": "ゲームをダウンロード中",
+  "Drawing the first frame": "最初のフレームを描画中",
+  Eject: "切り離す",
+  "Eject engine": "エンジンを切り離す",
+  "Ejecting needs a Mac, with macOS among this game’s destinations: the conformance checks run on its Mac build. Nothing was copied.":
+    "切り離しにはMacが必要で、このゲームの行き先にmacOSが含まれている必要があります。適合チェックはMac向けビルドで動きます。何もコピーしていません。",
+  Emulator: "エミュレーター",
+  "Engine settings": "エンジンの設定",
+  "Environment variable": "環境変数",
+  "Esc releases the keyboard": "Escでキーボードを解放",
+  "Exited unexpectedly": "予期せず終了",
+  Export: "書き出す",
+  "Export for": "書き出し先",
+  "Export for {phone}": "{phone}向けに書き出す",
+  "Export this destination first: there’s no packaged build to install yet.":
+    "先にこの行き先を書き出してください。インストールできるパッケージ済みビルドがまだありません。",
+  "Exported {file}.": "{file}を書き出しました。",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Linux.":
+    "{file}を書き出しました。Genexは{machine}でビルドしましたが、Linuxでは実行していません。",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Windows.":
+    "{file}を書き出しました。Genexは{machine}でビルドしましたが、Windowsでは実行していません。",
+  "Exported {name}.app. It opens on this Mac. On another Mac, open it from System Settings > Privacy & Security.":
+    "{name}.appを書き出しました。このMacで開けます。別のMacでは、システム設定 > プライバシーとセキュリティから開いてください。",
+  "Finding a match…": "マッチを探しています…",
+  "Finish the install in Apple’s window, then come back.":
+    "Appleのウインドウでインストールを終えてから、戻ってきてください。",
+  "Fix the error, then try again.": "エラーを直してから、もう一度試してください。",
+  "Frame profile": "フレームプロファイル",
+  "Frame time over the last 30 seconds. The dashed line is a 60 fps frame; marks are hitches.":
+    "直近30秒のフレーム時間です。破線は60 fpsの1フレーム、マークはカクつきです。",
+  "GPU device lost": "GPUデバイスを喪失",
+  "GPU error": "GPUエラー",
+  "GPU passes": "GPUパス",
+  "Game engine": "ゲームエンジン",
+  "Game keyboard": "ゲームのキーボード",
+  "Genex built it and checked the program, but this computer can’t run it.":
+    "Genexはビルドしてプログラムをチェックしましたが、このコンピューターでは実行できません。",
+  "Genex can’t convert this format yet, so builds leave it out.":
+    "Genexはまだこの形式を変換できないため、ビルドから外します。",
+  "Genex can’t run this build without a window on this computer yet, so the browser build is checked instead.":
+    "Genexはまだこのコンピューターでこのビルドをウインドウなしで実行できないため、代わりにブラウザ向けビルドをチェックします。",
+  "Genex can’t write the export there, so nothing was exported.":
+    "Genexはそこに書き出せないため、何も書き出していません。",
+  "Genex couldn’t install its crate checker, so nothing was checked or added. Connect to the internet and approve again.":
+    "Genexがcrateチェッカーをインストールできなかったため、何もチェック・追加していません。インターネットに接続して、もう一度承認してください。",
+  "Genex couldn’t reach a Wayland session to open the game’s window.":
+    "Genexはゲームのウインドウを開くためのWaylandセッションに接続できませんでした。",
+  "Genex didn’t start this build": "Genexはこのビルドを起動しませんでした",
+  "Genex doesn’t ship this part, so there is no copy to re-take.":
+    "Genexはこのパーツを同梱していないため、取り戻すコピーがありません。",
+  "Genex has no audit lists to compare against yet, so it was added on your approval alone.":
+    "Genexにはまだ比較できる監査リストがないため、あなたの承認だけで追加しました。",
+  "Genex has no pinned version of this tool for this computer yet.":
+    "Genexにはまだこのコンピューター向けのこのツールの固定バージョンがありません。",
+  "Genex has no pinned version of this tool for this computer yet; Install leaves it out.":
+    "Genexにはまだこのコンピューター向けのこのツールの固定バージョンがありません。インストールでは外します。",
+  "Genex has no pinned versions of these tools for this computer yet; Install leaves them out.":
+    "Genexにはまだこのコンピューター向けのこれらのツールの固定バージョンがありません。インストールでは外します。",
+  "Genex hasn’t published a download of a tool this needs yet.":
+    "これに必要なツールのダウンロードを、Genexはまだ公開していません。",
+  "Genex hasn’t published these tools for this computer yet.":
+    "Genexはまだこのコンピューター向けにこれらのツールを公開していません。",
+  "Genex hasn’t published this download yet": "Genexはまだこのダウンロードを公開していません",
+  "Genex is compiling the C++ code.": "GenexがC++のコードをコンパイルしています。",
+  "Genex is compiling the Rust code with Cargo.": "GenexがCargoでRustのコードをコンパイルしています。",
+  "Genex is in a folder other people on this computer can change, so a profile must not name it. Move Genex to a folder only you can write to, such as ~/Genex, then open it again.":
+    "Genexはこのコンピューターの他の人も変更できるフォルダーにあるため、プロファイルで指定できません。~/Genexのように自分だけが書き込めるフォルダーにGenexを移動して、開き直してください。",
+  "Genex needs bubblewrap 0.8 or newer to run games here. Install it, then try again.":
+    "ここでゲームを動かすには、bubblewrap 0.8以降が必要です。インストールして、もう一度試してください。",
+  "Genex never asks for the password itself: the signer reads it from the variable or the file when it signs.":
+    "Genexがパスワードを尋ねることはありません。署名ツールが署名するときに変数かファイルから読みます。",
+  "Genex opens game windows on Wayland only, and this session is X11.":
+    "GenexはWaylandでのみゲームのウインドウを開きますが、このセッションはX11です。",
+  "Genex stopped it after it didn’t quit when asked.": "終了を求めても閉じなかったため、Genexが停止しました。",
+  "Genex’s AppArmor profile is installed, but this window started without it. Quit and reopen Genex. If this screen comes back, AppArmor isn’t applying the profile to this copy; Details say which path it names.":
+    "GenexのAppArmorプロファイルはインストール済みですが、このウインドウはそれなしで起動しました。Genexを終了して開き直してください。この画面がまた出る場合、AppArmorがこのコピーにプロファイルを適用していません。「詳細」にプロファイルが指定するパスがあります。",
+  "Genex’s built-in rules (test data)": "Genexの組み込みルール（テストデータ）",
+  "Genex’s copy of the engine doesn’t match its checksums, so nothing was copied. Reinstall the Rust setup and try again.":
+    "Genexのエンジンのコピーがチェックサムと一致しないため、何もコピーしていません。Rustのセットアップを再インストールして、もう一度試してください。",
+  "Genex’s crate check didn’t finish, so nothing was added. Approve again to retry; if it keeps failing, reinstall the Rust toolchain in Settings › Toolchains or report the problem.":
+    "Genexのcrateチェックが終わらなかったため、何も追加していません。もう一度承認して再試行してください。失敗が続く場合は、設定 › ツールチェーンでRustツールチェーンを再インストールするか、問題を報告してください。",
+  "Genex’s crate policy doesn’t match the one it shipped with, so nothing was checked or added. Reinstall Genex.":
+    "Genexのcrateポリシーが同梱時のものと一致しないため、何もチェック・追加していません。Genexを再インストールしてください。",
+  "Genex’s engine already uses it; games reach it through Genex, not directly.":
+    "Genexのエンジンがすでに使っています。ゲームは直接ではなくGenexを通して使います。",
+  "Genex’s engine: it updates with Genex.": "Genexのエンジン：Genexと一緒にアップデートされます。",
+  "Genex’s graphics library didn’t match its checksum, so the game wasn’t started.":
+    "Genexのグラフィックライブラリがチェックサムと一致しなかったため、ゲームを起動していません。",
+  "Getting this ready for your game’s builds…": "ゲームのビルド用に準備しています…",
+  "Go back to Genex’s engine? Genex saves a snapshot of the game first, then removes its engine folder and every change in it.":
+    "Genexのエンジンに戻しますか？Genexはまずゲームのスナップショットを保存してから、エンジンフォルダーとその中の変更をすべて削除します。",
+  "Google Play bundle (.aab)": "Google Playバンドル（.aab）",
+  "Harness changed these parts before it knew Rust games, so a Rust build won’t run on them. Re-take the shipped copy of each; Harness’s change is kept beside it.":
+    "HarnessはRustのゲームを知る前にこれらのパーツを変更したため、Rustのビルドはそのままでは動きません。それぞれ同梱のコピーを取り戻してください。Harnessの変更は隣に残ります。",
+  "Harness parts from before Rust games": "Rustのゲーム以前のHarnessパーツ",
+  "Hide engine settings": "エンジンの設定を隠す",
+  "How it was checked": "チェックの方法",
+  "Importing this file failed, so builds leave it out. Deliver it again to retry.":
+    "このファイルの取り込みに失敗したため、ビルドから外します。もう一度渡すと再試行します。",
+  "In Live": "Liveで表示中",
+  "In Live · Native": "Liveで表示中 · ネイティブ",
+  "Included with Genex": "Genexに同梱",
+  "Included with Xcode": "Xcodeに同梱",
+  "Install Command Line Tools": "Command Line Toolsをインストール",
+  "Install progress": "インストールの進み具合",
+  "Install tools": "ツールをインストール",
+  "Install {phone} tools": "{phone}用ツールをインストール",
+  "Installed ({version})": "インストール済み（{version}）",
+  "Installed for an older version of Genex: set it up again before the next build.":
+    "古いバージョンのGenex用にインストール済み：次のビルドの前にもう一度セットアップしてください。",
+  "Installed versions": "インストール済みのバージョン",
+  "Installed, but the first build isn’t prepared yet: set it up to finish.":
+    "インストール済みですが、最初のビルドの準備がまだです：セットアップして仕上げてください。",
+  "Installing and starting": "インストールして起動中",
+  "Installs the latest packaged build and starts it.": "最新のパッケージ済みビルドをインストールして起動します。",
+  "It brings in {crate}, a graphics backend Genex doesn’t allow in games.":
+    "{crate}を取り込んでいます。これはGenexがゲームで許可しないグラフィックバックエンドです。",
+  "It brings in {crate}, under {licence}, a licence Genex doesn’t allow in games.":
+    "{licence}ライセンスの{crate}を取り込んでいます。Genexがゲームで許可しないライセンスです。",
+  "It brings in {crate}, which a known security advisory ({advisory}) affects, so it wasn’t added even with your approval.":
+    "既知のセキュリティアドバイザリ（{advisory}）の影響を受ける{crate}を取り込んでいるため、承認があっても追加していません。",
+  "It ended on {signal}.": "{signal}で終了しました。",
+  "It ended with code {code}.": "コード{code}で終了しました。",
+  "It has no browser build. Choose Native to play it here.":
+    "ブラウザ向けビルドがありません。ここで遊ぶには「ネイティブ」を選んでください。",
+  "It includes a proc macro, which you didn’t allow.": "プロシージャルマクロを含みますが、許可されていません。",
+  "It needs a second version of a crate Genex already ships.":
+    "Genexがすでに同梱しているcrateの2つ目のバージョンが必要です。",
+  "It runs a build script, which you didn’t allow.": "ビルドスクリプトを実行しますが、許可されていません。",
+  "It, or a crate it brings in, is a graphics backend Genex doesn’t allow in games.":
+    "このcrateか依存するcrateが、Genexがゲームで許可しないグラフィックバックエンドです。",
+  "It, or a crate it brings in, uses a licence Genex doesn’t allow in games.":
+    "このcrateか依存するcrateが、Genexがゲームで許可しないライセンスを使っています。",
+  "Its assets are {size} MB, over the game’s {budget} MB budget for this destination, so it takes longer to download. Raise budget_mb under [assets] in genex.toml if that’s fine.":
+    "アセットは{size} MBで、この行き先のゲームの予算{budget} MBを超えているため、ダウンロードに時間がかかります。問題なければgenex.tomlの[assets]でbudget_mbを上げてください。",
+  "Its authors withdrew this version.": "作者がこのバージョンを取り下げました。",
+  "Its code is {size} MB compressed, over the game’s {budget} MB budget, so it loads slower on phones and weak devices. Raise wasm_budget_mb in genex.toml if that’s fine.":
+    "コードは圧縮後{size} MBで、ゲームの予算{budget} MBを超えているため、スマホや非力な端末では読み込みが遅くなります。問題なければgenex.tomlでwasm_budget_mbを上げてください。",
+  "Its destinations can’t run on this computer.": "このゲームの行き先はこのコンピューターでは動きません。",
+  "Its files changed after they were checked, so Genex won’t use them.":
+    "チェック後にファイルが変わったため、Genexは使いません。",
+  "Its licence ({licence}) isn’t one Genex allows in games.":
+    "ライセンス（{licence}）は、Genexがゲームで許可するものではありません。",
+  "Its licence, advisories and audits are checked after you approve; nothing is added if a check stops it.":
+    "ライセンス、アドバイザリ、監査は承認後にチェックします。チェックで止まった場合は何も追加しません。",
+  "It’s a graphics backend Genex doesn’t allow in games.": "Genexがゲームで許可しないグラフィックバックエンドです。",
+  "It’s untested on real GPUs: only a software renderer has drawn it so far.":
+    "実機のGPUでは未テストです。これまでソフトウェアレンダラーでしか描画していません。",
+  "It’s untested on real devices: Genex built it but hasn’t run it on a phone.":
+    "実機では未テストです。Genexはビルドしましたが、スマホでは実行していません。",
+  "Java runtime": "Javaランタイム",
+  Joined: "参加済み",
+  "Key alias": "キーエイリアス",
+  "Keystore password": "キーストアのパスワード",
+  Licence: "ライセンス",
+  "Linux (.tar.gz)": "Linux（.tar.gz）",
+  "Linux headers": "Linuxヘッダー",
+  "Linux window": "Linuxのウインドウ",
+  "Live can’t draw the game on this Mac. Use Pop out.":
+    "LiveはこのMacでゲームを描画できません。「別ウインドウで開く」を使ってください。",
+  "Live couldn’t start the game. Try again or use Pop out.":
+    "Liveでゲームを起動できませんでした。もう一度試すか、「別ウインドウで開く」を使ってください。",
+  "Live shows browser builds, and this game has none. Play it in its own window instead.":
+    "Liveはブラウザ向けビルドを表示しますが、このゲームにはありません。専用のウインドウで遊んでください。",
+  "Live stopped showing the game, so it was stopped.": "Liveがゲームの表示をやめたため、ゲームを停止しました。",
+  "Live stopped showing the game. Try again or use Pop out.":
+    "Liveがゲームの表示をやめました。もう一度試すか、「別ウインドウで開く」を使ってください。",
+  "Loading assets": "アセットを読み込み中",
+  "Local test room": "ローカルのテストルーム",
+  "Mac games are built on a Mac": "Mac向けゲームはMacでビルドします",
+  "Mac window": "Macのウインドウ",
+  "Made in": "作成ツール",
+  "Made in {stack} for the browser.": "{stack}で作ったブラウザ向けゲームです。",
+  "Made in {stack}: one game, built for every place you pick.":
+    "{stack}で作成：1つのゲームを、選んだすべての場所向けにビルドします。",
+  Memory: "メモリ",
+  "Memory fault": "メモリフォールト",
+  "Multiplayer bridge for the browser": "ブラウザ用マルチプレイブリッジ",
+  "Multiplayer relay library": "マルチプレイ中継ライブラリ",
+  "Multiplayer relay library source": "マルチプレイ中継ライブラリのソース",
+  Native: "ネイティブ",
+  "Needed later to build for iPhone and iPad. Install it from the App Store.":
+    "あとでiPhoneとiPad向けにビルドするときに必要です。App Storeからインストールしてください。",
+  "Needed to build for Mac, unless Xcode is installed. macOS installs them in its own window.":
+    "Xcodeがない場合、Mac向けのビルドに必要です。macOSが専用のウインドウでインストールします。",
+  "Needed to build for Mac. macOS installs them in its own window.":
+    "Mac向けのビルドに必要です。macOSが専用のウインドウでインストールします。",
+  "Needs set-up": "セットアップが必要",
+  "Needs tools": "ツールが必要",
+  "New Rust game": "新しいRustのゲーム",
+  "No Android SDK was found. Install Android Studio or its command-line tools, then open this again.":
+    "Android SDKが見つかりません。Android Studioかそのコマンドラインツールをインストールしてから、もう一度開いてください。",
+  "No audit Genex trusts covers it yet.": "Genexが信頼する監査はまだこれをカバーしていません。",
+  "No audit list yet from {sources}": "{sources}の監査リストはまだありません",
+  "No device is ready: start one (or connect your phone) and try again.":
+    "準備できているデバイスがありません。デバイスを起動する（またはスマホをつなぐ）か、もう一度試してください。",
+  "No file chosen": "ファイルが選ばれていません",
+  "No licence named": "ライセンスの記載なし",
+  "No old versions to remove": "削除する古いバージョンはありません",
+  "No trusted audit lists installed yet": "信頼できる監査リストはまだインストールされていません",
+  "No trusted source has audited it yet. It was added on your approval.":
+    "信頼できる監査元はまだこれを監査していません。あなたの承認で追加しました。",
+  "None known": "既知のものはありません",
+  "None known as of {day}": "{day}時点で既知のものはありません",
+  "Not allowed": "許可されていません",
+  "Not allowed: {crates}": "許可されていません：{crates}",
+  "Not audited by {sources}": "{sources}は未監査",
+  "Not available yet": "まだ利用できません",
+  "Not built yet": "まだビルドしていません",
+  "Not installed. Builds need {version}; Android’s SDK manager installs it.":
+    "未インストールです。ビルドには{version}が必要です。AndroidのSDKマネージャーでインストールできます。",
+  "Not one of this game’s destinations": "このゲームの行き先ではありません",
+  "Nothing installed yet. Make a C++ game to set up its tools.":
+    "まだ何もインストールされていません。C++のゲームを作るとツールをセットアップできます。",
+  "Nothing removed: a game may still need these versions.":
+    "何も削除していません：まだゲームがこれらのバージョンを使うかもしれません。",
+  "Nothing removed: an install is running. Try again when it ends.":
+    "何も削除していません：インストール中です。終わってから、もう一度試してください。",
+  "Nothing removed: no install has finished yet.": "何も削除していません：まだ完了したインストールがありません。",
+  "Nothing removed: this toolchain folder is shared with another Genex.":
+    "何も削除していません：このツールチェーンフォルダーは別のGenexと共有しています。",
+  "Off: unsafe code and build scripts in this game don’t build.":
+    "オフ：このゲームのunsafeコードとビルドスクリプトはビルドされません。",
+  "On a device": "デバイスで実行",
+  "On: this game’s unsafe code and its own build script build. The sandbox is unchanged.":
+    "オン：このゲームのunsafeコードと独自のビルドスクリプトをビルドします。サンドボックスは変わりません。",
+  "One of the game’s own graphics passes didn’t pass Genex’s checks, so it wasn’t run.":
+    "ゲーム独自のグラフィックパスの1つがGenexのチェックに通らなかったため、実行していません。",
+  Online: "オンライン",
+  "Only trust code you’ve read. Unsafe code can crash the game or corrupt its memory, and a build script runs on this Mac at every build. Both stay inside the sandbox: no network, and writes only to the build folder.":
+    "読んだコードだけを信頼してください。unsafeコードはゲームをクラッシュさせたりメモリを壊したりすることがあり、ビルドスクリプトはビルドのたびにこのMacで動きます。どちらもサンドボックス内にとどまります。ネットワークはなく、書き込めるのはビルドフォルダーだけです。",
+  "Only you": "あなた専用",
+  "Only you can sign an export with your own identity.": "自分のIDで書き出しに署名できるのはあなただけです。",
+  "Only you can trust a game, here in Genex.": "ゲームを信頼できるのはあなただけです。ここ、Genexでどうぞ。",
+  "Out of memory": "メモリ不足",
+  Panic: "パニック",
+  "Play in its own window": "専用のウインドウで遊ぶ",
+  "Play on Mac": "Macで遊ぶ",
+  "Play on Mac opens games made for Mac.": "「Macで遊ぶ」はMac向けに作られたゲームを開きます。",
+  "Playing on Mac": "Macでプレイ中",
+  "Plays in its own window": "専用のウインドウで遊べます",
+  "Pop out": "別ウインドウで開く",
+  "Preparing shaders": "シェーダーを準備中",
+  "Preparing the first build": "最初のビルドを準備中",
+  "Provisioning profile": "プロビジョニングプロファイル",
+  "Re-take shipped copy": "同梱のコピーを取り戻す",
+  "Re-taking…": "取り戻し中…",
+  "Read the license": "ライセンスを読む",
+  "Reading…": "読み込み中…",
+  "Ready for builds. The model check noted {count, plural, one {# thing} other {# things}} worth a look.":
+    "ビルドの準備ができました。モデルチェックで、見ておきたい点が{count, plural, other {#件}}見つかりました。",
+  "Reconnecting…": "再接続中…",
+  "Release keystore": "リリース用キーストア",
+  "Remove old versions": "古いバージョンを削除",
+  "Remove the engine folder": "エンジンフォルダーを削除",
+  "Removed {count, plural, one {# old version} other {# old versions}}, {size}":
+    "古いバージョンを{count, plural, other {#個}}削除しました（{size}）",
+  Replay: "リプレイ",
+  Restart: "再起動",
+  "Restarting…": "再起動中…",
+  "Run this, then quit and reopen Genex:": "これを実行してから、Genexを終了して開き直してください：",
+  "Running in its own window": "専用のウインドウで実行中",
+  "Runs in the iOS Simulator on this Mac. Signed for this Mac only.":
+    "このMacのiOS Simulatorで動きます。このMac専用に署名されています。",
+  "Rust for Android": "Android用Rust",
+  "Rust for Linux": "Linux用Rust",
+  "Rust for Windows": "Windows用Rust",
+  "Rust for iPhone": "iPhone用Rust",
+  "Rust for the browser": "ブラウザ用Rust",
+  "Rust for the iOS Simulator": "iOS Simulator用Rust",
+  "Rust games": "Rustのゲーム",
+  "Rust games are a developer preview: this version of Genex doesn’t download their tools yet.":
+    "Rustのゲームは開発者向けプレビューです。このバージョンのGenexはまだそのツールをダウンロードしません。",
+  "Rust games aren’t available in this version of Genex yet.":
+    "このバージョンのGenexでは、Rustのゲームはまだ使えません。",
+  "Rust games can’t be built on this computer yet.": "Rustのゲームはまだこのコンピューターでビルドできません。",
+  "Rust games can’t load .{ext} files. Use PNG, JPEG, WebP or KTX2 pictures, OGG, WAV, MP3 or FLAC sound, and glTF or OBJ models.":
+    "Rustのゲームは.{ext}ファイルを読み込めません。画像はPNG、JPEG、WebP、KTX2、音声はOGG、WAV、MP3、FLAC、モデルはglTFかOBJを使ってください。",
+  "Rust games can’t load this format, so builds leave it out.":
+    "Rustのゲームはこの形式を読み込めないため、ビルドから外します。",
+  "Rust game…": "Rustのゲーム…",
+  "Rust libraries": "Rustライブラリ",
+  "RustSec advisories": "RustSecアドバイザリ",
+  "Safety check: {file} ({refusal})": "安全チェック：{file}（{refusal}）",
+  "Saved to": "保存先",
+  "Set up C++ games": "C++のゲームをセットアップ",
+  "Set up Rust games": "Rustのゲームをセットアップ",
+  "Set up again": "もう一度セットアップ",
+  "Set up once for every C++ destination this computer can build. These tools are shared by all your C++ games.":
+    "このコンピューターでビルドできるC++の行き先を、一度だけまとめてセットアップします。これらのツールはあなたのC++のゲームすべてで共有されます。",
+  "Set up once for every Rust destination this computer can build. These tools are shared by all your Rust games.":
+    "このコンピューターでビルドできるRustの行き先を、一度だけまとめてセットアップします。これらのツールはあなたのRustのゲームすべてで共有されます。",
+  "Set up the C++ tools this game builds with": "このゲームのビルドに使うC++ツールをセットアップ",
+  "Setup finished": "セットアップ完了",
+  "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.":
+    "セットアップがキャンセルされたため、何も変わっていません。承認できるようになったら、もう一度「セットアップ」を選んでください。",
+  "Shipped copy back. Harness’s change is kept in {file}":
+    "同梱のコピーを取り戻しました。Harnessの変更は{file}に残っています",
+  "Signed with this profile’s own Genex debug key. Installs on a test phone.":
+    "このプロファイル専用のGenexデバッグキーで署名されています。テスト用のスマホにインストールできます。",
+  "Signed with your Apple Development identity and a provisioning profile that lists your device.":
+    "あなたのApple Development IDと、デバイスが登録されたプロビジョニングプロファイルで署名されています。",
+  "Signed with your Apple Distribution identity and its provisioning profile.":
+    "あなたのApple Distribution IDとそのプロビジョニングプロファイルで署名されています。",
+  "Signed with your own release keystore.": "あなた自身のリリース用キーストアで署名されています。",
+  "Signing didn’t finish, so nothing was exported.": "署名が完了しなかったため、何も書き出していません。",
+  "Signing identity": "署名ID",
+  "Simulator app": "シミュレーター用アプリ",
+  "Slowest scopes": "遅いスコープ",
+  "Start the game to see its frame profile.": "ゲームを起動するとフレームプロファイルが見られます。",
+  "Started on the device.": "デバイスで起動しました。",
+  "Starting the graphics": "グラフィックスを起動中",
+  "Stop timing passes": "パスの計測をやめる",
+  "Stop trusting": "信頼をやめる",
+  "Stopped responding": "応答なし",
+  "Studio plays a local test room; publish a draft to play online.":
+    "Studioではローカルのテストルームで遊びます。オンラインで遊ぶには下書きを公開してください。",
+  "SwiftShader for Linux": "Linux用SwiftShader",
+  "That isn’t a harness part’s path, so nothing was changed.": "Harnessパーツのパスではないため、何も変えていません。",
+  "That isn’t one of this game’s destinations.": "このゲームの行き先ではありません。",
+  "That isn’t something a C++ game can do here.": "C++のゲームはここでそれをできません。",
+  "The C++ tools are installed but not set up yet. Set them up to finish.":
+    "C++ツールはインストール済みですが、まだセットアップされていません。セットアップして仕上げてください。",
+  "The C++ tools this export needs are missing or damaged. Set them up again, then try again.":
+    "この書き出しに必要なC++ツールがないか壊れています。もう一度セットアップしてから、試してください。",
+  "The C++ tools this game builds with aren’t installed. Install them, then try again.":
+    "このゲームのビルドに使うC++ツールがインストールされていません。インストールしてから、もう一度試してください。",
+  "The C++ tools were set up for an older version of Genex. Set them up again, then try again.":
+    "C++ツールは古いバージョンのGenex用にセットアップされています。もう一度セットアップしてから、試してください。",
+  "The Mac build didn’t pass Genex’s checks, so no app was made.":
+    "Mac向けビルドがGenexのチェックに通らなかったため、アプリは作っていません。",
+  "The Mac build failed.": "Mac向けビルドに失敗しました。",
+  "The build changed while it was being exported. Try again.":
+    "書き出し中にビルドが変わりました。もう一度試してください。",
+  "The build didn’t pass Genex’s safety check, so it isn’t used.":
+    "ビルドがGenexの安全チェックに通らなかったため、使っていません。",
+  "The build doesn’t draw through Genex’s graphics library, so it wasn’t started.":
+    "ビルドがGenexのグラフィックライブラリを通して描画しないため、起動していません。",
+  "The build failed.": "ビルドに失敗しました。",
+  "The build holds a file linked from somewhere else, so it wasn’t started.":
+    "ビルドに別の場所からリンクされたファイルがあるため、起動していません。",
+  "The build holds a library Genex didn’t expect, so it wasn’t started.":
+    "ビルドにGenexが想定していないライブラリがあるため、起動していません。",
+  "The build holds a link, so it wasn’t started.": "ビルドにリンクが含まれているため、起動していません。",
+  "The build holds a program Genex didn’t expect, so it wasn’t started.":
+    "ビルドにGenexが想定していないプログラムがあるため、起動していません。",
+  "The build is for a different kind of computer, so it wasn’t started.":
+    "ビルドが別の種類のコンピューター向けのため、起動していません。",
+  "The build isn’t a Mac program this computer can run.":
+    "このビルドは、このコンピューターで実行できるMacのプログラムではありません。",
+  "The build loads libraries from outside the game, so it wasn’t started.":
+    "ビルドがゲーム外からライブラリを読み込むため、起動していません。",
+  "The build needs a newer Linux than Genex supports.": "ビルドにはGenexが対応するより新しいLinuxが必要です。",
+  "The build needs a system library Genex doesn’t allow, so it wasn’t started.":
+    "ビルドにGenexが許可しないシステムライブラリが必要なため、起動していません。",
+  "The build took too long and was stopped.": "ビルドに時間がかかりすぎたため、停止しました。",
+  "The build uses OpenGL directly, which Genex doesn’t run on Linux.":
+    "ビルドがOpenGLを直接使っていますが、GenexはLinuxでOpenGLを実行しません。",
+  "The build uses OpenGL, which Genex doesn’t run on Windows.":
+    "ビルドがOpenGLを使っていますが、GenexはWindowsでOpenGLを実行しません。",
+  "The build uses OpenGL, which Genex doesn’t run. Games draw through Metal.":
+    "ビルドがOpenGLを使っていますが、GenexはOpenGLを実行しません。ゲームはMetalで描画します。",
+  "The build was stopped.": "ビルドを停止しました。",
+  "The device didn’t install or start the game.": "デバイスがゲームをインストールまたは起動しませんでした。",
+  "The engine didn’t change.": "エンジンは変わっていません。",
+  "The engine this game was built with is no longer installed, so nothing was copied. Build the game once, then try again.":
+    "このゲームのビルドに使ったエンジンがもうインストールされていないため、何もコピーしていません。一度ゲームをビルドしてから、もう一度試してください。",
+  "The export folder holds files Genex didn’t put there, so nothing was exported.":
+    "書き出しフォルダーにGenexが置いていないファイルがあるため、何も書き出していません。",
+  "The game answered Genex with something it couldn’t read, so it was stopped.":
+    "ゲームがGenexの読めない応答を返したため、停止しました。",
+  "The game asked for more pictures than Genex shares, so it was stopped.":
+    "ゲームがGenexの共有する以上の画像を求めたため、停止しました。",
+  "The game crashed": "ゲームがクラッシュしました",
+  "The game didn’t answer Genex the way a Genex game does, so it was stopped.":
+    "ゲームがGenexのゲームらしい応答をしなかったため、停止しました。",
+  "The game lost its graphics device. It’s getting it back; try again in a moment.":
+    "ゲームがグラフィックデバイスを失いました。取り戻しているところなので、少ししてからもう一度試してください。",
+  "The game needs a graphics feature this computer doesn’t have.":
+    "このゲームには、このコンピューターにないグラフィック機能が必要です。",
+  "The game needs graphics features browsers don’t offer, so it has no web build.":
+    "このゲームにはブラウザにないグラフィック機能が必要なため、Web向けビルドがありません。",
+  "The game sent Genex more than it accepts at once, so it was stopped.":
+    "ゲームが一度にGenexが受け付ける以上のデータを送ったため、停止しました。",
+  "The game sent Live a picture Genex couldn’t use, so it was stopped.":
+    "ゲームがGenexの使えない画像をLiveに送ったため、停止しました。",
+  "The game sent a picture Genex didn’t ask for, so it was stopped.":
+    "ゲームがGenexの求めていない画像を送ったため、停止しました。",
+  "The game sent pictures faster than Genex shows them, so it was stopped.":
+    "ゲームがGenexの表示より速く画像を送ったため、停止しました。",
+  "The game stopped responding and was stopped.": "ゲームが応答しなくなったため、停止しました。",
+  "The game took too long to start and was stopped.": "ゲームの起動に時間がかかりすぎたため、停止しました。",
+  "The game used too much memory and was stopped.": "ゲームがメモリを使いすぎたため、停止しました。",
+  "The game was stopped by force": "ゲームを強制停止しました",
+  "The game’s current build failed, so nothing was exported.":
+    "ゲームの現在のビルドが失敗したため、何も書き出していません。",
+  "The game’s graphics stopped responding, so it was stopped.":
+    "ゲームのグラフィックスが応答しなくなったため、停止しました。",
+  "The game’s picture didn’t match what it said it drew.": "ゲームの画像が、描いたと伝えた内容と一致しませんでした。",
+  "The game’s picture was larger than Genex accepts.": "ゲームの画像がGenexの受け付けるサイズより大きすぎました。",
+  "The install stopped": "インストールが止まりました",
+  "The model check found errors in this file, so builds leave it out.":
+    "モデルチェックでこのファイルにエラーが見つかったため、ビルドから外します。",
+  "The packaged build holds a link, so it wasn’t installed.":
+    "パッケージ済みビルドにリンクが含まれているため、インストールしていません。",
+  "The packaged build is linked from somewhere else, so it wasn’t installed.":
+    "パッケージ済みビルドが別の場所からリンクされているため、インストールしていません。",
+  "The registry has no such crate or version.": "レジストリにそのcrateやバージョンはありません。",
+  "The sandbox Genex runs games in refused to start this one.":
+    "Genexがゲームを動かすサンドボックスが、このゲームの起動を拒否しました。",
+  "The signing details aren’t valid, so nothing was exported.": "署名情報が正しくないため、何も書き出していません。",
+  "The tools installed, but preparing the first build failed.":
+    "ツールはインストールされましたが、最初のビルドの準備に失敗しました。",
+  "The trust setting didn’t change.": "信頼の設定は変わっていません。",
+  "The {destination} build failed.": "{destination}向けビルドに失敗しました。",
+  "There is no build the judges can play: the browser build made for them failed.":
+    "審査員が遊べるビルドがありません。審査用に作ったブラウザ向けビルドが失敗しました。",
+  "There isn’t enough free disk space.": "ディスクの空き容量が足りません。",
+  "This Mac can’t show the game inside Live. Play on Mac opens it in its own window.":
+    "このMacではLive内にゲームを表示できません。「Macで遊ぶ」で専用のウインドウに開きます。",
+  "This Xcode is too old for iPhone and iPad builds: they need Xcode 26 or later.":
+    "このXcodeはiPhoneとiPad向けのビルドには古すぎます。Xcode 26以降が必要です。",
+  "This build doesn’t report a frame profile yet.": "このビルドはまだフレームプロファイルを報告しません。",
+  "This build has no game id to find its room with.": "このビルドには、ルームを見つけるためのゲームIDがありません。",
+  "This build has no multiplayer: add [net] to genex.toml.":
+    "このビルドにはマルチプレイがありません。genex.tomlに[net]を追加してください。",
+  "This computer can’t show the game inside Live yet.": "このコンピューターではまだLive内にゲームを表示できません。",
+  "This computer’s graphics can’t run the game: it needs WebGPU-class graphics.":
+    "このコンピューターのグラフィックスではゲームを動かせません。WebGPUクラスのグラフィックスが必要です。",
+  "This copy of Genex is missing a bundled C++ component. Reinstall Genex, or rebuild it with the bundled tools.":
+    "このGenexには同梱のC++コンポーネントが欠けています。Genexを再インストールするか、同梱ツールでビルドし直してください。",
+  "This desktop can’t give a game its own restricted Wayland connection, so Genex won’t open its window.":
+    "このデスクトップはゲームに専用の制限付きWayland接続を渡せないため、Genexはそのウインドウを開きません。",
+  "This destination can’t reach the network.": "この行き先はネットワークにつながりません。",
+  "This file is damaged or isn’t the format its name says, so builds leave it out.":
+    "このファイルは壊れているか、名前の示す形式ではないため、ビルドから外します。",
+  "This file is gone, so builds leave it out.": "このファイルはもうないため、ビルドから外します。",
+  "This file is too large to import, so builds leave it out.":
+    "このファイルは大きすぎて取り込めないため、ビルドから外します。",
+  "This file points outside the game folder, so builds leave it out.":
+    "このファイルはゲームフォルダーの外を指しているため、ビルドから外します。",
+  "This file’s name can’t be used in a game, so builds leave it out.":
+    "このファイル名はゲームで使えないため、ビルドから外します。",
+  "This game already has an engine folder, so nothing was copied. Remove it or use Genex’s engine first.":
+    "このゲームにはすでにエンジンフォルダーがあるため、何もコピーしていません。削除するか、先にGenexのエンジンを使ってください。",
+  "This game has no browser build": "このゲームにはブラウザ向けビルドがありません",
+  "This game plays its Mac build in Live": "このゲームはLiveでMac向けビルドを表示します",
+  "This game runs in its own window": "このゲームは専用のウインドウで動きます",
+  "This game runs its own engine, and its current build hasn’t passed the conformance checks, so nothing was exported.":
+    "このゲームは独自のエンジンで動いていて、現在のビルドが適合チェックに合格していないため、何も書き出していません。",
+  "This game runs its own engine, and this build hasn’t passed the conformance checks yet, so it wasn’t started.":
+    "このゲームは独自のエンジンで動いていて、このビルドがまだ適合チェックに合格していないため、起動していません。",
+  "This game was made before Live could show Mac builds.":
+    "このゲームは、LiveでMac向けビルドを表示できるようになる前に作られました。",
+  "This game was made before Live could show Mac builds. Use Pop out.":
+    "このゲームは、LiveでMac向けビルドを表示できるようになる前に作られました。「別ウインドウで開く」を使ってください。",
+  "This game’s folder has a CMakeCache.txt. Genex builds outside the game folder: delete that file, then try again.":
+    "このゲームのフォルダーにCMakeCache.txtがあります。Genexはゲームフォルダーの外でビルドします。そのファイルを削除してから、もう一度試してください。",
+  "This game’s own copy of engine {version}, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "このゲーム専用のエンジン{version}のコピーで、エンジンフォルダーにあります。もうアップデートされません。Liveと書き出しには、ビルドごとに適合チェックの合格が必要です。",
+  "This game’s own copy, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "このゲーム専用のコピーで、エンジンフォルダーにあります。もうアップデートされません。Liveと書き出しには、ビルドごとに適合チェックの合格が必要です。",
+  "This game’s tools aren’t installed, and Genex can’t download them while offline.":
+    "このゲームのツールがインストールされておらず、オフラインではGenexがダウンロードできません。",
+  "This isn’t a regular file, so builds leave it out.": "これは通常のファイルではないため、ビルドから外します。",
+  "This model needs a glTF extension Genex games can’t read, so builds leave it out.":
+    "このモデルにはGenexのゲームが読めないglTF拡張が必要なため、ビルドから外します。",
+  "This page has no player identity to join with.": "このページには参加に使うプレイヤーIDがありません。",
+  "This part is already the shipped copy.": "このパーツはすでに同梱のコピーです。",
+  "This part isn’t a plain file in the harness, so nothing was changed.":
+    "このパーツはHarness内の通常のファイルではないため、何も変えていません。",
+  "This preview can’t take touches, so the game’s touch controls weren’t played.":
+    "このプレビューはタッチを受け付けないため、ゲームのタッチ操作はプレイしていません。",
+  "This version of Genex can’t build this kind of game yet, so nothing was exported.":
+    "このバージョンのGenexはまだこの種類のゲームをビルドできないため、何も書き出していません。",
+  "This version of Genex can’t build this kind of game yet.":
+    "このバージョンのGenexはまだこの種類のゲームをビルドできません。",
+  "This version of Genex can’t eject an engine.": "このバージョンのGenexはエンジンを切り離せません。",
+  "This version of Genex can’t open game windows on Linux yet.":
+    "このバージョンのGenexはまだLinuxでゲームのウインドウを開けません。",
+  "This version of Genex can’t run it on this computer yet":
+    "このバージョンのGenexはまだこのコンピューターで実行できません",
+  "This version of Genex can’t show Mac builds inside Live yet. Play on Mac opens it in its own window.":
+    "このバージョンのGenexはまだLive内にMac向けビルドを表示できません。「Macで遊ぶ」で専用のウインドウに開きます。",
+  "This version of Genex can’t show the game inside Live yet.":
+    "このバージョンのGenexはまだLive内にゲームを表示できません。",
+  "This version of Genex can’t trust a game’s code.": "このバージョンのGenexはゲームのコードを信頼できません。",
+  "This version of Genex doesn’t build it from here yet.": "このバージョンのGenexはまだここからビルドしません。",
+  "This version of Genex exports Mac apps signed for this Mac only.":
+    "このバージョンのGenexは、このMac専用に署名したMacアプリを書き出します。",
+  "This version of Genex has no game launcher for Windows yet.":
+    "このバージョンのGenexにはまだWindows用のゲームランチャーがありません。",
+  "This version of the studio’s harness can’t judge C++ games. Update it, then try again.":
+    "このバージョンのスタジオのHarnessはC++のゲームを審査できません。アップデートしてから、もう一度試してください。",
+  "Three.js games play in the browser. Choose Rust · wgpu to build for it.":
+    "Three.jsのゲームはブラウザで遊びます。この行き先向けにビルドするにはRust · wgpuを選んでください。",
+  "Time GPU passes": "GPUパスを計測",
+  "Timing the next frames…": "次のフレームを計測中…",
+  "To remove it later:": "あとで削除するには：",
+  Toolchains: "ツールチェーン",
+  "Trust this game": "このゲームを信頼する",
+  "Trust this game’s code": "このゲームのコードを信頼する",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces agents run in. Genex needs its profile added once.":
+    "Ubuntuでは、エージェントが動く隔離スペースを作れるのはAppArmorプロファイルのあるアプリだけです。Genexのプロファイルを一度追加する必要があります。",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces games run in, so this game wasn’t started.":
+    "Ubuntuでは、ゲームが動く隔離スペースを作れるのはAppArmorプロファイルのあるアプリだけのため、このゲームを起動していません。",
+  "Ubuntu will ask for your password once to add {file}. It lets this copy of Genex, and the programs it starts, create user namespaces despite Ubuntu’s restriction. Then Genex restarts.":
+    "Ubuntuが{file}を追加するためにパスワードを一度だけ尋ねます。これで、このGenexと起動するプログラムが、Ubuntuの制限があってもユーザー名前空間を作れるようになります。その後Genexが再起動します。",
+  Unpacking: "展開中",
+  "Untested on real GPUs": "実機のGPUでは未テスト",
+  "Untested on real devices": "実機では未テスト",
+  "Use Genex’s engine": "Genexのエンジンを使う",
+  "Verified in a VM": "VMで検証済み",
+  "Waiting for approval…": "承認を待っています…",
+  "Waiting for players": "プレイヤーを待っています",
+  "Web and exported builds don’t report a frame profile.":
+    "Web向けビルドと書き出したビルドはフレームプロファイルを報告しません。",
+  "WebAssembly trap": "WebAssemblyトラップ",
+  "What to make": "作るもの",
+  "Where will people play?": "どこで遊んでもらいますか？",
+  "Windows (.zip)": "Windows（.zip）",
+  "Windows will ask an administrator to approve the setup once.":
+    "Windowsが管理者にセットアップの承認を一度だけ求めます。",
+  "Windows window": "Windowsのウインドウ",
+  "Xcode is missing the iOS 26 SDK. Open Xcode once to install it.":
+    "XcodeにiOS 26 SDKがありません。一度Xcodeを開いてインストールしてください。",
+  "Xcode is ready for iPhone and iPad builds.": "XcodeはiPhoneとiPad向けのビルドの準備ができています。",
+  "You accepted the Android SDK License.": "Android SDKライセンスに同意しました。",
+  "You declined it.": "あなたが断りました。",
+  "Your iPhone or iPad (.ipa)": "あなたのiPhoneまたはiPad（.ipa）",
+  "checked the game's conformance": "ゲームの適合性をチェックしました",
+  "for {game}": "{game}用",
+  game: "ゲーム",
+  "has a proc macro": "プロシージャルマクロあり",
+  "iPhone and iPad": "iPhoneとiPad",
+  "iPhone and iPad app": "iPhone・iPadアプリ",
+  "iPhone and iPad builds need Xcode 26 or later. Install it from the App Store.":
+    "iPhoneとiPad向けのビルドにはXcode 26以降が必要です。App Storeからインストールしてください。",
+  "no licence": "ライセンスなし",
+  "over budget": "予算オーバー",
+  "runs a build script": "ビルドスクリプトを実行",
+  "seed {seed}": "シード{seed}",
+  "this Mac": "このMac",
+  "this computer": "このコンピューター",
+  "tick {tick}": "tick {tick}",
+  unnamed: "名前なし",
+  "{advisory} in {crate}": "{crate}の{advisory}",
+  "{count, plural, one {# crate} other {# crates}}": "{count, plural, other {#個のcrate}}",
+  "{count, plural, one {# hitch} other {# hitches}}": "{count, plural, other {#回のカクつき}}",
+  "{count, plural, one {# time} other {# times}}": "{count, plural, other {#回}}",
+  "{destinations} aren’t available yet": "{destinations}はまだ利用できません",
+  "{destination} isn’t available yet": "{destination}はまだ利用できません",
+  "{game} crashed": "{game}がクラッシュしました",
+  "{game} crashed with a memory fault": "{game}がメモリフォールトでクラッシュしました",
+  "{game} exited abnormally": "{game}が異常終了しました",
+  "{game} hit a GPU error": "{game}でGPUエラーが起きました",
+  "{game} lost its GPU device": "{game}がGPUデバイスを失いました",
+  "{game} panicked": "{game}がパニックしました",
+  "{game} ran out of memory": "{game}のメモリが足りなくなりました",
+  "{game} stopped answering and was ended": "{game}が応答しなくなり、終了しました",
+  "{game} trapped in WebAssembly": "{game}がWebAssemblyでトラップしました",
+  "{label}, Built on the starting point": "{label}、スタート地点からビルド",
+  "{mib} MiB": "{mib} MiB",
+  "{mib} of {budget} MiB": "{mib} / {budget} MiB",
+  "{ms} ms": "{ms} ms",
+  "{need} needed, {free} free": "必要{need}、空き{free}",
+  "{players, plural, one {# player} other {# players}}": "{players, plural, other {#人のプレイヤー}}",
+  "{players, plural, one {# player} other {# players}} · {connected} connected":
+    "{players, plural, other {#人のプレイヤー}} · {connected}人が接続中",
+  "{runs, plural, one {; the same crash in # run} other {; the same crash in # runs}}":
+    "{runs, plural, other {。同じクラッシュが#回の実行で発生}}",
+  "{size} on disk": "ディスク上の{size}",
+  "{stack} games can’t be built for it here yet": "{stack}のゲームは、ここではまだこの行き先向けにビルドできません",
+  "{stage} · {done} of {total}": "{stage} · {done}/{total}",
+  "{what}{where}{when}{again}.": "{what}{where}{when}{again}。",
 } satisfies LocaleCatalog;

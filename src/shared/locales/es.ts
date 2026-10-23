@@ -5970,4 +5970,688 @@ export default {
   "Your game is on Roblox": "Tu juego está en Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "El agente de tu juego lo publica en Roblox Studio mientras sigues trabajando.",
+  " (tick {tick})": " (tick {tick})",
+  " at {file}:{line}": " en {file}:{line}",
+  "A download address was not secure, so nothing was downloaded.":
+    "Una dirección de descarga no era segura, así que no se descargó nada.",
+  "A download did not match its pinned checksum and was thrown away.":
+    "Una descarga no coincidió con su suma de verificación fijada y se descartó.",
+  "A download failed. Check the connection and try again.":
+    "Falló una descarga. Revisa la conexión y vuelve a intentarlo.",
+  "A download held files outside its own folder, so it was not unpacked.":
+    "Una descarga traía archivos fuera de su propia carpeta, así que no se descomprimió.",
+  "A file couldn’t be packed safely, so nothing was exported.":
+    "Un archivo no se pudo empaquetar de forma segura, así que no se exportó nada.",
+  "A file held a secret key, so nothing was exported.":
+    "Un archivo contenía una clave secreta, así que no se exportó nada.",
+  "A game": "Un juego",
+  "A game asked for a crate beyond Genex’s reviewed set. You decide. Genex reads the crate and checks it offline only after you approve: a known security advisory, a licence Genex doesn’t allow or a banned crate, in it or in a crate it brings in, stops it. Audits are shown for your information. Added crates are for that game only.":
+    "Un juego pidió un crate fuera del conjunto revisado de Genex. Tú decides. Genex lee el crate y lo revisa sin conexión solo cuando lo apruebas: lo detiene un aviso de seguridad conocido, una licencia que Genex no permite o un crate prohibido, en él o en un crate que trae consigo. Las auditorías se muestran a título informativo. Los crates añadidos son solo para ese juego.",
+  "A game keeps the stack it was made with. Add destinations it can already build for.":
+    "Un juego mantiene el stack con el que se creó. Añade destinos para los que ya pueda compilarse.",
+  "A known security advisory ({advisory}) affects it, so it wasn’t added even with your approval.":
+    "Un aviso de seguridad conocido ({advisory}) le afecta, así que no se añadió ni con tu aprobación.",
+  "A known security advisory affects it, or a crate it brings in, so it wasn’t added even with your approval.":
+    "Un aviso de seguridad conocido le afecta a él o a un crate que trae, así que no se añadió ni con tu aprobación.",
+  "A licence the export must include couldn’t be read, so nothing was exported.":
+    "No se pudo leer una licencia que la exportación debe incluir, así que no se exportó nada.",
+  "A newer version of Genex made this game, so this one opens it read-only.":
+    "Una versión más nueva de Genex creó este juego, así que esta lo abre en modo de solo lectura.",
+  "A tool was installed but did not run.": "Una herramienta se instaló, pero no se ejecutó.",
+  "ANGLE for Linux": "ANGLE para Linux",
+  "ANGLE for Mac": "ANGLE para Mac",
+  "ANGLE for Windows": "ANGLE para Windows",
+  "Accept the Android SDK License before installing Android’s tools.":
+    "Acepta la licencia del SDK de Android antes de instalar las herramientas de Android.",
+  "Accept the license": "Aceptar la licencia",
+  "Add it in a terminal instead": "Añadirlo desde una terminal",
+  "Added for this game": "Añadido para este juego",
+  Advisories: "Avisos",
+  "Advisory list": "Lista de avisos",
+  "Allow build scripts": "Permitir scripts de compilación",
+  "Allow proc macros": "Permitir macros procedurales",
+  "An earlier re-take of this part is still where this one would go.":
+    "Una recuperación anterior de esta parte sigue donde iría esta.",
+  "Android NDK": "NDK de Android",
+  "Android SDK License": "Licencia del SDK de Android",
+  "Android SDK platform": "Plataforma del SDK de Android",
+  "Android app": "App para Android",
+  "Android build tools": "Herramientas de compilación de Android",
+  "Android phone": "Teléfono Android",
+  "Android’s SDK, build tools and NDK are installed under Google’s Android Software Development Kit License Agreement. Read it, then accept it here. Genex never accepts it for you.":
+    "El SDK de Android, las herramientas de compilación y el NDK se instalan bajo el Acuerdo de Licencia del Android Software Development Kit de Google. Léelo y acéptalo aquí. Genex nunca lo acepta por ti.",
+  "Another version is installed. Builds need {version}; Android’s SDK manager installs it.":
+    "Hay otra versión instalada. Las builds necesitan {version}; la instala el gestor del SDK de Android.",
+  "App Store or ad hoc (.ipa)": "App Store o ad hoc (.ipa)",
+  "AppArmor can’t name the folder Genex is in. Move Genex to a folder whose path has none of {characters}, then open it again.":
+    "AppArmor no puede nombrar la carpeta donde está Genex. Mueve Genex a una carpeta cuya ruta no tenga ninguno de {characters} y vuelve a abrirlo.",
+  "Apple Command Line Tools": "Apple Command Line Tools",
+  "Apple’s Command Line Tools are needed first.": "Primero hacen falta las Command Line Tools de Apple.",
+  "Approved, checking…": "Aprobado, revisando…",
+  "Audited by {sources}": "Auditado por {sources}",
+  Audits: "Auditorías",
+  Banned: "Prohibido",
+  "Bring to front": "Traer al frente",
+  Browser: "Navegador",
+  "Browser (web folder)": "Navegador (carpeta web)",
+  "Build in Live": "Build en Live",
+  "Building for Mac": "Creando para Mac",
+  "Building for Mac needs Apple’s Command Line Tools.": "Crear para Mac necesita las Command Line Tools de Apple.",
+  Built: "Creado",
+  "Built here, but it can’t run on this computer": "Creado aquí, pero no puede ejecutarse en este equipo",
+  "Built on the starting point": "Creado sobre el punto de partida",
+  "Built, not run here": "Creado, no ejecutado aquí",
+  "Built, not run on this Mac": "Creado, no ejecutado en este Mac",
+  "C++ games can’t be built on this computer yet.": "Los juegos en C++ aún no se pueden crear en este equipo.",
+  "C++ games can’t load .{ext} files. Use PNG or JPEG pictures, OGG, WAV or MP3 sound, and glTF or OBJ models.":
+    "Los juegos en C++ no pueden cargar archivos .{ext}. Usa imágenes PNG o JPEG, sonido OGG, WAV o MP3 y modelos glTF u OBJ.",
+  "C++ games can’t load this format, so builds leave it out.":
+    "Los juegos en C++ no pueden cargar este formato, así que las builds lo dejan fuera.",
+  "CI smoke passed": "Prueba de CI superada",
+  "CPU {cpu} ms": "CPU {cpu} ms",
+  "CPU {cpu} ms · GPU {gpu} ms": "CPU {cpu} ms · GPU {gpu} ms",
+  Cancelled: "Cancelado",
+  "Checked by": "Revisado con",
+  "Checking disk space": "Comprobando el espacio en disco",
+  "Checking the build": "Revisando la build",
+  "Checking the downloads": "Revisando las descargas",
+  "Checking the tools run": "Comprobando que las herramientas funcionan",
+  "Checking what is installed…": "Comprobando qué está instalado…",
+  "Choose Native to build it and play it here.": "Elige Nativo para crearlo y jugarlo aquí.",
+  "Choose Native to play it here.": "Elige Nativo para jugarlo aquí.",
+  "Choose at least one place to play.": "Elige al menos un lugar donde jugar.",
+  "Choose what to make. Builds signed with your own identity or keystore are yours alone: the agent never makes them.":
+    "Elige qué crear. Las builds firmadas con tu propia identidad o almacén de claves son solo tuyas: el agente nunca las crea.",
+  "Choose…": "Elegir…",
+  "Click to play": "Haz clic para jugar",
+  Closed: "Cerrada",
+  "Copy the engine into this game’s engine folder? The game stops getting engine updates, and Live and export wait until each new build passes the conformance checks.":
+    "¿Copiar el motor a la carpeta de motor de este juego? El juego deja de recibir actualizaciones del motor, y Live y la exportación esperan a que cada build nueva pase las pruebas de conformidad.",
+  "Copy the removal command": "Copiar el comando para quitarlo",
+  "Copy the terminal command": "Copiar el comando de terminal",
+  "Couldn’t read the frame profile.": "No se pudo leer el perfil de fotogramas.",
+  "Crates games asked for": "Crates que pidieron los juegos",
+  "Creating…": "Creando…",
+  Decline: "Rechazar",
+  "Development APK": "APK de desarrollo",
+  Downloading: "Descargando",
+  "Downloading the game": "Descargando el juego",
+  "Drawing the first frame": "Dibujando el primer fotograma",
+  Eject: "Separar",
+  "Eject engine": "Separar el motor",
+  "Ejecting needs a Mac, with macOS among this game’s destinations: the conformance checks run on its Mac build. Nothing was copied.":
+    "Separar el motor necesita un Mac, con macOS entre los destinos de este juego: las pruebas de conformidad se ejecutan en su build para Mac. No se copió nada.",
+  Emulator: "Emulador",
+  "Engine settings": "Ajustes del motor",
+  "Environment variable": "Variable de entorno",
+  "Esc releases the keyboard": "Esc libera el teclado",
+  "Exited unexpectedly": "Se cerró inesperadamente",
+  Export: "Exportar",
+  "Export for": "Exportar para",
+  "Export for {phone}": "Exportar para {phone}",
+  "Export this destination first: there’s no packaged build to install yet.":
+    "Exporta primero este destino: aún no hay ninguna build empaquetada que instalar.",
+  "Exported {file}.": "Exportado {file}.",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Linux.":
+    "Exportado {file}. Genex lo creó en {machine}, pero no lo ha ejecutado en Linux.",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Windows.":
+    "Exportado {file}. Genex lo creó en {machine}, pero no lo ha ejecutado en Windows.",
+  "Exported {name}.app. It opens on this Mac. On another Mac, open it from System Settings > Privacy & Security.":
+    "Exportado {name}.app. Se abre en este Mac. En otro Mac, ábrelo desde Ajustes del Sistema > Privacidad y seguridad.",
+  "Finding a match…": "Buscando partida…",
+  "Finish the install in Apple’s window, then come back.": "Termina la instalación en la ventana de Apple y vuelve.",
+  "Fix the error, then try again.": "Corrige el error y vuelve a intentarlo.",
+  "Frame profile": "Perfil de fotogramas",
+  "Frame time over the last 30 seconds. The dashed line is a 60 fps frame; marks are hitches.":
+    "Tiempo de fotograma de los últimos 30 segundos. La línea discontinua es un fotograma a 60 fps; las marcas son tirones.",
+  "GPU device lost": "Dispositivo GPU perdido",
+  "GPU error": "Error de GPU",
+  "GPU passes": "Pasadas de GPU",
+  "Game engine": "Motor del juego",
+  "Game keyboard": "Teclado del juego",
+  "Genex built it and checked the program, but this computer can’t run it.":
+    "Genex lo creó y revisó el programa, pero este equipo no puede ejecutarlo.",
+  "Genex can’t convert this format yet, so builds leave it out.":
+    "Genex aún no puede convertir este formato, así que las builds lo dejan fuera.",
+  "Genex can’t run this build without a window on this computer yet, so the browser build is checked instead.":
+    "Genex aún no puede ejecutar esta build sin ventana en este equipo, así que se revisa la build del navegador.",
+  "Genex can’t write the export there, so nothing was exported.":
+    "Genex no puede escribir la exportación ahí, así que no se exportó nada.",
+  "Genex couldn’t install its crate checker, so nothing was checked or added. Connect to the internet and approve again.":
+    "Genex no pudo instalar su revisor de crates, así que no se revisó ni añadió nada. Conéctate a internet y vuelve a aprobar.",
+  "Genex couldn’t reach a Wayland session to open the game’s window.":
+    "Genex no pudo acceder a una sesión de Wayland para abrir la ventana del juego.",
+  "Genex didn’t start this build": "Genex no inició esta build",
+  "Genex doesn’t ship this part, so there is no copy to re-take.":
+    "Genex no incluye esta parte, así que no hay copia que recuperar.",
+  "Genex has no audit lists to compare against yet, so it was added on your approval alone.":
+    "Genex aún no tiene listas de auditoría con las que comparar, así que se añadió solo con tu aprobación.",
+  "Genex has no pinned version of this tool for this computer yet.":
+    "Genex aún no tiene una versión fijada de esta herramienta para este equipo.",
+  "Genex has no pinned version of this tool for this computer yet; Install leaves it out.":
+    "Genex aún no tiene una versión fijada de esta herramienta para este equipo; Instalar la deja fuera.",
+  "Genex has no pinned versions of these tools for this computer yet; Install leaves them out.":
+    "Genex aún no tiene versiones fijadas de estas herramientas para este equipo; Instalar las deja fuera.",
+  "Genex hasn’t published a download of a tool this needs yet.":
+    "Genex aún no ha publicado la descarga de una herramienta que esto necesita.",
+  "Genex hasn’t published these tools for this computer yet.":
+    "Genex aún no ha publicado estas herramientas para este equipo.",
+  "Genex hasn’t published this download yet": "Genex aún no ha publicado esta descarga",
+  "Genex is compiling the C++ code.": "Genex está compilando el código C++.",
+  "Genex is compiling the Rust code with Cargo.": "Genex está compilando el código Rust con Cargo.",
+  "Genex is in a folder other people on this computer can change, so a profile must not name it. Move Genex to a folder only you can write to, such as ~/Genex, then open it again.":
+    "Genex está en una carpeta que otras personas de este equipo pueden cambiar, así que un perfil no debe nombrarla. Mueve Genex a una carpeta en la que solo tú puedas escribir, como ~/Genex, y vuelve a abrirlo.",
+  "Genex needs bubblewrap 0.8 or newer to run games here. Install it, then try again.":
+    "Genex necesita bubblewrap 0.8 o posterior para ejecutar juegos aquí. Instálalo y vuelve a intentarlo.",
+  "Genex never asks for the password itself: the signer reads it from the variable or the file when it signs.":
+    "Genex nunca pide la contraseña: el firmante la lee de la variable o del archivo al firmar.",
+  "Genex opens game windows on Wayland only, and this session is X11.":
+    "Genex abre ventanas de juego solo en Wayland, y esta sesión es X11.",
+  "Genex stopped it after it didn’t quit when asked.": "Genex lo detuvo porque no se cerró cuando se le pidió.",
+  "Genex’s AppArmor profile is installed, but this window started without it. Quit and reopen Genex. If this screen comes back, AppArmor isn’t applying the profile to this copy; Details say which path it names.":
+    "El perfil de AppArmor de Genex está instalado, pero esta ventana se abrió sin él. Cierra y vuelve a abrir Genex. Si vuelve esta pantalla, AppArmor no está aplicando el perfil a esta copia; Detalles indica qué ruta nombra.",
+  "Genex’s built-in rules (test data)": "Reglas integradas de Genex (datos de prueba)",
+  "Genex’s copy of the engine doesn’t match its checksums, so nothing was copied. Reinstall the Rust setup and try again.":
+    "La copia del motor de Genex no coincide con sus sumas de verificación, así que no se copió nada. Reinstala la configuración de Rust y vuelve a intentarlo.",
+  "Genex’s crate check didn’t finish, so nothing was added. Approve again to retry; if it keeps failing, reinstall the Rust toolchain in Settings › Toolchains or report the problem.":
+    "La revisión de crates de Genex no terminó, así que no se añadió nada. Vuelve a aprobar para reintentarlo; si sigue fallando, reinstala la toolchain de Rust en Ajustes › Toolchains o informa del problema.",
+  "Genex’s crate policy doesn’t match the one it shipped with, so nothing was checked or added. Reinstall Genex.":
+    "La política de crates de Genex no coincide con la que traía, así que no se revisó ni añadió nada. Reinstala Genex.",
+  "Genex’s engine already uses it; games reach it through Genex, not directly.":
+    "El motor de Genex ya lo usa; los juegos llegan a él a través de Genex, no directamente.",
+  "Genex’s engine: it updates with Genex.": "El motor de Genex: se actualiza con Genex.",
+  "Genex’s graphics library didn’t match its checksum, so the game wasn’t started.":
+    "La biblioteca gráfica de Genex no coincidió con su suma de verificación, así que el juego no se inició.",
+  "Getting this ready for your game’s builds…": "Preparando esto para las builds de tu juego…",
+  "Go back to Genex’s engine? Genex saves a snapshot of the game first, then removes its engine folder and every change in it.":
+    "¿Volver al motor de Genex? Genex guarda primero una instantánea del juego y luego elimina su carpeta de motor y todos sus cambios.",
+  "Google Play bundle (.aab)": "Paquete de Google Play (.aab)",
+  "Harness changed these parts before it knew Rust games, so a Rust build won’t run on them. Re-take the shipped copy of each; Harness’s change is kept beside it.":
+    "Harness cambió estas partes antes de conocer los juegos en Rust, así que una build de Rust no funcionará con ellas. Recupera la copia original de cada una; el cambio de Harness se guarda al lado.",
+  "Harness parts from before Rust games": "Partes de Harness anteriores a los juegos en Rust",
+  "Hide engine settings": "Ocultar ajustes del motor",
+  "How it was checked": "Cómo se revisó",
+  "Importing this file failed, so builds leave it out. Deliver it again to retry.":
+    "La importación de este archivo falló, así que las builds lo dejan fuera. Entrégalo de nuevo para reintentarlo.",
+  "In Live": "En Live",
+  "In Live · Native": "En Live · Nativo",
+  "Included with Genex": "Incluido con Genex",
+  "Included with Xcode": "Incluido con Xcode",
+  "Install Command Line Tools": "Instalar Command Line Tools",
+  "Install progress": "Progreso de la instalación",
+  "Install tools": "Instalar herramientas",
+  "Install {phone} tools": "Instalar herramientas de {phone}",
+  "Installed ({version})": "Instalado ({version})",
+  "Installed for an older version of Genex: set it up again before the next build.":
+    "Instalado para una versión anterior de Genex: configúralo de nuevo antes de la próxima build.",
+  "Installed versions": "Versiones instaladas",
+  "Installed, but the first build isn’t prepared yet: set it up to finish.":
+    "Instalado, pero la primera build aún no está preparada: configúralo para terminar.",
+  "Installing and starting": "Instalando e iniciando",
+  "Installs the latest packaged build and starts it.": "Instala la última build empaquetada y la inicia.",
+  "It brings in {crate}, a graphics backend Genex doesn’t allow in games.":
+    "Trae {crate}, un backend gráfico que Genex no permite en los juegos.",
+  "It brings in {crate}, under {licence}, a licence Genex doesn’t allow in games.":
+    "Trae {crate}, con licencia {licence}, una licencia que Genex no permite en los juegos.",
+  "It brings in {crate}, which a known security advisory ({advisory}) affects, so it wasn’t added even with your approval.":
+    "Trae {crate}, al que afecta un aviso de seguridad conocido ({advisory}), así que no se añadió ni con tu aprobación.",
+  "It ended on {signal}.": "Terminó con {signal}.",
+  "It ended with code {code}.": "Terminó con el código {code}.",
+  "It has no browser build. Choose Native to play it here.":
+    "No tiene build para navegador. Elige Nativo para jugarlo aquí.",
+  "It includes a proc macro, which you didn’t allow.": "Incluye una macro procedural, que no permitiste.",
+  "It needs a second version of a crate Genex already ships.":
+    "Necesita una segunda versión de un crate que Genex ya incluye.",
+  "It runs a build script, which you didn’t allow.": "Ejecuta un script de compilación, que no permitiste.",
+  "It, or a crate it brings in, is a graphics backend Genex doesn’t allow in games.":
+    "Él, o un crate que trae, es un backend gráfico que Genex no permite en los juegos.",
+  "It, or a crate it brings in, uses a licence Genex doesn’t allow in games.":
+    "Él, o un crate que trae, usa una licencia que Genex no permite en los juegos.",
+  "Its assets are {size} MB, over the game’s {budget} MB budget for this destination, so it takes longer to download. Raise budget_mb under [assets] in genex.toml if that’s fine.":
+    "Sus recursos ocupan {size} MB, más que el presupuesto de {budget} MB del juego para este destino, así que tarda más en descargarse. Sube budget_mb en [assets] de genex.toml si te parece bien.",
+  "Its authors withdrew this version.": "Sus autores retiraron esta versión.",
+  "Its code is {size} MB compressed, over the game’s {budget} MB budget, so it loads slower on phones and weak devices. Raise wasm_budget_mb in genex.toml if that’s fine.":
+    "Su código ocupa {size} MB comprimido, más que el presupuesto de {budget} MB del juego, así que carga más lento en teléfonos y equipos modestos. Sube wasm_budget_mb en genex.toml si te parece bien.",
+  "Its destinations can’t run on this computer.": "Sus destinos no pueden ejecutarse en este equipo.",
+  "Its files changed after they were checked, so Genex won’t use them.":
+    "Sus archivos cambiaron después de revisarse, así que Genex no los usará.",
+  "Its licence ({licence}) isn’t one Genex allows in games.":
+    "Su licencia ({licence}) no es una que Genex permita en los juegos.",
+  "Its licence, advisories and audits are checked after you approve; nothing is added if a check stops it.":
+    "Su licencia, avisos y auditorías se revisan cuando lo apruebas; no se añade nada si una revisión lo detiene.",
+  "It’s a graphics backend Genex doesn’t allow in games.": "Es un backend gráfico que Genex no permite en los juegos.",
+  "It’s untested on real GPUs: only a software renderer has drawn it so far.":
+    "No se ha probado en GPU reales: hasta ahora solo lo ha dibujado un renderizador por software.",
+  "It’s untested on real devices: Genex built it but hasn’t run it on a phone.":
+    "No se ha probado en dispositivos reales: Genex lo creó, pero no lo ha ejecutado en un teléfono.",
+  "Java runtime": "Entorno de ejecución de Java",
+  Joined: "Conectado",
+  "Key alias": "Alias de la clave",
+  "Keystore password": "Contraseña del almacén de claves",
+  Licence: "Licencia",
+  "Linux (.tar.gz)": "Linux (.tar.gz)",
+  "Linux headers": "Cabeceras de Linux",
+  "Linux window": "Ventana de Linux",
+  "Live can’t draw the game on this Mac. Use Pop out.": "Live no puede dibujar el juego en este Mac. Usa Abrir aparte.",
+  "Live couldn’t start the game. Try again or use Pop out.":
+    "Live no pudo iniciar el juego. Vuelve a intentarlo o usa Abrir aparte.",
+  "Live shows browser builds, and this game has none. Play it in its own window instead.":
+    "Live muestra builds para navegador, y este juego no tiene ninguna. Juégalo en su propia ventana.",
+  "Live stopped showing the game, so it was stopped.": "Live dejó de mostrar el juego, así que se detuvo.",
+  "Live stopped showing the game. Try again or use Pop out.":
+    "Live dejó de mostrar el juego. Vuelve a intentarlo o usa Abrir aparte.",
+  "Loading assets": "Cargando recursos",
+  "Local test room": "Sala de prueba local",
+  "Mac games are built on a Mac": "Los juegos para Mac se crean en un Mac",
+  "Mac window": "Ventana de Mac",
+  "Made in": "Hecho en",
+  "Made in {stack} for the browser.": "Hecho en {stack} para el navegador.",
+  "Made in {stack}: one game, built for every place you pick.":
+    "Hecho en {stack}: un juego, creado para cada lugar que elijas.",
+  Memory: "Memoria",
+  "Memory fault": "Fallo de memoria",
+  "Multiplayer bridge for the browser": "Puente multijugador para el navegador",
+  "Multiplayer relay library": "Biblioteca de relé multijugador",
+  "Multiplayer relay library source": "Código fuente de la biblioteca de relé multijugador",
+  Native: "Nativo",
+  "Needed later to build for iPhone and iPad. Install it from the App Store.":
+    "Hará falta más adelante para crear para iPhone y iPad. Instálalo desde la App Store.",
+  "Needed to build for Mac, unless Xcode is installed. macOS installs them in its own window.":
+    "Necesarias para crear para Mac, salvo que tengas Xcode instalado. macOS las instala en su propia ventana.",
+  "Needed to build for Mac. macOS installs them in its own window.":
+    "Necesarias para crear para Mac. macOS las instala en su propia ventana.",
+  "Needs set-up": "Necesita configuración",
+  "Needs tools": "Necesita herramientas",
+  "New Rust game": "Nuevo juego en Rust",
+  "No Android SDK was found. Install Android Studio or its command-line tools, then open this again.":
+    "No se encontró ningún SDK de Android. Instala Android Studio o sus herramientas de línea de comandos y vuelve a abrir esto.",
+  "No audit Genex trusts covers it yet.": "Aún no lo cubre ninguna auditoría en la que Genex confíe.",
+  "No audit list yet from {sources}": "Aún sin lista de auditoría de {sources}",
+  "No device is ready: start one (or connect your phone) and try again.":
+    "No hay ningún dispositivo listo: inicia uno (o conecta tu teléfono) y vuelve a intentarlo.",
+  "No file chosen": "Ningún archivo elegido",
+  "No licence named": "Sin licencia indicada",
+  "No old versions to remove": "No hay versiones antiguas que quitar",
+  "No trusted audit lists installed yet": "Aún no hay listas de auditoría de confianza instaladas",
+  "No trusted source has audited it yet. It was added on your approval.":
+    "Ninguna fuente de confianza lo ha auditado aún. Se añadió con tu aprobación.",
+  "None known": "Ninguno conocido",
+  "None known as of {day}": "Ninguno conocido a {day}",
+  "Not allowed": "No permitida",
+  "Not allowed: {crates}": "No permitida: {crates}",
+  "Not audited by {sources}": "No auditado por {sources}",
+  "Not available yet": "Aún no disponible",
+  "Not built yet": "Aún no creado",
+  "Not installed. Builds need {version}; Android’s SDK manager installs it.":
+    "No instalado. Las builds necesitan {version}; la instala el gestor del SDK de Android.",
+  "Not one of this game’s destinations": "No es uno de los destinos de este juego",
+  "Nothing installed yet. Make a C++ game to set up its tools.":
+    "Aún no hay nada instalado. Crea un juego en C++ para configurar sus herramientas.",
+  "Nothing removed: a game may still need these versions.":
+    "No se quitó nada: puede que un juego aún necesite estas versiones.",
+  "Nothing removed: an install is running. Try again when it ends.":
+    "No se quitó nada: hay una instalación en curso. Vuelve a intentarlo cuando termine.",
+  "Nothing removed: no install has finished yet.": "No se quitó nada: aún no ha terminado ninguna instalación.",
+  "Nothing removed: this toolchain folder is shared with another Genex.":
+    "No se quitó nada: esta carpeta de toolchains se comparte con otro Genex.",
+  "Off: unsafe code and build scripts in this game don’t build.":
+    "Desactivado: el código no seguro y los scripts de compilación de este juego no se compilan.",
+  "On a device": "En un dispositivo",
+  "On: this game’s unsafe code and its own build script build. The sandbox is unchanged.":
+    "Activado: el código no seguro de este juego y su propio script de compilación se compilan. El sandbox no cambia.",
+  "One of the game’s own graphics passes didn’t pass Genex’s checks, so it wasn’t run.":
+    "Una de las pasadas gráficas propias del juego no superó las comprobaciones de Genex, así que no se ejecutó.",
+  Online: "En línea",
+  "Only trust code you’ve read. Unsafe code can crash the game or corrupt its memory, and a build script runs on this Mac at every build. Both stay inside the sandbox: no network, and writes only to the build folder.":
+    "Confía solo en código que hayas leído. El código no seguro puede bloquear el juego o corromper su memoria, y un script de compilación se ejecuta en este Mac en cada build. Ambos se quedan dentro del sandbox: sin red y escribiendo solo en la carpeta de la build.",
+  "Only you": "Solo tú",
+  "Only you can sign an export with your own identity.":
+    "Solo tú puedes firmar una exportación con tu propia identidad.",
+  "Only you can trust a game, here in Genex.": "Solo tú puedes confiar en un juego, aquí en Genex.",
+  "Out of memory": "Sin memoria",
+  Panic: "Pánico",
+  "Play in its own window": "Jugar en su propia ventana",
+  "Play on Mac": "Jugar en Mac",
+  "Play on Mac opens games made for Mac.": "Jugar en Mac abre juegos hechos para Mac.",
+  "Playing on Mac": "Jugando en Mac",
+  "Plays in its own window": "Se juega en su propia ventana",
+  "Pop out": "Abrir aparte",
+  "Preparing shaders": "Preparando los shaders",
+  "Preparing the first build": "Preparando la primera build",
+  "Provisioning profile": "Perfil de aprovisionamiento",
+  "Re-take shipped copy": "Recuperar la copia original",
+  "Re-taking…": "Recuperando…",
+  "Read the license": "Leer la licencia",
+  "Reading…": "Leyendo…",
+  "Ready for builds. The model check noted {count, plural, one {# thing} other {# things}} worth a look.":
+    "Listo para las builds. La revisión del modelo encontró {count, plural, one {# cosa} other {# cosas}} que conviene mirar.",
+  "Reconnecting…": "Reconectando…",
+  "Release keystore": "Almacén de claves de lanzamiento",
+  "Remove old versions": "Quitar versiones antiguas",
+  "Remove the engine folder": "Eliminar la carpeta del motor",
+  "Removed {count, plural, one {# old version} other {# old versions}}, {size}":
+    "Se {count, plural, one {quitó # versión antigua} other {quitaron # versiones antiguas}}, {size}",
+  Replay: "Repetición",
+  Restart: "Reiniciar",
+  "Restarting…": "Reiniciando…",
+  "Run this, then quit and reopen Genex:": "Ejecuta esto y luego cierra y vuelve a abrir Genex:",
+  "Running in its own window": "Ejecutándose en su propia ventana",
+  "Runs in the iOS Simulator on this Mac. Signed for this Mac only.":
+    "Se ejecuta en el iOS Simulator de este Mac. Firmado solo para este Mac.",
+  "Rust for Android": "Rust para Android",
+  "Rust for Linux": "Rust para Linux",
+  "Rust for Windows": "Rust para Windows",
+  "Rust for iPhone": "Rust para iPhone",
+  "Rust for the browser": "Rust para el navegador",
+  "Rust for the iOS Simulator": "Rust para el iOS Simulator",
+  "Rust games": "Juegos en Rust",
+  "Rust games are a developer preview: this version of Genex doesn’t download their tools yet.":
+    "Los juegos en Rust son una vista previa para desarrolladores: esta versión de Genex aún no descarga sus herramientas.",
+  "Rust games aren’t available in this version of Genex yet.":
+    "Los juegos en Rust aún no están disponibles en esta versión de Genex.",
+  "Rust games can’t be built on this computer yet.": "Los juegos en Rust aún no se pueden crear en este equipo.",
+  "Rust games can’t load .{ext} files. Use PNG, JPEG, WebP or KTX2 pictures, OGG, WAV, MP3 or FLAC sound, and glTF or OBJ models.":
+    "Los juegos en Rust no pueden cargar archivos .{ext}. Usa imágenes PNG, JPEG, WebP o KTX2, sonido OGG, WAV, MP3 o FLAC y modelos glTF u OBJ.",
+  "Rust games can’t load this format, so builds leave it out.":
+    "Los juegos en Rust no pueden cargar este formato, así que las builds lo dejan fuera.",
+  "Rust game…": "Juego en Rust…",
+  "Rust libraries": "Bibliotecas de Rust",
+  "RustSec advisories": "Avisos de RustSec",
+  "Safety check: {file} ({refusal})": "Comprobación de seguridad: {file} ({refusal})",
+  "Saved to": "Guardado en",
+  "Set up C++ games": "Configurar juegos en C++",
+  "Set up Rust games": "Configurar juegos en Rust",
+  "Set up again": "Configurar de nuevo",
+  "Set up once for every C++ destination this computer can build. These tools are shared by all your C++ games.":
+    "Configura una vez cada destino C++ que este equipo pueda crear. Estas herramientas se comparten entre todos tus juegos en C++.",
+  "Set up once for every Rust destination this computer can build. These tools are shared by all your Rust games.":
+    "Configura una vez cada destino Rust que este equipo pueda crear. Estas herramientas se comparten entre todos tus juegos en Rust.",
+  "Set up the C++ tools this game builds with": "Configurar las herramientas de C++ con las que se crea este juego",
+  "Setup finished": "Configuración terminada",
+  "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.":
+    "Se canceló la configuración, así que no cambió nada. Elige Configurar de nuevo cuando quieras aprobarla.",
+  "Shipped copy back. Harness’s change is kept in {file}":
+    "Copia original recuperada. El cambio de Harness se guarda en {file}",
+  "Signed with this profile’s own Genex debug key. Installs on a test phone.":
+    "Firmado con la clave de depuración propia de Genex de este perfil. Se instala en un teléfono de prueba.",
+  "Signed with your Apple Development identity and a provisioning profile that lists your device.":
+    "Firmado con tu identidad Apple Development y un perfil de aprovisionamiento que incluye tu dispositivo.",
+  "Signed with your Apple Distribution identity and its provisioning profile.":
+    "Firmado con tu identidad Apple Distribution y su perfil de aprovisionamiento.",
+  "Signed with your own release keystore.": "Firmado con tu propio almacén de claves de lanzamiento.",
+  "Signing didn’t finish, so nothing was exported.": "La firma no terminó, así que no se exportó nada.",
+  "Signing identity": "Identidad de firma",
+  "Simulator app": "App para el simulador",
+  "Slowest scopes": "Ámbitos más lentos",
+  "Start the game to see its frame profile.": "Inicia el juego para ver su perfil de fotogramas.",
+  "Started on the device.": "Iniciado en el dispositivo.",
+  "Starting the graphics": "Iniciando los gráficos",
+  "Stop timing passes": "Dejar de medir pasadas",
+  "Stop trusting": "Dejar de confiar",
+  "Stopped responding": "Dejó de responder",
+  "Studio plays a local test room; publish a draft to play online.":
+    "Studio usa una sala de prueba local; publica un borrador para jugar en línea.",
+  "SwiftShader for Linux": "SwiftShader para Linux",
+  "That isn’t a harness part’s path, so nothing was changed.":
+    "Esa no es la ruta de una parte de Harness, así que no cambió nada.",
+  "That isn’t one of this game’s destinations.": "Ese no es uno de los destinos de este juego.",
+  "That isn’t something a C++ game can do here.": "Un juego en C++ no puede hacer eso aquí.",
+  "The C++ tools are installed but not set up yet. Set them up to finish.":
+    "Las herramientas de C++ están instaladas, pero aún no configuradas. Configúralas para terminar.",
+  "The C++ tools this export needs are missing or damaged. Set them up again, then try again.":
+    "Faltan o están dañadas las herramientas de C++ que necesita esta exportación. Configúralas de nuevo y vuelve a intentarlo.",
+  "The C++ tools this game builds with aren’t installed. Install them, then try again.":
+    "Las herramientas de C++ con las que se crea este juego no están instaladas. Instálalas y vuelve a intentarlo.",
+  "The C++ tools were set up for an older version of Genex. Set them up again, then try again.":
+    "Las herramientas de C++ se configuraron para una versión anterior de Genex. Configúralas de nuevo y vuelve a intentarlo.",
+  "The Mac build didn’t pass Genex’s checks, so no app was made.":
+    "La build para Mac no superó las comprobaciones de Genex, así que no se creó ninguna app.",
+  "The Mac build failed.": "Falló la build para Mac.",
+  "The build changed while it was being exported. Try again.":
+    "La build cambió mientras se exportaba. Vuelve a intentarlo.",
+  "The build didn’t pass Genex’s safety check, so it isn’t used.":
+    "La build no superó la comprobación de seguridad de Genex, así que no se usa.",
+  "The build doesn’t draw through Genex’s graphics library, so it wasn’t started.":
+    "La build no dibuja a través de la biblioteca gráfica de Genex, así que no se inició.",
+  "The build failed.": "Falló la build.",
+  "The build holds a file linked from somewhere else, so it wasn’t started.":
+    "La build contiene un archivo enlazado desde otro sitio, así que no se inició.",
+  "The build holds a library Genex didn’t expect, so it wasn’t started.":
+    "La build contiene una biblioteca que Genex no esperaba, así que no se inició.",
+  "The build holds a link, so it wasn’t started.": "La build contiene un enlace, así que no se inició.",
+  "The build holds a program Genex didn’t expect, so it wasn’t started.":
+    "La build contiene un programa que Genex no esperaba, así que no se inició.",
+  "The build is for a different kind of computer, so it wasn’t started.":
+    "La build es para otro tipo de equipo, así que no se inició.",
+  "The build isn’t a Mac program this computer can run.":
+    "La build no es un programa de Mac que este equipo pueda ejecutar.",
+  "The build loads libraries from outside the game, so it wasn’t started.":
+    "La build carga bibliotecas de fuera del juego, así que no se inició.",
+  "The build needs a newer Linux than Genex supports.": "La build necesita un Linux más nuevo del que Genex admite.",
+  "The build needs a system library Genex doesn’t allow, so it wasn’t started.":
+    "La build necesita una biblioteca del sistema que Genex no permite, así que no se inició.",
+  "The build took too long and was stopped.": "La build tardó demasiado y se detuvo.",
+  "The build uses OpenGL directly, which Genex doesn’t run on Linux.":
+    "La build usa OpenGL directamente, que Genex no ejecuta en Linux.",
+  "The build uses OpenGL, which Genex doesn’t run on Windows.": "La build usa OpenGL, que Genex no ejecuta en Windows.",
+  "The build uses OpenGL, which Genex doesn’t run. Games draw through Metal.":
+    "La build usa OpenGL, que Genex no ejecuta. Los juegos dibujan con Metal.",
+  "The build was stopped.": "Se detuvo la build.",
+  "The device didn’t install or start the game.": "El dispositivo no instaló ni inició el juego.",
+  "The engine didn’t change.": "El motor no cambió.",
+  "The engine this game was built with is no longer installed, so nothing was copied. Build the game once, then try again.":
+    "El motor con el que se creó este juego ya no está instalado, así que no se copió nada. Crea el juego una vez y vuelve a intentarlo.",
+  "The export folder holds files Genex didn’t put there, so nothing was exported.":
+    "La carpeta de exportación contiene archivos que Genex no puso ahí, así que no se exportó nada.",
+  "The game answered Genex with something it couldn’t read, so it was stopped.":
+    "El juego respondió a Genex con algo que no pudo leer, así que se detuvo.",
+  "The game asked for more pictures than Genex shares, so it was stopped.":
+    "El juego pidió más imágenes de las que Genex comparte, así que se detuvo.",
+  "The game crashed": "El juego se bloqueó",
+  "The game didn’t answer Genex the way a Genex game does, so it was stopped.":
+    "El juego no respondió a Genex como lo hace un juego de Genex, así que se detuvo.",
+  "The game lost its graphics device. It’s getting it back; try again in a moment.":
+    "El juego perdió su dispositivo gráfico. Lo está recuperando; vuelve a intentarlo en un momento.",
+  "The game needs a graphics feature this computer doesn’t have.":
+    "El juego necesita una función gráfica que este equipo no tiene.",
+  "The game needs graphics features browsers don’t offer, so it has no web build.":
+    "El juego necesita funciones gráficas que los navegadores no ofrecen, así que no tiene build web.",
+  "The game sent Genex more than it accepts at once, so it was stopped.":
+    "El juego envió a Genex más de lo que acepta de una vez, así que se detuvo.",
+  "The game sent Live a picture Genex couldn’t use, so it was stopped.":
+    "El juego envió a Live una imagen que Genex no pudo usar, así que se detuvo.",
+  "The game sent a picture Genex didn’t ask for, so it was stopped.":
+    "El juego envió una imagen que Genex no pidió, así que se detuvo.",
+  "The game sent pictures faster than Genex shows them, so it was stopped.":
+    "El juego envió imágenes más rápido de lo que Genex las muestra, así que se detuvo.",
+  "The game stopped responding and was stopped.": "El juego dejó de responder y se detuvo.",
+  "The game took too long to start and was stopped.": "El juego tardó demasiado en iniciarse y se detuvo.",
+  "The game used too much memory and was stopped.": "El juego usó demasiada memoria y se detuvo.",
+  "The game was stopped by force": "El juego se detuvo a la fuerza",
+  "The game’s current build failed, so nothing was exported.":
+    "La build actual del juego falló, así que no se exportó nada.",
+  "The game’s graphics stopped responding, so it was stopped.":
+    "Los gráficos del juego dejaron de responder, así que se detuvo.",
+  "The game’s picture didn’t match what it said it drew.":
+    "La imagen del juego no coincidió con lo que dijo haber dibujado.",
+  "The game’s picture was larger than Genex accepts.": "La imagen del juego era más grande de lo que Genex acepta.",
+  "The install stopped": "La instalación se detuvo",
+  "The model check found errors in this file, so builds leave it out.":
+    "La revisión del modelo encontró errores en este archivo, así que las builds lo dejan fuera.",
+  "The packaged build holds a link, so it wasn’t installed.":
+    "La build empaquetada contiene un enlace, así que no se instaló.",
+  "The packaged build is linked from somewhere else, so it wasn’t installed.":
+    "La build empaquetada está enlazada desde otro sitio, así que no se instaló.",
+  "The registry has no such crate or version.": "El registro no tiene ese crate ni esa versión.",
+  "The sandbox Genex runs games in refused to start this one.":
+    "El sandbox en el que Genex ejecuta los juegos se negó a iniciar este.",
+  "The signing details aren’t valid, so nothing was exported.":
+    "Los datos de firma no son válidos, así que no se exportó nada.",
+  "The tools installed, but preparing the first build failed.":
+    "Las herramientas se instalaron, pero falló la preparación de la primera build.",
+  "The trust setting didn’t change.": "El ajuste de confianza no cambió.",
+  "The {destination} build failed.": "Falló la build para {destination}.",
+  "There is no build the judges can play: the browser build made for them failed.":
+    "No hay ninguna build que los jueces puedan jugar: falló la build para navegador creada para ellos.",
+  "There isn’t enough free disk space.": "No hay suficiente espacio libre en disco.",
+  "This Mac can’t show the game inside Live. Play on Mac opens it in its own window.":
+    "Este Mac no puede mostrar el juego dentro de Live. Jugar en Mac lo abre en su propia ventana.",
+  "This Xcode is too old for iPhone and iPad builds: they need Xcode 26 or later.":
+    "Este Xcode es demasiado antiguo para crear para iPhone y iPad: hace falta Xcode 26 o posterior.",
+  "This build doesn’t report a frame profile yet.": "Esta build aún no informa de un perfil de fotogramas.",
+  "This build has no game id to find its room with.":
+    "Esta build no tiene un id de juego con el que encontrar su sala.",
+  "This build has no multiplayer: add [net] to genex.toml.":
+    "Esta build no tiene multijugador: añade [net] a genex.toml.",
+  "This computer can’t show the game inside Live yet.": "Este equipo aún no puede mostrar el juego dentro de Live.",
+  "This computer’s graphics can’t run the game: it needs WebGPU-class graphics.":
+    "Los gráficos de este equipo no pueden ejecutar el juego: necesita gráficos de nivel WebGPU.",
+  "This copy of Genex is missing a bundled C++ component. Reinstall Genex, or rebuild it with the bundled tools.":
+    "A esta copia de Genex le falta un componente C++ incluido. Reinstala Genex o vuelve a compilarlo con las herramientas incluidas.",
+  "This desktop can’t give a game its own restricted Wayland connection, so Genex won’t open its window.":
+    "Este escritorio no puede dar a un juego su propia conexión restringida de Wayland, así que Genex no abrirá su ventana.",
+  "This destination can’t reach the network.": "Este destino no puede acceder a la red.",
+  "This file is damaged or isn’t the format its name says, so builds leave it out.":
+    "Este archivo está dañado o no tiene el formato que dice su nombre, así que las builds lo dejan fuera.",
+  "This file is gone, so builds leave it out.": "Este archivo ya no está, así que las builds lo dejan fuera.",
+  "This file is too large to import, so builds leave it out.":
+    "Este archivo es demasiado grande para importarlo, así que las builds lo dejan fuera.",
+  "This file points outside the game folder, so builds leave it out.":
+    "Este archivo apunta fuera de la carpeta del juego, así que las builds lo dejan fuera.",
+  "This file’s name can’t be used in a game, so builds leave it out.":
+    "El nombre de este archivo no se puede usar en un juego, así que las builds lo dejan fuera.",
+  "This game already has an engine folder, so nothing was copied. Remove it or use Genex’s engine first.":
+    "Este juego ya tiene una carpeta de motor, así que no se copió nada. Elimínala o usa primero el motor de Genex.",
+  "This game has no browser build": "Este juego no tiene build para navegador",
+  "This game plays its Mac build in Live": "Este juego muestra su build para Mac en Live",
+  "This game runs in its own window": "Este juego se ejecuta en su propia ventana",
+  "This game runs its own engine, and its current build hasn’t passed the conformance checks, so nothing was exported.":
+    "Este juego usa su propio motor, y su build actual no ha superado las pruebas de conformidad, así que no se exportó nada.",
+  "This game runs its own engine, and this build hasn’t passed the conformance checks yet, so it wasn’t started.":
+    "Este juego usa su propio motor, y esta build aún no ha superado las pruebas de conformidad, así que no se inició.",
+  "This game was made before Live could show Mac builds.":
+    "Este juego se creó antes de que Live pudiera mostrar builds para Mac.",
+  "This game was made before Live could show Mac builds. Use Pop out.":
+    "Este juego se creó antes de que Live pudiera mostrar builds para Mac. Usa Abrir aparte.",
+  "This game’s folder has a CMakeCache.txt. Genex builds outside the game folder: delete that file, then try again.":
+    "La carpeta de este juego tiene un CMakeCache.txt. Genex compila fuera de la carpeta del juego: borra ese archivo y vuelve a intentarlo.",
+  "This game’s own copy of engine {version}, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "La copia propia de este juego del motor {version}, en su carpeta de motor. Ya no se actualiza; Live y la exportación necesitan que cada build pase las pruebas de conformidad.",
+  "This game’s own copy, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "La copia propia de este juego, en su carpeta de motor. Ya no se actualiza; Live y la exportación necesitan que cada build pase las pruebas de conformidad.",
+  "This game’s tools aren’t installed, and Genex can’t download them while offline.":
+    "Las herramientas de este juego no están instaladas, y Genex no puede descargarlas sin conexión.",
+  "This isn’t a regular file, so builds leave it out.":
+    "Este no es un archivo normal, así que las builds lo dejan fuera.",
+  "This model needs a glTF extension Genex games can’t read, so builds leave it out.":
+    "Este modelo necesita una extensión de glTF que los juegos de Genex no pueden leer, así que las builds lo dejan fuera.",
+  "This page has no player identity to join with.": "Esta página no tiene una identidad de jugador con la que unirse.",
+  "This part is already the shipped copy.": "Esta parte ya es la copia original.",
+  "This part isn’t a plain file in the harness, so nothing was changed.":
+    "Esta parte no es un archivo normal de Harness, así que no cambió nada.",
+  "This preview can’t take touches, so the game’s touch controls weren’t played.":
+    "Esta vista previa no admite toques, así que no se probaron los controles táctiles del juego.",
+  "This version of Genex can’t build this kind of game yet, so nothing was exported.":
+    "Esta versión de Genex aún no puede crear este tipo de juego, así que no se exportó nada.",
+  "This version of Genex can’t build this kind of game yet.":
+    "Esta versión de Genex aún no puede crear este tipo de juego.",
+  "This version of Genex can’t eject an engine.": "Esta versión de Genex no puede separar un motor.",
+  "This version of Genex can’t open game windows on Linux yet.":
+    "Esta versión de Genex aún no puede abrir ventanas de juego en Linux.",
+  "This version of Genex can’t run it on this computer yet":
+    "Esta versión de Genex aún no puede ejecutarlo en este equipo",
+  "This version of Genex can’t show Mac builds inside Live yet. Play on Mac opens it in its own window.":
+    "Esta versión de Genex aún no puede mostrar builds para Mac dentro de Live. Jugar en Mac lo abre en su propia ventana.",
+  "This version of Genex can’t show the game inside Live yet.":
+    "Esta versión de Genex aún no puede mostrar el juego dentro de Live.",
+  "This version of Genex can’t trust a game’s code.":
+    "Esta versión de Genex no puede confiar en el código de un juego.",
+  "This version of Genex doesn’t build it from here yet.": "Esta versión de Genex aún no lo crea desde aquí.",
+  "This version of Genex exports Mac apps signed for this Mac only.":
+    "Esta versión de Genex exporta apps para Mac firmadas solo para este Mac.",
+  "This version of Genex has no game launcher for Windows yet.":
+    "Esta versión de Genex aún no tiene un lanzador de juegos para Windows.",
+  "This version of the studio’s harness can’t judge C++ games. Update it, then try again.":
+    "Esta versión del Harness del estudio no puede evaluar juegos en C++. Actualízalo y vuelve a intentarlo.",
+  "Three.js games play in the browser. Choose Rust · wgpu to build for it.":
+    "Los juegos en Three.js se juegan en el navegador. Elige Rust · wgpu para crear para este destino.",
+  "Time GPU passes": "Medir pasadas de GPU",
+  "Timing the next frames…": "Midiendo los próximos fotogramas…",
+  "To remove it later:": "Para quitarlo más adelante:",
+  Toolchains: "Toolchains",
+  "Trust this game": "Confiar en este juego",
+  "Trust this game’s code": "Confiar en el código de este juego",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces agents run in. Genex needs its profile added once.":
+    "Ubuntu solo deja que las apps con un perfil de AppArmor creen los espacios aislados donde trabajan los agentes. Hay que añadir el perfil de Genex una vez.",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces games run in, so this game wasn’t started.":
+    "Ubuntu solo deja que las apps con un perfil de AppArmor creen los espacios aislados donde se ejecutan los juegos, así que este juego no se inició.",
+  "Ubuntu will ask for your password once to add {file}. It lets this copy of Genex, and the programs it starts, create user namespaces despite Ubuntu’s restriction. Then Genex restarts.":
+    "Ubuntu te pedirá tu contraseña una vez para añadir {file}. Permite que esta copia de Genex, y los programas que inicia, creen espacios de nombres de usuario pese a la restricción de Ubuntu. Luego Genex se reinicia.",
+  Unpacking: "Descomprimiendo",
+  "Untested on real GPUs": "Sin probar en GPU reales",
+  "Untested on real devices": "Sin probar en dispositivos reales",
+  "Use Genex’s engine": "Usar el motor de Genex",
+  "Verified in a VM": "Verificado en una máquina virtual",
+  "Waiting for approval…": "Esperando aprobación…",
+  "Waiting for players": "Esperando jugadores",
+  "Web and exported builds don’t report a frame profile.":
+    "Las builds web y exportadas no informan de un perfil de fotogramas.",
+  "WebAssembly trap": "Trap de WebAssembly",
+  "What to make": "Qué crear",
+  "Where will people play?": "¿Dónde se va a jugar?",
+  "Windows (.zip)": "Windows (.zip)",
+  "Windows will ask an administrator to approve the setup once.":
+    "Windows pedirá a un administrador que apruebe la configuración una vez.",
+  "Windows window": "Ventana de Windows",
+  "Xcode is missing the iOS 26 SDK. Open Xcode once to install it.":
+    "A Xcode le falta el SDK de iOS 26. Abre Xcode una vez para instalarlo.",
+  "Xcode is ready for iPhone and iPad builds.": "Xcode está listo para crear para iPhone y iPad.",
+  "You accepted the Android SDK License.": "Aceptaste la licencia del SDK de Android.",
+  "You declined it.": "Lo rechazaste.",
+  "Your iPhone or iPad (.ipa)": "Tu iPhone o iPad (.ipa)",
+  "checked the game's conformance": "revisó la conformidad del juego",
+  "for {game}": "para {game}",
+  game: "juego",
+  "has a proc macro": "tiene una macro procedural",
+  "iPhone and iPad": "iPhone y iPad",
+  "iPhone and iPad app": "App para iPhone y iPad",
+  "iPhone and iPad builds need Xcode 26 or later. Install it from the App Store.":
+    "Crear para iPhone y iPad necesita Xcode 26 o posterior. Instálalo desde la App Store.",
+  "no licence": "sin licencia",
+  "over budget": "por encima del presupuesto",
+  "runs a build script": "ejecuta un script de compilación",
+  "seed {seed}": "semilla {seed}",
+  "this Mac": "este Mac",
+  "this computer": "este equipo",
+  "tick {tick}": "tick {tick}",
+  unnamed: "sin nombre",
+  "{advisory} in {crate}": "{advisory} en {crate}",
+  "{count, plural, one {# crate} other {# crates}}": "{count, plural, one {# crate} other {# crates}}",
+  "{count, plural, one {# hitch} other {# hitches}}": "{count, plural, one {# tirón} other {# tirones}}",
+  "{count, plural, one {# time} other {# times}}": "{count, plural, one {# vez} other {# veces}}",
+  "{destinations} aren’t available yet": "{destinations} aún no están disponibles",
+  "{destination} isn’t available yet": "{destination} aún no está disponible",
+  "{game} crashed": "{game} se bloqueó",
+  "{game} crashed with a memory fault": "{game} se bloqueó por un fallo de memoria",
+  "{game} exited abnormally": "{game} se cerró de forma anómala",
+  "{game} hit a GPU error": "{game} tuvo un error de GPU",
+  "{game} lost its GPU device": "{game} perdió su dispositivo GPU",
+  "{game} panicked": "{game} entró en pánico",
+  "{game} ran out of memory": "{game} se quedó sin memoria",
+  "{game} stopped answering and was ended": "{game} dejó de responder y se cerró",
+  "{game} trapped in WebAssembly": "{game} hizo un trap en WebAssembly",
+  "{label}, Built on the starting point": "{label}, creado sobre el punto de partida",
+  "{mib} MiB": "{mib} MiB",
+  "{mib} of {budget} MiB": "{mib} de {budget} MiB",
+  "{ms} ms": "{ms} ms",
+  "{need} needed, {free} free": "{need} necesarios, {free} libres",
+  "{players, plural, one {# player} other {# players}}": "{players, plural, one {# jugador} other {# jugadores}}",
+  "{players, plural, one {# player} other {# players}} · {connected} connected":
+    "{players, plural, one {# jugador} other {# jugadores}} · {connected} conectados",
+  "{runs, plural, one {; the same crash in # run} other {; the same crash in # runs}}":
+    "{runs, plural, one {; el mismo fallo en # ejecución} other {; el mismo fallo en # ejecuciones}}",
+  "{size} on disk": "{size} en disco",
+  "{stack} games can’t be built for it here yet": "Los juegos en {stack} aún no se pueden crear para este destino aquí",
+  "{stage} · {done} of {total}": "{stage} · {done} de {total}",
+  "{what}{where}{when}{again}.": "{what}{where}{when}{again}.",
 } satisfies LocaleCatalog;

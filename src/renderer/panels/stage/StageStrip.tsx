@@ -225,9 +225,9 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
 
 /** The engine button's own words. */
 const MESSAGE = {
-  engine: "Game engine",
-  showEngine: "Engine settings",
-  hideEngine: "Hide engine settings",
+  engine: t("Game engine"),
+  showEngine: t("Engine settings"),
+  hideEngine: t("Hide engine settings"),
 } as const;
 
 /** The strip's engine button for a Rust game: opens and closes its engine rows above the stage. */

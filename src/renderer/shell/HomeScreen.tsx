@@ -47,7 +47,7 @@ const MESSAGE = {
   openingStatus: t("Opening your game…"),
   suggest: t("Suggest prompt"),
   home: t("Home"),
-  compiledGame: "Rust game…",
+  compiledGame: t("Rust game…"),
 } as const;
 
 /** Home's fade over the game it launched takes 250ms (`--duration-fast`); past this it is done anyway. */

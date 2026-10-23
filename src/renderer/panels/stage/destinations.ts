@@ -30,16 +30,17 @@ import type { ToolchainStatus } from "../../../shared/toolchain.ts";
 import { missingForStack } from "../toolchain-view.ts";
 import type { UiEventMap } from "../../../shared/ui-events.ts";
 import { DESTINATION_WORDS, NATIVE_WORDS } from "../../words.ts";
+import { t } from "../../../shared/i18n.ts";
 
 /** The badge and card words only the stage uses. */
 const MESSAGE = {
-  inLive: "In Live",
-  ownWindow: "Plays in its own window",
-  needsTools: "Needs tools",
-  needsSetUp: "Needs set-up",
+  inLive: t("In Live"),
+  ownWindow: t("Plays in its own window"),
+  needsTools: t("Needs tools"),
+  needsSetUp: t("Needs set-up"),
   /** Live's card for a game none of whose destinations runs on this computer: one line each, as the shared empty state holds. */
-  noBrowserBuild: "This game has no browser build",
-  notRunHere: "Its destinations can’t run on this computer.",
+  noBrowserBuild: t("This game has no browser build"),
+  notRunHere: t("Its destinations can’t run on this computer."),
 } as const;
 
 /** What a badge's `data-destination-state` reports: the badge vocabulary, and the standings only the stage names. */

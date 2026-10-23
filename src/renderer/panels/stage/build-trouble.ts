@@ -18,7 +18,7 @@ const MESSAGE = {
   exited: (command: string, code: number | null) =>
     t("{command} (exit {code})", { command, code: code ?? t("stopped") }),
   /** Details for a build the PE or ELF gate refused: the file in `out/` and the rule, as the gate named them. */
-  gateFile: (file: string, refusal: string) => `Safety check: ${file} (${refusal})`,
+  gateFile: (file: string, refusal: string) => t("Safety check: {file} ({refusal})", { file, refusal }),
 } as const;
 
 /** The C++ lane parses at most this many diagnostics; the strip shows no more than that. */
