@@ -11,7 +11,7 @@ checkpoint; ∞ ends on verified outcomes with no blocker. Asked to finish, the 
 end, then lands; Finish overrides the clock, never the final judge
 ([details](../harness-runtime.md#goal-completion-and-worker-approvals)).
 
-An active run opens Builds once; a build shown from chat, or empty Builds, opens Live. Files and images opened from chat get closable tabs.
+An active run opens Builds once; a chat-shown build, or empty Builds, opens Live. Chat's files and images get closable tabs.
 
 ## The two views
 
@@ -30,7 +30,8 @@ preview reaches only public library CDNs; Open Game names other hosts. Other fol
 **Compiled games** (C++ · raylib; Rust · wgpu, needing WebGPU, on Apple-silicon Macs or Linux
 x64) build per destination, sandboxed; **Web | Native** shows the Mac build in Live, a crash its
 card, Rust a profile strip and `[net]` room; only **On a device** installs a phone build
-([more](../agent/feature-map.md)).
+([more](../agent/feature-map.md)). Rust's `genex.toml` turns on nav, streaming and animation (off
+in the starter).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node: what reached the build forms the line, the rest
@@ -58,10 +59,9 @@ pauses wait. A crash or restart settles abandoned activity from saved state.
 
 ## Where to work
 
-- [WorkspaceStage](../../src/renderer/shell/WorkspaceStage.tsx) picks the stage,
-  [PreviewPanel](../../src/renderer/panels/PreviewPanel.tsx) its tabs; [run-steps](../../src/renderer/run-steps.ts)
-  folds steps that [RunGraph](../../src/renderer/panels/RunGraph.tsx) and
-  [RunInspector](../../src/renderer/panels/RunInspector.tsx) draw.
-- [Conversation coordinator](../conversation-coordinator.md): queue, continuation and Stop.
-- [Architecture](../agent/architecture.md), [Verification](../agent/verification.md): run, preview,
+- Stage: [WorkspaceStage](../../src/renderer/shell/WorkspaceStage.tsx),
+  [PreviewPanel](../../src/renderer/panels/PreviewPanel.tsx); steps: [run-steps](../../src/renderer/run-steps.ts),
+  [RunGraph](../../src/renderer/panels/RunGraph.tsx), [RunInspector](../../src/renderer/panels/RunInspector.tsx).
+- [Conversation coordinator](../conversation-coordinator.md): queue, continuation, Stop;
+  [Architecture](../agent/architecture.md), [Verification](../agent/verification.md): run, preview,
   recovery.

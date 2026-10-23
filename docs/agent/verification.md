@@ -144,6 +144,16 @@ one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check
 `rust-examples-web` holds each example game's genex.toml switches to the genex features its
 Cargo.toml names; with `GENEX_EXAMPLES_WEB=1` it also builds every web example alone (one cargo
 run each, so no feature unification) in the export flavour and fails one over 4 MiB gzip.
+The system switches: `rust-manifest-switches` and `genex-toml` hold a genex.toml's `[nav]`,
+`[streaming]` and `[animation]` `enabled = false` to a facade line without default features that
+names every kept default; the facade's `tests/switches.rs` refuses each switched-off system
+(`nav-disabled`, `streaming-disabled`, `animation-disabled`) and runs in every feature set
+(`cargo test -p genex --test switches`, then again with `--no-default-features --features
+physics,audio`). Live's asset swap: `asset-watch` plans the swap against the copy the game reads,
+with a fake clock and folder, and the hostile-path table of `present_files.rs`
+(`cargo test -p genex present_files`) refuses a link, `..`, an absolute path or an oversized file
+before any read; its sandboxed row reads a Mac game's bundled `assets/` under the game Seatbelt
+profile. `native-words-locale` holds the Rust and native Studio words to the translation catalog.
 `GENEX_REQUIRE_METAL=1` makes the skipped Metal renderer goldens fail.
 
 Rust Windows and Linux: `rust-windows-lane`, `rust-linux-lane`, `rust-cross-lane`,
