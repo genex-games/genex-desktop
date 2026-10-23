@@ -4,9 +4,12 @@
  * SIGTERM to its group, then SIGKILL to the group and every listed descendant, reaped within
  * `NATIVE_STOP_BUDGET_MS`), never paused. It announces each change as `UiEvent.NativeStatus`, the
  * game's stderr as `UiEvent.NativeLog`, keeps a pidfile per run so the next boot sweeps an orphan
- * (pid and start time must both match), and kills a game past `NATIVE_GAME_MEMORY_MAX_BYTES`: on a
- * Mac its `phys_footprint`, on Linux the private memory of bubblewrap and every process below it
- * (`linuxTreeMemory`); on Windows the launcher's Job Object holds the same cap.
+ * (pid and start time must both match), and samples each game's memory: on a Mac its
+ * `phys_footprint`, on Linux the private memory of bubblewrap and every process below it
+ * (`linuxTreeMemory`). The run's status keeps the peak (`NativeRunMemory`): past
+ * `NATIVE_GAME_MEMORY_BUDGET_BYTES` the game keeps running and is marked over budget; past the host's
+ * cap (`nativeGameMemoryCapBytes` of its physical memory) it is killed `memory-cap`. On Windows the
+ * launcher's Job Object holds the same cap.
  * Every timer goes through `NativeTimers`. On Windows the run's child is the game launcher, whose
  * kill-on-close Job Object holds the game: a stop ends it through that one handle (fd 3 closed,
  * then the launcher ended), never a process group, and lists no descendants.
@@ -31,6 +34,7 @@ import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants as FS } from "node:fs";
 import { lstat, readdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { StudioPlatform } from "../../shared/boot.ts";
@@ -43,7 +47,7 @@ import { type BuildTarget, isCompiledStack } from "../../shared/game-project.ts"
 import type { ToolchainLock } from "../../shared/toolchain.ts";
 import {
   type GameBoxProblem,
-  NATIVE_GAME_MEMORY_MAX_BYTES,
+  NATIVE_GAME_MEMORY_BUDGET_BYTES,
   NATIVE_HEARTBEAT_MS,
   NATIVE_LOG_BATCH_MAX,
   NATIVE_QUIT_GRACE_MS,
@@ -58,9 +62,11 @@ import {
   NativeOpError,
   NativeRefusal,
   NativeRunMode,
+  type NativeRunMemory,
   NativeRunState,
   type NativeRunStatus,
   type NativeTimers,
+  nativeGameMemoryCapBytes,
   parseNativeInput,
 } from "../../shared/native-contract.ts";
 import { UiEvent, uiEvent } from "../../shared/ui-events.ts";
@@ -84,6 +90,7 @@ const run = promisify(execFile);
 /** Bytes in a MiB, for the memory lines. */
 const MIB_BYTES = 1024 ** 2;
 const mib = (bytes: number): string => (bytes / MIB_BYTES).toFixed(1);
+const gib = (bytes: number): string => (bytes / 1024 / MIB_BYTES).toFixed(1);
 
 const MESSAGE = {
   notReaped: (runId: string, pid: number) => `native run ${runId}: pid ${pid} was not reaped after SIGKILL`,
@@ -91,8 +98,11 @@ const MESSAGE = {
   killFailed: (runId: string, pid: number, error: string) => `native run ${runId}: signalling ${pid} failed: ${error}`,
   pidfile: (runId: string, error: string) => `native run ${runId}: its pidfile was not written: ${error}`,
   sweep: (dir: string, error: string) => `native runs: ${dir} was not removed: ${error}`,
-  overMemory: (runId: string, bytes: number) =>
-    `native run ${runId}: footprint ${mib(bytes)} MiB is over the ${mib(NATIVE_GAME_MEMORY_MAX_BYTES)} MiB cap; killed ${NativeRefusal.MemoryCap}`,
+  overMemory: (runId: string, bytes: number, cap: number) =>
+    `native run ${runId}: footprint ${mib(bytes)} MiB is over the ${mib(cap)} MiB cap; killed ${NativeRefusal.MemoryCap}`,
+  /** What the game's pending calls reject with, which reaches the harness: the footprint and the cap, in GiB. */
+  memoryCap: (bytes: number, cap: number) =>
+    `the game used ${gib(bytes)} GiB of memory, over this computer's ${gib(cap)} GiB cap, and was stopped (${NativeRefusal.MemoryCap})`,
   stopped: "the run was stopped before it was ready",
   listener: (error: string) => `native runs: a status listener threw: ${error}`,
   cannotEmbed: (refusal: NativeRefusal) => `Live cannot show a Mac build here (${refusal})`,
@@ -222,6 +232,8 @@ export interface NativeRunsOptions {
   timers: NativeTimers;
   /** `footprint -p`'s phys_footprint in bytes, or null. */
   sampleFootprint?(pid: number): Promise<number | null>;
+  /** The host's physical memory in bytes, which sets the kill cap (default: `os.totalmem()`, read once). */
+  ramBytes?: number;
   /** A pid's descendants (the injected `ps`). */
   descendants?(pid: number): Promise<number[]>;
   /** Linux: `/proc/<pid>/status`, or null when it cannot be read (default: reads it). */
@@ -414,7 +426,19 @@ const copyStatus = (status: NativeRunStatus): NativeRunStatus => ({
   ...status,
   exit: status.exit ? { ...status.exit } : null,
   ...(status.progress ? { progress: { ...status.progress } } : {}),
+  ...(status.memory ? { memory: { ...status.memory } } : {}),
 });
+
+/** A run's memory after one sample of `bytes`: the peak only rises, and once past the budget it stays over. */
+function memoryAfter(previous: NativeRunMemory | null | undefined, bytes: number, capBytes: number): NativeRunMemory {
+  const peakBytes = Math.max(previous?.peakBytes ?? 0, bytes);
+  return {
+    peakBytes,
+    budgetBytes: NATIVE_GAME_MEMORY_BUDGET_BYTES,
+    capBytes,
+    overBudget: peakBytes > NATIVE_GAME_MEMORY_BUDGET_BYTES,
+  };
+}
 
 /** How a game that ran ended: a stop the host asked for, a refusal it killed for, or the game's own exit. */
 function endingOf(entry: RunEntry, ended: GameExit | null): Ending {
@@ -464,6 +488,8 @@ function pidRecord(text: string): { pid: number; lstart: string } | null {
  */
 export class NativeRuns implements NativeRunsHost {
   readonly #options: NativeRunsOptions;
+  /** The footprint past which a game is killed `memory-cap`, from the host's memory, once. */
+  readonly #memoryCapBytes: number;
   readonly #runs = new Map<string, RunEntry>();
   readonly #focus = new Set<(run: NativeRunStatus, focused: boolean) => void>();
   readonly #statusListeners = new Set<(run: NativeRunStatus) => void>();
@@ -471,6 +497,7 @@ export class NativeRuns implements NativeRunsHost {
 
   constructor(options: NativeRunsOptions) {
     this.#options = options;
+    this.#memoryCapBytes = nativeGameMemoryCapBytes(options.ramBytes ?? os.totalmem());
     // Bound to this registry: a caller may hold a method apart from it, or stand a wrapper in
     // (`Object.create(runs)` with one member replaced) and still reach this registry's runs.
     this.start = this.start.bind(this);
@@ -997,24 +1024,36 @@ export class NativeRuns implements NativeRunsHost {
     return (pid) => linuxTreeMemory(pid, { descendants: (root) => this.#descendants(root), readStatus });
   }
 
-  /** The game's memory every `MEMORY_SAMPLE_MS` (`#memorySampler`); past the cap it ends `memory-cap`. */
+  /**
+   * The game's memory every `MEMORY_SAMPLE_MS` (`#memorySampler`): a new peak goes on its status
+   * (past the budget it is marked over budget and keeps running); past the cap it ends `memory-cap`.
+   */
   #sampleMemory(entry: RunEntry): void {
     const { timers } = this.#options;
     const sampler = this.#memorySampler();
+    const cap = this.#memoryCapBytes;
     const sample = async () => {
       entry.timers.memory = null;
       const { port, child } = entry;
       if (!port || !child || entry.finished || entry.stopAsked) return;
       const bytes = await sampler(child.pid).catch(() => null);
       if (entry.finished || entry.stopAsked) return;
-      if (bytes !== null && bytes > NATIVE_GAME_MEMORY_MAX_BYTES) {
+      if (bytes !== null) this.#recordMemory(entry, bytes);
+      if (bytes !== null && bytes > cap) {
         // The person sees the reason on the card; the log keeps what was measured, for a kill nobody watched.
-        this.#log(MESSAGE.overMemory(entry.status.runId, bytes));
-        return port.kill(NativeRefusal.MemoryCap);
+        this.#log(MESSAGE.overMemory(entry.status.runId, bytes, cap));
+        return port.kill(NativeRefusal.MemoryCap, MESSAGE.memoryCap(bytes, cap));
       }
       entry.timers.memory = timers.setTimeout(() => void sample(), MEMORY_SAMPLE_MS);
     };
     entry.timers.memory = timers.setTimeout(() => void sample(), MEMORY_SAMPLE_MS);
+  }
+
+  /** One memory sample on the run's status, announced only when it raised the peak. */
+  #recordMemory(entry: RunEntry, bytes: number): void {
+    const previous = entry.status.memory;
+    if (previous && bytes <= previous.peakBytes) return;
+    this.#set(entry, { memory: memoryAfter(previous, bytes, this.#memoryCapBytes) });
   }
 
   /**

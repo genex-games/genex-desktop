@@ -180,7 +180,7 @@ A C++ · raylib game never runs under srt-win: `ProcessSandbox.spawnGame` starts
 planned by [`windows-game-launch.ts`](../src/substrate/windows-game-launch.ts)). The launcher puts
 the game in a per-run AppContainer with no capabilities (no network), grants it the run's
 `bundle\` (read and execute) and `state\` (read and write) and nothing else, holds it in a
-kill-on-close Job Object with the memory cap, and relays the protocol between its own fd 3 and
+kill-on-close Job Object with the host's memory cap (`jobMemoryBytes`), and relays the protocol between its own fd 3 and
 the run's pipe `\\.\pipe\genex-game-<run id>` (`GENEX_STUDIO_PIPE`). The host checks the run
 folder by realpath and claims it once (`launch.claim`). Stop closes fd 3, then ends the launcher;
 no process group is signalled. Neither Windows nor Linux has a headless build, so an agent's run is

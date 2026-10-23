@@ -1420,6 +1420,8 @@ describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, n
       // A starting game's boot progress is read by the host for Live's card alone; the harness
       // never parses game events.
       "NATIVE_BOOT_COUNT_MAX",
+      // The memory cap is the host's, from its own memory: the harness reads it off a run's status.
+      "NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES",
     ]);
     const shared = Object.entries(native).filter(
       ([name, value]) => /^(NATIVE|MAC)_/.test(name) && typeof value !== "object" && !hostOnly.has(name),

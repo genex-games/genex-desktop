@@ -2473,6 +2473,21 @@ export interface NativeBootProgress {
 export type CrashKind = 'device-lost' | 'panic' | 'gpu-validation' | 'wasm-trap' | 'native-fault' | 'out-of-memory' | 'hang' | 'process-exit';
 // ↑ src/shared/crash-record.ts
 
+/**
+ * A run's memory as the host samples it (a Mac's `phys_footprint`, GPU memory included on Apple
+ * Silicon; a Linux box's process tree): the highest footprint so far (it only rises), the budget
+ * a game should fit in for phones and the web, and this host's kill cap. `overBudget` is set once
+ * the peak passed the budget: the run keeps going. A run killed past the cap ends `memory-cap`
+ * with `peakBytes` the footprint that killed it.
+ */
+export interface NativeRunMemory {
+  peakBytes: number;
+  budgetBytes: number;
+  capBytes: number;
+  overBudget: boolean;
+}
+// ↑ src/shared/native-contract.ts
+
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
   project: string;
@@ -2497,6 +2512,8 @@ export interface NativeRunStatus {
   progress?: NativeBootProgress | null;
   /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
   crash?: { crashId: string; kind: CrashKind } | null;
+  /** What the host measured of the game's memory; absent or null before its first sample. */
+  memory?: NativeRunMemory | null;
   startedAt: string;
   endedAt: string | null;
 }

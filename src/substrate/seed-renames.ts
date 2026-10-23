@@ -24,6 +24,8 @@ export const RENAMED_SEED_NAMES: Readonly<Record<string, string>> = {
   NightLogEntry: "LoopRunLogEntry",
   NightShape: "LoopRunShape",
   NightState: "LoopRunState",
+  // The 4 GiB the seed called a cap is a budget now: the host's cap follows the computer's memory.
+  NATIVE_GAME_MEMORY_MAX_BYTES: "NATIVE_GAME_MEMORY_BUDGET_BYTES",
   SERVES_AFTER_NIGHT: "SERVES_AFTER_LOOP_RUN",
   afterLeadNight: "afterLeadLoopRun",
   afterNight: "afterLoopRun",

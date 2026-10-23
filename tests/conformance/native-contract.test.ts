@@ -19,6 +19,9 @@ import {
   isNativeProtocolVersion,
   isNativeResult,
   NATIVE_CUSTOM_PASS_API_VERSION,
+  NATIVE_GAME_MEMORY_BUDGET_BYTES,
+  NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES,
+  nativeGameMemoryCapBytes,
   NATIVE_CUSTOM_PASSES_KEY,
   NATIVE_EXTENSION_API_VERSION,
   NATIVE_PROTOCOL_V1,
@@ -1458,5 +1461,42 @@ describe("saves and uiSettings (UIS-15): every argument is checked before it is 
     ];
     for (const [arg, sent] of rows)
       assert.deepEqual(checkUiSettingsArg(arg), { ok: true, arg: sent }, String(JSON.stringify(arg)));
+  });
+});
+
+describe("the memory cap a host kills a game past (nativeGameMemoryCapBytes)", () => {
+  const GIB = 1024 ** 3;
+
+  it("is max(8 GiB, RAM / 4), never more than RAM / 2, over the machines people have", () => {
+    const rows: Array<[ramGib: number, capGib: number]> = [
+      [4, 2],
+      [8, 4],
+      [16, 8],
+      [18, 8],
+      [24, 8],
+      [32, 8],
+      [36, 9],
+      [64, 16],
+      [128, 32],
+      [192, 48],
+    ];
+    for (const [ram, cap] of rows) assert.equal(nativeGameMemoryCapBytes(ram * GIB), cap * GIB, `${ram} GiB of RAM`);
+  });
+
+  it("reads a memory that is no size as unknown and answers the floor, never throwing", () => {
+    for (const ram of [0, -1, -16 * GIB, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 2 ** 60])
+      assert.equal(nativeGameMemoryCapBytes(ram), NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES, String(ram));
+  });
+
+  it("answers whole bytes for a fractional memory, rounded down", () => {
+    assert.equal(nativeGameMemoryCapBytes(36 * GIB + 0.5), 9 * GIB);
+    assert.equal(nativeGameMemoryCapBytes(16 * GIB - 0.5), 8 * GIB - 1);
+    assert.equal(nativeGameMemoryCapBytes(7), 3);
+  });
+
+  it("keeps the 4 GiB budget under the cap of any host of 8 GiB or more", () => {
+    assert.equal(NATIVE_GAME_MEMORY_BUDGET_BYTES, 4 * GIB);
+    for (const ram of [8, 16, 36, 192])
+      assert.ok(nativeGameMemoryCapBytes(ram * GIB) >= NATIVE_GAME_MEMORY_BUDGET_BYTES);
   });
 });

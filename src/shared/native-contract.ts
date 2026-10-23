@@ -650,8 +650,34 @@ export const NATIVE_HEARTBEAT_MS = 5 * SECOND_MS;
 export const NATIVE_STDERR_LINE_MAX_CHARS = 2048;
 /** The most stderr lines one `native.log` event carries. */
 export const NATIVE_LOG_BATCH_MAX = 200;
-/** A game past this `phys_footprint` is killed (PX8 sets this). */
-export const NATIVE_GAME_MEMORY_MAX_BYTES = 4 * 1024 ** 3;
+/** Bytes in a GiB, for the memory budget and cap. */
+const GIB_BYTES = 1024 ** 3;
+/**
+ * The memory a game should fit in to run on phones and the web. A desktop run past it keeps
+ * running: its status says so (`NativeRunMemory.overBudget`), and the harness warns a game whose
+ * destinations include the web or a phone. Normal for a desktop game.
+ */
+export const NATIVE_GAME_MEMORY_BUDGET_BYTES = 4 * GIB_BYTES;
+/** The memory cap's floor, and the cap of a host whose memory reads as no size (`nativeGameMemoryCapBytes`). */
+export const NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES = 8 * GIB_BYTES;
+/** The cap is this share of the host's memory when that is above the floor… */
+const CAP_SHARE_OF_RAM = 1 / 4;
+/** …and never more than this share, however small the host. */
+const CAP_CEILING_SHARE_OF_RAM = 1 / 2;
+
+/**
+ * The footprint past which the host kills a game (`memory-cap`), from the host's physical memory
+ * (`os.totalmem()`, read once at the host's edge): `max(8 GiB, RAM / 4)`, never more than
+ * `RAM / 2`. 36 GiB → 9 GiB, 16 GiB → 8 GiB, 8 GiB → 4 GiB. A memory that is not a positive,
+ * safe number of bytes (0, negative, NaN, Infinity) reads as unknown and gets the floor, 8 GiB;
+ * a fractional one is rounded down. Never throws; the answer is whole bytes.
+ */
+export function nativeGameMemoryCapBytes(ramBytes: number): number {
+  const known = Number.isFinite(ramBytes) && ramBytes > 0 && ramBytes <= Number.MAX_SAFE_INTEGER;
+  if (!known) return NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES;
+  const share = Math.max(NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES, ramBytes * CAP_SHARE_OF_RAM);
+  return Math.floor(Math.min(share, ramBytes * CAP_CEILING_SHARE_OF_RAM));
+}
 /** Embedded runs: the shared-image ring size. */
 export const NATIVE_FRAME_SLOTS = 3;
 /** Embedded runs: frames per second past which the frames receiver refuses the game. */
@@ -1499,8 +1525,24 @@ export interface NativeRunStatus {
   progress?: NativeBootProgress | null;
   /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
   crash?: { crashId: string; kind: CrashKind } | null;
+  /** What the host measured of the game's memory; absent or null before its first sample. */
+  memory?: NativeRunMemory | null;
   startedAt: string;
   endedAt: string | null;
+}
+
+/**
+ * A run's memory as the host samples it (a Mac's `phys_footprint`, GPU memory included on Apple
+ * Silicon; a Linux box's process tree): the highest footprint so far (it only rises), the budget
+ * a game should fit in for phones and the web, and this host's kill cap. `overBudget` is set once
+ * the peak passed the budget: the run keeps going. A run killed past the cap ends `memory-cap`
+ * with `peakBytes` the footprint that killed it.
+ */
+export interface NativeRunMemory {
+  peakBytes: number;
+  budgetBytes: number;
+  capBytes: number;
+  overBudget: boolean;
 }
 
 /** One `native.log` batch: stderr lines, each cut at `NATIVE_STDERR_LINE_MAX_CHARS`, at most `NATIVE_LOG_BATCH_MAX`. */

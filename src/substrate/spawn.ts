@@ -42,7 +42,6 @@ import { BuildTarget, type CompiledStack } from "../shared/game-project.ts";
 import {
   GameBoxProblem,
   NATIVE_CROSS_EXECUTABLES,
-  NATIVE_GAME_MEMORY_MAX_BYTES,
   NativeError,
   NativeRefusal,
   NativeRunMode,
@@ -118,6 +117,7 @@ import {
 import {
   type LauncherFileStat,
   type WindowsStartDeps,
+  jobMemoryBytes,
   launcherDesktopFor,
   launcherGameExit,
   launcherMayLeaveProfile,
@@ -308,6 +308,8 @@ export interface GameBoxSeams {
   launcherStat?: (file: string) => LauncherFileStat | null;
   /** Windows: planning's realpath, the run claim and the host environment (default: `windowsLaunchDeps`). */
   windows?: Partial<Omit<WindowsStartDeps<ChildProcess>, "spawn" | "runsRoot">>;
+  /** Windows: the PC's physical memory in bytes, which sets the Job Object's limit (default: `os.totalmem()`). */
+  ramBytes?: number;
   /** Linux: bubblewrap's absolute path (default: {@link BWRAP}). */
   bwrap?: string;
   /** Linux: `bwrap --version`'s output, or null when it does not run (default: runs it, once). */
@@ -973,6 +975,8 @@ export class ProcessSandbox {
   /** Windows: the AppContainer launcher every game starts through, when this build has one. */
   #gameLauncher: string | null = null;
   #boxSeams: GameBoxSeams = {};
+  /** A Windows game's Job Object memory limit: the host's cap from its memory, read once. */
+  #jobMemoryBytes = 0;
   /** Linux: `bwrap --version`'s output, asked once (undefined until asked). */
   #bwrapVersion: string | null | undefined;
   /** The Android SDK folders that drive a device: never on a child's PATH (C1). */
@@ -1015,6 +1019,7 @@ export class ProcessSandbox {
     this.#nativeRunsRoot = options.nativeRunsRoot ?? null;
     this.#gameLauncher = options.gameLauncher ?? null;
     this.#boxSeams = options.gameBoxSeams ?? {};
+    this.#jobMemoryBytes = jobMemoryBytes(this.#boxSeams.ramBytes ?? os.totalmem());
     this.#deviceTools = deviceToolDirs(process.env, os.homedir(), platform);
     this.#deviceToolExec = [...this.#deviceTools, ...packagedDeviceTools(platform)].map(realPathOrSelf);
     this.#dataRoot = longDataRoot(options.dataRoot, platform);
@@ -1103,7 +1108,7 @@ export class ProcessSandbox {
         exe,
         desktop: launcherDesktopFor(request.mode),
         nonce: request.nonce,
-        memoryBytes: NATIVE_GAME_MEMORY_MAX_BYTES,
+        memoryBytes: this.#jobMemoryBytes,
       },
       deps,
     );

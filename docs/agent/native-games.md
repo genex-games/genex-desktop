@@ -191,8 +191,12 @@ Windows/Linux use Zig; `admitCrossOutput` records refusal `DestinationCheck`s.
 Desktop exports stage privately at the current lock; certificate signing uses its own sandbox and Java proxy.
 Mac Play, agent runs and embedding use `NativeRuns`: prepare, `spawnGame`, nonce `ready`,
 `NativeGamePort`. Stop requests quit, then TERM/KILL; boot sweeps orphans; app death kills registered
-groups. A v2 game that misses a step or capture deadline, or goes silent owing one, is killed
-`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. A run that ends
+groups. Every 5 s the registry samples a run's memory (a Mac's `phys_footprint`, GPU memory
+included; a Linux box's process tree) and keeps the peak on its status (`memory`). Past the 4 GiB
+budget (`NATIVE_GAME_MEMORY_BUDGET_BYTES`) the run keeps going, marked `overBudget`; past the host's
+cap, `nativeGameMemoryCapBytes(os.totalmem())` (`max(8 GiB, RAM / 4)`, at most `RAM / 2`; the
+Windows Job Object's limit too), it is killed `memory-cap`. A v2 game that misses a step or capture
+deadline, or goes silent owing one, is killed `gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. A run that ends
 crashed names its record in its status (`crash`): the game's own last `crash` record (a forged host
 kind or writer is `reply-invalid`), else a host-made `hang` (killed `unresponsive` or `gpu-hang`) or
 `process-exit`. [`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps it in the game's

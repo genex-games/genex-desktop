@@ -22,7 +22,6 @@ import { StudioPlatform } from "../../src/shared/boot.ts";
 import { GameStack } from "../../src/shared/game-project.ts";
 import {
   GameBoxProblem,
-  NATIVE_GAME_MEMORY_MAX_BYTES,
   NativeEnv,
   NativeError,
   NativeRefusal,
@@ -49,6 +48,7 @@ import {
   WindowsLaunchRefusal,
   launcherGameExit,
   launcherPipeName,
+  GAME_MEMORY_MAX_BYTES,
   launchRefusalError,
   planWindowsGameLaunch,
 } from "../../src/substrate/windows-game-launch.ts";
@@ -220,8 +220,17 @@ function windowsFs(options: { links?: Record<string, string>; claimed?: Set<stri
   return { windows, claims, claimed, hostEnv, realpath: realpathOf };
 }
 
+const GIB = 1024 ** 3;
+/** The Windows rig's PC: 36 GiB of memory, whose cap is 9 GiB (`nativeGameMemoryCapBytes`). */
+const WIN_RAM_BYTES = 36 * GIB;
+const WIN_CAP_BYTES = 9 * GIB;
+
 async function windowsBox(
-  options: { launcher?: "file" | "link" | "dir" | "absent" | "none"; fs?: ReturnType<typeof windowsFs> } = {},
+  options: {
+    launcher?: "file" | "link" | "dir" | "absent" | "none";
+    fs?: ReturnType<typeof windowsFs>;
+    ramBytes?: number;
+  } = {},
 ) {
   const spawned = recordingSpawn();
   const fs = options.fs ?? windowsFs();
@@ -234,6 +243,7 @@ async function windowsBox(
       spawn: spawned.spawn,
       launcherStat: (file) => (file === LAUNCHER && present ? fileKind(kind) : null),
       windows: fs.windows,
+      ramBytes: options.ramBytes ?? WIN_RAM_BYTES,
     },
   });
   return { sandbox, spawned, fs };
@@ -278,7 +288,7 @@ describe("a Windows host's game box", () => {
         exe: "game.exe",
         desktop: LauncherDesktop.Interactive,
         nonce: NONCE,
-        memoryBytes: NATIVE_GAME_MEMORY_MAX_BYTES,
+        memoryBytes: WIN_CAP_BYTES,
       },
       { runsRoot: WIN_ROOT, hostEnv: fs.hostEnv, realpath: fs.realpath },
     );
@@ -312,12 +322,31 @@ describe("a Windows host's game box", () => {
     assert.equal(Object.hasOwn(first?.options.env ?? {}, NativeEnv.StudioPipe), false);
   });
 
+  // Flipped (MC): the Job Object's limit was the fixed 4 GiB; it is now the host's cap from its memory.
   it("asks the launcher for the person's desktop and the host's memory cap", async () => {
     const { sandbox, spawned } = await windowsBox();
     await sandbox.spawnGame(winRun());
     const args = spawned.calls[0]?.args ?? [];
     assert.equal(args[args.indexOf("--desktop") + 1], LauncherDesktop.Interactive);
-    assert.equal(args[args.indexOf("--memory-bytes") + 1], String(NATIVE_GAME_MEMORY_MAX_BYTES));
+    assert.equal(args[args.indexOf("--memory-bytes") + 1], String(WIN_CAP_BYTES));
+  });
+
+  it("sets the Job Object's limit by the PC's memory, inside the launcher's own bounds", async () => {
+    const rows: Array<[ram: number, limit: number]> = [
+      [8 * GIB, 4 * GIB],
+      [16 * GIB, 8 * GIB],
+      [64 * GIB, 16 * GIB],
+      // RAM / 4 is 128 GiB: the launcher takes at most 64 GiB, so the job gets that, never a refusal.
+      [512 * GIB, GAME_MEMORY_MAX_BYTES],
+      // A memory that reads as no size gets the cap's floor.
+      [0, 8 * GIB],
+    ];
+    for (const [ramBytes, limit] of rows) {
+      const { sandbox, spawned } = await windowsBox({ ramBytes });
+      await sandbox.spawnGame(winRun());
+      const args = spawned.calls[0]?.args ?? [];
+      assert.equal(args[args.indexOf("--memory-bytes") + 1], String(limit), `${ramBytes / GIB} GiB PC`);
+    }
   });
 });
 
