@@ -1719,11 +1719,15 @@ impl Presenter {
     }
 
     /// Whether the boot's warm-up ([`Presenter::warm_boot`]) is still compiling the first Live
-    /// frame's pipelines: a shell shows its loading screen meanwhile instead of waiting on that
-    /// frame (owner decision D11). Never on the web, which warms nothing off its one thread.
+    /// frame's pipelines, or a pipeline it handed over is still compiling: a shell shows its
+    /// loading screen meanwhile instead of waiting on that frame (owner decision D11). The warm
+    /// frame also hands over the variants its content can take later without waiting for them (a
+    /// far character's vertex skinning, TAAU's dynamic-resolution step), so the window shows once
+    /// those are made too and play never waits for a compile (game systems R-20, EP-X1). Never
+    /// on the web, which warms nothing off its one thread.
     pub fn boot_warming(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
-        return self.held.is_none() && self.warming.as_ref().is_some_and(|warming| !warming.is_finished());
+        return self.held.is_none() && self.warming.as_ref().is_some_and(|warming| !warming.is_finished() || genex_render::compile::compile_tally().pending());
         #[cfg(target_arch = "wasm32")]
         false
     }
@@ -2158,7 +2162,7 @@ impl Presenter {
         let timing = live.then(|| self.begin_live());
         // Characters' poses (AN-17), over their skins (loaded first): Live's rate bands read the
         // game camera, whatever the view.
-        if let Err(error) = self.load(&frame) {
+        if let Err(error) = self.load_characters(runtime).and_then(|()| self.load(&frame)) {
             return Some(Err(error));
         }
         let game_camera = runtime.camera(View::Game).unwrap_or(camera);
@@ -2396,6 +2400,14 @@ impl Presenter {
     /// Load every model and material texture `frame` draws that was never tried; a refusal is
     /// logged once. A lost device stops the frame (`device-lost`) and leaves the rest to be tried
     /// again.
+    /// Skin every character the game made (`gfx.character`) that no frame drew yet: the renderer
+    /// then compiles the skinned variants (a far character's vertex skinning) on the frame that has
+    /// them, the boot's warm frame, never on the frame a character first walks far (R-20, EP-X1).
+    fn load_characters<W: Default + 'static>(&mut self, runtime: &Runtime<W>) -> Result<(), RenderError> {
+        let log = self.log;
+        self.assets.characters.load_paths(&runtime.character_paths(), &*self.source, &mut self.resilient, &mut |line| log(line))
+    }
+
     fn load(&mut self, frame: &Frame) -> Result<(), RenderError> {
         let log = self.log;
         self.assets.load(frame, &*self.source, &mut self.resilient, &mut |line| log(line))?;
@@ -3415,6 +3427,41 @@ mod tests {
         let table: AssetTable = &[("pond.glb", b"glb bytes")];
         assert_eq!(table.model_bytes("pond.glb").as_deref(), Some(&b"glb bytes"[..]));
         assert_eq!(table.model_bytes("other.glb"), None);
+    }
+
+    /// R-20: the window shows once every pipeline the boot handed over is made, not only those the
+    /// warm frame waited for (red at the R2 head: the boot ended with a compile still pending).
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn metal_the_boot_keeps_warming_while_a_pipeline_it_handed_over_compiles() {
+        let mut presenter = match Presenter::open([96, 64], &[]) {
+            Ok(presenter) => presenter,
+            Err(error) if std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1") => panic!("no WebGPU-core adapter: {error}"),
+            Err(error) => return eprintln!("skipped: no WebGPU-core adapter ({error})"),
+        };
+        presenter.set_off_thread_changes(true);
+        let mut game = crate::Game::new(0_u32).world_size(96, 64);
+        game.camera(|_| Camera::look_at(Vec3::new(0.0, 1.0, 4.0), Vec3::ZERO));
+        game.on_draw(|_, frame, _| {
+            frame.cube(crate::Transform::IDENTITY, Color::RED);
+        });
+        let mut runtime = Runtime::new(game).expect("installs");
+        presenter.warm_boot(&mut runtime);
+        assert!(presenter.boot_warming(), "the warm-up is compiling");
+        while presenter.boot_warming() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // A variant the warm frame handed over and did not wait for, still compiling.
+        let held = genex_render::compile::hold();
+        let variant = genex_render::compile::Compiled::spawn(|| 7_u8);
+        assert!(presenter.boot_warming(), "the boot waits for the variant's compile");
+        drop(held);
+        assert_eq!(*variant, 7);
+        while genex_render::compile::compile_tally().pending() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!presenter.boot_warming(), "every compile made: the window shows");
     }
 
     #[test]

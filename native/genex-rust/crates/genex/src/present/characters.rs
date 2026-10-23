@@ -156,13 +156,23 @@ impl Characters {
     pub(super) fn load(&mut self, frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
         for draw in frame.draws() {
             let Shape::Character { animator, .. } = &draw.shape else { continue };
-            let path = animator.asset().path();
-            if self.skins.iter().any(|(known, _)| known == path) {
-                continue;
-            }
-            let loaded = load_skin(path, source, uploads, log)?;
-            self.skins.push((path.to_owned(), loaded));
+            self.load_path(animator.asset().path(), source, uploads, log)?;
         }
+        Ok(())
+    }
+
+    /// Upload every character GLB of `paths` that was never tried, skinned (the characters the
+    /// game made, before a frame draws one: game systems R-20).
+    pub(super) fn load_paths(&mut self, paths: &[String], source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
+        paths.iter().try_for_each(|path| self.load_path(path, source, uploads, log))
+    }
+
+    fn load_path(&mut self, path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
+        if self.skins.iter().any(|(known, _)| known == path) {
+            return Ok(());
+        }
+        let loaded = load_skin(path, source, uploads, log)?;
+        self.skins.push((path.to_owned(), loaded));
         Ok(())
     }
 

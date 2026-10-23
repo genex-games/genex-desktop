@@ -24,7 +24,14 @@
 //! from the game's saves ([`open_pipeline_cache`], keyed by wgpu's adapter key: vendor and device,
 //! the driver checked by wgpu's header) and every built-in pipeline compiled on it afterwards uses
 //! it; [`save_pipeline_cache`] writes it back.
+//!
+//! Late compiles (game systems R-20, EP-X1): a pipeline first asked for mid-game makes the frame
+//! that asks wait for its compile (half a second cold on Metal), so the renderer makes every
+//! variant a session's content can need on the first frame that has that content, and the boot's
+//! warm-up compiles them before the window shows. Each pipeline handed over keeps its label
+//! ([`pipelines_since`]), so a harness names what a frame compiled after the boot.
 
+use std::collections::VecDeque;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -71,8 +78,14 @@ impl<T: Send + Sync + 'static> Compiled<T> {
     /// `job` run on the job pool's [`COMPILE_PRIORITY`] lane (inline on the web, or when no job
     /// thread can start).
     pub fn spawn(job: impl FnOnce() -> T + Send + 'static) -> Self {
+        Compiled::spawn_counted(job).0
+    }
+
+    /// [`Compiled::spawn`], with the job's place in the count of jobs handed over (0 for the
+    /// first): what [`pipelines_since`] files its label under.
+    fn spawn_counted(job: impl FnOnce() -> T + Send + 'static) -> (Self, usize) {
         PENDING_JOBS.fetch_add(1, Ordering::AcqRel);
-        SUBMITTED_JOBS.fetch_add(1, Ordering::AcqRel);
+        let index = SUBMITTED_JOBS.fetch_add(1, Ordering::AcqRel);
         let counted = move || {
             // Caught as handled (CRASH-2); the re-raise below is not a new panic, so one record.
             let made = genex_crash::catching(std::panic::AssertUnwindSafe(job));
@@ -87,7 +100,14 @@ impl<T: Send + Sync + 'static> Compiled<T> {
                 save_pipeline_caches();
             }
         };
-        Compiled { job: Arc::new(Pool::global().spawn_then(COMPILE_PRIORITY, counted, after)) }
+        (Compiled { job: Arc::new(Pool::global().spawn_then(COMPILE_PRIORITY, counted, after)) }, index)
+    }
+
+    /// [`Compiled::spawn`] for a pipeline: its `label` is kept for [`pipelines_since`].
+    fn spawn_pipeline(label: Option<&str>, job: impl FnOnce() -> T + Send + 'static) -> Self {
+        let (made, index) = Compiled::spawn_counted(job);
+        note_pipeline(index, label);
+        made
     }
 }
 
@@ -178,6 +198,12 @@ impl CompileTally {
     pub fn since(self, base: CompileTally) -> CompileTally {
         CompileTally { submitted: self.submitted.saturating_sub(base.finished), finished: self.finished.saturating_sub(base.finished) }
     }
+
+    /// Whether a job handed over is not finished yet (a boot waits for these before its window
+    /// shows: game systems R-20).
+    pub fn pending(self) -> bool {
+        self.finished < self.submitted
+    }
 }
 
 /// The compiles' counts now.
@@ -185,6 +211,31 @@ pub fn compile_tally() -> CompileTally {
     // Finished first: a job that finishes between the two reads is never counted done before it was handed over.
     let finished = FINISHED_JOBS.load(Ordering::Acquire);
     CompileTally { submitted: SUBMITTED_JOBS.load(Ordering::Acquire).max(finished), finished }
+}
+
+/// The most pipeline labels [`pipelines_since`] keeps; past it the oldest go (a session that
+/// rebuilds renderers keeps compiling, and the log is a diagnostic).
+const LABELS_KEPT: usize = 4096;
+/// What [`pipelines_since`] reads for a pipeline handed over without a label.
+pub const UNLABELLED: &str = "unlabelled";
+
+/// Each pipeline handed to the pool, by its place in the count of jobs handed over, with its label.
+static LABELS: Mutex<VecDeque<(usize, String)>> = Mutex::new(VecDeque::new());
+
+/// Keep `label` for the pipeline handed over as job `at`.
+fn note_pipeline(at: usize, label: Option<&str>) {
+    let mut labels = LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if labels.len() == LABELS_KEPT {
+        labels.pop_front();
+    }
+    labels.push_back((at, label.unwrap_or(UNLABELLED).to_owned()));
+}
+
+/// The labels of the pipelines handed to the pool since `base` was read, oldest first: what the
+/// frames since then compiled (a frame after the boot's warm-up should compile none).
+pub fn pipelines_since(base: CompileTally) -> Vec<String> {
+    let labels = LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    labels.iter().filter(|(at, _)| *at >= base.submitted).map(|(_, label)| label.clone()).collect()
 }
 
 /// The save folder a game's pipeline caches are kept in, one file per adapter key.
@@ -263,7 +314,7 @@ fn pipeline_cache_of(device: &Device) -> Option<PipelineCache> {
 pub fn render_pipeline(device: &Device, desc: &wgpu::RenderPipelineDescriptor<'_>) -> Compiled<RenderPipeline> {
     let owned = OwnedRender::of(desc);
     let device = device.clone();
-    Compiled::spawn(move || owned.create(&device))
+    Compiled::spawn_pipeline(desc.label, move || owned.create(&device))
 }
 
 /// [`render_pipeline`] for a game's own source: the job thread wraps the creation in
@@ -273,7 +324,7 @@ pub fn render_pipeline(device: &Device, desc: &wgpu::RenderPipelineDescriptor<'_
 pub fn render_pipeline_checked(device: &Device, desc: &wgpu::RenderPipelineDescriptor<'_>) -> Compiled<Result<RenderPipeline, String>> {
     let owned = OwnedRender::of(desc);
     let device = device.clone();
-    Compiled::spawn(move || scoped(&device, || owned.create(&device)))
+    Compiled::spawn_pipeline(desc.label, move || scoped(&device, || owned.create(&device)))
 }
 
 /// `create` inside validation and internal error scopes pushed on this thread: its value, or the
@@ -303,7 +354,7 @@ fn answered(future: impl std::future::Future<Output = Option<wgpu::Error>>) -> O
 pub fn compute_pipeline(device: &Device, desc: &wgpu::ComputePipelineDescriptor<'_>) -> Compiled<ComputePipeline> {
     let owned = OwnedCompute::of(desc);
     let device = device.clone();
-    Compiled::spawn(move || owned.create(&device))
+    Compiled::spawn_pipeline(desc.label, move || owned.create(&device))
 }
 
 /// A stage's module, entry point and compilation options, owned.
@@ -470,6 +521,13 @@ mod tests {
         assert!(now.finished <= now.submitted, "never more finished than handed over: {now:?}");
     }
 
+    #[test]
+    fn a_tally_is_pending_until_every_job_handed_over_finished() {
+        assert!(CompileTally { submitted: 3, finished: 2 }.pending());
+        assert!(!CompileTally { submitted: 3, finished: 3 }.pending());
+        assert!(!CompileTally::default().pending());
+    }
+
     /// A job still compiling when a boot reads its base (the presenter's own, handed over before
     /// the warm-up) finishes inside the boot's count: its n never passes its m.
     #[test]
@@ -483,6 +541,22 @@ mod tests {
         let now = compile_tally().since(base);
         assert!(now.finished >= 1, "the pending job finished since the base: {now:?}");
         assert!(now.finished <= now.submitted, "never more finished than handed over: {now:?}");
+    }
+
+    /// R-20: a pipeline handed over keeps its label, read back by the tally taken before it.
+    #[test]
+    fn the_pipelines_since_a_tally_are_named_by_their_labels() {
+        let label = format!("r20 row {}", std::process::id());
+        assert_eq!(*Compiled::spawn_pipeline(Some(&label), || 1_u8), 1);
+        let base = compile_tally();
+        let unseen = format!("{label} after");
+        let later = Compiled::spawn_pipeline(Some(&unseen), || 2_u8);
+        let unlabelled = Compiled::spawn_pipeline(None, || 3_u8);
+        assert_eq!((*later, *unlabelled), (2, 3));
+        let since = pipelines_since(base);
+        assert!(!since.contains(&label), "a pipeline handed over before the tally is not read: {since:?}");
+        let after = since.iter().position(|seen| *seen == unseen).expect("the later pipeline is read");
+        assert!(since[after..].iter().any(|seen| seen == UNLABELLED), "an unlabelled pipeline reads {UNLABELLED}: {since:?}");
     }
 
     #[test]

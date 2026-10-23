@@ -1,7 +1,9 @@
 //! EP-X1: the frontier's 120 s ride drawn Live on the host GPU, one tick per frame: desktop-high in
 //! a 2560x1440 window and the mobile-mid proxy at its reference resolution. Per class: no frame
 //! (tick, draw and GPU completion) over the class's frame interval (D7: 16.7 ms on desktop-high) and
-//! zero stalls (`volatile.__stream.stalls`). The record goes to `GENEX_FRONTIER_PERF_OUT` (default
+//! zero stalls (`volatile.__stream.stalls`), and no pipeline compiled after the boot (R-20: a
+//! pipeline first asked for mid-ride makes its frame wait for the compile, 0.5 s cold on Metal).
+//! The record goes to `GENEX_FRONTIER_PERF_OUT` (default
 //! `.studio-dev/evidence/rust-renderer/perf/frontier-ride.json`). Timings are the gate's on a quiet
 //! machine (GE); a lane's run is advisory. A debug build skips the row.
 //!
@@ -16,6 +18,7 @@ use frontier_game::{RIDE_TICKS, WORLD_SIZE, assets, game};
 use genex::present::Presenter;
 use genex::render::{DeviceClass, FormFactor, RenderChange};
 use genex::{FIXED_STEP_MS, Value, View, json};
+use genex_render::compile::{compile_tally, pipelines_since};
 use genex_render::presets::{class_defaults, reference_resolution};
 
 /// Frames drawn at tick 0 before the measured ride: the pipelines compile, the impostors bake and
@@ -55,6 +58,8 @@ fn ride(class: DeviceClass, window: (u32, u32)) -> (Value, Vec<String>) {
         presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("drawn");
         presenter.gpu().device.poll(wgpu::PollType::wait_indefinitely()).expect("the frame finished");
     }
+    // The boot's work is done: whatever the ride compiles from here on, a frame waited for.
+    let booted = compile_tally();
     let budget_ms = 1000.0 / f64::from(class_defaults(class).target_fps);
     let (mut frames, mut steps, mut draws, mut waits) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for _ in 0..RIDE_TICKS {
@@ -71,6 +76,7 @@ fn ride(class: DeviceClass, window: (u32, u32)) -> (Value, Vec<String>) {
         frames.push(finished);
     }
     assert_eq!(presenter.failure(), None);
+    let late = pipelines_since(booted);
     let state = runtime.state();
     let stream = &state["volatile"]["__stream"];
     let stalls = stream["stalls"].as_u64().expect("the stall count");
@@ -86,6 +92,9 @@ fn ride(class: DeviceClass, window: (u32, u32)) -> (Value, Vec<String>) {
     if stalls > 0 {
         failures.push(format!("{wire}: {stalls} stalls"));
     }
+    if !late.is_empty() {
+        failures.push(format!("{wire}: {} pipelines compiled after the boot: {late:?}", late.len()));
+    }
     let summary = |values: &[f64]| json!({ "p50": rounded(percentile(values, 0.5)), "p95": rounded(percentile(values, 0.95)), "p99": rounded(percentile(values, 0.99)), "max": rounded(percentile(values, 1.0)) });
     let row = json!({
         "class": wire,
@@ -95,6 +104,7 @@ fn ride(class: DeviceClass, window: (u32, u32)) -> (Value, Vec<String>) {
         "frameMs": summary(&frames),
         "framesOverBudget": over,
         "stalls": stalls,
+        "pipelinesAfterBoot": late,
         "heldMs": stream["heldMs"],
         "stepMs": summary(&steps),
         "drawMs": summary(&draws),

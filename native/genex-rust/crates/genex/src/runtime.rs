@@ -761,6 +761,13 @@ impl<W> Runtime<W> {
         state
     }
 
+    /// The characters the game made in its resets (`gfx.character`), whose rigs imported: the
+    /// presenter skins them at the boot, so the renderer compiles every skinned variant before a
+    /// frame draws one (game systems R-20, EP-X1).
+    pub(crate) fn character_paths(&self) -> Vec<String> {
+        self.core.gfx.assets().character_paths()
+    }
+
     /// `state()` as genex-core's snapshot (`session::snapshot_view`): `camera` the active view,
     /// `fps` the shell's live rate, the volatile probes under `volatile` beside `fps`.
     pub fn state_value(&self, camera: &str, fps: f64) -> CoreValue {
