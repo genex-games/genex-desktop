@@ -15,7 +15,7 @@ import { GenexPublishDialog } from "../../src/renderer/panels/plugins/genex/Gene
 import { studio } from "../../src/renderer/state/studio.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
 import type { GameProject } from "../../src/shared/game-project.ts";
-import { GenexAction, type GenexNativeRecord, type GenexPublishState } from "../../src/shared/genex.ts";
+import { GenexAction, GenexBuildReview, type GenexNativeRecord, type GenexPublishState } from "../../src/shared/genex.ts";
 import { NativeArch } from "../../src/shared/play-native.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
@@ -38,7 +38,7 @@ async function settle(frames = 10) {
 }
 
 /** What the game folder holds in each scene, and how its last Publish's apps went (`apps*`). */
-type Scene = "engine" | "stale" | "web" | "apps" | "appsSending" | "appsSent" | "appsFailed" | "appsOnly" | "appsHeld" | "unityNoApp" | "unitySoon" | "unityOldPlugin" | "unreal";
+type Scene = "engine" | "stale" | "web" | "apps" | "appsSending" | "appsSent" | "appsFailed" | "appsOnly" | "appsHeld" | "appsReview" | "appsRejected" | "unityNoApp" | "unitySoon" | "unityOldPlugin" | "unreal";
 
 const web = (uploads: boolean): PublishPlatform => ({
   target: PublishTarget.Web,
@@ -84,6 +84,8 @@ const SCENES: Record<Scene, () => PublishPlatform[]> = {
   appsFailed: sendingApps,
   appsOnly: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
   appsHeld: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
+  appsReview: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
+  appsRejected: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
   unityNoApp: () => [web(false), mac(PublishPlatformState.Missing), windows, linux()],
   unitySoon: () => [web(false), mac(PublishPlatformState.Ready), windows, linux()],
   unityOldPlugin: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
@@ -103,6 +105,17 @@ function appsOf(of: Scene): GenexNativeRecord {
   if (of === "appsHeld") {
     record.sent.push({ platform: "mac", arch: "universal", version: "1", sizeBytes: 1, publishedAt: at });
     record.listing = { state: "held", detail: null };
+  }
+  // Someone other than an admin sent it: Genex reviews it before players get it, or turned it down.
+  if (of === "appsReview") {
+    const review = GenexBuildReview.Pending;
+    record.sent.push({ platform: "mac", arch: "universal", version: "1", sizeBytes: 1, publishedAt: at, review });
+    record.listing = { state: "held", detail: null };
+  }
+  if (of === "appsRejected") {
+    const review = GenexBuildReview.Rejected;
+    const reviewReason = "It opens a shell.";
+    record.sent.push({ platform: "mac", arch: "universal", version: "1", sizeBytes: 1, publishedAt: at, review, reviewReason });
   }
   return record;
 }

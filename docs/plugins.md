@@ -3265,7 +3265,10 @@ Genex:
   (`publishApps`, `native-publish.ts`, one hour each), one at a time, after resolving each by real
   path inside the game folder. An app that fails never fails the publish; its row says "Not sent"
   and a line under the rows says why in the CLI's words. Each result is kept in the workspace's
-  `native.json` and answered as `GenexPublishState.native` (Sending…, On Genex). A draft sends no app,
+  `native.json` and answered as `GenexPublishState.native` (Sending…, On Genex). An app sent by
+  someone other than a Genex admin waits for Genex's review: the CLI's answer carries the build's
+  `review` (`pending`, `approved`, `rejected`, with `reviewReason`), its row says In review or Not
+  approved (a line under the rows gives Genex's reason), and players get it once it is approved. A draft sends no app,
   and a stale build stays. While the pinned CLI is older than `genex native` (1.36.11), nothing is
   sent and a built app says "Coming soon" (`uploads: false`), its players getting the web version.
   The dialog sends apps only through an installed Genex plugin whose record says it can
@@ -3282,7 +3285,10 @@ Genex:
   the first time, each app goes with `genex native publish`, the first that goes carrying
   `--gallery --title <name>` (a refused listing exits 1 with its answer; the app is live either way).
   Listed, the record turns public with the game's genex.games page as its link; held for review or
-  not listed, a line under the rows says so; refused, the publish fails in Genex's words. Multiplayer
+  not listed, a line under the rows says so; refused, the publish fails in Genex's words. A listing
+  whose app Genex still reviews counts as held (`listingForPlayers`): the game shows nowhere until
+  the app is approved, so the dialog says "Sent for review", neither celebrates nor offers to send
+  the same apps again (`appsInReview`). Multiplayer
   stays off for it. Like a web publish, it takes the cover again as it starts and sends it once its
   apps are on Genex (`#reshoot`, then the cover step). Its clip names as its build the first 40
   characters of a sent app's archive sha256 (`appClipCommit`, from `native.json`), which Genex

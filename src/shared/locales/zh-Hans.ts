@@ -1427,6 +1427,8 @@ export default {
   "Genex didn't click anything. Turn it on yourself: {clicks}.": "Genex 没有点击任何内容。请自己开启：{clicks}。",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex 没有发布任何内容。要在 Studio 中自己发布：{clicks}。",
+  "Genex didn’t approve the {app}.": "{app} 未通过 Genex 审核。",
+  "Genex didn’t approve the {app}: {reason}": "{app} 未通过 Genex 审核：{reason}",
   "Genex didn’t take that. Try again in a moment.": "Genex 没能完成这个操作。请稍后再试。",
   "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
     "只有在 Windows 上 Genex 才这样下载 Godot；在 Mac 上，“帮我完成”会把它安装到“应用程序”中。",
@@ -1459,7 +1461,6 @@ export default {
   "Genex is installing Godot. Nothing is needed from you.": "Genex 正在安装 Godot。你无需做任何事。",
   "Genex is open source under the MIT License. It also includes software from other projects, each under its own license.":
     "Genex 以 MIT 许可证开源。它还包含其他项目的软件，各自遵循自己的许可证。",
-  "Genex is reviewing the game before it shows in the gallery.": "Genex 正在审核这款游戏，通过后才会显示在画廊中。",
   "Genex isn't getting Roblox Studio right now.": "Genex 现在没有在获取 Roblox Studio。",
   "Genex keeps a copy of each file first, and Undo setup takes these changes back. A Genex editor helper file you changed is kept beside it as a .mine copy.":
     "Genex 会先备份每个文件，“撤销设置”可以撤回这些更改。你改过的 Genex 编辑器辅助程序文件会以 .mine 副本保留在旁边。",
@@ -1649,6 +1650,7 @@ export default {
   "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.":
     "在 Unity Hub 中登录并添加 Unity 许可证（如果 Unity 的条款允许，Personal 版免费）。Unity 的应用和你的账号受 Unity 自己的条款约束。密码只由你本人输入。",
   "In every game": "所有游戏",
+  "In review": "审核中",
   "In round {round}'s brief": "已写入第 {round} 轮的任务说明",
   "In the background": "后台",
   "In the background: {title}": "后台：{title}",
@@ -2235,6 +2237,7 @@ export default {
   "None yet": "暂无",
   "Not a public file: {path}": "不是公开文件：{path}",
   "Not added": "未添加",
+  "Not approved": "未通过",
   "Not asked — the step did not land.": "未请求——步骤没有完成。",
   "Not comparable": "无法比较",
   "Not confirmed": "未确认",
@@ -3118,6 +3121,7 @@ export default {
   Sending: "正在发送",
   "Sending…": "正在发送…",
   "Sends when the build finishes…": "构建完成后发送…",
+  "Sent for review. It appears in Play once Genex approves it.": "已提交审核。Genex 通过后会出现在“游玩”中。",
   Sent: "已发送",
   "Sent — every part gets it with its next round": "已发送——每个部分都会在下一轮收到",
   "Sent — it goes into this part's next round": "已发送——将进入这个部分的下一轮",
@@ -5348,6 +5352,7 @@ export default {
   "{name}, playing {game}": "{name}，正在玩 {game}",
   '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".':
     "{name}：Codex 从环境变量 {variable} 读取 bearer 令牌。Studio 会自己保存它——请将令牌以“Bearer <token>”的形式粘贴到 Authorization 字段中。",
+  "{name}: Genex is reviewing it": "{name}：Genex 正在审核",
   "{name}: on Genex for desktop players": "{name}：已在 Genex 上供桌面玩家使用",
   "{name}: publishing it is coming soon": "{name}：即将支持发布",
   "{name}: sign in to Genex again": "{name}：重新登录 Genex",

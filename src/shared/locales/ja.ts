@@ -1511,6 +1511,8 @@ export default {
     "Genexは何もクリックしませんでした。自分でオンにしてください：{clicks}。",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genexは何も公開しませんでした。Studioで自分で公開するには：{clicks}。",
+  "Genex didn’t approve the {app}.": "{app}はGenexに承認されませんでした。",
+  "Genex didn’t approve the {app}: {reason}": "{app}はGenexに承認されませんでした：{reason}",
   "Genex didn’t take that. Try again in a moment.":
     "Genexが受け付けませんでした。少し待ってからもう一度試してください。",
   "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
@@ -1548,8 +1550,6 @@ export default {
     "GenexがGodotをインストールしています。何もしなくて大丈夫です。",
   "Genex is open source under the MIT License. It also includes software from other projects, each under its own license.":
     "GenexはMITライセンスのオープンソースです。ほかのプロジェクトのソフトウェアも含まれており、それぞれ独自のライセンスに従います。",
-  "Genex is reviewing the game before it shows in the gallery.":
-    "ギャラリーに表示される前に、Genexがゲームを確認しています。",
   "Genex isn't getting Roblox Studio right now.": "Genexは今、Roblox Studioを入手していません。",
   "Genex keeps a copy of each file first, and Undo setup takes these changes back. A Genex editor helper file you changed is kept beside it as a .mine copy.":
     "Genexは先に各ファイルのコピーを保存します。「セットアップを元に戻す」でこれらの変更を取り消せます。あなたが変更したGenexエディターヘルパーのファイルは、.mineコピーとして横に残ります。",
@@ -1751,6 +1751,7 @@ export default {
   "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.":
     "Unity Hubでサインインして、Unityのライセンスを追加してください（Unityの規約で認められていれば、Personalは無料です）。Unityのアプリとアカウントには、Unity自身の規約が適用されます。パスワードを入力するのはあなただけです。",
   "In every game": "すべてのゲーム",
+  "In review": "審査中",
   "In round {round}'s brief": "ラウンド{round}の指示に反映",
   "In the background": "バックグラウンド",
   "In the background: {title}": "バックグラウンド：{title}",
@@ -2368,6 +2369,7 @@ export default {
   "None yet": "まだありません",
   "Not a public file: {path}": "公開ファイルではありません：{path}",
   "Not added": "未追加",
+  "Not approved": "未承認",
   "Not asked — the step did not land.": "依頼なし — ステップが実現しませんでした。",
   "Not comparable": "比較できません",
   "Not confirmed": "未確認",
@@ -3294,6 +3296,8 @@ export default {
   Sending: "送信中",
   "Sending…": "送信中…",
   "Sends when the build finishes…": "ビルドが終わったら送信されます…",
+  "Sent for review. It appears in Play once Genex approves it.":
+    "審査に送りました。Genexが承認すると「プレイ」に表示されます。",
   Sent: "送信済み",
   "Sent — every part gets it with its next round": "送信しました。すべてのパートの次のラウンドに反映されます",
   "Sent — it goes into this part's next round": "送信しました。このパートの次のラウンドに反映されます",
@@ -5653,6 +5657,7 @@ export default {
   "{name}, playing {game}": "{name}、{game}をプレイ中",
   '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".':
     "{name}：Codexはbearerトークンを環境変数{variable}から読みます。Studioはトークンを自分で保存するので、Authorizationフィールドに「Bearer <token>」の形で貼り付けてください。",
+  "{name}: Genex is reviewing it": "{name}：Genexが審査中",
   "{name}: on Genex for desktop players": "{name}：デスクトップのプレイヤー向けにGenexで公開中",
   "{name}: publishing it is coming soon": "{name}：公開は近日対応予定です",
   "{name}: sign in to Genex again": "{name}：Genexにもう一度サインイン",

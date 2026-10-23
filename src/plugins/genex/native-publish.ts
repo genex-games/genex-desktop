@@ -11,6 +11,7 @@ import path from "node:path";
 // look-up at run time from the app's own bundle finds nothing and no app would ever be sent.
 import cliPackage from "@genex-ai/cli-demo/package.json" with { type: "json" };
 import {
+  GenexBuildReview,
   type GenexNativeFailure,
   type GenexNativeListing,
   type GenexNativeSent,
@@ -24,6 +25,8 @@ const NATIVE_CLI = [1, 36, 11] as const;
 const NATIVE_UPLOADS_MAX = 6;
 /** What a failure keeps of the CLI's words. */
 const FAILURE_CHARS = 400;
+/** The most of Genex's words on a turned-down app kept. */
+const REVIEW_REASON_CHARS = 400;
 
 /** How much of an app's archive hash a clip names as its build: the most `genex cover --commit` takes. */
 const CLIP_COMMIT_CHARS = 40;
@@ -145,7 +148,27 @@ export function sentBuild(answer: unknown): GenexNativeSent | null {
     sizeBytes,
     ...(typeof sha256 === "string" && SHA256_HEX.test(sha256) ? { sha256: sha256.toLowerCase() } : {}),
     publishedAt: String(publishedAt),
+    ...reviewOf(build),
   };
+}
+
+const REVIEWS: ReadonlySet<unknown> = new Set(Object.values(GenexBuildReview));
+
+/** Genex's review of a sent build, as the API answers it beside the build; nothing for an unknown one. */
+function reviewOf(build: Record<string, unknown>): Pick<GenexNativeSent, "review" | "reviewReason"> {
+  if (!REVIEWS.has(build.review)) return {};
+  const review = build.review as GenexBuildReview;
+  const reason = typeof build.reviewReason === "string" ? build.reviewReason.trim() : "";
+  return reason ? { review, reviewReason: reason.slice(0, REVIEW_REASON_CHARS) } : { review };
+}
+
+/**
+ * The listing as it stands for players: a game Genex lists with an app it still reviews shows nowhere
+ * until that app is approved, so its listing is held. Genex answers the listing beside the build.
+ */
+function listingForPlayers(listing: GenexNativeListing | undefined, sent: GenexNativeSent | null) {
+  const waiting = listing?.state === GenexListingState.Published && sent?.review === GenexBuildReview.Pending;
+  return waiting ? { state: GenexListingState.Held, detail: null } : listing;
 }
 
 /**
@@ -192,7 +215,7 @@ export async function sendNativeBuild(
   try {
     const answer = await send(upload.target);
     const sent = sentBuild(answer);
-    const listing = listingOf(answer);
+    const listing = listingForPlayers(listingOf(answer), sent);
     const listed = listing ? { listing } : {};
     if (sent) return { sent, ...listed };
     return { failed: { platform: upload.platform, arch: "", error: MESSAGE.NotABuild }, ...listed };

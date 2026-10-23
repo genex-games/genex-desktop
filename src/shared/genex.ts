@@ -609,7 +609,11 @@ export interface GenexPublishState {
   remix?: GenexRemixRecord;
 }
 
-/** One app a publish sent: live for desktop players under `version`. */
+/** Where Genex's review of an app someone other than an admin sent stands. Wire values: never rename one. */
+export const GenexBuildReview = { Pending: "pending", Approved: "approved", Rejected: "rejected" } as const;
+export type GenexBuildReview = (typeof GenexBuildReview)[keyof typeof GenexBuildReview];
+
+/** One app a publish sent: live for desktop players under `version`, once Genex approved it. */
 export interface GenexNativeSent {
   platform: string;
   arch: string;
@@ -618,6 +622,10 @@ export interface GenexNativeSent {
   /** The archive's sha256 as Genex keeps it: the build a clip of a game with only apps names. */
   sha256?: string;
   publishedAt: string;
+  /** Genex's review of it; absent when Genex did not review it (an admin's app, a Genex before review). */
+  review?: GenexBuildReview;
+  /** Why Genex turned it down, when it did and said why. */
+  reviewReason?: string;
 }
 
 /** One app a publish could not send, and Genex's or the CLI's words for why. */

@@ -1330,11 +1330,12 @@ button.genex-publish-banner-name:hover {
 .genex-publish-platform-make:hover {
   background: var(--hover-2);
 }
-/* The words of an app that is on Genex, and of one that could not be sent. */
+/* The words of an app that is on Genex, and of one that could not be sent or was not approved. */
 .genex-publish-platform-note[data-end="sent"] {
   color: color-mix(in oklab, var(--green) 70%, var(--ink-2));
 }
-.genex-publish-platform-note[data-end="failed"] {
+.genex-publish-platform-note[data-end="failed"],
+.genex-publish-platform-note[data-end="rejected"] {
   color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
 }
 .genex-publish-platform-failure {

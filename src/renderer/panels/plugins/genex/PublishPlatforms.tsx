@@ -68,6 +68,11 @@ const NOTE: Partial<Record<PlatformEnd, { text: string; label: (name: string) =>
   [PlatformEnd.Soon]: { text: WORDS.soon, label: WORDS.soonLabel },
   [PlatformEnd.Sending]: { text: WORDS.sending, label: (name) => t("{name}: {state}", { name, state: WORDS.sending }) },
   [PlatformEnd.Sent]: { text: WORDS.sent, label: WORDS.sentLabel },
+  [PlatformEnd.Review]: { text: WORDS.review, label: WORDS.reviewLabel },
+  [PlatformEnd.Rejected]: {
+    text: WORDS.notApproved,
+    label: (name) => t("{name}: {state}", { name, state: WORDS.notApproved }),
+  },
   [PlatformEnd.Failed]: { text: WORDS.failed, label: (name) => t("{name}: {state}", { name, state: WORDS.failed }) },
 };
 

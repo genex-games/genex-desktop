@@ -1574,6 +1574,8 @@ export default {
     "Genex n’a cliqué sur rien. Active-le toi-même : {clicks}.",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex n’a rien publié. Pour le publier toi-même dans Studio : {clicks}.",
+  "Genex didn’t approve the {app}.": "{app} : Genex ne l’a pas approuvée.",
+  "Genex didn’t approve the {app}: {reason}": "{app} : Genex ne l’a pas approuvée. {reason}",
   "Genex didn’t take that. Try again in a moment.": "Genex n’a pas accepté. Réessaie dans un instant.",
   "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
     "Genex ne télécharge Godot ainsi que sur Windows ; sur un Mac, « Fais-le pour moi » l’installe dans Applications.",
@@ -1611,8 +1613,6 @@ export default {
   "Genex is installing Godot. Nothing is needed from you.": "Genex installe Godot. Tu n’as rien à faire.",
   "Genex is open source under the MIT License. It also includes software from other projects, each under its own license.":
     "Genex est open source sous licence MIT. Il inclut aussi des logiciels d’autres projets, chacun sous sa propre licence.",
-  "Genex is reviewing the game before it shows in the gallery.":
-    "Genex vérifie le jeu avant qu’il apparaisse dans la galerie.",
   "Genex isn't getting Roblox Studio right now.": "Genex n’est pas en train d’installer Roblox Studio.",
   "Genex keeps a copy of each file first, and Undo setup takes these changes back. A Genex editor helper file you changed is kept beside it as a .mine copy.":
     "Genex garde d’abord une copie de chaque fichier, et « Annuler la configuration » revient sur ces changements. Un fichier du module d’éditeur Genex que tu as modifié est gardé à côté, en copie .mine.",
@@ -1818,6 +1818,7 @@ export default {
   "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.":
     "Dans Unity Hub, connecte-toi et ajoute une licence Unity (Personal est gratuite si les conditions d’Unity te le permettent). Les conditions d’Unity couvrent ses apps et ton compte. Ton mot de passe, c’est toi qui le tapes.",
   "In every game": "Dans tous les jeux",
+  "In review": "En vérification",
   "In round {round}'s brief": "Dans les consignes du tour {round}",
   "In the background": "En arrière-plan",
   "In the background: {title}": "En arrière-plan : {title}",
@@ -2429,6 +2430,7 @@ export default {
   "None yet": "Rien pour l’instant",
   "Not a public file: {path}": "Ce n’est pas un fichier public : {path}",
   "Not added": "Pas ajouté",
+  "Not approved": "Non approuvée",
   "Not asked — the step did not land.": "Pas demandé — l’étape n’a pas abouti.",
   "Not comparable": "Non comparable",
   "Not confirmed": "Non confirmé",
@@ -3362,6 +3364,8 @@ export default {
   Sending: "Envoi en cours",
   "Sending…": "Envoi…",
   "Sends when the build finishes…": "Sera envoyé à la fin du build…",
+  "Sent for review. It appears in Play once Genex approves it.":
+    "Envoyé pour vérification. Visible dans « Jouer » dès que Genex l’approuve.",
   Sent: "Envoyé",
   "Sent — every part gets it with its next round": "Envoyé — chaque partie le reçoit à son prochain tour",
   "Sent — it goes into this part's next round": "Envoyé — ça part dans le prochain tour de cette partie",
@@ -5763,6 +5767,7 @@ export default {
   "{name}, playing {game}": "{name}, joue à {game}",
   '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".':
     "{name} : Codex lit le jeton bearer dans la variable d’environnement {variable}. Studio le stocke lui-même — colle le jeton dans le champ Authorization sous la forme « Bearer <token> ».",
+  "{name}: Genex is reviewing it": "{name} : Genex le vérifie",
   "{name}: on Genex for desktop players": "{name} : sur Genex pour les joueurs sur ordinateur",
   "{name}: publishing it is coming soon": "{name} : publication bientôt disponible",
   "{name}: sign in to Genex again": "{name} : se reconnecter à Genex",

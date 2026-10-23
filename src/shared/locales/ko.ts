@@ -1482,6 +1482,8 @@ export default {
     "Genex가 아무것도 클릭하지 않았어요. 직접 켜세요: {clicks}.",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex가 아무것도 게시하지 않았어요. Studio에서 직접 게시하려면: {clicks}.",
+  "Genex didn’t approve the {app}.": "Genex가 {app}을 승인하지 않았어요.",
+  "Genex didn’t approve the {app}: {reason}": "Genex가 {app}을 승인하지 않았어요: {reason}",
   "Genex didn’t take that. Try again in a moment.": "Genex가 받아들이지 않았어요. 잠시 후 다시 시도해 주세요.",
   "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
     "Genex는 Windows에서만 이렇게 Godot를 다운로드해요. Mac에서는 ‘대신 해 주기’가 응용 프로그램 폴더에 설치해요.",
@@ -1515,8 +1517,6 @@ export default {
   "Genex is installing Godot. Nothing is needed from you.": "Genex가 Godot를 설치하고 있어요. 따로 할 일은 없어요.",
   "Genex is open source under the MIT License. It also includes software from other projects, each under its own license.":
     "Genex는 MIT 라이선스로 공개된 오픈 소스예요. 다른 프로젝트의 소프트웨어도 포함되어 있고, 각각 고유한 라이선스를 따라요.",
-  "Genex is reviewing the game before it shows in the gallery.":
-    "갤러리에 표시되기 전에 Genex가 게임을 검토하고 있어요.",
   "Genex isn't getting Roblox Studio right now.": "Genex는 지금 Roblox Studio를 받고 있지 않아요.",
   "Genex keeps a copy of each file first, and Undo setup takes these changes back. A Genex editor helper file you changed is kept beside it as a .mine copy.":
     "Genex는 먼저 각 파일의 사본을 남겨 두고, ‘설정 되돌리기’로 이 변경을 되돌릴 수 있어요. 직접 수정한 Genex 에디터 도우미 파일은 옆에 .mine 사본으로 보관돼요.",
@@ -1714,6 +1714,7 @@ export default {
   "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.":
     "Unity Hub에서 로그인하고 Unity 라이선스를 추가하세요(Unity 약관상 가능하면 Personal은 무료예요). Unity 앱과 계정에는 Unity 자체 약관이 적용돼요. 비밀번호는 본인만 입력해요.",
   "In every game": "모든 게임",
+  "In review": "검토 중",
   "In round {round}'s brief": "{round}라운드 지시에 포함",
   "In the background": "백그라운드",
   "In the background: {title}": "백그라운드: {title}",
@@ -2315,6 +2316,7 @@ export default {
   "None yet": "아직 없어요",
   "Not a public file: {path}": "공개 파일이 아니에요: {path}",
   "Not added": "추가 안 됨",
+  "Not approved": "승인 안 됨",
   "Not asked — the step did not land.": "요청 안 함 — 단계가 반영되지 않았어요.",
   "Not comparable": "비교 불가",
   "Not confirmed": "확인되지 않음",
@@ -3221,6 +3223,8 @@ export default {
   Sending: "보내는 중",
   "Sending…": "보내는 중…",
   "Sends when the build finishes…": "빌드가 끝나면 보내져요…",
+  "Sent for review. It appears in Play once Genex approves it.":
+    "검토를 요청했어요. Genex가 승인하면 플레이에 나타나요.",
   Sent: "보냄",
   "Sent — every part gets it with its next round": "보냈어요 — 모든 파트가 다음 라운드에 받아요",
   "Sent — it goes into this part's next round": "보냈어요 — 이 파트의 다음 라운드에 반영돼요",
@@ -5529,6 +5533,7 @@ export default {
   "{name}, playing {game}": "{name}, {game} 플레이 중",
   '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".':
     "{name}: Codex는 bearer 토큰을 환경 변수 {variable}에서 읽어요. Studio는 토큰을 직접 저장하니, Authorization 필드에 “Bearer <token>” 형식으로 붙여 넣으세요.",
+  "{name}: Genex is reviewing it": "{name}: Genex가 검토하고 있어요",
   "{name}: on Genex for desktop players": "{name}: 데스크톱 플레이어용으로 Genex에 올라감",
   "{name}: publishing it is coming soon": "{name}: 게시 기능은 곧 제공돼요",
   "{name}: sign in to Genex again": "{name}: Genex에 다시 로그인",

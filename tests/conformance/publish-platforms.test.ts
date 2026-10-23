@@ -9,7 +9,7 @@ import { mkdir, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { publishedApps, publishPlatforms } from "../../src/main/core/publish-platforms.ts";
-import type { GenexNativeRecord } from "../../src/shared/genex.ts";
+import { GenexBuildReview, type GenexNativeRecord } from "../../src/shared/genex.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
 import { NativeArch } from "../../src/shared/play-native.ts";
@@ -20,6 +20,7 @@ import {
   PublishTarget,
 } from "../../src/shared/publish-platforms.ts";
 import {
+  appsInReview,
   appsMadeOnly,
   appsUpToDate,
   appsLabel,
@@ -392,6 +393,26 @@ describe("Publish's platform rows as the dialog says them", () => {
       "Couldn’t send the Mac app: Couldn't get an upload token (HTTP 413).",
     ]);
     assert.deepEqual(failureLines([WEB, ready, WINDOWS], record({})), []);
+    const reviewed = (review: GenexBuildReview, reviewReason?: string) =>
+      record({
+        sent: [
+          {
+            ...live,
+            publishedAt: new Date(T0 + MINUTE_MS).toISOString(),
+            review,
+            ...(reviewReason && { reviewReason }),
+          },
+        ],
+      });
+    assert.equal(macEnd(reviewed(GenexBuildReview.Pending)), PlatformEnd.Review);
+    assert.equal(macEnd(reviewed(GenexBuildReview.Approved)), PlatformEnd.Sent);
+    assert.equal(macEnd(reviewed(GenexBuildReview.Rejected)), PlatformEnd.Rejected);
+    assert.deepEqual(failureLines([WEB, ready, WINDOWS], reviewed(GenexBuildReview.Rejected, "It opens a shell.")), [
+      "Genex didn’t approve the Mac app: It opens a shell.",
+    ]);
+    assert.deepEqual(failureLines([WEB, ready, WINDOWS], reviewed(GenexBuildReview.Rejected)), [
+      "Genex didn’t approve the Mac app.",
+    ]);
   });
 
   it("has nothing new to send for a game whose apps are all on Genex already", () => {
@@ -415,6 +436,14 @@ describe("Publish's platform rows as the dialog says them", () => {
     );
     assert.equal(appsUpToDate([WEB, ready], native(T0 + MINUTE_MS)), false, "a web game always publishes its build");
     assert.equal(appsUpToDate([noWeb, ready], undefined), false, "never published");
+    const reviewed = (review: GenexBuildReview) =>
+      native(T0 + MINUTE_MS, { sent: [{ ...live, publishedAt: new Date(T0 + MINUTE_MS).toISOString(), review }] });
+    assert.equal(appsUpToDate([noWeb, ready], reviewed(GenexBuildReview.Pending)), true, "Genex reviews what went");
+    assert.equal(
+      appsUpToDate([noWeb, ready], reviewed(GenexBuildReview.Rejected)),
+      false,
+      "a turned-down app goes again",
+    );
   });
 
   it("publishes a game that has only apps as its apps, and says how its listing went", () => {
@@ -439,14 +468,41 @@ describe("Publish's platform rows as the dialog says them", () => {
     assert.equal(listingLine(rows, record({ listing: { state: "published", detail: null } })), null);
     assert.equal(
       listingLine(rows, record({ listing: { state: "held", detail: null } })),
-      "Genex is reviewing the game before it shows in the gallery.",
+      "Sent for review. It appears in Play once Genex approves it.",
     );
     assert.equal(
       listingLine(rows, record({})),
       "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.",
     );
     assert.equal(listingLine(rows, record({ sending: true })), null, "nothing is said while the apps go");
+    const turnedDown = record({});
+    turnedDown.sent = turnedDown.sent.map((app) => ({ ...app, review: GenexBuildReview.Rejected }));
+    assert.equal(listingLine(rows, turnedDown), null, "a turned-down app says why on its own line");
     assert.equal(listingLine([WEB, ready, WINDOWS], record({})), null, "a web game is listed by its web publish");
+  });
+
+  it("knows a game with only apps waits for Genex's review: no celebration until then", () => {
+    const noWeb = { ...WEB, state: PublishPlatformState.Missing, uploads: false };
+    const ready = { ...MAC, uploads: true };
+    const app = {
+      platform: "mac",
+      arch: "universal",
+      version: "1",
+      sizeBytes: 1,
+      publishedAt: new Date(NOW).toISOString(),
+    };
+    const record = (...reviews: (GenexBuildReview | undefined)[]): GenexNativeRecord => ({
+      supported: true,
+      sending: false,
+      sent: reviews.map((review) => ({ ...app, ...(review && { review }) })),
+      failed: [],
+    });
+    assert.equal(appsInReview([noWeb, ready], record(GenexBuildReview.Pending)), true);
+    assert.equal(appsInReview([noWeb, ready], record(GenexBuildReview.Pending, GenexBuildReview.Approved)), false);
+    assert.equal(appsInReview([noWeb, ready], record(undefined)), false, "a Genex without review lists it at once");
+    assert.equal(appsInReview([WEB, ready], record(GenexBuildReview.Pending)), false, "its web version went live");
+    assert.equal(appsInReview([noWeb, ready], { ...record(GenexBuildReview.Pending), sending: true }), false);
+    assert.equal(appsInReview([noWeb, ready], undefined), false);
   });
 
   it("offers Publish for apps to a Unity, Godot or Unreal game, by its facts", () => {

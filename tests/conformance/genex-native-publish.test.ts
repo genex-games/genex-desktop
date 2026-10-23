@@ -243,6 +243,27 @@ describe("one app sent", () => {
     });
   });
 
+  it("keeps Genex's review of the build: waiting, or turned down and why", async () => {
+    const waiting = await sendNativeBuild(MAC, async () => ({
+      build: { ...BUILD, review: "pending" },
+      listing: { state: "published", slug: "dust-runners" },
+    }));
+    assert.equal("sent" in waiting ? waiting.sent.review : null, "pending");
+    assert.deepEqual(waiting.listing, { state: "held", detail: null }, "a game Genex reviews is not listed yet");
+    const approved = await sendNativeBuild(MAC, async () => ({
+      build: { ...BUILD, review: "approved" },
+      listing: { state: "published", slug: "dust-runners" },
+    }));
+    assert.deepEqual(approved.listing, { state: "published", detail: null });
+    const rejected = sentBuild({ build: { ...BUILD, review: "rejected", reviewReason: "It opens a shell." } });
+    assert.deepEqual([rejected?.review, rejected?.reviewReason], ["rejected", "It opens a shell."]);
+    assert.equal(
+      sentBuild({ build: { ...BUILD, review: "maybe" } })?.review,
+      undefined,
+      "an unknown review is dropped",
+    );
+  });
+
   it("keeps a failure in the CLI's own last words, and an answer without a build as a failure", async () => {
     const failed = await sendNativeBuild(MAC, async () => {
       throw new Error(
@@ -262,7 +283,8 @@ describe("one app sent", () => {
  * Genex's tools with a stand-in for the CLI: a preload that answers `genex init` and `genex native
  * publish` itself, as the real commands do (`--json`: one object, exit 1 for a refused listing), and
  * logs each run's arguments. An app whose path names "Broken" fails on stderr with a non-zero exit;
- * one naming "Held" or "Refused" gets that answer to its `--gallery` listing.
+ * one naming "Held" or "Refused" gets that answer to its `--gallery` listing, and one naming "Review" is
+ * listed with a build Genex still reviews.
  */
 async function toolsWithStandIn(sendsApps = true, api = "http://127.0.0.1:9", clipAnswer: object = CLIP_APPLIED) {
   const root = await realpath(await tmpDir("genex-native-tools-"));
@@ -309,7 +331,8 @@ const listing = !args.includes("--gallery")
       ? { state: "held", category: null, detail: null }
       : { state: "published", slug: "dust-runners" };
 const system = args.includes("--platform") ? args[args.indexOf("--platform") + 1] : "windows";
-const build = { ...${JSON.stringify(answer)}, ...(windows ? { platform: system, arch: "x64" } : {}) };
+const review = target.includes("Review") ? { review: "pending" } : {};
+const build = { ...${JSON.stringify(answer)}, ...(windows ? { platform: system, arch: "x64" } : {}), ...review };
 process.stdout.write(JSON.stringify({ build, engine: "unity", ...(listing ? { listing } : {}) }));
 process.exit(listing?.state === "refused" ? 1 : 0);
 `,
@@ -440,6 +463,16 @@ describe("a game with only apps, published", () => {
     const failed = await broken.genex.publishWait("dust");
     assert.equal(failed.job?.state, "failed");
     assert.equal(failed.job?.error, "Couldn't get an upload token (HTTP 413).");
+  });
+
+  it("is held, never listed, while Genex reviews the app it went with", async () => {
+    const { genex } = await toolsWithStandIn(true, await fixtureApi());
+    await genex.publishAppsOnly("dust", [app("Review")], "Dust Runners");
+    const state = await genex.publishWait("dust");
+    assert.equal(state.job?.state, "done", JSON.stringify(state.job));
+    assert.equal(state.native?.sent[0]?.review, "pending");
+    assert.deepEqual(state.native?.listing, { state: "held", detail: null });
+    assert.notEqual(state.status, "published", "its page is not found until Genex approves it");
   });
 
   it("takes the cover again as it starts and sends it once the apps are on Genex", async () => {

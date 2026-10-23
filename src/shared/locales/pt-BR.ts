@@ -1566,6 +1566,8 @@ export default {
     "O Genex não clicou em nada. Ative você mesmo: {clicks}.",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "O Genex não publicou nada. Para publicar você mesmo no Studio: {clicks}.",
+  "Genex didn’t approve the {app}.": "{app}: o Genex não aprovou.",
+  "Genex didn’t approve the {app}: {reason}": "{app}: o Genex não aprovou. {reason}",
   "Genex didn’t take that. Try again in a moment.": "O Genex não aceitou. Tente de novo daqui a pouco.",
   "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
     "O Genex baixa o Godot assim só no Windows; no Mac, “Fazer por mim” instala em Aplicativos.",
@@ -1602,8 +1604,6 @@ export default {
     "O Genex está instalando o Godot. Você não precisa fazer nada.",
   "Genex is open source under the MIT License. It also includes software from other projects, each under its own license.":
     "O Genex é de código aberto sob a Licença MIT. Ele também inclui software de outros projetos, cada um com sua própria licença.",
-  "Genex is reviewing the game before it shows in the gallery.":
-    "O Genex está revisando o jogo antes de ele aparecer na galeria.",
   "Genex isn't getting Roblox Studio right now.": "O Genex não está baixando o Roblox Studio agora.",
   "Genex keeps a copy of each file first, and Undo setup takes these changes back. A Genex editor helper file you changed is kept beside it as a .mine copy.":
     "O Genex guarda antes uma cópia de cada arquivo, e “Desfazer configuração” reverte essas mudanças. Um arquivo do módulo do Genex para o editor que você alterou fica ao lado do novo como cópia .mine.",
@@ -1808,6 +1808,7 @@ export default {
   "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.":
     "No Unity Hub, entre na sua conta e adicione uma licença do Unity (a Personal é grátis se os termos da Unity permitirem para você). Os próprios termos da Unity cobrem os apps dela e a sua conta. Só você digita a sua senha.",
   "In every game": "Em todos os jogos",
+  "In review": "Em revisão",
   "In round {round}'s brief": "No briefing da rodada {round}",
   "In the background": "Em segundo plano",
   "In the background: {title}": "Em segundo plano: {title}",
@@ -2419,6 +2420,7 @@ export default {
   "None yet": "Nenhum ainda",
   "Not a public file: {path}": "Não é um arquivo público: {path}",
   "Not added": "Não adicionado",
+  "Not approved": "Não aprovado",
   "Not asked — the step did not land.": "Não foi pedido — o passo não deu certo.",
   "Not comparable": "Não comparável",
   "Not confirmed": "Não confirmado",
@@ -3351,6 +3353,8 @@ export default {
   Sending: "Enviando",
   "Sending…": "Enviando…",
   "Sends when the build finishes…": "Será enviada quando o build terminar…",
+  "Sent for review. It appears in Play once Genex approves it.":
+    "Enviado para revisão. Aparece em Jogar assim que o Genex aprovar.",
   Sent: "Enviado",
   "Sent — every part gets it with its next round": "Enviado — cada parte recebe na próxima rodada",
   "Sent — it goes into this part's next round": "Enviado — entra na próxima rodada desta parte",
@@ -5733,6 +5737,7 @@ export default {
   "{name}, playing {game}": "{name}, jogando {game}",
   '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".':
     "{name}: o Codex lê o token bearer da variável de ambiente {variable}. O Studio guarda o token por conta própria — cole-o no campo Authorization como “Bearer <token>”.",
+  "{name}: Genex is reviewing it": "{name}: o Genex está revisando",
   "{name}: on Genex for desktop players": "{name}: no Genex para jogadores de desktop",
   "{name}: publishing it is coming soon": "{name}: publicação em breve",
   "{name}: sign in to Genex again": "{name}: entrar no Genex de novo",

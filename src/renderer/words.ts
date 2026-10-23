@@ -3719,10 +3719,16 @@ export const PUBLISH_PLATFORM_WORDS = {
   sentLabel: (name: string) => t("{name}: on Genex for desktop players", { name }),
   failed: t("Not sent"),
   failedLine: (name: string, error: string) => t("Couldn’t send the {app}: {error}", { app: name, error }),
+  /** An app sent by someone other than an admin: Genex reviews it before players get it. */
+  review: t("In review"),
+  reviewLabel: (name: string) => t("{name}: Genex is reviewing it", { name }),
+  notApproved: t("Not approved"),
+  rejected: (name: string) => t("Genex didn’t approve the {app}.", { app: name }),
+  rejectedLine: (name: string, reason: string) => t("Genex didn’t approve the {app}: {reason}", { app: name, reason }),
   /** A game with only apps: its main press, who can play it, and how its listing went. */
   publishApps: (apps: string) => t("Publish {apps}", { apps }),
   onlyPlayers: (players: string) => t("Only {players} players can play it.", { players }),
-  held: t("Genex is reviewing the game before it shows in the gallery."),
+  held: t("Sent for review. It appears in Play once Genex approves it."),
   /** A game made in an engine with nothing Publish can send yet: no app, or none Studio can send. */
   makeFirst: t("Make a Mac, Windows or Linux app first, then publish it here."),
   makeAnyFirst: t("Make a web version or a Mac, Windows or Linux app first, then publish it here."),

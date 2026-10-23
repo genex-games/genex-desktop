@@ -4,7 +4,8 @@
  * line; a built Mac app says "Coming soon" and the line under the rows says its players get the
  * web version; Make with agent sends the ask to the game's chat and the row says it was asked; a
  * build older than the game's last change says so; once the CLI sends apps, the line says Publish
- * sends the Mac app and its row says Sending…, On Genex or Not sent (with why); a web game with no
+ * sends the Mac app and its row says Sending…, On Genex or Not sent (with why), or In review and Not
+ * approved (with why) for an app Genex reviews first; a web game with no
  * app shows no rows. Dark and
  * light screens.
  */
@@ -118,8 +119,20 @@ app.whenReady().then(async()=>{
   const pressed=await step('appsOnlyPress','window.platformsRig.press()');
   assert.deepEqual(pressed.published,[{via:'apps',title:'Dust Runners'}],'the apps go, never a web copy');
   const held=await step('appsHeld','window.platformsRig.open({scene:"appsHeld"})');
-  assert.deepEqual(held.failures,['Genex is reviewing the game before it shows in the gallery.']);
+  assert.deepEqual(held.failures,['Sent for review. It appears in Play once Genex approves it.']);
   assert.equal(held.rows[1].end,'On Genex');
+  // Someone other than an admin sent it: Genex reviews it first, and may turn it down with why.
+  const review=await step('appsReview','window.platformsRig.open({scene:"appsReview"})');
+  assert.deepEqual(review.failures,['Sent for review. It appears in Play once Genex approves it.']);
+  assert.equal(review.rows[1].end,'In review');
+  assert.equal(review.primary,null,'the same app sent again would change nothing');
+  assert.equal(review.overflow,false);
+  report.appsReview=await capture('dark-apps-review');
+  const rejected=await step('appsRejected','window.platformsRig.open({scene:"appsRejected"})');
+  assert.equal(rejected.rows[1].end,'Not approved');
+  assert.deepEqual(rejected.failures,['Genex didn’t approve the Mac app: It opens a shell.']);
+  assert.equal(rejected.primary,'Publish Mac app','a turned-down app can go again');
+  report.appsRejected=await capture('dark-apps-rejected');
   // A Unity game with no app yet, then with one Studio cannot send yet: its press waits and says why.
   const unity=await step('unityNoApp','window.platformsRig.open({scene:"unityNoApp"})');
   assert.equal(unity.listed,true);

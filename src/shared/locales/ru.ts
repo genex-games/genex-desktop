@@ -1527,6 +1527,8 @@ export default {
   "Genex didn't click anything. Turn it on yourself: {clicks}.": "Genex ничего не нажимал. Включи вручную: {clicks}.",
   "Genex didn't publish anything. To publish it yourself in Studio: {clicks}.":
     "Genex ничего не опубликовал. Опубликовать вручную можно в Studio: {clicks}.",
+  "Genex didn’t approve the {app}.": "Genex не одобрил {app}.",
+  "Genex didn’t approve the {app}: {reason}": "Genex не одобрил {app}: {reason}",
   "Genex didn’t take that. Try again in a moment.": "Genex не принял запрос. Попробуй чуть позже.",
   "Genex downloads Godot this way on Windows only; on a Mac, Do it for me installs it in Applications.":
     "Так Genex скачивает Godot только на Windows; на Mac кнопка «Сделать за меня» установит его в «Программы».",
@@ -1561,8 +1563,6 @@ export default {
   "Genex is installing Godot. Nothing is needed from you.": "Genex устанавливает Godot. От тебя ничего не нужно.",
   "Genex is open source under the MIT License. It also includes software from other projects, each under its own license.":
     "Genex — открытый проект под лицензией MIT. В него также входят программы из других проектов, у каждой своя лицензия.",
-  "Genex is reviewing the game before it shows in the gallery.":
-    "Genex проверяет игру, прежде чем она появится в галерее.",
   "Genex isn't getting Roblox Studio right now.": "Genex сейчас не устанавливает Roblox Studio.",
   "Genex keeps a copy of each file first, and Undo setup takes these changes back. A Genex editor helper file you changed is kept beside it as a .mine copy.":
     "Сначала Genex сохраняет копию каждого файла, а «Отменить настройку» возвращает всё как было. Изменённый тобой файл модуля Genex для редактора останется рядом как копия .mine.",
@@ -1765,6 +1765,7 @@ export default {
   "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.":
     "В Unity Hub войди в аккаунт и добавь лицензию Unity (Personal — бесплатно, если условия Unity тебе это позволяют). На приложения Unity и твой аккаунт действуют условия самой Unity. Пароль вводишь только ты.",
   "In every game": "Во всех играх",
+  "In review": "На проверке",
   "In round {round}'s brief": "В задании раунда {round}",
   "In the background": "В фоне",
   "In the background: {title}": "В фоне: {title}",
@@ -2369,6 +2370,7 @@ export default {
   "None yet": "Пока нет",
   "Not a public file: {path}": "Это не публичный файл: {path}",
   "Not added": "Не добавлено",
+  "Not approved": "Не одобрено",
   "Not asked — the step did not land.": "Не спрашивали — шаг не получился.",
   "Not comparable": "Нельзя сравнить",
   "Not confirmed": "Не подтверждено",
@@ -3286,6 +3288,8 @@ export default {
   Sending: "Отправка",
   "Sending…": "Отправка…",
   "Sends when the build finishes…": "Отправится, когда сборка закончится…",
+  "Sent for review. It appears in Play once Genex approves it.":
+    "Отправлено на проверку. Появится в «Играть», когда Genex одобрит.",
   Sent: "Отправлено",
   "Sent — every part gets it with its next round": "Отправлено — каждая часть получит это в следующем раунде",
   "Sent — it goes into this part's next round": "Отправлено — попадёт в следующий раунд этой части",
@@ -5699,6 +5703,7 @@ export default {
   "{name}, playing {game}": "{name} играет в «{game}»",
   '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".':
     "{name}: Codex берёт bearer-токен из переменной окружения {variable}. Studio хранит его сама — вставь токен в поле Authorization в виде «Bearer <token>».",
+  "{name}: Genex is reviewing it": "{name}: Genex проверяет",
   "{name}: on Genex for desktop players": "{name}: в Genex для игроков на компьютере",
   "{name}: publishing it is coming soon": "{name}: публикация скоро появится",
   "{name}: sign in to Genex again": "{name}: снова войти в Genex",

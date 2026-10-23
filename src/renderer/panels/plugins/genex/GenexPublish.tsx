@@ -64,6 +64,7 @@ import { Pressing, usePublishRecord } from "./use-publish-record.ts";
 import { PublishPlatforms, usePublishPlatforms } from "./PublishPlatforms.tsx";
 import {
   appsLabel,
+  appsInReview,
   appsUpToDate,
   gateByPlugin,
   makesApps,
@@ -751,6 +752,8 @@ function useAppsPublish(
   waiting: boolean;
   /** Every app Publish would send is on Genex already: the press has nothing new to do. */
   upToDate: boolean;
+  /** Its apps wait for Genex's review: nothing reached players yet. */
+  inReview: boolean;
 } {
   const read = usePublishPlatforms(project);
   // An app goes only through a Genex plugin that can send it: an older one is updated first.
@@ -762,6 +765,7 @@ function useAppsPublish(
     // A game made in an engine with nothing to send yet: the rows say why, and the press waits.
     waiting: platforms !== null && nothingToPublish(platforms),
     upToDate: platforms !== null && appsUpToDate(platforms, native),
+    inReview: platforms !== null && appsInReview(platforms, native),
   };
 }
 
@@ -773,14 +777,17 @@ const remixLineShown = (pressShown: boolean, publishing: boolean, view: PublishV
 const pressLabel = (celebrate: boolean, apps: string | null): string | undefined =>
   celebrate ? WORDS.saveName : (apps ?? undefined);
 
-/** Whether the dialog celebrates: an attempt it watched just went live; a new press ends it. */
-function useCelebration(view: PublishView, publishing: boolean): boolean {
+/**
+ * Whether the dialog celebrates: an attempt it watched just went live; a new press ends it. A game
+ * whose apps Genex still reviews has not reached players, so it is not celebrated.
+ */
+function useCelebration(view: PublishView, publishing: boolean, inReview: boolean): boolean {
   const before = useRef<PublishView | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   useEffect(() => {
-    if (justPublished(before.current, view)) setCelebrate(true);
+    if (justPublished(before.current, view) && !inReview) setCelebrate(true);
     before.current = view;
-  }, [view]);
+  }, [view, inReview]);
   useEffect(() => {
     if (publishing) setCelebrate(false);
   }, [publishing]);
@@ -836,16 +843,16 @@ function PublishBody({
   const [title, setTitle] = useState<string | null>(null);
   const name = title ?? offeredTitle(record.state, gameTitle, project);
   const publishing = record.pressing === Pressing.Publish || view.running;
-  const celebrate = useCelebration(view, publishing);
+  const { platforms, behind, apps, waiting, upToDate, inReview } = useAppsPublish(project, record.state?.native);
+  const celebrate = useCelebration(view, publishing, inReview);
   const share = useShareWhenLive(project, celebrate);
   // A name changed after it went live is listed again by Publish update ("Save name" while celebrating).
   const renamed = title !== null && title.trim() !== (record.state?.title ?? "") && view.stage === PublishStage.Public;
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const open = () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
   const opening = record.pressing === Pressing.Action;
-  const { platforms, behind, apps, waiting, upToDate } = useAppsPublish(project, record.state?.native);
   const pressShown = !celebrate || renamed;
-  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, renamed });
+  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, renamed, inReview });
   return (
     <div
       className="genex-publish-body"
@@ -921,12 +928,15 @@ const pressHasWork = (
   shown: boolean,
   view: PublishView,
   publishing: boolean,
-  { upToDate, renamed }: { upToDate: boolean; renamed: boolean },
-): boolean => shown && (renamed || !upToDate || !liveAndQuiet(view, publishing));
+  { upToDate, renamed, inReview }: { upToDate: boolean; renamed: boolean; inReview: boolean },
+): boolean => shown && (renamed || !upToDate || !settled(view, publishing, inReview));
 
-/** Whether a game is live and nothing is going on: no publish runs, nothing failed, no terms to accept. */
-const liveAndQuiet = (view: PublishView, publishing: boolean): boolean =>
-  view.stage === PublishStage.Public && !publishing && !view.failure && !view.terms;
+/**
+ * Whether what went is where it stays for now: live, or with Genex for review, with nothing going on
+ * (no publish runs, nothing failed, no terms to accept). Sending the same apps again changes nothing.
+ */
+const settled = (view: PublishView, publishing: boolean, inReview: boolean): boolean =>
+  (view.stage === PublishStage.Public || inReview) && !publishing && !view.failure && !view.terms;
 
 /** The public link, then the tested draft players do not have yet: shown together, right above the press. */
 function Links({
