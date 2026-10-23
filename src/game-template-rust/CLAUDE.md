@@ -208,8 +208,8 @@ write your own system around it.
   online, move yourself locally and rule on `.state_raw()`. Only the published draft in two
   windows proves online play (`docs/api/net.md`).
 - **A hitch**: time the suspects with `genex::profile_scope!` and read `volatile.profile`
-  (`docs/api/profiling.md`). **A crash** leaves a record naming its line, seed and tick: give
-  each `expect` the rule that broke and never catch a panic.
+  on a native run; the web has none yet (`docs/api/profiling.md`). **A crash** leaves a record
+  naming its line, seed and tick: give each `expect` the rule that broke and never catch a panic.
 
 ## Extension ladder
 

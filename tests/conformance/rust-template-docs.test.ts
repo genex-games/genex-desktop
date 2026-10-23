@@ -999,6 +999,7 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "nav.add_mesh",
     "NavAgent::new",
     "nav.add_agent",
+    ".with_speed",
     "nav.move_to",
     "nav.update",
     "nav.desired_velocity",
@@ -1083,6 +1084,8 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "TerrainTexel::blend",
     ".with_control",
     "Scatter::new",
+    ".on_flat_ground",
+    ".with_cap",
     "terrain.scatter",
     "terrain.height",
     "frame.terrain",
@@ -1250,6 +1253,16 @@ describe("the in-app agent knows every game system and its switch (R-32)", () =>
   it("the Game systems rules route a streamed world to the pack reader, its digest and named groups", () => {
     for (const call of ["CellPacks::from_table(", "genex::digest", "sim.stream.require(", "sim.stream.ready("])
       assert.ok(rules().includes(call), `the rules name ${call}`);
+  });
+
+  it("the Streaming page states the web's named-group gap the rules state, and promises no web fetch", () => {
+    // Gate GR: the web runtime queues no named group's fetches yet, so neither text may promise one.
+    const gap = "On the web a named group is not fetched yet";
+    assert.ok(rules().includes(gap), "the rules state the gap");
+    const page = read(`${API_PAGES}/streaming.md`).replace(/\s+/g, " ");
+    assert.ok(page.includes(gap), "the Streaming page states the gap");
+    assert.ok(!page.includes("each named group's files arrive while playing"), "the page promises no web group fetch");
+    assert.ok(!page.includes("(on the web, still being fetched)"), "the page promises no web group fetch");
   });
 
   it("the Game systems rules teach only calls the fixture pins", () => {

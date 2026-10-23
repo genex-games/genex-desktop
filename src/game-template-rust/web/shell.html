@@ -30,9 +30,10 @@
       redirect lands it outside assets/ or on another origin; nothing it carried is admitted.
 
       Streaming (game systems STR-14b): the plan holds only the map's boot and sim groups (a cell
-      pack's index, everything outside the streamed groups); a pack's cells and terrain tiles and
-      each named group's files are fetched while playing. Each frame, before the game's, the shell
-      hands the module the pieces fetched since (studio_assets_arrived, oldest first, at most
+      pack's index, everything outside the streamed groups); a pack's cells and terrain tiles are
+      fetched while playing. A named group's files are planned but not fetched yet (no module asks
+      for them), so a game with a web build loads what it needs up front. Each frame, before the
+      game's, the shell hands the module the pieces fetched since (studio_assets_arrived, oldest first, at most
       STREAM_HANDOFF_BYTES a frame but always one), then asks studio_assets_wanted for the pieces
       the game wants now and fetches each with a Range request, at most ASSET_FETCHES at once. A
       server that ignores Range answers the whole file, which is read up to the piece's end and

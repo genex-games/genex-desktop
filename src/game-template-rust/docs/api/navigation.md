@@ -62,7 +62,7 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
 - **Caps.** `NAV_TILES_MAX` 4096, `NAV_OBSTACLES_MAX` 256, `NAV_INPUT_TRIANGLES_MAX` 4,194,304,
   obstacles at most 256 m from their centre.
 
-- **Agents.** `sim.nav.add_agent(NavAgent::new(at))` adds one (`with_speed(desired, max)`,
+- **Agents.** `sim.nav.add_agent(NavAgent::new(at))` adds one (`.with_speed(desired, max)`,
   `with_radius`, `with_reach`, `with_links(&[kinds])`, `with_area_cost(area, cost)`); at most
   `NAV_AGENTS_MAX` 1024, and `nav.remove_agent(agent)` removes one. `nav.move_to(agent, target)`
   and `nav.stop(agent)` set its goal. The game moves it: after `nav.update(dt)`, read

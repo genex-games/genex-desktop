@@ -39,6 +39,9 @@ game.on_update(|sim, ctx| {
   `top` lists the 8 heaviest scopes by p95, and `game: true` marks the game's own scopes. The
   summary is at most 4 KiB. A run whose shell never started profiling, such as a test that drives
   `Runtime` directly, has no `volatile.profile`.
+- **On the web** (Web Live and an export) the shell does not start profiling yet: there is no
+  `volatile.profile`, Studio's `profile` verb answers `unknown-op`, and a scope costs its
+  thread-local read. Time a hitch on a native run (Native Live).
 - **Studio's `profile` verb** reads the summary, a `ProfileReport` v2 of the last frames (with the
   hitches kept), arms per-node GPU timing, or writes a Chrome trace into `state/profile/`. The
   project's CONTRACT.md lists each action. An agent reads these, and a game never calls them.

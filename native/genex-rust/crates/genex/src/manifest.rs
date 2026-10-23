@@ -181,7 +181,7 @@ pub const PARTICLE_CALLS: [&str; 9] =
 /// `TerrainLayer::flat(..)`, `.with_layers(..)`) and control map (`TerrainTexel::blend(..)`,
 /// `.with_control(..)`), drawn each frame (`frame.terrain(..)`) and asked for its height
 /// (`terrain.height(..)`).
-pub const TERRAIN_CALLS: [&str; 13] = [
+pub const TERRAIN_CALLS: [&str; 15] = [
     "Terrain::from_fn",
     "Terrain::from_heights",
     "TerrainLayer::textured",
@@ -196,6 +196,9 @@ pub const TERRAIN_CALLS: [&str; 13] = [
     ".with_grass",
     "Scatter::new",
     "terrain.scatter",
+    // Gate GR: the scatter rule's flat-ground and cap steps the terrain recipe sketches.
+    ".on_flat_ground",
+    ".with_cap",
 ];
 /// The look's fog calls of the facade, as agents call them: the fog a config draws
 /// (`RenderConfig::new().fog(..)`), made from `Fog::default()` and shaped (`.with_density(..)`,
@@ -241,8 +244,9 @@ pub const STREAM_CALLS: [&str; 69] = [
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
 /// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14; tiles, triangle input,
-/// custom areas, saved meshes, two-way links and streamed islands the page teaches, pinned at gate GI).
-pub const NAV_CALLS: [&str; 64] = [
+/// custom areas, saved meshes, two-way links and streamed islands the page teaches, pinned at gate GI;
+/// an agent's speed, which the nav-agents recipe sets, pinned at gate GR).
+pub const NAV_CALLS: [&str; 65] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
@@ -253,7 +257,7 @@ pub const NAV_CALLS: [&str; 64] = [
     "nav.probe", "nav.snapshot", "nav.restore", ".with_colliders", ".with_static_colliders", "frame.nav_debug",
     "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths", "game.nav_bake",
     "NavArea::custom", ".with_tile", ".with_triangles", "sim.nav.config", "mesh.to_bytes", "mesh.source",
-    "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
+    "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes", ".with_speed",
 ];
 /// The input calls of the facade (IN-11, IN-12).
 pub const INPUT_CALLS: [&str; 32] = [
