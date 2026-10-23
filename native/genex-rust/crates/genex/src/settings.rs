@@ -51,8 +51,12 @@ const SHAKE_STEP: f32 = 0.1;
 const DEFAULT_PRESET: &str = "default";
 /// The language choice that follows the device (the OS locale in an export).
 const LANGUAGE_AUTO: &str = "auto";
-/// The text size choices, by index (recorded for the game; the HUD does not scale text yet).
+/// The text size choices, by index: the UI hooks' text styles scale by [`TEXT_SIZES`] (R-25).
 const TEXT_SIZE_KEYS: [&str; 4] = ["text-size-100", "text-size-125", "text-size-150", "text-size-200"];
+/// The text size factor of each [`TEXT_SIZE_KEYS`] choice.
+const TEXT_SIZES: [f32; 4] = [1.0, 1.25, 1.5, 2.0];
+/// The prefix a game's settings text key usually carries, left out of its English stand-in.
+const GAME_KEY_PREFIX: &str = "settings-";
 
 /// The built-in option keys.
 mod key {
@@ -342,15 +346,26 @@ fn person_layer(store: &SettingsStore) -> crate::ui::PersonLayer {
         Some(SettingValue::Choice(index)) => UiScale::from_choice(index),
         _ => UiScale::Auto,
     };
-    crate::ui::PersonLayer { locale, scale: (scale != UiScale::Auto).then_some(scale), reduced_motion: store.flag(key::REDUCED_MOTION) }
+    let text_size = match store.value(key::TEXT_SIZE) {
+        Some(SettingValue::Choice(index)) => TEXT_SIZES.get(usize::from(index)).copied(),
+        _ => None,
+    };
+    crate::ui::PersonLayer {
+        locale,
+        scale: (scale != UiScale::Auto).then_some(scale),
+        reduced_motion: store.flag(key::REDUCED_MOTION),
+        text_size,
+    }
 }
 
-/// The tabs the menu shows, in menu order: Controls only with `game.input`, Game only with the
-/// game's options or presets there.
+/// The tabs the menu shows, in menu order: Audio only in a build with sound (`[audio] enabled =
+/// false` has no mixer to set, R-25), Controls only with `game.input`, Game only with the game's
+/// options or presets there.
 fn tabs(setup: &G6Setup, store: &SettingsStore) -> Vec<SettingsTab> {
     let schema = store.schema();
     let game_tab = schema.tab_options(SettingsTab::Game).next().is_some() || schema.presets(SettingsTab::Game).next().is_some();
     let shown = |tab: &SettingsTab| match tab {
+        SettingsTab::Audio => cfg!(feature = "audio"),
         SettingsTab::Controls => setup.input.map().is_some(),
         SettingsTab::Game => game_tab,
         _ => true,
@@ -374,14 +389,30 @@ pub(crate) struct SettingsScope {
 }
 
 /// A text key in the game's catalog. The runtime's own words fall back to their English with no
-/// issue (the facade's table, then the shell's); a game's key it lacks records `text-missing`.
+/// issue (the facade's table, then the shell's); a game's key it lacks records `text-missing` and
+/// reads as its words (`settings-hints` as "Hints", R-25), never as the raw key.
 fn words(key: &str) -> String {
     let built_in = ENGLISH.iter().find(|(own, _)| *own == key).map(|(_, word)| (*word).to_owned());
     let shell = english(key);
     match built_in {
         Some(word) => crate::ui::tr_or(key, |_| word),
         None if shell != key => crate::ui::tr_or(key, |_| shell),
-        None => crate::ui::tr(key),
+        None => {
+            let text = crate::ui::tr(key);
+            if text == key { key_words(key) } else { text }
+        }
+    }
+}
+
+/// A game's text key as words: `settings-hint_level` reads "Hint level" (the prefix left out,
+/// dashes, underscores and dots as spaces, the first letter capital).
+fn key_words(key: &str) -> String {
+    let bare = key.strip_prefix(GAME_KEY_PREFIX).filter(|rest| !rest.is_empty()).unwrap_or(key);
+    let spaced: String = bare.chars().map(|c| if matches!(c, '-' | '_' | '.') { ' ' } else { c }).collect();
+    let mut chars = spaced.trim().chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => key.to_owned(),
     }
 }
 
@@ -459,5 +490,33 @@ mod tests {
         let with_locales = accessibility_options(SettingsSchema::new(), &["en".to_owned(), "fr-CA".to_owned()]);
         let Some(SettingKind::Choice { options }) = with_locales.def(key::LANGUAGE).map(SettingDef::kind) else { panic!("a language choice") };
         assert_eq!(options, &["auto", "en", "fr-ca"], "locale tags become legal option keys");
+    }
+
+    /// R-25: a game's option whose text the catalog lacks read as its raw key (`settings-hints: 1`).
+    #[test]
+    fn a_game_key_without_text_reads_as_words_never_as_the_raw_key() {
+        let rows = [("settings-hints", "Hints"), ("settings-hint_level", "Hint level"), ("veteran", "Veteran"), ("settings-", "Settings")];
+        for (key, shown) in rows {
+            assert_eq!(words(key), shown, "{key}");
+        }
+    }
+
+    /// R-25: the text size was recorded but never applied; each choice reaches the person layer.
+    #[test]
+    fn every_text_size_choice_reaches_the_person_layer() {
+        let mut store = SettingsStore::new(schema(&G6Setup::default())).expect("the runtime schema");
+        assert_eq!(person_layer(&store).text_size, Some(1.0), "the default choice is 100%");
+        for (index, size) in TEXT_SIZES.iter().enumerate() {
+            store.set(key::TEXT_SIZE, SettingValue::Choice(u16::try_from(index).expect("a choice index"))).expect("a legal choice");
+            assert_eq!(person_layer(&store).text_size, Some(*size), "choice {index}");
+        }
+    }
+
+    /// R-25: a build with `[audio] enabled = false` has no mixer, so no Audio tab.
+    #[test]
+    fn the_audio_tab_shows_only_in_a_build_with_sound() {
+        let setup = G6Setup::default();
+        let store = SettingsStore::new(schema(&setup)).expect("the runtime schema");
+        assert_eq!(tabs(&setup, &store).contains(&SettingsTab::Audio), cfg!(feature = "audio"));
     }
 }

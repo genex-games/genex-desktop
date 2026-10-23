@@ -401,7 +401,8 @@ fn a_pad_alone_walks_every_tab_and_changes_options() {
     // RB: the Audio tab, its preset row first, then each bus, then Reset.
     let (_, focus, update) = walk.press(NavButton::Next);
     assert_eq!(focus.as_deref(), Some("settings.audio.preset"));
-    assert_eq!(label_of(&update, "settings.audio.preset").as_deref(), Some("Preset: Custom"));
+    // R-25 (flipped from "Preset: Custom"): an untouched tab no preset describes reads Default.
+    assert_eq!(label_of(&update, "settings.audio.preset").as_deref(), Some("Preset: Default"));
     // A 0-to-1 slider reads as a percent (GI visual row; was the raw "0.8").
     assert_eq!(label_of(&update, "settings.opt.audio.music").as_deref(), Some("settings-audio-music: 80%"));
     // Right on the preset row picks the first preset.
