@@ -2,7 +2,7 @@
 import type { JSX } from "react";
 import { t } from "../../../shared/i18n.ts";
 import type { RunTask } from "../../../shared/run-summary.ts";
-import { type FacetNode, type RunGraph as RunGraphModel, runIdOf, thumbShot } from "../../run-graph.ts";
+import { type FacetNode, type RunGraph as RunGraphModel, runIdOf } from "../../run-graph.ts";
 import {
   elapsedWords,
   isLiveStep,
@@ -15,7 +15,7 @@ import {
 } from "../../run-steps.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { checkCounts, ranToItsEnd, stopReason } from "../../words.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { useRoundPicture } from "../run-stills.ts";
 import { Details, NotesSection, Panel, PanelRow, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
 import { capitalise, joinDots } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
@@ -26,14 +26,7 @@ import type { InspectorProps } from "./types.ts";
 
 /** A step as one row of its part's panel: thumbnail, name, state and tries. */
 function StepRow({ graph, step, onSelect }: { graph: RunGraphModel; step: Step; onSelect: () => void }): JSX.Element {
-  const node = step.shown;
-  const src = useRoundStill(
-    graph,
-    step.facetId,
-    node?.iteration ?? 1,
-    node ? (thumbShot(node)?.path ?? null) : null,
-    false,
-  );
+  const src = useRoundPicture(runIdOf(graph), step.roundPicture, false).src;
   const off = !step.onLine && !isLiveStep(step);
   return (
     <button

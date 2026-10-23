@@ -21,7 +21,7 @@ import {
   workerStopWords,
 } from "../../run-steps.ts";
 import { stoppedWords, verdictSentence, WORKER_WORDS } from "../../words.ts";
-import { useRoundStill, useWorkerStill } from "../run-stills.ts";
+import { useRoundPicture, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import { type DetailRow, Details, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
@@ -131,9 +131,11 @@ function StillMedia({ props, src, asset }: { props: StepPanelProps; src: string 
 export function SessionPanel(props: StepPanelProps): JSX.Element {
   const { graph, step } = props;
   const working = step.state === StepState.Building;
-  const round = useRoundStill(graph, step.facetId, 1, null, working && graph.active);
+  const runId = runIdOf(graph);
+  const round = useRoundPicture(runId, step.roundPicture, working && graph.active).src;
   const worker = useWorkerStill(props.project, step.picture);
-  const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, working && graph.active);
+  // The screen and captures of the worker on the part now, never those of an attempt a restart replaced.
+  const screen = usePartScreen(props.project, runId, step.builder, working && graph.active);
   return (
     <Panel
       id={step.id}

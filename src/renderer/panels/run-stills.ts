@@ -5,12 +5,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
-import { type IterationNode, type RunGraph, runIdOf, type Shot } from "../run-graph.ts";
+import type { IterationNode, Shot } from "../run-graph.ts";
 import { type CameraPair, camerasToCompare, frameDifference, savePointShot } from "../run-graph-pictures.ts";
-import { PictureSource, type WorkerPicture } from "../run-steps.ts";
+import {
+  type BuilderCapture,
+  capturedBy,
+  onStartingPoint,
+  PictureSource,
+  type RoundPicture,
+  RoundPictureSource,
+  type WorkerPicture,
+} from "../run-steps.ts";
 import { loadStill, type StillSource, useStill } from "../stills.ts";
 
-/** How often a round still in hand looks for a newer saved frame. */
+/** How often a builder capture of a round in hand looks for a newer saved frame. */
 const LIVE_FRAME_POLL_MS = 5 * SECOND_MS;
 /** The size two frames are compared at: small enough to read fast, big enough to see a change. */
 const COMPARE_W = 32;
@@ -96,38 +104,65 @@ export function readRoundPreview(request: BuildPreviewRequest, active: boolean):
   return pending;
 }
 
+/** A step's picture of its builds as a card shows it: the still, and whether it stands on the run's starting point. */
+export interface RoundStill {
+  src: string | null;
+  onStart: boolean;
+}
+
+const NO_ROUND_STILL: RoundStill = { src: null, onStart: false };
+
 /**
- * What a round looks like: its judged still when it has one, else the newest frame the builder
- * saved — polled while the round is in hand, because that frame changes as it works.
+ * A builder's newest capture of its own round, read from its own folder — polled while the round
+ * is in hand, because that frame changes as it works. A capture whose manifest names another
+ * worker or run is never shown. A chat turn's graph (no run, `runIdOf` null) has no saved frames
+ * to ask for.
  */
-export function useRoundStill(
-  graph: Pick<RunGraph, "runId">,
-  facetId: string,
-  iteration: number,
-  shot: string | null,
-  active: boolean,
-): string | null {
-  const judged = useStill(shot ? { run: shot, maxPx: 640 } : null);
-  const [live, setLive] = useState<string | null>(null);
-  // A chat turn's graph has no run whose saved frames could be asked for.
-  const runId = runIdOf(graph);
+function useBuilderStill(runId: string | null, capture: BuilderCapture | null, live: boolean): RoundStill {
+  const [still, setStill] = useState<RoundStill>(NO_ROUND_STILL);
+  const worker = capture?.worker ?? null;
+  const iteration = capture?.iteration ?? 0;
+  const startCommit = capture?.start?.commit ?? null;
+  const movedOnAt = capture?.start?.movedOnAt ?? null;
   useEffect(() => {
-    setLive(null);
-    // No part named: nothing to ask for (a caller whose picture comes from elsewhere).
-    if (shot || !facetId || !runId) return;
+    setStill(NO_ROUND_STILL);
+    const run = runId;
+    if (!worker || !run) return;
+    const start = startCommit && movedOnAt ? { commit: startCommit, movedOnAt } : null;
     const read = async (isCurrent: () => boolean): Promise<void> => {
       try {
-        const frame = await readRoundPreview({ runId, facetId, iteration }, active);
-        const src = frame ? await loadStill({ run: frame.path, version: frame.capturedAt, maxPx: 640 }) : null;
-        if (isCurrent() && src) setLive(src);
+        const frame = await readRoundPreview({ runId: run, facetId: worker, iteration }, live);
+        if (!frame || !capturedBy(frame.manifest, run, worker)) return;
+        const src = await loadStill({ run: frame.path, version: frame.capturedAt, maxPx: NODE_PICTURE_PX });
+        if (isCurrent() && src) setStill({ src, onStart: onStartingPoint(frame.manifest, start) });
       } catch {
         /* no frame yet */
       }
     };
-    return pollWhile(read, active, LIVE_FRAME_POLL_MS);
-  }, [runId, facetId, iteration, shot, active]);
-  return judged ?? live;
+    return pollWhile(read, live, LIVE_FRAME_POLL_MS);
+  }, [runId, worker, iteration, startCommit, movedOnAt, live]);
+  return still;
 }
+
+/**
+ * A step's picture of its builds (`run-steps.ts` `RoundPicture`): the judged frame, else its own
+ * builder's newest capture, else none — never another worker's capture, such as that of the
+ * attempt a restart replaced, and never an older one standing in for a build that showed nothing.
+ */
+export function useRoundPicture(runId: string | null, picture: RoundPicture | null, live: boolean): RoundStill {
+  const judgedPath = picture?.source === RoundPictureSource.Judged ? picture.shot.path : null;
+  const judged = useStill(judgedPath ? { run: judgedPath, maxPx: NODE_PICTURE_PX } : null);
+  const builder = useBuilderStill(runId, picture?.source === RoundPictureSource.Builder ? picture : null, live);
+  if (judgedPath) return { src: judged, onStart: false };
+  return builder;
+}
+
+/**
+ * A step's card picture through the shot its node wears (a save point's own camera,
+ * `useSavePointShot`): that judged frame when there is one, else the step's own picture.
+ */
+export const throughShot = (picture: RoundPicture, shot: Shot | null): RoundPicture =>
+  shot ? { source: RoundPictureSource.Judged, shot } : picture;
 
 export interface ReferenceFrame {
   label: string;

@@ -25,11 +25,12 @@ import {
   STATE_TONE,
   type Step,
   stepPill,
+  tryPicture,
 } from "../../run-steps.ts";
 import { useStill } from "../../stills.ts";
 import { Icon, type IconName } from "../../ui/icons.tsx";
 import { checkCounts, undoneBecause } from "../../words.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { throughShot, useRoundPicture } from "../run-stills.ts";
 import { Details, NotesSection, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise, listOrNull, modelLine } from "./format.ts";
 import { JudgesNotes } from "./JudgesNotes.tsx";
@@ -79,7 +80,8 @@ function useStepPicture(props: StepPanelProps, node: IterationNode) {
   useEffect(() => setCamera(thumbShot(node)?.camera ?? null), [node]);
   const live = graph.active && node.status === IterationStatus.Building;
   const rightShot = shotThrough(node, camera);
-  const right = useRoundStill(graph, node.facetId, node.iteration, rightShot?.path ?? null, live);
+  // The judged frame through the chosen camera, else the try's own picture (its builder's capture, or none).
+  const right = useRoundPicture(runIdOf(graph), throughShot(tryPicture(step, node), rightShot), live).src;
   const beforeNode = stepBefore(row, step)?.shown ?? null;
   const leftShot = beforeNode ? shotThrough(beforeNode, camera) : null;
   const leftStill = useStill(leftShot?.path ? { run: leftShot.path } : null);
@@ -127,15 +129,16 @@ function CheckList({ node }: { node: IterationNode }): JSX.Element {
 /** Folded into one node on the graph, the tries unfold here: pick one to see it above. */
 function TriesStrip({
   graph,
-  tries,
+  step,
   node,
   onPick,
 }: {
   graph: RunGraphModel;
-  tries: IterationNode[];
+  step: Step;
   node: IterationNode;
   onPick: (at: number) => void;
 }): JSX.Element | null {
+  const tries = step.tries;
   if (tries.length < 2) return null;
   return (
     <div role="group" aria-label={t("Tries")} className="flex flex-wrap gap-2.5 pt-1">
@@ -144,6 +147,7 @@ function TriesStrip({
           key={item.id}
           graph={graph}
           node={item}
+          picture={tryPicture(step, item)}
           n={at + 1}
           selected={item === node}
           live={graph.active && item.status === IterationStatus.Building}
@@ -308,8 +312,9 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
   const { graph, step, run, node } = props;
   const tries = step.tries;
   const picture = useStepPicture(props, node);
-  // The try in hand, while its agent works: the card shows its screen, live, instead of its stills.
-  const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, graph.active && isLiveStep(step));
+  // The try in hand, while its agent works: the card shows its screen, live, instead of its stills —
+  // the screen of the worker on the step now, never that of an attempt a restart replaced.
+  const screen = usePartScreen(props.project, runIdOf(graph), step.builder, graph.active && isLiveStep(step));
   const liveFrame = node === tries.at(-1) ? screen.frame : null;
   const n = tries.indexOf(node) + 1;
   const rightLabel = rightLabelOf(step, n);
@@ -371,7 +376,7 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
           ) : (
             <TryStills picture={picture} onLine={step.onLine} label={rightLabel} onOpen={open} />
           )}
-          <TriesStrip graph={graph} tries={tries} node={node} onPick={props.onPick} />
+          <TriesStrip graph={graph} step={step} node={node} onPick={props.onPick} />
         </div>
       }
     >
