@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { findLeaks, isolationInputs } from "../../scripts/evals/check-isolation.ts";
 import { caseById, readCases } from "../../scripts/evals/cases.ts";
 import { CaseMode } from "../../scripts/evals/vocabulary.ts";
+import { loadRecipes, recipesForChecks } from "../../src/harness-seed/loop/library.ts";
 import { PageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import {
   NativeEnhancedFeature,
@@ -1130,6 +1131,29 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "driver.net",
   ],
   "rust.crash-records": ["genex::profile_scope!", "ScopeName::new", "genex::profile::counter"],
+  "rust.physics-bodies": [
+    "RigidBodyBuilder::fixed",
+    "RigidBodyBuilder::dynamic",
+    "RigidBodyBuilder::kinematic_position_based",
+    "ColliderBuilder::cuboid",
+    "ColliderBuilder::ball",
+    ".mass",
+    ".ccd_enabled",
+    "physics.insert",
+    "physics.insert_body",
+    "body.set_next_kinematic_translation",
+    "RopeJointBuilder::new",
+    "physics.insert_impulse_joint",
+    "physics.intersect_shape",
+    "QueryFilter::only_dynamic",
+    "body.apply_impulse",
+    "physics.cast_ray",
+    "ray.point_at",
+    "physics.contact_pair",
+    "physics.active_bodies",
+    "handle.into_raw_parts",
+    "frame.id",
+  ],
 };
 
 /** The seed skill a Rust game's lead reads before reaching past the facade (UIS-19 adds its menu and save lines). */
@@ -1349,6 +1373,16 @@ describe("the in-app agent knows every game system and its switch (R-32)", () =>
   });
 });
 
+/** The mechanics the physics recipe sketches, each with the probe that measures it (lane PH). */
+const PHYSICS_PROBES = ["pile", "blast", "wrecking-ball", "shots"] as const;
+
+/** A physics brief in a person's words, as a failing check carries it. */
+const PHYSICS_CHECK = {
+  id: "crate-wall-knockdown",
+  kind: "physics",
+  ask: "2,000 crates I knock down with a wrecking ball and explosives",
+};
+
 describe("the in-app agent is taught general physics (lane PH)", () => {
   const page = () => read(`${API_PAGES}/physics.md`).replace(/\s+/g, " ");
 
@@ -1366,5 +1400,26 @@ describe("the in-app agent is taught general physics (lane PH)", () => {
     );
     assert.match(text, /contacts and sleep are not (?:saved|restored)/, "a loaded pile settles again");
     assert.ok(text.includes("frame.id("), "moving bodies are drawn under draw ids");
+  });
+
+  it("the physics recipe is what a physics brief retrieves", async () => {
+    const recipes = await loadRecipes(path.join(REPO, "src", "harness-seed"));
+    const hits = recipesForChecks(recipes, [PHYSICS_CHECK], 3, { stack: GameStack.RustWgpu });
+    assert.equal(hits[0]?.recipe.id, "rust.physics-bodies", hits.map((hit) => hit.recipe.id).join(", "));
+  });
+
+  it("the physics recipe switches physics on and gives each mechanic a probe its intent names", () => {
+    const recipe = seedRecipe("rust.physics-bodies");
+    const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${sketchToml(recipe.sketch).replace(/^#.*\n/gm, "")}`);
+    assert.ok(parsed.ok, JSON.stringify(parsed));
+    assert.equal(
+      (parsed.manifest as unknown as Record<string, unknown>).physics,
+      true,
+      "the sketch switches physics on",
+    );
+    for (const probe of PHYSICS_PROBES) {
+      assert.ok(recipe.sketch.includes(`game.probe("${probe}"`), `the sketch probes ${probe}`);
+      assert.ok(recipe.intent.includes(`"${probe}"`), `the intent names the ${probe} probe`);
+    }
   });
 });
