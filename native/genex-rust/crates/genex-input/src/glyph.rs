@@ -39,9 +39,10 @@
 use std::collections::BTreeMap;
 
 use crate::binding::{Binding, ChordInput, KeyCode, PadAxis, PadButton, PadFamily, Sign, Stick, wire_enum};
-use crate::id::ActionId;
+use crate::id::{ActionId, ControlId};
 use crate::map::ActionMap;
 use crate::state::Device;
+use crate::touch::{ControlKind, TouchControls};
 
 /// The most keys a layout map relabels (a full keyboard is about 100).
 pub const KEY_LABELS_MAX: usize = 256;
@@ -55,6 +56,8 @@ struct Message {
     mouse_look: &'static str,
     wheel: &'static str,
     dpad: &'static str,
+    /// An on-screen stick the game did not name.
+    touch_stick: &'static str,
     left_stick: &'static str,
     right_stick: &'static str,
     up: &'static str,
@@ -71,6 +74,7 @@ const MESSAGE: Message = Message {
     mouse_look: "Mouse",
     wheel: "Wheel",
     dpad: "D-pad",
+    touch_stick: "Stick",
     left_stick: "Left Stick",
     right_stick: "Right Stick",
     up: "Up",
@@ -431,7 +435,8 @@ fn same_device(a: Device, b: Device) -> bool {
     )
 }
 
-fn family_of(device: Device) -> PadFamily {
+/// The pad family a device's prompts read (a keyboard or touch screen reads generic positions).
+pub(crate) fn family_of(device: Device) -> PadFamily {
     match device {
         Device::Pad(family) => family,
         Device::KeyboardMouse | Device::Touch => PadFamily::Generic,
@@ -442,13 +447,45 @@ fn family_of(device: Device) -> PadFamily {
 /// that device, else its first binding on its own device, else "Unbound". An id the map does not
 /// declare reads "Unbound" too.
 pub fn action_glyph(map: &ActionMap, action: ActionId, device: Device, labels: &KeyLabels) -> Glyph {
+    action_glyph_with(map, action, device, labels, None)
+}
+
+/// [`action_glyph`] with the game's touch layout, which names its controls' prompts.
+pub fn action_glyph_with(map: &ActionMap, action: ActionId, device: Device, labels: &KeyLabels, touch: Option<&TouchControls>) -> Glyph {
     let family = family_of(device);
-    let bindings = map.bindings(action);
-    let on_device = bindings.iter().find(|binding| same_device(binding_device(binding, family), device));
-    match on_device.or_else(|| bindings.first()) {
+    let chosen = prompt_binding(map, action, device);
+    if let (Some(Binding::Touch(control)), Some(layout)) = (chosen, touch)
+        && let Some(glyph) = touch_glyph(layout, *control)
+    {
+        return glyph;
+    }
+    match chosen {
         Some(binding) => binding_glyph(binding, family, labels),
         None => Glyph { label: MESSAGE.unbound.to_owned(), shape: GlyphShape::Key, device },
     }
+}
+
+/// The binding a prompt for `action` on `device` reads: its first binding of that device, else its
+/// first binding.
+pub(crate) fn prompt_binding(map: &ActionMap, action: ActionId, device: Device) -> Option<&Binding> {
+    let family = family_of(device);
+    let bindings = map.bindings(action);
+    let on_device = bindings.iter().find(|binding| same_device(binding_device(binding, family), device));
+    on_device.or_else(|| bindings.first())
+}
+
+/// The prompt for the on-screen control `control` of `layout`: a button reads its label, a stick or
+/// d-pad its label once named (`TouchControls::label`) and otherwise its shape ("Stick", "D-pad"),
+/// never its id. `None` when the layout does not declare it.
+pub fn touch_glyph(layout: &TouchControls, control: ControlId) -> Option<Glyph> {
+    let found = layout.controls().iter().find(|declared| declared.id == control)?;
+    let (shape, unnamed) = match found.kind {
+        ControlKind::Button => (GlyphShape::Touch, found.label.as_str()),
+        ControlKind::Stick(_) => (GlyphShape::Stick, MESSAGE.touch_stick),
+        ControlKind::Dpad => (GlyphShape::Dpad, MESSAGE.dpad),
+    };
+    let label = if found.shows_label { found.label.clone() } else { unnamed.to_owned() };
+    Some(Glyph { label, shape, device: Device::Touch })
 }
 
 /// A one-line hint for `state().__input.hints`: the first keyboard label and the first pad label
