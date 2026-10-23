@@ -877,6 +877,7 @@ function PublishBody({
           behind={behind}
           shown={!celebrate}
           native={record.state?.native}
+          onGenex={Boolean(record.state?.slug)}
         />
         {view.running && <Progress view={view} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}

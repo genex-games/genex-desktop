@@ -5,6 +5,7 @@
   "Approve character workflow": "Aprobar el flujo del personaje",
   "Asset setup state": "Estado de configuración de recursos",
   "Blender server address": "Dirección del servidor de Blender",
+  "Build an app on Genex": "Crear una app en Genex",
   "Cancel sign-in": "Cancelar inicio de sesión",
   "Connect Genex": "Conectar Genex",
   "Disconnect Genex": "Desconectar Genex",
@@ -29,6 +30,7 @@
   "Unlock saved account": "Desbloquear la cuenta guardada",
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "Subir la copia exportada por Studio de este juego a su página borrador de Genex y hacerla la versión pública en la galería. Todos podrán encontrarlo y jugarlo. La primera vez, se crea un proyecto alojado de Genex para este juego en tu cuenta. Su captura de portada también pasa a ser su imagen en Genex, salvo que hayas elegido una allí.",
   "Upload Studio's exported copy of this game to its unlisted Genex draft page only; the public version stays as it is. The first time, a hosted Genex project is created for this game under your account; Studio keeps that link in its own copy, never in your game folder. Until the game is public, its cover shot also becomes its picture on Genex, unless you chose one there.": "Subir la copia exportada por Studio de este juego solo a su página borrador oculta de Genex; la versión pública se queda como está. La primera vez, se crea un proyecto alojado de Genex para este juego en tu cuenta; Studio guarda ese vínculo en su propia copia, nunca en la carpeta de tu juego. Hasta que el juego sea público, su captura de portada también pasa a ser su imagen en Genex, salvo que hayas elegido una allí.",
+  "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project.": "Sube el proyecto de este juego en privado a Genex, que crea con él una app para otro sistema (una app de Windows de un juego de Unreal hecho en un Mac) en sus propios ordenadores y la añade a la página del juego en Genex. Solo tú y Genex pueden ver el proyecto.",
   "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account.": "Subir a Genex las apps de Mac, Windows y Linux ya listas de este juego desde su carpeta y poner el juego en la galería, donde quienes juegan en la app de escritorio de Genex pueden instalarlas. La primera vez, se crea un proyecto alojado de Genex para este juego en tu cuenta.",
   "Use this cover": "Usar esta portada"
 }

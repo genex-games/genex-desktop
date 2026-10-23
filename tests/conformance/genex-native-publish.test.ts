@@ -369,7 +369,14 @@ describe("a publish's apps sent through the CLI", () => {
     await genex.publishApps("dust", "job-1", [MAC_APP]);
     assert.deepEqual(await runs(), []);
     const { native } = await genex.publishView("dust");
-    assert.deepEqual(native, { supported: false, sending: false, sent: [], failed: [] });
+    // The record also says Genex builds no app here: the pinned CLI has no `genex native build` either.
+    assert.deepEqual(native, {
+      supported: false,
+      sending: false,
+      sent: [],
+      failed: [],
+      cloud: { supported: false, builds: [] },
+    });
   });
 });
 

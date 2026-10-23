@@ -195,6 +195,8 @@ is.
   trusts (`NATIVE_BUILD_HOSTS`: `cdn.genex.technology` by exact name, so a game's own
   `<slug>.genex.technology` site never hands out an app), with no port or credentials, never
   redirecting elsewhere, and answers `Range`. A row with anything off is dropped, the rest kept.
+  A Windows app Genex built from an Unreal game's project on its own computers (Publish's Build on
+  Genex, [plugins](plugins.md)) comes as any other row.
 - The build a computer installs is its platform's for its own processor, else a universal Mac app,
   else, on Apple silicon with Rosetta installed, an Intel-only one, where its `minOs` is met
   (`buildFor`). Games launch on the Mac and on Linux; nothing is launched on Windows until its

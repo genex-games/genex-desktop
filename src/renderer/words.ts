@@ -37,7 +37,7 @@ import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plugins.ts";
 import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
-import type { GenexPublishPhase } from "../shared/genex.ts";
+import { CloudBuildFailure, type GenexPublishPhase } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayRemixRefusal, PlayShelf, RemixStep } from "../shared/play.ts";
 import {
   InstallFailure,
@@ -3693,6 +3693,33 @@ export const PUBLISH_PLATFORM_WORDS = {
     [PublishTarget.Windows]: t("Package it on a Windows PC"),
     [PublishTarget.Linux]: t("Package it on a Linux PC"),
   } satisfies Record<Exclude<PublishTarget, typeof PublishTarget.Web>, string>,
+  /** An app this computer can't make that Genex builds on its own computers, by how that goes. */
+  cloudOffer: t("Genex can build it on Windows for you"),
+  cloudPublishFirst: t("Publish the game first, then Genex can build it"),
+  /** A build on Genex still running: "Building on Genex · 5 min so far". */
+  cloudBuilding: (startedAt: string, now: number) =>
+    t("Building on Genex · {minutes} min so far", {
+      minutes: Math.max(0, Math.floor((now - Date.parse(startedAt)) / MINUTE_MS)),
+    }),
+  cloudFailed: {
+    [CloudBuildFailure.EngineUnsupported]: t("Genex can’t build this Unreal version yet"),
+    [CloudBuildFailure.Compile]: t("Genex couldn’t compile the game’s code"),
+    [CloudBuildFailure.Cook]: t("Genex couldn’t cook the game’s content"),
+    [CloudBuildFailure.Timeout]: t("The build on Genex took too long"),
+    [CloudBuildFailure.Quota]: t("You’ve used this month’s builds on Genex"),
+    [CloudBuildFailure.SourceTooBig]: t("The project is too big for Genex to build"),
+    [CloudBuildFailure.NotOnGenex]: t("Publish the game first, then Genex can build it"),
+    [CloudBuildFailure.Failed]: t("The build on Genex failed"),
+  } satisfies Record<CloudBuildFailure, string>,
+  cloudBuild: t("Build on Genex"),
+  cloudBuildLabel: (name: string) => t("Build the {app} on Genex", { app: name }),
+  cloudRetry: t("Try again"),
+  cloudRetryLabel: (name: string) => t("Build the {app} on Genex again", { app: name }),
+  /** The row's note while Genex builds it, and once its press was taken. */
+  building: t("Building…"),
+  cloudAsked: t("Asked Genex"),
+  /** A press Genex refused before building anything, in Genex's or the CLI's words. */
+  cloudRefused: (name: string, error: string) => t("Couldn’t build the {app} on Genex: {error}", { app: name, error }),
   /** A built app genex.games does not take yet: it shows, and Publish sends the web version. */
   soon: t("Coming soon"),
   soonLabel: (name: string) => t("{name}: publishing it is coming soon", { name }),

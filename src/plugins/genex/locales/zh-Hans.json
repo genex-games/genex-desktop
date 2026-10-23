@@ -5,6 +5,7 @@
   "Approve character workflow": "批准角色流程",
   "Asset setup state": "素材设置状态",
   "Blender server address": "Blender 服务器地址",
+  "Build an app on Genex": "在 Genex 上制作应用",
   "Cancel sign-in": "取消登录",
   "Connect Genex": "连接 Genex",
   "Disconnect Genex": "断开 Genex",
@@ -29,6 +30,7 @@
   "Unlock saved account": "解锁已保存的账号",
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "将 Studio 导出的这个游戏副本上传到它的 Genex 草稿页面，并设为画廊中的公开版本。所有人都能找到并游玩。第一次上传时，会在你的账号下为这个游戏创建一个托管的 Genex 项目。除非你已在那里自选图片，否则封面截图也会成为它在 Genex 上的图片。",
   "Upload Studio's exported copy of this game to its unlisted Genex draft page only; the public version stays as it is. The first time, a hosted Genex project is created for this game under your account; Studio keeps that link in its own copy, never in your game folder. Until the game is public, its cover shot also becomes its picture on Genex, unless you chose one there.": "只将 Studio 导出的这个游戏副本上传到它不公开列出的 Genex 草稿页面；公开版本保持不变。第一次上传时，会在你的账号下为这个游戏创建一个托管的 Genex 项目；Studio 会把这个关联保存在自己的副本里，绝不放进你的游戏文件夹。在游戏公开前，除非你已在那里自选图片，否则封面截图也会成为它在 Genex 上的图片。",
+  "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project.": "将这个游戏的项目私密上传到 Genex，Genex 会在自己的电脑上用它制作另一个系统的应用（在 Mac 上做的 Unreal 游戏的 Windows 应用），并添加到游戏的 Genex 页面。只有你和 Genex 能看到这个项目。",
   "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account.": "将这个游戏文件夹中已就绪的 Mac、Windows 和 Linux 应用上传到 Genex，并在画廊中上架这个游戏，在 Genex 桌面应用中游玩的人可以安装它们。第一次上传时，会在你的账号下为这个游戏创建一个托管的 Genex 项目。",
   "Use this cover": "使用这个封面"
 }

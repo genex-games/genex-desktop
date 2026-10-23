@@ -6,7 +6,13 @@
  * tests read it.
  */
 import { sizeWords } from "../../../../shared/byte-size.ts";
-import { GenexListingState, type GenexNativeRecord } from "../../../../shared/genex.ts";
+import {
+  CloudBuildFailure,
+  CloudBuildState,
+  type GenexCloudBuild,
+  GenexListingState,
+  type GenexNativeRecord,
+} from "../../../../shared/genex.ts";
 import { CoreFact, type FactRef } from "../../../../shared/project-facts.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { NATIVE_WORDS, PUBLISH_PLATFORM_WORDS } from "../../../words.ts";
@@ -29,6 +35,14 @@ export const PlatformEnd = {
   Sent: "sent",
   /** The last Publish could not send it. */
   Failed: "failed",
+  /** This computer can't make it, and Genex can build it on its own computers. */
+  CloudBuild: "cloud-build",
+  /** Genex built it: it can build it again from the game as it is now. */
+  CloudRebuild: "cloud-rebuild",
+  /** Genex's build of it failed, for a reason trying again may fix. */
+  CloudRetry: "cloud-retry",
+  /** Genex is building it now. */
+  Building: "building",
 } as const;
 export type PlatformEnd = (typeof PlatformEnd)[keyof typeof PlatformEnd];
 
@@ -134,10 +148,59 @@ const elsewhereWords = (row: PublishPlatform & { target: NativeTarget }, now: nu
   end: PlatformEnd.None,
 });
 
+/** The rows whose app Genex builds on its own computers when this one can't: an Unreal game's Windows app. */
+const CLOUD_TARGETS: ReadonlySet<PublishTarget> = new Set([PublishTarget.Windows]);
+
+/** The builds still running on Genex's computers. */
+const RUNNING_CLOUD: ReadonlySet<CloudBuildState> = new Set([
+  CloudBuildState.Queued,
+  CloudBuildState.Building,
+  CloudBuildState.Publishing,
+]);
+
+/** The newest build Genex made, or makes, of `row`'s app; none before the first. */
+function newestCloudBuild(row: PublishPlatform, native: GenexNativeRecord | undefined): GenexCloudBuild | undefined {
+  const builds = (native?.cloud?.builds ?? []).filter(forRow(row));
+  return builds.reduce<GenexCloudBuild | undefined>(
+    (newest, build) => (!newest || Date.parse(build.startedAt) > Date.parse(newest.startedAt) ? build : newest),
+    undefined,
+  );
+}
+
+/** What a failed build on Genex says, and whether trying again can help. */
+function cloudFailureWords(build: GenexCloudBuild): { detail: string; end: PlatformEnd } {
+  const failure = build.failure ?? CloudBuildFailure.Failed;
+  const detail = WORDS.cloudFailed[failure] ?? WORDS.cloudFailed[CloudBuildFailure.Failed];
+  return { detail, end: failure === CloudBuildFailure.Quota ? PlatformEnd.None : PlatformEnd.CloudRetry };
+}
+
+/**
+ * A row this computer can't make that Genex builds instead: offered once the game is on Genex
+ * (`onGenex`), then building, on Genex, or failed; null for a row Genex does not build, or while the
+ * Genex plugin and its CLI can't ask for builds.
+ */
+function cloudWords(
+  row: PublishPlatform & { target: NativeTarget },
+  native: GenexNativeRecord | undefined,
+  now: number,
+  onGenex: boolean,
+): { detail: string; end: PlatformEnd } | null {
+  if (!CLOUD_TARGETS.has(row.target) || native?.cloud?.supported !== true) return null;
+  if (!onGenex) return { detail: WORDS.cloudPublishFirst, end: PlatformEnd.None };
+  const build = newestCloudBuild(row, native);
+  if (!build) return { detail: WORDS.cloudOffer, end: PlatformEnd.CloudBuild };
+  if (RUNNING_CLOUD.has(build.state))
+    return { detail: WORDS.cloudBuilding(build.startedAt, now), end: PlatformEnd.Building };
+  if (build.state === CloudBuildState.Failed) return cloudFailureWords(build);
+  const built = WORDS.built(build.finishedAt ?? build.startedAt, now);
+  return { detail: [WORDS.sent, built].join(" · "), end: PlatformEnd.CloudRebuild };
+}
+
 /**
  * The rows in the order they come, each as words; `native` is how the last Publish's apps went,
  * `webOffer` what a game with no web version is offered for one, `madeOnly` the one system this
- * computer makes the game's apps for (`appsMadeOnly`).
+ * computer makes the game's apps for (`appsMadeOnly`), `onGenex` whether the game has a page on
+ * Genex, which an app Genex builds goes on.
  */
 export function platformRows(
   platforms: readonly PublishPlatform[],
@@ -145,6 +208,7 @@ export function platformRows(
   native?: GenexNativeRecord,
   webOffer: WebOffer = WebOffer.Quiet,
   madeOnly: PublishTarget | null = null,
+  onGenex = false,
 ): PlatformRow[] {
   return platforms.map((row) => {
     if (!isNative(row))
@@ -156,7 +220,7 @@ export function platformRows(
         state: row.state,
       };
     const words = madeElsewhere(row, madeOnly)
-      ? elsewhereWords(row, now)
+      ? (cloudWords(row, native, now, onGenex) ?? elsewhereWords(row, now))
       : { detail: nativeDetail(row, now), end: nativeEnd(row, native) };
     return {
       target: row.target,

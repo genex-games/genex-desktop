@@ -3269,6 +3269,23 @@ Genex:
   characters of a sent app's archive sha256 (`appClipCommit`, from `native.json`), which Genex
   matches as a prefix where a web game's names its staging commit; a stand that refuses it leaves a
   `failed` clip record, sent again by the next publish, and the picture stands. A web game with no app shows no rows. L4: `npm run test:ui -- publish-platforms-ui`.
+- An Unreal game's rows for another system say where it is packaged ("Package it on a Windows PC"),
+  except the Windows row on a Mac once Genex can build it (`cloudWords`, `CLOUD_TARGETS`): while the
+  game has no page on Genex it says to publish first; then it offers Build on Genex, which runs
+  `studio:plugins.genex-cloud-build` (`cloudBuildFromDialog`, Windows only) → the plugin's
+  `cloud-build` (`cloudBuild`, `cloud-build.ts`). The press is the consent: the game's project is
+  staged as remixers get it (`stageRemixSource`, into `cloud-source/`, removed once sent) and goes
+  privately with `genex native build --platform windows --source <folder> --json`; Genex builds it on
+  its own computers and puts the app on the game's page. Each job is kept in the workspace's
+  `cloud-build.json` (apart from `native.json`, which every publish writes anew) and followed with
+  `genex native build-status <job> --json`, waiting 15 s, 30 s, 1 and then 2 min between reads; a job
+  still running when Studio starts is followed again when the record is next read. The record
+  answers as `native.cloud`; the row then says "Building on Genex · N min so far", "On Genex · built …"
+  with Build again, or why it failed by code (`CloudBuildFailure`) with Try again (none once the
+  month's builds are used). A refused press is said under the rows. Job ids and platforms Genex
+  answers are kept only when whole (`cloudBuildOf`). Nothing is asked while the pinned CLI is older
+  than `genex native build` (1.38.0, `pinnedCliBuildsApps`): `native.cloud.supported` is false and
+  the row reads as before. Genex's side of this is a draft contract.
 - Every published copy gets a `<head>` tag when `deployment.ts` marks it (`withHead`): the games
   host injects its environment (`window.__GENEX__`), mobile kit, crash watchdog and cover
   responder only into one, and the marker never goes ahead of the doctype. A game whose

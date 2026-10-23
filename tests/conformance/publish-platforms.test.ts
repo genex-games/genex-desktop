@@ -9,7 +9,12 @@ import { mkdir, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { publishedApps, publishPlatforms } from "../../src/main/core/publish-platforms.ts";
-import type { GenexNativeRecord } from "../../src/shared/genex.ts";
+import {
+  CloudBuildFailure,
+  CloudBuildState,
+  type GenexCloudBuild,
+  type GenexNativeRecord,
+} from "../../src/shared/genex.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
 import { NativeArch } from "../../src/shared/play-native.ts";
@@ -360,6 +365,90 @@ describe("Publish's platform rows as the dialog says them", () => {
       "Publishing Mac, Windows and Linux apps comes with the next Genex update.",
       "a game with no web build says why its press waits",
     );
+  });
+
+  it("offers a Mac's Unreal game its Windows app built on Genex, and says how that build goes", () => {
+    const record = (cloud?: GenexNativeRecord["cloud"]): GenexNativeRecord => ({
+      supported: true,
+      sending: false,
+      sent: [],
+      failed: [],
+      ...(cloud ? { cloud } : {}),
+    });
+    const started = new Date(T0).toISOString();
+    const build = (over: Partial<GenexCloudBuild>): GenexCloudBuild => ({
+      platform: "windows",
+      jobId: "job-1",
+      state: CloudBuildState.Building,
+      startedAt: started,
+      ...over,
+    });
+    const windowsRow = (native?: GenexNativeRecord, onGenex = true) => {
+      const row = platformRows([WEB, MAC, WINDOWS], NOW, native, WebOffer.Unavailable, PublishTarget.Mac, onGenex)[2];
+      return [row?.detail, row?.end];
+    };
+    assert.deepEqual(
+      windowsRow(record()),
+      ["Package it on a Windows PC", PlatformEnd.None],
+      "a Genex plugin or CLI that can't ask for builds keeps the old words",
+    );
+    assert.deepEqual(windowsRow(record({ supported: false, builds: [] })), [
+      "Package it on a Windows PC",
+      PlatformEnd.None,
+    ]);
+    const cloud = (builds: GenexCloudBuild[]) => record({ supported: true, builds });
+    assert.deepEqual(windowsRow(cloud([]), false), [
+      "Publish the game first, then Genex can build it",
+      PlatformEnd.None,
+    ]);
+    assert.deepEqual(windowsRow(cloud([])), ["Genex can build it on Windows for you", PlatformEnd.CloudBuild]);
+    assert.deepEqual(windowsRow(cloud([build({ state: CloudBuildState.Queued })])), [
+      "Building on Genex · 5 min so far",
+      PlatformEnd.Building,
+    ]);
+    assert.deepEqual(windowsRow(cloud([build({})])), ["Building on Genex · 5 min so far", PlatformEnd.Building]);
+    const done = build({ state: CloudBuildState.Done, finishedAt: new Date(T0 + 4 * MINUTE_MS).toISOString() });
+    assert.deepEqual(windowsRow(cloud([done])), ["On Genex · built 1 min ago", PlatformEnd.CloudRebuild]);
+    const failed = (failure: CloudBuildFailure) => cloud([build({ state: CloudBuildState.Failed, failure })]);
+    assert.deepEqual(windowsRow(failed(CloudBuildFailure.Compile)), [
+      "Genex couldn’t compile the game’s code",
+      PlatformEnd.CloudRetry,
+    ]);
+    assert.deepEqual(
+      windowsRow(failed(CloudBuildFailure.Quota)),
+      ["You’ve used this month’s builds on Genex", PlatformEnd.None],
+      "trying again can't help until the allowance comes back",
+    );
+    const older = build({
+      jobId: "job-0",
+      state: CloudBuildState.Failed,
+      startedAt: new Date(T0 - MINUTE_MS).toISOString(),
+    });
+    assert.equal(windowsRow(cloud([done, older]))[1], PlatformEnd.CloudRebuild, "the newest build speaks for the row");
+    const otherPlatform = cloud([build({ platform: "linux" })]);
+    assert.deepEqual(windowsRow(otherPlatform), ["Genex can build it on Windows for you", PlatformEnd.CloudBuild]);
+    const onWindows = platformRows(
+      [WEB, { ...MAC, state: PublishPlatformState.Missing, arch: null, bytes: 0, builtAt: null }, WINDOWS_READY],
+      NOW,
+      cloud([]),
+      WebOffer.Unavailable,
+      PublishTarget.Windows,
+      true,
+    );
+    assert.deepEqual(
+      [onWindows[1]?.detail, onWindows[1]?.end],
+      ["Package it on a Mac", PlatformEnd.None],
+      "Genex builds no Mac app",
+    );
+    const builtHere = platformRows(
+      [WEB, MAC, WINDOWS_READY],
+      NOW,
+      cloud([]),
+      WebOffer.Unavailable,
+      PublishTarget.Mac,
+      true,
+    );
+    assert.equal(builtHere[2]?.end, PlatformEnd.None, "a Windows build in the folder goes with Publish as before");
   });
 
   it("says on an app's row that it is being sent, is on Genex, or was not sent and why", () => {

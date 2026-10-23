@@ -5975,4 +5975,25 @@ export default {
   "Your game is on Roblox": "Ton jeu est sur Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "L’agent de ton jeu le publie dans Roblox Studio pendant que tu continues à travailler.",
+  "Asked Genex": "Demandé à Genex",
+  "Build on Genex": "Créer sur Genex",
+  "Build the {app} on Genex": "Créer l’{app} sur Genex",
+  "Build the {app} on Genex again": "Recréer l’{app} sur Genex",
+  "Building on Genex · {minutes} min so far": "En création sur Genex · {minutes} min pour l’instant",
+  "Building…": "Création…",
+  "Couldn’t build the {app} on Genex: {error}": "Impossible de créer l’{app} sur Genex : {error}",
+  "Genex builds only Windows apps on its own computers":
+    "Genex ne crée que des apps Windows sur ses propres ordinateurs",
+  "Genex can build it on Windows for you": "Genex peut la créer sur Windows pour toi",
+  "Genex can’t build this Unreal version yet": "Genex ne peut pas encore créer avec cette version d’Unreal",
+  "Genex couldn’t compile the game’s code": "Genex n’a pas pu compiler le code du jeu",
+  "Genex couldn’t cook the game’s content": "Genex n’a pas pu préparer le contenu du jeu",
+  "Open the game to build its app on Genex": "Ouvre le jeu pour créer son app sur Genex",
+  "Publish the game first, then Genex can build it": "Publie d’abord le jeu, puis Genex pourra la créer",
+  "The build on Genex failed": "La création sur Genex a échoué",
+  "The build on Genex took too long": "La création sur Genex a pris trop de temps",
+  "The project is too big for Genex to build": "Le projet est trop gros pour que Genex le crée",
+  "This version of Genex can’t build apps on Genex yet":
+    "Cette version de Genex ne peut pas encore créer d’apps sur Genex",
+  "You’ve used this month’s builds on Genex": "Tu as utilisé les créations de ce mois sur Genex",
 } satisfies LocaleCatalog;

@@ -322,6 +322,10 @@ const ACTIONS: Record<string, Action> = {
     const camera = coverCamera(ctx, service, invokedAt);
     return genex.publishAppsOnly(ctx.project, apps, args.title, camera, remixChoice(args, ctx));
   },
+  [GenexAction.CloudBuild]: async (genex, args, ctx) => {
+    if (!ctx.project) throw new Error(MESSAGE.OpenProject());
+    return genex.cloudBuild(ctx.project, args.platform, ctx.directory);
+  },
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),
   ),
