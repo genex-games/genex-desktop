@@ -633,7 +633,14 @@ impl<W> Runtime<W> {
     #[doc(hidden)]
     pub fn host_saves(&mut self, call: crate::saves::HostSavesCall) -> Result<serde_json::Value, crate::saves::SaveError> {
         let core = &mut self.core;
-        let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
+        let running = crate::saves::Running {
+            sim: &mut core.sim,
+            seed: &mut core.seed,
+            tick: &mut core.tick,
+            rng: &core.rng,
+            gfx: &core.gfx,
+            input: &mut core.g6.input,
+        };
         let answer = crate::saves::host_call(&self.game, &mut core.g6.saves, running, call)?;
         if !answer.restored {
             return Ok(answer.value);
@@ -654,7 +661,8 @@ impl<W> Runtime<W> {
     #[doc(hidden)]
     pub fn suspend_save(&mut self) -> Option<Result<crate::saves::SlotInfo, crate::saves::SaveError>> {
         let core = &mut self.core;
-        let view = crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx };
+        let view =
+            crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx, input: &core.g6.input };
         crate::saves::suspend_save(&self.game, &mut core.g6.saves, &view)
     }
 
@@ -1386,7 +1394,14 @@ fn step<W>(game: &Game<W>, core: &mut Core<W>, ms: f64) -> StepResult {
 /// cell build.
 fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::HoldBudget) -> bool {
     // A load the last tick asked for swaps in first (UIS-9); one whose body is not resident holds.
-    let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
+    let running = crate::saves::Running {
+        sim: &mut core.sim,
+        seed: &mut core.seed,
+        tick: &mut core.tick,
+        rng: &core.rng,
+        gfx: &core.gfx,
+        input: &mut core.g6.input,
+    };
     match crate::saves::swap_in(game, &mut core.g6.saves, running) {
         crate::saves::Swap::Hold => return false,
         crate::saves::Swap::Restored => restored(game, core),
@@ -1473,10 +1488,15 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         let shown = crate::actions_touch::State::shown(&game.g6.touch, ctx.actions.device());
         let (sim, touch) = (&mut core.sim, &core.g6.touch);
         let panel = crate::render::PanelScope::enter(&core.render);
+        // The hooks draw inside the safe area plus a margin, at the person's text size (R-25);
+        // touch controls keep the whole world.
+        let layout = core.g6.ui.hooks_layout(&game.g6.ui);
         core.hud.run(game.world_size, simulated_ms(core.tick) / 1000.0, &hud, |ui| {
-            for hook in &game.uis {
-                hook(sim, ui, &ctx);
-            }
+            layout.show(ui, |ui| {
+                for hook in &game.uis {
+                    hook(sim, ui, &ctx);
+                }
+            });
             if shown {
                 touch.paint(&game.g6.touch, game.world_size, ui);
             }
@@ -1507,7 +1527,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     core.g6.audio.step(camera, &core.sim);
     core.g6.tick_end(&game.g6, core.tick);
     core.tick += 1;
-    let view = crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx };
+    let view =
+        crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx, input: &core.g6.input };
     crate::saves::end_of_tick(game, &mut core.g6.saves, &view);
     true
 }

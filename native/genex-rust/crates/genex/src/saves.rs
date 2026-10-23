@@ -16,6 +16,9 @@
 //!   anchors, kept cells and active cells. A load restores it after `genex.nav`; before the next
 //!   tick's commit the runtime rebuilds the slot's active cells through the commit hooks
 //!   (`StreamTick::rebuild_restored`) and the commit moves them to the anchors (STR-12, owner call S5).
+//! - `genex.input` (when `game.input` is registered) holds the evaluated actions and the pad
+//!   family in use (R-25), so a load mid-hold reads the hold on, not a fresh press. A slot saved
+//!   before the section existed loads with fresh actions.
 //! - Without `game.saves`, `state()` and every checksum are what they were: the slot calls refuse
 //!   `save-not-configured` and nothing is read or written.
 
@@ -29,9 +32,11 @@ use genex_core::saves::{MAX_TOTAL_SAVE_BYTES, Saves, mirror};
 use genex_core::session;
 use genex_save::driver::{BodyRead, SlotDriver, SlotStore, Snapshot, Step};
 use genex_save::index::SlotIndex;
+use genex_input::state::ActionState;
 use genex_save::migrate::{BUILTIN_SECTION_PREFIX, Migrations};
 use serde_json::{Map, Value, json};
 
+use crate::actions::PadFamily;
 use crate::game::Game;
 use crate::gfx::Gfx;
 use crate::rng::Pcg32;
@@ -52,6 +57,9 @@ pub const NAV_SECTION: &str = "genex.nav";
 /// The built-in section holding `sim.stream` (STR-12's snapshot), written while `game.streaming`
 /// is registered.
 pub const STREAM_SECTION: &str = "genex.stream";
+/// The built-in section holding the evaluated input actions and the pad family in use (R-25),
+/// written while `game.input` is registered.
+pub const INPUT_SECTION: &str = "genex.input";
 /// The section `game.save_world` registers.
 pub const WORLD_SECTION: &str = "world";
 /// The save calls the reference's saves page teaches, as the facade vocabulary's `saves` block
@@ -76,9 +84,10 @@ pub const SAVE_CALLS: [&str; 16] = [
 ];
 /// The locale a slot records until gameplay UI (UIS-10) names the running one.
 const SAVE_LOCALE: &str = "en";
-/// Built-in sections a slot may hold beside the game's (`genex.nav` and `genex.stream`), counted
+/// Built-in sections a slot may hold beside the game's (`genex.nav`, `genex.stream` and
+/// `genex.input`), counted
 /// against [`SECTIONS_MAX`] at install.
-const BUILTIN_SECTIONS_MAX: usize = 2;
+const BUILTIN_SECTIONS_MAX: usize = 3;
 /// Simulated ticks a second (genex-core's `FIXED_STEP_MS` is 1000/60): a slot's play time.
 const TICKS_PER_SECOND: u64 = 60;
 /// How far the web's hold clock moves each time it is read: the facade has no monotonic clock on
@@ -557,6 +566,15 @@ pub(crate) struct Running<'a, W> {
     pub(crate) rng: &'a Cell<Pcg32>,
     /// What reset and load hooks read through.
     pub(crate) gfx: &'a Gfx,
+    /// The evaluated input actions a load restores (`genex.input`).
+    pub(crate) input: &'a mut crate::actions::State,
+}
+
+impl<W> Running<'_, W> {
+    /// The running game as a save reads it.
+    fn view(&self) -> SaveView<'_, W> {
+        SaveView { sim: &*self.sim, seed: *self.seed, tick: *self.tick, rng: self.rng, gfx: self.gfx, input: &*self.input }
+    }
 }
 
 /// What the runtime does before a tick, after [`swap_in`].
@@ -629,7 +647,11 @@ fn restore_into<W>(game: &Game<W>, envelope: Envelope, running: Running<'_, W>) 
     }
     gfx.assets().set_at_reset(false);
     restore_sections(game, &mut sim, &envelope.sections, gfx)?;
+    let input = restored_input(running.input, &envelope.sections)?;
     let checksum = checksum_of(game, &sim, seed, envelope.tick);
+    if let Some((actions, family)) = input {
+        running.input.restore(actions, family);
+    }
     *running.sim = sim;
     *running.seed = seed;
     *running.tick = envelope.tick;
@@ -654,6 +676,27 @@ fn restore_sections<W>(game: &Game<W>, sim: &mut Sim<W>, sections: &Map<String, 
     Ok(())
 }
 
+/// The slot's evaluated actions and pad family for a game with `game.input`: its `genex.input`
+/// section, or fresh actions (the family kept) for a slot saved before the section existed. None
+/// without `game.input`; a section another map wrote refuses `save-section-invalid`.
+fn restored_input(input: &crate::actions::State, sections: &Map<String, Value>) -> Result<Option<(ActionState, PadFamily)>, SaveError> {
+    if !input.registered() {
+        return Ok(None);
+    }
+    let Some(section) = sections.get(INPUT_SECTION) else {
+        return Ok(Some((ActionState::new(input.map()), input.family())));
+    };
+    let invalid = |detail: &str| SaveError::section_invalid(format!("{INPUT_SECTION}: {detail}"));
+    let actions = ActionState::restore(input.map(), &section["actions"]).map_err(|error| invalid(&error.detail))?;
+    let family = section["family"].as_str().and_then(PadFamily::from_wire).ok_or_else(|| invalid("an unknown pad family"))?;
+    Ok(Some((actions, family)))
+}
+
+/// The `genex.input` section: the evaluated actions and the pad family in use.
+fn input_section(input: &crate::actions::State) -> Value {
+    json!({ "actions": input.action_state().snapshot(), "family": input.family().as_str() })
+}
+
 fn section<'a>(sections: &'a Map<String, Value>, name: &str) -> Result<&'a Value, SaveError> {
     sections.get(name).ok_or_else(|| SaveError::new(SaveErrorCode::SectionMissing, format!("the slot has no section {name}")))
 }
@@ -670,6 +713,8 @@ pub(crate) struct SaveView<'a, W> {
     pub(crate) rng: &'a Cell<Pcg32>,
     /// Where the slots are written.
     pub(crate) gfx: &'a Gfx,
+    /// The evaluated input actions (`genex.input`).
+    pub(crate) input: &'a crate::actions::State,
 }
 
 /// At the end of a tick: run the deletes and saves it asked for, then a due autosave.
@@ -698,6 +743,9 @@ fn snapshot<W>(game: &Game<W>, view: &SaveView<'_, W>) -> Result<Snapshot, SaveE
     }
     if game.stream_registration().is_some() {
         sections.insert(STREAM_SECTION.to_owned(), view.sim.stream.snapshot());
+    }
+    if view.input.registered() {
+        sections.insert(INPUT_SECTION.to_owned(), input_section(view.input));
     }
     for entry in &game.save_sections.list {
         let value = (entry.save)(view.sim).map_err(|detail| SaveError::section_invalid(format!("{}: {detail}", entry.name)))?;
@@ -840,7 +888,7 @@ fn write_envelope<W>(game: &Game<W>, config: &SaveConfig, driver: &mut SlotDrive
 /// Run the save or delete just queued now, as a tick's end would (the running game read through
 /// read hooks only), and answer the slot as listed after it, or why it refused.
 fn run_queued<W>(game: &Game<W>, driver: &mut SlotDriver, saves: &Saves, running: &Running<'_, W>, slot: &str) -> Result<SlotInfo, SaveError> {
-    let view = SaveView { sim: &*running.sim, seed: *running.seed, tick: *running.tick, rng: running.rng, gfx: running.gfx };
+    let view = running.view();
     driver.end_tick(&mut Store(saves), view.tick, &mut || snapshot(game, &view));
     // The event is published at the next tick's start; begin it now (nothing is pending).
     let Step::Run = driver.begin_tick(&mut Store(saves), 0) else { return Err(SaveError::new(SaveErrorCode::Busy, "a load is pending")) };
@@ -855,11 +903,11 @@ fn load_now<W>(game: &Game<W>, state: &mut State, running: Running<'_, W>, slot:
     let saves = running.gfx.saves().clone();
     if let Some(driver) = state.driver.as_mut() {
         // A tick's end turns the queued load into the pending one; nothing else is queued.
-        let view = SaveView { sim: &*running.sim, seed: *running.seed, tick: *running.tick, rng: running.rng, gfx: running.gfx };
+        let view = running.view();
         driver.end_tick(&mut Store(&saves), view.tick, &mut || snapshot(game, &view));
     }
-    let Running { sim, seed, tick, rng, gfx } = running;
-    let swap = swap_in(game, state, Running { sim: &mut *sim, seed: &mut *seed, tick: &mut *tick, rng, gfx });
+    let Running { sim, seed, tick, rng, gfx, input } = running;
+    let swap = swap_in(game, state, Running { sim: &mut *sim, seed: &mut *seed, tick: &mut *tick, rng, gfx, input });
     let driver = state.driver.as_ref().ok_or_else(not_configured)?;
     if swap != Swap::Restored {
         let refused = driver.events().iter().rev().find(|event| event.op == SlotOp::Load && event.slot.as_str() == slot);

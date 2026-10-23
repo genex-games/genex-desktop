@@ -9,6 +9,7 @@ import { FIXTURE_NAMES, installOlderPlugins } from "../../src/main/dev/fixtures.
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { devBuildArgs, launchEnv, main } from "../../scripts/studio-dev.ts";
 import { gamesRootWarnings, liveEnvStripped, StudioDevWarning } from "../../scripts/studio-dev/live-env.ts";
+import { allocateProfile, removeProfile, validateProfile } from "../../scripts/studio-dev/ownership.mjs";
 import { fixtureElectronEnv } from "../../scripts/electron-runtime.mjs";
 import { freshMachineEnv } from "../../scripts/studio-dev/fresh-machine.ts";
 import { strippedEnv } from "../../scripts/evals/lanes/common.ts";
@@ -359,6 +360,55 @@ test("a live games root under a .claude folder is warned about, through a link t
     assert.deepEqual(warnings, at ? [{ code: StudioDevWarning.GamesRootUnderClaudeFolder, at }] : [], name);
     assert.equal(fs.existsSync(root), false, `${name}: the check creates nothing`);
   }
+});
+
+test("a live profile in a checkout under a .claude folder keeps its games outside it, and only there", (t) => {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "games-outside-")));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const home = path.join(base, "home");
+  fs.mkdirSync(home);
+  const realHome = process.env.HOME;
+  process.env.HOME = home;
+  t.after(() => {
+    process.env.HOME = realHome;
+  });
+  const worktree = path.join(base, "repo/.claude/worktrees/wt");
+  const plain = path.join(base, "plain");
+  fs.mkdirSync(worktree, { recursive: true });
+  fs.mkdirSync(plain);
+
+  const live = allocateProfile(worktree, "manual", "live", null);
+  assert.deepEqual(gamesRootWarnings(live.games), [], "the agent's native Write is not asked about every game file");
+  assert.ok(live.games.startsWith(home + path.sep), live.games);
+  assert.ok(fs.statSync(live.games).isDirectory());
+  assert.equal(validateProfile(worktree, "manual").games, live.games);
+  assert.equal(allocateProfile(worktree, "manual", "live", null, true).games, live.games, "--reuse keeps the root");
+  // Nothing else moves: a fixture profile there, and a live one in a plain checkout, keep theirs inside.
+  const fixture = allocateProfile(worktree, "checks", "fixture", null);
+  assert.equal(fixture.games, path.join(worktree, ".studio-dev/profiles/checks/games"));
+  assert.equal(
+    allocateProfile(plain, "manual", "live", null).games,
+    path.join(plain, ".studio-dev/profiles/manual/games"),
+  );
+  const fresh = allocateProfile(worktree, "newbie", "live", null, false, true);
+  t.after(() => fs.rmSync(fresh.home, { recursive: true, force: true }));
+  assert.equal(
+    fresh.games,
+    path.join(worktree, ".studio-dev/profiles/newbie/games"),
+    "a fresh machine has its own home",
+  );
+
+  // A record pointing the games anywhere else is refused, whatever the profile says of itself.
+  const ownerFile = path.join(live.root, "owner.json");
+  const record = fs.readFileSync(ownerFile, "utf8");
+  for (const games of [path.join(home, "AI Games"), path.join(base, "elsewhere"), path.join(live.root, "games")]) {
+    fs.writeFileSync(ownerFile, JSON.stringify({ ...JSON.parse(record), games }));
+    assert.throws(() => validateProfile(worktree, "manual"), /games/, games);
+  }
+  fs.writeFileSync(ownerFile, record);
+  removeProfile(validateProfile(worktree, "manual"));
+  assert.equal(fs.existsSync(live.games), false, "removing the profile removes its games");
+  assert.equal(fs.existsSync(path.join(home, "AI Games")), false, "the normal games folder is never made");
 });
 
 test("a fixture profile's build counts React commits for its checks; a live profile's does not", () => {

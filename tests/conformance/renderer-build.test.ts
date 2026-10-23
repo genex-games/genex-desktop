@@ -127,3 +127,32 @@ test("the eager budget counts the studio the entry loads after the language, nev
     /three\.js/,
   );
 });
+
+/** The studio renderer as `scripts/build.mjs` bundles it for an owned development profile, unwritten. */
+async function bundleStudio(mode: Parameters<typeof rendererBuildOptions>[0]): Promise<Metafile> {
+  const result = await build({
+    ...rendererBuildOptions(mode),
+    bundle: true,
+    write: false,
+    metafile: true,
+    logLevel: "silent",
+    platform: "browser",
+    target: "chrome130",
+    format: "esm",
+    jsx: "automatic",
+    entryPoints: ["src/renderer/main.tsx"],
+    outdir: "dist/renderer",
+    entryNames: "renderer",
+    chunkNames: "chunks/[name]-[hash]",
+    splitting: true,
+    loader: { ".css": "css" },
+  });
+  return result.metafile;
+}
+
+// `npm run studio:dev -- start` builds development React and refuses to start past this budget, so
+// the studio's dialogs must stay out of what a window reads before it shows.
+test("the development studio fits the eager budget a studio:dev start enforces", async () => {
+  const report = rendererBundleReport(await bundleStudio({ development: true }), { development: true });
+  assert.equal(report.react, "development");
+});

@@ -345,6 +345,50 @@ fn a_hostile_settings_file_keeps_the_defaults_reports_settings_invalid_and_is_no
     assert!(clean.state()["volatile"].get("settings").is_none());
 }
 
+/// R-25 (GI visual rows 1 and 7): the Game tab showed the raw key `settings-hints: 1` and "Preset:
+/// Custom" on an untouched tab, and every row and the tab strip sat flush against the left edge.
+#[test]
+fn the_game_tab_reads_words_and_the_menu_sits_inside_the_margin() {
+    let mut rt = runtime(game_with_options());
+    rt.step(FIXED_STEP_MS * 2.0);
+    for _ in 0..3 {
+        tap(&mut rt, PAD_RB);
+    }
+    rt.step(FIXED_STEP_MS);
+    let items = hud_items(&rt);
+    assert!(items.iter().any(|item| item == "Hints: 1"), "the option reads as words: {items:?}");
+    assert!(!items.iter().any(|item| item.starts_with("settings-")), "no raw key: {items:?}");
+    assert!(items.iter().any(|item| item == "Preset: Default"), "an untouched tab reads Default: {items:?}");
+    for widget in rt.hud_widgets() {
+        let [x0, y0, x1, y1] = widget.rect;
+        let inside = x0 >= 16.0 && y0 >= 16.0 && x1 <= WORLD[0] as f32 - 16.0 && y1 <= WORLD[1] as f32 - 16.0;
+        assert!(inside, "{} sits inside the 16 pt margin: {:?}", widget.label, widget.rect);
+    }
+}
+
+const BIG_TEXT: &[u8] = br#"{"format":1,"presets":{},"values":{"ui.text_size":"text-size-200"}}"#;
+
+/// R-25: the text size was recorded but not applied; at 200% the menu's words are twice as tall.
+#[test]
+fn the_text_size_the_person_chose_scales_the_menu_text() {
+    let tab_height = |rt: &Runtime<World>| {
+        let tab = rt.hud_widgets().into_iter().find(|widget| widget.label == "Audio").expect("the Audio tab");
+        tab.rect[3] - tab.rect[1]
+    };
+    let mut plain = runtime(menu_game());
+    plain.use_android_data(&temp_dir("text-plain"));
+    plain.step(FIXED_STEP_MS * 2.0);
+    let mut big = runtime(menu_game());
+    let dir = temp_dir("text-big");
+    big.use_android_data(&dir);
+    assert!(big.saves().save(SETTINGS_FILE, BIG_TEXT));
+    big.use_android_data(&dir);
+    big.step(FIXED_STEP_MS * 2.0);
+    let (small, large) = (tab_height(&plain), tab_height(&big));
+    assert!(large > small * 1.6, "the tab's text grows with the text size: {small} -> {large}");
+    assert_eq!(plain.checksum(), big.checksum(), "text size is display only");
+}
+
 const EVIDENCE_ENV: &str = "GENEX_SETTINGS_EVIDENCE_DIR";
 const REQUIRE_METAL_ENV: &str = "GENEX_REQUIRE_METAL";
 
@@ -432,4 +476,40 @@ fn open_audio_tab_again(rt: &mut Runtime<World>) {
     tap(rt, PAD_RB);
     rt.step(FIXED_STEP_MS);
     assert_eq!(focus(rt), json!("settings.audio.preset"));
+}
+
+/// R-25 look row: the menu at 200% text on the Accessibility tab, kept for a person to look at.
+#[test]
+#[ignore = "Metal row: run with --ignored metal"]
+fn metal_the_menu_at_200_percent_text() {
+    let mut rt = runtime(game_with_options());
+    let dir = temp_dir("text-200-capture");
+    rt.use_android_data(&dir);
+    assert!(rt.saves().save(SETTINGS_FILE, BIG_TEXT));
+    rt.use_android_data(&dir);
+    rt.step(FIXED_STEP_MS * 2.0);
+    tap(&mut rt, PAD_RB);
+    tap(&mut rt, PAD_RB);
+    rt.step(FIXED_STEP_MS);
+    let Some(mut presenter) = presenter() else { return };
+    let accessibility = capture(&mut presenter, &mut rt);
+    keep("settings-text-200-accessibility", &accessibility);
+}
+
+/// R-25 look row (GI visual row 1, "no Controls tab"): a game with `game.input` shows the Controls
+/// tab between Audio and Language & Accessibility; kept for a person to look at.
+#[test]
+#[ignore = "Metal row: run with --ignored metal"]
+fn metal_the_controls_tab_with_game_input() {
+    let mut game = menu_game();
+    game.input(ActionMap::new().context(Context::new(PLAY, 0).button(JUMP, &[Key::KeyJ.into()])));
+    let mut rt = runtime(game);
+    rt.step(FIXED_STEP_MS * 2.0);
+    tap(&mut rt, PAD_RB);
+    tap(&mut rt, PAD_RB);
+    rt.step(FIXED_STEP_MS);
+    assert!(hud_items(&rt).iter().any(|item| item == "Rebind Jump"), "the Controls tab is open: {:?}", hud_items(&rt));
+    let Some(mut presenter) = presenter() else { return };
+    let controls = capture(&mut presenter, &mut rt);
+    keep("settings-controls", &controls);
 }

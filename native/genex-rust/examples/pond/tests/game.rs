@@ -96,7 +96,9 @@ fn the_game_draws_every_tag_and_the_splash_reaches_the_meter() {
 fn a_tap_on_the_water_casts_and_a_tap_on_the_hud_does_not() {
     let mut runtime = pond();
     runtime.step(50.0);
-    runtime.inject(Input::click_at(0.01, 0.01));
+    // The HUD's score line starts inside the 16 pt margin (R-25): tap a few pixels into it.
+    let [width, height] = pond_game::WORLD_SIZE.map(|side| side as f32);
+    runtime.inject(Input::click_at(24.0 / width, 24.0 / height));
     runtime.step(50.0);
     assert_eq!(fishing(&runtime)["casts"], json!(0), "the tap was the HUD's");
     runtime.inject(Input::click_at(0.5, 0.6));
