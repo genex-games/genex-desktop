@@ -183,8 +183,9 @@ write your own system around it.
   compiled cell pack is read with `genex::pack::CellPacks::from_table(ASSETS, "<folder>")`, and
   `genex::digest` hashes the game's own data: a game depends on `genex` alone. A level that loads
   an interior while playing requires its `[[asset_group]]` with `sim.stream.require("<group>")`
-  and waits for `sim.stream.ready(ticket)`. On the web a named group is not fetched yet, so a game
-  with a web build loads what it needs up front.
+  and waits for `sim.stream.ready(ticket)`. On the web a named group is not fetched yet, nor are a
+  pack's cells and terrain tiles: a game with a web build loads what it needs up front, and a
+  streamed world is judged on a native run.
 - **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
   `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn

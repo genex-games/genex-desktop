@@ -22,7 +22,8 @@
 //! compiled table first, then these; the sim's reads see each file's group. Streamed and named
 //! files arrive while playing: [`studio_assets_wanted`] answers the fetches the game wants,
 //! [`studio_assets_arrived`] admits each (a whole file or one planned range) and
-//! [`studio_assets_release`] drops one again.
+//! [`studio_assets_release`] drops one again. Nothing in the runtime queues a want yet (only tests
+//! call `WebAssets::want`), so streamed and named files are planned but not fetched on the web.
 //!
 //! Frames are drawn by genex's shared presenter (`genex::present::Presenter`), the one a native
 //! run draws with, behind the [`Screen`] painter: the game's Level-3 custom GPU passes (installed

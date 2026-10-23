@@ -88,8 +88,9 @@ game.on_update(|sim, _| {
   `timeout: "stream-drain-timeout"` until a drain settles.
 - `frame.cells_debug()` outlines the view's cells on the ground. Green: drawn. Yellow: loading.
   Grey: building. Red: refused.
-- On the web, a pack's cells and terrain tiles arrive while playing (by `Range`, a KTX2's small
-  levels first); a reset that reads one is refused `not-preloaded`, as natively.
+- On the web a pack's cells and terrain tiles are not fetched yet: the build plans them to arrive
+  while playing (by `Range`, a KTX2's small levels first), but nothing asks for them, so judge a
+  streamed world on a native run. A reset that reads one is refused `not-preloaded`, as natively.
 - Caps per cell, all builders together: 256 things, 64 colliders, 4096 group instances. A cell
   past one enters empty (`cell.refused()` is `stream-invalid`), nothing of it is kept, and
   `state().volatile.__stream.refused` names it.
