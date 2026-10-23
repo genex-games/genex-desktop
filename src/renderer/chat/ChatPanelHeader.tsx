@@ -1,9 +1,11 @@
-import type { JSX } from "react";
+import { type JSX, lazy, Suspense } from "react";
 import { ChatHeader } from "../panels/ChatHeader.tsx";
-import { ExportSheet } from "../panels/ExportSheet.tsx";
 import type { ChatExport } from "./use-chat-export.ts";
 import { useGameStorage } from "./use-game-storage.ts";
 import type { ChatParts } from "./use-chat-panel.ts";
+
+// The export sheet loads when an export opens it, outside the studio's first chunk.
+const ExportSheet = lazy(() => import("../panels/ExportSheet.tsx").then((m) => ({ default: m.ExportSheet })));
 
 /**
  * The chat's header, keyed by thread: its title (a game chat renames its game), export (a phone
@@ -20,12 +22,14 @@ export function ChatPanelHeader({
     <>
       <ChatHeaderBar props={props} chat={chat} composer={composer} chatExport={chatExport} />
       {sheet && (
-        <ExportSheet
-          project={sheet.project}
-          destination={sheet.destination}
-          onClose={chatExport.closeSheet}
-          onExported={chatExport.sheetExported}
-        />
+        <Suspense fallback={null}>
+          <ExportSheet
+            project={sheet.project}
+            destination={sheet.destination}
+            onClose={chatExport.closeSheet}
+            onExported={chatExport.sheetExported}
+          />
+        </Suspense>
       )}
     </>
   );

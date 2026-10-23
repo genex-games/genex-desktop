@@ -14,10 +14,9 @@
  * here: the notifications App draws on its own root read it.
  */
 import type { JSX } from "react";
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { t } from "../shared/i18n.ts";
 import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
-import { Onboarding } from "./onboarding/Onboarding.tsx";
 import { AppDialogs, type DialogsState } from "./panels/AppDialogs.tsx";
 import { GenexPromo } from "./panels/GenexPromo.tsx";
 import { nativeViewsUp } from "./play/play-model.ts";
@@ -34,6 +33,10 @@ import { useShell } from "./shell/use-shell.ts";
 import { Workspace } from "./shell/Workspace.tsx";
 import { useEngines, usePlay, useUpdate } from "./state/hooks.ts";
 import { CodexLoginPanel } from "./ui/CodexLoginPanel.tsx";
+
+// The welcome loads when a first run shows it, outside the studio's first chunk (the eager budget in
+// `scripts/renderer-build.mjs`).
+const Onboarding = lazy(() => import("./onboarding/Onboarding.tsx").then((m) => ({ default: m.Onboarding })));
 
 /** `data-room` while Plugins covers the workspace. */
 const PLUGINS_ROOM = "plugins";
@@ -142,12 +145,14 @@ export function App(): JSX.Element {
         onRemoveGame={navigation.removeGame}
       />
       {welcoming && (
-        <Onboarding
-          engines={engines}
-          onEnginesRefresh={app.engines.refresh}
-          onReady={welcome.readyAfterWelcome}
-          onFinish={welcome.finishWelcome}
-        />
+        <Suspense fallback={null}>
+          <Onboarding
+            engines={engines}
+            onEnginesRefresh={app.engines.refresh}
+            onReady={welcome.readyAfterWelcome}
+            onFinish={welcome.finishWelcome}
+          />
+        </Suspense>
       )}
       <Promo welcoming={welcoming} covered={chrome.workspaceCovered} project={project} dialogs={dialogs.state} />
       <AvatarWelcome blocked={welcoming} />

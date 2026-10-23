@@ -2429,6 +2429,9 @@ export class PreviewService {
       await this.reloadPreview({ retry: p.retry === true });
       return;
     }
+    // As a plain Reload does: Live's Native view starts the Mac build again from what is on disk
+    // once the run it showed has ended (`afterReload` in the renderer's native store).
+    await this.#endLiveTiedRuns(waiting.project);
     try {
       if (waiting.commit) await this.showBuild(waiting.project, waiting.commit);
       else await this.loadPreview({ project: waiting.project, ...(waiting.root ? { root: waiting.root } : {}) });
