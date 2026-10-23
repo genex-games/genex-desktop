@@ -2,7 +2,8 @@
 //! builds its graph and its animators, a world holds each [`Animator`] and advances it in
 //! `on_update` with `animator.update(ctx.dt)`, and a draw hook draws it with `frame.character`.
 //! `Animator::simple(&hero)` is the short path: `play`, `crossfade`, `play_once` and `speed` on a
-//! hidden one-layer graph.
+//! hidden one-layer graph. `animator.plant_feet(model, ground)` after the update keeps the feet on
+//! slopes and steps (release R-22, over genex-anim's `FootPlacer`).
 //!
 //! The update rule is the facade's own: `update` takes `&mut self`, and every read hook (`on_draw`,
 //! `camera`, `probe`, ...) gets `&Sim`, so an animator only moves in the simulation, by the tick's
@@ -32,15 +33,22 @@ use std::sync::Arc;
 
 use genex_anim::AnimationError;
 use genex_anim::animator::{AnimSet, Animator as Rig};
+use genex_anim::character::GroundHit;
+use genex_anim::evaluate::pose_digest;
+use genex_anim::foot::{FootPlacer, FootRig, FootSettings, apply_plan};
+use genex_anim::math::Trs;
 use genex_anim::retarget::retarget_clips;
+use genex_core::digest::fnv1a64_from;
+use genex_core::json::Value as CoreValue;
 use serde_json::Value;
 
 use crate::frame::{Color, Material, Transform};
 use crate::gfx::{CharacterAsset, Model};
-use crate::math::Vec3;
+use crate::math::{Mat4, Vec3};
 
 pub use genex_anim::animator::{AnimEvent, AnimatorStep, Limb, LimbTarget, LookTarget};
 pub use genex_anim::events::EventFilter;
+pub use genex_anim::foot::{Foot, FootGoal, FootPlan, height_ground};
 pub use genex_anim::graph::{AnimGraph, AnimGraphBuilder, ClipMotion, DEFAULT_BLEND_SECONDS, Motion, TransitionBlend, TransitionBuilder};
 pub use genex_anim::ids::{ClipId, EventId, JointId, LayerId, StateId};
 pub use genex_anim::mask::{BodyPart, Mask};
@@ -86,7 +94,7 @@ impl CharacterAsset {
     pub fn animator(&self, graph: &AnimGraph) -> Result<Animator, AnimationError> {
         built()?;
         let rig = Rig::new(Arc::clone(self.set()), graph)?;
-        Ok(Animator { asset: self.clone(), rig })
+        Ok(Animator { asset: self.clone(), rig, dt: 0.0, feet: None })
     }
 
     /// The same character with root motion extracted from its clips by `settings` (baked in place
@@ -112,14 +120,56 @@ impl CharacterAsset {
 }
 
 /// One animated character's state, held in the world and advanced in `on_update`:
-/// `animator.update(ctx.dt)` steps its graph and gives the tick's events and root motion. It
-/// derefs to genex-anim's animator for the rest (`set_float`, `fire`, `jump_to`, `state_name`,
-/// `socket`, `snapshot` / `restore`, `digest`, ...).
+/// `animator.update(ctx.dt)` steps its graph and gives the tick's events and root motion, and
+/// `animator.plant_feet(model, ground)` after it keeps the feet on uneven ground. It derefs to
+/// genex-anim's animator for the rest (`set_float`, `fire`, `jump_to`, `state_name`, ...).
 #[derive(Clone, Debug)]
 pub struct Animator {
     asset: CharacterAsset,
     rig: Rig,
+    /// The last update's `dt`, which the next `plant_feet` eases its locks by.
+    dt: f32,
+    /// Foot placement, from the first `plant_feet` on (release R-22).
+    feet: Option<Box<Feet>>,
 }
+
+/// One character's planted feet: its legs, the placer's locks and the pose with the last plan.
+#[derive(Clone, Debug, PartialEq)]
+struct Feet {
+    /// The legs; `None` for a rig without a humanoid's hips, thighs, shins and feet.
+    rig: Option<FootRig>,
+    placer: FootPlacer,
+    /// The animator's pose with the last plan applied, until the next update.
+    posed: Option<Posed>,
+    /// The furthest the pelvis drops before the character counts as in the air, model space.
+    max_drop: f32,
+}
+
+impl Feet {
+    /// No locks yet, over `set`'s legs.
+    fn new(set: &AnimSet, placer: FootPlacer) -> Box<Feet> {
+        let skeleton = set.skeleton();
+        let rig = FootRig::of(skeleton, set.humanoid());
+        let mut rest = vec![Mat4::IDENTITY; skeleton.joint_count()];
+        skeleton.local_to_model(skeleton.rest_pose(), &mut rest);
+        let hips = rig.as_ref().and_then(|legs| rest.get(usize::from(legs.pelvis().raw()))).map_or(0.0, |pelvis| pelvis.w_axis.y.max(0.0));
+        Box::new(Feet { rig, placer, posed: None, max_drop: AIRBORNE_DROP_SHARE * hips })
+    }
+}
+
+/// A planted pose: local transforms and model matrices.
+#[derive(Clone, Debug, PartialEq)]
+struct Posed {
+    local: Vec<Trs>,
+    model: Vec<Mat4>,
+}
+
+/// The share of the hips' rest height the pelvis may drop to reach the ground; a deeper drop means
+/// the character is in the air (a jump, a ledge), and `plant_feet` leaves its legs as animated.
+const AIRBORNE_DROP_SHARE: f32 = 0.35;
+
+/// The snapshot key the facade adds for the feet's locks.
+const FEET_KEY: &str = "feet";
 
 impl Animator {
     /// A simple animator of `asset`: `play(clip)`, `crossfade(clip, seconds)`, `play_once(clip)`
@@ -133,6 +183,141 @@ impl Animator {
     /// The character it animates.
     pub fn asset(&self) -> &CharacterAsset {
         &self.asset
+    }
+
+    /// Advance by `dt` seconds (pass `ctx.dt`): genex-anim's `update`, which gives the tick's
+    /// events and root motion. The feet stand where the animation puts them until the next
+    /// [`Animator::plant_feet`].
+    pub fn update(&mut self, dt: f32) -> AnimatorStep {
+        self.dt = dt;
+        if let Some(feet) = &mut self.feet {
+            feet.posed = None;
+        }
+        self.rig.update(dt)
+    }
+
+    /// Keep the feet on the ground (release R-22, call it in `on_update` after
+    /// [`Animator::update`]): for a character drawn at `model`, cast `ground(from, to)` under each
+    /// ankle (world space; `character.ground_ray(&sim.physics)` with physics, or
+    /// `height_ground(|x, z| Some(terrain.height(x, z)))`), bend each leg onto the ground, turn
+    /// each foot to its slope (at most 30°), drop the pelvis by the lower foot's offset and hold a
+    /// planted foot where it stands until the animation lifts it. A foot is down while its ankle
+    /// is within 3 cm of its rest height. The planted pose is what `socket`, `pose`, `palette`
+    /// and `frame.character` show until the next update; the locks are simulation state, carried
+    /// by `snapshot` / `restore`. A rig without a humanoid's legs, a probe that finds no ground,
+    /// or ground so far below that the pelvis would drop more than a third of the hips' height
+    /// (the character is in the air: its locks go) leaves the pose as it is ([`FootPlan::NONE`]).
+    ///
+    /// ```
+    /// # use genex::prelude::*;
+    /// use genex::animation::{FootPlan, height_ground};
+    ///
+    /// #[derive(Default)]
+    /// struct World { hero: Option<Animator>, terrain: Option<genex::Terrain>, at: Transform, feet: FootPlan }
+    ///
+    /// # fn wire(game: &mut Game<World>) {
+    /// game.on_update(|sim, ctx| {
+    ///     let World { hero: Some(hero), terrain: Some(terrain), at, feet } = &mut sim.world else { return };
+    ///     hero.update(ctx.dt);
+    ///     *feet = hero.plant_feet(*at, height_ground(|x, z| Some(terrain.height(x, z))));
+    /// });
+    /// // A probe a check reads: both feet found the ground, and how far the pelvis dropped.
+    /// game.probe("feet", |sim| json!({ "planted": sim.world.feet.feet.iter().flatten().count(), "pelvisDrop": -sim.world.feet.pelvis.y }));
+    /// # }
+    /// ```
+    pub fn plant_feet(&mut self, model: Transform, ground: impl FnMut(Vec3, Vec3) -> Option<GroundHit>) -> FootPlan {
+        let set = Arc::clone(self.rig.set());
+        let feet = self.feet.get_or_insert_with(|| Feet::new(&set, FootPlacer::new(FootSettings::default())));
+        let Some(legs) = &feet.rig else { return FootPlan::NONE };
+        let contacts = legs.contacts(self.rig.model_pose());
+        let plan = feet.placer.plant(legs, self.rig.pose(), model.matrix(), contacts, self.dt, ground);
+        if plan.pelvis.length() > feet.max_drop {
+            // In the air: the legs stay as animated and the locks go, so a landing locks afresh.
+            feet.placer.clear();
+            feet.posed = None;
+            return FootPlan::NONE;
+        }
+        let mut posed = Posed { local: self.rig.pose().to_vec(), model: self.rig.model_pose().to_vec() };
+        let skeleton = set.skeleton();
+        if apply_plan(skeleton, legs, &plan, &mut posed.local, &mut posed.model) {
+            // The toes below each foot catch up.
+            skeleton.local_to_model(&posed.local, &mut posed.model);
+        }
+        feet.posed = Some(posed);
+        plan
+    }
+
+    /// The planted pose, when `plant_feet` ran since the last update.
+    fn posed(&self) -> Option<&Posed> {
+        self.feet.as_ref().and_then(|feet| feet.posed.as_ref())
+    }
+
+    /// The local pose as drawn: planted after `plant_feet`, otherwise genex-anim's evaluation.
+    pub fn pose(&self) -> &[Trs] {
+        self.posed().map_or_else(|| self.rig.pose(), |posed| &posed.local)
+    }
+
+    /// The model-space pose as drawn, one matrix per joint.
+    pub fn model_pose(&self) -> &[Mat4] {
+        self.posed().map_or_else(|| self.rig.model_pose(), |posed| &posed.model)
+    }
+
+    /// A joint's world transform for a character placed at `model` (`model` itself for a joint
+    /// the skeleton lacks): the drawn pose's, planted feet included.
+    pub fn socket(&self, joint: JointId, model: Mat4) -> Mat4 {
+        self.model_pose().get(usize::from(joint.raw())).map_or(model, |joint| model * *joint)
+    }
+
+    /// The skinning palette of the drawn pose into `palette`, in skin order.
+    pub fn palette(&self, palette: &mut [[f32; 16]]) {
+        self.rig.set().skeleton().palette(self.model_pose(), palette);
+    }
+
+    /// The drawn pose's palette when `plant_feet` planted it since the last update: the
+    /// presenter's path, which otherwise evaluates the animator's state itself.
+    #[allow(dead_code, reason = "present/characters.rs calls it once the R-22 cross-lane hunk lands; the hunk removes this allow")]
+    pub(crate) fn planted_palette(&self) -> Option<Vec<[f32; 16]>> {
+        let posed = self.posed()?;
+        let skeleton = self.rig.set().skeleton();
+        let mut palette = vec![Mat4::IDENTITY.to_cols_array(); skeleton.skin_order().len()];
+        skeleton.palette(&posed.model, &mut palette);
+        Some(palette)
+    }
+
+    /// FNV-1a 64 over the drawn local pose's bits.
+    pub fn pose_digest(&self) -> u64 {
+        pose_digest(self.pose())
+    }
+
+    /// FNV-1a 64 over the whole state: genex-anim's digest, then the feet's locks once
+    /// `plant_feet` has run.
+    pub fn digest(&self) -> u64 {
+        let hash = self.rig.digest();
+        self.feet.as_ref().map_or(hash, |feet| fnv1a64_from(&feet.placer.digest().to_le_bytes(), hash))
+    }
+
+    /// The whole state as a value (genex-anim's snapshot, plus the feet's locks under `"feet"`
+    /// once `plant_feet` has run). [`Animator::restore`] continues exactly where this one is.
+    pub fn snapshot(&self) -> CoreValue {
+        let mut out = self.rig.snapshot();
+        if let Some(feet) = &self.feet {
+            out.set(FEET_KEY, feet.placer.snapshot());
+        }
+        out
+    }
+
+    /// Restore a [`Animator::snapshot`]. Refused `animation-asset-invalid`, with the animator
+    /// unchanged: genex-anim's refusals, or feet that are not a foot snapshot. A snapshot without
+    /// feet drops the locks; the feet stand as animated until the next `plant_feet`.
+    pub fn restore(&mut self, snapshot: &CoreValue) -> Result<(), AnimationError> {
+        let mut placer = FootPlacer::new(FootSettings::default());
+        let saved = snapshot.get(FEET_KEY);
+        if let Some(saved) = saved {
+            placer.restore(saved)?;
+        }
+        self.rig.restore(snapshot)?;
+        self.feet = saved.map(|_| Feet::new(self.rig.set(), placer));
+        Ok(())
     }
 
     /// For a probe: each layer's state, clip time and transition, and the parameters
@@ -150,7 +335,7 @@ impl Animator {
     /// placed at `transform`: two points per bone, parents first.
     pub(crate) fn bone_segments(&self, transform: Transform) -> Vec<Vec3> {
         let skeleton = self.rig.set().skeleton();
-        let model = self.rig.model_pose();
+        let model = self.model_pose();
         let place = transform.matrix();
         let at = |index: usize| model.get(index).map_or(place.w_axis.truncate(), |joint| (place * *joint).w_axis.truncate());
         skeleton
@@ -162,9 +347,9 @@ impl Animator {
 }
 
 impl PartialEq for Animator {
-    /// The same character in the same state (genex-anim's whole-state digest).
+    /// The same character in the same state (the whole-state digest, feet included).
     fn eq(&self, other: &Animator) -> bool {
-        self.asset == other.asset && self.rig.digest() == other.rig.digest()
+        self.asset == other.asset && self.digest() == other.digest()
     }
 }
 
