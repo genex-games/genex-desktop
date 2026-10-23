@@ -883,7 +883,11 @@ function verdictLook(shots: Shot[], viewpoints: readonly string[], entry: string
 /** The seeded replay (two native runs) and the fixed-horizon agreement with the web build. */
 async function replayAndCrossRows(gate: GateRun): Promise<boolean> {
   const { ctx, handle, request } = gate;
-  const first = await drive(ctx, request, { handle, target: request.target }).catch((error: unknown) => error as Error);
+  // Both replay runs start from a reload: the captures before this drew frames, and a renderer's
+  // pixels carry earlier frames (TAA jitter and history), so a run that skipped it never matched.
+  const first = await freshRun(ctx, handle)
+    .then(() => drive(ctx, request, { handle, target: request.target }))
+    .catch((error: unknown) => error as Error);
   if (first instanceof Error) {
     gate.rows.push(failed(ParityRow.Replay, messageOf(first), refusalOf(first)));
     return false;
@@ -893,13 +897,18 @@ async function replayAndCrossRows(gate: GateRun): Promise<boolean> {
   return true;
 }
 
+/** Reload the native run and wait until it is ready again; refused `notReady` when it does not come back. */
+async function freshRun(ctx: HarnessCtx, handle: string): Promise<void> {
+  await ctx.call(HostMethod.PreviewReload, { handle });
+  const ready = await ctx.call(HostMethod.PreviewReady, { handle });
+  if (ready?.ready !== true) throw new Error(MESSAGE.notReady(String(ready?.reason ?? "unknown")));
+}
+
 /** The second native run from the same seed and input: the same `state()` and the same pixels. */
 async function replayRow(gate: GateRun, first: Drive): Promise<ParityRowResult> {
   const { ctx, handle, request } = gate;
   try {
-    await ctx.call(HostMethod.PreviewReload, { handle });
-    const ready = await ctx.call(HostMethod.PreviewReady, { handle });
-    if (ready?.ready !== true) return failed(ParityRow.Replay, MESSAGE.notReady(String(ready?.reason ?? "unknown")));
+    await freshRun(ctx, handle);
     const second = await drive(ctx, request, { handle, target: request.target });
     const same = compareStates(first.state, second.state, { tolerance: 0, volatile: REPLAY_VOLATILE });
     if (!same.agree) return failed(ParityRow.Replay, MESSAGE.replayState(quote(same)));

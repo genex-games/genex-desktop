@@ -8971,6 +8971,55 @@ describe("C++ · raylib on the web lane (M3a)", () => {
     assert.ok(timeoutMs >= budgetMs, `the playtester keeps its whole budget after the build: ${timeoutMs}`);
   });
 
+  it("PARITY-REPLAY-FRESH. the parity gate's first replay run started on a game that had already drawn its captures while the second started after a reload, so a renderer whose pixels carry earlier frames (TAA jitter and history) never matched: both replay runs start from a reload", async () => {
+    let framesSinceLoad = 0;
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.NativeBuild]: () => ({
+          ok: true,
+          admission: { target: BuildTarget.Mac, refusal: null, detail: null, imports: [], rpaths: [] },
+        }),
+        [HostMethod.PreviewAcquire]: () => ({ handle: "native" }),
+        [HostMethod.PreviewReady]: () => ({ ready: true }),
+        [HostMethod.PreviewLoad]: () => true,
+        [HostMethod.PreviewReload]: (params) => {
+          if (params.handle === "native") framesSinceLoad = 0;
+          return true;
+        },
+        [HostMethod.PreviewCall]: (params) => {
+          if (params.handle === "native" && params.method === PageMethod.Step) framesSinceLoad++;
+          return { ok: true };
+        },
+        [HostMethod.PreviewInput]: () => ({ ok: true }),
+        [HostMethod.PreviewWitness]: () => {
+          framesSinceLoad++;
+          return { frameBefore: 0, frameAfter: 1, simulatedMs: 16, drawCalls: 4 };
+        },
+        // Every drawn frame moves the temporal history, so a picture depends on all frames since load.
+        [HostMethod.PreviewScreenshot]: (params) => {
+          if (params.handle === "native") framesSinceLoad++;
+          return {
+            base64: Buffer.from(`frames:${framesSinceLoad}`).toString("base64"),
+            stats: { litFraction: 0.4, meanLuma: 0.5, canvas: true, drawCalls: 4 },
+          };
+        },
+        [HostMethod.PreviewState]: () => ({ player: { x: 0 } }),
+        [HostMethod.PreviewRelease]: () => true,
+      },
+    });
+    const verdict = await runParityGate(recorder.ctx as never, {
+      run: { runId: "run_horde", project: "ashen-horde", stack: GameStack.RustWgpu } as never,
+      target: BuildTarget.Mac,
+      webHandle: "web",
+      seed: 1234,
+      cameras: ["default", "top"],
+      retriesMs: [],
+      tolerances: { read: async () => null, write: async () => {} },
+    });
+    const replay = verdict.rows.find((row) => row.row === ParityRow.Replay);
+    assert.equal(replay?.pass, true, JSON.stringify(replay));
+  });
+
   it('PARITY-REPLAY-CAMERA. the parity gate stepped its first replay run on the last camera the captures left ("top") and the second on the default, so a game whose frame depends on the camera it ran under never matched: both replay runs step on the default camera', async () => {
     let camera = "default";
     let steppedUnder = "default";

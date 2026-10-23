@@ -214,6 +214,9 @@ function fakeHost(quirks: GameQuirks = {}): CtxRecorder & { games: Map<string, F
     games.set(key, made);
     return made;
   };
+  // The gate reloads before each of its two replay runs (the first load is run 1), so the second
+  // replay run is the native game's third load.
+  const isSecondReplay = (handle: unknown, g: { runs: number }) => handle === NATIVE && g.runs > 2;
   const stateOf = (handle: unknown) => {
     const g = game(handle);
     return {
@@ -230,14 +233,14 @@ function fakeHost(quirks: GameQuirks = {}): CtxRecorder & { games: Map<string, F
       __render: { drawCalls: handle === NATIVE ? 4 : 9 },
       ...(quirks.extra ?? {}),
       ...(quirks.stateByTarget?.[TARGET_OF[String(handle)] ?? BuildTarget.Web] ?? {}),
-      ...(handle === NATIVE && g.runs > 1 ? (quirks.replayState ?? {}) : {}),
+      ...(isSecondReplay(handle, g) ? (quirks.replayState ?? {}) : {}),
     };
   };
   const tick = (handle: unknown) => {
     const g = game(handle);
     g.frame += 1;
     const target = TARGET_OF[String(handle)] ?? BuildTarget.Web;
-    const replay = handle === NATIVE && g.runs > 1 ? (quirks.replayDrift ?? 0) : 0;
+    const replay = isSecondReplay(handle, g) ? (quirks.replayDrift ?? 0) : 0;
     g.x += (g.held.has("KeyD") ? 1.5 : 0) + (quirks.drift?.[target] ?? 0) + replay;
   };
   const pageCall = (p: Record<string, unknown>) => {
