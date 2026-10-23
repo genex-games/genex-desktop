@@ -186,7 +186,9 @@ credential denies for that sandbox only (`SandboxOptions.ownHome`), and only the
 provider hosts (the address OpenCode lists, plus a built-in provider's known API and browser
 sign-in hosts, OpenCode Zen's `opencode.ai` among them, which a session started before the list was
 read still gets) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are
-reachable. `OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, never ask, denies web
+reachable, plus, on 2.x, loopback (`127.0.0.1`, `localhost`): its run command talks to a server it
+starts for itself, and on Windows the sandbox sends loopback through its proxy, which answers a host
+it was not given with a bare 403. `OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, never ask, denies web
 fetch, skills and other folders to a build, and lets a read-only session run only the studio bridge
 (`node .studio/bridge/tool.mjs`), which carries the studio's tools as it does for Codex. On 2.x,
 which allows any tool it has no rule for, the rules open with a deny of everything and are repeated

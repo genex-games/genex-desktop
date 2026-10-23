@@ -995,7 +995,12 @@ describe("OpenCode 2.x sessions", () => {
     assert.equal(config.permission, undefined, "never 1.18's shape");
     assert.equal(config.share, "disabled");
     assert.equal(config.update, "disable");
-    assert.deepEqual(invocation?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+    assert.deepEqual(
+      invocation?.domains,
+      ["opencode.ai", "models.dev", "models.opencode.ai", "127.0.0.1", "localhost"],
+      // On Windows loopback goes through the sandbox's proxy, which refuses a host it was not given.
+      "and 2.x's own server, which its run command reaches over loopback",
+    );
   });
 
   it("resumes by session id, and leaves the variant off a model with no such dial", async () => {

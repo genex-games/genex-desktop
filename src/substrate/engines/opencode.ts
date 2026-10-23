@@ -99,6 +99,11 @@ const MODEL_REFUSED_STATUSES: ReadonlySet<number> = new Set([400, 404]);
 const PROXY_REFUSED_STATUS = 403;
 /** Where OpenCode refreshes its model catalogs; opened beside the provider's own hosts. */
 const CATALOG_HOSTS = ["models.dev", "models.opencode.ai"] as const;
+/**
+ * Where 2.x's run command reaches the server it starts for itself. On Windows the sandbox sends
+ * loopback through its proxy too, which refuses a host it was not given (a bare 403).
+ */
+const OWN_SERVER_HOSTS = ["127.0.0.1", "localhost"] as const;
 
 /**
  * What this engine says: statuses and remedies for Settings in the person's language (functions,
@@ -519,7 +524,7 @@ export class OpenCodeEngine implements Engine {
       env,
       signal: ctx.signal,
       sandbox,
-      domains: this.#domains(model),
+      domains: [...this.#domains(model), ...(dialect === OpenCodeDialect.V2 ? OWN_SERVER_HOSTS : [])],
     };
   }
 
