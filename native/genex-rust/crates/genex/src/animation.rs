@@ -275,7 +275,6 @@ impl Animator {
 
     /// The drawn pose's palette when `plant_feet` planted it since the last update: the
     /// presenter's path, which otherwise evaluates the animator's state itself.
-    #[allow(dead_code, reason = "present/characters.rs calls it once the R-22 cross-lane hunk lands; the hunk removes this allow")]
     pub(crate) fn planted_palette(&self) -> Option<Vec<[f32; 16]>> {
         let posed = self.posed()?;
         let skeleton = self.rig.set().skeleton();

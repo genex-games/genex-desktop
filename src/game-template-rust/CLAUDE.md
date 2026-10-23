@@ -175,7 +175,10 @@ write your own system around it.
   keys, touches and pads are `docs/api/ctx.md`).
 - **UI and settings**: text, locales and the kit's menus through `game.ui(..)` and `genex::ui`
   (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
-  (`docs/api/settings.md`).
+  (`docs/api/settings.md`). `on_ui` hooks already draw inside the safe area plus a 16 pt margin
+  and at the player's text size, so add no edge margin of your own; `genex::ui::safe_area(ui)` is
+  only for a child placed back at the screen edge (zero inside the hook's rect). Give every game
+  option's label key an `.ftl` line: a missing one reads as words and records `text-missing`.
 - **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`). A
   compiled cell pack is read with `genex::pack::CellPacks::from_table(ASSETS, "<folder>")`, and
   `genex::digest` hashes the game's own data: a game depends on `genex` alone. A level that loads
@@ -185,7 +188,9 @@ write your own system around it.
 - **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
   `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn
-  its capsule at the feet and draw the model at the capsule, never placed by its centre.
+  its capsule at the feet, draw the model at the capsule, never placed by its centre, and call
+  `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground
+  (`docs/api/animation.md`).
 - **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
   tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
   cards past their last level, declared once in `on_reset`. A model only streamed cells draw
@@ -195,7 +200,9 @@ write your own system around it.
   `state().volatile.audio`, never by ear (`docs/api/audio.md`).
 - **Ground** across the world is one `Terrain` made in `on_reset` and drawn with
   `frame.terrain(..)`; stand things on it with `terrain.height(x, z)` (`docs/api/terrain.md`).
-- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`).
+- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`). With `game.input` a slot
+  keeps the input actions itself, so a load mid-hold replays exactly; a slot holds at most 61 game
+  sections.
 - **Multiplayer**: `game.net(..)` and `sim.net`; connect only after the player picks Play
   online, move yourself locally and rule on `.state_raw()`. Only the published draft in two
   windows proves online play (`docs/api/net.md`).

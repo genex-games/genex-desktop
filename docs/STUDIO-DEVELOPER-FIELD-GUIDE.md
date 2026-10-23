@@ -130,10 +130,11 @@ session's nesting, effort, context, timeout, MCP and OAuth markers, and `ELECTRO
 ([live-env.ts](../scripts/studio-dev/live-env.ts); the eval lanes strip the same routing names and
 prefixes). `CLAUDE_CONFIG_DIR` and `CODEX_HOME` stay: they are your choice of account. A
 `CLAUDE_CODE_OAUTH_TOKEN` login is not carried into a live launch (it shows in `envStripped`);
-pick the account with `CLAUDE_CONFIG_DIR` instead. The start JSON names what it dropped (`envStripped`, never values). Start and status
-warn (`games-root-under-claude-folder`) when the profile's games sit under a `.claude` folder,
-as in a worktree under `.claude/`, where native Claude Write refuses or asks
-([live acceptance](#full-regression-and-failure-evidence)).
+pick the account with `CLAUDE_CONFIG_DIR` instead. The start JSON names what it dropped (`envStripped`, never values). A new live profile in a checkout under a `.claude` folder (a worktree there) keeps its games
+outside it, in `~/Genex Studio Dev/<owner id>/games` (status `roots.games`; removed with the
+profile), since native Claude Write refuses or asks below `.claude`
+([live acceptance](#full-regression-and-failure-evidence)). Start and status still warn
+(`games-root-under-claude-folder`) for a profile whose games sit there, such as one made earlier.
 
 Live profiles isolate Studio data, not all machine accounts, Keychain, quotas, local models
 or compute. They do not copy credentials. Follow the [credential restriction](agent/verification.md#credentials)

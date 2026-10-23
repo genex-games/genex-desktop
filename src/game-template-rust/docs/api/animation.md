@@ -102,6 +102,17 @@ if step.events.iter().any(|event| event.event == hit) { /* deal damage */ }
   `.in_transition(layer)` read it.
 - `animator.reach(limb, target)` and `.look_at(target)` aim limbs and the head (IK, character
   space). `.socket(joint, model)` is a joint's world matrix, for a sword tip.
+- `animator.plant_feet(model, ground)` right after `animator.update(ctx.dt)` keeps the feet on
+  slopes and steps. `model` is the `Transform` you draw the character at; `ground` is
+  `character.ground_ray(&sim.physics)` with physics, or
+  `genex::animation::height_ground(|x, z| Some(terrain.height(x, z)))`. Each leg bends onto the
+  ground, each foot turns to the slope (at most 30°), the pelvis drops by the lower foot's offset,
+  and a standing foot holds its place until the animation lifts it (an ankle within 3 cm of its
+  rest height is down). `socket`, `pose`, `palette` and `frame.character` show the planted pose
+  until the next update; `snapshot` and `restore` carry the foot locks. It returns a `FootPlan`
+  (`plan.feet` per foot, `plan.pelvis`) for a probe. A rig without a humanoid's legs, no ground
+  under the feet, or a character in the air (the pelvis would drop more than a third of its hip
+  height) is left as animated.
 - `animator.snapshot()` and `.restore(..)` carry the whole state, floats as bits.
 - `game.probe("hero", |sim| sim.world.hero.as_ref().map_or(Value::Null, Animator::probe))` gives each layer's state, clip time and
   transition, and the parameters. `animator.digest()` hashes the whole state.

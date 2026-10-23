@@ -24,6 +24,9 @@ let step = world.hero.drive(physics, CharacterMotion::Velocity { wish, jump }, c
   ground that skips the character, sensors and ragdolls; `character.remove(physics)` takes it out.
 - `character.feet()`, `character.facing()`, `character.velocity()` and `character.grounded()` read
   it; `character.transform().into()` is the `Transform` to draw it with.
+- To stand its feet on a slope or a step, call
+  `animator.plant_feet(character.transform().into(), character.ground_ray(&sim.physics))` after
+  the animator's update (`docs/api/animation.md`).
 - `character.nav_config()` is the `NavConfig` whose climb and slope match the controller, so every
   path its bake finds is one the character can walk (`docs/api/navigation.md`).
 - `character.snapshot()` and `character.restore(..)` carry the controller state (floats as bits).

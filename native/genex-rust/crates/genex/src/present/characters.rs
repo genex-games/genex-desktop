@@ -252,8 +252,12 @@ fn full_rate(animator: &Animator, stats: &mut CharacterStats) -> Vec<[f32; 16]> 
     evaluated_palette(animator)
 }
 
-/// genex-anim's evaluation of `animator`'s state (IK from its stored targets) as the palette.
+/// genex-anim's evaluation of `animator`'s state (IK from its stored targets) as the palette, or
+/// its planted pose's after `plant_feet` (release R-22).
 fn evaluated_palette(animator: &Animator) -> Vec<[f32; 16]> {
+    if let Some(planted) = animator.planted_palette() {
+        return planted;
+    }
     let skeleton = animator.set().skeleton();
     let mut evaluation = Evaluation::new(skeleton.joint_count());
     evaluate(animator, &mut evaluation);

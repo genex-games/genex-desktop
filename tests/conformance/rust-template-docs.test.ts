@@ -118,6 +118,7 @@ const FACADE = JSON.parse(
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
   audio: { calls: string[]; refusals: string[] };
+  animation: { calls: string[]; refusals: string[] };
   input: { calls: string[]; refusals: string[] };
   lod: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
@@ -1208,5 +1209,83 @@ describe("the seed's game-systems recipes (EP-R1)", () => {
     assert.ok(rules.includes(".with_impostor("), "the guide names impostors");
     assert.match(rules, /by (?:its|their) feet/, "the guide says a character stands by its feet");
     assert.ok(rules.includes("docs/api/input.md"), "input routes to the Input page");
+  });
+});
+
+/** The game systems a `genex.toml` table switches (`[physics]`, `[audio]`, ...), as the manifest parser reads them. */
+function switchedSystems(): string[] {
+  const parsed = parseGenexToml(`[game]\ntitle = "Switches"\n`);
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  return Object.entries(parsed.manifest).flatMap(([key, value]) => (typeof value === "boolean" ? [key] : []));
+}
+
+/** The codes a switched-off system's calls are refused with, as the facade pins them (`nav-disabled`, ...). */
+const SWITCH_REFUSALS = [...FACADE.installRefusals, ...FACADE.animation.refusals, ...FACADE.audio.refusals].filter(
+  (code) => code.endsWith("-disabled"),
+);
+
+/** The `genex.toml` part of a sketch: everything before its first Rust file. */
+const sketchToml = (sketch: string): string => sketch.split(/^\/\/ src\//m)[0] ?? "";
+
+/** The system recipes whose sketches must switch on what they call, with the tables each needs on. */
+const RECIPE_SWITCHES: Record<string, readonly string[]> = {
+  "rust.streamed-world": ["streaming"],
+  "rust.nav-agents": ["nav", "animation"],
+  "rust.animated-characters": ["animation"],
+};
+
+describe("the in-app agent knows every game system and its switch (R-32)", () => {
+  const rules = () => section(read("CLAUDE.md"), "Game systems");
+
+  it("the Game systems rules name each genex.toml switch and the code a switched-off system answers", () => {
+    const systems = switchedSystems();
+    assert.ok(systems.length >= 5, `the parser switches ${systems.join(", ")}`);
+    for (const system of systems) assert.ok(rules().includes(`[${system}]`), `the rules name the [${system}] switch`);
+    assert.ok(SWITCH_REFUSALS.length >= 4, `the facade pins ${SWITCH_REFUSALS.join(", ")}`);
+    for (const code of SWITCH_REFUSALS) assert.ok(rules().includes(`\`${code}\``), `the rules name ${code}`);
+  });
+
+  it("the Game systems rules route a streamed world to the pack reader, its digest and named groups", () => {
+    for (const call of ["CellPacks::from_table(", "genex::digest", "sim.stream.require(", "sim.stream.ready("])
+      assert.ok(rules().includes(call), `the rules name ${call}`);
+  });
+
+  it("the Game systems rules teach only calls the fixture pins", () => {
+    const pinned = new Set(
+      pinnedCallGroups().flatMap(([, calls]) => calls.flatMap((call) => call.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])),
+    );
+    const unpinned = [...calledNames(rules())].filter((name) => !pinned.has(name) && !NOT_GAME_SYSTEMS_CALLS.has(name));
+    assert.deepEqual(unpinned, []);
+  });
+
+  it("each system recipe's sketch switches on the tables its calls need, in rows the build accepts", () => {
+    for (const [id, systems] of Object.entries(RECIPE_SWITCHES)) {
+      const toml = sketchToml(seedRecipe(id).sketch);
+      const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${toml.replace(/^#.*\n/gm, "")}`);
+      assert.ok(parsed.ok, `${id}: ${JSON.stringify(parsed)}`);
+      const manifest = parsed.manifest as unknown as Record<string, unknown>;
+      for (const system of systems) {
+        assert.ok(toml.includes(`[${system}]`), `${id}'s sketch has a [${system}] row`);
+        assert.equal(manifest[system], true, `${id} switches ${system} on`);
+        assert.ok(toml.includes(`${system}-disabled`), `${id} names what a switched-off ${system} answers`);
+      }
+    }
+  });
+
+  it("the feet recipe teaches a Rust game to stand a character by its feet, with pinned calls", () => {
+    const recipe = seedRecipe("characters.feet-on-the-ground") as SeedRecipe & { port?: string };
+    const text = `${recipe.intent}\n${recipe.port ?? ""}`;
+    for (const call of ["Character::spawn(", "terrain.height(", ".feet(", "plant_feet("])
+      assert.ok(text.includes(call), `characters.feet-on-the-ground names ${call}`);
+  });
+
+  it("CLAUDE.own.md and the ladder skill name every switched-off system's code", () => {
+    const own = read("CLAUDE.own.md");
+    const skill = readFileSync(LADDER_SKILL, "utf8");
+    assert.ok(own.includes("docs/api/"), "CLAUDE.own.md routes to the topic pages");
+    for (const code of SWITCH_REFUSALS) {
+      assert.ok(own.includes(code), `CLAUDE.own.md names ${code}`);
+      assert.ok(skill.includes(code), `the ladder skill names ${code}`);
+    }
   });
 });

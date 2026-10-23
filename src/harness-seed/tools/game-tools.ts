@@ -351,7 +351,7 @@ export const tools: HarnessTool[] = [
       "(crate-declined, crate-advisory, crate-licence, crate-banned, crate-build-script, crate-proc-macro, …); " +
       "a known security advisory, a licence off the list or a banned crate refuses it even after the person approves. " +
       'Once vendored, name it in genex.toml under [crates] at that exact version (tidy = "=1.0.0"). ' +
-      "Prefer the facade and the reviewed crates (noise, fastrand) first.",
+      "Prefer the facade and the reviewed crates (noise, fastrand, pathfinding) first.",
     parameters: {
       type: "object",
       properties: {
