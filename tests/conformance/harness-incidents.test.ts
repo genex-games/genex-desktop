@@ -49,6 +49,8 @@ import {
   leaseTarget,
   NativeBackend,
   NativeRefusal,
+  serveStacksFrom,
+  stacksServed,
   TargetRefusal,
 } from "../../src/harness-seed/loop/native-contract.ts";
 import { ParityRow, parityFor, runParityGate } from "../../src/harness-seed/loop/native-evidence.ts";
@@ -8826,6 +8828,41 @@ describe("C++ · raylib on the web lane (M3a)", () => {
       assert.equal(cross?.pass, drift === 0, JSON.stringify(cross));
       assert.equal(verdict.pass, drift === 0, JSON.stringify(verdict));
       if (drift) assert.match(cross?.reason ?? "", /player\.x/);
+    }
+  });
+
+  it("RUST-PARITY-LEASE. a Rust game's Mac parity gate borrowed its native lease without naming the stacks it serves, and the host refused every one \"this harness predates them\": the gate's lease declares them", async () => {
+    serveStacksFrom(() => stacksServed({ native: true, rust: true }));
+    try {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.NativeBuild]: () => ({
+            ok: true,
+            admission: { target: BuildTarget.Mac, refusal: null, detail: null, imports: [], rpaths: [] },
+          }),
+          [HostMethod.PreviewAcquire]: () => ({ handle: "native" }),
+          [HostMethod.PreviewReady]: () => ({ ready: true }),
+          [HostMethod.PreviewRelease]: () => true,
+        },
+      });
+      await runParityGate(recorder.ctx as never, {
+        run: { runId: "run_horde", project: "ashen-horde", stack: GameStack.RustWgpu } as never,
+        target: BuildTarget.Mac,
+        webHandle: "web",
+        seed: 1234,
+        cameras: ["default"],
+        retriesMs: [],
+        tolerances: { read: async () => null, write: async () => {} },
+      });
+      const acquired = recorder.paramsOf(HostMethod.PreviewAcquire);
+      assert.equal(acquired.length, 1, "the gate borrowed one native lease");
+      assert.equal(acquired[0]?.target, BuildTarget.Mac);
+      assert.ok(
+        (acquired[0]?.stacks as readonly string[] | undefined)?.includes(GameStack.RustWgpu),
+        `the lease declares the Rust stack: ${JSON.stringify(acquired[0])}`,
+      );
+    } finally {
+      serveStacksFrom(() => stacksServed({ native: true, rust: false }));
     }
   });
 

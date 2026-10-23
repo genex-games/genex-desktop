@@ -43,6 +43,7 @@ import {
   RAYLIB_WEB_UNMEASURED,
   RUST_WEB_UNMEASURED,
   runRefusal,
+  servedStacks,
   TargetRefusal,
   leasedJudging,
 } from "./native-contract.ts";
@@ -604,8 +605,13 @@ async function admitBuild(
 async function nativeLease(ctx: HarnessCtx, request: ParityRequest): Promise<string | null> {
   const retries = request.retriesMs ?? WINDOW_RETRIES_MS;
   const label = `parity:${request.target}`;
+  // The lease declares the stacks this harness serves, as every lease does (`acquireFor`): the host
+  // loads a Rust game only through a lease whose harness says it serves Rust games.
+  const stacks = [...servedStacks()];
   for (let attempt = 0; ; attempt++) {
-    const lease = await ctx.call(HostMethod.PreviewAcquire, { label, target: request.target }).catch(() => null);
+    const lease = await ctx
+      .call(HostMethod.PreviewAcquire, { label, target: request.target, stacks })
+      .catch(() => null);
     if (lease?.handle) return lease.handle;
     if (attempt >= retries.length || ctx.cancelled) return null;
     await sleep(retries[attempt]);
