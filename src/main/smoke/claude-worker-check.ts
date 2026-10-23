@@ -14,11 +14,11 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { CodingCliState } from "../../shared/coding-cli.ts";
-import { MINUTE_MS } from "../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { type FetchInstaller, installCodingCli } from "../../substrate/cli-installer.ts";
+import { type FetchInstaller, type InstallerRun, installCodingCli } from "../../substrate/cli-installer.ts";
 import { ClaudeCodeEngine, studioShell } from "../../substrate/engines/claude-code.ts";
 import { requireCodingCli, resolveCodingCli } from "../../substrate/engines/external-cli.ts";
 import { NeverTouchKind } from "../../substrate/engines/never-touch.ts";
@@ -35,6 +35,12 @@ export const CLAUDE_WORKER_CHECK = {
 
 /** The worker's whole turn, CLI start included. */
 const WORKER_TIMEOUT_MS = 3 * MINUTE_MS;
+/**
+ * The vendor installer's time here. The person's Install button allows it 10 minutes, longer than
+ * the whole self test's 8 (`run-electron-e2e.mjs`), so a stalled install ended the run with nothing
+ * said; this limit reports it, with what the installer last printed, inside that budget.
+ */
+const CLI_INSTALL_TIMEOUT_MS = 4 * MINUTE_MS;
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -45,7 +51,7 @@ export async function checkClaudeWorker(
   check: Check,
 ): Promise<void> {
   const homes = path.join(core.layout.engineHomes, "claude-worker-check");
-  const cli = await stageCli(path.join(homes, "cli-home"), stage.fetch);
+  const cli = await stageCli(path.join(homes, "cli-home"), { fetch: stage.fetch });
   check(CLAUDE_WORKER_CHECK.Cli, cli.path !== null, cli.detail);
   if (!cli.path) return;
   // Inside the studio's scratch, which every sandboxed process here is already granted (Windows
@@ -110,17 +116,30 @@ function workerRequest(copy: string, otherGame: string): DelegateRequest {
   return request;
 }
 
+/** What the stage's CLI install runs on; the vendor's installer and the clock unless a test stands in. */
+export type StageCliDeps = { fetch: FetchInstaller; run?: InstallerRun; now?: () => number };
+
 /**
  * The stage's own CLI, in `home`: the vendor's installer run with that folder as its home folder,
- * where it puts the CLI as it does in a person's (`.local/bin`). Its path, or null and why.
+ * where it puts the CLI as it does in a person's (`.local/bin`). Its path, or null and why; either
+ * way the detail says how long the install took.
  */
-async function stageCli(home: string, fetch: FetchInstaller): Promise<{ path: string | null; detail: string }> {
+export async function stageCli(home: string, deps: StageCliDeps): Promise<{ path: string | null; detail: string }> {
+  const now = deps.now ?? Date.now;
   const exe = path.join(home, ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude");
   await mkdir(home, { recursive: true });
   const env = { ...process.env, HOME: home, USERPROFILE: home };
-  const installed = await installCodingCli(EngineId.ClaudeCode, { fetch, env });
-  if (!installed.ok) return { path: null, detail: `${installed.problem}: ${installed.detail}` };
+  const started = now();
+  const installed = await installCodingCli(EngineId.ClaudeCode, {
+    fetch: deps.fetch,
+    env,
+    timeoutMs: CLI_INSTALL_TIMEOUT_MS,
+    ...(deps.run ? { run: deps.run } : {}),
+  });
+  const seconds = Math.round((now() - started) / SECOND_MS);
+  if (!installed.ok) return { path: null, detail: `${installed.problem} after ${seconds} s: ${installed.detail}` };
   const { status } = await resolveCodingCli(EngineId.ClaudeCode, exe, undefined, true);
-  if (status.state !== CodingCliState.Ready) return { path: null, detail: `${status.state}: ${status.detail}` };
-  return { path: exe, detail: `${exe} (${status.version ?? "unknown version"})` };
+  if (status.state !== CodingCliState.Ready)
+    return { path: null, detail: `${status.state}: ${status.detail} (installed in ${seconds} s)` };
+  return { path: exe, detail: `${exe} (${status.version ?? "unknown version"}; installed in ${seconds} s)` };
 }
