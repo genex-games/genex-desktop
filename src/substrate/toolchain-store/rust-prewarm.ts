@@ -16,7 +16,8 @@
  *   and the flags the dependencies were built with.
  * - Builds and worktrees never write the prewarmed folder: each gets a copy-on-write clone
  *   ({@link cloneRustTarget}), every file its own inode with its timestamps, so cargo reads the
- *   dependencies as fresh and a write to the clone never reaches the store.
+ *   dependencies as fresh and a write to the clone never reaches the store. A Mac clones through
+ *   `cp -c` on APFS (`clone-tree.ts`): Node's `COPYFILE_FICLONE` copies every byte there.
  * - The host's prewarm can also build the naga validator ({@link NAGA_CHECK_MAIN_RS}) from the
  *   vendored naga, wgpu-types and wgpu-naga-bridge: WGSL is validated host-side as a sandboxed
  *   store tool against WebGPU core plus the declared native-enhanced features ({@link validateWgsl}).
@@ -50,6 +51,8 @@ import {
   type ToolchainLock,
   ToolchainProblem,
 } from "../../shared/toolchain.ts";
+import { StudioPlatform } from "../../shared/boot.ts";
+import { hostTreeCloner } from "../clone-tree.ts";
 import { atomicWriteJson, isJsonObject } from "../fsx.ts";
 import { isInside } from "../paths.ts";
 import { type RunRequest, type RunResult, type SandboxPolicy, shellQuote } from "../spawn.ts";
@@ -1123,14 +1126,57 @@ export async function cloneRustTarget(
   if (!(await readRustPrewarm(root, lock, target)))
     throw new ToolchainError(ToolchainProblem.Prewarm, MESSAGE.NotPrewarmed(target));
   const dest = await cloneDestination(root, store, to);
+  const from = rustPrewarmedTargetDir(root, lock, target);
+  if (await macClones(path.dirname(dest))) return await macClone(from, dest);
   await mkdir(dest);
   try {
-    return await cloneTree(rustPrewarmedTargetDir(root, lock, target), dest);
+    return await cloneTree(from, dest);
   } catch (error) {
     await rm(dest, { recursive: true, force: true });
     if (error instanceof ToolchainError) throw error;
     throw new ToolchainError(ToolchainProblem.Prewarm, String(error));
   }
+}
+
+/**
+ * Whether a Mac clones under `dir` (APFS): Node's `COPYFILE_FICLONE` copies every byte there, so
+ * the prewarm clones through the system's `cp -c` instead (`clone-tree.ts`).
+ */
+async function macClones(dir: string): Promise<boolean> {
+  if (process.platform !== StudioPlatform.Mac) return false;
+  return (
+    (await hostTreeCloner(process.platform)
+      ?.supported(dir)
+      .catch(() => false)) ?? false
+  );
+}
+
+/** The prewarm cloned whole by the Mac's cloner, counted as {@link cloneTree} counts; nothing left when it fails. */
+async function macClone(from: string, dest: string): Promise<{ files: number; bytes: number }> {
+  try {
+    await hostTreeCloner(StudioPlatform.Mac)?.clone(from, dest);
+    return await treeTotals(dest);
+  } catch (error) {
+    await rm(dest, { recursive: true, force: true });
+    throw new ToolchainError(ToolchainProblem.Prewarm, String(error));
+  }
+}
+
+/** The regular files under `dir` and their bytes. */
+async function treeTotals(dir: string): Promise<{ files: number; bytes: number }> {
+  const totals = { files: 0, bytes: 0 };
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const child = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const inner = await treeTotals(child);
+      totals.files += inner.files;
+      totals.bytes += inner.bytes;
+    } else if (entry.isFile()) {
+      totals.files += 1;
+      totals.bytes += (await lstat(child)).size;
+    }
+  }
+  return totals;
 }
 
 // ---------- sizes ----------

@@ -665,6 +665,12 @@ export class PreviewService {
   readonly #frames = new Map<string, PendingFrame>();
   /** The build trouble last said on each window, so a judged load that built nothing says why. */
   readonly #buildNotes = new WeakMap<PreviewPort, string | null>();
+  /**
+   * The compiled build output each window was last given to serve (a lane's `<bin>.out`), so the
+   * build lanes' sweep keeps it. A window that moved on keeps its entry until it loads another
+   * build: the sweep keeps a folder a little longer, never removes one in view.
+   */
+  readonly #servedBuilds = new Map<PreviewPort, string>();
   #stageVisible = true;
   /** The person watches a game in Live, whatever briefly covers it (the renderer's `watchingLive`). */
   #liveWatched = true;
@@ -953,6 +959,11 @@ export class PreviewService {
     };
   }
 
+  /** The compiled build outputs the preview windows were last given to serve. */
+  servedBuildFolders(): string[] {
+    return [...this.#servedBuilds.values()];
+  }
+
   /** A game of the library by name, or undefined when there is none (or the library cannot be read). */
   async #game(project: string): Promise<GameProject | undefined> {
     return (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
@@ -1010,6 +1021,7 @@ export class PreviewService {
     const note = this.#reportBuild(project, root, outcome, port);
     const served = servedAfterBuild(outcome, { fallback });
     if (!served) return null;
+    this.#servedBuilds.set(port, served.dir);
     const build = {
       stack: receipt.stack,
       target: BuildTarget.Web,

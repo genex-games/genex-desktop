@@ -1418,6 +1418,8 @@ export class StudioCore {
       writeLock: (project, digest) => this.games.writeNativeLock(project, digest),
       // A game kept on an older Rust lock after an update keeps its build folders through the sweep.
       retainedLocks: () => this.games.nativeLocks(),
+      // A build output a preview window serves keeps its build folder through the sweep, its source gone or not.
+      inUse: () => this.#previews.servedBuildFolders(),
       builders: { ...rustTargetBuilders(), ...simulator },
       // The phones' settings (the pinned NDK from the person's SDK), then Windows' and Linux's over
       // the store at the build's lock (M4.6).

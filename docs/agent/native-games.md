@@ -51,7 +51,21 @@ build (Live, Mac Play, `native.build`, exports, prepare) goes through `GameBuild
 stack without a lane `lane-missing`. Raylib's lane is `CppBuilds`; Rust's
 is `RustBuilds` ([`src/main/rust-build.ts`](../../src/main/rust-build.ts)) in `layout.rustBuilds`,
 denied to prewarm, over the store's Rust toolchain and the payload's genex release and `clippy.toml`
-([`core/rust-lane.ts`](../../src/main/core/rust-lane.ts)). It
+([`core/rust-lane.ts`](../../src/main/core/rust-lane.ts)). Each source folder of a game (the
+game folder, every worker worktree, Play-latest, playtest and integration copy) has its own build
+folder, `<game>-<sha12(real source)>/<target>-<lock12>`, and they share the compiled engine
+([`rust-build-cache.ts`](../../src/main/rust-build-cache.ts), receipt `cache`): where the lane's
+root clones copy-on-write ([`clone-tree.ts`](../../src/substrate/clone-tree.ts): `cp -c` on
+APFS, since Node's `COPYFILE_FICLONE` copies there; reflinks on btrfs and XFS) a new folder's
+target is cloned from the most recently admitted idle copy of the same game, destination and lock
+(`copy`), else the store's prewarm (`prewarm`), else empty (`cold`), and copies build in parallel;
+the donor's next build waits for the clone. Where it cannot (Windows, NTFS, ext4, HFS+) the game's
+copies build one at a time in one target, `shared/<game>-targets/<target>-<lock12>`. Every command
+starts with `RUSTC_BOOTSTRAP` set empty as the prewarm's `rustEnv` does, or proc-macro2's build
+script reruns and every derive-using unit with it. The sweep (`gameBuilds.sweep()`: at start, after
+a worktree goes and after freeing a game's space) removes a build folder whose source is gone, an
+unstamped one after `UNSTAMPED_GRACE_MS`, and a shared target no copy builds in, never one building,
+lending or served by a preview, nor anything through a link; one it cannot remove is skipped. It
 builds the Mac and the web (packaged by
 [`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell); the phones'
 builders and settings ([`rust-build-mobile.ts`](../../src/main/rust-build-mobile.ts)), registered

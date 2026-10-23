@@ -138,7 +138,10 @@ export class StorageSpaceService {
       for (const holding of await this.#holdings(old))
         if (holding.project === project) freed += await this.#remove(holding);
       const scratch = this.#core.layout.scratch;
-      return freed + (await clearSideTracks(dir, old.get(project) ?? NO_RUNS, { scratch })).freedBytes;
+      const cleared = await clearSideTracks(dir, old.get(project) ?? NO_RUNS, { scratch });
+      // The copies' build folders go with them: the lanes' sweep removes those whose source is gone.
+      void this.#x.gameBuilds.sweep().catch(() => {});
+      return freed + cleared.freedBytes;
     });
   }
 

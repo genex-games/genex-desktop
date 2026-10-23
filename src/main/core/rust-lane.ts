@@ -9,8 +9,8 @@
  * stage and one without a non-empty `clippy.toml` locates no toolchain, so no game builds without the gate.
  * A web build serves the template's WebGPU-only shell from `<resources>/game-template-rust/web/shell.html`
  * (the app's copy, never the game's), read the same way, and packs with the store's wasm-bindgen and wasm-opt.
- * The prewarmed target folders are not cloned into a build yet (`cloneRustTarget`): a destination
- * builds from its base alone, cold, prewarmed or not.
+ * A build folder's first target is a copy-on-write clone of another copy's of the same game, else
+ * of the store's prewarm (`cloneRustTarget`, `warmTarget`), else empty (`rust-build-cache.ts`).
  */
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";

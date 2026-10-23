@@ -9,6 +9,7 @@
  * stdout, so a line that is not a JSON object of a known shape is skipped, and every string kept
  * is capped.
  */
+import type { RustTargetSeed, RustTargetSharing } from "./rust-build-cache.ts";
 import path from "node:path";
 import { isInside, toPosixRelative } from "../substrate/paths.ts";
 import type { CrateRefusal } from "../shared/crate-requests.ts";
@@ -101,6 +102,8 @@ export interface RustBuildReceipt {
   steps: Array<{ step: RustBuildStep; ms: number; code: number | null }>;
   /** The admitted `out/` files, `/`-separated, with their sha256 and size. */
   outputs: Array<{ path: string; sha256: string; bytes: number }>;
+  /** How the host shares compiled dependencies, and where this build's target folder came from (`rust-build-cache.ts`). */
+  cache?: { sharing: RustTargetSharing; seed: RustTargetSeed };
   /** A web build's packaging: the tools, the module's sizes against the budget, the served files. */
   web?: WebReceipt;
   /** The import step over the stage (C-2): each staged asset's action and refusal. */
