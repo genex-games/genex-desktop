@@ -73,15 +73,20 @@ export const RUST_SIZES_FILE = "rust-sizes.json";
 export const RUST_TARGET_DIR = "target";
 /**
  * The dev profile's settings over cargo's defaults, as `--config` values, for every Rust build that
- * is not an export and for every prewarm (K6 rebuild speed): the engine and every other dependency
- * compile once at opt-level 1, so the executable a rebuild links is a third of the size (a faster
- * link, copy, digest and admission scan) and Live runs optimized engine code, while the game crate
- * keeps cargo's unoptimized, incremental dev settings and its debug info. A prewarm built without
- * them is another dependency build: a game's build cloning it would rebuild every dependency.
- * Debug info is line tables only (R-7), which backtraces and the symbolicator read.
+ * is not an export and for every prewarm (K6 rebuild speed, OPT run speed): the engine and every
+ * other dependency compile once, in the prewarm, at opt-level 3, so Live, judging and playtests run
+ * wgpu, Rapier, glam and skinning near release speed; the game crate compiles at opt-level 1, which
+ * makes its own loops and the generic engine code it instantiates fast while its rebuild stays
+ * incremental and about as quick as unoptimized. Neither level changes a float result: rustc never
+ * contracts or reorders float operations at any opt-level, so the determinism rows hold. A prewarm
+ * built without these is another dependency build: a game's build cloning it would rebuild every
+ * dependency, so a prewarm records them and one made with others is stale. Debug info is line
+ * tables only (R-7), which backtraces and the symbolicator read; debug assertions and overflow
+ * checks stay cargo's dev defaults.
  */
 export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze([
-  'profile.dev.package."*".opt-level=1',
+  "profile.dev.opt-level=1",
+  'profile.dev.package."*".opt-level=3',
   'profile.dev.debug="line-tables-only"',
 ]);
 /** In a destination's folder: the warm project's lock, as it was resolved offline. */
@@ -117,6 +122,8 @@ export interface RustPrewarmRecord {
   triple: string;
   /** The compiler flags every build cloning this folder must pass too, or it rebuilds every dependency. */
   rustflags: string[];
+  /** The cargo profile it was built with ({@link RUST_DEV_PROFILE_SETTINGS} when it was made); another is stale. */
+  profile: string[];
   steps: RustPrewarmStepRecord[];
   /** Target-folder-relative artifacts and build-script out dirs, from Cargo's JSON messages. */
   outputs: string[];
@@ -355,7 +362,7 @@ function isRustPrewarmRecord(
   record: Record<string, unknown>,
   target: BuildTarget,
 ): record is Record<string, unknown> & RustPrewarmRecord {
-  const lists = isStringList(record.rustflags) && isStringList(record.outputs);
+  const lists = isStringList(record.rustflags) && isStringList(record.outputs) && isStringList(record.profile);
   const steps = Array.isArray(record.steps) && record.steps.every(isPrewarmStep);
   const sizes = isCount(record.units) && isCount(record.bytes);
   const named = typeof record.lock === "string" && record.target === target && record.triple === RUST_TRIPLE[target];
@@ -369,7 +376,10 @@ export async function readRustBase(root: string, lock: ToolchainLock): Promise<R
   return record;
 }
 
-/** A destination's prewarm record, when it is this lock's, this destination's and made with `rustflags`. */
+/**
+ * A destination's prewarm record, when it is this lock's, this destination's and made with
+ * `rustflags` and this checkout's {@link RUST_DEV_PROFILE_SETTINGS}.
+ */
 export async function readRustPrewarm(
   root: string,
   lock: ToolchainLock,
@@ -379,7 +389,8 @@ export async function readRustPrewarm(
   const record = await readRecord(path.join(rustTargetFolder(root, lock, target), RUST_PREWARM_FILE));
   if (!record || record.lock !== lock.digest || !isRustPrewarmRecord(record, target)) return null;
   const sameFlags = rustflags === undefined || record.rustflags.join("\u0000") === rustflags.join("\u0000");
-  return sameFlags ? record : null;
+  const sameProfile = record.profile.join("\u0000") === RUST_DEV_PROFILE_SETTINGS.join("\u0000");
+  return sameFlags && sameProfile ? record : null;
 }
 
 const exists = (file: string) =>

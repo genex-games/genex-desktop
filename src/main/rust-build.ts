@@ -309,18 +309,6 @@ const SAFE_PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const UNNAMED_PROJECT = "game";
 /** cargo's build profile per purpose: an export ships an optimized build. */
 const PROFILE = { dev: "dev", release: "release" } as const;
-/**
- * Live's and judging's debug info (R-7): line tables only, which backtraces and the crash
- * symbolicator read, instead of cargo's full variable info, which grows every dependency build in a
- * live profile. A prewarm a build clones must be built with the same setting, or cargo rebuilds
- * every dependency over the clone.
- */
-export const RUST_LIVE_DEBUG_SETTING = 'profile.dev.debug="line-tables-only"';
-/** Every non-export build's profile settings: the store's dev profile, then {@link RUST_LIVE_DEBUG_SETTING} once. */
-const RUST_LIVE_PROFILE_SETTINGS: readonly string[] = [
-  ...new Set([...RUST_DEV_PROFILE_SETTINGS, RUST_LIVE_DEBUG_SETTING]),
-];
-
 /** Where the Rust toolchain a lock names is installed, as the store locates it (M2.3). */
 export interface RustToolchain {
   /** The sysroot's `bin` folder: cargo, rustc, cargo-clippy and clippy-driver. */
@@ -2010,12 +1998,13 @@ function sharedArgs(plan: Plan, jobs: number): string[] {
 }
 
 /**
- * Live's dev profile with optimized dependencies and line tables only, cargo's release for an
- * export, and a web export's size profile on top.
+ * Live's and judging's dev profile, exactly the store prewarm's (optimized dependencies, the game
+ * crate at opt-level 1, line tables only), cargo's release for an export, and a web export's size
+ * profile on top.
  */
 function profileArgs(plan: Plan): string[] {
   const asConfig = (settings: readonly string[]) => settings.flatMap((setting) => ["--config", setting]);
-  if (profileOf(plan.purpose) !== PROFILE.release) return asConfig(RUST_LIVE_PROFILE_SETTINGS);
+  if (profileOf(plan.purpose) !== PROFILE.release) return asConfig(RUST_DEV_PROFILE_SETTINGS);
   const web = plan.target === BuildTarget.Web ? asConfig(RUST_WEB_EXPORT_PROFILE_SETTINGS) : [];
   const debug = plan.debug ? asConfig(EXPORT_DEBUG_SETTINGS[plan.debug.kind]) : [];
   return ["--release", ...web, ...debug];

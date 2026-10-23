@@ -35,6 +35,7 @@ import { lockFolder, RECEIPT_FILE, RUST_COMPONENT_LAYOUT } from "../../substrate
 import { lockOf, writeCurrentLock } from "../../substrate/toolchain-store/lock.ts";
 import {
   RUST_BASE_FILE,
+  RUST_DEV_PROFILE_SETTINGS,
   RUST_HOST_TRIPLE,
   RUST_PREWARM_FILE,
   RUST_TRIPLE,
@@ -457,6 +458,7 @@ async function seedRustPrewarm(store: string, lock: ToolchainLock, target: Build
     target,
     triple,
     rustflags: FIXTURE_RUSTFLAGS,
+    profile: [...RUST_DEV_PROFILE_SETTINGS],
     steps: [],
     outputs: [output],
     units: 0,

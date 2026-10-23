@@ -51,6 +51,7 @@ import {
 import type { ToolchainLock } from "../../src/shared/toolchain.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
 import type { XcodeExec } from "../../src/substrate/toolchain-store/locate.ts";
+import { RUST_DEV_PROFILE_SETTINGS } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { admitRustOutput } from "../../src/substrate/native-cross-admission.ts";
 import { NativeRefusal, RustAdmissionProblem } from "../../src/shared/native-contract.ts";
 import { macBinary } from "../fixtures/rust-bundles/binaries.ts";
@@ -692,12 +693,18 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
-  it("builds Live with the engine and its dependencies optimized and the game crate not (K6), line tables only (R-7); an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
-    const depsOptimized = 'profile.dev.package."*".opt-level=1';
-    // Flipped from [depsOptimized] (R-7): Live keeps line tables only, what a backtrace and the symbolicator read.
-    const lineTablesOnly = 'profile.dev.debug="line-tables-only"';
+  it("builds Live and judging with the game crate at opt-level 1 over the engine and its dependencies at 3 (OPT), line tables only (R-7), the store prewarm's profile; an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
+    // Flipped from the game crate unoptimized over dependencies at opt-level 1 (K6, OPT): Live runs
+    // near release speed, and the game crate's rebuild stays incremental.
+    const liveProfile = [
+      "profile.dev.opt-level=1",
+      'profile.dev.package."*".opt-level=3',
+      'profile.dev.debug="line-tables-only"',
+    ];
+    assert.deepEqual(RUST_DEV_PROFILE_SETTINGS, liveProfile, "the profile the store's prewarm builds with");
     for (const [purpose, expected] of [
-      [CppBuildPurpose.Live, [depsOptimized, lineTablesOnly]],
+      [CppBuildPurpose.Live, liveProfile],
+      [CppBuildPurpose.Judging, liveProfile],
       [CppBuildPurpose.Export, EXPORT_DEBUG_SETTINGS[DebugFileKind.Dsym]],
     ] as const) {
       const parent = await realpath(await tmpDir("rust-dev-profile-"));

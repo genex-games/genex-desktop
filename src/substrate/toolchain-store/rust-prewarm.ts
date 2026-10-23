@@ -423,6 +423,7 @@ export async function prewarmRust(
       target,
       triple: context.located.triple,
       rustflags: [...(deps.rustflags ?? [])],
+      profile: [...RUST_DEV_PROFILE_SETTINGS],
       steps: context.steps,
       outputs: built.outputs,
       units: built.units,

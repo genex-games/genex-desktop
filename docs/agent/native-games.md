@@ -87,7 +87,7 @@ Publishing (MP-5c): `assertPublishable` admits a Rust game by its web build and 
 `publicCopyFiles` is the lane's web export; `readGenexGameManifest` carries `[net.matchmaking]` as
 `genex.matchmaking`; `plugins.preflightMultiplayer` answers `RustNoWeb`, then the account and the
 draft route (`RustReady`), never Genex's npm packages. Non-export builds and
-prewarms optimize dependencies (`RUST_DEV_PROFILE_SETTINGS`). Mac embedded and
+prewarms share one profile (`RUST_DEV_PROFILE_SETTINGS`: dependencies at opt-level 3, the game at 1). Mac embedded and
 headless runs use only lane-admitted bytes (receipt digests); window runs and desktop
 exports stay `lane-missing`. Rust creation ([`stack-gate.ts`](../../src/main/core/stack-gate.ts),
 the bootstrap's `rustCreation`) is open in development builds and where the Rust lane runs, else

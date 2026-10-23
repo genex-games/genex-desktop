@@ -547,6 +547,44 @@ describe("the core's Rust lane: a web export (stub cargo)", { skip: SKIP_ON_WIND
   });
 });
 
+/** The `--config profile.…` settings of a shell-quoted cargo command, in order. */
+function profileSettings(command: string): string[] {
+  return [...command.matchAll(/'--config' '(profile\.[^']*)'/g)].map((match) => match[1] ?? "");
+}
+
+describe("the core's Rust lane: Live builds run optimized (stub cargo)", { skip: SKIP_UNLESS_MAC }, () => {
+  // OPT: the engine and every dependency at opt-level 3, the game crate at 1 (still incremental),
+  // line tables kept; exactly the store prewarm's settings, so a first build clones every unit.
+  it("passes the prewarm's profile to clippy and the build of every Live and judging build, Mac and web, and none to an export", async () => {
+    const { store, lock } = await fixtureStore();
+    const resources = await shippedResources();
+    const dir = await templateGame();
+    const liveProfile = [
+      "profile.dev.opt-level=1",
+      'profile.dev.package."*".opt-level=3',
+      'profile.dev.debug="line-tables-only"',
+    ];
+    const purposes = [CppBuildPurpose.Live, CppBuildPurpose.Judging, CppBuildPurpose.Export];
+    for (const target of [BuildTarget.Mac, BuildTarget.Web])
+      for (const purpose of purposes) {
+        const { sandbox, requests } = openSandbox();
+        const lane = await coreLane(store, resources, sandbox, rustTargetBuilders());
+        const outcome = await lane.ensure({ ...rustGame(dir), lock }, target, purpose);
+        assert.equal(outcome.ok, true, `${target} ${purpose}: ${JSON.stringify(outcome.problem)}`);
+        const cargo = requests.filter((request) =>
+          [RustBuildStep.Clippy, RustBuildStep.Build].some((step) => request.label?.endsWith(`:${step}`)),
+        );
+        assert.equal(cargo.length, 2, `${target} ${purpose}: clippy and the build ran`);
+        for (const request of cargo) {
+          const settings = profileSettings(request.command);
+          if (purpose === CppBuildPurpose.Export)
+            assert.ok(!settings.some((setting) => setting.startsWith("profile.dev.")), `${target}: ${settings}`);
+          else assert.deepEqual(settings, liveProfile, `${target} ${purpose} ${request.label}`);
+        }
+      }
+  });
+});
+
 describe("the core's Rust lane builds over the store and the payload (stub cargo)", { skip: SKIP_UNLESS_MAC }, () => {
   it("a forced error is the first problem; clippy read the payload's gate and every tool came from the store", async () => {
     const { store, lock } = await fixtureStore();
