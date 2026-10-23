@@ -594,6 +594,33 @@ test("damaged kept answers are ignored: the CLI is asked, and discovery still wo
   configureCodingClis(path.join(root, "settings.json"), [], options);
 });
 
+test("a saved-paths file Genex cannot read hides no CLI: a BOM is read, anything else is ignored", async () => {
+  const automatic = await cli("damaged-saved/auto/codex", "auto 3.0.0");
+  const saved = await cli("damaged-saved/saved/codex", "saved 3.1.0");
+  const damaged = [
+    { text: `\uFEFF${JSON.stringify({ codex: saved })}`, path: saved, why: "UTF-8 BOM, as Windows PowerShell writes" },
+    { text: "{", path: automatic, why: "cut short" },
+    { text: "", path: automatic, why: "empty" },
+    { text: "[]", path: automatic, why: "not an object" },
+    { text: JSON.stringify({ codex: 7 }), path: automatic, why: "a path that is no text" },
+  ];
+  try {
+    for (const [index, { text, path: expected, why }] of damaged.entries()) {
+      const settings = path.join(root, `damaged-saved-${index}/settings.json`);
+      await mkdir(path.dirname(settings), { recursive: true });
+      await writeFile(settings, text);
+      configureCodingClis(settings, [], { ...options, loginPath: path.dirname(automatic) });
+      for (const provider of ["codex", "claude-code", "opencode"] as const) {
+        const found = await resolveCodingCli(provider, undefined, undefined, true);
+        if (provider === "codex") assert.equal(found.status.path, expected, why);
+        else assert.equal(found.status.state, "missing", `${why}: ${provider} is looked for, not refused`);
+      }
+    }
+  } finally {
+    configureCodingClis(path.join(root, "settings.json"), [], options);
+  }
+});
+
 test("a saved path that stopped working yields to a working automatic installation", async () => {
   const settings = path.join(root, "fallback-host/settings.json");
   const automatic = await cli("fallback/auto/codex", "auto 2.0.0");

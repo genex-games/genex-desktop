@@ -224,7 +224,12 @@ describe("The build for this computer", () => {
   const universal = build();
   const arm = build({ arch: NativeArch.Arm64, version: "arm" });
   const intel = build({ arch: NativeArch.X64, version: "intel" });
-  const windows = build({ platform: NativePlatform.Windows, arch: NativeArch.X64, entry: "Dust.exe" });
+  const windows = build({
+    platform: NativePlatform.Windows,
+    arch: NativeArch.X64,
+    entry: "Dust.exe",
+    minOs: "10.0.19041",
+  });
 
   it("prefers this Mac's own architecture, then a universal app", () => {
     assert.equal(buildFor([universal, arm, intel], MAC_ARM), arm);
@@ -248,8 +253,11 @@ describe("The build for this computer", () => {
     assert.ok(buildFor([build({ minOs: "15" })], MAC_ARM));
   });
 
-  it("launches nothing on Windows yet, whatever was built for it", () => {
-    assert.equal(buildFor([windows], WINDOWS), null);
+  it("offers Windows its own processor's build where its system is met, and nothing built for another", () => {
+    assert.equal(buildFor([universal, windows], WINDOWS), windows);
+    assert.equal(buildFor([windows], { ...WINDOWS, arch: NativeArch.Arm64 }), null);
+    assert.equal(buildFor([{ ...windows, minOs: "10.0.26100" }], WINDOWS), null);
+    assert.equal(buildFor([universal], WINDOWS), null);
   });
 
   it("offers Linux this computer's own processor's build, and nothing built for another", () => {
@@ -270,17 +278,14 @@ describe("The build for this computer", () => {
     assert.equal(playableHere({ native: { web: true, engine: null, builds: [windows] } }, MAC_ARM), true);
   });
 
-  it("says why nothing installs here: no game runs on this system, none was made for it, or this computer can't run it", () => {
+  it("says why nothing installs here: none was made for this system, or this computer can't run it", () => {
     const linuxX64 = build({ platform: NativePlatform.Linux, arch: NativeArch.X64, entry: "Dust/Dust.x86_64" });
     assert.equal(whyNotHere([universal, windows], MAC_ARM), null, "a build installs");
-    assert.deepEqual(whyNotHere([universal, windows], WINDOWS), {
-      why: WhyNotHere.System,
-      elsewhere: [NativePlatform.Mac],
-    });
-    assert.deepEqual(whyNotHere([windows], WINDOWS), { why: WhyNotHere.System, elsewhere: [] });
-    assert.deepEqual(whyNotHere([universal, linuxX64, windows], WINDOWS), {
-      why: WhyNotHere.System,
-      elsewhere: [NativePlatform.Mac, NativePlatform.Linux],
+    assert.equal(whyNotHere([universal, windows], WINDOWS), null, "Windows installs its own");
+    assert.deepEqual(whyNotHere([universal, linuxX64], WINDOWS), { why: WhyNotHere.NoBuild });
+    assert.deepEqual(whyNotHere([{ ...windows, minOs: "10.0.26100" }], WINDOWS), {
+      why: WhyNotHere.OldSystem,
+      minOs: "10.0.26100",
     });
     assert.deepEqual(whyNotHere([windows], MAC_ARM), { why: WhyNotHere.NoBuild });
     assert.deepEqual(whyNotHere([], LINUX), { why: WhyNotHere.NoBuild });

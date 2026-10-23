@@ -86,6 +86,8 @@ export type LaunchEnv = {
   open: Opener;
   /** `/Applications` on a Mac, Program Files (x86) on Windows. */
   applications: string;
+  /** Windows' own Program Files, where Epic's 64-bit launcher installs itself; none on a Mac. */
+  programFiles?: string;
   now: () => number;
   portWait?: PortWait;
   /** Builds a project's editor target before it opens; UnrealBuildTool's own unless a test stands in. */
@@ -219,11 +221,20 @@ export function quitEditorLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessE
   return { command: MAC_OSASCRIPT, args: script.flatMap((line) => ["-e", line]), detached: false };
 }
 
-/** Where Epic's launcher is installed, in the order Genex looks. */
-export function launcherPaths(platform: NodeJS.Platform, applications: string): string[] {
-  if (platform !== "win32") return [path.posix.join(applications, LAUNCHER_APP)];
-  const binaries = path.win32.join(applications, "Epic Games", "Launcher", "Portal", "Binaries");
-  return LAUNCHER_FOLDERS.map((folder) => path.win32.join(binaries, folder, "EpicGamesLauncher.exe"));
+/** The folders Epic's launcher may be installed in, as the launch environment names them. */
+export type LauncherFolders = Pick<LaunchEnv, "applications" | "programFiles">;
+
+/**
+ * Where Epic's launcher is installed, in the order Genex looks: on Windows, Program Files first,
+ * where the 64-bit launcher installs itself, then Program Files (x86), where the older one went.
+ */
+export function launcherPaths(platform: NodeJS.Platform, folders: LauncherFolders): string[] {
+  if (platform !== "win32") return [path.posix.join(folders.applications, LAUNCHER_APP)];
+  const roots = [folders.programFiles, folders.applications].filter((root) => root !== undefined);
+  return roots.flatMap((root) => {
+    const binaries = path.win32.join(root, "Epic Games", "Launcher", "Portal", "Binaries");
+    return LAUNCHER_FOLDERS.map((folder) => path.win32.join(binaries, folder, "EpicGamesLauncher.exe"));
+  });
 }
 
 /** Opens Epic's launcher when it was found, else Epic's download page in the user's browser. */
@@ -259,8 +270,8 @@ async function isInstalledApp(target: string, platform: NodeJS.Platform): Promis
 }
 
 /** Epic's launcher where it is installed, or undefined. */
-export async function findLauncher(platform: NodeJS.Platform, applications: string): Promise<string | undefined> {
-  for (const candidate of launcherPaths(platform, applications))
+export async function findLauncher(platform: NodeJS.Platform, folders: LauncherFolders): Promise<string | undefined> {
+  for (const candidate of launcherPaths(platform, folders))
     if (await isInstalledApp(candidate, platform)) return candidate;
   return undefined;
 }
@@ -332,11 +343,12 @@ export function systemLaunchEnv(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): LaunchEnv {
-  const applications =
-    platform === "win32" ? windowsFolder(env, "ProgramFiles(x86)", "Program Files (x86)") : "/Applications";
+  const windows = platform === "win32";
+  const applications = windows ? windowsFolder(env, "ProgramFiles(x86)", "Program Files (x86)") : "/Applications";
   return {
     open: (launch) => systemOpener(launch),
     applications,
+    ...(windows ? { programFiles: windowsFolder(env, "ProgramFiles", "Program Files") } : {}),
     now: () => Date.now(),
     portWait: { free: (port) => portFree(port, platform), sleep: (ms) => sleep(ms) },
   };
@@ -542,7 +554,7 @@ async function forgetStartingOf(project: string, options: LaunchOptions): Promis
 
 /** Opens Epic's launcher, else Epic's download page; nothing the panel sends changes which. */
 export async function getUnreal(env: Pick<SetupEnv, "platform">, launch: LaunchEnv): Promise<{ opened: UnrealSource }> {
-  const launcher = await findLauncher(env.platform, launch.applications);
+  const launcher = await findLauncher(env.platform, launch);
   await launch.open(getUnrealLaunch(env.platform, launcher));
   return { opened: launcher ? UnrealSource.Launcher : UnrealSource.Download };
 }

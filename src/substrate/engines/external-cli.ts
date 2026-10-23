@@ -103,6 +103,8 @@ const CMD_SHIM_PATH_NODE = /_prog=node\b/i;
 const IN_NODE_MODULES = /[\\/]node_modules[\\/]/;
 /** The file beside the overrides that keeps the CLIs' answers between launches. */
 const ANSWERS_FILE = "coding-cli-answers.json";
+/** What a Windows PowerShell 5 `Set-Content -Encoding utf8` puts before a file's text. */
+const BYTE_ORDER_MARK = /^\uFEFF/;
 
 /** What discovery tells the user about a CLI it could not use, and why a probe or setting fails. */
 const MESSAGE = {
@@ -238,13 +240,22 @@ export function codingCliBinary(provider: string): string {
   providerId(provider);
   return CLI_BINARY[provider];
 }
+/**
+ * The saved CLI paths. A file that cannot be read as them (a BOM is read past; a damaged, empty or
+ * unreadable file is not) saves none, so every CLI is still found automatically: a throw here failed
+ * every provider's discovery, and Settings called Claude Code and Codex uninstalled.
+ */
 async function overrides(): Promise<Partial<Record<CodingProvider, string>>> {
   if (!settingsFile) return {};
   try {
-    return JSON.parse(await readFile(settingsFile, "utf8"));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw e;
+    const saved: unknown = JSON.parse((await readFile(settingsFile, "utf8")).replace(BYTE_ORDER_MARK, ""));
+    if (typeof saved !== "object" || saved === null || Array.isArray(saved)) return {};
+    const paths = Object.entries(saved).filter(
+      (entry): entry is [CodingProvider, string] => Object.hasOwn(CLI_BINARY, entry[0]) && typeof entry[1] === "string",
+    );
+    return Object.fromEntries(paths);
+  } catch {
+    return {};
   }
 }
 let settingsWrite: Promise<unknown> = Promise.resolve();

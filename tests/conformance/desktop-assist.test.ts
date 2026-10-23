@@ -28,6 +28,7 @@ import {
   engineAssist,
 } from "../../src/main/core/desktop-assist.ts";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
+import { engineAppRefusal } from "../../src/main/core/desktop-target.ts";
 import {
   EngineAssistRefusal,
   type PluginBinding,
@@ -37,7 +38,8 @@ import {
 } from "../../src/shared/plugins.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
-import type { DesktopDriver } from "../../src/substrate/desktop-driver.ts";
+import type { DesktopApp, DesktopDriver } from "../../src/substrate/desktop-driver.ts";
+import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -386,6 +388,19 @@ describe("the apps engines declare", () => {
       [],
       "a Mac-only engine declares nothing here",
     );
+  });
+
+  it("Unreal's Do it for me may drive Epic's launcher, only in the turn answering its task, never Unreal's editor", async () => {
+    const manifest = validateManifest(JSON.parse(await readFile("src/plugins/unreal/plugin.json", "utf8")));
+    const unreal = [{ enabled: true, removed: false, manifest }];
+    const declared = declaredEngineApps(unreal, "win32");
+    assert.deepEqual([...declared], ["epicgameslauncher.exe", "epicwebhelper.exe"]);
+    assert.deepEqual([...declaredEngineApps(unreal, "darwin")], ["com.epicgames.EpicGamesLauncher"]);
+    const launcher: DesktopApp = { name: "Epic Games Launcher", bundleId: "epicgameslauncher.exe", pid: 7 };
+    assert.match(String(engineAppRefusal(launcher, { declared, granted: null })), /engine/, "outside its assist");
+    assert.equal(engineAppRefusal(launcher, { declared, granted: declared }), null, "the turn answering its task");
+    const editor: DesktopApp = { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 8 };
+    assert.match(String(engineAppRefusal(editor, { declared, granted: declared })), /not one of the apps/);
   });
 });
 

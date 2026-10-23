@@ -27,7 +27,13 @@ import {
 import { atomicWriteJson, readJsonIfExists } from "../../substrate/fsx.ts";
 import { diskBytes, removeOwnedFolder } from "../../substrate/storage-folders.ts";
 import { downloadArchive, InstallError, verifyArchive } from "./native-download.ts";
-import { type ToolRun, type UnpackedApp, unpackLinuxBuild, unpackMacBuild } from "./native-unpack.ts";
+import {
+  type ToolRun,
+  type UnpackedApp,
+  unpackLinuxBuild,
+  unpackMacBuild,
+  unpackWindowsBuild,
+} from "./native-unpack.ts";
 import type { StallClock } from "./remix.ts";
 
 /** Free space kept beyond the download and the unpacked game. */
@@ -316,13 +322,17 @@ export class NativeInstaller {
     await this.#push();
     const unpacked = path.join(staging, "game");
     const game = { slug: job.slug, host: this.#deps.host };
-    const app =
-      job.build.platform === NativePlatform.Linux
-        ? await unpackLinuxBuild(archive, unpacked, job.build, game)
-        : await unpackMacBuild(this.#deps.run, archive, unpacked, job.build, game);
+    const app = await this.#unpack(job, archive, unpacked, game);
     job.stop.signal.throwIfAborted();
     await this.#settle(job, unpacked, app);
     await rm(archive, { force: true });
+  }
+
+  /** Unpack a verified archive the way its platform's builds are packed. */
+  #unpack(job: Job, archive: string, unpacked: string, game: { slug: string; host: NativeHost }): Promise<UnpackedApp> {
+    if (job.build.platform === NativePlatform.Linux) return unpackLinuxBuild(archive, unpacked, job.build, game);
+    if (job.build.platform === NativePlatform.Windows) return unpackWindowsBuild(archive, unpacked, job.build, game);
+    return unpackMacBuild(this.#deps.run, archive, unpacked, job.build, game);
   }
 
   /** Download, check and unpack one game; its progress and outcome say how it went. */

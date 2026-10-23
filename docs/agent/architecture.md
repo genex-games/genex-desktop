@@ -401,7 +401,7 @@ dependencies and packaged binaries are excluded. A persisted override that is no
 ready automatic installation, an explicit executable never. Diagnostics share a 15-second
 cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers (kept
 across launches) until Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
-renderer or agent channel can write. Descriptors carry `account` (login source, variable, what
+renderer or agent channel can write; a copy it cannot read (damaged, empty) saves no path, and a BOM is read past. Descriptors carry `account` (login source, variable, what
 signing out leaves, CLI state and version). Fixture and smoke sessions search no paths or standard
 locations (`configureCodingClis`), so status checks never run a machine-installed provider or report
 fixtures as account readiness.

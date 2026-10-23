@@ -177,6 +177,7 @@ import { hasGameWindow, showGameWindow } from "./play/native-windows.ts";
 import { linuxGameWindows } from "./play/native-windows-linux.ts";
 import { spawnNativeGame } from "../substrate/plugins/native-process.ts";
 import { spawnLinuxGame } from "../substrate/plugins/linux-game.ts";
+import { windowsGames } from "../substrate/plugins/windows-game.ts";
 import { psProbe, SYSTEM_CLOCK } from "../substrate/job-process.ts";
 import { killProcessTree } from "../substrate/process-tree.ts";
 import { prepareNativeGamesFixture } from "./dev/fixture-native-games.ts";
@@ -1149,19 +1150,28 @@ function watchNativeUpdates(studio: StudioCore): void {
  * Native games being played in their own windows, each in the game sandbox, or null where Genex
  * launches no native game.
  */
+/** Where Genex keeps its compiled game host on Windows, in its own data. */
+const GAME_HOST_FOLDER = "game-host";
+
+/** How this system starts a native game, sees its window, brings it forward and asks it to quit. */
+function gameLauncher(): Pick<NativeSessionsDeps, "spawn" | "hasWindow" | "show" | "kill"> {
+  // Windows runs a game in an AppContainer through Genex's game host, which says when its window is up.
+  if (process.platform === StudioPlatform.Windows) return windowsGames(path.join(userDataRoot, GAME_HOST_FOLDER));
+  const kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal);
+  // Linux runs a game in bubblewrap and has no window list to read; the Mac in Seatbelt.
+  if (process.platform === StudioPlatform.Linux) return { spawn: spawnLinuxGame, ...linuxGameWindows(), kill };
+  return { spawn: spawnNativeGame, hasWindow: hasGameWindow, show: showGameWindow, kill };
+}
+
 function playSessionsFor(studio: StudioCore): NativeSessions | null {
   const installs = playInstallsFor(studio);
   if (!installs) return null;
-  // Linux runs a game in bubblewrap and has no window list to read; the Mac in Seatbelt.
-  const linux = process.platform === StudioPlatform.Linux;
-  const windows = linux ? linuxGameWindows() : { hasWindow: hasGameWindow, show: showGameWindow };
+  // A Windows game reaches nothing, Genex included: its AppContainer has no loopback (windows-game.ts).
+  const offline = Boolean(fixtureNativePolicy) || process.platform === StudioPlatform.Windows;
   nativeLauncher ??= nativeSessions({
     root: studio.layout.installedGames,
     record: (slug) => installs.record(slug),
-    spawn: linux ? spawnLinuxGame : spawnNativeGame,
-    hasWindow: windows.hasWindow,
-    show: windows.show,
-    kill: (pid, signal) => process.kill(pid, signal),
+    ...gameLauncher(),
     killTree: (pid) => killProcessTree(pid),
     probe: psProbe(),
     clock: SYSTEM_CLOCK,
@@ -1170,9 +1180,8 @@ function playSessionsFor(studio: StudioCore): NativeSessions | null {
     ended: (slug) => installs.sweep(slug),
     log: (line) => studioLog.write("main", line),
     // A fixture launch has no Genex to reach: its games stay offline, and their plays uncounted.
-    ...(fixtureNativePolicy
-      ? {}
-      : { genex: (slug: string) => openGameGenex(studio, slug), presence: playsFor(studio) }),
+    ...(offline ? {} : { genex: (slug: string) => openGameGenex(studio, slug) }),
+    ...(fixtureNativePolicy ? {} : { presence: playsFor(studio) }),
   });
   return nativeLauncher;
 }

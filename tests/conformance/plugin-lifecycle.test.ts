@@ -35,6 +35,7 @@ test("a plugin backend starts with the basics and nothing else of Studio's envir
     PATHEXT: ".EXE;.CMD",
     ComSpec: "C:\\Windows\\system32\\cmd.exe",
     ProgramData: "D:\\ProgramData",
+    ProgramFiles: "D:\\Program Files",
     "ProgramFiles(x86)": "D:\\Program Files (x86)",
   };
   const mac = pluginBackendEnv(parent, "darwin");
@@ -52,6 +53,7 @@ test("a plugin backend starts with the basics and nothing else of Studio's envir
     "PATHEXT",
     "ComSpec",
     "ProgramData",
+    "ProgramFiles",
     "ProgramFiles(x86)",
   ])
     assert.equal(windows[name], parent[name as keyof typeof parent], name);
