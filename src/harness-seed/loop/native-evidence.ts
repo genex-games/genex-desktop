@@ -17,6 +17,10 @@
  *    `unmeasured` ("built, not run on this Mac"), never a pass. The verdict rides on the look
  *    (`withParity`) and becomes one board row (checks.ts).
  *
+ * Both read the run's memory from `native.status`: a run past the 4 GiB budget is fine on a
+ * desktop and warned, with its peak, only when the game also ships to the web or a phone; a run
+ * the host killed past its cap (`memory-cap`) fails naming the footprint and the cap.
+ *
  * A new module on purpose: a seed upgrade keeps any older module the agent edited, so it imports
  * the frame verdicts from their own module and only names its neighbours have always exported.
  */
@@ -55,7 +59,7 @@ import { touchesSkipped } from "./native-refusal.ts";
 import { slug } from "./spec.ts";
 import { sleep } from "./time.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
-import type { BuildProblem, BuildProblemCode, StudioPlatform } from "../types/host-api.d.ts";
+import type { BuildProblem, BuildProblemCode, NativeRunMemory, StudioPlatform } from "../types/host-api.d.ts";
 import type { applySetup, consoleProblems, Evidence, GatherOptions, Shot } from "./evidence.ts";
 
 /**
@@ -144,6 +148,8 @@ export interface TargetParity {
   pass: boolean | null;
   reason: string;
   rows: ParityRowResult[];
+  /** What the next builder should know and that fails nothing (a run over the memory budget). */
+  warnings?: string[];
 }
 
 /** Every desktop destination's gate on one look, and what they add up to. */
@@ -241,7 +247,87 @@ const MESSAGE = {
   webUnjudged: "the web look judged no frames, so there is nothing to agree with",
   webWithoutWebGpu:
     "the web build could not run in this preview: it offers no WebGPU (gpu-unsupported), so cross-target agreement is unavailable, not failed",
+  overBudget: (target: string, peak: string, budget: string, small: string) =>
+    `the ${target} build used ${peak} GiB at peak: fine on a desktop, but over the ${budget} GiB budget a game should fit in to run ${small}, which this game also ships to; keep what those builds load under ${budget} GiB`,
+  memoryCap: (target: string, used: string, cap: string) =>
+    `the ${target} build used ${used} GiB and was stopped past this computer's ${cap} GiB memory cap (${NativeRefusal.MemoryCap})`,
 } as const;
+
+/** A desktop destination as a sentence names it: "the Mac build". */
+const DESKTOP_NAME: Readonly<Partial<Record<BuildTarget, string>>> = {
+  [BuildTarget.Mac]: "Mac",
+  [BuildTarget.Windows]: "Windows",
+  [BuildTarget.Linux]: "Linux",
+};
+/** The destinations a game must fit the memory budget for, as the warning names them. */
+const SMALL_DESTINATION_NAME: Readonly<Partial<Record<BuildTarget, string>>> = {
+  [BuildTarget.Web]: "in a browser",
+  [BuildTarget.Ios]: "on an iPhone",
+  [BuildTarget.Android]: "on an Android phone",
+};
+const GIB_BYTES = 1024 ** 3;
+
+// ── memory ────────────────────────────────────────────────────────────────────────────────
+
+/** What `native.status` says of a run's memory and whether the host killed it past the cap. */
+interface MemoryReading {
+  memory: NativeRunMemory | null;
+  killedPastCap: boolean;
+}
+
+const isBytes = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/** A `native.status` answer's `memory`, or null when it has none or not in its shape. */
+export function runMemoryOf(status: unknown): NativeRunMemory | null {
+  const memory = isRecord(status) ? status.memory : null;
+  if (!isRecord(memory)) return null;
+  const { peakBytes, budgetBytes, capBytes, overBudget } = memory;
+  const counted = isBytes(peakBytes) && isBytes(budgetBytes) && isBytes(capBytes);
+  return counted && typeof overBudget === "boolean" ? { peakBytes, budgetBytes, capBytes, overBudget } : null;
+}
+
+/** Bytes in GiB as a sentence says them: "5.3", "4". */
+const gib = (bytes: number): string => String(Number((bytes / GIB_BYTES).toFixed(1)));
+const desktopName = (target: BuildTarget): string => DESKTOP_NAME[target] ?? target;
+
+/** The lease's run memory and whether it ended `memory-cap`; nothing when the host answers no status. */
+async function readMemory(ctx: HarnessCtx, project: string, handle: string | null | undefined): Promise<MemoryReading> {
+  const params = handle ? { project, handle } : { project };
+  const status: unknown = await ctx.call(HostMethod.NativeStatus, params).catch(() => null);
+  const killedPastCap = isRecord(status) && status.refusal === NativeRefusal.MemoryCap;
+  return { memory: runMemoryOf(status), killedPastCap };
+}
+
+/**
+ * The warning a run over the memory budget earns: none for a game that ships only to desktops (more
+ * than 4 GiB is normal there), or that names no destinations; else one naming the peak, the budget
+ * and the web or phone destinations it is too much for.
+ */
+export function memoryWarnings(
+  memory: NativeRunMemory | null,
+  target: BuildTarget,
+  destinations: Destinations | null | undefined,
+): string[] {
+  if (!memory?.overBudget) return [];
+  const small = (destinations?.targets ?? []).flatMap((entry) => SMALL_DESTINATION_NAME[entry] ?? []);
+  if (small.length === 0) return [];
+  const where = small.join(" or ");
+  return [MESSAGE.overBudget(desktopName(target), gib(memory.peakBytes), gib(memory.budgetBytes), where)];
+}
+
+/** The failure a run killed past the cap reads as: the footprint that killed it and the cap. */
+function memoryCapReason(target: BuildTarget, memory: NativeRunMemory): string {
+  return MESSAGE.memoryCap(desktopName(target), gib(memory.peakBytes), gib(memory.capBytes));
+}
+
+/** A gate whose run the host killed past its cap: the row that failed says so with the numbers. */
+function nameTheCap(rows: ParityRowResult[], target: BuildTarget, reading: MemoryReading): void {
+  if (!reading.killedPastCap || !reading.memory) return;
+  const failure = rows.find((entry) => entry.pass === false);
+  if (!failure) return;
+  failure.reason = memoryCapReason(target, reading.memory);
+  failure.refusal = NativeRefusal.MemoryCap;
+}
 
 // ── rows and verdicts ──────────────────────────────────────────────────────────────────────
 
@@ -481,6 +567,8 @@ const quote = (comparison: StateComparison): string =>
 /** What one gate is asked to look at. */
 export interface ParityRequest {
   run: Run;
+  /** The game's destinations: a run over the memory budget is warned only when they include the web or a phone. */
+  destinations?: Destinations;
   /** The desktop destination the gate runs (a build this host runs in its game box). */
   target: BuildTarget;
   /** The web lease the look judged (null: the studio's stand-in), which the cross-target drive steps. */
@@ -555,12 +643,17 @@ export async function runParityGate(ctx: HarnessCtx, request: ParityRequest): Pr
   const handle = await nativeLease(ctx, request);
   if (!handle) return targetParity(target, restUnmeasured(rows, MESSAGE.noLease(target)));
   const gate: GateRun = { ctx, request, rows, handle, openGl: admitted.openGl, shots: [] };
+  let reading: MemoryReading = { memory: null, killedPastCap: false };
   try {
     for (const step of GATE_STEPS) if (!(await step(gate))) break;
+    reading = await readMemory(ctx, request.run.project, handle);
   } finally {
     await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
   }
-  return targetParity(target, restUnmeasured(rows, MESSAGE.notRun));
+  nameTheCap(rows, target, reading);
+  const parity = targetParity(target, restUnmeasured(rows, MESSAGE.notRun));
+  const warnings = memoryWarnings(reading.memory, target, request.destinations);
+  return warnings.length ? { ...parity, warnings } : parity;
 }
 
 /**
@@ -1124,6 +1217,7 @@ export async function withParity(
   });
   if (!parity) return evidence;
   evidence.parity = parity;
+  evidence.warnings.push(...parity.targets.flatMap((entry) => entry.warnings ?? []));
   if (parity.pass === false) {
     evidence.ok = false;
     evidence.problems.push(parity.reason);
@@ -1229,10 +1323,20 @@ export async function nativeEvidence(ctx: HarnessCtx, options: GatherOptions, pa
   if (!up) return reportNative(look);
   try {
     for (const phase of NATIVE_PHASES) await phase(look);
+    await memoryNative(look);
   } finally {
     await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start, ...look.h }).catch(() => {});
   }
   return reportNative(look);
+}
+
+/** The run's memory: over the budget a warning when the game also ships to the web or a phone; killed past the cap, a problem. */
+async function memoryNative(look: NativeLook): Promise<void> {
+  const leased = leasedJudging(look.options.handle);
+  const target = leased?.target ?? BuildTarget.Mac;
+  const reading = await readMemory(look.ctx, look.options.run.project, look.options.handle);
+  look.warnings.push(...memoryWarnings(reading.memory, target, leased?.destinations));
+  if (reading.killedPastCap && reading.memory) look.problems.push(memoryCapReason(target, reading.memory));
 }
 
 /** The pass on a ready run, in order. */

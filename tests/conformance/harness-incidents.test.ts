@@ -8831,6 +8831,92 @@ describe("C++ · raylib on the web lane (M3a)", () => {
     }
   });
 
+  /** A Mac parity gate whose run passes every row and whose `native.status` is `status` (MEMORY-BUDGET). */
+  const memoryGate = async (targets: readonly string[], status: Record<string, unknown>, killedAt?: string) => {
+    let killed = false;
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.NativeBuild]: () => ({
+          ok: true,
+          admission: { target: BuildTarget.Mac, refusal: null, detail: null, imports: [], rpaths: [] },
+        }),
+        [HostMethod.PreviewAcquire]: () => ({ handle: "native" }),
+        [HostMethod.PreviewReady]: () => ({ ready: true }),
+        [HostMethod.PreviewLoad]: () => true,
+        [HostMethod.PreviewReload]: () => true,
+        [HostMethod.PreviewCall]: (params) => {
+          if (params.handle === "native" && killedAt === params.method) killed = true;
+          if (killed && params.handle === "native")
+            throw Object.assign(new Error("the game was stopped"), { refusal: NativeRefusal.MemoryCap });
+          return { ok: true };
+        },
+        [HostMethod.PreviewInput]: () => ({ ok: true }),
+        [HostMethod.PreviewWitness]: () => ({ frameBefore: 0, frameAfter: 1, simulatedMs: 16, drawCalls: 4 }),
+        [HostMethod.PreviewScreenshot]: () => ({
+          base64: "SE9SREU=",
+          stats: { litFraction: 0.4, meanLuma: 0.5, canvas: true, drawCalls: 4 },
+        }),
+        [HostMethod.PreviewState]: () => ({ player: { x: 0 } }),
+        [HostMethod.NativeStatus]: () => status,
+        [HostMethod.PreviewRelease]: () => true,
+      },
+    });
+    return runParityGate(recorder.ctx as never, {
+      run: { runId: "run_horde", project: "ashen-horde", stack: GameStack.RaylibCpp } as never,
+      destinations: { stack: GameStack.RaylibCpp, targets: targets as never },
+      target: BuildTarget.Mac,
+      webHandle: "web",
+      seed: 1234,
+      cameras: ["default"],
+      retriesMs: [],
+      tolerances: { read: async () => null, write: async () => {} },
+    });
+  };
+  const GIB = 1024 ** 3;
+  const overBudget = {
+    state: "ready",
+    refusal: null,
+    memory: { peakBytes: 5.3 * GIB, budgetBytes: 4 * GIB, capBytes: 9 * GIB, overBudget: true },
+  };
+
+  it("MEMORY-BUDGET. a Mac build of 1,000 animated characters went past 4 GiB and the agent never saw the number: a game that also ships to the web or a phone gets a warning naming the peak and the 4 GiB budget, and the gate passes", async () => {
+    for (const targets of [
+      [BuildTarget.Web, BuildTarget.Mac],
+      [BuildTarget.Mac, BuildTarget.Ios],
+    ]) {
+      const verdict = await memoryGate(targets, overBudget);
+      assert.equal(verdict.pass, true, `over the budget is no failure: ${JSON.stringify(verdict.rows)}`);
+      const warnings = verdict.warnings ?? [];
+      assert.equal(warnings.length, 1, JSON.stringify(warnings));
+      assert.match(warnings[0] ?? "", /5\.3 GiB at peak/, "the warning names the measured peak");
+      assert.match(warnings[0] ?? "", /4 GiB budget/, "and the budget");
+      assert.match(warnings[0] ?? "", /fine on a desktop/, "it reads as fine on desktop");
+    }
+  });
+
+  it("MEMORY-BUDGET. more than 4 GiB is normal for a desktop game: a desktop-only game, or one under the budget, gets no memory warning", async () => {
+    const desktopOnly = await memoryGate([BuildTarget.Mac, BuildTarget.Windows], overBudget);
+    assert.equal(desktopOnly.pass, true);
+    assert.deepEqual(desktopOnly.warnings ?? [], []);
+    const under = { ...overBudget, memory: { ...overBudget.memory, peakBytes: GIB, overBudget: false } };
+    const fits = await memoryGate([BuildTarget.Web, BuildTarget.Mac], under);
+    assert.deepEqual(fits.warnings ?? [], []);
+  });
+
+  it("MEMORY-BUDGET. a run the host killed past its memory cap fails naming the footprint it measured and the cap", async () => {
+    const killed = {
+      state: "killed",
+      refusal: NativeRefusal.MemoryCap,
+      memory: { peakBytes: 9.6 * GIB, budgetBytes: 4 * GIB, capBytes: 9 * GIB, overBudget: true },
+    };
+    const verdict = await memoryGate([BuildTarget.Mac], killed, PageMethod.Pause);
+    assert.equal(verdict.pass, false);
+    const failure = verdict.rows.find((row) => row.pass === false);
+    assert.equal(failure?.refusal, NativeRefusal.MemoryCap, JSON.stringify(verdict.rows));
+    assert.match(failure?.reason ?? "", /9\.6 GiB/, "the failure names the footprint");
+    assert.match(failure?.reason ?? "", /9 GiB memory cap/, "and the cap");
+  });
+
   it("RUST-PARITY-LEASE. a Rust game's Mac parity gate borrowed its native lease without naming the stacks it serves, and the host refused every one \"this harness predates them\": the gate's lease declares them", async () => {
     serveStacksFrom(() => stacksServed({ native: true, rust: true }));
     try {

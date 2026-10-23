@@ -70,6 +70,11 @@ target pair, so a Rust pair never inherits a raylib game's. Phone builds are bui
 only: their rows are unmeasured, so gameplay is judged on the Mac or web build of the same code,
 and no judge starts a Simulator, emulator or phone.
 
+A native look also reads its run's memory (`native.status`). Over the 4 GiB budget is normal on a
+desktop: the look warns, never fails, and only for a game that also ships to the web or a phone,
+naming the measured peak. A run the host killed past its memory cap (`memory-cap`) fails, naming
+the footprint and the cap.
+
 These are test cases, not human-labelled quality results. Begin without model calls by checking
 capture reproducibility, malformed responses, budget limits and blind-label handling through the
 existing conformance and harness suites. A real-model campaign requires its own authorized
