@@ -172,31 +172,28 @@ WebAssembly and phones on slower cores, neither measured: plan for a few hundred
 
 A slot holds what `World` holds (`docs/api/saves.md`), never Rapier's world. Keep every moving
 body's handle in `World` in the order the reset makes them, and add a section with each one's pose
-and velocities as f32 bits. Never write a float as a JSON number: one that does not read back to
-the same text makes the slot refuse to load (`save-corrupt`), while bits come back exact.
+and velocities as plain f32 numbers: every finite float loads back exact.
 
 ```rust
-/// One body's pose and velocities as f32 bits.
-fn body_bits(body: &RigidBody) -> [u32; 13] {
+/// One body's pose and velocities.
+fn body_pose(body: &RigidBody) -> [f32; 13] {
     let (at, turn, linvel, angvel) = (body.translation(), *body.rotation(), body.linvel(), body.angvel());
-    let floats = [at.x, at.y, at.z, turn.x, turn.y, turn.z, turn.w, linvel.x, linvel.y, linvel.z, angvel.x, angvel.y, angvel.z];
-    floats.map(f32::to_bits)
+    [at.x, at.y, at.z, turn.x, turn.y, turn.z, turn.w, linvel.x, linvel.y, linvel.z, angvel.x, angvel.y, angvel.z]
 }
 
 game.save_world(); // the handles
 game.save_section("bodies", |sim| {
-    let rows: Vec<Option<[u32; 13]>> = sim.world.crates.iter().map(|handle| sim.physics.bodies.get(*handle).map(body_bits)).collect();
+    let rows: Vec<Option<[f32; 13]>> = sim.world.crates.iter().map(|handle| sim.physics.bodies.get(*handle).map(body_pose)).collect();
     json!(rows)
 }, |sim, value, _gfx| {
     // The reset rebuilt every body where it starts: put each where it was.
-    let rows = Vec::<Option<[u32; 13]>>::deserialize(value).map_err(|error| error.to_string())?;
+    let rows = Vec::<Option<[f32; 13]>>::deserialize(value).map_err(|error| error.to_string())?;
     for (handle, row) in sim.world.crates.clone().into_iter().zip(rows) {
-        let Some(row) = row else {
+        let Some(f) = row else {
             sim.physics.remove_body(handle); // gone when it was saved
             continue;
         };
         let Some(body) = sim.physics.bodies.get_mut(handle) else { continue };
-        let f = row.map(f32::from_bits);
         body.set_position(Pose::from_parts(vec3(f[0], f[1], f[2]), Quat::from_xyzw(f[3], f[4], f[5], f[6])), true);
         body.set_linvel(vec3(f[7], f[8], f[9]), true);
         body.set_angvel(vec3(f[10], f[11], f[12]), true);
@@ -218,7 +215,7 @@ game.save_section("bodies", |sim| {
 ```rust
 game.probe("bodies", |sim| {
     let bodies = sim.world.crates.iter().filter_map(|h| sim.physics.bodies.get(*h)).filter(|body| body.is_dynamic());
-    let bytes: Vec<u8> = bodies.flat_map(body_bits).flat_map(u32::to_le_bytes).collect();
+    let bytes: Vec<u8> = bodies.flat_map(body_pose).map(f32::to_bits).flat_map(u32::to_le_bytes).collect();
     json!(digest::hex64(digest::fnv1a64(&bytes)))
 });
 ```

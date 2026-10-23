@@ -65,18 +65,17 @@ fn body_id(handle: RigidBodyHandle) -> u64 {
     u64::from(slot) | (u64::from(generation) << 32)
 }
 
-/// One body's pose and velocities as f32 bits: a save keeps floats as bits, so each comes back exact.
-fn body_bits(body: &RigidBody) -> [u32; 13] {
+/// One body's pose and velocities: a save keeps them as plain floats, and each comes back exact.
+fn body_pose(body: &RigidBody) -> [f32; 13] {
     let (at, turn, linvel, angvel) = (body.translation(), *body.rotation(), body.linvel(), body.angvel());
-    let floats = [at.x, at.y, at.z, turn.x, turn.y, turn.z, turn.w, linvel.x, linvel.y, linvel.z, angvel.x, angvel.y, angvel.z];
-    floats.map(f32::to_bits)
+    [at.x, at.y, at.z, turn.x, turn.y, turn.z, turn.w, linvel.x, linvel.y, linvel.z, angvel.x, angvel.y, angvel.z]
 }
 
 /// A digest of every moving body's bits: probed, it makes the bodies part of the checksum, so a
 /// load's `checksumMatch` says each body came back exactly.
 fn bodies_digest(sim: &Sim<Yard>) -> String {
     let bodies = sim.world.moving().into_iter().filter_map(|handle| sim.physics.bodies.get(handle)).filter(|body| body.is_dynamic());
-    let bytes: Vec<u8> = bodies.flat_map(body_bits).flat_map(u32::to_le_bytes).collect();
+    let bytes: Vec<u8> = bodies.flat_map(body_pose).map(f32::to_bits).flat_map(u32::to_le_bytes).collect();
     digest::hex64(digest::fnv1a64(&bytes))
 }
 
@@ -179,22 +178,21 @@ fn shoot(physics: &mut PhysicsWorld, eye: Vec3, aim: Vec3) -> Option<RigidBodyHa
     Some(parent)
 }
 
-/// The save section's writer: each moving body's bits, `null` for one the game removed.
+/// The save section's writer: each moving body's pose, `null` for one the game removed.
 fn save_bodies(sim: &Sim<Yard>) -> Value {
-    let rows: Vec<Option<[u32; 13]>> = sim.world.moving().iter().map(|handle| sim.physics.bodies.get(*handle).map(body_bits)).collect();
+    let rows: Vec<Option<[f32; 13]>> = sim.world.moving().iter().map(|handle| sim.physics.bodies.get(*handle).map(body_pose)).collect();
     json!(rows)
 }
 
 /// The save section's reader: the reset rebuilt every body where it starts; put each where it was.
 fn load_bodies(sim: &mut Sim<Yard>, value: &Value, _gfx: &Gfx) -> Result<(), String> {
-    let rows = Vec::<Option<[u32; 13]>>::deserialize(value).map_err(|error| error.to_string())?;
+    let rows = Vec::<Option<[f32; 13]>>::deserialize(value).map_err(|error| error.to_string())?;
     for (handle, row) in sim.world.moving().into_iter().zip(rows) {
-        let Some(row) = row else {
+        let Some(f) = row else {
             sim.physics.remove_body(handle);
             continue;
         };
         let Some(body) = sim.physics.bodies.get_mut(handle) else { continue };
-        let f = row.map(f32::from_bits);
         body.set_position(Pose::from_parts(vec3(f[0], f[1], f[2]), Quat::from_xyzw(f[3], f[4], f[5], f[6])), true);
         body.set_linvel(vec3(f[7], f[8], f[9]), true);
         body.set_angvel(vec3(f[10], f[11], f[12]), true);
