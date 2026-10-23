@@ -242,7 +242,7 @@ import { PageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import { runTurn } from "../../src/harness-seed/loop/turn-loop.ts";
 import { materializePrompt } from "../../src/harness-seed/loop/prompt.ts";
 import { toPiMessages } from "../../src/substrate/engines/ollama.ts";
-import type { Run } from "../../src/harness-seed/types/harness.d.ts";
+import type { HarnessCtx, Run } from "../../src/harness-seed/types/harness.d.ts";
 import { killTree } from "../../src/substrate/spawn.ts";
 
 /**
@@ -17653,5 +17653,115 @@ describe("a Rust recipe's sketch, held to the facade's pinned calls (R-31)", () 
       }),
     );
     assert.deepEqual(unpinned, {}, "seed Rust sketches call only pinned or plain names");
+  });
+});
+
+describe("a resumed run whose start waits on its game's build (HX)", () => {
+  /** How long a stopped start may take to close: a few of the setup's cancellation looks, never a build. */
+  const STOPPED_START_MS = 5 * SECOND_MS;
+  const RUN_ID = "run_hx";
+  /** The Rust template's shape, as the host lists it. */
+  const RUST_GAME_SHAPE = {
+    entry: "index.html",
+    main: "src/main.rs",
+    build: null,
+    own: false,
+    kind: ProjectKind.RustWgpu,
+  };
+
+  /** `work`, or `late` once `ms` pass first. */
+  async function within<T>(work: Promise<T>, ms: number, late: T): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(late), ms);
+    });
+    try {
+      return await Promise.race([work, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * stormvale-rust, 2026-10-24: a resumed director run whose game's web build is cold. Every
+   * `preview.load` waits on that build, and only the person's Stop cancels it; the lead's session
+   * would open once the start is ready.
+   */
+  async function resumeWaitingOnBuild() {
+    const { runDirector } = await import("../../src/harness-seed/loop/director.ts");
+    const workspace = await tmpDir("hx-start-");
+    const game = { name: "stormvale", dir: `${workspace}/games/stormvale`, title: "Stormvale", shape: RUST_GAME_SHAPE };
+    let loads = 0;
+    let loading = () => {};
+    const firstLoad = new Promise<void>((resolve) => {
+      loading = resolve;
+    });
+    const recorder = ctxRecorder({
+      workspace,
+      threadId: "t1",
+      unknown: { value: null },
+      handlers: {
+        [HostMethod.GameList]: () => [game],
+        [HostMethod.EngineDescribe]: () => [],
+        [HostMethod.PreviewLoad]: () => {
+          loads += 1;
+          loading();
+          return new Promise(() => {});
+        },
+        [HostMethod.EngineDelegate]: () => {
+          throw new Error("the lead's session opened");
+        },
+      },
+    });
+    const run = {
+      runId: RUN_ID,
+      goal: "a forested valley at night in a rainstorm",
+      project: "stormvale",
+      engine: "claude-code",
+      reference: { name: "storm", shots: [], kind: "direction" },
+      budgets: { wallClockMs: HOUR_MS },
+      directorLoop: "wake",
+    } as unknown as Run;
+    const running = runDirector(recorder.ctx as unknown as HarnessCtx, { threadId: "t1", run, resume: true }).then(
+      () => "closed",
+      (error: unknown) => `threw: ${String((error as Error)?.message ?? error)}`,
+    );
+    await within(firstLoad, STOPPED_START_MS, undefined);
+    return { recorder, running, loads: () => loads };
+  }
+
+  /** The run's closing record, as the run appended it. */
+  function runFinished(recorder: CtxRecorder): Record<string, any> | undefined {
+    const batches = recorder
+      .paramsOf(HostMethod.EventsAppend)
+      .flatMap((p) => (p.batch as Array<Record<string, any>>) ?? []);
+    return batches.find((event) => event.event_type === RunEvent.RunFinished);
+  }
+
+  it("HX1. Stop while a resumed run's start waits on its game's build: the run closes as the person's stop within seconds, loads nothing again and opens no lead", async () => {
+    const { recorder, running, loads } = await resumeWaitingOnBuild();
+    assert.equal(loads(), 1, "the start is waiting on the game's build");
+    recorder.cancel();
+    assert.equal(await within(running, STOPPED_START_MS, "still waiting"), "closed");
+    assert.equal(loads(), 1, "no step after Stop starts the build again");
+    assert.equal(recorder.paramsOf(HostMethod.EngineDelegate).length, 0, "no lead session opens after Stop");
+    assert.match(String(runFinished(recorder)?.payload?.stoppedBecause), /stopped by the user/);
+  });
+
+  it("HX2. a message sent while the run's start waits reaches its lead's line, and goes back to the chat when Stop ends the start", async () => {
+    const { recorder, running } = await resumeWaitingOnBuild();
+    const line = leadLineOf(RUN_ID);
+    assert.equal(line?.open(), true, "the run's lead takes the chat while its start is prepared");
+    const givenBack: string[] = [];
+    line?.hear(
+      { type: "user_message", threadId: "t1", messageId: "msg_trees", text: "make the trees AAA" },
+      async (items) => {
+        givenBack.push(...items.map((item) => String(item.messageId)));
+      },
+    );
+    recorder.cancel();
+    assert.equal(await within(running, STOPPED_START_MS, "still waiting"), "closed");
+    assert.deepEqual(givenBack, ["msg_trees"], "the chat answers it: never left sending");
+    assert.equal(leadLineOf(RUN_ID), undefined, "the line is shut with the run");
   });
 });

@@ -837,10 +837,18 @@ async function runTurnLoop(loopRun: LoopRun, talk: DirectorTalk, brief: string):
  * recorded on the run's log. The long turn opens none, and its chat waits for the run as it
  * always did.
  */
-function leadLine(loopRun: LoopRun, loop: DirectorLoop): LeadLine | null {
+function leadLine(
+  ctx: HarnessCtx,
+  { run, threadId }: { run: Run; threadId: string },
+  loop: DirectorLoop,
+  prepared: () => LoopRun | undefined,
+): LeadLine | null {
   if (loop !== DirectorLoop.Wake) return null;
-  const { ctx, report, run, state, threadId } = loopRun;
-  return openLeadLine(run.runId, threadId, () => !state.finished && !ctx.cancelled && !report.failure, ctx);
+  const going = () => {
+    const loopRun = prepared();
+    return !loopRun || (!loopRun.state.finished && !loopRun.report.failure);
+  };
+  return openLeadLine(run.runId, threadId, () => !ctx.cancelled && going(), ctx);
 }
 
 /** The wake loop's run, and the close of whatever its lead left open — what it never heard goes back to the chat first. */
@@ -925,18 +933,29 @@ export async function runDirector(
     }),
   );
   const options = { threadId, run, resume, oneSession, liveChat, ...(open ? { profile, clock } : {}) };
-  const loopRun = await prepareLoopRun(measured, options, LOOP_RUN_MODULES);
-  // A paused run its open Loop can't pick up is refused before anything of it runs or is written over.
-  const refused = loopRun.open?.refused;
-  if (refused) {
-    await refuseResume(loopRun, refused, loopRun.open?.refusalPauses === true);
-    return loopRun.report;
+  // The lead takes the chat from the run's start: a start that waits minutes on the game's build
+  // (stormvale-rust) never leaves a message sending. What it never heard goes back with a Stop.
+  const line = leadLine(ctx, { run, threadId }, loop, () => tracing);
+  let loopRun: LoopRun;
+  let session: SessionParts;
+  try {
+    loopRun = await prepareLoopRun(measured, options, LOOP_RUN_MODULES);
+    // A paused run its open Loop can't pick up is refused before anything of it runs or is written over.
+    const refused = loopRun.open?.refused;
+    if (refused) {
+      await line?.release({ heardNone: true });
+      await refuseResume(loopRun, refused, loopRun.open?.refusalPauses === true);
+      return loopRun.report;
+    }
+    tracing = loopRun;
+    keepTimings(loopRun, timings);
+    if (oneSession) await seatTheLead(loopRun);
+    session = await sessionParts(ctx, loopRun, loop);
+  } catch (err) {
+    // No lead ever heard the chat: what it was handed goes back before the run's failure is told.
+    await line?.release({ heardNone: true });
+    throw err;
   }
-  tracing = loopRun;
-  keepTimings(loopRun, timings);
-  if (oneSession) await seatTheLead(loopRun);
-  const session = await sessionParts(ctx, loopRun, loop);
-  const line = leadLine(loopRun, loop);
   await leadTheRun(loopRun, { ...session, loop, line, clock });
   return loopRun.report;
 }

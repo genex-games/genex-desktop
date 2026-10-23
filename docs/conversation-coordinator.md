@@ -276,7 +276,10 @@ queue takes no switches, and a switch then waits for a turn of its own as before
 While a director run is going on the wake loop, its lead is the chat: a message sent meanwhile is
 handed to it at once, and it answers in the chat. The long turn (`directorLoop: "turn"`,
 `STUDIO_DIRECTOR_LOOP=turn`), the classic pipeline and a kept `director.ts` from before live chat
-open no line, and their messages wait for the run to close as before. A waking run's start
+open no line, and their messages wait for the run to close as before. The line opens as the run
+starts, before its start is prepared (a compiled game's first load can build for minutes): a message
+sent meanwhile is the lead's from its first wake, and when a Stop or a failed start ends the run
+before any lead heard it, it goes back to the chat, which answers it. A waking run's start
 says so (`autopilot_started.liveChat`) when the chat's queue hands messages to it (main.ts tells
 `live-chat-served.ts` `serveLiveChat` which queue it wired; a kept older `message-queue.ts` lacks
 `SERVES_LIVE_CHAT`), and while it runs the composer reads "Talk to the lead while

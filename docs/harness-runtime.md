@@ -648,6 +648,12 @@ to review is told so (the wrap-up asks for claims early enough), and `LeadJourna
 count. Its start says `finishCheck: true`, so its graph is a tree from the start. The critic stays
 advice.
 
+A web run's start (`prepareLoopRun`) loads the game and looks at it before the lead's session opens,
+and on a compiled game each load may wait minutes on a cold build. Those steps are stop-aware
+(`unlessStopped` in `director/setup.ts`): a Stop ends the step it waits on within `CANCEL_POLL_MS`
+and skips every later look, so the run closes as the person's stop (`closeStoppedStart`) and no
+lead opens.
+
 The open Loop. `runDirector(ctx, { …, profile: LoopProfile.Open })` runs the director's wake loop on a
 project that isn't a web game, led in place (`loop/director/open/`). `prepareLoopRun` branches inside `director/setup.ts` (`prepareOpenLoopRun`, its state helpers
 being that module's): the game as `game.list` lists it, its hours held to `MAX_RUN_HOURS`, the run's
