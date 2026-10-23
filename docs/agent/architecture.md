@@ -345,8 +345,9 @@ build Live shows (`shows`, whichever path loaded it), and the stage reads the wh
 mount (`studio:live.behind`). The renderer (`stage.ts`, `stage/live-behind.ts`) adds the run's
 newest healthy build Live does not show and a shown build found broken, applies what main holds when Live is not watched, and swaps only the
 empty scaffold's first healthy build by itself. Candidates load in a staging preview first; a
-candidate or session never borrows Live or the stand-in (a session gets an overflow lease, at most
-`OVERFLOW_WINDOWS_MAX` past the ceiling, then waits). The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in
+candidate or session never borrows Live or the stand-in (a session overflows by at most
+`OVERFLOW_WINDOWS_MAX`, then waits); the person's Play (`showBuild`) gets a reserved one
+(`PreviewActor.Person`). The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in
 the [feature map](feature-map.md).
 
 **Covers.** `GameAvatar` paints every cover with one WebGL context (`ui/cover-animation.ts`,

@@ -448,9 +448,10 @@ async function profile(core: StudioCore, x: CoreInternals, p: HarnessParams<type
     if (!source || !sameRevision) throw new Error(MESSAGE.profileSourceMismatch);
     const registered = await core.candidates.source(source.candidateId, p.expectedRevision);
     if (registered.runId !== p.runId || p.stageId !== OPTIMIZATION_STAGE) throw new Error(MESSAGE.profileRunMismatch);
-    // The stage's own window is one lease; any other (a window, or a native game running) skews the sample.
+    // The stage's own window is one lease; any other (a window, the person's, or a native game running) skews the sample.
     const pool = x.previews.pool();
-    if (pool.leaseCount + pool.nativeLeaseCount > 1) return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
+    if (pool.leaseCount + pool.personLeaseCount + pool.nativeLeaseCount > 1)
+      return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
   }
   return port.profile(p);
 }
