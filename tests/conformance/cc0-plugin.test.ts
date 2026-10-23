@@ -20,8 +20,10 @@ import {
   API_HOSTS,
   CC0_USER_AGENT,
   type Cc0Net,
+  CURATED_HOSTS,
   createCc0Net,
   DOWNLOAD_HOSTS,
+  FETCH_HOSTS,
   REDIRECT_HOSTS,
 } from "../../src/plugins/cc0/net.ts";
 import { type Cc0Delivery, cc0LockFacts } from "../../src/plugins/cc0/provenance.ts";
@@ -367,7 +369,7 @@ describe("cc0__fetch from the curated manifest", () => {
       assert.equal(asset.licence, "CC0-1.0");
       for (const entry of asset.files) {
         assert.match(entry.sha256, /^[0-9a-f]{64}$/);
-        assert.ok(DOWNLOAD_HOSTS.has(new URL(entry.url).hostname), entry.url);
+        assert.ok(FETCH_HOSTS.has(new URL(entry.url).hostname), entry.url);
       }
     }
   });
@@ -485,7 +487,10 @@ describe("cc0__search", () => {
 describe("the CC0 plugin's network and package", () => {
   it("declares exactly the hosts it reaches, and names itself with its manifest's version", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(path.join(PLUGIN_DIR, "plugin.json"), "utf8")));
-    assert.deepEqual(new Set(manifest.network?.hosts), new Set([...API_HOSTS, ...DOWNLOAD_HOSTS, ...REDIRECT_HOSTS]));
+    assert.deepEqual(
+      new Set(manifest.network?.hosts),
+      new Set([...API_HOSTS, ...DOWNLOAD_HOSTS, ...CURATED_HOSTS, ...REDIRECT_HOSTS]),
+    );
     assert.ok(CC0_USER_AGENT.startsWith(`Genex-CC0/${manifest.version} `));
     assert.deepEqual(
       manifest.tools.map((tool) => tool.name),
@@ -542,5 +547,77 @@ describe("the CC0 plugin's network and package", () => {
   it("packs a glTF whose resources it lacks as a refusal, never a GLB with holes", () => {
     assert.throws(() => packGlb(GLTF, new Map([["wooden_crate.bin", BIN]])), { code: "zip-member-missing" });
     assert.throws(() => packGlb(encode('{"asset":{"version":"1.0"}}'), new Map()), { code: "manifest-invalid" });
+  });
+});
+
+/** The Universal Animation Library as Quaternius uploaded it to OpenGameArt (CC0), served from its file store. */
+const UAL_ON_OGA = "https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip";
+
+/** A network over a stub `fetch` that answers `routes` and records every request it is asked. */
+function recordingNet(routes: Record<string, () => Response>) {
+  const asked: string[] = [];
+  const fetchStub = (async (input: URL | string) => {
+    const url = String(input);
+    asked.push(url);
+    const route = routes[url];
+    if (!route) throw new Error(`unexpected fetch ${url}`);
+    return route();
+  }) as typeof fetch;
+  return { net: createCc0Net({ fetch: fetchStub }), asked };
+}
+
+describe("Quaternius' download host (owner call AN-21)", () => {
+  it("downloads the Universal Animation Library from OpenGameArt's file store", async () => {
+    const zip = encode("PK the-universal-animation-library");
+    const { net, asked } = recordingNet({ [UAL_ON_OGA]: () => new Response(zip) });
+    assert.deepEqual(await net.download(new URL(UAL_ON_OGA), zip.byteLength), zip);
+    assert.deepEqual(asked, [UAL_ON_OGA]);
+  });
+
+  it("refuses every hostile shape of that host before a single request", async () => {
+    const hostile = [
+      "https://user:secret@opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "https://opengameart.org:8443/sites/default/files/universal_animation_librarystandard.zip",
+      "http://opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "https://www.opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "https://opengameart.org.evil.example/sites/default/files/universal_animation_librarystandard.zip",
+      "https://evil.example/opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+    ];
+    const { net, asked } = recordingNet({});
+    for (const url of hostile) {
+      await assert.rejects(net.download(new URL(url), 1024), { code: "host-not-allowed" }, url);
+    }
+    await assert.rejects(net.json(new URL(UAL_ON_OGA)), { code: "host-not-allowed" }, "it lists nothing");
+    assert.deepEqual(asked, []);
+  });
+
+  it("follows no redirect from it to a host off the list", async () => {
+    const { net, asked } = recordingNet({
+      [UAL_ON_OGA]: () => new Response(null, { status: 302, headers: { location: "https://evil.example/ual.zip" } }),
+    });
+    await assert.rejects(net.download(new URL(UAL_ON_OGA), 1024), { code: "host-not-allowed" });
+    assert.deepEqual(asked, [UAL_ON_OGA]);
+  });
+
+  it("is never reached through an API answer: only a curated row may name it", async () => {
+    const host = await fakeHost();
+    const oga = "https://opengameart.org/sites/default/files/wooden_crate_diff_1k.jpg";
+    const { net, asked } = stubNet({ [FILES_URL]: polyHavenFiles({ diffUrl: oga }), [INFO_URL]: INFO }, {});
+    await assert.rejects(
+      call(
+        createCc0Plugin({ net }),
+        Cc0Tool.Fetch,
+        { source: "polyhaven", id: "wooden_crate", resolution: "1k", maps: "diff" },
+        host.ctx,
+      ),
+      /host-not-allowed/,
+    );
+    assert.ok(!asked.includes(oga));
+    await nothingWritten(host);
+  });
+
+  it("is declared in the plugin's network hosts", async () => {
+    const manifest = validateManifest(JSON.parse(await readFile(path.join(PLUGIN_DIR, "plugin.json"), "utf8")));
+    assert.ok(manifest.network?.hosts.includes("opengameart.org"));
   });
 });

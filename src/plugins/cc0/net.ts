@@ -1,19 +1,28 @@
 /**
- * The CC0 library's network: JSON from the sources' APIs and bytes from their download servers,
- * each on an allowlisted https host, every request naming Genex in its User-Agent (Poly Haven's API
- * terms ask every client to). The plugin's `network.hosts` declares exactly these hosts.
+ * The CC0 library's network: JSON from the sources' APIs and bytes from their download servers and
+ * the curated packs' hosts, each on an allowlisted https host, every request naming Genex in its
+ * User-Agent (Poly Haven's API terms ask every client to). The plugin's `network.hosts` declares
+ * exactly these hosts.
  */
 import { Cc0Error, Cc0Refusal } from "../../substrate/cc0-fetch.ts";
 
 /** The plugin's version, as its `plugin.json` names it (a test holds the two equal). */
-export const CC0_PLUGIN_VERSION = "1.0.0";
+export const CC0_PLUGIN_VERSION = "1.1.0";
 /** What every request names itself as. */
 export const CC0_USER_AGENT = `Genex-CC0/${CC0_PLUGIN_VERSION} (+https://github.com/genex-games/genex-desktop)`;
 
 /** The hosts whose JSON APIs list and describe assets. */
 export const API_HOSTS: ReadonlySet<string> = new Set(["api.polyhaven.com", "ambientcg.com"]);
-/** The hosts a manifest or an API answer may name as a download. */
+/** The hosts an API answer (or a curated row) may name as a download. */
 export const DOWNLOAD_HOSTS: ReadonlySet<string> = new Set(["dl.polyhaven.org", "ambientcg.com"]);
+/**
+ * Hosts only a curated pack's pinned row may name, never an API answer: OpenGameArt's file store,
+ * where Quaternius publishes the Universal Animation Library as CC0 (owner call AN-21). It also
+ * hosts other licences, so only a hand-reviewed, sha256-pinned row reaches it.
+ */
+export const CURATED_HOSTS: ReadonlySet<string> = new Set(["opengameart.org"]);
+/** Every host a download may start on, so every host a curated row may name. */
+export const FETCH_HOSTS: ReadonlySet<string> = new Set([...DOWNLOAD_HOSTS, ...CURATED_HOSTS]);
 /** Hosts reached only as the one redirect a download host answers (ambientCG's `get` names its file server). */
 export const REDIRECT_HOSTS: ReadonlySet<string> = new Set(["acg-download.struffelproductions.com"]);
 
@@ -73,9 +82,9 @@ export function createCc0Net(options: { fetch?: typeof fetch } = {}): Cc0Net {
       throw failed(url, error instanceof Error ? error.message : String(error));
     }
   };
-  /** A download host's answer, after at most one redirect to a redirect host. */
+  /** A download or curated host's answer, after at most one redirect to a redirect host. */
   const answer = async (url: URL): Promise<{ response: Response; at: URL }> => {
-    const first = await request(checkedHost(url, DOWNLOAD_HOSTS));
+    const first = await request(checkedHost(url, FETCH_HOSTS));
     if (!REDIRECT_STATUSES.has(first.status)) return { response: first, at: url };
     await first.body?.cancel();
     const target = checkedHost(new URL(first.headers.get("location") ?? "", url), REDIRECT_HOSTS);

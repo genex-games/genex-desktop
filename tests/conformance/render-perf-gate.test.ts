@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,7 @@ import {
   switchedOn,
   LAKESIDE_CONTENT_COMMIT,
   lakesideGatedFor,
+  savedBaseline,
 } from "../../scripts/spike/rust-wgpu/render-perf.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -245,6 +246,61 @@ describe("render perf Lakeside rows against a baseline that draws the same Lakes
     assert.equal(lakesideGatedFor("0e46c323", ancestry(null)), false, "an unknown commit keeps the exemption");
     assert.equal(lakesideGatedFor("", ancestry(true)), false, "a record with no commit keeps the exemption");
     assert.ok(seen.every(([ancestor]) => ancestor === LAKESIDE_CONTENT_COMMIT));
+  });
+});
+
+describe("render perf A/B saved side", () => {
+  // GE perf: a saved perf_matrix records the commit of the checkout it runs in, not the one it was
+  // built from. The A/B reads the tier folder's SOURCE_SHA and SOURCE_TREE instead.
+  const CHECKOUT_SHA = "1e5832ab09b0aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const BUILT_SHA = "980b6491a2892eaba312c96748e83fde1dd13ced";
+
+  /** A tier folder holding a saved executable and, when given, what it was built from. */
+  async function tier(sha?: string, trackedDiffSha256: string | null = null): Promise<string> {
+    const dir = path.join(await tmpDir("render-perf-tier-"), "bin", "gs-head");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "perf_matrix"), "");
+    if (sha !== undefined) {
+      await writeFile(path.join(dir, "SOURCE_SHA"), `${sha}\n`);
+      const tree = { sha, snapshot: trackedDiffSha256 === null, trackedDiffSha256 };
+      await writeFile(path.join(dir, "SOURCE_TREE"), `${JSON.stringify(tree)}\n`);
+    }
+    return path.join(dir, "perf_matrix");
+  }
+
+  /** Two runs of the saved executable as it records them: under the checkout's commit. */
+  async function runsInCheckout(): Promise<PerfRecord[]> {
+    const run = await fixture("baseline.json");
+    run.build = { sha: CHECKOUT_SHA, trackedChanges: false };
+    return [run, structuredClone(run)];
+  }
+
+  /** An ancestry that knows only full commits, as git does: a suffixed or unknown name is null. */
+  const ancestry = (descends: boolean) => (_ancestor: string, sha: string) =>
+    /^[0-9a-f]{40}$/.test(sha) ? descends : null;
+
+  it("names the commit its folder records, not the checkout's, and gates Lakeside from it", async () => {
+    const saved = savedBaseline(await tier(BUILT_SHA), await runsInCheckout(), ancestry(true));
+    assert.equal(saved.record.build.sha, BUILT_SHA.slice(0, 12));
+    assert.equal(saved.record.build.trackedChanges, false);
+    assert.equal(saved.commit, BUILT_SHA);
+    assert.equal(saved.lakesideGated, true);
+    assert.equal(savedBaseline(await tier(BUILT_SHA), await runsInCheckout(), ancestry(false)).lakesideGated, false);
+  });
+
+  it("marks a working-tree build dirty in its label but decides Lakeside from its bare commit", async () => {
+    const diff = "1234abcd".repeat(8);
+    const saved = savedBaseline(await tier(BUILT_SHA, diff), await runsInCheckout(), ancestry(true));
+    assert.equal(saved.record.build.sha, `${BUILT_SHA.slice(0, 12)}+dirty-1234abcd`);
+    assert.equal(saved.record.build.trackedChanges, true);
+    assert.equal(saved.lakesideGated, true, "the dirty label is not a commit git can answer for");
+  });
+
+  it("calls a folder with no SOURCE_SHA unknown and keeps the Lakeside exemption", async () => {
+    const saved = savedBaseline(await tier(), await runsInCheckout(), ancestry(true));
+    assert.equal(saved.record.build.sha, "unknown");
+    assert.equal(saved.commit, null);
+    assert.equal(saved.lakesideGated, false, "the checkout's commit says nothing about the saved build");
   });
 });
 

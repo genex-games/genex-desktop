@@ -1,14 +1,20 @@
 {
   "apiVersion": 4,
   "id": "cc0",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "CC0 Library",
   "publisher": "Studio",
   "description": "Free CC0 models, textures and skies from Poly Haven and ambientCG, fetched into your game with their licence recorded. No account or credits.",
   "backend": "backend.mjs",
   "capabilities": ["network", "project.write", "jobs"],
   "network": {
-    "hosts": ["api.polyhaven.com", "dl.polyhaven.org", "ambientcg.com", "acg-download.struffelproductions.com"]
+    "hosts": [
+      "api.polyhaven.com",
+      "dl.polyhaven.org",
+      "ambientcg.com",
+      "acg-download.struffelproductions.com",
+      "opengameart.org"
+    ]
   },
   "tools": [
     {
