@@ -8,7 +8,11 @@
 //! - **Opaque (node 12)**: shaded by the forward fragment, `Equal` against the prepass depth where
 //!   the world pass reuses it.
 //!
-//! A frame with no part on the path compiles, allocates and costs nothing here.
+//! A renderer with no skinned mesh compiles, allocates and costs nothing here. One that holds a
+//! skinned mesh compiles the path's pipelines on its next frame even when no part takes the path
+//! yet (game systems R-20): a character that walks far mid-game, or past the class's compute cap,
+//! then compiles nothing on the frame thread (the presenter skins a game's characters at its boot,
+//! so the boot's warm frame is that frame).
 
 use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferUsages, RenderPass, RenderPipeline, TextureFormat};
 
@@ -139,11 +143,7 @@ impl Renderer {
         }
         let Some(table) = self.skin_vertex.table.clone() else { return Ok(()) };
         self.queue.write_buffer(&table, 0, bytes);
-        if self.skin_vertex.layouts.is_none() {
-            let empty = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("vertex skin empty"), entries: &[] });
-            let empty_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("vertex skin empty"), layout: &empty, entries: &[] });
-            self.skin_vertex.layouts = Some((tables_layout(&self.device), empty, empty_group));
-        }
+        self.ensure_skin_vertex_layouts();
         let skin = self.meshes.skin.clone();
         let made_over = |(_, rows, held): &(BindGroup, Buffer, Buffer)| *rows == skin && *held == table;
         if !self.skin_vertex.group.as_ref().is_some_and(made_over) {
@@ -154,12 +154,29 @@ impl Renderer {
         Ok(())
     }
 
+    /// The tables' layout and the prepass's empty group, made once.
+    fn ensure_skin_vertex_layouts(&mut self) {
+        if self.skin_vertex.layouts.is_none() {
+            let empty = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("vertex skin empty"), entries: &[] });
+            let empty_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("vertex skin empty"), layout: &empty, entries: &[] });
+            self.skin_vertex.layouts = Some((tables_layout(&self.device), empty, empty_group));
+        }
+    }
+
+    /// Whether a later frame can draw a part on the vertex path: the library holds a skinned mesh
+    /// and the policy does not keep every draw on compute.
+    fn skin_vertex_reachable(&self) -> bool {
+        self.skin_vertex.policy != SkinVertexPolicy::Compute && !self.library.skin().is_empty()
+    }
+
     /// The pipelines `path` and the frame's `prepass` (motion when `motion`) draw this frame's
-    /// vertex-skinned parts with.
+    /// vertex-skinned parts with, made on any frame of a renderer that holds a skinned mesh (R-20:
+    /// compiled before the first part takes the path, never on that frame).
     pub(super) fn prepare_skin_vertex(&mut self, plan: &crate::scene::FramePlan, path: &ScenePath, prepass: Option<&FramePrepass>, motion: bool) -> Result<(), RenderError> {
-        if self.skin_vertex.draws.is_empty() {
+        if self.skin_vertex.draws.is_empty() && !self.skin_vertex_reachable() {
             return Ok(());
         }
+        self.ensure_skin_vertex_layouts();
         let surface = self.surface_key(path.hdr);
         let world = WorldKey { format: path.format, reversed: path.depth_reversed, samples: self.samples, surface, equal: prepass.is_some_and(|prepass| prepass.equal) };
         if self.skin_vertex.world.as_ref().is_none_or(|(made, _)| *made != world) {

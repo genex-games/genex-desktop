@@ -665,6 +665,12 @@ impl Assets {
         self.requested.borrow().clone()
     }
 
+    /// The characters the game made (`gfx.character`) whose rigs imported, in path order: a
+    /// presenter skins them before a frame draws one (game systems R-20).
+    pub(crate) fn character_paths(&self) -> Vec<String> {
+        self.reads.borrow().rigs.iter().filter(|(_, rig)| rig.is_ok()).map(|(path, _)| path.clone()).collect()
+    }
+
     pub(crate) fn clear(&self) {
         self.requested.borrow_mut().clear();
     }
