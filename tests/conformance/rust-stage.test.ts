@@ -593,8 +593,11 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
       bare.cargoToml,
       /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["nav", "streaming", "animation"\] \}\n/,
     );
+    // Flipped (GR fix): the template ships `[audio] enabled = false`, so the game that says nothing
+    // is a manifest without an [audio] table, not the template's own.
+    const unsaid = await makeGame({ "genex.toml": '[game]\ntitle = "Puzzle"\n' });
     const withAudio = staged(
-      await stageRustGame({ source: await makeGame(), stage: await stagePath(), target: BuildTarget.Web, pins }),
+      await stageRustGame({ source: unsaid, stage: await stagePath(), target: BuildTarget.Web, pins }),
     );
     assert.match(withAudio.cargoLock ?? "", /\nname = "kira"\n/, "a game that says nothing keeps audio");
   });
