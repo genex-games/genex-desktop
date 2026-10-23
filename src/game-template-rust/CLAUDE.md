@@ -41,12 +41,9 @@ feature in `genex.toml` has no web build, so add one only when the brief needs i
 over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most
 32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
-`invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
-Rapier (a fifth of the web build) out; one that plays no sound sets `[audio] enabled = false`,
-which leaves the mixer and decoders out. This game starts with `[nav]`, `[streaming]` and
-`[animation]` switched off in `genex.toml`: set that table's `enabled = true` before using
-walkers, a streamed world or an animated character, or the call is refused `nav-disabled`,
-`streaming-disabled` or `animation-disabled`.
+`invalid-web-budget`. A system the game does not use stays switched off in `genex.toml`, which
+keeps the web build small: this game starts with `[nav]`, `[streaming]` and `[animation]` off, and
+Game systems below names each switch and what a switched-off system answers.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
@@ -157,6 +154,20 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 ## Game systems
 
 Use the built-in system before writing your own; each page holds the how and its refusals.
+Five systems have a `genex.toml` switch (`docs/api/genex-toml.md`). A switched-off system leaves
+its engine out of the build; facade calls still compile, but they are refused:
+
+| Switch | Off means | Refused |
+| --- | --- | --- |
+| `[physics]` | no Rapier (a fifth of the web build); `sim.physics` is never stepped | code that reaches for Rapier does not compile |
+| `[audio]` | no mixer or decoders | every sound is missing, `audio-disabled` |
+| `[nav]` | no walkers or paths | `game.navigation` fails install, `nav-disabled` |
+| `[streaming]` | no streamed cells | `game.streaming` fails install, `streaming-disabled` |
+| `[animation]` | no rigs or animators | `gfx.character` and every animator, `animation-disabled` |
+
+Set the table's `enabled = true` in the same change that first calls the system, and leave
+off what the brief never uses. A `*-disabled` refusal means the switch is off: turn it on, never
+write your own system around it.
 
 - **Input**: name actions once with `game.input(ActionMap::new()..)` and read `ctx.actions`, so
   keys, pads and on-screen touch controls drive the same action; `controls_panel(ui)` rebinds,
@@ -165,7 +176,12 @@ Use the built-in system before writing your own; each page holds the how and its
 - **UI and settings**: text, locales and the kit's menus through `game.ui(..)` and `genex::ui`
   (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
   (`docs/api/settings.md`).
-- **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`).
+- **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`). A
+  compiled cell pack is read with `genex::pack::CellPacks::from_table(ASSETS, "<folder>")`, and
+  `genex::digest` hashes the game's own data: a game depends on `genex` alone. A level that loads
+  an interior while playing requires its `[[asset_group]]` with `sim.stream.require("<group>")`
+  and waits for `sim.stream.ready(ticket)`. On the web a named group is not fetched yet, so a game
+  with a web build loads what it needs up front.
 - **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
   `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn

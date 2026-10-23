@@ -6,7 +6,7 @@
   "kind": "craft",
   "pack": "characters",
   "note": "Everything alive stands on the ground: its world bbox bottom sits within a few centimetres of the top of the walkable mesh.",
-  "intent": "A figure floating five centimetres above the floor, or sunk into it, is the fastest way to break the illusion, and it happens whenever an object is placed by its centre instead of its base. Place by the base: sample the ground height at the x,z, then set y so the group's bounding-box minimum lands on it. On uneven terrain, raycast down against the walkable mesh rather than assuming a plane. Give every standing thing a contact shadow or a darkened patch under it — the eye reads contact from the shadow before it reads it from the geometry.",
+  "intent": "A figure floating five centimetres above the floor, or sunk into it, is the fastest way to break the illusion, and it happens whenever an object is placed by its centre instead of its base. Place by the base: sample the ground height at the x,z, then set y so the group's bounding-box minimum lands on it. On uneven terrain, raycast down against the walkable mesh rather than assuming a plane. Give every standing thing a contact shadow or a darkened patch under it — the eye reads contact from the shadow before it reads it from the geometry. In a Rust game the facade stands a character by its feet: spawn its capsule there with Character::spawn(&mut sim.physics, feet, CharacterParams::default()) (Character::on_ground without physics) at the ground's terrain.height(x, z), draw the model at character.transform() and probe character.feet().y beside the ground's height.",
   "check": {
     "id": "grounded",
     "kind": "scene",
@@ -14,7 +14,7 @@
     "weight": "identity",
     "note": "Every object tagged enemy or npc stands on the ground: its world bbox bottom is within 5 cm below / 12 cm above the top of the ground mesh (tag the walkable floor ground)."
   },
-  "port": "The world facet exposes groundHeightAt(x, z); every facet that places a standing object calls it and offsets by the object's own bbox minimum.",
+  "port": "The world facet exposes groundHeightAt(x, z); every facet that places a standing object calls it and offsets by the object's own bbox minimum. In a Rust game the facet that owns a character owns its capsule and its feet probe.",
   "evidence": [
     {
       "source": "library/checks.json (seeded catalogue, retired to the recipe library by M4.7)",
