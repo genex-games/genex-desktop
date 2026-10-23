@@ -3232,6 +3232,11 @@ export class StudioCore {
     return this.#previews.liveState(...args);
   }
 
+  /** The build copy Live serves of `project`, which Live's Native view builds; undefined for the game folder. */
+  liveRootOf(project: string): string | undefined {
+    return this.#previews.liveRootOf(project);
+  }
+
   buildProblem(...args: Parameters<PreviewService["buildProblem"]>): ReturnType<PreviewService["buildProblem"]> {
     return this.#previews.buildProblem(...args);
   }

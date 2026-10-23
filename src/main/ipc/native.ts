@@ -60,7 +60,10 @@ const PROJECT_NAME_MAX = 255;
  * What the native registrar reaches: the registry, the library and the games-root check; for a
  * device launch also the exports root (`layout.exports`) and the event log it is recorded in.
  */
-export type NativeIpcCore = Pick<StudioCore, "nativeRuns" | "games" | "assertProjectAllowed" | "layout" | "append">;
+export type NativeIpcCore = Pick<
+  StudioCore,
+  "nativeRuns" | "games" | "assertProjectAllowed" | "layout" | "append" | "liveRootOf"
+>;
 
 /** The clock a refused status is stamped with, and a device launch's host and tools (tests pass their own). */
 export interface NativeIpcOptions {
@@ -215,7 +218,10 @@ function registerEmbedIpc(handle: IpcHandle, core: NativeIpcCore, iso: () => str
   handle("studio:native.embed", async (payload) => {
     const project = await listedGame(core, payload);
     const surface = surfaceOf(payload);
-    const embedding = core.nativeRuns.embed({ project, target: BuildTarget.Mac, surface });
+    // Native plays what Live shows: a build copy Live serves is built, never the game folder under it.
+    const root = core.liveRootOf(project);
+    const request = { project, target: BuildTarget.Mac, surface };
+    const embedding = core.nativeRuns.embed(root === undefined ? request : { ...request, root });
     return startAnswer(core, project, NativeRunMode.Embedded, embedding, iso);
   });
   handle("studio:native.unembed", async (payload) => {

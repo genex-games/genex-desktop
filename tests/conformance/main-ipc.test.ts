@@ -1365,6 +1365,7 @@ async function embedIpc(
     nativeRuns,
     games: { list: async () => (options.list ? options.list([game]) : [game]) },
     assertProjectAllowed: async () => {},
+    liveRootOf: () => undefined,
   } as unknown as Parameters<typeof registerNativeIpc>[1];
   const listeners = new Map<string, Listener>();
   const handle = createIpcHandle(
@@ -1789,6 +1790,7 @@ describe("the native-game fixture's scripted registry", () => {
       nativeRuns: registry,
       games: { list: async () => games },
       assertProjectAllowed: async () => {},
+      liveRootOf: () => undefined,
     } as unknown as Parameters<typeof registerNativeIpc>[1];
     const listeners = new Map<string, Listener>();
     const handle = createIpcHandle(

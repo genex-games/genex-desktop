@@ -1080,6 +1080,26 @@ export class PreviewService {
     return url;
   }
 
+  /**
+   * The build copy Live serves of `project` (a shown build, a run's worktree), which Live's Native
+   * view builds instead of the game folder; undefined while Live serves the game folder or another game.
+   */
+  liveRootOf(project: string): string | undefined {
+    const live = this.#x.servedRoots.get(LIVE_HANDLE);
+    return live?.project === project && live.root !== null ? live.root : undefined;
+  }
+
+  /**
+   * `handle` now serves `served`. Live's Native view plays what Live shows: when Live serves another
+   * folder of the same game, its embedded run (when the person watches one) starts again on it.
+   */
+  #serve(handle: string, served: ServedRoot): void {
+    const before = handle === LIVE_HANDLE ? this.#x.servedRoots.get(LIVE_HANDLE) : undefined;
+    this.#x.servedRoots.set(handle, served);
+    if (before?.project !== served.project || before.root === served.root) return;
+    void this.#x.nativeRuns?.reembed(served.project, served.root ?? undefined).catch(() => {});
+  }
+
   /** Live is changing games: the previous game's Play window and embedded runs end (its agents' runs are theirs). */
   #switchLive(project: string): void {
     const previous = this.#x.servedRoots.get(LIVE_HANDLE)?.project;
@@ -1145,7 +1165,7 @@ export class PreviewService {
     port: PreviewPort,
   ): Promise<string> {
     const remembered = { project: p.project, root: checkedRoot, entry: p.entry, loaded: null as string | null };
-    this.#x.servedRoots.set(handle, remembered);
+    this.#serve(handle, remembered);
     const isLive = handle === LIVE_HANDLE;
     const revisionBefore = isLive ? await this.previewRevision(p.project, checkedRoot) : null;
     const print = isLive ? await this.#live.printBefore(p.project, checkedRoot) : undefined;

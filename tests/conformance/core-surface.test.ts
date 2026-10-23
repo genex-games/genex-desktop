@@ -56,6 +56,8 @@ const METHODS = [
   "landBuild",
   "listAllEvents",
   "liveAssetsLoaded",
+  // The build copy Live serves, which Live's Native view builds instead of the game folder.
+  "liveRootOf",
   "liveState",
   "loadPreview",
   "loadWebBuild",
