@@ -3277,6 +3277,18 @@ Genex:
   characters of a sent app's archive sha256 (`appClipCommit`, from `native.json`), which Genex
   matches as a prefix where a web game's names its staging commit; a stand that refuses it leaves a
   `failed` clip record, sent again by the next publish, and the picture stands. A web game with no app shows no rows. L4: `npm run test:ui -- publish-platforms-ui`.
+- A Mac app goes signed ad hoc unless its creator turned on Sign and notarize Mac apps in the Genex
+  plugin's settings (`mac-notarize`, `mac-signing-identity`, `mac-notary-profile`; `macSigningOf`).
+  Genex never signs with an identity of its own: the certificate is the creator's Developer ID
+  Application identity in their login keychain (the only one when the setting names none), and Apple's
+  notary is asked through the keychain profile they stored with `xcrun notarytool store-credentials`
+  (`genex-notary` unless named). Before Publish sends that Mac app (`#sendApps`), `mac-notarize.ts`
+  signs every Mach-O program inside it, deepest first, then the app (hardened runtime, secure
+  timestamp, never through a link), zips it with `ditto` into a scratch folder, waits for
+  `notarytool submit --wait`, and staples the ticket. Each step runs `/usr/bin/security`, `codesign`,
+  `ditto` or `xcrun` by full path with no shell. A failure never stops the app: it goes as built and
+  the record keeps why by code (`MacNotarizeFailure`, `notarizeFailure` beside the sent app); the Mac
+  row then says "notarized", or a line under the rows says why it went without.
 - An Unreal game's rows for another system say where it is packaged ("Package it on a Windows PC"),
   except the Windows row on a Mac once Genex can build it (`cloudWords`, `CLOUD_TARGETS`): while the
   game has no page on Genex it says to publish first; then it offers Build on Genex, which runs

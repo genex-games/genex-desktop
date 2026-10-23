@@ -5933,4 +5933,21 @@ export default {
   "The project is too big for Genex to build": "Проект слишком большой, Genex не может его собрать",
   "This version of Genex can’t build apps on Genex yet": "Эта версия Genex пока не умеет собирать приложения в Genex",
   "You’ve used this month’s builds on Genex": "Сборки в Genex на этот месяц закончились",
+  notarized: "нотаризовано",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Приложение для Mac ушло без нотаризации: не удалось связаться с нотариальной службой Apple по твоему сохранённому профилю.",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Приложение для Mac ушло без нотаризации: нотариальная служба Apple его отклонила.",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Приложение для Mac ушло без нотаризации: не удалось прикрепить к нему квитанцию Apple.",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Приложение для Mac ушло без нотаризации: codesign не смог его подписать.",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "Приложение для Mac ушло без нотаризации: это не пакет приложения Mac.",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Приложение для Mac ушло без нотаризации: в твоей связке ключей нет сертификата Developer ID Application.",
+  "The Mac app went without notarization: notarizing was stopped.":
+    "Приложение для Mac ушло без нотаризации: нотаризация была остановлена.",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Приложение для Mac ушло без нотаризации: в связке ключей несколько сертификатов Developer ID. Укажи один в настройках Genex.",
 } satisfies LocaleCatalog;

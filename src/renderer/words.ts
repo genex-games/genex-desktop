@@ -37,7 +37,7 @@ import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plugins.ts";
 import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
-import { CloudBuildFailure, type GenexPublishPhase } from "../shared/genex.ts";
+import { CloudBuildFailure, type GenexPublishPhase, MacNotarizeFailure } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayRemixRefusal, PlayShelf, RemixStep } from "../shared/play.ts";
 import {
   InstallFailure,
@@ -3744,6 +3744,25 @@ export const PUBLISH_PLATFORM_WORDS = {
   sending: t("Sending…"),
   sent: t("On Genex"),
   sentLabel: (name: string) => t("{name}: on Genex for desktop players", { name }),
+  /** A Mac app signed and notarized under the creator's own Apple Developer ID. */
+  notarized: t("notarized"),
+  /** Why a Mac app went without the notarizing its creator turned on, in whole sentences. */
+  notarizeFailed: {
+    [MacNotarizeFailure.NotAnApp]: t("The Mac app went without notarization: it isn’t a Mac app bundle."),
+    [MacNotarizeFailure.NoIdentity]: t(
+      "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.",
+    ),
+    [MacNotarizeFailure.ManyIdentities]: t(
+      "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.",
+    ),
+    [MacNotarizeFailure.Sign]: t("The Mac app went without notarization: codesign couldn’t sign it."),
+    [MacNotarizeFailure.Submit]: t(
+      "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.",
+    ),
+    [MacNotarizeFailure.Rejected]: t("The Mac app went without notarization: Apple’s notary rejected it."),
+    [MacNotarizeFailure.Staple]: t("The Mac app went without notarization: Apple’s ticket couldn’t be attached to it."),
+    [MacNotarizeFailure.Stopped]: t("The Mac app went without notarization: notarizing was stopped."),
+  } satisfies Record<MacNotarizeFailure, string>,
   failed: t("Not sent"),
   failedLine: (name: string, error: string) => t("Couldn’t send the {app}: {error}", { app: name, error }),
   /** A game with only apps: its main press, who can play it, and how its listing went. */

@@ -5758,4 +5758,20 @@ export default {
   "The project is too big for Genex to build": "프로젝트가 너무 커서 Genex가 만들 수 없어요",
   "This version of Genex can’t build apps on Genex yet": "이 버전의 Genex는 아직 Genex에서 앱을 만들 수 없어요",
   "You’ve used this month’s builds on Genex": "이번 달 Genex 만들기 횟수를 다 썼어요",
+  notarized: "공증됨",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Mac 앱이 공증 없이 올라갔어요: 저장한 공증 프로필로 Apple 공증 서비스에 연결하지 못했어요.",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Mac 앱이 공증 없이 올라갔어요: Apple 공증 서비스가 거부했어요.",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Mac 앱이 공증 없이 올라갔어요: Apple 티켓을 붙이지 못했어요.",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Mac 앱이 공증 없이 올라갔어요: codesign이 서명하지 못했어요.",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "Mac 앱이 공증 없이 올라갔어요: Mac 앱 번들이 아니에요.",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Mac 앱이 공증 없이 올라갔어요: 키체인에 Developer ID Application 인증서가 없어요.",
+  "The Mac app went without notarization: notarizing was stopped.": "Mac 앱이 공증 없이 올라갔어요: 공증이 중단됐어요.",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Mac 앱이 공증 없이 올라갔어요: 키체인에 Developer ID 인증서가 여러 개 있어요. Genex 설정에서 하나를 지정해 주세요.",
 } satisfies LocaleCatalog;

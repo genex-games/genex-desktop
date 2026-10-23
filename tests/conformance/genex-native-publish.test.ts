@@ -14,7 +14,8 @@ import { realpath } from "node:fs/promises";
 import { after } from "node:test";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
 import { saveClip } from "../../src/plugins/genex/clip.ts";
-import { GENEX_COVERS_DIR } from "../../src/shared/genex.ts";
+import type { MacSigning, NotarizeOutcome } from "../../src/plugins/genex/mac-notarize.ts";
+import { GENEX_COVERS_DIR, MacNotarizeFailure } from "../../src/shared/genex.ts";
 import { type GenexFixtureApi, startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import {
   hasNativeCommand,
@@ -264,7 +265,12 @@ describe("one app sent", () => {
  * logs each run's arguments. An app whose path names "Broken" fails on stderr with a non-zero exit;
  * one naming "Held" or "Refused" gets that answer to its `--gallery` listing.
  */
-async function toolsWithStandIn(sendsApps = true, api = "http://127.0.0.1:9", clipAnswer: object = CLIP_APPLIED) {
+async function toolsWithStandIn(
+  sendsApps = true,
+  api = "http://127.0.0.1:9",
+  clipAnswer: object = CLIP_APPLIED,
+  notarize?: (app: string, signing: MacSigning, signal: AbortSignal) => Promise<NotarizeOutcome>,
+) {
   const root = await realpath(await tmpDir("genex-native-tools-"));
   const log = path.join(root, "runs.jsonl");
   const standIn = path.join(root, "native-cli.mjs");
@@ -318,6 +324,7 @@ process.exit(listing?.state === "refused" ? 1 : 0);
     credentials: { get: async () => "fixture-token", set: async () => {}, clear: async () => {} },
     preload: standIn,
     sendsApps,
+    ...(notarize ? { notarize } : {}),
   });
   const runs = async () =>
     (await readFile(log, "utf8").catch(() => ""))
@@ -362,6 +369,37 @@ describe("a publish's apps sent through the CLI", () => {
     assert.deepEqual(native?.failed, [
       { platform: "windows", arch: "", error: "Couldn't get an upload token (HTTP 413)." },
     ]);
+  });
+
+  it("notarizes a Mac app under the creator's own Apple ID before it goes, and sends it as built when that fails", async () => {
+    const notarized: Array<[string, unknown]> = [];
+    const { genex, runs } = await toolsWithStandIn(true, undefined, undefined, async (app, signing) => {
+      notarized.push([app, signing]);
+      return notarized.length === 1
+        ? { notarized: true, identity: "Developer ID Application: Ada Lovelace (ABCDE12345)" }
+        : { failure: MacNotarizeFailure.Rejected };
+    });
+    const signing = { identity: "", profile: "genex-notary" };
+    await genex.publishApps("dust", "job-1", [{ ...MAC_APP, sign: signing }, LINUX]);
+    assert.deepEqual(notarized, [[MAC_APP.target, signing]], "only the Mac app the creator asked for");
+    const first = (await genex.publishView("dust")).native?.sent ?? [];
+    assert.deepEqual(
+      first.map((sent) => [sent.platform, sent.notarized ?? null]),
+      [
+        ["mac", true],
+        ["linux", null],
+      ],
+    );
+    await genex.publishApps("dust", "job-2", [{ ...MAC_APP, sign: signing }]);
+    const second = (await genex.publishView("dust")).native?.sent ?? [];
+    assert.deepEqual(
+      second.map((sent) => [sent.platform, sent.notarized ?? null, sent.notarizeFailure ?? null]),
+      [["mac", null, MacNotarizeFailure.Rejected]],
+      "Apple's refusal never stops the app: it goes as built, and the record says why",
+    );
+    assert.equal((await runs()).filter((run) => run.args[1] === "publish").length, 3);
+    await genex.publishApps("dust", "job-3", [MAC_APP]);
+    assert.equal(notarized.length, 2, "a creator who chose no notarization gets none");
   });
 
   it("sends nothing while the CLI has no `genex native`, and says so", async () => {

@@ -5569,4 +5569,19 @@ export default {
   "The project is too big for Genex to build": "项目太大，Genex 无法制作",
   "This version of Genex can’t build apps on Genex yet": "这个版本的 Genex 还不能在 Genex 上制作应用",
   "You’ve used this month’s builds on Genex": "你本月在 Genex 上的制作次数已用完",
+  notarized: "已公证",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Mac 应用未经公证就发布了：无法用你保存的公证配置连接 Apple 的公证服务。",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Mac 应用未经公证就发布了：Apple 的公证服务拒绝了它。",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Mac 应用未经公证就发布了：无法附加 Apple 的公证票据。",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Mac 应用未经公证就发布了：codesign 无法为它签名。",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.": "Mac 应用未经公证就发布了：它不是 Mac 应用包。",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Mac 应用未经公证就发布了：你的钥匙串里没有 Developer ID Application 证书。",
+  "The Mac app went without notarization: notarizing was stopped.": "Mac 应用未经公证就发布了：公证被中止了。",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Mac 应用未经公证就发布了：你的钥匙串里有多个 Developer ID 证书。请在 Genex 设置里指定一个。",
 } satisfies LocaleCatalog;

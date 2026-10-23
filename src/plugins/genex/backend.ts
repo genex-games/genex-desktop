@@ -2,7 +2,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GenexTools, type RemixChoice } from "./adapter.ts";
 import { COVER_CLIP } from "./clip.ts";
-import { nativeUploads } from "./native-publish.ts";
+import { macSigningOf } from "./mac-notarize.ts";
+import { type NativeUpload, nativeUploads, withMacSigning } from "./native-publish.ts";
 import { type CoverCamera, CoverOperation, COVER_STILL, MESSAGE as COVER_MESSAGE } from "./cover.ts";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import {
@@ -311,14 +312,14 @@ const ACTIONS: Record<string, Action> = {
   [GenexAction.PublishGallery]: async (genex, args, ctx, service, invokedAt) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     // The dialog names the game's apps by their place in its folder; only real builds inside it go.
-    const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
+    const apps = await appsToSend(ctx, args.native, service);
     const exportStage = () => service(PluginService.ExportStage, {});
     const camera = coverCamera(ctx, service, invokedAt);
     return genex.publishGallery(ctx.project, exportStage, args.title, camera, apps, remixChoice(args, ctx));
   },
   [GenexAction.PublishApps]: async (genex, args, ctx, service, invokedAt) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
-    const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
+    const apps = await appsToSend(ctx, args.native, service);
     const camera = coverCamera(ctx, service, invokedAt);
     return genex.publishAppsOnly(ctx.project, apps, args.title, camera, remixChoice(args, ctx));
   },
@@ -339,6 +340,19 @@ const ACTIONS: Record<string, Action> = {
     );
   },
 };
+
+/**
+ * The apps a publish sends, by their place in the game folder (only real builds inside it), each Mac
+ * app with the creator's notarizing when they turned it on in Genex's settings.
+ */
+async function appsToSend(ctx: Invocation, entries: unknown, service: Service): Promise<NativeUpload[]> {
+  if (!ctx.directory) return [];
+  const settings = await service(PluginService.SettingsRead).catch(() => ({}));
+  const signing = macSigningOf(
+    typeof settings === "object" && settings !== null ? (settings as Record<string, unknown>) : {},
+  );
+  return withMacSigning(await nativeUploads(ctx.directory, entries), signing);
+}
 
 export async function activate() {
   return createGenexPlugin();

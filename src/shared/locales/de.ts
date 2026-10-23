@@ -6030,4 +6030,21 @@ export default {
   "The project is too big for Genex to build": "Das Projekt ist zu groß, damit Genex es bauen kann",
   "This version of Genex can’t build apps on Genex yet": "Diese Genex-Version kann noch keine Apps auf Genex bauen",
   "You’ve used this month’s builds on Genex": "Du hast die Builds auf Genex für diesen Monat aufgebraucht",
+  notarized: "notarisiert",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Die Mac-App ging ohne Notarisierung raus: Apples Notardienst war mit deinem gespeicherten Profil nicht erreichbar.",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Die Mac-App ging ohne Notarisierung raus: Apples Notardienst hat sie abgelehnt.",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Die Mac-App ging ohne Notarisierung raus: Apples Ticket ließ sich nicht anheften.",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Die Mac-App ging ohne Notarisierung raus: codesign konnte sie nicht signieren.",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "Die Mac-App ging ohne Notarisierung raus: Sie ist kein Mac-App-Paket.",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Die Mac-App ging ohne Notarisierung raus: In deinem Schlüsselbund ist kein Developer-ID-Application-Zertifikat.",
+  "The Mac app went without notarization: notarizing was stopped.":
+    "Die Mac-App ging ohne Notarisierung raus: Das Notarisieren wurde gestoppt.",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Die Mac-App ging ohne Notarisierung raus: Dein Schlüsselbund hat mehrere Developer-ID-Zertifikate. Nenne eins in den Genex-Einstellungen.",
 } satisfies LocaleCatalog;

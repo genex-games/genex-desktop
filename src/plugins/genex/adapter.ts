@@ -45,6 +45,13 @@ import { PluginStillProblemCode } from "../../shared/plugins.ts";
 import { GenexCliStopped, runGenexCli, genexCliPath } from "./cli.ts";
 import { stageRemixSource } from "./remix-source.ts";
 import {
+  type MacSigning,
+  type NotarizeOutcome,
+  notarizeMacApp,
+  systemNotarizeRun,
+  withNotarizing,
+} from "./mac-notarize.ts";
+import {
   CLOUD_BUILD_FILE,
   CLOUD_SOURCE_FOLDER,
   type CloudBuildDeps,
@@ -489,6 +496,7 @@ export class GenexTools {
   readonly #sendsSource: boolean;
   readonly #buildsApps: boolean;
   readonly #cloudSleep: CloudBuildDeps["sleep"];
+  readonly #notarize: (app: string, signing: MacSigning, signal: AbortSignal) => Promise<NotarizeOutcome>;
   /** The builds on Genex being followed, by game and job: one watch each. */
   #cloudWatches = new Map<string, Promise<void>>();
   /** The games whose project Allow remixing is sending now. */
@@ -532,6 +540,8 @@ export class GenexTools {
       buildsApps?: boolean;
       /** How a build on Genex waits between its status reads; tests make it instant. */
       cloudSleep?: CloudBuildDeps["sleep"];
+      /** Signs and notarizes a Mac app under the creator's Apple ID; the system tools unless a test stands in. */
+      notarize?: (app: string, signing: MacSigning, signal: AbortSignal) => Promise<NotarizeOutcome>;
     } = {},
   ) {
     this.root = root;
@@ -553,6 +563,8 @@ export class GenexTools {
     this.#sendsSource = options.sendsSource ?? pinnedCliSendsSource();
     this.#buildsApps = options.buildsApps ?? pinnedCliBuildsApps();
     this.#cloudSleep = options.cloudSleep ?? ((ms, signal) => sleep(ms, undefined, { signal }).catch(() => {}));
+    this.#notarize =
+      options.notarize ?? ((app, signing, signal) => notarizeMacApp(app, signing, { run: systemNotarizeRun }, signal));
   }
   async init() {
     this.#initialized ??= (async () => {
@@ -1889,6 +1901,9 @@ export class GenexTools {
     await atomicWriteJson(file, record);
     for (const app of apps) {
       const listing = gallery && !record.listing ? ["--gallery", "--title", gallery.title] : [];
+      // A failed notarizing never stops the app: it goes as built, and the record says why.
+      const notarized = app.sign ? await this.#notarize(app.target, app.sign, signal) : null;
+      if (signal.aborted) return record;
       const outcome = await sendNativeBuild(app, () =>
         this.#spawnCli(dir, [...nativePublishArgs(app), ...listing], signal, {
           timeoutMs: NATIVE_PUBLISH_TIMEOUT_MS,
@@ -1900,7 +1915,7 @@ export class GenexTools {
       );
       // Stopped: a newer publish writes its own record.
       if (signal.aborted) return record;
-      if ("sent" in outcome) record.sent.push(outcome.sent);
+      if ("sent" in outcome) record.sent.push(withNotarizing(outcome.sent, notarized));
       else record.failed.push(outcome.failed);
       if (outcome.listing) record.listing = outcome.listing;
       await atomicWriteJson(file, record);

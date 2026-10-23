@@ -14,6 +14,7 @@ import {
   CloudBuildState,
   type GenexCloudBuild,
   type GenexNativeRecord,
+  MacNotarizeFailure,
 } from "../../src/shared/genex.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
@@ -484,6 +485,33 @@ describe("Publish's platform rows as the dialog says them", () => {
       "Couldn’t send the Mac app: Couldn't get an upload token (HTTP 413).",
     ]);
     assert.deepEqual(failureLines([WEB, ready, WINDOWS], record({})), []);
+  });
+
+  it("says a Mac app went notarized under the creator's Apple ID, or why it went without", () => {
+    const ready = { ...MAC, uploads: true };
+    const at = new Date(T0 + MINUTE_MS).toISOString();
+    const live = { platform: "mac", arch: "universal", version: "1", sizeBytes: 1, publishedAt: at };
+    const record = (sent: GenexNativeRecord["sent"]): GenexNativeRecord => ({
+      supported: true,
+      sending: false,
+      sent,
+      failed: [],
+    });
+    const mac = (native: GenexNativeRecord) => platformRows([WEB, ready, WINDOWS], NOW, native)[1];
+    assert.equal(
+      mac(record([{ ...live, notarized: true }]))?.detail,
+      "Apple silicon and Intel · built 5 min ago · notarized",
+    );
+    assert.equal(
+      mac(record([live]))?.detail,
+      "Apple silicon and Intel · built 5 min ago",
+      "ad hoc, as the creator chose",
+    );
+    const refused = record([{ ...live, notarizeFailure: MacNotarizeFailure.NoIdentity }]);
+    assert.equal(mac(refused)?.end, PlatformEnd.Sent, "it is on Genex all the same");
+    assert.deepEqual(failureLines([WEB, ready, WINDOWS], refused), [
+      "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.",
+    ]);
   });
 
   it("has nothing new to send for a game whose apps are all on Genex already", () => {

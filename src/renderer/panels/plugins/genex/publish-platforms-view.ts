@@ -12,6 +12,7 @@ import {
   type GenexCloudBuild,
   GenexListingState,
   type GenexNativeRecord,
+  type MacNotarizeFailure,
 } from "../../../../shared/genex.ts";
 import { CoreFact, type FactRef } from "../../../../shared/project-facts.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../../../shared/publish-platforms.ts";
@@ -113,11 +114,20 @@ function nativeDetail(row: PublishPlatform & { target: NativeTarget }, now: numb
 /** Whether a record's entry is for `row`'s platform. */
 const forRow = (row: PublishPlatform) => (entry: { platform: string }) => entry.platform === row.target;
 
-/** Where an app Publish sends stands: being sent, on Genex (this build or a newer one), or not sent. */
-function sendEnd(row: PublishPlatform, native: GenexNativeRecord | undefined): PlatformEnd {
+/** The app on Genex for `row` when it is this build or a newer one, else none. */
+function currentSent(row: PublishPlatform, native: GenexNativeRecord | undefined) {
   const sent = native?.sent.find(forRow(row));
   const builtAt = row.builtAt ? Date.parse(row.builtAt) : 0;
-  if (sent && Date.parse(sent.publishedAt) >= builtAt) return PlatformEnd.Sent;
+  return sent && Date.parse(sent.publishedAt) >= builtAt ? sent : undefined;
+}
+
+/** A row's detail, saying so when its app on Genex is notarized under the creator's Apple ID. */
+const withNotarized = (detail: string, row: PublishPlatform, native: GenexNativeRecord | undefined): string =>
+  currentSent(row, native)?.notarized ? [detail, WORDS.notarized].filter(Boolean).join(" · ") : detail;
+
+/** Where an app Publish sends stands: being sent, on Genex (this build or a newer one), or not sent. */
+function sendEnd(row: PublishPlatform, native: GenexNativeRecord | undefined): PlatformEnd {
+  if (currentSent(row, native)) return PlatformEnd.Sent;
   if (native?.sending) return PlatformEnd.Sending;
   return native?.failed.some(forRow(row)) ? PlatformEnd.Failed : PlatformEnd.None;
 }
@@ -223,7 +233,7 @@ export function platformRows(
       };
     const words = madeElsewhere(row, madeHere)
       ? (cloudWords(row, native, now, onGenex) ?? elsewhereWords(row, now))
-      : { detail: nativeDetail(row, now), end: nativeEnd(row, native) };
+      : { detail: withNotarized(nativeDetail(row, now), row, native), end: nativeEnd(row, native) };
     return {
       target: row.target,
       name: WORDS.name[row.target],
@@ -336,14 +346,22 @@ export function reachLine(
   return lines.length > 0 ? lines.join(" ") : null;
 }
 
-/** A line for each app the last Publish could not send, in the CLI's words. */
+/**
+ * A line for each app the last Publish could not send, in the CLI's words, and for each that went
+ * without the notarizing its creator asked for, why.
+ */
 export function failureLines(platforms: readonly PublishPlatform[], native: GenexNativeRecord | undefined): string[] {
-  return platforms
+  const unsent = platforms
     .filter((row) => isNative(row) && row.uploads && sendEnd(row, native) === PlatformEnd.Failed)
     .map((row) => {
       const error = native?.failed.find(forRow(row))?.error ?? "";
       return WORDS.failedLine(WORDS.name[row.target], error);
     });
+  const unnotarized = platforms
+    .map((row) => (isNative(row) && row.uploads ? currentSent(row, native)?.notarizeFailure : undefined))
+    .filter((failure): failure is MacNotarizeFailure => failure !== undefined)
+    .map((failure) => WORDS.notarizeFailed[failure]);
+  return [...unsent, ...unnotarized];
 }
 
 /** The players a native row is for: "Mac", "Windows", "Linux". */

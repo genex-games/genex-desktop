@@ -621,7 +621,35 @@ export interface GenexNativeSent {
   /** The archive's sha256 as Genex keeps it: the build a clip of a game with only apps names. */
   sha256?: string;
   publishedAt: string;
+  /** A Mac app signed and notarized under the creator's own Apple Developer ID before it went. */
+  notarized?: true;
+  /** Why a Mac app the creator asked to notarize went without it (as built, ad hoc). */
+  notarizeFailure?: MacNotarizeFailure;
 }
+
+/**
+ * Why a creator's Mac app was not notarized under their Apple Developer ID, by code. Wire values:
+ * kept in `native.json`; never rename one.
+ */
+export const MacNotarizeFailure = {
+  /** The target is not a Mac app bundle in a plain folder. */
+  NotAnApp: "not-an-app",
+  /** No Developer ID Application identity in the keychain (or not the one the settings name). */
+  NoIdentity: "no-identity",
+  /** More than one identity, and the settings name none. */
+  ManyIdentities: "many-identities",
+  /** codesign refused a program or the app. */
+  Sign: "sign",
+  /** Apple's notary could not be asked: no stored profile, no network, or an answer that isn't Apple's. */
+  Submit: "submit",
+  /** Apple's notary answered Invalid or Rejected. */
+  Rejected: "rejected",
+  /** The ticket could not be stapled to the app. */
+  Staple: "staple",
+  /** Stopped before it ended. */
+  Stopped: "stopped",
+} as const;
+export type MacNotarizeFailure = (typeof MacNotarizeFailure)[keyof typeof MacNotarizeFailure];
 
 /** One app a publish could not send, and Genex's or the CLI's words for why. */
 export interface GenexNativeFailure {

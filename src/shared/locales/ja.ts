@@ -5884,4 +5884,21 @@ export default {
   "The project is too big for Genex to build": "プロジェクトが大きすぎてGenexでつくれません",
   "This version of Genex can’t build apps on Genex yet": "このバージョンのGenexではまだGenexでアプリをつくれません",
   "You’ve used this month’s builds on Genex": "今月のGenexでのビルド回数を使い切りました",
+  notarized: "公証済み",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Macアプリは公証なしで公開されました：保存した公証プロファイルでAppleの公証サービスに接続できませんでした。",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Macアプリは公証なしで公開されました：Appleの公証サービスに却下されました。",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Macアプリは公証なしで公開されました：Appleのチケットを添付できませんでした。",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Macアプリは公証なしで公開されました：codesignで署名できませんでした。",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "Macアプリは公証なしで公開されました：Macアプリのバンドルではありません。",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Macアプリは公証なしで公開されました：キーチェーンにDeveloper ID Application証明書がありません。",
+  "The Mac app went without notarization: notarizing was stopped.":
+    "Macアプリは公証なしで公開されました：公証が中止されました。",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Macアプリは公証なしで公開されました：キーチェーンにDeveloper ID証明書が複数あります。Genexの設定で1つ指定してください。",
 } satisfies LocaleCatalog;
