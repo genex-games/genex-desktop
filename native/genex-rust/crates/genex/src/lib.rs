@@ -156,6 +156,10 @@ pub use present_files::AssetFiles;
 /// host glue.
 #[doc(hidden)]
 pub use stream_source::{AsyncSource, StreamAnswer, StreamBytes, StreamRequest};
+/// A compiled cell pack read whole and the pack format (release R-8): `genex::pack::CellPacks`.
+pub use stream_source::pack;
+/// FNV-1a 64, the digest the checksum and captures use, for a game's own digests (release R-8).
+pub use genex_core::digest;
 /// The native async source: the compiled table, then `assets/` by real path on the job pool.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
