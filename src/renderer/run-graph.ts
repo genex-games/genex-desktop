@@ -302,6 +302,8 @@ export interface MergeInfo {
   /** its place in the log — what a lead's merge is ordered by against the rounds around it */
   seq: number;
   head: string | null;
+  /** the build it landed on: the first merge's is the commit the first workers forked from */
+  previousHead: string | null;
   conflict: boolean;
   union: boolean;
   stage: string | null;
@@ -649,6 +651,18 @@ export interface RunGraph {
   captures: CaptureInfo[];
   /** The chat turn (its message id) this graph is, when it is a turn's and no run's. */
   turn?: string;
+  /** Every restart folded into the part it replaced, in the order they came; absent from a graph made without them. */
+  restarts?: RestartFold[];
+}
+
+/**
+ * A restart the graph folded into the part it replaced: the replacement worker, the part, and
+ * how far the graph shifted its rounds (the worker's own round 1 is the part's `offset + 1`).
+ */
+export interface RestartFold {
+  worker: string;
+  part: string;
+  offset: number;
 }
 
 export const FACET_PALETTE = ["#9a5cff", "#f09a2f", "#2fbfb0", "#f0567a", "#4f8cff", "#5ccf6b"] as const;
@@ -1712,6 +1726,7 @@ function assembleGraph(graph: GraphDraft): RunGraph {
     tree,
     captures: graph.captures,
     ...(graph.turn ? { turn: graph.turn } : {}),
+    restarts: [...graph.restarts].map(([worker, part]) => ({ worker, part: part.id, offset: part.offset })),
   };
 }
 

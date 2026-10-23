@@ -20,6 +20,7 @@ import { Button } from "../../ui/Button.tsx";
 import { hostOf } from "../../../shared/game-targets.ts";
 import { hostPlatform } from "../../platform.ts";
 import { NATIVE_WORDS } from "../../words.ts";
+import { t } from "../../../shared/i18n.ts";
 
 /** One device a destination runs on, as its button offers it. */
 interface DeviceChoice {
@@ -30,21 +31,21 @@ interface DeviceChoice {
 
 /** The row's own words. */
 const MESSAGE = {
-  heading: "On a device",
-  idle: "Installs the latest packaged build and starts it.",
-  launching: "Installing and starting",
-  launched: "Started on the device.",
-  failed: "The device didn’t install or start the game.",
+  heading: t("On a device"),
+  idle: t("Installs the latest packaged build and starts it."),
+  launching: t("Installing and starting"),
+  launched: t("Started on the device."),
+  failed: t("The device didn’t install or start the game."),
   /** The refusals a launch says in its own words; any other is the run card's. */
   refusal: {
-    [NativeRefusal.Unsupported]: "Export this destination first: there’s no packaged build to install yet.",
-    [NativeRefusal.NotRunnableHere]: "No device is ready: start one (or connect your phone) and try again.",
-    [NativeRefusal.Symlink]: "The packaged build holds a link, so it wasn’t installed.",
-    [NativeRefusal.HardLink]: "The packaged build is linked from somewhere else, so it wasn’t installed.",
+    [NativeRefusal.Unsupported]: t("Export this destination first: there’s no packaged build to install yet."),
+    [NativeRefusal.NotRunnableHere]: t("No device is ready: start one (or connect your phone) and try again."),
+    [NativeRefusal.Symlink]: t("The packaged build holds a link, so it wasn’t installed."),
+    [NativeRefusal.HardLink]: t("The packaged build is linked from somewhere else, so it wasn’t installed."),
   } as Partial<Record<NativeRefusal, string>>,
   choice: {
     [BuildTarget.Ios]: { [DeviceKind.Simulator]: "Simulator", [DeviceKind.Phone]: "iPhone" },
-    [BuildTarget.Android]: { [DeviceKind.Emulator]: "Emulator", [DeviceKind.Phone]: "Android phone" },
+    [BuildTarget.Android]: { [DeviceKind.Emulator]: t("Emulator"), [DeviceKind.Phone]: t("Android phone") },
   },
 } as const;
 

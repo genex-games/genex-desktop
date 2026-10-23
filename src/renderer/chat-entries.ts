@@ -1210,29 +1210,34 @@ function narrateCheckpointSkipped(chat: ChatDraft, event: EventEnvelope): void {
 /** The crash line's words (CRASH-5): what happened to the game, by the record's kind. */
 const CRASH_WORDS = {
   kinds: {
-    [CrashKind.Panic]: "panicked",
-    [CrashKind.GpuValidation]: "hit a GPU error",
-    [CrashKind.DeviceLost]: "lost its GPU device",
-    [CrashKind.WasmTrap]: "trapped in WebAssembly",
-    [CrashKind.NativeFault]: "crashed with a memory fault",
-    [CrashKind.OutOfMemory]: "ran out of memory",
-    [CrashKind.Hang]: "stopped answering and was ended",
-    [CrashKind.ProcessExit]: "exited abnormally",
-  } satisfies Record<CrashKind, string>,
-  unknownKind: "crashed",
-  aGame: "A game",
-  at: (file: string, line: number) => ` at ${file}:${line}`,
-  tick: (tick: number) => ` (tick ${tick})`,
-  repeat: (runs: number) => `; the same crash in ${runs} runs`,
+    [CrashKind.Panic]: (game: string) => t("{game} panicked", { game }),
+    [CrashKind.GpuValidation]: (game: string) => t("{game} hit a GPU error", { game }),
+    [CrashKind.DeviceLost]: (game: string) => t("{game} lost its GPU device", { game }),
+    [CrashKind.WasmTrap]: (game: string) => t("{game} trapped in WebAssembly", { game }),
+    [CrashKind.NativeFault]: (game: string) => t("{game} crashed with a memory fault", { game }),
+    [CrashKind.OutOfMemory]: (game: string) => t("{game} ran out of memory", { game }),
+    [CrashKind.Hang]: (game: string) => t("{game} stopped answering and was ended", { game }),
+    [CrashKind.ProcessExit]: (game: string) => t("{game} exited abnormally", { game }),
+  } satisfies Record<CrashKind, (game: string) => string>,
+  unknownKind: (game: string) => t("{game} crashed", { game }),
+  aGame: () => t("A game"),
+  at: (file: string, line: number) => t(" at {file}:{line}", { file, line: String(line) }),
+  tick: (tick: number) => t(" (tick {tick})", { tick: String(tick) }),
+  repeat: (runs: number) =>
+    t("{runs, plural, one {; the same crash in # run} other {; the same crash in # runs}}", { runs }),
+  /** The whole line: what happened, then where, at which tick and how often, each possibly empty. */
+  line: (what: string, where: string, when: string, again: string) =>
+    t("{what}{where}{when}{again}.", { what, where, when, again }),
 } as const;
 
 /** One line for a `game_crashed` record: the game, what happened, where, and how often. */
 function crashLine(crash: GameCrashedPayload): string {
-  const what = crash.kind ? CRASH_WORDS.kinds[crash.kind] : CRASH_WORDS.unknownKind;
+  const game = crash.project ?? CRASH_WORDS.aGame();
+  const what = crash.kind ? CRASH_WORDS.kinds[crash.kind](game) : CRASH_WORDS.unknownKind(game);
   const where = crash.location ? CRASH_WORDS.at(crash.location.file, crash.location.line) : "";
   const when = typeof crash.tick === "number" ? CRASH_WORDS.tick(crash.tick) : "";
   const again = (crash.repeat ?? 1) > 1 ? CRASH_WORDS.repeat(crash.repeat ?? 1) : "";
-  return `${crash.project ?? CRASH_WORDS.aGame} ${what}${where}${when}${again}.`;
+  return CRASH_WORDS.line(what, where, when, again);
 }
 
 /** A crash stays a line of its own; a handled, non-fatal one (a device loss recovered) is not trouble. */

@@ -12,7 +12,7 @@ use genex_render::budget::{
 use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs, WebHints};
 use genex_render::presets::{
     ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, LodOverride, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
-    SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
+    SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, MOBILE_HIGH_SHADOW_DISTANCE_M, MOBILE_MAX_SHADOW_DISTANCE_M, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
     on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits, STREAM_POOL_DESKTOP_BYTES, STREAM_POOL_PHONE_BYTES,
     STREAM_POOL_PRESSURE_PERCENT, stream_pool_bytes,
 };
@@ -102,13 +102,15 @@ fn the_preset_table_rows() {
     let high = preset_quality(QualityPreset::High, desktop);
     let ultra = preset_quality(QualityPreset::Ultra, desktop);
     let aa: Vec<AntiAliasing> = [low, medium, high, ultra].iter().map(|q| q.anti_aliasing).collect();
-    assert_eq!(aa, [AntiAliasing::Msaa4, AntiAliasing::Msaa4, AntiAliasing::Taa, AntiAliasing::TaaSharpen]);
+    // Release R-13 (D9/D12) flips ultra's to plain TAA (was TaaSharpen; named in the PR).
+    assert_eq!(aa, [AntiAliasing::Msaa4, AntiAliasing::Msaa4, AntiAliasing::Taa, AntiAliasing::Taa]);
     let shadows: Vec<(u8, u32, ShadowFilter)> =
         [low, medium, high, ultra].iter().map(|q| (q.shadows.cascades, q.shadows.map_size, q.shadows.filter)).collect();
     // Pass-1 gate findings 01 and 02 flip low's row (named in the log): two 1024 px cascades (was one).
+    // Release R-13 (D22) flips low's and medium's filter to 5x5 PCF (was 3x3; named in the PR).
     assert_eq!(
         shadows,
-        [(2, 1024, ShadowFilter::Pcf3x3), (2, 1536, ShadowFilter::Pcf3x3), (3, 2048, ShadowFilter::PcssLite), (4, 4096, ShadowFilter::Pcss)]
+        [(2, 1024, ShadowFilter::Pcf5x5), (2, 1536, ShadowFilter::Pcf5x5), (3, 2048, ShadowFilter::PcssLite), (4, 4096, ShadowFilter::Pcss)]
     );
     // RQ3 review: each preset reaches its own distance with its split, blend band and end fade.
     let reach: Vec<(u16, u8, u8, u8)> = [low, medium, high, ultra]
@@ -227,22 +229,22 @@ type ShadowRow = (u8, u32, ShadowFilter, ShadowFormat, u8);
 /// the low tier draw Depth16 cascades and redraw far cascades every 2nd frame; mobile has no PCSS,
 /// at most 2 cascades of 1536 px; mobile-low's are 512 px. `low` draws two cascades, 768 px on a
 /// phone (pass-1 gate findings 01 and 02; it drew one of 1024, mobile-low one of 768, named in
-/// the log). Desktop `low` filters 3x3 (RQ3 review),
+/// the log). Desktop `low` and `medium`, and phones above `low`, filter 5x5 (release R-13, D22: was 3x3),
 /// phones' `low` keeps one hardware tap.
 fn expected_shadows(class: DeviceClass, preset: QualityPreset) -> ShadowRow {
-    use ShadowFilter::{Hardware2x2, Pcf3x3, Pcss, PcssLite};
+    use ShadowFilter::{Hardware2x2, Pcf5x5, Pcss, PcssLite};
     use ShadowFormat::{Depth16, Depth32};
     let low_tier = class.tier == PerformanceTier::Low;
     match (class.form, preset) {
         (FormFactor::Mobile, QualityPreset::Low) if low_tier => (2, 512, Hardware2x2, Depth16, 2),
-        (FormFactor::Mobile, _) if low_tier => (2, 512, Pcf3x3, Depth16, 2),
+        (FormFactor::Mobile, _) if low_tier => (2, 512, Pcf5x5, Depth16, 2),
         (FormFactor::Mobile, QualityPreset::Low) => (2, 768, Hardware2x2, Depth16, 2),
-        (_, QualityPreset::Low) if low_tier => (2, 1024, Pcf3x3, Depth16, 2),
-        (_, QualityPreset::Low) => (2, 1024, Pcf3x3, Depth16, 1),
-        (FormFactor::Mobile, _) => (2, 1536, Pcf3x3, Depth16, 2),
-        (_, QualityPreset::Medium) if low_tier => (2, 1536, Pcf3x3, Depth16, 2),
+        (_, QualityPreset::Low) if low_tier => (2, 1024, Pcf5x5, Depth16, 2),
+        (_, QualityPreset::Low) => (2, 1024, Pcf5x5, Depth16, 1),
+        (FormFactor::Mobile, _) => (2, 1536, Pcf5x5, Depth16, 2),
+        (_, QualityPreset::Medium) if low_tier => (2, 1536, Pcf5x5, Depth16, 2),
         (_, QualityPreset::High) if low_tier => (3, 2048, PcssLite, Depth16, 2),
-        (_, QualityPreset::Medium) => (2, 1536, Pcf3x3, Depth32, 1),
+        (_, QualityPreset::Medium) => (2, 1536, Pcf5x5, Depth32, 1),
         (_, QualityPreset::High) => (3, 2048, PcssLite, Depth32, 1),
         _ if low_tier => (4, 4096, Pcss, Depth16, 2),
         _ => (4, 4096, Pcss, Depth32, 1),
@@ -450,11 +452,11 @@ fn shadow_choices_cannot_pass_the_mobile_or_low_tier_caps() {
     let game = RenderOverrides { preset: Some(QualityPreset::Ultra), shadows: vec![(QualityPreset::Ultra, greedy)], ..RenderOverrides::default() };
     for phone in ["mobile-high", "mobile-mid"] {
         let row = shadows_of(&mac(), class(phone), &game, None);
-        assert_eq!(row, (2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "{phone}: 2 x 1536, no PCSS, Depth16, far cadence 2");
+        assert_eq!(row, (2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "{phone}: 2 x 1536, 5x5 PCF for PCSS, Depth16, far cadence 2");
     }
     let low = shadows_of(&mac(), class("mobile-low"), &game, None);
     // Pass-1 gate finding 02 flips the weakest phone's cap (named in the log): two 512 px cascades (was one of 768).
-    assert_eq!(low, (2, 512, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "mobile-low: two 512 px cascades, far cadence 2");
+    assert_eq!(low, (2, 512, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "mobile-low: two 512 px cascades, far cadence 2");
     let laptop = shadows_of(&mac(), class("desktop-low"), &game, None);
     assert_eq!((laptop.3, laptop.4), (ShadowFormat::Depth16, 2), "an old laptop keeps Depth16 and the far cadence at any request");
     assert_eq!(laptop.0, 4, "a laptop may ask for cascades; the budget ladder trims them last");
@@ -699,9 +701,11 @@ fn the_ledger_gives_fixed_byte_totals_at_the_reference_resolutions() {
         // The look pass's SSGI (B.4, `AoMethod::BitmaskGi` at desktop ultra) flips the ultra row
         // (named in the log): AO's targets hold the gathered light beside visibility
         // (`ao::target_bytes_shaped`, as the pool allocates them): +14_745_600 (was 747_261_812).
+        // Release R-13 flips the ultra row (named in the PR): plain TAA at scale 1 draws no RCAS,
+        // so its output-size target goes, -14_745_600 (was 762_007_412).
         ("desktop-high", QualityPreset::High, (2560, 1440), false, 401_053_684),
         ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 175_005_928),
-        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 762_007_412),
+        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 747_261_812),
         ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_260_876),
         ("desktop-high", QualityPreset::High, (1920, 1080), false, 251_555_164),
         ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_889_452),
@@ -942,7 +946,9 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // -> 270 rows).
     // Pass 2 A.5 flipped (was 249_808_244; named in the log): +262_144, the aerial volume's
     // transmittance half (SI-04); the froxel fog's volumes are given up.
-    assert_eq!(boot.total_bytes, 250_070_388, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
+    // Release R-13 flipped (was 250_070_388; named in the PR): -14_745_600, ultra's plain TAA draws
+    // no RCAS target at scale 1.
+    assert_eq!(boot.total_bytes, 235_324_788, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
     assert!(boot.quality.anti_aliasing.temporal(), "ultra keeps TAA");
     // At runtime the shadow format and TAA rungs are closed: the resource rungs step after the
     // boot ladder's. RQ5.6 flipped (named in the log): TAA draws one sample, not MSAA 4x, so the
@@ -970,7 +976,8 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // P2-0.13 flipped (was 237_294_868 after three bloom-mips steps; named in the log): one bloom
     // resolution step on the output-sized chain.
     // Pass 2 A.5 flipped (was 233_031_028; named in the log): +262_144, as the boot total.
-    assert_eq!((runtime.total_bytes, runtime.fits), (233_293_172, true));
+    // Release R-13 flipped (was 233_293_172; named in the PR): -14_745_600, as the boot total.
+    assert_eq!((runtime.total_bytes, runtime.fits), (218_547_572, true));
     // A game that uses shadowed spots reserves the atlas, and its own rung gives the spots up
     // before the sun's cascades are halved for their memory.
     let spotted = at.clone().with_spot_atlas(true);
@@ -1760,4 +1767,29 @@ fn the_lod_threshold_and_far_density_reach_the_plan() {
     assert_eq!(thinned.far_rules, untouched, "a density of 1 keeps the scene's rules");
     thinned.thin_far_rules(LodQuality::MEDIUM.far_density);
     assert_eq!(thinned.far_rules[0].keep, 0.8 * 0.75, "medium keeps three quarters of what each rule kept");
+}
+
+/// Release R-13 (GE's captures): a high or ultra tier phone draws each preset's own shadow reach
+/// up to desktop `high`'s 80 units, so its default `medium` reaches 50 and `high` and `ultra` 80, and
+/// a game may ask for 80. At the phones' old 40-unit cap an elevated game camera (frontier's field,
+/// stream-valley's valley) saw its near houses and trees past the reach or inside the end fade on
+/// mobile-high. Mid and low phones keep 40 units (their off-chip ceilings).
+#[test]
+fn a_high_tier_phone_draws_each_preset_s_shadow_reach_up_to_desktop_high_s() {
+    for phone in mobile_classes().filter(|phone| phone.tier >= PerformanceTier::High) {
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let reach = preset_quality(preset, phone).shadows.distance;
+            let desktop = preset_quality(preset, class("desktop-high")).shadows.distance;
+            assert_eq!(reach, desktop, "{} at {}: the sun's shadows reach {reach} units, the preset's {desktop}", phone.wire(), preset.wire());
+        }
+        let asked = RenderOverrides { preset: Some(QualityPreset::Medium), shadows: vec![(QualityPreset::Medium, ShadowOverride::new().distance(400))], ..RenderOverrides::default() };
+        let row = profile(&mac(), phone, &asked, None);
+        assert_eq!(row.quality.shadows.distance, MOBILE_HIGH_SHADOW_DISTANCE_M, "{}: a game's 400 units are held to 80", phone.wire());
+    }
+    for phone in mobile_classes().filter(|phone| phone.tier < PerformanceTier::High) {
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let reach = preset_quality(preset, phone).shadows.distance;
+            assert_eq!(reach, MOBILE_MAX_SHADOW_DISTANCE_M, "{} at {}: {reach} units", phone.wire(), preset.wire());
+        }
+    }
 }

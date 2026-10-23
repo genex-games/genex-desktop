@@ -5750,4 +5750,667 @@ export default {
   "Your game is on Roblox": "게임이 Roblox에 올라갔어요",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "작업을 계속하는 동안 게임의 에이전트가 Roblox Studio에서 게시해요.",
+  " (tick {tick})": " (틱 {tick})",
+  " at {file}:{line}": " ({file}:{line})",
+  "A download address was not secure, so nothing was downloaded.":
+    "다운로드 주소가 안전하지 않아서 아무것도 내려받지 않았어요.",
+  "A download did not match its pinned checksum and was thrown away.":
+    "다운로드가 고정된 체크섬과 맞지 않아서 버렸어요.",
+  "A download failed. Check the connection and try again.":
+    "다운로드에 실패했어요. 연결을 확인하고 다시 시도해 주세요.",
+  "A download held files outside its own folder, so it was not unpacked.":
+    "다운로드에 자체 폴더 밖의 파일이 있어서 압축을 풀지 않았어요.",
+  "A file couldn’t be packed safely, so nothing was exported.":
+    "파일을 안전하게 패키징할 수 없어서 아무것도 내보내지 않았어요.",
+  "A file held a secret key, so nothing was exported.": "파일에 비밀 키가 있어서 아무것도 내보내지 않았어요.",
+  "A game": "게임",
+  "A game asked for a crate beyond Genex’s reviewed set. You decide. Genex reads the crate and checks it offline only after you approve: a known security advisory, a licence Genex doesn’t allow or a banned crate, in it or in a crate it brings in, stops it. Audits are shown for your information. Added crates are for that game only.":
+    "게임이 Genex의 검토된 목록 밖의 크레이트를 요청했어요. 결정은 당신이 해요. Genex는 승인한 뒤에만 크레이트를 읽고 오프라인으로 검사해요. 알려진 보안 권고, Genex가 허용하지 않는 라이선스, 금지된 크레이트가 이 크레이트나 함께 가져오는 크레이트에 있으면 막혀요. 감사 결과는 참고용으로 보여 줘요. 추가된 크레이트는 그 게임에서만 써요.",
+  "A game keeps the stack it was made with. Add destinations it can already build for.":
+    "게임은 처음 만든 스택을 그대로 유지해요. 이미 빌드할 수 있는 대상을 추가하세요.",
+  "A known security advisory ({advisory}) affects it, so it wasn’t added even with your approval.":
+    "알려진 보안 권고({advisory})의 영향을 받아서 승인했어도 추가하지 않았어요.",
+  "A known security advisory affects it, or a crate it brings in, so it wasn’t added even with your approval.":
+    "이 크레이트나 함께 가져오는 크레이트가 알려진 보안 권고의 영향을 받아서 승인했어도 추가하지 않았어요.",
+  "A licence the export must include couldn’t be read, so nothing was exported.":
+    "내보내기에 포함해야 할 라이선스를 읽지 못해서 아무것도 내보내지 않았어요.",
+  "A newer version of Genex made this game, so this one opens it read-only.":
+    "더 새로운 버전의 Genex가 이 게임을 만들어서 이 버전에서는 읽기 전용으로 열어요.",
+  "A tool was installed but did not run.": "도구가 설치됐지만 실행되지 않았어요.",
+  "ANGLE for Linux": "Linux용 ANGLE",
+  "ANGLE for Mac": "Mac용 ANGLE",
+  "ANGLE for Windows": "Windows용 ANGLE",
+  "Accept the Android SDK License before installing Android’s tools.":
+    "Android 도구를 설치하기 전에 Android SDK 라이선스에 동의하세요.",
+  "Accept the license": "라이선스 동의하기",
+  "Add it in a terminal instead": "터미널에서 추가하기",
+  "Added for this game": "이 게임에 추가됨",
+  Advisories: "보안 권고",
+  "Advisory list": "보안 권고 목록",
+  "Allow build scripts": "빌드 스크립트 허용",
+  "Allow proc macros": "절차적 매크로 허용",
+  "An earlier re-take of this part is still where this one would go.":
+    "이 부분을 예전에 되돌린 파일이 이번 파일이 들어갈 자리에 아직 있어요.",
+  "Android NDK": "Android NDK",
+  "Android SDK License": "Android SDK 라이선스",
+  "Android SDK platform": "Android SDK 플랫폼",
+  "Android app": "Android 앱",
+  "Android build tools": "Android 빌드 도구",
+  "Android phone": "Android 폰",
+  "Android’s SDK, build tools and NDK are installed under Google’s Android Software Development Kit License Agreement. Read it, then accept it here. Genex never accepts it for you.":
+    "Android SDK, 빌드 도구, NDK는 Google의 Android Software Development Kit 라이선스 계약에 따라 설치돼요. 읽어 본 뒤 여기서 동의하세요. Genex가 대신 동의하는 일은 없어요.",
+  "Another version is installed. Builds need {version}; Android’s SDK manager installs it.":
+    "다른 버전이 설치되어 있어요. 빌드에는 {version}이 필요해요. Android SDK 관리자로 설치할 수 있어요.",
+  "App Store or ad hoc (.ipa)": "App Store 또는 애드혹 (.ipa)",
+  "AppArmor can’t name the folder Genex is in. Move Genex to a folder whose path has none of {characters}, then open it again.":
+    "AppArmor가 Genex가 있는 폴더를 지정할 수 없어요. 경로에 {characters} 중 어느 것도 없는 폴더로 Genex를 옮긴 뒤 다시 여세요.",
+  "Apple Command Line Tools": "Apple Command Line Tools",
+  "Apple’s Command Line Tools are needed first.": "먼저 Apple의 Command Line Tools가 필요해요.",
+  "Approved, checking…": "승인됨, 검사 중…",
+  "Audited by {sources}": "{sources} 감사 완료",
+  Audits: "감사",
+  Banned: "금지됨",
+  "Bring to front": "앞으로 가져오기",
+  Browser: "브라우저",
+  "Browser (web folder)": "브라우저 (웹 폴더)",
+  "Build in Live": "Live 빌드",
+  "Building for Mac": "Mac용으로 빌드 중",
+  "Building for Mac needs Apple’s Command Line Tools.": "Mac용 빌드에는 Apple의 Command Line Tools가 필요해요.",
+  Built: "빌드됨",
+  "Built here, but it can’t run on this computer": "여기서 빌드했지만 이 컴퓨터에서는 실행할 수 없어요",
+  "Built on the starting point": "시작 지점에서 빌드됨",
+  "Built, not run here": "빌드됨, 여기서 실행 안 함",
+  "Built, not run on this Mac": "빌드됨, 이 Mac에서 실행 안 함",
+  "C++ games can’t be built on this computer yet.": "C++ 게임은 아직 이 컴퓨터에서 빌드할 수 없어요.",
+  "C++ games can’t load .{ext} files. Use PNG or JPEG pictures, OGG, WAV or MP3 sound, and glTF or OBJ models.":
+    "C++ 게임은 .{ext} 파일을 불러올 수 없어요. 그림은 PNG나 JPEG, 소리는 OGG, WAV, MP3, 모델은 glTF나 OBJ를 쓰세요.",
+  "C++ games can’t load this format, so builds leave it out.": "C++ 게임은 이 형식을 불러올 수 없어서 빌드에서 빼요.",
+  "CI smoke passed": "CI 스모크 테스트 통과",
+  "CPU {cpu} ms": "CPU {cpu}ms",
+  "CPU {cpu} ms · GPU {gpu} ms": "CPU {cpu}ms · GPU {gpu}ms",
+  Cancelled: "취소됨",
+  "Checked by": "검사 도구",
+  "Checking disk space": "디스크 공간 확인 중",
+  "Checking the build": "빌드 확인 중",
+  "Checking the downloads": "다운로드 확인 중",
+  "Checking the tools run": "도구가 실행되는지 확인 중",
+  "Checking what is installed…": "설치된 항목 확인 중…",
+  "Choose Native to build it and play it here.": "여기서 빌드하고 플레이하려면 네이티브를 고르세요.",
+  "Choose Native to play it here.": "여기서 플레이하려면 네이티브를 고르세요.",
+  "Choose at least one place to play.": "플레이할 곳을 하나 이상 고르세요.",
+  "Choose what to make. Builds signed with your own identity or keystore are yours alone: the agent never makes them.":
+    "무엇을 만들지 고르세요. 당신의 ID나 키스토어로 서명한 빌드는 당신만의 것이에요. 에이전트는 절대 만들지 않아요.",
+  "Choose…": "고르기…",
+  "Click to play": "클릭해서 플레이",
+  Closed: "닫힘",
+  "Copy the engine into this game’s engine folder? The game stops getting engine updates, and Live and export wait until each new build passes the conformance checks.":
+    "엔진을 이 게임의 엔진 폴더로 복사할까요? 게임은 더 이상 엔진 업데이트를 받지 않고, Live와 내보내기는 새 빌드마다 적합성 검사를 통과할 때까지 기다려요.",
+  "Copy the removal command": "제거 명령 복사",
+  "Copy the terminal command": "터미널 명령 복사",
+  "Couldn’t read the frame profile.": "프레임 프로필을 읽지 못했어요.",
+  "Crates games asked for": "게임이 요청한 크레이트",
+  "Creating…": "만드는 중…",
+  Decline: "거절하기",
+  "Development APK": "개발용 APK",
+  Downloading: "다운로드 중",
+  "Downloading the game": "게임 다운로드 중",
+  "Drawing the first frame": "첫 프레임 그리는 중",
+  Eject: "분리하기",
+  "Eject engine": "엔진 분리하기",
+  "Ejecting needs a Mac, with macOS among this game’s destinations: the conformance checks run on its Mac build. Nothing was copied.":
+    "분리하려면 Mac이 필요하고, 이 게임의 대상에 macOS가 있어야 해요. 적합성 검사는 Mac 빌드에서 실행돼요. 아무것도 복사하지 않았어요.",
+  Emulator: "에뮬레이터",
+  "Engine settings": "엔진 설정",
+  "Environment variable": "환경 변수",
+  "Esc releases the keyboard": "Esc로 키보드 놓기",
+  "Exited unexpectedly": "예기치 않게 종료됨",
+  Export: "내보내기",
+  "Export for": "내보낼 대상",
+  "Export for {phone}": "{phone}용으로 내보내기",
+  "Export this destination first: there’s no packaged build to install yet.":
+    "먼저 이 대상을 내보내세요. 아직 설치할 패키지 빌드가 없어요.",
+  "Exported {file}.": "{file}을(를) 내보냈어요.",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Linux.":
+    "{file}을(를) 내보냈어요. Genex가 {machine}에서 빌드했지만 Linux에서는 실행하지 않았어요.",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Windows.":
+    "{file}을(를) 내보냈어요. Genex가 {machine}에서 빌드했지만 Windows에서는 실행하지 않았어요.",
+  "Exported {name}.app. It opens on this Mac. On another Mac, open it from System Settings > Privacy & Security.":
+    "{name}.app을 내보냈어요. 이 Mac에서 열려요. 다른 Mac에서는 시스템 설정 > 개인정보 보호 및 보안에서 여세요.",
+  "Finding a match…": "매치 찾는 중…",
+  "Finish the install in Apple’s window, then come back.": "Apple 창에서 설치를 마친 뒤 돌아오세요.",
+  "Fix the error, then try again.": "오류를 고친 뒤 다시 시도해 주세요.",
+  "Frame profile": "프레임 프로필",
+  "Frame time over the last 30 seconds. The dashed line is a 60 fps frame; marks are hitches.":
+    "최근 30초 동안의 프레임 시간이에요. 점선은 60fps 기준 한 프레임이고, 표시는 끊김이에요.",
+  "GPU device lost": "GPU 장치 잃음",
+  "GPU error": "GPU 오류",
+  "GPU passes": "GPU 패스",
+  "Game engine": "게임 엔진",
+  "Game keyboard": "게임 키보드",
+  "Genex built it and checked the program, but this computer can’t run it.":
+    "Genex가 빌드하고 프로그램을 검사했지만, 이 컴퓨터에서는 실행할 수 없어요.",
+  "Genex can’t convert this format yet, so builds leave it out.":
+    "Genex가 아직 이 형식을 변환할 수 없어서 빌드에서 빼요.",
+  "Genex can’t run this build without a window on this computer yet, so the browser build is checked instead.":
+    "Genex가 아직 이 컴퓨터에서 이 빌드를 창 없이 실행할 수 없어서, 대신 브라우저 빌드를 검사해요.",
+  "Genex can’t write the export there, so nothing was exported.":
+    "Genex가 그곳에 내보낼 수 없어서 아무것도 내보내지 않았어요.",
+  "Genex couldn’t install its crate checker, so nothing was checked or added. Connect to the internet and approve again.":
+    "Genex가 크레이트 검사기를 설치하지 못해서 아무것도 검사하거나 추가하지 않았어요. 인터넷에 연결한 뒤 다시 승인하세요.",
+  "Genex couldn’t reach a Wayland session to open the game’s window.":
+    "Genex가 게임 창을 열 Wayland 세션에 연결하지 못했어요.",
+  "Genex didn’t start this build": "Genex가 이 빌드를 시작하지 않았어요",
+  "Genex doesn’t ship this part, so there is no copy to re-take.":
+    "Genex가 이 부분을 함께 제공하지 않아서 되돌릴 사본이 없어요.",
+  "Genex has no audit lists to compare against yet, so it was added on your approval alone.":
+    "Genex에 아직 비교할 감사 목록이 없어서, 당신의 승인만으로 추가했어요.",
+  "Genex has no pinned version of this tool for this computer yet.":
+    "Genex에 아직 이 컴퓨터용 이 도구의 고정 버전이 없어요.",
+  "Genex has no pinned version of this tool for this computer yet; Install leaves it out.":
+    "Genex에 아직 이 컴퓨터용 이 도구의 고정 버전이 없어요. 설치할 때 빼요.",
+  "Genex has no pinned versions of these tools for this computer yet; Install leaves them out.":
+    "Genex에 아직 이 컴퓨터용 이 도구들의 고정 버전이 없어요. 설치할 때 빼요.",
+  "Genex hasn’t published a download of a tool this needs yet.":
+    "Genex가 이 작업에 필요한 도구의 다운로드를 아직 공개하지 않았어요.",
+  "Genex hasn’t published these tools for this computer yet.": "Genex가 이 컴퓨터용 도구를 아직 공개하지 않았어요.",
+  "Genex hasn’t published this download yet": "Genex가 이 다운로드를 아직 공개하지 않았어요",
+  "Genex is compiling the C++ code.": "Genex가 C++ 코드를 컴파일하고 있어요.",
+  "Genex is compiling the Rust code with Cargo.": "Genex가 Cargo로 Rust 코드를 컴파일하고 있어요.",
+  "Genex is in a folder other people on this computer can change, so a profile must not name it. Move Genex to a folder only you can write to, such as ~/Genex, then open it again.":
+    "Genex가 이 컴퓨터의 다른 사람도 바꿀 수 있는 폴더에 있어서 프로필에 그 폴더를 지정할 수 없어요. ~/Genex처럼 당신만 쓸 수 있는 폴더로 Genex를 옮긴 뒤 다시 여세요.",
+  "Genex needs bubblewrap 0.8 or newer to run games here. Install it, then try again.":
+    "여기서 게임을 실행하려면 bubblewrap 0.8 이상이 필요해요. 설치한 뒤 다시 시도해 주세요.",
+  "Genex never asks for the password itself: the signer reads it from the variable or the file when it signs.":
+    "Genex는 비밀번호를 직접 묻지 않아요. 서명 도구가 서명할 때 변수나 파일에서 읽어요.",
+  "Genex opens game windows on Wayland only, and this session is X11.":
+    "Genex는 Wayland에서만 게임 창을 여는데, 이 세션은 X11이에요.",
+  "Genex stopped it after it didn’t quit when asked.": "종료를 요청해도 닫히지 않아서 Genex가 멈췄어요.",
+  "Genex’s AppArmor profile is installed, but this window started without it. Quit and reopen Genex. If this screen comes back, AppArmor isn’t applying the profile to this copy; Details say which path it names.":
+    "Genex의 AppArmor 프로필은 설치됐지만, 이 창은 프로필 없이 시작됐어요. Genex를 종료하고 다시 여세요. 이 화면이 다시 나오면 AppArmor가 이 사본에 프로필을 적용하지 않는 거예요. 자세히에서 프로필이 지정하는 경로를 볼 수 있어요.",
+  "Genex’s built-in rules (test data)": "Genex 기본 규칙 (테스트 데이터)",
+  "Genex’s copy of the engine doesn’t match its checksums, so nothing was copied. Reinstall the Rust setup and try again.":
+    "Genex의 엔진 사본이 체크섬과 맞지 않아서 아무것도 복사하지 않았어요. Rust 설정을 다시 설치한 뒤 다시 시도해 주세요.",
+  "Genex’s crate check didn’t finish, so nothing was added. Approve again to retry; if it keeps failing, reinstall the Rust toolchain in Settings › Toolchains or report the problem.":
+    "Genex의 크레이트 검사가 끝나지 않아서 아무것도 추가하지 않았어요. 다시 승인해서 재시도하세요. 계속 실패하면 설정 › 툴체인에서 Rust 툴체인을 다시 설치하거나 문제를 신고하세요.",
+  "Genex’s crate policy doesn’t match the one it shipped with, so nothing was checked or added. Reinstall Genex.":
+    "Genex의 크레이트 정책이 함께 제공된 것과 맞지 않아서 아무것도 검사하거나 추가하지 않았어요. Genex를 다시 설치하세요.",
+  "Genex’s engine already uses it; games reach it through Genex, not directly.":
+    "Genex 엔진이 이미 쓰고 있어요. 게임은 직접이 아니라 Genex를 통해 써요.",
+  "Genex’s engine: it updates with Genex.": "Genex 엔진: Genex와 함께 업데이트돼요.",
+  "Genex’s graphics library didn’t match its checksum, so the game wasn’t started.":
+    "Genex 그래픽 라이브러리가 체크섬과 맞지 않아서 게임을 시작하지 않았어요.",
+  "Getting this ready for your game’s builds…": "게임 빌드에 쓸 수 있게 준비하는 중…",
+  "Go back to Genex’s engine? Genex saves a snapshot of the game first, then removes its engine folder and every change in it.":
+    "Genex 엔진으로 돌아갈까요? Genex가 먼저 게임 스냅샷을 저장한 뒤, 엔진 폴더와 그 안의 모든 변경을 지워요.",
+  "Google Play bundle (.aab)": "Google Play 번들 (.aab)",
+  "Harness changed these parts before it knew Rust games, so a Rust build won’t run on them. Re-take the shipped copy of each; Harness’s change is kept beside it.":
+    "Harness가 Rust 게임을 알기 전에 이 부분들을 바꿔서, Rust 빌드가 그대로는 실행되지 않아요. 각각 기본 사본을 되돌리세요. Harness의 변경은 옆에 보관돼요.",
+  "Harness parts from before Rust games": "Rust 게임 이전의 Harness 부분",
+  "Hide engine settings": "엔진 설정 숨기기",
+  "How it was checked": "검사 방법",
+  "Importing this file failed, so builds leave it out. Deliver it again to retry.":
+    "이 파일 가져오기에 실패해서 빌드에서 빼요. 다시 전달하면 재시도해요.",
+  "In Live": "Live에서 표시 중",
+  "In Live · Native": "Live에서 표시 중 · 네이티브",
+  "Included with Genex": "Genex에 포함됨",
+  "Included with Xcode": "Xcode에 포함됨",
+  "Install Command Line Tools": "Command Line Tools 설치하기",
+  "Install progress": "설치 진행 상황",
+  "Install tools": "도구 설치하기",
+  "Install {phone} tools": "{phone} 도구 설치하기",
+  "Installed ({version})": "설치됨 ({version})",
+  "Installed for an older version of Genex: set it up again before the next build.":
+    "예전 버전의 Genex용으로 설치됨: 다음 빌드 전에 다시 설정하세요.",
+  "Installed versions": "설치된 버전",
+  "Installed, but the first build isn’t prepared yet: set it up to finish.":
+    "설치됐지만 첫 빌드가 아직 준비되지 않았어요: 설정해서 마무리하세요.",
+  "Installing and starting": "설치하고 시작하는 중",
+  "Installs the latest packaged build and starts it.": "최신 패키지 빌드를 설치하고 시작해요.",
+  "It brings in {crate}, a graphics backend Genex doesn’t allow in games.":
+    "{crate}을(를) 가져와요. Genex가 게임에서 허용하지 않는 그래픽 백엔드예요.",
+  "It brings in {crate}, under {licence}, a licence Genex doesn’t allow in games.":
+    "{licence} 라이선스인 {crate}을(를) 가져와요. Genex가 게임에서 허용하지 않는 라이선스예요.",
+  "It brings in {crate}, which a known security advisory ({advisory}) affects, so it wasn’t added even with your approval.":
+    "알려진 보안 권고({advisory})의 영향을 받는 {crate}을(를) 가져와서, 승인했어도 추가하지 않았어요.",
+  "It ended on {signal}.": "{signal}(으)로 종료됐어요.",
+  "It ended with code {code}.": "코드 {code}(으)로 종료됐어요.",
+  "It has no browser build. Choose Native to play it here.":
+    "브라우저 빌드가 없어요. 여기서 플레이하려면 네이티브를 고르세요.",
+  "It includes a proc macro, which you didn’t allow.": "절차적 매크로가 있는데, 허용하지 않았어요.",
+  "It needs a second version of a crate Genex already ships.":
+    "Genex가 이미 제공하는 크레이트의 두 번째 버전이 필요해요.",
+  "It runs a build script, which you didn’t allow.": "빌드 스크립트를 실행하는데, 허용하지 않았어요.",
+  "It, or a crate it brings in, is a graphics backend Genex doesn’t allow in games.":
+    "이 크레이트나 함께 가져오는 크레이트가 Genex가 게임에서 허용하지 않는 그래픽 백엔드예요.",
+  "It, or a crate it brings in, uses a licence Genex doesn’t allow in games.":
+    "이 크레이트나 함께 가져오는 크레이트가 Genex가 게임에서 허용하지 않는 라이선스를 써요.",
+  "Its assets are {size} MB, over the game’s {budget} MB budget for this destination, so it takes longer to download. Raise budget_mb under [assets] in genex.toml if that’s fine.":
+    "에셋이 {size}MB로, 이 대상의 게임 예산 {budget}MB를 넘어서 다운로드가 더 오래 걸려요. 괜찮다면 genex.toml의 [assets]에서 budget_mb를 올리세요.",
+  "Its authors withdrew this version.": "작성자가 이 버전을 철회했어요.",
+  "Its code is {size} MB compressed, over the game’s {budget} MB budget, so it loads slower on phones and weak devices. Raise wasm_budget_mb in genex.toml if that’s fine.":
+    "코드가 압축 후 {size}MB로, 게임 예산 {budget}MB를 넘어서 폰이나 저사양 기기에서 더 느리게 불러와요. 괜찮다면 genex.toml에서 wasm_budget_mb를 올리세요.",
+  "Its destinations can’t run on this computer.": "대상들을 이 컴퓨터에서 실행할 수 없어요.",
+  "Its files changed after they were checked, so Genex won’t use them.": "검사 후 파일이 바뀌어서 Genex가 쓰지 않아요.",
+  "Its licence ({licence}) isn’t one Genex allows in games.":
+    "라이선스({licence})가 Genex가 게임에서 허용하는 라이선스가 아니에요.",
+  "Its licence, advisories and audits are checked after you approve; nothing is added if a check stops it.":
+    "라이선스, 보안 권고, 감사는 승인한 뒤에 검사해요. 검사에서 막히면 아무것도 추가하지 않아요.",
+  "It’s a graphics backend Genex doesn’t allow in games.": "Genex가 게임에서 허용하지 않는 그래픽 백엔드예요.",
+  "It’s untested on real GPUs: only a software renderer has drawn it so far.":
+    "실제 GPU에서 테스트되지 않았어요: 지금까지 소프트웨어 렌더러로만 그렸어요.",
+  "It’s untested on real devices: Genex built it but hasn’t run it on a phone.":
+    "실제 기기에서 테스트되지 않았어요: Genex가 빌드했지만 폰에서 실행하지 않았어요.",
+  "Java runtime": "Java 런타임",
+  Joined: "참가함",
+  "Key alias": "키 별칭",
+  "Keystore password": "키스토어 비밀번호",
+  Licence: "라이선스",
+  "Linux (.tar.gz)": "Linux (.tar.gz)",
+  "Linux headers": "Linux 헤더",
+  "Linux window": "Linux 창",
+  "Live can’t draw the game on this Mac. Use Pop out.": "Live가 이 Mac에서 게임을 그릴 수 없어요. 따로 열기를 쓰세요.",
+  "Live couldn’t start the game. Try again or use Pop out.":
+    "Live가 게임을 시작하지 못했어요. 다시 시도하거나 따로 열기를 쓰세요.",
+  "Live shows browser builds, and this game has none. Play it in its own window instead.":
+    "Live는 브라우저 빌드를 보여 주는데, 이 게임에는 없어요. 대신 별도 창에서 플레이하세요.",
+  "Live stopped showing the game, so it was stopped.": "Live가 게임 표시를 멈춰서 게임을 멈췄어요.",
+  "Live stopped showing the game. Try again or use Pop out.":
+    "Live가 게임 표시를 멈췄어요. 다시 시도하거나 따로 열기를 쓰세요.",
+  "Loading assets": "에셋 불러오는 중",
+  "Local test room": "로컬 테스트 방",
+  "Mac games are built on a Mac": "Mac 게임은 Mac에서 빌드해요",
+  "Mac window": "Mac 창",
+  "Made in": "만든 도구",
+  "Made in {stack} for the browser.": "{stack}(으)로 만든 브라우저용 게임이에요.",
+  "Made in {stack}: one game, built for every place you pick.":
+    "{stack}(으)로 제작: 하나의 게임을 고른 모든 곳에 맞게 빌드해요.",
+  Memory: "메모리",
+  "Memory fault": "메모리 오류",
+  "Multiplayer bridge for the browser": "브라우저용 멀티플레이 브리지",
+  "Multiplayer relay library": "멀티플레이 릴레이 라이브러리",
+  "Multiplayer relay library source": "멀티플레이 릴레이 라이브러리 소스",
+  Native: "네이티브",
+  "Needed later to build for iPhone and iPad. Install it from the App Store.":
+    "나중에 iPhone과 iPad용으로 빌드할 때 필요해요. App Store에서 설치하세요.",
+  "Needed to build for Mac, unless Xcode is installed. macOS installs them in its own window.":
+    "Xcode가 없다면 Mac용 빌드에 필요해요. macOS가 자체 창에서 설치해요.",
+  "Needed to build for Mac. macOS installs them in its own window.":
+    "Mac용 빌드에 필요해요. macOS가 자체 창에서 설치해요.",
+  "Needs set-up": "설정 필요",
+  "Needs tools": "도구 필요",
+  "New Rust game": "새 Rust 게임",
+  "No Android SDK was found. Install Android Studio or its command-line tools, then open this again.":
+    "Android SDK를 찾지 못했어요. Android Studio나 그 명령줄 도구를 설치한 뒤 다시 여세요.",
+  "No audit Genex trusts covers it yet.": "아직 Genex가 신뢰하는 감사가 이 크레이트를 다루지 않아요.",
+  "No audit list yet from {sources}": "아직 {sources}의 감사 목록 없음",
+  "No device is ready: start one (or connect your phone) and try again.":
+    "준비된 기기가 없어요. 기기를 시작하거나 폰을 연결한 뒤 다시 시도해 주세요.",
+  "No file chosen": "선택한 파일 없음",
+  "No licence named": "라이선스 표시 없음",
+  "No old versions to remove": "제거할 예전 버전이 없어요",
+  "No trusted audit lists installed yet": "아직 설치된 신뢰할 수 있는 감사 목록이 없어요",
+  "No trusted source has audited it yet. It was added on your approval.":
+    "아직 신뢰할 수 있는 출처가 감사하지 않았어요. 당신의 승인으로 추가했어요.",
+  "None known": "알려진 것 없음",
+  "None known as of {day}": "{day} 기준 알려진 것 없음",
+  "Not allowed": "허용 안 됨",
+  "Not allowed: {crates}": "허용 안 됨: {crates}",
+  "Not audited by {sources}": "{sources} 감사 안 함",
+  "Not available yet": "아직 사용할 수 없어요",
+  "Not built yet": "아직 빌드 안 됨",
+  "Not installed. Builds need {version}; Android’s SDK manager installs it.":
+    "설치 안 됨. 빌드에는 {version}이 필요해요. Android SDK 관리자로 설치할 수 있어요.",
+  "Not one of this game’s destinations": "이 게임의 대상이 아니에요",
+  "Nothing installed yet. Make a C++ game to set up its tools.":
+    "아직 설치된 게 없어요. C++ 게임을 만들면 도구를 설정할 수 있어요.",
+  "Nothing removed: a game may still need these versions.":
+    "제거하지 않았어요: 아직 게임에 이 버전들이 필요할 수 있어요.",
+  "Nothing removed: an install is running. Try again when it ends.":
+    "제거하지 않았어요: 설치가 진행 중이에요. 끝난 뒤 다시 시도해 주세요.",
+  "Nothing removed: no install has finished yet.": "제거하지 않았어요: 아직 끝난 설치가 없어요.",
+  "Nothing removed: this toolchain folder is shared with another Genex.":
+    "제거하지 않았어요: 이 툴체인 폴더를 다른 Genex와 함께 써요.",
+  "Off: unsafe code and build scripts in this game don’t build.":
+    "끔: 이 게임의 unsafe 코드와 빌드 스크립트는 빌드되지 않아요.",
+  "On a device": "기기에서",
+  "On: this game’s unsafe code and its own build script build. The sandbox is unchanged.":
+    "켬: 이 게임의 unsafe 코드와 자체 빌드 스크립트를 빌드해요. 샌드박스는 그대로예요.",
+  "One of the game’s own graphics passes didn’t pass Genex’s checks, so it wasn’t run.":
+    "게임 자체 그래픽 패스 중 하나가 Genex 검사를 통과하지 못해서 실행하지 않았어요.",
+  Online: "온라인",
+  "Only trust code you’ve read. Unsafe code can crash the game or corrupt its memory, and a build script runs on this Mac at every build. Both stay inside the sandbox: no network, and writes only to the build folder.":
+    "읽어 본 코드만 신뢰하세요. unsafe 코드는 게임을 멈추게 하거나 메모리를 망가뜨릴 수 있고, 빌드 스크립트는 빌드할 때마다 이 Mac에서 실행돼요. 둘 다 샌드박스 안에 머물러요: 네트워크 없이, 빌드 폴더에만 쓸 수 있어요.",
+  "Only you": "당신만",
+  "Only you can sign an export with your own identity.": "내 ID로 내보내기에 서명할 수 있는 건 당신뿐이에요.",
+  "Only you can trust a game, here in Genex.": "게임을 신뢰할 수 있는 건 당신뿐이에요. 여기 Genex에서요.",
+  "Out of memory": "메모리 부족",
+  Panic: "패닉",
+  "Play in its own window": "별도 창에서 플레이",
+  "Play on Mac": "Mac에서 플레이",
+  "Play on Mac opens games made for Mac.": "Mac에서 플레이는 Mac용으로 만든 게임을 열어요.",
+  "Playing on Mac": "Mac에서 플레이 중",
+  "Plays in its own window": "별도 창에서 플레이해요",
+  "Pop out": "따로 열기",
+  "Preparing shaders": "셰이더 준비 중",
+  "Preparing the first build": "첫 빌드 준비 중",
+  "Provisioning profile": "프로비저닝 프로필",
+  "Re-take shipped copy": "기본 사본 되돌리기",
+  "Re-taking…": "되돌리는 중…",
+  "Read the license": "라이선스 읽기",
+  "Reading…": "읽는 중…",
+  "Ready for builds. The model check noted {count, plural, one {# thing} other {# things}} worth a look.":
+    "빌드할 준비가 됐어요. 모델 검사에서 살펴볼 만한 점을 {count, plural, other {#개}} 찾았어요.",
+  "Reconnecting…": "다시 연결하는 중…",
+  "Release keystore": "릴리스 키스토어",
+  "Remove old versions": "예전 버전 제거하기",
+  "Remove the engine folder": "엔진 폴더 제거하기",
+  "Removed {count, plural, one {# old version} other {# old versions}}, {size}":
+    "예전 버전 {count, plural, other {#개}}를 제거했어요, {size}",
+  Replay: "리플레이",
+  Restart: "다시 시작",
+  "Restarting…": "다시 시작하는 중…",
+  "Run this, then quit and reopen Genex:": "이걸 실행한 뒤 Genex를 종료하고 다시 여세요:",
+  "Running in its own window": "별도 창에서 실행 중",
+  "Runs in the iOS Simulator on this Mac. Signed for this Mac only.":
+    "이 Mac의 iOS Simulator에서 실행돼요. 이 Mac 전용으로 서명돼요.",
+  "Rust for Android": "Android용 Rust",
+  "Rust for Linux": "Linux용 Rust",
+  "Rust for Windows": "Windows용 Rust",
+  "Rust for iPhone": "iPhone용 Rust",
+  "Rust for the browser": "브라우저용 Rust",
+  "Rust for the iOS Simulator": "iOS Simulator용 Rust",
+  "Rust games": "Rust 게임",
+  "Rust games are a developer preview: this version of Genex doesn’t download their tools yet.":
+    "Rust 게임은 개발자 미리보기예요: 이 버전의 Genex는 아직 도구를 내려받지 않아요.",
+  "Rust games aren’t available in this version of Genex yet.": "이 버전의 Genex에서는 아직 Rust 게임을 쓸 수 없어요.",
+  "Rust games can’t be built on this computer yet.": "Rust 게임은 아직 이 컴퓨터에서 빌드할 수 없어요.",
+  "Rust games can’t load .{ext} files. Use PNG, JPEG, WebP or KTX2 pictures, OGG, WAV, MP3 or FLAC sound, and glTF or OBJ models.":
+    "Rust 게임은 .{ext} 파일을 불러올 수 없어요. 그림은 PNG, JPEG, WebP, KTX2, 소리는 OGG, WAV, MP3, FLAC, 모델은 glTF나 OBJ를 쓰세요.",
+  "Rust games can’t load this format, so builds leave it out.": "Rust 게임은 이 형식을 불러올 수 없어서 빌드에서 빼요.",
+  "Rust game…": "Rust 게임…",
+  "Rust libraries": "Rust 라이브러리",
+  "RustSec advisories": "RustSec 보안 권고",
+  "Safety check: {file} ({refusal})": "안전 검사: {file} ({refusal})",
+  "Saved to": "저장 위치",
+  "Set up C++ games": "C++ 게임 설정하기",
+  "Set up Rust games": "Rust 게임 설정하기",
+  "Set up again": "다시 설정하기",
+  "Set up once for every C++ destination this computer can build. These tools are shared by all your C++ games.":
+    "이 컴퓨터가 빌드할 수 있는 모든 C++ 대상을 한 번만 설정해요. 이 도구는 모든 C++ 게임에서 함께 써요.",
+  "Set up once for every Rust destination this computer can build. These tools are shared by all your Rust games.":
+    "이 컴퓨터가 빌드할 수 있는 모든 Rust 대상을 한 번만 설정해요. 이 도구는 모든 Rust 게임에서 함께 써요.",
+  "Set up the C++ tools this game builds with": "이 게임 빌드에 쓰는 C++ 도구 설정하기",
+  "Setup finished": "설정 완료",
+  "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.":
+    "설정이 취소되어 바뀐 게 없어요. 승인할 준비가 되면 다시 설정하기를 고르세요.",
+  "Shipped copy back. Harness’s change is kept in {file}": "기본 사본을 되돌렸어요. Harness의 변경은 {file}에 보관돼요",
+  "Signed with this profile’s own Genex debug key. Installs on a test phone.":
+    "이 프로필 전용 Genex 디버그 키로 서명돼요. 테스트용 폰에 설치돼요.",
+  "Signed with your Apple Development identity and a provisioning profile that lists your device.":
+    "당신의 Apple Development ID와 기기가 등록된 프로비저닝 프로필로 서명돼요.",
+  "Signed with your Apple Distribution identity and its provisioning profile.":
+    "당신의 Apple Distribution ID와 그 프로비저닝 프로필로 서명돼요.",
+  "Signed with your own release keystore.": "당신의 릴리스 키스토어로 서명돼요.",
+  "Signing didn’t finish, so nothing was exported.": "서명이 끝나지 않아서 아무것도 내보내지 않았어요.",
+  "Signing identity": "서명 ID",
+  "Simulator app": "시뮬레이터 앱",
+  "Slowest scopes": "가장 느린 구간",
+  "Start the game to see its frame profile.": "게임을 시작하면 프레임 프로필을 볼 수 있어요.",
+  "Started on the device.": "기기에서 시작했어요.",
+  "Starting the graphics": "그래픽 시작 중",
+  "Stop timing passes": "패스 측정 그만하기",
+  "Stop trusting": "신뢰 그만하기",
+  "Stopped responding": "응답 없음",
+  "Studio plays a local test room; publish a draft to play online.":
+    "Studio는 로컬 테스트 방에서 플레이해요. 온라인으로 플레이하려면 초안을 게시하세요.",
+  "SwiftShader for Linux": "Linux용 SwiftShader",
+  "That isn’t a harness part’s path, so nothing was changed.":
+    "Harness 부분의 경로가 아니어서 아무것도 바꾸지 않았어요.",
+  "That isn’t one of this game’s destinations.": "이 게임의 대상이 아니에요.",
+  "That isn’t something a C++ game can do here.": "C++ 게임은 여기서 그걸 할 수 없어요.",
+  "The C++ tools are installed but not set up yet. Set them up to finish.":
+    "C++ 도구가 설치됐지만 아직 설정되지 않았어요. 설정해서 마무리하세요.",
+  "The C++ tools this export needs are missing or damaged. Set them up again, then try again.":
+    "이 내보내기에 필요한 C++ 도구가 없거나 손상됐어요. 다시 설정한 뒤 다시 시도해 주세요.",
+  "The C++ tools this game builds with aren’t installed. Install them, then try again.":
+    "이 게임 빌드에 쓰는 C++ 도구가 설치되지 않았어요. 설치한 뒤 다시 시도해 주세요.",
+  "The C++ tools were set up for an older version of Genex. Set them up again, then try again.":
+    "C++ 도구가 예전 버전의 Genex용으로 설정됐어요. 다시 설정한 뒤 다시 시도해 주세요.",
+  "The Mac build didn’t pass Genex’s checks, so no app was made.":
+    "Mac 빌드가 Genex 검사를 통과하지 못해서 앱을 만들지 않았어요.",
+  "The Mac build failed.": "Mac 빌드에 실패했어요.",
+  "The build changed while it was being exported. Try again.": "내보내는 동안 빌드가 바뀌었어요. 다시 시도해 주세요.",
+  "The build didn’t pass Genex’s safety check, so it isn’t used.":
+    "빌드가 Genex 안전 검사를 통과하지 못해서 쓰지 않아요.",
+  "The build doesn’t draw through Genex’s graphics library, so it wasn’t started.":
+    "빌드가 Genex 그래픽 라이브러리로 그리지 않아서 시작하지 않았어요.",
+  "The build failed.": "빌드에 실패했어요.",
+  "The build holds a file linked from somewhere else, so it wasn’t started.":
+    "빌드에 다른 곳에서 링크된 파일이 있어서 시작하지 않았어요.",
+  "The build holds a library Genex didn’t expect, so it wasn’t started.":
+    "빌드에 Genex가 예상하지 못한 라이브러리가 있어서 시작하지 않았어요.",
+  "The build holds a link, so it wasn’t started.": "빌드에 링크가 있어서 시작하지 않았어요.",
+  "The build holds a program Genex didn’t expect, so it wasn’t started.":
+    "빌드에 Genex가 예상하지 못한 프로그램이 있어서 시작하지 않았어요.",
+  "The build is for a different kind of computer, so it wasn’t started.":
+    "빌드가 다른 종류의 컴퓨터용이라 시작하지 않았어요.",
+  "The build isn’t a Mac program this computer can run.":
+    "이 빌드는 이 컴퓨터에서 실행할 수 있는 Mac 프로그램이 아니에요.",
+  "The build loads libraries from outside the game, so it wasn’t started.":
+    "빌드가 게임 밖에서 라이브러리를 불러와서 시작하지 않았어요.",
+  "The build needs a newer Linux than Genex supports.": "빌드에 Genex가 지원하는 것보다 새로운 Linux가 필요해요.",
+  "The build needs a system library Genex doesn’t allow, so it wasn’t started.":
+    "빌드에 Genex가 허용하지 않는 시스템 라이브러리가 필요해서 시작하지 않았어요.",
+  "The build took too long and was stopped.": "빌드가 너무 오래 걸려서 멈췄어요.",
+  "The build uses OpenGL directly, which Genex doesn’t run on Linux.":
+    "빌드가 OpenGL을 직접 쓰는데, Genex는 Linux에서 OpenGL을 실행하지 않아요.",
+  "The build uses OpenGL, which Genex doesn’t run on Windows.":
+    "빌드가 OpenGL을 쓰는데, Genex는 Windows에서 OpenGL을 실행하지 않아요.",
+  "The build uses OpenGL, which Genex doesn’t run. Games draw through Metal.":
+    "빌드가 OpenGL을 쓰는데, Genex는 OpenGL을 실행하지 않아요. 게임은 Metal로 그려요.",
+  "The build was stopped.": "빌드를 멈췄어요.",
+  "The device didn’t install or start the game.": "기기가 게임을 설치하거나 시작하지 않았어요.",
+  "The engine didn’t change.": "엔진은 바뀌지 않았어요.",
+  "The engine this game was built with is no longer installed, so nothing was copied. Build the game once, then try again.":
+    "이 게임을 빌드한 엔진이 더 이상 설치되어 있지 않아서 아무것도 복사하지 않았어요. 게임을 한 번 빌드한 뒤 다시 시도해 주세요.",
+  "The export folder holds files Genex didn’t put there, so nothing was exported.":
+    "내보내기 폴더에 Genex가 넣지 않은 파일이 있어서 아무것도 내보내지 않았어요.",
+  "The game answered Genex with something it couldn’t read, so it was stopped.":
+    "게임이 Genex가 읽을 수 없는 응답을 보내서 멈췄어요.",
+  "The game asked for more pictures than Genex shares, so it was stopped.":
+    "게임이 Genex가 공유하는 것보다 많은 그림을 요청해서 멈췄어요.",
+  "The game crashed": "게임이 멈췄어요",
+  "The game didn’t answer Genex the way a Genex game does, so it was stopped.":
+    "게임이 Genex 게임답게 응답하지 않아서 멈췄어요.",
+  "The game lost its graphics device. It’s getting it back; try again in a moment.":
+    "게임이 그래픽 장치를 잃었어요. 다시 가져오는 중이니 잠시 후 다시 시도해 주세요.",
+  "The game needs a graphics feature this computer doesn’t have.": "게임에 이 컴퓨터에 없는 그래픽 기능이 필요해요.",
+  "The game needs graphics features browsers don’t offer, so it has no web build.":
+    "게임에 브라우저가 제공하지 않는 그래픽 기능이 필요해서 웹 빌드가 없어요.",
+  "The game sent Genex more than it accepts at once, so it was stopped.":
+    "게임이 Genex가 한 번에 받는 것보다 많이 보내서 멈췄어요.",
+  "The game sent Live a picture Genex couldn’t use, so it was stopped.":
+    "게임이 Genex가 쓸 수 없는 그림을 Live에 보내서 멈췄어요.",
+  "The game sent a picture Genex didn’t ask for, so it was stopped.":
+    "게임이 Genex가 요청하지 않은 그림을 보내서 멈췄어요.",
+  "The game sent pictures faster than Genex shows them, so it was stopped.":
+    "게임이 Genex가 보여 주는 것보다 빠르게 그림을 보내서 멈췄어요.",
+  "The game stopped responding and was stopped.": "게임이 응답하지 않아서 멈췄어요.",
+  "The game took too long to start and was stopped.": "게임이 시작하는 데 너무 오래 걸려서 멈췄어요.",
+  "The game used too much memory and was stopped.": "게임이 메모리를 너무 많이 써서 멈췄어요.",
+  "The game was stopped by force": "게임을 강제로 멈췄어요",
+  "The game’s current build failed, so nothing was exported.":
+    "게임의 현재 빌드가 실패해서 아무것도 내보내지 않았어요.",
+  "The game’s graphics stopped responding, so it was stopped.": "게임 그래픽이 응답하지 않아서 멈췄어요.",
+  "The game’s picture didn’t match what it said it drew.": "게임 그림이 그렸다고 한 내용과 맞지 않았어요.",
+  "The game’s picture was larger than Genex accepts.": "게임 그림이 Genex가 받는 크기보다 컸어요.",
+  "The install stopped": "설치가 멈췄어요",
+  "The model check found errors in this file, so builds leave it out.":
+    "모델 검사에서 이 파일의 오류를 찾아서 빌드에서 빼요.",
+  "The packaged build holds a link, so it wasn’t installed.": "패키지 빌드에 링크가 있어서 설치하지 않았어요.",
+  "The packaged build is linked from somewhere else, so it wasn’t installed.":
+    "패키지 빌드가 다른 곳에서 링크되어 있어서 설치하지 않았어요.",
+  "The registry has no such crate or version.": "레지스트리에 그런 크레이트나 버전이 없어요.",
+  "The sandbox Genex runs games in refused to start this one.":
+    "Genex가 게임을 실행하는 샌드박스가 이 게임의 시작을 거부했어요.",
+  "The signing details aren’t valid, so nothing was exported.":
+    "서명 정보가 올바르지 않아서 아무것도 내보내지 않았어요.",
+  "The tools installed, but preparing the first build failed.": "도구는 설치됐지만 첫 빌드 준비에 실패했어요.",
+  "The trust setting didn’t change.": "신뢰 설정은 바뀌지 않았어요.",
+  "The {destination} build failed.": "{destination} 빌드에 실패했어요.",
+  "There is no build the judges can play: the browser build made for them failed.":
+    "심사위원이 플레이할 빌드가 없어요: 그들을 위해 만든 브라우저 빌드가 실패했어요.",
+  "There isn’t enough free disk space.": "디스크 여유 공간이 부족해요.",
+  "This Mac can’t show the game inside Live. Play on Mac opens it in its own window.":
+    "이 Mac은 Live 안에 게임을 보여 줄 수 없어요. Mac에서 플레이로 별도 창에서 열어요.",
+  "This Xcode is too old for iPhone and iPad builds: they need Xcode 26 or later.":
+    "이 Xcode는 iPhone과 iPad 빌드에 너무 오래됐어요: Xcode 26 이상이 필요해요.",
+  "This build doesn’t report a frame profile yet.": "이 빌드는 아직 프레임 프로필을 보고하지 않아요.",
+  "This build has no game id to find its room with.": "이 빌드에는 방을 찾을 게임 ID가 없어요.",
+  "This build has no multiplayer: add [net] to genex.toml.":
+    "이 빌드에는 멀티플레이가 없어요: genex.toml에 [net]을 추가하세요.",
+  "This computer can’t show the game inside Live yet.": "이 컴퓨터는 아직 Live 안에 게임을 보여 줄 수 없어요.",
+  "This computer’s graphics can’t run the game: it needs WebGPU-class graphics.":
+    "이 컴퓨터의 그래픽으로는 게임을 실행할 수 없어요: WebGPU급 그래픽이 필요해요.",
+  "This copy of Genex is missing a bundled C++ component. Reinstall Genex, or rebuild it with the bundled tools.":
+    "이 Genex 사본에 함께 제공되는 C++ 구성 요소가 없어요. Genex를 다시 설치하거나 함께 제공된 도구로 다시 빌드하세요.",
+  "This desktop can’t give a game its own restricted Wayland connection, so Genex won’t open its window.":
+    "이 데스크톱은 게임에 전용 제한 Wayland 연결을 줄 수 없어서 Genex가 게임 창을 열지 않아요.",
+  "This destination can’t reach the network.": "이 대상은 네트워크에 연결할 수 없어요.",
+  "This file is damaged or isn’t the format its name says, so builds leave it out.":
+    "이 파일이 손상됐거나 이름과 다른 형식이라 빌드에서 빼요.",
+  "This file is gone, so builds leave it out.": "이 파일이 없어져서 빌드에서 빼요.",
+  "This file is too large to import, so builds leave it out.": "이 파일은 너무 커서 가져올 수 없어 빌드에서 빼요.",
+  "This file points outside the game folder, so builds leave it out.":
+    "이 파일이 게임 폴더 밖을 가리켜서 빌드에서 빼요.",
+  "This file’s name can’t be used in a game, so builds leave it out.":
+    "이 파일 이름은 게임에서 쓸 수 없어서 빌드에서 빼요.",
+  "This game already has an engine folder, so nothing was copied. Remove it or use Genex’s engine first.":
+    "이 게임에는 이미 엔진 폴더가 있어서 아무것도 복사하지 않았어요. 폴더를 지우거나 먼저 Genex 엔진을 쓰세요.",
+  "This game has no browser build": "이 게임에는 브라우저 빌드가 없어요",
+  "This game plays its Mac build in Live": "이 게임은 Live에서 Mac 빌드를 보여 줘요",
+  "This game runs in its own window": "이 게임은 별도 창에서 실행돼요",
+  "This game runs its own engine, and its current build hasn’t passed the conformance checks, so nothing was exported.":
+    "이 게임은 자체 엔진으로 실행되는데, 현재 빌드가 적합성 검사를 통과하지 못해서 아무것도 내보내지 않았어요.",
+  "This game runs its own engine, and this build hasn’t passed the conformance checks yet, so it wasn’t started.":
+    "이 게임은 자체 엔진으로 실행되는데, 이 빌드가 아직 적합성 검사를 통과하지 못해서 시작하지 않았어요.",
+  "This game was made before Live could show Mac builds.": "이 게임은 Live가 Mac 빌드를 보여 주기 전에 만들어졌어요.",
+  "This game was made before Live could show Mac builds. Use Pop out.":
+    "이 게임은 Live가 Mac 빌드를 보여 주기 전에 만들어졌어요. 따로 열기를 쓰세요.",
+  "This game’s folder has a CMakeCache.txt. Genex builds outside the game folder: delete that file, then try again.":
+    "이 게임 폴더에 CMakeCache.txt가 있어요. Genex는 게임 폴더 밖에서 빌드해요: 그 파일을 지운 뒤 다시 시도해 주세요.",
+  "This game’s own copy of engine {version}, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "엔진 {version}의 이 게임 전용 사본으로, 엔진 폴더에 있어요. 더 이상 업데이트되지 않아요. Live와 내보내기에는 빌드마다 적합성 검사 통과가 필요해요.",
+  "This game’s own copy, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "이 게임 전용 사본으로, 엔진 폴더에 있어요. 더 이상 업데이트되지 않아요. Live와 내보내기에는 빌드마다 적합성 검사 통과가 필요해요.",
+  "This game’s tools aren’t installed, and Genex can’t download them while offline.":
+    "이 게임의 도구가 설치되지 않았고, 오프라인이라 Genex가 내려받을 수 없어요.",
+  "This isn’t a regular file, so builds leave it out.": "일반 파일이 아니어서 빌드에서 빼요.",
+  "This model needs a glTF extension Genex games can’t read, so builds leave it out.":
+    "이 모델에는 Genex 게임이 읽을 수 없는 glTF 확장이 필요해서 빌드에서 빼요.",
+  "This page has no player identity to join with.": "이 페이지에는 참가할 플레이어 ID가 없어요.",
+  "This part is already the shipped copy.": "이 부분은 이미 기본 사본이에요.",
+  "This part isn’t a plain file in the harness, so nothing was changed.":
+    "이 부분은 Harness의 일반 파일이 아니어서 아무것도 바꾸지 않았어요.",
+  "This preview can’t take touches, so the game’s touch controls weren’t played.":
+    "이 미리보기는 터치를 받지 않아서 게임의 터치 조작을 플레이하지 않았어요.",
+  "This version of Genex can’t build this kind of game yet, so nothing was exported.":
+    "이 버전의 Genex는 아직 이런 종류의 게임을 빌드할 수 없어서 아무것도 내보내지 않았어요.",
+  "This version of Genex can’t build this kind of game yet.":
+    "이 버전의 Genex는 아직 이런 종류의 게임을 빌드할 수 없어요.",
+  "This version of Genex can’t eject an engine.": "이 버전의 Genex는 엔진을 분리할 수 없어요.",
+  "This version of Genex can’t open game windows on Linux yet.":
+    "이 버전의 Genex는 아직 Linux에서 게임 창을 열 수 없어요.",
+  "This version of Genex can’t run it on this computer yet": "이 버전의 Genex는 아직 이 컴퓨터에서 실행할 수 없어요",
+  "This version of Genex can’t show Mac builds inside Live yet. Play on Mac opens it in its own window.":
+    "이 버전의 Genex는 아직 Live 안에 Mac 빌드를 보여 줄 수 없어요. Mac에서 플레이로 별도 창에서 열어요.",
+  "This version of Genex can’t show the game inside Live yet.":
+    "이 버전의 Genex는 아직 Live 안에 게임을 보여 줄 수 없어요.",
+  "This version of Genex can’t trust a game’s code.": "이 버전의 Genex는 게임 코드를 신뢰할 수 없어요.",
+  "This version of Genex doesn’t build it from here yet.": "이 버전의 Genex는 아직 여기서 빌드하지 않아요.",
+  "This version of Genex exports Mac apps signed for this Mac only.":
+    "이 버전의 Genex는 이 Mac 전용으로 서명한 Mac 앱을 내보내요.",
+  "This version of Genex has no game launcher for Windows yet.":
+    "이 버전의 Genex에는 아직 Windows용 게임 실행기가 없어요.",
+  "This version of the studio’s harness can’t judge C++ games. Update it, then try again.":
+    "이 버전의 스튜디오 Harness는 C++ 게임을 평가할 수 없어요. 업데이트한 뒤 다시 시도해 주세요.",
+  "Three.js games play in the browser. Choose Rust · wgpu to build for it.":
+    "Three.js 게임은 브라우저에서 플레이해요. 이 대상으로 빌드하려면 Rust · wgpu를 고르세요.",
+  "Time GPU passes": "GPU 패스 측정하기",
+  "Timing the next frames…": "다음 프레임 측정 중…",
+  "To remove it later:": "나중에 제거하려면:",
+  Toolchains: "툴체인",
+  "Trust this game": "이 게임 신뢰하기",
+  "Trust this game’s code": "이 게임의 코드 신뢰하기",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces agents run in. Genex needs its profile added once.":
+    "Ubuntu는 AppArmor 프로필이 있는 앱만 에이전트가 실행되는 격리 공간을 만들 수 있게 해요. Genex 프로필을 한 번 추가해야 해요.",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces games run in, so this game wasn’t started.":
+    "Ubuntu는 AppArmor 프로필이 있는 앱만 게임이 실행되는 격리 공간을 만들 수 있게 해서, 이 게임을 시작하지 않았어요.",
+  "Ubuntu will ask for your password once to add {file}. It lets this copy of Genex, and the programs it starts, create user namespaces despite Ubuntu’s restriction. Then Genex restarts.":
+    "Ubuntu가 {file}을(를) 추가하려고 비밀번호를 한 번 물어요. 이렇게 하면 이 Genex 사본과 Genex가 시작하는 프로그램이 Ubuntu의 제한과 관계없이 사용자 네임스페이스를 만들 수 있어요. 그다음 Genex가 다시 시작돼요.",
+  Unpacking: "압축 푸는 중",
+  "Untested on real GPUs": "실제 GPU에서 테스트 안 됨",
+  "Untested on real devices": "실제 기기에서 테스트 안 됨",
+  "Use Genex’s engine": "Genex 엔진 쓰기",
+  "Verified in a VM": "VM에서 확인됨",
+  "Waiting for approval…": "승인 기다리는 중…",
+  "Waiting for players": "플레이어 기다리는 중",
+  "Web and exported builds don’t report a frame profile.": "웹 빌드와 내보낸 빌드는 프레임 프로필을 보고하지 않아요.",
+  "WebAssembly trap": "WebAssembly 트랩",
+  "What to make": "만들 것",
+  "Where will people play?": "어디서 플레이하나요?",
+  "Windows (.zip)": "Windows (.zip)",
+  "Windows will ask an administrator to approve the setup once.": "Windows가 관리자에게 설정 승인을 한 번 요청해요.",
+  "Windows window": "Windows 창",
+  "Xcode is missing the iOS 26 SDK. Open Xcode once to install it.":
+    "Xcode에 iOS 26 SDK가 없어요. Xcode를 한 번 열어서 설치하세요.",
+  "Xcode is ready for iPhone and iPad builds.": "Xcode가 iPhone과 iPad 빌드를 할 준비가 됐어요.",
+  "You accepted the Android SDK License.": "Android SDK 라이선스에 동의했어요.",
+  "You declined it.": "거절했어요.",
+  "Your iPhone or iPad (.ipa)": "내 iPhone 또는 iPad (.ipa)",
+  "checked the game's conformance": "게임 적합성을 검사함",
+  "for {game}": "{game}용",
+  game: "게임",
+  "has a proc macro": "절차적 매크로 있음",
+  "iPhone and iPad": "iPhone과 iPad",
+  "iPhone and iPad app": "iPhone 및 iPad 앱",
+  "iPhone and iPad builds need Xcode 26 or later. Install it from the App Store.":
+    "iPhone과 iPad 빌드에는 Xcode 26 이상이 필요해요. App Store에서 설치하세요.",
+  "no licence": "라이선스 없음",
+  "over budget": "예산 초과",
+  "runs a build script": "빌드 스크립트 실행",
+  "seed {seed}": "시드 {seed}",
+  "this Mac": "이 Mac",
+  "this computer": "이 컴퓨터",
+  "tick {tick}": "틱 {tick}",
+  unnamed: "이름 없음",
+  "{advisory} in {crate}": "{crate}의 {advisory}",
+  "{count, plural, one {# crate} other {# crates}}": "{count, plural, other {크레이트 #개}}",
+  "{count, plural, one {# hitch} other {# hitches}}": "{count, plural, other {끊김 #회}}",
+  "{count, plural, one {# time} other {# times}}": "{count, plural, other {#회}}",
+  "{destinations} aren’t available yet": "{destinations}은(는) 아직 사용할 수 없어요",
+  "{destination} isn’t available yet": "{destination}은(는) 아직 사용할 수 없어요",
+  "{game} crashed": "{game}이(가) 멈췄어요",
+  "{game} crashed with a memory fault": "{game}이(가) 메모리 오류로 멈췄어요",
+  "{game} exited abnormally": "{game}이(가) 비정상 종료됐어요",
+  "{game} hit a GPU error": "{game}에서 GPU 오류가 났어요",
+  "{game} lost its GPU device": "{game}이(가) GPU 장치를 잃었어요",
+  "{game} panicked": "{game}이(가) 패닉했어요",
+  "{game} ran out of memory": "{game}의 메모리가 부족해졌어요",
+  "{game} stopped answering and was ended": "{game}이(가) 응답하지 않아 종료됐어요",
+  "{game} trapped in WebAssembly": "{game}이(가) WebAssembly에서 트랩됐어요",
+  "{label}, Built on the starting point": "{label}, 시작 지점에서 빌드됨",
+  "{mib} MiB": "{mib}MiB",
+  "{mib} of {budget} MiB": "{mib}/{budget}MiB",
+  "{ms} ms": "{ms}ms",
+  "{need} needed, {free} free": "{need} 필요, {free} 여유",
+  "{players, plural, one {# player} other {# players}}": "{players, plural, other {플레이어 #명}}",
+  "{players, plural, one {# player} other {# players}} · {connected} connected":
+    "{players, plural, other {플레이어 #명}} · {connected}명 연결됨",
+  "{runs, plural, one {; the same crash in # run} other {; the same crash in # runs}}":
+    "{runs, plural, other {; 같은 문제가 #번의 실행에서 발생}}",
+  "{size} on disk": "디스크 {size}",
+  "{stack} games can’t be built for it here yet": "{stack} 게임은 아직 여기서 이 대상으로 빌드할 수 없어요",
+  "{stage} · {done} of {total}": "{stage} · {done}/{total}",
+  "{what}{where}{when}{again}.": "{what}{where}{when}{again}.",
 } satisfies LocaleCatalog;

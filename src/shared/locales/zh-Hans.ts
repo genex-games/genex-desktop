@@ -5560,4 +5560,630 @@ export default {
   "Your game is on Roblox": "你的游戏已上线 Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "你继续工作时，游戏的智能体会在 Roblox Studio 中发布它。",
+  " (tick {tick})": "（tick {tick}）",
+  " at {file}:{line}": "（{file}:{line}）",
+  "A download address was not secure, so nothing was downloaded.": "下载地址不安全，所以没有下载任何内容。",
+  "A download did not match its pinned checksum and was thrown away.": "下载内容与固定的校验和不符，已丢弃。",
+  "A download failed. Check the connection and try again.": "下载失败。检查网络连接后再试一次。",
+  "A download held files outside its own folder, so it was not unpacked.":
+    "下载内容包含其文件夹之外的文件，所以没有解压。",
+  "A file couldn’t be packed safely, so nothing was exported.": "有文件无法安全打包，所以没有导出任何内容。",
+  "A file held a secret key, so nothing was exported.": "有文件包含密钥，所以没有导出任何内容。",
+  "A game": "一个游戏",
+  "A game asked for a crate beyond Genex’s reviewed set. You decide. Genex reads the crate and checks it offline only after you approve: a known security advisory, a licence Genex doesn’t allow or a banned crate, in it or in a crate it brings in, stops it. Audits are shown for your information. Added crates are for that game only.":
+    "有游戏请求了 Genex 审核范围之外的 crate。由你决定。只有在你批准后，Genex 才会读取并离线检查这个 crate：如果它本身或它引入的 crate 有已知安全公告、Genex 不允许的许可证或被禁止的 crate，就会被拦下。审计结果仅供参考。添加的 crate 只用于那个游戏。",
+  "A game keeps the stack it was made with. Add destinations it can already build for.":
+    "游戏会保留创建时的技术栈。请添加它已经能构建的目标平台。",
+  "A known security advisory ({advisory}) affects it, so it wasn’t added even with your approval.":
+    "它受已知安全公告（{advisory}）影响，所以即使你批准也没有添加。",
+  "A known security advisory affects it, or a crate it brings in, so it wasn’t added even with your approval.":
+    "它或它引入的 crate 受已知安全公告影响，所以即使你批准也没有添加。",
+  "A licence the export must include couldn’t be read, so nothing was exported.":
+    "无法读取导出必须包含的许可证，所以没有导出任何内容。",
+  "A newer version of Genex made this game, so this one opens it read-only.":
+    "这个游戏由更新版本的 Genex 创建，所以当前版本以只读方式打开。",
+  "A tool was installed but did not run.": "工具已安装，但没有运行起来。",
+  "ANGLE for Linux": "Linux 版 ANGLE",
+  "ANGLE for Mac": "Mac 版 ANGLE",
+  "ANGLE for Windows": "Windows 版 ANGLE",
+  "Accept the Android SDK License before installing Android’s tools.":
+    "安装 Android 工具前，请先接受 Android SDK 许可证。",
+  "Accept the license": "接受许可证",
+  "Add it in a terminal instead": "改用终端添加",
+  "Added for this game": "已为这个游戏添加",
+  Advisories: "安全公告",
+  "Advisory list": "公告列表",
+  "Allow build scripts": "允许构建脚本",
+  "Allow proc macros": "允许过程宏",
+  "An earlier re-take of this part is still where this one would go.": "这个部分之前的取回文件还在本次要放的位置。",
+  "Android NDK": "Android NDK",
+  "Android SDK License": "Android SDK 许可证",
+  "Android SDK platform": "Android SDK 平台",
+  "Android app": "Android 应用",
+  "Android build tools": "Android 构建工具",
+  "Android phone": "Android 手机",
+  "Android’s SDK, build tools and NDK are installed under Google’s Android Software Development Kit License Agreement. Read it, then accept it here. Genex never accepts it for you.":
+    "Android SDK、构建工具和 NDK 按 Google 的 Android Software Development Kit 许可协议安装。请阅读后在这里接受。Genex 绝不会替你接受。",
+  "Another version is installed. Builds need {version}; Android’s SDK manager installs it.":
+    "已安装其他版本。构建需要 {version}；Android 的 SDK 管理器可以安装。",
+  "App Store or ad hoc (.ipa)": "App Store 或 ad hoc（.ipa）",
+  "AppArmor can’t name the folder Genex is in. Move Genex to a folder whose path has none of {characters}, then open it again.":
+    "AppArmor 无法指定 Genex 所在的文件夹。请把 Genex 移到路径中不含 {characters} 的文件夹，然后重新打开。",
+  "Apple Command Line Tools": "Apple Command Line Tools",
+  "Apple’s Command Line Tools are needed first.": "需要先安装 Apple 的 Command Line Tools。",
+  "Approved, checking…": "已批准，检查中…",
+  "Audited by {sources}": "已由 {sources} 审计",
+  Audits: "审计",
+  Banned: "已禁止",
+  "Bring to front": "移到最前",
+  Browser: "浏览器",
+  "Browser (web folder)": "浏览器（网页文件夹）",
+  "Build in Live": "实时中的构建",
+  "Building for Mac": "正在为 Mac 构建",
+  "Building for Mac needs Apple’s Command Line Tools.": "为 Mac 构建需要 Apple 的 Command Line Tools。",
+  Built: "已构建",
+  "Built here, but it can’t run on this computer": "已在这里构建，但无法在这台电脑上运行",
+  "Built on the starting point": "基于起点构建",
+  "Built, not run here": "已构建，未在这里运行",
+  "Built, not run on this Mac": "已构建，未在这台 Mac 上运行",
+  "C++ games can’t be built on this computer yet.": "这台电脑暂时还不能构建 C++ 游戏。",
+  "C++ games can’t load .{ext} files. Use PNG or JPEG pictures, OGG, WAV or MP3 sound, and glTF or OBJ models.":
+    "C++ 游戏无法加载 .{ext} 文件。图片请用 PNG 或 JPEG，声音用 OGG、WAV 或 MP3，模型用 glTF 或 OBJ。",
+  "C++ games can’t load this format, so builds leave it out.": "C++ 游戏无法加载这种格式，所以构建会跳过它。",
+  "CI smoke passed": "CI 冒烟测试已通过",
+  "CPU {cpu} ms": "CPU {cpu} ms",
+  "CPU {cpu} ms · GPU {gpu} ms": "CPU {cpu} ms · GPU {gpu} ms",
+  Cancelled: "已取消",
+  "Checked by": "检查工具",
+  "Checking disk space": "正在检查磁盘空间",
+  "Checking the build": "正在检查构建",
+  "Checking the downloads": "正在检查下载内容",
+  "Checking the tools run": "正在检查工具能否运行",
+  "Checking what is installed…": "正在检查已安装的内容…",
+  "Choose Native to build it and play it here.": "选择“原生”即可在这里构建并游玩。",
+  "Choose Native to play it here.": "选择“原生”即可在这里游玩。",
+  "Choose at least one place to play.": "至少选择一个游玩平台。",
+  "Choose what to make. Builds signed with your own identity or keystore are yours alone: the agent never makes them.":
+    "选择要制作的内容。用你自己的身份或密钥库签名的构建只属于你：智能体绝不会制作它们。",
+  "Choose…": "选择…",
+  "Click to play": "点击游玩",
+  Closed: "已关闭",
+  "Copy the engine into this game’s engine folder? The game stops getting engine updates, and Live and export wait until each new build passes the conformance checks.":
+    "把引擎复制到这个游戏的引擎文件夹吗？游戏将不再接收引擎更新，实时和导出会等到每个新构建都通过一致性检查。",
+  "Copy the removal command": "复制移除命令",
+  "Copy the terminal command": "复制终端命令",
+  "Couldn’t read the frame profile.": "无法读取帧分析。",
+  "Crates games asked for": "游戏请求的 crate",
+  "Creating…": "正在创建…",
+  Decline: "拒绝",
+  "Development APK": "开发版 APK",
+  Downloading: "正在下载",
+  "Downloading the game": "正在下载游戏",
+  "Drawing the first frame": "正在绘制第一帧",
+  Eject: "弹出",
+  "Eject engine": "弹出引擎",
+  "Ejecting needs a Mac, with macOS among this game’s destinations: the conformance checks run on its Mac build. Nothing was copied.":
+    "弹出引擎需要一台 Mac，并且 macOS 要在这个游戏的目标平台中：一致性检查在它的 Mac 构建上运行。没有复制任何内容。",
+  Emulator: "模拟器",
+  "Engine settings": "引擎设置",
+  "Environment variable": "环境变量",
+  "Esc releases the keyboard": "按 Esc 释放键盘",
+  "Exited unexpectedly": "意外退出",
+  Export: "导出",
+  "Export for": "导出到",
+  "Export for {phone}": "导出到 {phone}",
+  "Export this destination first: there’s no packaged build to install yet.":
+    "请先导出这个目标平台：还没有可安装的打包构建。",
+  "Exported {file}.": "已导出 {file}。",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Linux.":
+    "已导出 {file}。Genex 在 {machine} 上构建了它，但没有在 Linux 上运行过。",
+  "Exported {file}. Genex built it on {machine} but hasn’t run it on Windows.":
+    "已导出 {file}。Genex 在 {machine} 上构建了它，但没有在 Windows 上运行过。",
+  "Exported {name}.app. It opens on this Mac. On another Mac, open it from System Settings > Privacy & Security.":
+    "已导出 {name}.app。它可以在这台 Mac 上打开。在其他 Mac 上，请从“系统设置 > 隐私与安全性”中打开。",
+  "Finding a match…": "正在寻找对局…",
+  "Finish the install in Apple’s window, then come back.": "在 Apple 的窗口中完成安装，然后回来。",
+  "Fix the error, then try again.": "修复错误后再试一次。",
+  "Frame profile": "帧分析",
+  "Frame time over the last 30 seconds. The dashed line is a 60 fps frame; marks are hitches.":
+    "最近 30 秒的帧时间。虚线是 60 fps 的一帧；标记是卡顿。",
+  "GPU device lost": "GPU 设备丢失",
+  "GPU error": "GPU 错误",
+  "GPU passes": "GPU 通道",
+  "Game engine": "游戏引擎",
+  "Game keyboard": "游戏键盘",
+  "Genex built it and checked the program, but this computer can’t run it.":
+    "Genex 已构建并检查了程序，但这台电脑无法运行它。",
+  "Genex can’t convert this format yet, so builds leave it out.": "Genex 暂时无法转换这种格式，所以构建会跳过它。",
+  "Genex can’t run this build without a window on this computer yet, so the browser build is checked instead.":
+    "Genex 暂时无法在这台电脑上无窗口运行这个构建，所以改为检查浏览器构建。",
+  "Genex can’t write the export there, so nothing was exported.": "Genex 无法把导出写到那里，所以没有导出任何内容。",
+  "Genex couldn’t install its crate checker, so nothing was checked or added. Connect to the internet and approve again.":
+    "Genex 无法安装 crate 检查器，所以没有检查或添加任何内容。连接网络后再批准一次。",
+  "Genex couldn’t reach a Wayland session to open the game’s window.": "Genex 无法连接到 Wayland 会话来打开游戏窗口。",
+  "Genex didn’t start this build": "Genex 没有启动这个构建",
+  "Genex doesn’t ship this part, so there is no copy to re-take.": "Genex 不附带这个部分，所以没有可取回的副本。",
+  "Genex has no audit lists to compare against yet, so it was added on your approval alone.":
+    "Genex 还没有可对比的审计列表，所以仅凭你的批准添加了它。",
+  "Genex has no pinned version of this tool for this computer yet.": "Genex 还没有这台电脑可用的这个工具的固定版本。",
+  "Genex has no pinned version of this tool for this computer yet; Install leaves it out.":
+    "Genex 还没有这台电脑可用的这个工具的固定版本；安装时会跳过它。",
+  "Genex has no pinned versions of these tools for this computer yet; Install leaves them out.":
+    "Genex 还没有这台电脑可用的这些工具的固定版本；安装时会跳过它们。",
+  "Genex hasn’t published a download of a tool this needs yet.": "Genex 还没有发布这项所需工具的下载。",
+  "Genex hasn’t published these tools for this computer yet.": "Genex 还没有为这台电脑发布这些工具。",
+  "Genex hasn’t published this download yet": "Genex 还没有发布这个下载",
+  "Genex is compiling the C++ code.": "Genex 正在编译 C++ 代码。",
+  "Genex is compiling the Rust code with Cargo.": "Genex 正在用 Cargo 编译 Rust 代码。",
+  "Genex is in a folder other people on this computer can change, so a profile must not name it. Move Genex to a folder only you can write to, such as ~/Genex, then open it again.":
+    "Genex 所在的文件夹可以被这台电脑上的其他人修改，所以配置文件不能指定它。请把 Genex 移到只有你能写入的文件夹，例如 ~/Genex，然后重新打开。",
+  "Genex needs bubblewrap 0.8 or newer to run games here. Install it, then try again.":
+    "Genex 需要 bubblewrap 0.8 或更新版本才能在这里运行游戏。安装后再试一次。",
+  "Genex never asks for the password itself: the signer reads it from the variable or the file when it signs.":
+    "Genex 从不直接询问密码：签名工具会在签名时从变量或文件中读取。",
+  "Genex opens game windows on Wayland only, and this session is X11.":
+    "Genex 只在 Wayland 上打开游戏窗口，而当前会话是 X11。",
+  "Genex stopped it after it didn’t quit when asked.": "要求退出后它没有关闭，所以 Genex 停止了它。",
+  "Genex’s AppArmor profile is installed, but this window started without it. Quit and reopen Genex. If this screen comes back, AppArmor isn’t applying the profile to this copy; Details say which path it names.":
+    "Genex 的 AppArmor 配置文件已安装，但这个窗口启动时没有使用它。请退出并重新打开 Genex。如果这个界面再次出现，说明 AppArmor 没有对这个副本应用配置文件；“详情”会显示它指定的路径。",
+  "Genex’s built-in rules (test data)": "Genex 内置规则（测试数据）",
+  "Genex’s copy of the engine doesn’t match its checksums, so nothing was copied. Reinstall the Rust setup and try again.":
+    "Genex 的引擎副本与校验和不符，所以没有复制任何内容。重新安装 Rust 设置后再试一次。",
+  "Genex’s crate check didn’t finish, so nothing was added. Approve again to retry; if it keeps failing, reinstall the Rust toolchain in Settings › Toolchains or report the problem.":
+    "Genex 的 crate 检查没有完成，所以没有添加任何内容。再次批准即可重试；如果一直失败，请在“设置 › 工具链”中重新安装 Rust 工具链，或报告问题。",
+  "Genex’s crate policy doesn’t match the one it shipped with, so nothing was checked or added. Reinstall Genex.":
+    "Genex 的 crate 策略与随附的不一致，所以没有检查或添加任何内容。请重新安装 Genex。",
+  "Genex’s engine already uses it; games reach it through Genex, not directly.":
+    "Genex 的引擎已经在用它；游戏通过 Genex 使用它，而不是直接使用。",
+  "Genex’s engine: it updates with Genex.": "Genex 的引擎：随 Genex 一起更新。",
+  "Genex’s graphics library didn’t match its checksum, so the game wasn’t started.":
+    "Genex 的图形库与校验和不符，所以没有启动游戏。",
+  "Getting this ready for your game’s builds…": "正在为你的游戏构建做准备…",
+  "Go back to Genex’s engine? Genex saves a snapshot of the game first, then removes its engine folder and every change in it.":
+    "要回到 Genex 的引擎吗？Genex 会先保存游戏快照，然后删除它的引擎文件夹及其中的所有改动。",
+  "Google Play bundle (.aab)": "Google Play 包（.aab）",
+  "Harness changed these parts before it knew Rust games, so a Rust build won’t run on them. Re-take the shipped copy of each; Harness’s change is kept beside it.":
+    "Harness 在了解 Rust 游戏之前改过这些部分，所以 Rust 构建无法在它们上运行。请分别取回随附副本；Harness 的改动会保存在旁边。",
+  "Harness parts from before Rust games": "Rust 游戏之前的 Harness 部分",
+  "Hide engine settings": "隐藏引擎设置",
+  "How it was checked": "检查方式",
+  "Importing this file failed, so builds leave it out. Deliver it again to retry.":
+    "导入这个文件失败，所以构建会跳过它。重新交付即可重试。",
+  "In Live": "在实时中",
+  "In Live · Native": "在实时中 · 原生",
+  "Included with Genex": "Genex 自带",
+  "Included with Xcode": "Xcode 自带",
+  "Install Command Line Tools": "安装 Command Line Tools",
+  "Install progress": "安装进度",
+  "Install tools": "安装工具",
+  "Install {phone} tools": "安装 {phone} 工具",
+  "Installed ({version})": "已安装（{version}）",
+  "Installed for an older version of Genex: set it up again before the next build.":
+    "为旧版 Genex 安装：请在下次构建前重新设置。",
+  "Installed versions": "已安装的版本",
+  "Installed, but the first build isn’t prepared yet: set it up to finish.":
+    "已安装，但第一次构建还没准备好：设置一下即可完成。",
+  "Installing and starting": "正在安装并启动",
+  "Installs the latest packaged build and starts it.": "安装最新的打包构建并启动它。",
+  "It brings in {crate}, a graphics backend Genex doesn’t allow in games.":
+    "它引入了 {crate}，这是 Genex 在游戏中不允许的图形后端。",
+  "It brings in {crate}, under {licence}, a licence Genex doesn’t allow in games.":
+    "它引入了 {licence} 许可证的 {crate}，Genex 在游戏中不允许这种许可证。",
+  "It brings in {crate}, which a known security advisory ({advisory}) affects, so it wasn’t added even with your approval.":
+    "它引入了受已知安全公告（{advisory}）影响的 {crate}，所以即使你批准也没有添加。",
+  "It ended on {signal}.": "它因 {signal} 结束了。",
+  "It ended with code {code}.": "它以代码 {code} 结束了。",
+  "It has no browser build. Choose Native to play it here.": "它没有浏览器构建。选择“原生”即可在这里游玩。",
+  "It includes a proc macro, which you didn’t allow.": "它包含过程宏，而你没有允许。",
+  "It needs a second version of a crate Genex already ships.": "它需要 Genex 已附带的某个 crate 的第二个版本。",
+  "It runs a build script, which you didn’t allow.": "它会运行构建脚本，而你没有允许。",
+  "It, or a crate it brings in, is a graphics backend Genex doesn’t allow in games.":
+    "它或它引入的 crate 是 Genex 在游戏中不允许的图形后端。",
+  "It, or a crate it brings in, uses a licence Genex doesn’t allow in games.":
+    "它或它引入的 crate 使用了 Genex 在游戏中不允许的许可证。",
+  "Its assets are {size} MB, over the game’s {budget} MB budget for this destination, so it takes longer to download. Raise budget_mb under [assets] in genex.toml if that’s fine.":
+    "它的素材有 {size} MB，超出了游戏在这个目标平台上 {budget} MB 的预算，所以下载会更久。如果没问题，请在 genex.toml 的 [assets] 中调高 budget_mb。",
+  "Its authors withdrew this version.": "作者撤回了这个版本。",
+  "Its code is {size} MB compressed, over the game’s {budget} MB budget, so it loads slower on phones and weak devices. Raise wasm_budget_mb in genex.toml if that’s fine.":
+    "它的代码压缩后有 {size} MB，超出了游戏 {budget} MB 的预算，所以在手机和性能较弱的设备上加载更慢。如果没问题，请在 genex.toml 中调高 wasm_budget_mb。",
+  "Its destinations can’t run on this computer.": "它的目标平台无法在这台电脑上运行。",
+  "Its files changed after they were checked, so Genex won’t use them.":
+    "它的文件在检查后发生了变化，所以 Genex 不会使用。",
+  "Its licence ({licence}) isn’t one Genex allows in games.":
+    "它的许可证（{licence}）不在 Genex 允许游戏使用的范围内。",
+  "Its licence, advisories and audits are checked after you approve; nothing is added if a check stops it.":
+    "许可证、安全公告和审计会在你批准后检查；如果检查拦下了它，就不会添加任何内容。",
+  "It’s a graphics backend Genex doesn’t allow in games.": "这是 Genex 在游戏中不允许的图形后端。",
+  "It’s untested on real GPUs: only a software renderer has drawn it so far.":
+    "未在真实 GPU 上测试：目前只有软件渲染器绘制过它。",
+  "It’s untested on real devices: Genex built it but hasn’t run it on a phone.":
+    "未在真实设备上测试：Genex 构建了它，但没有在手机上运行过。",
+  "Java runtime": "Java 运行时",
+  Joined: "已加入",
+  "Key alias": "密钥别名",
+  "Keystore password": "密钥库密码",
+  Licence: "许可证",
+  "Linux (.tar.gz)": "Linux（.tar.gz）",
+  "Linux headers": "Linux 头文件",
+  "Linux window": "Linux 窗口",
+  "Live can’t draw the game on this Mac. Use Pop out.": "实时无法在这台 Mac 上绘制游戏。请使用“单独打开”。",
+  "Live couldn’t start the game. Try again or use Pop out.": "实时无法启动游戏。再试一次或使用“单独打开”。",
+  "Live shows browser builds, and this game has none. Play it in its own window instead.":
+    "实时显示浏览器构建，而这个游戏没有。请在它自己的窗口中游玩。",
+  "Live stopped showing the game, so it was stopped.": "实时停止显示游戏，所以游戏已停止。",
+  "Live stopped showing the game. Try again or use Pop out.": "实时停止显示游戏。再试一次或使用“单独打开”。",
+  "Loading assets": "正在加载素材",
+  "Local test room": "本地测试房间",
+  "Mac games are built on a Mac": "Mac 游戏要在 Mac 上构建",
+  "Mac window": "Mac 窗口",
+  "Made in": "制作工具",
+  "Made in {stack} for the browser.": "用 {stack} 制作的浏览器游戏。",
+  "Made in {stack}: one game, built for every place you pick.": "用 {stack} 制作：一个游戏，为你选的每个平台构建。",
+  Memory: "内存",
+  "Memory fault": "内存错误",
+  "Multiplayer bridge for the browser": "浏览器多人游戏桥接",
+  "Multiplayer relay library": "多人游戏中继库",
+  "Multiplayer relay library source": "多人游戏中继库源码",
+  Native: "原生",
+  "Needed later to build for iPhone and iPad. Install it from the App Store.":
+    "之后为 iPhone 和 iPad 构建时需要。请从 App Store 安装。",
+  "Needed to build for Mac, unless Xcode is installed. macOS installs them in its own window.":
+    "为 Mac 构建时需要，除非已安装 Xcode。macOS 会在它自己的窗口中安装。",
+  "Needed to build for Mac. macOS installs them in its own window.":
+    "为 Mac 构建时需要。macOS 会在它自己的窗口中安装。",
+  "Needs set-up": "需要设置",
+  "Needs tools": "需要工具",
+  "New Rust game": "新的 Rust 游戏",
+  "No Android SDK was found. Install Android Studio or its command-line tools, then open this again.":
+    "没有找到 Android SDK。请安装 Android Studio 或它的命令行工具，然后重新打开这里。",
+  "No audit Genex trusts covers it yet.": "还没有 Genex 信任的审计覆盖它。",
+  "No audit list yet from {sources}": "还没有来自 {sources} 的审计列表",
+  "No device is ready: start one (or connect your phone) and try again.":
+    "没有就绪的设备：启动一台（或连接你的手机）后再试一次。",
+  "No file chosen": "未选择文件",
+  "No licence named": "未注明许可证",
+  "No old versions to remove": "没有可移除的旧版本",
+  "No trusted audit lists installed yet": "还没有安装受信任的审计列表",
+  "No trusted source has audited it yet. It was added on your approval.":
+    "还没有受信任的来源审计过它。它是凭你的批准添加的。",
+  "None known": "暂无已知",
+  "None known as of {day}": "截至 {day} 暂无已知",
+  "Not allowed": "不允许",
+  "Not allowed: {crates}": "不允许：{crates}",
+  "Not audited by {sources}": "未经 {sources} 审计",
+  "Not available yet": "暂不可用",
+  "Not built yet": "尚未构建",
+  "Not installed. Builds need {version}; Android’s SDK manager installs it.":
+    "未安装。构建需要 {version}；Android 的 SDK 管理器可以安装。",
+  "Not one of this game’s destinations": "不是这个游戏的目标平台",
+  "Nothing installed yet. Make a C++ game to set up its tools.":
+    "还没有安装任何内容。创建一个 C++ 游戏来设置它的工具。",
+  "Nothing removed: a game may still need these versions.": "没有移除任何内容：可能还有游戏需要这些版本。",
+  "Nothing removed: an install is running. Try again when it ends.":
+    "没有移除任何内容：正在安装。等安装结束后再试一次。",
+  "Nothing removed: no install has finished yet.": "没有移除任何内容：还没有完成的安装。",
+  "Nothing removed: this toolchain folder is shared with another Genex.":
+    "没有移除任何内容：这个工具链文件夹与另一个 Genex 共用。",
+  "Off: unsafe code and build scripts in this game don’t build.": "关：这个游戏中的不安全代码和构建脚本不会被构建。",
+  "On a device": "在设备上",
+  "On: this game’s unsafe code and its own build script build. The sandbox is unchanged.":
+    "开：这个游戏的不安全代码和它自己的构建脚本会被构建。沙盒不变。",
+  "One of the game’s own graphics passes didn’t pass Genex’s checks, so it wasn’t run.":
+    "游戏自己的某个图形通道没有通过 Genex 的检查，所以没有运行。",
+  Online: "在线",
+  "Only trust code you’ve read. Unsafe code can crash the game or corrupt its memory, and a build script runs on this Mac at every build. Both stay inside the sandbox: no network, and writes only to the build folder.":
+    "只信任你读过的代码。不安全代码可能让游戏崩溃或损坏它的内存，而构建脚本会在每次构建时在这台 Mac 上运行。两者都留在沙盒中：没有网络，只能写入构建文件夹。",
+  "Only you": "仅限你",
+  "Only you can sign an export with your own identity.": "只有你可以用自己的身份为导出签名。",
+  "Only you can trust a game, here in Genex.": "只有你可以在 Genex 中信任一个游戏。",
+  "Out of memory": "内存不足",
+  Panic: "Panic",
+  "Play in its own window": "在独立窗口中游玩",
+  "Play on Mac": "在 Mac 上游玩",
+  "Play on Mac opens games made for Mac.": "“在 Mac 上游玩”会打开为 Mac 制作的游戏。",
+  "Playing on Mac": "正在 Mac 上游玩",
+  "Plays in its own window": "在独立窗口中游玩",
+  "Pop out": "单独打开",
+  "Preparing shaders": "正在准备着色器",
+  "Preparing the first build": "正在准备第一次构建",
+  "Provisioning profile": "预置描述文件",
+  "Re-take shipped copy": "取回随附副本",
+  "Re-taking…": "正在取回…",
+  "Read the license": "阅读许可证",
+  "Reading…": "正在读取…",
+  "Ready for builds. The model check noted {count, plural, one {# thing} other {# things}} worth a look.":
+    "已可构建。模型检查发现了 {count, plural, other {# 处}}值得一看的地方。",
+  "Reconnecting…": "正在重新连接…",
+  "Release keystore": "发布密钥库",
+  "Remove old versions": "移除旧版本",
+  "Remove the engine folder": "移除引擎文件夹",
+  "Removed {count, plural, one {# old version} other {# old versions}}, {size}":
+    "已移除 {count, plural, other {# 个旧版本}}，{size}",
+  Replay: "回放",
+  Restart: "重启",
+  "Restarting…": "正在重启…",
+  "Run this, then quit and reopen Genex:": "运行这条命令，然后退出并重新打开 Genex：",
+  "Running in its own window": "正在独立窗口中运行",
+  "Runs in the iOS Simulator on this Mac. Signed for this Mac only.":
+    "在这台 Mac 的 iOS Simulator 中运行。仅为这台 Mac 签名。",
+  "Rust for Android": "Android 版 Rust",
+  "Rust for Linux": "Linux 版 Rust",
+  "Rust for Windows": "Windows 版 Rust",
+  "Rust for iPhone": "iPhone 版 Rust",
+  "Rust for the browser": "浏览器版 Rust",
+  "Rust for the iOS Simulator": "iOS Simulator 版 Rust",
+  "Rust games": "Rust 游戏",
+  "Rust games are a developer preview: this version of Genex doesn’t download their tools yet.":
+    "Rust 游戏是开发者预览版：这个版本的 Genex 还不会下载它们的工具。",
+  "Rust games aren’t available in this version of Genex yet.": "这个版本的 Genex 暂时还不支持 Rust 游戏。",
+  "Rust games can’t be built on this computer yet.": "这台电脑暂时还不能构建 Rust 游戏。",
+  "Rust games can’t load .{ext} files. Use PNG, JPEG, WebP or KTX2 pictures, OGG, WAV, MP3 or FLAC sound, and glTF or OBJ models.":
+    "Rust 游戏无法加载 .{ext} 文件。图片请用 PNG、JPEG、WebP 或 KTX2，声音用 OGG、WAV、MP3 或 FLAC，模型用 glTF 或 OBJ。",
+  "Rust games can’t load this format, so builds leave it out.": "Rust 游戏无法加载这种格式，所以构建会跳过它。",
+  "Rust game…": "Rust 游戏…",
+  "Rust libraries": "Rust 库",
+  "RustSec advisories": "RustSec 安全公告",
+  "Safety check: {file} ({refusal})": "安全检查：{file}（{refusal}）",
+  "Saved to": "保存到",
+  "Set up C++ games": "设置 C++ 游戏",
+  "Set up Rust games": "设置 Rust 游戏",
+  "Set up again": "重新设置",
+  "Set up once for every C++ destination this computer can build. These tools are shared by all your C++ games.":
+    "为这台电脑能构建的每个 C++ 目标平台设置一次。这些工具由你所有的 C++ 游戏共用。",
+  "Set up once for every Rust destination this computer can build. These tools are shared by all your Rust games.":
+    "为这台电脑能构建的每个 Rust 目标平台设置一次。这些工具由你所有的 Rust 游戏共用。",
+  "Set up the C++ tools this game builds with": "设置这个游戏构建所用的 C++ 工具",
+  "Setup finished": "设置完成",
+  "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.":
+    "设置已取消，没有任何改动。准备好批准时，再选一次“设置”。",
+  "Shipped copy back. Harness’s change is kept in {file}": "随附副本已取回。Harness 的改动保存在 {file}",
+  "Signed with this profile’s own Genex debug key. Installs on a test phone.":
+    "使用这个配置专属的 Genex 调试密钥签名。可安装到测试手机。",
+  "Signed with your Apple Development identity and a provisioning profile that lists your device.":
+    "使用你的 Apple Development 身份和包含你设备的预置描述文件签名。",
+  "Signed with your Apple Distribution identity and its provisioning profile.":
+    "使用你的 Apple Distribution 身份及其预置描述文件签名。",
+  "Signed with your own release keystore.": "使用你自己的发布密钥库签名。",
+  "Signing didn’t finish, so nothing was exported.": "签名没有完成，所以没有导出任何内容。",
+  "Signing identity": "签名身份",
+  "Simulator app": "模拟器应用",
+  "Slowest scopes": "最慢的范围",
+  "Start the game to see its frame profile.": "启动游戏即可查看帧分析。",
+  "Started on the device.": "已在设备上启动。",
+  "Starting the graphics": "正在启动图形",
+  "Stop timing passes": "停止测量通道",
+  "Stop trusting": "停止信任",
+  "Stopped responding": "停止响应",
+  "Studio plays a local test room; publish a draft to play online.":
+    "Studio 运行的是本地测试房间；发布草稿即可在线游玩。",
+  "SwiftShader for Linux": "Linux 版 SwiftShader",
+  "That isn’t a harness part’s path, so nothing was changed.": "这不是 Harness 部分的路径，所以没有任何改动。",
+  "That isn’t one of this game’s destinations.": "这不是这个游戏的目标平台。",
+  "That isn’t something a C++ game can do here.": "C++ 游戏无法在这里这样做。",
+  "The C++ tools are installed but not set up yet. Set them up to finish.":
+    "C++ 工具已安装但还没设置。设置一下即可完成。",
+  "The C++ tools this export needs are missing or damaged. Set them up again, then try again.":
+    "这次导出所需的 C++ 工具缺失或损坏。重新设置后再试一次。",
+  "The C++ tools this game builds with aren’t installed. Install them, then try again.":
+    "这个游戏构建所用的 C++ 工具没有安装。安装后再试一次。",
+  "The C++ tools were set up for an older version of Genex. Set them up again, then try again.":
+    "C++ 工具是为旧版 Genex 设置的。重新设置后再试一次。",
+  "The Mac build didn’t pass Genex’s checks, so no app was made.": "Mac 构建没有通过 Genex 的检查，所以没有生成应用。",
+  "The Mac build failed.": "Mac 构建失败。",
+  "The build changed while it was being exported. Try again.": "导出过程中构建发生了变化。再试一次。",
+  "The build didn’t pass Genex’s safety check, so it isn’t used.": "构建没有通过 Genex 的安全检查，所以不会使用。",
+  "The build doesn’t draw through Genex’s graphics library, so it wasn’t started.":
+    "构建没有通过 Genex 的图形库绘制，所以没有启动。",
+  "The build failed.": "构建失败。",
+  "The build holds a file linked from somewhere else, so it wasn’t started.":
+    "构建中有从别处链接来的文件，所以没有启动。",
+  "The build holds a library Genex didn’t expect, so it wasn’t started.": "构建中有 Genex 意料之外的库，所以没有启动。",
+  "The build holds a link, so it wasn’t started.": "构建中有链接，所以没有启动。",
+  "The build holds a program Genex didn’t expect, so it wasn’t started.":
+    "构建中有 Genex 意料之外的程序，所以没有启动。",
+  "The build is for a different kind of computer, so it wasn’t started.": "构建是为另一种电脑准备的，所以没有启动。",
+  "The build isn’t a Mac program this computer can run.": "这个构建不是这台电脑能运行的 Mac 程序。",
+  "The build loads libraries from outside the game, so it wasn’t started.": "构建会从游戏外部加载库，所以没有启动。",
+  "The build needs a newer Linux than Genex supports.": "构建需要比 Genex 支持的更新的 Linux。",
+  "The build needs a system library Genex doesn’t allow, so it wasn’t started.":
+    "构建需要 Genex 不允许的系统库，所以没有启动。",
+  "The build took too long and was stopped.": "构建用时过长，已停止。",
+  "The build uses OpenGL directly, which Genex doesn’t run on Linux.":
+    "构建直接使用了 OpenGL，Genex 在 Linux 上不运行它。",
+  "The build uses OpenGL, which Genex doesn’t run on Windows.": "构建使用了 OpenGL，Genex 在 Windows 上不运行它。",
+  "The build uses OpenGL, which Genex doesn’t run. Games draw through Metal.":
+    "构建使用了 OpenGL，Genex 不运行它。游戏通过 Metal 绘制。",
+  "The build was stopped.": "构建已停止。",
+  "The device didn’t install or start the game.": "设备没有安装或启动游戏。",
+  "The engine didn’t change.": "引擎没有变化。",
+  "The engine this game was built with is no longer installed, so nothing was copied. Build the game once, then try again.":
+    "构建这个游戏所用的引擎已不再安装，所以没有复制任何内容。先构建一次游戏，然后再试一次。",
+  "The export folder holds files Genex didn’t put there, so nothing was exported.":
+    "导出文件夹中有不是 Genex 放进去的文件，所以没有导出任何内容。",
+  "The game answered Genex with something it couldn’t read, so it was stopped.":
+    "游戏用 Genex 无法读取的内容回应，所以已停止。",
+  "The game asked for more pictures than Genex shares, so it was stopped.":
+    "游戏请求的画面超过了 Genex 的共享数量，所以已停止。",
+  "The game crashed": "游戏崩溃了",
+  "The game didn’t answer Genex the way a Genex game does, so it was stopped.":
+    "游戏没有像 Genex 游戏那样回应 Genex，所以已停止。",
+  "The game lost its graphics device. It’s getting it back; try again in a moment.":
+    "游戏丢失了图形设备。正在恢复；稍后再试一次。",
+  "The game needs a graphics feature this computer doesn’t have.": "游戏需要这台电脑没有的图形功能。",
+  "The game needs graphics features browsers don’t offer, so it has no web build.":
+    "游戏需要浏览器不提供的图形功能，所以没有网页构建。",
+  "The game sent Genex more than it accepts at once, so it was stopped.":
+    "游戏一次发给 Genex 的内容超过了它能接收的量，所以已停止。",
+  "The game sent Live a picture Genex couldn’t use, so it was stopped.":
+    "游戏发给实时的画面 Genex 无法使用，所以已停止。",
+  "The game sent a picture Genex didn’t ask for, so it was stopped.": "游戏发送了 Genex 没有请求的画面，所以已停止。",
+  "The game sent pictures faster than Genex shows them, so it was stopped.":
+    "游戏发送画面的速度超过了 Genex 的显示速度，所以已停止。",
+  "The game stopped responding and was stopped.": "游戏停止响应，已停止。",
+  "The game took too long to start and was stopped.": "游戏启动用时过长，已停止。",
+  "The game used too much memory and was stopped.": "游戏占用内存过多，已停止。",
+  "The game was stopped by force": "游戏被强制停止",
+  "The game’s current build failed, so nothing was exported.": "游戏当前的构建失败了，所以没有导出任何内容。",
+  "The game’s graphics stopped responding, so it was stopped.": "游戏的图形停止响应，所以已停止。",
+  "The game’s picture didn’t match what it said it drew.": "游戏的画面与它声称绘制的内容不符。",
+  "The game’s picture was larger than Genex accepts.": "游戏的画面超过了 Genex 能接收的大小。",
+  "The install stopped": "安装已停止",
+  "The model check found errors in this file, so builds leave it out.":
+    "模型检查在这个文件中发现了错误，所以构建会跳过它。",
+  "The packaged build holds a link, so it wasn’t installed.": "打包构建中有链接，所以没有安装。",
+  "The packaged build is linked from somewhere else, so it wasn’t installed.":
+    "打包构建是从别处链接来的，所以没有安装。",
+  "The registry has no such crate or version.": "注册表中没有这个 crate 或版本。",
+  "The sandbox Genex runs games in refused to start this one.": "Genex 运行游戏的沙盒拒绝启动这个游戏。",
+  "The signing details aren’t valid, so nothing was exported.": "签名信息无效，所以没有导出任何内容。",
+  "The tools installed, but preparing the first build failed.": "工具已安装，但准备第一次构建失败了。",
+  "The trust setting didn’t change.": "信任设置没有变化。",
+  "The {destination} build failed.": "{destination} 构建失败。",
+  "There is no build the judges can play: the browser build made for them failed.":
+    "没有评委可以游玩的构建：为他们制作的浏览器构建失败了。",
+  "There isn’t enough free disk space.": "磁盘可用空间不足。",
+  "This Mac can’t show the game inside Live. Play on Mac opens it in its own window.":
+    "这台 Mac 无法在实时中显示游戏。“在 Mac 上游玩”会在独立窗口中打开它。",
+  "This Xcode is too old for iPhone and iPad builds: they need Xcode 26 or later.":
+    "这个 Xcode 太旧，无法构建 iPhone 和 iPad 版本：需要 Xcode 26 或更新版本。",
+  "This build doesn’t report a frame profile yet.": "这个构建还不会报告帧分析。",
+  "This build has no game id to find its room with.": "这个构建没有用于查找房间的游戏 ID。",
+  "This build has no multiplayer: add [net] to genex.toml.": "这个构建没有多人游戏：请在 genex.toml 中添加 [net]。",
+  "This computer can’t show the game inside Live yet.": "这台电脑暂时还不能在实时中显示游戏。",
+  "This computer’s graphics can’t run the game: it needs WebGPU-class graphics.":
+    "这台电脑的图形无法运行这个游戏：需要 WebGPU 级别的图形。",
+  "This copy of Genex is missing a bundled C++ component. Reinstall Genex, or rebuild it with the bundled tools.":
+    "这份 Genex 缺少一个自带的 C++ 组件。请重新安装 Genex，或用自带工具重新构建它。",
+  "This desktop can’t give a game its own restricted Wayland connection, so Genex won’t open its window.":
+    "这个桌面无法为游戏提供独立的受限 Wayland 连接，所以 Genex 不会打开它的窗口。",
+  "This destination can’t reach the network.": "这个目标平台无法访问网络。",
+  "This file is damaged or isn’t the format its name says, so builds leave it out.":
+    "这个文件已损坏，或者不是文件名所示的格式，所以构建会跳过它。",
+  "This file is gone, so builds leave it out.": "这个文件已不存在，所以构建会跳过它。",
+  "This file is too large to import, so builds leave it out.": "这个文件太大，无法导入，所以构建会跳过它。",
+  "This file points outside the game folder, so builds leave it out.": "这个文件指向游戏文件夹之外，所以构建会跳过它。",
+  "This file’s name can’t be used in a game, so builds leave it out.": "这个文件名不能用在游戏中，所以构建会跳过它。",
+  "This game already has an engine folder, so nothing was copied. Remove it or use Genex’s engine first.":
+    "这个游戏已经有引擎文件夹，所以没有复制任何内容。请删除它，或先使用 Genex 的引擎。",
+  "This game has no browser build": "这个游戏没有浏览器构建",
+  "This game plays its Mac build in Live": "这个游戏在实时中显示它的 Mac 构建",
+  "This game runs in its own window": "这个游戏在独立窗口中运行",
+  "This game runs its own engine, and its current build hasn’t passed the conformance checks, so nothing was exported.":
+    "这个游戏运行自己的引擎，而它当前的构建没有通过一致性检查，所以没有导出任何内容。",
+  "This game runs its own engine, and this build hasn’t passed the conformance checks yet, so it wasn’t started.":
+    "这个游戏运行自己的引擎，而这个构建还没有通过一致性检查，所以没有启动。",
+  "This game was made before Live could show Mac builds.": "这个游戏制作于实时能显示 Mac 构建之前。",
+  "This game was made before Live could show Mac builds. Use Pop out.":
+    "这个游戏制作于实时能显示 Mac 构建之前。请使用“单独打开”。",
+  "This game’s folder has a CMakeCache.txt. Genex builds outside the game folder: delete that file, then try again.":
+    "这个游戏的文件夹里有 CMakeCache.txt。Genex 在游戏文件夹之外构建：删除那个文件后再试一次。",
+  "This game’s own copy of engine {version}, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "这个游戏自己的引擎 {version} 副本，位于它的引擎文件夹中。它不再更新；实时和导出需要每个构建都通过一致性检查。",
+  "This game’s own copy, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.":
+    "这个游戏自己的副本，位于它的引擎文件夹中。它不再更新；实时和导出需要每个构建都通过一致性检查。",
+  "This game’s tools aren’t installed, and Genex can’t download them while offline.":
+    "这个游戏的工具没有安装，而 Genex 离线时无法下载它们。",
+  "This isn’t a regular file, so builds leave it out.": "这不是普通文件，所以构建会跳过它。",
+  "This model needs a glTF extension Genex games can’t read, so builds leave it out.":
+    "这个模型需要 Genex 游戏无法读取的 glTF 扩展，所以构建会跳过它。",
+  "This page has no player identity to join with.": "这个页面没有可用于加入的玩家身份。",
+  "This part is already the shipped copy.": "这个部分已经是随附副本。",
+  "This part isn’t a plain file in the harness, so nothing was changed.":
+    "这个部分不是 Harness 中的普通文件，所以没有任何改动。",
+  "This preview can’t take touches, so the game’s touch controls weren’t played.":
+    "这个预览不支持触摸，所以没有试玩游戏的触控操作。",
+  "This version of Genex can’t build this kind of game yet, so nothing was exported.":
+    "这个版本的 Genex 暂时还不能构建这类游戏，所以没有导出任何内容。",
+  "This version of Genex can’t build this kind of game yet.": "这个版本的 Genex 暂时还不能构建这类游戏。",
+  "This version of Genex can’t eject an engine.": "这个版本的 Genex 无法弹出引擎。",
+  "This version of Genex can’t open game windows on Linux yet.": "这个版本的 Genex 暂时还不能在 Linux 上打开游戏窗口。",
+  "This version of Genex can’t run it on this computer yet": "这个版本的 Genex 暂时还不能在这台电脑上运行它",
+  "This version of Genex can’t show Mac builds inside Live yet. Play on Mac opens it in its own window.":
+    "这个版本的 Genex 暂时还不能在实时中显示 Mac 构建。“在 Mac 上游玩”会在独立窗口中打开它。",
+  "This version of Genex can’t show the game inside Live yet.": "这个版本的 Genex 暂时还不能在实时中显示游戏。",
+  "This version of Genex can’t trust a game’s code.": "这个版本的 Genex 无法信任游戏的代码。",
+  "This version of Genex doesn’t build it from here yet.": "这个版本的 Genex 暂时还不能从这里构建它。",
+  "This version of Genex exports Mac apps signed for this Mac only.":
+    "这个版本的 Genex 导出的 Mac 应用仅为这台 Mac 签名。",
+  "This version of Genex has no game launcher for Windows yet.": "这个版本的 Genex 还没有 Windows 游戏启动器。",
+  "This version of the studio’s harness can’t judge C++ games. Update it, then try again.":
+    "这个版本的工作室 Harness 无法评审 C++ 游戏。更新后再试一次。",
+  "Three.js games play in the browser. Choose Rust · wgpu to build for it.":
+    "Three.js 游戏在浏览器中游玩。选择 Rust · wgpu 即可为这个平台构建。",
+  "Time GPU passes": "测量 GPU 通道",
+  "Timing the next frames…": "正在测量接下来的帧…",
+  "To remove it later:": "以后要移除：",
+  Toolchains: "工具链",
+  "Trust this game": "信任这个游戏",
+  "Trust this game’s code": "信任这个游戏的代码",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces agents run in. Genex needs its profile added once.":
+    "Ubuntu 只允许带 AppArmor 配置文件的应用创建智能体运行所需的隔离空间。需要添加一次 Genex 的配置文件。",
+  "Ubuntu only lets apps with an AppArmor profile create the isolated spaces games run in, so this game wasn’t started.":
+    "Ubuntu 只允许带 AppArmor 配置文件的应用创建游戏运行所需的隔离空间，所以这个游戏没有启动。",
+  "Ubuntu will ask for your password once to add {file}. It lets this copy of Genex, and the programs it starts, create user namespaces despite Ubuntu’s restriction. Then Genex restarts.":
+    "Ubuntu 会询问一次你的密码来添加 {file}。这样这份 Genex 及其启动的程序就能在 Ubuntu 的限制下创建用户命名空间。之后 Genex 会重启。",
+  Unpacking: "正在解压",
+  "Untested on real GPUs": "未在真实 GPU 上测试",
+  "Untested on real devices": "未在真实设备上测试",
+  "Use Genex’s engine": "使用 Genex 的引擎",
+  "Verified in a VM": "已在虚拟机中验证",
+  "Waiting for approval…": "正在等待批准…",
+  "Waiting for players": "正在等待玩家",
+  "Web and exported builds don’t report a frame profile.": "网页构建和导出的构建不会报告帧分析。",
+  "WebAssembly trap": "WebAssembly 陷阱",
+  "What to make": "要制作的内容",
+  "Where will people play?": "玩家会在哪里玩？",
+  "Windows (.zip)": "Windows（.zip）",
+  "Windows will ask an administrator to approve the setup once.": "Windows 会请管理员批准一次设置。",
+  "Windows window": "Windows 窗口",
+  "Xcode is missing the iOS 26 SDK. Open Xcode once to install it.": "Xcode 缺少 iOS 26 SDK。打开一次 Xcode 即可安装。",
+  "Xcode is ready for iPhone and iPad builds.": "Xcode 已可用于 iPhone 和 iPad 构建。",
+  "You accepted the Android SDK License.": "你已接受 Android SDK 许可证。",
+  "You declined it.": "你拒绝了它。",
+  "Your iPhone or iPad (.ipa)": "你的 iPhone 或 iPad（.ipa）",
+  "checked the game's conformance": "检查了游戏的一致性",
+  "for {game}": "用于 {game}",
+  game: "游戏",
+  "has a proc macro": "含过程宏",
+  "iPhone and iPad": "iPhone 和 iPad",
+  "iPhone and iPad app": "iPhone 和 iPad 应用",
+  "iPhone and iPad builds need Xcode 26 or later. Install it from the App Store.":
+    "iPhone 和 iPad 构建需要 Xcode 26 或更新版本。请从 App Store 安装。",
+  "no licence": "无许可证",
+  "over budget": "超出预算",
+  "runs a build script": "运行构建脚本",
+  "seed {seed}": "种子 {seed}",
+  "this Mac": "这台 Mac",
+  "this computer": "这台电脑",
+  "tick {tick}": "tick {tick}",
+  unnamed: "未命名",
+  "{advisory} in {crate}": "{crate} 中的 {advisory}",
+  "{count, plural, one {# crate} other {# crates}}": "{count, plural, other {# 个 crate}}",
+  "{count, plural, one {# hitch} other {# hitches}}": "{count, plural, other {# 次卡顿}}",
+  "{count, plural, one {# time} other {# times}}": "{count, plural, other {# 次}}",
+  "{destinations} aren’t available yet": "{destinations} 暂不可用",
+  "{destination} isn’t available yet": "{destination} 暂不可用",
+  "{game} crashed": "{game} 崩溃了",
+  "{game} crashed with a memory fault": "{game} 因内存错误崩溃了",
+  "{game} exited abnormally": "{game} 异常退出了",
+  "{game} hit a GPU error": "{game} 遇到了 GPU 错误",
+  "{game} lost its GPU device": "{game} 丢失了 GPU 设备",
+  "{game} panicked": "{game} 发生了 panic",
+  "{game} ran out of memory": "{game} 内存不足",
+  "{game} stopped answering and was ended": "{game} 停止响应并已结束",
+  "{game} trapped in WebAssembly": "{game} 在 WebAssembly 中触发了陷阱",
+  "{label}, Built on the starting point": "{label}，基于起点构建",
+  "{mib} MiB": "{mib} MiB",
+  "{mib} of {budget} MiB": "{mib} / {budget} MiB",
+  "{ms} ms": "{ms} ms",
+  "{need} needed, {free} free": "需要 {need}，可用 {free}",
+  "{players, plural, one {# player} other {# players}}": "{players, plural, other {# 名玩家}}",
+  "{players, plural, one {# player} other {# players}} · {connected} connected":
+    "{players, plural, other {# 名玩家}} · {connected} 人已连接",
+  "{runs, plural, one {; the same crash in # run} other {; the same crash in # runs}}":
+    "{runs, plural, other {；同样的崩溃出现在 # 次运行中}}",
+  "{size} on disk": "磁盘上 {size}",
+  "{stack} games can’t be built for it here yet": "{stack} 游戏暂时还不能在这里为这个平台构建",
+  "{stage} · {done} of {total}": "{stage} · {done}/{total}",
+  "{what}{where}{when}{again}.": "{what}{where}{when}{again}。",
 } satisfies LocaleCatalog;

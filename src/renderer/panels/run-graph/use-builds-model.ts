@@ -19,7 +19,7 @@ import {
   runStillPath,
   thumbShot,
 } from "../../run-graph.ts";
-import { leadWorking, partRows, resultStatus, StepState } from "../../run-steps.ts";
+import { leadWorking, type PartRow, partRows, resultStatus, type RoundPicture, StepState } from "../../run-steps.ts";
 import { buildsLayout, graphLoaded, leadFace, leadNodeOf, readingNodes, readingOrder } from "../../run-tree.ts";
 import { useLibrary } from "../../state/hooks.ts";
 import { assetsOf } from "../../state/library.ts";
@@ -27,7 +27,7 @@ import { studio } from "../../state/studio.ts";
 import { useStill } from "../../stills.ts";
 import { useSharedSnapshot } from "../../use-shared-snapshot.ts";
 import { useRunSummary } from "../../use-run-summary.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { useRoundPicture } from "../run-stills.ts";
 
 /** How often the status bar's elapsed time moves while the run does. */
 const CLOCK_TICK_MS = 30 * SECOND_MS;
@@ -167,13 +167,19 @@ function newestMergedPart(graph: RunGraphModel): string | null {
   return merge?.facetId ?? null;
 }
 
+/** The picture of a part's newest step in the build: its judged frame, else its own builder's capture. */
+function mergedPicture(rows: readonly PartRow[], facetId: string | null): RoundPicture | null {
+  const row = rows.find((item) => item.facet.facetId === facetId);
+  return row?.steps.findLast((step) => step.state === StepState.InBuild)?.roundPicture ?? null;
+}
+
 /**
  * The run's two stills: where it started, and its build now — the final capture, else the last
  * merged try's, else (a lead's merge names no round) the picture of the part it merged last. A
  * build still being tried shows that borrowed picture softened, never as the build's own.
  */
 export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
-  const { graph, outcome, base, roundById } = model;
+  const { graph, outcome, base, roundById, rows } = model;
   const baseStillPath = baseStillOf(graph, outcome);
   const baseSrc = useStill(
     baseStillPath ? { run: baseStillPath, maxPx: 640, retry: `${graph.runDir}:${baseStillPath}:${base?.done}` } : null,
@@ -187,9 +193,9 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
   const mergedShot = lastMergedRound ? thumbShot(lastMergedRound) : null;
   const mergedPath = finalSrc ? null : (mergedShot?.path ?? null);
   const mergedSrc = useStill(mergedPath ? { run: mergedPath, maxPx: 640 } : null);
-  const newestPart = useMemo(() => newestMergedPart(graph), [graph]);
-  // No part named: nothing to ask for while the build has a picture of its own.
-  const partSrc = useRoundStill(graph, finalSrc || mergedShot ? "" : (newestPart ?? ""), 1, null, false);
+  const newestPart = useMemo(() => mergedPicture(rows, newestMergedPart(graph)), [rows, graph]);
+  // No part picture asked for while the build has a picture of its own.
+  const partSrc = useRoundPicture(runIdOf(graph), finalSrc || mergedShot ? null : newestPart, false).src;
   const result = useMemo(() => resultStatus(graph, outcome), [graph, outcome]);
   const resultSrc = finalSrc ?? mergedSrc ?? partSrc;
   const resultPath = finalSrc ? finalStillPath : (mergedShot?.path ?? null);

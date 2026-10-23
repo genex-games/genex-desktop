@@ -13,6 +13,7 @@ import { nativeCommands, useNativeRun } from "../../state/hooks.ts";
 import { type Notify, notifyProblem } from "../../state/toasts.ts";
 import { Button } from "../../ui/Button.tsx";
 import { NATIVE_WORDS, TOOLCHAIN_WORDS } from "../../words.ts";
+import { t } from "../../../shared/i18n.ts";
 import { TroubleDetails } from "./build-problem.tsx";
 import { NativeCardAction, type NativeCardView, nativeCardView } from "./native-card.ts";
 
@@ -22,7 +23,7 @@ const LOG_LINES_SHOWN = 20;
 /** The card's own words. */
 const MESSAGE = {
   /** Install tools, as the build strip says it. */
-  installTools: "Install tools",
+  installTools: t("Install tools"),
 } as const;
 
 /** The buttons that open the Toolchain sheet instead of asking the registry for something. */

@@ -620,10 +620,10 @@ fn a_game_asks_for_four_cascades_at_high_and_only_high_on_a_desktop_gets_them() 
 fn the_same_request_on_a_phone_is_held_to_the_mobile_caps() {
     let mut phone = control(RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4).map_size(4096).filter(ShadowFilter::Pcss)));
     emulate(&mut phone, "mobile-high", QualityPreset::High);
-    assert_eq!(shadow_row(&phone), (2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "2 x 1536 Depth16, no PCSS, far cascade every 2nd frame");
+    assert_eq!(shadow_row(&phone), (2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "2 x 1536 Depth16, no PCSS, far cascade every 2nd frame");
     emulate(&mut phone, "mobile-low", QualityPreset::High);
     // Pass-1 gate finding 02 flips the weakest phone's cap (named in the log): two 512 px cascades (was one of 768).
-    assert_eq!(shadow_row(&phone), (2, 512, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "the weakest phone: two 512 px cascades");
+    assert_eq!(shadow_row(&phone), (2, 512, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "the weakest phone: two 512 px cascades");
     let (capture, _) = phone.capture_frame();
     assert_eq!(capture.quality.shadows.cascades, 2, "a capture as that phone draws what the phone draws");
 }
@@ -657,8 +657,12 @@ fn genex_toml_and_the_facade_set_the_shadow_distance_and_blend_band_on_every_pre
     assert_eq!(reach(&game), (150, 20), "genex.toml's [render.shadows] at high");
     game.apply(&preset(QualityPreset::Medium));
     assert_eq!(reach(&game), (150, 20), "and at every other preset");
+    // Release R-13 flipped (was 40; named in the PR): a high-tier phone reaches desktop high's 80
+    // units at most, the mid and low phones 40.
     emulate(&mut game, "mobile-high", QualityPreset::Medium);
-    assert_eq!(reach(&game).0, 40, "a phone reaches 40 units at most");
+    assert_eq!(reach(&game).0, 80, "a high-tier phone reaches 80 units at most");
+    emulate(&mut game, "mobile-mid", QualityPreset::Medium);
+    assert_eq!(reach(&game).0, 40, "a mid-tier phone reaches 40 units at most");
     let code = RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().distance(5).blend_band(0.9));
     assert_eq!(reach(&control(code)), (10, 50), "a request is held to 10..=400 units and half a cascade");
 }

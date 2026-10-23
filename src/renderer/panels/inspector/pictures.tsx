@@ -3,10 +3,11 @@ import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react"
 import { useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { clamp } from "../../canvas-view.ts";
-import { type IterationNode, type RunGraph as RunGraphModel, thumbShot } from "../../run-graph.ts";
+import { type IterationNode, type RunGraph as RunGraphModel, runIdOf } from "../../run-graph.ts";
 import { TRY_GLYPH, tryWord } from "../../round-status.ts";
+import type { RoundPicture } from "../../run-steps.ts";
 import { Icon } from "../../ui/icons.tsx";
-import { useRoundStill } from "../run-stills.ts";
+import { useRoundPicture } from "../run-stills.ts";
 import { capitalise } from "./format.ts";
 
 /** Where the compare handle starts, how far it may go toward either edge, and one arrow key's step. */
@@ -180,10 +181,11 @@ export function Cameras({
   );
 }
 
-/** One try of a step as a thumbnail with its status glyph; pressing it shows that try. */
+/** One try of a step as a thumbnail (its own picture) with its status glyph; pressing it shows that try. */
 export function TryThumb({
   graph,
   node,
+  picture,
   n,
   selected,
   live,
@@ -191,12 +193,13 @@ export function TryThumb({
 }: {
   graph: RunGraphModel;
   node: IterationNode;
+  picture: RoundPicture;
   n: number;
   selected: boolean;
   live: boolean;
   onSelect: () => void;
 }): JSX.Element {
-  const src = useRoundStill(graph, node.facetId, node.iteration, thumbShot(node)?.path ?? null, live);
+  const src = useRoundPicture(runIdOf(graph), picture, live).src;
   const glyph = TRY_GLYPH[node.status];
   return (
     <button

@@ -292,6 +292,7 @@ export function parseMerge(payload: Payload, place: MergePlace): MergeInfo {
     at: place.at,
     seq: place.seq,
     head: strOrNull(payload.head) ?? strOrNull(payload.commit),
+    previousHead: strOrNull(payload.previousHead),
     conflict: payload.conflict === true,
     union: payload.union === true,
     stage: strOrNull(payload.stage),

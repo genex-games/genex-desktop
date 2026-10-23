@@ -156,10 +156,14 @@ function TroubleButtons({
   if (action === TroubleAction.TryAgain) return again;
   // Each opens the Toolchain sheet: to install the tools, to set up again what an older Genex set
   // up, or to finish setting up tools that are installed.
-  const label = SHEET_LABELS[action] ?? "Install tools";
+  const label = SHEET_LABELS[action] ?? t("Install tools");
   return (
     <>
-      <Button data-build-install-tools="" title="Set up the C++ tools this game builds with" onClick={onInstallTools}>
+      <Button
+        data-build-install-tools=""
+        title={t("Set up the C++ tools this game builds with")}
+        onClick={onInstallTools}
+      >
         {label}
       </Button>
       {again}
