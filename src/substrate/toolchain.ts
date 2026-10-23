@@ -267,22 +267,46 @@ export function expandWindowsVariables(value: string, env: NodeJS.ProcessEnv): s
   return value.replace(/%([^%;]+)%/g, (whole, name: string) => envValue(env, name) ?? whole);
 }
 
-/** The `Path` value out of `reg query <key> /v Path` output, or null when the key has none. */
-export function parseRegistryPath(output: string): string | null {
-  const row = /^\s+Path\s+REG_(?:EXPAND_)?SZ\s+(.*)$/im.exec(output);
+/**
+ * The value named `name` out of `reg query <key> /v <name>` output, or null when the key has none.
+ * Windows reads variable names case-blind; a name that only contains `name` is another value.
+ */
+export function parseRegistryValue(output: string, name: string): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const row = new RegExp(`^\\s+${escaped}\\s+REG_(?:EXPAND_)?SZ\\s+(.*)$`, "im").exec(output);
   return row?.[1]?.trim() || null;
 }
 
-/** One registry key's PATH, or null when `reg.exe` cannot answer in time. */
-function queryRegistryPath(regExe: string, key: string): Promise<string | null> {
+/** The `Path` value out of `reg query <key> /v Path` output, or null when the key has none. */
+export const parseRegistryPath = (output: string): string | null => parseRegistryValue(output, "Path");
+
+/** One registry key's value `name`, or null when `reg.exe` cannot answer in time. */
+function queryRegistryValue(regExe: string, key: string, name: string): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       regExe,
-      ["query", key, "/v", "Path"],
+      ["query", key, "/v", name],
       { timeout: REGISTRY_PATH_TIMEOUT_MS, windowsHide: true },
-      (error, stdout) => resolve(error ? null : parseRegistryPath(String(stdout))),
+      (error, stdout) => resolve(error ? null : parseRegistryValue(String(stdout), name)),
     );
   });
+}
+
+/** `reg.exe` by its full path, so a PATH entry can never stand in for it. */
+const regExeOf = (env: NodeJS.ProcessEnv): string =>
+  path.win32.join(envValue(env, "SystemRoot") || "C:\\Windows", "System32", "reg.exe");
+
+/**
+ * Windows: the environment variable `name` as the registry holds it now, the user's over the
+ * machine's as a new process gets it, with `%VARS%` expanded; null when neither has it. An installer
+ * that set it after this process started is seen here, never in this process's own environment.
+ */
+export async function readRegistryVariable(name: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  const [machine, user] = await Promise.all(
+    REGISTRY_PATH_KEYS.map((key) => queryRegistryValue(regExeOf(env), key, name)),
+  );
+  const value = user ?? machine;
+  return value === null ? null : expandWindowsVariables(value, env);
 }
 
 /**
@@ -290,9 +314,7 @@ function queryRegistryPath(regExe: string, key: string): Promise<string | null> 
  * expanded. `reg.exe` is named by its full path so a PATH entry can never stand in for it.
  */
 export async function readRegistryPath(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  const systemRoot = envValue(env, "SystemRoot") || "C:\\Windows";
-  const regExe = path.win32.join(systemRoot, "System32", "reg.exe");
-  const values = await Promise.all(REGISTRY_PATH_KEYS.map((key) => queryRegistryPath(regExe, key)));
+  const values = await Promise.all(REGISTRY_PATH_KEYS.map((key) => queryRegistryValue(regExeOf(env), key, "Path")));
   const found = values.filter((value): value is string => value !== null);
   return found.length ? expandWindowsVariables(found.join(";"), env) : null;
 }

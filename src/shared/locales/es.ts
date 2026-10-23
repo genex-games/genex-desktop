@@ -6016,4 +6016,40 @@ export default {
   "Your game is on Roblox": "Tu juego está en Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "El agente de tu juego lo publica en Roblox Studio mientras sigues trabajando.",
+  "Asked Genex": "Pedido a Genex",
+  "Build on Genex": "Crear en Genex",
+  "Build the {app} on Genex": "Crear la {app} en Genex",
+  "Build the {app} on Genex again": "Crear la {app} en Genex otra vez",
+  "Building on Genex · {minutes} min so far": "Creándose en Genex · {minutes} min hasta ahora",
+  "Building…": "Creando…",
+  "Couldn’t build the {app} on Genex: {error}": "No se pudo crear la {app} en Genex: {error}",
+  "Genex builds only Windows apps on its own computers": "Genex solo crea apps de Windows en sus propios ordenadores",
+  "Genex can build it on Windows for you": "Genex puede crearla en Windows por ti",
+  "Genex can’t build this Unreal version yet": "Genex aún no puede crear con esta versión de Unreal",
+  "Genex couldn’t compile the game’s code": "Genex no pudo compilar el código del juego",
+  "Genex couldn’t cook the game’s content": "Genex no pudo preparar el contenido del juego",
+  "Open the game to build its app on Genex": "Abre el juego para crear su app en Genex",
+  "Publish the game first, then Genex can build it": "Publica el juego primero y luego Genex podrá crearla",
+  "The build on Genex failed": "La creación en Genex falló",
+  "The build on Genex took too long": "La creación en Genex tardó demasiado",
+  "The project is too big for Genex to build": "El proyecto es demasiado grande para que Genex lo cree",
+  "This version of Genex can’t build apps on Genex yet": "Esta versión de Genex aún no puede crear apps en Genex",
+  "You’ve used this month’s builds on Genex": "Ya usaste las creaciones de este mes en Genex",
+  notarized: "notarizada",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "La app de Mac se publicó sin notarizar: no se pudo contactar con el servicio de notarización de Apple con tu perfil guardado.",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "La app de Mac se publicó sin notarizar: el servicio de notarización de Apple la rechazó.",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "La app de Mac se publicó sin notarizar: no se pudo adjuntar el ticket de Apple.",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "La app de Mac se publicó sin notarizar: codesign no pudo firmarla.",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "La app de Mac se publicó sin notarizar: no es un paquete de app de Mac.",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "La app de Mac se publicó sin notarizar: no hay un certificado Developer ID Application en tu llavero.",
+  "The Mac app went without notarization: notarizing was stopped.":
+    "La app de Mac se publicó sin notarizar: la notarización se detuvo.",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "La app de Mac se publicó sin notarizar: tu llavero tiene varios certificados Developer ID. Elige uno en los ajustes de Genex.",
 } satisfies LocaleCatalog;

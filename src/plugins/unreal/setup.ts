@@ -29,7 +29,7 @@ import {
   readRegularFile,
 } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
-import { envValue } from "../../substrate/toolchain.ts";
+import { envValue, readRegistryVariable } from "../../substrate/toolchain.ts";
 import { crashReporterHolds, editorHoldsLog, heldProjectNames } from "./editor-holds.ts";
 import { type EditorLog, editorLogPath, readEditorLog } from "./editor-log.ts";
 import { loadEpicText } from "./epic-files.ts";
@@ -181,6 +181,9 @@ export class SetupError extends Error {
 }
 
 /** Where setup looks and what it asks the computer; tests hand in a fake home. */
+/** The variable Epic's Linux cross-compile installer sets to its toolchain's folder, which UnrealBuildTool reads. */
+export const LINUX_TOOLCHAIN_VARIABLE = "LINUX_MULTIARCH_ROOT";
+
 export type SetupEnv = {
   home: string;
   platform: NodeJS.Platform;
@@ -203,6 +206,11 @@ export type SetupEnv = {
   editorAnswers: (port: number, project?: string) => Promise<boolean>;
   /** Where Xcode stands on a Mac, judged by the range of the engine installed in the folder it is given. */
   xcode: XcodeCheck;
+  /**
+   * Windows: the folder Epic's Linux cross-compile installer set in `LINUX_MULTIARCH_ROOT`, read from
+   * the registry (an install after Genex started is seen), else this process's own; undefined without one.
+   */
+  linuxToolchain?: () => Promise<string | undefined>;
   freeBytes: (dir: string) => Promise<number>;
   totalMemory: () => number;
   /** A folder's entries, as readdir names them; tests stand in for Windows, which calls a placeholder a link. */
@@ -356,6 +364,11 @@ export function systemSetupEnv(
       return project === undefined ? editorAnswers(endpoint) : editorServes(endpoint, project);
     }, now),
     xcode: systemXcodeCheck(platform, env),
+    linuxToolchain: async () => {
+      if (platform !== "win32") return undefined;
+      const registry = await readRegistryVariable(LINUX_TOOLCHAIN_VARIABLE, env).catch(() => null);
+      return registry ?? envValue(env, LINUX_TOOLCHAIN_VARIABLE);
+    },
     freeBytes: async (dir) => {
       const disk = await statfs(dir);
       return disk.bavail * disk.bsize;

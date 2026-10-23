@@ -12,6 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { EXPORT_APPROVAL_TTL_MS, ExportApprovals } from "../../src/main/core/export-approvals.ts";
 import { GenexStudioTool } from "../../src/main/core/genex-cli-prompts.ts";
 import {
+  cloudBuildFromDialog,
   PublishRefusal,
   PublishRefusedError,
   publishAppsFromDialog,
@@ -217,6 +218,33 @@ test("an Unreal game with a ready Mac app publishes as its app, never as a web g
       publishFromDialog(rig.core, UNREAL_GAME, await publishReview(rig.core, GAME)),
       refusedAsUnreal,
     );
+  } finally {
+    await rig.close();
+  }
+});
+
+test("an Unreal game's Windows app is asked of Genex for a known system and a game Studio opens", async () => {
+  const rig = await dialogRig();
+  try {
+    const game = await addUnrealGame(rig);
+    await cloudBuildFromDialog(rig.core, UNREAL_GAME, "windows");
+    assert.deepEqual(rig.calls.at(-1), {
+      id: "genex",
+      name: GenexAction.CloudBuild,
+      args: { platform: "windows" },
+      binding: { project: UNREAL_GAME, directory: game.dir, threadId: undefined },
+    });
+    const before = rig.calls.length;
+    for (const platform of [undefined, "mac", "linux", "Windows", "../windows", 7, ["windows"]])
+      await assert.rejects(
+        cloudBuildFromDialog(rig.core, UNREAL_GAME, platform),
+        /only Windows apps/,
+        String(platform),
+      );
+    for (const project of [undefined, "", 42, `../${UNREAL_GAME}`, "no-such-game"])
+      await assert.rejects(cloudBuildFromDialog(rig.core, project, "windows"), String(project));
+    assert.equal(rig.calls.length, before, "Genex is asked nothing");
+    assert.deepEqual(rig.staged, [], "no web copy is made");
   } finally {
     await rig.close();
   }

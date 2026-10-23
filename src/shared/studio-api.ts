@@ -231,6 +231,8 @@ export interface StudioApi {
    * is the consent; `remix` is its Allow remixing, whether the game's project goes once they are live.
    */
   genexPublishApps(project: string, title?: string, remix?: boolean): Promise<void>;
+  /** Ask Genex to build the game's `platform` app on its own computers (an Unreal game's Windows app on a Mac). */
+  genexCloudBuild(project: string, platform: string): Promise<void>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */

@@ -17,6 +17,7 @@ import {
   GenexListingState,
 } from "../../shared/genex.ts";
 import { linuxBuildOf } from "../../shared/publish-platforms.ts";
+import type { MacSigning } from "./mac-notarize.ts";
 
 /** The first Genex CLI with `genex native`: an older pin sends no app. */
 const NATIVE_CLI = [1, 36, 11] as const;
@@ -58,7 +59,13 @@ export interface NativeUpload {
   target: string;
   platform: "mac" | "windows" | "linux";
   entry?: string;
+  /** A Mac app the creator asked to sign and notarize under their own Apple Developer ID first. */
+  sign?: MacSigning;
 }
+
+/** `uploads` with the creator's notarizing on each Mac app, when they turned it on (`macSigningOf`). */
+export const withMacSigning = (uploads: readonly NativeUpload[], signing: MacSigning | null): NativeUpload[] =>
+  uploads.map((upload) => (signing && upload.platform === "mac" ? { ...upload, sign: signing } : upload));
 
 /** The CLI's words for one upload: `genex native publish <target>`, and a Linux build's platform and program. */
 export const nativePublishArgs = (upload: NativeUpload): string[] => [

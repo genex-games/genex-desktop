@@ -13,6 +13,7 @@ import { publishesAsWebGame } from "../../shared/project-workspace.ts";
 import { cleanGenexTitle, GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
 import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
+import { CLOUD_PLATFORMS } from "../../plugins/genex/cloud-build.ts";
 import { pinnedCliSendsApps } from "../../plugins/genex/native-publish.ts";
 import { publishedApps } from "./publish-platforms.ts";
 import { t } from "../../shared/i18n.ts";
@@ -26,6 +27,7 @@ const MESSAGE = {
     t("{title} builds in Unreal; publishing an Unreal game isn't supported yet.", { title }),
   NotWebGame: (title: string) => t("{title} isn't a web game, so Genex can't publish it yet.", { title }),
   NoApps: () => t("This game has no Mac, Windows or Linux app ready to publish"),
+  NoCloudPlatform: () => t("Genex builds only Windows apps on its own computers"),
 } as const;
 
 /** Why a game can't be published at all, by code: callers act on it, never on its words. */
@@ -152,4 +154,16 @@ export async function publishAppsFromDialog(
     { native, ...(name ? { title: name } : {}), ...remixArg(remix) },
     binding,
   );
+}
+
+/**
+ * Ask Genex, from the dialog, to build `project`'s `platform` app on its own computers: the app this
+ * computer can't make (an Unreal game's Windows app on a Mac). The row's press is the consent to send
+ * the game's project privately for it, as Publish's is to send its apps. Refused for a system Genex
+ * builds no app for, before Genex is asked anything.
+ */
+export async function cloudBuildFromDialog(core: DialogCore, project: unknown, platform: unknown): Promise<void> {
+  if (typeof platform !== "string" || !CLOUD_PLATFORMS.has(platform)) throw new Error(MESSAGE.NoCloudPlatform());
+  const binding = await boundGame(core, project);
+  await core.plugins.action(GENEX_PLUGIN_ID, GenexAction.CloudBuild, { platform }, binding);
 }

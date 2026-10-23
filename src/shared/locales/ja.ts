@@ -5921,4 +5921,41 @@ export default {
   "Your game is on Roblox": "ゲームがRobloxに公開されました",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "作業を続けている間に、ゲームのエージェントがRoblox Studioで公開します。",
+  "Asked Genex": "Genexに依頼済み",
+  "Build on Genex": "Genexでつくる",
+  "Build the {app} on Genex": "{app}をGenexでつくる",
+  "Build the {app} on Genex again": "{app}をもう一度Genexでつくる",
+  "Building on Genex · {minutes} min so far": "Genexでビルド中 · {minutes}分経過",
+  "Building…": "ビルド中…",
+  "Couldn’t build the {app} on Genex: {error}": "{app}をGenexでつくれませんでした：{error}",
+  "Genex builds only Windows apps on its own computers":
+    "Genexが自分のコンピューターでつくれるのはWindowsアプリだけです",
+  "Genex can build it on Windows for you": "GenexがWindowsで代わりにつくれます",
+  "Genex can’t build this Unreal version yet": "GenexはこのUnrealバージョンにまだ対応していません",
+  "Genex couldn’t compile the game’s code": "Genexがゲームのコードをコンパイルできませんでした",
+  "Genex couldn’t cook the game’s content": "Genexがゲームのコンテンツをクックできませんでした",
+  "Open the game to build its app on Genex": "ゲームを開いてからGenexでアプリをつくってください",
+  "Publish the game first, then Genex can build it": "先にゲームを公開すると、Genexがつくれます",
+  "The build on Genex failed": "Genexでのビルドに失敗しました",
+  "The build on Genex took too long": "Genexでのビルドに時間がかかりすぎました",
+  "The project is too big for Genex to build": "プロジェクトが大きすぎてGenexでつくれません",
+  "This version of Genex can’t build apps on Genex yet": "このバージョンのGenexではまだGenexでアプリをつくれません",
+  "You’ve used this month’s builds on Genex": "今月のGenexでのビルド回数を使い切りました",
+  notarized: "公証済み",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Macアプリは公証なしで公開されました：保存した公証プロファイルでAppleの公証サービスに接続できませんでした。",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Macアプリは公証なしで公開されました：Appleの公証サービスに却下されました。",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Macアプリは公証なしで公開されました：Appleのチケットを添付できませんでした。",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Macアプリは公証なしで公開されました：codesignで署名できませんでした。",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "Macアプリは公証なしで公開されました：Macアプリのバンドルではありません。",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Macアプリは公証なしで公開されました：キーチェーンにDeveloper ID Application証明書がありません。",
+  "The Mac app went without notarization: notarizing was stopped.":
+    "Macアプリは公証なしで公開されました：公証が中止されました。",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Macアプリは公証なしで公開されました：キーチェーンにDeveloper ID証明書が複数あります。Genexの設定で1つ指定してください。",
 } satisfies LocaleCatalog;

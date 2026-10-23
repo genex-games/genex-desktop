@@ -26,6 +26,8 @@ export const GenexAction = {
   PublishGallery: "publish-gallery",
   /** Publish a game that has only apps, no web build: send them and list the game (`genex native publish --gallery`). */
   PublishApps: "publish-apps",
+  /** Ask Genex to build an app this computer can't make, on its own computers (`genex native build`). */
+  CloudBuild: "cloud-build",
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
@@ -51,6 +53,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishDraft,
   GenexAction.PublishGallery,
   GenexAction.PublishApps,
+  GenexAction.CloudBuild,
   GenexAction.PublishAllowUpload,
   GenexAction.PublishOpen,
   GenexAction.PublishBadge,
@@ -618,7 +621,35 @@ export interface GenexNativeSent {
   /** The archive's sha256 as Genex keeps it: the build a clip of a game with only apps names. */
   sha256?: string;
   publishedAt: string;
+  /** A Mac app signed and notarized under the creator's own Apple Developer ID before it went. */
+  notarized?: true;
+  /** Why a Mac app the creator asked to notarize went without it (as built, ad hoc). */
+  notarizeFailure?: MacNotarizeFailure;
 }
+
+/**
+ * Why a creator's Mac app was not notarized under their Apple Developer ID, by code. Wire values:
+ * kept in `native.json`; never rename one.
+ */
+export const MacNotarizeFailure = {
+  /** The target is not a Mac app bundle in a plain folder. */
+  NotAnApp: "not-an-app",
+  /** No Developer ID Application identity in the keychain (or not the one the settings name). */
+  NoIdentity: "no-identity",
+  /** More than one identity, and the settings name none. */
+  ManyIdentities: "many-identities",
+  /** codesign refused a program or the app. */
+  Sign: "sign",
+  /** Apple's notary could not be asked: no stored profile, no network, or an answer that isn't Apple's. */
+  Submit: "submit",
+  /** Apple's notary answered Invalid or Rejected. */
+  Rejected: "rejected",
+  /** The ticket could not be stapled to the app. */
+  Staple: "staple",
+  /** Stopped before it ended. */
+  Stopped: "stopped",
+} as const;
+export type MacNotarizeFailure = (typeof MacNotarizeFailure)[keyof typeof MacNotarizeFailure];
 
 /** One app a publish could not send, and Genex's or the CLI's words for why. */
 export interface GenexNativeFailure {
@@ -686,4 +717,63 @@ export interface GenexNativeRecord {
   failed: GenexNativeFailure[];
   /** A game with only apps is listed with its first app that goes: Genex's answer. */
   listing?: GenexNativeListing;
+  /** The apps Genex builds on its own computers; absent from a Genex plugin older than them. */
+  cloud?: GenexCloudRecord;
+}
+
+/** Where an app Genex builds on its own computers stands (`genex native build`). Wire values: never rename one. */
+export const CloudBuildState = {
+  /** Asked for, waiting for a computer. */
+  Queued: "queued",
+  Building: "building",
+  /** Built and checked: Genex is putting it on the game's page. */
+  Publishing: "publishing",
+  /** On the game's page for its players. */
+  Done: "done",
+  Failed: "failed",
+} as const;
+export type CloudBuildState = (typeof CloudBuildState)[keyof typeof CloudBuildState];
+
+/** Why a build on Genex's computers failed, by code: callers act on it, never on words. Wire values: never rename one. */
+export const CloudBuildFailure = {
+  /** Genex has no computer with the game's Unreal version. */
+  EngineUnsupported: "engine-unsupported",
+  /** The game's own code did not compile. */
+  Compile: "compile",
+  /** Unreal could not cook the game's content. */
+  Cook: "cook",
+  /** The build ran past its time. */
+  Timeout: "timeout",
+  /** The account has used its builds for now: trying again can't help. */
+  Quota: "quota",
+  /** The project is bigger than Genex builds. */
+  SourceTooBig: "source-too-big",
+  /** The game has no page on Genex for the app to go on. */
+  NotOnGenex: "not-on-genex",
+  /** Anything else, or a code this Studio does not know. */
+  Failed: "failed",
+} as const;
+export type CloudBuildFailure = (typeof CloudBuildFailure)[keyof typeof CloudBuildFailure];
+
+/** One app Genex builds, or built, on its own computers from the game's project. */
+export interface GenexCloudBuild {
+  /** The system the app is for (`windows`). */
+  platform: string;
+  jobId: string;
+  state: CloudBuildState;
+  startedAt: string;
+  /** When it went on the game's page or failed; absent while it runs. */
+  finishedAt?: string;
+  failure?: CloudBuildFailure;
+}
+
+/**
+ * The apps Genex builds on its own computers for a game: a Windows app of an Unreal game made on a
+ * Mac, which Unreal can't package there. `supported` is false while Studio's pinned CLI cannot ask
+ * Genex for one: the row then says where it is packaged, as before.
+ */
+export interface GenexCloudRecord {
+  supported: boolean;
+  /** Oldest first, at most a few per platform. */
+  builds: GenexCloudBuild[];
 }

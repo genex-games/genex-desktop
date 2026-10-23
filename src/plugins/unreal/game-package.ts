@@ -1,10 +1,12 @@
 /**
  * Packaging an Unreal game as the app its players install: `package-game` runs Epic's
- * `BuildCookRun` (build, cook, stage and pak, Shipping) for this computer's system, a Mac
- * app on a Mac and a Windows program on Windows, into `unreal/Builds/<Mac|Windows>/`, where Publish
- * finds it (`main/core/native-builds.ts`). Unreal makes no app for another system, so each system's
- * app is packaged on a computer of its own. `package-status` says how the job stands and names the
- * app it left.
+ * `BuildCookRun` (build, cook, stage and pak, Shipping) for a system this computer packages for, a
+ * Mac app on a Mac, a Windows program on Windows, and on Windows a Linux program too, into
+ * `unreal/Builds/<Mac|Windows|Linux>/`, where Publish finds it (`main/core/native-builds.ts`). Unreal
+ * makes a Mac app only on a Mac and a Windows one only on Windows; Linux it cross-compiles from
+ * Windows with Epic's Linux toolchain, which the person installs (Epic's installer sets
+ * `LINUX_MULTIARCH_ROOT`, read from the registry so no restart is needed) and RunUAT is handed.
+ * `package-status` says how the job stands and names the app it left.
  *
  * Like `plugin-test` and `open-editor`, the job runs outside ProcessSandbox: its cook is the
  * engine's own editor (`UnrealEditor-Cmd`) on the same project the person's editor opens, loading
@@ -31,6 +33,7 @@ import { isInside } from "../../substrate/paths.ts";
 import { envValue } from "../../substrate/toolchain.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
 import { editorCmdPath, type ProgramOutcome, programEnv } from "./automation-tests.ts";
+import { LINUX_TOOLCHAIN_VARIABLE } from "./setup.ts";
 import { canCompileCpp, outputCollector, pathScrubber } from "./ubt.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
@@ -71,11 +74,35 @@ const LAST_LINES = 8;
 
 const MAC = "darwin";
 const WINDOWS = "win32";
-/** What each system packages for: UAT's platform, and the folder its stage makes under `Builds/`. */
-const TARGETS: Partial<Record<NodeJS.Platform, { platform: string; folder: string }>> = {
-  [MAC]: { platform: "Mac", folder: "Mac" },
-  [WINDOWS]: { platform: "Win64", folder: "Windows" },
+
+/** The systems a package is for. Wire values: `package-game`'s and `package-status`'s `system`. */
+export const PackageSystem = { Mac: "mac", Windows: "windows", Linux: "linux" } as const;
+export type PackageSystem = (typeof PackageSystem)[keyof typeof PackageSystem];
+
+/** Each system's package: UAT's platform, and the folder its stage makes under `Builds/`. */
+const SYSTEMS: Readonly<Record<PackageSystem, { platform: string; folder: string }>> = {
+  [PackageSystem.Mac]: { platform: "Mac", folder: "Mac" },
+  [PackageSystem.Windows]: { platform: "Win64", folder: "Windows" },
+  [PackageSystem.Linux]: { platform: "Linux", folder: "Linux" },
 };
+/** What each computer packages for, its own system first: Windows cross-compiles Linux with Epic's toolchain. */
+const HOST_SYSTEMS: Partial<Record<NodeJS.Platform, readonly PackageSystem[]>> = {
+  [MAC]: [PackageSystem.Mac],
+  [WINDOWS]: [PackageSystem.Windows, PackageSystem.Linux],
+};
+
+/**
+ * Epic's Linux cross-compile toolchain for each Unreal Genex makes games with, by `major.minor`
+ * (Epic's "Linux development requirements" page); its installer is `<name>.exe` at
+ * {@link LINUX_TOOLCHAIN_DOWNLOADS}.
+ */
+const LINUX_TOOLCHAINS: Readonly<Record<string, string>> = {
+  "5.7": "v26_clang-20.1.8-rockylinux8",
+  "5.8": "v26_clang-20.1.8-rockylinux8",
+};
+const LINUX_TOOLCHAIN_DOWNLOADS = "https://cdn.unrealengine.com/CrossToolchain_Linux/";
+/** A trailing slash or backslash, as the installer writes the folder. */
+const TRAILING_SEPARATORS = /[\\/]+$/;
 /**
  * The staging folder in the project: Publish looks for apps here, and the game's history leaves it out.
  * UAT stages into it directly: its `-archive` copies a Mac app with no game content (only the program
@@ -117,6 +144,7 @@ const WINDOWS_UAT_ENV = [
 ] as const;
 const APP_EXTENSION = ".app";
 const EXE_EXTENSION = ".exe";
+const SH_EXTENSION = ".sh";
 
 const MESSAGE = {
   NoGame: "This call needs a game: run it from a game's chat or build.",
@@ -124,6 +152,14 @@ const MESSAGE = {
   OutsideGame: "This game's Unreal project isn't inside its folder; Genex packages a project in unreal/.",
   NoEngine: "No supported Unreal is installed, so Genex can't package the game.",
   Unsupported: "Genex packages Unreal games on a Mac or on Windows.",
+  CannotPackage: (asked: string) =>
+    `This computer can't package ${asked ? `"${asked.slice(0, 24)}"` : "that"}: Genex packages a Mac app on a Mac, and Windows and Linux apps on Windows (system: "windows" or "linux").`,
+  NoToolchainKnown: (version: string) =>
+    `Genex doesn't know Epic's Linux toolchain for Unreal ${version} yet, so it can't package for Linux here.`,
+  NeedsToolchain: (version: string, name: string, url: string) =>
+    `Packaging for Linux on Windows needs Epic's free Linux cross-compile toolchain for Unreal ${version} (${name}). Give the user this link to download and run Epic's installer, then package again: ${url} (Genex finds it without a restart). Genex packaged nothing.`,
+  Busy: (folder: string) =>
+    `A ${folder} package of this game is running: wait for it (package-status), or stop it, then package again.`,
   NoXcode: (state: string) =>
     `Packaging an Unreal game on a Mac needs Xcode (Xcode: ${state}). Call unreal__show-steps so the user can install it, then package again.`,
   Uncarried:
@@ -146,8 +182,11 @@ export type RunUat = (
   options: { signal: AbortSignal; timeoutMs: number },
 ) => Promise<ProgramOutcome>;
 
-/** How RunUAT is started: the program, its arguments, and whether they are one prepared command line. */
-export type UatLaunch = { file: string; args: string[]; verbatim: boolean };
+/**
+ * How RunUAT is started: the program, its arguments, whether they are one prepared command line, and
+ * what its environment adds to the small one (a Linux package's toolchain).
+ */
+export type UatLaunch = { file: string; args: string[]; verbatim: boolean; env?: Record<string, string> };
 
 /** What the tools need from the computer, the editor and the clock. */
 export type GamePackageDeps = {
@@ -155,6 +194,8 @@ export type GamePackageDeps = {
   engine(): Promise<{ version: string; directory: string } | undefined>;
   project(storage: string, game: string): Promise<string | undefined>;
   xcode(engineDir: string | undefined): Promise<Pick<XcodeStatus, "state">>;
+  /** Windows: `LINUX_MULTIARCH_ROOT` as Epic's installer set it, or undefined; none means no toolchain. */
+  linuxToolchain?(): Promise<string | undefined>;
   /** Whether the game's own Unreal answers now. */
   editorAnswers(storage: string, game: string): Promise<boolean>;
   /** Saves the game's open Unreal (ending play first): whether all of it saved, and what didn't. */
@@ -174,7 +215,8 @@ type Target = {
   projectFile: string;
   projectDir: string;
   engineDir: string;
-  system: { platform: string; folder: string };
+  engineVersion: string;
+  system: { id: PackageSystem; platform: string; folder: string };
 };
 
 /** A path inside the game as an agent reads it: relative, with `/`. */
@@ -186,19 +228,36 @@ function errorCode(failure: unknown): string {
   return typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : "unknown";
 }
 
+/** The system `asked` names when this computer (`platform`) packages for it; its own system when none is asked. */
+export function packageSystemOf(platform: NodeJS.Platform, asked?: unknown): PackageSystem {
+  const systems = HOST_SYSTEMS[platform];
+  if (!systems) throw new Error(MESSAGE.Unsupported);
+  if (asked === undefined) return systems[0] ?? PackageSystem.Mac;
+  const known = systems.find((system) => system === asked);
+  if (!known) throw new Error(MESSAGE.CannotPackage(typeof asked === "string" ? asked : ""));
+  return known;
+}
+
+/** Epic's Linux toolchain for Unreal `version` (`major.minor`): its name and its installer; null when unknown. */
+export function linuxToolchainFor(version: string): { name: string; url: string } | null {
+  if (!Object.hasOwn(LINUX_TOOLCHAINS, version)) return null;
+  const name = LINUX_TOOLCHAINS[version] ?? "";
+  return { name, url: `${LINUX_TOOLCHAIN_DOWNLOADS}${name}.exe` };
+}
+
 /**
- * BuildCookRun's arguments: Shipping for this computer's system, built, cooked, staged into paks
- * and staged under `stagingDir`, the cook run by the engine's own command-line editor (a project
- * with no editor target of its own has none to build).
+ * BuildCookRun's arguments: Shipping for `system` (this computer's own when none), built, cooked,
+ * staged into paks and staged under `stagingDir`, the cook run by this computer's own command-line
+ * editor (a project with no editor target of its own has none to build).
  */
 export function buildCookRunArgs(o: {
   projectFile: string;
   stagingDir: string;
   engineDir: string;
   platform: NodeJS.Platform;
+  system?: PackageSystem;
 }): string[] {
-  const target = TARGETS[o.platform];
-  if (!target) throw new Error(MESSAGE.Unsupported);
+  const target = SYSTEMS[packageSystemOf(o.platform, o.system)];
   return [
     "BuildCookRun",
     `-project=${o.projectFile}`,
@@ -248,7 +307,7 @@ export function uatEnv(
 export const systemRunUat: RunUat = (launch, { signal, timeoutMs }) =>
   new Promise((resolve, reject) => {
     const child = spawn(launch.file, launch.args, {
-      env: uatEnv(),
+      env: { ...uatEnv(), ...launch.env },
       detached: true,
       windowsHide: true,
       windowsVerbatimArguments: launch.verbatim,
@@ -293,29 +352,68 @@ export function packageErrors(output: string, scrub: (text: string) => string): 
 /** Whether cmd.exe can carry every path RunUAT.bat is handed. */
 const carried = (paths: readonly string[]) => paths.every((p) => !UNCARRIED.test(p) && !NETWORK_PATH.test(p));
 
-/** The call's game and its linked project inside the game's folder, by real path, with the engine for this system. */
-async function targetOf(deps: GamePackageDeps, storage: string, context: PluginContext): Promise<Target> {
+/**
+ * The call's game and its linked project inside the game's folder, by real path, with the engine,
+ * for the system `asked` (this computer's own when none).
+ */
+async function targetOf(
+  deps: GamePackageDeps,
+  storage: string,
+  context: PluginContext,
+  asked: unknown,
+): Promise<Target> {
   const game = context.project;
   if (!game || !context.directory) throw new Error(MESSAGE.NoGame);
-  const system = TARGETS[deps.platform];
-  if (!system) throw new Error(MESSAGE.Unsupported);
+  const id = packageSystemOf(deps.platform, asked);
+  const system = { id, ...SYSTEMS[id] };
   const linked = await deps.project(storage, game);
   if (!linked) throw new Error(MESSAGE.NoProject);
   const [gameDir, projectFile] = await Promise.all([realpath(context.directory), realpath(linked)]);
   if (!isInside(gameDir, projectFile)) throw new Error(MESSAGE.OutsideGame);
   const engine = await deps.engine();
   if (!engine) throw new Error(MESSAGE.NoEngine);
-  return { game, gameDir, projectFile, projectDir: path.dirname(projectFile), engineDir: engine.directory, system };
+  return {
+    game,
+    gameDir,
+    projectFile,
+    projectDir: path.dirname(projectFile),
+    engineDir: engine.directory,
+    engineVersion: engine.version,
+    system,
+  };
 }
 
-/** Refuses what the package can't run with: no Xcode on a Mac, a path cmd.exe can't carry on Windows. */
-async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<void> {
+/**
+ * Refuses what the package can't run with: no Xcode on a Mac, a path cmd.exe can't carry on Windows,
+ * a Linux package without Epic's toolchain for this Unreal. Answers what RunUAT's environment adds.
+ */
+async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<Record<string, string>> {
   if (deps.platform === WINDOWS) {
     if (!carried([target.engineDir, target.projectFile])) throw new Error(MESSAGE.Uncarried);
-    return;
+    if (target.system.id !== PackageSystem.Linux) return {};
+    return { [LINUX_TOOLCHAIN_VARIABLE]: await linuxToolchainRoot(deps, target.engineVersion) };
   }
   const xcode = await deps.xcode(target.engineDir);
   if (!canCompileCpp(xcode, deps.platform)) throw new Error(MESSAGE.NoXcode(xcode.state));
+  return {};
+}
+
+/**
+ * The folder of Epic's Linux toolchain for Unreal `version`, as Epic's installer set it: a plain local
+ * folder (never a link, a network share, or a path cmd.exe can't carry) named for that version's
+ * toolchain. Anything else is refused with the installer's link for the agent to give the person.
+ */
+async function linuxToolchainRoot(deps: GamePackageDeps, version: string): Promise<string> {
+  const wanted = linuxToolchainFor(version);
+  if (!wanted) throw new Error(MESSAGE.NoToolchainKnown(version));
+  const set = (await deps.linuxToolchain?.().catch(() => undefined)) ?? "";
+  const folder = set.replace(TRAILING_SEPARATORS, "");
+  const named = path.win32.basename(folder) === wanted.name || path.basename(folder) === wanted.name;
+  const plain = path.isAbsolute(folder) && carried([folder]) && named;
+  const info = plain ? await lstat(folder).catch(() => null) : null;
+  if (!info?.isDirectory() || info.isSymbolicLink())
+    throw new Error(MESSAGE.NeedsToolchain(version, wanted.name, wanted.url));
+  return set;
 }
 
 /** Saves the person's open Unreal first; one that doesn't answer has nothing unsaved to lose. */
@@ -343,13 +441,20 @@ async function freshStage(target: Target): Promise<{ staging: string; dir: strin
   return { staging, dir };
 }
 
-/** The app the stage holds: the Mac's one `.app`, or Windows' starter `.exe` at the package's root. */
-async function appIn(dir: string, platform: NodeJS.Platform): Promise<string | undefined> {
+/** What names a system's app at its package's root: the Mac's `.app`, Windows' starter `.exe`, Linux's starter `.sh`. */
+const APP_AT_ROOT: Readonly<Record<PackageSystem, { extension: string; folder: boolean }>> = {
+  [PackageSystem.Mac]: { extension: APP_EXTENSION, folder: true },
+  [PackageSystem.Windows]: { extension: EXE_EXTENSION, folder: false },
+  [PackageSystem.Linux]: { extension: SH_EXTENSION, folder: false },
+};
+
+/** The app the stage holds for `system`: the one entry at its package's root that starts the game. */
+async function appIn(dir: string, system: PackageSystem): Promise<string | undefined> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-  const wanted = platform === WINDOWS ? EXE_EXTENSION : APP_EXTENSION;
+  const wanted = APP_AT_ROOT[system];
   const found = entries.find((entry) => {
-    const plain = platform === WINDOWS ? entry.isFile() : entry.isDirectory();
-    return plain && entry.name.toLowerCase().endsWith(wanted);
+    const plain = wanted.folder ? entry.isDirectory() : entry.isFile();
+    return plain && entry.name.toLowerCase().endsWith(wanted.extension);
   });
   return found ? path.join(dir, found.name) : undefined;
 }
@@ -359,15 +464,20 @@ async function runPackage(
   deps: GamePackageDeps,
   target: Target,
   dirs: { staging: string; dir: string },
-  signal: AbortSignal,
+  run: { signal: AbortSignal; env: Record<string, string> },
 ) {
+  const { signal } = run;
   const args = buildCookRunArgs({
     projectFile: target.projectFile,
     stagingDir: dirs.staging,
     engineDir: target.engineDir,
     platform: deps.platform,
+    system: target.system.id,
   });
-  const launch = uatLaunch(target.engineDir, args, deps.platform);
+  const launch = {
+    ...uatLaunch(target.engineDir, args, deps.platform),
+    ...(Object.keys(run.env).length > 0 ? { env: run.env } : {}),
+  };
   const started = deps.now();
   const outcome = await (deps.runUat ?? systemRunUat)(launch, { signal, timeoutMs: GAME_PACKAGE_TIMEOUT_MS }).catch(
     (failure: unknown) => {
@@ -377,7 +487,8 @@ async function runPackage(
   const seconds = Math.round((deps.now() - started) / SECOND_MS);
   if (signal.aborted) throw new Error(MESSAGE.Stopped);
   if (outcome.timedOut) throw new PackageFailed(MESSAGE.TimedOut, [], seconds);
-  const app = outcome.code === 0 && SUCCEEDED.test(outcome.output) ? await appIn(dirs.dir, deps.platform) : undefined;
+  const app =
+    outcome.code === 0 && SUCCEEDED.test(outcome.output) ? await appIn(dirs.dir, target.system.id) : undefined;
   if (app) return { line: MESSAGE.Packaged(target.system.folder, seconds), app: shownIn(target.gameDir, app), seconds };
   const scrub = await pathScrubber(target.projectDir, target.engineDir);
   const errors = packageErrors(outcome.output, scrub);
@@ -398,6 +509,18 @@ class PackageFailed extends Error {
   }
 }
 
+/** A package that ended without its app, as `package-status` answers it: stopped, or failed with its lines. */
+function failedRecord(target: Target, failure: unknown, stopped: boolean): GamePackageStatus {
+  const failed = failure instanceof PackageFailed ? failure : undefined;
+  return {
+    state: stopped ? GamePackageState.Stopped : GamePackageState.Failed,
+    system: target.system.folder,
+    line: errorMessage(failure),
+    ...(failed?.errors.length ? { errors: failed.errors } : {}),
+    ...(failed?.seconds === undefined ? {} : { seconds: failed.seconds }),
+  };
+}
+
 /** Whether a plain folder or file is at `file` (never a link). */
 const isPlain = async (file: string) => {
   const info = await lstat(file).catch(() => null);
@@ -406,75 +529,97 @@ const isPlain = async (file: string) => {
 
 /** The two tools over one record per project: `package-game` starts or stops the job, `package-status` reads it. */
 export function createGamePackageTools(deps: GamePackageDeps) {
+  /** Each project's last package of each system, keyed by {@link recordKey}. */
   const records = new Map<string, GamePackageStatus>();
-  const stops = new Map<string, AbortController>();
+  /** The package running in each project, at most one, and the system it is for. */
+  const stops = new Map<string, { stop: AbortController; folder: string }>();
   deps.stopped?.addEventListener("abort", () => {
-    for (const stop of stops.values()) stop.abort();
+    for (const running of stops.values()) running.stop.abort();
   });
-  const systemName = () => TARGETS[deps.platform]?.folder ?? "";
+  const recordKey = (target: Target) => `${target.projectFile}\n${target.system.id}`;
 
-  /** `package-game`: `stop` ends the running package; else saves Unreal's work and starts one unless one runs. */
+  /** `package-game` with `stop`: ends the game's running package, whatever system it is for. */
+  async function stopRunning(context: PluginContext, storage: string) {
+    const running = stops.get((await targetOf(deps, storage, context, undefined)).projectFile);
+    running?.stop.abort();
+    return { stopped: running !== undefined };
+  }
+
+  /**
+   * `package-game`: `stop` ends the running package; else saves Unreal's work and starts one for
+   * `system` (this computer's own when none) unless one runs.
+   */
   async function start(args: Args, context: PluginContext, storage: string) {
-    const target = await targetOf(deps, storage, context);
+    if (args.stop === true) return stopRunning(context, storage);
+    const target = await targetOf(deps, storage, context, args.system);
     const key = target.projectFile;
-    if (args.stop === true) {
-      const stop = stops.get(key);
-      stop?.abort();
-      return { stopped: stop !== undefined };
-    }
-    if (stops.has(key)) return { started: true, system: target.system.folder };
-    await assertRunnable(deps, target);
+    const running = stops.get(key);
+    if (running?.folder === target.system.folder) return { started: true, system: target.system.folder };
+    if (running) throw new Error(MESSAGE.Busy(running.folder));
+    const env = await assertRunnable(deps, target);
     const stop = new AbortController();
     if (deps.stopped?.aborted) stop.abort();
     // Reserved before the save: no second call starts beside this one meanwhile.
-    stops.set(key, stop);
-    const before = records.get(key);
-    records.set(key, { state: GamePackageState.Running, system: target.system.folder });
-    let dirs: { staging: string; dir: string };
-    try {
-      if (context.signal?.aborted) throw new Error(MESSAGE.Stopped);
-      await saveFirst(deps, storage, target.game);
-      dirs = await freshStage(target);
-    } catch (failure) {
-      stops.delete(key);
-      if (before) records.set(key, before);
-      else records.delete(key);
-      throw failure;
-    }
-    void runPackage(deps, target, dirs, stop.signal)
-      .then(
-        (done): GamePackageStatus => ({ state: GamePackageState.Done, system: target.system.folder, ...done }),
-        (failure: unknown): GamePackageStatus => {
-          const state = stop.signal.aborted ? GamePackageState.Stopped : GamePackageState.Failed;
-          const failed = failure instanceof PackageFailed ? failure : undefined;
-          return {
-            state,
-            system: target.system.folder,
-            line: errorMessage(failure),
-            ...(failed?.errors.length ? { errors: failed.errors } : {}),
-            ...(failed?.seconds === undefined ? {} : { seconds: failed.seconds }),
-          };
-        },
-      )
-      .then((record) => {
-        if (stops.get(key) === stop) records.set(key, record);
-      })
-      .finally(() => {
-        if (stops.get(key) === stop) stops.delete(key);
-      });
+    stops.set(key, { stop, folder: target.system.folder });
+    const dirs = await prepare(target, context, storage);
+    follow(target, dirs, { stop, env });
     return { started: true, system: target.system.folder };
   }
 
-  /** `package-status`: the job's record; after a restart, the app found in this system's build folder. */
-  async function status(_args: Args, context: PluginContext, storage: string): Promise<GamePackageStatus> {
-    const target = await targetOf(deps, storage, context);
-    const record = records.get(target.projectFile);
+  /**
+   * Marks `target`'s package running, saves Unreal's work and empties its staging folder; on a failure
+   * gives the game back its earlier record and its slot, then throws.
+   */
+  async function prepare(target: Target, context: PluginContext, storage: string) {
+    const record = recordKey(target);
+    const before = records.get(record);
+    records.set(record, { state: GamePackageState.Running, system: target.system.folder });
+    try {
+      if (context.signal?.aborted) throw new Error(MESSAGE.Stopped);
+      await saveFirst(deps, storage, target.game);
+      return await freshStage(target);
+    } catch (failure) {
+      stops.delete(target.projectFile);
+      if (before) records.set(record, before);
+      else records.delete(record);
+      throw failure;
+    }
+  }
+
+  /** Runs the package in the background, keeping how it ended while it is still this game's package. */
+  function follow(
+    target: Target,
+    dirs: { staging: string; dir: string },
+    run: { stop: AbortController; env: Record<string, string> },
+  ): void {
+    const key = target.projectFile;
+    const ours = () => stops.get(key)?.stop === run.stop;
+    void runPackage(deps, target, dirs, { signal: run.stop.signal, env: run.env })
+      .then(
+        (done): GamePackageStatus => ({ state: GamePackageState.Done, system: target.system.folder, ...done }),
+        (failure: unknown) => failedRecord(target, failure, run.stop.signal.aborted),
+      )
+      .then((ended) => {
+        if (ours()) records.set(recordKey(target), ended);
+      })
+      .finally(() => {
+        if (ours()) stops.delete(key);
+      });
+  }
+
+  /**
+   * `package-status`: the job's record for `system` (this computer's own when none); after a restart,
+   * the app found in that system's build folder.
+   */
+  async function status(args: Args, context: PluginContext, storage: string): Promise<GamePackageStatus> {
+    const target = await targetOf(deps, storage, context, args.system);
+    const record = records.get(recordKey(target));
     if (record) return record;
     const dir = path.join(target.projectDir, BUILDS_FOLDER, target.system.folder);
-    const app = (await isPlain(dir)) ? await appIn(dir, deps.platform) : undefined;
+    const app = (await isPlain(dir)) ? await appIn(dir, target.system.id) : undefined;
     return {
       state: GamePackageState.Idle,
-      system: systemName(),
+      system: target.system.folder,
       ...(app ? { app: shownIn(target.gameDir, app) } : {}),
     };
   }

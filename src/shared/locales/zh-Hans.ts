@@ -5602,4 +5602,38 @@ export default {
   "Your game is on Roblox": "你的游戏已上线 Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "你继续工作时，游戏的智能体会在 Roblox Studio 中发布它。",
+  "Asked Genex": "已交给 Genex",
+  "Build on Genex": "在 Genex 上制作",
+  "Build the {app} on Genex": "在 Genex 上制作{app}",
+  "Build the {app} on Genex again": "在 Genex 上重新制作{app}",
+  "Building on Genex · {minutes} min so far": "正在 Genex 上制作 · 已 {minutes} 分钟",
+  "Building…": "制作中…",
+  "Couldn’t build the {app} on Genex: {error}": "无法在 Genex 上制作{app}：{error}",
+  "Genex builds only Windows apps on its own computers": "Genex 在自己的电脑上只能制作 Windows 应用",
+  "Genex can build it on Windows for you": "Genex 可以替你在 Windows 上制作",
+  "Genex can’t build this Unreal version yet": "Genex 暂时还不支持这个 Unreal 版本",
+  "Genex couldn’t compile the game’s code": "Genex 无法编译游戏代码",
+  "Genex couldn’t cook the game’s content": "Genex 无法烘焙游戏内容",
+  "Open the game to build its app on Genex": "先打开游戏，才能在 Genex 上制作它的应用",
+  "Publish the game first, then Genex can build it": "先发布游戏，然后 Genex 才能制作",
+  "The build on Genex failed": "在 Genex 上制作失败",
+  "The build on Genex took too long": "在 Genex 上制作用时太长",
+  "The project is too big for Genex to build": "项目太大，Genex 无法制作",
+  "This version of Genex can’t build apps on Genex yet": "这个版本的 Genex 还不能在 Genex 上制作应用",
+  "You’ve used this month’s builds on Genex": "你本月在 Genex 上的制作次数已用完",
+  notarized: "已公证",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Mac 应用未经公证就发布了：无法用你保存的公证配置连接 Apple 的公证服务。",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Mac 应用未经公证就发布了：Apple 的公证服务拒绝了它。",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Mac 应用未经公证就发布了：无法附加 Apple 的公证票据。",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Mac 应用未经公证就发布了：codesign 无法为它签名。",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.": "Mac 应用未经公证就发布了：它不是 Mac 应用包。",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Mac 应用未经公证就发布了：你的钥匙串里没有 Developer ID Application 证书。",
+  "The Mac app went without notarization: notarizing was stopped.": "Mac 应用未经公证就发布了：公证被中止了。",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Mac 应用未经公证就发布了：你的钥匙串里有多个 Developer ID 证书。请在 Genex 设置里指定一个。",
 } satisfies LocaleCatalog;

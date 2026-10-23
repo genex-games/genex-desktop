@@ -1082,6 +1082,7 @@ function loopTools(deps: UnrealBackendDeps) {
     engine: async () => (await findEngines(deps.env)).find((e) => e.supported),
     project: (storage, game) => linkedProject(storage, game),
     xcode: (engineDir) => deps.env.xcode(engineDir),
+    linuxToolchain: async () => deps.env.linuxToolchain?.(),
     editorCall: async (storage, game, tool: AnyLoopTool, args, timeoutMs, signal) => {
       const call = { toolset: TOOLSET_OF[tool], tool, args, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
       return parsedAnswer(await callProjectTool(await gameEditor(deps, storage, game), call, undefined, signal));

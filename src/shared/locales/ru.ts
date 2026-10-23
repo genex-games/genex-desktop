@@ -5967,4 +5967,41 @@ export default {
   "Your game is on Roblox": "Твоя игра на Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "Агент твоей игры публикует её в Roblox Studio, а ты можешь работать дальше.",
+  "Asked Genex": "Отправлено в Genex",
+  "Build on Genex": "Собрать в Genex",
+  "Build the {app} on Genex": "Собрать {app} в Genex",
+  "Build the {app} on Genex again": "Собрать {app} в Genex ещё раз",
+  "Building on Genex · {minutes} min so far": "Собирается в Genex · уже {minutes} мин",
+  "Building…": "Собирается…",
+  "Couldn’t build the {app} on Genex: {error}": "Не получилось собрать {app} в Genex: {error}",
+  "Genex builds only Windows apps on its own computers":
+    "На своих компьютерах Genex собирает только приложения для Windows",
+  "Genex can build it on Windows for you": "Genex может собрать его на Windows за тебя",
+  "Genex can’t build this Unreal version yet": "Genex пока не умеет собирать эту версию Unreal",
+  "Genex couldn’t compile the game’s code": "Genex не смог скомпилировать код игры",
+  "Genex couldn’t cook the game’s content": "Genex не смог подготовить контент игры",
+  "Open the game to build its app on Genex": "Открой игру, чтобы собрать её приложение в Genex",
+  "Publish the game first, then Genex can build it": "Сначала опубликуй игру, потом Genex сможет её собрать",
+  "The build on Genex failed": "Сборка в Genex не удалась",
+  "The build on Genex took too long": "Сборка в Genex заняла слишком много времени",
+  "The project is too big for Genex to build": "Проект слишком большой, Genex не может его собрать",
+  "This version of Genex can’t build apps on Genex yet": "Эта версия Genex пока не умеет собирать приложения в Genex",
+  "You’ve used this month’s builds on Genex": "Сборки в Genex на этот месяц закончились",
+  notarized: "нотаризовано",
+  "The Mac app went without notarization: Apple’s notary couldn’t be reached with your saved notary profile.":
+    "Приложение для Mac ушло без нотаризации: не удалось связаться с нотариальной службой Apple по твоему сохранённому профилю.",
+  "The Mac app went without notarization: Apple’s notary rejected it.":
+    "Приложение для Mac ушло без нотаризации: нотариальная служба Apple его отклонила.",
+  "The Mac app went without notarization: Apple’s ticket couldn’t be attached to it.":
+    "Приложение для Mac ушло без нотаризации: не удалось прикрепить к нему квитанцию Apple.",
+  "The Mac app went without notarization: codesign couldn’t sign it.":
+    "Приложение для Mac ушло без нотаризации: codesign не смог его подписать.",
+  "The Mac app went without notarization: it isn’t a Mac app bundle.":
+    "Приложение для Mac ушло без нотаризации: это не пакет приложения Mac.",
+  "The Mac app went without notarization: no Developer ID Application certificate is in your keychain.":
+    "Приложение для Mac ушло без нотаризации: в твоей связке ключей нет сертификата Developer ID Application.",
+  "The Mac app went without notarization: notarizing was stopped.":
+    "Приложение для Mac ушло без нотаризации: нотаризация была остановлена.",
+  "The Mac app went without notarization: your keychain has several Developer ID certificates. Name one in Genex’s settings.":
+    "Приложение для Mac ушло без нотаризации: в связке ключей несколько сертификатов Developer ID. Укажи один в настройках Genex.",
 } satisfies LocaleCatalog;

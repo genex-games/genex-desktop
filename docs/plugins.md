@@ -2498,11 +2498,18 @@ its report is a failed run, its summary naming the exit code, the counts so far 
 `unreal__plugin-status` answers each job's state and results and `proof`: the summary, the note and
 `unreal/Saved/Genex/Shots/<Plugin>-window.jpg` (kept by `app_look`'s `save`) that exist, the summary
 and note only for a run that finished, relative to the game, read from disk after a restart.
-Any Unreal game also gets `unreal__package-game {stop?}` and `unreal__package-status`
-(`game-package.ts`): the app players install, for this computer's system only (Unreal makes no app
-for another one). The person's open Unreal saves first (play ended; one that answers but can't save
-leaves nothing packaged), then `RunUAT BuildCookRun -platform=Mac|Win64 -clientconfig=Shipping -build
--cook -stage -pak -stagingdirectory=…` stages into `unreal/Builds/<Mac|Windows>/` (emptied first, never
+Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
+(`game-package.ts`): the app players install, for this computer's own system, or on Windows a Linux
+one with `system: "linux"` (`PackageSystem`, `HOST_SYSTEMS`; Unreal makes a Mac app only on a Mac and a
+Windows one only on Windows; anything else is refused before anything runs). A Linux package needs
+Epic's cross-compile toolchain for the engine's version (`LINUX_TOOLCHAINS`: 5.7 and 5.8 take
+`v26_clang-20.1.8-rockylinux8`), whose installer the person runs: Genex reads `LINUX_MULTIARCH_ROOT`
+from the registry (the user's over the machine's, `readRegistryVariable`, so no restart is needed),
+takes it only as a plain local folder named for that toolchain (never a link, a share or a path
+cmd.exe can't carry), and hands it to RunUAT; without it the call refuses with the installer's link
+for the agent to give the person. One package runs per game at a time. The person's open Unreal saves first (play ended; one that answers but can't save
+leaves nothing packaged), then `RunUAT BuildCookRun -platform=Mac|Win64|Linux -clientconfig=Shipping -build
+-cook -stage -pak -stagingdirectory=…` stages into `unreal/Builds/<Mac|Windows|Linux>/` (emptied first, never
 through a link; ignored by the game's history; never `-archive`, which copies a Mac app without its
 cooked content), the cook run by the engine's `UnrealEditor-Cmd`, within 120
 minutes. A Mac needs Xcode: a template's plugins make even a Blueprint game build code there. Like
@@ -2512,8 +2519,9 @@ editor's derived data, Zen store and shader workers, all of which UnrealBuildToo
 On Windows `RunUAT.bat` runs through cmd.exe with every path whole in quotes (`quotedScriptLine`); a
 path with a quote, `%` or `!`, or on a network share, is refused first. `package-status` answers the
 state, the app relative to the game, the seconds and a failure's first error lines with the
-computer's paths taken out; after a restart, idle with the app found on disk. Publish then finds the
-app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole
+computer's paths taken out; after a restart, idle with the app found on disk (a Linux package's
+starter `<Game>.sh`). On Windows the Publish dialog's Linux row of an Unreal game offers Make with
+agent (`appsMadeHere`). Publish then finds the app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole
 build (no program inside a Windows build's folder is a build of its own, and Unreal's
 `UEPrereqSetup` is a helper) and never a project's own `Binaries` beside its `.uproject`, which hold
 no cooked content. A chat build of a game still with no kind, with the plugin on, first asks the
@@ -3288,6 +3296,35 @@ Genex:
   characters of a sent app's archive sha256 (`appClipCommit`, from `native.json`), which Genex
   matches as a prefix where a web game's names its staging commit; a stand that refuses it leaves a
   `failed` clip record, sent again by the next publish, and the picture stands. A web game with no app shows no rows. L4: `npm run test:ui -- publish-platforms-ui`.
+- A Mac app goes signed ad hoc unless its creator turned on Sign and notarize Mac apps in the Genex
+  plugin's settings (`mac-notarize`, `mac-signing-identity`, `mac-notary-profile`; `macSigningOf`).
+  Genex never signs with an identity of its own: the certificate is the creator's Developer ID
+  Application identity in their login keychain (the only one when the setting names none), and Apple's
+  notary is asked through the keychain profile they stored with `xcrun notarytool store-credentials`
+  (`genex-notary` unless named). Before Publish sends that Mac app (`#sendApps`), `mac-notarize.ts`
+  signs every Mach-O program inside it, deepest first, then the app (hardened runtime, secure
+  timestamp, never through a link), zips it with `ditto` into a scratch folder, waits for
+  `notarytool submit --wait`, and staples the ticket. Each step runs `/usr/bin/security`, `codesign`,
+  `ditto` or `xcrun` by full path with no shell. A failure never stops the app: it goes as built and
+  the record keeps why by code (`MacNotarizeFailure`, `notarizeFailure` beside the sent app); the Mac
+  row then says "notarized", or a line under the rows says why it went without.
+- An Unreal game's rows for another system say where it is packaged ("Package it on a Windows PC"),
+  except the Windows row on a Mac once Genex can build it (`cloudWords`, `CLOUD_TARGETS`): while the
+  game has no page on Genex it says to publish first; then it offers Build on Genex, which runs
+  `studio:plugins.genex-cloud-build` (`cloudBuildFromDialog`, Windows only) → the plugin's
+  `cloud-build` (`cloudBuild`, `cloud-build.ts`). The press is the consent: the game's project is
+  staged as remixers get it (`stageRemixSource`, into `cloud-source/`, removed once sent) and goes
+  privately with `genex native build --platform windows --source <folder> --json`; Genex builds it on
+  its own computers and puts the app on the game's page. Each job is kept in the workspace's
+  `cloud-build.json` (apart from `native.json`, which every publish writes anew) and followed with
+  `genex native build-status <job> --json`, waiting 15 s, 30 s, 1 and then 2 min between reads; a job
+  still running when Studio starts is followed again when the record is next read. The record
+  answers as `native.cloud`; the row then says "Building on Genex · N min so far", "On Genex · built …"
+  with Build again, or why it failed by code (`CloudBuildFailure`) with Try again (none once the
+  month's builds are used). A refused press is said under the rows. Job ids and platforms Genex
+  answers are kept only when whole (`cloudBuildOf`). Nothing is asked while the pinned CLI is older
+  than `genex native build` (1.38.0, `pinnedCliBuildsApps`): `native.cloud.supported` is false and
+  the row reads as before. Genex's side of this is a draft contract.
 - Every published copy gets a `<head>` tag when `deployment.ts` marks it (`withHead`): the games
   host injects its environment (`window.__GENEX__`), mobile kit, crash watchdog and cover
   responder only into one, and the marker never goes ahead of the doctype. A game whose

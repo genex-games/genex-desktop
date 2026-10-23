@@ -43,6 +43,24 @@ import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { PluginStillProblemCode } from "../../shared/plugins.ts";
 import { GenexCliStopped, runGenexCli, genexCliPath } from "./cli.ts";
+import { stageRemixSource } from "./remix-source.ts";
+import {
+  type MacSigning,
+  type NotarizeOutcome,
+  notarizeMacApp,
+  systemNotarizeRun,
+  withNotarizing,
+} from "./mac-notarize.ts";
+import {
+  CLOUD_BUILD_FILE,
+  CLOUD_SOURCE_FOLDER,
+  type CloudBuildDeps,
+  isRunning,
+  loadCloudBuilds,
+  pinnedCliBuildsApps,
+  startCloudBuild,
+  watchCloudBuild,
+} from "./cloud-build.ts";
 import {
   appClipCommit,
   listingOf,
@@ -476,6 +494,11 @@ export class GenexTools {
   readonly #sendsApps: boolean;
   /** Whether this CLI pushes a game's source from another folder (`--source`); tests say so of their stand-in. */
   readonly #sendsSource: boolean;
+  readonly #buildsApps: boolean;
+  readonly #cloudSleep: CloudBuildDeps["sleep"];
+  readonly #notarize: (app: string, signing: MacSigning, signal: AbortSignal) => Promise<NotarizeOutcome>;
+  /** The builds on Genex being followed, by game and job: one watch each. */
+  #cloudWatches = new Map<string, Promise<void>>();
   /** The games whose project Allow remixing is sending now. */
   #remixSends = new Set<string>();
   /** When Studio last took each game's cover on its own (`coverAuto`). */
@@ -513,6 +536,12 @@ export class GenexTools {
       sendsApps?: boolean;
       /** Whether the CLI sends a game's project (`--source`); else read from the pinned CLI's version. */
       sendsSource?: boolean;
+      /** Whether the CLI asks Genex to build apps (`genex native build`); else read from the pinned CLI's version. */
+      buildsApps?: boolean;
+      /** How a build on Genex waits between its status reads; tests make it instant. */
+      cloudSleep?: CloudBuildDeps["sleep"];
+      /** Signs and notarizes a Mac app under the creator's Apple ID; the system tools unless a test stands in. */
+      notarize?: (app: string, signing: MacSigning, signal: AbortSignal) => Promise<NotarizeOutcome>;
     } = {},
   ) {
     this.root = root;
@@ -532,6 +561,10 @@ export class GenexTools {
     this.#preload = options.preload ?? fileURLToPath(new URL("../../genex-host/preload.mjs", import.meta.url));
     this.#sendsApps = options.sendsApps ?? pinnedCliSendsApps();
     this.#sendsSource = options.sendsSource ?? pinnedCliSendsSource();
+    this.#buildsApps = options.buildsApps ?? pinnedCliBuildsApps();
+    this.#cloudSleep = options.cloudSleep ?? ((ms, signal) => sleep(ms, undefined, { signal }).catch(() => {}));
+    this.#notarize =
+      options.notarize ?? ((app, signing, signal) => notarizeMacApp(app, signing, { run: systemNotarizeRun }, signal));
   }
   async init() {
     this.#initialized ??= (async () => {
@@ -647,8 +680,9 @@ export class GenexTools {
     await mkdir(path.join(dir, "home"), { recursive: true, mode: 0o700 });
     await mkdir(path.join(dir, "dist"), { recursive: true, mode: 0o700 });
     // The CLI pushes this folder as the game's source when no project goes with a publish: Studio's
-    // private HOME, a project staged for remixers and the record of it are never part of it.
-    await writeFile(path.join(dir, ".gitignore"), `home/\n${SOURCE_FOLDER}/\n${REMIX_FILE}\n`);
+    // private HOME, a project staged for remixers or for a build on Genex, and their records, are never part of it.
+    const ignored = [`home/`, `${SOURCE_FOLDER}/`, REMIX_FILE, `${CLOUD_SOURCE_FOLDER}/`, CLOUD_BUILD_FILE];
+    await writeFile(path.join(dir, ".gitignore"), `${ignored.join("\n")}\n`);
     return dir;
   }
   async #publishState(project: string): Promise<GenexPublishState> {
@@ -1748,7 +1782,81 @@ export class GenexTools {
   /** A game's apps as its last publish sent them, and whether they are going now. */
   async #nativeRecord(project: string): Promise<GenexNativeRecord> {
     const saved = readNativeSaved(await readJsonOr(path.join(this.#publishDir(project), NATIVE_FILE)));
-    return { supported: this.#sendsApps, sending: this.#nativeSteps.has(project), ...saved };
+    return {
+      supported: this.#sendsApps,
+      sending: this.#nativeSteps.has(project),
+      ...saved,
+      cloud: await this.#cloud(project),
+    };
+  }
+  // ── apps Genex builds ────────────────────────────────────────────────────────────────────
+  /** The game's builds on Genex; one still running that nothing follows (Studio restarted) is followed again. */
+  async #cloud(project: string): Promise<NonNullable<GenexNativeRecord["cloud"]>> {
+    if (!this.#buildsApps) return { supported: false, builds: [] };
+    const builds = await loadCloudBuilds(this.#publishDir(project), (file) => readJsonOr(file));
+    for (const build of builds.filter(isRunning)) this.#watchCloud(project, build.jobId);
+    return { supported: true, builds };
+  }
+  /** What a build on Genex runs on: the CLI in the game's publish workspace, its project staged as remixers get it. */
+  #cloudDeps(project: string): CloudBuildDeps & { read: (file: string) => Promise<unknown> } {
+    const dir = this.#publishDir(project);
+    return {
+      cli: (args, signal) =>
+        this.#spawnCli(dir, args, signal, {
+          timeoutMs: NATIVE_PUBLISH_TIMEOUT_MS,
+          parse: true,
+          home: path.join(dir, "home"),
+        }),
+      stage: (gameDir, dest) => stageRemixSource(gameDir, dest),
+      sleep: this.#cloudSleep,
+      read: (file) => readJsonOr(file),
+    };
+  }
+  /**
+   * Ask Genex to build the game's `platform` app on its own computers, from the project in
+   * `gameDir`. Refused while the CLI can't ask, or before the game has a page on Genex for the app to
+   * go on; a build of that platform still running is answered as it is. The build is then followed
+   * until it ends, and the dialog reads how it goes in the publish record.
+   */
+  async cloudBuild(project: string, platform: unknown, gameDir: string | undefined): Promise<GenexNativeRecord> {
+    if (!this.#buildsApps) throw new Error(PUBLISH_MESSAGE.CloudBuildsUnavailableRefusal());
+    if (!gameDir) throw new Error(PUBLISH_MESSAGE.NoGameFolderRefusal());
+    if (!(await this.#publishState(project)).slug) throw new Error(PUBLISH_MESSAGE.NotOnGenexRefusal());
+    const dir = await this.#publishWorkspace(project);
+    const running = (await this.#cloud(project)).builds.find(
+      (build) => build.platform === platform && isRunning(build),
+    );
+    if (!running) {
+      const controller = new AbortController();
+      this.#controllers.set(controller, { project });
+      const build = await startCloudBuild(
+        dir,
+        String(platform),
+        gameDir,
+        this.#cloudDeps(project),
+        controller.signal,
+      ).finally(() => this.#controllers.delete(controller));
+      this.#watchCloud(project, build.jobId);
+    }
+    return this.#nativeRecord(project);
+  }
+  /** Follow build `jobId` of `project` until it ends, once; signing out or disconnecting stops it. */
+  #watchCloud(project: string, jobId: string): void {
+    const key = `${project}\n${jobId}`;
+    if (this.#cloudWatches.has(key)) return;
+    const controller = new AbortController();
+    this.#controllers.set(controller, { project });
+    const watch = watchCloudBuild(this.#publishDir(project), jobId, this.#cloudDeps(project), controller.signal)
+      .catch(() => {})
+      .finally(() => {
+        this.#controllers.delete(controller);
+        this.#cloudWatches.delete(key);
+      });
+    this.#cloudWatches.set(key, watch);
+  }
+  /** Settles once every build on Genex being followed has ended; for tests. */
+  async cloudSettled(): Promise<void> {
+    await Promise.all(this.#cloudWatches.values());
   }
   /**
    * Send publish `jobId`'s apps (`genex native publish`), one at a time, each recorded as it goes; a
@@ -1793,6 +1901,9 @@ export class GenexTools {
     await atomicWriteJson(file, record);
     for (const app of apps) {
       const listing = gallery && !record.listing ? ["--gallery", "--title", gallery.title] : [];
+      // A failed notarizing never stops the app: it goes as built, and the record says why.
+      const notarized = app.sign ? await this.#notarize(app.target, app.sign, signal) : null;
+      if (signal.aborted) return record;
       const outcome = await sendNativeBuild(app, () =>
         this.#spawnCli(dir, [...nativePublishArgs(app), ...listing], signal, {
           timeoutMs: NATIVE_PUBLISH_TIMEOUT_MS,
@@ -1804,7 +1915,7 @@ export class GenexTools {
       );
       // Stopped: a newer publish writes its own record.
       if (signal.aborted) return record;
-      if ("sent" in outcome) record.sent.push(outcome.sent);
+      if ("sent" in outcome) record.sent.push(withNotarizing(outcome.sent, notarized));
       else record.failed.push(outcome.failed);
       if (outcome.listing) record.listing = outcome.listing;
       await atomicWriteJson(file, record);
