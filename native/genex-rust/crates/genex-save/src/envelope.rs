@@ -1,6 +1,8 @@
 //! The save envelope: one slot's sections with the sim position they were read at, as canonical
 //! JSON (serde_json with `preserve_order`, ryu floats, no whitespace, members in the documented
-//! order) so the same state always gives the same bytes on every target.
+//! order) so the same state always gives the same bytes on every target. serde_json's
+//! `float_roundtrip` parses each float correctly rounded, so every finite float reads back to the
+//! bits it was written from; a non-finite one has no JSON number and serialises as `null`.
 //!
 //! ```json
 //! {"genex":"save","format":1,"schema":3,"game":"<save name>","tick":18000,"seed":7,
