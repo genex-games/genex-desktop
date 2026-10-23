@@ -1393,6 +1393,56 @@ describe("a GPU that hangs, a device that comes back, and where a capture came f
     assert.equal(r.statuses.length, count, "nothing more happened");
   });
 
+  it("an embedded run builds the folder Live serves, and starts again on another one at the canvas's last size", async () => {
+    const root = await tmpDir("native-runs-live-root-");
+    const asked: Array<{ root: string | undefined; surface: NativeStartRequest["surface"] }> = [];
+    const r = await registry(
+      {
+        root,
+        prepare: async (req) => {
+          asked.push({ root: req.root, surface: req.surface && { ...req.surface } });
+          const runDir = path.join(root, req.runId);
+          await mkdir(path.join(runDir, "state"), { recursive: true });
+          req.onAdmitting?.();
+          return {
+            runId: req.runId,
+            runDir,
+            exe: path.join(runDir, "bundle", "Game.app", "Contents", "MacOS", "game"),
+            bundle: path.join(runDir, "bundle"),
+            state: path.join(runDir, "state"),
+            bundleId: "games.genex.game.0123456789ab",
+          };
+        },
+      },
+      V2_GAME,
+    );
+    const surface = { width: 320, height: 180, dpr: 2 };
+    const first = r.runs.embed({ project: "pond", target: BuildTarget.Mac, surface, root: "/copies/show-a" });
+    await r.clock.settle();
+    const shown = await first;
+    assert.equal(r.runs.resize("pond", { width: 640, height: 360, dpr: 2 }), true);
+    const again = r.runs.reembed("pond", "/copies/show-b");
+    await r.clock.settle();
+    const copy = await again;
+    assert.deepEqual(
+      asked.map((ask) => ask.root),
+      ["/copies/show-a", "/copies/show-b"],
+    );
+    assert.deepEqual(asked[1]?.surface, { width: 640, height: 360, dpr: 2 }, "the canvas's last size");
+    assert.equal(r.runs.state("pond", NativeRunMode.Embedded)?.runId, copy?.runId);
+    assert.notEqual(copy?.runId, shown.runId);
+    assert.ok(
+      r.statuses.some((status) => status.runId === shown.runId && ENDED.has(status.state)),
+      "the run of the other folder ended",
+    );
+    const folder = r.runs.reembed("pond", undefined);
+    await r.clock.settle();
+    await folder;
+    assert.equal(asked.at(-1)?.root, undefined, "back on the game folder");
+    assert.equal(await r.runs.reembed("tetris", "/copies/show-c"), null, "a game Live draws no run of starts none");
+    assert.equal(asked.length, 3);
+  });
+
   /** A frames host that records every ring it announces. */
   function recordingFrames() {
     const rings: Array<{ runId: string; generation: number }> = [];

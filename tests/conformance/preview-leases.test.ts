@@ -272,6 +272,7 @@ describe("harness-borrowed native leases", () => {
       sweepOrphans: async () => 0,
       onFocus: () => () => {},
       onStatus: () => () => {},
+      reembed: async () => null,
       showEmbedded: () => {},
     };
     const lite = await coreLite({

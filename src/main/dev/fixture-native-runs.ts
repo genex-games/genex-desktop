@@ -8,8 +8,8 @@
  *
  * Live's Native view is scripted too (its four channels are fixture-safe): embed answers a ready
  * embedded run with no process and no frames, and the input, resizes and sight it then receives are
- * said in that run's `native.log` (`embed: 1280x720 @2`, `input: tap`, `resize: …`, `hidden`, `shown`), so a
- * fixture run can read what Live sent.
+ * said in that run's `native.log` (`embed: 1280x720 @2`, `copy: <folder>` for a build copy Live serves,
+ * `input: tap`, `resize: …`, `hidden`, `shown`), so a fixture run can read what Live sent.
  *
  * The `cross-game` fixture's seed is here too: the cpp-game fixture plus pong-cross, made for all
  * four destinations (so on a Mac its Export for list offers Browser, Mac, Windows and Linux), whose
@@ -17,6 +17,7 @@
  * not run here, Linux refused by the ELF gate). No build runs, and no export: `studio:export` is
  * native, refused in a fixture profile.
  */
+import path from "node:path";
 import { BuildTarget, GameStack } from "../../shared/game-project.ts";
 import { DestinationBadge } from "../../shared/game-targets.ts";
 import {
@@ -50,6 +51,8 @@ const MESSAGE = {
   input: (actions: readonly NativeInputAction[]) => `input: ${actions.map((action) => action.type).join(", ")}`,
   resize: (surface: NativeSurfaceSize) => `resize: ${surface.width}x${surface.height} @${surface.dpr}`,
   embed: (surface: NativeSurfaceSize) => `embed: ${surface.width}x${surface.height} @${surface.dpr}`,
+  /** The build copy an embed builds instead of the game folder, by its folder's name. */
+  copy: (root: string) => `copy: ${path.basename(root)}`,
   hidden: "hidden",
   shown: "shown",
 } as const;
@@ -61,6 +64,9 @@ function macOnly(game: { targets: readonly BuildTarget[] }): boolean {
 
 /** The game whose window the fixture shows running: the Mac-only one (pong-mac). */
 const RUNNING_GAME = FIXTURE_CPP_GAMES.find(macOnly)?.name ?? "pong-mac";
+
+/** The canvas size a restart asks for when Live's canvas never said one. */
+const NO_SURFACE: NativeSurfaceSize = Object.freeze({ width: 1280, height: 720, dpr: 2 });
 
 /** States a run has ended in. */
 const ENDED: ReadonlySet<NativeRunState> = new Set([
@@ -84,6 +90,8 @@ class ScriptedNativeRuns implements NativeRunsHost {
   readonly #statusListeners = new Set<(run: NativeRunStatus) => void>();
   /** Embedded runs scripted so far, for their run ids. */
   #embeds = 0;
+  /** The size each game's embedded run was last asked for. */
+  readonly #surfaces = new Map<string, NativeSurfaceSize>();
 
   constructor(options: Pick<NativeRunsOptions, "emit" | "timers">) {
     this.#options = options;
@@ -145,12 +153,27 @@ class ScriptedNativeRuns implements NativeRunsHost {
       endedAt: null,
     };
     this.#announce(status);
+    this.#surfaces.set(request.project, { ...request.surface });
     this.#say(request.project, MESSAGE.embed(request.surface));
+    if (request.root !== undefined) this.#say(request.project, MESSAGE.copy(request.root));
     return { ...status };
+  }
+
+  /** Live serves another folder: the game's embedded run, when there is one, starts again as `embed` starts it. */
+  async reembed(project: string, root: string | undefined): Promise<NativeRunStatus | null> {
+    const shown = this.state(project, NativeRunMode.Embedded);
+    if (!shown) return null;
+    const request: NativeEmbedRequest = {
+      project,
+      target: shown.target,
+      surface: this.#surfaces.get(project) ?? NO_SURFACE,
+    };
+    return this.embed(root === undefined ? request : { ...request, root });
   }
 
   /** Said in the embedded run's log; false when there is none. */
   resize(project: string, surface: NativeSurfaceSize): boolean {
+    if (this.state(project, NativeRunMode.Embedded)) this.#surfaces.set(project, { ...surface });
     return this.#say(project, MESSAGE.resize(surface));
   }
 

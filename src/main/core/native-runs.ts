@@ -185,11 +185,13 @@ export interface NativeSurfaceSize {
   dpr: number;
 }
 
-/** What starts a game inside Live: the game, its destination and the size of Live's canvas. */
+/** What starts a game inside Live: the game, its destination, the size of Live's canvas and the folder Live serves. */
 export interface NativeEmbedRequest {
   project: string;
   target: BuildTarget;
   surface: NativeSurfaceSize;
+  /** The build copy Live serves (a shown build, a run's worktree), already checked by the previews; absent: the game folder. */
+  root?: string;
 }
 
 /** What `prepare` is handed: the request, its run id, and the step that says the build is done. */
@@ -286,6 +288,12 @@ export interface NativeRunsHost {
    * is registered; a failed start rejects as `start` does.
    */
   embed(request: NativeEmbedRequest): Promise<NativeRunStatus>;
+  /**
+   * Live now serves another folder of `project` (`root`, absent: the game folder): its embedded run,
+   * when there is one, starts again on that folder at the size Live's canvas last asked for, as
+   * `embed` does. Null when Live draws no run of `project`.
+   */
+  reembed(project: string, root: string | undefined): Promise<NativeRunStatus | null>;
   /** Live's canvas changed: `project`'s embedded run gets a new ring once it holds still; false when there is none. */
   resize(project: string, surface: NativeSurfaceSize): boolean;
   /** Checked input to `project`'s ready embedded run; false when there is none or it refused. */
@@ -514,6 +522,7 @@ export class NativeRuns implements NativeRunsHost {
     this.onFocus = this.onFocus.bind(this);
     this.onStatus = this.onStatus.bind(this);
     this.embed = this.embed.bind(this);
+    this.reembed = this.reembed.bind(this);
     this.resize = this.resize.bind(this);
     this.input = this.input.bind(this);
     this.showEmbedded = this.showEmbedded.bind(this);
@@ -623,6 +632,15 @@ export class NativeRuns implements NativeRunsHost {
     const starting = this.start({ ...request, mode: NativeRunMode.Embedded });
     if (before) void this.stop(before.status.runId);
     return (await starting).status;
+  }
+
+  /** Live serves another folder of `project`: its live embedded run starts again there at its canvas's last size. */
+  async reembed(project: string, root: string | undefined): Promise<NativeRunStatus | null> {
+    const entry = this.#newest(project, NativeRunMode.Embedded);
+    const embed = entry?.embed;
+    if (!entry || !embed || entry.stopAsked) return null;
+    const request: NativeEmbedRequest = { project, target: entry.status.target, surface: { ...embed.surface } };
+    return this.embed(root === undefined ? request : { ...request, root });
   }
 
   /** Live's canvas changed size: a new ring `NATIVE_RESIZE_DEBOUNCE_MS` after the last change. */

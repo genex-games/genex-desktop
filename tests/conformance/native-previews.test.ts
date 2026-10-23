@@ -169,6 +169,10 @@ function fakeRegistry() {
     embed: async () => {
       throw new Error("the previews never embed");
     },
+    reembed: async (project, root) => {
+      events.push(`reembed ${project} ${root ?? "folder"}`);
+      return null;
+    },
     resize: () => false,
     input: async () => false,
     showEmbedded: (project, visible) => void shown.push([project, visible]),

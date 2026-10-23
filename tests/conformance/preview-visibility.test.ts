@@ -55,6 +55,7 @@ test("hiding Live pauses an embedded run, never the Play window or an agent's ru
     sweepOrphans: async () => 0,
     onFocus: () => () => {},
     onStatus: () => () => {},
+    reembed: async () => null,
     showEmbedded: (project: string, visible: boolean) => void shown.push([project, visible]),
   };
   const live = {
@@ -132,6 +133,7 @@ test("an embedded run follows the person watching Live, not the web view's bound
       listeners.push(listener);
       return () => {};
     },
+    reembed: async () => null,
     showEmbedded: (project: string, visible: boolean) => void shown.push([project, visible]),
   };
   const live = {
