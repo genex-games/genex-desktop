@@ -534,6 +534,8 @@ export default {
   "Build updated": "빌드가 업데이트됐어요",
   "Build with workers": "작업자와 함께 만들기",
   Building: "만드는 중",
+  "Building the Mac version of this build… {clock}": "이 빌드의 Mac 버전을 빌드하는 중… {clock}",
+  "Building the Mac version… {clock}": "Mac 버전을 빌드하는 중… {clock}",
   "Building the game": "게임 빌드 중",
   "Building the starting point": "시작점을 만드는 중",
   "Building the starting point…": "시작점을 만드는 중…",

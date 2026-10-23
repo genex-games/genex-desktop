@@ -5560,6 +5560,10 @@ export const NATIVE_WORDS = {
     cantDraw: t("Live can’t draw the game on this Mac. Use Pop out."),
     /** The embed call itself failed (main did not answer). */
     failed: t("Live couldn’t start the game. Try again or use Pop out."),
+    /** The game folder's Mac build is being made, for how long so far ("1:12"). */
+    building: (clock: string) => t("Building the Mac version… {clock}", { clock }),
+    /** The Mac build of the build copy Live shows (Play latest, a run card's Play) is being made. */
+    buildingCopy: (clock: string) => t("Building the Mac version of this build… {clock}", { clock }),
   },
 } as const;
 

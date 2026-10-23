@@ -499,6 +499,8 @@ export const MESSAGES = [
   "Building",
   "Building for Mac",
   "Building for Mac needs Apple’s Command Line Tools.",
+  "Building the Mac version of this build… {clock}",
+  "Building the Mac version… {clock}",
   "Building the game",
   "Building the starting point",
   "Building the starting point…",

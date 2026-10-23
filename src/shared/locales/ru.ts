@@ -564,6 +564,8 @@ export default {
   "Build updated": "Сборка обновлена",
   "Build with workers": "Собирай с помощниками",
   Building: "Собирает",
+  "Building the Mac version of this build… {clock}": "Собираем версию для Mac из этой сборки… {clock}",
+  "Building the Mac version… {clock}": "Собираем версию для Mac… {clock}",
   "Building the game": "Собираем игру",
   "Building the starting point": "Собирает основу",
   "Building the starting point…": "Собирает основу…",

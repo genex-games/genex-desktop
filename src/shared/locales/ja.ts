@@ -538,6 +538,8 @@ export default {
   "Build updated": "ビルドを更新しました",
   "Build with workers": "ワーカーとつくる",
   Building: "制作中",
+  "Building the Mac version of this build… {clock}": "このビルドのMac版をビルド中… {clock}",
+  "Building the Mac version… {clock}": "Mac版をビルド中… {clock}",
   "Building the game": "ゲームをビルド中",
   "Building the starting point": "土台をつくっています",
   "Building the starting point…": "土台をつくっています…",

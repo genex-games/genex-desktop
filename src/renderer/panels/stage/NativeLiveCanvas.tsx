@@ -15,6 +15,8 @@ import {
   NativeRunState,
   type NativeRunStatus,
 } from "../../../shared/native-contract.ts";
+import type { CompiledStack } from "../../../shared/game-project.ts";
+import { CLOCK_TICK_MS } from "../../asset-making.ts";
 import { useNative } from "../../state/hooks.ts";
 import { nativeEmbedOf, nativeStoreFor } from "../../state/native.ts";
 import { studio } from "../../state/studio.ts";
@@ -23,6 +25,7 @@ import { NATIVE_WORDS } from "../../words.ts";
 import { TroubleDetails } from "./build-problem.tsx";
 import {
   awaitsFirstFrame,
+  buildingWords,
   CanvasAction,
   CanvasPhase,
   canvasActions,
@@ -446,20 +449,41 @@ function useCapture(
 const shownOf = (status: NativeRunStatus | null): ShownRun | null =>
   status ? { project: status.project, runId: status.runId } : null;
 
+/** What a Mac build under way is: of the build copy Live shows or of the game folder, and the game's stack. */
+export interface CanvasBuild {
+  copy: boolean;
+  stack: CompiledStack | null;
+}
+
+/** Now, moving on once a second while `running`: the clock a build under way is counted on. */
+function useClock(running: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(timer);
+  }, [running]);
+  return now;
+}
+
 /** What the canvas says over the game when it is not simply playing, with its buttons. */
 function CanvasCard({
   phase,
   status,
+  build,
   popOut,
   onAction,
 }: {
   phase: CanvasPhase;
   status: NativeRunStatus | null;
+  build: CanvasBuild;
   /** Whether the game has a window of its own to pop out to. */
   popOut: boolean;
   onAction: (action: CanvasAction) => void;
 }): JSX.Element {
-  const { title, detail } = canvasWords(phase, status);
+  const now = useClock(status?.state === NativeRunState.Building);
+  const { title, detail } = buildingWords(status, { ...build, now }) ?? canvasWords(phase, status);
   const actions = canvasActions(phase, status, { popOut });
   const busy = phase === CanvasPhase.Starting;
   const boot = busy ? startingProgress(status) : null;
@@ -567,10 +591,13 @@ function CaptureHint({
 export function NativeLiveCanvas({
   project,
   active,
+  build,
   onPopOut,
 }: {
   project: string;
   active: boolean;
+  /** What a Mac build under way is made of, for the card's words. */
+  build: CanvasBuild;
   /** Null for a game with no window of its own (a Rust game): the card never offers Pop out. */
   onPopOut: (() => void) | null;
 }): JSX.Element {
@@ -611,7 +638,9 @@ export function NativeLiveCanvas({
       />
       {playing ? <CaptureHint captured={captured} onCapture={capture} veiled={veiled} /> : null}
       {veiled ? <FirstFrameVeil /> : null}
-      {playing ? null : <CanvasCard phase={phase} status={embed.status} popOut={onPopOut !== null} onAction={act} />}
+      {playing ? null : (
+        <CanvasCard phase={phase} status={embed.status} build={build} popOut={onPopOut !== null} onAction={act} />
+      )}
     </div>
   );
 }

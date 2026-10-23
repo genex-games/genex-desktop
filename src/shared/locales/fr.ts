@@ -597,6 +597,8 @@ export default {
   "Build updated": "Build mis à jour",
   "Build with workers": "Crée avec des assistants",
   Building: "Création",
+  "Building the Mac version of this build… {clock}": "Création de la version Mac de ce build… {clock}",
+  "Building the Mac version… {clock}": "Création de la version Mac… {clock}",
   "Building the game": "Création du jeu",
   "Building the starting point": "Crée le point de départ",
   "Building the starting point…": "Création du point de départ…",

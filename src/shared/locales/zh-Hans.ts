@@ -512,6 +512,8 @@ export default {
   "Build updated": "构建已更新",
   "Build with workers": "与助手一起制作",
   Building: "制作中",
+  "Building the Mac version of this build… {clock}": "正在构建这个构建的 Mac 版本… {clock}",
+  "Building the Mac version… {clock}": "正在构建 Mac 版本… {clock}",
   "Building the game": "正在构建游戏",
   "Building the starting point": "正在制作起点",
   "Building the starting point…": "正在制作起点…",

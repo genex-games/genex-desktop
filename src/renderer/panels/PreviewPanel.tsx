@@ -100,7 +100,7 @@ import {
 } from "./stage/destinations.ts";
 import { nativeCardView } from "./stage/native-card.ts";
 import { embedRefusalWords } from "./stage/native-live.ts";
-import { NativeLiveCanvas } from "./stage/NativeLiveCanvas.tsx";
+import { type CanvasBuild, NativeLiveCanvas } from "./stage/NativeLiveCanvas.tsx";
 import { DeviceLaunch } from "./stage/DeviceLaunch.tsx";
 import { EngineRows, type EngineRowsToggle, useEngineRows } from "./stage/EngineRows.tsx";
 import { NativeRunCard } from "./stage/NativeRunCard.tsx";
@@ -690,15 +690,19 @@ function useCompiledSurface(input: {
 /** Live's canvas for the Mac build, while Native is chosen for `game`; Pop out is the strip's. */
 function LiveCanvas({
   game,
+  build,
   active,
   choice,
 }: {
   game: string | null;
+  build: CanvasBuild;
   active: boolean;
   choice: LiveViewChoice | null;
 }): JSX.Element | null {
   if (!game) return null;
-  return <NativeLiveCanvas key={game} project={game} active={active} onPopOut={choice?.onPopOut ?? null} />;
+  return (
+    <NativeLiveCanvas key={game} project={game} active={active} build={build} onPopOut={choice?.onPopOut ?? null} />
+  );
 }
 
 /**
@@ -838,12 +842,19 @@ function useLiveStage(input: {
 }
 
 /** A game's own Mac window and engine on the stage: the run card's game, a Rust game's engine rows, and Live's canvas. */
-function useStageNative(loaded: GameProject | null, host: StudioPlatform | null, cover: StageCover) {
+function useStageNative(
+  loaded: GameProject | null,
+  host: StudioPlatform | null,
+  shown: { cover: StageCover; copy: boolean },
+) {
   const { macGame, windowShown } = useNativeWindow(loaded, host);
   const engine = useEngineRows(loaded);
   /** The game whose Mac build Live's canvas shows, while Native is chosen for it. */
-  const canvasGame = loaded && nativeCanvasShown(cover) ? loaded.name : null;
-  return { macGame, windowShown, engine, canvasGame };
+  const canvasGame = loaded && nativeCanvasShown(shown.cover) ? loaded.name : null;
+  /** What its Mac build is made of: the build copy Live shows (Play latest, a run card's Play), or the game folder. */
+  const stack = loaded ? stackOf(loaded.shape) : null;
+  const canvasBuild: CanvasBuild = { copy: shown.copy, stack: stack !== null && isCompiledStack(stack) ? stack : null };
+  return { macGame, windowShown, engine, canvasGame, canvasBuild };
 }
 
 /**
@@ -1077,7 +1088,8 @@ function usePreviewStage(input: {
     onNotice,
   });
   const stageReload = useNativeReload(project, liveStage.nativeView.native, liveBehind.reload);
-  const stageNative = useStageNative(loaded, liveStage.host, liveStage.cover);
+  const copy = liveBehind.shownBuild !== null;
+  const stageNative = useStageNative(loaded, liveStage.host, { cover: liveStage.cover, copy });
   return { ...surface, firstPlan, liveStage, liveBehind, stageReload, stageNative };
 }
 
@@ -1118,7 +1130,7 @@ export function PreviewPanel({
   const { stageView, showEmpty, liveLoading, gameStopped, previewOnStage } = flags;
   const [focusedAsset, setFocusedAsset] = useState<string | null>(null);
   const { shownBuild, behind, showBuild } = liveBehind;
-  const { macGame, windowShown, engine, canvasGame } = stageNative;
+  const { macGame, windowShown, engine, canvasGame, canvasBuild } = stageNative;
 
   return (
     <div
@@ -1154,7 +1166,12 @@ export function PreviewPanel({
       <StageAbove {...{ stage, card, macGame, tools, engine, native, onNotice }} onStage={previewOnStage} />
       <div className="relative min-h-0 flex-1 overflow-hidden bg-base">
         <div ref={slot} data-preview-slot className="absolute inset-0" />
-        <LiveCanvas game={canvasGame} active={previewOnStage && visible} choice={nativeView.choice} />
+        <LiveCanvas
+          game={canvasGame}
+          build={canvasBuild}
+          active={previewOnStage && visible}
+          choice={nativeView.choice}
+        />
         <StageContents
           project={project}
           threadId={threadId}

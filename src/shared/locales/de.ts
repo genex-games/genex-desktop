@@ -600,6 +600,8 @@ export default {
   "Build updated": "Build aktualisiert",
   "Build with workers": "Bau mit Helfern",
   Building: "Baut",
+  "Building the Mac version of this build… {clock}": "Die Mac-Version dieses Builds wird gebaut… {clock}",
+  "Building the Mac version… {clock}": "Die Mac-Version wird gebaut… {clock}",
   "Building the game": "Spiel wird gebaut",
   "Building the starting point": "Baut den Ausgangspunkt",
   "Building the starting point…": "Baut den Ausgangspunkt…",

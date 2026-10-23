@@ -28,7 +28,9 @@ import {
   deviceSideFits,
   ringSizeFor,
 } from "../../../shared/native-contract.ts";
-import { NATIVE_WORDS } from "../../words.ts";
+import type { CompiledStack } from "../../../shared/game-project.ts";
+import { elapsedWords } from "../../asset-making.ts";
+import { DESTINATION_WORDS, NATIVE_WORDS } from "../../words.ts";
 
 /** The device-pixel ratio Live sends at most and at least (`parseNativeEmbedSize`'s range). */
 const DPR_MIN = 1;
@@ -469,4 +471,27 @@ export function canvasWords(
         detail: startingProgress(status)?.words ?? null,
       };
   }
+}
+
+/** What the canvas knows of the build under way: whether it is of a build copy Live shows, the game's stack, and now. */
+export interface BuildingContext {
+  copy: boolean;
+  stack: CompiledStack | null;
+  now: number;
+}
+
+/**
+ * What the canvas says while the run's Mac build is made: what is built (the game folder's, or
+ * the build copy Live shows), for how long so far, and the stack's compiler; null once the run is
+ * past its build (or before the host answered).
+ */
+export function buildingWords(
+  status: NativeRunStatus | null,
+  context: BuildingContext,
+): { title: string; detail: string | null } | null {
+  if (status?.state !== NativeRunState.Building) return null;
+  const started = Date.parse(status.startedAt);
+  const clock = elapsedWords(Number.isFinite(started) ? started : context.now, context.now) ?? "";
+  const title = context.copy ? NATIVE_WORDS.embed.buildingCopy(clock) : NATIVE_WORDS.embed.building(clock);
+  return { title, detail: context.stack ? DESTINATION_WORDS.buildStage[context.stack] : null };
 }
