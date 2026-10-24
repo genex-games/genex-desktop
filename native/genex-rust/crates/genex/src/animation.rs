@@ -94,7 +94,7 @@ impl CharacterAsset {
     pub fn animator(&self, graph: &AnimGraph) -> Result<Animator, AnimationError> {
         built()?;
         let rig = Rig::new(Arc::clone(self.set()), graph)?;
-        Ok(Animator { asset: self.clone(), rig, dt: 0.0, feet: None })
+        Ok(Animator { asset: self.clone(), rig, dt: 0.0, feet: None, revision: next_revision() })
     }
 
     /// The same character with root motion extracted from its clips by `settings` (baked in place
@@ -131,6 +131,18 @@ pub struct Animator {
     dt: f32,
     /// Foot placement, from the first `plant_feet` on (release R-22).
     feet: Option<Box<Feet>>,
+    /// A number no other state of any animator in the process carries (lane CP): taken afresh by
+    /// every `&mut` access, kept by a clone. Two animators with one revision are one state, so a
+    /// frame copies each drawn animator once. Never part of the state, its digest or a snapshot.
+    revision: u64,
+}
+
+/// The last revision handed out ([`Animator::revision`]).
+static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A revision no animator has carried yet.
+fn next_revision() -> u64 {
+    REVISIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
 }
 
 /// One character's planted feet: its legs, the placer's locks and the pose with the last plan.
@@ -189,6 +201,7 @@ impl Animator {
     /// events and root motion. The feet stand where the animation puts them until the next
     /// [`Animator::plant_feet`].
     pub fn update(&mut self, dt: f32) -> AnimatorStep {
+        self.revision = next_revision();
         self.dt = dt;
         if let Some(feet) = &mut self.feet {
             feet.posed = None;
@@ -226,6 +239,7 @@ impl Animator {
     /// # }
     /// ```
     pub fn plant_feet(&mut self, model: Transform, ground: impl FnMut(Vec3, Vec3) -> Option<GroundHit>) -> FootPlan {
+        self.revision = next_revision();
         let set = Arc::clone(self.rig.set());
         let feet = self.feet.get_or_insert_with(|| Feet::new(&set, FootPlacer::new(FootSettings::default())));
         let Some(legs) = &feet.rig else { return FootPlan::NONE };
@@ -309,6 +323,7 @@ impl Animator {
     /// unchanged: genex-anim's refusals, or feet that are not a foot snapshot. A snapshot without
     /// feet drops the locks; the feet stand as animated until the next `plant_feet`.
     pub fn restore(&mut self, snapshot: &CoreValue) -> Result<(), AnimationError> {
+        self.revision = next_revision();
         let mut placer = FootPlacer::new(FootSettings::default());
         let saved = snapshot.get(FEET_KEY);
         if let Some(saved) = saved {
@@ -323,6 +338,12 @@ impl Animator {
     /// (`{"layers":[{"state":"walk",..}],"params":{"speed":2}}`).
     pub fn probe(&self) -> Value {
         Value::from(&self.rig.probe())
+    }
+
+    /// Its revision: the same for two animators only while they hold one state (a clone that
+    /// neither has changed since).
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// The model handle the presenter loads for it (the checker when the file is missing).
@@ -362,6 +383,7 @@ impl Deref for Animator {
 
 impl DerefMut for Animator {
     fn deref_mut(&mut self) -> &mut Rig {
+        self.revision = next_revision();
         &mut self.rig
     }
 }

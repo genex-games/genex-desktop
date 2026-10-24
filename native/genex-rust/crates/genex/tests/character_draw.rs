@@ -66,6 +66,9 @@ enum Draws {
     BindPose,
     /// The one animator drawn by three characters side by side (a crowd's shared cycle).
     Crowd,
+    /// Three temporary copies of the animator, each advanced a little further, drawn in turn from
+    /// one stack slot (each its own pose).
+    Phased,
 }
 
 /// A game walking the hero in place at the origin, seen from `eye`; a player eye named
@@ -99,6 +102,14 @@ fn hero_game(draws: Draws, eye: Vec3, observer: Vec3) -> Game<World> {
             Draws::Crowd => {
                 for x in [-2.0, 0.0, 2.0] {
                     frame.tag("hero").character(hero, Transform::from_xyz(x, 0.0, 0.0));
+                }
+                frame
+            }
+            Draws::Phased => {
+                for k in 1..=3 {
+                    let mut phased = hero.clone();
+                    phased.update(0.1 * k as f32);
+                    frame.tag("hero").character(&phased, Transform::from_xyz(2.0 * k as f32, 0.0, 0.0));
                 }
                 frame
             }
@@ -353,6 +364,16 @@ fn an_animator_drawn_by_several_characters_is_copied_once_and_posed_every_tick()
         let scene = to_scene(&frame, &game_camera, &cache);
         assert!(scene.skinned.iter().all(|draw| draw.joints == palette_of(&hero)), "all three draw this tick's full-rate pose");
     }
+}
+
+/// Temporaries drawn from one stack slot are three states: each is copied for its own draw.
+#[test]
+fn temporary_animators_at_one_address_are_copied_apart() {
+    let mut runtime = runtime(hero_game(Draws::Phased, near_eye(), near_eye()), 1);
+    let frame = runtime.frame(View::Game).expect("the game view");
+    let digests: Vec<u64> = frame.draws().iter().filter_map(|draw| if let genex::Shape::Character { animator, .. } = &draw.shape { Some(animator.digest()) } else { None }).collect();
+    assert_eq!(digests.len(), 3);
+    assert!(digests[0] != digests[1] && digests[1] != digests[2] && digests[0] != digests[2], "three poses: {digests:?}");
 }
 
 /// [`live_far_ticks`]'s run with no presenter.

@@ -159,6 +159,10 @@ pub(super) struct Characters {
     /// (the frame's `Arc`, kept so its address names it for the frame; one per animator, which
     /// every draw of it in the frame shares).
     posed: FastMap<usize, (Arc<Animator>, Palette)>,
+    /// The palettes the last frame drew, in draw order: its [`palette_digest`], made only when
+    /// [`AssetCache::character_stats`] is asked (hashing every palette every frame costs more
+    /// than posing a crowd).
+    drawn: Vec<Palette>,
     frames: u64,
     stats: CharacterStats,
 }
@@ -218,7 +222,7 @@ impl Characters {
         let mut stats = CharacterStats::default();
         let shared = shared_animators(frame);
         let mut ordinals: FastMap<(&str, Option<DrawId>), u32> = FastMap::default();
-        let mut digest = FNV_OFFSET_BASIS;
+        self.drawn.clear();
         for draw in frame.draws() {
             let Shape::Character { animator, transform, .. } = &draw.shape else { continue };
             let path = animator.asset().path();
@@ -243,12 +247,11 @@ impl Characters {
                     palette
                 }
             };
-            digest = digest_palette(digest, &palette);
+            self.drawn.push(palette);
             stats.drawn += 1;
         }
         let frames = self.frames;
         self.held.retain(|_, held| frames - held.seen < EVICT_AFTER_FRAMES);
-        stats.palette_digest = digest;
         stats.cached = self.held.len() as u32;
         self.stats = stats;
     }
@@ -402,7 +405,8 @@ impl AssetCache {
 
     /// What the last [`AssetCache::pose_characters`] did.
     pub fn character_stats(&self) -> CharacterStats {
-        self.characters.stats
+        let palette_digest = self.characters.drawn.iter().fold(FNV_OFFSET_BASIS, |hash, palette| digest_palette(hash, palette));
+        CharacterStats { palette_digest, ..self.characters.stats }
     }
 }
 
@@ -415,7 +419,7 @@ impl Presenter {
     /// `volatile.render.characters` for the last drawn frame (game systems AN-23): its characters'
     /// poses and the renderer's skinned instances on each path under the class's compute cap.
     pub fn characters_status(&self) -> crate::render::CharactersStatus {
-        let stats = self.assets.character_stats();
+        let stats = self.assets.characters.stats;
         let skinned = self.resilient.renderer().renderer().last_skinned_instances();
         crate::render::CharactersStatus {
             drawn: stats.drawn,

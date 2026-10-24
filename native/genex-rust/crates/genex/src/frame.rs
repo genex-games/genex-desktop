@@ -693,12 +693,12 @@ pub struct Frame {
 }
 
 /// The animators a frame drew with `frame.character`, by the drawn animator's address (lane CP):
-/// its whole-state digest, its drawn pose's digest and its one copy, which every draw of it in this
-/// frame shares (a crowd drawn with a few shared animators copies each once, not once per draw).
-/// A different animator at a reused address (a temporary) differs in a digest and is copied anew.
-/// Never part of a frame's equality: it only saves copies.
+/// its revision and its one copy, which every draw of it in this frame shares (a crowd drawn with a
+/// few shared animators copies each once, not once per draw). Another animator at a reused address
+/// (a temporary) carries another revision and is copied anew. Never part of a frame's equality:
+/// it only saves copies.
 #[derive(Clone, Debug, Default)]
-struct DrawnAnimators(genex_core::map::FastMap<usize, (u64, u64, Arc<crate::animation::Animator>)>);
+struct DrawnAnimators(genex_core::map::FastMap<usize, (u64, Arc<crate::animation::Animator>)>);
 
 impl PartialEq for DrawnAnimators {
     fn eq(&self, _other: &DrawnAnimators) -> bool {
@@ -707,17 +707,17 @@ impl PartialEq for DrawnAnimators {
 }
 
 impl DrawnAnimators {
-    /// This frame's copy of `animator`: the earlier one while its state and pose are the same.
+    /// This frame's copy of `animator`: the earlier one while it holds the same state.
     fn copy(&mut self, animator: &crate::animation::Animator) -> Arc<crate::animation::Animator> {
         let at = std::ptr::from_ref(animator) as usize;
-        let (state, pose) = (animator.digest(), animator.pose_digest());
-        if let Some((held_state, held_pose, copy)) = self.0.get(&at)
-            && (*held_state, *held_pose) == (state, pose)
+        let revision = animator.revision();
+        if let Some((held, copy)) = self.0.get(&at)
+            && *held == revision
         {
             return Arc::clone(copy);
         }
         let copy = Arc::new(animator.clone());
-        self.0.insert(at, (state, pose, Arc::clone(&copy)));
+        self.0.insert(at, (revision, Arc::clone(&copy)));
         copy
     }
 }
