@@ -18,7 +18,9 @@
  *   ({@link sharedTargetDir}), and the lane builds that game's copies one at a time.
  *
  * The sweep ({@link sweepProject}, {@link sweepShared}) removes a build folder whose source folder
- * is gone or whose lock nothing keeps, never one in use, and nothing outside the lane's root.
+ * is gone or whose lock nothing keeps (neither the current lock nor a game's recorded one the store
+ * still holds), never one in use, and nothing outside the lane's root; a shared target goes once no
+ * copy's build folder names it, so a stale lock's goes in the same sweep as its copies' folders.
  */
 import { lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";

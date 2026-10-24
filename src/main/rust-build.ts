@@ -831,7 +831,8 @@ export class RustBuilds implements GameBuildLane {
    * Removes the build folders nothing will build again, with everything named after them beside:
    * those whose source root is gone (a merged worker's worktree, a discarded Play-latest copy),
    * unknown past the grace, or of a lock that is neither the current one nor one a game of the
-   * library recorded ({@link RustBuildsOptions.retainedLocks}); then the shared targets no copy
+   * library recorded ({@link RustBuildsOptions.retainedLocks}; the core's lane names only those the
+   * store still holds, `core/rust-lane.ts`); then the shared targets no copy
    * builds in any more (`rust-build-cache.ts`). A project with a build in flight or lending its
    * target is left whole, a folder the app serves stays, one that cannot be removed is skipped,
    * and nothing is followed through a link. When the app cannot say what it serves, nothing goes.

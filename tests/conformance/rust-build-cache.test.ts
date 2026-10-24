@@ -19,9 +19,14 @@ import {
   sharedTargetDir,
   UNSTAMPED_GRACE_MS,
 } from "../../src/main/rust-build-cache.ts";
+import { createCoreRustBuilds } from "../../src/main/core/rust-lane.ts";
 import { RustBuilds, type RustBuildsOptions } from "../../src/main/rust-build.ts";
+import { GameStack } from "../../src/shared/game-project.ts";
 import { hostTreeCloner, type TreeCloner } from "../../src/substrate/clone-tree.ts";
 import type { ToolchainLock } from "../../src/shared/toolchain.ts";
+import { lockFolder } from "../../src/substrate/toolchain-store/locate.ts";
+import { lockOf, recordLock, writeCurrentLock } from "../../src/substrate/toolchain-store/lock.ts";
+import { RUST_BASE_FILE } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { removeTree, tmpDir } from "../helpers/tmp.ts";
 
 const LOCK: ToolchainLock = {
@@ -346,4 +351,103 @@ describe("the sweep's hostile inputs delete nothing outside the lane's root (BC)
       assert.equal(await exists(path.join(outside, WEB)), true, label);
     });
   }
+});
+
+/** A Rust lock over a sysroot of `version`, recorded in `store`; `installed` also writes its probed base. */
+async function rustLockIn(store: string, version: string, installed: boolean): Promise<ToolchainLock> {
+  const lock = lockOf({ rust: { version, sha12: "0123456789ab" } });
+  await recordLock(store, lock);
+  if (!installed) return lock;
+  const base = { schema: 1, lock: lock.digest, triples: ["aarch64-apple-darwin"], vendor: VENDOR, at: "2026-10-25" };
+  await mkdir(lockFolder(store, lock), { recursive: true });
+  await writeFile(path.join(lockFolder(store, lock), RUST_BASE_FILE), JSON.stringify(base));
+  return lock;
+}
+const VENDOR = { sha256: "0".repeat(64), files: 0, bytes: 0 };
+
+describe("the core lane's sweep removes the folders of a lock gone from the store (LK)", () => {
+  /** A store whose current Rust lock is 1.101, beside an older one still installed, one only recorded and one gone. */
+  async function storeWithLocks(parent: string) {
+    const store = path.join(parent, "toolchains");
+    const current = await rustLockIn(store, "1.101.0", true);
+    await writeCurrentLock(store, current, GameStack.RustWgpu);
+    const kept = await rustLockIn(store, "1.100.0", true);
+    const recordOnly = await rustLockIn(store, "1.99.0", false);
+    const gone = lockOf({ rust: { version: "1.98.0", sha12: "0123456789ab" } });
+    return { store, current, kept, recordOnly, gone };
+  }
+
+  /** The core's lane over `store`, its library recording `recorded`; it only sweeps. */
+  function coreSweeper(root: string, store: string, recorded: () => Promise<readonly string[]>) {
+    return createCoreRustBuilds({
+      root,
+      store,
+      resources: path.join(path.dirname(store), "resources"),
+      sandbox: async () => assert.fail("the sweep builds nothing"),
+      emit: () => {},
+      platform: process.platform,
+      cores: 8,
+      denyWrite: [],
+      writeLock: async () => {},
+      retainedLocks: recorded,
+      inUse: () => [],
+      now: () => NOW,
+    });
+  }
+
+  it("removes the folders of a lock whose toolchain is gone though a game still records it; keeps the current and an installed recorded lock's", async () => {
+    const parent = await realpath(await tmpDir("rust-sweep-stale-lock-"));
+    const root = path.join(parent, "rust-builds");
+    const live = path.join(parent, "game");
+    await mkdir(live);
+    const { store, current, kept, recordOnly, gone } = await storeWithLocks(parent);
+    const project = `pond-${"1".repeat(12)}`;
+    const folderOf = (lock: ToolchainLock, target = "macos") => `${target}-${lock.digest.slice(0, 12)}`;
+    for (const lock of [current, kept, recordOnly, gone]) {
+      await builtFolder(root, project, folderOf(lock), live);
+      await builtFolder(root, project, folderOf(lock, "web"), live);
+    }
+    const recorded = [kept, recordOnly, gone].map((lock) => lock.digest);
+    assert.equal(await coreSweeper(root, store, async () => recorded).sweep(), 4);
+    const left = (await readdir(path.join(root, project))).filter((name) => !name.includes(".")).sort();
+    assert.deepEqual(left, [current, kept].flatMap((lock) => [folderOf(lock), folderOf(lock, "web")]).sort());
+  });
+
+  it("a recorded digest that is no lock keeps nothing, and a library it cannot read keeps every lock's folders", async () => {
+    const parent = await realpath(await tmpDir("rust-sweep-stale-lock-"));
+    const root = path.join(parent, "rust-builds");
+    const live = path.join(parent, "game");
+    await mkdir(live);
+    const { store, gone } = await storeWithLocks(parent);
+    const project = `pond-${"1".repeat(12)}`;
+    const stale = await builtFolder(root, project, `macos-${gone.digest.slice(0, 12)}`, live);
+    const unreadable = coreSweeper(root, store, async () => {
+      throw new Error("the library is unreadable");
+    });
+    assert.equal(await unreadable.sweep(), 0);
+    assert.equal(await exists(stale), true);
+    const hostile = ["../../toolchains", gone.digest.toUpperCase(), `${gone.digest}/..`, "", gone.digest];
+    assert.equal(await coreSweeper(root, store, async () => hostile).sweep(), 1);
+    assert.equal(await exists(stale), false);
+    assert.equal(await exists(path.join(store, "lock-records")), true, "the store is left as it was");
+  });
+});
+
+describe("the shared-target branch sweeps a stale lock's target with its copies' folders (LK)", () => {
+  it("a game's shared target of a lock no longer kept goes in the same sweep as the copies' folders", async () => {
+    const parent = await realpath(await tmpDir("rust-sweep-stale-shared-"));
+    const root = path.join(parent, "rust-builds");
+    const live = path.join(parent, "game");
+    await mkdir(live);
+    const stale = `macos-${"b".repeat(12)}`;
+    await builtFolder(root, `pond-${"1".repeat(12)}`, stale, live);
+    await builtFolder(root, `pond-${"1".repeat(12)}`, MAC, live);
+    const staleTarget = sharedTargetDir(root, "pond", stale);
+    const currentTarget = sharedTargetDir(root, "pond", MAC);
+    assert.ok(staleTarget && currentTarget);
+    for (const dir of [staleTarget, currentTarget]) await mkdir(path.join(dir, "debug"), { recursive: true });
+    assert.equal(await sweeper(root, { retainedLocks: async () => [] }).sweep(), 2);
+    assert.equal(await exists(staleTarget), false);
+    assert.equal(await exists(currentTarget), true);
+  });
 });

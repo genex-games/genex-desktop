@@ -29,6 +29,7 @@ import {
 } from "../../substrate/rust-notices.ts";
 import { crateOverlayLayout } from "../../substrate/toolchain-store/crate-overlay.ts";
 import { readCurrentLock } from "../../substrate/toolchain-store/lock.ts";
+import { installedRustLocks } from "../../substrate/toolchain-store/retention.ts";
 import { locateRust } from "../../substrate/toolchain-store/rust-locate.ts";
 import { cloneRustTarget } from "../../substrate/toolchain-store/rust-prewarm.ts";
 import { FIXTURE_STORE_MARKER } from "../dev/fixture-toolchains.ts";
@@ -257,12 +258,18 @@ export type CoreRustLaneOptions = Omit<RustBuildsOptions, "locate" | "currentLoc
   resources: string;
 };
 
-/** The core's Rust lane: the store's current Rust lock and toolchain, the shipped payload's release and gate. */
+/**
+ * The core's Rust lane: the store's current Rust lock and toolchain, the shipped payload's release
+ * and gate. The sweep keeps the folders of a lock a game records only while the store still holds
+ * that lock's toolchain: a game whose lock was removed builds on the current one, so its old
+ * folders are nothing any build reaches.
+ */
 export function createCoreRustBuilds(options: CoreRustLaneOptions): RustBuilds {
-  const { store, resources, ...lane } = options;
+  const { store, resources, retainedLocks, ...lane } = options;
   const payload = rustPayloadDir(resources);
   return new RustBuilds({
     ...lane,
+    ...(retainedLocks ? { retainedLocks: async () => installedRustLocks(store, await retainedLocks()) } : {}),
     locate: storeRustLocate(store, payload),
     currentLock: () => readCurrentLock(store, GameStack.RustWgpu),
     stage: shippedRustStage(payload),

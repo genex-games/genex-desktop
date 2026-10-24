@@ -1421,7 +1421,7 @@ export class StudioCore {
       cores: os.availableParallelism(),
       denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
       writeLock: (project, digest) => this.games.writeNativeLock(project, digest),
-      // A game kept on an older Rust lock after an update keeps its build folders through the sweep.
+      // A game kept on an older Rust lock after an update keeps its build folders through the sweep, while the store holds it.
       retainedLocks: () => this.games.nativeLocks(),
       // A build output a preview window serves keeps its build folder through the sweep, its source gone or not.
       inUse: () => this.#previews.servedBuildFolders(),
