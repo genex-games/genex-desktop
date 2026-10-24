@@ -115,6 +115,19 @@ async function rustLock(store: string, version: string): Promise<ToolchainLock> 
   });
 }
 
+/** The base record a probed Rust lock folder holds (`rust-base.json`). */
+function baseRecord(lock: ToolchainLock) {
+  const vendor = { sha256: "0".repeat(64), files: 0, bytes: 0 };
+  return { schema: 1, lock: lock.digest, triples: ["aarch64-apple-darwin"], vendor, at: "2026-10-25T00:00:00.000Z" };
+}
+
+/** Writes `lock`'s probed base into its lock folder, as an install leaves it. */
+async function probedBase(store: string, lock: ToolchainLock): Promise<void> {
+  const folder = path.join(store, "locks", lock.digest.slice(0, 12));
+  await mkdir(folder, { recursive: true });
+  await writeFile(path.join(folder, "rust-base.json"), JSON.stringify(baseRecord(lock)));
+}
+
 /** Every path under `root` (`/`-separated), so "left as it was" and "removed" are checked whole. */
 async function tree(root: string): Promise<string[]> {
   if (!existsSync(root)) return [];
@@ -235,13 +248,66 @@ describe("an existing raylib store is adopted in place", () => {
   });
 });
 
+describe("a game whose recorded Rust lock's toolchain is gone builds on the current lock (LK)", () => {
+  /** A store whose Rust lock moved from 1.99.0 (`old`, still recorded) to 1.100.0 (`next`), both installed. */
+  async function moved(): Promise<{ store: string; old: ToolchainLock; next: ToolchainLock }> {
+    const { store } = await v1Store();
+    const old = await rustLock(store, "1.99.0");
+    await writeCurrentLock(store, old, GameStack.RustWgpu);
+    await probedBase(store, old);
+    const next = await rustLock(store, "1.100.0");
+    await writeCurrentLock(store, next, GameStack.RustWgpu);
+    await probedBase(store, next);
+    return { store, old, next };
+  }
+
+  /** The service over `store` with a library recording `recorded` for every game. */
+  function recording(store: string, recorded: unknown): ToolchainService {
+    return new ToolchainService({
+      store,
+      host: ToolchainHost.MacArm64,
+      emit: () => {},
+      run: async () => {
+        throw new Error("no command runs in these rows");
+      },
+      exec: async () => ({ code: 1, stdout: "", stderr: "" }),
+      probeClt: async () => ({ present: true, version: "16.0" }),
+      recordedLock: async () => recorded,
+    });
+  }
+
+  it("the old lock's folder removed (its record kept): the game builds on the current lock, never toolchain-missing", async () => {
+    const { store, old, next } = await moved();
+    await rm(path.join(store, "locks", old.digest.slice(0, 12)), { recursive: true, force: true });
+    assert.deepEqual(await readRecordedLock(store, old.digest), old, "the record is still there");
+    assert.deepEqual(await recording(store, old.digest).currentLock(GameStack.RustWgpu, "ferris"), next);
+    assert.deepEqual(await lockForGame(store, GameStack.RustWgpu, old.digest), next);
+  });
+
+  it("the old lock's base unprobed or for another lock: the current lock", async () => {
+    const { store, old, next } = await moved();
+    const base = path.join(store, "locks", old.digest.slice(0, 12), "rust-base.json");
+    await writeFile(base, "{}\n");
+    assert.deepEqual(await recording(store, old.digest).currentLock(GameStack.RustWgpu, "ferris"), next);
+    await writeFile(base, JSON.stringify({ ...baseRecord(next) }));
+    assert.deepEqual(await recording(store, old.digest).currentLock(GameStack.RustWgpu, "ferris"), next);
+  });
+
+  it("the old lock still installed: the game keeps building on it (the lock is the person's to move)", async () => {
+    const { store, old } = await moved();
+    assert.deepEqual(await recording(store, old.digest).currentLock(GameStack.RustWgpu, "ferris"), old);
+    assert.deepEqual(await lockForGame(store, GameStack.RustWgpu, old.digest), old);
+  });
+});
+
 describe("lock retention across a Rust lock bump", () => {
   /** A store whose Rust lock moved from 1.99.0 (`old`) to 1.100.0 (`next`). */
   async function bumped(): Promise<{ store: string; old: ToolchainLock; next: ToolchainLock; raylib: ToolchainLock }> {
     const { store, lock: raylib } = await v1Store();
     const old = await rustLock(store, "1.99.0");
     await writeCurrentLock(store, old, GameStack.RustWgpu);
-    await mkdir(path.join(store, "locks", old.digest.slice(0, 12)), { recursive: true });
+    // An installed lock's folder holds its probed base: what a game recorded on it builds on.
+    await probedBase(store, old);
     const next = await rustLock(store, "1.100.0");
     await writeCurrentLock(store, next, GameStack.RustWgpu);
     return { store, old, next, raylib };

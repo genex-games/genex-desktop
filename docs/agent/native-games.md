@@ -98,8 +98,8 @@ prewarms share one profile (`RUST_DEV_PROFILE_SETTINGS`: dependencies at opt-lev
 headless runs use only lane-admitted bytes (receipt digests); window runs and desktop
 exports stay `lane-missing`. Rust creation ([`stack-gate.ts`](../../src/main/core/stack-gate.ts),
 the bootstrap's `rustCreation`) is open in development builds and where the Rust lane runs, else
-`stack-gated`. Rust games build on their recorded lock while kept (`currentLock(stack, project)`,
-its genex release). New games default by
+`stack-gated`. Rust games build on their recorded lock while kept and installed, else on the current lock,
+which their next own-folder build records (`currentLock(stack, project)`, its genex release). New games default by
 `defaultStackFor` ([`toolchain.ts`](../../src/shared/toolchain.ts)); raylib is never creatable
 (`raylib-creation-retired`). A preview lease declares the stacks its harness serves
 (`preview.acquire {stacks}`); a lease declaring none is refused a Rust game. A Rust run is refused

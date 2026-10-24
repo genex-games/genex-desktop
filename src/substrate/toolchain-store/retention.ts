@@ -28,15 +28,17 @@ export function stackOfLock(lock: ToolchainLock): CompiledStack {
 
 /**
  * The lock a game of `stack` builds on: the one it recorded (`recorded`, a lock digest from the
- * host's own record of its last build) while the store can read it back and it is that stack's,
- * else the stack's current lock; null before the stack's first install.
+ * host's own record of its last build) while the store can read it back, it is that stack's and,
+ * for a Rust lock, the store still holds its toolchain ({@link installedRustLock}); else the
+ * stack's current lock; null before the stack's first install.
  */
 export async function lockForGame(
   store: string,
   stack: CompiledStack,
   recorded: unknown,
 ): Promise<ToolchainLock | null> {
-  const own = await readRecordedLock(store, recorded);
+  const own =
+    stack === GameStack.RustWgpu ? await installedRustLock(store, recorded) : await readRecordedLock(store, recorded);
   if (own && stackOfLock(own) === stack) return own;
   return readCurrentLock(store, stack);
 }

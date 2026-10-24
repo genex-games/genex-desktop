@@ -628,7 +628,7 @@ export class ToolchainService {
   /**
    * The lock new games of `stack` (raylib by default) build with, or null before its first install.
    * Given the `project` a build is for, a Rust · wgpu game's own lock instead: the one its last
-   * build recorded while the store can read it back ({@link lockForGame}), so an app update that
+   * build recorded while the store can read it back and holds its toolchain ({@link lockForGame}), so an app update that
    * moved the Rust lock on keeps building it, offline, on the toolchain it was made with. A raylib
    * game builds on raylib's current lock, as it always did.
    */
@@ -641,13 +641,22 @@ export class ToolchainService {
 
   /**
    * The lock a `stack` game builds on: the one it recorded (`recorded`, the lock digest of its
-   * last build in the host's own record) while the store can still read it back, so an app update
-   * that moved the current lock on never rebuilds it on another toolchain; else the current lock.
+   * last build in the host's own record) while the store can still read it back and holds its
+   * toolchain, so an app update that moved the current lock on never rebuilds it on another
+   * toolchain; else the current lock. A recorded Rust lock whose folder was removed (its sysroot
+   * and probed base gone, its record left) would only fail `toolchain-missing`: the game builds on
+   * the current lock, and its next build of its own folder records that one.
    */
   async lockForGame(stack: CompiledStack, recorded: unknown): Promise<ToolchainLock | null> {
     const own = typeof recorded === "string" ? await this.#ops.readRecordedLock(this.#options.store, recorded) : null;
-    if (own && stackOfLock(own) === stack) return own;
+    if (own && stackOfLock(own) === stack && (await this.#holdsToolchain(own))) return own;
     return this.#ops.currentLock(this.#options.store, stack);
+  }
+
+  /** Whether the store still holds `lock`'s toolchain: a Rust lock's probed base; a raylib lock is never a game's own. */
+  async #holdsToolchain(lock: ToolchainLock): Promise<boolean> {
+    if (stackOfLock(lock) !== GameStack.RustWgpu) return true;
+    return (await readRustBase(this.#options.store, lock)) !== null;
   }
 
   /**

@@ -282,7 +282,7 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `rust-recipe.json`, beside libcolyseus for a `[net]` game's exports; a release build does not
   download them yet), installed only from the
   Toolchain sheet; a lock names the versions a game builds with by digest, one current lock per
-  compiled stack, and a game keeps its recorded lock across a bump
+  compiled stack, and a game keeps its recorded lock across a bump while the store holds it
   (`src/substrate/toolchain-store/`, `src/main/core/toolchains.ts`).
 - **Fixture profile**: a disposable `studio:dev` profile with scripted engines and native
   actions refused (`scripts/studio-dev.ts`, `src/main/dev/fixtures.ts`,
