@@ -33,8 +33,7 @@ x64) build per destination, sandboxed; **Web | Native** shows the Mac build in L
 shows: a played build's copy, else the folder; the card counts its build time; Full screen), a crash its card,
 Rust a profile strip and `[net]` room; in either view `game.mouseLook` locks the pointer; only **On a device** installs a phone build
 ([more](../agent/feature-map.md)). Rust's `genex.toml` turns on nav, streaming and animation (off
-in the starter); a Rust starter fills Live and Full screen around its world (`fit = "expand"`),
-a game without it keeps black bars.
+in the starter).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node: what reached the build forms the line, the rest
