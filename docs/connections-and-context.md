@@ -167,7 +167,9 @@ settings of whoever started it, so each session runs a private one inside `Proce
 reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
 plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
 (2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
-`--model provider/model#variant`. Its model list is `GET /api/model` from a private `opencode serve`
+`--model provider/model#variant`. Every session, either dialect, is given the person's own
+`XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`: on Windows it runs as the sandbox's own
+user, whose home holds no sign-in, so only the free models would run. Its model list is `GET /api/model` from a private `opencode serve`
 started on the host for the listing alone, read until two reads agree (its first answer can come
 before its catalog loads); the sign-in runs `opencode auth login --standalone`.
 
@@ -182,7 +184,8 @@ free model's prompts may be used to improve it. Once a provider is signed in, it
 list and the free ones wait in Settings; a paid provider not yet set up shows no rows at all. It has
 no sandbox of its own, so each session runs in `ProcessSandbox`: the workspace (a scratch folder
 when read-only) plus OpenCode's state and cache are writable, its own data folder is exempt from the
-credential denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked model's
+credential denies for that sandbox only (`SandboxOptions.ownHome`; on Windows, where a deny is an
+ACE for the whole sandbox group, no sandbox denies it, `keepWindowsDenies`), and only the picked model's
 provider hosts (the address OpenCode lists, plus a built-in provider's known API and browser
 sign-in hosts, OpenCode Zen's `opencode.ai` among them, which a session started before the list was
 read still gets) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are

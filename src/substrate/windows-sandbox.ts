@@ -35,7 +35,7 @@ import { promisify } from "node:util";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform, WindowsSetupNeed } from "../shared/boot.ts";
-import { ROBLOX_WINDOWS_SIGN_IN_STORES } from "./credential-homes.ts";
+import { ROBLOX_WINDOWS_SIGN_IN_STORES, sandboxedCliHomes } from "./credential-homes.ts";
 import { errorMessage } from "../shared/errors.ts";
 import {
   DenyAccess,
@@ -383,6 +383,12 @@ export function grantableToolDirs(
 export interface DenyScope {
   roots: readonly string[];
   profile: string;
+  /**
+   * Folders never denied, by default the sign-in home of the CLI that runs as the sandbox user
+   * (OpenCode's, `sandboxedCliHomes`). A deny is an ACE for the whole sandbox group, so another
+   * member's deny of it would shut OpenCode out of its own sign-ins.
+   */
+  readable?: readonly string[];
 }
 
 /**
@@ -390,7 +396,8 @@ export interface DenyScope {
  * placeholder chain to stamp, which must never litter the user's profile with a `.aws` or a
  * browser folder they never had. Nothing in the profile outside a grant is readable anyway, so a
  * missing path there is dropped. Off the profile (another drive) BUILTIN\Users can usually read,
- * so a missing path there is kept, as is one a grant would cover once it appears.
+ * so a missing path there is kept, as is one a grant would cover once it appears. A path in a
+ * `readable` folder is never sent.
  */
 export function keepWindowsDenies(
   paths: readonly string[],
@@ -399,7 +406,9 @@ export function keepWindowsDenies(
 ): string[] {
   const unreadable = (p: string) =>
     insideWindowsPath(scope.profile, p) && !scope.roots.some((root) => insideWindowsPath(root, p));
-  const kept = paths.filter((p) => exists(p) || !unreadable(p));
+  const readable = scope.readable ?? sandboxedCliHomes();
+  const shared = (p: string) => readable.some((home) => insideWindowsPath(home, p));
+  const kept = paths.filter((p) => !shared(p) && (exists(p) || !unreadable(p)));
   return [...new Map(kept.map((p) => [pathKey(p), p])).values()];
 }
 

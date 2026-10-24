@@ -648,8 +648,9 @@ export function openCodeSandbox(input: {
 }): SandboxOptions {
   const env = input.env ?? process.env;
   const home = input.home ?? os.homedir();
-  const state = path.join(xdg(env.XDG_STATE_HOME, home, ".local/state"), "opencode");
-  const cache = path.join(xdg(env.XDG_CACHE_HOME, home, ".cache"), "opencode");
+  const folders = openCodeFolders(env, home);
+  const state = path.join(folders.XDG_STATE_HOME, "opencode");
+  const cache = path.join(folders.XDG_CACHE_HOME, "opencode");
   return {
     writableRoots: [input.runDir, ...input.gitDirs, state, cache],
     scratchDir: input.scratchDir,
@@ -658,6 +659,22 @@ export function openCodeSandbox(input: {
     // A game's own OpenCode config and plugins are never the session's to plant.
     denyWrite: [path.join(input.gameDir, "opencode.json"), path.join(input.gameDir, ".opencode")],
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
+  };
+}
+
+/**
+ * The person's own folders OpenCode keeps its sign-ins and sessions (data), logs (state) and model
+ * catalog (cache) in, as XDG variables. Every session is pointed at them: on Windows it runs as the
+ * sandbox's own user, whose home holds none of them, so a signed-in provider's model was unavailable.
+ */
+function openCodeFolders(
+  env: Record<string, string | undefined>,
+  home: string,
+): { XDG_DATA_HOME: string; XDG_STATE_HOME: string; XDG_CACHE_HOME: string } {
+  return {
+    XDG_DATA_HOME: xdg(env.XDG_DATA_HOME, home, ".local/share"),
+    XDG_STATE_HOME: xdg(env.XDG_STATE_HOME, home, ".local/state"),
+    XDG_CACHE_HOME: xdg(env.XDG_CACHE_HOME, home, ".cache"),
   };
 }
 
@@ -708,8 +725,8 @@ function sessionArgv(
  * folder from `PWD` before its working directory, and a game's own OpenCode config (its plugins,
  * agents and rules) never loads, as 1.18's `--pure` kept its plugins out. 2.x also looks for
  * Claude's settings in the home folder's `.claude` and stops when the sandbox refuses it, so it is
- * given an empty home of its own (`OPENCODE_TEST_HOME` moves only that: its own folders still come
- * from the real home or XDG, so its sign-ins stay where they are).
+ * given an empty home of its own (`OPENCODE_TEST_HOME` moves only that). Its own folders are named
+ * outright (`openCodeFolders`), so its sign-ins are found whoever the sandbox runs it as.
  */
 function sessionEnv(
   dialect: OpenCodeDialect,
@@ -723,12 +740,11 @@ function sessionEnv(
     OPENCODE_CONFIG_CONTENT: config,
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     ...(v2 ? { OPENCODE_DISABLE_PROJECT_CONFIG: "1", PWD: ctx.runDir, OPENCODE_TEST_HOME: ctx.home } : {}),
+    ...openCodeFolders(process.env, os.homedir()),
   };
-  // OpenCode finds its sign-ins and sessions through these; the sandbox's own environment drops them.
-  for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
-    const value = process.env[key];
-    if (value && path.isAbsolute(value)) env[key] = value;
-  }
+  // The person's own config folder, when they moved it; the sandbox's own environment drops it.
+  const configHome = process.env.XDG_CONFIG_HOME;
+  if (configHome && path.isAbsolute(configHome)) env.XDG_CONFIG_HOME = configHome;
   return env;
 }
 

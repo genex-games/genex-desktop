@@ -1003,6 +1003,24 @@ describe("OpenCode 2.x sessions", () => {
     );
   });
 
+  it("points every session at the person's own OpenCode folders, which hold its sign-ins", async () => {
+    // On Windows a session runs as the sandbox's own user, whose home holds no sign-in: a signed-in
+    // provider's model (OpenCode Go) then answered "Model unavailable" before its first turn.
+    for (const make of [engineWith, engineV2]) {
+      const { engine, seen } = await make(() => replay([]));
+      await engine.refreshModels(true);
+      await engine.delegate({ cwd: await game(), prompt: "Write hello" });
+      const invocation = seen.at(-1);
+      const env = invocation?.env ?? {};
+      for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
+        assert.ok(path.isAbsolute(env[name] ?? ""), `${name} is set, whatever the sandbox's own home is`);
+      }
+      assert.deepEqual(invocation?.sandbox.ownHome, [path.join(env.XDG_DATA_HOME ?? "", "opencode")]);
+      assert.ok(invocation?.sandbox.writableRoots.includes(path.join(env.XDG_STATE_HOME ?? "", "opencode")));
+      assert.ok(invocation?.sandbox.writableRoots.includes(path.join(env.XDG_CACHE_HOME ?? "", "opencode")));
+    }
+  });
+
   it("resumes by session id, and leaves the variant off a model with no such dial", async () => {
     const { engine, seen } = await engineV2(() => replay([]));
     await engine.refreshModels(true);

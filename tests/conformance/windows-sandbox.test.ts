@@ -1333,6 +1333,18 @@ describe("toolchain and deny paths", () => {
     const kept = keepWindowsDenies(paths, within, exists);
     assert.deepEqual(kept, [at(".ssh"), at("AI Games", "Pong", ".env"), offProfile]);
   });
+
+  it("never denies OpenCode's own sign-in folder, which its sessions run as the sandbox user to read", () => {
+    // A deny is an ACE for the whole sandbox group, so one member's deny shut OpenCode out of its
+    // own sign-ins: every signed-in provider's model answered "Model unavailable".
+    const openCode = at(".local", "share", "opencode");
+    const scope = { roots: [], profile: PROFILE, readable: [openCode] };
+    const paths = [at(".ssh"), openCode, at(".local", "share", "OpenCode", "auth.json"), at(".codex")];
+    assert.deepEqual(
+      keepWindowsDenies(paths, scope, () => true),
+      [at(".ssh"), at(".codex")],
+    );
+  });
 });
 
 describe("read and write denies", () => {
