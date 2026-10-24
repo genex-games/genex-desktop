@@ -273,13 +273,16 @@ fn crowd_game(count: usize) -> Game<Crowd> {
             (Limb::LeftArm, vec3(0.4, 1.2, 0.2), Vec3::NEG_Y),
             (Limb::RightArm, vec3(-0.4, 1.2, 0.2), Vec3::NEG_Y),
         ];
+        // Each its own phase of the cycle, so each poses its own skin job (a shared pose would be
+        // one job for all of them, lane CP).
         sim.world.heroes = (0..count)
-            .map(|_| {
+            .map(|i| {
                 let mut animator = hero.animator(&graph).expect("an animator");
                 animator.set_bool(fast, true);
                 for (limb, target, pole) in limbs {
                     animator.reach(limb, Some(LimbTarget { target, pole, weight: 1.0 }));
                 }
+                animator.update(0.013 * i as f32);
                 animator
             })
             .collect();
