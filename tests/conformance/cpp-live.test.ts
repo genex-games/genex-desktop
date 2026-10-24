@@ -168,7 +168,11 @@ async function stage({ failing = false }: { failing?: boolean } = {}): Promise<S
 }
 
 /** A raylib game in the games folder, listed with `destinations` (the library's own detection is `project-shape.ts`'s). */
-async function raylibGame(lite: CoreLite, destinations: GameDestinations): Promise<string> {
+async function raylibGame(
+  lite: CoreLite,
+  destinations: GameDestinations,
+  declared: Pick<GameProject, "mouseLook"> = {},
+): Promise<string> {
   const dir = path.join(lite.gamesRoot, "pong");
   await mkdir(path.join(dir, "src"), { recursive: true });
   await writeFile(path.join(dir, "CMakeLists.txt"), `include("\${GENEX_CMAKE}")\ngenex_add_game(SOURCES src/*.cpp)\n`);
@@ -195,6 +199,7 @@ async function raylibGame(lite: CoreLite, destinations: GameDestinations): Promi
     },
     built: false,
     destinations,
+    ...declared,
   };
   mock.method(lite.core.games, "list", async () => [game]);
   return dir;
@@ -267,6 +272,27 @@ describe("a C++ game in Live", () => {
     const judged = standIn[0]?.loads.at(-1);
     assert.equal(path.basename(judged?.root ?? ""), "out");
     assert.equal(judged?.options?.insertMap, false);
+  });
+});
+
+describe("a compiled game played with mouse look (studio.json game.mouseLook)", () => {
+  it("opens Live's page and a played snapshot asking for mouse look, and a judged page without it", async () => {
+    const { lite, live, standIn } = await stage();
+    await raylibGame(lite, BROWSER_AND_MAC, { mouseLook: true });
+    await lite.core.loadPreview({ project: "pong" });
+    assert.equal(live.loads.at(-1)?.entry, "index.html?mouseLook", "Live's page takes the pointer lock on a click");
+    const v1 = await lite.core.snapshot("game", "v1", "pong");
+    await lite.core.playGameSnapshot(v1.snapshot_id, "pong");
+    assert.equal(live.loads.at(-1)?.entry, "index.html?mouseLook", "a played snapshot is Live's too");
+    await lite.api()["preview.load"]({ project: "pong" });
+    assert.equal(standIn[0]?.loads.at(-1)?.entry, "index.html", "the judges drive look through the input verb");
+  });
+
+  it("opens Live's page of a game without mouse look as it always did: drag to look, the cursor free", async () => {
+    const { lite, live } = await stage();
+    await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    assert.equal(live.loads.at(-1)?.entry, "index.html");
   });
 });
 

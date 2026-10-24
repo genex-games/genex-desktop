@@ -67,7 +67,9 @@ a worktree goes and after freeing a game's space) removes a build folder whose s
 unstamped one after `UNSTAMPED_GRACE_MS`, and a shared target no copy builds in, never one building,
 lending or served by a preview, nor anything through a link; one it cannot remove is skipped. It
 builds the Mac and the web (packaged by
-[`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell); the phones'
+[`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell; Live opens a
+`game.mouseLook` game's page at `index.html?mouseLook`, and the shell then takes the pointer lock
+on a click, as Native does); the phones'
 builders and settings ([`rust-build-mobile.ts`](../../src/main/rust-build-mobile.ts)), registered
 by `rustTargetBuilders`, build on a Mac (Android also on Linux);
 Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register once

@@ -140,7 +140,9 @@
       with the pointer (a click no tick saw is also sent as a tap), the pointer's movement as look
       while Mouse1 is held or the pointer is locked to the canvas, the wheel in pixels, and real
       gamepads in the browser's standard mapping with their Gamepad.id (so the game can tell the
-      pad's family), polled each animation frame. Where the browser offers the keyboard's layout
+      pad's family), polled each animation frame. A page opened with ?mouseLook (Live's, for a game
+      whose studio.json declares game.mouseLook) asks for the pointer lock on a press into the
+      game, as Native does; Esc, or the canvas, the window or the page losing focus, lets it go. Where the browser offers the keyboard's layout
       map (Chromium), its key labels are sent once, for display only.
     -->
     <style>
@@ -2170,6 +2172,24 @@
         if (kept > 0) call(game, "input", { layout });
       }
 
+      /**
+       * Ask for the pointer lock on the canvas (mouse look); a refusal (no gesture, the page not
+       * focused) leaves the cursor free, and the next press asks again.
+       */
+      function lockPointer() {
+        try {
+          const asked = canvas.requestPointerLock?.();
+          if (typeof asked?.catch === "function") asked.catch(() => {});
+        } catch {
+          // The cursor stays free: the next press asks again.
+        }
+      }
+
+      /** Let the pointer lock go (focus left the game): the mouse is a cursor again. */
+      function unlockPointer() {
+        if (document.pointerLockElement === canvas) document.exitPointerLock?.();
+      }
+
       /** Release every key and button the page holds (focus left the game: its keyup would go elsewhere). */
       function releaseAll(game, input) {
         const held = [...input.held];
@@ -2183,9 +2203,14 @@
        * when focus or the page goes; Mouse1 held from pointerdown to pointerup (a click no tick saw
        * is sent as a tap too, so it is never lost), the pointer and, while it is held or the pointer
        * is locked, its movement as `look`; the wheel; real gamepads polled each animation frame.
+       * With `mouseLook` a press into the game asks for the pointer lock, which focus leaving lets go.
        */
-      function listen(game) {
+      function listen(game, { mouseLook = false } = {}) {
         const input = { held: new Set(), pads: new Map(), ticked: false };
+        const leave = () => {
+          unlockPointer();
+          releaseAll(game, input);
+        };
         const keyEvent = (field) => (event) => {
           if (event.repeat) return;
           if (field === "down") input.held.add(event.code);
@@ -2195,16 +2220,18 @@
         };
         canvas.addEventListener("keydown", keyEvent("down"));
         canvas.addEventListener("keyup", keyEvent("up"));
-        canvas.addEventListener("blur", () => releaseAll(game, input));
-        window.addEventListener("blur", () => releaseAll(game, input));
+        canvas.addEventListener("blur", leave);
+        window.addEventListener("blur", leave);
         document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") releaseAll(game, input);
+          if (document.visibilityState === "hidden") leave();
         });
         canvas.addEventListener("pointerdown", (event) => {
           canvas.focus();
           const pointer = worldPointer(event);
           // A press on a letterbox bar is on no part of the game.
           if (!pointer) return;
+          // Asked inside the press itself: a pointer lock needs the person's gesture.
+          if (mouseLook && document.pointerLockElement !== canvas) lockPointer();
           canvas.setPointerCapture?.(event.pointerId);
           input.held.add(MOUSE1);
           input.ticked = false;
@@ -2266,7 +2293,7 @@
         const [worldWidth, worldHeight] = Array.isArray(answer.world) ? answer.world : [];
         if (worldWidth > 0 && worldHeight > 0) shell.world = [worldWidth, worldHeight];
         bindStudio(game);
-        const input = listen(game);
+        const input = listen(game, { mouseLook: params.has("mouseLook") });
         listenForSaves(game);
         if (!params.has("paused")) window.__studio.start();
         run(game, input);

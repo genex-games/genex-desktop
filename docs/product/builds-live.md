@@ -30,8 +30,8 @@ preview reaches only public library CDNs; Open Game names other hosts. Other fol
 
 **Compiled games** (C++ · raylib; Rust · wgpu, needing WebGPU, on Apple-silicon Macs or Linux
 x64) build per destination, sandboxed; **Web | Native** shows the Mac build in Live (of what Live
-shows: a played build's copy, else the folder; the card counts its build time; Full screen; `game.mouseLook`
-locks the pointer), a crash its card, Rust a profile strip and `[net]` room; only **On a device** installs a phone build
+shows: a played build's copy, else the folder; the card counts its build time; Full screen), a crash its card,
+Rust a profile strip and `[net]` room; in either view `game.mouseLook` locks the pointer; only **On a device** installs a phone build
 ([more](../agent/feature-map.md)). Rust's `genex.toml` turns on nav, streaming and animation (off
 in the starter).
 

@@ -497,6 +497,19 @@ function notForTheBrowser(game: GameProject | undefined): boolean {
   return !destinationsOf(game ?? {}).targets.includes(BuildTarget.Web);
 }
 
+/** The query the web shell reads for a game played with mouse look (`shell.html`'s `mouseLook`). */
+const MOUSE_LOOK_QUERY = "?mouseLook";
+
+/**
+ * The page a compiled game's build opens at: Live's (a played snapshot's too) of a game played with
+ * mouse look (`GameProject.mouseLook`) asks the web shell for it, which then takes the pointer lock
+ * on a click as Native does; a judged page drives look through the `input` verb.
+ */
+function compiledEntry(game: GameProject | undefined, purpose: CppBuildPurpose): string {
+  const looks = purpose === CppBuildPurpose.Live && game?.mouseLook === true;
+  return looks ? `${CPP_ENTRY}${MOUSE_LOOK_QUERY}` : CPP_ENTRY;
+}
+
 /** The port's load options for a served entry. */
 function servedLoadOptions(served: ServedEntry): { loopback: boolean; insertMap: boolean } {
   return { loopback: served.loopback, insertMap: served.insertMap };
@@ -1029,7 +1042,7 @@ export class PreviewService {
       lock: outcome.rust?.receipt?.lock ?? null,
     };
     return {
-      entry: entry ?? CPP_ENTRY,
+      entry: entry ?? compiledEntry(descriptor, purpose),
       root: served.dir,
       loopback: false,
       insertMap: false,
