@@ -87,8 +87,11 @@ twice the preset's.
 Many copies cost what can be seen of them. Each sun cascade draws only the casters that can
 shadow something the camera may see through it: a caster beside the view's light-space footprint,
 or farther from the sun than every surface that reads the cascade (behind the camera under a sun
-ahead of it), is left out, so a crowd or a forest behind the camera costs no shadow time. The
-pictures are the same; there is nothing to set.
+ahead of it), is left out, so a crowd or a forest behind the camera costs no shadow time. A
+frame of at least 1,024 opaque copies also tests each copy against a depth pyramid of what the
+prepass (the camera) or a cascade (the sun) drew first, and leaves out what that hides, where it
+measures that this pays (a walled street, a forest behind a hill). The pictures are the same;
+there is nothing to set.
 
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`

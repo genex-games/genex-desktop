@@ -1591,7 +1591,8 @@ fn the_stage_zero_contract_slots_hold_todays_values() {
 /// table the forward frame's binding 31 names), within WebGPU core's eight storage buffers per
 /// stage. Named flips: the fade table went from reserved and unbound (`binding 31 is free`) to
 /// bound and written by the cull, and its row from 4 bytes (f32 per instance row) to 8 (fade and
-/// grow per slot); the cull's storage buffers from 5 to 7 of 8.
+/// grow per slot); the cull's storage buffers from 5 to 7 of 8, then to 8 of 8 with instance
+/// occlusion's history (binding 11, horde 10k: read and written, the last free storage buffer).
 #[test]
 fn the_cull_reads_the_lod_rows_and_writes_the_fade_table_within_cores_storage_limit() {
     use genex_render::cull::{CULL_FADES_BINDING, CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY};
@@ -1613,7 +1614,10 @@ fn the_cull_reads_the_lod_rows_and_writes_the_fade_table_within_cores_storage_li
     assert_eq!((stride(lod_rows), stride(fades)), (LOD_ROW_BYTES, INSTANCE_FADE_BYTES));
     let core = wgpu::Limits::defaults();
     let declared = module.global_variables.iter().filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. })).count() as u32;
-    assert_eq!(declared, 7, "the cull group's storage buffers");
+    assert_eq!(declared, 8, "the cull group's storage buffers");
+    let history = global("occ_history");
+    assert_eq!(history.binding.as_ref().map(|at| (at.group, at.binding)), Some((0, genex_render::cull::CULL_HISTORY_BINDING)));
+    assert_eq!(history.space, naga::AddressSpace::Storage { access: naga::StorageAccess::LOAD | naga::StorageAccess::STORE });
     assert!(declared <= core.max_storage_buffers_per_shader_stage, "{declared} of {}", core.max_storage_buffers_per_shader_stage);
     for entry in [CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY] {
         let used = storage_buffers_used(&module, &info, entry);

@@ -17,7 +17,7 @@ use crate::shadow_cache::{LayerUse, copy_layer};
 use crate::tables::{ARGS_STRIDE, PASS_VIEW_STRIDE, variant_pass_entry};
 
 /// A depth-only pass over `view`, cleared or loaded.
-fn depth_pass<'e>(encoder: &'e mut CommandEncoder, label: &'static str, view: &TextureView, load: LoadOp<f32>) -> RenderPass<'e> {
+pub(super) fn depth_pass<'e>(encoder: &'e mut CommandEncoder, label: &'static str, view: &TextureView, load: LoadOp<f32>) -> RenderPass<'e> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[],

@@ -924,6 +924,8 @@ mod chain_level {
     fn metal_the_gpu_cull_keeps_the_cpus_impostor_levels_in_every_view() {
         let Some(gpu) = gpu() else { return };
         let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+        // The CPU reference culls the frustum and the levels only (horde 10k: no occlusion).
+        renderer.set_instance_occlusion(genex_render::occlusion::InstanceOcclusion::Off);
         let meshes = renderer.add_model_parts(&gpu, vec![chained(MeshData::sphere(), 4), chained(MeshData::cube(), 4)]).expect("added");
         let parts = [meshes[0], meshes[1]];
         renderer.set_impostor(parts[0], Some(MeshImpostor::lead(0, IMPOSTOR_ERROR))).expect("lead");

@@ -348,7 +348,7 @@ struct RowIndex<'a> {
 /// kind or skinned flag, then the ordinal. The row index sorts and searches these instead of the
 /// keys themselves (GE fix r2: sorting the frontier's rows by `MotionKey`, through their indices,
 /// was a fifth of a frame's CPU draw), and a sorted search finds the same row either way.
-fn packed(key: &MotionKey) -> u128 {
+pub(crate) fn packed(key: &MotionKey) -> u128 {
     let (variant, id, flag) = match key.scope {
         MotionScope::Id { id, skinned } => (0u128, u128::from(id.0), u128::from(skinned)),
         MotionScope::Mesh { mesh, kind } => (1u128, u128::from(mesh.packed()), kind.column() as u128),

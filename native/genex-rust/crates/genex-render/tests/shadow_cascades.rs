@@ -755,6 +755,7 @@ fn metal_cascades_held_to_their_receivers_draw_the_same_picture() {
             renderer.set_scene_format(SceneFormat::Rgba16Float);
             renderer.set_quality(&quality);
             renderer.set_shadow_receiver_cull(held);
+            renderer.set_instance_occlusion(genex_render::occlusion::InstanceOcclusion::Off);
             let mut drawn = 0;
             let mut last = None;
             for index in 0..3 {

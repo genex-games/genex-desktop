@@ -44,9 +44,9 @@ renderer enables it. In-pass nodes draw inside one world pass.
 | 2 | Level-3 `before-cull` | compute |
 | 3 | skinning | compute |
 | 4 | light binning | compute |
-| 5 | cull (instances; meshlets pass 1 with R2) | compute |
-| 6 | shadows | pass |
-| 7 | depth/normal prepass | pass |
+| 5 | cull (instances, an occluded cascade keeping last frame's casters; meshlets pass 1 with R2) | compute |
+| 6 | shadows (an occluded cascade: first draws, its Hi-Z, cull phase 2, second draws) | pass + compute |
+| 7 | depth/normal prepass, then the camera's instance Hi-Z and final cull (`occlusion`) | pass + compute |
 | 8 | occlusion: Hi-Z build, meshlet cull pass 2, prepass part 2 | compute + pass |
 | 9 | Level-3 `after-prepass` | pass |
 | 10, 10a | ambient occlusion; contact shadows, then the sun-shadow mask (`post::sun_mask`) | pass |
@@ -937,6 +937,37 @@ instanced call; a fragment reading `gx_draw` is handed its instance's row (`@loc
 opens by copying it (`extension::opened_draw_row`), so `gx_draw` reads as before. API 1 keeps
 loading unchanged. Level-3 passes register at stage ids (`before-cull`, `after-prepass`, `after-opaque`,
 `after-transparent`, `post-hdr`, `post`) that never change once shipped.
+
+## Instance occlusion (horde 10k)
+
+The instance path culls by occlusion on its own (`src/occlusion.rs`, `renderer/instance_occlusion.rs`,
+the phases of `shaders/cull.wgsl`), with no switch to turn on: a frame of at least
+`INSTANCE_OCCLUSION_MIN_ROWS` (1024) opaque rows on the GPU-driven path occludes.
+
+- **Camera** (one pass, exact): the prepass draws every copy in the frustum, a Hi-Z of its depth
+  is built (`instance hi-z`), and the camera's lists are culled again against it (phase
+  `Final`) before the world pass, the screen effects and TAA's reactive pass read them. It needs
+  the prepass and a one-sample world pass.
+- **Sun cascades** (two passes): the cull's first phase keeps, in an occluded cascade, the casters
+  it saw last frame; the cascade draws them, its Hi-Z is built (`shadow hi-z`, shared by the
+  cascades in turn), phase `Second` re-tests every caster, writes the next history and keeps the
+  visible ones the first phase left, and a second depth pass draws them. Only Live frames, and
+  only a cascade drawn whole this frame (not held by its cadence, not drawn from the static shadow
+  cache), occlude; spot shadows do not. With a low sun a crowd's front ranks hide the rest from the
+  sun as from the camera.
+- **History:** one word per (view, row) in three slots (Live's pair and a spare), after each row's
+  last-frame row found through its identity (the draw id, else the mesh and ordinal, as motion
+  vectors match rows), so a copy that changes mesh keeps its history. A row without a match draws
+  in the first phase.
+- **Exactness:** each Hi-Z texel holds the farthest depth drawn so far, so a copy it hides would
+  have lost every depth test: the pictures and the maps are the ones without occlusion, bit for bit
+  (`tests/instance_occlusion.rs`). The history only decides what draws first.
+- **When it pays:** each Hi-Z phase counts the rows it tested and those it found visible; the
+  counts come back a frame or two later, and a view whose Hi-Z hid under a fifth of what it tested
+  (`OCCLUSION_PAYS_MIN`: an open field, a crowd seen from above) sits out for 240 frames, then
+  measures again. A walled scene, a city block or a forest behind a hill keeps it.
+- `Renderer::set_instance_occlusion(InstanceOcclusion::Off)` draws every copy in a frustum
+  (tests and cost rows compare against it). The cull's storage buffers are 8 of WebGPU core's 8.
 
 ## Meshlets and Hi-Z occlusion (R2)
 

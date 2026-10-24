@@ -181,6 +181,8 @@ pub mod meshlet;
 pub mod hiz;
 /// Meshlet culling with two-pass Hi-Z occlusion: visibility history, ordered scan, draws.
 pub mod meshlet_cull;
+/// Hi-Z occlusion of the instance path's draws in the camera and the sun's cascades (horde 10k).
+pub mod occlusion;
 
 // --- RQ6: emissive materials, spot lights, light binning, texture quality (RQ6.0 registers every
 // RQ6 module, so wave-1 work never edits this file) ---

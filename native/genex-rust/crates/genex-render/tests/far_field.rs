@@ -382,6 +382,9 @@ fn metal_the_gpu_cull_keeps_the_cpus_far_field() {
     let Some(gpu) = gpu() else { return };
     let (width, height) = (640, 360);
     let mut renderer = Renderer::new(&gpu, width, height).expect("renderer");
+    // The CPU reference culls the frustum and the far field only: occlusion would leave a cascade's
+    // lists holding its second phase's casters (horde 10k).
+    renderer.set_instance_occlusion(genex_render::occlusion::InstanceOcclusion::Off);
     let meshes = renderer.add_model_parts(&gpu, vec![ModelPart::whole(MeshData::sphere()), chained_sphere()]).expect("added");
     for band in [0.0, 0.15] {
         let mut scene = row_scene(meshes[0], &[RULE, GpuFarRule { keep: 0.5, ..RULE }], FAR_RULE_OF(1), (0..3_000).collect());

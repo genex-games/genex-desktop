@@ -124,6 +124,8 @@ mod grass_draw;
 mod skin_vertex_draw;
 mod impostor_draw;
 mod impostor_install;
+/// Hi-Z occlusion of the instance path's copies ([`crate::occlusion`]).
+mod instance_occlusion;
 mod shadow_cache_draw;
 mod ssr_draw;
 mod terrain_draw;
@@ -143,7 +145,7 @@ use wgpu::{
 use crate::capture::{Capture, check_capture_size};
 use crate::caps::{check_texture, world_size};
 use crate::compile::Compiled;
-use crate::cull::{CpuCull, CullBuffers, CullPass};
+use crate::cull::{CpuCull, CullPass};
 use crate::custom_pass::{CustomStage, PassStage, PrepassViews};
 use crate::device_class::{DeviceClass, FormFactor, TargetOs};
 use crate::error::RenderError;
@@ -325,6 +327,9 @@ pub struct FrameStats {
     pub meshlet_draws: u32,
     /// Whether two-pass Hi-Z occlusion ran.
     pub occlusion: bool,
+    /// The views whose instances Hi-Z occlusion culled ([`crate::occlusion`]): bit 0 the camera,
+    /// bit `1 + c` cascade `c`.
+    pub occluded_views: u32,
     /// Shadow layers drawn from the static cache with the dynamic overlay (renderer pass 2, B.6).
     pub shadow_layers_cached: u32,
     /// Instance rows skipped because their mesh was removed (game systems STR-2,
@@ -967,6 +972,15 @@ pub struct Renderer {
     /// Level-3 pass (which may read the maps anywhere, so the cull views stay whole).
     receiver_cull: bool,
     frame_level3: bool,
+    /// Instance occlusion's history, setting and uniform rows ([`crate::occlusion`]).
+    occlusion: crate::occlusion::OcclusionState,
+    /// The camera's Hi-Z build and pyramid while the camera occludes its instances.
+    occlusion_hiz: std::cell::RefCell<Option<HizNode>>,
+    occlusion_pyramid: Option<HizPyramid>,
+    /// One Hi-Z build per cascade (each caches its layer's bind groups) and the pyramid they share
+    /// while a cascade occludes.
+    shadow_hiz: std::cell::RefCell<Vec<HizNode>>,
+    shadow_pyramid: Option<HizPyramid>,
     /// What the last frame drew through meshlets.
     last_meshlets: Option<MeshletFrame>,
     /// The instance table the last upload wrote and the retained spans it holds (A.0b).
@@ -1980,6 +1994,8 @@ pub(crate) struct FramePrep {
     reactive_group: Option<BindGroup>,
     /// The scene's water (graph node 16a, B.3).
     water: Option<crate::scene::SceneWater>,
+    /// What the frame occludes ([`crate::occlusion`]).
+    occlusion: crate::occlusion::FrameOcclusion,
 }
 
 /// One frame's motion prepass inputs: the frame row, the instance draws' group 2 and the meshlet
@@ -2296,6 +2312,11 @@ impl<'a> WorldNodes<'a> {
                     self.prepass = Some(prepass);
                     self.count_render(frame, 1);
                 }
+                // The camera's lists lose what the whole prepass hides, before anything else reads them.
+                if renderer.encode_camera_final(frame, self.prep) {
+                    self.count_compute(frame, 2);
+                    self.stats.occluded_views |= 1;
+                }
             }
             NodeId::Ao | NodeId::ContactShadows => self.encode_effect(id, frame),
             NodeId::Ssr => {
@@ -2312,6 +2333,8 @@ impl<'a> WorldNodes<'a> {
                 let mut drawn = 0;
                 for cascade in (0..plan.cascades_drawn()).filter(|c| renderer.shadow_draws.draws(*c)) {
                     drawn += renderer.encode_shadow_layer(frame.encoder(), self.prep, cascade, self.counts(1 + cascade), &mut self.stats);
+                    // An occluded cascade's second draws, after the Hi-Z of its first.
+                    drawn += renderer.encode_cascade_second(frame.encoder(), self.prep, cascade, &mut self.stats);
                 }
                 // Every shadowed spot's tile of the atlas layer, in one pass.
                 if !plan.spot_shadows.is_empty() {
@@ -2832,6 +2855,11 @@ impl Renderer {
             hiz_pyramid: None,
             receiver_cull: true,
             frame_level3: false,
+            occlusion: crate::occlusion::OcclusionState::new(&device)?,
+            occlusion_hiz: std::cell::RefCell::new(None),
+            occlusion_pyramid: None,
+            shadow_hiz: std::cell::RefCell::new(Vec::new()),
+            shadow_pyramid: None,
             last_meshlets: None,
             retained_held: std::cell::RefCell::new(None),
             last_instance_bytes: std::cell::Cell::new(0),
@@ -4667,6 +4695,7 @@ impl Renderer {
         let prepass = self.prepass_plan(stage, meshlets.is_some(), plan.cascades.is_some(), &temporal);
         let spec = self.target_spec(&scene_path, prepass.as_ref(), &temporal);
         self.targets = pooled_targets(&mut self.pool, &self.device, (self.width, self.height), render, self.samples, &spec)?;
+        let occlusion = self.prepare_occlusion(&plan, path, prepass.is_some(), scene_path.depth_reversed)?;
         self.ensure_hdr(&scene_path)?;
         if let Some(prepass) = &prepass {
             self.ensure_prepass(&scene_path, prepass.draws.len(), spec.motion)?;
@@ -4700,7 +4729,7 @@ impl Renderer {
         }
         let motion = self.motion_row.take().zip(self.motion_group(&spec)).map(|(row, (group, meshlet_group))| FrameMotion { row, group, meshlet_group });
         let reactive_group = self.reactive.as_ref().filter(|_| spec.motion).map(|reactive| reactive.node.group(&self.device, self.tables.prev_models.get()));
-        Ok(FramePrep { plan, environment_sun, uploads, path, clear: scene.clear, groups, prepass, meshlets, camera: scene.camera, motion, reactive_group, water: scene.water })
+        Ok(FramePrep { plan, environment_sun, uploads, path, clear: scene.clear, groups, prepass, meshlets, camera: scene.camera, motion, reactive_group, water: scene.water, occlusion })
     }
 
     /// The part-1 nodes of the frame `prep`.
@@ -4716,6 +4745,7 @@ impl Renderer {
 
     /// Keep what the frame `prep` drew (stats, the world pass, the CPU cull, the scene path).
     pub(crate) fn end_frame(&mut self, prep: FramePrep, done: WorldDone) {
+        self.read_back_occlusion(&prep.occlusion);
         if self.temporal.taa {
             let last = TemporalLast { jitter_px: self.temporal.jitter_px, pre_exposure: self.path.pre_exposure };
             self.temporal_last[set_index(self.temporal.set)] = Some(last);
@@ -4733,23 +4763,13 @@ impl Renderer {
         self.encode_cull_timed(encoder, plan, None);
     }
 
-    /// [`Renderer::encode_cull`] with the cull pass's timestamp writes (a cost row).
+    /// [`Renderer::encode_cull`] with the cull pass's timestamp writes (a cost row): every view,
+    /// the occluded cascades keeping last frame's set ([`crate::occlusion`]).
     fn encode_cull_timed(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan, timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>) {
         if plan.batches.is_empty() {
             return;
         }
-        let buffers = CullBuffers {
-            views: &self.cull_views,
-            instances: self.tables.instances.get(),
-            batches: self.tables.batches.get(),
-            visible: self.tables.visible.get(),
-            args: self.tables.args.get(),
-            scratch: self.tables.cull_scratch.get(),
-            lod_rows: self.tables.lod_rows.get(),
-            fades: self.tables.instance_fade.get(),
-            far_rules: self.tables.far_rules.get(),
-        };
-        self.cull.encode(&self.device, encoder, &buffers, plan.visible_slots, plan.views, timestamps);
+        self.encode_cull_dispatch(encoder, plan, self.first_occlusion(plan), timestamps);
     }
 
     /// The frame's meshlet candidates (R2), before occlusion is decided: None when the game's
@@ -5075,6 +5095,10 @@ impl Renderer {
         if cache > 0 {
             ledger.register(Buffers, crate::shadow_cache::SHADOW_CACHE_LEDGER_LABEL, cache);
         }
+        let history = self.occlusion.bytes();
+        if history > 0 {
+            ledger.register(Buffers, crate::occlusion::HISTORY_LEDGER_LABEL, history);
+        }
         // The terrain's row, maps, rows and grid (A.7).
         let terrain = self.terrain_bytes();
         if terrain > 0 {
@@ -5156,7 +5180,11 @@ impl Renderer {
             skin_vertices: self.library.skin().len() as u64,
             fade_slots: crate::tables::fade_slots(&plan),
         };
-        Ok(crate::budget::buffer_model(&counts))
+        // Instance occlusion's history (a frame that occludes holds it).
+        let rows = plan.instances.len() as u32;
+        let occludes = crate::occlusion::occlusion_runs(self.occlusion.setting, rows) && (plan.cascades.is_some() || self.quality.prepass);
+        let history = if occludes { crate::occlusion::history_bytes(rows) } else { 0 };
+        Ok(crate::budget::buffer_model(&counts) + history)
     }
 
     /// Read the last meshlet frame's cull back (diagnostics and tests): each pass's kept meshlets
