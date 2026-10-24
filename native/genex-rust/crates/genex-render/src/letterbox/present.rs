@@ -46,6 +46,22 @@ pub fn present_filter(view: Viewport, world: (u32, u32)) -> Option<PresentFilter
     Some(if larger { PresentFilter::Upscale } else { PresentFilter::Downscale })
 }
 
+/// Where a present of a `world`-sized target lands in a `window`: its letterbox, or, when the
+/// present `fill`s (`fit = "expand"`), the whole window once the target has the window's aspect
+/// to within [`FILL_ASPECT_SLACK`] (a capped target's rounding); a target of another aspect keeps
+/// its letterbox, never stretched.
+pub fn present_view(window: (u32, u32), world: (u32, u32), fill: bool) -> Viewport {
+    let letterboxed = letterbox(window, world);
+    let (ww, wh) = (u64::from(window.0), u64::from(window.1));
+    let (cross_window, cross_world) = (ww * u64::from(world.1), wh * u64::from(world.0));
+    let near = cross_window.abs_diff(cross_world).saturating_mul(FILL_ASPECT_SLACK) <= cross_window.max(cross_world);
+    let fills = fill && letterboxed.width > 0 && letterboxed.height > 0 && near;
+    if fills { Viewport { x: 0, y: 0, width: window.0, height: window.1 } } else { letterboxed }
+}
+
+/// One over the aspect error a filling present absorbs (1%): a capped target is a pixel off.
+const FILL_ASPECT_SLACK: u64 = 100;
+
 /// The letterbox-sized image's usages: RCAS and the overlay draw into it, the final pass reads it,
 /// a copy fills it when no filter runs.
 const STAGED_USAGE: TextureUsages = TextureUsages::RENDER_ATTACHMENT.union(TextureUsages::TEXTURE_BINDING).union(TextureUsages::COPY_DST);
@@ -142,6 +158,8 @@ impl std::fmt::Debug for WindowPresent {
 
 /// One present: what [`WindowPresent::present`] was handed.
 pub struct PresentInto<'a> {
+    /// Fill the window ([`present_view`]): the renderer's fit is `expand`.
+    pub fill: bool,
     /// The world target and its size.
     pub world: (&'a TextureView, (u32, u32)),
     /// The window's target.
@@ -312,7 +330,7 @@ impl WindowPresent {
         }
         let Some(state) = self.state.as_mut() else { return 0 };
         state.note_world(into.world.0);
-        let view = letterbox(into.window, into.world.1);
+        let view = present_view(into.window, into.world.1, into.fill);
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("window present") });
         let Some(filter) = present_filter(view, into.world.1) else {
             drop(clear_pass(&mut encoder, "window present", into.target));
@@ -384,5 +402,17 @@ mod tests {
             assert_eq!(present_filter(letterbox, world), expected, "{letterbox:?}");
         }
         assert_eq!(present_filter(view(64, 64), (0, 64)), None, "an empty world presents nothing");
+    }
+
+    /// Lane EF: a filling present (`fit = "expand"`) covers the whole window when the world target
+    /// has the window's aspect, a rounding pixel short included; any other target is letterboxed.
+    #[test]
+    fn a_filling_present_covers_the_window_and_never_stretches_another_aspect() {
+        let window = (3840, 1600);
+        assert_eq!(present_view(window, (2974, 1239), true), view(3840, 1600), "a capped 21:9 target, a pixel short");
+        assert_eq!(present_view(window, (3840, 1600), true), view(3840, 1600));
+        assert_eq!(present_view(window, (2974, 1239), false), letterbox(window, (2974, 1239)), "letterbox: as before");
+        assert_eq!(present_view(window, (960, 540), true), letterbox(window, (960, 540)), "another aspect: bars, never a stretch");
+        assert_eq!(present_view((0, 0), (960, 540), true), letterbox((0, 0), (960, 540)), "no window: nothing");
     }
 }

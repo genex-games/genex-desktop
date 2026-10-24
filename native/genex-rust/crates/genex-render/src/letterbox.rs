@@ -1,11 +1,43 @@
 //! The letterbox: the world target keeps its aspect inside any window, centred, with black bars.
 //! Integer arithmetic, so the same sizes always give the same rectangle on every target.
-//! [`present`] draws the world into it, filtered by the ratio.
+//! [`present`] draws the world into it, filtered by the ratio. A game whose `[game] fit` is
+//! `expand` ([`Fit::Expand`]) fills the window instead: its world stays whole on the letterbox's
+//! rectangle and the view grows past it on the window's long side ([`view_rect`]).
 
 use crate::caps::{MAX_WORLD_PX, MIN_WORLD_PX};
 
 /// The window present: the world target filtered into a window's letterbox.
 pub mod present;
+
+/// How a game's world fills a window of another aspect (`genex.toml [game] fit`, `Game::fit`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Fit {
+    /// The world keeps its size and aspect, centred between black bars.
+    #[default]
+    Letterbox,
+    /// The world is a safe frame: whole, on the letterbox's rectangle, with the view grown on the
+    /// window's long side to fill it (more scene at the sides of a wide window, Hor+; above and
+    /// below in a tall one). Input, the HUD and captures at the world size see the world as before.
+    Expand,
+}
+
+impl Fit {
+    /// Every fit.
+    pub const ALL: [Fit; 2] = [Fit::Letterbox, Fit::Expand];
+
+    /// The wire spelling (`[game] fit`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Fit::Letterbox => "letterbox",
+            Fit::Expand => "expand",
+        }
+    }
+
+    /// The fit `wire` spells, or None for any other text.
+    pub fn from_wire(wire: &str) -> Option<Fit> {
+        Fit::ALL.into_iter().find(|fit| fit.as_str() == wire)
+    }
+}
 
 /// A rectangle of window pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +91,40 @@ pub fn output_for_window(world: (u32, u32), window: (u32, u32), cap_px: u64) -> 
         return world;
     }
     (w, h)
+}
+
+/// [`output_for_window`] under `fit`: under [`Fit::Expand`] the window's own pixels at its own
+/// aspect (capped alike), so the present leaves no bars; the world size when there is no window
+/// yet or a side would be under [`MIN_WORLD_PX`].
+pub fn output_for(world: (u32, u32), window: (u32, u32), cap_px: u64, fit: Fit) -> (u32, u32) {
+    if fit == Fit::Letterbox {
+        return output_for_window(world, window, cap_px);
+    }
+    let output = output_for_window(window, window, cap_px);
+    let usable = output.0 >= MIN_WORLD_PX && output.1 >= MIN_WORLD_PX;
+    if usable { output } else { world }
+}
+
+/// The rectangle of world pixels an `output`-sized frame shows of a `world` under `fit`: x, y,
+/// width, height. The world itself under [`Fit::Letterbox`] and for an output of the world's
+/// aspect; under [`Fit::Expand`] the world grown on the output's long side, centred, so the world
+/// is whole in every output and sits where the letterbox would put it.
+pub fn view_rect(world: (u32, u32), output: (u32, u32), fit: Fit) -> [f32; 4] {
+    let (w, h) = (world.0 as f32, world.1 as f32);
+    let whole = [0.0, 0.0, w, h];
+    let (ow, oh) = (u64::from(output.0), u64::from(output.1));
+    let (cross_output, cross_world) = (ow * u64::from(world.1), oh * u64::from(world.0));
+    let degenerate = ow == 0 || oh == 0 || world.0 == 0 || world.1 == 0;
+    if fit == Fit::Letterbox || degenerate || cross_output == cross_world {
+        return whole;
+    }
+    if cross_output > cross_world {
+        // Wider than the world: its height, a wider view.
+        let width = h * output.0 as f32 / output.1 as f32;
+        return [(w - width) / 2.0, 0.0, width, h];
+    }
+    let height = w * output.1 as f32 / output.0 as f32;
+    [0.0, (h - height) / 2.0, w, height]
 }
 
 /// A window point in world pixels, or `None` when it falls on a bar.
@@ -116,5 +182,63 @@ mod tests {
         assert!(w <= MAX_WORLD_PX && h <= MAX_WORLD_PX && w >= MIN_WORLD_PX && h >= MIN_WORLD_PX, "{w}x{h}");
         assert_eq!((w, h), (4096, 2304), "the largest target keeps the aspect");
         assert_eq!(output_for_window(TEMPLATE, (1920, 1080), 0), (1920, 1080), "a cap of 0 is no cap");
+    }
+
+    /// Lane EF: under `fit = "expand"` Live draws at the window's own aspect, so the present leaves
+    /// no bars, within the same caps; letterbox keeps the world's aspect.
+    #[test]
+    fn expand_draws_at_the_window_s_aspect_and_letterbox_at_the_world_s() {
+        let ultrawide = (2520, 1080);
+        let classic = (1440, 1080);
+        assert_eq!(output_for(TEMPLATE, ultrawide, DESKTOP_CAP, Fit::Expand), ultrawide, "21:9: the whole window");
+        assert_eq!(output_for(TEMPLATE, classic, DESKTOP_CAP, Fit::Expand), classic, "4:3: the whole window");
+        assert_eq!(output_for(TEMPLATE, ultrawide, DESKTOP_CAP, Fit::Letterbox), (1920, 1080), "letterbox: bars at the sides");
+        assert_eq!(output_for(TEMPLATE, classic, DESKTOP_CAP, Fit::Letterbox), (1440, 810), "letterbox: bars above and below");
+        let (w, h) = output_for(TEMPLATE, (5040, 2160), DESKTOP_CAP, Fit::Expand);
+        assert!(u64::from(w) * u64::from(h) <= DESKTOP_CAP, "{w}x{h} within the cap");
+        assert_eq!(u64::from(w) * 2160 / 5040, u64::from(h), "{w}x{h} keeps the window's aspect");
+        assert_eq!(output_for(TEMPLATE, (0, 0), DESKTOP_CAP, Fit::Expand), TEMPLATE, "no window yet: the world");
+        assert_eq!(output_for(TEMPLATE, (40, 30), DESKTOP_CAP, Fit::Expand), TEMPLATE, "below the smallest target: the world");
+        let (w, h) = output_for(TEMPLATE, (16_000, 4_000), u64::MAX, Fit::Expand);
+        assert!(w <= MAX_WORLD_PX && h >= MIN_WORLD_PX, "{w}x{h} within the target limits");
+    }
+
+    /// The view an output shows: the world itself under letterbox and at the world's aspect; under
+    /// expand the world stays whole and centred and the view grows on the output's long side.
+    #[test]
+    fn the_expanded_view_keeps_the_world_whole_and_centred() {
+        let whole = [0.0, 0.0, 960.0, 540.0];
+        assert_eq!(view_rect(TEMPLATE, (1920, 1080), Fit::Expand), whole, "the world's aspect: the world");
+        assert_eq!(view_rect(TEMPLATE, (960, 540), Fit::Expand), whole);
+        assert_eq!(view_rect(TEMPLATE, (2520, 1080), Fit::Letterbox), whole, "letterbox: always the world");
+        assert_eq!(view_rect(TEMPLATE, (2520, 1080), Fit::Expand), [-150.0, 0.0, 1260.0, 540.0], "21:9: wider");
+        assert_eq!(view_rect(TEMPLATE, (1440, 1080), Fit::Expand), [0.0, -90.0, 960.0, 720.0], "4:3: taller");
+        assert_eq!(view_rect(TEMPLATE, (0, 0), Fit::Expand), whole, "an empty output: the world");
+    }
+
+    /// Under expand the world lands where the letterbox would put it: input mapped through the
+    /// letterbox (Studio's ring, the desktop window, the web canvas) reads the same world points.
+    #[test]
+    fn the_expanded_world_sits_on_the_letterbox_rectangle() {
+        for window in [(2520, 1080), (1440, 1080), (1920, 1080), (1000, 1000)] {
+            let [x, y, width, height] = view_rect(TEMPLATE, window, Fit::Expand);
+            let scale = window.0 as f32 / width;
+            assert!((window.1 as f32 / height - scale).abs() < 1e-4, "{window:?}: one scale both ways");
+            let place = letterbox(window, TEMPLATE);
+            assert!((-x * scale - place.x as f32).abs() <= 1.0, "{window:?}: left edge");
+            assert!((-y * scale - place.y as f32).abs() <= 1.0, "{window:?}: top edge");
+        }
+    }
+
+    /// The wire spellings of `[game] fit`, and the default.
+    #[test]
+    fn fit_reads_its_two_wire_spellings_only() {
+        assert_eq!(Fit::default(), Fit::Letterbox);
+        for fit in Fit::ALL {
+            assert_eq!(Fit::from_wire(fit.as_str()), Some(fit));
+        }
+        for hostile in ["", "Expand", "stretch", "expand ", "letterbox\0", "fill"] {
+            assert_eq!(Fit::from_wire(hostile), None, "{hostile:?}");
+        }
     }
 }

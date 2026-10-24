@@ -670,6 +670,14 @@ nearest-texel. Live paints the HUD over the letterbox after that, at the window'
 (`genex::present::Presenter::present`); a capture paints it into the world target at its own
 pixels per point (node 24). The ledger counts the window present's images (`BudgetInput::window`).
 
+A game whose fit is `expand` (`letterbox::Fit`, `Renderer::set_fit`) fills the window instead:
+Live draws at the window's own aspect (`letterbox::output_for`), the present covers the whole
+window (`letterbox::present::present_view`), the 2D layer shows `Renderer::view_rect` (the world
+grown on the output's long side, the world whole and centred on the letterbox's rectangle) and
+the camera's aspect follows the output (the facade widens a tall output's field of view to keep
+the world's width). Input and the HUD stay on the world's rectangle, and a capture at the world
+size is the letterbox picture.
+
 Each dynamic-resolution step draws into targets of its exact size (`target_pool`). On desktop a
 step change keeps the targets it replaced, and those a step draws without (FSR1's at scale 1), as
 spares in the ledger (`TargetPolicy::spares`, at most `SPARE_BYTES_MAX` together), so going back

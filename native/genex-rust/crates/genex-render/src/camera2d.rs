@@ -64,8 +64,15 @@ impl Camera2d {
     /// World → clip space for a world target of `size` pixels: the top-left pixel corner is NDC
     /// (-1, 1), the bottom-right (1, -1); depth 0. Column-major.
     pub fn view_proj(&self, size: (u32, u32)) -> [f32; 16] {
-        let (width, height) = (size.0.max(1) as f32, size.1.max(1) as f32);
-        let projection = glam::camera::rh::proj::directx::orthographic(0.0, width, height, 0.0, -1.0, 1.0);
+        self.view_proj_over([0.0, 0.0, size.0.max(1) as f32, size.1.max(1) as f32])
+    }
+
+    /// World → clip space for a frame showing `view` (x, y, width, height in world-target pixels;
+    /// [`crate::letterbox::view_rect`]): its top-left corner is NDC (-1, 1), its bottom-right
+    /// (1, -1). Over `[0, 0, width, height]` it is [`Camera2d::view_proj`].
+    pub fn view_proj_over(&self, view: [f32; 4]) -> [f32; 16] {
+        let [x, y, width, height] = view;
+        let projection = glam::camera::rh::proj::directx::orthographic(x, x + width, y + height, y, -1.0, 1.0);
         (projection * self.view()).to_cols_array()
     }
 }

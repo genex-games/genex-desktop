@@ -1001,6 +1001,8 @@ pub struct Renderer {
     taa_reproject: [f32; 16],
     /// The game's logical world size: the size the renderer was made at ([`Renderer::logical_size`]).
     logical: (u32, u32),
+    /// How the world fills an output of another aspect ([`Renderer::set_fit`]).
+    fit: crate::letterbox::Fit,
     /// The most coverage the frame's transparent meshes write into TAA's reactive mask, each its
     /// material's alpha below it ([`crate::post::taa::transparent_coverage`]), read before the
     /// uploads take the plan's previous-model table.
@@ -2851,6 +2853,7 @@ impl Renderer {
             width,
             height,
             logical: (width, height),
+            fit: crate::letterbox::Fit::Letterbox,
         })
     }
 
@@ -2864,6 +2867,24 @@ impl Renderer {
     /// coordinates and the default output (renderer pass 2, P2-0.9 step B).
     pub fn logical_size(&self) -> (u32, u32) {
         self.logical
+    }
+
+    /// How the world fills an output of another aspect: under [`Fit::Expand`](crate::letterbox::Fit)
+    /// the 2D layer shows [`Renderer::view_rect`] and the window present fills the window.
+    pub fn set_fit(&mut self, fit: crate::letterbox::Fit) {
+        self.fit = fit;
+    }
+
+    /// The fit frames draw with ([`Renderer::set_fit`]; letterbox by default).
+    pub fn fit(&self) -> crate::letterbox::Fit {
+        self.fit
+    }
+
+    /// The rectangle of logical world pixels the output shows: the world itself, or under
+    /// [`Fit::Expand`](crate::letterbox::Fit) the world grown to the output's aspect
+    /// ([`crate::letterbox::view_rect`]). The immediate 2D layer is drawn over it.
+    pub fn view_rect(&self) -> [f32; 4] {
+        crate::letterbox::view_rect(self.logical, (self.width, self.height), self.fit)
     }
 
     /// Draw the next frames at `size` (each side clamped to 64..=4096, as the world target's):
@@ -5862,7 +5883,8 @@ impl Renderer {
     /// texel for texel into one of the world target's own size ([`crate::letterbox::present`]).
     /// Shells present through `Resilient::present`, which keeps its own across device recoveries.
     pub fn present(&mut self, gpu: &Gpu, target: &TextureView, format: TextureFormat, window: (u32, u32)) {
-        let into = crate::letterbox::present::PresentInto { world: (&self.targets.world_view, self.drawn_size()), target, format, window };
+        let fill = self.fit == crate::letterbox::Fit::Expand;
+        let into = crate::letterbox::present::PresentInto { fill, world: (&self.targets.world_view, self.drawn_size()), target, format, window };
         self.window_present.present(gpu, &into, None);
     }
 
