@@ -36,6 +36,11 @@ exists only on screen derives from simulation state (a tick counter the world ke
 own `state/` folder to save in, never this one. `target/` is scratch: never committed, served or
 judged.
 
+The game fills any window: `main.rs` sets `.fit(Fit::Expand)` and `genex.toml` `fit = "expand"`
+(keep both alike). The 960x540 world stays whole and centred and the scene shows more past it on
+the window's long side, so frame the camera for 16:9 and keep the HUD inside the world; use
+`Fit::Letterbox` only for a fixed picture (`docs/api/ctx.md`).
+
 Every device must offer WebGPU core; there is no WebGL path. A game that names a native-enhanced
 feature in `genex.toml` has no web build, so add one only when the brief needs it. A web export
 over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most

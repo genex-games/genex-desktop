@@ -14,7 +14,7 @@ use genex::prelude::*;
 struct World { score: u32 }
 
 fn main() {
-    let mut game = Game::new(World::default()).title("Pond").world_size(960, 540);
+    let mut game = Game::new(World::default()).title("Pond").world_size(960, 540).fit(Fit::Expand);
     game.on_update(|sim, ctx| if ctx.keys.pressed(Key::Space) { sim.world.score += 1; });
     game.on_draw(|sim, frame, _camera| { frame.tag("score").cube(Transform::IDENTITY, Color::WHITE); });
     game.probe("score", |sim| json!(sim.world.score));

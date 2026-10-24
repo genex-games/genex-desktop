@@ -4,6 +4,7 @@
 [game]
 title = "Pond"            # required
 world_size = [960, 540]   # optional, each side 64..=4096
+fit = "expand"            # optional: letterbox (default) | expand, as Game::fit in main.rs
 save_name = "pond"        # optional: letters, digits, space, _ - .
 
 [crates]                  # optional: the reviewed allowlist (noise, fastrand, pathfinding), or a crate the
