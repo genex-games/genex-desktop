@@ -106,6 +106,7 @@ async function rig(options: { targets?: BuildTarget[]; host?: StudioPlatform } =
       return { ok: true, output: out, lastGood: out, problem: null, ran: true, rust: await admittedReport(out) };
     },
     cancelAll: () => {},
+    cancelGame: () => {},
     sweep: async () => 0,
   };
   const deps: NativePrepareDeps = {

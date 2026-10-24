@@ -235,12 +235,13 @@ test("before any install the toolchain status is the empty store on this host, a
       ...(host ? { unhosted: [] } : {}),
     },
   );
-  // Composer Stop and the studio's own stop end every C++ build in flight; with none, nothing fails.
+  // The studio's own stop ends every C++ build in flight; with none, nothing fails. A composer Stop
+  // ends only its own game's (`native-lifecycle.test.ts`): a chat with no game ends none.
   const cancelled = t.mock.method(lite.core.cppBuilds, "cancelAll");
   await lite.core.stopThread("no-such-thread").catch(() => {});
-  assert.equal(cancelled.mock.callCount(), 1);
+  assert.equal(cancelled.mock.callCount(), 0);
   await lite.close();
-  assert.equal(cancelled.mock.callCount(), 2);
+  assert.equal(cancelled.mock.callCount(), 1);
 });
 
 test("the Command Line Tools probe runs only xcode-select -p and pkgutil, and nothing off a Mac", async () => {

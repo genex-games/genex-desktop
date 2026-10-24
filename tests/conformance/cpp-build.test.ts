@@ -1450,6 +1450,24 @@ describe("Stop", () => {
     }
   });
 
+  it("cancelGame cancels one game's builds, its copies' too, and leaves another game's running", async () => {
+    const holding = holdingRun();
+    const { builds } = await lane(holding.run, { cores: 16 });
+    const parent = await realpath(await tmpDir("cpp-game-"));
+    const other = builds.ensure(input(await cppGame(parent, "lake"), { project: "lake" }));
+    await waitFor(() => holding.calls.length === 1);
+    const own = builds.ensure(input(await cppGame(parent, "pond"), { project: "pond" }));
+    const copy = builds.ensure(input(await cppGame(parent, "pond-copy"), { project: "pond" }));
+    await waitFor(() => holding.calls.length === 3);
+    builds.cancelGame("pond");
+    for (const outcome of await Promise.all([own, copy]))
+      assert.equal(outcome.problem?.reason, BuildProblemCode.Cancelled);
+    assert.equal(holding.calls[0]?.signal?.aborted, false, "another game's build goes on");
+    assert.equal(await settledNow(other), false);
+    builds.cancelAll();
+    assert.equal((await other).problem?.reason, BuildProblemCode.Cancelled);
+  });
+
   /** Long enough for a second `ensure` to pass its host-side checks and join the build in flight. */
   const JOIN_MS = 50;
 

@@ -638,6 +638,7 @@ export class StudioCore {
     cppBuilds: {
       ensure: (input, options) => this.cppBuilds.ensure(input, options),
       cancelAll: () => this.cppBuilds?.cancelAll(),
+      cancelGame: (project) => this.cppBuilds?.cancelGame(project),
       sweep: () => this.cppBuilds.sweep(),
     },
     rustBuilds: {
@@ -645,6 +646,10 @@ export class StudioCore {
       cancelAll: () => {
         this.#rustBuilds?.cancelAll();
         this.#rustSimulatorBuilds?.cancelAll();
+      },
+      cancelGame: (project) => {
+        this.#rustBuilds?.cancelGame(project);
+        this.#rustSimulatorBuilds?.cancelGame(project);
       },
       sweep: async () => {
         const lanes = [this.#rustBuilds, this.#rustSimulatorBuilds].filter((lane) => lane !== null);
@@ -3461,11 +3466,20 @@ export class StudioCore {
 
   stopThread(...args: Parameters<ConversationService["stopThread"]>): ReturnType<ConversationService["stopThread"]> {
     this.#autoResume.userStopped(args[0]);
-    // Composer Stop ends every C++ build in flight too (nobody waits for one any more), then every
-    // agent's native run; the person's own Play window keeps running.
-    if (this.nativeRuns) void nativeOnComposerStop(this.#gameBuilds, this.nativeRuns).catch(() => {});
-    else this.#gameBuilds.cancelAll();
+    void this.#stopGameWork(args[0]).catch(() => {});
     return this.#conversation.stopThread(...args);
+  }
+
+  /**
+   * Composer Stop ends the compiled builds in flight of the chat's own game, its copies' too (nobody
+   * waits for one any more), then that game's agent native runs. Another game's builds and runs,
+   * and the person's own Play window, keep running; a chat with no game stops none.
+   */
+  async #stopGameWork(threadId: string): Promise<void> {
+    const project = threadProject(await this.store.getRecord(threadId));
+    if (!project) return;
+    if (this.nativeRuns) await nativeOnComposerStop(this.#gameBuilds, this.nativeRuns, project);
+    else this.#gameBuilds.cancelGame(project);
   }
 
   /**

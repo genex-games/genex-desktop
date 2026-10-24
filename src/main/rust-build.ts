@@ -754,6 +754,8 @@ interface ExportDebug {
 
 /** A build running (or waiting for a slot), which later looks at the same folder join; each caller waits with its own signal. */
 interface InFlight {
+  /** The game it builds (its folder or a copy of it). */
+  project: string;
   controller: AbortController;
   done: Promise<BuildOutcome>;
   waiters: number;
@@ -818,6 +820,11 @@ export class RustBuilds implements GameBuildLane {
   /** Composer Stop and the app's stop: every build in flight or waiting aborts; nothing in flight is no error. */
   cancelAll(): void {
     for (const flight of this.#inFlight.values()) flight.controller.abort();
+  }
+
+  /** Composer Stop: `project`'s builds in flight or waiting abort, of its folder and every copy; other games' go on. */
+  cancelGame(project: string): void {
+    for (const flight of this.#inFlight.values()) if (flight.project === project) flight.controller.abort();
   }
 
   /**
@@ -907,7 +914,7 @@ export class RustBuilds implements GameBuildLane {
     const controller = new AbortController();
     const start = () => this.#build(pending, controller.signal);
     const done = cancelled ? cancelled.done.then(start, start) : start();
-    const flight: InFlight = { controller, done, waiters: 0 };
+    const flight: InFlight = { project: pending.game.project, controller, done, waiters: 0 };
     this.#inFlight.set(pending.bin, flight);
     const forget = () => {
       if (this.#inFlight.get(pending.bin) === flight) this.#inFlight.delete(pending.bin);

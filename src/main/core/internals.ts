@@ -365,7 +365,7 @@ export interface CoreBuildLanes {
  * only way its games build; one missing is refused `lane-missing` (Rust in a core given no Rust lane).
  */
 export function coreGameBuilds(services: {
-  readonly cppBuilds: Pick<CppBuilds, "ensure" | "cancelAll" | "sweep">;
+  readonly cppBuilds: Pick<CppBuilds, "ensure" | "cancelAll" | "cancelGame" | "sweep">;
   readonly rustBuilds?: GameBuildLane;
 }): GameBuildLanes {
   return new GameBuildLanes({

@@ -718,8 +718,10 @@ export interface GameBuildLane {
     purpose: CppBuildPurpose,
     options?: GameBuildOptions,
   ): Promise<BuildOutcome>;
-  /** Abort every build in flight or waiting (Composer Stop, the app's stop); nothing in flight is no error. */
+  /** Abort every build in flight or waiting (the app's stop); nothing in flight is no error. */
   cancelAll(): void;
+  /** Abort `project`'s builds in flight or waiting, its folder's and its copies' (Composer Stop); other games' go on. */
+  cancelGame(project: string): void;
   /** Remove the build folders nothing will build again; answer how many went. */
   sweep(): Promise<number>;
 }
@@ -770,9 +772,14 @@ export class GameBuildLanes {
     return { stack, target, purpose, refusal: null, outcome };
   }
 
-  /** Composer Stop and the app's stop: every lane aborts what it has in flight or waiting. */
+  /** The app's stop: every lane aborts what it has in flight or waiting. */
   cancelAll(): void {
     for (const lane of this.#registered()) lane.cancelAll();
+  }
+
+  /** Composer Stop: every lane aborts `project`'s builds, its copies' too; other games' go on. */
+  cancelGame(project: string): void {
+    for (const lane of this.#registered()) lane.cancelGame(project);
   }
 
   /** Every lane sweeps its unused build folders; answers how many went in all. */
@@ -790,10 +797,11 @@ export class GameBuildLanes {
  * The C++ · raylib lane behind the seam: `CppBuilds` itself, untouched, handed exactly the input
  * its callers built for it before the seam, with the caller's own signal.
  */
-export function raylibLane(cpp: Pick<CppBuilds, "ensure" | "cancelAll" | "sweep">): GameBuildLane {
+export function raylibLane(cpp: Pick<CppBuilds, "ensure" | "cancelAll" | "cancelGame" | "sweep">): GameBuildLane {
   return {
     ensure: (game, target, purpose, options) => cpp.ensure(cppBuildInput(game, target, purpose), options),
     cancelAll: () => cpp.cancelAll(),
+    cancelGame: (project) => cpp.cancelGame(project),
     sweep: () => cpp.sweep(),
   };
 }

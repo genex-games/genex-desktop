@@ -425,13 +425,68 @@ describe("the Rust lane's typed refusals run nothing", { skip: SKIP_ON_WINDOWS }
   });
 });
 
+/** A sandbox whose every command holds until its signal aborts, then answers killed: every request recorded. */
+function holdingSandboxes() {
+  const requests: RunRequest[] = [];
+  const sandbox = async (): Promise<RustBuildSandbox> => ({
+    run: (request) => {
+      requests.push(request);
+      return new Promise((resolve) => {
+        const killed = (): void =>
+          resolve({
+            code: null,
+            signal: "SIGKILL",
+            stdout: "",
+            stderr: "",
+            durationMs: 0,
+            timedOut: false,
+            truncated: false,
+            sandboxed: false,
+            command: request.command,
+            cwd: request.cwd,
+          });
+        if (request.signal?.aborted) killed();
+        else request.signal?.addEventListener("abort", killed, { once: true });
+      });
+    },
+    dispose: async () => {},
+  });
+  return { sandbox, requests };
+}
+
+describe("Composer Stop in the Rust lane", { skip: SKIP_ON_WINDOWS }, () => {
+  it("cancelGame cancels one game's builds, its copies' too, and leaves another game's running", async () => {
+    const parent = await realpath(await tmpDir("rust-cancel-game-"));
+    const holding = holdingSandboxes();
+    const { builds } = await lane(parent, holding.sandbox, { cores: 16 });
+    const lake = { ...gameOf(await rustGame(parent, "lake")), project: "lake" };
+    const other = builds.ensure(lake, BuildTarget.Mac, CppBuildPurpose.Live);
+    for (let i = 0; i < 400 && holding.requests.length < 1; i++) await sleep(5);
+    const pond = { ...gameOf(await rustGame(parent, "pond")), project: "pond" };
+    const copy = { ...gameOf(await rustGame(parent, "pond-copy")), project: "pond" };
+    const own = [pond, copy].map((game) => builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live));
+    for (let i = 0; i < 400 && holding.requests.length < 3; i++) await sleep(5);
+    assert.equal(holding.requests.length, 3, "all three build");
+    builds.cancelGame("pond");
+    for (const outcome of await Promise.all(own)) assert.equal(outcome.problem?.reason, BuildProblemCode.Cancelled);
+    assert.equal(holding.requests[0]?.signal?.aborted, false, "another game's build goes on");
+    builds.cancelAll();
+    assert.equal((await other).problem?.reason, BuildProblemCode.Cancelled);
+  });
+});
+
 describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () => {
   it("registers as the Rust · wgpu lane of core.gameBuilds", async () => {
     const parent = await realpath(await tmpDir("rust-seam-"));
     const open = openSandboxes();
     const { builds } = await lane(parent, open.sandbox);
     const lanes = coreGameBuilds({
-      cppBuilds: { ensure: async () => assert.fail("not the raylib lane"), cancelAll: () => {}, sweep: async () => 0 },
+      cppBuilds: {
+        ensure: async () => assert.fail("not the raylib lane"),
+        cancelAll: () => {},
+        cancelGame: () => {},
+        sweep: async () => 0,
+      },
       rustBuilds: builds,
     });
     const receipt = await lanes.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);

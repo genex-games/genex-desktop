@@ -65,8 +65,9 @@ starts with `RUSTC_BOOTSTRAP` set empty as the prewarm's `rustEnv` does, or proc
 script reruns and every derive-using unit with it. The sweep (`gameBuilds.sweep()`: at start, after
 a worktree goes and after freeing a game's space) removes a build folder whose source is gone, an
 unstamped one after `UNSTAMPED_GRACE_MS`, and a shared target no copy builds in, never one building,
-lending or served by a preview, nor anything through a link; one it cannot remove is skipped. It
-builds the Mac and the web (packaged by
+lending or served by a preview, nor anything through a link; one it cannot remove is skipped.
+Composer Stop cancels only the chat's own game's builds (`gameBuilds.cancelGame`: its folder's and
+every copy's) and agent runs; another game's go on. It builds the Mac and the web (packaged by
 [`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell; Live opens a
 `game.mouseLook` game's page at `index.html?mouseLook`, and the shell then takes the pointer lock
 on a click, as Native does); the phones'

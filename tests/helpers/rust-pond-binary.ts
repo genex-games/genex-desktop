@@ -151,7 +151,7 @@ export function pondPrepareDeps(options: { root: string; out: string; game: Game
     gameBox: options.gameBox,
     games: { list: async () => [options.game], bundleIdFor: async () => POND_BUNDLE_ID },
     gameBuilds: new GameBuildLanes({
-      [GameStack.RustWgpu]: { ensure, cancelAll: () => {}, sweep: async () => 0 },
+      [GameStack.RustWgpu]: { ensure, cancelAll: () => {}, cancelGame: () => {}, sweep: async () => 0 },
     }),
     toolchains: {
       currentLock: async () => STAND_IN_LOCK,
