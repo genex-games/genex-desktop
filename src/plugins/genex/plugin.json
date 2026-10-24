@@ -217,13 +217,13 @@
     {
       "name": "genex-monetization",
       "engines": ["web"],
-      "summary": "Selling for Genex coin: purchase flow, delivery and the hard rules (no paid randomness, no gambling). Fixed coin prices (unlocks, skins, items) are store items listed with shop add, as genex-items says; dynamic payments only for amounts decided while playing.",
+      "summary": "Selling for Genex coin: purchase flow, delivery and the hard rules (no paid randomness, no gambling). Ask first if coins are Genex or in-game. Genex-coin prices are store items listed with shop add, as genex-items says; dynamic payments only for amounts decided while playing.",
       "file": "skills/genex-monetization/SKILL.md"
     },
     {
       "name": "genex-items",
       "engines": ["web"],
-      "summary": "Read first when the game prices anything in coins or players buy or unlock something: those are Genex coins and each is a store item. By default, without asking, list it with genex__cli-paid shop add so its card shows in the chat, before publish too. Also: getEntitlements() at boot, items add.",
+      "summary": "Read first when the person prices anything in coins: ask once whether they mean coins earned in the game or Genex coins. Each thing priced in Genex coins is a store item: list it with genex__cli-paid shop add by default, so its card shows, before publish too. Also: getEntitlements(), items add.",
       "file": "skills/genex-items/SKILL.md"
     },
     {
