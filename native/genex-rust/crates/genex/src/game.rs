@@ -43,6 +43,8 @@ pub struct Game<W> {
     pub(crate) initial: W,
     pub(crate) title: String,
     pub(crate) world_size: [u32; 2],
+    /// How the world fills a window of another aspect (`Game::fit`).
+    pub(crate) fit: crate::Fit,
     pub(crate) background: Color,
     pub(crate) save_name: Option<String>,
     pub(crate) resets: Vec<ResetHook<W>>,
@@ -118,6 +120,7 @@ impl<W: Default + 'static> Game<W> {
             initial: world,
             title: "Genex game".to_owned(),
             world_size: [960, 540],
+            fit: crate::Fit::Letterbox,
             background: Color::BACKGROUND,
             save_name: None,
             resets: Vec::new(),
@@ -157,9 +160,20 @@ impl<W: Default + 'static> Game<W> {
         self
     }
 
-    /// The fixed world target size in pixels; the window letterboxes it.
+    /// The fixed world target size in pixels; the window letterboxes it, or fills around it under
+    /// [`Game::fit`]`(Fit::Expand)`.
     pub fn world_size(mut self, width: u32, height: u32) -> Game<W> {
         self.world_size = [width, height];
+        self
+    }
+
+    /// How the world fills a window of another aspect (`genex.toml [game] fit`, keep the two
+    /// alike): [`Fit::Letterbox`](crate::Fit) (the default) keeps black bars; [`Fit::Expand`](crate::Fit)
+    /// fills the window, the world whole and centred where the letterbox would put it and the view
+    /// grown on the window's long side. The simulation, input, the HUD and captures at the world
+    /// size see the world either way, so replays and goldens do not change with the window.
+    pub fn fit(mut self, fit: crate::Fit) -> Game<W> {
+        self.fit = fit;
         self
     }
 

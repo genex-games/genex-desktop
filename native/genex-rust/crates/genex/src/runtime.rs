@@ -750,6 +750,11 @@ impl<W> Runtime<W> {
         self.game.world_size
     }
 
+    /// How the world fills a window of another aspect ([`Game::fit`](crate::Game::fit)).
+    pub fn fit(&self) -> crate::Fit {
+        self.game.fit
+    }
+
     /// The save folder name the game chose, if any.
     pub fn save_name(&self) -> Option<&str> {
         self.game.save_name.as_deref()

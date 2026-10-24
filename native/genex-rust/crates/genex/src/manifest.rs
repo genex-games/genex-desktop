@@ -5,6 +5,7 @@
 //! [game]
 //! title = "Pond"            # required
 //! world_size = [960, 540]   # optional, each side 64..=4096
+//! fit = "expand"            # optional: letterbox (default) | expand
 //! save_name = "pond"        # optional: letters, digits, space, _ - .
 //!
 //! [crates]                  # optional: the reviewed allowlist by requirement, or a crate the
@@ -645,6 +646,10 @@ pub struct GameSection {
     /// The fixed world target size in pixels.
     #[serde(default = "default_world_size")]
     pub world_size: [u32; 2],
+    /// How the world fills a window of another aspect, `letterbox` or `expand` (lane EF); none is
+    /// letterbox. Checked as text so any other word is refused `invalid-fit`.
+    #[serde(default)]
+    pub fit: Option<String>,
     /// The save folder name.
     #[serde(default)]
     pub save_name: Option<String>,
@@ -652,6 +657,13 @@ pub struct GameSection {
 
 fn default_world_size() -> [u32; 2] {
     [960, 540]
+}
+
+impl GameSection {
+    /// The fit the game declares: letterbox when it names none (a refused word never parses).
+    pub fn fit(&self) -> crate::Fit {
+        self.fit.as_deref().and_then(crate::Fit::from_wire).unwrap_or_default()
+    }
 }
 
 /// `[[crate_request]]`: one crate at one exact release, and why.
@@ -1207,6 +1219,8 @@ pub enum ManifestErrorCode {
     AssetBudgetOutOfRange,
     /// An `[assets] phone_max_texture_px` that is not a power of two from [`PHONE_TEXTURE_CAP_MIN_PX`] to [`PHONE_TEXTURE_CAP_MAX_PX`].
     InvalidTextureCap,
+    /// A `[game] fit` other than `letterbox` or `expand`.
+    InvalidFit,
 }
 
 impl ManifestErrorCode {
@@ -1216,6 +1230,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::Syntax => "manifest-syntax",
             ManifestErrorCode::InvalidTitle => "invalid-title",
             ManifestErrorCode::InvalidWorldSize => "invalid-world-size",
+            ManifestErrorCode::InvalidFit => "invalid-fit",
             ManifestErrorCode::InvalidSaveName => "invalid-save-name",
             ManifestErrorCode::CrateNotAllowlisted => "crate-not-allowlisted",
             ManifestErrorCode::InvalidWgslPath => "invalid-wgsl-path",
@@ -1428,6 +1443,9 @@ fn check_game(game: &GameSection) -> Result<(), ManifestError> {
     if !game.world_size.iter().all(|side| (MIN_WORLD_PX..=MAX_WORLD_PX).contains(side)) {
         let [w, h] = game.world_size;
         return Err(ManifestError::new(ManifestErrorCode::InvalidWorldSize, format!("{w}x{h}")));
+    }
+    if let Some(fit) = game.fit.as_deref().filter(|fit| crate::Fit::from_wire(fit).is_none()) {
+        return Err(ManifestError::new(ManifestErrorCode::InvalidFit, format!("{fit:?}")));
     }
     match &game.save_name {
         Some(name) if !valid_save_name(name) => Err(ManifestError::new(ManifestErrorCode::InvalidSaveName, name.clone())),

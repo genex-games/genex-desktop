@@ -91,6 +91,7 @@ import {
   checkTargetFeatures,
   checkWgslFiles,
   GAME_CRATE_ALLOWLIST,
+  GameFit,
   GenexTomlCode,
   genexMatchmakingBlock,
   MatchmakingPreset,
@@ -176,6 +177,15 @@ const hostile: Array<[string, string, string]> = [
   ["an overlong title", `[game]\ntitle = "${"x".repeat(81)}"\n`, GenexTomlCode.InvalidTitle],
   ["a world side below 64", `${SIZE}[32, 540]\n`, GenexTomlCode.InvalidWorldSize],
   ["a world side above 4096", `${SIZE}[960, 8192]\n`, GenexTomlCode.InvalidWorldSize],
+  // Lane EF: genex's `the_fit_is_letterbox_unless_the_game_says_expand` holds the same rows.
+  ["a fit in another case", `${GAME}fit = "Expand"\n`, GenexTomlCode.InvalidFit],
+  ["an empty fit", `${GAME}fit = ""\n`, GenexTomlCode.InvalidFit],
+  ["a fit outside the vocabulary", `${GAME}fit = "stretch"\n`, GenexTomlCode.InvalidFit],
+  ["a fit with a trailing space", `${GAME}fit = "expand "\n`, GenexTomlCode.InvalidFit],
+  ["a fit with a NUL", `${GAME}fit = "letterbox\\u0000"\n`, GenexTomlCode.InvalidFit],
+  ["a fit that climbs", `${GAME}fit = "../expand"\n`, GenexTomlCode.InvalidFit],
+  ["a fit of the wrong type", `${GAME}fit = 1\n`, GenexTomlCode.Syntax],
+  ["a fit as an array", `${GAME}fit = ["expand"]\n`, GenexTomlCode.Syntax],
   ["a save name that climbs", `${GAME}save_name = "../x"\n`, GenexTomlCode.InvalidSaveName],
   ["a save name of '..'", `${GAME}save_name = ".."\n`, GenexTomlCode.InvalidSaveName],
   ["a crate off the allowlist", `${GAME}[crates]\nserde = "1"\n`, GenexTomlCode.CrateNotAllowlisted],
@@ -290,6 +300,12 @@ describe("genex.toml: the schema", () => {
       const result = parseGenexToml(`${GAME}[crates]\ntidy = "${version}"\n`);
       assert.equal(result.ok, false, version);
     }
+  });
+
+  it("reads [game] fit as written, letterbox when the file names none", () => {
+    assert.equal(accepted(GAME).fit, null);
+    assert.equal(accepted(`${GAME}fit = "letterbox"\n`).fit, GameFit.Letterbox);
+    assert.equal(accepted(`${GAME}fit = "expand"\n`).fit, GameFit.Expand);
   });
 
   it("decodes string escapes and keeps the allowlist the runtime keeps", () => {

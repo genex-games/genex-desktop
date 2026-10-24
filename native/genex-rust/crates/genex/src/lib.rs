@@ -103,6 +103,9 @@ mod desktop;
 /// (`genex::profile_scope!("enemy_ai")`); write-only, never in the checksum.
 pub use genex_profile::profile_scope;
 pub use camera::{Camera, Projection};
+/// How the world fills a window of another aspect: letterboxed, or expanded to fill it with the
+/// world kept whole and centred (`Game::fit`, `genex.toml [game] fit`).
+pub use genex_render::letterbox::Fit;
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use decal::Decal;
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
@@ -231,7 +234,7 @@ pub mod prelude {
     pub use crate::ui::{TextArgs, UiConfig, UiScale};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
-        Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
+        Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};

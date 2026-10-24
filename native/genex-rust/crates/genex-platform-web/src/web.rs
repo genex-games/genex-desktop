@@ -219,12 +219,13 @@ fn started(game: &mut Option<Box<dyn GameHandle>>) -> Result<&mut dyn GameHandle
 }
 
 /// Start the installed game once (its first reset reads the preloaded saves and `assets`, the
-/// files fetched before boot); answers its world size.
-fn start_game(shell: &mut Shell, assets: WebSource) -> Result<[u32; 2], JsValue> {
+/// files fetched before boot); answers its world size and fit.
+fn start_game(shell: &mut Shell, assets: WebSource) -> Result<([u32; 2], genex::Fit), JsValue> {
     if let Some(start) = shell.waiting.take() {
         shell.game = Some(start(Box::new(assets)));
     }
-    Ok(started(&mut shell.game)?.world_size())
+    let game = started(&mut shell.game)?;
+    Ok((game.world_size(), game.fit()))
 }
 
 fn refusal(code: &str, detail: impl std::fmt::Display) -> JsValue {
@@ -403,7 +404,7 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
         shell.stream = Some(stream);
         Ok(source)
     })?;
-    let world = with_shell(|shell| start_game(shell, models.clone()))?;
+    let (world, fit) = with_shell(|shell| start_game(shell, models.clone()))?;
     let mut graphics = match open_graphics(canvas, world, models).await {
         Ok(graphics) => graphics,
         Err(error) => return Ok(boot_refused(&error)),
@@ -428,7 +429,7 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
     with_shell(|shell| {
         shell.graphics = Some(graphics);
         STUDIO.with_borrow_mut(Studio::mark_ready);
-        Ok(json!({ "ok": true, "receipt": receipt, "world": world }).to_string())
+        Ok(json!({ "ok": true, "receipt": receipt, "world": world, "fit": fit.as_str() }).to_string())
     })
     .inspect(|_| listen_for_unlock())
 }

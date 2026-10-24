@@ -139,6 +139,25 @@ fn a_crate_the_person_approved_and_a_crate_request_parse_as_the_host_reads_them(
     assert_eq!(row.reason.as_deref(), Some("an entity store"));
 }
 
+/// Lane EF: `[game] fit` is letterbox unless the game says expand; any other value, a wrong case or
+/// type among them, is refused `invalid-fit` (the host's reader holds the same rows).
+#[test]
+fn the_fit_is_letterbox_unless_the_game_says_expand() {
+    let fit = |text: &str| manifest::parse(&format!("[game]\ntitle = \"T\"\n{text}")).map(|parsed| parsed.game.fit());
+    assert_eq!(fit("").ok(), Some(genex::Fit::Letterbox), "absent: letterbox");
+    assert_eq!(fit("fit = \"letterbox\"\n").ok(), Some(genex::Fit::Letterbox));
+    assert_eq!(fit("fit = \"expand\"\n").ok(), Some(genex::Fit::Expand));
+    for hostile in ["\"Expand\"", "\"\"", "\"stretch\"", "\"expand \"", "\"letterbox\\u0000\"", "\"../expand\""] {
+        let code = fit(&format!("fit = {hostile}\n")).err().map(|error| error.code());
+        assert_eq!(code, Some(ManifestErrorCode::InvalidFit), "{hostile}");
+    }
+    for wrong_type in ["1", "true", "[\"expand\"]"] {
+        let code = fit(&format!("fit = {wrong_type}\n")).err().map(|error| error.code());
+        assert_eq!(code, Some(ManifestErrorCode::Syntax), "{wrong_type}");
+    }
+    assert_eq!(ManifestErrorCode::InvalidFit.as_str(), "invalid-fit");
+}
+
 #[test]
 fn the_crate_codes_keep_the_hosts_wire_spellings() {
     assert_eq!(ManifestErrorCode::InvalidCrateVersion.as_str(), "invalid-crate-version");

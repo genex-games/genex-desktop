@@ -37,6 +37,8 @@ pub trait GameHandle {
     fn tick(&self) -> u64;
     /// The fixed world target size, in pixels.
     fn world_size(&self) -> [u32; 2];
+    /// How the world fills the canvas ([`genex::Game::fit`]): the shell's pointer follows it.
+    fn fit(&self) -> genex::Fit;
     /// Demo names, in registration order.
     fn demos(&self) -> Vec<String>;
     /// Run a demo; the runtime is paused after it.
@@ -159,6 +161,10 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
 
     fn world_size(&self) -> [u32; 2] {
         Runtime::world_size(self)
+    }
+
+    fn fit(&self) -> genex::Fit {
+        Runtime::fit(self)
     }
 
     fn demos(&self) -> Vec<String> {

@@ -115,7 +115,7 @@ use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, GlbSidecars, Mes
 use genex_render::mesh_lod_runtime::{RUNTIME_LOD_MAX_TRIANGLES, RuntimeLodOutcome, add_runtime_chains};
 use genex_render::meshlet::MeshletSet;
 use genex_render::motion::DrawId;
-use genex_render::letterbox::{letterbox, output_for_window};
+use genex_render::letterbox::{Fit, letterbox, output_for};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
 use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
@@ -1440,6 +1440,9 @@ pub struct Presenter {
     /// The window the presents go to, in pixels, once a shell said or presented
     /// ([`Presenter::set_window_size`]): Live frames draw at its letterbox's pixels.
     window: Option<(u32, u32)>,
+    /// How the last drawn game fills the window ([`crate::Game::fit`]): under expand Live draws at
+    /// the window's whole pixels and the present fills it.
+    fit: Fit,
     /// The size captures draw at when one was asked for ([`Presenter::set_capture_size`]).
     capture_size: Option<(u32, u32)>,
     /// What the next settled captures ask of the look's lens ([`Presenter::set_capture_lens`]).
@@ -1583,6 +1586,15 @@ impl OverlayPainter for HudOverlay<'_> {
     }
 }
 
+/// Move `paint` onto `place` (the world's rectangle in the target's pixels, under expand);
+/// answers the shift in HUD points.
+fn translate_hud(paint: &mut HudPaint, place: genex_render::letterbox::Viewport) -> genex_hud::egui::Vec2 {
+    let per_point = paint.pixels_per_point.max(f32::MIN_POSITIVE);
+    let shift = genex_hud::egui::vec2(place.x as f32, place.y as f32) / per_point;
+    paint.translate(shift);
+    shift
+}
+
 /// Whether `paint` has anything to draw or upload.
 fn paints(paint: &HudPaint) -> bool {
     let textures = &paint.textures_delta;
@@ -1616,6 +1628,7 @@ impl Presenter {
             profile_overlay: genex_hud::ProfileOverlay::default(),
             window_pixels_per_point: WORLD_PIXELS_PER_POINT,
             window: None,
+            fit: Fit::Letterbox,
             capture_size: None,
             capture_lens: crate::render::CaptureLens::default(),
             last_output: None,
@@ -2035,7 +2048,7 @@ impl Presenter {
         let world = self.resilient.renderer().renderer().logical_size();
         let Some(window) = self.window else { return world };
         let (cap_w, cap_h) = genex_render::presets::reference_resolution(handle.borrow().live_class());
-        output_for_window(world, window, u64::from(cap_w) * u64::from(cap_h))
+        output_for(world, window, u64::from(cap_w) * u64::from(cap_h), self.fit)
     }
 
     /// Hand the settings this draw's output size (Live's window pixels, or the capture's size)
@@ -2047,7 +2060,11 @@ impl Presenter {
         }
         let output = self.live_output(handle);
         let world = self.resilient.renderer().renderer().logical_size();
-        let window = self.window.map(|window| letterbox(window, world)).map(|view| (view.width, view.height));
+        // The present fills the whole window under expand, the world's letterbox otherwise.
+        let filled = |window: (u32, u32)| genex_render::letterbox::present::present_view(window, output, self.fit == Fit::Expand);
+        let letterboxed = |window: (u32, u32)| letterbox(window, world);
+        let place = |window| if self.fit == Fit::Expand { filled(window) } else { letterboxed(window) };
+        let window = self.window.map(place).map(|view| (view.width, view.height));
         handle.borrow_mut().set_live_output(output, window);
         output
     }
@@ -2056,6 +2073,7 @@ impl Presenter {
     /// size the renderer had and is logged.
     fn set_output(&mut self, output: (u32, u32)) {
         let renderer = self.resilient.renderer_mut().renderer_mut();
+        renderer.set_fit(self.fit);
         if let Err(error) = renderer.set_output_size(output) {
             (self.log)(&format!("output size {}x{} refused: {error}", output.0, output.1));
         }
@@ -2085,9 +2103,16 @@ impl Presenter {
         paint.textures_delta = std::mem::take(&mut self.hud_unsent);
         paint.pixels_per_point = self.window_pixels_per_point;
         let painted = paints(&paint);
+        // Under expand the present fills the window and the HUD keeps to the world's rectangle.
+        let world = self.resilient.renderer().renderer().logical_size();
+        let place = (self.fit == Fit::Expand).then(|| letterbox(window, world));
+        let shift = place.map(|place| translate_hud(&mut paint, place));
         let mut overlay = HudOverlay { painter: &mut self.hud, paint: &mut paint };
         let overlay: Option<&mut dyn OverlayPainter> = if painted { Some(&mut overlay) } else { None };
         self.resilient.present_with(target, format, window, overlay);
+        if let Some(shift) = shift {
+            paint.translate(-shift);
+        }
         // What the painter did not take (a lost device paints nothing) waits for the next one.
         self.hud_unsent = std::mem::take(&mut paint.textures_delta);
         self.live_hud = Some(paint);
@@ -2118,17 +2143,25 @@ impl Presenter {
     pub fn draw_view<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Option<Result<Drawn, RenderError>> {
         let camera = runtime.camera(view)?;
         let mut frame = runtime.frame(view)?;
+        self.fit = runtime.fit();
         let handle = self.attach(runtime);
         if let Err(error) = self.stream_frame(runtime, &handle, &camera, &mut frame) {
             return Some(Err(error));
         }
         let output = self.frame_output(&handle);
         let world = self.resilient.renderer().renderer().logical_size();
+        // Under expand an output taller than the world widens the view to keep the world's width.
+        let camera = camera.for_output([world.0, world.1], output, self.fit);
         // A capture paints its HUD into the world target at the capture's own pixels per point (1 at
-        // the world size); Live paints it over the window after the upscale.
-        let capture_ppp = output.0 as f32 / world.0.max(1) as f32;
+        // the world size); Live paints it over the window after the upscale. Under expand the
+        // world, and so the HUD, sits on the output's letterbox rectangle.
+        let expand_place = (self.fit == Fit::Expand).then(|| letterbox(output, world));
+        let capture_ppp = expand_place.map_or(output.0 as f32, |place| place.width as f32) / world.0.max(1) as f32;
         let pixels_per_point = if self.capturing { capture_ppp } else { self.window_pixels_per_point };
         let mut hud = runtime.hud_paint(pixels_per_point);
+        if let Some(place) = expand_place.filter(|_| self.capturing) {
+            translate_hud(&mut hud, place);
+        }
         let live = !self.capturing;
         if live {
             // PROF-8: the dev flavour's Ctrl+Shift+P, and the numbers a shown overlay reads.

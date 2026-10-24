@@ -202,6 +202,38 @@ fn metal_captures_stay_at_the_world_size_whatever_the_window() {
     assert_eq!(output(&windowed), WINDOW_1080P, "Live is back at the window's pixels");
 }
 
+/// Lane EF: under `fit = "expand"` Live draws at a 21:9 and a 4:3 window's whole pixels (the
+/// present leaves no bars), while a world-size capture is the letterbox game's byte for byte (the
+/// goldens do not move) and the simulation reads the same checksum under both windows.
+#[test]
+#[ignore = "needs the host GPU: run with --ignored metal"]
+fn metal_expand_fills_any_window_and_leaves_captures_and_the_sim_alone() {
+    let _gpu = gpu_rows();
+    let Some(mut letterboxed) = presenter() else { return };
+    let mut runtime = ticked();
+    let plain = capture(&mut letterboxed, &mut runtime);
+    drop(letterboxed);
+    let mut checksums = Vec::new();
+    for window in [(2520, 1080), (1440, 1080)] {
+        let Some(mut presenter) = presenter() else { return };
+        let mut runtime = Runtime::new(template_game().fit(Fit::Expand)).expect("installs");
+        runtime.step(TICK_MS);
+        presenter.set_window_size(window);
+        for _ in 0..LIVE_FRAMES {
+            live(&mut presenter, &mut runtime);
+            runtime.step(TICK_MS);
+        }
+        assert_eq!(output(&presenter), window, "{window:?}: Live draws the whole window");
+        checksums.push(runtime.checksum());
+        let mut fresh = Runtime::new(template_game().fit(Fit::Expand)).expect("installs");
+        fresh.step(TICK_MS);
+        let shot = capture(&mut presenter, &mut fresh);
+        assert_eq!((shot.width(), shot.height()), (WORLD[0], WORLD[1]), "{window:?}: captured at the world size");
+        assert_eq!(shot.digest(), plain.digest(), "{window:?}: an expand capture is the letterbox game's");
+    }
+    assert_eq!(checksums[0], checksums[1], "the window never reaches the simulation");
+}
+
 /// `capture --size` (the 4K/1440p plan): a capture drawn natively at the size asked for, the HUD
 /// at that size's pixels (two device pixels per point at 1920x1080), the same picture twice, and
 /// Live's history left alone.

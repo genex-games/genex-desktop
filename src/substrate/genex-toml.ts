@@ -7,6 +7,7 @@
  * [game]
  * title = "Pond"            # required
  * world_size = [960, 540]   # optional, each side 64..=4096
+ * fit = "expand"            # optional: letterbox (default) | expand
  * save_name = "pond"        # optional: letters, digits, space, _ - .
  *
  * [crates]                  # optional: the reviewed allowlist (noise, fastrand, pathfinding) by requirement,
@@ -181,6 +182,8 @@ export const GenexTomlCode = {
   InvalidTitle: "invalid-title",
   /** A world size side outside 64..=4096. */
   InvalidWorldSize: "invalid-world-size",
+  /** A `[game] fit` other than a {@link GameFit} spelling. */
+  InvalidFit: "invalid-fit",
   /** A save name with characters outside letters, digits, space, `_`, `-`, `.`, or `.`/`..`. */
   InvalidSaveName: "invalid-save-name",
   /** A crate off the reviewed allowlist, named by anything but an exact version (`=X.Y.Z`). */
@@ -378,6 +381,20 @@ export const NET_MATCH_KNOB_MAX = 1_000_000;
 /** A knob's name: Genex's camelCase spelling, a lower-case letter then letters and digits, 32 at most. */
 const NET_MATCH_KNOB_NAME = /^[a-z][A-Za-z0-9]{0,31}$/;
 
+/** How a game's world fills a window of another aspect (`[game] fit`, genex's `Fit`); wire values. */
+export const GameFit = {
+  /** The world keeps its aspect between black bars (the default). */
+  Letterbox: "letterbox",
+  /** The world stays whole and centred and the view grows to fill the window. */
+  Expand: "expand",
+} as const;
+export type GameFit = (typeof GameFit)[keyof typeof GameFit];
+
+/** Whether `value` is a {@link GameFit} spelling. */
+export function isGameFit(value: string): value is GameFit {
+  return Object.values<string>(GameFit).includes(value);
+}
+
 /** The world target when `world_size` is absent. */
 const DEFAULT_WORLD_SIZE = [960, 540] as const;
 /** genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`. */
@@ -474,6 +491,8 @@ export interface NetToml {
 export interface GenexToml {
   title: string;
   worldSize: readonly [number, number];
+  /** `[game] fit` as written, checked by {@link checkGame}; absent or null: letterbox. */
+  fit?: string | null;
   saveName: string | null;
   /** By name. */
   crates: readonly GameCrate[];
@@ -719,7 +738,7 @@ const GENEX_RELEASE = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 const SECTION_HEADER =
   /^\s*\[\[?\s*("[^"]*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+))*\s*\]\]?\s*(#.*)?$/;
 const REQUEST_KEYS = ["name", "version", "reason"] as const;
-const GAME_KEYS = ["title", "world_size", "save_name"] as const;
+const GAME_KEYS = ["title", "world_size", "fit", "save_name"] as const;
 const WGSL_KEYS = ["path", "kind", "api"] as const;
 /** The extension API a `[[wgsl]]` row that names none is written against. */
 const DEFAULT_WGSL_API = 1;
@@ -838,6 +857,7 @@ function shapeManifest(document: TomlTable): Shaped {
     const manifest: GenexToml = {
       title: string(game.title, "game.title"),
       worldSize: worldSize(game.world_size),
+      fit: game.fit === undefined ? null : string(game.fit, "game.fit"),
       saveName: game.save_name === undefined ? null : string(game.save_name, "game.save_name"),
       crates: crates(document.crates),
       crateRequests: crateRequests(document.crate_request),
@@ -1336,6 +1356,8 @@ function checkGame(manifest: GenexToml): GenexTomlRefusal | null {
   const [width, height] = manifest.worldSize;
   const inRange = (side: number) => side >= MIN_WORLD_PX && side <= MAX_WORLD_PX;
   if (!inRange(width) || !inRange(height)) return refuse(GenexTomlCode.InvalidWorldSize, `${width}x${height}`);
+  const fit = manifest.fit ?? null;
+  if (fit !== null && !isGameFit(fit)) return refuse(GenexTomlCode.InvalidFit, JSON.stringify(fit));
   if (manifest.saveName !== null && !validSaveName(manifest.saveName))
     return refuse(GenexTomlCode.InvalidSaveName, manifest.saveName);
   return null;
