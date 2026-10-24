@@ -27,7 +27,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, DeviceId, Ime, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 /// What a refusal says beside its code.
 struct Message {
@@ -103,6 +103,8 @@ pub struct WindowedOptions {
     pub max_frames: Option<u64>,
     /// Whether real gamepads are read (off by default; [`GamepadPolicy::for_run`] decides).
     pub gamepads: GamepadPolicy,
+    /// How the window fills its monitor ([`crate::Fullscreen`]).
+    pub fullscreen: crate::Fullscreen,
 }
 
 struct WindowedApp<G> {
@@ -124,7 +126,8 @@ impl<G: ShellGame> WindowedApp<G> {
         let [width, height] = self.core.game().world_size();
         let attributes = Window::default_attributes()
             .with_title(self.core.game().title())
-            .with_inner_size(LogicalSize::new(width, height));
+            .with_inner_size(LogicalSize::new(width, height))
+            .with_fullscreen(fullscreen_for(event_loop, self.options.fullscreen));
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window = Arc::new(window);
@@ -261,6 +264,25 @@ impl<G: ShellGame> ApplicationHandler for WindowedApp<G> {
         }
         event_loop.set_control_flow(ControlFlow::Poll);
         window.request_redraw();
+    }
+}
+
+/// winit's fullscreen for `asked` on the primary monitor: borderless, or exclusive at the monitor's
+/// largest mode (most pixels, then the highest refresh and depth), which the log names. A monitor
+/// without modes gets borderless.
+fn fullscreen_for(event_loop: &ActiveEventLoop, asked: crate::Fullscreen) -> Option<Fullscreen> {
+    match asked {
+        crate::Fullscreen::Off => None,
+        crate::Fullscreen::Borderless => Some(Fullscreen::Borderless(None)),
+        crate::Fullscreen::Native => {
+            let monitor = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next());
+            let largest = monitor.and_then(|monitor| {
+                monitor.video_modes().max_by_key(|mode| (u64::from(mode.size().width) * u64::from(mode.size().height), mode.refresh_rate_millihertz(), mode.bit_depth()))
+            });
+            let Some(mode) = largest else { return Some(Fullscreen::Borderless(None)) };
+            eprintln!("genex: fullscreen at {}x{} {} mHz", mode.size().width, mode.size().height, mode.refresh_rate_millihertz());
+            Some(Fullscreen::Exclusive(mode))
+        }
     }
 }
 

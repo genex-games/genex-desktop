@@ -29,8 +29,9 @@ use genex_render::compile::{CompileTally, compile_tally};
 use crate::present::Presenter;
 use crate::runtime::{Runtime, View};
 use genex_core::input::{FrameSample as CoreSample, Vec2};
+use crate::desktop_bench::{Bench, BenchPlan};
 use genex_platform_desktop::{
-    FrameControl, FrameSample, ShellError, ShellFrame, ShellGame, ShellMode, ShellOptions, ShellSurface, run_with,
+    FrameControl, FrameSample, Fullscreen, ShellError, ShellFrame, ShellGame, ShellMode, ShellOptions, ShellSurface, fullscreen_from_process, run_with,
 };
 use genex_render::capture::{Capture, check_capture_size};
 use genex_render::{Gpu, RenderCode, RenderError};
@@ -70,6 +71,8 @@ pub(crate) struct DesktopGame<W> {
     loading: Option<Loading>,
     /// The audio device a windowed run opens on its first frame (AU-8); never a headless one.
     audio: crate::audio::Device,
+    /// A dev build's measured run (`GENEX_BENCH`, [`crate::desktop_bench`]).
+    bench: Option<Bench>,
 }
 
 /// The loading screen a window shows, its look, and the compile pool's counts when the boot began.
@@ -105,7 +108,7 @@ impl<W: Default + 'static> DesktopGame<W> {
         }
         presenter.set_off_thread_changes(true);
         runtime.start();
-        DesktopGame { runtime, presenter, window: None, shell_surface: None, surface_requests: 0, drawn: 0, presented: 0, loading: None, audio: crate::audio::Device::default() }
+        DesktopGame { runtime, presenter, window: None, shell_surface: None, surface_requests: 0, drawn: 0, presented: 0, loading: None, audio: crate::audio::Device::default(), bench: None }
     }
 
     fn configure(&mut self, surface: wgpu::Surface<'static>, size: [u32; 2]) {
@@ -237,10 +240,85 @@ impl<W: Default + 'static> DesktopGame<W> {
         read_texture(self.presenter.gpu(), &texture, size)
     }
 
+    /// Close the profiler's frame with the GPU time the settings last measured (timestamp
+    /// queries; none without them), as a studio run's frames do.
+    fn close_profile_frame(&mut self, interval_ms: f64) {
+        let timestamps = self.presenter.gpu().device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let source = if timestamps { genex_profile::GpuTimeSource::Timestamps } else { genex_profile::GpuTimeSource::None };
+        let gpu_ms = self.runtime.render().borrow().status().gpu_ms;
+        let profiling = self.runtime.profiling();
+        profiling.set_gpu_source(source);
+        let index = profiling.frame_index();
+        profiling.new_frame(interval_ms, gpu_ms.map(|ms| (index, f64::from(ms))));
+    }
+
+    /// Set a measured run's scene up once the loading screen is done: its seed, its demo, live
+    /// play, its render settings and output, then its clock.
+    fn begin_bench(&mut self) {
+        let Some(bench) = self.bench.as_mut().filter(|bench| !bench.begun()) else { return };
+        let plan = bench.plan.clone();
+        if let Some(seed) = plan.seed {
+            self.runtime.seed(seed);
+        }
+        if let Some(demo) = plan.demo.as_deref()
+            && self.runtime.demo(demo).is_err()
+        {
+            eprintln!("genex: the bench's demo {demo} is not one of the game's");
+        }
+        self.runtime.start();
+        let features: Vec<(&str, bool)> = plan.features.iter().map(|(name, on)| (name.as_str(), *on)).collect();
+        let class = plan.device_class.as_deref().map(Some);
+        match crate::render::RenderChange::from_spellings(None, class, &features, plan.scale_lock.map(Some)) {
+            Ok(change) => {
+                self.runtime.render().borrow_mut().apply(&change);
+            }
+            Err(refusal) => eprintln!("genex: the bench's render settings were refused: {}", refusal.wire()),
+        }
+        self.presenter.set_output_capped(!plan.native_output);
+        bench.begin();
+    }
+
+    /// Note a measured run's frame (a profile report every window); at its end write its record
+    /// and close the window.
+    fn bench_frame(&mut self, shell_ms: f64, work_ms: f64, ticks: u32, drew: bool) -> FrameControl {
+        let Some(bench) = self.bench.as_mut() else { return FrameControl::Continue };
+        if let Some(window) = self.window.as_ref() {
+            bench.surface = [window.config.width, window.config.height];
+        }
+        bench.scale_factor = self.shell_surface.as_ref().map_or(1.0, ShellSurface::scale);
+        let over = bench.frame(shell_ms, work_ms, ticks, drew);
+        if bench.report_due() || over {
+            let class = self.runtime.render().borrow().status().device_class.wire();
+            bench.keep_report(self.runtime.profiling().report_json(Bench::report_frames(), destination(), &class));
+        }
+        if !over {
+            return FrameControl::Continue;
+        }
+        let status = self.runtime.render().borrow().status();
+        let renderer = self.presenter.resilient.renderer().renderer();
+        let features: serde_json::Map<String, serde_json::Value> = status.features.iter().map(|(feature, on)| (feature.wire().to_owned(), (*on).into())).collect();
+        let render = serde_json::json!({
+            "deviceClass": status.device_class.wire(),
+            "preset": status.preset.wire(),
+            "scale": status.scale,
+            "output": self.presenter.last_output().map(|(w, h)| [w, h]),
+            "renderSize": [renderer.render_size().0, renderer.render_size().1],
+            "gpuMs": status.gpu_ms,
+            "cpuMs": status.cpu_ms,
+            "features": features,
+            "degraded": status.degraded.iter().map(|d| format!("{}:{}", d.reason.wire(), d.subject.clone().unwrap_or_default())).collect::<Vec<_>>(),
+            "characters": status.characters.to_json(),
+        });
+        bench.write(render);
+        FrameControl::Exit
+    }
+
     /// A windowed frame opens the audio device once (a person sees and hears the run); a headless
     /// one never does. Each frame then reports the device to `volatile.audio.device`.
     fn follow_audio(&mut self, frame: &ShellFrame) {
-        if !self.audio.tried() && crate::audio::may_open_device(frame.headless, false) {
+        // A measured run is silent unless its plan asks for sound.
+        let silent = self.bench.as_ref().is_some_and(|bench| !bench.plan.audio);
+        if !self.audio.tried() && !silent && crate::audio::may_open_device(frame.headless, false) {
             self.audio.open_for(&mut self.runtime);
         } else if self.audio.is_open() {
             self.runtime.note_audio_device(true, self.audio.fault());
@@ -313,6 +391,7 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
         self.runtime.set_os_locale(tag);
     }
 
+    #[allow(clippy::disallowed_types, clippy::disallowed_methods, reason = "host glue: a measured run times the frame's work by the wall clock; the simulation never sees it")]
     fn frame(&mut self, frame: ShellFrame) -> FrameControl {
         if self.presenter.resilient.is_lost() {
             self.recover();
@@ -329,13 +408,19 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
             self.loading = None;
         }
         self.follow_audio(&frame);
+        self.begin_bench();
+        let began = std::time::Instant::now();
         // One profiler frame per shell frame (PROF-5): the ticks, the draw and the present.
         let scope = crate::profile::engine_scope(crate::profile::EngineScope::Frame);
         self.runtime.sample_input(&core_sample(&frame.sample));
         let ticks = self.runtime.advance_live(frame.frame_ms);
         // The first frame draws even before a tick: the window never shows an empty target.
-        if ticks > 0 || self.drawn == 0 {
-            match self.presenter.draw_view(&mut self.runtime, View::Game) {
+        let draws = ticks > 0 || self.drawn == 0;
+        if draws {
+            let _draw = crate::profile::engine_scope(crate::profile::EngineScope::Draw);
+            let camera = self.bench.as_ref().and_then(|bench| bench.plan.camera.clone());
+            let view = camera.as_deref().map_or(View::Game, View::Named);
+            match self.presenter.draw_view(&mut self.runtime, view) {
                 Some(Ok(_)) => self.drawn += 1,
                 Some(Err(error)) => eprintln!("genex: render failed: {error}"),
                 None => {}
@@ -349,8 +434,9 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
             self.present();
         }
         drop(scope);
-        self.runtime.profiling().new_frame(frame.frame_ms, None);
-        FrameControl::Continue
+        self.close_profile_frame(frame.frame_ms);
+        let work_ms = began.elapsed().as_secs_f64() * 1000.0;
+        self.bench_frame(frame.frame_ms, work_ms, ticks, draws)
     }
 }
 
@@ -380,11 +466,15 @@ pub(crate) fn run<W: Default + 'static>(mut runtime: Runtime<W>, assets: AssetTa
     crate::crash::set_identity(destination(), dev, &format!("genex-rust/{}/desktop", destination()), u64::from(CRASH_CONTRACT_VERSION));
     crate::crash::install_file_sink(runtime.saves());
     runtime.profiling().start(dev);
-    let game = open(runtime, assets).unwrap_or_else(|error| {
+    let mut game = open(runtime, assets).unwrap_or_else(|error| {
         eprintln!("genex: {error}");
         std::process::exit(EXIT_SHELL_FAILED);
     });
-    let options = ShellOptions { max_frames: None, studio: false };
+    // Only a dev build takes a measured run's plan; an export never reads it.
+    game.bench = if dev { BenchPlan::from_process().map(Bench::new) } else { None };
+    let asked = game.bench.as_ref().map_or(Fullscreen::Off, |bench| bench.plan.fullscreen);
+    let fullscreen = if asked == Fullscreen::Off { fullscreen_from_process() } else { asked };
+    let options = ShellOptions { max_frames: None, studio: false, fullscreen };
     if let Err(error) = run_with(game, ShellMode::from_process(), options) {
         eprintln!("genex: {error}");
         std::process::exit(EXIT_SHELL_FAILED);
@@ -483,7 +573,7 @@ pub fn desktop_shot<W: Default + 'static>(
     let mut presenter = Presenter::open_with_root(runtime.world_size(), assets, None).map_err(DesktopShotError::Gpu)?;
     // As a window's surface is configured before its first frame.
     presenter.set_window_size((window[0], window[1]));
-    let options = ShellOptions { max_frames: Some(frames.max(1)), studio: false };
+    let options = ShellOptions { max_frames: Some(frames.max(1)), studio: false, fullscreen: Fullscreen::Off };
     let shell = run_with(DesktopGame::new(runtime, presenter), ShellMode::Headless, options);
     let (mut game, exit) = shell.map_err(DesktopShotError::Shell)?;
     let capture = game.present_offscreen(window).map_err(DesktopShotError::Readback)?;
@@ -617,7 +707,7 @@ mod tests {
     #[ignore = "needs the host GPU: run with --ignored metal"]
     fn metal_a_headless_desktop_run_ticks_live_and_draws_each_frame() {
         let Some(game) = desktop_game() else { return };
-        let options = ShellOptions { max_frames: Some(12), studio: false };
+        let options = ShellOptions { max_frames: Some(12), studio: false, fullscreen: Fullscreen::Off };
         let (game, exit) = run_with(game, ShellMode::Headless, options).expect("the shell ran");
         assert_eq!(exit.frames, 12);
         assert!(game.runtime.sim().world.ticks > 0, "live play ticked");

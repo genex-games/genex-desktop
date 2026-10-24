@@ -84,3 +84,24 @@ corner: CPU and GPU frame times, hitches, the heaviest scopes (the game's in blu
 counters. It is painted over the window after the HUD and outside the tick, so it is never in a
 capture, never in `state().hud.items`, and showing it changes nothing a tick sees. Exports do not
 offer the chord.
+
+## A measured window run
+
+Studio's runs draw headless, so a dev build can also be timed in a real window on the person's
+display. Start the built game from a shell with `GENEX_BENCH` set to a JSON plan:
+
+```sh
+GENEX_BENCH='{"seed":7,"demo":"genex-clip","camera":"horde","fullscreen":"native",
+  "renderScaleLock":1.0,"nativeOutput":true,"seconds":60,"out":"/tmp/bench.json"}' ./game
+```
+
+After the loading screen the run seeds, runs the demo, starts live play on the named camera and
+measures for `seconds`, then writes `out` and exits. `fullscreen` is `true` (borderless at the
+desktop's resolution) or `"native"` (exclusive at the display's own pixels). `renderScaleLock`
+holds the render scale; leave it out to let dynamic resolution move it. `nativeOutput` lifts the
+class's reference-resolution cap, so the frame draws the window's own pixels. `deviceClass` and
+`features` set what the `renderSettings` verb would, and `audio` (off by default) opens the sound
+device. The record lists every frame (time, interval, ticks, whether it drew), the surface, output
+and render sizes, and the profile reports. Exports ignore the variable. Any desktop build also
+opens fullscreen with `--fullscreen` or `GENEX_FULLSCREEN=1`, or at the display's own pixels with
+`--fullscreen=native` or `GENEX_FULLSCREEN=native`.

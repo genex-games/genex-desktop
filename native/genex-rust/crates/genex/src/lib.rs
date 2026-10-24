@@ -98,6 +98,8 @@ mod present_stream;
 mod present_files;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod desktop;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod desktop_bench;
 
 /// Time the rest of the enclosing block under a name checked when the game compiles
 /// (`genex::profile_scope!("enemy_ai")`); write-only, never in the checksum.

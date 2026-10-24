@@ -1443,6 +1443,10 @@ pub struct Presenter {
     /// How the last drawn game fills the window ([`crate::Game::fit`]): under expand Live draws at
     /// the window's whole pixels and the present fills it.
     fit: Fit,
+    /// Whether Live's output is capped at the class's reference resolution (the default); a dev
+    /// build's measured window run ([`crate::desktop`]'s `GENEX_BENCH`) may draw the window's own
+    /// pixels ([`Presenter::set_output_capped`]).
+    output_capped: bool,
     /// The size captures draw at when one was asked for ([`Presenter::set_capture_size`]).
     capture_size: Option<(u32, u32)>,
     /// What the next settled captures ask of the look's lens ([`Presenter::set_capture_lens`]).
@@ -1629,6 +1633,7 @@ impl Presenter {
             window_pixels_per_point: WORLD_PIXELS_PER_POINT,
             window: None,
             fit: Fit::Letterbox,
+            output_capped: true,
             capture_size: None,
             capture_lens: crate::render::CaptureLens::default(),
             last_output: None,
@@ -2027,6 +2032,18 @@ impl Presenter {
         }
     }
 
+    /// Cap Live's output at the class's reference resolution (`true`, the default) or draw the
+    /// window's own letterbox pixels (`false`: a dev build's measured window run at a display's
+    /// native resolution). Captures keep their own size either way.
+    pub(crate) fn set_output_capped(&mut self, capped: bool) {
+        self.output_capped = capped;
+    }
+
+    /// The output size the last draw drew at (Live's window pixels or a capture's size), if any.
+    pub(crate) fn last_output(&self) -> Option<(u32, u32)> {
+        self.last_output
+    }
+
     /// Draw the next settled captures with what `lens` asks of the look's depth of field and
     /// motion blur (`capture`'s `lens`; renderer pass 2 A.9). Neither by default: a capture is a
     /// still of the held frame.
@@ -2048,7 +2065,9 @@ impl Presenter {
         let world = self.resilient.renderer().renderer().logical_size();
         let Some(window) = self.window else { return world };
         let (cap_w, cap_h) = genex_render::presets::reference_resolution(handle.borrow().live_class());
-        output_for(world, window, u64::from(cap_w) * u64::from(cap_h), self.fit)
+        // A cap of 0 is none: the window's own letterbox pixels.
+        let cap = if self.output_capped { u64::from(cap_w) * u64::from(cap_h) } else { 0 };
+        output_for(world, window, cap, self.fit)
     }
 
     /// Hand the settings this draw's output size (Live's window pixels, or the capture's size)
