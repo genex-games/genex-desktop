@@ -83,6 +83,7 @@
   "tests/conformance/engine-common.test.ts",
   "tests/conformance/engine-delegated.test.ts",
   "tests/conformance/engine-game-view.test.ts",
+  "tests/conformance/engine-grok.test.ts",
   "tests/conformance/engine-limits.test.ts",
   "tests/conformance/engine-link-entries.test.ts",
   "tests/conformance/engine-ollama.test.ts",

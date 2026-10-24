@@ -29,6 +29,8 @@ const NATIVE_CHANNELS = [
   "studio:subscription.use-account",
   // OpenCode's sign-in runs its CLI in a terminal and reaches the provider the person picks.
   "studio:opencode.signin",
+  // Grok Build's sign-in runs its CLI in a terminal and signs in to the person's Grok account.
+  "studio:grok.signin",
   // Opens the sign-in page a terminal printed in the person's browser.
   "studio:terminal.open-link",
   // Saving checks the key with OpenRouter and writes it to the OS secret store; forgetting it

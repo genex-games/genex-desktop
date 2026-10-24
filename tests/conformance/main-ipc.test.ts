@@ -324,6 +324,12 @@ function loginFixture(
         return { started: true };
       },
     },
+    grokLogin: {
+      start: async () => {
+        started.push("grok");
+        return { started: true };
+      },
+    },
     claudeLogin: {
       start: async (home: string | null) => {
         started.push(`claude ${home}`);
@@ -599,6 +605,58 @@ describe("both sign-in paths go through the controllers", () => {
       },
     });
     assert.deepEqual(await missing.openCodeLogin.start(), { started: false, missingCli: true });
+  });
+
+  it("Grok Build signs in through its own CLI in the terminal, whatever else is running", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:grok.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(started, ["grok"]);
+  });
+
+  it("the Grok Build sign-in runs `grok login` in the terminal, on its own home, and rechecks it when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { grokLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t3", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onGrokSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", ANTHROPIC_API_KEY: "sk-ant-not-for-grok", XAI_API_KEY: "xai-not-for-grok" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await grokLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/grok");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "grok-login");
+    assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
+    assert.equal(opened[0]?.env.XAI_API_KEY, undefined, "an xAI key never stands in for the Grok sign-in");
+    assert.ok(opened[0]?.env.GROK_HOME, "the home its sessions read the sign-in from");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
   });
 
   it("on OpenCode 2.x the sign-in runs on a server of its own, never the shared background one", async () => {

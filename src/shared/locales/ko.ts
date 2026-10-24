@@ -777,6 +777,19 @@ export default {
   "Codex skill discovery closed. Refresh to retry.": "Codex 스킬 검색이 종료됐어요. 새로 고침해서 다시 시도하세요.",
   "Codex skill discovery timed out. Refresh to retry.":
     "Codex 스킬 검색 시간이 초과됐어요. 새로 고침해서 다시 시도하세요.",
+  "Finish signing in to Grok in your browser.": "브라우저에서 Grok 로그인을 마쳐 주세요.",
+  "Grok Build didn't answer. Check the installation, then try again.":
+    "Grok Build가 응답하지 않았어요. 설치를 확인한 뒤 다시 시도해 주세요.",
+  "Grok Build isn't installed on this Mac.": "이 Mac에 Grok Build가 설치되어 있지 않아요.",
+  "Grok Build isn't signed in.": "Grok Build에 로그인되어 있지 않아요.",
+  "Grok Build sign-in": "Grok Build 로그인",
+  "Grok Build {version}, {count, plural, one {# model} other {# models}}":
+    "Grok Build {version}, 모델 {count, plural, other {#개}}",
+  "Grok Build's model list could not be read.": "Grok Build의 모델 목록을 읽을 수 없었어요.",
+  "Install Grok Build": "Grok Build 설치",
+  "Install Grok Build from Settings › Model Providers.": "설정 › 모델 제공자에서 Grok Build를 설치해 주세요.",
+  "Install it to build games with your Grok account.": "설치하면 Grok 계정으로 게임을 만들 수 있어요.",
+  "Installing Grok Build. This can take a minute.": "Grok Build를 설치하는 중이에요. 1분 정도 걸릴 수 있어요.",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "Nex는 Genex 계정에 있어요. 한 번 로그인하면 여기서 결제할 수 있어요.",
   Color: "색상",
@@ -1588,6 +1601,14 @@ export default {
   "Get a key": "키 받기",
   "Get Nex": "Nex 받기",
   Nex: "Nex",
+  "Runs on your Grok account": "Grok 계정으로 실행돼요",
+  "Sign in again…": "다시 로그인…",
+  "Sign in to Grok from Settings › Model Providers.": "설정 › 모델 제공자에서 Grok에 로그인해 주세요.",
+  "Sign in with your Grok account. Grok Build keeps the sign-in.":
+    "Grok 계정으로 로그인해 주세요. 로그인 정보는 Grok Build가 보관해요.",
+  "Switch to another Grok account": "다른 Grok 계정으로 전환",
+  "Update Grok Build": "Grok Build 업데이트",
+  "xAI blocked this Grok account: {reason}": "xAI가 이 Grok 계정을 차단했어요: {reason}",
   "{amount} Nex, get Nex": "{amount} Nex, Nex 받기",
   "Get credits": "크레딧 받기",
   "Get the Epic Games Launcher": "Epic Games Launcher 받기",

@@ -2,8 +2,9 @@
  * Where the coding CLIs keep a sign-in on this Mac (SEC-3).
  *
  * `~/.codex` holds a ChatGPT refresh token when Codex uses its file store, `~/.claude` holds
- * Claude Code's settings and transcripts, and OpenCode keeps every provider it signs in to in
- * `auth.json` under its data folder (`$XDG_DATA_HOME/opencode`, default `~/.local/share/opencode`).
+ * Claude Code's settings and transcripts, OpenCode keeps every provider it signs in to in
+ * `auth.json` under its data folder (`$XDG_DATA_HOME/opencode`, default `~/.local/share/opencode`),
+ * and Grok Build keeps its Grok sign-in in `auth.json` under its home (`$GROK_HOME`, default `~/.grok`).
  * Studio borrows either subscription as the 'system' login, and `CODEX_HOME` / `CLAUDE_CONFIG_DIR`
  * can move them. No agent process reads or writes any of
  * them: the sandbox denies them, and every contractor is told (Codex) or ruled (Claude) off.
@@ -70,9 +71,11 @@ export function credentialHomes(
     path.join(home, ".codex"),
     path.join(home, ".claude"),
     openCodeDataHome({}, home),
+    grokHome({}, home),
     env.CODEX_HOME,
     env.CLAUDE_CONFIG_DIR,
     env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? openCodeDataHome(env, home) : undefined,
+    env.GROK_HOME,
     ...logins,
   ];
   const homeDir = path.resolve(home);
@@ -97,6 +100,11 @@ export function openCodeDataHome(
   return path.join(data, "opencode");
 }
 
+/** Where Grok Build keeps its sign-in (`auth.json`), sessions and settings: `$GROK_HOME`, else `~/.grok`. */
+export function grokHome(env: Record<string, string | undefined> = process.env, home: string = os.homedir()): string {
+  return env.GROK_HOME && path.isAbsolute(env.GROK_HOME) ? env.GROK_HOME : path.join(home, ".grok");
+}
+
 /**
  * Where OpenCode 2.x keeps its background server's password: `service.json` in its config folder
  * (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`). That server runs outside every sandbox,
@@ -112,12 +120,13 @@ export function openCodeServicePassword(
 }
 
 /**
- * The sign-in homes of the CLIs that run inside the studio's own sandbox (OpenCode, which has no
- * sandbox of its own): the only homes a sandbox may exempt for the CLI it runs (`SandboxOptions.ownHome`).
+ * The sign-in homes of the CLIs that run inside the studio's own sandbox (OpenCode and Grok Build,
+ * which bring no sandbox of their own): the only homes a sandbox may exempt for the CLI it runs
+ * (`SandboxOptions.ownHome`).
  */
 export function sandboxedCliHomes(
   env: Record<string, string | undefined> = process.env,
   home: string = os.homedir(),
 ): string[] {
-  return [openCodeDataHome(env, home)];
+  return [openCodeDataHome(env, home), grokHome(env, home)];
 }

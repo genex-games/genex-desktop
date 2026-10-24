@@ -476,6 +476,8 @@ export interface StudioApi {
   claudeLoginCancel(): Promise<unknown>;
   /** OpenCode's own sign-in (`opencode auth login`), in the terminal dock. */
   openCodeSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Grok Build's own sign-in (`grok login`, a Grok account in the browser), in its Settings row. */
+  grokSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
   /**
    * Check a pasted OpenRouter API key with OpenRouter and keep it in the OS secret store when it is
    * accepted. The answer is OpenRouter's status; the key never comes back.

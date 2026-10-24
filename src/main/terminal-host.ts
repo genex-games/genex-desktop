@@ -175,7 +175,7 @@ function startShell(launch: TerminalLaunch): void {
   started = true;
   if (launch.kind === TerminalKind.ClaudeLogin)
     filter = new LoginTerminalOutput((url) => send({ type: HostEventType.Link, url }));
-  if (launch.kind === TerminalKind.OpenCodeLogin)
+  if (launch.kind === TerminalKind.OpenCodeLogin || launch.kind === TerminalKind.GrokLogin)
     links = new LinkScanner((url) => send({ type: HostEventType.Link, url }));
   const shell = pty.spawn(launch.file, launch.args, {
     name: "xterm-256color",

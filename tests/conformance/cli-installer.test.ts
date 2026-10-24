@@ -43,6 +43,7 @@ test("each CLI's installer is its vendor's own script: shell on macOS and Linux,
     codex: ["https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1"],
     // OpenCode publishes no PowerShell installer: Windows has none to fetch.
     opencode: ["https://opencode.ai/install", null],
+    grok: ["https://x.ai/cli/install.sh", "https://x.ai/cli/install.ps1"],
   };
   for (const [provider, [unix, windows]] of Object.entries(expected) as [CodingProvider, [string, string | null]][]) {
     for (const platform of ["darwin", "linux"] as const)
@@ -72,6 +73,10 @@ test("an installer runs from its saved file under the shell it was written for, 
   });
   assert.deepEqual(installerCommand("codex", "linux", "/tmp/i/install.sh", {}), {
     file: "/bin/sh",
+    args: ["/tmp/i/install.sh"],
+  });
+  assert.deepEqual(installerCommand("grok", "darwin", "/tmp/i/install.sh", {}), {
+    file: "/bin/bash",
     args: ["/tmp/i/install.sh"],
   });
   assert.deepEqual(installerCommand("codex", "win32", "C:\\T\\install.ps1", { SystemRoot: "D:\\Win" }), {

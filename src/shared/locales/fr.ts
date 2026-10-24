@@ -852,6 +852,20 @@ export default {
     "La recherche des compétences de Codex s’est fermée. Actualise pour réessayer.",
   "Codex skill discovery timed out. Refresh to retry.":
     "La recherche des compétences de Codex a expiré. Actualise pour réessayer.",
+  "Finish signing in to Grok in your browser.": "Termine la connexion à Grok dans ton navigateur.",
+  "Grok Build didn't answer. Check the installation, then try again.":
+    "Grok Build n’a pas répondu. Vérifie l’installation, puis réessaie.",
+  "Grok Build isn't installed on this Mac.": "Grok Build n’est pas installé sur ce Mac.",
+  "Grok Build isn't signed in.": "Grok Build n’est pas connecté.",
+  "Grok Build sign-in": "Connexion à Grok Build",
+  "Grok Build {version}, {count, plural, one {# model} other {# models}}":
+    "Grok Build {version}, {count, plural, one {# modèle} other {# modèles}}",
+  "Grok Build's model list could not be read.": "Impossible de lire la liste des modèles de Grok Build.",
+  "Install Grok Build": "Installer Grok Build",
+  "Install Grok Build from Settings › Model Providers.":
+    "Installe Grok Build depuis Réglages › Fournisseurs de modèles.",
+  "Install it to build games with your Grok account.": "Installe-le pour créer des jeux avec ton compte Grok.",
+  "Installing Grok Build. This can take a minute.": "Installation de Grok Build. Ça peut prendre une minute.",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "Tes Nex sont sur ton compte Genex. Connecte-toi une fois, puis paie ici.",
   Color: "Couleur",
@@ -1685,6 +1699,14 @@ export default {
   "Get a key": "Obtenir une clé",
   "Get Nex": "Obtenir des Nex",
   Nex: "Nex",
+  "Runs on your Grok account": "Fonctionne avec ton compte Grok",
+  "Sign in again…": "Se reconnecter…",
+  "Sign in to Grok from Settings › Model Providers.": "Connecte-toi à Grok depuis Réglages › Fournisseurs de modèles.",
+  "Sign in with your Grok account. Grok Build keeps the sign-in.":
+    "Connecte-toi avec ton compte Grok. Grok Build garde la connexion.",
+  "Switch to another Grok account": "Passer à un autre compte Grok",
+  "Update Grok Build": "Mettre à jour Grok Build",
+  "xAI blocked this Grok account: {reason}": "xAI a bloqué ce compte Grok : {reason}",
   "{amount} Nex, get Nex": "{amount} Nex, obtenir des Nex",
   "Get credits": "Obtenir des crédits",
   "Get the Epic Games Launcher": "Télécharger Epic Games Launcher",

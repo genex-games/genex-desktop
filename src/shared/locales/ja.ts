@@ -788,6 +788,20 @@ export default {
     "Codexのスキル検出が終了しました。更新して、もう一度試してください。",
   "Codex skill discovery timed out. Refresh to retry.":
     "Codexのスキル検出がタイムアウトしました。更新して、もう一度試してください。",
+  "Finish signing in to Grok in your browser.": "ブラウザでGrokへのサインインを完了してください。",
+  "Grok Build didn't answer. Check the installation, then try again.":
+    "Grok Buildが応答しませんでした。インストールを確認してから、もう一度お試しください。",
+  "Grok Build isn't installed on this Mac.": "このMacにGrok Buildがインストールされていません。",
+  "Grok Build isn't signed in.": "Grok Buildにサインインしていません。",
+  "Grok Build sign-in": "Grok Buildのサインイン",
+  "Grok Build {version}, {count, plural, one {# model} other {# models}}":
+    "Grok Build {version}、モデル{count, plural, other {#個}}",
+  "Grok Build's model list could not be read.": "Grok Buildのモデル一覧を読み込めませんでした。",
+  "Install Grok Build": "Grok Buildをインストール",
+  "Install Grok Build from Settings › Model Providers.":
+    "設定 › モデルプロバイダーからGrok Buildをインストールしてください。",
+  "Install it to build games with your Grok account.": "インストールすると、Grokアカウントでゲームをつくれます。",
+  "Installing Grok Build. This can take a minute.": "Grok Buildをインストールしています。1分ほどかかることがあります。",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "NexはGenexアカウントに保管されます。一度サインインすれば、ここで支払えます。",
   Color: "色",
@@ -1622,6 +1636,14 @@ export default {
   "Get a key": "キーを取得",
   "Get Nex": "Nexを入手",
   Nex: "Nex",
+  "Runs on your Grok account": "Grokアカウントで動作",
+  "Sign in again…": "もう一度サインイン…",
+  "Sign in to Grok from Settings › Model Providers.": "設定 › モデルプロバイダーからGrokにサインインしてください。",
+  "Sign in with your Grok account. Grok Build keeps the sign-in.":
+    "Grokアカウントでサインインしてください。サインイン情報はGrok Buildが保持します。",
+  "Switch to another Grok account": "別のGrokアカウントに切り替える",
+  "Update Grok Build": "Grok Buildをアップデート",
+  "xAI blocked this Grok account: {reason}": "xAIがこのGrokアカウントをブロックしました: {reason}",
   "{amount} Nex, get Nex": "{amount} Nex、Nexを入手",
   "Get credits": "クレジットを入手",
   "Get the Epic Games Launcher": "Epic Games Launcherを入手",

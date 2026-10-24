@@ -117,7 +117,8 @@ Set up in first launch, installs Claude Code or Codex with its vendor's own inst
 `install.sh` on macOS and Linux, `install.ps1` on Windows, from `claude.ai` and
 `chatgpt.com/codex`. Settings installs OpenCode the same way from `opencode.ai/install` (macOS and
 Linux only; it publishes no Windows script) into `~/.opencode/bin`, and updates it with
-`opencode upgrade`. Main fetches the script over HTTPS itself, runs it as the person with the
+`opencode upgrade`; and Grok Build from `x.ai/cli/install.sh` (`install.ps1` on Windows) into
+`~/.grok/bin`, updated with `grok update`. Main fetches the script over HTTPS itself, runs it as the person with the
 contractor environment (no keys, none of the other vendor's variables; Codex with
 `CODEX_NON_INTERACTIVE=1` so it asks nothing), keeps only its last output for `studio.log` and
 stops it after ten minutes. Both installers use folders discovery already searches (`~/.local/bin`;
@@ -215,6 +216,52 @@ lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, s
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
 (OpenCode 1.18 and 2.0.20).
+
+## Grok Build
+
+**Grok Build** ([grok.ts](../src/substrate/engines/grok.ts)) is xAI's coding CLI (`grok`) as a
+delegated engine, metered like OpenCode (`billing: "metered"`): it runs on whatever its own sign-in
+is, so only the person's pick runs it. Grok keeps its sign-in in its home (`$GROK_HOME`, default
+`~/.grok`); Sign in runs `grok login` in a terminal inside its Settings row (Open sign-in page,
+as for OpenCode), which signs in to the person's Grok account in the browser, and Genex never reads
+it. An xAI key the person's shell exports never reaches the CLI (`childEnv` vendor `grok`), so a
+session never turns into a per-token bill behind their back; a key put in Grok's own config still
+runs, and a result is then billed `api` (`_x.ai/auth/info` says `xai.api_key`), else `subscription`.
+
+Whether it is signed in and which models it offers, the CLI says itself
+([grok-cli.ts](../src/substrate/engines/grok-cli.ts), `probeGrok`): `grok agent stdio` speaks the
+Agent Client Protocol, and its `_x.ai/auth/info` (`methodId`: `cached_token` for `grok login`, null
+when signed out) and `_x.ai/models/list` (names, context windows, effort levels, the current model)
+answer after `initialize`, with no session and no model call. A turn is headless
+([grok-events.ts](../src/substrate/engines/grok-events.ts)): `grok --prompt-file … --output-format
+streaming-json`, the prompt a file of ACP content blocks (pictures included: Grok reads no piped
+stdin, and on Windows the sandbox passes none), resumed by `--resume` (by id, from any folder).
+Each turn gets `--sandbox off` (the studio's holds it), `--no-wait-for-background`, Grok's own ask
+tools, plan mode, schedulers and workflows removed, and `GROK_HOME` named outright; the person's
+Claude and Cursor MCP servers, hooks and skills, Grok's memory and its updater are off by variable,
+and `RUST_LOG=error` makes its error log name a failed call's HTTP status (`grokStderrStatus`),
+which a 429 after Grok's own retries leaves out of the `error` event. A build and a read-only
+session approve every call (`--always-approve`): a call Grok's headless ask mode refuses ends the
+whole turn, so a read-only session's sandbox, which writes only its scratch folder, keeps the game
+as it is, and its file-editing tools are gone. A blind judge keeps the ask mode with the shell alone,
+approved for the studio bridge only (`--allow "Bash(node .studio/bridge/tool.mjs *)"`), and a
+one-shot answer approves nothing. Studio tools reach it through the file bridge, as Codex's.
+Each tool call is mirrored as it starts and its result as it ends, so a steer cuts the turn between
+calls; a reply streams to the chat and becomes one row per response; each response's whole prompt
+is the context reading. Compact now runs Grok's own `/compact` on the resumed session
+(`auto_compact_completed`). Its sandbox writes the workspace (a scratch folder when read-only) and
+Grok's home (`ownHome`; on Windows the studio's sandbox grants it at start, as OpenCode's folders),
+denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
+`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). Status codes decide failures
+(401/403 sign-in, 429 rate limit, 400/404 the picked model refused); a failure with none is a
+sign-in failure only when the probe then finds Grok signed out. Recorded streams and probes:
+`tests/fixtures/transcripts/grok-*` (Grok Build 1.0.70 against a scripted stand-in for xAI);
+`STUDIO_GROK_CLI_TESTS=1` runs the real CLI in the real sandbox (`grok-cli-live.test.ts`).
+Unproven: a real Grok account (which plans Grok Build accepts, its plan limits, which Genex does not
+read yet) and the CLI on Windows.
+
+Residual risk, as for OpenCode: Grok Build must read its own `auth.json` and its shell shares its
+sandbox, so a Grok session can read Grok's sign-in; every other sandbox denies `~/.grok`.
 
 ## Your own model server
 
@@ -401,8 +448,10 @@ Compact now is the context panel's Compact button (on the reading's line), or `/
 composer's command list (`ui/ComposerCommandMenu.tsx`), which runs it instead of sending the text,
 and lists it as waiting while a turn or a build runs (`loop/session-compact.ts`).
 
-On Claude Code and Codex (`EngineDescriptor.compactsNatively`) the chat's latest session compacts
-itself with the provider's own compaction and goes on under the same id. Claude Code is sent its
+On Claude Code, Codex and Grok Build (`EngineDescriptor.compactsNatively`) the chat's latest
+session compacts itself with the provider's own compaction and goes on under the same id. Grok
+Build is sent its own `/compact` headless on the resumed session (`grok -p /compact --resume`), and
+keeps its summary sealed inside the session, as Codex does. Claude Code is sent its
 `/compact` on the resumed session, as the Agent SDK documents; its `PostCompact` hook hands over
 the summary, without the model's scratch analysis. `codex exec` has no compaction command, so
 Codex compacts the thread on its app server (`codex app-server`, `thread/compact/start`,

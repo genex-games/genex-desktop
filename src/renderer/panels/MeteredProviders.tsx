@@ -1,6 +1,7 @@
 /**
  * Settings → Model Providers, the metered rows: OpenCode, which signs in to providers itself in
- * Studio's terminal, and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
+ * Studio's terminal, Grok Build, which signs in to the person's Grok account there the same way,
+ * and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
  * subscription's (`ModelsSection.tsx`): one status plate, one line, at most one visible action, an
  * Account menu once connected, and the picker's model list under it. The OpenRouter key goes
  * straight to main, which checks it with OpenRouter and keeps it in the OS secret store; it is
@@ -150,85 +151,116 @@ export function useRecheck(engineId: string, onEnginesRefresh: () => Promise<voi
   return { checking, recheck };
 }
 
-const OPEN_CODE_WORDS: ProviderWords = { name: WORDS.openCode.name, plans: "", guide: WORDS.openCode.guide };
-
-/** What OpenCode's row can do: install, recheck, sign in to a provider or stop signing in, update. */
-type OpenCodeActions = {
+/** What OpenCode's and Grok Build's rows can do: install, recheck, sign in or stop signing in, update. */
+type CliRowActions = {
   install: () => void;
   recheck: () => void;
   signIn: () => void;
   cancelSignIn: () => void;
-  /** Open the sign-in page OpenCode printed, when it printed one. */
+  /** Open the sign-in page the CLI printed, when it printed one. */
   openSignInPage: (() => void) | null;
   update: () => void;
 };
 
-/** OpenCode's row by its state: installing, missing, signing in, free models only, connected or unreachable. */
-function openCodeView(state: OpenCodeRowState, act: OpenCodeActions): RowView {
+/** What a row whose CLI signs in in its own terminal says: OpenCode's words, or Grok Build's. */
+interface CliRowWords {
+  card: ProviderWords;
+  install: string;
+  installLine: string;
+  installingLine: string;
+  signIn: string;
+  signInLine: string;
+  signingIn: string;
+  openSignInPage: string;
+  cancelSignIn: string;
+  update: string;
+  connectedLine: string;
+  unreachable: string;
+  /** The Account menu's item that signs in again: OpenCode adds a provider, Grok switches accounts. */
+  again: { title: string; line: string };
+  /** OpenCode's own free models running with no provider signed in; Grok Build has none. */
+  freeOnly?: { status: string; line: string };
+}
+
+const OPEN_CODE_ROW: CliRowWords = {
+  ...WORDS.openCode,
+  card: { name: WORDS.openCode.name, plans: "", guide: WORDS.openCode.guide },
+  again: { title: WORDS.openCode.addProvider, line: WORDS.openCode.addProviderLine },
+  freeOnly: { status: WORDS.openCode.freeOnly, line: WORDS.openCode.freeOnlyLine },
+};
+
+const GROK_ROW: CliRowWords = {
+  ...WORDS.grok,
+  card: { name: WORDS.grok.name, plans: "", guide: WORDS.grok.guide },
+  again: { title: WORDS.grok.signInAgain, line: WORDS.grok.signInAgainLine },
+};
+
+/** The row by its state: installing, missing, signing in, free models only, connected or unreachable. */
+function cliRowView(state: OpenCodeRowState, act: CliRowActions, words: CliRowWords): RowView {
   switch (state) {
     case OpenCodeRowState.Installing:
-      return { tone: RowTone.Busy, status: WORDS.installing, line: WORDS.openCode.installingLine, actions: null };
+      return { tone: RowTone.Busy, status: WORDS.installing, line: words.installingLine, actions: null };
     case OpenCodeRowState.NotInstalled:
       return {
         tone: RowTone.Off,
         status: WORDS.notInstalled,
-        line: WORDS.openCode.installLine,
+        line: words.installLine,
         actions: (
           <>
             <Button variant="default" onClick={act.install}>
-              {WORDS.openCode.install}
+              {words.install}
             </Button>
             <Button onClick={act.recheck}>{WORDS.checkAgain}</Button>
           </>
         ),
       };
     case OpenCodeRowState.SigningIn:
-      return openCodeSigningInView(act);
+      return signingInView(act, words);
     case OpenCodeRowState.SignedOut:
       return {
         tone: RowTone.Off,
         status: WORDS.notConnected,
-        line: WORDS.openCode.signInLine,
+        line: words.signInLine,
         actions: (
           <Button variant="default" onClick={act.signIn}>
-            {WORDS.openCode.signIn}
+            {words.signIn}
           </Button>
         ),
       };
     case OpenCodeRowState.FreeOnly:
-      return openCodeFreeOnlyView(act);
+      return words.freeOnly ? freeOnlyView(act, words, words.freeOnly) : connectedView(act, words);
     case OpenCodeRowState.Connected:
-      return openCodeConnectedView(act);
+      return connectedView(act, words);
     default:
       return {
         tone: RowTone.Danger,
         status: WORDS.couldNotCheck,
-        line: WORDS.openCode.unreachable,
+        line: words.unreachable,
         actions: <Button onClick={act.recheck}>{WORDS.tryAgain}</Button>,
       };
   }
 }
 
-/** OpenCode's own sign-in runs in the row's terminal, below: finish it there, or stop it. */
-function openCodeSigningInView(act: OpenCodeActions): RowView {
+/** The CLI's own sign-in runs in the row's terminal, below: finish it there, or stop it. */
+function signingInView(act: CliRowActions, words: CliRowWords): RowView {
   return {
     tone: RowTone.Busy,
     status: WORDS.signingIn,
-    line: WORDS.openCode.signingIn,
+    line: words.signingIn,
     actions: (
       <>
         {act.openSignInPage && (
           <Button variant="default" onClick={act.openSignInPage}>
-            {WORDS.openCode.openSignInPage}
+            {words.openSignInPage}
           </Button>
         )}
-        <Button onClick={act.cancelSignIn}>{WORDS.openCode.cancelSignIn}</Button>
+        <Button onClick={act.cancelSignIn}>{words.cancelSignIn}</Button>
       </>
     ),
   };
 }
 
-/** The sign-in's terminal inside the row, so Settings stays open while OpenCode asks its questions. */
+/** The sign-in's terminal inside the row, so Settings stays open while the CLI asks its questions. */
 function SignInTerminal({ session, onError }: { session: TerminalSession; onError: (error: string) => void }) {
   const box = useRef<HTMLDivElement>(null);
   // The row may sit below the fold: bring the sign-in's questions into view once it starts.
@@ -251,75 +283,84 @@ function SignInTerminal({ session, onError }: { session: TerminalSession; onErro
 }
 
 /** No provider signed in: OpenCode's free models run, and Sign in comes first. */
-function openCodeFreeOnlyView(act: OpenCodeActions): RowView {
+function freeOnlyView(act: CliRowActions, words: CliRowWords, free: { status: string; line: string }): RowView {
   return {
     tone: RowTone.Warning,
-    status: WORDS.openCode.freeOnly,
-    line: WORDS.openCode.freeOnlyLine,
+    status: free.status,
+    line: free.line,
     actions: (
       <>
         <Button variant="default" onClick={act.signIn}>
-          {WORDS.openCode.signIn}
+          {words.signIn}
         </Button>
-        <AccountMenu name={WORDS.openCode.name} onCheck={act.recheck}>
-          <DropdownMenuItem onSelect={act.update}>{WORDS.openCode.update}</DropdownMenuItem>
+        <AccountMenu name={words.card.name} onCheck={act.recheck}>
+          <DropdownMenuItem onSelect={act.update}>{words.update}</DropdownMenuItem>
         </AccountMenu>
       </>
     ),
   };
 }
 
-/** A provider signed in: billed by each one, and another can be added. */
-function openCodeConnectedView(act: OpenCodeActions): RowView {
+/** Signed in: OpenCode is billed by each provider and can add one; Grok Build can switch accounts. */
+function connectedView(act: CliRowActions, words: CliRowWords): RowView {
   return {
     tone: RowTone.Connected,
     status: WORDS.connected,
-    line: WORDS.openCode.connectedLine,
+    line: words.connectedLine,
     actions: (
-      <AccountMenu name={WORDS.openCode.name} onCheck={act.recheck}>
+      <AccountMenu name={words.card.name} onCheck={act.recheck}>
         <>
           <DropdownMenuItem onSelect={act.signIn}>
-            <ItemWords title={WORDS.openCode.addProvider} line={WORDS.openCode.addProviderLine} />
+            <ItemWords title={words.again.title} line={words.again.line} />
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={act.update}>{WORDS.openCode.update}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={act.update}>{words.update}</DropdownMenuItem>
         </>
       </AccountMenu>
     ),
   };
 }
 
-function OpenCodeRow({
-  engine,
-  onEnginesRefresh,
-}: { engine: EngineDescriptor } & Pick<MeteredProviderProps, "onEnginesRefresh">) {
-  const install = useCliInstall(EngineId.OpenCode);
+/** A CLI that signs in in its own terminal: which one, how its sign-in starts, and what its row says. */
+type CliRowProps = { engine: EngineDescriptor } & Pick<MeteredProviderProps, "onEnginesRefresh"> & {
+    engineId: typeof EngineId.OpenCode | typeof EngineId.Grok;
+    terminalKind: typeof TerminalKind.OpenCodeLogin | typeof TerminalKind.GrokLogin;
+    startSignIn: () => Promise<{ started: boolean }>;
+    words: CliRowWords;
+  };
+
+function CliSignInRow({ engine, onEnginesRefresh, engineId, terminalKind, startSignIn, words }: CliRowProps) {
+  const install = useCliInstall(engineId);
   const { run, error } = useRun();
-  const { checking, recheck } = useRecheck(EngineId.OpenCode, onEnginesRefresh);
-  // The sign-in runs in this row's terminal; when it exits, the host rechecks OpenCode's models.
-  const terminal = useSignInTerminal(TerminalKind.OpenCodeLogin);
+  const { checking, recheck } = useRecheck(engineId, onEnginesRefresh);
+  // The sign-in runs in this row's terminal; when it exits, the host asks the CLI again.
+  const terminal = useSignInTerminal(terminalKind);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const ready = engine.status.code === EngineStatusCode.Ready;
   const state = openCodeRowState(engine, { installing: install.installing, signingIn: Boolean(terminal) });
   const signIn = (): void =>
     void run(async () => {
       setTerminalError(null);
-      const started = await window.studio.openCodeSignIn();
+      const started = await startSignIn();
       if (!started.started) await recheck();
     });
   const cancelSignIn = (): void => {
     if (terminal) void run(() => window.studio.terminalStop(terminal.id));
   };
-  const view = openCodeView(state, {
-    install: () => void install.install(),
-    recheck: () => void run(recheck),
-    signIn,
-    cancelSignIn,
-    openSignInPage: terminal?.signInPage ? () => void run(() => window.studio.terminalOpenLink(terminal.id)) : null,
-    update: () => void install.update(),
-  });
+  const view = cliRowView(
+    state,
+    {
+      install: () => void install.install(),
+      recheck: () => void run(recheck),
+      signIn,
+      cancelSignIn,
+      openSignInPage: terminal?.signInPage ? () => void run(() => window.studio.terminalOpenLink(terminal.id)) : null,
+      update: () => void install.update(),
+    },
+    words,
+  );
   return (
     <ProviderCard
-      words={OPEN_CODE_WORDS}
+      words={words.card}
       engine={engine}
       view={view}
       checking={checking}
@@ -456,10 +497,30 @@ function OpenRouterRow({
 /** The metered rows, under the subscriptions: each only when its engine is registered. */
 export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProviderProps): JSX.Element {
   const openCode = engines.find((engine) => engine.id === EngineId.OpenCode);
+  const grok = engines.find((engine) => engine.id === EngineId.Grok);
   const openRouter = engines.find((engine) => engine.id === EngineId.OpenRouter);
   return (
     <>
-      {openCode && <OpenCodeRow engine={openCode} onEnginesRefresh={onEnginesRefresh} />}
+      {openCode && (
+        <CliSignInRow
+          engine={openCode}
+          onEnginesRefresh={onEnginesRefresh}
+          engineId={EngineId.OpenCode}
+          terminalKind={TerminalKind.OpenCodeLogin}
+          startSignIn={() => window.studio.openCodeSignIn()}
+          words={OPEN_CODE_ROW}
+        />
+      )}
+      {grok && (
+        <CliSignInRow
+          engine={grok}
+          onEnginesRefresh={onEnginesRefresh}
+          engineId={EngineId.Grok}
+          terminalKind={TerminalKind.GrokLogin}
+          startSignIn={() => window.studio.grokSignIn()}
+          words={GROK_ROW}
+        />
+      )}
       {openRouter && <OpenRouterRow engine={openRouter} onEnginesRefresh={onEnginesRefresh} />}
     </>
   );

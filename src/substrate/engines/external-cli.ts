@@ -48,18 +48,21 @@ const CLI_BINARY = {
   [EngineId.Codex]: "codex",
   [EngineId.ClaudeCode]: "claude",
   [EngineId.OpenCode]: "opencode",
+  [EngineId.Grok]: "grok",
 } as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
 const GUIDANCE_URL = {
   [EngineId.Codex]: "https://developers.openai.com/codex/cli/",
   [EngineId.ClaudeCode]: "https://code.claude.com/docs/en/setup",
   [EngineId.OpenCode]: "https://opencode.ai/docs/",
+  [EngineId.Grok]: "https://docs.x.ai/build/overview",
 } as const satisfies Record<CodingProvider, string>;
 /** The help each CLI is asked for, and the options it must list: every one Studio passes. */
 const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.Codex]: ["exec", "--help"],
   [EngineId.ClaudeCode]: ["--help"],
   [EngineId.OpenCode]: ["run", "--help"],
+  [EngineId.Grok]: ["--help"],
 };
 const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
@@ -72,6 +75,21 @@ const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, 
     "--mcp-config",
     "--allowedTools",
     "--disallowedTools",
+  ],
+  // Its help lists these; `grok.ts` also passes `--no-wait-for-background`, which only its manual names.
+  [EngineId.Grok]: [
+    "--prompt-file",
+    "--output-format",
+    "--resume",
+    "--model",
+    "--reasoning-effort",
+    "--always-approve",
+    "--allow",
+    "--tools",
+    "--disallowed-tools",
+    "--disable-web-search",
+    "--sandbox",
+    "--cwd",
   ],
 };
 /**
@@ -368,9 +386,9 @@ const macApplications = (home: string): string[] => ["/Applications", path.join(
  * Where installers put these CLIs when the login shell does not say (a slow or broken shell profile,
  * or an install whose PATH line was never added). Settings has no manual path picker, so this list
  * is the whole answer: native installers, Homebrew, npm prefixes, Volta, Bun, Claude Code's legacy
- * `~/.claude/local` install (reached only through a shell alias), pnpm, mise and asdf shims, the
- * Node versions of nvm and fnm, newest first, and last the copies the Claude and ChatGPT apps ship.
- * On Windows: Claude Code's and Codex's native installers, npm's global prefix,
+ * `~/.claude/local` install (reached only through a shell alias), Grok Build's `~/.grok/bin`, pnpm,
+ * mise and asdf shims, the Node versions of nvm and fnm, newest first, and last the copies the Claude
+ * and ChatGPT apps ship. On Windows: Claude Code's, Codex's and Grok Build's native installers, npm's global prefix,
  * the Node installer's folder, pnpm, Volta, Bun and Scoop.
  */
 export async function standardCliDirs(
@@ -395,6 +413,7 @@ export async function standardCliDirs(
     path.join(home, ".bun/bin"),
     path.join(home, ".codex/bin"),
     path.join(home, ".opencode/bin"),
+    path.join(home, ".grok/bin"),
     path.join(home, mac ? "Library/pnpm" : ".local/share/pnpm"),
     path.join(home, ".local/share/mise/shims"),
     path.join(home, ".asdf/shims"),
@@ -452,6 +471,8 @@ function windowsCliDirs(home: string, env: NodeJS.ProcessEnv): string[] {
     // Codex's own installer (install.ps1) puts its launcher here and adds it to the user's PATH,
     // which a Studio already running never sees.
     join(localAppData, "Programs", "OpenAI", "Codex", "bin"),
+    // Grok Build's own installer (install.ps1) copies `grok.exe` here.
+    join(home, ".grok", "bin"),
     join(appData, "npm"),
     join(variable("ProgramFiles", "C:\\Program Files"), "nodejs"),
     join(localAppData, "pnpm"),

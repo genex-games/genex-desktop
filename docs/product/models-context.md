@@ -6,30 +6,31 @@ The model button opens Main agent, Workers and Reviewers by provider; Add more m
 setup. Blocked plans keep the request, offering settings or retry.
 
 Claude Code and Codex discover models without generating. The list names each family's newest
-model of the newest generation; older ones switch on in Settings; a model in use stays listed.
+model of the newest generation; older ones switch on in Settings; one in use stays listed.
 An unset pick runs the CLI's named default, else a default row. Aliases follow the CLI;
 versions stay pinned.
 
 Settings shows CLI versions; Account rechecks or updates them; failed refreshes offer Try again.
 Tabs switch [accounts](../connections-and-context.md#several-accounts-per-subscription).
-Unavailable picks block sends; without models, Connect AI model replaces the model pill. A
+Unavailable picks block sends; without models, Connect AI model replaces the pill. A
 listing proves no access.
 
 Each chat keeps its model, effort and Loop; fresh games inherit the last picks. One effort, on the
 main agent's levels, serves every role (Workers and Reviewers at most high).
-Workers and Reviewers run only in Loop and
-survive a main-agent change. Each Ollama job takes its own model; Reviewers must see images and
+Workers and Reviewers run only in Loop,
+surviving a main-agent change. Each Ollama job takes its own model; Reviewers must see images and
 check a Loop's finish.
 
-Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenRouter and OpenCode show three once
-set up, no default, never auto-chosen unless Free and alone
-([details](../connections-and-context.md#openrouter-and-opencode)). Local server connects your LM
+Local Models (Bonsai/Ollama) downloads and deletes. Metered
+[OpenRouter, OpenCode](../connections-and-context.md#openrouter-and-opencode) and
+[Grok Build](../connections-and-context.md#grok-build) are never auto-chosen unless Free and alone;
+the first two show three, no default. Local server connects your LM
 Studio, llama.cpp or TabbyAPI ([details](../connections-and-context.md#your-own-model-server)).
 
 ## What the model knows
 
 The context ring shows reported orchestrator usage and capacity; unknown stays unknown. Its panel
-offers Compact now (or `/compact`; Claude Code and Codex use
+offers Compact now (or `/compact`; Claude Code, Codex and Grok use
 [their own](../connections-and-context.md#compact-now), others hand over); every provider, workers
 included, compacts automatically. Then plan limits
 ([details](../connections-and-context.md#plan-limits)).

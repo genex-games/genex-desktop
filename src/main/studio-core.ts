@@ -91,6 +91,8 @@ import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
 import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
+import { GrokEngine } from "../substrate/engines/grok.ts";
+import { grokHome } from "../substrate/credential-homes.ts";
 import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
 import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../substrate/engines/local-server.ts";
@@ -1037,10 +1039,11 @@ export class StudioCore {
     // Windows: native jobs work in, and read pinned runtimes from, folders granted now. srt-win
     // changes grants only while no sandboxed command runs, and agents keep commands running.
     const windows = process.platform === StudioPlatform.Windows;
-    // OpenCode's own folders too: its sessions run as the sandbox user and read their sign-ins there.
-    const openCode = windows ? openCodeSessionFolders() : [];
+    // OpenCode's and Grok Build's own folders too: their sessions run as the sandbox user and read
+    // their sign-ins there.
+    const cliFolders = windows ? [...openCodeSessionFolders(), grokHome()] : [];
     if (windows)
-      await Promise.all([this.layout.nativeRuntimes, ...openCode].map((dir) => mkdir(dir, { recursive: true })));
+      await Promise.all([this.layout.nativeRuntimes, ...cliFolders].map((dir) => mkdir(dir, { recursive: true })));
     return ProcessSandbox.create({
       writableRoots: [
         this.layout.workspaces,
@@ -1049,7 +1052,7 @@ export class StudioCore {
         this.layout.gamesRoot,
         ...games.map((game) => game.dir),
         ...(windows ? [this.layout.nativeWork] : []),
-        ...openCode,
+        ...cliFolders,
       ],
       scratchDir: this.layout.scratch,
       secretPaths: this.#protectedPaths(),
@@ -1454,6 +1457,7 @@ export class StudioCore {
       EngineId.LocalServer,
       ...SUBSCRIPTION_ENGINES,
       EngineId.OpenCode,
+      EngineId.Grok,
       EngineId.OpenRouter,
     ]);
   }
@@ -1508,6 +1512,14 @@ export class StudioCore {
         toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
+      }),
+      // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is.
+      new GrokEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Grok),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Grok }),
       }),
       new OpenRouterEngine({
         root: path.join(this.layout.engineHomes, EngineId.OpenRouter),

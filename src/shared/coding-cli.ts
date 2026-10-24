@@ -1,4 +1,4 @@
-export type CodingProvider = "codex" | "claude-code" | "opencode";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok";
 export interface CodingCliStatus {
   provider: CodingProvider;
   state: "ready" | "missing" | "invalid_path" | "missing_runtime" | "incompatible";

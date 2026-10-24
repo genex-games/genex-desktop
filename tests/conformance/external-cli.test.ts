@@ -650,7 +650,7 @@ test("standard folders cover installers that never reach the login PATH", async 
   for (const version of ["v18.20.1", "v22.3.0", "v9.0.0"])
     await mkdir(path.join(home, ".nvm/versions/node", version, "bin"), { recursive: true });
   const dirs = await standardCliDirs(home, "darwin");
-  for (const dir of [".local/bin", ".claude/local", ".npm-global/bin", ".bun/bin", ".volta/bin"])
+  for (const dir of [".local/bin", ".claude/local", ".npm-global/bin", ".bun/bin", ".volta/bin", ".grok/bin"])
     assert.ok(dirs.includes(path.join(home, dir)), dir);
   const nvm = dirs.filter((dir) => dir.includes(".nvm"));
   assert.deepEqual(
@@ -714,6 +714,7 @@ test("Windows standard folders: the native installers first, then npm's prefix a
   assert.deepEqual(await standardCliDirs("C:\\Users\\Ada", "win32", env), [
     "C:\\Users\\Ada\\.local\\bin",
     "C:\\Users\\Ada\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
+    "C:\\Users\\Ada\\.grok\\bin",
     "C:\\Users\\Ada\\AppData\\Roaming\\npm",
     "C:\\Program Files\\nodejs",
     "C:\\Users\\Ada\\AppData\\Local\\pnpm",
@@ -734,12 +735,14 @@ test("on Windows only a PATHEXT name is a CLI: npm's sh launcher and PowerShell 
 test("the binary resolver names each coding CLI's executable and refuses any other engine", () => {
   assert.equal(codingCliBinary("codex"), "codex");
   assert.equal(codingCliBinary("claude-code"), "claude");
+  assert.equal(codingCliBinary("grok"), "grok");
   for (const other of ["ollama", "bonsai", "constructor", "", "claude"]) assert.throws(() => codingCliBinary(other));
 });
 test("display versions drop product names", () => {
   assert.equal(cliVersion("2.1.280 (Claude Code)"), "2.1.280");
   assert.equal(cliVersion("codex-cli 0.155.1"), "0.155.1");
   assert.equal(cliVersion("codex-cli 0.2.0-alpha.3"), "0.2.0-alpha.3");
+  assert.equal(cliVersion("grok 1.0.70 (f50904eaee6c)"), "1.0.70");
   assert.equal(cliVersion("fixture-1"), "fixture-1");
   assert.equal(cliVersion(undefined), undefined);
 });
@@ -792,6 +795,30 @@ test("an installation that cannot run yields to a working one further along the 
   const manual = await discoverCodingCli("opencode", { ...search, override: outdated });
   assert.equal(manual.status.state, "incompatible");
   assert.equal(manual.status.path, outdated);
+});
+/** `grok --help`'s options, as Grok Build 1.0.70 lists them. */
+const GROK_FLAGS =
+  "--add-dir --allow --always-approve --continue --cwd --deny --disable-web-search --disallowed-tools --model " +
+  "--max-turns --no-plan --output-format --permission-mode --prompt-file --prompt-json --reasoning-effort --resume " +
+  "--rules --sandbox --session-id --tools";
+test("Grok Build is ready when its help lists every option Genex passes; one that lacks one is refused by name", async () => {
+  const grokCli = async (relative: string, help: string) => {
+    const file = path.join(root, exe(relative));
+    await launcher(
+      file,
+      `#!/bin/sh\ncase "$1" in\n --version) echo 'grok 1.0.70 (f50904eaee6c)';;\n *) echo '${help}';;\nesac\n`,
+      `console.log(process.argv[2] === "--version" ? "grok 1.0.70 (f50904eaee6c)" : ${JSON.stringify(help)});\n`,
+    );
+    await chmod(file, 0o755);
+    return file;
+  };
+  const ready = await discoverCodingCli("grok", { ...options, override: await grokCli("grok-ok/grok", GROK_FLAGS) });
+  assert.equal(ready.status.state, "ready");
+  assert.equal(ready.status.version, "grok 1.0.70 (f50904eaee6c)");
+  const older = GROK_FLAGS.replace("--prompt-file ", "");
+  const refused = await discoverCodingCli("grok", { ...options, override: await grokCli("grok-old/grok", older) });
+  assert.equal(refused.status.state, "incompatible");
+  assert.match(refused.status.detail, /--prompt-file/);
 });
 test.after(async () => {
   await rm(root, { recursive: true, force: true });

@@ -39,7 +39,7 @@ interface Installer {
   windows: string | null;
   shell: string;
   set: Record<string, string>;
-  vendor: "claude" | "codex" | "opencode";
+  vendor: "claude" | "codex" | "opencode" | "grok";
 }
 
 /** Each coding CLI's official installers, from its vendor's install instructions. */
@@ -65,6 +65,14 @@ const INSTALLERS = {
     shell: "/bin/bash",
     set: {},
     vendor: "opencode",
+  },
+  // Installs into `~/.grok/bin` (`%USERPROFILE%\.grok\bin`), where discovery looks; it asks nothing.
+  [EngineId.Grok]: {
+    unix: "https://x.ai/cli/install.sh",
+    windows: "https://x.ai/cli/install.ps1",
+    shell: "/bin/bash",
+    set: {},
+    vendor: "grok",
   },
 } as const satisfies Record<CodingProvider, Installer>;
 

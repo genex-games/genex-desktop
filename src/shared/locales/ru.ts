@@ -810,6 +810,20 @@ export default {
   "Codex skill discovery closed. Refresh to retry.": "Поиск навыков Codex прервался. Обнови, чтобы попробовать снова.",
   "Codex skill discovery timed out. Refresh to retry.":
     "Поиск навыков Codex не уложился во время. Обнови, чтобы попробовать снова.",
+  "Finish signing in to Grok in your browser.": "Заверши вход в Grok в браузере.",
+  "Grok Build didn't answer. Check the installation, then try again.":
+    "Grok Build не ответил. Проверь установку и попробуй ещё раз.",
+  "Grok Build isn't installed on this Mac.": "Grok Build не установлен на этом Mac.",
+  "Grok Build isn't signed in.": "Grok Build не выполнил вход.",
+  "Grok Build sign-in": "Вход в Grok Build",
+  "Grok Build {version}, {count, plural, one {# model} other {# models}}":
+    "Grok Build {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
+  "Grok Build's model list could not be read.": "Не удалось прочитать список моделей Grok Build.",
+  "Install Grok Build": "Установить Grok Build",
+  "Install Grok Build from Settings › Model Providers.":
+    "Установи Grok Build в разделе «Настройки › Провайдеры моделей».",
+  "Install it to build games with your Grok account.": "Установи его, чтобы делать игры со своим аккаунтом Grok.",
+  "Installing Grok Build. This can take a minute.": "Устанавливаем Grok Build. Это может занять минуту.",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "Твои Nex хранятся в аккаунте Genex. Войди один раз — и оплачивай здесь.",
   Color: "Цвет",
@@ -1635,6 +1649,14 @@ export default {
   "Get a key": "Получить ключ",
   "Get Nex": "Получить Nex",
   Nex: "Nex",
+  "Runs on your Grok account": "Работает на твоём аккаунте Grok",
+  "Sign in again…": "Войти заново…",
+  "Sign in to Grok from Settings › Model Providers.": "Войди в Grok в разделе «Настройки › Провайдеры моделей».",
+  "Sign in with your Grok account. Grok Build keeps the sign-in.":
+    "Войди со своим аккаунтом Grok. Вход хранит Grok Build.",
+  "Switch to another Grok account": "Перейти на другой аккаунт Grok",
+  "Update Grok Build": "Обновить Grok Build",
+  "xAI blocked this Grok account: {reason}": "xAI заблокировал этот аккаунт Grok: {reason}",
   "{amount} Nex, get Nex": "{amount} Nex, получить Nex",
   "Get credits": "Получить кредиты",
   "Get the Epic Games Launcher": "Скачать Epic Games Launcher",

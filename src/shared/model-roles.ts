@@ -71,6 +71,7 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.OpenCode,
   EngineId.OpenRouter,
   EngineId.LocalServer,
+  EngineId.Grok,
 ];
 
 /** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */

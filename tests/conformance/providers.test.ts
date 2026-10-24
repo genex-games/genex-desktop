@@ -76,6 +76,7 @@ describe("provider table", () => {
     assert.equal(loginKind("codex"), "console");
     assert.equal(loginKind("ollama"), "none");
     assert.equal(loginKind("opencode"), "cli", "OpenCode runs its own sign-in in the terminal");
+    assert.equal(loginKind("grok"), "cli", "Grok Build runs its own `grok login` in the terminal");
     assert.equal(loginKind("openrouter"), "none", "OpenRouter's key is pasted in Settings");
     assert.equal(loginKind("local-server"), "none", "a local server's address and key are typed in Settings");
     assert.equal(loginKind("gemini-cli"), "none");
@@ -91,11 +92,14 @@ describe("provider table", () => {
       bonsai: "local",
       ollama: "local",
       opencode: "metered",
+      // Grok Build runs on whatever its own sign-in is (a Grok plan, or an xAI key in its config), so,
+      // like OpenCode, it is never picked on the person's behalf.
+      grok: "metered",
       openrouter: "metered",
       // Flipped (a local server): a server the person runs is local, never metered.
       "local-server": "local",
     });
-    for (const id of ["openrouter", "opencode"]) assert.equal(isMetered(id), true, id);
+    for (const id of ["openrouter", "opencode", "grok"]) assert.equal(isMetered(id), true, id);
     for (const id of ["bonsai", "ollama", "local-server"]) assert.equal(isLocalEngine(id), true, id);
     for (const id of ["claude-code", "codex", "gemini-cli", "constructor", null, undefined]) {
       assert.equal(isMetered(id), false, String(id));
