@@ -167,9 +167,7 @@ settings of whoever started it, so each session runs a private one inside `Proce
 reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
 plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
 (2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
-`--model provider/model#variant`. Every session, either dialect, is given the person's own
-`XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`: on Windows it runs as the sandbox's own
-user, whose home holds no sign-in, so only the free models would run. Its model list is `GET /api/model` from a private `opencode serve`
+`--model provider/model#variant`. Its model list is `GET /api/model` from a private `opencode serve`
 started on the host for the listing alone, read until two reads agree (its first answer can come
 before its catalog loads); the sign-in runs `opencode auth login --standalone`.
 
