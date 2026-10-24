@@ -84,6 +84,12 @@ and `far_density` (0.1..=1, the far-field copies kept); in code
 `invalid-render-lod`. The settings panel's Detail distance slider moves the threshold from half to
 twice the preset's.
 
+Many copies cost what can be seen of them. Each sun cascade draws only the casters that can
+shadow something the camera may see through it: a caster beside the view's light-space footprint,
+or farther from the sun than every surface that reads the cascade (behind the camera under a sun
+ahead of it), is left out, so a crowd or a forest behind the camera costs no shadow time. The
+pictures are the same; there is nothing to set.
+
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`
 draws it orthographic, `fovy` then being the view's height in world units (a 2D or isometric

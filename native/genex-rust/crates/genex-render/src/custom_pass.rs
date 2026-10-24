@@ -1843,6 +1843,7 @@ impl CustomPasses {
             custom_inputs: self.render_inputs(),
             after_prepass: self.running().any(|entry| entry.stage == PassStage::AfterPrepass),
             extension_inputs,
+            level3: self.running().next().is_some(),
         }
     }
 

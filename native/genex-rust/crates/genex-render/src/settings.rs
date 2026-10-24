@@ -1450,6 +1450,10 @@ pub struct ShadowSettings {
     /// Far cascades are redrawn every this many frames (1: every frame); the nearest cascade
     /// draws every frame and a settled capture draws every cascade.
     pub far_cadence: u8,
+    /// Whether each cascade's cull view keeps only the casters that can shadow a receiver reading
+    /// it ([`crate::shadow::fit`]; horde 10k): on by default where every cascade redraws each frame
+    /// (a cadence holds maps across camera moves, so it keeps the fit's cull view).
+    pub receiver_cull: bool,
 }
 
 impl ShadowSettings {
@@ -1478,7 +1482,16 @@ impl ShadowSettings {
             sun_angular_radius: radius.clamp(0.0, SUN_ANGULAR_RADIUS_MAX_DEG.to_radians()),
             format: quality.format,
             far_cadence: quality.far_cadence.max(1),
+            receiver_cull: quality.far_cadence <= 1,
         }
+    }
+
+    /// The settings with each cascade's cull view held to the casters a receiver reading it can
+    /// see (`true`) or the fit's whole light frustum (`false`: a Level-3 pass may read the maps
+    /// anywhere).
+    pub const fn with_receiver_cull(mut self, on: bool) -> ShadowSettings {
+        self.receiver_cull = on && self.far_cadence <= 1;
+        self
     }
 
     /// The settings with the logarithmic split weighted `lambda` (clamped to 0..=1; NaN keeps it).

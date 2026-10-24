@@ -150,7 +150,11 @@ fn only_the_legacy_layout_keeps_the_legacy_fit() {
     let camera = camera();
     let legacy = ShadowSettings::legacy(DISTANCE);
     assert!(keeps_legacy_fit(&legacy));
-    assert_eq!(fit(&camera, ASPECT, SUN, &legacy, std::iter::empty()), cascades(&camera, ASPECT, SUN, DISTANCE));
+    // Named flip (horde 10k): the default fit holds each cascade's cull view to its receivers, so
+    // the legacy fit's bits are compared with that cull off; the maps are the legacy fit's either way.
+    assert_eq!(fit(&camera, ASPECT, SUN, &legacy.with_receiver_cull(false), std::iter::empty()), cascades(&camera, ASPECT, SUN, DISTANCE));
+    let held = fit(&camera, ASPECT, SUN, &legacy, std::iter::empty());
+    assert_eq!(Cascades { planes: cascades(&camera, ASPECT, SUN, DISTANCE).planes, ..held }, cascades(&camera, ASPECT, SUN, DISTANCE));
     for changed in [settings(4, SHADOW_MAP_PX), settings(2, 2048), settings(2, SHADOW_MAP_PX).with_split_lambda(0.8), {
         let mut sixteen = legacy;
         sixteen.format = ShadowFormat::Depth16;
@@ -230,6 +234,43 @@ fn a_caster_nearer_the_sun_than_the_near_plane_stays_in_the_cascade_cull_view() 
             assert!(!in_frustum(&set.planes[c], [aside.x, aside.y, aside.z, 0.1]), "{name} cascade {c}: the sides still cull");
         }
     }
+}
+
+/// Horde 10k: a cascade's cull view keeps only the casters that can shadow a receiver reading it
+/// (one in the camera's frustum up to the cascade's end, the filter's reach about it). With the sun
+/// behind the camera, a caster on the view axis well past a cascade's end is downstream of every
+/// such receiver: the held cull view drops it where the fit's whole light frustum still holds it,
+/// and keeps every caster up to the cascade's end; the maps are the fit's either way.
+#[test]
+fn a_cascade_culls_the_casters_downstream_of_every_receiver_reading_it() {
+    let camera = CameraDesc::look_at([0.0, 3.0, 8.0], [0.0, 2.5, -20.0]);
+    let forward = (Vec3::new(0.0, 2.5, -20.0) - Vec3::new(0.0, 3.0, 8.0)).normalize();
+    let behind_sun = [0.0, 0.3, 1.0];
+    let mut held_less = 0;
+    let mut layouts = vec![("legacy".to_owned(), ShadowSettings::legacy(DISTANCE))];
+    for count in 1..=MAX_CASCADES as u8 {
+        layouts.push((format!("{count}x2048"), settings(count, 2048)));
+    }
+    for (name, settings) in layouts {
+        assert!(settings.receiver_cull, "{name}: on by default");
+        let set = fit(&camera, ASPECT, behind_sun, &settings, ground_bounds().into_iter());
+        let open = fit(&camera, ASPECT, behind_sun, &settings.with_receiver_cull(false), ground_bounds().into_iter());
+        let on_axis = |t: f32| (Vec3::new(0.0, 3.0, 8.0) + forward * t).extend(0.05).to_array();
+        let mut dropped = 0;
+        for c in 0..set.count() {
+            assert_eq!(set.view_proj[c], open.view_proj[c], "{name} cascade {c}: the map itself is the fit's");
+            for step in 1..=20 {
+                let t = set.splits[c] * step as f32 / 20.0;
+                assert!(in_frustum(&set.planes[c], on_axis(t)), "{name} cascade {c}: a caster {t} m ahead, inside the receivers' reach, stays");
+            }
+            let far = (1..=400).map(|step| set.splits[c] + step as f32 * 0.5).find(|t| !in_frustum(&set.planes[c], on_axis(*t)));
+            dropped += usize::from(far.is_some_and(|t| in_frustum(&open.planes[c], on_axis(t))));
+        }
+        eprintln!("{name}: {dropped} cascades drop a downstream caster their whole light frustum holds");
+        held_less += usize::from(dropped > 0);
+    }
+    // A coarse map's lookups reach far along the light (the legacy 1024 px fit keeps its whole frustum).
+    assert!(held_less >= 3, "{held_less} layouts hold a cascade's cull view tighter than its light frustum");
 }
 
 /// Every tight fit under test (1 to 4 cascades, both depth formats, two map sizes) around `bounds`.
@@ -683,6 +724,53 @@ fn metal_a_caster_beyond_the_cascade_near_plane_still_shadows_by_pancaking() {
         assert!(luma(&shaded) < luma(&open) - 1.0, "{path:?}: the slab shadows the ground: {} vs {}", luma(&shaded), luma(&open));
     }
     write_evidence("pancake-open.bgra", &open);
+}
+
+/// Horde 10k: a crowd of posts on open ground around and behind the camera under a low sun ahead
+/// of it, a thin fog and boxes in the far cascades. The cascades held to their receivers draw
+/// fewer casters and the same picture, on every desktop preset's shadows (PCSS through the screen
+/// mask on high and ultra, inline otherwise).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_cascades_held_to_their_receivers_draw_the_same_picture() {
+    use genex_render::device_class::DeviceClass;
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::QualityPreset;
+    let _turn = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let class = DeviceClass::from_wire("desktop-ultra").expect("a class");
+    let mut camera = CameraDesc::look_at([0.0, 3.2, 0.0], [0.0, 1.0, -24.0]);
+    camera.far = 300.0;
+    let mut scene = Scene::new(camera, [150, 120, 90, 255]);
+    scene.lighting.sun_dir = Vec3::new(0.1, 0.08, -1.0).normalize().to_array();
+    scene.draw(MeshId::CUBE, scaled([0.0, -0.1, -20.0], [200.0, 0.2, 200.0]), Material::color([150, 140, 120, 255]));
+    for i in 0..2_500 {
+        let (x, z) = ((i % 50) as f32 * 1.2 - 30.0, 40.0 - (i / 50) as f32 * 1.6);
+        scene.draw(MeshId::CUBE, scaled([x, 0.7, z], [0.4, 1.4, 0.4]), Material::color([90, 70, 60, 255]));
+    }
+    for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+        let quality = preset_quality(preset, class);
+        let frame = |held: bool| {
+            let mut renderer = Renderer::with_options(&gpu, 320, 180, genex_render::RenderOptions { msaa: false }).expect("renderer");
+            renderer.set_scene_format(SceneFormat::Rgba16Float);
+            renderer.set_quality(&quality);
+            renderer.set_shadow_receiver_cull(held);
+            let mut drawn = 0;
+            let mut last = None;
+            for index in 0..3 {
+                renderer.set_frame_index(index);
+                renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+                drawn = (1..renderer.last_stats().views).map(|view| renderer.read_view_args(&gpu, view).expect("args").iter().map(|a| a.instance_count).sum::<u32>()).sum::<u32>();
+                last = Some(renderer.capture(&gpu).expect("capture"));
+            }
+            (last.expect("a frame"), drawn)
+        };
+        let ((whole, whole_casters), (held, held_casters)) = (frame(false), frame(true));
+        write_evidence(&format!("receiver-cull-{preset:?}.bgra"), &held);
+        assert!(held_casters < whole_casters, "{preset:?}: the held cull views draw fewer casters ({held_casters} of {whole_casters})");
+        let differing = whole.bgra().chunks(4).zip(held.bgra().chunks(4)).filter(|(a, b)| a != b).count();
+        assert_eq!(differing, 0, "{preset:?}: the picture is the one with the whole light frustums");
+    }
 }
 
 /// A 44 x 4 m canopy plate 3 m up, reaching 40 m towards a low sun over the camera's near field

@@ -583,6 +583,7 @@ fn either_demand(a: ExtensionDemand, b: ExtensionDemand) -> ExtensionDemand {
         custom_inputs: a.custom_inputs.union(b.custom_inputs),
         after_prepass: a.after_prepass || b.after_prepass,
         extension_inputs: a.extension_inputs.union(b.extension_inputs),
+        level3: a.level3 || b.level3,
     }
 }
 
@@ -961,6 +962,11 @@ pub struct Renderer {
     hiz: std::cell::RefCell<Option<HizNode>>,
     /// The frame's Hi-Z pyramid while occlusion runs.
     hiz_pyramid: Option<HizPyramid>,
+    /// Whether each cascade's cull view keeps only the casters a receiver reading it can see
+    /// ([`crate::shadow::cull_to_receivers`]; on by default), and whether this frame runs a
+    /// Level-3 pass (which may read the maps anywhere, so the cull views stay whole).
+    receiver_cull: bool,
+    frame_level3: bool,
     /// What the last frame drew through meshlets.
     last_meshlets: Option<MeshletFrame>,
     /// The instance table the last upload wrote and the retained spans it holds (A.0b).
@@ -2824,6 +2830,8 @@ impl Renderer {
             meshlet_pipelines: None,
             hiz: std::cell::RefCell::new(None),
             hiz_pyramid: None,
+            receiver_cull: true,
+            frame_level3: false,
             last_meshlets: None,
             retained_held: std::cell::RefCell::new(None),
             last_instance_bytes: std::cell::Cell::new(0),
@@ -3773,7 +3781,8 @@ impl Renderer {
         // Shadows switched off are planned without cascades (no copy of the scene per frame).
         let shadows = &self.quality.shadows;
         let sun_radius = self.environment_choice.sun_angular_radius();
-        let shadows = shadows.enabled.then(|| ShadowSettings::from_quality(shadows, scene.lighting.shadow_distance, sun_radius));
+        let receiver_cull = self.receiver_cull && !self.frame_level3;
+        let shadows = shadows.enabled.then(|| ShadowSettings::from_quality(shadows, scene.lighting.shadow_distance, sun_radius).with_receiver_cull(receiver_cull));
         // The environment's sun on every path: a frame kept on the legacy LDR scene (a v1 pass in
         // the world) is lit as the device's HDR frames are, only without the sky drawn.
         let environment_sun = self.environment_sun(scene);
@@ -4647,6 +4656,8 @@ impl Renderer {
         let scene_path = self.scene_path(render, stage_reason);
         let temporal = self.frame_temporal(&scene_path, stage.demand, render);
         self.temporal = temporal;
+        // A Level-3 pass may read the sun's maps anywhere: each cascade then keeps its whole cull view.
+        self.frame_level3 = either_demand(self.prepass_demand, stage.demand).level3;
         let (plan, uploads, environment_sun) = self.prepare(scene, path, &scene_path, &temporal)?;
         let meshlets = self.plan_meshlets(&plan, path);
         // B.6: only Live frames on the GPU cull path without meshlets draw from the shadow cache.
@@ -5625,6 +5636,13 @@ impl Renderer {
     /// sun shadows).
     pub fn shadow_maps(&self) -> ShadowMapDesc {
         self.shadow_desc
+    }
+
+    /// Hold each cascade's cull view to the casters a receiver reading it can see (`true`, the
+    /// default; [`crate::shadow::cull_to_receivers`]) or keep the fit's whole light frustum. The
+    /// pictures are the same either way; tests and cost rows compare the two.
+    pub fn set_shadow_receiver_cull(&mut self, on: bool) {
+        self.receiver_cull = on;
     }
 
     /// Switch the static shadow cache on or off (renderer pass 2, B.6; on by default on every

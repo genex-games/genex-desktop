@@ -614,6 +614,22 @@ a still camera draws the same picture every frame. A settled capture draws witho
 shot asks (`Renderer::set_capture_lens`, the Studio capture's `lens` argument). They take no
 forward binding (`renderer/lens.rs` holds their targets).
 
+## Sun cascades: the casters each one draws
+
+`shadow::cull_to_receivers` (horde 10k) holds each cascade's cull view to the casters that can
+shadow a receiver reading it, after `shadow::fit` places the cascade: a receiver reads cascade `c`
+from any view depth up to `c`'s end (its own cascade, the blend band, PCSS's coarser cascade for a
+wide penumbra), so its receivers lie in the camera frustum from the near plane to `c`'s end. A
+caster outside that frustum's light-space box, widened by the widest lookup across the map
+(PCSS's 16 texels and the bilinear one, or the filter's reach) and along the light by that reach
+times the receiver-plane bias's slope cap (16), cannot shadow any of them and is culled; the near
+plane stays open (pancaking). The box snaps outward to 16-texel steps, so a camera moving inside a
+step keeps the cull view (and the static shadow cache's key). The maps and matrices are the fit's:
+the pictures are bit for bit the same (`tests/shadow_cascades.rs`), exact for every receiver in
+the frustum whose slope to the light is under the cap. It stands down under a far cadence (a held
+map outlives its camera) and on frames with a Level-3 pass (`ExtensionDemand::level3`: it may read
+the maps anywhere); `Renderer::set_shadow_receiver_cull(false)` turns it off.
+
 ## Sun-shadow mask
 
 On desktop `high` and `ultra` under TAA with PCSS (`post::sun_mask`, node 10a after the contact
