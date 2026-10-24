@@ -32,6 +32,7 @@ import type { CodexLoginState } from "../../src/shared/codex-login.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
 import { UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
+import { recommendModels, type HardwareInfo } from "../../src/substrate/hardware.ts";
 
 type Listener = (event: IpcSender, payload: unknown) => Promise<IpcResult>;
 const studio = { sender: "studio", senderFrame: "main-frame" };
@@ -671,6 +672,39 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(await claudeLogin.start(null), { started: false, error: "claude-code is not installed" });
     await codexLogin.start("/homes/codex");
     assert.deepEqual(asked, ["claude-code", "codex"]);
+  });
+});
+
+describe("local model hardware in isolated acceptance", () => {
+  it("uses the supplied machine and its catalog without detecting the host", async () => {
+    const hardware: HardwareInfo = {
+      cpu: "Fixture Apple Silicon",
+      ramBytes: 32 * 1024 ** 3,
+      ramGb: 32,
+      usableModelGb: 23,
+      platform: "darwin",
+      arch: "arm64",
+      appleSilicon: true,
+    };
+    const report = { hardware, recommendation: await recommendModels(hardware) };
+    let reads = 0;
+    const core = { engines: {} } as ModelsIpcDeps["core"];
+    const { handle, invoke } = registrar();
+    registerModelsIpc(handle, {
+      core,
+      subscription: () => null,
+      pushUiEvent: () => {},
+      openRouterLogin: noSignIn,
+      readHardware: async () => {
+        reads++;
+        return report;
+      },
+      usage: noUsage,
+    });
+    assert.deepEqual(await invoke("studio:hardware"), { ok: true, value: report });
+    assert.equal(reads, 1);
+    for (const model of ["bonsai-2:27b-pq2_0", "bonsai-2:27b-ptq1_0"])
+      assert.ok(report.recommendation.picks.some((pick) => pick.model === model && pick.fits));
   });
 });
 
