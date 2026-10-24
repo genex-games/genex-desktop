@@ -94,8 +94,11 @@ describe("provider table", () => {
       openrouter: "metered",
       // Flipped (a local server): a server the person runs is local, never metered.
       "local-server": "local",
+      // Flipped (Cursor): third-party models in Cursor, and Cursor's own past the plan's pool, are paid
+      // from the account's credit, so the app never picks it by itself.
+      cursor: "metered",
     });
-    for (const id of ["openrouter", "opencode"]) assert.equal(isMetered(id), true, id);
+    for (const id of ["openrouter", "opencode", "cursor"]) assert.equal(isMetered(id), true, id);
     for (const id of ["bonsai", "ollama", "local-server"]) assert.equal(isLocalEngine(id), true, id);
     for (const id of ["claude-code", "codex", "gemini-cli", "constructor", null, undefined]) {
       assert.equal(isMetered(id), false, String(id));

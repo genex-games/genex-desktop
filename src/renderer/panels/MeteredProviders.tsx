@@ -98,7 +98,7 @@ export function ItemWords({ title, line }: { title: string; line: string }): JSX
 }
 
 /** The row's card: its heading, the picker's models once connected, and its trouble. */
-function ProviderCard({
+export function ProviderCard({
   words,
   engine,
   view,
@@ -228,8 +228,8 @@ function openCodeSigningInView(act: OpenCodeActions): RowView {
   };
 }
 
-/** The sign-in's terminal inside the row, so Settings stays open while OpenCode asks its questions. */
-function SignInTerminal({ session, onError }: { session: TerminalSession; onError: (error: string) => void }) {
+/** The sign-in's terminal inside the row, so Settings stays open while the CLI asks its questions. */
+export function SignInTerminal({ session, onError }: { session: TerminalSession; onError: (error: string) => void }) {
   const box = useRef<HTMLDivElement>(null);
   // The row may sit below the fold: bring the sign-in's questions into view once it starts.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once per sign-in session

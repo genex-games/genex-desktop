@@ -810,6 +810,23 @@ export default {
   "Codex skill discovery closed. Refresh to retry.": "Поиск навыков Codex прервался. Обнови, чтобы попробовать снова.",
   "Codex skill discovery timed out. Refresh to retry.":
     "Поиск навыков Codex не уложился во время. Обнови, чтобы попробовать снова.",
+  "Cursor didn't answer. Check the installation, then try again.":
+    "Cursor не ответил. Проверь установку и попробуй снова.",
+  "Cursor is unavailable": "Cursor недоступен",
+  "Cursor isn't installed on this computer.": "Cursor не установлен на этом компьютере.",
+  "Cursor sign-in": "Вход в Cursor",
+  "Cursor {version}, {count, plural, other {# model(s)}}":
+    "Cursor {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
+  "Cursor's CLI forgets this computer's sign-in": "CLI Cursor забудет вход на этом компьютере",
+  "Cursor's model list could not be read.": "Не удалось прочитать список моделей Cursor.",
+  "Cursor's sign-in status could not be read.": "Не удалось узнать, выполнен ли вход в Cursor.",
+  "Finish signing in to Cursor in your browser. Cursor keeps the sign-in.":
+    "Заверши вход в Cursor в браузере. Cursor сам хранит вход.",
+  "Install Cursor": "Установить Cursor",
+  "Install Cursor from Settings › Model Providers.": "Установи Cursor в разделе «Настройки › Провайдеры моделей».",
+  "Install Cursor's CLI to build with your Cursor plan.":
+    "Установи CLI Cursor, чтобы собирать игры по своему тарифу Cursor.",
+  "Installing Cursor. This can take a minute.": "Устанавливаем Cursor. Это может занять минуту.",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "Твои Nex хранятся в аккаунте Genex. Войди один раз — и оплачивай здесь.",
   Color: "Цвет",
@@ -1633,6 +1650,13 @@ export default {
   "Get a key": "Получить ключ",
   "Get Nex": "Получить Nex",
   Nex: "Nex",
+  "Not signed in to Cursor.": "Вход в Cursor не выполнен.",
+  "Sign in to Cursor from Settings › Model Providers.": "Войди в Cursor в разделе «Настройки › Провайдеры моделей».",
+  "Sign in with your Cursor account to build with your plan.":
+    "Войди в свой аккаунт Cursor, чтобы собирать игры по своему тарифу.",
+  "Update Cursor": "Обновить Cursor",
+  "Uses your Cursor plan": "По твоему тарифу Cursor",
+  "Your Cursor account has no model it can run.": "У твоего аккаунта Cursor нет моделей, которые он может запустить.",
   "{amount} Nex, get Nex": "{amount} Nex, получить Nex",
   "Get credits": "Получить кредиты",
   "Get the Epic Games Launcher": "Скачать Epic Games Launcher",

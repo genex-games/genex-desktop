@@ -22,11 +22,17 @@ const REFRESHABLE: ReadonlySet<string> = new Set([
   EngineId.ClaudeCode,
   EngineId.Codex,
   EngineId.OpenCode,
+  EngineId.Cursor,
   EngineId.OpenRouter,
   EngineId.LocalServer,
 ]);
 /** The engines with no subscription sign-in: a recheck reads their models (and status) again. */
-const RECHECKED_BY_MODELS: readonly string[] = [EngineId.OpenCode, EngineId.OpenRouter, EngineId.LocalServer];
+const RECHECKED_BY_MODELS: readonly string[] = [
+  EngineId.OpenCode,
+  EngineId.Cursor,
+  EngineId.OpenRouter,
+  EngineId.LocalServer,
+];
 
 /** An engine whose API key is pasted in Settings (OpenRouter). */
 interface ApiKeyEngine {

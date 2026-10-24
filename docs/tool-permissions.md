@@ -516,6 +516,7 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | Bonsai, OpenRouter, Local server | Auto, Manual, Accept edits, Plan | the studio runs its tools and asks before each change |
 | Codex | Auto, Plan, Bypass | `codex exec` cannot ask mid-turn; the mode picks its sandbox |
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
+| Cursor | Auto, Plan | `cursor-agent --print` cannot ask mid-turn and always runs in the studio's sandbox |
 | Ollama, a new engine | Auto | its harness tool loop keeps its sandbox |
 
 The chat's own session on any engine is handed `permissions` (`#personSession`, no

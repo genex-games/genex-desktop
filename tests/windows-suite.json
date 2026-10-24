@@ -81,6 +81,7 @@
   "tests/conformance/empty-scaffold.test.ts",
   "tests/conformance/engine-codex.test.ts",
   "tests/conformance/engine-common.test.ts",
+  "tests/conformance/engine-cursor.test.ts",
   "tests/conformance/engine-delegated.test.ts",
   "tests/conformance/engine-game-view.test.ts",
   "tests/conformance/engine-limits.test.ts",

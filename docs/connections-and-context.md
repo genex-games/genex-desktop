@@ -117,7 +117,11 @@ Set up in first launch, installs Claude Code or Codex with its vendor's own inst
 `install.sh` on macOS and Linux, `install.ps1` on Windows, from `claude.ai` and
 `chatgpt.com/codex`. Settings installs OpenCode the same way from `opencode.ai/install` (macOS and
 Linux only; it publishes no Windows script) into `~/.opencode/bin`, and updates it with
-`opencode upgrade`. Main fetches the script over HTTPS itself, runs it as the person with the
+`opencode upgrade`; and Cursor from `cursor.com/install` (`?win32=true` on Windows) into
+`~/.local/bin` (`%LOCALAPPDATA%\cursor-agent` on Windows), updated with `cursor-agent update`.
+Cursor's installer also links `~/.local/bin/agent`, a name Grok Build's installer uses too, so
+discovery looks only for `cursor-agent`. Main fetches the script over HTTPS itself, with a program's user agent (cursor.com answers a
+browser's with its web page), runs it as the person with the
 contractor environment (no keys, none of the other vendor's variables; Codex with
 `CODEX_NON_INTERACTIVE=1` so it asks nothing), keeps only its last output for `studio.log` and
 stops it after ten minutes. Both installers use folders discovery already searches (`~/.local/bin`;
@@ -216,6 +220,52 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
 (OpenCode 1.18 and 2.0.20).
 
+## Cursor
+
+**Cursor** ([cursor.ts](../src/substrate/engines/cursor.ts)) is a delegated engine that runs Cursor's
+agent CLI, `cursor-agent --print --output-format stream-json --stream-partial-output`, one process
+per turn, the brief on stdin, resumed by `--resume <session id>`
+([cursor-cli.ts](../src/substrate/engines/cursor-cli.ts)). It runs on the person's Cursor account:
+Cursor's own models draw on the plan's weekly pool, and Claude, GPT and Gemini in Cursor, or use past
+the pool, are paid from the account's prepaid credit. So it is `billing: "metered"`: the app never
+picks it by itself. Settings shows it under the subscriptions ([CursorRow](../src/renderer/panels/CursorRow.tsx)),
+in OpenCode's row pattern: Install, Sign in (`cursor-agent login` in a terminal inside the row, which
+opens the browser and prints the page for Open sign-in page; `studio:cursor.signin`, native), and
+once connected Check connection, Sign out (`cursor-agent logout`, `studio:cursor.signout`, native)
+and Update. The engine is Ready once `cursor-agent status --format json` says `isAuthenticated` and
+`cursor-agent models` lists a model; the picker shows the CLI's default (`auto`) and the first three
+it lists, the rest under Older models.
+
+Cursor keeps its sign-in itself and Genex never reads it. On a Mac the CLI keeps it in the Keychain
+unless told otherwise, and no sandboxed command can reach the Keychain, so every call Genex makes sets
+`AGENT_CLI_CREDENTIAL_STORE=file`: the sign-in lives in `~/.cursor/auth.json` (on Windows
+`%APPDATA%\Cursor\auth.json`, on Linux `$XDG_CONFIG_HOME/cursor`), and a Terminal sign-in kept in
+the Keychain is not Genex's. Cursor's homes (`cursorHomes` in
+[credential-homes.ts](../src/substrate/credential-homes.ts)) join the credential homes every other
+sandbox denies, and are `ownHome` in Cursor's own sandbox only.
+
+Cursor's sandbox cannot start inside Genex's, so each turn runs in `ProcessSandbox` with
+`--sandbox disabled`, `--trust` and `--force`: the box is the boundary, as for OpenCode. Its network
+is Cursor's hosts (`*.cursor.sh`, `*.cursorapi.com`, `cursor.com`); Cursor's agent connection reads
+the sandbox's proxy itself and `NODE_USE_ENV_PROXY=1` covers Node's own requests. It writes the
+workspace (a read-only session, Plan, a reviewer or a playtester runs from a scratch folder; a blind
+judge cannot read the game at all), Cursor's own folders and a Node compile cache, never a game's
+`.cursor` (its rules, hooks and MCP servers). Two options `--help` does not list are passed, checked
+on 2026.10.22: `--disable-auto-update` (its updater rewrites `~/.local/bin/agent`) and
+`--single-turn` (a turn ends with its reply instead of waiting on a dev server left in the
+background, which kept `--print` from exiting). A judge's answer runs in `--mode ask` from an empty
+folder. Studio tools reach it through the file bridge, as for Codex; pictures are files it is told to
+open.
+
+A failed turn writes no event: the CLI says why on stderr and exits non-zero. Its Connect code
+decides the kind (`[resource_exhausted]` a usage limit, `[unauthenticated]` a sign-in failure,
+`[unavailable]`, `[internal]`, `[deadline_exceeded]` unavailable); a CLI that stops before its
+session starts is a sign-in failure only when `status` then says no account is signed in; anything
+else ends the build with the CLI's words, its session kept. A turn that prints nothing for 10 minutes
+(30 while a tool call is open) is stopped, and one still running 5 seconds after its result is
+stopped and kept; either way its process group goes with it. Compact now is refused: Cursor compacts
+its own sessions. Tests: `engine-cursor.test.ts` on `tests/fixtures/transcripts/cursor-*`.
+
 ## Your own model server
 
 **Local server** ([local-server.ts](../src/substrate/engines/local-server.ts)) connects a model
@@ -257,7 +307,7 @@ nothing is `unavailable`, so another engine may take over. Tests: `engine-local-
 against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
-session can read OpenCode's own `auth.json`, and its commands can reach the provider host the session
+session can read OpenCode's own `auth.json` (and a Cursor session Cursor's), and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
 boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where
 OpenCode 2.x's background server listens outside any sandbox; its password

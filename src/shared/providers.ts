@@ -10,9 +10,10 @@ import { t } from "./i18n.ts";
 
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
- * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
- * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
+ * through its native login reported from the in-app console, OpenCode and Cursor through their own
+ * sign-in command in the embedded terminal (OpenCode's keeps every provider it signs in to), `none`
+ * for an engine with no sign-in of its own (a local model, a local server, or OpenRouter, whose key
+ * is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
 
@@ -68,6 +69,7 @@ export const EngineId = {
   OpenCode: "opencode",
   OpenRouter: "openrouter",
   LocalServer: "local-server",
+  Cursor: "cursor",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -160,6 +162,17 @@ export const PROVIDERS = [
     subscription: false,
     login: "cli",
     roles: "sessions",
+    billing: "metered",
+    signIn: null,
+  },
+  {
+    id: EngineId.Cursor,
+    label: "Cursor",
+    subscription: false,
+    login: "cli",
+    roles: "sessions",
+    // Cursor's own models draw on the plan's weekly pool, but Claude, GPT and Gemini in Cursor, and
+    // anything past the pool, are paid from the account's credit: only the person's pick runs it.
     billing: "metered",
     signIn: null,
   },

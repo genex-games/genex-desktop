@@ -476,6 +476,10 @@ export interface StudioApi {
   claudeLoginCancel(): Promise<unknown>;
   /** OpenCode's own sign-in (`opencode auth login`), in the terminal dock. */
   openCodeSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Cursor's own sign-in (`cursor-agent login`), in a terminal in its Settings row. */
+  cursorSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Sign Cursor's CLI out of the account Genex runs on; answers Cursor's status. */
+  cursorSignOut(): Promise<import("./engine-descriptor.ts").EngineStatus>;
   /**
    * Check a pasted OpenRouter API key with OpenRouter and keep it in the OS secret store when it is
    * accepted. The answer is OpenRouter's status; the key never comes back.

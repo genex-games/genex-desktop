@@ -788,6 +788,22 @@ export default {
     "Codexのスキル検出が終了しました。更新して、もう一度試してください。",
   "Codex skill discovery timed out. Refresh to retry.":
     "Codexのスキル検出がタイムアウトしました。更新して、もう一度試してください。",
+  "Cursor didn't answer. Check the installation, then try again.":
+    "Cursorが応答しませんでした。インストールを確認して、もう一度試してください。",
+  "Cursor is unavailable": "Cursorを利用できません",
+  "Cursor isn't installed on this computer.": "このコンピューターにCursorがインストールされていません。",
+  "Cursor sign-in": "Cursorへのサインイン",
+  "Cursor {version}, {count, plural, other {# model(s)}}": "Cursor {version}、モデル{count, plural, other {#個}}",
+  "Cursor's CLI forgets this computer's sign-in": "CursorのCLIがこのコンピューターのサインインを忘れます",
+  "Cursor's model list could not be read.": "Cursorのモデル一覧を読み取れませんでした。",
+  "Cursor's sign-in status could not be read.": "Cursorのサインイン状態を読み取れませんでした。",
+  "Finish signing in to Cursor in your browser. Cursor keeps the sign-in.":
+    "ブラウザーでCursorへのサインインを完了してください。サインインはCursorが保存します。",
+  "Install Cursor": "Cursorをインストール",
+  "Install Cursor from Settings › Model Providers.": "設定 › モデルプロバイダーからCursorをインストールしてください。",
+  "Install Cursor's CLI to build with your Cursor plan.":
+    "CursorのCLIをインストールすると、Cursorのプランでつくれます。",
+  "Installing Cursor. This can take a minute.": "Cursorをインストールしています。1分ほどかかることがあります。",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "NexはGenexアカウントに保管されます。一度サインインすれば、ここで支払えます。",
   Color: "色",
@@ -1620,6 +1636,13 @@ export default {
   "Get a key": "キーを取得",
   "Get Nex": "Nexを入手",
   Nex: "Nex",
+  "Not signed in to Cursor.": "Cursorにサインインしていません。",
+  "Sign in to Cursor from Settings › Model Providers.": "設定 › モデルプロバイダーからCursorにサインインしてください。",
+  "Sign in with your Cursor account to build with your plan.":
+    "Cursorのアカウントでサインインすると、プランでつくれます。",
+  "Update Cursor": "Cursorをアップデート",
+  "Uses your Cursor plan": "Cursorのプランを使います",
+  "Your Cursor account has no model it can run.": "Cursorのアカウントで実行できるモデルがありません。",
   "{amount} Nex, get Nex": "{amount} Nex、Nexを入手",
   "Get credits": "クレジットを入手",
   "Get the Epic Games Launcher": "Epic Games Launcherを入手",

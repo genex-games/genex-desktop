@@ -8,6 +8,7 @@ import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
+import { CURSOR_FILE_STORE, CursorCommand } from "../substrate/engines/cursor-cli.ts";
 import { childEnv } from "../substrate/child-env.ts";
 import type { ClaudeLoginState } from "../shared/claude-login.ts";
 import type { CodexLoginState } from "../shared/codex-login.ts";
@@ -66,6 +67,8 @@ export interface LoginControllerDeps {
   showClaudeState(state: ClaudeLoginState): void;
   /** OpenCode's sign-in ended: read the models it can run now. */
   onOpenCodeSignedIn?(): Promise<unknown>;
+  /** Cursor's sign-in ended: check the sign-in and read the models it can run now. */
+  onCursorSignedIn?(): Promise<unknown>;
   /** The installed CLI each sign-in runs; the studio's own resolver unless a test gives another. */
   requireCli?: typeof requireCodingCli;
   findBinary?: typeof findClaudeBinary;
@@ -81,10 +84,12 @@ export function createLoginControllers({
   requireCli = requireCodingCli,
   findBinary = findClaudeBinary,
   onOpenCodeSignedIn,
+  onCursorSignedIn,
 }: LoginControllerDeps): {
   codexLogin: CodexLoginController;
   claudeLogin: ClaudeLoginController;
   openCodeLogin: OpenCodeLogin;
+  cursorLogin: CursorLogin;
 } {
   let lastCodexLoginPhase = "idle";
   const codexLogin = new CodexLoginController({
@@ -156,7 +161,36 @@ export function createLoginControllers({
       return { started: true };
     },
   };
-  return { codexLogin, claudeLogin, openCodeLogin };
+  const cursorLogin: CursorLogin = {
+    async start() {
+      const cli = await requireCli(EngineId.Cursor).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: [CursorCommand.SignIn],
+        cwd: os.tmpdir(),
+        // Its own sign-in, kept in its file as every session reads it (never the Keychain, which no
+        // sandboxed session reaches); no other vendor's variables and no credential.
+        env: childEnv(cli.env, { base: "contractor", vendor: "cursor", set: { ...CURSOR_FILE_STORE } }),
+        title: t("Cursor sign-in"),
+        kind: TerminalKind.CursorLogin,
+        onExit: () => {
+          void onCursorSignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
+  return { codexLogin, claudeLogin, openCodeLogin, cursorLogin };
+}
+
+/**
+ * Cursor's sign-in: its own `cursor-agent login`, in a terminal in its Settings row. Cursor opens
+ * the browser itself and prints the page too; it keeps the account in its own file, and the studio
+ * checks the sign-in and rereads the models once the terminal closes.
+ */
+export interface CursorLogin {
+  start(): Promise<{ started: boolean; missingCli?: boolean }>;
 }
 
 /**

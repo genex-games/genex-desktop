@@ -608,10 +608,17 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
     const at = (...parts: string[]) => path.resolve(path.sep, ...parts);
     const home = at("Users", "me");
     // Flipped (OpenCode): OpenCode's sign-in store joins the list, so no other agent reads it.
+    // Flipped (Cursor): so do Cursor's settings and chats, and its sign-in file's own folder.
+    const cursorSignIn: Partial<Record<NodeJS.Platform, string>> = {
+      win32: at("Users", "me", "AppData", "Roaming", "Cursor"),
+      linux: at("Users", "me", ".config", "cursor"),
+    };
     const defaults = [
       at("Users", "me", ".codex"),
       at("Users", "me", ".claude"),
       at("Users", "me", ".local", "share", "opencode"),
+      at("Users", "me", ".cursor"),
+      ...[cursorSignIn[process.platform]].filter((dir): dir is string => Boolean(dir)),
     ];
     assert.deepEqual(credentialHomes([], {}, home), defaults);
     assert.deepEqual(

@@ -43,6 +43,7 @@ test("each CLI's installer is its vendor's own script: shell on macOS and Linux,
     codex: ["https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1"],
     // OpenCode publishes no PowerShell installer: Windows has none to fetch.
     opencode: ["https://opencode.ai/install", null],
+    cursor: ["https://cursor.com/install", "https://cursor.com/install?win32=true"],
   };
   for (const [provider, [unix, windows]] of Object.entries(expected) as [CodingProvider, [string, string | null]][]) {
     for (const platform of ["darwin", "linux"] as const)
@@ -103,6 +104,28 @@ test("the Windows installer runs in a PowerShell that builds its own module path
     const names = Object.keys(seen[0] ?? {}).map((name) => name.toUpperCase());
     assert.ok(!names.includes("PSMODULEPATH"), `${provider}: no inherited module path`);
     assert.equal(seen[0]?.SystemRoot, "C:\\Windows", `${provider}: the rest of the environment arrives`);
+  }
+});
+
+test("an installer is asked for as a program asks, never as a browser, which cursor.com sends its web page", async () => {
+  // Electron's own fetch speaks with Chrome's user agent; cursor.com answered it with the /cli page,
+  // and bash ran that HTML ("the installer exited with 2").
+  for (const provider of ["claude-code", "codex", "opencode", "cursor"] as const) {
+    const asked: Array<Headers> = [];
+    const outcome = await installCodingCli(provider, {
+      platform: "darwin",
+      env: PARENT,
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        asked.push(new Headers(init?.headers));
+        return serving("#!/bin/sh\necho installed\n")(input, init);
+      }) as typeof fetch,
+      tmpRoot: await tmpDir("cli-installer-"),
+      run: async () => ({ code: 0, output: "", timedOut: false }),
+    });
+    assert.deepEqual(outcome, { ok: true }, provider);
+    const agent = asked[0]?.get("user-agent") ?? "";
+    assert.match(agent, /^Genex\b/, `${provider}: names itself`);
+    assert.doesNotMatch(agent, /Mozilla|Chrome|Safari/, `${provider}: no browser's name`);
   }
 });
 

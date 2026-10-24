@@ -853,6 +853,22 @@ export default {
     "La búsqueda de habilidades de Codex se cerró. Actualiza para reintentar.",
   "Codex skill discovery timed out. Refresh to retry.":
     "La búsqueda de habilidades de Codex tardó demasiado. Actualiza para reintentar.",
+  "Cursor didn't answer. Check the installation, then try again.":
+    "Cursor no respondió. Revisa la instalación y vuelve a intentarlo.",
+  "Cursor is unavailable": "Cursor no está disponible",
+  "Cursor isn't installed on this computer.": "Cursor no está instalado en este equipo.",
+  "Cursor sign-in": "Inicio de sesión de Cursor",
+  "Cursor {version}, {count, plural, other {# model(s)}}":
+    "Cursor {version}, {count, plural, one {# modelo} other {# modelos}}",
+  "Cursor's CLI forgets this computer's sign-in": "La CLI de Cursor olvida el inicio de sesión de este equipo",
+  "Cursor's model list could not be read.": "No se pudo leer la lista de modelos de Cursor.",
+  "Cursor's sign-in status could not be read.": "No se pudo leer el estado de inicio de sesión de Cursor.",
+  "Finish signing in to Cursor in your browser. Cursor keeps the sign-in.":
+    "Termina de iniciar sesión en Cursor en tu navegador. Cursor guarda la sesión.",
+  "Install Cursor": "Instalar Cursor",
+  "Install Cursor from Settings › Model Providers.": "Instala Cursor desde Ajustes › Proveedores de modelos.",
+  "Install Cursor's CLI to build with your Cursor plan.": "Instala la CLI de Cursor para crear con tu plan de Cursor.",
+  "Installing Cursor. This can take a minute.": "Instalando Cursor. Puede tardar un minuto.",
   "Nex lives in your Genex account. Sign in once, then pay here.":
     "Tus Nex están en tu cuenta de Genex. Inicia sesión una vez y paga aquí.",
   Color: "Color",
@@ -1680,6 +1696,14 @@ export default {
   "Get a key": "Obtener una clave",
   "Get Nex": "Conseguir Nex",
   Nex: "Nex",
+  "Not signed in to Cursor.": "No has iniciado sesión en Cursor.",
+  "Sign in to Cursor from Settings › Model Providers.":
+    "Inicia sesión en Cursor desde Ajustes › Proveedores de modelos.",
+  "Sign in with your Cursor account to build with your plan.":
+    "Inicia sesión con tu cuenta de Cursor para crear con tu plan.",
+  "Update Cursor": "Actualizar Cursor",
+  "Uses your Cursor plan": "Usa tu plan de Cursor",
+  "Your Cursor account has no model it can run.": "Tu cuenta de Cursor no tiene ningún modelo que pueda ejecutar.",
   "{amount} Nex, get Nex": "{amount} Nex, conseguir Nex",
   "Get credits": "Conseguir créditos",
   "Get the Epic Games Launcher": "Descargar Epic Games Launcher",

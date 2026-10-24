@@ -27,6 +27,11 @@ import { envValue, isWindows } from "./toolchain.ts";
 const INSTALL_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The largest installer script accepted; the vendors' are tens of kilobytes. */
 const SCRIPT_MAX_BYTES = 1024 * 1024;
+/**
+ * The user agent the installer is fetched with: a program's, never a browser's. Electron's own fetch
+ * speaks with Chrome's, and cursor.com answers a browser with its web page, not the script.
+ */
+const INSTALLER_USER_AGENT = "Genex (coding CLI installer)";
 /** How much of the installer's output is kept for the log when it fails. */
 const OUTPUT_TAIL_CHARS = 4000;
 /** How long an exited installer's output may take to close before it is read as it stands. */
@@ -39,7 +44,7 @@ interface Installer {
   windows: string | null;
   shell: string;
   set: Record<string, string>;
-  vendor: "claude" | "codex" | "opencode";
+  vendor: "claude" | "codex" | "opencode" | "cursor";
 }
 
 /** Each coding CLI's official installers, from its vendor's install instructions. */
@@ -65,6 +70,13 @@ const INSTALLERS = {
     shell: "/bin/bash",
     set: {},
     vendor: "opencode",
+  },
+  [EngineId.Cursor]: {
+    unix: "https://cursor.com/install",
+    windows: "https://cursor.com/install?win32=true",
+    shell: "/bin/bash",
+    set: {},
+    vendor: "cursor",
   },
 } as const satisfies Record<CodingProvider, Installer>;
 
@@ -179,7 +191,7 @@ async function download(
 ): Promise<{ ok: true; text: string } | { ok: false; detail: string }> {
   let response: Response;
   try {
-    response = await fetchFn(url, { redirect: "follow" });
+    response = await fetchFn(url, { redirect: "follow", headers: { "user-agent": INSTALLER_USER_AGENT } });
   } catch (err) {
     return { ok: false, detail: String(err) };
   }

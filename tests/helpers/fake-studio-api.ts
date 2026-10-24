@@ -125,6 +125,8 @@ const METHODS = [
   "claudeLoginOpenBrowser",
   "claudeLoginCancel",
   "openCodeSignIn",
+  "cursorSignIn",
+  "cursorSignOut",
   "openRouterKeySave",
   "openRouterKeyClear",
   "openRouterSignIn",

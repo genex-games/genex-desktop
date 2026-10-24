@@ -714,6 +714,8 @@ test("Windows standard folders: the native installers first, then npm's prefix a
   assert.deepEqual(await standardCliDirs("C:\\Users\\Ada", "win32", env), [
     "C:\\Users\\Ada\\.local\\bin",
     "C:\\Users\\Ada\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
+    // Flipped (Cursor): its PowerShell installer's own folder.
+    "C:\\Users\\Ada\\AppData\\Local\\cursor-agent",
     "C:\\Users\\Ada\\AppData\\Roaming\\npm",
     "C:\\Program Files\\nodejs",
     "C:\\Users\\Ada\\AppData\\Local\\pnpm",

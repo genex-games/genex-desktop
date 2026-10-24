@@ -6,12 +6,13 @@ export const TerminalKind = {
   Shell: "shell",
   ClaudeLogin: "claude-login",
   OpenCodeLogin: "opencode-login",
+  CursorLogin: "cursor-login",
   Command: "command",
 } as const;
 export type TerminalKind = (typeof TerminalKind)[keyof typeof TerminalKind];
 
 /** Sign-ins Settings shows in their own row: revealing the dock would close Settings over them. */
-const SETTINGS_TERMINALS: ReadonlySet<TerminalKind> = new Set([TerminalKind.OpenCodeLogin]);
+const SETTINGS_TERMINALS: ReadonlySet<TerminalKind> = new Set([TerminalKind.OpenCodeLogin, TerminalKind.CursorLogin]);
 
 /** Whether the dock lists this session; a Settings sign-in shows in Settings instead. */
 export const inDock = (session: { kind: TerminalKind }): boolean => !SETTINGS_TERMINALS.has(session.kind);

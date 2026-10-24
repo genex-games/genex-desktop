@@ -43,23 +43,36 @@ export interface DiscoveryOptions {
   /** Each try's allowance for one `--version`/`--help` probe ({@link PROBE_TIMEOUTS_MS} by default). */
   probeTimeoutsMs?: readonly number[];
 }
-/** The executable each coding CLI installs as. */
+/**
+ * The executable each coding CLI installs as. Cursor's installer links both `agent` and its older
+ * name `cursor-agent`; Grok Build installs an `agent` too, so only the unambiguous name is looked for.
+ */
 const CLI_BINARY = {
   [EngineId.Codex]: "codex",
   [EngineId.ClaudeCode]: "claude",
   [EngineId.OpenCode]: "opencode",
+  [EngineId.Cursor]: "cursor-agent",
+} as const satisfies Record<CodingProvider, string>;
+/** Whose variables each CLI's own process keeps (`childEnv`'s vendor). */
+const CLI_VENDOR = {
+  [EngineId.Codex]: "codex",
+  [EngineId.ClaudeCode]: "claude",
+  [EngineId.OpenCode]: "opencode",
+  [EngineId.Cursor]: "cursor",
 } as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
 const GUIDANCE_URL = {
   [EngineId.Codex]: "https://developers.openai.com/codex/cli/",
   [EngineId.ClaudeCode]: "https://code.claude.com/docs/en/setup",
   [EngineId.OpenCode]: "https://opencode.ai/docs/",
+  [EngineId.Cursor]: "https://cursor.com/docs/cli/installation",
 } as const satisfies Record<CodingProvider, string>;
 /** The help each CLI is asked for, and the options it must list: every one Studio passes. */
 const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.Codex]: ["exec", "--help"],
   [EngineId.ClaudeCode]: ["--help"],
   [EngineId.OpenCode]: ["run", "--help"],
+  [EngineId.Cursor]: ["--help"],
 };
 const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
@@ -73,6 +86,7 @@ const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, 
     "--allowedTools",
     "--disallowedTools",
   ],
+  [EngineId.Cursor]: ["--print", "--output-format", "--resume", "--model", "--force", "--trust", "--sandbox", "--mode"],
 };
 /**
  * `opencode run`'s options by the command line its version speaks: 1.18 lists every one (an older
@@ -452,6 +466,8 @@ function windowsCliDirs(home: string, env: NodeJS.ProcessEnv): string[] {
     // Codex's own installer (install.ps1) puts its launcher here and adds it to the user's PATH,
     // which a Studio already running never sees.
     join(localAppData, "Programs", "OpenAI", "Codex", "bin"),
+    // Cursor's installer (install.ps1) puts its launchers here and adds the folder to the user's PATH.
+    join(localAppData, "cursor-agent"),
     join(appData, "npm"),
     join(variable("ProgramFiles", "C:\\Program Files"), "nodejs"),
     join(localAppData, "pnpm"),
@@ -751,7 +767,7 @@ async function checkCliCapabilities(
 ): Promise<void> {
   const { platform } = context;
   // M6: a version and a help text need no credential; the CLI is asked with none.
-  const probeEnv = childEnv(context.env, { base: "contractor", vendor: CLI_BINARY[provider] });
+  const probeEnv = childEnv(context.env, { base: "contractor", vendor: CLI_VENDOR[provider] });
   const identity = await cliIdentity(provider, file, platform);
   await answersRead;
   const known = identity ? answered.get(identity) : undefined;

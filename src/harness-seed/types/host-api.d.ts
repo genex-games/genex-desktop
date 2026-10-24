@@ -986,7 +986,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "cursor";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -1014,9 +1014,10 @@ export interface EngineAccount {
 
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
- * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
- * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
+ * through its native login reported from the in-app console, OpenCode and Cursor through their own
+ * sign-in command in the embedded terminal (OpenCode's keeps every provider it signs in to), `none`
+ * for an engine with no sign-in of its own (a local model, a local server, or OpenRouter, whose key
+ * is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
 // ↑ src/shared/providers.ts

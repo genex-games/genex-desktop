@@ -712,6 +712,19 @@ describe("eval review server: grader-validation labels", () => {
 });
 
 /** Load the page, its script and style, then answer every task; returns every body the server sent. */
+/** The engine ids a served body must not name; `cursor` is also a CSS property the page styles with. */
+const ENGINE_IDS: ReadonlySet<string> = new Set(Object.values(EngineId));
+
+/**
+ * Whether `body` names `word`. An engine id counts as a word of its own, and a CSS declaration
+ * (`cursor: pointer;`) is no mention of the Cursor engine; anything else counts wherever it appears.
+ */
+function names(body: string, word: string): boolean {
+  if (!ENGINE_IDS.has(word)) return body.includes(word);
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b(?!\\s*:\\s*[a-z-]+\\s*;)`).test(body);
+}
+
 async function answerEverything(handle: ReviewServerHandle): Promise<string[]> {
   const token = tokenOf(handle);
   const served: string[] = [];
@@ -763,7 +776,7 @@ describe("eval review server: blinding", () => {
       closeBeforeCleanup(() => handle.close());
       const served = await answerEverything(handle);
       for (const body of served)
-        for (const word of forbidden) assert.ok(!body.includes(word), `${mode} served ${word}`);
+        for (const word of forbidden) assert.ok(!names(body, word), `${mode} served ${word}`);
       if (mode === ReviewMode.GraderValidation)
         assert.ok(
           served.some((body) => body.includes(`"family":"${GraderFamily.Claude}"`)),

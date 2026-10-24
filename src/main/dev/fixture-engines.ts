@@ -1,6 +1,6 @@
 /**
- * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, OpenRouter and
- * local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
+ * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, Cursor, OpenRouter
+ * and local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
  * network, and start no vendor worker. Markers in
  * the user's words (`fixture:pending`, `fixture:stream`, `fixture:plan`, …) choose the script.
  */
@@ -33,6 +33,7 @@ const FIXTURE_ENGINES = [
   EngineId.ClaudeCode,
   EngineId.Codex,
   EngineId.OpenCode,
+  EngineId.Cursor,
   EngineId.OpenRouter,
   EngineId.LocalServer,
 ] as const;
@@ -50,8 +51,13 @@ const FIXTURE_SERVER: LocalServerInfo = {
   kind: LocalServerKind.TabbyApi,
   hasKey: true,
 };
-/** The status each fixture starts with when the session names none: ready, but for the local server. */
-const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = { [EngineId.LocalServer]: NO_LOCAL_SERVER };
+/** Cursor's CLI is not on a fixture session's computer, so the picker's lists stay as they were. */
+const NO_CURSOR: EngineStatus = { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Cursor CLI" };
+/** The status each fixture starts with when the session names none: ready, but for the local server and Cursor. */
+const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = {
+  [EngineId.LocalServer]: NO_LOCAL_SERVER,
+  [EngineId.Cursor]: NO_CURSOR,
+};
 /**
  * How each subscription's plan limits answer, read again on every read so a reviewer can change it
  * while the window is open: a JSON file named by `STUDIO_FIXTURE_USAGE_FILE`, for example
@@ -128,7 +134,7 @@ const COMMAND_MARKER = "fixture:command";
 const LATEST_MESSAGE = "LATEST USER MESSAGE:\n";
 
 /**
- * First launch: an empty library, Claude Code waiting for a sign-in, Codex and OpenCode not
+ * First launch: an empty library, Claude Code waiting for a sign-in, Codex, OpenCode and Cursor not
  * installed, OpenRouter with no key, and no local server.
  */
 export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
@@ -138,6 +144,7 @@ export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   },
   [EngineId.Codex]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Codex app" },
   [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
+  [EngineId.Cursor]: NO_CURSOR,
   [EngineId.OpenRouter]: { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; no OpenRouter key" },
   [EngineId.LocalServer]: NO_LOCAL_SERVER,
 };

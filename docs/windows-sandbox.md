@@ -91,7 +91,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   global packages' files are hardlinks that share their security descriptor). So that home is
   granted entry by entry without its store, and with no link among the entries, since srt-win
   grants a link's target. npm's global prefix is granted whole: its `node_modules` are the global
-  CLIs that run in the sandbox, OpenCode among them.
+  CLIs that run in the sandbox, OpenCode among them. Cursor's own folders (`~/.cursor`,
+  `%APPDATA%\Cursor`) are granted at the sandbox's start, as OpenCode's are: its sessions run as
+  the sandbox user and read their sign-in there.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
   command as it reads it, for a long-lived process (`spawnLongLived`'s `stdin`, OpenCode's brief)
