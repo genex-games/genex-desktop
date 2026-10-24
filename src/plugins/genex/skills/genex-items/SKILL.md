@@ -44,22 +44,39 @@ Where it disagrees with this preface, this preface wins.
   there, then try buying on the published draft (`genex__publish {"operation":"draft"}`). An added
   item reaches this game's store with its next publish (`genex__publish {"operation":"gallery"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-items/SKILL.md v1.36.15 sha256 9874956caafe24fceef25fdb269167570fcbac51b8efcb9f2278eb65ce6435d4 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-items/SKILL.md v1.36.16 sha256 e093be967a4e217bf7c6a699615f7a8048e777f96e31ee54faaab90b405708f2 -->
 ---
 name: genex-items
-description: Make game items for the Genex store and add other creators' shared items to this game. Build the item into the game first, list it as a draft with `genex shop add … --json` (before the game is published it waits as a local draft), apply owned items from getEntitlements() at boot, and integrate a shared item with `genex items add`. Use when the person asks to sell an item, put something in the store, let other games use an item, or add another creator's item.
+description: Make game items for the Genex store, priced in Nex, and add other creators' shared items to this game. Build the item into the game first, list it as a draft with `genex shop add … --json` (before the game is published it waits as a local draft), apply owned items from getEntitlements() at boot, and integrate a shared item with `genex items add`. Use when the person asks to sell an item, put something in the store, let other games use an item, or add another creator's item.
 ---
 
 # Genex Items
 
 An item is something a player owns: a name, a description, a picture, a price
-in coin and free-text tags. A 3D model, sounds or code are optional. A player
+in Nex and free-text tags. A 3D model, sounds or code are optional. A player
 buys an item once and owns it in every game that has added it. Your game
 decides what the item looks like and what it does there.
 
-`$genex-monetization` owns the hard rules for anything sold for coin. They apply
+`$genex-monetization` owns the hard rules for anything sold for Nex. They apply
 to items without exception: no paid randomness, no gambling, no donation
-mechanics, no pressure, and a real-money price beside every coin price.
+mechanics, no pressure, and a real-money price beside every Nex price.
+
+## Nex, and the game's own currencies
+
+Genex's own currency is **Nex**: players buy it with real money and spend it in
+the Genex store. It is a name, written "1,200 Nex", never "Nexes".
+
+- **A price in Nex means a Genex store item.** Build the thing into the game,
+  then list it with `npx genex shop add … --json` without asking, before or
+  after the first publish (a folder with no linked game keeps a local draft,
+  below). Price it from the store's grid: `npx genex shop list` prints it, and
+  a price off the grid is refused with `price_off_grid`. The person puts it on
+  sale.
+- **A price in coins, gold, gems or any other name is a currency of the game's
+  own**, earned by playing: it lives in the game's code, not in the store. If
+  the person also says it is for real money, ask once whether they mean Nex.
+- **A request to sell something for real money that names no currency**
+  ("paid characters", "sell skins") means Nex store items.
 
 ## The rules
 
@@ -95,7 +112,7 @@ mechanics, no pressure, and a real-money price beside every coin price.
    sheet "Drag to turn".
 3. **Ask once, only if the person did not say:** "Can other games use it too?"
    Only a durable item can be shared.
-4. **List it as a draft:**
+4. **List it as a draft, without asking:**
 
 ```bash
 npx genex shop add "Frost Axe" --price 1200 --type durable \
@@ -170,19 +187,19 @@ for (const item of await getShop()) {
   card.onclick = async () => {
     const result = await buy({ skuId: item.id }); // the first await in the click
     if (result.status === 'succeeded' || result.status === 'already_owned') await applyOwnedItems();
-    if (result.status === 'insufficient_balance') showNotEnoughCoin(); // nothing was charged
+    if (result.status === 'insufficient_balance') showNotEnoughNex(); // nothing was charged
   };
 }
 ```
 
-`knowsItem`, `applyItem`, `drawCard` and `showNotEnoughCoin` are your game
+`knowsItem`, `applyItem`, `drawCard` and `showNotEnoughNex` are your game
 code. A durable is applied on every boot and never consumed. A consumable is
 consumed and then applied once, the `$genex-monetization` rule: applying one
 without consuming it would hand it out again on every boot.
 
 `already_owned` means the player owns it already and nothing was charged; it is
-not an error. `insufficient_balance` means the player was short of coin at
-Confirm; nothing was charged, so tell them they need more coin. A shared item
+not an error. `insufficient_balance` means the player was short of Nex at
+Confirm; nothing was charged, so tell them they need more Nex. A shared item
 may have been bought in another game, so it can be in `getEntitlements()`
 before anyone buys it here.
 
@@ -226,7 +243,7 @@ own it keep it.
 - [ ] It was listed with `genex shop add … --json` and left as a draft (a
       local draft before the game is published)
 - [ ] Owned items are applied from `getEntitlements()` at every boot
-- [ ] Every coin price shows `priceDisplayUsdCents` beside it
+- [ ] Every Nex price shows `priceDisplayUsdCents` beside it
 - [ ] No price, share or item type is typed into the game
 - [ ] A shared item's package was reviewed before any of it ran
 - [ ] The rules of `$genex-monetization` hold for every item
