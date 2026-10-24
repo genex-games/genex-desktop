@@ -15,7 +15,7 @@ const plugin = {
 } as unknown as PluginInfo;
 
 /** A panel's frame on a host whose game the test moves, and main's action channel answered by hand. */
-function panelOn(project: string) {
+function panelOn(project: string, allowPrompts = true) {
   const posted: unknown[] = [];
   const frame = { postMessage: (message: unknown) => posted.push(message) };
   const host = { project, frame: frame as typeof frame | null };
@@ -24,6 +24,10 @@ function panelOn(project: string) {
   Object.assign(globalThis, {
     window: {
       studio: {
+        pluginChooseFile: async () => {
+          asked.push("file picker");
+          return null;
+        },
         pluginAction: (_id: string, name: string, _args: unknown, game: string) => {
           asked.push(`${name} in ${game}`);
           return new Promise((resolve) => answers.push(resolve));
@@ -36,6 +40,7 @@ function panelOn(project: string) {
     plugin: () => plugin,
     project: () => host.project,
     surface: () => PanelSurface.Page,
+    allowPrompts: () => allowPrompts,
     style: () => ({ getPropertyValue: () => "" }),
     review: () => {},
     onHead: () => {},
@@ -51,6 +56,33 @@ function panelOn(project: string) {
 }
 
 describe("a plugin panel's requests", () => {
+  it("blocks actions and file pickers in the automatically loaded New Chat panel without side effects", async () => {
+    const panel = panelOn("valley", false);
+    const action = panel.request("action");
+    await settle();
+    assert.deepEqual(panel.asked, [], "a passive panel must never start an action");
+    await action;
+    await panel.bridge.receive({
+      source: panel.host.frame,
+      origin: "null",
+      data: { type: PanelMessage.Request, id: "file", method: PanelMethod.ChooseFile, args: {} },
+    });
+    assert.deepEqual(panel.asked, []);
+    assert.deepEqual(panel.posted, [
+      {
+        type: PanelMessage.Result,
+        id: "action",
+        error: "Error: Actions and file pickers are unavailable in the New Chat panel",
+      },
+      {
+        type: PanelMessage.Result,
+        id: "file",
+        error: "Error: Actions and file pickers are unavailable in the New Chat panel",
+      },
+    ]);
+    panel.bridge.close();
+  });
+
   it("answers a request asked before the game changed, after telling the panel its context changed", async () => {
     const panel = panelOn("valley");
     const answered = panel.request("1");

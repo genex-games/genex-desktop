@@ -91,6 +91,7 @@ const CAPABILITY_WORDS: ReadonlyMap<string, () => string> = new Map(
     [PluginCapability.Export]: () => t("export your games"),
     [PluginCapability.NativeRuntime]: () => t("install and run the apps it names, such as Blender"),
     [PluginCapability.GameEngine]: () => t("make games of its engine's kind and link them to its projects"),
+    [PluginCapability.UiCustomization]: () => t("offer themes and show a labelled panel under New Chat while enabled"),
   } satisfies Record<PluginCapability, () => string>),
 );
 

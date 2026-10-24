@@ -2127,6 +2127,7 @@ export default {
   "Loading game": "Chargement du jeu",
   "Loading local model": "Charge le modèle local",
   "Loading models…": "Chargement des modèles…",
+  "Loading plugin panel…": "Chargement du panneau du plugin…",
   "Loading more…": "Chargement de la suite…",
   "Loading preview…": "Chargement de l’aperçu…",
   "Loading terminal…": "Chargement du terminal…",
@@ -3963,6 +3964,7 @@ export default {
   "The plan is ready — waiting for your go-ahead": "Le plan est prêt — en attente de ton feu vert",
   "The plan opens here; each part appears as it is named.":
     "Le plan s’ouvre ici ; chaque partie apparaît dès qu’elle est nommée.",
+  "The plugin panel could not be loaded.": "Impossible de charger le panneau du plugin.",
   "The plugin was not reinstalled": "Le plugin n’a pas été réinstallé",
   "The protected workspace was still starting after {minutes, plural, one {# minute} other {# minutes}}. Genex keeps trying and opens by itself if it finishes; Try again restarts Genex.":
     "L’espace de travail protégé démarrait encore après {minutes, plural, one {# minute} other {# minutes}}. Genex continue d’essayer et s’ouvrira tout seul s’il y arrive ; « Réessayer » relance Genex.",
@@ -5119,6 +5121,8 @@ export default {
   "only https links open from the studio": "seuls les liens https s’ouvrent depuis Studio",
   "only you see these": "visibles uniquement par toi",
   open: "ouvrir",
+  "offer themes and show a labelled panel under New Chat while enabled":
+    "proposer des thèmes et afficher un panneau identifié sous Nouveau chat tant que le plugin est activé",
   "open a game folder inside the one you picked, not a path":
     "ouvre un dossier de jeu à l’intérieur de celui que tu as choisi, pas un chemin",
   "open sign-in in your browser": "ouvrir la connexion dans ton navigateur",

@@ -2072,6 +2072,7 @@ export default {
   "Loading game": "Загрузка игры",
   "Loading local model": "Загружает локальную модель",
   "Loading models…": "Загрузка моделей…",
+  "Loading plugin panel…": "Загрузка панели плагина…",
   "Loading more…": "Загружаем ещё…",
   "Loading preview…": "Загружаем превью…",
   "Loading terminal…": "Загрузка терминала…",
@@ -3876,6 +3877,7 @@ export default {
   "The plan is ready — waiting for your go-ahead": "План готов — ждёт твоего одобрения",
   "The plan opens here; each part appears as it is named.":
     "План откроется здесь; каждая часть появится, как только её назовут.",
+  "The plugin panel could not be loaded.": "Не удалось загрузить панель плагина.",
   "The plugin was not reinstalled": "Плагин не переустановлен",
   "The protected workspace was still starting after {minutes, plural, one {# minute} other {# minutes}}. Genex keeps trying and opens by itself if it finishes; Try again restarts Genex.":
     "Защищённое рабочее пространство всё ещё запускается спустя {minutes, plural, one {# минуту} few {# минуты} many {# минут} other {# минуты}}. Genex продолжает попытки и откроется сам, когда запуск закончится; «Попробовать снова» перезапустит Genex.",
@@ -5021,6 +5023,8 @@ export default {
   "only https links open from the studio": "из Studio открываются только ссылки https",
   "only you see these": "видишь только ты",
   open: "открыть",
+  "offer themes and show a labelled panel under New Chat while enabled":
+    "предлагать темы и показывать подписанную панель под полем нового чата, пока плагин включён",
   "open a game folder inside the one you picked, not a path": "открой папку игры внутри выбранной, а не путь",
   "open sign-in in your browser": "открывать вход в браузере",
   "open sign-in pages in your browser": "открывать страницы входа в браузере",

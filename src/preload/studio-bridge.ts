@@ -332,6 +332,8 @@ function pluginCalls(bridge: BridgeCalls) {
     pluginPanel: (id, panel) => invoke("studio:plugins.panel", { id, panel }),
     pluginSettings: (id) => invoke("studio:plugins.settings", { id }),
     pluginSetSetting: (id, key, value) => invoke("studio:plugins.setting", { id, key, value }),
+    pluginCustomization: (id) => invoke("studio:plugins.customization", { id }),
+    pluginSetCustomization: (id, profile) => invoke("studio:plugins.customization-set", { id, profile }),
     pluginReview: (id, name, args, project) => invoke("studio:plugins.review", { id, name, args, project }),
     pluginAction: (id, name, args, project, ticket) =>
       invoke("studio:plugins.action", { id, name, args, project, ticket }),

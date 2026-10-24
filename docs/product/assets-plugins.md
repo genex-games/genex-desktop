@@ -42,10 +42,10 @@ Genex and Local Blender as official; its installs require native-code trust
 
 ## Permissions and lifecycle
 
-Installation shows publisher and capabilities; new capabilities need confirmation. Game agents never
-install, enable or approve plugins, only
-[suggest or write one](projects-engines.md#plugins-on-or-off). Process isolation does not sandbox
-native code.
+Installation names publishers/capabilities; added capabilities need confirmation.
+Agents [suggest or write plugins](projects-engines.md#plugins-on-or-off), never install,
+enable or approve them. Native code runs unsandboxed.
+[Customization](../plugins.md#ui-customization-panel-feature-version-1): themes and New Chat panels.
 
 Connector tools ask before each call unless Settings holds an exact grant (a plugin's read-only
 tools never ask, its others not in Auto); server hints grant nothing. Plugin uploads show every

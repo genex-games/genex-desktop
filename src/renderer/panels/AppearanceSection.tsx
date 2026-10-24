@@ -1,3 +1,5 @@
+import { customizationProviders } from "../../shared/plugin-customization.ts";
+import { usePlugins } from "../state/hooks.ts";
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   APPEARANCE_MODES,
@@ -28,6 +30,7 @@ import {
   type ThemeSelection,
 } from "../appearance/themes.ts";
 import { useAppearance } from "../appearance/store.ts";
+import { customizedAppearance } from "../appearance/plugin-customization.ts";
 import { HomeBackdropSection } from "./HomeBackdropSection.tsx";
 import { t } from "../../shared/i18n.ts";
 import { isLanguageChoice, LOCALE_NAMES, LOCALES, SYSTEM_LANGUAGE } from "../../shared/locale.ts";
@@ -230,7 +233,7 @@ function useThemeEditor(scheme: Scheme) {
   const [notice, setNotice] = useState("");
   const selection = appearance[scheme];
   const change = (next: Partial<ThemeSelection>) =>
-    update((prev) => ({ ...prev, [scheme]: { ...prev[scheme], ...next } }));
+    update((prev) => ({ ...prev, pluginTheme: undefined, [scheme]: { ...prev[scheme], ...next } }));
   const adjust = (role: ColorRole, value: string) => change({ overrides: { ...selection.overrides, [role]: value } });
   const save = (themeName: string, colors: Palette, contrast: number) => {
     if (appearance.saved.length >= MAX_SAVED_PRESETS) {
@@ -676,6 +679,64 @@ function TypographySection() {
     </section>
   );
 }
+const PLUGIN_THEME_MESSAGE = {
+  Label: "Theme source",
+  BuiltIn: "Built-in appearance",
+  Off: "Turn off plugin theme",
+  Unavailable: "Unavailable plugin theme",
+  Active: (plugin: string, publisher: string) =>
+    `Plugin theme active: ${plugin} by ${publisher}. Turn it off to edit built-in themes and fonts.`,
+  Inactive: "Plugin themes include light and dark palettes. Your mode stays unchanged.",
+  Missing: "This plugin theme is unavailable. Built-in appearance is active.",
+  Offer: (name: string, plugin: string, publisher: string) => `${name} · Plugin: ${plugin} by ${publisher}`,
+} as const;
+function PluginThemeChoice() {
+  const { appearance, scheme, update } = useAppearance();
+  const plugins = usePlugins((state) => state.list);
+  const offers = customizationProviders(plugins).filter((p) => p.customization?.theme);
+  const selected = offers.find((p) => p.manifest.id === appearance.pluginTheme);
+  const available = Boolean(selected);
+  if (offers.length === 0 && !appearance.pluginTheme) return null;
+  const options: { value: string; label: string; swatch?: Palette }[] = offers.map((p) => ({
+    value: p.manifest.id,
+    label: PLUGIN_THEME_MESSAGE.Offer(
+      p.customization?.theme?.name ?? p.manifest.name,
+      p.manifest.name,
+      p.manifest.publisher,
+    ),
+    swatch: p.customization?.theme?.[scheme],
+  }));
+  if (appearance.pluginTheme && !available)
+    options.push({ value: appearance.pluginTheme, label: PLUGIN_THEME_MESSAGE.Unavailable });
+  const hint = selected
+    ? PLUGIN_THEME_MESSAGE.Active(selected.manifest.name, selected.manifest.publisher)
+    : PLUGIN_THEME_MESSAGE.Inactive;
+  return (
+    <section data-plugin-theme-choice>
+      {offers.length > 0 && (
+        <SettingRow label={PLUGIN_THEME_MESSAGE.Label}>
+          <Choice
+            label={PLUGIN_THEME_MESSAGE.Label}
+            value={appearance.pluginTheme ?? ""}
+            options={[
+              { value: "", label: PLUGIN_THEME_MESSAGE.BuiltIn, swatch: paletteFor(appearance, scheme) },
+              ...options,
+            ]}
+            onChange={(id) => update((prev) => ({ ...prev, pluginTheme: id || undefined }))}
+          />
+        </SettingRow>
+      )}
+      <p className="appearance-hint" role="status">
+        {appearance.pluginTheme && !available ? PLUGIN_THEME_MESSAGE.Missing : hint}
+      </p>
+      {appearance.pluginTheme && (
+        <Button variant="outline" onClick={() => update((prev) => ({ ...prev, pluginTheme: undefined }))}>
+          {PLUGIN_THEME_MESSAGE.Off}
+        </Button>
+      )}
+    </section>
+  );
+}
 /** The app's language: the Mac's (named) first, then each language in its own name. */
 function LanguageSection() {
   const choice = languageChoice();
@@ -707,8 +768,13 @@ function followsMacHint(scheme: Scheme): string {
 }
 export function AppearanceSection() {
   const { appearance, scheme, error, update } = useAppearance();
-  const light = paletteFor(appearance, Scheme.Light);
-  const dark = paletteFor(appearance, Scheme.Dark);
+  const plugins = usePlugins((state) => state.list);
+  const pluginTheme =
+    customizationProviders(plugins).find((plugin) => plugin.manifest.id === appearance.pluginTheme)?.customization
+      ?.theme ?? null;
+  const effective = customizedAppearance(appearance, pluginTheme);
+  const light = paletteFor(effective, Scheme.Light);
+  const dark = paletteFor(effective, Scheme.Dark);
   return (
     <div data-appearance className="appearance-section">
       <LanguageSection />
@@ -725,10 +791,15 @@ export function AppearanceSection() {
           ? followsMacHint(scheme)
           : t("Changes apply immediately and save on this Mac.")}
       </p>
+      <PluginThemeChoice />
       <HomeBackdropSection />
-      <ThemeEditor scheme={Scheme.Light} />
-      <ThemeEditor scheme={Scheme.Dark} />
-      <TypographySection />
+      {!pluginTheme && (
+        <fieldset className="appearance-native-editors">
+          <ThemeEditor scheme={Scheme.Light} />
+          <ThemeEditor scheme={Scheme.Dark} />
+          <TypographySection />
+        </fieldset>
+      )}
       {error && (
         <p role="alert" className="appearance-error">
           {error}

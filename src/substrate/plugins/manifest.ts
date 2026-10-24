@@ -153,6 +153,7 @@ const EnvSource = {
 /** What a publisher reads when a manifest is refused, and a caller when tool input is. */
 const MESSAGE = {
   InvalidSetup: `setup must be 1 to ${PLUGIN_SETUP_STEPS} plain one-line steps of at most ${PLUGIN_SETUP_STEP_CHARS} characters`,
+  CustomizationApi: "UI customization requires API 3",
   InvalidIcon: "icon must name a .png, .jpg, .webp or .svg file inside the package",
   MissingIcon: (file: string) => `icon ${file} is missing from the package`,
   IconNotAFile: (file: string) => `icon ${file} is not a plain file`,
@@ -676,6 +677,8 @@ export function validateManifest(value: unknown): PluginManifest {
     if (!Array.isArray(m[field])) throw new Error(MESSAGE.MissingList(field));
   }
   if (m.capabilities.some((c) => !CAPABILITIES.has(c))) throw new Error(MESSAGE.UnsupportedCapability);
+  if (m.apiVersion !== 3 && hasCapability(m, PluginCapability.UiCustomization))
+    throw new Error(MESSAGE.CustomizationApi);
   const toolNames = new Set<string>();
   const tools = m.tools.map((t) => validateTool(t, m, toolNames));
   const skills = validateSkills(m, tools);

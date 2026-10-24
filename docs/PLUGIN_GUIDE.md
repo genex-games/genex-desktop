@@ -327,7 +327,8 @@ A panel is served into an opaque-origin sandboxed frame with
   and `call('action', name, args)` → a declared action, plus
   `chooseFile({ title, extensions })` → the chosen file's real path or `null` (1–4 extensions, each
   `[a-z0-9]{1,10}`; native, so a fixture profile answers `unsupported-in-fixture`; see
-  [Panels](plugins.md#panels-and-trusted-approval)). Nothing else crosses. A call the person
+  [Panels](plugins.md#panels-and-trusted-approval)), and the capability-gated
+  [customization calls](#customizing-studio-from-a-plugin). A call the person
   cancelled in Studio's confirmation rejects with `code: "cancelled"`; stay quiet then.
 - A panel opened from the stage strip sits in a dialog (`context.surface` is `"card"`), and the
   dialog is the window: mark each page's heading block `data-panel-head` (its `h2` is the dialog's
@@ -361,6 +362,38 @@ A panel is served into an opaque-origin sandboxed frame with
   that you want quiet is a link (underlined words, no padding), never a padded button without a fill.
 
 `plugin:doctor` warns about both of these mistakes, naming the file.
+
+### Customizing Studio from a plugin
+
+Declare `apiVersion: 3` and the `ui.customization` capability. Check feature discovery first;
+this is additive to API 3 and is absent from older hosts. A plugin may offer a readable theme
+and a small panel in the one host-owned New Chat slot. For a panel declared as `activity`:
+
+```js
+const context = await studioPlugin.call('context');
+if (context.features?.uiCustomization !== 1) {
+  throw new Error('This Genex version does not support UI customization.');
+}
+await studioPlugin.call('customization.set', undefined, {
+  version: 1,
+  newChat: { panel: 'activity', height: 160 },
+});
+```
+
+Add `theme: { name, light, dark, fonts, geometry }` to offer a theme. Both palettes must supply
+all 14 core roles and pass the host's contrast floor. People select it in Settings → Appearance;
+offering it never changes their selected theme or light/dark mode. The source is labelled as a
+plugin and has a Turn off control. Fonts use the existing local choices; geometry sets only
+button and card radii. The panel sits in a clipped, labelled box under the composer.
+
+`customization.read` reads your own saved profile; `customization.reset` withdraws both offers.
+The automatically loaded New Chat panel cannot call actions or open a file picker; put those
+operations in your ordinary plugin panel. Its height does not move the title or composer.
+Profiles live in `data/<id>/customization.json`, independently of the install identity, so saving
+an offer leaves open approval prompts valid. Disable or reset removes host effects without
+overwriting the person's built-in appearance. See [UI customization](plugins.md#ui-customization-panel-feature-version-1)
+for exact bounds and lifecycle rules. Your plugin provides its own editor. No executable CSS,
+host DOM, navigation rearrangement, background replacement or usage-file access is exposed.
 
 ## 4. Consent and confirmation
 

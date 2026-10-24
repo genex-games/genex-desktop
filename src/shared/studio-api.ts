@@ -44,6 +44,7 @@ import type {
 import type { HandleCheck, HandleSave } from "./handle.ts";
 import type { PlayStats, StatsPeriod } from "./play-stats.ts";
 import type { PerformanceMark } from "./performance.ts";
+import type { PluginCustomization } from "./plugin-customization.ts";
 import type { ComposerSendOptions } from "./composer.ts";
 import type {
   ExportReview,
@@ -205,6 +206,8 @@ export interface StudioApi {
   pluginInstall(id?: string): Promise<void>;
   pluginPanel(id: string, panel: string): Promise<PluginPanelDocument>;
   pluginSettings(id: string): Promise<Record<string, unknown>>;
+  pluginCustomization(id: string): Promise<PluginCustomization | null>;
+  pluginSetCustomization(id: string, profile: unknown): Promise<void>;
   pluginSetSetting(id: string, key: string, value: unknown): Promise<void>;
   pluginReview(
     id: string,

@@ -106,6 +106,8 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:plugins.panel": "pluginPanel",
   "studio:plugins.settings": "pluginSettings",
   "studio:plugins.setting": "pluginSetSetting",
+  "studio:plugins.customization": "pluginCustomization",
+  "studio:plugins.customization-set": "pluginSetCustomization",
   "studio:plugins.review": "pluginReview",
   "studio:plugins.action": "pluginAction",
   "studio:plugins.choose-file": "pluginChooseFile",
@@ -372,6 +374,8 @@ export interface StudioInvokePayloads {
   "studio:plugins.panel": { id: string; panel: string };
   "studio:plugins.settings": { id: string };
   "studio:plugins.setting": { id: string; key: string; value: unknown };
+  "studio:plugins.customization": { id: string };
+  "studio:plugins.customization-set": { id: string; profile: unknown };
   "studio:plugins.review": { id: string; name: string; args: unknown; project?: string };
   "studio:plugins.action": { id: string; name: string; args: unknown; project?: string; ticket?: string };
   "studio:plugins.choose-file": { id: string; request: Arg<"pluginChooseFile", 1> };

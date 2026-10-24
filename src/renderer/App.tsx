@@ -13,6 +13,7 @@
  * chat's build line), toasts and the plugin list (`shell/store-leaves.tsx`). The log's feed stays
  * here: the notifications App draws on its own root read it.
  */
+import { PluginCustomizationHost } from "./appearance/PluginCustomizationHost.tsx";
 import type { JSX } from "react";
 import { useEffect, useRef } from "react";
 import { t } from "../shared/i18n.ts";
@@ -143,6 +144,7 @@ export function App(): JSX.Element {
       <Toasts />
       <CodexLoginPanel />
       <ColorTweakerHost />
+      <PluginCustomizationHost />
     </div>
   );
 }

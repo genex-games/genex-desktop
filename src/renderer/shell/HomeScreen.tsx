@@ -7,6 +7,7 @@
  * Planner starts writing (`launch.ts` holds the steps). Once the game's own chat has the message,
  * home fades away over it, so the swap underneath is never seen.
  */
+import { NewChatPluginSlot } from "../appearance/NewChatPluginSlot.tsx";
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { GameLocation } from "../../shared/game-project.ts";
@@ -166,29 +167,34 @@ function HomeScreen({
         <HomeBackdropButton picked={model.selected} />
       </div>
       <div className="home-body">
-        <h1 className="home-title">{MESSAGE.title}</h1>
-        <div className="home-compose">
-          {composer}
-          <div className="home-compose-row">
-            <HomeFolderChip
-              rootLabel={rootLabel}
-              location={location}
-              onLocation={setLocation}
-              onInspect={(inspection) => dialogs.dispatch({ type: "picked", inspection })}
-              onProblem={(words) => app.notify(words, ToastTone.Error)}
-            />
-            {/* Only while the box is empty or still holds a suggestion: it never replaces the user's words. */}
-            <button
-              type="button"
-              data-home-suggest
-              className="home-suggest"
-              disabled={!suggestion.offered}
-              onClick={suggestion.suggest}
-            >
-              <Icon name="dice" size={15} />
-              {MESSAGE.suggest}
-            </button>
+        <div className="home-primary">
+          <h1 className="home-title">{MESSAGE.title}</h1>
+          <div className="home-compose">
+            {composer}
+            <div className="home-compose-row">
+              <HomeFolderChip
+                rootLabel={rootLabel}
+                location={location}
+                onLocation={setLocation}
+                onInspect={(inspection) => dialogs.dispatch({ type: "picked", inspection })}
+                onProblem={(words) => app.notify(words, ToastTone.Error)}
+              />
+              {/* Only while the box is empty or still holds a suggestion: it never replaces the user's words. */}
+              <button
+                type="button"
+                data-home-suggest
+                className="home-suggest"
+                disabled={!suggestion.offered}
+                onClick={suggestion.suggest}
+              >
+                <Icon name="dice" size={15} />
+                {MESSAGE.suggest}
+              </button>
+            </div>
           </div>
+        </div>
+        <div className="home-plugin-slot">
+          <NewChatPluginSlot />
         </div>
       </div>
     </section>

@@ -8,10 +8,11 @@
 import { pluginFileRequest } from "../../shared/plugin-file-request.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
 import { runPluginAction, type PluginReviewRequest } from "../plugin-actions.ts";
+import { answerCustomizationRequest, isCustomizationRequest } from "./plugin-customization-request.ts";
 import {
   type PanelErrorReply,
   type PanelHead,
-  PanelSurface,
+  type PanelSurface,
   type StyleReader,
   panelContext,
   panelErrorReply,
@@ -22,6 +23,7 @@ import {
 /** The longest request id a panel may use, and how many requests it may have in flight. */
 const REQUEST_ID_MAX = 80;
 const MAX_PENDING_REQUESTS = 16;
+const MESSAGE = { Passive: "Actions and file pickers are unavailable in the New Chat panel" } as const;
 
 /** The bridge's message types, as the plugin SDK (src/plugin-sdk/panel.js) spells them. Wire values: never rename. */
 export const PanelMessage = {
@@ -58,6 +60,8 @@ export type PanelBridgeHost = {
   plugin(): PluginInfo;
   project(): string | null | undefined;
   surface(): PanelSurface;
+  /** Auto-mounted Home panels cannot open pickers or action approvals. Other panels retain their normal flow. */
+  allowPrompts?(): boolean;
   /** The theme's properties, for the panel's context. */
   style(): StyleReader;
   review(request: PluginReviewRequest): void;
@@ -96,6 +100,10 @@ async function answerRequest(
 ): Promise<unknown> {
   if (m.method === PanelMethod.Context) return panelContext(asked.project, host.style(), asked.surface);
   if (m.method === PanelMethod.Settings) return await window.studio.pluginSettings(asked.id);
+  if (isCustomizationRequest(m.method))
+    return await answerCustomizationRequest(m.method, m.args, asked.plugin, window.studio, asked.id);
+  const opensPrompt = m.method === PanelMethod.ChooseFile || m.method === PanelMethod.Action;
+  if (opensPrompt && host.allowPrompts?.() === false) throw new Error(MESSAGE.Passive);
   // Checked here before it leaves the renderer, and again in main before the picker opens.
   if (m.method === PanelMethod.ChooseFile)
     return await window.studio.pluginChooseFile(asked.id, pluginFileRequest(m.args));

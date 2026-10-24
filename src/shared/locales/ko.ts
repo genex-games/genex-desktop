@@ -2017,6 +2017,7 @@ export default {
   "Loading game": "게임 불러오는 중",
   "Loading local model": "로컬 모델 불러오는 중",
   "Loading models…": "모델을 불러오는 중…",
+  "Loading plugin panel…": "플러그인 패널을 불러오는 중…",
   "Loading more…": "더 불러오는 중…",
   "Loading preview…": "미리보기 불러오는 중…",
   "Loading terminal…": "터미널 불러오는 중…",
@@ -3802,6 +3803,7 @@ export default {
   "The plan could not be prepared.": "계획을 준비하지 못했어요.",
   "The plan is ready — waiting for your go-ahead": "계획이 준비됐어요 — 진행 신호를 기다리는 중",
   "The plan opens here; each part appears as it is named.": "계획이 여기에 열려요. 각 파트는 이름이 정해지면 나타나요.",
+  "The plugin panel could not be loaded.": "플러그인 패널을 불러오지 못했어요.",
   "The plugin was not reinstalled": "플러그인이 다시 설치되지 않았어요",
   "The protected workspace was still starting after {minutes, plural, one {# minute} other {# minutes}}. Genex keeps trying and opens by itself if it finishes; Try again restarts Genex.":
     "보호된 작업 공간이 {minutes, plural, other {#분}}이 지나도 아직 시작 중이었어요. Genex는 계속 시도하고, 준비되면 저절로 열려요. ‘다시 시도’를 누르면 Genex가 다시 시작돼요.",
@@ -4932,6 +4934,8 @@ export default {
   "only https links open from the studio": "Studio에서는 https 링크만 열려요",
   "only you see these": "나만 볼 수 있어요",
   open: "열기",
+  "offer themes and show a labelled panel under New Chat while enabled":
+    "테마를 제공하고 활성화된 동안 새 채팅 아래에 이름이 표시된 패널을 표시",
   "open a game folder inside the one you picked, not a path": "경로가 아니라 고른 폴더 안의 게임 폴더를 여세요",
   "open sign-in in your browser": "브라우저에서 로그인 열기",
   "open sign-in pages in your browser": "브라우저에서 로그인 페이지 열기",
