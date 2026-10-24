@@ -91,7 +91,10 @@ ahead of it), is left out, so a crowd or a forest behind the camera costs no sha
 frame of at least 1,024 opaque copies also tests each copy against a depth pyramid of what the
 prepass (the camera) or a cascade (the sun) drew first, and leaves out what that hides, where it
 measures that this pays (a walled street, a forest behind a hill). The pictures are the same;
-there is nothing to set.
+there is nothing to set. For a crowd, draw plain models under a stable `frame.id` each (baked
+poses past a skinned band of the nearest, under the class's skinned cap) and leave their levels to
+the import. Measured on an M4 Max in a 3456x2169 window at `ultra`, 1,000 to 10,000 such copies
+hold 60 fps under dynamic resolution and draw 30 to 40 fps with the scale held at 1: never hold it.
 
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`

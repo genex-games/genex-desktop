@@ -119,8 +119,8 @@ never the quality.
   ask for more at one preset with
   `RenderConfig::shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))` and size the
   reach to the world with `[render.shadows] distance`.
-- **Meshlets and occlusion** are off on every preset because they measured slower; opt in per
-  class only on the game's own measurement (`docs/api/meshlets.md`).
+- **Meshlets** stay off unless the game's own measurement opts a class in (`docs/api/meshlets.md`);
+  crowds of thousands need no switch (`docs/api/drawing.md`).
 - **Test as a phone.** Call `renderSettings` with `{set: {deviceClass: "mobile-mid"}}`, then
   `{set: {preset: "low"}}`, look at a capture each time and keep the game readable and playable
   at both before calling it done. A change holds for the session, so give the game's own back:
