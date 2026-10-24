@@ -688,6 +688,38 @@ pub struct Frame {
     particles: Vec<crate::particles::Particles>,
     /// Whether the presenter draws the streamed cell overlay over this frame (`cells_debug`).
     cells_debug: bool,
+    /// The animators this frame drew, each copied once (lane CP).
+    animators: DrawnAnimators,
+}
+
+/// The animators a frame drew with `frame.character`, by the drawn animator's address (lane CP):
+/// its whole-state digest, its drawn pose's digest and its one copy, which every draw of it in this
+/// frame shares (a crowd drawn with a few shared animators copies each once, not once per draw).
+/// A different animator at a reused address (a temporary) differs in a digest and is copied anew.
+/// Never part of a frame's equality: it only saves copies.
+#[derive(Clone, Debug, Default)]
+struct DrawnAnimators(genex_core::map::FastMap<usize, (u64, u64, Arc<crate::animation::Animator>)>);
+
+impl PartialEq for DrawnAnimators {
+    fn eq(&self, _other: &DrawnAnimators) -> bool {
+        true
+    }
+}
+
+impl DrawnAnimators {
+    /// This frame's copy of `animator`: the earlier one while its state and pose are the same.
+    fn copy(&mut self, animator: &crate::animation::Animator) -> Arc<crate::animation::Animator> {
+        let at = std::ptr::from_ref(animator) as usize;
+        let (state, pose) = (animator.digest(), animator.pose_digest());
+        if let Some((held_state, held_pose, copy)) = self.0.get(&at)
+            && (*held_state, *held_pose) == (state, pose)
+        {
+            return Arc::clone(copy);
+        }
+        let copy = Arc::new(animator.clone());
+        self.0.insert(at, (state, pose, Arc::clone(&copy)));
+        copy
+    }
 }
 
 impl Default for Frame {
@@ -708,6 +740,7 @@ impl Default for Frame {
             decals: Vec::new(),
             particles: Vec::new(),
             cells_debug: false,
+            animators: DrawnAnimators::default(),
         }
     }
 }
@@ -991,7 +1024,7 @@ impl Frame {
 
     /// [`Frame::character`] with a tint or a replacing material (`CharacterDraw`).
     pub fn character_with(&mut self, animator: &crate::animation::Animator, transform: Transform, draw: &crate::animation::CharacterDraw) -> &mut Self {
-        let animator = Arc::new(animator.clone());
+        let animator = self.animators.copy(animator);
         self.push(Shape::Character { animator, transform, tint: draw.tint_or_white(), material: draw.replacing().cloned() })
     }
 

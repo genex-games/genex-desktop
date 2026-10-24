@@ -64,6 +64,8 @@ struct World {
 enum Draws {
     Character,
     BindPose,
+    /// The one animator drawn by three characters side by side (a crowd's shared cycle).
+    Crowd,
 }
 
 /// A game walking the hero in place at the origin, seen from `eye`; a player eye named
@@ -94,6 +96,12 @@ fn hero_game(draws: Draws, eye: Vec3, observer: Vec3) -> Game<World> {
         match draws {
             Draws::Character => frame.tag("hero").character(hero, Transform::IDENTITY),
             Draws::BindPose => frame.tag("hero").model(&sim.world.bind, Transform::IDENTITY),
+            Draws::Crowd => {
+                for x in [-2.0, 0.0, 2.0] {
+                    frame.tag("hero").character(hero, Transform::from_xyz(x, 0.0, 0.0));
+                }
+                frame
+            }
         };
     });
     game
@@ -320,6 +328,31 @@ fn an_entry_is_evicted_after_two_undrawn_frames_and_lod_never_writes_back_to_the
     let digest = |runtime: &Runtime<World>| runtime.sim().world.hero.as_ref().map(|hero| hero.digest());
     assert_eq!(digest(&plain), digest(&runtime));
     let _ = plain.frame(View::Game);
+}
+
+/// A crowd drawn with one shared animator (lane CP): the frame copies the animator once, and Live
+/// poses it once a tick, at full rate, for all three (never held: a held pose per character would
+/// split the one pose the renderer skins once into three).
+#[test]
+fn an_animator_drawn_by_several_characters_is_copied_once_and_posed_every_tick() {
+    let far = vec3(1.0, 0.5, FAR_METRES);
+    let mut runtime = runtime(hero_game(Draws::Crowd, far, far), 1);
+    let frame = runtime.frame(View::Game).expect("the game view");
+    let animators: Vec<_> = frame.draws().iter().filter_map(|draw| if let genex::Shape::Character { animator, .. } = &draw.shape { Some(animator.clone()) } else { None }).collect();
+    assert_eq!(animators.len(), 3);
+    assert!(animators.iter().all(|animator| std::sync::Arc::ptr_eq(animator, &animators[0])), "one copy for the three draws");
+    let mut cache = loaded(&frame, &mut Library::default());
+    for _ in 0..LIVE_TICKS {
+        runtime.step(FIXED_STEP_MS);
+        let frame = runtime.frame(View::Game).expect("the view");
+        let game_camera = runtime.camera(View::Game).expect("the game camera");
+        cache.pose_characters(&frame, &game_camera, runtime.tick(), true);
+        let stats = cache.character_stats();
+        assert_eq!((stats.drawn, stats.evaluated, stats.held), (3, 3, 0), "tick {}: {stats:?}", runtime.tick());
+        let hero = runtime.sim().world.hero.clone().expect("the hero");
+        let scene = to_scene(&frame, &game_camera, &cache);
+        assert!(scene.skinned.iter().all(|draw| draw.joints == palette_of(&hero)), "all three draw this tick's full-rate pose");
+    }
 }
 
 /// [`live_far_ticks`]'s run with no presenter.

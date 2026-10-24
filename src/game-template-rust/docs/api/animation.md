@@ -131,8 +131,9 @@ frame.skeleton_debug(hero, at);
   draws the magenta checker; a file the renderer cannot skin draws its model in bind pose.
 - In Live a far character's pose is held between evaluations: every tick near the camera, every
   2nd, 4th or 8th tick as its projected height (LOD's screen-size metric, from the game camera)
-  falls past 240, 120 and 60 pixels of a 1080-pixel view. A capture is always full rate. Drawing
-  never moves the animator or the simulation.
+  falls past 240, 120 and 60 pixels of a 1080-pixel view. An animator drawn by several characters
+  in one frame (a crowd's shared run cycle) is evaluated once, every tick, and they all draw that
+  pose. A capture is always full rate. Drawing never moves the animator or the simulation.
 - A character under 240 pixels whose materials are all plain and opaque is skinned in the vertex
   stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
   skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the

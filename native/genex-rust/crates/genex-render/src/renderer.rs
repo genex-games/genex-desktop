@@ -3768,6 +3768,7 @@ impl Renderer {
     /// Plan `scene`, check its uploads against the budget and make room in the tables. A refusal
     /// comes before any GPU write (the `tables` node writes them).
     fn prepare(&mut self, scene: &Scene, path: CullPath, scene_path: &ScenePath, temporal: &FrameTemporal) -> Result<(FramePlan, Uploads, EnvironmentSun), RenderError> {
+        let _plan = genex_profile::scope(genex_profile::EngineScope::Plan);
         let aspect = self.width as f32 / self.height as f32;
         // Shadows switched off are planned without cascades (no copy of the scene per frame).
         let shadows = &self.quality.shadows;

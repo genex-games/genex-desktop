@@ -2199,7 +2199,10 @@ impl Presenter {
             return Some(Err(error));
         }
         let game_camera = runtime.camera(View::Game).unwrap_or(camera);
-        self.assets.pose_characters(&frame, &game_camera, runtime.tick(), live);
+        {
+            let _pose = crate::profile::engine_scope(genex_profile::EngineScope::Pose);
+            self.assets.pose_characters(&frame, &game_camera, runtime.tick(), live);
+        }
         let drawn = crate::gpu::host::with_passes(runtime, |passes, tick| self.draw(&frame, &camera, passes, tick, &mut hud));
         if let Some(timing) = timing {
             self.end_live(&handle, timing);
