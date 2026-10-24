@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.34",
+  "version": "1.10.35",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -91,7 +91,7 @@
     },
     {
       "name": "cli-paid",
-      "description": "Run a Genex CLI command that spends coin or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop add, shop set, shop remove, shop test, items add or items remove. A store item's shop add and shop set take price (0 is Free), type, description, tag (a list), shared (true or false), and image, model and package, each a path inside this game that Studio copies in; the answer is the item's draft, which the person puts on sale from its card in the chat (shop publish is not available). items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli; the game needs a published Genex draft first.",
+      "description": "Run a Genex CLI command that spends coin or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop add, shop set, shop remove, shop test, items add or items remove. A store item's shop add and shop set take price (0 is Free), type, description, tag (a list), shared (true or false), and image, model and package, each a path inside this game that Studio copies in; the answer is the item's draft, which the person puts on sale from its card in the chat (shop publish is not available). items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli. shop add, shop set and shop remove also work before the game is on Genex, as local drafts its publish uploads; the other commands need a published Genex draft first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -217,13 +217,13 @@
     {
       "name": "genex-monetization",
       "engines": ["web"],
-      "summary": "Build an in-game shop that sells items for Genex coin: the catalog, purchase flow, delivery and the hard rules (no paid randomness, no gambling). Items are listed with genex__cli and changed with genex__cli-paid.",
+      "summary": "Selling for Genex coin: purchase flow, delivery and the hard rules (no paid randomness, no gambling). Fixed coin prices (unlocks, skins, items) are store items listed with shop add, as genex-items says; dynamic payments only for amounts decided while playing.",
       "file": "skills/genex-monetization/SKILL.md"
     },
     {
       "name": "genex-items",
       "engines": ["web"],
-      "summary": "Items for the Genex store: build the item first, list it as a draft with genex__cli-paid shop add (the person puts it on sale from its card), apply owned items from getEntitlements() at boot, and add another creator's item with items add. Read it before shop add or items add.",
+      "summary": "Read first when the game prices anything in coins or players buy or unlock something: those are Genex coins and each is a store item. By default, without asking, list it with genex__cli-paid shop add so its card shows in the chat, before publish too. Also: getEntitlements() at boot, items add.",
       "file": "skills/genex-items/SKILL.md"
     },
     {

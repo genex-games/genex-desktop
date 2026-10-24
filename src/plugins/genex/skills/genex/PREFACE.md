@@ -31,7 +31,8 @@ Where it disagrees with this preface, this preface wins.
   approves each call, because it spends coin or changes what the game sells. A store item's
   `image`, `model` and `package` name paths inside this game, and `items add` writes
   `genex-items/<id>/` into it; `shop publish` is not available, because only the person puts an
-  item on sale. Read the `genex-items` skill first.
+  item on sale. Read the `genex-items` skill first. Anything the game prices in coins is a Genex
+  store item, listed this way by default.
 - `publish` and `promote`: `genex__publish {"operation":"gallery"}`, which also updates the draft;
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
