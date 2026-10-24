@@ -7,7 +7,8 @@
  * - The studio page crashed: the runs drawn inside it (embedded); the Play window keeps running.
  *   Their frames stop at once, before the games are asked to quit (`NativeRuns.stop` pauses an
  *   embedded run's frames first), so no send waits on a renderer that is gone.
- * - Composer Stop: every C++ build in flight first, then every agent run; the Play window is the person's.
+ * - Composer Stop: its own game's compiled builds in flight first (its copies' too), then that
+ *   game's agent runs; other games' builds and runs, and the person's Play window, go on.
  * - The harness died: the runs its leases started.
  */
 import { NativeRunMode } from "../../shared/native-contract.ts";
@@ -23,13 +24,14 @@ export function nativeOnRendererGone(runs: Pick<NativeRunsHost, "stopMode">): Pr
   return runs.stopMode(NativeRunMode.Embedded);
 }
 
-/** Composer Stop: every C++ build in flight is cancelled at once, then every agent run ends. */
+/** Composer Stop in `project`'s chat: its builds in flight are cancelled at once, then its agent runs end. */
 export async function nativeOnComposerStop(
-  builds: { cancelAll(): void },
-  runs: Pick<NativeRunsHost, "stopAgentRuns">,
+  builds: { cancelGame(project: string): void },
+  runs: Pick<NativeRunsHost, "stopProject">,
+  project: string,
 ): Promise<void> {
-  builds.cancelAll();
-  await runs.stopAgentRuns();
+  builds.cancelGame(project);
+  await runs.stopProject(project, [NativeRunMode.Headless]);
 }
 
 /** The harness boot `owner` is gone: the runs its leases started end. */

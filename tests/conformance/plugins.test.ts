@@ -381,6 +381,22 @@ test("API 2 fields are rejected under apiVersion 1 instead of being ignored", as
     /scalar/,
   );
 });
+test("a toolbar item's facts: API 3 only, fact ids, kept on the canonical item", async () => {
+  const manifest = await manifestOf();
+  const item = manifest.toolbar![0]!;
+  const v3 = (facts: unknown) => ({ ...manifest, apiVersion: 3, toolbar: [{ ...item, facts }] });
+  assert.deepEqual(validateManifest(v3(["unreal-project", "unreal-plugin"])).toolbar![0]!.facts, [
+    "unreal-project",
+    "unreal-plugin",
+  ]);
+  assert.ok(!("facts" in validateManifest({ ...manifest, apiVersion: 3 }).toolbar![0]!), "none named: every game");
+  assert.throws(
+    () => validateManifest({ ...manifest, toolbar: [{ ...item, facts: ["unreal-project"] }] }),
+    /toolbar\[\]\.facts requires apiVersion 3/,
+  );
+  for (const facts of [[], ["Unreal Project"], ["a", "a"], "unreal-project", [7]])
+    assert.throws(() => validateManifest(v3(facts)), /facts/, JSON.stringify(facts));
+});
 test("toolbar validation: reserved labels, undeclared targets, confirmed status actions and the item cap", async () => {
   const manifest = await manifestOf();
   const item = manifest.toolbar![0]!;
@@ -2219,4 +2235,27 @@ test("a plugin server whose connector id would be too long is refused by the man
   // `<plugin>-<server>` becomes the connector id, which is at most 32 characters.
   assert.throws(() => validateManifest(withServer("a-long-plugin-name-for-tools", "server")), /connector id/);
   assert.doesNotThrow(() => validateManifest(withServer("short-plugin", "server")));
+});
+
+test("a start names each part of the plugin setup as it finishes, and a first launch each seed it copies", async () => {
+  // Windows 11's first start never logged `core:plugins` (release canary 39440536691): the step's
+  // parts need marks of their own before anyone can say which one held it.
+  const f = await fixture();
+  try {
+    const steps: string[] = [];
+    const record = (step: string, plugin?: string) => steps.push(plugin ? `${step}:${plugin}` : step);
+    const first = new PluginRegistry(path.join(f.root, "fresh"), f.seeds, f.registry.bootstrap, async () => null);
+    first.onInitStep = record;
+    await first.init();
+    first.cancel();
+    assert.deepEqual(steps, ["records", "seed:example", "pending", "saved", "swept", "unlisted", "accounts"]);
+    steps.length = 0;
+    const again = new PluginRegistry(path.join(f.root, "fresh"), f.seeds, f.registry.bootstrap, async () => null);
+    again.onInitStep = record;
+    await again.init();
+    again.cancel();
+    assert.deepEqual(steps, ["records", "pending", "saved", "swept", "unlisted", "accounts"], "nothing copied again");
+  } finally {
+    await f.close();
+  }
 });

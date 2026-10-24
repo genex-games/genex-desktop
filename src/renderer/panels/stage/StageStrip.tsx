@@ -1,9 +1,9 @@
 /**
- * The stage strip: one addressable row, so a check can prove every control in it stays uniquely
+ * The stage strip: one addressable strip, so a check can prove every control in it stays uniquely
  * labelled — `control.ts` refuses an ambiguous selector at run time. The game's name and folder
  * live in the chat header; the rest of this strip drags the window.
  */
-import { type JSX, useEffect, useState } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 import type { BuildProblem } from "../../../shared/build-problem.ts";
 import {
   type BuildTarget,
@@ -14,10 +14,12 @@ import {
   stackOf,
 } from "../../../shared/game-project.ts";
 import { SOUND_SHORTCUT } from "../../../shared/game-sound.ts";
+import { stackChip } from "../../../shared/shape-words.ts";
 import { hostOf } from "../../../shared/game-targets.ts";
+import { t } from "../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import type { FactRef } from "../../../shared/project-facts.ts";
-import { kindChip } from "../../../shared/shape-words.ts";
+
 import { UiEvent } from "../../../shared/ui-events.ts";
 import type { LiveView } from "../../live-views.ts";
 import type { BesideTarget } from "../../open-beside.ts";
@@ -25,7 +27,15 @@ import { hostPlatform } from "../../platform.ts";
 import type { LiveBehind, StageView } from "../../stage.ts";
 import type { GameProject } from "../../types.ts";
 import { cn } from "../../ui/cn.ts";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../ui/dropdown-menu.tsx";
 import { Icon } from "../../ui/icons.tsx";
+import { PluginIcon } from "../../ui/PluginIcon.tsx";
 import { Shortcut } from "../../ui/Shortcut.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip.tsx";
 import { ViewSwitcher } from "../../ui/view-switcher.tsx";
@@ -55,7 +65,8 @@ import {
   toolsNeeds,
 } from "./destinations.ts";
 import { LiveRun } from "./live-run.ts";
-import { activeStageTab, type StageTab, type StageTabKey, stageTabs } from "./stage-tabs.ts";
+import { activeStageTab, type StageTab, type StageTabKey, stageTabs, tabGlyph, tabPluginId } from "./stage-tabs.ts";
+import { StripFoldStep, useStripFold } from "./strip-fold.ts";
 
 /** The facts of a game whose descriptor isn't loaded yet: none, served as a web game. */
 const NO_FACTS: readonly FactRef[] = [];
@@ -70,7 +81,7 @@ const switcherItems = (tabs: readonly StageTab[]) =>
  * reason breathes the ring once (`key`), except under reduced motion (theme.css).
  */
 function ReloadButton({ behind, onReload }: { behind: LiveBehind | null; onReload: () => void }): JSX.Element {
-  const label = behind ? liveBehindLabel(behind.reason, behind.note) : "Reload game";
+  const label = behind ? liveBehindLabel(behind.reason, behind.note) : t("Reload game");
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -93,7 +104,7 @@ function ReloadButton({ behind, onReload }: { behind: LiveBehind | null; onReloa
       </TooltipTrigger>
       {/* Beside, not below: a tooltip under the strip would sit behind the native game view. */}
       <TooltipContent side="right" sideOffset={6} data-stage-reload-tip="">
-        {behind ? liveBehindWords(behind.reason) : "Reload game"}
+        {behind ? liveBehindWords(behind.reason) : t("Reload game")}
         {behind?.note ? <span className="block max-w-72 opacity-75">{behind.note}</span> : null}
       </TooltipContent>
     </Tooltip>
@@ -103,6 +114,17 @@ function ReloadButton({ behind, onReload }: { behind: LiveBehind | null; onReloa
 /** The strip's icon buttons: a 32px glass square with a 15px glyph in the text colour, faded when disabled. */
 const STRIP_ICON_BUTTON =
   "surface-glass grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-foreground transition-colors duration-(--duration-quick) enabled:active:scale-[0.96] disabled:cursor-default disabled:opacity-50";
+
+/**
+ * Play/Stop's dress: the action's own colour on its tint (green to play, red to stop), and the
+ * plain glass while a start or stop is under way.
+ */
+const RUN_LOOK = {
+  [LiveRun.Running]: "border border-transparent bg-red-tint text-red",
+  [LiveRun.Stopping]: "surface-glass text-foreground",
+  [LiveRun.Stopped]: "border border-transparent bg-green-tint text-green",
+  [LiveRun.Starting]: "surface-glass text-foreground",
+} as const satisfies Record<LiveRun, string>;
 
 /** What Play/Stop says for each state of the game. */
 const RUN_LABEL = {
@@ -134,7 +156,7 @@ function RunButton({ run, onToggle }: { run: LiveRun; onToggle: () => void }): J
           aria-disabled={busy}
           data-stage-run={run}
           onClick={busy ? undefined : onToggle}
-          className={cn(STRIP_ICON_BUTTON, busy && "cursor-default")}
+          className={cn(STRIP_ICON_BUTTON, RUN_LOOK[run], busy && "cursor-default")}
         >
           {/* Keyed by state, so each glyph fades and grows in as it takes the last one's place. */}
           <span key={run} className="grid place-items-center animate-in fade-in-0 zoom-in-75 duration-150">
@@ -181,7 +203,7 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label="Game sound"
+          aria-label={t("Game sound")}
           aria-pressed={on}
           data-stage-sound={on ? "on" : "off"}
           onClick={onToggle}
@@ -193,7 +215,7 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
       {/* Beside, not below: a tooltip under the strip would sit behind the native game view. */}
       <TooltipContent side="left" sideOffset={6}>
         <span className="flex items-center gap-2">
-          {on ? "Mute game" : "Unmute game"}
+          {on ? t("Mute game") : t("Unmute game")}
           <Shortcut>{SOUND_SHORTCUT}</Shortcut>
         </span>
       </TooltipContent>
@@ -203,9 +225,9 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
 
 /** The engine button's own words. */
 const MESSAGE = {
-  engine: "Game engine",
-  showEngine: "Engine settings",
-  hideEngine: "Hide engine settings",
+  engine: t("Game engine"),
+  showEngine: t("Engine settings"),
+  hideEngine: t("Hide engine settings"),
 } as const;
 
 /** The strip's engine button for a Rust game: opens and closes its engine rows above the stage. */
@@ -245,6 +267,84 @@ export function useLaneRuns(project: string | null): LaneRuns {
     });
   }, [project]);
   return runs;
+}
+
+/** A view's mark where the folded views name it: a plugin view's own picture, else the view's glyph. */
+function ViewMark({
+  tab,
+  views,
+  plugins,
+}: {
+  tab: StageTab;
+  views: readonly LiveView[];
+  plugins: readonly PluginInfo[];
+}): JSX.Element {
+  const pluginId = tabPluginId(tab, views);
+  const plugin = pluginId ? plugins.find((candidate) => candidate.manifest.id === pluginId) : undefined;
+  if (plugin) return <PluginIcon name={plugin.manifest.name} src={plugin.iconUrl} size="menu" />;
+  return <Icon name={tabGlyph(tab, views)} size={14} />;
+}
+
+/**
+ * The views folded into one button (`strip-fold.ts`): the current one in the switcher's accent and a
+ * chevron, opening a menu of every view with the current one ticked. The button lists the views'
+ * keys (`data-stage-views`) and names the current one (`data-stage-current`); each row keeps its
+ * tab's `data-stage-action`, so a check finds and presses the same view either way.
+ */
+function ViewMenu({
+  tabs,
+  active,
+  views,
+  plugins,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  tabs: readonly StageTab[];
+  active: StageTabKey;
+  views: readonly LiveView[];
+  plugins: readonly PluginInfo[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (key: StageTabKey) => void;
+}): JSX.Element | null {
+  const current = tabs.find((tab) => tab.key === active) ?? tabs[0];
+  if (!current) return null;
+  const choose = (key: string) => {
+    const tab = tabs.find((candidate) => candidate.key === key);
+    if (tab) onSelect(tab.key);
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={STAGE_WORDS.viewsButton(current.label)}
+          data-stage-views={tabs.map((tab) => tab.key).join(" ")}
+          data-stage-current={current.key}
+          className="no-drag surface-glass flex shrink-0 cursor-pointer items-center gap-1 rounded-lg p-0.5 pe-1.5 text-control-text transition-colors duration-(--duration-quick) hover:text-control-text-hover"
+        >
+          <span className="flex h-7 items-center gap-1.5 rounded-md bg-[var(--switch-fill,var(--accent-fill))] px-2.5 font-mono text-body-sm text-accent-foreground">
+            <ViewMark tab={current} views={views} plugins={plugins} />
+            {current.label}
+          </span>
+          <Icon name="chevron-down" size={14} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-44">
+        <DropdownMenuRadioGroup value={current.key} onValueChange={choose}>
+          {tabs.map((tab) => (
+            <DropdownMenuRadioItem key={tab.key} value={tab.key} data-stage-action={tab.key}>
+              <span className="flex items-center gap-2">
+                <ViewMark tab={tab} views={views} plugins={plugins} />
+                {tab.label}
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 /**
@@ -402,27 +502,25 @@ function compiledStackOf(loaded: GameProject | null): CompiledStack | undefined 
   return isCompiledStack(stack) ? stack : undefined;
 }
 
+/** Where the game on the stage plays; null with no game. */
+const destinationsFor = (loaded: GameProject | null): readonly BuildTarget[] | null =>
+  loaded ? destinationsOf(loaded).targets : null;
+
 /**
- * What this folder is, from its own evidence — so nobody has to guess why the stage is showing a
- * built page, and an engine export says so before a run is asked for. A compiled game (C++ or
- * Rust) always says so, naming its stack: Genex builds it, so it is not `built` (its own), yet it
- * is not the Three.js default either.
+ * A compiled game's (C++ or Rust) stack, named in the header: Genex builds it, so it is neither a
+ * web game's own build nor the Three.js default. Any other game shows no chip.
  */
-function KindChip({ loaded }: { loaded: GameProject }): JSX.Element | null {
+function KindChip({ loaded }: { loaded: GameProject | null }): JSX.Element | null {
+  if (!loaded) return null;
   const stack = stackOf(loaded.shape);
-  const compiled = isCompiledStack(stack);
-  if (!loaded.built && !compiled) return null;
+  if (!isCompiledStack(stack)) return null;
   return (
     <span
       data-stage-kind={loaded.shape.kind}
-      title={
-        compiled
-          ? DESTINATION_WORDS.stackLine(stack)
-          : `The studio found this and keeps it as it is: ${loaded.shape.main}`
-      }
+      title={DESTINATION_WORDS.stackLine(stack)}
       className="no-drag shrink-0 rounded-control bg-inset px-1.5 py-0.5 text-micro text-ink-3"
     >
-      {kindChip(loaded.shape.kind)}
+      {stackChip(stack)}
     </span>
   );
 }
@@ -460,6 +558,8 @@ function DestinationControls({
   const ownWindow = loaded !== null && playsInOwnWindow(stackOf(loaded.shape));
   const macPlay = ownWindow && playOnMacShown(targets, host) ? project : null;
   const facts = useBadgeFacts(macPlay, targets, buildProblem, toolchain, compiled);
+  /** Live's embedded run of a game with no window of its own: its Mac badge says In Live only while Live draws it. */
+  const macRun = useNative((state) => (ownWindow ? null : (nativeEmbedOf(state, project).status?.state ?? null)));
   return (
     <>
       {liveView ? <NativeViewToggle choice={liveView} /> : null}
@@ -475,6 +575,7 @@ function DestinationControls({
             ...facts,
             checks: loaded.nativeChecks,
             stack: compiled,
+            macRun,
           })}
           phase={stagePhase(runs, facts.failed)}
         />
@@ -484,9 +585,11 @@ function DestinationControls({
 }
 
 /**
- * The strip over the stage: what the folder is, the view switcher, Play/Stop and Reload, Web |
+ * The strip over the stage: the views, Play/Stop, Reload, the game's sound and full screen, Web |
  * Native with Play on Mac or Pop out, a compiled game's destinations, then at its end a Rust game's
- * engine button, the game's sound, full screen and plugin buttons. An earlier build opens from its
+ * engine button, the plugin buttons. As it narrows it makes room in steps (`strip-fold.ts`): the views fold
+ * into one button, then the plugin buttons move to a second row, then Sound and Full screen join
+ * them; nothing ever runs under the window's own controls. An earlier build opens from its
  * result card in the chat, not from here. An Unreal game plays in Unreal, not in a web page here,
  * so it has none of the web game's controls and no Publish: there is no web build to put online.
  */
@@ -507,6 +610,7 @@ export function StageStrip({
   engine = null,
   emptyGame,
   livePreview,
+  gameControls,
   plugins,
   onNotice,
   onToolbarOpen,
@@ -539,6 +643,8 @@ export function StageStrip({
   emptyGame: boolean;
   /** Live shows the game's web preview (`live-views.ts`): only then do Run, Reload, Sound and Full screen show. */
   livePreview: boolean;
+  /** The game has something to run (`gameControlsShown`): only then do Play/Stop and Sound show. */
+  gameControls: boolean;
   plugins: PluginInfo[];
   onNotice: Notify;
   onToolbarOpen: (open: boolean) => void;
@@ -551,50 +657,87 @@ export function StageStrip({
   /** Web | Native, for a game whose Mac build Live can show here; null hides the toggle. */
   liveView: LiveViewChoice | null;
 }): JSX.Element {
-  const destinations = loaded ? destinationsOf(loaded).targets : null;
+  const strip = useRef<HTMLDivElement>(null);
+  const start = useRef<HTMLDivElement>(null);
+  const game = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  const step = useStripFold(strip, [start, game, end]);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  // The folded views' menu goes with the fold: a strip wide enough again closes it.
+  useEffect(() => {
+    if (step === StripFoldStep.Full) setViewsOpen(false);
+  }, [step]);
+  // Either menu lies over the stage, so the native game view gives way while one is open.
+  useEffect(() => {
+    onToolbarOpen(pluginsOpen || viewsOpen);
+    return () => onToolbarOpen(false);
+  }, [pluginsOpen, viewsOpen, onToolbarOpen]);
+  const secondRow = step === StripFoldStep.Plugins || step === StripFoldStep.Game;
+  const tabs = stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, beside });
+  const active = activeStageTab(stageView, live.views, live.shown);
   return (
     <div
+      ref={strip}
       data-stage-strip=""
-      className="titlebar-drag window-controls-end flex min-h-12 max-h-30 shrink-0 flex-wrap items-center gap-2 overflow-auto border-b border-line bg-canvas ps-3 pe-2 py-1.5"
+      data-fold={step}
+      className="stage-strip titlebar-drag shrink-0 border-b border-line bg-canvas ps-3"
     >
-      {loaded ? <KindChip loaded={loaded} /> : null}
-      {/* One segmented group for every loaded game; Builds joins it once there is a build to
-          draw, and Assets is always there — a game with no build still has files. Plugin buttons
-          end the strip, so they are there for a game with no build either. */}
-      {project ? (
-        <ViewSwitcher
-          className="no-drag shrink-0"
-          label="Game view"
-          dataAttribute="data-stage-action"
-          items={switcherItems(stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, beside }))}
-          active={activeStageTab(stageView, live.views, live.shown)}
-          onSelect={onTab}
+      {/* Three groups the fold measures and lays out (theme.css `.stage-strip`), none of them
+          no-drag: every gap between the strip's controls still drags the window. */}
+      <div ref={start} className="stage-strip-start flex shrink-0 items-center gap-2">
+        <KindChip loaded={loaded} />
+        {/* Every loaded game's views; Builds joins them once there is a build to draw, and Assets is
+            always there — a game with no build still has files. */}
+        {project && step === StripFoldStep.Full ? (
+          <ViewSwitcher
+            className="no-drag shrink-0"
+            label={STAGE_WORDS.views}
+            dataAttribute="data-stage-action"
+            items={switcherItems(tabs)}
+            active={active}
+            onSelect={onTab}
+          />
+        ) : null}
+        {project && step !== StripFoldStep.Full ? (
+          <ViewMenu
+            tabs={tabs}
+            active={active}
+            views={live.views}
+            plugins={plugins}
+            open={viewsOpen}
+            onOpenChange={setViewsOpen}
+            onSelect={onTab}
+          />
+        ) : null}
+        {livePreview && gameControls ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
+        {livePreview ? <ReloadButton behind={behind} onReload={onReload} /> : null}
+        <DestinationControls
+          loaded={loaded}
+          project={project}
+          game={{ buildProblem, runs, toolchain }}
+          liveView={liveView}
+          onNotice={onNotice}
         />
-      ) : null}
-      {/* Siblings, not a group: every gap between the strip's controls drags the window. */}
-      {livePreview ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
-      {livePreview ? <ReloadButton behind={behind} onReload={onReload} /> : null}
-      <DestinationControls
-        loaded={loaded}
-        project={project}
-        game={{ buildProblem, runs, toolchain }}
-        liveView={liveView}
-        onNotice={onNotice}
-      />
-      <span className="min-w-0 flex-1 self-stretch" />
-      {project && engine ? <EngineButton engine={engine} /> : null}
-      {livePreview ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
-      {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
-      <PluginToolbar
-        plugins={plugins}
-        project={project}
-        destinations={destinations}
-        facts={loaded?.facts ?? NO_FACTS}
-        holds={loaded?.holds}
-        emptyGame={emptyGame}
-        onNotice={onNotice}
-        onOpenChange={onToolbarOpen}
-      />
+      </div>
+      <div ref={game} className="stage-strip-game flex shrink-0 items-center gap-2">
+        {engine ? <EngineButton engine={engine} /> : null}
+        {livePreview && gameControls ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
+        {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
+      </div>
+      <div ref={end} data-row={secondRow ? "second" : undefined} className="stage-strip-end flex items-center gap-2">
+        <PluginToolbar
+          plugins={plugins}
+          project={project}
+          destinations={destinationsFor(loaded)}
+          facts={loaded?.facts ?? NO_FACTS}
+          holds={loaded?.holds}
+          emptyGame={emptyGame}
+          game={{ builtOnce: !loaded?.awaitingFirstBuild, multiplayer: loaded?.multiplayer === true }}
+          onNotice={onNotice}
+          onOpenChange={setPluginsOpen}
+        />
+      </div>
     </div>
   );
 }

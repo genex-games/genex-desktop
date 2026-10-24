@@ -231,6 +231,8 @@ async function acceptance() {
       await until(`document.querySelector('#settings-tab-providers')?.getAttribute('aria-selected')==='true'`),
     );
     check("dialog initially focuses selected tab", await js(`document.activeElement.id==='settings-tab-providers'`));
+    // Settings loads on first open, and the view leaves after main photographs the game under it.
+    for (let n = 0; n < 40 && nativeVisible(); n++) await wait(50);
     check("modal hides native game", !nativeVisible());
     check(
       "both provider controls are present",
@@ -261,6 +263,10 @@ async function acceptance() {
       js(
         `(()=>{const r=document.querySelector('[data-testid="settings-dialog"]').getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()`,
       );
+    // Measure the dialog once its opening animation has finished.
+    await until(
+      `document.querySelector('[data-testid="settings-dialog"]').getAnimations({subtree:true}).every((a)=>a.playState!=='running')`,
+    );
     const providersBounds = await bounds();
     const sectionBounds = [];
     for (const section of ["games", "appearance", "local", "toolchains", "providers", "harness", "permissions"]) {

@@ -204,6 +204,8 @@ class Recompile(HelperCase):
             'the hot reload failed': ('5706', 'LogHotReload: Error: Hot reload failed, GxCpp could not be reloaded.'),
             'the module did not load': ('5707', 'LogModuleManager: Error: Unable to load module GxCpp-5707.'),
         }
+        # Each case builds a library of its own: one written again within the same timestamp tick
+        # as the case before it (a fast runner) would look untouched, so not compiled.
         for label, (suffix, line) in cases.items():
             with self.subTest(label):
                 self.fresh()

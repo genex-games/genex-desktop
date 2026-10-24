@@ -1,0 +1,38 @@
+{
+ "recorded": "The WebSocket upgrade request Roblox Studio 0.743 (macOS) sends from HttpService:CreateWebStreamClient, headers in order. It has no Origin header.",
+ "path": "/genex-helper",
+ "headers": [
+  [
+   "Cache-Control",
+   "no-cache"
+  ],
+  [
+   "Connection",
+   "Upgrade"
+  ],
+  [
+   "User-Agent",
+   "RobloxStudio/Darwin RobloxApp/0.743.0.7431133 (GlobalDist; RobloxDirectDownload)"
+  ],
+  [
+   "traceparent",
+   "00-1a5e2fbb5edb39de08b8220dcf845704-a8aa68e3b0304c41-00"
+  ],
+  [
+   "Host",
+   "127.0.0.1:47398"
+  ],
+  [
+   "Upgrade",
+   "websocket"
+  ],
+  [
+   "Sec-WebSocket-Key",
+   "MYu8A3lOEj0Pao7iHGRfxA=="
+  ],
+  [
+   "Sec-WebSocket-Version",
+   "13"
+  ]
+ ]
+}

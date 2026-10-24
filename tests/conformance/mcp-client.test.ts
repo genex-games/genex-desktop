@@ -1067,3 +1067,160 @@ test("a server's own name and picture, from its initialize answer, reach the con
     await f.close();
   }
 });
+
+/** A server that speaks only the older SSE transport: GET opens the stream, POST to it is refused. */
+async function sseOnlyServer() {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
+  const { createServer } = await import("node:http");
+  const sessions = new Map<string, InstanceType<typeof SSEServerTransport>>();
+  const requests: string[] = [];
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    requests.push(`${request.method} ${url.pathname}`);
+    if (request.method === "GET" && url.pathname === "/sse") {
+      const transport = new SSEServerTransport("/messages", response);
+      sessions.set(transport.sessionId, transport);
+      const mcp = new McpServer({ name: "old-feed", version: "1.0.0" });
+      mcp.registerTool("ping", { description: "Answers pong" }, async () => ({
+        content: [{ type: "text", text: "pong" }],
+      }));
+      await mcp.connect(transport);
+      return;
+    }
+    const session = sessions.get(url.searchParams.get("sessionId") ?? "");
+    if (request.method === "POST" && url.pathname === "/messages" && session)
+      return void (await session.handlePostMessage(request, response));
+    response.writeHead(405).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${port}/sse`,
+    requests,
+    async close() {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+test("a URL saved as HTTP that only speaks SSE is reached over SSE", async () => {
+  const feed = await sseOnlyServer();
+  const connection = new McpConnection({
+    connector: draft({
+      id: "feed",
+      name: "Feed",
+      transport: "http",
+      url: feed.url,
+      command: undefined,
+      args: undefined,
+    }),
+    secrets: null,
+  });
+  try {
+    const tools = await connection.listTools();
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["ping"],
+    );
+    assert.equal(connection.health, "ready");
+    assert.ok(feed.requests.includes("POST /sse"), "it tried the newer transport first");
+    assert.ok(feed.requests.includes("GET /sse"), "then opened the SSE stream");
+  } finally {
+    await connection.close();
+    await feed.close();
+  }
+});
+
+/** A URL server behind an account: every MCP request without a token is answered 401. */
+function accountServer() {
+  const issuer = "https://identity.example";
+  const requests: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    requests.push(`${init?.method ?? "GET"} ${url}`);
+    if (url === "https://docs.example/mcp")
+      return new Response("sign in first", {
+        status: 401,
+        headers: {
+          "www-authenticate": 'Bearer resource_metadata="https://docs.example/.well-known/oauth-protected-resource"',
+        },
+      });
+    if (url.includes("oauth-protected-resource"))
+      return Response.json({ resource: "https://docs.example/mcp", authorization_servers: [issuer] });
+    if (url.includes("/.well-known/"))
+      return Response.json({
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        registration_endpoint: `${issuer}/register`,
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      });
+    if (url === `${issuer}/register`)
+      return Response.json({ client_id: "genex-client", redirect_uris: JSON.parse(String(init?.body)).redirect_uris });
+    throw new Error(`Unexpected fixture request: ${url}`);
+  };
+  return { fetchImpl, requests };
+}
+
+test("a URL server that asks for an account turns browser sign-in on when the person connects it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-mcp-"));
+  const server = accountServer();
+  const registry = new McpRegistry({
+    file: path.join(root, "mcp", "connectors.json"),
+    secrets: memorySecretPort(new Map()),
+    fetchImpl: server.fetchImpl,
+  });
+  await registry.init();
+  const opened: string[] = [];
+  try {
+    const remote = { transport: "http", url: "https://docs.example/mcp", command: undefined, args: undefined } as const;
+    await registry.save(draft({ id: "docs", name: "Docs", ...remote }));
+    await registry.save(draft({ id: "keyed", name: "Keyed", ...remote, headers: ["Authorization"] }));
+    const result = await registry.connect("docs", null, async (url) => void opened.push(url));
+    assert.equal(result.ok, false, "it waits for the browser");
+    const saved = (await registry.list()).find((view) => view.connector.id === "docs");
+    assert.equal(saved?.connector.authentication, "oauth");
+    assert.equal(opened.length, 1);
+    assert.match(opened[0] ?? "", /^https:\/\/identity\.example\/authorize\?/);
+    await registry.save(draft({ id: "api-key", name: "API key", ...remote, headers: ["X-API-Key"] }));
+    for (const id of ["keyed", "api-key"]) {
+      await registry.connect(id, null, async (url) => void opened.push(url));
+      const keyed = (await registry.list()).find((view) => view.connector.id === id);
+      assert.equal(keyed?.connector.authentication, undefined, `${id}: any key header is its own sign-in`);
+      assert.equal(opened.length, 1, `${id}: no browser opens`);
+    }
+  } finally {
+    await registry.cancelAuthorization("docs");
+    await registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a sign-in switch that cannot be saved answers the failed connect instead of throwing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-mcp-"));
+  const server = accountServer();
+  const registry = new McpRegistry({
+    file: path.join(root, "mcp", "connectors.json"),
+    secrets: memorySecretPort(new Map()),
+    fetchImpl: server.fetchImpl,
+  });
+  await registry.init();
+  const opened: string[] = [];
+  try {
+    const remote = { transport: "http", url: "https://docs.example/mcp", command: undefined, args: undefined } as const;
+    await registry.save(draft({ id: "docs", name: "Docs", ...remote }));
+    // The connectors file can no longer be written: its folder is now a plain file.
+    await rm(path.join(root, "mcp"), { recursive: true, force: true });
+    await writeFile(path.join(root, "mcp"), "");
+    const result = await registry.connect("docs", null, async (url) => void opened.push(url));
+    assert.equal(result.ok, false);
+    assert.equal(typeof result.error, "string");
+    assert.deepEqual(opened, [], "no browser opens for a switch that was not kept");
+  } finally {
+    await registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

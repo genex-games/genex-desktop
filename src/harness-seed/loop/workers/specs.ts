@@ -9,20 +9,20 @@ import { MAX_WORKER_WAIT_S, MAX_WORKERS_AT_ONCE, WorkerTool } from "./contract.t
 /** One string property of a tool's schema. */
 const text = (description: string) => ({ type: "string", description });
 
-/** `worker_start`'s description, naming the kinds of worker on offer. */
-function startDescription(types: readonly WorkerType[]): string {
+/** `worker_start`'s description, naming the kinds of worker on offer and how many may run at once. */
+function startDescription(types: readonly WorkerType[], allowed: number): string {
   const kinds = types.length
     ? ` Kinds of worker the plugins on offer declare (type): ${types.map((type) => `${type.id} (${type.description})`).join("; ")}.`
     : "";
-  return `Start a worker for one task, in the background: a reader in place (isolation read), a writer in its own copy that you merge with ${WorkerTool.Mark} (copy), or the one writer in place (lock). It works in this chat's permission mode and sees nothing but its task. Up to ${MAX_WORKERS_AT_ONCE} at once; answers its id.${kinds}`;
+  return `Start a worker for one task, in the background: a reader in place (isolation read), a writer in its own copy that you merge with ${WorkerTool.Mark} (copy), or the one writer in place (lock). It works in this chat's permission mode and sees nothing but its task. Up to ${allowed} at once (the person's Settings); answers its id.${kinds}`;
 }
 
-/** The six worker tools, with `worker_start` naming the kinds of worker on offer. */
-export function workerTools(types: readonly WorkerType[] = []): LiveToolSpec[] {
+/** The six worker tools, with `worker_start` naming the kinds of worker on offer and how many may run at once. */
+export function workerTools(types: readonly WorkerType[] = [], allowed: number = MAX_WORKERS_AT_ONCE): LiveToolSpec[] {
   return [
     {
       name: WorkerTool.Start,
-      description: startDescription(types),
+      description: startDescription(types, allowed),
       parameters: {
         type: "object",
         properties: {
@@ -71,7 +71,7 @@ export function workerTools(types: readonly WorkerType[] = []): LiveToolSpec[] {
     {
       name: WorkerTool.Mark,
       description:
-        "Your word on a finished worker: used merges a copy's work into your folder (conflicts come back to you), rejected drops it.",
+        "Your word on a finished worker, once you have read its report and looked at what it made (its pictures, at a size that shows the detail): used merges a copy's work into your folder (conflicts come back to you), rejected drops it.",
       parameters: {
         type: "object",
         properties: {

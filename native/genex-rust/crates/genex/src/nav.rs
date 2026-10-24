@@ -22,6 +22,13 @@ pub use genex_nav::tile::NavTile;
 pub use genex_nav::world::{NAV_SEARCH_NODES_DEFAULT, NAV_SEARCHES_PER_TICK_DEFAULT, NAV_TILES_MAX, NavBudget, NavMesh, NavMeshSource};
 pub use genex_nav::{AgentId, Nav, NavBodyId, NavConfig, NavDebug, NavErrorCode, NavLinkId, NavObstacleId};
 
+/// Whether this build links navigation (the facade's `nav` feature; `[nav] enabled = false` in a
+/// game's genex.toml leaves it out, release R-1). Without it `install` refuses `game.navigation`
+/// and `game.nav_bake` `nav-disabled`, and the runtime never bakes, saves or restores a nav, so
+/// none of genex-nav's engine is linked; `sim.nav` stays an empty nav the game's code compiles
+/// against.
+pub(crate) const NAV_BUILT: bool = cfg!(feature = "nav");
+
 /// The nav a seed starts with: empty, for the registered walker (the default walker when the
 /// game registered none).
 pub(crate) fn fresh(config: Option<&NavConfig>) -> Nav {

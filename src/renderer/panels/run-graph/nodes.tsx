@@ -1,6 +1,7 @@
 import { memo, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { PerformanceBoundary } from "../../performance.tsx";
 import { PerformanceComponent } from "../../../shared/performance.ts";
+import { t } from "../../../shared/i18n.ts";
 /**
  * The Builds graph's nodes: what you asked, the assets tile, every step, the optimization tile,
  * your build and the lead — in a tree for the whole run, with its background tile and the finish
@@ -44,19 +45,18 @@ import { GraphSelection } from "../inspector/selection.ts";
 import { NodeCursor, ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
 import { StateGlyph, TONE } from "../inspector/tone.tsx";
 import { sameStepNode, type StepNodeProps } from "./step-props.ts";
+import { throughShot, useRoundPicture, useSavePointShot, useWorkerStill } from "../run-stills.ts";
+import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import { FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
-import { useNow, useStepPicture } from "./use-builds-model.ts";
+import { useNow } from "./use-builds-model.ts";
 import type { ReferenceFrame } from "../../../shared/protocol.ts";
+import type { ProjectAsset } from "../../../shared/game-assets.ts";
 import { imageSrc, useMessageImages } from "../../chat/MessageImages.tsx";
 
 /** How many asset pictures the assets tile shows before it counts the rest. */
 const ASSETS_SHOWN = 3;
-
-/** The words a step's card wears about its picture. */
-const MESSAGE = {
-  /** A builder frame whose workspace stood on the run's starting point after the build had moved on. */
-  builtOnStart: "Built on the starting point",
-} as const;
+/** The largest side of the lead's picture. */
+const LEAD_PICTURE_PX = 640;
 
 /** How a node's frame looks: settled, a ghost of what is not there yet, at work right now, or your build. */
 const Variant = {
@@ -119,6 +119,10 @@ function NodeFrame({
     width: rect.w,
     height: rect.h,
     boxShadow: frameRing(variant, selected, edge),
+    // A large build has thousands of nodes and few on screen: the browser lays out and paints only
+    // those near the viewport, so opening Builds no longer lays out the whole graph at once.
+    contentVisibility: "auto",
+    containIntrinsicSize: `${rect.w}px ${rect.h}px`,
   };
   return (
     <button
@@ -202,6 +206,7 @@ function FarGlyph({ glyph }: { glyph: ReactNode }): JSX.Element | null {
  */
 function NodeFace({
   src,
+  picture = null,
   look = Look.Plain,
   fill = Fill.Hatch,
   tint = null,
@@ -216,6 +221,8 @@ function NodeFace({
   asked = null,
 }: {
   src: string | null;
+  /** Drawn in the picture's place when there is no still: a model as the Assets stage draws it. */
+  picture?: ReactNode;
   look?: Look;
   fill?: Fill;
   /** A state's tint (a token) laid over the fill: only the finish check has one. */
@@ -233,7 +240,7 @@ function NodeFace({
   glyph: ReactNode;
   asked?: string | null;
 }): JSX.Element {
-  const pictured = Boolean(src);
+  const pictured = Boolean(src) || Boolean(picture);
   return (
     <>
       {src ? (
@@ -246,7 +253,9 @@ function NodeFace({
           style={LOOK_STYLE[look]}
         />
       ) : (
-        <span aria-hidden="true" className={`absolute inset-0 ${FILL_CLASS[fill]}`} />
+        <span aria-hidden="true" className={`absolute inset-0 ${FILL_CLASS[fill]}`} style={LOOK_STYLE[look]}>
+          {picture}
+        </span>
       )}
       {tint ? <span aria-hidden="true" className="absolute inset-0" style={{ background: tint }} /> : null}
       {over}
@@ -326,13 +335,28 @@ function stepVariant(working: boolean, ghost: boolean): Variant {
 /** The chip on a step that folds several tries: which try is in hand, or how many it took. */
 function triesChip(tries: number, working: boolean): string | null {
   if (tries <= 1) return null;
-  return working ? `Try ${tries}` : `${tries} tries`;
+  return working ? t("Try {count}", { count: tries }) : t("{count, plural, other {# tries}}", { count: tries });
 }
+
+/** The words a step's card wears about its picture. */
+const PICTURE_WORDS = {
+  /** A builder frame whose workspace stood on the run's starting point after the build had moved on. */
+  builtOnStart: t("Built on the starting point"),
+} as const;
 
 /** The chip a step wears: its tries, and beside them that its picture stands on the starting point. */
 function stepChip(tries: number, working: boolean, onStart: boolean): string | null {
-  const parts = [triesChip(tries, working), onStart ? MESSAGE.builtOnStart : null].filter(Boolean);
+  const parts = [triesChip(tries, working), onStart ? PICTURE_WORDS.builtOnStart : null].filter(Boolean);
   return parts.length ? parts.join(" · ") : null;
+}
+
+/** A step's name for a screen reader: its state, how many tries it took when more than one, and a picture on the starting point. */
+function stepLabel(name: string, word: string, tries: number, onStart: boolean): string {
+  const label =
+    tries > 1
+      ? t("{name}: {status}, {count, plural, other {# tries}}", { name, status: word, count: tries })
+      : t("{name}: {status}", { name, status: word });
+  return onStart ? t("{label}, Built on the starting point", { label }) : label;
 }
 
 /** One step of a part: its shown try's picture (its agent's screen while it works), its state, and how many tries it took. */
@@ -349,14 +373,19 @@ export const StepNode = memo(function StepNode({
   const working = isLiveStep(step);
   // A chat turn's graph has no run whose saved frames or screens could be asked for.
   const run = runIdOf({ runId });
-  const picture = useStepPicture(run, step.picture, working && active);
+  const shot = useSavePointShot(step.shown, step.earlier);
+  const round = useRoundPicture(run, throughShot(step.roundPicture, shot), working && active);
   // The screen of the worker on the step now, never that of the attempt a restart replaced.
   const frame = usePartFrame(project, run, step.builder, working && active);
   const screen = useFrameSrc(frame);
+  const worker = useWorkerStill(project, step.picture);
   const word = stepWord(step, active);
   const tries = step.tries.length;
-  const onStart = !screen && picture.onStart;
   if (!rect) return null;
+  const onStart = !screen && round.onStart;
+  const still = screen ?? round.src ?? worker.src;
+  // With no picture of its own, a worker's step shows the asset it made.
+  const asset = still ? null : worker.asset;
   return (
     <PerformanceBoundary id={PerformanceComponent.StepNode}>
       <NodeFrame
@@ -364,13 +393,14 @@ export const StepNode = memo(function StepNode({
         rect={rect}
         variant={stepVariant(working, ghost)}
         selected={selected}
-        label={`${step.name}: ${[word, tries > 1 ? `${tries} tries` : null, onStart ? MESSAGE.builtOnStart : null].filter(Boolean).join(", ")}`}
+        label={stepLabel(step.name, word, tries, onStart)}
         screen={frame?.handle ?? null}
         onSelect={() => onSelect(step.id)}
       >
         <NodeFace
-          src={screen ?? picture.src}
-          look={ghost ? Look.Dim : Look.Plain}
+          src={still}
+          picture={project && asset ? <WorkerAsset project={project} asset={asset} /> : null}
+          look={stepLook(ghost, worker.borrowed && still === worker.src)}
           fill={working ? Fill.Shimmer : Fill.Hatch}
           over={frame ? <NodeCursor frame={frame} box={rect} /> : null}
           chip={stepChip(tries, working, onStart)}
@@ -385,17 +415,28 @@ export const StepNode = memo(function StepNode({
   );
 }, sameStepNode);
 
+/** A step's picture: dim when it is not in the build, soft when it is a reader's borrowed save point. */
+function stepLook(ghost: boolean, borrowed: boolean): Look {
+  if (ghost) return Look.Dim;
+  return borrowed ? Look.Soft : Look.Plain;
+}
+
+/** A worker's delivered model or image, as the Assets stage draws its thumbnail. */
+function WorkerAsset({ project, asset }: { project: string; asset: ProjectAsset }): JSX.Element {
+  return <AssetThumbnail project={project} asset={asset} companions={[]} fallback={null} quiet />;
+}
+
 /** A step being checked says so before its checker's action; a step being built says only the action. */
 const checkingWord = (step: Step, word: string): string | null => (step.state === StepState.Judging ? word : null);
 
 /** The start node's words. */
 const START_WORDS = {
-  label: "You asked",
-  noPrompt: "No prompt recorded",
-  starting: "Starting point…",
-  failed: "Start failed",
-  showAll: "Show all",
-  showLess: "Show less",
+  label: t("You asked"),
+  noPrompt: t("No prompt recorded"),
+  starting: t("Starting point…"),
+  failed: t("Start failed"),
+  showAll: t("Show all"),
+  showLess: t("Show less"),
 } as const;
 /** The start's request folded: to five lines in its own place, to three under its pictures (a class, so a far zoom still hides it). */
 const START_FOLD = { Alone: "line-clamp-5", UnderPictures: "line-clamp-3" } as const;
@@ -558,8 +599,7 @@ export function StartNode({
       <button
         type="button"
         data-graph-node={GraphSelection.Start}
-        data-working={building && !selected ? "true" : undefined}
-        aria-label={`${START_WORDS.label}: ${goal}`}
+        aria-label={t("You asked: {request}", { request: goal })}
         aria-pressed={selected}
         className="group/start relative flex cursor-pointer flex-col gap-2.5 rounded-[14px] p-0 text-left focus-visible:outline-2 focus-visible:outline-offset-[10px] focus-visible:outline-accent"
         onClick={(event) => {
@@ -569,6 +609,8 @@ export function StartNode({
       >
         <span
           aria-hidden="true"
+          data-graph-ring
+          data-working={building && !selected ? "true" : undefined}
           className="pointer-events-none absolute -inset-2.5 rounded-[18px] transition-[box-shadow] duration-150"
           style={{ boxShadow: ring }}
         />
@@ -599,8 +641,8 @@ const ASSETS_GLYPH: Partial<Record<Tone, StepState>> = {
 
 /** The assets tile's status when no plugin was asked: what the modeller made, or nothing yet. */
 function modelledStatus(modelled: number, active: boolean): { text: string; tone: Tone } {
-  if (modelled) return { text: `${modelled} modelled`, tone: Tone.Muted };
-  return { text: active ? "None yet" : "None made", tone: Tone.Muted };
+  if (modelled) return { text: t("{count, plural, other {# modelled}}", { count: modelled }), tone: Tone.Muted };
+  return { text: active ? t("None yet") : t("None made"), tone: Tone.Muted };
 }
 
 function AssetTile({ item, project }: { item: AssetInfo; project: string | null }): JSX.Element {
@@ -652,7 +694,7 @@ export function AssetsTile({
       id={GraphSelection.Assets}
       rect={rect}
       selected={selected}
-      label={`Assets: ${status.text}`}
+      label={t("Assets: {status}", { status: status.text })}
       onSelect={onSelect}
     >
       <span className="absolute inset-0 flex flex-col gap-2 p-2">
@@ -666,7 +708,7 @@ export function AssetsTile({
           )}
         </span>
         <TileText
-          name={all.length > ASSETS_SHOWN ? `Assets · ${all.length}` : "Assets"}
+          name={all.length > ASSETS_SHOWN ? t("Assets · {count}", { count: all.length }) : t("Assets")}
           word={status.text}
           glyph={glyphState ? <StateGlyph state={glyphState} /> : null}
           color={TONE[status.tone]}
@@ -693,13 +735,13 @@ export function OptimizationTile({
       id={GraphSelection.Optimization}
       rect={rect}
       selected={selected}
-      label="Optimization stage details"
+      label={t("Optimization stage details")}
       onSelect={onSelect}
     >
       <NodeFace
         src={null}
         fill={Fill.Flat}
-        name="Optimization"
+        name={t("Optimization")}
         word={optimizationStatus(node)}
         tone={Tone.Muted}
         glyph={null}
@@ -730,7 +772,7 @@ export function ResultNode({
   onSelect: () => void;
 }): JSX.Element | null {
   if (!rect) return null;
-  const name = active ? "Latest build" : "Your build";
+  const name = active ? t("Latest build") : t("Your build");
   const checking = status.state === StepState.Judging;
   return (
     <NodeFrame
@@ -738,7 +780,7 @@ export function ResultNode({
       rect={rect}
       variant={checking ? Variant.Working : Variant.Result}
       selected={selected}
-      label={`${name}: ${status.word}`}
+      label={t("{name}: {status}", { name, status: status.word })}
       onSelect={onSelect}
     >
       <NodeFace
@@ -763,7 +805,8 @@ const LEAD_LOOK: Record<LeadFace, { variant: Variant; fill: Fill; glyph: StepSta
   [LeadFace.Done]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.InBuild },
 };
 
-const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+/** The lead's faces that wear the run's last save point: its work is where that save point left it. */
+const SHOWS_LAST_SAVE: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused]);
 
 /**
  * The lead: while it works itself, its own screen when it has shown one. In a tree it stands for
@@ -773,18 +816,25 @@ export function LeadNode({
   rect,
   frame,
   face = LeadFace.Working,
+  lastSave = null,
   selected,
   onSelect,
 }: {
   rect: Rect;
   frame: AgentScreenFrame | null;
   face?: LeadFace;
+  /** The run's last save point: its picture is the lead's once the lead is done or paused. */
+  lastSave?: Step | null;
   selected: boolean;
   onSelect: () => void;
 }): JSX.Element {
   // Only the lead at work shows its screen; waiting, it is the workers' screens that move.
   const shown = face === LeadFace.Working ? frame : null;
-  const src = useFrameSrc(shown);
+  const saved = useSavePointShot(lastSave?.shown ?? null, lastSave?.earlier);
+  const settled = SHOWS_LAST_SAVE.has(face) && saved ? { run: saved.path, maxPx: LEAD_PICTURE_PX } : null;
+  const screen = useFrameSrc(shown);
+  const savedSrc = useStill(settled);
+  const src = screen ?? savedSrc;
   const look = LEAD_LOOK[face];
   const word = LEAD_WORDS.face[face];
   return (
@@ -793,7 +843,7 @@ export function LeadNode({
       rect={rect}
       variant={look.variant}
       selected={selected}
-      label={`${LEAD_WORDS.name}: ${lowerFirst(word)}`}
+      label={LEAD_WORDS.heard[face]}
       screen={shown?.handle ?? null}
       onSelect={onSelect}
     >
@@ -833,7 +883,7 @@ export function JobsTile({
       id={GraphSelection.Jobs}
       rect={rect}
       selected={selected}
-      label={`${JOBS_EYEBROW}: ${status.title}, ${status.status}`}
+      label={t("{kind}: {name}, {status}", { kind: JOBS_EYEBROW, name: status.title, status: status.status })}
       onSelect={onSelect}
     >
       <span className="absolute inset-0 flex flex-col justify-end p-2">
@@ -883,7 +933,7 @@ export function FinishCheckNode({
       variant={look.variant}
       edge={colours.edge}
       selected={selected}
-      label={`${FINISH_CHECK_WORDS.name}: ${face.name} · ${face.word}`}
+      label={t("{check}: {name} · {status}", { check: FINISH_CHECK_WORDS.name, name: face.name, status: face.word })}
       onSelect={onSelect}
     >
       <NodeFace

@@ -23,6 +23,7 @@ import type { CompleteRequest, CompleteResponse, Engine } from "../../substrate/
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { SUBSCRIPTION_ENGINES } from "./subscription-engines.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
@@ -68,16 +69,16 @@ const CHANGE_DIFF_MAX_CHARS = 400_000;
 
 /** Words the user reads when a suggestion or an undo cannot go ahead. */
 const MESSAGE = {
-  suggestionGone: "This suggestion is no longer waiting. Harness may have applied or discarded it already.",
-  suggestionTargetGone: "The instructions this suggestion changes are gone. Discard it.",
-  suggestionOutside:
-    "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.",
-  changeNotFound: "Harness couldn’t find this change.",
-  changeAlreadyUndone: "This change was already undone.",
-  changeBaseGone: "Harness no longer has the version from before this change, so it can’t undo it.",
-  undoWhileBuilding: "Harness is building right now. Undo this change when the build finishes.",
-  undoConflict: "A later change edited the same part of Harness’s instructions. Undo that change first.",
-  changeAlreadyGone: "This change no longer differs from what Harness has now.",
+  suggestionGone: () => t("This suggestion is no longer waiting. Harness may have applied or discarded it already."),
+  suggestionTargetGone: () => t("The instructions this suggestion changes are gone. Discard it."),
+  suggestionOutside: () =>
+    t("This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it."),
+  changeNotFound: () => t("Harness couldn’t find this change."),
+  changeAlreadyUndone: () => t("This change was already undone."),
+  changeBaseGone: () => t("Harness no longer has the version from before this change, so it can’t undo it."),
+  undoWhileBuilding: () => t("Harness is building right now. Undo this change when the build finishes."),
+  undoConflict: () => t("A later change edited the same part of Harness’s instructions. Undo that change first."),
+  changeAlreadyGone: () => t("This change no longer differs from what Harness has now."),
 } as const;
 
 /** Folders the architect never sees: the frozen judge, and installed packages. */
@@ -146,7 +147,7 @@ const isLinkRefusal = (err: unknown): boolean => (err as NodeJS.ErrnoException |
 async function assertRealFolder(folder: string): Promise<void> {
   const [info, real] = await Promise.all([lstat(folder).catch(() => null), realpath(folder).catch(() => null)]);
   const plain = info?.isDirectory() === true && real !== null && samePath(real, folder);
-  if (!plain) throw new SuggestionRefused(MESSAGE.suggestionOutside);
+  if (!plain) throw new SuggestionRefused(MESSAGE.suggestionOutside());
 }
 
 /**
@@ -159,7 +160,7 @@ async function suggestionFile(harnessWs: string, file: string): Promise<string> 
   const target = path.join(await realpath(harnessWs), file);
   const folder = path.dirname(target);
   const planned = await realpathNearest(folder).catch(() => null);
-  if (planned === null || !samePath(planned, folder)) throw new SuggestionRefused(MESSAGE.suggestionOutside);
+  if (planned === null || !samePath(planned, folder)) throw new SuggestionRefused(MESSAGE.suggestionOutside());
   // Something else standing where the folder should be is refused just below; a passing failure
   // (a full disk) is no refusal, and the suggestion waits for the next try.
   await mkdir(folder, { recursive: true }).catch((err: NodeJS.ErrnoException) => {
@@ -178,7 +179,7 @@ async function readSuggestionFile(file: string, missing: string | null): Promise
     return (await readRegularFile(file, SUGGESTION_FILE_MAX_BYTES)).toString("utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return missing;
-    throw new SuggestionRefused(MESSAGE.suggestionOutside);
+    throw new SuggestionRefused(MESSAGE.suggestionOutside());
   }
 }
 
@@ -191,7 +192,7 @@ async function writeSuggestionFile(file: string, text: string): Promise<void> {
   try {
     await writeFileNoFollow(file, text);
   } catch (err) {
-    if (isLinkRefusal(err)) throw new SuggestionRefused(MESSAGE.suggestionOutside);
+    if (isLinkRefusal(err)) throw new SuggestionRefused(MESSAGE.suggestionOutside());
     throw err;
   }
 }
@@ -541,7 +542,7 @@ export class SelfImprovementService {
   ): Promise<{ skill: string }> {
     const staged = await this.stagedList();
     const proposal = staged[findStaged(staged, index, key)];
-    if (!proposal) throw new Error(MESSAGE.suggestionGone);
+    if (!proposal) throw new Error(MESSAGE.suggestionGone());
     const { target: kind, skill, file } = proposalTarget(proposal);
     const lessons = kind === StagedTarget.Lessons;
     // The harness can plant links in its workspace and this process is not sandboxed: the file is
@@ -549,7 +550,7 @@ export class SelfImprovementService {
     const target = await suggestionFile(this.#core.layout.harnessWs, file);
     // The first lessons suggestion starts their file; a skill's file must still be there.
     const current = await readSuggestionFile(target, lessons ? "" : null);
-    if (current === null) throw new SuggestionRefused(MESSAGE.suggestionTargetGone);
+    if (current === null) throw new SuggestionRefused(MESSAGE.suggestionTargetGone());
     const text = rebaseProposal(proposal, current);
 
     const snapshot = await this.#core.snapshot(SnapshotScope.Harness, `skillopt: approved edits to ${skill}`);
@@ -628,12 +629,12 @@ export class SelfImprovementService {
   async undoSelfChange(snapshotId: string): Promise<{ file: string }> {
     const events = await this.#core.activityEvents();
     const change = changeRecords(events).find((record) => record.snapshotId === snapshotId);
-    if (!change) throw new Error(MESSAGE.changeNotFound);
-    if (undoneSelfChanges(events).has(snapshotId)) throw new Error(MESSAGE.changeAlreadyUndone);
+    if (!change) throw new Error(MESSAGE.changeNotFound());
+    if (undoneSelfChanges(events).has(snapshotId)) throw new Error(MESSAGE.changeAlreadyUndone());
     const before = this.#core.snapshotIndex.get(snapshotId)?.git.harness;
-    if (!before) throw new Error(MESSAGE.changeBaseGone);
+    if (!before) throw new Error(MESSAGE.changeBaseGone());
     const code = change.file.startsWith("loop/");
-    if (code && this.workInFlight()) throw new Error(MESSAGE.undoWhileBuilding);
+    if (code && this.workInFlight()) throw new Error(MESSAGE.undoWhileBuilding());
     const after = (
       (change.postSnapshotId ? this.#core.snapshotIndex.get(change.postSnapshotId) : undefined) ??
       this.nextHarnessSnapshot(snapshotId)
@@ -642,9 +643,9 @@ export class SelfImprovementService {
     try {
       reverted = await this.#core.snapshots.revert("harness", before, after, [change.file]);
     } catch {
-      throw new Error(MESSAGE.undoConflict);
+      throw new Error(MESSAGE.undoConflict());
     }
-    if (!reverted) throw new Error(MESSAGE.changeAlreadyGone);
+    if (!reverted) throw new Error(MESSAGE.changeAlreadyGone());
     await this.#archiveSkill(change);
     const undo = await this.#core.snapshot(SnapshotScope.Harness, `after undo: ${change.file}`);
     await this.#x.recovery.inheritHealth(undo);

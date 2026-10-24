@@ -52,6 +52,7 @@ async function checkedFile(root: string, relative: string) {
 async function stagedDigest(root: string, index: string, file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", [...HOST_GIT_CONFIG, "show", `:${file}`], {
+      windowsHide: true,
       cwd: root,
       env: { ...process.env, ...GIT_ENV, GIT_INDEX_FILE: index },
       stdio: ["ignore", "pipe", "pipe"],
@@ -75,6 +76,7 @@ function hostGit(root: string): HostGit {
   return async (args, index) =>
     (
       await exec("git", [...HOST_GIT_CONFIG, ...args], {
+        windowsHide: true,
         cwd: root,
         env: { ...process.env, ...GIT_ENV, ...(index ? { GIT_INDEX_FILE: index } : {}) },
         maxBuffer: GIT_MAX_BUFFER,

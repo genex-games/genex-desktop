@@ -35,7 +35,8 @@
 // receiver's own, whose GX_PCSS_MAX_TEXELS texels span their radius and whose map holds the
 // receiver (a wide penumbra is read from a coarser cascade, so the kernel stays within 16 texels
 // and the penumbra stays the same width across a split); only past the last such cascade is the
-// radius held to 16 of the receiver cascade's texels. The search reaches as far as a blocker at
+// radius held to 16 of the receiver cascade's texels; a narrower one is widened to
+// GX_PCSS_MIN_TEXELS, so a contact edge runs straight across the map's texels. The search reaches as far as a blocker at
 // the receiver cascade's slice sphere's sun-side point would spread its penumbra (renderer pass 2,
 // P2-0.3, SH-06: not from the map's near plane, which the legacy fit puts 60 units towards the sun).
 //
@@ -83,6 +84,13 @@ const GX_PCSS_MAX_WORLD: f32 = 1.0;
 // wider world radius is read from a coarser cascade. PCSS-lite shares both: fewer taps over the
 // same penumbra.
 const GX_PCSS_MAX_TEXELS: f32 = 16.0;
+// PCSS's narrowest kernel radius (blocker search and filter) in texels (release R-13, D22): a
+// contact edge, whose penumbra is far under a texel, is drawn by this kernel. At one texel the
+// turning disk's half-light line followed the map's texel staircase, 0.47 texels off a straight
+// edge at 17 degrees to the map (the audio-yard wall's notches, the twinstick wall's scallops);
+// two texels left 0.23 and three 0.18, the 5x5 PCF's level (a kernel only damps the staircase's
+// period, so wider costs softness for little).
+const GX_PCSS_MIN_TEXELS: f32 = 3.0;
 // The steepest receiver slope (world depth per world unit across the map) the receiver-plane bias
 // follows; a receiver nearly edge-on to the sun keeps this slope, and the rest of its slope as a
 // bias growing with each tap's distance. P2-0.3 (SH-11): open ground under a 7 degree sun climbs
@@ -347,10 +355,11 @@ fn gx_sun_front_distance(reference: f32, scale: vec2<f32>) -> f32 {
     return max(max(reference, 0.0) / scale.y - front, 0.0);
 }
 
-// A kernel of `radius` world units in `cascade`'s uv: at least one texel, at most GX_PCSS_MAX_TEXELS.
+// A kernel of `radius` world units in `cascade`'s uv: at least GX_PCSS_MIN_TEXELS texels, at most
+// GX_PCSS_MAX_TEXELS.
 fn gx_sun_kernel_uv(radius: f32, cascade: u32) -> f32 {
     let texel = 1.0 / f32(textureDimensions(shadow_map).x);
-    return clamp(radius * gx_sun_scale(cascade).x, texel, GX_PCSS_MAX_TEXELS * texel);
+    return clamp(radius * gx_sun_scale(cascade).x, GX_PCSS_MIN_TEXELS * texel, GX_PCSS_MAX_TEXELS * texel);
 }
 
 // One blocker tap `d` uv from the receiver `at` (whose plane is `plane`) in `cascade`'s map: the

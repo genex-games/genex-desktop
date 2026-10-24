@@ -4,9 +4,10 @@
 use genex_core::input::{Injection, InputMerger, PadState, TickInput};
 use genex_input::binding::{Binding, ChordInput, KeyCode, PadAxis, PadButton, PadFamily, Sign, Stick};
 use genex_input::glyph::{
-    Glyph, GlyphShape, KEY_LABEL_BYTES_MAX, KEY_LABELS_MAX, KeyLabels, action_glyph, binding_glyph, hint, key_label,
-    pad_label,
+    Glyph, GlyphShape, KEY_LABEL_BYTES_MAX, KEY_LABELS_MAX, KeyLabels, action_glyph, action_glyph_with, binding_glyph, hint,
+    key_label, pad_label,
 };
+use genex_input::touch::{Anchor, StickMode, TouchControls};
 use genex_input::id::{ActionId, ContextId, ControlId};
 use genex_input::map::{ActionMap, Context};
 use genex_input::state::{ActionState, Device, evaluate};
@@ -225,4 +226,51 @@ fn a_pad_family_on_the_tick_does_not_reach_the_glyph_unless_the_device_names_it(
     evaluate(&map, &mut state, &tick);
     assert_eq!(state.device(), Device::KeyboardMouse);
     assert_eq!(action_glyph(&map, JUMP, state.device(), &KeyLabels::new()).label, "Space");
+}
+
+// ---- touch prompts (release R-26) --------------------------------------------------------------
+
+const WALK: ActionId = ActionId::new("walk");
+const WALK_STICK: ControlId = ControlId::new("walk_stick");
+const ARROWS_PAD: ControlId = ControlId::new("arrows_pad");
+const STEER: ActionId = ActionId::new("steer");
+const TAP_BUTTON_LABEL: &str = "Blink";
+
+fn touch_game() -> (ActionMap, TouchControls) {
+    let map = ActionMap::new().context(
+        Context::new(PLAY, 0)
+            .axis2(WALK, &[Binding::WASD, Binding::Touch(WALK_STICK)])
+            .axis2(STEER, &[Binding::Touch(ARROWS_PAD)])
+            .button(BLINK, &[key("KeyB"), Binding::Touch(TAP)]),
+    );
+    let controls = TouchControls::new()
+        .stick(WALK_STICK, Anchor::BottomLeft([160.0, 160.0]), 80.0, StickMode::Floating)
+        .dpad(ARROWS_PAD, Anchor::TopLeft([120.0, 120.0]), 160.0)
+        .button(TAP, TAP_BUTTON_LABEL, Anchor::BottomRight([120.0, 120.0]), 60.0);
+    map.validate().expect("the touch map validates");
+    controls.check_bindings(&map).expect("the bindings name the layout's controls");
+    (map, controls)
+}
+
+#[test]
+fn a_touch_prompt_reads_the_controls_label_and_shape_never_its_id() {
+    // Red before R-26: the touch prompt read the control id ("tap", "walk_stick").
+    let (map, controls) = touch_game();
+    let labels = KeyLabels::new();
+    let glyph = |action| action_glyph_with(&map, action, Device::Touch, &labels, Some(&controls));
+    assert_eq!(glyph(BLINK), Glyph { label: TAP_BUTTON_LABEL.to_owned(), shape: GlyphShape::Touch, device: Device::Touch });
+    assert_eq!((glyph(WALK).label.as_str(), glyph(WALK).shape), ("Stick", GlyphShape::Stick), "an unlabelled stick reads its shape");
+    assert_eq!((glyph(STEER).label.as_str(), glyph(STEER).shape), ("D-pad", GlyphShape::Dpad));
+    let labelled = controls.clone().label("Walk");
+    // `label` names the last control: the Blink button here.
+    let relabelled = action_glyph_with(&map, BLINK, Device::Touch, &labels, Some(&labelled));
+    assert_eq!(relabelled.label, "Walk");
+    for action in [BLINK, WALK, STEER] {
+        let label = glyph(action).label;
+        assert!(!["tap", "walk_stick", "arrows_pad"].contains(&label.as_str()), "{label}");
+    }
+    // Off touch the prompt is the keyboard's, with or without the layout.
+    let keyboard = action_glyph_with(&map, BLINK, Device::KeyboardMouse, &labels, Some(&controls));
+    assert_eq!(keyboard, action_glyph(&map, BLINK, Device::KeyboardMouse, &labels));
+    assert_eq!(keyboard.label, "B");
 }

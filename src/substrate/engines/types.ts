@@ -298,6 +298,11 @@ export interface DelegateRequest {
    * asks in the chat's mode (`leadAsks`: a waking run's lead, the run's coordinator).
    */
   readOnly?: boolean;
+  /**
+   * A judge that plays: read-only, and it may not read files either. It sees the build only through
+   * its live tools, from an empty folder, so a note the builder left in the code cannot sway it.
+   */
+  blind?: boolean;
   /** A Loop's reviewer: the folder it reads (its cwd is a home of its own, which its brief must not name as the build). */
   reviewer?: { reads: string };
   /** Host-owned stable coordinator workspace; keep session cwd across chat turns. */
@@ -509,7 +514,10 @@ export class EngineError extends Error {
 
 export interface Engine {
   usageSnapshot?: () => ProviderUsage | null;
-  /** Subscription engines: the plan's limits, read from the provider without starting a turn. */
+  /**
+   * Subscription engines: the plan's limits, read from the provider without starting a turn. Null
+   * when the plan shares none; a throw when they could not be read.
+   */
   readUsage?(): Promise<ProviderUsage | null>;
   /** Subscription engines: login source and CLI summary for Settings. */
   account?(): Promise<EngineAccount>;

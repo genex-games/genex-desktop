@@ -4,6 +4,9 @@
 # `[gpu] native_features`) are listed in docs/api/genex-toml.md; any other key is refused.
 [game]
 title = "__GAME_TITLE__"
+# The game fills any window, as `.fit(Fit::Expand)` in main.rs (keep the two alike):
+# letterbox keeps black bars around a fixed picture (docs/api/ctx.md).
+fit = "expand"
 
 # How the game is drawn (docs/api/rendering.md). The quality is the device's: desktops and
 # phones each start on their own class's preset and the person can change it in the settings
@@ -21,3 +24,22 @@ tonemapper = "agx-punchy"
 exposure = "auto"
 ev_compensation = 0.5
 fog_density = 0.002
+
+# Game systems switched off stay out of the build, which keeps the web build small; their calls
+# still compile and are refused. Set `enabled = true` before using one (docs/api/genex-toml.md).
+# Sounds and music: gfx.sound and ctx.audio (docs/api/audio.md). Off, every sound is missing
+# `audio-disabled`.
+[audio]
+enabled = false
+
+# Walkers that find paths: game.navigation and sim.nav (docs/api/navigation.md).
+[nav]
+enabled = false
+
+# A big world streamed in cells around the player: game.streaming (docs/api/streaming.md).
+[streaming]
+enabled = false
+
+# Animated characters: gfx.character and the Animator (docs/api/animation.md).
+[animation]
+enabled = false

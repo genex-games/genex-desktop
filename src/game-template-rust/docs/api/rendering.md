@@ -21,7 +21,7 @@ up to 2 GiB).
 | `low` | MSAA 4x | 2 | off | off | off | 64 (0) |
 | `medium` | MSAA 4x | 2 | on | half size | off | 256 (0) |
 | `high` | TAA | 3 | on | half size, history | on | 1024 (2) |
-| `ultra` | TAA, RCAS | 4 | on | full size | on | 1024 (4) |
+| `ultra` | TAA | 4 | on | full size | on | 1024 (4) |
 
 Every preset draws HDR, image-based lighting, the sky and fog; below a render scale of 1 it
 upscales (TAA at output size on `high` and `ultra` without lens effects or `post-hdr` passes,
@@ -54,7 +54,7 @@ Each feature has a switch; off is its cheaper variant, never a refusal:
 | `ibl`, `sky` | environment lighting, the physical sky | flat `frame.ambient`, the clear colour |
 | `shadows`, `contact-shadows`, `spot-shadows` | sun cascades, screen-space contact, spot maps | that shadow |
 | `bloom`, `ao`, `fog` | the look's effects | none of it |
-| `taa`, `upscaler` | TAA with RCAS; below scale 1 TAA at output size or EASU | MSAA; bilinear |
+| `taa`, `upscaler` | TAA; below scale 1 TAA at output size or EASU with RCAS | MSAA; bilinear |
 | `clustered` | tile-binned point and spot lights | a per-pixel loop over the nearest 8 (4 on phones) |
 | `prepass` | depth, normals, motion for AO, contact shadows, TAA and Level-2/3 inputs | those fall back |
 | `meshlets`, `occlusion` | clustered big meshes, Hi-Z culling (off on every preset) | the instance path |

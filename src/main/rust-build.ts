@@ -56,7 +56,7 @@
 import type { LoadingStyle } from "../shared/loading-style.ts";
 import { createHash } from "node:crypto";
 import { constants as FS_CONSTANTS } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
 import { BuildPhase, type BuildProblem, BuildProblemCode, CppBuildPurpose } from "../shared/build-problem.ts";
@@ -144,6 +144,16 @@ import {
   type RustCrateRefusal,
   type RustLaneReport,
 } from "./rust-build-diagnostics.ts";
+import {
+  idleDonors,
+  RustTargetSeed,
+  RustTargetSharing,
+  rustTargetSharing,
+  sharedTargetDir,
+  sweepProject,
+  sweepShared,
+} from "./rust-build-cache.ts";
+import { type CloneFile, hostTreeCloner, type TreeCloner } from "../substrate/clone-tree.ts";
 
 const MESSAGE = {
   notAllowed: (names: readonly string[]) =>
@@ -294,13 +304,11 @@ const ENV = "/usr/bin/env";
 /** A build folder of one project: `<project>-<sha12>`. */
 const PROJECT_FOLDER = /^(.+)-[0-9a-f]{12}$/;
 /** One destination's build folder for one lock: `<target>-<digest12>`. */
-const BUILD_FOLDER = /^([a-z]+)-([0-9a-f]{12})$/;
 /** A project name that is one plain path segment; any other is foldered as {@link UNNAMED_PROJECT}. */
 const SAFE_PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const UNNAMED_PROJECT = "game";
 /** cargo's build profile per purpose: an export ships an optimized build. */
 const PROFILE = { dev: "dev", release: "release" } as const;
-
 /** Where the Rust toolchain a lock names is installed, as the store locates it (M2.3). */
 export interface RustToolchain {
   /** The sysroot's `bin` folder: cargo, rustc, cargo-clippy and clippy-driver. */
@@ -567,6 +575,25 @@ export interface RustBuildsOptions {
    * session of its admitted output. Absent: no bakes.
    */
   bakes?: RustBakeOptions;
+  /**
+   * Fills a build folder's new target folder (`to`, absent) from the store's prewarmed one for the
+   * lock and destination (`cloneRustTarget`: copy-on-write clones on APFS, so the clone costs no
+   * blocks until cargo rewrites a file) and answers whether it did. Absent, failing or false: the
+   * first build starts from an empty target folder and compiles every dependency.
+   */
+  warmTarget?: (lock: ToolchainLock, target: BuildTarget, to: string) => Promise<boolean>;
+  /**
+   * The host's copy-on-write folder clone (default `hostTreeCloner(platform)`: `cp -c` on APFS,
+   * reflinks on btrfs and XFS, none on Windows; null: none). Where the lane's root clones, a copy's
+   * first target is cloned from another copy of the game; where it does not, the game's copies
+   * share one target and build one at a time.
+   */
+  cloner?: TreeCloner | null;
+  /**
+   * The folders the app serves from now (a preview's `<bin>.out`): the sweep keeps their build
+   * folders. Absent: none; one that throws keeps every folder.
+   */
+  inUse?: () => readonly string[];
   /** The clock progress, problems and receipts are stamped with (default: `Date.now`). */
   now?: () => number;
 }
@@ -670,6 +697,10 @@ interface Pending {
 
 /** A pending build with its toolchain and sandbox. */
 interface Plan extends Pending {
+  /** The target folder cargo builds in: the build folder's own, or the game's shared one. */
+  targetDir: string;
+  /** How the host shares compiled dependencies, and where this build's target came from. */
+  cache: { sharing: RustTargetSharing; seed: RustTargetSeed };
   toolchain: RustToolchain;
   sandbox: RustBuildSandbox;
   /** The steps run so far, timed. */
@@ -723,6 +754,8 @@ interface ExportDebug {
 
 /** A build running (or waiting for a slot), which later looks at the same folder join; each caller waits with its own signal. */
 interface InFlight {
+  /** The game it builds (its folder or a copy of it). */
+  project: string;
   controller: AbortController;
   done: Promise<BuildOutcome>;
   waiters: number;
@@ -739,6 +772,14 @@ export class RustBuilds implements GameBuildLane {
   #active = 0;
   /** The lock digest last recorded per project, so the library is written once per change. */
   readonly #recorded = new Map<string, string>();
+  /** Whether this host's root clones copy-on-write, probed once. */
+  #sharing: Promise<RustTargetSharing> | null = null;
+  /** Build folders whose target a new copy is cloning now: their own next build waits for it. */
+  readonly #lending = new Map<string, Promise<void>>();
+  /** Shared targets a build holds or waits for: the last holder's turn, which the next waits on. */
+  readonly #holds = new Map<string, Promise<void>>();
+  /** The sweep a new build folder started, while it runs ({@link RustBuilds.sweep}). */
+  #sweeping: Promise<number> | null = null;
 
   constructor(options: RustBuildsOptions) {
     this.options = options;
@@ -783,25 +824,68 @@ export class RustBuilds implements GameBuildLane {
     for (const flight of this.#inFlight.values()) flight.controller.abort();
   }
 
+  /** Composer Stop: `project`'s builds in flight or waiting abort, of its folder and every copy; other games' go on. */
+  cancelGame(project: string): void {
+    for (const flight of this.#inFlight.values()) if (flight.project === project) flight.controller.abort();
+  }
+
   /**
    * Removes the build folders nothing will build again, with everything named after them beside:
-   * those whose source root is gone or unknown, and those of a lock that is neither the current one
-   * nor one a game of the library recorded ({@link RustBuildsOptions.retainedLocks}). A project with
-   * a build in flight is left whole; nothing is followed through a link.
+   * those whose source root is gone (a merged worker's worktree, a discarded Play-latest copy),
+   * unknown past the grace, or of a lock that is neither the current one nor one a game of the
+   * library recorded ({@link RustBuildsOptions.retainedLocks}; the core's lane names only those the
+   * store still holds, `core/rust-lane.ts`); then the shared targets no copy
+   * builds in any more (`rust-build-cache.ts`). A project with a build in flight or lending its
+   * target is left whole, a folder the app serves stays, one that cannot be removed is skipped,
+   * and nothing is followed through a link. When the app cannot say what it serves, nothing goes.
    */
   async sweep(): Promise<number> {
     const root = path.resolve(this.options.root);
     if (!(await lstat(root).catch(() => null))?.isDirectory()) return 0;
+    const served = this.#served();
+    if (served === null) return 0;
     const keep = await this.#keptLocks();
-    const busy = new Set([...this.#inFlight.keys()].map((bin) => path.dirname(bin)));
+    const busyBins = new Set([...this.#inFlight.keys(), ...this.#lending.keys()]);
+    const busy = new Set([...busyBins].map((bin) => path.dirname(bin)));
+    const guard = { keep, served, now: this.#now(), busy: (bin: string) => busyBins.has(bin) };
     let removed = 0;
     for (const name of await readdir(root).catch(() => [] as string[])) {
       const project = path.join(root, name);
       if (!PROJECT_FOLDER.test(name) || busy.has(project)) continue;
       if (!(await lstat(project).catch(() => null))?.isDirectory()) continue;
-      removed += await sweepProject(project, keep);
+      removed += await sweepProject(project, guard);
     }
-    return removed;
+    return removed + (await sweepShared(root, (dir) => this.#sharedBusy(dir)));
+  }
+
+  /** One sweep for every new build folder that asks while it runs; a sweep that fails removes nothing more. */
+  #sweepOnce(): Promise<number> {
+    if (this.#sweeping) return this.#sweeping;
+    const sweeping = this.sweep()
+      .catch(() => 0)
+      .finally(() => {
+        if (this.#sweeping === sweeping) this.#sweeping = null;
+      });
+    this.#sweeping = sweeping;
+    return sweeping;
+  }
+
+  /** The folders the app serves from now; null when it cannot say. */
+  #served(): readonly string[] | null {
+    try {
+      return [...(this.options.inUse?.() ?? [])].map((dir) => path.resolve(dir));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Whether a build holds or waits for the shared target `dir`, or one in flight will build in it. */
+  #sharedBusy(dir: string): boolean {
+    if (this.#holds.has(dir)) return true;
+    return [...this.#inFlight.keys()].some((bin) => {
+      const folder = PROJECT_FOLDER.exec(path.basename(path.dirname(bin)))?.[1] ?? null;
+      return sharedTargetDir(this.options.root, folder, path.basename(bin)) === dir;
+    });
   }
 
   /**
@@ -845,7 +929,7 @@ export class RustBuilds implements GameBuildLane {
     const controller = new AbortController();
     const start = () => this.#build(pending, controller.signal);
     const done = cancelled ? cancelled.done.then(start, start) : start();
-    const flight: InFlight = { controller, done, waiters: 0 };
+    const flight: InFlight = { project: pending.game.project, controller, done, waiters: 0 };
     this.#inFlight.set(pending.bin, flight);
     const forget = () => {
       if (this.#inFlight.get(pending.bin) === flight) this.#inFlight.delete(pending.bin);
@@ -913,17 +997,29 @@ export class RustBuilds implements GameBuildLane {
         extension: ExtensionRefusal.BuildScriptRefused,
       });
     }
+    // A new build folder is about to cost disk: the folders nothing builds again go first.
+    if (!(await lstat(pending.bin).catch(() => null))) await this.#sweepOnce();
+    const target = await this.#targetOf(pending);
+    // A copy cloning this folder's target finishes first; a shared target builds one copy at a time.
+    await this.#lending.get(pending.bin);
+    const held = target.shared ? await this.#hold(target.dir, signal) : () => {};
+    if (!held) return this.#outcome(pending, BuildProblemCode.Cancelled, { lastGood });
     const release = await this.#slot(signal);
-    if (!release) return this.#outcome(pending, BuildProblemCode.Cancelled, { lastGood });
+    if (!release) {
+      held();
+      return this.#outcome(pending, BuildProblemCode.Cancelled, { lastGood });
+    }
     let sandbox: RustBuildSandbox | null = null;
     try {
       this.#emit(pending, BuildPhase.Configure);
       const toolchain = withGrant(pending.bin, located.toolchain, grant);
-      const spec = await this.#prepare(pending, toolchain, grant, located.toolchain.vendor);
+      const { spec, seed } = await this.#prepare(pending, target, toolchain, grant, located.toolchain.vendor);
       sandbox = await this.options.sandbox(spec);
       const startedAt = this.#now();
       const plan: Plan = {
         ...pending,
+        targetDir: target.dir,
+        cache: { sharing: target.sharing, seed },
         toolchain,
         sandbox,
         steps: [],
@@ -955,6 +1051,7 @@ export class RustBuilds implements GameBuildLane {
     } finally {
       await sandbox?.dispose().catch(() => {});
       release();
+      held();
     }
   }
 
@@ -1128,7 +1225,7 @@ export class RustBuilds implements GameBuildLane {
         ran: true,
         rust: RustBuildRefusal.NoArtifact,
       });
-    const inside = await builtInside(plan.bin, exe);
+    const inside = await builtInside(plan.targetDir, exe);
     if (!inside) {
       const lines = [MESSAGE.artifactRefused(path.basename(exe))];
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
@@ -1147,7 +1244,8 @@ export class RustBuilds implements GameBuildLane {
     }
     const bakeCache = this.options.bakes?.cache(plan.game.project) ?? null;
     const webDir = web ? path.join(plan.bin, WEB_DIR) : null;
-    const written = await writeOutput(plan, shipped, webDir, this.options.admit, bakeCache);
+    const built = { exe: shipped, web: webDir, cloneFile: this.#fileCloner() };
+    const written = await writeOutput(plan, built, this.options.admit, bakeCache);
     if (!written.ok && "packageRefused" in written) {
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
         lines: [written.packageRefused],
@@ -1298,7 +1396,7 @@ export class RustBuilds implements GameBuildLane {
       triple: plan.builder.triple,
       kind: plan.debug.kind,
       sources: debugSources(plan.debug.kind, exe, name, plan.bin),
-      within: plan.bin,
+      within: plan.debug.kind === DebugFileKind.SymbolMap ? plan.bin : plan.targetDir,
       now: () => this.#now(),
     }).catch(() => null);
   }
@@ -1365,10 +1463,134 @@ export class RustBuilds implements GameBuildLane {
       finishedAt: this.#at(),
       steps: plan.steps,
       outputs,
+      cache: plan.cache,
       ...(web ? { web } : {}),
       ...(plan.assets ? { assets: plan.assets } : {}),
       ...(pack ? { package: pack } : {}),
     };
+  }
+
+  /**
+   * The target folder a build of `pending` uses: its build folder's own where the host clones
+   * copy-on-write (or the game has no name of its own), else the game's shared one for the
+   * destination and lock ({@link sharedTargetDir}).
+   */
+  async #targetOf(pending: Pending): Promise<{ dir: string; shared: boolean; sharing: RustTargetSharing }> {
+    const root = path.resolve(this.options.root);
+    this.#sharing ??= rustTargetSharing(root, this.#cloner());
+    const sharing = await this.#sharing;
+    const own = { dir: path.join(pending.bin, TARGET_DIR), shared: false, sharing };
+    if (sharing === RustTargetSharing.Clone) return own;
+    const folder = SAFE_PROJECT.test(pending.game.project) ? pending.game.project : null;
+    const dir = sharedTargetDir(root, folder, path.basename(pending.bin));
+    return dir === null ? own : { dir, shared: true, sharing };
+  }
+
+  /** The host's copy-on-write cloner, or null where it has none. */
+  #cloner(): TreeCloner | null {
+    return this.options.cloner === undefined ? hostTreeCloner(this.options.platform) : this.options.cloner;
+  }
+
+  /** The host's copy-on-write clone of one file, or null where it has none. */
+  #fileCloner(): CloneFile | null {
+    return this.#cloner()?.cloneFile ?? null;
+  }
+
+  /**
+   * Waits for the shared target `dir` and holds it: the release, or null when Stop came first.
+   * Each holder's turn is a promise the next waits on, so a game's copies build in the order asked.
+   */
+  async #hold(dir: string, signal: AbortSignal): Promise<(() => void) | null> {
+    const before = this.#holds.get(dir) ?? Promise.resolve();
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const turn = before.then(() => mine);
+    this.#holds.set(dir, turn);
+    void turn.then(() => {
+      if (this.#holds.get(dir) === turn) this.#holds.delete(dir);
+    });
+    const ready = await untilAborted(
+      before.then(() => true),
+      signal,
+    );
+    if (ready) return release;
+    release();
+    return null;
+  }
+
+  /**
+   * A build's target folder, seeded once: kept when it is already a real folder; otherwise (a link
+   * or file at its name is removed first) cloned from the freshest idle copy of the same game,
+   * destination and lock, else from the store's prewarm ({@link RustBuildsOptions.warmTarget}),
+   * else empty. A seed that fails, or leaves anything but a folder, leaves an empty one of its own.
+   * A build on a shared target drops the build folder's own target of an earlier, cloning host.
+   */
+  async #prepareTarget(pending: Pending, target: { dir: string; shared: boolean }): Promise<RustTargetSeed> {
+    const root = path.resolve(this.options.root);
+    if (target.shared) {
+      await rm(path.join(pending.bin, TARGET_DIR), { recursive: true, force: true });
+      for (const dir of [path.dirname(path.dirname(target.dir)), path.dirname(target.dir)]) await ownFolder(dir);
+    }
+    const found = await lstat(target.dir).catch(() => null);
+    if (found?.isDirectory()) return RustTargetSeed.Kept;
+    if (found) await rm(target.dir, { recursive: true, force: true });
+    const seed = await this.#seed(pending, target);
+    await ownFolder(target.dir);
+    if (!(await realFolders(root, target.dir))) throw new Error(MESSAGE.linked(target.dir));
+    return seed;
+  }
+
+  /** Fills the absent target folder from a sibling copy's, else the store's prewarm: what it came from. */
+  async #seed(pending: Pending, target: { dir: string; shared: boolean }): Promise<RustTargetSeed> {
+    if (!target.shared && (await this.#cloneFromCopy(pending, target.dir))) return RustTargetSeed.Copy;
+    const warmed = await this.options.warmTarget?.(pending.lock, pending.target, target.dir).catch(() => false);
+    if (warmed && (await lstat(target.dir).catch(() => null))?.isDirectory()) return RustTargetSeed.Prewarm;
+    await rm(target.dir, { recursive: true, force: true });
+    return RustTargetSeed.Cold;
+  }
+
+  /**
+   * Clones the target of the freshest idle copy of the game into `to`, else of the next freshest
+   * when that clone fails (a link in its target): each donor's next build waits until its clone is
+   * done, and a donor that started building is never taken.
+   */
+  async #cloneFromCopy(pending: Pending, to: string): Promise<boolean> {
+    if (!SAFE_PROJECT.test(pending.game.project)) return false;
+    const donors = await idleDonors({
+      root: this.options.root,
+      bin: pending.bin,
+      folder: pending.game.project,
+      targetOf: (bin) => path.join(bin, TARGET_DIR),
+      admittedOf: (bin) => `${bin}${ADMITTED_SUFFIX}`,
+      busy: (bin) => this.#inFlight.has(bin),
+    });
+    for (const donor of donors) if (await this.#cloneFrom(donor, to)) return true;
+    return false;
+  }
+
+  /** Clones `donor`'s target into `to`, lending it meanwhile; false when it is building now or the clone fails. */
+  async #cloneFrom(donor: string, to: string): Promise<boolean> {
+    // Checked again with no await before the lend is recorded: a build of the donor that started meanwhile wins.
+    if (this.#inFlight.has(donor)) return false;
+    let lent = () => {};
+    const lending = new Promise<void>((resolve) => {
+      lent = resolve;
+    });
+    const chained = Promise.all([this.#lending.get(donor), lending]).then(() => {});
+    this.#lending.set(donor, chained);
+    try {
+      const cloner = this.#cloner();
+      if (cloner === null) return false;
+      await cloner.clone(path.join(donor, TARGET_DIR), to);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      lent();
+      if (this.#lending.get(donor) === chained) this.#lending.delete(donor);
+    }
   }
 
   /**
@@ -1378,15 +1600,17 @@ export class RustBuilds implements GameBuildLane {
    */
   async #prepare(
     pending: Pending,
+    target: { dir: string; shared: boolean },
     toolchain: RustToolchain,
     grant: Extract<RustCrateGrant, { ok: true }>,
     storeVendor: string,
-  ): Promise<RustBuildSandboxSpec> {
+  ): Promise<{ spec: RustBuildSandboxSpec; seed: RustTargetSeed }> {
     const root = path.resolve(this.options.root);
     await mkdir(path.dirname(root), { recursive: true });
     for (const dir of [root, path.dirname(pending.bin), pending.bin]) await ownFolder(dir);
     await atomicWriteText(`${pending.bin}${SOURCE_SUFFIX}`, pending.source);
-    for (const dir of [TARGET_DIR, TMP_DIR]) await ownFolder(path.join(pending.bin, dir));
+    const seed = await this.#prepareTarget(pending, target);
+    await ownFolder(path.join(pending.bin, TMP_DIR));
     const stage = stageDir(pending.bin);
     await rm(stage, { recursive: true, force: true });
     await mkdir(stage);
@@ -1394,22 +1618,26 @@ export class RustBuilds implements GameBuildLane {
     if (!(await realFolders(root, pending.bin))) throw new Error(MESSAGE.linked(pending.bin));
     // The directory source cargo reads: the store's crates and the game's granted overlay crates, as host links.
     if (grant.vendor !== null) await mergedVendor(storeVendor, grant.crates, grant.vendor, toolchain.vendor);
+    // A shared target lies outside the build folder: the build writes it as its own while it holds it.
+    const shared = target.shared ? [target.dir] : [];
     const reads = [
       pending.bin,
+      ...shared,
       stage,
       `${pending.bin}${CARGO_HOME_SUFFIX}`,
       `${pending.bin}${HOME_SUFFIX}`,
       ...toolchain.reads,
       ...(pending.settings?.reads ?? []),
     ];
-    return {
+    const spec = {
       bin: pending.bin,
       tmp: path.join(pending.bin, TMP_DIR),
-      allowWrite: [pending.bin],
+      allowWrite: [pending.bin, ...shared],
       reads,
       denyWrite: await this.#denyWrite(pending),
       allowedDomains: [],
     };
+    return { spec, seed };
   }
 
   /** The source root and the paths no build writes, as named and as real (literal globs on a Mac). */
@@ -1727,11 +1955,14 @@ function buildEnv(plan: Plan): Record<string, string> {
     PATH: [plan.toolchain.bin, ...SYSTEM_PATH].join(path.delimiter),
     HOME: `${plan.bin}${HOME_SUFFIX}`,
     CARGO_HOME: `${plan.bin}${CARGO_HOME_SUFFIX}`,
-    CARGO_TARGET_DIR: path.join(plan.bin, TARGET_DIR),
+    CARGO_TARGET_DIR: plan.targetDir,
     TMPDIR: path.join(plan.bin, TMP_DIR),
     RUSTFLAGS: [...rustTrustPolicy(plan.trust.trusted).rustflags, ...(plan.settings?.rustflags ?? [])].join(" "),
     CARGO_TERM_COLOR: "never",
     CLIPPY_CONF_DIR: plan.toolchain.clippyConf,
+    // Set and empty, as the store's prewarm clears it (`rustEnv`): proc-macro2's build script reruns
+    // when it changes, and with it every proc macro and every crate deriving with one.
+    RUSTC_BOOTSTRAP: "",
   };
   if (plan.sdk) env.SDKROOT = plan.sdk;
   // The facade opens its device with exactly these (`option_env!`); cargo rebuilds it when they change.
@@ -1754,7 +1985,7 @@ function configArgs(plan: Plan, jobs: number): string[] {
     "net.offline=true",
     `build.rustc=${tomlString(path.join(plan.toolchain.bin, "rustc"))}`,
     'build.rustc-wrapper=""',
-    `build.target-dir=${tomlString(path.join(plan.bin, TARGET_DIR))}`,
+    `build.target-dir=${tomlString(plan.targetDir)}`,
     `build.jobs=${jobs}`,
     'term.color="never"',
   ];
@@ -1803,7 +2034,11 @@ function sharedArgs(plan: Plan, jobs: number): string[] {
   ];
 }
 
-/** Live's dev profile with optimized dependencies, cargo's release for an export, and a web export's size profile on top. */
+/**
+ * Live's and judging's dev profile, exactly the store prewarm's (optimized dependencies, the game
+ * crate at opt-level 1, line tables only), cargo's release for an export, and a web export's size
+ * profile on top.
+ */
 function profileArgs(plan: Plan): string[] {
   const asConfig = (settings: readonly string[]) => settings.flatMap((setting) => ["--config", setting]);
   if (profileOf(plan.purpose) !== PROFILE.release) return asConfig(RUST_DEV_PROFILE_SETTINGS);
@@ -1937,13 +2172,31 @@ async function vendoredIn(vendor: string, pkg: { name: string; version: string }
   return found.some((info) => info?.isDirectory());
 }
 
-/** `exe` when it is a regular file inside the build folder by its real path, never through a link; else null. */
-async function builtInside(bin: string, exe: string): Promise<string | null> {
+/** `exe` when it is a regular file inside the build's target folder by its real path, never through a link; else null. */
+async function builtInside(targetDir: string, exe: string): Promise<string | null> {
   if (!path.isAbsolute(exe)) return null;
   const found = await lstat(exe).catch(() => null);
   if (!found?.isFile() || found.size > EXECUTABLE_MAX_BYTES) return null;
-  const [realBin, realExe] = await Promise.all([realpath(bin).catch(() => null), realpath(exe).catch(() => null)]);
-  return realBin && realExe && isInside(realBin, realExe) && realExe !== realBin ? realExe : null;
+  const [realTarget, realExe] = await Promise.all([
+    realpath(targetDir).catch(() => null),
+    realpath(exe).catch(() => null),
+  ]);
+  return realTarget && realExe && isInside(realTarget, realExe) && realExe !== realTarget ? realExe : null;
+}
+
+/** `ready`'s answer, or false once `signal` aborts first. */
+async function untilAborted(ready: Promise<boolean>, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false;
+  let leave = () => {};
+  const aborted = new Promise<boolean>((resolve) => {
+    leave = () => resolve(false);
+    signal.addEventListener("abort", leave, { once: true });
+  });
+  try {
+    return await Promise.race([ready, aborted]);
+  } finally {
+    signal.removeEventListener("abort", leave);
+  }
 }
 
 /** What the stage read from `genex.toml`, taken into the plan: each field absent from the stage is its default. */
@@ -1974,17 +2227,17 @@ type WrittenOutput =
  */
 async function writeOutput(
   plan: Plan,
-  exe: string,
-  web: string | null,
+  built: BuiltFiles,
   admit: RustOutputAdmit | undefined,
   bakeCache: string | null,
 ): Promise<WrittenOutput> {
+  const { web } = built;
   const out = `${plan.bin}${OUT_SUFFIX}`;
   const fresh = `${out}.new`;
   await rm(fresh, { recursive: true, force: true });
   await mkdir(fresh);
   if (web) await copyRegularFiles(web, fresh);
-  else await copyExecutables(plan, exe, fresh);
+  else await copyExecutables(plan, built, fresh);
   const pack = plan.builder.assets
     ? await packageAssets({
         from: path.join(stageDir(plan.bin), ASSETS_DIR),
@@ -2031,15 +2284,34 @@ async function trustedLockRows(gameDir: string): Promise<AssetLockEntry[] | null
   return lock?.state === AssetLockState.Trusted ? lock.entries : null;
 }
 
+/** What a build hands `<bin>.out`: cargo's executable, the web branch's package, and the host's file clone. */
+interface BuiltFiles {
+  exe: string;
+  web: string | null;
+  /** The host's copy-on-write file clone (APFS's `cp -c`, a reflink); null where it has none. */
+  cloneFile: CloneFile | null;
+}
+
 /**
- * The executable under each of the builder's names. A clone where the file system makes one (APFS):
- * a file of its own, which a later write to cargo's copy never reaches, made without copying the
- * bytes; elsewhere a plain copy.
+ * The executable under each of the builder's names: a copy-on-write clone where the host makes one
+ * (a file of its own, which a later write to cargo's copy never reaches, sharing its blocks: on
+ * APFS Node's `COPYFILE_FICLONE` copies every byte), else, or when the clone fails, a plain copy.
  */
-async function copyExecutables(plan: Plan, exe: string, to: string): Promise<void> {
+async function copyExecutables(plan: Plan, built: BuiltFiles, to: string): Promise<void> {
+  const { exe, cloneFile } = built;
   for (const name of plan.builder.executables) {
-    await copyFile(exe, path.join(to, name), FS_CONSTANTS.COPYFILE_FICLONE);
-    await chmod(path.join(to, name), 0o755);
+    const file = path.join(to, name);
+    const cloned = cloneFile
+      ? await cloneFile(exe, file).then(
+          () => true,
+          () => false,
+        )
+      : false;
+    if (!cloned) {
+      await rm(file, { force: true });
+      await copyFile(exe, file, FS_CONSTANTS.COPYFILE_FICLONE);
+    }
+    await chmod(file, 0o755);
   }
 }
 
@@ -2132,34 +2404,4 @@ async function realFolders(root: string, target: string): Promise<boolean> {
     if (!(await lstat(current).catch(() => null))?.isDirectory()) return false;
   }
   return true;
-}
-
-/**
- * One project's folder: each build folder of a lock `keep` does not name, or whose source root is
- * gone or unknown, goes with everything named after it beside it; an empty project folder goes too.
- * With `keep` unknown (null), no folder goes for its lock alone.
- */
-async function sweepProject(project: string, keep: ReadonlySet<string> | null): Promise<number> {
-  let removed = 0;
-  const names = await readdir(project).catch(() => [] as string[]);
-  for (const name of names) {
-    const digest = BUILD_FOLDER.exec(name)?.[2];
-    if (!digest) continue;
-    const oldLock = keep !== null && !keep.has(digest);
-    if (!oldLock && (await sourceIsThere(path.join(project, name)))) continue;
-    for (const other of names)
-      if (other === name || other.startsWith(`${name}.`))
-        await rm(path.join(project, other), { recursive: true, force: true });
-    removed++;
-  }
-  await rmdir(project).catch(() => {});
-  return removed;
-}
-
-/** Whether the source root a build folder was made for is still there, read from the host's stamp beside it. */
-async function sourceIsThere(bin: string): Promise<boolean> {
-  if (!(await lstat(bin).catch(() => null))?.isDirectory()) return false;
-  const source = await readRegularFile(`${bin}${SOURCE_SUFFIX}`, STAMP_MAX_BYTES).catch(() => null);
-  if (!source?.length) return false;
-  return (await lstat(source.toString("utf8")).catch(() => null)) !== null;
 }

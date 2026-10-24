@@ -14,27 +14,51 @@
  * here: the notifications App draws on its own root read it.
  */
 import type { JSX } from "react";
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
+import { t } from "../shared/i18n.ts";
 import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
-import { Onboarding } from "./onboarding/Onboarding.tsx";
 import { AppDialogs, type DialogsState } from "./panels/AppDialogs.tsx";
 import { GenexPromo } from "./panels/GenexPromo.tsx";
+import { nativeViewsUp } from "./play/play-model.ts";
+import { AvatarWelcome } from "./play/AvatarWelcome.tsx";
+import { PlayPages } from "./play/PlayPages.tsx";
+import { PlayViewerLayer } from "./play/PlayViewerLayer.tsx";
+import { useGuestSignIn } from "./play/use-genex-sign-in.ts";
+import { usePlayRemixes } from "./play/use-play-remixes.ts";
 import { AppSidebar } from "./shell/AppSidebar.tsx";
 import { PluginsRoom, Toasts } from "./shell/store-leaves.tsx";
 import { useChatWidthVariable } from "./shell/use-shell-chrome.ts";
 import { noticeState } from "./shell/use-shell-notices.ts";
 import { useShell } from "./shell/use-shell.ts";
 import { Workspace } from "./shell/Workspace.tsx";
-import { useEngines, useUpdate } from "./state/hooks.ts";
+import { useEngines, usePlay, useUpdate } from "./state/hooks.ts";
 import { CodexLoginPanel } from "./ui/CodexLoginPanel.tsx";
+
+// The welcome loads when a first run shows it, outside the studio's first chunk (the eager budget in
+// `scripts/renderer-build.mjs`).
+const Onboarding = lazy(() => import("./onboarding/Onboarding.tsx").then((m) => ({ default: m.Onboarding })));
 
 /** `data-room` while Plugins covers the workspace. */
 const PLUGINS_ROOM = "plugins";
+/** `data-room` while Play's dashboard covers it. */
+const PLAY_ROOM = "play";
+
+/** The room `data-room` names: Plugins or Play over the workspace, else the open conversation's. */
+const roomName = (chrome: { pluginsOpen: boolean; playOpen: boolean }, room: string): string => {
+  if (chrome.pluginsOpen) return PLUGINS_ROOM;
+  return chrome.playOpen ? PLAY_ROOM : room;
+};
 
 /** The promo waits until every workspace dialog is closed. */
 function hasDialog(state: DialogsState): boolean {
   const open = [state.creating, state.searching, state.settingsOpen, state.game, state.picked, state.feedback];
   return open.some(Boolean);
+}
+
+/** The Genex promo, out of the way of the welcome, a covered workspace and any open dialog. */
+function Promo(props: { welcoming: boolean; covered: boolean; project: string | null; dialogs: DialogsState }) {
+  const { welcoming, covered, project, dialogs } = props;
+  return <GenexPromo welcoming={welcoming} pluginsOpen={covered} project={project} overlayOpen={hasDialog(dialogs)} />;
 }
 
 export function App(): JSX.Element {
@@ -44,8 +68,13 @@ export function App(): JSX.Element {
   const { activeThreadId, room, project } = threads;
   const engines = useEngines((s) => s.list);
   const updateReady = useUpdate((s) => s.ready !== null);
-  const overlayOpen = hasDialog(dialogs.state);
   useChatWidthVariable(shell, app);
+  usePlayRemixes(navigation, chrome);
+  useGuestSignIn();
+  // While Play's game or its menu lies over the window, no drag region takes the pointer from them (play.css).
+  const playNative = usePlay((s) => nativeViewsUp(s.viewer));
+  // A game playing in Play is modal: nothing under it takes the keyboard or a click.
+  const viewing = usePlay((s) => s.viewer !== null);
   useEffect(() => {
     const refresh = () => {
       void app.engines.refresh();
@@ -57,13 +86,14 @@ export function App(): JSX.Element {
     <div
       ref={shell}
       data-studio-state
-      data-room={chrome.pluginsOpen ? PLUGINS_ROOM : room}
+      data-room={roomName(chrome, room)}
       data-active-thread={activeThreadId ?? ""}
       data-project={project ?? ""}
       data-sidebar-open={chrome.sidebarVisible}
       data-compact={chrome.compactWindow}
       data-notices={noticeState(notices)}
       data-update-ready={updateReady || undefined}
+      data-play-native={playNative || undefined}
       className="studio-shell h-full bg-canvas"
     >
       <AppSidebar
@@ -73,16 +103,17 @@ export function App(): JSX.Element {
         navigation={navigation}
         notices={notices}
         welcoming={welcoming}
+        covered={viewing}
       />
       {chrome.drawerCovers && (
         <button
           type="button"
           className="studio-sidebar-backdrop"
-          aria-label="Close sidebar"
+          aria-label={t("Close sidebar")}
           onClick={chrome.toggleSidebar}
         />
       )}
-      <main className="relative min-h-0 min-w-0" inert={chrome.drawerCovers || welcoming}>
+      <main className="relative min-h-0 min-w-0" inert={chrome.drawerCovers || welcoming || viewing}>
         <Workspace
           app={app}
           chrome={chrome}
@@ -103,6 +134,7 @@ export function App(): JSX.Element {
             onToggleSidebar={chrome.toggleSidebar}
           />
         )}
+        {chrome.playOpen && !chrome.pluginsOpen && <PlayPages chrome={chrome} onNewGame={navigation.newGame} />}
       </main>
       <AppDialogs
         dialogs={dialogs}
@@ -113,14 +145,18 @@ export function App(): JSX.Element {
         onRemoveGame={navigation.removeGame}
       />
       {welcoming && (
-        <Onboarding
-          engines={engines}
-          onEnginesRefresh={app.engines.refresh}
-          onReady={welcome.readyAfterWelcome}
-          onFinish={welcome.finishWelcome}
-        />
+        <Suspense fallback={null}>
+          <Onboarding
+            engines={engines}
+            onEnginesRefresh={app.engines.refresh}
+            onReady={welcome.readyAfterWelcome}
+            onFinish={welcome.finishWelcome}
+          />
+        </Suspense>
       )}
-      <GenexPromo welcoming={welcoming} pluginsOpen={chrome.pluginsOpen} project={project} overlayOpen={overlayOpen} />
+      <Promo welcoming={welcoming} covered={chrome.workspaceCovered} project={project} dialogs={dialogs.state} />
+      <AvatarWelcome blocked={welcoming} />
+      <PlayViewerLayer />
       <Toasts />
       <CodexLoginPanel />
       <ColorTweakerHost />

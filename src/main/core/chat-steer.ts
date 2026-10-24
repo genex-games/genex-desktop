@@ -2,11 +2,14 @@
  * Steer, the host's half: a message the person sent while the chat's own turn works goes into
  * the session answering that turn (`engine.steer`). An engine that reads input mid-turn
  * (`Engine.steersMidTurn`) takes it at its next step and reports where it read it, which is
- * recorded in stream order among the turn's mirrored rows; any other session is interrupted —
- * marked `steered`, so its caller (the harness's `loop/chat-steer.ts`) resumes it with the
- * messages in front instead of reading a Stop. Only a chat's own session answers a turn, and a
- * run's lead, which answers the chat while its build runs (addressed by its run id, and told
- * without recording where: the queue recorded the hand-over): a builder's never.
+ * recorded in stream order among the turn's mirrored rows; any other session, and one asked not
+ * to read it mid-turn (`native: false`), is cut at its next step, between tool calls and never
+ * inside one (`steer-cut.ts`) — marked `steered`, so its caller (the harness's
+ * `loop/chat-steer.ts`) resumes it with the messages in front instead of reading a Stop. Either
+ * way the session's plugin calls stop waiting for a lock (`PersonWrote`): the agent reads the
+ * message first. Only a chat's own session answers a turn, and a run's lead, which answers the
+ * chat while its build runs (addressed by its run id, and told without recording where: the queue
+ * recorded the hand-over): a builder's never.
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
@@ -17,6 +20,8 @@ import { UiEvent } from "../../shared/ui-events.ts";
 import type { SteerMessage, SteerSend } from "../../substrate/engines/types.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { ActiveDelegation } from "./internals.ts";
+import { personWrote, personWroteBeforeCut } from "./plugin-locks.ts";
+import { cutAtNextStep } from "./steer-cut.ts";
 
 /** How long `engine.steer` waits for the session it names: the harness asks as soon as it has asked for it. */
 export const FIND_SESSION_MS = 3 * SECOND_MS;
@@ -31,8 +36,13 @@ const MESSAGE = {
 } as const;
 
 type SteerParams = HarnessParams<typeof HostMethod.EngineSteer>;
-/** How `engine.steer` waits between looks for the session: real time, or a test's own clock. */
-export type SteerSleep = (ms: number) => Promise<unknown>;
+/**
+ * How `engine.steer` waits, between looks for the session and for a cut's cap (`STEER_CUT_MAX_WAIT_MS`):
+ * real time, or a test's own clock. Its signal ends the wait early.
+ */
+export type SteerSleep = (ms: number, signal?: AbortSignal) => Promise<unknown>;
+/** Real time: a wait its signal ends rejects, and leaves no timer behind. */
+const realSleep: SteerSleep = (ms, signal) => sleep(ms, undefined, signal ? { signal } : {});
 type SteerAnswer = HarnessResult<typeof HostMethod.EngineSteer>;
 type DelegateParams = HarnessParams<typeof HostMethod.EngineDelegate>;
 
@@ -134,32 +144,47 @@ function sendEach(send: SteerSend, messages: readonly SteerMessage[]): string[] 
   return accepted;
 }
 
+/** The session's own input mid-turn, once its engine said; none when it has none, or the steer asks for a cut (`native: false`). */
+async function nativeSend(running: ActiveDelegation, p: SteerParams): Promise<SteerSend | null> {
+  if (p.native === false || !running.steer) return null;
+  return doorSend(running.steer);
+}
+
+/** The messages read mid-turn: the session's calls waiting for a lock stop waiting once it took one. */
+function sendNatively(running: ActiveDelegation, send: SteerSend, messages: readonly SteerMessage[]): SteerAnswer {
+  const accepted = sendEach(send, messages);
+  if (accepted.length && running.personWrote) personWrote(running.personWrote);
+  return { how: SteerDelivery.Native, accepted };
+}
+
 /**
  * `engine.steer`: messages the person sent while the chat's turn works, into the session
  * answering it. Read mid-turn by an engine that can (`native`, recorded where it reads them), or
- * taken by interrupting the session (`interrupt`): its caller resumes it with them in front.
- * `wait` is the clock it looks for the session on.
+ * taken by cutting the session at its next step (`interrupt`), answered at once though the cut
+ * lands when its tools in flight ended: its caller resumes it with them in front. `wait` is the
+ * clock it looks for the session on, and waits out a cut's cap on.
  */
 export async function steerIntoChat(
   delegations: ReadonlyMap<string, ActiveDelegation>,
   p: SteerParams,
-  wait: SteerSleep = sleep,
+  wait: SteerSleep = realSleep,
 ): Promise<SteerAnswer> {
   const messages = steerMessages(p);
   const running = await findChatSession(delegations, p, wait);
   if (!running || !messages.length) return REFUSED;
   const all = messages.map((m) => m.id);
-  // Already interrupted to take earlier messages: these join the same resume.
+  // Already cut, or to be at its next step, to take earlier messages: these join the same resume.
   if (running.steered) return { how: SteerDelivery.Interrupt, accepted: all };
   if (running.abort.signal.aborted) return REFUSED;
-  const send = running.steer ? await doorSend(running.steer) : null;
-  if (send) return { how: SteerDelivery.Native, accepted: sendEach(send, messages) };
-  // No input mid-turn (Codex, an older Claude Code, a Loop chat): interrupt, and the caller resumes —
-  // unless it asked for a session that reads them as it works, or none.
+  const send = await nativeSend(running, p);
+  if (send) return sendNatively(running, send, messages);
+  // No input mid-turn (Codex, an older Claude Code, a Loop chat), or none asked: cut, and the caller
+  // resumes — unless it asked for a session that reads them as it works, or none.
   const mayCut = p.interrupt !== false && !running.ended && !running.abort.signal.aborted;
   if (!mayCut) return REFUSED;
   running.steered = true;
-  running.abort.abort();
+  if (running.personWrote) personWroteBeforeCut(running.personWrote);
+  cutAtNextStep(running, wait);
   return { how: SteerDelivery.Interrupt, accepted: all };
 }
 

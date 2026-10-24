@@ -539,13 +539,14 @@ describe("skillopt: the gate", () => {
 
   it("leaves out what the web preview saw of a game that now builds in Unreal", async () => {
     const { writeEngineBinding } = await import("../../src/substrate/game-engine-binding.ts");
+    const { ENGINES, UNREAL_ENGINE } = await import("../helpers/engines.ts");
     const { respond } = makeResponder({ edits: [], gate: "reject" });
     const rig = await startRig({ respond });
     rigs.push(rig);
     const unreal = await rig.core.games.scaffold("fog-valley", { title: "Fog Valley" });
     const uproject = path.join(await tmpDir("unreal-project-"), "Valley.uproject");
     await writeFile(uproject, "{}\n");
-    await writeEngineBinding(unreal.dir, uproject);
+    await writeEngineBinding(unreal.dir, uproject, UNREAL_ENGINE.id, ENGINES);
     const observed = (project: string, brief: string, ok: boolean) => ({
       type: "custom" as const,
       event_type: "build_observation",

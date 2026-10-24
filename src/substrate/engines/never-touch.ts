@@ -9,7 +9,10 @@
  * it, a relative path against the folder a `cd` moved to, `sh -c`, `eval`, `$(…)` and backticks
  * followed; on Windows drive, share and Git Bash paths too) and any `security` call. A shell word
  * reaches what it names and everything below it, as a search does: `rm -rf ~/.codex` and `cd ..`
- * reach what those folders hold. A path a program builds while it runs escapes any text screen; in
+ * reach what those folders hold. A here-document is cut out of its line: one a program takes as
+ * text (`TEXT_READERS`), on the line the session runs itself with nothing on it that runs a shell or
+ * a file by its path, names paths only alone, so code and prose in it (`a / b`) reach no folder; every
+ * other one is screened as commands. A path a program builds while it runs escapes any text screen; in
  * every mode, Bypass included, the worker's box holds those at the OS boundary too
  * (claude-code.ts `workerSandbox`). The hook that carries the verdict into a session, and follows
  * links, is `neverTouchHook` in claude-permissions.ts.
@@ -17,7 +20,7 @@
 import path from "node:path";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { isInside } from "../paths.ts";
-import { STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
+import { STUDIO_SHELL_TOOL, STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
 import type { ScreenedCall } from "./types.ts";
 
 /** What a never-touch root holds, as the refusal names it. */
@@ -86,6 +89,11 @@ const PATH_PATTERN_TOOL = "Glob";
 const GREP_GLOB_FIELD = "glob";
 /** The shell tool, screened by its command line; a job's command is screened as one of its calls. */
 export const SHELL_TOOL = "Bash";
+
+/** Whether a call runs a command line: Bash, or the studio's shell that stands in for it (Windows). */
+function isShellCall(tool: string): boolean {
+  return tool === SHELL_TOOL || tool === STUDIO_SHELL_TOOL;
+}
 /** The macOS keychain's command line tool: any call of it is a sign-in reached. */
 const KEYCHAIN_COMMAND = "security";
 /** The word that ends a command's options (`cd -- dir`). */
@@ -173,6 +181,40 @@ const WORD_BREAK = /[\s<>]/;
 const NESTED_COMMANDS_MAX = 4;
 /** The commands that move the folder later relative paths are read against. */
 const CHANGES_FOLDER: ReadonlySet<string> = new Set(["cd", "pushd"]);
+/** Commands that run what they read as commands: a here-document they take, or one on the same line, is commands. */
+const RUNS_INPUT: ReadonlySet<string> = new Set([...SHELLS, "source", ".", "eval", "xargs"]);
+/**
+ * Programs that take a here-document as text: what it says is code or prose, so a word in it names a
+ * path only alone (`x = a / b` names no disk). What the program then does is held at the OS boundary.
+ */
+const TEXT_READERS: ReadonlySet<string> = new Set([
+  "cat",
+  "tee",
+  "python",
+  "python3",
+  "node",
+  "perl",
+  "ruby",
+  "blender",
+  "jq",
+  "sed",
+  "awk",
+  "grep",
+  "head",
+  "tail",
+  "wc",
+  "sort",
+]);
+/** A program's version after its name (`python3.11`): the program is the same. */
+const VERSION_SUFFIX = /[\d.]+$/;
+/** A command word that is a path: it runs a file, not a program found by name. */
+const PATH_SEPARATOR = /[\\/]/;
+/** A here-document's operator: `<<`, never the here-string `<<<`. */
+const HERE_OPERATOR = "<<";
+/** What ends a here-document's delimiter word outside quotes. */
+const DELIMITER_END = /[\s;&|()<>`]/;
+/** The tabs `<<-` strips from the front of each line of its body and of its delimiter line. */
+const LEADING_TABS = /^\t+/;
 
 /** The never-touch roots no open folder sits in: what a deny rule or a brief may name whole. */
 export function neverTouchWhole(list: NeverTouchList): string[] {
@@ -361,14 +403,77 @@ function closingParen(command: string, from: number): number {
   return command.length;
 }
 
-/** The command lines run inside a command line: its substitutions, and each simple command's script. */
-function nestedCommands(command: string, platform: NodeJS.Platform): string[] {
+/**
+ * The command lines run inside a command line `depth` levels down: its substitutions (a
+ * here-document's too, where its delimiter is unquoted), each simple command's script, and each
+ * here-document read as commands.
+ */
+function nestedCommands(line: CommandLine, platform: NodeJS.Platform, depth: number): string[] {
   const fold = (text: string) => folded(text, platform);
-  const scripts = simpleCommands(command).flatMap((words) => {
+  const scripts = line.commands.flatMap((words) => {
     const at = commandWord(words, fold);
     return at < 0 ? [] : nestedScripts(words, at, fold);
   });
-  return [...substitutions(command), ...scripts];
+  const documents = line.documents.flatMap((document) => {
+    if (!readsAsText(line, document, fold, depth)) return [document.body];
+    return document.expands ? substitutions(document.body) : [];
+  });
+  return [...substitutions(line.text), ...scripts, ...documents];
+}
+
+/**
+ * Whether a here-document is text to the program reading it: a program that takes text (`TEXT_READERS`)
+ * on the line the session runs itself (`depth` 0; inside a substitution or a script its output may
+ * yet run as commands), and nothing on that line that runs input as commands (a shell, `source`,
+ * `eval`, `xargs`), which a pipe could hand the body to, or that runs a file by its path, which the
+ * body may have just written. Every other here-document is screened as a command line.
+ */
+function readsAsText(
+  line: CommandLine,
+  document: HereDocument,
+  fold: (text: string) => string,
+  depth: number,
+): boolean {
+  if (depth > 0) return false;
+  if (line.commands.some((words) => runsInput(words, fold) || runsFile(words, fold))) return false;
+  const words = line.commands[document.reader] ?? [];
+  const at = commandWord(words, fold);
+  return at >= 0 && readsText(words[at] ?? "", fold);
+}
+
+/** Whether a command is a program that takes a here-document as text (`TEXT_READERS`), by name or by path. */
+const readsText = (command: string, fold: (text: string) => string): boolean =>
+  TEXT_READERS.has(fold(path.basename(command)).replace(VERSION_SUFFIX, ""));
+
+/** Whether a simple command runs a file by its path (`./build.sh`) that is no program reading text. */
+function runsFile(words: readonly string[], fold: (text: string) => string): boolean {
+  const command = words[commandWord([...words], fold)];
+  return command !== undefined && PATH_SEPARATOR.test(command) && !readsText(command, fold);
+}
+
+/** Whether a simple command runs what it reads as commands: its command, or a wrapper in front of it, is one that does. */
+function runsInput(words: readonly string[], fold: (text: string) => string): boolean {
+  const at = commandWord([...words], fold);
+  const front = at < 0 ? words : words.slice(0, at + 1);
+  return front.some((word) => RUNS_INPUT.has(fold(path.basename(word))));
+}
+
+/**
+ * The paths a here-document read as text names: each piece of it that names a path, as a path alone
+ * (a piece never reaches what lies below it), from the folder its reader stands in. A piece built
+ * from a variable the screen cannot read is no path it can name, and is passed over.
+ */
+function textPaths(body: string, base: string, home: string, platform: NodeJS.Platform): ScreenedPath[] {
+  return body
+    .split(PATH_WORD_SPLIT)
+    .filter((piece) => piece && namesPath(piece, platform))
+    .flatMap((piece) => {
+      try {
+        return [{ path: expanded(piece, base, home, platform), searches: false }];
+      } catch {
+        return [];
+      }
+    });
 }
 
 /**
@@ -402,17 +507,20 @@ function commandPaths(
 ): ScreenedPath[] {
   if (depth > NESTED_COMMANDS_MAX) throw new TypeError("a command line nested too deep to screen");
   const fold = (text: string) => folded(text, platform);
+  const line = lexCommandLine(command);
   const found: ScreenedPath[] = [];
   let base = cwd;
-  for (const words of simpleCommands(command)) {
+  for (const [index, words] of line.commands.entries()) {
     const at = commandWord(words, fold);
     const text = textWords(words, at, fold);
-    found.push(...words.flatMap((word, index) => (text.has(index) ? [] : wordPaths(word, base, home, platform))));
+    found.push(...words.flatMap((word, i) => (text.has(i) ? [] : wordPaths(word, base, home, platform))));
     // Once a `cd` moved away, a bare name (`.codex`) is a path from where it went, as the shell reads it.
     if (base !== cwd) found.push(...movedArguments(words, at, text, base, home, platform));
+    for (const document of line.documents.filter((d) => d.reader === index && readsAsText(line, d, fold, depth)))
+      found.push(...textPaths(document.body, base, home, platform));
     if (at >= 0 && CHANGES_FOLDER.has(fold(words[at] ?? ""))) base = movedTo(words.slice(at + 1), base, home, platform);
   }
-  for (const nested of nestedCommands(command, platform))
+  for (const nested of nestedCommands(line, platform, depth))
     found.push(...commandPaths(nested, base, home, platform, depth + 1));
   return found;
 }
@@ -466,8 +574,9 @@ export function screenedPaths(
   home: string,
   platform: NodeJS.Platform = process.platform,
 ): ScreenedPath[] {
-  if (call.tool.startsWith(STUDIO_TOOL_PREFIX)) return [];
-  if (call.tool !== SHELL_TOOL) return filePaths(call, cwd, home, platform);
+  const shell = isShellCall(call.tool);
+  if (!shell && call.tool.startsWith(STUDIO_TOOL_PREFIX)) return [];
+  if (!shell) return filePaths(call, cwd, home, platform);
   const command = call.input.command;
   if (typeof command !== "string") throw new TypeError("Bash.command is not a command line");
   return commandPaths(command, cwd, home, platform);
@@ -498,11 +607,48 @@ export function pathVerdict(
   return held ? { kind: held.kind, path: held.path } : null;
 }
 
-/** A command line being split into simple commands: the words so far, the open word and quote. */
+/** A here-document as the shell hands it to the command reading it. */
+interface HereDocument {
+  /** Its lines, without the delimiter line (and, for `<<-`, without their leading tabs). */
+  body: string;
+  /** Its delimiter was unquoted: the shell runs the body's `$(…)` and backticks before handing it over. */
+  expands: boolean;
+  /** The simple command whose input it is: its index among the line's commands. */
+  reader: number;
+}
+
+/** A here-document whose `<<` the lexer met, its body still to come after the line's next newline. */
+interface PendingDocument {
+  delimiter: string;
+  quoted: boolean;
+  stripsTabs: boolean;
+  reader: number;
+}
+
+/** A command line split for screening: its simple commands, and the here-documents cut out of it. */
+interface CommandLine {
+  commands: string[][];
+  documents: HereDocument[];
+  /** The line without its here-documents' bodies: where its own substitutions stand. */
+  text: string;
+}
+
+/**
+ * A command line being split into simple commands: the words so far, the open word and quote, the
+ * here-documents met, and where `<<` is no here-document (a comment, inside `$((…))`, `((…))`,
+ * `$[…]` or `${…}`).
+ */
 interface Lexer {
   commands: string[][];
   word: string | null;
   quote: string | null;
+  pending: PendingDocument[];
+  documents: HereDocument[];
+  /** The bodies' spans in the line, `[start, end)`. */
+  cuts: Array<[number, number]>;
+  comment: boolean;
+  /** Open arithmetic (`((`) and parameter (`${`, `$[`) expansions, by their closing text. */
+  expansions: string[];
 }
 
 /** Ends the open word, if any, into the current simple command. */
@@ -553,39 +699,178 @@ function dollarQuote(c: string, next: string): string | null {
   return next === '"' ? next : null;
 }
 
-/** One character outside quotes; returns how many characters it took. */
-function unquoted(lexer: Lexer, command: string, at: number): number {
-  const c = command.charAt(at);
-  const next = command.charAt(at + 1);
-  const opens = dollarQuote(c, next);
+/**
+ * What opens at `at` outside quotes: a `$'…'` or `$"…"` quote, or a here-document's operator; how
+ * many characters it took, 0 for neither. An expansion opening or closing there is noted on the way.
+ */
+function opening(lexer: Lexer, command: string, at: number): number {
+  const opens = dollarQuote(command.charAt(at), command.charAt(at + 1));
   if (opens) {
     lexer.quote = opens;
     lexer.word ??= "";
     return 2;
   }
+  trackExpansions(lexer, command, at);
+  return command.charAt(at) === "<" ? hereOperator(lexer, command, at) : 0;
+}
+
+/** One character outside quotes; returns how many characters it took. */
+function unquoted(lexer: Lexer, command: string, at: number): number {
+  const opened = opening(lexer, command, at);
+  if (opened) return opened;
+  const c = command.charAt(at);
+  const next = command.charAt(at + 1);
+  if (c === "#" && lexer.word === null) lexer.comment = true;
   if (c === "'" || c === '"') {
     lexer.quote = c;
     lexer.word ??= "";
   } else if (c === "\\") {
     lexer.word = (lexer.word ?? "") + next;
     return 2;
-  } else if (COMMAND_BREAK.test(c)) {
-    // `$(` opens a command of its own: the `$` is not a word.
-    if (c === "(" && lexer.word === "$") lexer.word = null;
-    endWord(lexer);
-    lexer.commands.push([]);
-  } else if (WORD_BREAK.test(c)) endWord(lexer);
+  } else if (COMMAND_BREAK.test(c)) return commandBreak(lexer, command, at);
+  else if (WORD_BREAK.test(c)) endWord(lexer);
   else lexer.word = (lexer.word ?? "") + c;
   return 1;
 }
 
-/** A command line's simple commands, as words with quotes removed: split on `;`, `&`, `|`, newlines, subshells. */
-function simpleCommands(command: string): string[][] {
-  const lexer: Lexer = { commands: [[]], word: null, quote: null };
+/**
+ * A character that ends a simple command (`COMMAND_BREAK`); returns how many characters it took,
+ * here-document bodies included after a newline.
+ */
+function commandBreak(lexer: Lexer, command: string, at: number): number {
+  const c = command.charAt(at);
+  // `$(` opens a command of its own: the `$` is not a word.
+  if (c === "(" && lexer.word === "$") lexer.word = null;
+  endWord(lexer);
+  lexer.commands.push([]);
+  return c === "\n" ? 1 + lineEnded(lexer, command, at + 1) : 1;
+}
+
+/**
+ * Note where an arithmetic (`((`, `$((`) or parameter (`${`, `$[`) expansion opens and closes: `<<`
+ * inside one is a shift or text, never a here-document. One left open keeps every later `<<` a word.
+ */
+function trackExpansions(lexer: Lexer, command: string, at: number): void {
+  const pair = command.slice(at, at + 2);
+  const open = lexer.expansions.at(-1);
+  if (open && command.startsWith(open, at)) lexer.expansions.pop();
+  else if (pair === "((") lexer.expansions.push("))");
+  else if (pair === "${") lexer.expansions.push("}");
+  else if (pair === "$[") lexer.expansions.push("]");
+}
+
+/**
+ * A here-document's operator at `at` (`<<`, `<<-`, then its delimiter word, quoted or not): noted to
+ * be read once the line ends; returns how many characters it took. 0 when it is none: a here-string,
+ * text in a comment or an expansion, or no delimiter word.
+ */
+function hereOperator(lexer: Lexer, command: string, at: number): number {
+  const isOperator = command.startsWith(HERE_OPERATOR, at) && command.charAt(at + 2) !== "<";
+  if (!isOperator || lexer.comment || lexer.expansions.length) return 0;
+  const stripsTabs = command.charAt(at + 2) === "-";
+  let from = at + 2 + (stripsTabs ? 1 : 0);
+  while (command.charAt(from) === " " || command.charAt(from) === "\t") from++;
+  const delimiter = delimiterWord(command, from);
+  if (!delimiter) return 0;
+  endWord(lexer);
+  lexer.pending.push({
+    delimiter: delimiter.word,
+    quoted: delimiter.quoted,
+    stripsTabs,
+    reader: lexer.commands.length - 1,
+  });
+  return delimiter.end - at;
+}
+
+/** The delimiter word starting at `from`, its quotes removed: where it ends and whether any part was quoted. */
+function delimiterWord(command: string, from: number): { word: string; quoted: boolean; end: number } | null {
+  let word = "";
+  let quoted = false;
+  let at = from;
+  while (at < command.length && !DELIMITER_END.test(command.charAt(at))) {
+    const c = command.charAt(at);
+    if (c === "'" || c === '"') {
+      const close = command.indexOf(c, at + 1);
+      if (close < 0) return null;
+      word += command.slice(at + 1, close);
+      quoted = true;
+      at = close + 1;
+    } else if (c === "\\") {
+      word += command.charAt(at + 1);
+      quoted = true;
+      at += 2;
+    } else {
+      word += c;
+      at++;
+    }
+  }
+  return word ? { word, quoted, end: at } : null;
+}
+
+/**
+ * The line ended at `from`: its here-documents' bodies follow, each up to its delimiter line, and
+ * are cut out of the line; returns how many characters they took. A body whose delimiter line never
+ * comes is no here-document the screen can read: the rest of the line is read as commands.
+ */
+function lineEnded(lexer: Lexer, command: string, from: number): number {
+  lexer.comment = false;
+  const pending = lexer.pending;
+  lexer.pending = [];
+  let at = from;
+  const documents: HereDocument[] = [];
+  for (const document of pending) {
+    const body = documentBody(command, at, document);
+    if (!body) return 0;
+    documents.push({ body: body.text, expands: !document.quoted, reader: document.reader });
+    at = body.end;
+  }
+  if (!documents.length) return 0;
+  lexer.documents.push(...documents);
+  lexer.cuts.push([from, at]);
+  return at - from;
+}
+
+/** One here-document's body from `from`: its lines up to its delimiter line, and where that line ends; null without one. */
+function documentBody(command: string, from: number, document: PendingDocument): { text: string; end: number } | null {
+  const lines: string[] = [];
+  let at = from;
+  while (at < command.length) {
+    const newline = command.indexOf("\n", at);
+    const end = newline < 0 ? command.length : newline;
+    const raw = command.slice(at, end);
+    const line = document.stripsTabs ? raw.replace(LEADING_TABS, "") : raw;
+    at = newline < 0 ? command.length : newline + 1;
+    if (line === document.delimiter) return { text: lines.join("\n"), end: at };
+    lines.push(line);
+  }
+  return null;
+}
+
+/**
+ * A command line's simple commands, as words with quotes removed (split on `;`, `&`, `|`, newlines,
+ * subshells), and its here-documents, their bodies cut out of the line.
+ */
+function lexCommandLine(command: string): CommandLine {
+  const lexer: Lexer = {
+    commands: [[]],
+    word: null,
+    quote: null,
+    pending: [],
+    documents: [],
+    cuts: [],
+    comment: false,
+    expansions: [],
+  };
   let i = 0;
   while (i < command.length) i += lexer.quote ? quoted(lexer, command, i) : unquoted(lexer, command, i);
   endWord(lexer);
-  return lexer.commands.filter((words) => words.length);
+  let text = command;
+  for (const [start, end] of [...lexer.cuts].reverse()) text = text.slice(0, start) + text.slice(end);
+  // A reader is numbered among every command lexed; the empty ones are dropped, so it is renumbered
+  // (-1, reading as commands, when its command is empty).
+  const kept = lexer.commands.flatMap((words, index) => (words.length ? [index] : []));
+  const documents = lexer.documents.map((document) => ({ ...document, reader: kept.indexOf(document.reader) }));
+  return { commands: lexer.commands.filter((words) => words.length), documents, text };
 }
 
 /** The command a simple command runs, past assignments and wrappers (with their options); its index. */
@@ -606,11 +891,12 @@ function commandWord(words: string[], fold: (text: string) => string): number {
 function callsKeychain(command: string, platform: NodeJS.Platform, depth = 0): boolean {
   if (depth > NESTED_COMMANDS_MAX) return true;
   const fold = (text: string) => folded(text, platform);
-  for (const words of simpleCommands(command)) {
+  const line = lexCommandLine(command);
+  for (const words of line.commands) {
     const at = commandWord(words, fold);
     if (at >= 0 && fold(path.basename(words[at] ?? "")) === KEYCHAIN_COMMAND) return true;
   }
-  return nestedCommands(command, platform).some((nested) => callsKeychain(nested, platform, depth + 1));
+  return nestedCommands(line, platform, depth).some((nested) => callsKeychain(nested, platform, depth + 1));
 }
 
 /**
@@ -625,7 +911,7 @@ export function neverTouchVerdict(
   home: string,
   platform: NodeJS.Platform = process.platform,
 ): NeverTouchHit | null {
-  const command = call.tool === SHELL_TOOL ? call.input.command : undefined;
+  const command = isShellCall(call.tool) ? call.input.command : undefined;
   if (typeof command === "string" && callsKeychain(command, platform))
     return { kind: NeverTouchKind.Login, path: KEYCHAIN_COMMAND };
   for (const screened of screenedPaths(call, cwd, home, platform)) {

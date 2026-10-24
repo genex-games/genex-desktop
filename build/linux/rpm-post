@@ -1,0 +1,28 @@
+# The rpm's %post: add the Genex package repository (packages.genex.games), so dnf and GNOME
+# Software bring every later version. The key comes from the package itself and always refreshes;
+# a repository file the person edited is kept, and `repo=off` in /etc/default/genex keeps it out.
+# GENEX_PACKAGE_ROOT exists only for the tests. Nothing here may fail the install.
+ROOT="${GENEX_PACKAGE_ROOT:-}"
+SHIPPED_KEY="$ROOT/usr/lib/genex/resources/genex-archive-keyring.asc"
+RPM_KEY="$ROOT/etc/pki/rpm-gpg/RPM-GPG-KEY-genex"
+REPO_FILE="$ROOT/etc/yum.repos.d/genex.repo"
+
+add_repository() {
+  [ -s "$SHIPPED_KEY" ] || return 0
+  [ -d "$ROOT/etc/yum.repos.d" ] || return 0
+  if grep -qs '^repo=off' "$ROOT/etc/default/genex"; then return 0; fi
+  mkdir -p "$ROOT/etc/pki/rpm-gpg" && cp "$SHIPPED_KEY" "$RPM_KEY" && chmod 0644 "$RPM_KEY" || return 0
+  [ -e "$REPO_FILE" ] && return 0
+  cat > "$REPO_FILE" <<'REPO_TEXT'
+[genex]
+name=Genex
+baseurl=https://packages.genex.games/rpm
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-genex
+REPO_TEXT
+}
+
+add_repository
+exit 0

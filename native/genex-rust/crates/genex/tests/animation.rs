@@ -264,6 +264,8 @@ fn refusing_game() -> Game<Refusals> {
         let mut nodes = gfx.node_clips("hero.glb").expect("the hero's node clips").animator();
         let clip = nodes.play("no-such-clip").expect_err("a clip the file does not have refuses");
         codes.push(clip.code.wire().to_owned());
+        // A build without the `animation` feature refuses every character (tests/switches.rs).
+        codes.push(AnimationErrorCode::Disabled.wire().to_owned());
         let shape = Character::on_ground(vec3(f32::NAN, 0.0, 0.0), CharacterParams::default()).expect_err("feet that are not finite refuse");
         codes.push(shape.code.wire().to_owned());
     });

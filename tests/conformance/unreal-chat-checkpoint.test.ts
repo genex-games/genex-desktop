@@ -22,6 +22,7 @@ import type { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { CodexEngine } from "../../src/substrate/engines/codex.ts";
 import { writeEngineBinding } from "../../src/substrate/game-engine-binding.ts";
+import { ENGINES, UNREAL_ENGINE } from "../helpers/engines.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
@@ -150,6 +151,7 @@ function standInOps(editor: StandInEditor): MomentOps {
       return { saved: saved?.saved !== false, dirty: Array.isArray(saved?.dirty) ? saved.dirty.map(String) : [] };
     },
     end: async () => ({ ended: 1 }),
+    setUp: async () => {},
     reopen: async () => ({ started: true }),
     state: async () => state,
     start: async () => null,
@@ -158,6 +160,7 @@ function standInOps(editor: StandInEditor): MomentOps {
     exported: async () => true,
     exportReference: async () => ({}),
     restoreClosed: { mark: () => {}, take: () => false },
+    mayEndPlay: async () => false,
   };
 }
 
@@ -219,7 +222,7 @@ async function unrealWorld(lites: CoreLite[]) {
   await mkdir(path.join(projects, "RailYard"));
   const uproject = path.join(projects, "RailYard", "RailYard.uproject");
   await writeFile(uproject, '{"FileVersion":3}\n');
-  await writeEngineBinding(unreal.dir, uproject);
+  await writeEngineBinding(unreal.dir, uproject, UNREAL_ENGINE.id, ENGINES);
   const api = core.api() as unknown as Record<"engine.delegate", (params: unknown) => Promise<unknown>>;
   const turn = async (game: { name: string }, extra: Record<string, unknown> = {}) => {
     // What the person was doing a moment ago is asked again.

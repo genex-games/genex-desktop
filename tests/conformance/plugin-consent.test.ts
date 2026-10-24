@@ -9,7 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it, test } from "node:test";
 import { PluginConsent } from "../../src/main/plugin-consent.ts";
+import { toEntries } from "../../src/renderer/chat-entries.ts";
+import { ConsentChoice, consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
+import { COMPUTER_SETTING_CARD_WORDS } from "../../src/renderer/words.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
+import { STUDIO_CONSENT_NAMES, StudioConsentSource } from "../../src/shared/plugins.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
@@ -98,6 +102,48 @@ test("the turn's abort signal withdraws its question as a stop", async () => {
   assert.deepEqual(consent.pending(), []);
 });
 
+test("the studio's card that turns computer control on names its source and asks Turn on or Not now", () => {
+  assert.equal(STUDIO_CONSENT_NAMES[StudioConsentSource.ComputerSetting], "Computer control");
+  const payload = {
+    consentId: "c-setting",
+    pluginId: StudioConsentSource.ComputerSetting,
+    pluginName: STUDIO_CONSENT_NAMES[StudioConsentSource.ComputerSetting],
+    tool: `${StudioConsentSource.ComputerSetting}__computer_control`,
+    args: {},
+    project: "garden",
+    prompt: "Turn on computer control for every chat?",
+    state: "pending",
+  };
+  const [card] = toEntries([
+    {
+      id: "000001",
+      thread_id: "t1",
+      turn_id: "turn",
+      session_id: null,
+      created_at: new Date(1).toISOString(),
+      data: { type: "custom", event_type: "plugin_consent", payload },
+    },
+  ]) as Array<Parameters<typeof consentChoices>[0]>;
+  assert.ok(card);
+  assert.equal(card.consentSource, "Computer control");
+  assert.equal(consentTitle(card), COMPUTER_SETTING_CARD_WORDS.title);
+  assert.match(consentTitle(card), /every chat/);
+  assert.deepEqual(
+    consentChoices(card).map((choice) => [choice.id, choice.label]),
+    [
+      [ConsentChoice.Once, COMPUTER_SETTING_CARD_WORDS.turnOn.label],
+      [ConsentChoice.Decline, COMPUTER_SETTING_CARD_WORDS.notNow.label],
+    ],
+  );
+  // Any other card keeps its own words and Allow once / Don't allow.
+  const plugin = { ...card, consentSourceId: "genex", consentSource: "Genex", consentPrompt: "Publish?" };
+  assert.equal(consentTitle(plugin), "Publish?");
+  assert.deepEqual(
+    consentChoices(plugin).map((choice) => choice.label),
+    ["Allow once", "Don't allow"],
+  );
+});
+
 // ── the run's own consent ────────────────────────────────────────────────────────────────
 
 const SERVER = path.resolve("tests/fixtures/mcp/plugin-server.mjs");
@@ -134,7 +180,10 @@ interface Outcome {
   called: boolean;
 }
 
-/** A local plugin with one MCP server (`editor`, echoing), with the capabilities it is granted. */
+/**
+ * A local plugin with one MCP server (`editor`, echoing), with the capabilities it is granted; one
+ * with `game-engine` declares an engine of its own whose projects are Unreal project files.
+ */
 async function connectorPackage(id: string, capabilities: string[]): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), `studio-${id}-`));
   const manifest = {
@@ -146,6 +195,17 @@ async function connectorPackage(id: string, capabilities: string[]): Promise<str
     description: "An editor connector.",
     backend: "backend.mjs",
     capabilities,
+    ...(capabilities.includes(GAME_ENGINE)
+      ? {
+          engine: {
+            id,
+            label: `Demo ${id}`,
+            projectFiles: [".uproject"],
+            fact: "unreal-project",
+            projectInFolder: true,
+          },
+        }
+      : {}),
     tools: [],
     skills: [],
     panels: [],

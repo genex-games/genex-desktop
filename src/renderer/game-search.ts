@@ -2,6 +2,7 @@
 import { buildIndex } from "../shared/catalog-search/buildIndex.ts";
 import { createSearcher } from "../shared/catalog-search/query.ts";
 import { ThreadKind } from "../shared/event-log.ts";
+import { t } from "../shared/i18n.ts";
 import type { ConversationRecord, GameProject, ThreadMeta } from "./types.ts";
 
 /** How many games a search returns at most. */
@@ -32,8 +33,8 @@ export function librarySearch(games: GameProject[], threads: ConversationRecord[
     if (folderlessDraft)
       items.push({
         id: `thread:${thread.id}`,
-        title: thread.title || firstAsks[thread.id] || "Untitled conversation",
-        detail: "Earlier conversation · no folder",
+        title: thread.title || firstAsks[thread.id] || t("Untitled conversation"),
+        detail: t("Earlier conversation · no folder"),
         threadId: thread.id,
         searchText: firstAsks[thread.id] ?? "",
       });

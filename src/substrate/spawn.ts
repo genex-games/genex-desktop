@@ -33,21 +33,21 @@ import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { Duplex, type Readable } from "node:stream";
+import { Duplex, type Readable, Writable } from "node:stream";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
-import { StudioPlatform } from "../shared/boot.ts";
+import { type SandboxProblem, StudioPlatform } from "../shared/boot.ts";
+import { ownBubblewrap } from "./linux-bubblewrap.ts";
 import { BuildTarget, type CompiledStack } from "../shared/game-project.ts";
 import {
   GameBoxProblem,
   NATIVE_CROSS_EXECUTABLES,
-  NATIVE_GAME_MEMORY_MAX_BYTES,
   NativeError,
   NativeRefusal,
   NativeRunMode,
 } from "../shared/native-contract.ts";
 import { prepareGameLaunch } from "./game-sandbox-profile.ts";
-import { LEAVE_GROUP_SYSCALLS } from "./plugins/native-process.ts";
+import { LEAVE_GROUP_SYSCALLS } from "./seatbelt.ts";
 import { type ReadSystemFile, usernsRestricted } from "./linux-apparmor.ts";
 import { prepareSandbox } from "./sandbox-prepare.ts";
 import {
@@ -61,6 +61,7 @@ import {
   sandboxProblem,
   usernsCheck,
   windowsLaunchError,
+  windowsProxyPortsError,
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
 import { shellQuote } from "./shell-quote.ts";
@@ -72,6 +73,7 @@ import {
   mobileCredentialHomes,
   openCodeServicePassword,
   packagedDeviceTools,
+  ROBLOX_ASSISTANT_SETTINGS,
   sandboxedCliHomes,
   withoutDeviceTools,
 } from "./credential-homes.ts";
@@ -104,15 +106,18 @@ import {
   renderEnvFile,
   srtWinExecFailure,
   srtWinPath,
+  type WindowsSetupGap,
   windowsDenyRead,
   windowsRunEnv,
   windowsSessionFor,
+  windowsSetupGaps,
   writeCurlHome,
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
 import {
   type LauncherFileStat,
   type WindowsStartDeps,
+  jobMemoryBytes,
   launcherDesktopFor,
   launcherGameExit,
   launcherMayLeaveProfile,
@@ -124,6 +129,8 @@ import {
   windowsLaunchDeps,
   WindowsLaunchRefusal,
 } from "./windows-game-launch.ts";
+import { DenyAccess } from "./windows-folder-ace.ts";
+import { type LiveInput, openLiveInput } from "./windows-live-input.ts";
 
 // Linux launches this native helper through a shell, which cannot traverse Electron's asar.
 // The runtime's automatic lookup returns its virtual archive path even when the file is unpacked.
@@ -161,9 +168,13 @@ export interface RunRequest {
   stdin?: string;
   /** Per-run policy overlay (e.g. opening `registry.npmjs.org` for one install). */
   policy?: Partial<SandboxPolicy>;
+  /** Hold this run to its own folders in place of the sandbox's writable roots (macOS and Linux). */
+  confine?: RunConfinement;
   /** Correlation label used for sandbox-violation attribution and logging. */
   label?: string;
   maxOutputBytes?: number;
+  /** Which end of a stream longer than `maxOutputBytes` is kept; the head unless said. */
+  keepOutput?: OutputKept;
   signal?: AbortSignal;
   /**
    * Once the command exits, end whatever it left running in its process group (POSIX): a C++
@@ -173,6 +184,25 @@ export interface RunRequest {
    * with `&` is theirs.
    */
   reapGroup?: boolean;
+}
+
+/** Which end of a long stdout or stderr a run keeps: a long build log ends with its verdict. */
+export const OutputKept = { Head: "head", Tail: "tail" } as const;
+/** Which end of a long stream a run keeps. */
+export type OutputKept = (typeof OutputKept)[keyof typeof OutputKept];
+
+/**
+ * The folders a confined run writes: a game's build or install writes its game and its own scratch,
+ * never another game, the games folder or another build's scratch. The sandbox's deny lists still
+ * hold, and so do the few folders srt itself keeps writable for every run (its own temp folder,
+ * npm's and Claude's logs under `$HOME`). On Windows srt-win grants writes for the whole session,
+ * so a confinement there changes nothing: the run writes what every sandboxed process there writes.
+ */
+export interface RunConfinement {
+  /** The only folders the run may write. */
+  write: readonly string[];
+  /** The run's TMPDIR, a folder of its own; made before the run and writable too. */
+  tmp: string;
 }
 
 export interface RunResult {
@@ -213,6 +243,11 @@ export interface SandboxOptions {
   ownHome?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
+  /**
+   * Windows: Genex's data folder. Moved off the profile (Settings → Storage), it is as closed as
+   * the profile, so the folders between it and each root it holds get the read-attributes grant.
+   */
+  dataRoot?: string;
   /** Extra always-readable roots (vendored toolchain, app resources); they win over {@link denyRead}. */
   readableRoots?: string[];
   /**
@@ -232,6 +267,20 @@ export interface SandboxOptions {
   platform?: NodeJS.Platform;
   /** Test seams for the Windows backend; production finds each of these itself. */
   windows?: WindowsSeams;
+  /**
+   * Windows: `create` checks only what Set up fixes (Git Bash, the sandbox user and its network
+   * filter) and starts the rest behind it. srt-win's network check and folder grants took minutes
+   * on a fresh PC, and the window waited on them; every launch waits for the start anyway.
+   * Elsewhere the sandbox starts in `create` as before.
+   */
+  startInBackground?: boolean;
+  /** Where the sandbox says how long each step of its start took (Windows). */
+  log?: (line: string) => void;
+  /**
+   * Linux: the bubblewrap to run (default: the app's own copy beside its executable when there is
+   * one, else the system's on PATH; substrate/linux-bubblewrap.ts says why).
+   */
+  bubblewrap?: string | null;
   /**
    * Test seams for Ubuntu's user-namespace check; production reads /proc, its own executable and
    * its folders. With a fake `runtime` and no `read`, nothing reads the host's /proc.
@@ -259,6 +308,8 @@ export interface GameBoxSeams {
   launcherStat?: (file: string) => LauncherFileStat | null;
   /** Windows: planning's realpath, the run claim and the host environment (default: `windowsLaunchDeps`). */
   windows?: Partial<Omit<WindowsStartDeps<ChildProcess>, "spawn" | "runsRoot">>;
+  /** Windows: the PC's physical memory in bytes, which sets the Job Object's limit (default: `os.totalmem()`). */
+  ramBytes?: number;
   /** Linux: bubblewrap's absolute path (default: {@link BWRAP}). */
   bwrap?: string;
   /** Linux: `bwrap --version`'s output, or null when it does not run (default: runs it, once). */
@@ -344,6 +395,13 @@ export interface WindowsSeams {
   session?: WindowsSandboxSession;
   /** The real user's profile folder (default: the home folder). */
   profile?: string;
+  /** What of the Windows sandbox is not set up yet (default: {@link windowsSetupGaps}). */
+  setupGaps?: () => Promise<WindowsSetupGap[]>;
+}
+
+/** The data folder spelled by its long name on Windows, as the grants are; null when none was given. */
+function longDataRoot(dataRoot: string | undefined, platform: NodeJS.Platform): string | null {
+  return dataRoot ? longPath(dataRoot, platform) : null;
 }
 
 /** The part of sandbox-runtime's `SandboxManager` this file drives. */
@@ -569,7 +627,8 @@ const RENDER_NODE_NAME = /^renderD[0-9]{1,3}$/;
  * window then offers the fix instead of the app quitting. Missing Linux tools are looked up on
  * PATH only after sandbox-runtime's own check fails; with every tool there, Linux checks Ubuntu's
  * user-namespace restriction, which sandbox-runtime does not. On Windows the dependency check runs
- * srt-win probes of its own, so it is skipped: `initialize` reports a missing setup with a typed code.
+ * srt-win probes of its own, so it is skipped here and asked only when a start fails
+ * ({@link asWindowsSetupProblem}).
  */
 function assertSandboxReady(
   runtime: Pick<SandboxRuntime, "isSupportedPlatform" | "checkDependencies">,
@@ -594,8 +653,37 @@ function asSetupProblem(error: unknown): unknown {
   return setup ? new SandboxUnavailableError(setup) : error;
 }
 
+/** The Windows setup problem for what is not set up yet, carrying what Set up does; null when nothing is missing. */
+function windowsGapProblem(gaps: readonly WindowsSetupGap[]): SandboxProblem | null {
+  return sandboxProblem({
+    platform: StudioPlatform.Windows,
+    supported: true,
+    dependencyErrors: gaps.map((gap) => gap.detail),
+    missingTools: [],
+    windowsNeeds: [...new Set(gaps.map((gap) => gap.need))],
+  });
+}
+
+/**
+ * A failed Windows start as the setup problem the window shows, when it is one: by the error's
+ * code, else by what is not set up yet, whose refusal `initialize` throws untyped. A failure the
+ * check does not explain, or a check that fails itself, stays the error it was.
+ */
+async function asWindowsSetupProblem(error: unknown, setupGaps: () => Promise<WindowsSetupGap[]>): Promise<unknown> {
+  const typed = asSetupProblem(error);
+  if (typed !== error) return typed;
+  const problem = windowsGapProblem(await setupGaps().catch((): WindowsSetupGap[] => []));
+  return problem ? new SandboxUnavailableError(problem) : error;
+}
+
 /** What a launch needs from a run or a long-lived start. */
-type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin" | "reapGroup">;
+type LaunchRequest = Pick<
+  RunRequest,
+  "command" | "cwd" | "env" | "label" | "policy" | "stdin" | "reapGroup" | "confine"
+> & {
+  /** A process that outlives this call (the harness): Windows sets the folder grants above its roots again first. */
+  longLived?: boolean;
+};
 
 /** How one process starts: the program, its arguments, its environment, and whether srt wraps it. */
 interface LaunchPlan {
@@ -611,31 +699,68 @@ interface LaunchPlan {
   stdinInFile?: boolean;
 }
 
-/** Collect a child's stdout and stderr as text, each clipped at `maxChars`. */
+/** One stream's kept text: its first or its last `maxChars` characters. */
+interface KeptStream {
+  add(text: string): void;
+  text(): string;
+}
+
+/** Keep the first `maxChars` characters of a stream; `onClip` hears that some were dropped. */
+function keptHead(maxChars: number, onClip: () => void): KeptStream {
+  let kept = "";
+  return {
+    add(text) {
+      if (kept.length + text.length > maxChars) onClip();
+      if (kept.length < maxChars) kept = (kept + text).slice(0, maxChars);
+    },
+    text: () => kept,
+  };
+}
+
+/**
+ * Keep the last `maxChars` characters of a stream. The text is trimmed only once it holds twice
+ * the cap, so a long log costs a copy per `maxChars` of output, not one per chunk.
+ */
+function keptTail(maxChars: number, onClip: () => void): KeptStream {
+  let kept = "";
+  return {
+    add(text) {
+      kept += text;
+      if (kept.length > maxChars) onClip();
+      if (kept.length > 2 * maxChars) kept = kept.slice(-maxChars);
+    },
+    text: () => kept.slice(-maxChars),
+  };
+}
+
+/** Collect a child's stdout and stderr as text, each clipped at `maxChars` from the end `keep` names. */
 function captureOutput(
   child: { stdout: Readable; stderr: Readable },
   maxChars: number,
+  keep: OutputKept,
 ): { stdout: string; stderr: string; truncated: boolean } {
-  const output = { stdout: "", stderr: "", truncated: false };
-  const clip = (buf: Buffer, current: string): string => {
-    if (current.length >= maxChars) {
-      output.truncated = true;
-      return current;
-    }
-    const next = current + buf.toString("utf8");
-    if (next.length > maxChars) {
-      output.truncated = true;
-      return next.slice(0, maxChars);
-    }
-    return next;
+  let truncated = false;
+  const onClip = () => {
+    truncated = true;
   };
-  child.stdout.on("data", (buf: Buffer) => {
-    output.stdout = clip(buf, output.stdout);
-  });
-  child.stderr.on("data", (buf: Buffer) => {
-    output.stderr = clip(buf, output.stderr);
-  });
-  return output;
+  const kept = keep === OutputKept.Tail ? keptTail : keptHead;
+  const stdout = kept(maxChars, onClip);
+  const stderr = kept(maxChars, onClip);
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (text: string) => stdout.add(text));
+  child.stderr.on("data", (text: string) => stderr.add(text));
+  return {
+    get stdout() {
+      return stdout.text();
+    },
+    get stderr() {
+      return stderr.text();
+    },
+    get truncated() {
+      return truncated;
+    },
+  };
 }
 
 /**
@@ -715,6 +840,23 @@ export function phoneDenyRead(
   return phone.filter((p) => existsSync(p));
 }
 
+/**
+ * Paths no agent process may write on `platform`, on top of the caller's list: the coding CLIs'
+ * sign-in homes and Roblox Studio's Assistant settings (which switch its MCP server).
+ */
+export function baseDenyWrite(
+  home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const localAppData = env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
+  const assistant =
+    platform === StudioPlatform.Windows
+      ? path.join(localAppData, ...ROBLOX_ASSISTANT_SETTINGS.windows)
+      : path.join(home, ...ROBLOX_ASSISTANT_SETTINGS.mac);
+  return [...credentialHomes(), assistant];
+}
+
 /** `.claude` in any case, as a sandbox glob: macOS's file system does not tell the cases apart. */
 const CLAUDE_FOLDER_GLOB = "[.][cC][lL][aA][uU][dD][eE]";
 /** What {@link literalGlob} rewrites character by character. */
@@ -770,6 +912,29 @@ export function claudeFoldersIn(folders: readonly string[]): string[] {
   return [...new Set(resolved.flatMap((folder) => claudeFolderDenyWrites(path.dirname(folder), [folder])))];
 }
 
+/** The policy a sandbox holds every process it starts to (`ProcessSandbox.create`). */
+function sandboxPolicy(options: SandboxOptions, platform: NodeJS.Platform, scratchDir: string): SandboxPolicy {
+  const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
+  const notOwn = (dir: string) => !own.includes(dir);
+  return {
+    allowedDomains: [],
+    allowLocalBinding: true,
+    allowWrite: [...options.writableRoots, scratchDir, ...own],
+    allowRead: options.readableRoots ?? [],
+    denyRead: [
+      ...baseDenyRead(os.homedir(), platform).filter(notOwn),
+      ...phoneDenyRead(os.homedir(), platform),
+      ...options.secretPaths,
+      ...(options.denyRead ?? []),
+    ],
+    denyWrite: [
+      ...baseDenyWrite(os.homedir(), platform).filter(notOwn),
+      ...options.secretPaths,
+      ...(options.denyWrite ?? []),
+    ],
+  };
+}
+
 /**
  * The named homes a sandbox may exempt: exactly the sign-in home of a CLI that runs inside the
  * studio's sandbox, never a secret path, another CLI's home, a parent folder or a relative path.
@@ -791,7 +956,12 @@ export class ProcessSandbox {
   /** Domains opened by runs in flight, with how many runs hold each open (PH-3). */
   #opened = new Map<string, number>();
   #initialized = false;
+  /** The start in flight, shared by every caller that needs it; cleared when it fails, so the next one tries again. */
+  #starting: Promise<void> | null = null;
   #initError: Error | null = null;
+  #log: ((line: string) => void) | null = null;
+  /** Linux: the bubblewrap sandbox-runtime runs, when not the system's on PATH. */
+  #bubblewrap: string | null = null;
   #toolPath: (() => Promise<string>) | null = null;
   #resolvedToolPath: Promise<string> | null = null;
   readonly #platform: NodeJS.Platform;
@@ -805,12 +975,15 @@ export class ProcessSandbox {
   /** Windows: the AppContainer launcher every game starts through, when this build has one. */
   #gameLauncher: string | null = null;
   #boxSeams: GameBoxSeams = {};
+  /** A Windows game's Job Object memory limit: the host's cap from its memory, read once. */
+  #jobMemoryBytes = 0;
   /** Linux: `bwrap --version`'s output, asked once (undefined until asked). */
   #bwrapVersion: string | null | undefined;
   /** The Android SDK folders that drive a device: never on a child's PATH (C1). */
   #deviceTools: string[] = [];
   /** macOS: those folders and the packaged device tools, by real path, where no agent process starts a program (C1). */
   #deviceToolExec: string[] = [];
+  #dataRoot: string | null = null;
 
   private constructor(policy: SandboxPolicy, enabled: boolean, scratchDir: string, platform: NodeJS.Platform) {
     this.policy = policy;
@@ -824,33 +997,34 @@ export class ProcessSandbox {
     await mkdir(options.scratchDir, { recursive: true });
     // Windows: the long path, since srt-win and Git Credential Manager trip over 8.3 short names.
     const scratchDir = longPath(options.scratchDir, platform);
-    const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
-    const notOwn = (dir: string) => !own.includes(dir);
-    const policy: SandboxPolicy = {
-      allowedDomains: [],
-      allowLocalBinding: true,
-      allowWrite: [...options.writableRoots, scratchDir, ...own],
-      allowRead: options.readableRoots ?? [],
-      denyRead: [
-        ...baseDenyRead(os.homedir(), platform).filter(notOwn),
-        ...phoneDenyRead(os.homedir(), platform),
-        ...options.secretPaths,
-        ...(options.denyRead ?? []),
-      ],
-      denyWrite: [...credentialHomes().filter(notOwn), ...options.secretPaths, ...(options.denyWrite ?? [])],
-    };
-    const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
-    sandbox.#toolPath = options.toolPath ?? null;
-    sandbox.#runtime = options.runtime ?? null;
-    sandbox.#seams = options.windows ?? {};
-    sandbox.#linux = { read: options.runtime ? NO_SYSTEM_FILES : undefined, ...options.linux };
-    sandbox.#nativeRunsRoot = options.nativeRunsRoot ?? null;
-    sandbox.#gameLauncher = options.gameLauncher ?? null;
-    sandbox.#boxSeams = options.gameBoxSeams ?? {};
-    sandbox.#deviceTools = deviceToolDirs(process.env, os.homedir(), platform);
-    sandbox.#deviceToolExec = [...sandbox.#deviceTools, ...packagedDeviceTools(platform)].map(realPathOrSelf);
-    if (sandbox.enabled) await sandbox.#initialize();
+    const sandbox = new ProcessSandbox(
+      sandboxPolicy(options, platform, scratchDir),
+      options.enabled ?? true,
+      scratchDir,
+      platform,
+    );
+    sandbox.#configure(options, platform);
+    if (!sandbox.enabled) return sandbox;
+    if (options.startInBackground && platform === StudioPlatform.Windows) await sandbox.#startInBackground();
+    else await sandbox.#initialize();
     return sandbox;
+  }
+
+  /** What `create` hands the instance beyond its policy: its seams, its game box's folders and helpers. */
+  #configure(options: SandboxOptions, platform: NodeJS.Platform): void {
+    this.#toolPath = options.toolPath ?? null;
+    this.#runtime = options.runtime ?? null;
+    this.#seams = options.windows ?? {};
+    this.#linux = { read: options.runtime ? NO_SYSTEM_FILES : undefined, ...options.linux };
+    this.#nativeRunsRoot = options.nativeRunsRoot ?? null;
+    this.#gameLauncher = options.gameLauncher ?? null;
+    this.#boxSeams = options.gameBoxSeams ?? {};
+    this.#jobMemoryBytes = jobMemoryBytes(this.#boxSeams.ramBytes ?? os.totalmem());
+    this.#deviceTools = deviceToolDirs(process.env, os.homedir(), platform);
+    this.#deviceToolExec = [...this.#deviceTools, ...packagedDeviceTools(platform)].map(realPathOrSelf);
+    this.#dataRoot = longDataRoot(options.dataRoot, platform);
+    this.#log = options.log ?? null;
+    this.#bubblewrap = platform === StudioPlatform.Linux ? (options.bubblewrap ?? ownBubblewrap()) : null;
   }
 
   /**
@@ -872,6 +1046,11 @@ export class ProcessSandbox {
 
   get initError(): Error | null {
     return this.#initError;
+  }
+
+  /** Wait for sandbox initialization before booting or recovering code that must run inside it. */
+  async ensureReady(): Promise<void> {
+    if (this.enabled) await this.#initialize();
   }
 
   /**
@@ -929,7 +1108,7 @@ export class ProcessSandbox {
         exe,
         desktop: launcherDesktopFor(request.mode),
         nonce: request.nonce,
-        memoryBytes: NATIVE_GAME_MEMORY_MAX_BYTES,
+        memoryBytes: this.#jobMemoryBytes,
       },
       deps,
     );
@@ -1132,6 +1311,21 @@ export class ProcessSandbox {
   }
 
   /**
+   * Open another folder the agent may read: a native runtime the person installed in their own
+   * profile, which srt-win's sandbox user cannot read otherwise. Idempotent, and a no-op when `dir`
+   * already sits inside a readable or writable root.
+   */
+  allowRead(dir: string): void {
+    const resolved = path.resolve(dir);
+    const roots = [...this.policy.allowRead, ...this.policy.allowWrite];
+    if (roots.some((root) => isInside(root, resolved))) return;
+    this.policy.allowRead.push(resolved);
+    // Windows: grants change only between commands, so the session queues a regrant instead.
+    if (this.#windows) this.#windows.session.update(this, this.#windowsGrants(this.#windows));
+    else this.#pushConfig();
+  }
+
+  /**
    * Deny writing more paths from the next process on (a game's `.claude` folder, once the game is
    * adopted). A process already running keeps the policy it started with.
    */
@@ -1151,6 +1345,8 @@ export class ProcessSandbox {
    */
   async dispose(): Promise<void> {
     await this.#stopGames();
+    // A start in flight joins the session; it leaves only after that.
+    await this.#starting?.catch(() => {});
     if (this.#windows) {
       this.#windows.session.leave(this);
       return;
@@ -1167,6 +1363,34 @@ export class ProcessSandbox {
 
   async #initialize(): Promise<void> {
     if (this.#initialized) return;
+    this.#starting ??= this.#boot().catch((error: unknown) => {
+      this.#starting = null;
+      throw error;
+    });
+    await this.#starting;
+  }
+
+  /**
+   * Windows: refuse now what Set up fixes, so the window still opens on the setup screen, and
+   * start the rest behind it. A start that fails there is tried again by the first launch, which
+   * reports its error.
+   */
+  async #startInBackground(): Promise<void> {
+    const runtime = this.#runtime ?? (await import("@anthropic-ai/sandbox-runtime")).SandboxManager;
+    assertSandboxReady(runtime, this.#platform);
+    const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
+    if (!bash) throw new SandboxUnavailableError(gitMissingProblem());
+    const gaps = await (this.#seams.setupGaps ?? windowsSetupGaps)().catch((): WindowsSetupGap[] => []);
+    const problem = windowsGapProblem(gaps);
+    if (problem) throw new SandboxUnavailableError(problem);
+    const started = performance.now();
+    this.#initialize().then(
+      () => this.#log?.(`started in the background in ${Math.round(performance.now() - started)} ms`),
+      (error: unknown) => this.#log?.(`background start failed: ${errorMessage(error)}`),
+    );
+  }
+
+  async #boot(): Promise<void> {
     try {
       const SandboxManager = this.#runtime ?? (await import("@anthropic-ai/sandbox-runtime")).SandboxManager;
       assertSandboxReady(SandboxManager, this.#platform, this.#linux);
@@ -1209,19 +1433,33 @@ export class ProcessSandbox {
     await Promise.all(this.policy.allowWrite.map((dir) => mkdir(dir, { recursive: true })));
     const toolDirs = [(await this.toolPath()) ?? "", process.env.PATH ?? ""].flatMap((value) => value.split(";"));
     const gitRoot = gitRootOf(bash);
+    const installDir = path.dirname(longPath(process.execPath, this.#platform));
     const read = [
-      path.dirname(longPath(process.execPath, this.#platform)),
+      installDir,
       ...grantableToolDirs(toolDirs, profile, this.policy.denyRead),
       ...(insideWindowsPath(profile, gitRoot) ? [gitRoot] : []),
     ];
-    const session = this.#seams.session ?? windowsSessionFor(runtime, { profile, srtWin: srtWinPath() });
+    const session =
+      this.#seams.session ??
+      windowsSessionFor(runtime, {
+        profile,
+        srtWin: srtWinPath(),
+        installDir,
+        ...(this.#dataRoot ? { dataRoot: this.#dataRoot } : {}),
+        ...(this.#log ? { log: this.#log } : {}),
+      });
     const backend = { session, bash, read, profile, curlHome: await writeCurlHome(this.scratchDir) };
     await session
       .join(this, { grants: this.#windowsGrants(backend), config: this.#windowsSessionConfig() })
-      .catch((error: unknown) => {
-        throw asSetupProblem(error);
+      .catch(async (error: unknown) => {
+        throw (
+          windowsProxyPortsError(error) ??
+          (await asWindowsSetupProblem(error, this.#seams.setupGaps ?? windowsSetupGaps))
+        );
       });
     this.#windows = backend;
+    // A folder or deny added while the session started (a start in the background) joins it now.
+    session.update(this, this.#windowsGrants(backend));
   }
 
   /**
@@ -1257,6 +1495,7 @@ export class ProcessSandbox {
   toRuntimeConfig(policy: SandboxPolicy): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
     return {
       ...(packagedSeccomp ? { seccomp: { applyPath: packagedSeccomp } } : {}),
+      ...(this.#bubblewrap ? { bwrapPath: this.#bubblewrap } : {}),
       network: {
         allowedDomains: policy.allowedDomains,
         deniedDomains: [],
@@ -1282,23 +1521,60 @@ export class ProcessSandbox {
     env?: Record<string, string>;
     label?: string;
     policy?: Partial<SandboxPolicy>;
-  }): Promise<{ child: ChildProcess; sandboxed: boolean }> {
+    /**
+     * All of the process's input, sent once and then closed. Pass it here rather than writing to
+     * the child: on Windows srt-win does not pass stdin on, so only the run's stdin file carries it.
+     */
+    stdin?: string;
+    /**
+     * Input the caller keeps writing for the life of the process (the Play Protocol's requests):
+     * write it to the answer's `input`, never to `child.stdin`, which srt-win does not pass on.
+     */
+    liveInput?: boolean;
+  }): Promise<{ child: ChildProcess; sandboxed: boolean; input: Writable }> {
     // Held open until the process is gone, as `run` holds it for the length of a run.
     const close = await this.#openDomains(request.policy);
+    let live: LiveInput | null = null;
     try {
-      const plan = await this.#launchPlan(request);
+      live = request.liveInput ? await this.#liveInput(request.command) : null;
+      const launch = live ? { ...request, ...this.#relayed(live, request.env) } : request;
+      const plan = await this.#launchPlan({ ...launch, longLived: true });
+      const relay = live;
       const done = () => {
         plan.release?.();
         close();
+        void relay?.close();
       };
       const child = this.#start(plan);
       child.once("close", done);
       child.once("error", done);
-      return { child, sandboxed: plan.sandboxed };
+      if (request.stdin !== undefined) {
+        // A process that exits before reading its input lands EPIPE here; its exit already says so.
+        child.stdin.on("error", () => {});
+        child.stdin.end(plan.stdinInFile ? undefined : request.stdin);
+      }
+      if (relay) void relay.connect(() => child.exitCode === null && child.signalCode === null);
+      return { child, sandboxed: plan.sandboxed, input: relay?.input ?? child.stdin };
     } catch (err) {
       close();
+      await live?.close();
       throw err;
     }
+  }
+
+  /** Windows, sandboxed: the relay a process's live input goes through. Null elsewhere: stdin carries it. */
+  async #liveInput(command: string): Promise<LiveInput | null> {
+    await this.ensureReady();
+    const backend = this.#windows;
+    if (!this.enabled || !backend) return null;
+    return openLiveInput({ command, shell: backend.bash, scratchDir: this.scratchDir });
+  }
+
+  /** The relay in place of the caller's command, by the studio's own Node, its variables beside the caller's. */
+  #relayed(live: LiveInput, env: Record<string, string> | undefined): { command: string; env: Record<string, string> } {
+    const node = shellQuote(mixedPath(longPath(process.execPath, this.#platform)));
+    const file = shellQuote(mixedPath(live.file));
+    return { command: `export ELECTRON_RUN_AS_NODE=1; exec ${node} ${file}`, env: { ...env, ...live.env } };
   }
 
   /**
@@ -1340,12 +1616,13 @@ export class ProcessSandbox {
     const manager = this.#manager;
     if (!manager) throw new Error(MESSAGE.NotInitialized);
     if (this.#windows) return this.#windowsLaunchPlan(manager, this.#windows, request, signal);
+    const tmp = await this.#runTmp(request);
     const wrapped = await prepareSandbox(
       () =>
         manager.wrapWithSandboxArgv(
-          this.#withScratchTmp(request.command),
+          this.#withTmp(request.command, tmp),
           process.platform === "darwin" ? SANDBOX_SHELL : undefined,
-          this.#overlay(request.policy ?? {}),
+          this.#overlay(request.policy ?? {}, request.confine),
           signal,
           request.cwd,
           { commandId: request.label ?? request.command, commandText: request.command },
@@ -1356,7 +1633,7 @@ export class ProcessSandbox {
     const reaped = request.reapGroup && this.#platform === StudioPlatform.Mac;
     const [file, ...args] = reaped ? keepInGroup(ruled) : ruled;
     if (!file) throw new Error(MESSAGE.EmptyArgv);
-    const env = { ...(await this.#env(wrapped.env, request.env)), ...NESTED_SHELL_ENV };
+    const env = { ...(await this.#env(wrapped.env, request.env, tmp)), ...NESTED_SHELL_ENV };
     return { file, args, env, sandboxed: true, cwd: request.cwd };
   }
 
@@ -1375,7 +1652,7 @@ export class ProcessSandbox {
    * Windows program needs to start and the env file's `MSYS_NO_PATHCONV=1`.
    */
   async #unsandboxedPlan(request: LaunchRequest): Promise<LaunchPlan> {
-    const own = await this.#env(process.env, request.env);
+    const own = await this.#env(process.env, request.env, await this.#runTmp(request));
     const plan = { args: ["-c", request.command], sandboxed: false, cwd: request.cwd };
     if (this.#platform !== StudioPlatform.Windows) return { ...plan, file: UNSANDBOXED_SHELL, env: own };
     const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
@@ -1404,6 +1681,7 @@ export class ProcessSandbox {
     try {
       if (!backend.session.covers(needed))
         throw new SandboxLaunchError(SandboxLaunchCode.NotGranted, [...needed.write, ...needed.read].join(", "));
+      if (request.longLived) await backend.session.refreshAncestors();
       const cwd = longPath(request.cwd, this.#platform);
       const command = `${await this.#runPrelude(backend, request, files)} ${request.command}`;
       const wrapped = await manager
@@ -1461,7 +1739,8 @@ export class ProcessSandbox {
    * A Windows run's own config: its network and the run's own denies (the instance's are the
    * session's). Grants are the session's too (srt-win refuses a per-command grant), and a deny
    * path that does not exist is dropped where it is unreadable anyway (in the profile, outside
-   * every grant), so srt-win never creates a placeholder there.
+   * every grant), so srt-win never creates a placeholder there. So is one Genex already denies
+   * for the session: srt-win would stamp it again for the command, walking its parent folder.
    */
   #windowsOverlay(
     backend: WindowsBackend,
@@ -1469,14 +1748,16 @@ export class ProcessSandbox {
   ): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
     const applied = backend.session.applied ?? { write: [], read: [] };
     const scope = { roots: [...applied.write, ...applied.read], profile: backend.profile };
-    const denyRead = keepWindowsDenies(patch.denyRead ?? [], scope);
+    const kept = (paths: readonly string[] | undefined, access: DenyAccess) =>
+      backend.session.withoutOwnDenies(keepWindowsDenies(paths ?? [], scope), access);
+    const denyRead = kept(patch.denyRead, DenyAccess.Read);
     const config = this.toRuntimeConfig({
       ...this.policy,
       allowedDomains: [...this.policy.allowedDomains, ...(patch.allowedDomains ?? [])],
       allowWrite: [],
       allowRead: [],
       denyRead,
-      denyWrite: writeDeniesBeyondRead(keepWindowsDenies(patch.denyWrite ?? [], scope), denyRead),
+      denyWrite: writeDeniesBeyondRead(kept(patch.denyWrite, DenyAccess.Write), denyRead),
     });
     return config;
   }
@@ -1547,7 +1828,11 @@ export class ProcessSandbox {
 
     const child = this.#start(plan);
     return await new Promise<RunResult>((resolve, reject) => {
-      const output = captureOutput(child, request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_CHARS);
+      const output = captureOutput(
+        child,
+        request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_CHARS,
+        request.keepOutput ?? OutputKept.Head,
+      );
 
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -1630,10 +1915,14 @@ export class ProcessSandbox {
    * so the studio's own environment (whatever credentials its shell exported) is allow-listed
    * down to the toolchain basics; the child's own variables are the caller's to pass.
    */
-  async #env(parent: NodeJS.ProcessEnv, own: Record<string, string> | undefined): Promise<Record<string, string>> {
+  async #env(
+    parent: NodeJS.ProcessEnv,
+    own: Record<string, string> | undefined,
+    tmp: string = this.scratchDir,
+  ): Promise<Record<string, string>> {
     const env = childEnv(parent, {
       base: "sandbox",
-      set: { ...this.#tmpEnv(), ...(await this.#pathEnv()), ...(own ?? {}) },
+      set: { ...tmpEnv(tmp), ...(await this.#pathEnv()), ...(own ?? {}) },
     });
     // C1: whoever set PATH (the floor or the caller), the device tools are not on it.
     const delimiter = this.#platform === StudioPlatform.Windows ? ";" : ":";
@@ -1648,22 +1937,37 @@ export class ProcessSandbox {
     return resolved ? { PATH: resolved } : {};
   }
 
-  /** Point every temp-file convention at the agent's own scratch dir. */
-  #tmpEnv(): Record<string, string> {
-    return { TMPDIR: this.scratchDir, TMP: this.scratchDir, TEMP: this.scratchDir };
+  /**
+   * A run's temp folder: its confinement's own, or the agent's scratch dir. A confinement's folders
+   * are made first: srt on Linux leaves out a writable folder that is not there yet.
+   */
+  async #runTmp(request: LaunchRequest): Promise<string> {
+    if (!request.confine) return this.scratchDir;
+    const { write, tmp } = request.confine;
+    await Promise.all([...write, tmp].map((dir) => mkdir(dir, { recursive: true })));
+    return tmp;
   }
 
   /**
    * srt assigns its own `TMPDIR` (`/tmp/claude`) *inside* the wrapped argv, so an env override
    * cannot win — the assignment has to happen in the command itself. Verified against 0.0.73.
    */
-  #withScratchTmp(command: string): string {
-    const dir = shellQuote(this.scratchDir);
+  #withTmp(command: string, tmp: string): string {
+    const dir = shellQuote(tmp);
     return `export TMPDIR=${dir} TMP=${dir} TEMP=${dir}; ${command}`;
   }
 
-  #overlay(patch: Partial<SandboxPolicy>): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
-    return this.toRuntimeConfig(mergeOverlay(this.policy, patch));
+  /**
+   * A run's own config: the sandbox's, widened by the run's patch ({@link mergeOverlay}), or — for
+   * a confined run — with the confinement's folders as its only writable ones. srt takes a per-spawn
+   * `allowWrite` in place of the process-wide one.
+   */
+  #overlay(
+    patch: Partial<SandboxPolicy>,
+    confine?: RunConfinement,
+  ): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
+    const base = confine ? { ...this.policy, allowWrite: [...confine.write, confine.tmp] } : this.policy;
+    return this.toRuntimeConfig(mergeOverlay(base, patch));
   }
 }
 
@@ -1701,6 +2005,9 @@ function bubblewrapVersionText(bwrap: string): string | null {
     return null;
   }
 }
+
+/** Point every temp-file convention at `dir`. */
+const tmpEnv = (dir: string): Record<string, string> => ({ TMPDIR: dir, TMP: dir, TEMP: dir });
 
 /** This host's GPU render nodes, `/dev/dri/renderD*`; none when the folder cannot be read. */
 async function renderNodes(): Promise<string[]> {

@@ -35,7 +35,7 @@ function closedWords(loopRun: AfterLoopRun): string {
 
 /** A finished run's change with Loop off (or no reopen granted): the session's own work. */
 const OWN_WORK =
-  "- Work the user asks for now, you do yourself, here in the game folder, like any change in this chat — no build starts for it.";
+  "- Work the user asks for now, you do yourself, here in the game folder, like any change in this chat — no build starts for it, unless they ask in words for a new Loop: then you start it, as the Loop rule says.";
 
 /**
  * The paused run's resume; a finished run's reopen when the turn grants it (Loop on,
@@ -44,7 +44,7 @@ const OWN_WORK =
 function workRules(loopRun: AfterLoopRun, engine: string | undefined, grant: ReopenGrant | null): string[] {
   if (loopRun.state === RunState.Paused)
     return [
-      `- This build is paused. When the user asks to go on with it — with new guidance or none, or with work for it — call ${toolCall(engine, "resume_run")} once, last, with their instruction as text, and edit nothing in that reply: when your reply ends the build resumes where it stopped, with the working time it had left, and you lead it again.`,
+      `- This build is paused. When the user asks to go on with it — with new guidance or none, or with work for it — call ${toolCall(engine, "resume_run")} once, last, with their instruction as text, and edit nothing in that reply: when your reply ends the build resumes where it stopped, with the working time it had left, and you lead it again. Going on, again or "rerun" is this resume; only a new Loop they ask for is a fresh start.`,
     ];
   if (grant) return reopenRules(engine, grant);
   return [OWN_WORK];

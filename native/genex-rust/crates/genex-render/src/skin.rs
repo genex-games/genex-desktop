@@ -215,7 +215,7 @@ pub struct SkinnedMeshData {
 }
 
 /// A skinned mesh in a renderer's library.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SkinId {
     pub(crate) mesh: MeshId,
     pub(crate) skin_base: u32,

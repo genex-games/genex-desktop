@@ -36,6 +36,7 @@ import { CaptureSurface } from "../../src/shared/preview-contract.ts";
 import { CAPTURE_MANIFEST_VERSION } from "../../src/shared/build-preview.ts";
 import { latestBuildPreview } from "../../src/substrate/build-preview.ts";
 import { git } from "../../src/substrate/snapshots.ts";
+import { LiveBehindReason } from "../../src/shared/live-behind.ts";
 
 /** This host's own desktop destination: the native leases and runs here are the ones it can run (CI runs Linux and Windows too). */
 const HOST_TARGET = hostTarget(hostOf(process.platform) ?? StudioPlatform.Mac);
@@ -168,6 +169,10 @@ function fakeRegistry() {
     embed: async () => {
       throw new Error("the previews never embed");
     },
+    reembed: async (project, root) => {
+      events.push(`reembed ${project} ${root ?? "folder"}`);
+      return null;
+    },
     resize: () => false,
     input: async () => false,
     showEmbedded: (project, visible) => void shown.push([project, visible]),
@@ -285,6 +290,23 @@ describe("Live's actions end the native runs tied to what it showed", () => {
     assert.ok(builds.mock.callCount() > 0, "Reload rebuilt the game");
     assert.equal(registry.events[0], `stopProject pong ${NativeRunMode.Window},${NativeRunMode.Embedded}`);
     assert.ok(registry.events.indexOf("build") > 0, "the stop came before the rebuild");
+  });
+
+  it("Live Reload of a change held for Live stops its window and embedded runs before loading it", async (t) => {
+    const { core, registry } = await rig(t);
+    await core.loadPreview({ project: "pong" });
+    await core.offerLive({ project: "pong", root: null, note: null });
+    assert.equal((await core.liveState("pong")).reason, LiveBehindReason.Changed, "the change waits for Reload");
+    const builds = t.mock.method(core.cppBuilds, "ensure", async () => {
+      registry.events.push("build");
+      return { ok: false, output: null, lastGood: null, problem: null, ran: false };
+    });
+    registry.events.length = 0;
+    await core.reloadLive();
+    assert.ok(builds.mock.callCount() > 0, "Reload built the held change");
+    // Live's Native view starts the Mac build again only once Reload ended the run it showed.
+    assert.equal(registry.events[0], `stopProject pong ${NativeRunMode.Window},${NativeRunMode.Embedded}`);
+    assert.ok(registry.events.indexOf("build") > 0, "the stop came before the build");
   });
 
   it("Live switching to another game stops the previous game's window and embedded runs, and leaves its headless runs", async (t) => {

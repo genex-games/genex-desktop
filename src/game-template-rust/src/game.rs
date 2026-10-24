@@ -28,8 +28,6 @@ const BLOCK_COLOR: Color = Color::rgb(224, 168, 72);
 const BLOCK_ROUGHNESS: f32 = 0.3;
 /// The gear button's label (checks find it in `state().hud.items`; `settings_button` draws the gear).
 pub const SETTINGS_BUTTON: &str = "Settings";
-/// Clear of the screen edges (a phone's rounded corners and notch).
-const EDGE_MARGIN: i8 = 16;
 /// The settings panel's width, in world pixels.
 const PANEL_WIDTH: f32 = 300.0;
 
@@ -64,9 +62,9 @@ fn draw(world: &World, frame: &mut Frame) {
 
 /// The gear button in the top-right corner and, while it is open, the graphics settings panel
 /// under it: the person's quality choice, saved on this device and never part of the simulation.
+/// The hook's ui already sits inside the safe area and a 16 pt margin.
 fn settings(world: &mut World, ui: &mut egui::Ui) {
-    let margin = egui::Frame::new().inner_margin(egui::Margin::same(EDGE_MARGIN));
-    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| margin.show(ui, |ui| {
+    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
         if genex::render::settings_button(ui, SETTINGS_BUTTON).clicked() {
             world.settings_open = !world.settings_open;
         }
@@ -77,5 +75,5 @@ fn settings(world: &mut World, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), genex::render::settings_panel);
             });
         }
-    }));
+    });
 }

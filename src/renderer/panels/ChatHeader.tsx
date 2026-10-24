@@ -24,8 +24,10 @@ import type { BuildTarget } from "../../shared/game-project.ts";
 import { exportDestinationLabel, useExportCaveat, useExportDestinations } from "../chat/use-chat-export.ts";
 import type { GameStorage } from "../chat/use-game-storage.ts";
 import { freeableBytes } from "../../shared/storage-space.ts";
+import { t } from "../../shared/i18n.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
+import { SidebarToggle } from "../shell/use-shell-chrome.ts";
 
 interface Props {
   chatTitle: string;
@@ -78,10 +80,11 @@ export function ShowSidebarButton({ onToggle }: { onToggle: () => void }): JSX.E
   return (
     <HeaderButton
       icon="sidebar"
-      label="Show sidebar"
+      data-sidebar-toggle={SidebarToggle.Show}
+      label={t("Show sidebar")}
       tip={
         <span className="flex items-center gap-2">
-          Show sidebar <Shortcut>⌘B</Shortcut>
+          {t("Show sidebar")} <Shortcut>⌘B</Shortcut>
         </span>
       }
       aria-controls="studio-sidebar"
@@ -118,7 +121,7 @@ function ContextMeter({
     <div
       className="no-drag me-1 flex shrink-0 items-center gap-1.5"
       data-context-meter
-      title={`Context: ${used} tokens`}
+      title={t("Context: {used} tokens", { used })}
     >
       <span className="relative h-[3px] w-6 overflow-hidden rounded-full bg-inset shadow-hairline">
         <span
@@ -132,10 +135,10 @@ function ContextMeter({
           type="button"
           onClick={onCompact}
           disabled={compacting}
-          title="Summarise the older part of this chat into the log so it fits the model"
+          title={t("Summarise the older part of this chat into the log so it fits the model")}
           className="h-5 rounded-chip bg-inset px-1.5 font-mono text-micro text-ink-2 shadow-hairline hover:text-control-text-hover disabled:opacity-50"
         >
-          {compacting ? "…" : "compact"}
+          {compacting ? "…" : t("compact")}
         </button>
       )}
     </div>
@@ -183,19 +186,21 @@ function ChatTitle({
           if (event.key === "Escape") onCancel();
         }}
         className="no-drag h-[30px] w-80 min-w-0 shrink rounded-control bg-field px-2 text-sm font-medium text-ink outline-none"
-        aria-label={project ? "Game name" : "Chat name"}
+        aria-label={project ? t("Game name") : t("Chat name")}
       />
     );
   if (isStudio) return <span className="chat-header-title">Harness</span>;
   return (
     <button
       type="button"
-      title={`Rename ${chatTitle}`}
-      aria-label={`Rename ${project ? "game" : "chat"}: ${chatTitle}`}
+      title={t("Rename {name}", { name: chatTitle })}
+      aria-label={
+        project ? t("Rename game: {name}", { name: chatTitle }) : t("Rename chat: {name}", { name: chatTitle })
+      }
       onClick={onEdit}
       className="no-drag chat-header-title"
     >
-      {isDraft ? "New chat" : chatTitle}
+      {isDraft ? t("New chat") : chatTitle}
     </button>
   );
 }
@@ -350,12 +355,17 @@ function ChatActionsMenu({
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <button type="button" aria-expanded={open} aria-label="Chat actions" className="no-drag header-control">
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={t("Chat actions")}
+              className="no-drag header-control"
+            >
               <Icon name="more" />
             </button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>More actions</TooltipContent>
+        <TooltipContent>{t("More actions")}</TooltipContent>
       </Tooltip>
       <DropdownMenuContent
         align="end"
@@ -381,14 +391,14 @@ function ChatActionsMenu({
           }}
         >
           <Icon name="export" />
-          {exporting ? "Exporting…" : "Export game…"}
+          {exporting ? t("Exporting…") : t("Export game…")}
         </DropdownMenuItem>
         {choice.choosing && destinations && (
           <ExportDestinations destinations={destinations} caveat={choice.caveat} onExport={onExport} />
         )}
         <DropdownMenuItem data-chat-action="rename" onSelect={onRename}>
           <Icon name="rename" />
-          Rename
+          {t("Rename")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -478,11 +488,11 @@ export function ChatHeader({
       )}
       <HeaderButton
         icon="terminal"
-        label="Toggle terminal"
+        label={t("Toggle terminal")}
         data-terminal-toggle=""
         tip={
           <span className="flex items-center gap-2">
-            Terminal <Shortcut>⌘`</Shortcut>
+            {t("Terminal")} <Shortcut>⌘`</Shortcut>
           </span>
         }
         onClick={() => window.dispatchEvent(new Event(TOGGLE_TERMINAL_EVENT))}

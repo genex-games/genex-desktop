@@ -6,10 +6,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildChecklist, checklistCaption, PartMark, runPlanParts } from "../../src/renderer/chat/build-checklist.ts";
+import { buildHistory } from "../../src/renderer/build-progress.ts";
+import { BuildBarShape, buildBarShape } from "../../src/renderer/panels/run-graph/bar-shape.ts";
 import { BUILD_CHECKLIST_WORDS } from "../../src/renderer/words.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import type { EventData, EventEnvelope } from "../../src/shared/event-log.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
+import { RunState } from "../../src/shared/run-state.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
 
 const RUN = "run_c";
@@ -214,9 +217,33 @@ describe("the building-card dev fixture", () => {
         [BUILD_CHECKLIST_WORDS.together, PartMark.Next],
       ],
     );
-    assert.match(String(list?.rows[2]?.status), /^Working · about 2[45] min$/);
+    assert.match(String(list?.rows[2]?.status), /^Working · ~2[45] min$/);
     assert.equal(list?.rows[3]?.status, BUILD_CHECKLIST_WORDS.workingRound(1), "the restart's own first round");
     assert.equal(checklistCaption(list!, false), "2 of 5 parts added · 2 working");
-    assert.equal(log.filter((e) => e.data.type === "messages").length, 1, "seeding again writes nothing");
+    assert.equal(
+      log.filter((e) => e.data.type === "messages").length,
+      6,
+      "the five earlier Loops' asks and this one's; seeding again writes nothing",
+    );
+  });
+
+  it("gives the chat more builds than the Builds bar shows as tabs, so it holds them in its picker", async () => {
+    const { seedBuildingCard } = await import("../../src/main/dev/fixture-building-card.ts");
+    const log: EventEnvelope[] = [];
+    const core = {
+      store: { listEvents: async () => log },
+      append: async (events: EventData[]) => {
+        for (const data of events) log.push(event(log.length + 1, data));
+      },
+    };
+    await seedBuildingCard(core as never, "fixture-game", "t1");
+    const history = buildHistory(log, "t1");
+    assert.equal(history.length, 6);
+    assert.equal(history.at(-1)?.state, RunState.Running, "the newest is the Loop still going");
+    assert.ok(
+      history.every((build) => build.ask.length > 0),
+      "each build is named by what was asked",
+    );
+    assert.equal(buildBarShape(history.length, Number.POSITIVE_INFINITY), BuildBarShape.Picker);
   });
 });

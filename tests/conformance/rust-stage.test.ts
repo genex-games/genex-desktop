@@ -115,6 +115,11 @@ const withGameCode = (code: string) => async () => {
   return game;
 };
 
+/**
+ * A genex.toml that switches no game system off. Flipped (release R-2): the template switches off
+ * nav, streaming and animation, so a row about the bare facade line stages this, not the template's.
+ */
+const EVERY_SYSTEM = '[game]\ntitle = "Pond"\n';
 const NATIVE_FEATURES = '[game]\ntitle = "Pond"\n[gpu]\nnative_features = ["subgroup"]\n';
 
 /** Games refused, each with its code (and the destination when not the Mac). */
@@ -502,7 +507,7 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
 
   it("a web build names genex-platform-web as genex (the web facade that hands the game to the shell), locked from its closure", async () => {
     const workspaceLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
-    const game = await makeGame();
+    const game = await makeGame({ "genex.toml": EVERY_SYSTEM });
     const at = await stagePath();
     const pins = { genexVersion: GENEX_VERSION, baseLock: workspaceLock };
     const web = staged(await stageRustGame({ source: game, stage: at, target: BuildTarget.Web, pins }));
@@ -520,6 +525,7 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
   // Renderer pass 2 (owner decision D11): a game without physics opts out of Rapier, about a fifth
   // of a web build's code. The facade is linked without its default `physics` feature (keeping `audio`), and the lock
   // drops rapier3d and every crate only it reaches, as cargo's own resolve does (--locked holds).
+  // Flipped (release R-2): the kept defaults also name nav, streaming and animation.
   it("a game that opts out of physics links the facade without it, and its lock drops Rapier's closure", async () => {
     const workspaceLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
     const pins = { genexVersion: GENEX_VERSION, baseLock: workspaceLock };
@@ -529,14 +535,14 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     );
     assert.match(
       web.cargoToml,
-      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["audio"\] \}\n/,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["audio", "nav", "streaming", "animation"\] \}\n/,
     );
     const mac = staged(
       await stageRustGame({ source: without, stage: await stagePath(), target: BuildTarget.Mac, pins }),
     );
     assert.match(
       mac.cargoToml,
-      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["audio"\] \}\n/,
+      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["audio", "nav", "streaming", "animation"\] \}\n/,
     );
     for (const lock of [web.cargoLock ?? "", mac.cargoLock ?? ""]) {
       assert.doesNotMatch(lock, /\nname = "rapier3d"\n/);
@@ -552,6 +558,8 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
   // G6 AU-11: a game without audio opts out of the mixer and the decoders, the web build's largest
   // game-system share. The facade keeps physics by its own feature, and the lock drops kira, cpal and
   // symphonia and every crate only they reach, as cargo's resolve of that manifest does.
+  // Flipped (release R-2): the kept defaults also name nav, streaming and animation, and a game with
+  // neither physics nor audio keeps those three.
   it("a game that opts out of audio links the facade without it, and its lock drops kira, cpal and symphonia", async () => {
     const workspaceLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
     const pins = { genexVersion: GENEX_VERSION, baseLock: workspaceLock };
@@ -561,14 +569,14 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     );
     assert.match(
       web.cargoToml,
-      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["physics"\] \}\n/,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["physics", "nav", "streaming", "animation"\] \}\n/,
     );
     const mac = staged(
       await stageRustGame({ source: silent, stage: await stagePath(), target: BuildTarget.Mac, pins }),
     );
     assert.match(
       mac.cargoToml,
-      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["physics"\] \}\n/,
+      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["physics", "nav", "streaming", "animation"\] \}\n/,
     );
     for (const lock of [web.cargoLock ?? "", mac.cargoLock ?? ""]) {
       for (const crate of ["kira", "cpal", "symphonia"]) assert.doesNotMatch(lock, new RegExp(`\nname = "${crate}"\n`));
@@ -581,9 +589,15 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     const bare = staged(
       await stageRustGame({ source: neither, stage: await stagePath(), target: BuildTarget.Mac, pins }),
     );
-    assert.match(bare.cargoToml, /\ngenex = \{ version = "=0\.1\.0", default-features = false \}\n/);
+    assert.match(
+      bare.cargoToml,
+      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["nav", "streaming", "animation"\] \}\n/,
+    );
+    // Flipped (GR fix): the template ships `[audio] enabled = false`, so the game that says nothing
+    // is a manifest without an [audio] table, not the template's own.
+    const unsaid = await makeGame({ "genex.toml": '[game]\ntitle = "Puzzle"\n' });
     const withAudio = staged(
-      await stageRustGame({ source: await makeGame(), stage: await stagePath(), target: BuildTarget.Web, pins }),
+      await stageRustGame({ source: unsaid, stage: await stagePath(), target: BuildTarget.Web, pins }),
     );
     assert.match(withAudio.cargoLock ?? "", /\nname = "kira"\n/, "a game that says nothing keeps audio");
   });
@@ -620,7 +634,7 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     );
     const plain = staged(
       await stageRustGame({
-        source: await makeGame(),
+        source: await makeGame({ "genex.toml": EVERY_SYSTEM }),
         stage: await stagePath(),
         target: BuildTarget.Mac,
         pins,
@@ -642,9 +656,9 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
   });
 
   it("writes no lock when the store hands none, and the manifest alone is the same either way", async () => {
-    const parsed = parseGenexToml('[game]\ntitle = "Pond"\n');
+    const parsed = parseGenexToml(EVERY_SYSTEM);
     assert.ok(parsed.ok);
-    const game = await makeGame();
+    const game = await makeGame({ "genex.toml": EVERY_SYSTEM });
     const result = staged(
       await stageRustGame({
         source: game,

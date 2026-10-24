@@ -27,6 +27,9 @@ import {
   UpdateSkip,
   autoUpdateDecision,
   createUpdateAnnouncer,
+  FIRST_RUN_CHECK_DELAY_MS,
+  firstCheckDelay,
+  installedFromGenexRepository,
   releaseVersion,
   watchInstaller,
 } from "../../src/main/auto-update.ts";
@@ -44,7 +47,15 @@ const released: UpdateLaunch = {
   developerLaunch: false,
   testLaunch: false,
   productName: "Genex",
+  systemPackages: false,
 };
+
+test("the first check waits out Squirrel's hold on a fresh install, and runs at once otherwise", () => {
+  assert.equal(firstCheckDelay(["C:\\genex\\app-0.1.14\\Genex.exe", "--squirrel-firstrun"]), FIRST_RUN_CHECK_DELAY_MS);
+  assert.ok(FIRST_RUN_CHECK_DELAY_MS > 0);
+  assert.equal(firstCheckDelay(["C:\\genex\\app-0.1.14\\Genex.exe"]), 0);
+  assert.equal(firstCheckDelay(["/Applications/Genex.app/Contents/MacOS/Genex"]), 0);
+});
 
 test("a renamed fork cannot consume the official update feed", () => {
   assert.deepEqual(autoUpdateDecision({ ...released, productName: "My Studio" }), {
@@ -57,6 +68,31 @@ test("a released macOS or Windows build installs updates; a Linux build is told 
   assert.deepEqual(autoUpdateDecision(released), { start: true, mode: UpdateMode.Install });
   assert.deepEqual(autoUpdateDecision({ ...released, platform: "win32" }), { start: true, mode: UpdateMode.Install });
   assert.deepEqual(autoUpdateDecision({ ...released, platform: "linux" }), { start: true, mode: UpdateMode.Notify });
+});
+
+test("a Linux copy installed from the Genex package repository is updated by the system", () => {
+  const linux = { ...released, platform: "linux" as const };
+  assert.deepEqual(autoUpdateDecision({ ...linux, systemPackages: true }), { start: true, mode: UpdateMode.System });
+  assert.deepEqual(autoUpdateDecision({ ...released, systemPackages: true }), {
+    start: true,
+    mode: UpdateMode.Install,
+  });
+});
+
+test("only the packaged executable with the Genex repository configured counts as a repository install", () => {
+  const configured =
+    (...paths: string[]) =>
+    (path: string) =>
+      paths.includes(path);
+  const exec = "/usr/lib/genex/genex";
+  assert.equal(installedFromGenexRepository(exec, configured("/etc/apt/sources.list.d/genex.list")), true);
+  assert.equal(installedFromGenexRepository(exec, configured("/etc/yum.repos.d/genex.repo")), true);
+  assert.equal(installedFromGenexRepository(exec, configured()), false, "a .deb installed before the repository");
+  assert.equal(
+    installedFromGenexRepository("/home/me/Genex-linux-x64/genex", configured("/etc/apt/sources.list.d/genex.list")),
+    false,
+    "a .zip copy beside a repository install still needs the notice",
+  );
 });
 
 test("every other launch stays off, and says why", () => {
@@ -497,6 +533,15 @@ test("check for updates on Linux finds the release and offers its download", asy
   assert.deepEqual(rig.log, ["announce 0.2.0"]);
   const failed = checker(notify, { release: { kind: ReleaseCheckKind.Failed, reason: "offline" } });
   assert.equal((await failed.check()).status, UpdateCheckStatus.Failed);
+});
+
+test("check for updates on a repository install asks nobody and points at the system's updates", async () => {
+  const { check, asked } = checker({ start: true, mode: UpdateMode.System });
+  assert.deepEqual(await check(), { status: UpdateCheckStatus.System, current: "0.1.0", update: null });
+  assert.equal(asked(), 0);
+  const note = updateCheckNote({ status: UpdateCheckStatus.System, current: "0.1.0", update: null });
+  assert.equal(note.act, null);
+  assert.match(note.detail, /apt|dnf/);
 });
 
 test("a build that never checks answers off without asking anyone, unless an update already waits", async () => {

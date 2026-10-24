@@ -59,10 +59,10 @@ describe("provider table", () => {
   it("gives the sign-in card the table's words, and a neutral card to an engine it does not list", () => {
     assert.deepEqual(signInVendor("codex"), {
       name: "Codex",
-      product: "your ChatGPT subscription",
       url: "https://developers.openai.com/codex/cli",
       get: "Install Codex",
-      who: "Codex handles that part",
+      useLine: "Use your ChatGPT subscription to build games.",
+      signInLine: "Connect your ChatGPT subscription to build games. Codex handles sign-in in your browser.",
     });
     assert.equal(signInVendor("claude-code").name, "Claude Code");
     const unknown = signInVendor("gemini-cli");

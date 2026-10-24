@@ -9,6 +9,7 @@ import type { PluginInfo, PluginManifest } from "../../src/shared/plugins.ts";
 import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { accountPanel, hasOwnPage } from "../../src/renderer/panels/plugins/labels.ts";
 import {
+  accountCreditsOf,
   CreditsKind,
   GENEX_ACTIVE_POLL_MS,
   GENEX_IDLE_POLL_MS,
@@ -41,6 +42,14 @@ const job = (over: Partial<GenexJob>): GenexJob => ({
   files: [],
   createdAt: "2026-09-27T10:00:00.000Z",
   ...over,
+});
+
+describe("the Credits tab's balance", () => {
+  it("says Unlimited only when genex.games does, and never mistakes a balance it couldn't read for one", () => {
+    assert.deepEqual(accountCreditsOf({ balance: 1240, unlimited: false }), { kind: CreditsKind.Count, count: 1240 });
+    assert.deepEqual(accountCreditsOf({ balance: null, unlimited: true }), { kind: CreditsKind.Unlimited });
+    assert.deepEqual(accountCreditsOf({ balance: null, unlimited: false }), { kind: CreditsKind.Unknown });
+  });
 });
 
 describe("Genex account state", () => {
@@ -243,6 +252,20 @@ describe("Genex status cadence", () => {
     assert.equal(genexPollMs(withJobs()), GENEX_IDLE_POLL_MS);
     assert.equal(genexPollMs(null), GENEX_IDLE_POLL_MS, "no answer yet");
     assert.ok(GENEX_IDLE_POLL_MS > GENEX_ACTIVE_POLL_MS);
+  });
+
+  it("reads nothing on a timer while the window is hidden: showing it again reads at once", () => {
+    const hidden = { hidden: true, focused: false };
+    assert.equal(genexPollMs(withJobs("generating"), hidden), null);
+    assert.equal(genexPollMs(withJobs(), hidden), null);
+  });
+
+  it("drops to the idle read while Genex is behind another app, except while a sign-in waits in the browser", () => {
+    const behind = { hidden: false, focused: false };
+    // Each status read spawns the Genex CLI for the allowance; the page reads again on focus.
+    assert.equal(genexPollMs(withJobs("generating"), behind), GENEX_IDLE_POLL_MS);
+    const signingIn = status({ authorization: { userCode: "ABCD", verifyUrl: "https://x", expiresAt: 1 } });
+    assert.equal(genexPollMs(signingIn, behind), GENEX_ACTIVE_POLL_MS, "the person is approving it in the browser");
   });
 });
 

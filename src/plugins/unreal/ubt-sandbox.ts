@@ -4,7 +4,8 @@
  * the copy's C# rules, so the build reads nothing in the user's home folder but the copy, the
  * engine, Xcode and UBT's own per-user folders; writes only the copy's build output, UBT's log
  * folder and a private scratch folder; never touches a coding CLI's sign-in home, wherever it
- * lives; has no network; and starts with none of Genex's environment. A host project's build also
+ * lives; has no network; sends no Apple Events (no scripting another app or typing into it with
+ * Genex's grants); and starts with none of Genex's environment. A host project's build also
  * writes its plugins' build output (`Plugins/<Name>/Intermediate`, `Binaries`), nothing else of theirs,
  * and a plugin's package writes its own folder (`extraWrites`). UBT finds its per-user
  * folders from the account, not from HOME, so they are named here; its configuration there is
@@ -61,9 +62,13 @@ const UBT_SETTINGS = [
 /** .NET keeps its named mutexes (UBT's configuration lock) here, whatever TMPDIR says. */
 const DOTNET_SHARED = "/private/tmp/.dotnet";
 const DEVICES = ["/dev/null", "/dev/zero", "/dev/tty", "/dev/dtracehelper"];
-/** Services a build never needs that act outside it: opening apps, the pasteboard, the screen and the Dock. */
+/**
+ * Services a build never needs that act outside it: opening apps, Apple Events (another app's
+ * scripting, System Events' keystrokes), the pasteboard, the screen and the Dock.
+ */
 const OUTSIDE_SERVICES = [
   "com.apple.lsd.open",
+  "com.apple.coreservices.appleevents",
   "com.apple.pasteboard.1",
   "com.apple.pbs.fetch_services",
   "com.apple.dock.server",
@@ -107,13 +112,16 @@ const literals = (values: readonly string[]) => values.map((v) => `(literal ${qu
 /**
  * The Seatbelt profile: everything a process may do by default, then the home folder's contents
  * closed, the named folders opened, every write refused but the named ones, the sign-in homes
- * closed again whatever was opened, signals only within the build, and no network.
+ * closed again whatever was opened, signals only within the build, no network, and no Apple Events:
+ * a build's rules can't script another app, or type into one through System Events, with the grants
+ * Genex holds.
  */
 export function buildSandboxProfile(p: ProfilePaths): string {
   return [
     "(version 1)",
     "(allow default)",
     "(deny network*)",
+    "(deny appleevent-send)",
     `(deny mach-lookup ${OUTSIDE_SERVICES.map((n) => `(global-name ${quote(n)})`).join(" ")})`,
     "(deny signal)",
     "(allow signal (target self) (target children) (target pgrp))",

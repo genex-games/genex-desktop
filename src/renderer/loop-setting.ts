@@ -6,9 +6,8 @@
  * pick is also kept as the last pick, which seeds the next fresh chat.
  */
 import type { ComposerSendOptions } from "../shared/composer.ts";
-import { engineOf, GameEngine } from "../shared/game-engine.ts";
-import type { GameProject } from "../shared/game-project.ts";
 import { RunState } from "../shared/run-state.ts";
+import { type EngineGame, engineLoopAvailable } from "./engine-game.ts";
 import type { PickedFrame } from "./reference-frames.ts";
 import {
   type KeyValueStorage,
@@ -21,7 +20,6 @@ import {
   writeText,
 } from "./storage.ts";
 import { MAX_LOOP_HOURS, MIN_LOOP_HOURS } from "./ui/loop-duration.ts";
-import { unrealProjectInFolder } from "./unreal-game.ts";
 import type { ComposerExtras, RoleRecord } from "./ui/PromptBar.tsx";
 
 /** The composer's Loop: on or off, and its hours, where `null` means ∞ (until satisfied). */
@@ -47,12 +45,12 @@ export interface ComposerLoopView {
 }
 
 /**
- * Whether the composer may start a Loop in this game. A web game runs the Loop; an Unreal game runs
- * the Unreal Loop only when its project lies inside its folder, where each part's undo point holds
- * it. No game (a draft chat) is a web game.
+ * Whether the composer may start a Loop in this game. A web game runs the Loop; an engine game runs
+ * it unless its engine needs the project inside the game folder (`projectInFolder`, as Unreal's
+ * does: each part's undo point holds it there) and it lies elsewhere. No game (a draft chat) is a
+ * web game.
  */
-export const loopAvailableFor = (game: Pick<GameProject, "engine" | "dir"> | null | undefined): boolean =>
-  engineOf(game?.engine) !== GameEngine.Unreal || unrealProjectInFolder(game);
+export const loopAvailableFor = (game: EngineGame | null | undefined): boolean => engineLoopAvailable(game);
 
 /** A composer answering a running build it was not told about still sends it no commission. */
 export const RUNNING_BUILD: ComposerBuild = { state: RunState.Running, loop: null };
@@ -179,6 +177,7 @@ export function autopilotSendOptions(
     ...(autopilot.hours !== null ? { hours: autopilot.hours } : {}),
     ...(autopilot.frames.length ? { frames: autopilot.frames } : {}),
     ...(autopilot.reviewPlan ? { reviewPlan: true } : {}),
+    ...(autopilot.keepBuilding ? { keepBuilding: true } : {}),
     ...(roles ? { roles } : {}),
   };
 }

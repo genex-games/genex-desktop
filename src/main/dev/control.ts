@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { WebContents } from "electron";
 import { errorMessage } from "../../shared/errors.ts";
+import { fileDragEvents, writeDragSample } from "./file-drag.ts";
 import { type InspectParams, inspectScript } from "./inspect-dom.ts";
 import { DevErrorCode, DevError, DevMethod, type Operation } from "./protocol.ts";
 
@@ -65,13 +66,15 @@ export class DesktopControl {
     if (value.error) throw new DevError(value.error);
     return value;
   }
-  async click(wc: WebContents, params: { selector: string; scope?: string }) {
-    const { x, y } = await this.inspect(wc, params);
-    await this.cdp(wc, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+  async click(wc: WebContents, params: { selector: string; scope?: string; modifiers?: string[] }) {
+    const { x, y } = await this.inspect(wc, { selector: params.selector, scope: params.scope });
+    const modifiers = (params.modifiers ?? []).reduce((n, k) => n | (CDP_MODIFIER[k] ?? 0), 0);
+    await this.cdp(wc, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
     await this.cdp(wc, "Input.dispatchMouseEvent", {
       type: "mousePressed",
       x,
       y,
+      modifiers,
       button: "left",
       buttons: 1,
       clickCount: 1,
@@ -80,11 +83,17 @@ export class DesktopControl {
       type: "mouseReleased",
       x,
       y,
+      modifiers,
       button: "left",
       buttons: 0,
       clickCount: 1,
     });
     return { dispatched: true, x, y };
+  }
+  /** Move the pointer to `x`, `y` on the page, as a mouse would. */
+  async move(wc: WebContents, params: { x: number; y: number }) {
+    await this.cdp(wc, "Input.dispatchMouseEvent", { type: "mouseMoved", x: params.x, y: params.y });
+    return { dispatched: true, x: params.x, y: params.y };
   }
   async key(wc: WebContents, params: { key: string; code: string; modifiers?: string[] }) {
     const modifiers = (params.modifiers ?? []).reduce((n, k) => n | (CDP_MODIFIER[k] ?? 0), 0);
@@ -96,6 +105,14 @@ export class DesktopControl {
     await this.cdp(wc, "Input.dispatchKeyEvent", { ...p, type: "keyUp" });
     return { dispatched: true };
   }
+  /** Drag the control's sample file from outside the window onto a target, as the Finder would. */
+  async fileDrag(wc: WebContents, params: ActionOf<typeof DevMethod.FileDrag>["params"], dir: string) {
+    const point = await this.inspect(wc, { selector: params.selector, scope: params.scope });
+    const sample = await writeDragSample(dir, params.file);
+    for (const event of fileDragEvents(params.stage, point, sample.file))
+      await this.cdp(wc, "Input.dispatchDragEvent", event);
+    return { dispatched: true, x: point.x, y: point.y, stage: params.stage, mimeType: sample.mimeType };
+  }
   async action(wc: WebContents, op: Operation) {
     switch (op.method) {
       case DevMethod.Snapshot:
@@ -106,6 +123,8 @@ export class DesktopControl {
         return this.#graphDrag(wc, op.params);
       case DevMethod.Key:
         return this.key(wc, op.params);
+      case DevMethod.Move:
+        return this.move(wc, op.params);
       case DevMethod.Type:
         return this.#type(wc, op);
       case DevMethod.Select:

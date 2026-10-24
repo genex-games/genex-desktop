@@ -1,0 +1,19 @@
+# nav-crowd's manifest: 200 character capsules (physics) walking the market's nav mesh (navigation).
+[game]
+title = "Nav crowd"
+world_size = [960, 540]
+
+# The game systems it does not use stay out of its build, which keeps the web export under 4 MiB
+# (release R-3); the Cargo.toml names the same set as genex features.
+
+# Sounds and music: genex::audio and ctx.audio (docs/api/audio.md).
+[audio]
+enabled = false
+
+# A world streamed in cells round the player: game.streaming (docs/api/streaming.md).
+[streaming]
+enabled = false
+
+# Animated characters: gfx.character and the Animator (docs/api/animation.md).
+[animation]
+enabled = false

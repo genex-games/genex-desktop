@@ -648,8 +648,8 @@ On the frame it is graph node 17 under `Quality::taau` (`high` and `ultra`): a T
 depth key the convert's disocclusion test reads, so the step keeps the history; a step back to
 scale 1 starts TAA over), the jitter
 and mip bias follow `taau::frame_jitter` and `taau::frame_texture_lod_bias`, exposure, bloom and the
-tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (ultra's RCAS
-does, at output size) and a settled capture re-renders one cycle of its phases (within the wire's
+tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (nor RCAS, unless
+a game asks for `TaaSharpen`) and a settled capture re-renders one cycle of its phases (within the wire's
 16). A frame whose depth of field, motion blur or `post-hdr` passes read the scene at render size
 keeps TAA at render size and EASU. At scale 1 nothing changes. `tests/frame_hooks.rs` holds 4K from
 0.67 within 10% of native 4K's sharpness (TAA then EASU kept 0.89 of it).
@@ -669,6 +669,14 @@ smaller one. `Renderer::present` and `present_to_texture` go the same way; nothi
 nearest-texel. Live paints the HUD over the letterbox after that, at the window's pixels
 (`genex::present::Presenter::present`); a capture paints it into the world target at its own
 pixels per point (node 24). The ledger counts the window present's images (`BudgetInput::window`).
+
+A game whose fit is `expand` (`letterbox::Fit`, `Renderer::set_fit`) fills the window instead:
+Live draws at the window's own aspect (`letterbox::output_for`), the present covers the whole
+window (`letterbox::present::present_view`), the 2D layer shows `Renderer::view_rect` (the world
+grown on the output's long side, the world whole and centred on the letterbox's rectangle) and
+the camera's aspect follows the output (the facade widens a tall output's field of view to keep
+the world's width). Input and the HUD stay on the world's rectangle, and a capture at the world
+size is the letterbox picture.
 
 Each dynamic-resolution step draws into targets of its exact size (`target_pool`). On desktop a
 step change keeps the targets it replaced, and those a step draws without (FSR1's at scale 1), as
@@ -801,9 +809,13 @@ motion prepass holds all of core's eight).
 The twins draw through faded pipelines (`renderer/variants.rs`: the `*_fade` entry points of
 `forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`, `GX_LOD_FADE`). The two levels of a crossfade
 cover each pixel, or each MSAA sample, exactly once by a dither threshold (`gx_lod_fade_*` in
-`common.wgsl`: interleaved gradient noise, turned by the golden ratio each frame on TAA paths):
+`common.wgsl`: interleaved gradient noise, turned each frame on TAA paths by the frame's base-2
+radical inverse over eight frames, the shortest jitter cycle):
 - MSAA covers samples with `sample_mask`, both levels in proportion, so a pixel shows no stipple;
-- TAA and a one-sample path keep or drop whole pixels, and the resolve averages the levels;
+- TAA and a one-sample path keep or drop whole pixels; any eight consecutive frames keep each
+  pixel's incoming level in `floor(8 s)` or `ceil(8 s)` of them, so the resolve's average shows
+  every pixel at its share and a settled crossfade steps from pixel to pixel no more than twice
+  MSAA's (`tests/lod_fade.rs`);
 - an `Equal` main pass and an alpha-tested batch's shading apply the cut their depth step or the
   prepass applied (coincident levels both pass the test); an alpha-tested batch keeps
   alpha-to-coverage and cuts whole pixels, never writing `sample_mask` beside it;

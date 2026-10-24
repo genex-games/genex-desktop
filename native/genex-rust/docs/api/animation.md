@@ -102,6 +102,17 @@ if step.events.iter().any(|event| event.event == hit) { /* deal damage */ }
   `.in_transition(layer)` read it.
 - `animator.reach(limb, target)` and `.look_at(target)` aim limbs and the head (IK, character
   space). `.socket(joint, model)` is a joint's world matrix, for a sword tip.
+- `animator.plant_feet(model, ground)` right after `animator.update(ctx.dt)` keeps the feet on
+  slopes and steps. `model` is the `Transform` you draw the character at; `ground` is
+  `character.ground_ray(&sim.physics)` with physics, or
+  `genex::animation::height_ground(|x, z| Some(terrain.height(x, z)))`. Each leg bends onto the
+  ground, each foot turns to the slope (at most 30°), the pelvis drops by the lower foot's offset,
+  and a standing foot holds its place until the animation lifts it (an ankle within 3 cm of its
+  rest height is down). `socket`, `pose`, `palette` and `frame.character` show the planted pose
+  until the next update; `snapshot` and `restore` carry the foot locks. It returns a `FootPlan`
+  (`plan.feet` per foot, `plan.pelvis`) for a probe. A rig without a humanoid's legs, no ground
+  under the feet, or a character in the air (the pelvis would drop more than a third of its hip
+  height) is left as animated.
 - `animator.snapshot()` and `.restore(..)` carry the whole state, floats as bits.
 - `game.probe("hero", |sim| sim.world.hero.as_ref().map_or(Value::Null, Animator::probe))` gives each layer's state, clip time and
   transition, and the parameters. `animator.digest()` hashes the whole state.
@@ -120,20 +131,24 @@ frame.skeleton_debug(hero, at);
   draws the magenta checker; a file the renderer cannot skin draws its model in bind pose.
 - In Live a far character's pose is held between evaluations: every tick near the camera, every
   2nd, 4th or 8th tick as its projected height (LOD's screen-size metric, from the game camera)
-  falls past 240, 120 and 60 pixels of a 1080-pixel view. A capture is always full rate. Drawing
-  never moves the animator or the simulation.
+  falls past 240, 120 and 60 pixels of a 1080-pixel view. An animator drawn by several characters
+  in one frame (a crowd's shared run cycle) is evaluated once, every tick, and they all draw that
+  pose. A capture is always full rate. Drawing never moves the animator or the simulation.
 - A character under 240 pixels whose materials are all plain and opaque is skinned in the vertex
   stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
   skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the
   same picture as the compute pass, including the shadows and the motion vectors.
-- Each device class skins at most so many characters by compute in a frame: 128 on
-  `desktop-ultra`, 100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on
-  `mobile-high`, 12 on `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the
-  smallest on screen are skinned in the vertex stage too (masked, double-sided and transparent ones
-  stay on compute), so a crowd keeps its picture and holds no more skinned memory.
+- Characters of one GLB in the very same pose (a crowd drawn with a few shared animators) are
+  skinned once: the pose stays on the compute pass at any size, and every character showing it is
+  drawn from that one result, culled on the GPU for the view and each shadow cascade.
+- Each device class skins at most so many poses by compute in a frame: 128 on `desktop-ultra`,
+  100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on `mobile-high`, 12 on
+  `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the poses smallest on
+  screen are skinned in the vertex stage too (masked, double-sided and transparent ones stay on
+  compute), so a crowd keeps its picture and holds no more skinned memory.
   `state().volatile.render.characters` shows the last frame's `drawn`, `evaluated` and `held`
-  characters and its `computeSkinned` and `vertexSkinned` counts against `computeMax`; it is never
-  part of the checksum.
+  characters and how many are `computeSkinned` and `vertexSkinned`, with the class's `computeMax`
+  poses; it is never part of the checksum.
 - A character GLB with simplified levels (the Studio's import writes them on every primitive of a
   model of 512 or more triangles, skinned ones included) skins only the level its distance picks,
   with the screen-size metric and crossfades models use: the compute pass near, the vertex stage
@@ -184,4 +199,6 @@ if let Some(door) = &sim.world.door { frame.model_posed(&sim.world.door_model, d
   file does not have (`play`, `play_once`).
 - `animation-retarget-unmapped`: a retarget where either character lacks a humanoid bone (the
   toes are optional). It names the bone and the character.
+- `animation-disabled`: `gfx.character`, `gfx.node_clips` or an animator in a game whose
+  genex.toml sets `[animation] enabled = false`. Turn animation back on.
 - `ragdoll-profile-invalid` and `character-shape-invalid`: see `docs/api/characters.md`.

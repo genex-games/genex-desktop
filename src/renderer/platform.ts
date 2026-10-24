@@ -1,5 +1,5 @@
 /**
- * The operating system main runs on, as the renderer knows it: `main.tsx` puts main's answer to
+ * The operating system main runs on, as the renderer knows it: `studio-entry.tsx` puts main's answer to
  * `bootState` on the root as `data-platform` before the studio mounts, and platform-specific copy
  * (the file manager's name) reads it from there.
  */

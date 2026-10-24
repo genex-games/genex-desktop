@@ -110,7 +110,7 @@ function nextFor(plugins: readonly PluginFound[]): FindNext {
   return plugins.length ? FindNext.Use : FindNext.WritePlugin;
 }
 
-/** Whether the guide to writing a plugin reaches sessions: Genex Tools is on and carries its plugin-author skill. */
+/** Whether the guide to writing a plugin reaches sessions: the Genex plugin is on and carries its plugin-author skill. */
 function guideOn(installed: readonly ListedPlugin[]): boolean {
   const genex = installed.find((plugin) => plugin.manifest.id === GENEX_PLUGIN_ID && !plugin.unlisted);
   return !!genex && isOn(genex) && genex.manifest.skills.some((skill) => skill.name === GENEX_PLUGIN_AUTHOR_SKILL);

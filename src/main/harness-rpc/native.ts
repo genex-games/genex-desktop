@@ -11,7 +11,15 @@
  */
 import path from "node:path";
 import { CppBuildPurpose } from "../../shared/build-problem.ts";
-import { BuildTarget, destinationsOf, isBuildTarget, isCompiledStack, stackOf } from "../../shared/game-project.ts";
+import {
+  BuildTarget,
+  type CompiledStack,
+  destinationsOf,
+  GameStack,
+  isBuildTarget,
+  isCompiledStack,
+  stackOf,
+} from "../../shared/game-project.ts";
 import { type HarnessHostHandlers, type HarnessParams, HostMethod } from "../../shared/harness-api.ts";
 import {
   NATIVE_MAC_EXECUTABLES,
@@ -21,7 +29,7 @@ import {
   NativeRunMode,
   type NativeRunStatus,
 } from "../../shared/native-contract.ts";
-import { admitMacBundle, readMachO } from "../../substrate/native-bundle.ts";
+import { admitMacBundle, admitWgpuBundle, readMachO } from "../../substrate/native-bundle.ts";
 import {
   type CrossAngle,
   crossAdmissionFacts,
@@ -60,15 +68,25 @@ async function nativeGame(core: StudioCore, project: string) {
 const JUDGED_EXECUTABLE = NATIVE_MAC_EXECUTABLES[NativeRunMode.Headless];
 
 /**
- * The host's own facts about a Mac build's `out/`, read-only: admission's verdict on the judged
- * executable, and that executable's imports and rpaths as written, read even when admission
- * refused it so the import that failed it is named. Nothing is assembled, signed or started.
+ * Each compiled stack's Mac admission: a raylib game must link the bundled ANGLE, a Rust · wgpu
+ * game draws through Metal and is held to the Rust policy instead (as Native Live admits it).
+ */
+const MAC_ADMISSION = {
+  [GameStack.RaylibCpp]: admitMacBundle,
+  [GameStack.RustWgpu]: admitWgpuBundle,
+} as const satisfies Record<CompiledStack, typeof admitMacBundle>;
+
+/**
+ * The host's own facts about a Mac build's `out/`, read-only: the verdict of `stack`'s admission on
+ * the judged executable, and that executable's imports and rpaths as written, read even when
+ * admission refused it so the import that failed it is named. Nothing is assembled, signed or started.
  */
 export async function admissionFacts(
   output: string,
+  stack: CompiledStack,
   angleManifestSha256: string | null,
 ): Promise<NativeAdmissionFacts> {
-  const admitted = await admitMacBundle(output, { mode: NativeRunMode.Headless });
+  const admitted = await MAC_ADMISSION[stack](output, { mode: NativeRunMode.Headless });
   const image = admitted.ok
     ? admitted.bundle.image
     : await readMachO(path.join(output, JUDGED_EXECUTABLE)).catch(() => null);
@@ -111,10 +129,14 @@ async function lockedCrossAngle(
 async function admissionOf(
   core: StudioCore,
   lock: CurrentLock,
+  stack: CompiledStack,
   target: BuildTarget,
   output: string,
 ): Promise<NativeAdmissionFacts | null> {
-  if (target === BuildTarget.Mac) return admissionFacts(output, await lockedAngleDigest(core, lock));
+  if (target === BuildTarget.Mac) {
+    const angle = stack === GameStack.RustWgpu ? null : await lockedAngleDigest(core, lock);
+    return admissionFacts(output, stack, angle);
+  }
   if (!isDesktopTarget(target)) return null;
   const angle = await lockedCrossAngle(core, lock, target);
   return angle ? crossAdmissionFacts(output, target, angle) : null;
@@ -143,7 +165,7 @@ async function build(core: StudioCore, x: CoreInternals, p: HarnessParams<typeof
   const output = outcome.ok ? outcome.output : null;
   // The host's admission facts for a desktop build: what the game later says it renders with is a
   // claim. A refused cross build retains host-read imports without serving its output.
-  const admission = outcome.nativeAdmission ?? (output ? await admissionOf(core, lock, target, output) : null);
+  const admission = outcome.nativeAdmission ?? (output ? await admissionOf(core, lock, stack, target, output) : null);
   return {
     ok: outcome.ok,
     problem: outcome.problem,

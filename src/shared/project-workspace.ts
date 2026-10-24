@@ -9,7 +9,16 @@
  * Renderer-safe: no Node. The ignore file is written by `substrate/nested-repos.ts`.
  */
 import { assetExtension, listsModels, MEDIA_FORMATS, MODEL_COMPANION_FORMATS } from "./game-assets.ts";
-import { CoreFact, type FactRef, globMatches, isFileGlob, isFolderGlob, NOT_WALKED } from "./project-facts.ts";
+import {
+  CoreFact,
+  type FactRef,
+  type GameKind,
+  globMatches,
+  isFileGlob,
+  isFolderGlob,
+  NOT_WALKED,
+  servedAsWebGame,
+} from "./project-facts.ts";
 
 /** A folder of assets, relative to its fact's folder (`"."` for it); `formats` are lowercase extensions, absent for any file. */
 export interface AssetFolder {
@@ -22,6 +31,11 @@ export interface FactWorkspace {
   ignore: readonly string[];
   copySkip: readonly string[];
   assets: readonly AssetFolder[];
+  /**
+   * Where files a plugin delivers (generated assets) land, relative to the fact's folder, for a
+   * kind whose engine reads only its own project's folder; absent keeps Genex's default (the game's root).
+   */
+  deliver?: string;
 }
 
 /** The game's root, as a fact's path spells it. */
@@ -84,11 +98,24 @@ export const CORE_WORKSPACE = {
     assets: [],
   },
   // Godot's `*.import` files stay in history: the project needs them to open.
-  [CoreFact.GodotProject]: { ignore: [".godot/"], copySkip: [], assets: [{ folder: ROOT, formats: MEDIA_FORMATS }] },
+  // Delivered files land in the project, where `res://assets/...` reaches them.
+  [CoreFact.GodotProject]: {
+    ignore: [".godot/"],
+    copySkip: [],
+    assets: [{ folder: ROOT, formats: MEDIA_FORMATS }],
+    deliver: ROOT,
+  },
   [CoreFact.UnityProject]: {
-    ignore: ["Library/", "Temp/", "Logs/", "obj/", "UserSettings/"],
+    // Builds/ is where agents build players: a player is output, never the game's history.
+    ignore: ["Library/", "Temp/", "Logs/", "obj/", "UserSettings/", "Builds/"],
     copySkip: [],
     assets: [{ folder: "Assets", formats: MEDIA_FORMATS }],
+  },
+  // A Roblox game's assets live in its place and on Roblox: its media keeps the default folders.
+  [CoreFact.RobloxProject]: {
+    ignore: [],
+    copySkip: [],
+    assets: [],
   },
   [CoreFact.BlenderAssets]: {
     ignore: ["**/*.blend1", "**/*.blend2"],
@@ -356,6 +383,39 @@ function reachedFolders(plugin: PluginWorkspace, facts: readonly FactRef[]): Ass
   const { assets } = plugin;
   if (!assets) return [];
   return facts.filter((fact) => plugin.facts.includes(fact.id)).flatMap((fact) => pluginFolders(fact.path, assets));
+}
+
+/**
+ * The folder of a game's web game when it has none at its root: the first web game in a folder of
+ * the game (a Godot game's web export in `web/`), which Live plays and Publish puts online in the
+ * root's place; null for a game served as a web game at its root, or with none.
+ */
+export function webFolderOf(game: GameKind): string | null {
+  if (servedAsWebGame(game)) return null;
+  const inFolder = game.facts.find(
+    (fact) => fact.id === CoreFact.WebGame && fact.path !== ROOT && isPlaceableBase(fact.path),
+  );
+  return inFolder?.path ?? null;
+}
+
+/** Whether Publish can put the game online: a web game at its root, or one in a folder of it (`webFolderOf`). */
+export const publishesAsWebGame = (game: GameKind): boolean => servedAsWebGame(game) || webFolderOf(game) !== null;
+
+/**
+ * The folder, relative to the game, where a plugin's delivered files land for a game with these
+ * facts: the folder of the first fact (the root's first) whose kind keeps them in its own project;
+ * null keeps Genex's default, as does a web game at the root, which serves the files itself.
+ */
+export function deliveryFolderFor(facts: readonly FactRef[]): string | null {
+  if (facts.some((fact) => fact.id === CoreFact.WebGame && fact.path === ROOT)) return null;
+  const bases = facts.filter((fact) => isPlaceableBase(fact.path));
+  const ordered = [...bases.filter((fact) => fact.path === ROOT), ...bases.filter((fact) => fact.path !== ROOT)];
+  for (const fact of ordered) {
+    const workspace: FactWorkspace | undefined = isCoreFact(fact.id) ? CORE_WORKSPACE[fact.id] : undefined;
+    const deliver = workspace?.deliver;
+    if (deliver !== undefined) return joinFolder(fact.path, deliver);
+  }
+  return null;
 }
 
 /**

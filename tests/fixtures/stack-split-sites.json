@@ -55,7 +55,7 @@
       "site": "nativeGame (native.build)",
       "bucket": "compiled",
       "owner": "M1.3",
-      "note": "Switched: native.build accepts any compiled game and builds through x.gameBuilds; lane-missing is stack-gated. admissionOf below stays raylib's (Mac bundle, ANGLE) until M3.5."
+      "note": "Switched: native.build accepts any compiled game and builds through x.gameBuilds; lane-missing is stack-gated. admissionOf picks the stack's Mac admission: raylib's (bundled ANGLE) or Rust's (Metal, admitWgpuBundle)."
     },
     {
       "file": "src/main/harness-rpc/game.ts",

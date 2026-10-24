@@ -28,6 +28,8 @@ const ASK = "make a rally racing game";
 const PROJECT = "/Users/me/AI Games/rally/unreal/Rally.uproject";
 const SHAPE = { entry: "index.html", main: "src/main.js", build: null };
 const LAUNCH = { toolName: "start_unattended_run", hours: 2, frameCount: 0, project: "rally" };
+/** What every Auto chat is handed (flipped from none): the Loop's start, for a Loop asked for in words. */
+const AUTO_LOOP = "start_autopilot";
 /** The Unreal plugin's kind, as the host lists it while the plugin is on. */
 const UNREAL_KIND = { plugin: "unreal", name: "Unreal Editor", tool: UNREAL_NEW_GAME_TOOL, makes: ["unreal-project"] };
 
@@ -218,7 +220,7 @@ describe("a chat turn and the engine question", () => {
     const { prompt, bridged } = handed(recorder);
     assert.ok(!lines(prompt).includes(RULE));
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, []);
+    assert.deepEqual(bridged, [AUTO_LOOP]);
   });
 
   it("with it on, a new game's builder asks web or Unreal first, with the question card bridged in", async () => {
@@ -226,7 +228,7 @@ describe("a chat turn and the engine question", () => {
     await runDelegatedTurn(recorder.ctx as never, NEW_CHAT);
     const { prompt, bridged, capture } = handed(recorder);
     assert.ok(lines(prompt).includes(RULE));
-    assert.deepEqual(bridged, ["ask_user"]);
+    assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"]);
     assert.equal(capture, true, "it is still a web game until the user chooses");
   });
 
@@ -244,7 +246,7 @@ describe("a chat turn and the engine question", () => {
     await runDelegatedTurn(recorder.ctx as never, { ...TURN, project: "rally" });
     const { prompt, bridged, capture } = handed(recorder);
     assert.ok(!lines(prompt).includes(RULE));
-    assert.deepEqual(bridged, []);
+    assert.deepEqual(bridged, [AUTO_LOOP]);
     assert.equal(capture, false, "its folder holds notes, not a page to capture");
   });
 
@@ -258,7 +260,7 @@ describe("a chat turn and the engine question", () => {
       await runDelegatedTurn(recorder.ctx as never, { ...TURN, project: "rally" });
       const { prompt, bridged, capture } = handed(recorder);
       assert.ok(!lines(prompt).includes(RULE));
-      assert.deepEqual(bridged, []);
+      assert.deepEqual(bridged, [AUTO_LOOP]);
       assert.equal(capture, true);
     }
   });
@@ -305,7 +307,7 @@ describe("a game the app made before the chat's first ask", () => {
   it("with nothing built in it and the plugin on, the chat's first build asks web or Unreal first", async () => {
     const { prompt, bridged, capture } = await turnOn({});
     assert.ok(lines(prompt).includes(RULE));
-    assert.deepEqual(bridged, ["ask_user"]);
+    assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"]);
     assert.equal(capture, true, "it is still a web game until the user chooses");
   });
 
@@ -329,19 +331,20 @@ describe("a game the app made before the chat's first ask", () => {
     for (const [label, options] of Object.entries(cases)) {
       const { prompt, bridged } = await turnOn(options);
       assert.ok(!lines(prompt).includes(RULE), label);
-      assert.deepEqual(bridged, [], label);
+      assert.deepEqual(bridged, [AUTO_LOOP], label);
     }
   });
 
   it("is never asked on a resumed session or a run's own turn, and asked again on a later message while the folder has no kind", async () => {
-    const turns: Record<string, [Parameters<typeof chatTurn>[0], Record<string, unknown>]> = {
-      "a resumed session": [{}, { ...ON_ITS_GAME, resume: "session-1" }],
-      "a run's own turn": [{}, { ...ON_ITS_GAME, runId: "run-1" }],
+    const turns: Record<string, [Parameters<typeof chatTurn>[0], Record<string, unknown>, string[]]> = {
+      // Flipped: a resumed session that still has no kind keeps the card its first brief named.
+      "a resumed session": [{}, { ...ON_ITS_GAME, resume: "session-1" }, [AUTO_LOOP, "ask_user"]],
+      "a run's own turn": [{}, { ...ON_ITS_GAME, runId: "run-1" }, []],
     };
-    for (const [label, [options, turn]] of Object.entries(turns)) {
+    for (const [label, [options, turn, expected]] of Object.entries(turns)) {
       const { prompt, bridged } = await turnOn(options, turn);
       assert.ok(!lines(prompt).includes(RULE), label);
-      assert.deepEqual(bridged, [], label);
+      assert.deepEqual(bridged, expected, label);
     }
     // A greeting first never loses the card: the folder still has no kind, so a fresh brief asks.
     const replied = [
@@ -351,7 +354,7 @@ describe("a game the app made before the chat's first ask", () => {
     ];
     const later = await turnOn({ messages: replied }, ON_ITS_GAME);
     assert.ok(lines(later.prompt).includes(RULE), "a later message");
-    assert.deepEqual(later.bridged, ["ask_user"], "a later message");
+    assert.deepEqual(later.bridged, [AUTO_LOOP, "ask_user"], "a later message");
   });
 });
 

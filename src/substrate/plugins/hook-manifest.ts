@@ -5,7 +5,7 @@
  * asks the person nothing and runs no host program: a moment never waits on a question, and never
  * runs another plugin's code.
  */
-import { isHookEvent, isLockScope, LOCK_ID, LOCK_LABEL_CHARS } from "../../shared/plugin-hooks.ts";
+import { isHookEvent, isLockScope, LOCK_ID, LOCK_LABEL_CHARS, MESSAGE_HOOK_EVENT } from "../../shared/plugin-hooks.ts";
 import type { PluginHook, PluginLock } from "../../shared/plugin-hooks.ts";
 import { isAgentTool, type PluginManifest, type PluginManifestTool } from "../../shared/plugins.ts";
 import { isFactId } from "../../shared/project-facts.ts";
@@ -18,7 +18,7 @@ const CONTROL = /\p{Cc}/u;
 
 /** The keys each entry may hold, in canonical order. */
 const LOCK_KEYS = ["id", "label", "per", "personFirst"] as const;
-const HOOK_KEYS = ["on", "tool", "facts"] as const;
+const HOOK_KEYS = ["on", "tool", "facts", "messages"] as const;
 
 /** What a publisher reads when a section is refused. */
 const MESSAGE = {
@@ -31,6 +31,8 @@ const MESSAGE = {
     `Invalid locks entry ${at} personFirst (a tool of this manifest only the harness calls, that asks nothing, runs no host program and does not need this lock)`,
   InvalidHook: (at: string) =>
     `Invalid hooks entry ${at} (on: one of Genex's moments; tool: a tool of this manifest only the harness calls, that asks nothing and runs no host program; facts: 1-${LIMIT.Facts} fact ids, each once; only these keys)`,
+  InvalidMessages: (at: string) =>
+    `Invalid hooks entry ${at} messages (true or false, and only on ${MESSAGE_HOOK_EVENT}: no other moment runs for each chat message)`,
   DuplicateHook: (at: string) => `Invalid hooks: ${at} is declared twice`,
   InvalidNeeds: (where: string, name: string) =>
     `Invalid ${where}.needs of ${name} (1-${LIMIT.Needs} lock ids this manifest declares, each once)`,
@@ -150,10 +152,16 @@ function pluginHook(entry: unknown, index: number, tools: readonly PluginManifes
   const at = nameOf(entry, "tool", index);
   if (!isHookEntry(entry) || !quietHarnessTool(tools, entry.tool)) throw new Error(MESSAGE.InvalidHook(at));
   const hook: PluginHook = { on: entry.on, tool: entry.tool };
-  if (entry.facts === undefined) return hook;
-  const facts = distinctList(entry.facts, LIMIT.Facts, isFactId);
-  if (!facts) throw new Error(MESSAGE.InvalidHook(at));
-  hook.facts = facts;
+  if (entry.facts !== undefined) {
+    const facts = distinctList(entry.facts, LIMIT.Facts, isFactId);
+    if (!facts) throw new Error(MESSAGE.InvalidHook(at));
+    hook.facts = facts;
+  }
+  if (entry.messages === undefined) return hook;
+  if (typeof entry.messages !== "boolean" || entry.on !== MESSAGE_HOOK_EVENT)
+    throw new Error(MESSAGE.InvalidMessages(at));
+  // Kept only when it asks: a hook that says false runs as one that says nothing.
+  if (entry.messages) hook.messages = true;
   return hook;
 }
 

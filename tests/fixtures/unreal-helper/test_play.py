@@ -126,6 +126,62 @@ class GameTimeHolds(PlayCase):
         self.assertEqual(tool('player_state')['held'], [], 'the next play session starts with nothing held')
 
 
+class Mouse(PlayCase):
+    """The player's mouse moves and its wheel turns for exactly one frame of the game, as a mouse
+    does: the game's own look mapping (Mouse XY 2D-Axis) turns the view by what moved. Unreal lets go
+    of a forced analog key by injecting its opposite, which would turn the view straight back, so the
+    key is forced to zero for a frame before it is let go."""
+
+    def test_moves_the_mouse_for_one_frame_then_holds_it_still_before_letting_go(self) -> None:
+        self.assertEqual(tool('mouse', 12.0, 5.0, 0.0), {'moved': [12.0, 5.0], 'wheel': 0.0})
+        self.assertEqual(self.commands(), ['Input.+key Mouse2D X=12 Y=-5'], 'down on screen is negative y')
+        self.frame(0.0, 0.0)
+        self.assertEqual(len(self.commands()), 1, 'nothing until a game frame has run')
+        self.frame(0.016, 0.016)
+        self.assertEqual(self.commands()[-1], 'Input.+key Mouse2D X=0 Y=0', 'still after one frame')
+        self.frame(0.016, 0.016)
+        self.assertEqual(self.commands()[-1], 'Input.-key Mouse2D', 'let go once it was still for a frame')
+        self.assertEqual(unreal.state['ticks'], {})
+
+    def test_turns_the_wheel_for_one_frame_up_being_positive(self) -> None:
+        tool('mouse', 0.0, 0.0, 2.0)
+        self.frames(2, game=0.016, wall=0.016)
+        self.assertEqual(self.commands(), ['Input.+key MouseWheelAxis 2', 'Input.+key MouseWheelAxis 0',
+                                           'Input.-key MouseWheelAxis'])
+
+    def test_lets_go_when_everything_is_let_go_or_the_game_clock_stalls(self) -> None:
+        tool('mouse', 5.0, 0.0, 0.0)
+        play.release_all()
+        self.assertEqual(self.commands()[-1], 'Input.-key Mouse2D')
+        unreal.calls.clear()
+        tool('mouse', 5.0, 0.0, 0.0)
+        self.frames(11, game=0.0, wall=1.0)
+        self.assertEqual(self.commands()[-1], 'Input.-key Mouse2D', 'let go at the wall-clock cap')
+
+    def test_nothing_to_move_forces_nothing(self) -> None:
+        self.assertEqual(tool('mouse', 0.0, 0.0, 0.0), {'moved': [0.0, 0.0], 'wheel': 0.0})
+        self.assertEqual(self.commands(), [])
+
+    def test_without_a_play_session_it_is_an_error_not_an_exception(self) -> None:
+        unreal.state['pie'] = False
+        self.assertIn('error', tool('mouse', 5.0, 0.0, 0.0))
+
+
+class Pause(PlayCase):
+    """The play session's own pause, which Genex holds between a judge's moves so the game waits
+    while the judge looks and decides."""
+
+    def test_pauses_and_resumes_the_game(self) -> None:
+        self.assertEqual(tool('pause', True), {'paused': True})
+        self.assertTrue(unreal.state['paused'])
+        self.assertEqual(tool('pause', False), {'paused': False})
+        self.assertFalse(unreal.state['paused'])
+
+    def test_without_a_play_session_it_is_an_error_not_an_exception(self) -> None:
+        unreal.state['pie'] = False
+        self.assertIn('error', tool('pause', True))
+
+
 class Clocks(PlayCase):
     def test_player_state_reads_the_game_clock_and_the_frame_rate(self) -> None:
         tool('hold', 'Throttle', 1.0, 0.0, 10.0)

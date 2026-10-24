@@ -652,3 +652,66 @@ export function cobbles(t: number): Solid {
   );
   return solid;
 }
+
+/** The Genex account: a rounded card with a person on it and two lines of a name beside them. */
+export function accountMark(): MarkShape[] {
+  const shoulders: Vec2[] = arc(-5.4, -6.2, 5.0, 0, Math.PI, 14);
+  return [
+    { points: roundedRect(0, 0, 26, 18, 4.6), face: true },
+    { points: disc(-5.4, 2.4, 2.7), face: true },
+    { points: rounded(shoulders, 0.6, 3), face: true },
+    { points: roundedRect(5.4, 2.6, 9.4, 2.4, 1.2), face: true },
+    { points: roundedRect(4.2, -2.2, 7, 2.4, 1.2), face: true, k: 0.8 },
+  ];
+}
+
+/** A person's head and shoulders, centred on x, the shoulders' base at y. */
+function person(x: number, y: number, size: number, k = 1): MarkShape[] {
+  const head = disc(x, y + size * 1.62, size * 0.54);
+  const shoulders = rounded(arc(x, y, size, 0, Math.PI, 16), size * 0.12, 3);
+  return [
+    { points: head, face: true, k },
+    { points: shoulders, face: true, k },
+  ];
+}
+
+/** A ring: an outline with a hole `width` wide, for the even-odd face. */
+function ring(cx: number, cy: number, r: number, width: number): MarkShape[] {
+  return [
+    { points: disc(cx, cy, r), face: true },
+    { points: disc(cx, cy, r - width).reverse(), face: true },
+  ];
+}
+
+/** Remix: the Remix button's fork, three rings joined by a U and its stem, one game two ways on. */
+export function remixMark(): MarkShape[] {
+  const pipe: Vec2[] = [
+    [-8.2, 3.3],
+    [-8.2, -1.2],
+    [-1.2, -1.2],
+    [-1.2, -4.4],
+    [1.2, -4.4],
+    [1.2, -1.2],
+    [8.2, -1.2],
+    [8.2, 3.3],
+    [5.8, 3.3],
+    [5.8, 1.2],
+    [-5.8, 1.2],
+    [-5.8, 3.3],
+  ];
+  return [
+    { points: rounded(pipe, [0.2, 2.6, 0.5, 0.2, 0.2, 0.5, 2.6, 0.2, 0.2, 0.9, 0.9, 0.2]), face: true },
+    ...ring(-7, 5.9, 2.6, 1.25),
+    ...ring(7, 5.9, 2.6, 1.25),
+    ...ring(0, -7, 2.6, 1.25),
+  ];
+}
+
+/** Multiplayer: a room, drawn as the account card's sibling, with two players on it. */
+export function multiplayerMark(): MarkShape[] {
+  return [
+    { points: roundedRect(0, 0, 27, 18, 4.6), face: true },
+    ...person(-5.2, -6.6, 4.3),
+    ...person(5.2, -6.6, 4.3, 0.85),
+  ];
+}

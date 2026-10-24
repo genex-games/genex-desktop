@@ -14,6 +14,7 @@ import {
   canvasBacking,
   CanvasPhase,
   awaitsFirstFrame,
+  buildingWords,
   canvasPhase,
   canvasWords,
   clipText,
@@ -21,12 +22,14 @@ import {
   embedSizeOf,
   FrameVerdict,
   heldAfter,
+  lookAction,
   mouseButtonOf,
   NO_HELD,
   padAction,
   padChanges,
   pointerOnRing,
   pointerOnSurface,
+  pointerMoveAction,
   queueAction,
   releaseActions,
   releasesCapture,
@@ -34,8 +37,8 @@ import {
   startingProgress,
   textAction,
 } from "../../src/renderer/panels/stage/native-live.ts";
-import { NATIVE_WORDS } from "../../src/renderer/words.ts";
-import { BuildTarget } from "../../src/shared/game-project.ts";
+import { DESTINATION_WORDS, NATIVE_WORDS } from "../../src/renderer/words.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import {
   BootStage,
   NATIVE_FRAME_SIDE_MAX,
@@ -278,6 +281,42 @@ describe("captured input on its way to the game", () => {
   });
 });
 
+describe("mouse look while the pointer is locked", () => {
+  const RECT = { left: 0, top: 0, width: 800, height: 450 };
+  const RING = { width: 1600, height: 900 };
+
+  it("a locked pointer's motion is look, in device pixels as the web shell sends it", () => {
+    assert.deepEqual(lookAction({ x: 3, y: -2 }, 2), { type: "look", dx: 6, dy: -4 });
+    assert.equal(lookAction({ x: 0, y: 0 }, 2), null, "no motion, nothing sent");
+    assert.ok(parseNativeInput([lookAction({ x: 3, y: -2 }, 2)]), "main accepts it");
+  });
+
+  it("locked, a move is look and never a place; unlocked, it is the place and never look", () => {
+    const event = { clientX: 400, clientY: 225, movementX: 5, movementY: 1 };
+    assert.deepEqual(pointerMoveAction(event, { locked: true, rect: RECT, ring: RING, dpr: 2 }), {
+      type: "look",
+      dx: 10,
+      dy: 2,
+    });
+    assert.deepEqual(pointerMoveAction(event, { locked: false, rect: RECT, ring: RING, dpr: 2 }), {
+      type: "move",
+      x: 800,
+      y: 450,
+      px: true,
+    });
+  });
+
+  it("sums look within a frame, so a fast turn is one action and nothing is lost", () => {
+    let queue: NativeInputAction[] = [];
+    queue = queueAction(queue, { type: "look", dx: 4, dy: 1 });
+    queue = queueAction(queue, { type: "look", dx: 6, dy: -3 });
+    assert.deepEqual(queue, [{ type: "look", dx: 10, dy: -2 }]);
+    queue = queueAction(queue, { type: "mousedown", button: "left" });
+    queue = queueAction(queue, { type: "look", dx: 1, dy: 1 });
+    assert.equal(queue.length, 3, "a press between turns keeps its order");
+  });
+});
+
 describe("gamepads", () => {
   it("reads a pad in the standard mapping's bounds, and none past the fourth", () => {
     const many = pad(
@@ -477,5 +516,42 @@ describe("what Live's canvas says about the embedded run", () => {
       /own window/,
       "it plays inside Live",
     );
+  });
+});
+
+describe("what Live's canvas says while the Mac build is made", () => {
+  const startedAt = "2026-10-01T00:00:00.000Z";
+  const at = (ms: number) => Date.parse(startedAt) + ms;
+  const building = embedded(NativeRunState.Building, { startedAt });
+
+  it("says what is built, of which folder, for how long, and with which compiler", () => {
+    const copy = buildingWords(building, { copy: true, stack: GameStack.RustWgpu, now: at(72_000) });
+    assert.deepEqual(copy, {
+      title: NATIVE_WORDS.embed.buildingCopy("1:12"),
+      detail: DESTINATION_WORDS.buildStage[GameStack.RustWgpu],
+    });
+    assert.equal(
+      buildingWords(building, { copy: false, stack: GameStack.RaylibCpp, now: at(5_000) })?.title,
+      NATIVE_WORDS.embed.building("0:05"),
+      "the game folder",
+    );
+    assert.equal(buildingWords(building, { copy: false, stack: null, now: at(0) })?.detail, null);
+    const unread = embedded(NativeRunState.Building, { startedAt: "not a time" });
+    assert.equal(
+      buildingWords(unread, { copy: true, stack: null, now: at(0) })?.title,
+      NATIVE_WORDS.embed.buildingCopy("0:00"),
+    );
+  });
+
+  it("says nothing of a build once the run is past it; a failed build says its refusal and offers Try again", () => {
+    const context = { copy: true, stack: GameStack.RustWgpu, now: at(1_000) };
+    for (const state of [NativeRunState.Admitting, NativeRunState.Starting, NativeRunState.Ready])
+      assert.equal(buildingWords(embedded(state, { startedAt }), context), null, state);
+    assert.equal(buildingWords(null, context), null, "nothing answered yet");
+    const failed = embedded(NativeRunState.Refused, { refusal: NativeRefusal.BuildFailed, pid: null });
+    const phase = canvasPhase(failed, false, true);
+    assert.equal(phase, CanvasPhase.Refused, "never left starting");
+    assert.equal(canvasWords(phase, failed).title, NATIVE_WORDS.refusal[NativeRefusal.BuildFailed]);
+    assert.deepEqual(canvasActions(phase, failed, { popOut: false }), [CanvasAction.TryAgain]);
   });
 });

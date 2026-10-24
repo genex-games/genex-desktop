@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { safeChild, readVersion, writeJson } from "./files.mjs";
+import { gamesRootWarnings } from "./live-env.ts";
 export function slug(value) {
   if (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(value ?? ""))
     throw new Error("profile/build ID must be a lowercase slug (1–48 characters)");
@@ -33,6 +34,7 @@ export function validateProfile(checkout, id) {
     throw new Error("unrecognized or copied profile ownership");
   for (const [k, rel] of Object.entries(ownedRoots(owner)))
     if (owner[k] !== safeChild(dir, rel)) throw new Error(`invalid owned ${k} root`);
+  if (!ownsGamesRoot(owner, dir)) throw new Error("invalid owned games root");
   const freshMachine = owner.freshMachine === true;
   if (freshMachine && owner.home !== freshMachineHome(owner.ownerId)) throw new Error("invalid owned home root");
   const validFresh = owner.freshMachine === undefined || (freshMachine && owner.providers === "live");
@@ -50,9 +52,31 @@ export function validateProfile(checkout, id) {
  * profile a new account to the Keychain too.
  */
 function ownedRoots(owner) {
-  const roots = { electron: "electron", session: "session", core: "core", games: "games" };
+  const roots = { electron: "electron", session: "session", core: "core" };
   if (owner.freshMachine !== true) return roots;
   return { ...roots, secureStorage: `secure-storage-${owner.ownerId}` };
+}
+/** Whether `owner.games` is the root this profile was given: inside it, or outside for a live one ({@link outsideGamesRoot}). */
+function ownsGamesRoot(owner, dir) {
+  if (owner.gamesOutside === undefined) return owner.games === safeChild(dir, "games");
+  const outsideAllowed = owner.gamesOutside === true && owner.providers === "live" && owner.freshMachine !== true;
+  return outsideAllowed && owner.games === outsideGamesRoot(owner.ownerId);
+}
+/**
+ * A live profile's games when its checkout sits under a `.claude` folder (a worktree there):
+ * outside it in the home folder, where Claude Code's native Write neither refuses nor asks about
+ * every game file the in-app agent writes. Named by the owner id, so it is this profile's alone.
+ */
+export function outsideGamesRoot(ownerId) {
+  if (!/^[0-9a-f-]{36}$/.test(ownerId ?? "")) throw new Error("invalid owner id");
+  return path.join(os.homedir(), "Genex Studio Dev", ownerId, "games");
+}
+/**
+ * Whether a new profile keeps its games outside the checkout: a live one whose own games root is
+ * under `.claude`. Not a fresh machine's, whose app runs with another home than this script's.
+ */
+function gamesGoOutside(providers, freshMachine, dir) {
+  return providers === "live" && !freshMachine && gamesRootWarnings(path.join(dir, "games")).length > 0;
 }
 /**
  * A fresh-machine profile's home: in the temporary folder, outside the checkout, because the app
@@ -65,6 +89,8 @@ export function freshMachineHome(ownerId) {
 /** Remove a stopped profile and a fresh-machine home; links inside are removed, never followed. */
 export function removeProfile(owner) {
   if (owner.freshMachine === true) fs.rmSync(freshMachineHome(owner.ownerId), { recursive: true, force: true });
+  if (owner.gamesOutside === true)
+    fs.rmSync(path.dirname(outsideGamesRoot(owner.ownerId)), { recursive: true, force: true });
   fs.rmSync(owner.root, { recursive: true });
 }
 /** Live profiles hold real sign-ins and are kept; fixture and fresh-machine profiles are thrown away. */
@@ -114,6 +140,14 @@ export function allocateProfile(checkout, id, providers, fixture, reuse = false,
   for (const [k, rel] of Object.entries(ownedRoots(owner))) {
     fs.mkdirSync(safeChild(dir, rel), { mode: 0o700 });
     owner[k] = path.join(dir, rel);
+  }
+  if (gamesGoOutside(providers, freshMachine, dir)) {
+    owner.gamesOutside = true;
+    owner.games = outsideGamesRoot(owner.ownerId);
+    fs.mkdirSync(owner.games, { recursive: true, mode: 0o700 });
+  } else {
+    fs.mkdirSync(safeChild(dir, "games"), { mode: 0o700 });
+    owner.games = path.join(dir, "games");
   }
   if (freshMachine) {
     owner.home = freshMachineHome(owner.ownerId);

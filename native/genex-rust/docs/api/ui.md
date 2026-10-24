@@ -22,19 +22,21 @@ Register the gameplay UI once with `game.ui(UiConfig::new().locales(&["en", "fr"
 locales, fonts and `xx-pseudo` are `docs/api/text.md`. `.scale(UiScale::Fixed(1.25))` fixes the UI
 scale (by default `UiScale::Auto`: 1.5 on a phone in an export, 1 elsewhere). Install refuses a
 second registration (`duplicate-ui`) and a locale that is not BCP-47 or a font for a locale the
-list does not name (`ui-locale-invalid`). `genex::ui::locale()`, `genex::ui::reduced_motion()` and
-`genex::ui::safe_area(ui)` (what of the drawn world a phone's notch, island or home indicator
-covers, as an egui margin; zero while the world is presented inside the safe area) read the same
-layers; lay menus out inside the world's rect less that margin. A Genex run has no safe area. In
-a Studio run the `uiSettings` verb sets a session layer (locale, scale, safe area, text size) from
-the next tick. `textSize` is recorded and answered back; gameplay UI does not read it yet.
+list does not name (`ui-locale-invalid`). The `on_ui` hooks draw inside the safe area plus a
+16 pt margin, at the person's text size; touch controls, `egui::Area`s and `ui.put` keep the whole
+world. `genex::ui::locale()`, `genex::ui::reduced_motion()` and `genex::ui::safe_area(ui)` (what of
+`ui`'s rect a phone's notch, island or home indicator still covers, as an egui margin; zero inside
+the hook's own rect) read the same layers; lay menus out inside `ui`'s rect less that margin. A
+Genex run has no safe area. In a Studio run the `uiSettings` verb sets a session layer (locale,
+scale, safe area, text size) from the next tick. `textSize` is answered back; the hooks read the
+settings menu's text size.
 
 The kit draws in one pass and moves by pad or keys: `Menu::new("pause").item("resume", &tr("resume")).back("resume").show(ui)`
 answers the picked item's key (its `back` key on B or Escape), and `Dialog::new("quit")`,
 `ItemGrid::new("bag", 6)`, `ItemList::new("quests")` and `Bar::new("hp", 0.5)` follow the same
 pattern; `Toasts::push(ui.ctx(), ToastKind::Info, &tr("saved"))` queues a notice and
-`Toasts::show(ui)` draws the queue at the top right of `ui`'s rect: the whole frame for a root
-ui, clear of a notch inside the safe area. A menu focuses its first item when it opens and
+`Toasts::show(ui)` draws the queue at the top right of `ui`'s rect: inside the safe area and the
+16 pt margin for a hook's ui. A menu focuses its first item when it opens and
 remembers its focused item, so a menu opened again lands where the player left it. A `Bar`'s
 label is what checks and screen readers read, not drawn: draw the words beside it. The d-pad or left
 stick moves focus, A accepts, B cancels and the bumpers walk in drawing order; a held direction

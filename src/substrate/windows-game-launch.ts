@@ -17,7 +17,14 @@
  */
 import { realpath as realpathFs } from "node:fs/promises";
 import path from "node:path";
-import { GameBoxProblem, NativeEnv, NativeError, NativeRefusal, NativeRunMode } from "../shared/native-contract.ts";
+import {
+  GameBoxProblem,
+  NativeEnv,
+  NativeError,
+  NativeRefusal,
+  NativeRunMode,
+  nativeGameMemoryCapBytes,
+} from "../shared/native-contract.ts";
 import { writeNewFile } from "./fsx.ts";
 import { isRunId, RunDirLayout } from "./native-bundle.ts";
 
@@ -128,6 +135,16 @@ export const GAME_MEMORY_MIN_BYTES = 256 * MIB;
 export const GAME_MEMORY_MAX_BYTES = 64 * GIB;
 /** The memory limit a run gets when its request names none, in bytes. */
 export const DEFAULT_GAME_MEMORY_BYTES = 4 * GIB;
+
+/**
+ * The Job Object's memory limit on a PC with `ramBytes` of memory: the host's memory cap
+ * (`nativeGameMemoryCapBytes`), held inside the launcher's own bounds so a very large or very
+ * small PC gets the nearest limit the launcher takes, never `invalid-memory-limit`.
+ */
+export function jobMemoryBytes(ramBytes: number): number {
+  const cap = nativeGameMemoryCapBytes(ramBytes);
+  return Math.min(GAME_MEMORY_MAX_BYTES, Math.max(GAME_MEMORY_MIN_BYTES, cap));
+}
 /** The longest path the launcher accepts, in UTF-16 units: MAX_PATH less its terminator. */
 const PATH_MAX_UNITS = 259;
 /** The game's file name in the bundle. */

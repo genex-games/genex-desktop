@@ -14,7 +14,7 @@ use genex::prelude::*;
 struct World { score: u32 }
 
 fn main() {
-    let mut game = Game::new(World::default()).title("Pond").world_size(960, 540);
+    let mut game = Game::new(World::default()).title("Pond").world_size(960, 540).fit(Fit::Expand);
     game.on_update(|sim, ctx| if ctx.keys.pressed(Key::Space) { sim.world.score += 1; });
     game.on_draw(|sim, frame, _camera| { frame.tag("score").cube(Transform::IDENTITY, Color::WHITE); });
     game.probe("score", |sim| json!(sim.world.score));
@@ -28,9 +28,8 @@ scripts, cargo configuration or renderer internals.
 
 ## Topics
 
-This index holds the hooks and the rules every game follows. Every other topic is a page of its
-own beside it in `docs/api/`: read the page of each topic a change touches (nearly every game
-needs Ctx and Drawing).
+This index holds the hooks and rules; each other topic is a page in `docs/api/`. Read each one a
+change touches (nearly every game needs Ctx and Drawing).
 
 | Topic | Page | What it covers |
 |-|-|-|
@@ -42,6 +41,7 @@ needs Ctx and Drawing).
 | Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
+| Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
@@ -119,11 +119,12 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
-  `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second registration), `streaming-invalid` (the
-  Streaming and Navigation pages say when), `input-invalid` (the Input page explains it),
-  `audio-zone-limit` (more than 16 reverb zones),
+  `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second
+  registration), `streaming-invalid` (Streaming and Navigation pages), `input-invalid` (Input
+  page), `audio-zone-limit` (more than 16 reverb zones),
   `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`,
-  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps) and `settings-invalid`.
+  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps), `settings-invalid`, `nav-disabled`
+  and `streaming-disabled` (that system is off in genex.toml).
   `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
   pass name, or one pass over the cap.
 

@@ -71,7 +71,7 @@ drives no action.
 `ctx.actions.device(..)` is the device the player used last (keyboard, pad or touch) and
 `ctx.actions.glyph(..)` an action's prompt on it: "Space", "Cross" on a PlayStation pad, "B" on a
 Nintendo pad for south. `glyph_ui(ui, &glyph)` draws it as a key cap, face button or stick shape:
-the HUD's fonts have no pad symbols, and no platform logo is drawn. A glyph is display text: it
+the HUD's fonts have no pad symbols, and no platform logo is drawn. On a touch screen the prompt is the control's: its label, or its shape. A glyph is display text: it
 follows the keyboard layout (on AZERTY `KeyW` reads "Z") and the pad in hand, while the binding
 and the action read the same. Never keep a glyph's label in the world's rules, a save or a
 checksummed probe; a `probe_volatile` may show what the HUD drew. A Studio run ignores layout
@@ -83,10 +83,14 @@ labels, so judged runs read the same prompts. `state().__input.hints` lists ever
 (`StickMode::Fixed`, or `Floating`, whose base lands under the finger), `.button(..)` and
 `.dpad(..)`, each at an `Anchor` corner offset in world pixels. A `touch:<id>` binding reads a
 control; `ctx.actions.free_touches(..)` are the touches no control took, so a game that also reads
-raw touches handles those only. `.show(..)` picks when they are drawn (`ShowWhen::Touch`, `Always`,
-`Never`); drawn or not they read the same, so the mouse's first button (touch 0) presses a hidden
-control under the pointer. Keep their zones away from where a desktop player clicks. Each control
-is a HUD item labelled with its label, so a check finds and taps it.
+raw touches handles those only. `.show(..)` picks when they are drawn (`ShowWhen::Touch`, `Always`, `Never`); drawn or not, a
+finger reads the same. The desktop mouse's first button (touch 0) presses a control only in a
+layout shown on every device (`ShowWhen::Always`): elsewhere a click on a hidden control stays
+the game's click (`ctx.actions.free_touches`). `.label("Move")` names the control added last; a
+stick or d-pad without one is drawn as its shape alone and prompts "Stick" or "D-pad", a button
+shows its label. A floating stick's zone is outlined only while a finger is down. Each control is
+a HUD item labelled with its label (a stick or d-pad without one: its id), so a check finds and
+taps it.
 
 ## Rebinding
 

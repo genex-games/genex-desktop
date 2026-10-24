@@ -166,7 +166,7 @@ use crate::meshlet_cull::{
 };
 use crate::motion::{GpuMotionFrame, MotionHistory, MotionNode, MotionStep};
 use crate::post::fsr::{FsrNode, FsrPass, FsrPasses};
-use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveNode, TaaInput};
+use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveNode, TaaFlags, TaaInput};
 use crate::post::taau::{GpuTaauParams, TaauInput};
 use crate::post::tonemap::{MsaaResolve, ResolveNode, TonemapNode, TonemapPass, TonemapSource, f16_to_f32};
 use crate::prepass::{ExtensionDemand, GpuPrepassDraw, PrepassConsumers, PrepassDraw, PrepassInfo};
@@ -1001,6 +1001,8 @@ pub struct Renderer {
     taa_reproject: [f32; 16],
     /// The game's logical world size: the size the renderer was made at ([`Renderer::logical_size`]).
     logical: (u32, u32),
+    /// How the world fills an output of another aspect ([`Renderer::set_fit`]).
+    fit: crate::letterbox::Fit,
     /// The most coverage the frame's transparent meshes write into TAA's reactive mask, each its
     /// material's alpha below it ([`crate::post::taa::transparent_coverage`]), read before the
     /// uploads take the plan's previous-model table.
@@ -2851,6 +2853,7 @@ impl Renderer {
             width,
             height,
             logical: (width, height),
+            fit: crate::letterbox::Fit::Letterbox,
         })
     }
 
@@ -2864,6 +2867,24 @@ impl Renderer {
     /// coordinates and the default output (renderer pass 2, P2-0.9 step B).
     pub fn logical_size(&self) -> (u32, u32) {
         self.logical
+    }
+
+    /// How the world fills an output of another aspect: under [`Fit::Expand`](crate::letterbox::Fit)
+    /// the 2D layer shows [`Renderer::view_rect`] and the window present fills the window.
+    pub fn set_fit(&mut self, fit: crate::letterbox::Fit) {
+        self.fit = fit;
+    }
+
+    /// The fit frames draw with ([`Renderer::set_fit`]; letterbox by default).
+    pub fn fit(&self) -> crate::letterbox::Fit {
+        self.fit
+    }
+
+    /// The rectangle of logical world pixels the output shows: the world itself, or under
+    /// [`Fit::Expand`](crate::letterbox::Fit) the world grown to the output's aspect
+    /// ([`crate::letterbox::view_rect`]). The immediate 2D layer is drawn over it.
+    pub fn view_rect(&self) -> [f32; 4] {
+        crate::letterbox::view_rect(self.logical, (self.width, self.height), self.fit)
     }
 
     /// Draw the next frames at `size` (each side clamped to 64..=4096, as the world target's):
@@ -3324,6 +3345,18 @@ impl Renderer {
         self.last_path
     }
 
+    /// Whether the environment's time-sliced work has caught up: every reflection probe captured
+    /// and every irradiance volume baked, current and faded in. Live spreads that work over many
+    /// frames (`irradiance::CELLS_PER_FRAME`, `irradiance::FADE_IN_FRAMES`) while a settled capture
+    /// bakes it whole, so a Live picture compared with a capture waits for this first (R-12: the
+    /// cabin's volume, half baked, read as a 40-level "trail" on the Lakeside wall).
+    pub fn environment_settled(&self) -> bool {
+        let maps = self.environment.borrow();
+        let grid = maps.irradiance().schedule();
+        let faded_in = (0..).take_while(|slot| grid.published(*slot)).all(|slot| grid.presence(slot) >= 1.0);
+        maps.probes().schedule().settled() && grid.settled() && faded_in
+    }
+
     /// The last frame's depth, top row first: `Depth32Float` values, 1 for the far plane with
     /// standard Z and 0 with reverse-Z. Refused unless [`Renderer::set_depth_readback`] was on for
     /// that frame and it was single-sampled (a multisampled texture cannot be copied out).
@@ -3735,6 +3768,7 @@ impl Renderer {
     /// Plan `scene`, check its uploads against the budget and make room in the tables. A refusal
     /// comes before any GPU write (the `tables` node writes them).
     fn prepare(&mut self, scene: &Scene, path: CullPath, scene_path: &ScenePath, temporal: &FrameTemporal) -> Result<(FramePlan, Uploads, EnvironmentSun), RenderError> {
+        let _plan = genex_profile::scope(genex_profile::EngineScope::Plan);
         let aspect = self.width as f32 / self.height as f32;
         // Shadows switched off are planned without cascades (no copy of the scene per frame).
         let shadows = &self.quality.shadows;
@@ -3748,12 +3782,14 @@ impl Renderer {
         // Rows' identities across frames only for a frame that writes motion vectors.
         // Far plain skinned draws skin in the vertex stage (AN-18): no job, output or row of theirs.
         // Past the class's compute cap the smallest skin in the vertex stage too (AN-23).
+        // Draws sharing a job stay on compute and the cap counts jobs (lane CP), so the levels
+        // (AN-25, picked for the LOD view `set_lod_view` sets below) are picked first, once.
         let compute_max = self.skinned_compute_max();
-        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws_within(scene, &self.library, self.skin_vertex.policy, compute_max.unwrap_or(u32::MAX));
-        self.skin_vertex.instances = crate::skin_vertex::SkinnedInstances::of(scene.skinned.len(), &vertex_skinned, compute_max);
-        // Skinned levels (AN-25) are picked for the LOD view `set_lod_view` sets below.
         let target = LodTarget { height: self.height, threshold_px: self.quality.lod.threshold_px };
-        let mut plan = FramePlan::build_with_skin_levels(scene, &self.library, aspect, &options, (temporal.motion, &vertex_skinned), target)?;
+        let picks = crate::scene::skinned_levels(scene, &self.library, target);
+        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws_within(scene, &self.library, self.skin_vertex.policy, compute_max.unwrap_or(u32::MAX), &picks);
+        self.skin_vertex.instances = crate::skin_vertex::SkinnedInstances::of(scene.skinned.len(), &vertex_skinned, compute_max);
+        let mut plan = FramePlan::build_with_picks(scene, &self.library, aspect, &options, (temporal.motion, &vertex_skinned), &picks)?;
         self.prepare_skin_vertex_frame(scene, &plan, temporal.set, temporal.reset)?;
         // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
         // no instance to another level.
@@ -4043,6 +4079,11 @@ impl Renderer {
         } else {
             if self.taa.get_mut().is_none() {
                 *self.taa.get_mut() = Some(TaaHistories::on_device(&self.device, &self.queue)?);
+            }
+            // TAAU's pipelines compile with TAA's (R-20): a dynamic-resolution step below scale 1
+            // then compiles nothing on the frame thread.
+            if self.quality.taau && path.hdr && let Some(histories) = self.taa.get_mut().as_mut() {
+                histories.upscale_on(&self.device, &self.queue, HistorySet::Live)?;
             }
             if self.reactive.as_ref().is_none_or(|reactive| reactive.reversed != path.depth_reversed) {
                 // One node (one jitter group layout) for the session; its pipeline per convention.
@@ -4426,7 +4467,18 @@ impl Renderer {
     /// value moves by a small step per tick) and whether history starts over.
     fn taa_row(&self) -> GpuTaaParams {
         let (config, prev_jitter, ratio) = self.taa_inputs();
-        GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject)
+        let row = GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject);
+        if self.history_set != HistorySet::Capture {
+            return row;
+        }
+        // A settled capture's cycle averages its raw re-renders with the box's weights (R-12).
+        // Its history is rectified only while auto exposure meters (the first re-renders are drawn
+        // at another pre-exposure, which the row's ratio of 1 does not undo): after that nothing
+        // changes across the cycle, and clipping a few frames' history to one frame's box biased
+        // every pixel a one-sample dither covers (the LOD crossfade's stipple, D22).
+        let metering = auto_exposure(&self.look, &self.quality) && self.frame_index < u64::from(crate::settle::GRADED_EXPOSURE_SETTLE_FRAMES);
+        let flags = if metering { TaaFlags::CLIP.with(TaaFlags::SETTLE) } else { TaaFlags::SETTLE };
+        row.with_flags(flags)
     }
 
     /// TAA upscaling's row for the frame being drawn (B.8): [`Renderer::taa_row`]'s inputs at the
@@ -5834,7 +5886,8 @@ impl Renderer {
     /// texel for texel into one of the world target's own size ([`crate::letterbox::present`]).
     /// Shells present through `Resilient::present`, which keeps its own across device recoveries.
     pub fn present(&mut self, gpu: &Gpu, target: &TextureView, format: TextureFormat, window: (u32, u32)) {
-        let into = crate::letterbox::present::PresentInto { world: (&self.targets.world_view, self.drawn_size()), target, format, window };
+        let fill = self.fit == crate::letterbox::Fit::Expand;
+        let into = crate::letterbox::present::PresentInto { fill, world: (&self.targets.world_view, self.drawn_size()), target, format, window };
         self.window_present.present(gpu, &into, None);
     }
 

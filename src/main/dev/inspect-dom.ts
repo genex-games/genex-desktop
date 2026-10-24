@@ -72,6 +72,7 @@ function snapshotOf(root: Element, limit: number) {
     stage: datasetOf("[data-stage-view]"),
     chat: chatSummary(root),
     plan: planSummary(root),
+    play: playSummary(root),
     chatLayout: chatLayoutOf(root),
     text: text.slice(0, TEXT_LIMIT),
     textTruncated: text.length > TEXT_LIMIT,
@@ -166,6 +167,38 @@ function chatRowKind(e: Element): string {
   return "tool";
 }
 
+/**
+ * Play's dashboard as the person sees it: its cards, the covers on screen still blank (not loaded,
+ * or loaded and not faded in yet), and the clips holding a decoder or playing.
+ */
+function playSummary(root: Element) {
+  const scroll = root.querySelector("[data-play-page] .play-scroll");
+  if (!scroll) return null;
+  const view = scroll.getBoundingClientRect();
+  const cards = [...scroll.querySelectorAll("[data-play-game]")];
+  const covers = cards
+    .map((card) => card.querySelector(".play-card-cover"))
+    .filter((cover): cover is Element => {
+      const r = cover?.getBoundingClientRect();
+      return Boolean(r && r.bottom > view.top && r.top < view.bottom && r.height > 0);
+    });
+  const images = covers.map((cover) => cover.querySelector("img"));
+  const videos = [...scroll.querySelectorAll("video")];
+  return {
+    cards: cards.length,
+    placeholders: scroll.querySelectorAll(".play-card-placeholder").length,
+    inView: covers.length,
+    shown: images.filter((img) => img?.hasAttribute("data-shown")).length,
+    loading: images.filter((img) => img && !img.complete).length,
+    bare: images.filter((img) => !img).length,
+    clipsHeld: videos.filter((v) => v.getAttribute("src")).length,
+    clipsPlaying: videos.filter((v) => v.getAttribute("src") && !v.paused).length,
+    scrollTop: scroll.scrollTop,
+    scrollHeight: scroll.scrollHeight,
+    clientHeight: scroll.clientHeight,
+  };
+}
+
 function imagesOf(root: Element) {
   return [...root.querySelectorAll("img")]
     .filter(isVisible)
@@ -244,6 +277,7 @@ const PAGE_FUNCTIONS = [
   chatLayoutOf,
   chatRowOf,
   chatRowKind,
+  playSummary,
   imagesOf,
   controlOf,
   locate,

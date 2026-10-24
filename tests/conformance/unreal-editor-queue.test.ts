@@ -60,6 +60,7 @@ describe("the editor queue", () => {
       [
         LoopTool.ApplyPart,
         LoopTool.GetProperties,
+        LoopTool.SearchCVars,
         LoopTool.SetProperties,
         LoopTool.StartPlay,
         LoopTool.Hold,
@@ -218,6 +219,37 @@ describe("the editor queue's play tests run unthrottled", () => {
     });
   }
 
+  // UE 5.8 on a Mac hangs the GPU rendering a ray-traced level at full speed behind another app.
+  it("on a Mac, plays a ray-traced editor throttled, and lifts the throttle everywhere else", async () => {
+    for (const [platform, lifted] of [
+      ["darwin", false],
+      ["linux", true],
+      ["win32", true],
+    ] as const) {
+      const editor = standIn();
+      editor.state.rayTracing = true;
+      const run = await runLantern(editor.port, platform);
+      assert.equal(run.state, PartRunState.Done, platform);
+      assert.equal(editor.state.throttleAtPlay, !lifted, platform);
+      assert.equal(editor.state.throttle, true, platform);
+    }
+  });
+
+  it("on a Mac, lifts the throttle of an editor without ray tracing, and keeps it when the editor can't say", async () => {
+    const plain = standIn();
+    await runLantern(plain.port, "darwin");
+    assert.equal(plain.state.throttleAtPlay, false, "no ray tracing: full speed");
+    const silent = standIn({
+      [LoopTool.SearchCVars]: () => {
+        throw new Error("connection reset");
+      },
+    });
+    const run = await runLantern(silent.port, "darwin");
+    assert.equal(run.state, PartRunState.Done);
+    assert.equal(silent.state.throttleAtPlay, true, "unknown: kept, as for ray tracing");
+    assert.deepEqual(written(silent.calls), []);
+  });
+
   it("leaves a throttle that is already off alone (the user's choice, or the bridge's own play session)", async () => {
     const editor = standIn();
     editor.state.throttle = false;
@@ -329,6 +361,7 @@ describe("a C++ part in the editor queue", () => {
       LoopTool.RecompileModule,
       LoopTool.ApplyPart,
       LoopTool.GetProperties,
+      LoopTool.SearchCVars,
       LoopTool.SetProperties,
       LoopTool.StartPlay,
       LoopTool.Hold,
@@ -679,6 +712,7 @@ describe("a play-check in the editor queue (the live builder's checkpoint)", () 
     assert.equal(run.part, "play-check");
     assert.deepEqual(played(world.editor.calls), [
       LoopTool.GetProperties,
+      LoopTool.SearchCVars,
       LoopTool.SetProperties,
       LoopTool.StartPlay,
       LoopTool.Settle,

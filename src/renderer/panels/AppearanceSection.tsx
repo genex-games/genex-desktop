@@ -29,6 +29,9 @@ import {
 } from "../appearance/themes.ts";
 import { useAppearance } from "../appearance/store.ts";
 import { HomeBackdropSection } from "./HomeBackdropSection.tsx";
+import { t } from "../../shared/i18n.ts";
+import { isLanguageChoice, LOCALE_NAMES, LOCALES, SYSTEM_LANGUAGE } from "../../shared/locale.ts";
+import { languageChoice, switchLanguage, windowLanguage } from "../language.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Input } from "../ui/input.tsx";
@@ -41,40 +44,40 @@ import {
 } from "../ui/dropdown-menu.tsx";
 
 const LABELS: Record<ColorRole, string> = {
-  background: "Background",
-  foreground: "Text",
-  accent: "Accent",
-  surface: "Surfaces",
-  sidebar: "Sidebar",
-  popover: "Menus",
-  field: "Inputs",
-  hover: "Hover",
-  muted: "Secondary text",
-  border: "Dividers",
-  controlBorder: "Control borders",
-  success: "Success",
-  warning: "Warning",
-  danger: "Error",
+  background: t("Background"),
+  foreground: t("Text"),
+  accent: t("Accent"),
+  surface: t("Surfaces"),
+  sidebar: t("Sidebar"),
+  popover: t("Menus"),
+  field: t("Inputs"),
+  hover: t("Hover"),
+  muted: t("Secondary text"),
+  border: t("Dividers"),
+  controlBorder: t("Control borders"),
+  success: t("Success"),
+  warning: t("Warning"),
+  danger: t("Error"),
 };
 /** The colours every theme shows up front; the rest wait under "Customize theme". */
 const MAIN_ROLES: readonly ColorRole[] = ["accent", "background", "foreground"];
 const MORE_ROLES = COLOR_ROLES.filter((role) => !MAIN_ROLES.includes(role));
 /** The surfaces a theme's text has to stay readable on. */
 const TEXT_SURFACES: readonly ColorRole[] = ["background", "surface", "sidebar", "popover", "field", "hover"];
-const MODE_LABEL: Record<AppearanceMode, string> = { system: "System", light: "Light", dark: "Dark" };
+const MODE_LABEL: Record<AppearanceMode, string> = { system: t("System"), light: t("Light"), dark: t("Dark") };
 const UI_FONT_OPTIONS = [
-  { value: "studio", label: "Studio default" },
-  { value: "system", label: "System" },
+  { value: "studio", label: t("Studio default") },
+  { value: "system", label: t("System") },
 ];
 const CONTENT_FONT_OPTIONS = [
-  { value: "inherit", label: "Same as interface" },
-  { value: "system", label: "System" },
+  { value: "inherit", label: t("Same as interface") },
+  { value: "system", label: t("System") },
   { value: "serif", label: "Georgia" },
   { value: "mono", label: "Geist Mono" },
 ];
 const CODE_FONT_OPTIONS = [
   { value: "geist", label: "Geist Mono" },
-  { value: "system", label: "System mono" },
+  { value: "system", label: t("System mono") },
 ];
 function Choice({
   label,
@@ -164,11 +167,11 @@ function ColorField({
         <input
           type="color"
           value={value}
-          aria-label={`${scheme} ${LABELS[role]} color`}
+          aria-label={t("{scheme, select, light {light} other {dark}} {color} color", { scheme, color: LABELS[role] })}
           onChange={(event) => onChange(event.target.value)}
         />
         <input
-          aria-label={`${scheme} ${LABELS[role]} hex`}
+          aria-label={t("{scheme, select, light {light} other {dark}} {color} hex", { scheme, color: LABELS[role] })}
           aria-invalid={invalid}
           aria-describedby={invalid ? id : undefined}
           value={draft}
@@ -183,7 +186,7 @@ function ColorField({
       </div>
       {invalid && (
         <span id={id} className="text-red text-xs">
-          Use #RGB or #RRGGBB.
+          {t("Use #RGB or #RRGGBB.")}
         </span>
       )}
     </div>
@@ -231,11 +234,15 @@ function useThemeEditor(scheme: Scheme) {
   const adjust = (role: ColorRole, value: string) => change({ overrides: { ...selection.overrides, [role]: value } });
   const save = (themeName: string, colors: Palette, contrast: number) => {
     if (appearance.saved.length >= MAX_SAVED_PRESETS) {
-      setError(`You have ${MAX_SAVED_PRESETS} saved presets. Remove one before saving another.`);
+      setError(
+        t("You have {count, plural, one {# saved preset} other {# saved presets}}. Remove one before saving another.", {
+          count: MAX_SAVED_PRESETS,
+        }),
+      );
       return false;
     }
     const id = `${CUSTOM_PRESET_PREFIX}${crypto.randomUUID()}`;
-    const name = themeName.trim().slice(0, PRESET_NAME_MAX) || "Custom theme";
+    const name = themeName.trim().slice(0, PRESET_NAME_MAX) || t("Custom theme");
     update((prev) => ({
       ...prev,
       saved: [...prev.saved, { id, name, scheme, colors, contrast }],
@@ -275,9 +282,9 @@ function readability(palette: Palette, contrast: number): Readability {
   };
 }
 function readabilityHint({ ratio, corrected, mixedSurfaces }: Readability): string {
-  if (mixedSurfaces) return "Some surfaces cannot share readable text. Choose backgrounds with similar brightness.";
-  if (corrected) return "Text adjusted for readability.";
-  return `Text on background: ${ratio.toFixed(2)}:1.`;
+  if (mixedSurfaces) return t("Some surfaces cannot share readable text. Choose backgrounds with similar brightness.");
+  if (corrected) return t("Text adjusted for readability.");
+  return t("Text on background: {ratio}:1.", { ratio: ratio.toFixed(2) });
 }
 
 function ColorRow({ editor, role }: { editor: ThemeEditorModel; role: ColorRole }) {
@@ -296,21 +303,21 @@ function ThemeHeading({ editor, mixedSurfaces }: { editor: ThemeEditorModel; mix
   const { scheme, palette } = editor;
   const reset = () => {
     editor.change({ ...DEFAULT_APPEARANCE[scheme], overrides: {} });
-    editor.setNotice("Theme reset to Genex.");
+    editor.setNotice(t("Theme reset to Genex."));
     editor.setError("");
   };
   return (
     <div className="appearance-theme-heading">
-      <h3>{scheme === Scheme.Light ? "Light theme" : "Dark theme"}</h3>
-      {editor.active === scheme && <span className="appearance-active">Active</span>}
+      <h3>{scheme === Scheme.Light ? t("Light theme") : t("Dark theme")}</h3>
+      {editor.active === scheme && <span className="appearance-active">{t("Active")}</span>}
       <Button
         variant={mixedSurfaces ? "default" : "ghost"}
         className="ms-auto"
         style={mixedSurfaces ? { background: palette.accent, color: onColor(palette.accent) } : undefined}
-        aria-label={`Reset ${scheme} theme`}
+        aria-label={t("Reset {scheme, select, light {light} other {dark}} theme", { scheme })}
         onClick={reset}
       >
-        Reset
+        {t("Reset")}
       </Button>
     </div>
   );
@@ -324,9 +331,9 @@ function PresetRow({ editor }: { editor: ThemeEditorModel }) {
     editor.setNotice("");
   };
   return (
-    <SettingRow label="Preset">
+    <SettingRow label={t("Preset")}>
       <Choice
-        label={`${scheme} theme preset`}
+        label={t("{scheme, select, light {light} other {dark}} theme preset", { scheme })}
         value={editor.selection.preset}
         options={[...PRESETS, ...appearance.saved]
           .filter((p) => p.scheme === scheme)
@@ -342,7 +349,7 @@ function PresetActions({ editor }: { editor: ThemeEditorModel }) {
   const [name, setName] = useState("");
   const startSaving = () => {
     setSaving(!saving);
-    setName(editor.custom ? `${preset.name} custom` : preset.name);
+    setName(editor.custom ? t("{name} custom", { name: preset.name }) : preset.name);
     editor.setError("");
   };
   const remove = () =>
@@ -355,17 +362,17 @@ function PresetActions({ editor }: { editor: ThemeEditorModel }) {
     event.preventDefault();
     if (!editor.save(name, palette, editor.selection.contrast)) return;
     setSaving(false);
-    editor.setNotice("Preset saved.");
+    editor.setNotice(t("Preset saved."));
   };
   return (
     <>
       <div className="appearance-actions">
         <Button variant="secondary" onClick={startSaving}>
-          Save as preset…
+          {t("Save as preset…")}
         </Button>
         {preset.id.startsWith(CUSTOM_PRESET_PREFIX) && (
           <Button variant="ghost" onClick={remove}>
-            Remove preset
+            {t("Remove preset")}
           </Button>
         )}
       </div>
@@ -373,14 +380,14 @@ function PresetActions({ editor }: { editor: ThemeEditorModel }) {
         <form className="appearance-save" onSubmit={submit}>
           <Input
             autoFocus
-            aria-label={`${scheme} preset name`}
-            placeholder="Preset name"
+            aria-label={t("{scheme, select, light {light} other {dark}} preset name", { scheme })}
+            placeholder={t("Preset name")}
             value={name}
             maxLength={PRESET_NAME_MAX}
             onChange={(event) => setName(event.target.value)}
           />
           <Button type="submit" disabled={!name.trim()}>
-            Save
+            {t("Save")}
           </Button>
         </form>
       )}
@@ -392,13 +399,14 @@ function ThemeCustomize({ editor, check }: { editor: ThemeEditorModel; check: Re
   return (
     <details className="appearance-details">
       <summary>
-        Customize theme{editor.custom ? <span className="text-muted-foreground font-normal">Edited</span> : null}
+        {t("Customize theme")}
+        {editor.custom ? <span className="text-muted-foreground font-normal">{t("Edited")}</span> : null}
       </summary>
       <div className="appearance-customize">
         {MORE_ROLES.map((role) => (
           <ColorRow key={role} editor={editor} role={role} />
         ))}
-        <SettingRow label={<label htmlFor={`${scheme}-contrast`}>Contrast</label>}>
+        <SettingRow label={<label htmlFor={`${scheme}-contrast`}>{t("Contrast")}</label>}>
           <input
             id={`${scheme}-contrast`}
             type="range"
@@ -410,7 +418,9 @@ function ThemeCustomize({ editor, check }: { editor: ThemeEditorModel; check: Re
           />
           <output htmlFor={`${scheme}-contrast`}>{selection.contrast}</output>
         </SettingRow>
-        <p className="appearance-hint">{readabilityHint(check)} Action labels adjust to the accent.</p>
+        <p className="appearance-hint">
+          {readabilityHint(check)} {t("Action labels adjust to the accent.")}
+        </p>
         <PresetActions editor={editor} />
       </div>
     </details>
@@ -435,14 +445,14 @@ async function readThemeFile(
   input.value = "";
   if (!selected) return;
   if (selected.size > THEME_FILE_MAX_BYTES) {
-    setError("Choose a theme smaller than 128 KB.");
+    setError(t("Choose a theme smaller than 128 KB."));
     return;
   }
   try {
     setSource(await selected.text());
     setError("");
   } catch {
-    setError("Could not read the file. Choose another theme.");
+    setError(t("Could not read the file. Choose another theme."));
   }
 }
 function ImportControls({
@@ -462,15 +472,15 @@ function ImportControls({
   return (
     <>
       <p className="appearance-hint">
-        Genex tokens or VS Code JSON/JSONC. UI colors only; missing colors use Genex defaults.
+        {t("Genex tokens or VS Code JSON/JSONC. UI colors only; missing colors use Genex defaults.")}
       </p>
       <div className="appearance-actions">
         <Button variant="default" disabled={!source.trim()} onClick={onImport}>
-          Import theme
+          {t("Import theme")}
         </Button>
-        <Button onClick={() => file.current?.click()}>Choose file…</Button>
+        <Button onClick={() => file.current?.click()}>{t("Choose file…")}</Button>
         <Button variant="ghost" onClick={onCancel}>
-          Cancel
+          {t("Cancel")}
         </Button>
       </div>
       <input
@@ -478,7 +488,7 @@ function ImportControls({
         type="file"
         accept=".json,.jsonc,.tokens,application/json"
         className="hidden"
-        aria-label={`Choose ${editor.scheme} theme file`}
+        aria-label={t("Choose {scheme, select, light {light} other {dark}} theme file", { scheme: editor.scheme })}
         onChange={(event) => void readThemeFile(event.target, setSource, editor.setError)}
       />
     </>
@@ -498,26 +508,30 @@ function ThemeShare({ editor }: { editor: ThemeEditorModel }) {
     const text = exportTheme(editor.appearance, scheme);
     try {
       await navigator.clipboard.writeText(text);
-      setNotice("Theme copied.");
+      setNotice(t("Theme copied."));
       setShare(null);
     } catch {
       setSource(text);
       setShare(ShareMode.Export);
-      setNotice("Select and copy the theme below.");
+      setNotice(t("Select and copy the theme below."));
     }
   };
   const applyImport = () => {
     try {
       const imported = importTheme(source, scheme);
       if (imported.scheme !== scheme)
-        throw new Error(`This is a ${imported.scheme} theme. Import it in the ${imported.scheme} theme section.`);
+        throw new Error(
+          imported.scheme === Scheme.Light
+            ? t("This is a light theme. Import it in the light theme section.")
+            : t("This is a dark theme. Import it in the dark theme section."),
+        );
       if (!editor.save(imported.name, imported.colors, imported.contrast)) return;
       setShare(null);
       setSource("");
       setError("");
-      setNotice(`Imported ${imported.name}.`);
+      setNotice(t("Imported {name}.", { name: imported.name }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not import this theme.");
+      setError(e instanceof Error ? e.message : t("Could not import this theme."));
     }
   };
   const cancel = () => {
@@ -528,10 +542,10 @@ function ThemeShare({ editor }: { editor: ThemeEditorModel }) {
     <>
       <div className="appearance-actions appearance-share">
         <Button variant="ghost" onClick={toggleImport} aria-expanded={share === ShareMode.Import}>
-          Import…
+          {t("Import…")}
         </Button>
         <Button variant="ghost" onClick={() => void copy()}>
-          Copy theme
+          {t("Copy theme")}
         </Button>
         <span className="appearance-hint" role="status">
           {editor.notice}
@@ -540,7 +554,7 @@ function ThemeShare({ editor }: { editor: ThemeEditorModel }) {
       {share && (
         <div className="appearance-import">
           <label htmlFor={`${scheme}-theme-json`}>
-            {share === ShareMode.Import ? "Paste theme JSON" : "Theme JSON"}
+            {share === ShareMode.Import ? t("Paste theme JSON") : t("Theme JSON")}
           </label>
           <textarea
             id={`${scheme}-theme-json`}
@@ -551,7 +565,7 @@ function ThemeShare({ editor }: { editor: ThemeEditorModel }) {
               setSource(event.target.value);
               setError("");
             }}
-            placeholder="Genex color tokens or VS Code UI colors"
+            placeholder={t("Genex color tokens or VS Code UI colors")}
           />
           {share === ShareMode.Import && (
             <ImportControls
@@ -572,7 +586,10 @@ function ThemeEditor({ scheme }: { scheme: Scheme }) {
   const { palette } = editor;
   const check = readability(palette, editor.selection.contrast);
   return (
-    <section className="appearance-theme" aria-label={`${scheme} theme`}>
+    <section
+      className="appearance-theme"
+      aria-label={t("{scheme, select, light {light} other {dark}} theme", { scheme })}
+    >
       <ThemeHeading editor={editor} mixedSurfaces={check.mixedSurfaces} />
       <PresetRow editor={editor} />
       {MAIN_ROLES.map((role) => (
@@ -584,7 +601,7 @@ function ThemeEditor({ scheme }: { scheme: Scheme }) {
           className="rounded-control p-2 text-xs"
           style={{ background: palette.background, color: onColor(palette.background) }}
         >
-          These surfaces need different text colors. Use similar background brightness, or reset this theme.
+          {t("These surfaces need different text colors. Use similar background brightness, or reset this theme.")}
         </p>
       )}
       <ThemeCustomize editor={editor} check={check} />
@@ -628,19 +645,19 @@ function ModeOption({ mode, light, dark }: { mode: AppearanceMode; light: Palett
 function TypographySection() {
   const { appearance, update } = useAppearance();
   return (
-    <section className="appearance-typography" aria-label="Typography">
-      <h3>Typography</h3>
-      <SettingRow label="Interface font">
+    <section className="appearance-typography" aria-label={t("Typography")}>
+      <h3>{t("Typography")}</h3>
+      <SettingRow label={t("Interface font")}>
         <Choice
-          label="Interface font"
+          label={t("Interface font")}
           value={appearance.uiFont}
           options={UI_FONT_OPTIONS}
           onChange={(uiFont) => update((prev) => ({ ...prev, uiFont: uiFont as Appearance["uiFont"] }))}
         />
       </SettingRow>
-      <SettingRow label="Content font">
+      <SettingRow label={t("Content font")}>
         <Choice
-          label="Content font"
+          label={t("Content font")}
           value={appearance.contentFont}
           options={CONTENT_FONT_OPTIONS}
           onChange={(contentFont) =>
@@ -648,9 +665,9 @@ function TypographySection() {
           }
         />
       </SettingRow>
-      <SettingRow label="Code font">
+      <SettingRow label={t("Code font")}>
         <Choice
-          label="Code font"
+          label={t("Code font")}
           value={appearance.codeFont}
           options={CODE_FONT_OPTIONS}
           onChange={(codeFont) => update((prev) => ({ ...prev, codeFont: codeFont as Appearance["codeFont"] }))}
@@ -659,14 +676,44 @@ function TypographySection() {
     </section>
   );
 }
+/** The app's language: the Mac's (named) first, then each language in its own name. */
+function LanguageSection() {
+  const choice = languageChoice();
+  const options = [
+    {
+      value: SYSTEM_LANGUAGE,
+      label: t("System ({language})", { language: LOCALE_NAMES[windowLanguage(SYSTEM_LANGUAGE)] }),
+    },
+    ...LOCALES.map((locale) => ({ value: locale, label: LOCALE_NAMES[locale] })),
+  ];
+  const choose = (next: string): void => {
+    if (next !== choice && isLanguageChoice(next)) void switchLanguage(window.studio, next);
+  };
+  return (
+    <section className="appearance-typography" aria-label={t("Language")} data-language-setting>
+      <h3>{t("Language")}</h3>
+      <SettingRow label={t("App language")}>
+        <Choice label={t("App language")} value={choice} options={options} onChange={choose} />
+      </SettingRow>
+      <p className="appearance-hint">{t("Genex reloads its window to switch.")}</p>
+    </section>
+  );
+}
+/** The mode hint while the theme follows the Mac: which of its two themes shows now. */
+function followsMacHint(scheme: Scheme): string {
+  return scheme === Scheme.Light
+    ? t("Follows your Mac. Light theme is active.")
+    : t("Follows your Mac. Dark theme is active.");
+}
 export function AppearanceSection() {
   const { appearance, scheme, error, update } = useAppearance();
   const light = paletteFor(appearance, Scheme.Light);
   const dark = paletteFor(appearance, Scheme.Dark);
   return (
     <div data-appearance className="appearance-section">
+      <LanguageSection />
       <fieldset className="appearance-modes">
-        <legend>Theme</legend>
+        <legend>{t("Theme")}</legend>
         <div className="appearance-mode-options">
           {APPEARANCE_MODES.map((mode) => (
             <ModeOption key={mode} mode={mode} light={light} dark={dark} />
@@ -675,8 +722,8 @@ export function AppearanceSection() {
       </fieldset>
       <p className="appearance-hint appearance-mode-hint">
         {appearance.mode === AppearanceMode.System
-          ? `Follows your Mac. ${MODE_LABEL[scheme]} theme is active.`
-          : "Changes apply immediately and save on this Mac."}
+          ? followsMacHint(scheme)
+          : t("Changes apply immediately and save on this Mac.")}
       </p>
       <HomeBackdropSection />
       <ThemeEditor scheme={Scheme.Light} />
@@ -691,7 +738,7 @@ export function AppearanceSection() {
         variant="ghost"
         onClick={() => update((prev) => ({ ...structuredClone(DEFAULT_APPEARANCE), saved: prev.saved }))}
       >
-        Restore default appearance
+        {t("Restore default appearance")}
       </Button>
     </div>
   );

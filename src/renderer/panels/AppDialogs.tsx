@@ -4,7 +4,7 @@
  * not studio state: they live here, not in a store. App opens them through `useAppDialogs()`.
  */
 import type { JSX, RefObject } from "react";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { lazy, Suspense, useCallback, useEffect, useReducer, useRef } from "react";
 import { adoptPickedFolder } from "../open-folder.ts";
 import {
   isSettingsSection,
@@ -20,13 +20,30 @@ import { notifyProblem, ToastTone } from "../state/toasts.ts";
 import type { FeedbackAbout } from "../feedback-about.ts";
 import { FEEDBACK_WORDS } from "../words.ts";
 import type { FolderInspection, GameLocation, GameProject } from "../types.ts";
-import { CreateCppGameDialog } from "./CreateGameDialog.tsx";
 import { GameCoverDialog } from "./GameCoverDialog.tsx";
 import { FeedbackDialog } from "./FeedbackDialog.tsx";
 import { DeleteGameDialog, RenameGameDialog } from "./GameDialogs.tsx";
 import { GameSearchDialog } from "./GameSearchDialog.tsx";
 import { OpenGameSheet } from "./OpenGameSheet.tsx";
-import { SettingsDialog } from "./SettingsDialog.tsx";
+
+// Settings and the new-game dialog stay out of the studio's first chunk, which keeps the
+// development renderer inside the eager budget `scripts/renderer-build.mjs` enforces; the app
+// fetches both once it is idle, so a first open does not wait on a file read.
+const loadSettings = () => import("./SettingsDialog.tsx");
+const loadCreateGame = () => import("./CreateGameDialog.tsx");
+const SettingsDialog = lazy(() => loadSettings().then((m) => ({ default: m.SettingsDialog })));
+const CreateCppGameDialog = lazy(() => loadCreateGame().then((m) => ({ default: m.CreateCppGameDialog })));
+
+/** Fetch the lazily loaded dialogs once the window is idle. */
+function usePreloadedDialogs(): void {
+  useEffect(() => {
+    const id = window.requestIdleCallback(() => {
+      void loadSettings();
+      void loadCreateGame();
+    });
+    return () => window.cancelIdleCallback(id);
+  }, []);
+}
 
 export interface DialogsState {
   creating: boolean;
@@ -176,6 +193,7 @@ export function AppDialogs({
   onSelectGame: (name: string) => void;
 }): JSX.Element {
   const { state, dispatch } = dialogs;
+  usePreloadedDialogs();
   const games = useLibrary((s) => s.games);
   const rootLabel = useLibrary((s) => s.rootLabel);
   const threads = useThreads((s) => s.records);
@@ -186,32 +204,34 @@ export function AppDialogs({
   const dialogGame = state.game;
   return (
     <>
-      {state.creating && (
-        <CreateCppGameDialog
-          rootLabel={rootLabel}
-          initialLocation={state.createLocation}
-          onDismiss={() => dispatch({ type: "close-create" })}
-          onCreated={async (game) => {
-            app.addGame(game);
-            await onEnterProject(game.name, true);
-            dispatch({ type: "close-create" });
-          }}
-        />
-      )}
-      {state.settingsOpen && (
-        <SettingsDialog
-          returnFocus={dialogs.settingsReturnFocus}
-          section={state.settingsSection}
-          onSection={(section) => dispatch({ type: "section", section })}
-          onDismiss={() => dispatch({ type: "close-settings" })}
-          engines={engines}
-          // The store's own refresh: one function for the app's life. Settings keys an effect on it,
-          // so a new closure per render would re-read the engines on every update while it is open.
-          onEnginesRefresh={app.engines.refresh}
-          gamesRootLabel={rootLabel}
-          onGamesRoot={(label) => app.library.setState((s) => rootLabelChanged(s, label), true)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {state.creating && (
+          <CreateCppGameDialog
+            rootLabel={rootLabel}
+            initialLocation={state.createLocation}
+            onDismiss={() => dispatch({ type: "close-create" })}
+            onCreated={async (game) => {
+              app.addGame(game);
+              await onEnterProject(game.name, true);
+              dispatch({ type: "close-create" });
+            }}
+          />
+        )}
+        {state.settingsOpen && (
+          <SettingsDialog
+            returnFocus={dialogs.settingsReturnFocus}
+            section={state.settingsSection}
+            onSection={(section) => dispatch({ type: "section", section })}
+            onDismiss={() => dispatch({ type: "close-settings" })}
+            engines={engines}
+            // The store's own refresh: one function for the app's life. Settings keys an effect on it,
+            // so a new closure per render would re-read the engines on every update while it is open.
+            onEnginesRefresh={app.engines.refresh}
+            gamesRootLabel={rootLabel}
+            onGamesRoot={(label) => app.library.setState((s) => rootLabelChanged(s, label), true)}
+          />
+        )}
+      </Suspense>
       {state.searching && (
         <GameSearchDialog
           games={games}

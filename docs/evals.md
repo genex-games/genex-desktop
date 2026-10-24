@@ -215,7 +215,7 @@ blocks from it. A missing measurement is never zero: a pin is a value, `{unavail
 | `time.builds`, `delegationP50Ms` | Chat delegations and facet builds (Genex lanes) |
 | `tokens` | Uncached input, cache write, cache read, output, reasoning; by role (lead, workers, judges, subagents, auxiliary) and by model; `coverage` full, stream-only, partial-judges, trace-dirty or unmeasured |
 | `context` | Peak and compactions |
-| `calls` | Model calls, and tool calls by `ToolCategory` (`src/shared/eval-lane.ts`: read, search, edit, shell, build, install, browser, studio, subagent, web, planning, skill, other) |
+| `calls` | Model calls, and tool calls by `ToolCategory` (`src/shared/eval-lane.ts`: read, search, edit, shell, build, install, browser, studio, subagent, web, planning, skill, other), all classified by `src/shared/tool-category.ts`. In Genex lanes and the app's field rows a tool call is a `tool_use` part of a delegated record; raw Claude and Codex lanes count the stream's tool calls |
 | `cost.apiEquivalentUsd` | Tokens priced by `evals/prices.json`; one unpriced model makes it `unavailable: price-unknown` |
 | `outcome`, `output` | How the run ended, harness failure, typed no-build, questions, trace completeness, provider noise; `validateGameDir` of the stop-time snapshot, `verifiedBeforeDone` |
 
@@ -541,7 +541,10 @@ calibration results and human labels.
   days) and posted by `src/main/run-sharing.ts` with no credentials or redirects. Its tokens are
   normalized like the ledger's, its first boot is `build_observation.ready.pageMs`, its
   `recordedAt` is the finish hour, and a chat build's row comes from the handled message's own
-  turn (a message that opened no turn shares nothing). A 410 on a POST pauses sending for a day;
+  turn (a message that opened no turn shares nothing); a run's records in that thread stay in the
+  run's row. Its `calls.tools` counts builder tool calls by category, as a Genex lane does; rows
+  from app versions up to 0.1.7 counted the chat's own tool requests in total only, so split any
+  `calls.tools` analysis by `app.version`. A 410 on a POST pauses sending for a day;
   Delete what I shared keeps working while it is paused, and a partial delete reports the rows
   it removed. Only a packaged app with no `--studio-*` switch, dev profile or test user data
   sends. [PRIVACY.md](../PRIVACY.md) is the consent text; `RUN_SHARING_CONSENT_VERSION`
@@ -603,7 +606,6 @@ five-minute rows read `unknown`); both set `STUDIO_BROWSER_TESTS=1`.
 - Edit-existing, follow-up and long-horizon cases run as plain builds: no start-folder seeding or
   follow-up turns yet.
 - The prober writes PNG frames and no video; pairwise rows are never published.
-- Field rows count tool calls in total only (`byCategory` is empty).
 - The lane root keeps the evals home out of an agent's casual listing, not out of reach: its
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` still names a folder inside it.
 - Studio scratch sessions are attributed by time, so two streams sharing one engine home (a Genex

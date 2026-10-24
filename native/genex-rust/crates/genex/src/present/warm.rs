@@ -147,7 +147,7 @@ impl Presenter {
         let (Some(camera), Some(frame)) = (runtime.camera(View::Game), runtime.frame(View::Game)) else { return };
         let handle = self.attach(runtime);
         // The frame's models, extensions and environment on the device, as its first draw would.
-        if self.admit(&frame).and_then(|()| self.load(&frame)).and_then(|()| self.light(&frame)).is_err() {
+        if self.admit(&frame).and_then(|()| self.load_characters(runtime)).and_then(|()| self.load(&frame)).and_then(|()| self.light(&frame)).is_err() {
             return;
         }
         let (immediate, _) = self.immediate(&frame, &camera);

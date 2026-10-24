@@ -5,8 +5,10 @@ import { compareIds } from "./compare-ids.ts";
  * context and the harness read the log without them.
  */
 import { APPROVED_PLAN_HEADING } from "./composer.ts";
-import { CustomEvent, customRecord, DELEGATED_PREFIX } from "./custom-events.ts";
+import { withoutMentionContext } from "./prompt-mention.ts";
+import { CustomEvent, customPayload, customRecord, DELEGATED_PREFIX } from "./custom-events.ts";
 import { type EventEnvelope, EventKind } from "./event-log.ts";
+import { t } from "./i18n.ts";
 import { messageQueueState, QueueState, type QueuedMessage } from "./message-queue.ts";
 import { workerKeyOf } from "./run-graph-events.ts";
 import { isExecutionEvent, RUN_START_EVENTS } from "./run-state.ts";
@@ -161,14 +163,15 @@ export const RewindRefusal = {
 } as const;
 export type RewindRefusal = (typeof RewindRefusal)[keyof typeof RewindRefusal];
 
-const REFUSAL_WORDS: Record<RewindRefusal, string> = {
-  [RewindRefusal.NotFound]: "That message is no longer in this chat.",
-  [RewindRefusal.NotAnswered]: "That message hasn’t been answered yet.",
-  [RewindRefusal.Busy]: "Wait for this chat to finish, or press Stop, before rewinding.",
+/** Each refusal's words; functions, as main loads this module before it sets its language. */
+const REFUSAL_WORDS: Record<RewindRefusal, () => string> = {
+  [RewindRefusal.NotFound]: () => t("That message is no longer in this chat."),
+  [RewindRefusal.NotAnswered]: () => t("That message hasn’t been answered yet."),
+  [RewindRefusal.Busy]: () => t("Wait for this chat to finish, or press Stop, before rewinding."),
 };
 
 export function rewindRefusalWords(reason: RewindRefusal): string {
-  return REFUSAL_WORDS[reason];
+  return REFUSAL_WORDS[reason]();
 }
 
 /**
@@ -262,6 +265,95 @@ export interface RewindResult {
   files: number | null;
   /** Waiting follow-ups that left with it and the pictures their composer had attached. */
   held: Array<{ messageId: string; pickedImages: number }>;
+  /** Game files came back: the rewind's line offers to bring the newer version back by this id. */
+  undo?: { rewindId: string };
+}
+
+/**
+ * A rewind's undo id: the name of the `rewound/` ref that keeps the game folder as it was just
+ * before that rewind (`main/chat-checkpoints.ts`): base-36 time, a dash, eight hex digits.
+ */
+const REWIND_ID = /^[0-9a-z]{1,16}-[0-9a-f]{8}$/;
+
+/** Is this a rewind's undo id the host may name a ref by? */
+export function isRewindId(value: unknown): value is string {
+  return typeof value === "string" && REWIND_ID.test(value);
+}
+
+/** The `conversation_rewind_undone` record: which rewind's newer version came back, and how many files. */
+export interface RewindUndonePayload {
+  rewindId?: string;
+  files?: number;
+}
+
+/** What bringing the newer version back did: how many game files changed. */
+export interface UndoRewindResult {
+  files: number;
+}
+
+/** Why the newer version a rewind replaced cannot come back. */
+export const UndoRewindRefusal = {
+  /** Not the chat's newest rewind, or one that put no files back. */
+  NotOffered: "not-offered",
+  AlreadyBack: "already-back",
+  MessageSent: "message-sent",
+  Busy: "busy",
+  /** HEAD moved since the rewind: a commit or a landed build. */
+  HistoryChanged: "history-changed",
+  /** The saved folder is no longer kept. */
+  Gone: "gone",
+} as const;
+export type UndoRewindRefusal = (typeof UndoRewindRefusal)[keyof typeof UndoRewindRefusal];
+
+/** Each refusal's words; functions, as main loads this module before it sets its language. */
+const UNDO_REFUSAL_WORDS: Record<UndoRewindRefusal, () => string> = {
+  [UndoRewindRefusal.NotOffered]: () => t("Only the latest rewind can bring the newer version back."),
+  [UndoRewindRefusal.AlreadyBack]: () => t("The newer version is already back."),
+  [UndoRewindRefusal.MessageSent]: () =>
+    t("A message was sent after the rewind, so the newer version can’t come back now."),
+  [UndoRewindRefusal.Busy]: () =>
+    t("Wait for this chat to finish, or press Stop, before bringing the newer version back."),
+  [UndoRewindRefusal.HistoryChanged]: () =>
+    t("The game’s history changed since the rewind, so the newer version can’t come back now."),
+  [UndoRewindRefusal.Gone]: () => t("The newer version is no longer saved."),
+};
+
+export function undoRewindRefusalWords(reason: UndoRewindRefusal): string {
+  return UNDO_REFUSAL_WORDS[reason]();
+}
+
+/** The chat's newest rewind marker, by id, and the undo id it carries (if any). */
+function newestRewind(events: readonly EventEnvelope[]): { id: string; rewindId: string | undefined } | null {
+  let newest: { id: string; rewindId: string | undefined } | null = null;
+  for (const event of events) {
+    const marker = customPayload(event.data, CustomEvent.ConversationRewound);
+    if (marker && (!newest || compareIds(event.id, newest.id) > 0))
+      newest = { id: event.id, rewindId: marker.rewindId };
+  }
+  return newest;
+}
+
+/**
+ * Why the chat no longer offers to bring back the version this rewind replaced, or null while it
+ * does: only the chat's newest rewind, only one that put files back, only once, and only until a
+ * message is sent after it. The conversation stays rewound either way.
+ */
+export function undoRewindRefusal(events: readonly EventEnvelope[], rewindId: string): UndoRewindRefusal | null {
+  const undone = events.some(
+    (event) => customPayload(event.data, CustomEvent.ConversationRewindUndone)?.rewindId === rewindId,
+  );
+  if (undone) return UndoRewindRefusal.AlreadyBack;
+  const newest = newestRewind(events);
+  if (!newest || newest.rewindId !== rewindId) return UndoRewindRefusal.NotOffered;
+  const sentAfter = events.some((event) => compareIds(event.id, newest.id) > 0 && isUserBubble(event));
+  return sentAfter ? UndoRewindRefusal.MessageSent : null;
+}
+
+/** The rewind whose newer version the chat offers to bring back now, by its undo id; null for none. */
+export function offeredRewindUndo(events: readonly EventEnvelope[]): string | null {
+  const rewindId = newestRewind(events)?.rewindId;
+  if (!isRewindId(rewindId)) return null;
+  return undoRewindRefusal(events, rewindId) === null ? rewindId : null;
 }
 
 /** A follow-up waiting in the queue when the chat is rewound: it leaves too, and its words come back. */
@@ -298,10 +390,14 @@ export interface RewindBuild {
 }
 export type RewindPlan = ({ ok: true } & PlannedRewind) | { ok: false; reason: RewindRefusal };
 
-/** An approved plan is sent as the request, the plan and a closing line; the request is the user's. */
+/**
+ * An approved plan is sent as the request, the plan and a closing line, and a message with @ tags
+ * carries lines about them after the words; the request is the user's.
+ */
 export const requestOf = (text: string): string => {
-  const at = text.indexOf(APPROVED_PLAN_HEADING);
-  return at < 0 ? text : text.slice(0, at);
+  const words = withoutMentionContext(text);
+  const at = words.indexOf(APPROVED_PLAN_HEADING);
+  return at < 0 ? words : words.slice(0, at);
 };
 
 /** What a queued message's saved action says about the pictures it carried. */

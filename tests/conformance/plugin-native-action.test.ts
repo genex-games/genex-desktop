@@ -28,15 +28,39 @@ const { createIpcHandle } = await import("../../src/main/ipc-handle.ts");
 const { registerPluginsIpc } = await import("../../src/main/ipc/plugins.ts");
 
 /** Get Xcode opens the App Store page or the Xcode app, so it is native too. */
-const NATIVE = ["create", "open-editor", "quit-editor", "get-unreal", "get-xcode"];
+const NATIVE = ["create", "open-editor", "quit-editor", "get-unreal", "skip", "get-xcode"];
 
-/** Main's `studio:plugins.action` over the Unreal plugin's real manifest, with a core that records each call. */
-async function actionChannel(fixture: boolean) {
-  const manifest = validateManifest(JSON.parse(await readFile("src/plugins/unreal/plugin.json", "utf8")));
+/**
+ * Roblox's actions that quit, open or click in Studio, write its Plugins folder and settings,
+ * download and run Roblox's installer, read the person's places (Documents, Studio's recent list,
+ * the open Studios), write and link a place, or download the Luau checks.
+ */
+const ROBLOX_NATIVE = [
+  "setup",
+  "undo-setup",
+  "restart-studio",
+  "do-it-for-me",
+  "get-studio",
+  "finish-setup",
+  "open-studio",
+  "quit-studio",
+  "places",
+  "use-place",
+  "create",
+  "add-luau-checks",
+  "publish-update",
+  "first-publish",
+];
+
+/** Main's `studio:plugins.action` over a bundled plugin's real manifest, with a core that records each call. */
+async function actionChannel(fixture: boolean, id = "unreal") {
+  const manifest = validateManifest(JSON.parse(await readFile(`src/plugins/${id}/plugin.json`, "utf8")));
   const reached: string[] = [];
   const core = {
     plugins: {
       list: () => [{ manifest, enabled: true, removed: false, source: "bundled" }],
+      // The plugin is on: every action of its is the person's to run.
+      servesAction: () => true,
       action: async (_id: string, name: string) => {
         reached.push(name);
         return { ok: name };
@@ -60,8 +84,7 @@ async function actionChannel(fixture: boolean) {
   });
   const listener = listeners.get("studio:plugins.action");
   assert.ok(listener, "main registers the action channel");
-  const act = (name: string) =>
-    listener(studio, { id: "unreal", name, args: {} }) as Promise<{ ok: boolean; error?: string }>;
+  const act = (name: string) => listener(studio, { id, name, args: {} }) as Promise<{ ok: boolean; error?: string }>;
   return { act, reached };
 }
 
@@ -86,6 +109,29 @@ describe("A native plugin action", () => {
     const { act, reached } = await actionChannel(false);
     for (const name of NATIVE) assert.equal((await act(name)).ok, true, name);
     assert.deepEqual(reached, NATIVE);
+  });
+});
+
+describe("Roblox Studio's native actions", () => {
+  it("are refused in a fixture profile before the backend runs: no download, no installer, no Studio", async () => {
+    const { act, reached } = await actionChannel(true, "roblox");
+    for (const name of ROBLOX_NATIVE) {
+      const answer = await act(name);
+      assert.equal(answer.ok, false, name);
+      assert.match(answer.error ?? "", /^unsupported-in-fixture/, name);
+    }
+    assert.deepEqual(reached, []);
+  });
+
+  it("are exactly the ones the manifest marks native; status, steps and Stop still reach the backend", async () => {
+    const roblox = validateManifest(JSON.parse(await readFile("src/plugins/roblox/plugin.json", "utf8")));
+    assert.deepEqual(
+      roblox.actions.filter((action) => action.native).map((action) => action.name),
+      ROBLOX_NATIVE,
+    );
+    const { act, reached } = await actionChannel(true, "roblox");
+    for (const name of ["status", "steps", "cancel-get-studio"]) assert.equal((await act(name)).ok, true, name);
+    assert.deepEqual(reached, ["status", "steps", "cancel-get-studio"]);
   });
 });
 

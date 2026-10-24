@@ -33,4 +33,22 @@ describe("the pages a hosted game is linked by", () => {
     mergeMeta(state, { slug: "quiet-ride", status: "published", dashboardOrigins: ["https://genex.games"] });
     assert.equal(state.galleryUrl, "https://genex.games/quiet-ride");
   });
+
+  it("names a live play address only once the game is public", () => {
+    // A draft's record carried the project's future live address, and an agent handed testers that
+    // empty page instead of the draft's.
+    const play = "https://quiet-ride.genex.technology/";
+    const draft = { playUrl: play } as GenexPublishState;
+    mergeMeta(draft, { slug: "quiet-ride", status: "draft", playUrl: play, dashboardOrigins: ["https://genex.games"] });
+    assert.equal(draft.playUrl, undefined);
+    assert.equal(draft.draftUrl, "https://genex.games/draft/quiet-ride");
+    const listed = {} as GenexPublishState;
+    mergeMeta(listed, {
+      slug: "quiet-ride",
+      status: "published",
+      playUrl: play,
+      dashboardOrigins: ["https://genex.games"],
+    });
+    assert.equal(listed.playUrl, play);
+  });
 });

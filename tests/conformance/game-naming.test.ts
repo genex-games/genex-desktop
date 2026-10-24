@@ -5,7 +5,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { nameFromReply, nameFromRequest, nameGame, UNTITLED_GAME } from "../../src/main/core/game-naming.ts";
-import type { CompleteRequest, CompleteResponse, Engine } from "../../src/substrate/engines/types.ts";
+import {
+  EngineError,
+  type CompleteRequest,
+  type CompleteResponse,
+  type Engine,
+} from "../../src/substrate/engines/types.ts";
+import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
 
 const REQUEST = "A cozy fishing game on a tiny island. Catch fish, sell them at the dock, upgrade your rod.";
 
@@ -122,6 +128,26 @@ describe("naming a game", () => {
     assert.deepEqual(await nameGame(deps([engine("a", "x")]), { prompt: REQUEST, engine: "missing" }), fallback);
     const cannotComplete = { id: "b", label: "b" } as unknown as Engine;
     assert.deepEqual(await nameGame(deps([cannotComplete]), { prompt: REQUEST }), fallback);
+  });
+
+  it("says the picked engine is out of usage, in its own words, so no game is made for a turn it cannot take", async () => {
+    const weekly = "You've hit your weekly limit · resets 6pm";
+    const limited = () => new EngineError(EngineFailureKind.UsageLimit, "claude-code", weekly);
+    const picked = await nameGame(deps([engine("claude-code", limited())]), { prompt: REQUEST, engine: "claude-code" });
+    assert.equal(picked.limited, weekly);
+    assert.equal(picked.title, "A cozy fishing game on a tiny island", "it still has a name to show meanwhile");
+    // Only the picked engine's cap says the turn cannot run; a wait that ends soon and any other
+    // failure name the game from the request as before.
+    const firstReady = await nameGame(deps([engine("claude-code", limited())]), { prompt: REQUEST });
+    assert.equal(firstReady.limited, undefined, "an engine nobody picked says nothing of the turn's");
+    for (const failure of [
+      new EngineError(EngineFailureKind.RateLimit, "claude-code", "Session limit reached"),
+      new EngineError(EngineFailureKind.Auth, "claude-code", "signed out"),
+      new Error("You've hit your weekly limit"),
+    ]) {
+      const named = await nameGame(deps([engine("claude-code", failure)]), { prompt: REQUEST, engine: "claude-code" });
+      assert.deepEqual(named, { title: "A cozy fishing game on a tiny island", provisional: true }, failure.message);
+    }
   });
 
   it("does not wait past its time for a slow model", async () => {

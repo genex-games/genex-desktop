@@ -8,14 +8,15 @@ import type { CppBuilds } from "../../src/main/cpp-build.ts";
 import { GameBuildLanes, raylibLane } from "../../src/main/game-build.ts";
 import { GameStack } from "../../src/shared/game-project.ts";
 
-/** The seam with `cpp` as raylib's lane; a stand-in without `cancelAll` or `sweep` cancels and sweeps nothing. */
+/** The seam with `cpp` as raylib's lane; a stand-in without `cancelAll`, `cancelGame` or `sweep` cancels and sweeps nothing. */
 export function raylibLanes(
-  cpp: Pick<CppBuilds, "ensure"> & Partial<Pick<CppBuilds, "cancelAll" | "sweep">>,
+  cpp: Pick<CppBuilds, "ensure"> & Partial<Pick<CppBuilds, "cancelAll" | "cancelGame" | "sweep">>,
 ): GameBuildLanes {
   return new GameBuildLanes({
     [GameStack.RaylibCpp]: raylibLane({
       ensure: (input, options) => cpp.ensure(input, options),
       cancelAll: () => cpp.cancelAll?.(),
+      cancelGame: (project) => cpp.cancelGame?.(project),
       sweep: async () => (cpp.sweep ? cpp.sweep() : 0),
     }),
   });

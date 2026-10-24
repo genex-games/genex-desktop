@@ -96,15 +96,25 @@ export interface AutopilotCommission {
   roles?: RunRoles;
   /** Request host-owned explicit approval before execution (default off). */
   reviewPlan?: boolean;
+  /**
+   * The person's Keep building tap after a Loop ended with something still to fix: the finished
+   * build reopens, or the next Loop starts, with no turn deciding whether it is a contained change.
+   */
+  keepBuilding?: boolean;
 }
 
 /**
  * Who wrote a message the chat sends when the words are not the user's: the chat reporting how a
- * command the user ran from a reply went. The agent reads it; the transcript never draws it.
- * Recorded with the queued message: never rename a value.
+ * command the user ran from a reply went, that the person turned on a plugin the agent suggested,
+ * or what an engine's setup card has to say (done, or a step stopped). The agent reads it; the transcript never
+ * draws it. Recorded with the queued message: never rename a value.
  */
 export const MessageOrigin = {
   CommandResult: "command-result",
+  PluginTurnedOn: "plugin-turned-on",
+  SetupCard: "setup-card",
+  /** A tag the person tried again, now attached: its line for the agent. */
+  TagRetry: "tag-retry",
 } as const;
 export type MessageOrigin = (typeof MessageOrigin)[keyof typeof MessageOrigin];
 const MESSAGE_ORIGINS: ReadonlySet<unknown> = new Set(Object.values(MessageOrigin));
@@ -140,6 +150,8 @@ export type DispatchAction =
       pickedImages?: number;
       /** Reference files this message saved in the game (relative paths); a rewind with files removes them. */
       references?: string[];
+      /** Every file its attached pictures are saved as in the game (relative), already there or not: a run's lead reads them. */
+      pictureFiles?: string[];
       /** Composer Loop: the chat may start an unattended build when the ask needs one. */
       loop?: LoopCommission;
       /** Composer Autopilot: the chat may launch a build that decomposes into facets and runs until satisfied. */
@@ -173,6 +185,24 @@ export type DispatchAction =
    * message id), forwarded to the harness's worker pool for that turn. Answers with the tool's result.
    */
   | { type: "worker_tool"; threadId: string; turn: string; name: string; args: Record<string, unknown> }
+  /**
+   * A judge that plays (`judge_play`), asked for by the chat's own session after a change: one blind
+   * judge plays the game in `root` (the game folder, as the host resolved it) on a hidden window and
+   * answers `ask`, held to `goalState` when given. Answers with the judge's outcome, never throws.
+   */
+  | {
+      type: "chat_judge";
+      threadId: string;
+      project: string;
+      root: string;
+      engine: string;
+      model?: string;
+      effort?: string;
+      ask: string;
+      goalState?: string;
+      /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
+      judge?: string;
+    }
   | { type: "skillopt_start"; threadId: string; options?: Record<string, unknown> }
   | { type: "boot_notice"; notice: BootNotice };
 
@@ -191,6 +221,7 @@ export const DispatchActionType = {
   AutopilotResume: "autopilot_resume",
   DirectorTool: "director_tool",
   WorkerTool: "worker_tool",
+  ChatJudge: "chat_judge",
   SkilloptStart: "skillopt_start",
   BootNotice: "boot_notice",
 } as const satisfies Record<string, DispatchAction["type"]>;
@@ -224,6 +255,8 @@ export const HarnessCapability = {
   Workers: "workers",
   /** A build whose jobs cross to or from a completion-only local engine (`crossesCompletionEngine`). */
   LocalRoles: "local-roles",
+  /** The chat's own session may ask a blind judge to play its game: the harness answers `chat_judge`. */
+  ChatJudge: "chat-judge",
 } as const;
 export type HarnessCapability = (typeof HarnessCapability)[keyof typeof HarnessCapability];
 

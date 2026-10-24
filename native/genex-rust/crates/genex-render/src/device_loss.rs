@@ -660,7 +660,8 @@ impl Resilient {
         // The world target as the last frame drew it: an output size set since applies from the
         // next frame on (renderer pass 2, P2-0.9 step B).
         let world = renderer.world_texture();
-        let into = PresentInto { world: (renderer.world_view(), (world.width(), world.height())), target, format, window };
+        let fill = renderer.fit() == crate::letterbox::Fit::Expand;
+        let into = PresentInto { fill, world: (renderer.world_view(), (world.width(), world.height())), target, format, window };
         self.window.present(&self.gpu, &into, overlay)
     }
 

@@ -15,6 +15,7 @@ import { cp, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { errorMessage } from "../src/shared/errors.ts";
+import { isPublisherOwnedId, publisherIdPrefix } from "../src/shared/plugin-id.ts";
 import { PLUGIN_CATEGORIES, type PluginCategory, type PluginIndex, PluginTier } from "../src/shared/plugins.ts";
 import { assertRelativePath, isInside } from "../src/substrate/paths.ts";
 import { pathExists } from "../src/substrate/fsx.ts";
@@ -114,6 +115,10 @@ const reserved = Object.hasOwn(official, manifest.id) || Object.hasOwn(STUDIO_CA
 if (reserved) fail(`"${manifest.id}" is an official id; community plugins need their own id`);
 if (manifest.publisher === SCAFFOLD_PUBLISHER)
   fail(`Set "publisher" in plugin.json to your name first: it owns every later release of "${manifest.id}"`);
+if (!isPublisherOwnedId(manifest.id, source.repo))
+  fail(
+    `A community plugin's id starts with its GitHub owner: rename "${manifest.id}" to "${publisherIdPrefix(source.repo)}${manifest.id}" in plugin.json`,
+  );
 
 const artifact = path.resolve(
   flags.get("--artifact") ?? path.join(path.dirname(catalog), `${manifest.id}-${manifest.version}.json`),

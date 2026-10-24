@@ -5,6 +5,8 @@ import { unwrapMarkdown } from "../licenses-text.ts";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
 import { LICENSE_WORDS, problemWords } from "../words.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 
 /** The texts once read, in reading order; empty when the build wrote none. */
 function shownTexts(texts: LicenseTexts): { license: string | null; notices: string[] } {
@@ -21,9 +23,10 @@ function LicensesBody({ texts, error }: { texts: LicenseTexts | null; error: str
     );
   if (!texts)
     return (
-      <p role="status" className="text-ink-3">
-        {LICENSE_WORDS.loading}
-      </p>
+      <Pending label={LICENSE_WORDS.loading} className="flex flex-col gap-7">
+        <SkeletonLines widths={["30%", "100%", "94%", "98%", "60%"]} />
+        <SkeletonLines widths={["24%", "100%", "90%", "46%"]} />
+      </Pending>
     );
   const { license, notices } = shownTexts(texts);
   if (!license && notices.length === 0) return <p className="text-ink-3">{LICENSE_WORDS.missing}</p>;

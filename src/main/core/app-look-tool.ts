@@ -27,9 +27,11 @@ import {
 import { ensureDirBelow, writeFileInDir } from "../../substrate/fsx.ts";
 import { type NeverTouchList, pathVerdict } from "../../substrate/engines/never-touch.ts";
 import { assertRelativePath, isBelow } from "../../substrate/paths.ts";
+import { HOST_BUNDLE_ID } from "../../substrate/cua-embedded.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { APP_LOOK_ANSWER, APP_LOOK_TOOL, type LookedWindow } from "./app-look-tool-prompts.ts";
 import { ProjectToolSeat } from "./project-tools.ts";
+import { NEVER_DRIVEN_BUNDLES } from "./desktop-target.ts";
 
 /** The longest an app's name or a window's title reads in an answer. */
 const NAME_MAX_CHARS = 120;
@@ -56,6 +58,21 @@ export interface LookCaller {
   project: string;
   chatThreadId: string | null;
   save?: LookSave | null;
+}
+
+/** The apps computer control never drives, by bundle id in lower case: `app_look` never looks at them either. */
+const NEVER_LOOKED_BUNDLES: ReadonlySet<string> = new Set(
+  [...NEVER_DRIVEN_BUNDLES, HOST_BUNDLE_ID].map((id) => id.toLowerCase()),
+);
+
+/**
+ * Whether `app_look` refuses a window: a password manager's, any app computer control never drives
+ * (System Settings, the system's password prompts), or Genex's own (this process owns its windows).
+ * It only looks, so it needs no Settings switch, but it never sees what computer control may never touch.
+ */
+export function lookRefused(window: AppWindow): boolean {
+  if (refusedApp(window) || window.pid === process.pid) return true;
+  return NEVER_LOOKED_BUNDLES.has(window.bundleId?.toLowerCase() ?? "");
 }
 
 /** The chats told this app session that access is missing, per core. */
@@ -181,7 +198,7 @@ async function savePicture(caller: LookCaller, file: string, image: AppLookImage
 
 /** One window's look, as the agent reads it; with `save`, its picture also kept in the caller's folder. */
 async function lookAt(core: StudioCore, caller: LookCaller, window: AppWindow, save: string | null) {
-  if (refusedApp(window)) return refusal(APP_LOOK_ANSWER.refused);
+  if (lookRefused(window)) return refusal(APP_LOOK_ANSWER.refused);
   const looked = await core.appLook.look(window);
   if (isAppLookProblem(looked)) return problemAnswer(core, caller, looked);
   const unsaved = save === null ? undefined : await savePicture(caller, save, looked.image);
@@ -197,8 +214,8 @@ async function lookAt(core: StudioCore, caller: LookCaller, window: AppWindow, s
 }
 
 /**
- * `app_look`: the windows on screen without arguments (a password manager's left out), else the
- * window asked for, looked at. Access missing answers what the person must turn on.
+ * `app_look`: the windows on screen without arguments (the ones it never looks at left out, see
+ * {@link lookRefused}), else the window asked for, looked at. Access missing answers what the person must turn on.
  */
 export async function runAppLook(
   core: StudioCore,
@@ -211,7 +228,7 @@ export async function runAppLook(
   if (isAppLookProblem(windows)) return problemAnswer(core, caller, windows);
   const app = text(args.app);
   const window = text(args.window);
-  if (!app && !window) return APP_LOOK_ANSWER.windows(windows.filter((shown) => !refusedApp(shown)).map(named));
+  if (!app && !window) return APP_LOOK_ANSWER.windows(windows.filter((shown) => !lookRefused(shown)).map(named));
   const picked = pickWindow(windows, { app, window });
   const save = typeof args.save === "string" ? args.save.trim() : null;
   return picked ? lookAt(core, caller, picked, save) : refusal(APP_LOOK_ANSWER.noMatch);

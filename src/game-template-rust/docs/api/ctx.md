@@ -15,6 +15,16 @@ and a capture's default size are measured in it. It is not the resolution: Live 
 at the window's own pixels (capped per device class), so a larger window is sharper, never a
 stretched picture, and a capture is drawn at the world size unless a check asks for another.
 
+`Game::fit` says how the world meets a window of another aspect (keep `genex.toml` `[game] fit`
+the same; another word is refused `invalid-fit`). `Fit::Letterbox`, the default, keeps black bars.
+`Fit::Expand` fills the window: the world stays whole and centred where the letterbox would put
+it, and the view grows past it on the window's long side, more scene at the sides of a wide
+window (the vertical field of view kept) and above and below a tall one (widened to keep the
+world's width). The simulation, `ctx.world_size`, the pointer and touches, the HUD and captures
+at the world size never see the window, so replays and goldens do not change with it. Over the
+margin past the world the pointer and touches hold at its nearest edge and the 2D layer goes on
+in world pixels (draw a 2D backdrop wider than the world); keep a fixed-aspect picture on letterbox.
+
 Edges fire on the first tick after input arrives, so a long step never presses a key twice.
 `Input::key_tap(Key::Space)`, `Input::key_down`, `Input::key_up`, `Input::click_at(x, y)`,
 `Input::pointer`, `Input::look`, `Input::wheel` and `Input::text` build injections;

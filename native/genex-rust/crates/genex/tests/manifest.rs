@@ -139,10 +139,40 @@ fn a_crate_the_person_approved_and_a_crate_request_parse_as_the_host_reads_them(
     assert_eq!(row.reason.as_deref(), Some("an entity store"));
 }
 
+/// Lane EF: `[game] fit` is letterbox unless the game says expand; any other value, a wrong case or
+/// type among them, is refused `invalid-fit` (the host's reader holds the same rows).
+#[test]
+fn the_fit_is_letterbox_unless_the_game_says_expand() {
+    let fit = |text: &str| manifest::parse(&format!("[game]\ntitle = \"T\"\n{text}")).map(|parsed| parsed.game.fit());
+    assert_eq!(fit("").ok(), Some(genex::Fit::Letterbox), "absent: letterbox");
+    assert_eq!(fit("fit = \"letterbox\"\n").ok(), Some(genex::Fit::Letterbox));
+    assert_eq!(fit("fit = \"expand\"\n").ok(), Some(genex::Fit::Expand));
+    for hostile in ["\"Expand\"", "\"\"", "\"stretch\"", "\"expand \"", "\"letterbox\\u0000\"", "\"../expand\""] {
+        let code = fit(&format!("fit = {hostile}\n")).err().map(|error| error.code());
+        assert_eq!(code, Some(ManifestErrorCode::InvalidFit), "{hostile}");
+    }
+    for wrong_type in ["1", "true", "[\"expand\"]"] {
+        let code = fit(&format!("fit = {wrong_type}\n")).err().map(|error| error.code());
+        assert_eq!(code, Some(ManifestErrorCode::Syntax), "{wrong_type}");
+    }
+    assert_eq!(ManifestErrorCode::InvalidFit.as_str(), "invalid-fit");
+}
+
 #[test]
 fn the_crate_codes_keep_the_hosts_wire_spellings() {
     assert_eq!(ManifestErrorCode::InvalidCrateVersion.as_str(), "invalid-crate-version");
     assert_eq!(ManifestErrorCode::InvalidCrateRequest.as_str(), "invalid-crate-request");
+}
+
+/// The crates a game names without approval, the one table the host holds too (release R-2).
+#[test]
+fn the_crate_allowlist_is_the_fixtures() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/game-crate-allowlist.json");
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the fixture")).expect("the fixture is JSON");
+    let crates: Vec<&str> =
+        fixture["crates"].as_array().expect("crates").iter().map(|c| c.as_str().expect("a name")).collect();
+    assert_eq!(crates, manifest::GAME_CRATE_ALLOWLIST.to_vec());
 }
 
 fn request(prefix: &str, name: &str, version: &str, reason: Option<&str>) -> String {

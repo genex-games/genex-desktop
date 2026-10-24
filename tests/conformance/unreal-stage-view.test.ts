@@ -10,6 +10,8 @@ import { PanelStep } from "../../src/plugins/unreal/backend.ts";
 import {
   keepStageStatus,
   keptStageStatus,
+  ReopenStep,
+  reopenStep,
   StageAct,
   stageView,
 } from "../../src/renderer/panels/stage/unreal-stage-view.ts";
@@ -70,6 +72,14 @@ describe("the Live card's Unreal step", () => {
     const other = stageView(status(PanelStep.Switch, { openProject: { name: "Harbor", file: "/h" } }), NAME);
     assert.match(other.line, /Harbor/);
     assert.match(other.button?.label ?? "", /Lantern/);
+  });
+
+  it("says Unreal crashed while its crash report holds the port, and offers nothing until the report closes", () => {
+    const view = stageView(status(PanelStep.Crashed, { editors: 0 }), NAME);
+    assert.equal(view.button, null);
+    assert.match(view.line, /Unreal crashed/);
+    assert.match(view.line, /crash report/);
+    assert.match(view.line, /Lantern/);
   });
 
   it("offers no Quit or Restart while two editors run, since one could reach the wrong project", () => {
@@ -170,5 +180,32 @@ describe("the Live card's Unreal step", () => {
     keepStageStatus("lantern", ready);
     assert.equal(keptStageStatus("lantern"), ready);
     assert.equal(keptStageStatus("harbor"), null, "never another game's");
+  });
+});
+
+describe("a restart's reopen", () => {
+  const mark = { game: "lantern", until: 60_000 };
+  const closed = status(PanelStep.Open, { editors: 0 });
+
+  it("opens this game's project once Unreal has closed and opening is the step", () => {
+    assert.equal(reopenStep(mark, "lantern", closed, 1_000), ReopenStep.Open);
+  });
+
+  it("waits while an editor still runs (Unreal may first ask to save)", () => {
+    assert.equal(reopenStep(mark, "lantern", status(PanelStep.Open, { editors: 1 }), 1_000), ReopenStep.Wait);
+    assert.equal(reopenStep(mark, "lantern", null, 1_000), ReopenStep.Wait, "no answer yet");
+  });
+
+  it("opens nothing once the stage shows another game", () => {
+    assert.equal(reopenStep(mark, "harbor", closed, 1_000), ReopenStep.Drop);
+  });
+
+  it("opens nothing after the wait runs out, or when opening isn't the step", () => {
+    assert.equal(reopenStep(mark, "lantern", closed, 61_000), ReopenStep.Drop);
+    assert.equal(reopenStep(mark, "lantern", status(PanelStep.PortBlocked, { editors: 0 }), 1_000), ReopenStep.Drop);
+  });
+
+  it("does nothing with no restart waiting", () => {
+    assert.equal(reopenStep(null, "lantern", closed, 1_000), ReopenStep.Wait);
   });
 });

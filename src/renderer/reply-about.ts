@@ -3,6 +3,7 @@
  * names what the reply is about; the chat holds it as a chip above the prompt and sends the next
  * message as a note to that build (the steering inbox), not as a chat turn.
  */
+import { t } from "../shared/i18n.ts";
 
 /** Which part of a run a note is pinned to; none of it means the whole build. */
 export interface NoteTarget {
@@ -30,10 +31,10 @@ export function replyAbout(about: ReplyAbout): void {
 
 /** Where a sent note went, in the words of the toast that confirms it. */
 export function noteSentWords(about: Pick<ReplyAbout, "active" | "target">): string {
-  if (!about.active) return "Sent — it will steer the next run on this game";
+  if (!about.active) return t("Sent — it will steer the next run on this game");
   return about.target?.facetId
-    ? "Sent — it goes into this part's next round"
-    : "Sent — every part gets it with its next round";
+    ? t("Sent — it goes into this part's next round")
+    : t("Sent — every part gets it with its next round");
 }
 
 /**

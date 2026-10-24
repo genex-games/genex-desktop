@@ -1,0 +1,179 @@
+{
+ "recorded": "The Genex helper 2 in Roblox Studio 0.743 (macOS) on Genex's own helper socket: what it sent (text, exact) and what it was asked (id and type).",
+ "frames": [
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"helper\":2,\"place\":{\"id\":\"0\",\"name\":\"p16-s9b.rbxlx\"}},\"id\":1,\"type\":\"hello\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 1,
+   "type": "session.mark"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":2,\"ok\":true,\"re\":1,\"result\":{},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 2,
+   "type": "scripts.write"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":3,\"ok\":true,\"re\":2,\"result\":{\"hash\":\"2da30113\"},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 3,
+   "type": "scripts.list"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":4,\"ok\":true,\"re\":3,\"result\":{\"scripts\":[{\"class\":\"Script\",\"hash\":\"2da30113\",\"path\":[\"ServerScriptService\",\"Recorded\"],\"runContext\":\"Server\",\"synced\":false}]},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 4,
+   "type": "scripts.read"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":5,\"ok\":true,\"re\":4,\"result\":{\"scripts\":[{\"class\":\"Script\",\"path\":[\"ServerScriptService\",\"Recorded\"],\"runContext\":\"Server\",\"source\":\"print(\\\"recorded\\\")\\n\"}]},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 5,
+   "type": "place.export"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"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\",\"index\":0,\"part\":\"Workspace.rbxm\",\"transfer\":5},\"id\":6,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"Workspace/Terrain.rbxm\",\"transfer\":5},\"id\":7,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"Lighting.rbxm\",\"transfer\":5},\"id\":8,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"MaterialService.rbxm\",\"transfer\":5},\"id\":9,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"ReplicatedFirst.rbxm\",\"transfer\":5},\"id\":10,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"ReplicatedStorage.rbxm\",\"transfer\":5},\"id\":11,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"PHJvYmxveCGJ/w0KGgoAAAEAAAABAAAAAAAAAAAAAABNRVRBJAAAACIAAAAAAAAA8BMBAAAAEgAAAEV4cGxpY2l0QXV0b0pvaW50cwQAAAB0cnVlU1NUUhEAAAAcAAAAAAAAAFAAAAAAAQUACgIAUAAAAAAASU5TVBkAAAAXAAAAAAAAAPAIAAAAAAYAAABTY3JpcHQAAQAAAAAAAABQUk9QIgAAACAAAAAAAAAA8BEAAAAAEwAAAEF0dHJpYnV0ZXNTZXJpYWxpemUBAAAAAFBST1AfAAAAHQAAAAAAAADwDgAAAAAMAAAAQ2FwYWJpbGl0aWVzIQAAAAAAAAAAUFJPUB8AAAAdAAAAAAAAAPAOAAAAABMAAABEZWZpbmVzQ2FwYWJpbGl0aWVzAgBQUk9QFAAAABIAAAAAAAAA8AMAAAAACAAAAERpc2FibGVkAgBQUk9QGwAAABkAAAAAAAAA8AoAAAAADAAAAExpbmtlZFNvdXJjZQEAAAAAUFJPUBsAAAAZAAAAAAAAAPAKAAAAAAQAAABOYW1lAQgAAABSZWNvcmRlZFBST1AZAAAAFwAAAAAAAADwCAAAAAAKAAAAUnVuQ29udGV4dBIAAAABUFJPUD8AAAA9AAAAAAAAAPAuAAAAAAoAAABTY3JpcHRHdWlkASYAAAB7YTc0NTc2OWMtNjNkZS00YzMzLWFiNTctNDE2MTRjMzMwNDY4fVBST1AiAAAAIAAAAAAAAADwEQAAAAATAAAAU2VyaWFsaXplZE92ZXJyaWRlcwEAAAAAUFJPUCcAAAAlAAAAAAAAAPAWAAAAAAYAAABTb3VyY2UBEgAAAHByaW50KCJyZWNvcmRlZCIpClBST1AgAAAAHgAAAAAAAADwDwAAAAANAAAAU291cmNlQXNzZXRJZBsAAAAAAAAAAVBST1ATAAAAEQAAAAAAAADwAgAAAAAEAAAAVGFncxwAAAAAUFJOVA4AAAANAAAAAAAAANAAAQAAAAAAAAAAAAABRU5EAAAAAAAJAAAAAAAAADwvcm9ibG94Pg==\",\"index\":0,\"part\":\"ServerScriptService.rbxm\",\"transfer\":5},\"id\":12,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"ServerStorage.rbxm\",\"transfer\":5},\"id\":13,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"StarterGui.rbxm\",\"transfer\":5},\"id\":14,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"StarterPack.rbxm\",\"transfer\":5},\"id\":15,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"StarterPlayer.rbxm\",\"transfer\":5},\"id\":16,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"StarterPlayer/StarterPlayerScripts.rbxm\",\"transfer\":5},\"id\":17,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"StarterPlayer/StarterCharacterScripts.rbxm\",\"transfer\":5},\"id\":18,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"SoundService.rbxm\",\"transfer\":5},\"id\":19,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"TextChatService.rbxm\",\"transfer\":5},\"id\":20,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"TextChatService/ChatWindowConfiguration.rbxm\",\"transfer\":5},\"id\":21,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"TextChatService/ChatInputBarConfiguration.rbxm\",\"transfer\":5},\"id\":22,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"TextChatService/BubbleChatConfiguration.rbxm\",\"transfer\":5},\"id\":23,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"\",\"index\":0,\"part\":\"TextChatService/ChannelTabsConfiguration.rbxm\",\"transfer\":5},\"id\":24,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"eyJMaWdodGluZyI6eyJBbWJpZW50Ijp7InR5cGUiOiJDb2xvcjMiLCJ2YWx1ZSI6WzAuNSwwLjUsMC41XX0sIkJyaWdodG5lc3MiOjEsIkNsb2NrVGltZSI6MTQsIkNvbG9yU2hpZnRfQm90dG9tIjp7InR5cGUiOiJDb2xvcjMiLCJ2YWx1ZSI6WzAsMCwwXX0sIkNvbG9yU2hpZnRfVG9wIjp7InR5cGUiOiJDb2xvcjMiLCJ2YWx1ZSI6WzAsMCwwXX0sIkVudmlyb25tZW50RGlmZnVzZVNjYWxlIjowLCJFbnZpcm9ubWVudFNwZWN1bGFyU2NhbGUiOjAsIkV4cG9zdXJlQ29tcGVuc2F0aW9uIjowLCJGb2dDb2xvciI6eyJ0eXBlIjoiQ29sb3IzIiwidmFsdWUiOlswLjc1LDAuNzUsMC43NV19LCJGb2dFbmQiOjEwMDAwMCwiRm9nU3RhcnQiOjAsIkdlb2dyYXBoaWNMYXRpdHVkZSI6NDEuNzMzMjk5MjU1MzcxMDk0LCJHbG9iYWxTaGFkb3dzIjpmYWxzZSwiT3V0ZG9vckFtYmllbnQiOnsidHlwZSI6IkNvbG9yMyIsInZhbHVlIjpbMC41LDAuNSwwLjVdfSwiU2hhZG93U29mdG5lc3MiOjAuNX0sIlNvdW5kU2VydmljZSI6eyJBbWJpZW50UmV2ZXJiIjp7ImVudW0iOiJSZXZlcmJUeXBlIiwidHlwZSI6IkVudW0iLCJ2YWx1ZSI6Ik5vUmV2ZXJiIn0sIkRpc3RhbmNlRmFjdG9yIjozLjMyOTk5OTkyMzcwNjA1NDcsIkRvcHBsZXJTY2FsZSI6MSwiUm9sbG9mZlNjYWxlIjoxfSwiU3RhcnRlclBsYXllciI6eyJBdXRvSnVtcEVuYWJsZWQiOnRydWUsIkNhbWVyYU1heFpvb21EaXN0YW5jZSI6NDAwLCJDYW1lcmFNaW5ab29tRGlzdGFuY2UiOjAuNSwiQ2FtZXJhTW9kZSI6eyJlbnVtIjoiQ2FtZXJhTW9kZSIsInR5cGUiOiJFbnVtIiwidmFsdWUiOiJDbGFzc2ljIn0sIkNoYXJhY3Rlckp1bXBIZWlnaHQiOjcuMTk5OTk5ODA5MjY1MTM2NywiQ2hhcmFjdGVySnVtcFBvd2VyIjo1MCwiQ2hhcmFjdGVyTWF4U2xvcGVBbmdsZSI6ODksIkNoYXJhY3RlclVzZUp1bXBQb3dlciI6dHJ1ZSwiQ2hhcmFjdGVyV2Fsa1NwZWVkIjoxNiwiRW5hYmxlTW91c2VMb2NrT3B0aW9uIjp0cnVlLCJIZWFsdGhEaXNwbGF5RGlzdGFuY2UiOjEwMCwiTG9hZENoYXJhY3RlckFwcGVhcmFuY2UiOnRydWUsIk5hbWVEaXNwbGF5RGlzdGFuY2UiOjEwMH0sIldvcmtzcGFjZSI6eyJBaXJEZW5zaXR5IjowLjAwMTIwMDAwMDA1Njk5Njk0MTYsIkZhbGxlblBhcnRzRGVzdHJveUhlaWdodCI6LTUwMCwiR2xvYmFsV2luZCI6eyJ0eXBlIjoiVmVjdG9yMyIsInZhbHVlIjpbMCwwLDBdfSwiR3Jhdml0eSI6MTk2LjE5OTk5Njk0ODI0MjE5fX0=\",\"index\":0,\"part\":\"services.json\",\"transfer\":5},\"id\":25,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"body\":{\"count\":1,\"data\":\"PHJvYmxveCGJ/w0KGgoAAAEAAAABAAAAAAAAAAAAAABNRVRBJAAAACIAAAAAAAAA8BMBAAAAEgAAAEV4cGxpY2l0QXV0b0pvaW50cwQAAAB0cnVlU1NUUhEAAAAcAAAAAAAAAFAAAAAAAQUACgIAUAAAAAAASU5TVCAAAAAeAAAAAAAAAPAPAAAAAA0AAABUZXJyYWluUmVnaW9uAAEAAAAAAAAAUFJPUCIAAAAgAAAAAAAAAPARAAAAABMAAABBdHRyaWJ1dGVzU2VyaWFsaXplAQAAAABQUk9QHwAAAB0AAAAAAAAA8A4AAAAADAAAAENhcGFiaWxpdGllcyEAAAAAAAAAAFBST1AfAAAAHQAAAAAAAADwDgAAAAATAAAARGVmaW5lc0NhcGFiaWxpdGllcwIAUFJPUBsAAAAZAAAAAAAAAPAKAAAAAAoAAABFeHRlbnRzTWF4FAB9AH0AfVBST1AbAAAAGQAAAAAAAADwCgAAAAAKAAAARXh0ZW50c01pbhQAgwCDAINQUk9QIAAAAB4AAAAAAAAA8A8AAAAABAAAAE5hbWUBDQAAAFRlcnJhaW5SZWdpb25QUk9QIgAAACAAAAAAAAAA8BEAAAAAEwAAAFNlcmlhbGl6ZWRPdmVycmlkZXMBAAAAAFBST1AbAAAAGQAAAAAAAADwCgAAAAAKAAAAU21vb3RoR3JpZAECAAAAAQVQUk9QIAAAAB4AAAAAAAAA8A8AAAAADQAAAFNvdXJjZUFzc2V0SWQbAAAAAAAAAAFQUk9QEwAAABEAAAAAAAAA8AIAAAAABAAAAFRhZ3McAAAAAFBSTlQOAAAADQAAAAAAAADQAAEAAAAAAAAAAAAAAUVORAAAAAAACQAAAAAAAAA8L3JvYmxveD4=\",\"index\":0,\"part\":\"terrain.rbxm\",\"transfer\":5},\"id\":26,\"type\":\"data.chunk\",\"v\":1}"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":27,\"ok\":true,\"re\":5,\"result\":{\"ms\":928,\"parts\":[{\"bytes\":5868,\"hash\":\"5e48d22e\",\"name\":\"Workspace.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"Workspace/Terrain.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"Lighting.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"MaterialService.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"ReplicatedFirst.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"ReplicatedStorage.rbxm\"},{\"bytes\":787,\"hash\":\"80d0e6fb\",\"name\":\"ServerScriptService.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"ServerStorage.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"StarterGui.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"StarterPack.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"StarterPlayer.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"StarterPlayer/StarterPlayerScripts.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"StarterPlayer/StarterCharacterScripts.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"SoundService.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"TextChatService.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"TextChatService/ChatWindowConfiguration.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"TextChatService/ChatInputBarConfiguration.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"TextChatService/BubbleChatConfiguration.rbxm\"},{\"bytes\":0,\"hash\":\"811c9dc5\",\"name\":\"TextChatService/ChannelTabsConfiguration.rbxm\"},{\"bytes\":1244,\"hash\":\"ea60ef50\",\"name\":\"services.json\"},{\"bytes\":674,\"hash\":\"6ff81fa8\",\"name\":\"terrain.rbxm\"}],\"sent\":[\"Workspace.rbxm\",\"Workspace/Terrain.rbxm\",\"Lighting.rbxm\",\"MaterialService.rbxm\",\"ReplicatedFirst.rbxm\",\"ReplicatedStorage.rbxm\",\"ServerScriptService.rbxm\",\"ServerStorage.rbxm\",\"StarterGui.rbxm\",\"StarterPack.rbxm\",\"StarterPlayer.rbxm\",\"StarterPlayer/StarterPlayerScripts.rbxm\",\"StarterPlayer/StarterCharacterScripts.rbxm\",\"SoundService.rbxm\",\"TextChatService.rbxm\",\"TextChatService/ChatWindowConfiguration.rbxm\",\"TextChatService/ChatInputBarConfiguration.rbxm\",\"TextChatService/BubbleChatConfiguration.rbxm\",\"TextChatService/ChannelTabsConfiguration.rbxm\",\"services.json\",\"terrain.rbxm\"]},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 6,
+   "type": "activity"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":28,\"ok\":true,\"re\":6,\"result\":{\"editing\":false},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 7,
+   "type": "team"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":29,\"ok\":true,\"re\":7,\"result\":{\"others\":[]},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 9,
+   "type": "data.chunk"
+  },
+  {
+   "to": "helper",
+   "id": 8,
+   "type": "model.import"
+  },
+  {
+   "from": "helper",
+   "text": "{\"id\":30,\"ok\":true,\"re\":8,\"result\":{\"instance\":\"Workspace.GenexTetra\"},\"type\":\"answer\",\"v\":1}"
+  },
+  {
+   "to": "helper",
+   "id": 10,
+   "type": "scripts.remove"
+  },
+  {
+   "from": "helper",
+   "text": "{\"error\":{\"code\":\"conflict\",\"message\":\"The script changed in Studio since Genex last saw it.\"},\"id\":31,\"ok\":false,\"re\":10,\"type\":\"answer\",\"v\":1}"
+  }
+ ]
+}

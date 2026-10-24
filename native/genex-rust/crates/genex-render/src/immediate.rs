@@ -602,7 +602,8 @@ impl QuadPass {
         gpu.queue.write_buffer(vertices, 0, bytes);
         // 2D coordinates are the game's logical world pixels at any output size (renderer pass 2,
         // P2-0.9 step B): a Live frame drawn at the window's pixels scales them, never moves them.
-        let view_proj = Camera2d::SCREEN.view_proj(renderer.logical_size());
+        // Under `fit = "expand"` the frame shows the world grown to its aspect, the world centred.
+        let view_proj = Camera2d::SCREEN.view_proj_over(renderer.view_rect());
         gpu.queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&GpuQuad2d { view_proj }));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("quads"),

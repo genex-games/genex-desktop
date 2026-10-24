@@ -42,6 +42,7 @@ import { previewFrameProfile } from "../../substrate/native-profile.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture } from "../../substrate/preview-ready.ts";
 import { observeBuild } from "../../substrate/build-probe.ts";
+import { computerRpc } from "../core/computer-rpc.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import {
   DEFAULT_STILL_QUALITY,
@@ -210,6 +211,37 @@ export async function cameraPoseOf(port: ProbePort): Promise<CameraPoseResult> {
   return { measured: true, camera, pose: isRecord(reported) ? reported : (state.cameraPose ?? null) };
 }
 
+/** One computer service per core: the harness's leased windows outlive any one `api()` table. */
+const COMPUTERS = new WeakMap<CoreInternals, ReturnType<typeof computerRpc>>();
+
+/** The core's `preview.computer` service, made on first use. */
+function computersOf(core: StudioCore, x: CoreInternals): ReturnType<typeof computerRpc> {
+  const known = COMPUTERS.get(x);
+  if (known) return known;
+  const made = computerRpc({
+    gameDir: (project) => core.games.dirFor(project),
+    scratch: () => core.layout.scratch,
+    runs: () => core.layout.runs,
+    port: (handle) => x.previews.preview(handle),
+    // The harness's own loop writes the judge's rubric itself: an engine judge's brief opens its first answer.
+    computerTools: (grant, root, outDir, session) =>
+      core._computerToolsFor(grant, root, outDir, session, { judgeBrief: true }),
+    runOfGame: (project, runId) => core._runOfGame(project, runId),
+  });
+  COMPUTERS.set(x, made);
+  return made;
+}
+
+/**
+ * Forget the computers on windows a harness that ended had leased, stopping what each started (a
+ * Play Protocol game's process, an editor's play): its own `preview.release` never comes.
+ */
+export async function forgetHarnessComputers(x: CoreInternals, handles: readonly string[]): Promise<void> {
+  const computers = COMPUTERS.get(x);
+  if (!computers) return;
+  await Promise.all(handles.map((handle) => computers.forget(handle).catch(() => {})));
+}
+
 /** A still named by its bytes or by a path the previews may read. */
 type StillSource = { base64?: string; path?: string } | null | undefined;
 
@@ -234,6 +266,14 @@ function typedProbes(x: CoreInternals) {
       cameraPoseOf(x.previews.preview(p?.handle)),
     ),
   } satisfies Partial<HarnessHostHandlers>;
+}
+
+/** `preview.input` on the call's port: a touch reaches a native run or a Rust web build's `input` verb. */
+async function previewInput(core: StudioCore, x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewInput>) {
+  const port = x.previews.preview(p?.handle);
+  const actions = Array.isArray(p?.actions) ? p.actions : [];
+  const pageTakesTouch = touchless(actions) === null && (await servesRustPage(core, port));
+  return routePreviewInput(port, actions, { pageTakesTouch });
 }
 
 export function previewRpc(core: StudioCore, x: CoreInternals) {
@@ -292,12 +332,10 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewCrop]: async (p) => crop(core, x, p),
     // Challenger vs incumbent on one camera: diff fraction + heatmap, the invisible-diff detector.
     [HostMethod.PreviewDiff]: async (p) => diff(core, x, p),
-    [HostMethod.PreviewInput]: routed(async (p: HarnessParams<typeof HostMethod.PreviewInput>) => {
-      const port = x.previews.preview(p?.handle);
-      const actions = Array.isArray(p?.actions) ? p.actions : [];
-      const pageTakesTouch = touchless(actions) === null && (await servesRustPage(core, port));
-      return routePreviewInput(port, actions, { pageTakesTouch });
-    }),
+    [HostMethod.PreviewComputer]: async (p) => computersOf(core, x).call(p),
+    [HostMethod.PreviewInput]: routed(async (p: HarnessParams<typeof HostMethod.PreviewInput>) =>
+      previewInput(core, x, p),
+    ),
     [HostMethod.PreviewConsole]: routed(async (p: HarnessParams<typeof HostMethod.PreviewConsole>) =>
       x.previews.preview(p?.handle).consoleEntries(p?.sinceMs ?? 0),
     ),
@@ -335,6 +373,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewRelease]: async (p) => {
       x.profileSources.delete(p.handle);
       forgetStacks(x, p.handle);
+      await computersOf(core, x).forget(p.handle);
       await x.previewPool?.release(p.handle);
       return true;
     },
@@ -409,9 +448,10 @@ async function profile(core: StudioCore, x: CoreInternals, p: HarnessParams<type
     if (!source || !sameRevision) throw new Error(MESSAGE.profileSourceMismatch);
     const registered = await core.candidates.source(source.candidateId, p.expectedRevision);
     if (registered.runId !== p.runId || p.stageId !== OPTIMIZATION_STAGE) throw new Error(MESSAGE.profileRunMismatch);
-    // The stage's own window is one lease; any other (a window, or a native game running) skews the sample.
+    // The stage's own window is one lease; any other (a window, the person's, or a native game running) skews the sample.
     const pool = x.previews.pool();
-    if (pool.leaseCount + pool.nativeLeaseCount > 1) return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
+    if (pool.leaseCount + pool.personLeaseCount + pool.nativeLeaseCount > 1)
+      return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
   }
   return port.profile(p);
 }
@@ -628,6 +668,8 @@ async function capacity(core: StudioCore, x: CoreInternals) {
   // The host and its game box pick a C++ game's judging target; native leases have their own budget.
   const host = hostOf(process.platform);
   const gameBox = gameBoxOf(core);
+  // The Settings ceiling the host holds every chat's workers to (`delegation.ts` `#assertWorkerRoom`).
+  const workers = core.settings.buildersMax;
   try {
     const pool = x.previews.pool();
     return {
@@ -639,9 +681,10 @@ async function capacity(core: StudioCore, x: CoreInternals) {
       memory,
       host,
       native: { gameBox: gameBox && pool.native, leases: pool.nativeLeaseCount, max: NATIVE_LEASES_MAX },
+      workers,
     };
   } catch {
     const native = { gameBox: false, leases: 0, max: NATIVE_LEASES_MAX };
-    return { max: 0, inUse: 0, free: 0, live: false, headless: false, memory, host, native };
+    return { max: 0, inUse: 0, free: 0, live: false, headless: false, memory, host, native, workers };
   }
 }

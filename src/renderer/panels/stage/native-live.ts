@@ -28,7 +28,9 @@ import {
   deviceSideFits,
   ringSizeFor,
 } from "../../../shared/native-contract.ts";
-import { NATIVE_WORDS } from "../../words.ts";
+import type { CompiledStack } from "../../../shared/game-project.ts";
+import { elapsedWords } from "../../asset-making.ts";
+import { DESTINATION_WORDS, NATIVE_WORDS } from "../../words.ts";
 
 /** The device-pixel ratio Live sends at most and at least (`parseNativeEmbedSize`'s range). */
 const DPR_MIN = 1;
@@ -183,7 +185,8 @@ function isKind<T extends NativeInputAction["type"]>(
 
 /**
  * `queue` with `action` added for the next flush: a move right after a move replaces it (the last
- * place wins), wheel turns right after each other are summed, and a full queue takes nothing more.
+ * place wins), wheel turns and look turns right after each other are summed, and a full queue
+ * takes nothing more.
  */
 export function queueAction(queue: readonly NativeInputAction[], action: NativeInputAction): NativeInputAction[] {
   const last = queue.at(-1);
@@ -191,8 +194,38 @@ export function queueAction(queue: readonly NativeInputAction[], action: NativeI
   if (isKind(last, "move") && isKind(action, "move")) return [...rest, action];
   if (isKind(last, "scroll") && isKind(action, "scroll"))
     return [...rest, { type: "scroll", dx: (last.dx ?? 0) + (action.dx ?? 0), dy: (last.dy ?? 0) + (action.dy ?? 0) }];
+  if (isKind(last, "look") && isKind(action, "look"))
+    return [...rest, { type: "look", dx: last.dx + action.dx, dy: last.dy + action.dy }];
   if (queue.length >= NATIVE_INPUT_ACTIONS_MAX) return [...queue];
   return [...queue, action];
+}
+
+/**
+ * A locked pointer's motion as the game's look, in device pixels as the web shell sends it
+ * (`movementX` times the ratio); null when it did not move.
+ */
+export function lookAction(movement: { x: number; y: number }, dpr: number): NativeInputAction | null {
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const dx = Number.isFinite(movement.x) ? movement.x * ratio : 0;
+  const dy = Number.isFinite(movement.y) ? movement.y * ratio : 0;
+  return dx === 0 && dy === 0 ? null : { type: "look", dx, dy };
+}
+
+/**
+ * What a pointer move over Live's canvas becomes: while the pointer is locked (mouse look) its
+ * motion turns the camera and its place means nothing; otherwise its place in the game's ring.
+ */
+export function pointerMoveAction(
+  event: { clientX: number; clientY: number; movementX: number; movementY: number },
+  at: {
+    locked: boolean;
+    rect: { left: number; top: number; width: number; height: number };
+    ring: { width: number; height: number };
+    dpr: number;
+  },
+): NativeInputAction | null {
+  if (at.locked) return lookAction({ x: event.movementX, y: event.movementY }, at.dpr);
+  return { type: "move", ...pointerOnRing({ x: event.clientX, y: event.clientY }, at.rect, at.ring) };
 }
 
 /** `text` cut to the most UTF-16 units one text action carries, never through the middle of a character. */
@@ -348,6 +381,10 @@ export function canvasPhase(status: NativeRunStatus | null, failed: boolean, can
   return PLAYING.has(status.state) ? CanvasPhase.Playing : CanvasPhase.Starting;
 }
 
+/** Whether Live's embedded run plays its game (ready or paused), as the canvas shows it: what full screen can fill. */
+export const embedPlays = (embed: { status: NativeRunStatus | null; failed: boolean }): boolean =>
+  canvasPhase(embed.status, embed.failed, true) === CanvasPhase.Playing;
+
 /**
  * Whether a playing canvas still waits for the shown run's first frame (`drawnRun` is the run the
  * canvas drew last): until then it keeps the starting card's words over an empty canvas, never black.
@@ -469,4 +506,27 @@ export function canvasWords(
         detail: startingProgress(status)?.words ?? null,
       };
   }
+}
+
+/** What the canvas knows of the build under way: whether it is of a build copy Live shows, the game's stack, and now. */
+export interface BuildingContext {
+  copy: boolean;
+  stack: CompiledStack | null;
+  now: number;
+}
+
+/**
+ * What the canvas says while the run's Mac build is made: what is built (the game folder's, or
+ * the build copy Live shows), for how long so far, and the stack's compiler; null once the run is
+ * past its build (or before the host answered).
+ */
+export function buildingWords(
+  status: NativeRunStatus | null,
+  context: BuildingContext,
+): { title: string; detail: string | null } | null {
+  if (status?.state !== NativeRunState.Building) return null;
+  const started = Date.parse(status.startedAt);
+  const clock = elapsedWords(Number.isFinite(started) ? started : context.now, context.now) ?? "";
+  const title = context.copy ? NATIVE_WORDS.embed.buildingCopy(clock) : NATIVE_WORDS.embed.building(clock);
+  return { title, detail: context.stack ? DESTINATION_WORDS.buildStage[context.stack] : null };
 }

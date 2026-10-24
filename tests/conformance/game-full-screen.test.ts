@@ -10,7 +10,10 @@ import {
   ESC_HOLD_MS,
   EXIT_BUTTON,
   EXIT_FOLDED_AFTER_MS,
+  type FullScreenDeps,
   gameFullScreen,
+  liveFullScreens,
+  nativeCanvasGame,
   type Rect,
 } from "../../src/main/game-full-screen.ts";
 
@@ -159,5 +162,102 @@ describe("the game's full screen", () => {
     state.fill = null;
     screen.resized();
     assert.deepEqual(state.fill, { x: 0, y: 0, width: 1440, height: 900 });
+  });
+});
+
+/** Live's two full screens over one window and one clock: the web view's, and the Native canvas's in the studio's page. */
+function liveRig() {
+  let now = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  let next = 1;
+  const log: string[] = [];
+  const window = { full: false };
+  const shared: Omit<FullScreenDeps, "game" | "stage"> = {
+    window: {
+      isFullScreen: () => window.full,
+      setFullScreen: (on) => {
+        window.full = on;
+      },
+      contentSize: () => ({ width: 1440, height: 900 }),
+    },
+    exitButton: { show: () => {}, hide: () => {} },
+    clock: {
+      setTimeout: (fn, ms) => {
+        const id = next++;
+        timers.set(id, { at: now + ms, fn });
+        return id;
+      },
+      clearTimeout: (id) => {
+        timers.delete(id as number);
+      },
+    },
+  };
+  const none = { cover: () => {}, restore: () => {} };
+  const web = gameFullScreen({
+    ...shared,
+    game: { fill: (bounds) => log.push(bounds ? "web fills" : "web back"), focus: () => {} },
+    stage: none,
+  });
+  const native = gameFullScreen({
+    ...shared,
+    game: nativeCanvasGame({
+      emit: (on) => log.push(`native.full-screen ${on}`),
+      focus: () => log.push("page focused"),
+    }),
+    stage: none,
+  });
+  const screens = liveFullScreens({ web, native });
+  const advance = (ms: number) => {
+    now += ms;
+    for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
+      if (timer.at > now) continue;
+      timers.delete(id);
+      timer.fn();
+    }
+  };
+  return { screens, log, window, advance };
+}
+
+describe("Live's Native view in full screen", () => {
+  it("fills the window with the Native canvas: the page is told it covers the window and keeps the keyboard", () => {
+    const { screens, log, window } = liveRig();
+    screens.enter({ native: true });
+    assert.equal(window.full, true);
+    assert.equal(screens.nativeActive(), true);
+    assert.equal(screens.active(), false, "the web view's slot is still the page's to place");
+    assert.deepEqual(log.slice(0, 2), ["native.full-screen true", "page focused"]);
+  });
+
+  it("ends as the web view's does: a held Esc, never a tap, which stays the game's (pointer lock)", () => {
+    const { screens, log, window, advance } = liveRig();
+    screens.enter({ native: true });
+    screens.key({ type: "keyDown", key: "Escape", isAutoRepeat: false });
+    screens.key({ type: "keyUp", key: "Escape", isAutoRepeat: false });
+    advance(ESC_HOLD_MS);
+    assert.equal(screens.nativeActive(), true, "a tap leaves full screen on");
+    screens.key({ type: "keyDown", key: "Escape", isAutoRepeat: false });
+    advance(ESC_HOLD_MS);
+    assert.equal(screens.nativeActive(), false);
+    assert.equal(window.full, false);
+    assert.equal(log.at(-1), "native.full-screen false");
+  });
+
+  it("is one at a time: entering one view's full screen ends the other's", () => {
+    const { screens, log } = liveRig();
+    screens.enter({ native: false });
+    screens.enter({ native: true });
+    assert.equal(screens.active(), false);
+    assert.equal(screens.nativeActive(), true);
+    assert.deepEqual(log.slice(0, 2), ["web fills", "web back"]);
+  });
+
+  it("follows the window: a resize fills again, and the window leaving full screen ends it", () => {
+    const { screens, log } = liveRig();
+    screens.enter({ native: true });
+    screens.resized();
+    assert.equal(log.filter((line) => line === "native.full-screen true").length, 2);
+    screens.windowLeft();
+    assert.equal(screens.nativeActive(), false);
+    assert.equal(log.at(-1), "native.full-screen false");
   });
 });

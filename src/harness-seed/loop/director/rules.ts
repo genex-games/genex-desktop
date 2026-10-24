@@ -253,6 +253,21 @@ function entries(value: unknown, split: (value: unknown) => string[]): string[] 
 }
 
 /**
+ * A part's done scenarios: sentences, or entries written in worker_start's {what, check} shape,
+ * which keep their sentence. An entry with neither is dropped: stringified it read "[object
+ * Object]", and that became the goal's acceptance and the question its blind judge was asked.
+ */
+function scenarios(value: unknown): string[] {
+  if (!Array.isArray(value)) return entries(value, lines);
+  const sentence = (entry: unknown) =>
+    typeof entry === "string" ? entry : String((entry as AnyRecord | null)?.what ?? "");
+  return value
+    .map(sentence)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+/**
  * What kind of game this is (M4.4). Declared here or nowhere: the board, the play script the
  * harness drives and the line every judge reads all come from it, and nothing is assumed.
  */
@@ -288,7 +303,7 @@ function planPart(entry: unknown, id: string): PlanPart {
       .trim()
       .slice(0, PART_SEAM),
     owns: entries(raw.owns, list),
-    done: entries(raw.done, lines).slice(0, PART_DONE),
+    done: scenarios(raw.done).slice(0, PART_DONE),
     ...(raw.multiplayer === true ? { multiplayer: true } : {}),
     ...(singlePart(raw) ? { single: true } : {}),
     minutes: Math.round(num(raw.minutes, 0)) || null,

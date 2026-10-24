@@ -97,7 +97,7 @@ export function missingIgnoreRules(current: string | null, extra: readonly strin
  * when it is left alone (a link, a folder or anything but a plain file, or one past its cap). It
  * is never read through a link.
  */
-async function ownIgnoreFile(dir: string): Promise<string | null | undefined> {
+export async function ownIgnoreFile(dir: string): Promise<string | null | undefined> {
   const file = path.join(dir, IGNORE_FILE);
   const info = await lstat(file).catch(() => null);
   if (!info) return null;

@@ -8,7 +8,7 @@
  *
  * Prints a JSON report to stdout and exits non-zero if any check fails.
  */
-import { BrowserWindow, app } from "electron";
+import { BrowserWindow, app, net } from "electron";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +26,7 @@ import { sleep, waitFor } from "./wait.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { flagValue, hasFlag, StudioFlag } from "../dev/launch-flags.ts";
+import { checkClaudeWorker } from "./claude-worker-check.ts";
 
 /** The self test's window: shown (capturePage needs a compositor surface), parked off-screen unless `--show`. */
 const WINDOW = { width: 1024, height: 768, backgroundColor: "#05070d" } as const;
@@ -102,7 +103,7 @@ export async function runSelfTest(options: { resources: string; userData?: strin
     const { core, preview } = await bootStudio(options.resources, userData, uiEvents, owned);
     check("harness boots inside the sandbox", core.host.state === HarnessState.Ready, `state=${core.host.state}`);
     const t: SelfTest = { core, preview, userData, uiEvents, owned, check };
-    for (const stage of STAGES) await stage(t);
+    for (const stage of stagesOf(flagValue(StudioFlag.ClaudeWorkerCheck))) await stage(t);
   } catch (err) {
     check("self test ran without throwing", false, (err as Error).stack ?? String(err));
   } finally {
@@ -138,6 +139,18 @@ const STAGES: Array<(t: SelfTest) => Promise<void>> = [
   checkLoopCommission,
   checkAutopilot,
 ];
+
+/**
+ * The stages this run takes: every one, and the Claude worker's right after the first chat turn
+ * when the runner asked for it, so the release canary (which stops after the agent checks) sees it.
+ */
+function stagesOf(claudeWorkerProof: string | undefined): Array<(t: SelfTest) => Promise<void>> {
+  if (!claudeWorkerProof) return STAGES;
+  const [first, ...rest] = STAGES;
+  const claudeWorker = ({ core, check }: SelfTest) =>
+    checkClaudeWorker(core, { proofFile: claudeWorkerProof, fetch: net.fetch }, check);
+  return [...(first ? [first] : []), claudeWorker, ...rest];
+}
 
 /** The window, the preview and the core with its harness started. */
 async function bootStudio(resources: string, userData: string, uiEvents: UiEvent[], owned: Owned) {

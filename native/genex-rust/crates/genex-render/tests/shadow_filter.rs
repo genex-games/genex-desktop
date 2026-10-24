@@ -146,6 +146,7 @@ const CASTER_WGSL: &str = r"
 struct Caster {
     inverse: mat4x4<f32>,
     size: vec4<f32>,
+    ledge: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> caster: Caster;
 
@@ -179,6 +180,19 @@ fn fs_caster(@builtin(position) p: vec4<f32>) -> CasterOut {
     var t = 1.0;
     if d.y < 0.0 {
         t = min(t, clamp(-origin.y / d.y, 0.0, 1.0));
+    }
+    if caster.size.z > 1.5 {
+        // A ledge: the half plane of height ledge.z where dot(xz, ledge.xy) < 0, over the ground.
+        if abs(d.y) > 1e-9 {
+            let at = (caster.ledge.z - origin.y) / d.y;
+            let hit = origin + d * at;
+            if at >= 0.0 && at <= t && dot(hit.xz, caster.ledge.xy) < 0.0 {
+                t = at;
+            }
+        }
+        var ledge: CasterOut;
+        ledge.depth = t;
+        return ledge;
     }
     if caster.size.z > 0.5 {
         // The open ground alone.
@@ -221,6 +235,35 @@ fn shadow_map(gpu: &Gpu, cascades: &[([f32; 3], f32)], px: u32) -> ShadowMap {
 /// The analytic depth array of `cascades` (each a light view-projection and its half extent), the
 /// pole standing on the ground when `pole`, the open ground alone otherwise.
 fn shadow_map_of(gpu: &Gpu, cascades: &[(Mat4, f32)], px: u32, pole: bool) -> ShadowMap {
+    let mode = if pole { Caster::Pole } else { Caster::Bare };
+    shadow_map_with(gpu, cascades, px, mode)
+}
+
+/// What the analytic map holds over the ground.
+#[derive(Clone, Copy)]
+enum Caster {
+    /// The 8 m pole.
+    Pole,
+    /// The open ground alone.
+    Bare,
+    /// A ledge `height` metres over the ground covering the half plane where the ground point's
+    /// (x, z) dotted with `normal` is negative: its straight edge runs at any angle to the map.
+    Ledge { normal: [f32; 2], height: f32 },
+}
+
+impl Caster {
+    /// The caster shader's `size.z` mode and its `ledge` row.
+    fn uniform(self) -> (f32, [f32; 4]) {
+        match self {
+            Caster::Pole => (0.0, [0.0; 4]),
+            Caster::Bare => (1.0, [0.0; 4]),
+            Caster::Ledge { normal, height } => (2.0, [normal[0], normal[1], height, 0.0]),
+        }
+    }
+}
+
+/// The analytic depth array of `cascades` holding `caster` over the ground.
+fn shadow_map_with(gpu: &Gpu, cascades: &[(Mat4, f32)], px: u32, caster: Caster) -> ShadowMap {
     let layers = cascades.len() as u32;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("analytic shadow map"),
@@ -254,7 +297,9 @@ fn shadow_map_of(gpu: &Gpu, cascades: &[(Mat4, f32)], px: u32, pole: bool) -> Sh
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("caster") });
     for (layer, matrix) in matrices.iter().enumerate() {
         let mut uniform = matrix.inverse().to_cols_array().to_vec();
-        uniform.extend([px as f32, px as f32, if pole { 0.0 } else { 1.0 }, 0.0]);
+        let (mode, ledge) = caster.uniform();
+        uniform.extend([px as f32, px as f32, mode, 0.0]);
+        uniform.extend(ledge);
         let buffer = buffer_with(gpu, "caster", wgpu::BufferUsages::UNIFORM, bytemuck::cast_slice(&uniform));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("caster"),
@@ -670,8 +715,9 @@ fn ends_at_fade(fade: f32, band: f32) -> [f32; 4] {
     [GROUND_DEPTH / (1.0 - band + band * fade), 200.0, 0.0, 0.0]
 }
 
-/// The filters each preset draws with, and whether TAA turns their taps there: phones' hardware
-/// tap, low and medium's 3x3 PCF, the 5x5 PCF a game may ask for, high's PCSS-lite and ultra's PCSS.
+/// The filters each preset draws with, and whether TAA turns their taps there: the weakest phones'
+/// hardware tap, the 3x3 PCF a game may ask for (the legacy renderer's), low's, medium's and phones'
+/// 5x5 PCF (release R-13), high's PCSS-lite and ultra's PCSS.
 const PRESET_FILTERS: [(ShadowFilter, bool); 5] = [
     (ShadowFilter::Hardware2x2, false),
     (ShadowFilter::Pcf3x3, false),
@@ -1462,4 +1508,145 @@ fn metal_without_taa_two_pcss_frames_of_a_static_scene_are_byte_identical() {
     let hard = pole_frame(&gpu, &mut hard, 1);
     write_evidence("frame-hard", hard.bgra());
     assert_ne!(hard.digest(), first.digest(), "PCSS draws another penumbra than one hardware tap");
+}
+
+// ---------------------------------------------------------------------------------------------
+// A straight edge at an angle to the map (D22: no staircase on shadow edges)
+
+/// The ledge's height over the ground, metres: above the comparison bias (`BIAS` of the 46 m light
+/// depth, 7 cm), yet so near that the real sun's penumbra (1 mm) is far under a texel and the
+/// filter's smallest kernel draws the edge, as at a wall's foot (the audio-yard's cave wall, the
+/// twinstick wall's bottom shadow).
+const LEDGE_HEIGHT: f32 = 0.15;
+/// The ledge edge's angle to the map's rows, degrees (no small rational slope, so the edge crosses
+/// every sub-texel phase).
+const LEDGE_YAW_DEG: f32 = 17.0;
+/// The sun's angular radius in the ledge rows, degrees (the real sun's).
+const LEDGE_SUN_RADIUS_DEG: f32 = 0.27;
+/// How far along the edge the rows measure, metres each side of its middle, and their spacing.
+const LEDGE_ALONG_M: f32 = 2.5;
+const LEDGE_ALONG_STEP: f32 = 0.004;
+/// How far across the edge each line reaches, metres each side, and its spacing.
+const LEDGE_ACROSS_M: f32 = 0.08;
+const LEDGE_ACROSS_STEP: f32 = 0.0008;
+/// Frame keys a turning filter is averaged over: the key's whole cycle (`gx_sun_noise`), what TAA
+/// and the sun mask converge to on a still camera.
+const LEDGE_FRAME_KEYS: u32 = 64;
+/// D22's floor for a shadow edge's staircase: the edge's half-light line may stray from the straight
+/// line through it by at most this share of a shadow texel. A one-texel edge strays 0.66 (the map's
+/// own staircase, half a texel either way, through a bilinear tap); a kernel only damps the
+/// staircase's period, so the floor is the 5x5 PCF's level (0.16), the smoothest of the fixed
+/// kernels, with a little room: PCSS at its narrowest kernel draws 0.18, 3x3 PCF 0.37.
+const EDGE_STAIR_TEXELS_MAX: f32 = 0.2;
+/// The filters the presets draw on desktops and on all but the weakest phones (`presets.rs`):
+/// D22's floor holds for each.
+const PRESET_SMOOTH_FILTERS: [ShadowFilter; 3] = [ShadowFilter::Pcf5x5, ShadowFilter::PcssLite, ShadowFilter::Pcss];
+
+/// The ledge's edge direction and its normal on the ground (x, z).
+fn ledge_axes() -> ([f32; 2], [f32; 2]) {
+    let yaw = LEDGE_YAW_DEG.to_radians();
+    let (sin, cos) = (libm::sinf(yaw), libm::cosf(yaw));
+    ([cos, sin], [-sin, cos])
+}
+
+/// How far along the ledge's normal its shadow's edge lies on the ground (under [`sun`]).
+fn ledge_shadow_offset() -> f32 {
+    let (_, normal) = ledge_axes();
+    let sun = sun();
+    -LEDGE_HEIGHT * (sun.x * normal[0] + sun.z * normal[1]) / sun.y
+}
+
+/// The ground lines across the ledge shadow's edge: `lines` of `samples` rows each, from the
+/// shadow into the light; each row on its own pixel (its noise turns its taps).
+struct LedgeRows {
+    rows: Vec<([f32; 3], [f32; 2])>,
+    lines: usize,
+    samples: usize,
+}
+
+/// [`LedgeRows`] across the ledge shadow's whole measured length.
+fn ledge_rows() -> LedgeRows {
+    let (along, normal) = ledge_axes();
+    let edge = ledge_shadow_offset();
+    let lines = (2.0 * LEDGE_ALONG_M / LEDGE_ALONG_STEP) as usize + 1;
+    let samples = (2.0 * LEDGE_ACROSS_M / LEDGE_ACROSS_STEP) as usize + 1;
+    let mut rows = Vec::with_capacity(lines * samples);
+    for line in 0..lines {
+        let s = -LEDGE_ALONG_M + line as f32 * LEDGE_ALONG_STEP;
+        for sample in 0..samples {
+            let u = edge - LEDGE_ACROSS_M + sample as f32 * LEDGE_ACROSS_STEP;
+            let x = along[0] * s + normal[0] * u;
+            let z = along[1] * s + normal[1] * u;
+            rows.push(([x, 0.0, z], [line as f32, sample as f32]));
+        }
+    }
+    LedgeRows { rows, lines, samples }
+}
+
+/// The largest and the root-mean-square distance, in shadow texels, of each line's half-light
+/// crossing from the straight line fitted through them all.
+fn stair_of(visibility: &[f32], lines: usize, samples: usize, texel: f32) -> (f32, f32) {
+    let crossings: Vec<(f32, f32)> = (0..lines)
+        .filter_map(|line| {
+            let profile = &visibility[line * samples..(line + 1) * samples];
+            let at = crossing(profile, 0.5)? / STEP * LEDGE_ACROSS_STEP;
+            Some((line as f32 * LEDGE_ALONG_STEP, at))
+        })
+        .collect();
+    assert!(crossings.len() == lines, "every line crosses the edge ({} of {lines})", crossings.len());
+    let n = crossings.len() as f32;
+    let (sx, sy) = crossings.iter().fold((0.0, 0.0), |(a, b), (x, y)| (a + x, b + y));
+    let (mx, my) = (sx / n, sy / n);
+    let (sxy, sxx) = crossings.iter().fold((0.0, 0.0), |(a, b), (x, y)| (a + (x - mx) * (y - my), b + (x - mx) * (x - mx)));
+    let slope = sxy / sxx;
+    let residuals: Vec<f32> = crossings.iter().map(|(x, y)| (y - (my + slope * (x - mx))) / texel).collect();
+    let max = residuals.iter().fold(0.0_f32, |m, r| m.max(r.abs()));
+    let rms = (residuals.iter().map(|r| r * r).sum::<f32>() / n).sqrt();
+    (max, rms)
+}
+
+/// The visibility at `rows` under `filter`, averaged over [`LEDGE_FRAME_KEYS`] frames where TAA
+/// turns its taps (`temporal`), as the history holds it.
+fn settled_visibility(gpu: &Gpu, map: &ShadowMap, frame: &GpuFrame, filter: ShadowFilter, temporal: bool, rows: &[([f32; 3], [f32; 2])]) -> Vec<f32> {
+    if !temporal {
+        return visibility(gpu, map, frame, Run::filter(filter), rows);
+    }
+    let mut sum = vec![0.0_f32; rows.len()];
+    for key in 0..LEDGE_FRAME_KEYS {
+        let frame_visibility = visibility(gpu, map, frame, Run::filter(filter).temporal().with_context(key, 0.0), rows);
+        for (total, value) in sum.iter_mut().zip(frame_visibility) {
+            *total += value;
+        }
+    }
+    sum.iter().map(|total| total / LEDGE_FRAME_KEYS as f32).collect()
+}
+
+/// Release R-13 (D22: "no jaggies or staircase on ... shadow edges"): a ledge's straight contact
+/// shadow at an angle to the map's texel rows is drawn straight by every preset's filter, as TAA
+/// settles it. GE's captures showed the audio-yard cave wall's shadow notched and the twinstick
+/// wall's bottom shadow scalloped: PCSS drew a contact edge with its one-texel narrowest kernel
+/// (0.47 texels off the line) and medium's and the phones' 3x3 PCF with 0.37.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_straight_contact_shadow_edge_at_an_angle_to_the_map_has_no_staircase() {
+    let _shared = gpu_shared();
+    let Some(gpu) = gpu() else { return };
+    let (_, normal) = ledge_axes();
+    let layers = [(light_view_proj(Vec3::from(NEAR_CASCADE.0), NEAR_CASCADE.1), NEAR_CASCADE.1)];
+    let map = shadow_map_with(&gpu, &layers, MAP_PX, Caster::Ledge { normal, height: LEDGE_HEIGHT });
+    let frame = frame(&map, CAMERA, [0.0, -1.0, 0.0], IN_NEAR, LEDGE_SUN_RADIUS_DEG, MAP_PX);
+    let LedgeRows { rows, lines, samples } = ledge_rows();
+    let texel = map.texel_world[0];
+    let mut problems = Vec::new();
+    for (filter, temporal) in PRESET_FILTERS {
+        let seen = settled_visibility(&gpu, &map, &frame, filter, temporal, &rows);
+        let (max, rms) = stair_of(&seen, lines, samples, texel);
+        eprintln!("{filter:?}: the edge strays {max:.3} texels at most from its line (rms {rms:.3})");
+        // The weakest phone's `low` keeps its one hardware tap by design (`presets.rs`), and 3x3 PCF
+        // is drawn only on request: both are recorded, not held.
+        if PRESET_SMOOTH_FILTERS.contains(&filter) && max > EDGE_STAIR_TEXELS_MAX {
+            problems.push(format!("{filter:?}: the edge strays {max:.3} texels from its line (rms {rms:.3}), over {EDGE_STAIR_TEXELS_MAX}"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
 }

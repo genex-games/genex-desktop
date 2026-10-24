@@ -8,7 +8,7 @@ import { SECOND_MS } from "../../../../shared/duration.ts";
 import { GenexAction, GenexPublishStatusOperation, type GenexPublishState } from "../../../../shared/genex.ts";
 import type { ExportReview, PluginInfo } from "../../../../shared/plugins.ts";
 import { type PluginReviewRequest, runPluginAction } from "../../../plugin-actions.ts";
-import { publishView } from "./genex-publish-view.ts";
+import { type PublishButton, publishView } from "./genex-publish-view.ts";
 
 /** How often the dialog re-reads the record while an attempt runs, and otherwise. */
 const RUNNING_POLL_MS = 2 * SECOND_MS;
@@ -51,8 +51,10 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
       setReadError(words(e));
     }
   }, [id, project]);
-  // A Publish press shows its first steps (preparing the copy) while the press itself still runs.
-  const busy = (state ? publishView(state).running : false) || pressing === Pressing.Publish;
+  // A Publish press shows its first steps (preparing the copy) while the press itself still runs,
+  // and the game's apps going behind its web build are followed as closely as the build.
+  const sendingApps = state?.native?.sending === true;
+  const busy = (state ? publishView(state).running : false) || sendingApps || pressing === Pressing.Publish;
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), busy ? RUNNING_POLL_MS : IDLE_POLL_MS);
@@ -90,8 +92,23 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     act: (name: string, args: Record<string, unknown> = {}): Promise<void> =>
       run(Pressing.Action, () => runPluginAction({ plugin, name, args, project, review: setReview })),
     listFiles: (): Promise<void> => run(Pressing.Files, currentFiles),
-    /** Publish under `title`: the press is the consent to exactly the listed files. */
-    publish: (title: string): Promise<void> =>
-      run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title)),
+    /**
+     * Publish under `title`: the press is the consent to exactly the listed files, and to the game's
+     * project when `remix` (Allow remixing) is ticked.
+     */
+    publish: (title: string, remix?: boolean): Promise<void> =>
+      run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title, remix)),
+    /** Publish a game that has only apps under `title`: the press is the consent to the apps its rows name. */
+    publishApps: (title: string, remix?: boolean): Promise<void> =>
+      run(Pressing.Publish, () => window.studio.genexPublishApps(game, title, remix)),
+    /**
+     * Publish again while Studio cannot tell whether the last upload reached Genex: settle that
+     * upload (`again` names it), then publish under `title` as Publish does.
+     */
+    publishAgain: (again: PublishButton, title: string): Promise<void> =>
+      run(Pressing.Publish, async () => {
+        await runPluginAction({ plugin, name: again.action, args: again.args ?? {}, project, review: setReview });
+        await window.studio.genexPublish(game, await currentFiles(), title);
+      }),
   };
 }

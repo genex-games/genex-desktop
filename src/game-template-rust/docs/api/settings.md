@@ -10,7 +10,7 @@ it.
 | Tab | What it holds |
 |-|-|
 | Graphics | `genex::render::settings_panel`, unchanged (saved in `genex-render.json`) |
-| Audio | master volume and the `music`, `sfx`, `ui`, `voice` and `ambience` buses; presets Default, Quiet, Dialogue |
+| Audio | master volume and the `music`, `sfx`, `ui`, `voice` and `ambience` buses; presets Default, Quiet, Dialogue (not in a build with `[audio] enabled = false`) |
 | Controls | `controls_panel` (`docs/api/ctx.md`; only with `game.input`; saved in `genex-input.json`) |
 | Language & Accessibility | language (with `game.ui` locales), UI scale, text size, subtitles, reduced motion, screen shake; presets Default, Comfort |
 | Game | the game's own options and presets (only when it registers some) |
@@ -20,7 +20,10 @@ the simulation: a bus volume reaches the mixer at once, and the UI scale, langua
 motion reach `genex::ui` from the next tick (a Studio `uiSettings` session layer stays on top).
 Inside `on_update` and `on_ui`, `genex::settings::value("ui.subtitles")`,
 `genex::settings::number("ui.screen_shake")` and `genex::settings::flag("ui.subtitles")` read any
-option. Text size is recorded for the game to read; the HUD does not scale text by it yet.
+option. Text size (100% to 200%) scales the text of everything the UI hooks draw from the next
+tick. A preset row reads Default while no preset is chosen and every option is at its default. A
+game's option whose text the catalog lacks reads as its words (`settings-hints` as "Hints") and
+records `text-missing`.
 
 ```rust
 use genex::settings::{SettingDef, SettingValue, SettingsConfig, SettingsTab};

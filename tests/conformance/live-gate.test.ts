@@ -7,10 +7,12 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerPreviewIpc } from "../../src/main/ipc/preview.ts";
+import { BUILD_SETTLE_MS, buildFinished } from "../../src/main/core/live-gate.ts";
+import { WebBuildLoad } from "../../src/shared/live-behind.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
 import { gitFile } from "../helpers/git.ts";
 import { makeFakePreview } from "../helpers/studio-rig.ts";
@@ -20,17 +22,23 @@ import { tmpDir } from "../helpers/tmp.ts";
 function fakePort() {
   const port = {
     loads: [] as Array<{ project: string; root: string | null }>,
+    /** The page each load opened, in order. */
+    entries: [] as string[],
     reloads: 0,
     inputs: 0,
     disposed: false,
     /** The next load fails, as a page that never arrived does. */
     failNext: false,
+    /** While set, a load waits for it: a page still loading. */
+    hold: null as Promise<void> | null,
     async load(project: string, entry: string, root?: string) {
+      if (port.hold) await port.hold;
       if (port.failNext) {
         port.failNext = false;
         throw new Error("the page did not load");
       }
       port.loads.push({ project, root: root ?? null });
+      port.entries.push(entry);
       return `game://${project}/${entry}`;
     },
     async reload() {
@@ -210,6 +218,169 @@ function liveOf(behind: Stage["behind"][number] | undefined) {
  * those reach main directly, and only the stage's own Play said which build Live had. Main says it
  * now, on every path, and a stage that mounts later reads it.
  */
+describe("an engine's web build in Live", () => {
+  /** A file of the game's, with its folders. */
+  const put = async (dir: string, rel: string, text: string) => {
+    await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+    await writeFile(path.join(dir, rel), text);
+  };
+  /** Unity's WebGL build of `name`, as its export writes it into web/. */
+  const UNITY_BUILD = [
+    "web/index.html",
+    "web/Build/web.loader.js",
+    "web/Build/web.framework.js",
+    "web/Build/web.wasm",
+    "web/Build/web.data",
+  ];
+  /** Files the engine wrote a while ago: an export that has finished writing. */
+  const settle = async (dir: string, rels: readonly string[]) => {
+    const before = new Date(Date.now() - 10 * 1000);
+    for (const rel of rels) await utimes(path.join(dir, rel), before, before);
+  };
+
+  /** A Unity game with no web build yet, opened in Live. */
+  async function unityGame() {
+    const live = fakePort();
+    const behind: Stage["behind"] = [];
+    const lite = await coreLite({
+      preview: live as never,
+      gamesRoot: await realpath(await tmpDir("studio-live-web-build-")),
+      previewPoolMax: 2,
+      createHeadlessPreview: async () => fakePort() as never,
+      onUiEvent: (event) => {
+        if (event.type === "live.behind") behind.push(event.payload as Stage["behind"][number]);
+      },
+    });
+    const game = await lite.core.games.makeEmpty("arena");
+    await put(game.dir, "unity/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    await lite.core.loadPreview({ project: "arena" });
+    const offer = () => lite.core.offerLive({ project: "arena", root: null, note: "built for the web" });
+    return { lite, live, behind, dir: game.dir, offer };
+  }
+
+  it("a Unity game's finished web build that appears or is built again loads on its own; one still being written waits for Reload", async () => {
+    const { live, behind, dir, offer } = await unityGame();
+    assert.equal(live.entries.length, 1, "the person opened the game before it had a web build");
+
+    for (const rel of UNITY_BUILD) await put(dir, rel, `${rel}\n`);
+    await offer();
+    assert.equal(live.entries.length, 1, "a build written a moment ago may still be writing");
+    assert.equal(behind.at(-1)?.reason, "changed", "it lights Reload instead");
+
+    await settle(dir, UNITY_BUILD);
+    await offer();
+    assert.deepEqual(live.entries.slice(1), ["web/index.html"], "Live plays the finished build with no Reload");
+    assert.equal(behind.at(-1)?.reason ?? null, null, "nothing waits for Reload");
+
+    await rm(path.join(dir, "web/Build/web.data"));
+    await put(dir, "web/Build/web.wasm", "the arena, built again\n");
+    await settle(dir, ["web/Build/web.wasm"]);
+    await offer();
+    assert.equal(live.entries.length, 2, "a build missing a part is never loaded");
+    await put(dir, "web/Build/web.data", "the arena's data\n");
+    await settle(dir, ["web/Build/web.data"]);
+    await offer();
+    assert.equal(live.entries.length, 3, "the build made again loads once it is whole");
+    await offer();
+    assert.equal(live.entries.length, 3, "the same build is not loaded twice");
+
+    await put(dir, "unity/Assets/Enemy.cs", "class Enemy {}\n");
+    await offer();
+    assert.equal(live.entries.length, 3, "a change to the project alone leaves Live as it is");
+    assert.equal(behind.at(-1)?.reason, "changed", "and waits for Reload");
+  });
+
+  it("the Web game tab loads a finished build Live lacks, once; never one still written, a build the person views, or a stopped game", async () => {
+    const { lite, live, dir } = await unityGame();
+    for (const rel of UNITY_BUILD) await put(dir, rel, `${rel}\n`);
+    assert.equal(
+      await lite.core.loadWebBuild("arena"),
+      WebBuildLoad.Unfinished,
+      "a build written a moment ago may still be writing",
+    );
+    assert.equal(live.entries.length, 1);
+
+    await settle(dir, UNITY_BUILD);
+    // A checkpoint's offer and the tab ask at once: one of them loads it.
+    await Promise.all([lite.core.offerLive({ project: "arena", root: null }), lite.core.loadWebBuild("arena")]);
+    assert.deepEqual(live.entries.slice(1), ["web/index.html"], "loaded once, whoever asked first");
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Kept, "Live already has it");
+    assert.equal(await lite.core.loadWebBuild("pong"), WebBuildLoad.Kept, "a game Live does not hold");
+
+    await lite.core.stopLive();
+    await put(dir, "web/Build/web.wasm", "the arena, built again\n");
+    await settle(dir, ["web/Build/web.wasm"]);
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Kept, "a stopped game stays stopped");
+    await lite.core.playLive();
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Loaded, "Play lets the new build in");
+    assert.equal(live.entries.length, 3);
+
+    const review = path.join(lite.core.layout.scratch, "review-arena");
+    await mkdir(review, { recursive: true });
+    await lite.core.loadPreview({ project: "arena", root: review });
+    await put(dir, "web/Build/web.data", "the arena's data, again\n");
+    await settle(dir, ["web/Build/web.data"]);
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Kept, "a build the person chose to view stays");
+    assert.deepEqual(live.loads.at(-1), { project: "arena", root: await realpath(review) });
+  });
+
+  it("an offer with no web build to bring never waits behind a load under way", async () => {
+    const { lite, live, behind, dir } = await unityGame();
+    let release = () => {};
+    live.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loading = lite.core.loadPreview({ project: "arena" });
+    await put(dir, "unity/Assets/Enemy.cs", "class Enemy {}\n");
+    await lite.core.offerLive({ project: "arena", root: null, note: "a new enemy" });
+    assert.equal(behind.at(-1)?.note, "a new enemy", "Reload lit while the load still runs");
+    live.hold = null;
+    release();
+    await loading;
+  });
+
+  it("a load that fails still starts a stopped game again: its web build comes in", async () => {
+    const { lite, live, dir } = await unityGame();
+    await lite.core.stopLive();
+    live.failNext = true;
+    await assert.rejects(lite.core.loadPreview({ project: "arena" }));
+    for (const rel of UNITY_BUILD) await put(dir, rel, `${rel}\n`);
+    await settle(dir, UNITY_BUILD);
+    assert.equal(await lite.core.loadWebBuild("arena"), WebBuildLoad.Loaded);
+    assert.equal(live.entries.at(-1), "web/index.html");
+  });
+
+  it("a web build Live fails to load is still offered to Reload", async () => {
+    const { live, behind, dir, offer } = await unityGame();
+    for (const rel of UNITY_BUILD) await put(dir, rel, `${rel}\n`);
+    await settle(dir, UNITY_BUILD);
+    live.failNext = true;
+    await offer();
+    assert.equal(live.entries.length, 1, "the load did not arrive");
+    assert.equal(behind.at(-1)?.reason, "changed", "Reload still brings the build in");
+  });
+
+  it("tells a finished build of each engine from one still being written", () => {
+    const NOW = 1_000_000;
+    const build = (files: string[], newestMs = NOW - BUILD_SETTLE_MS) => ({
+      print: "p",
+      files: new Set(files),
+      newestMs,
+    });
+    const unity = ["index.html", "Build/g.loader.js", "Build/g.framework.js.br", "Build/g.wasm.br", "Build/g.data.br"];
+    const rows: Array<[string, ReturnType<typeof build>, string[], boolean]> = [
+      ["a Unity build packed with Brotli", build(unity), ["unity-project"], true],
+      ["a Unity build with no data yet", build(unity.slice(0, 4)), ["unity-project"], false],
+      ["a Unity build with no loader", build(unity.slice(2)), ["unity-project"], false],
+      ["a Unity build written a moment ago", build(unity, NOW - 1), ["unity-project"], false],
+      ["a Godot export", build(["index.html", "index.pck", "index.wasm", "index.js"]), ["godot-project"], true],
+      ["a Godot export with no engine yet", build(["index.html", "index.pck"]), ["godot-project"], false],
+      ["a Unity build in a game of no engine", build(unity), ["web-game"], false],
+    ];
+    for (const [title, files, kinds, finished] of rows) assert.equal(buildFinished(files, kinds, NOW), finished, title);
+  });
+});
+
 describe("what Live shows, whoever loaded it", () => {
   it("Play from anywhere says which build Live shows, and the game folder says it shows none", async () => {
     const { lite, live, behind, dir } = await stage();

@@ -54,10 +54,14 @@ pub enum EngineScope {
     PipelineCompile,
     /// Writing or reading a save.
     Save,
+    /// Choosing the drawn characters' poses (inside the frame's draw, lane CP).
+    Pose,
+    /// Planning the renderer's frame: its draws, skinning jobs and tables (inside the draw).
+    Plan,
 }
 
 /// How many engine scopes there are.
-const ENGINE_SCOPES: usize = 17;
+const ENGINE_SCOPES: usize = 19;
 
 impl EngineScope {
     /// Every engine scope, in declaration order.
@@ -79,6 +83,8 @@ impl EngineScope {
         EngineScope::AssetLoad,
         EngineScope::PipelineCompile,
         EngineScope::Save,
+        EngineScope::Pose,
+        EngineScope::Plan,
     ];
 
     /// The scope's wire spelling.
@@ -101,6 +107,8 @@ impl EngineScope {
             EngineScope::AssetLoad => "asset-load",
             EngineScope::PipelineCompile => "pipeline-compile",
             EngineScope::Save => "save",
+            EngineScope::Pose => "pose",
+            EngineScope::Plan => "plan",
         }
     }
 

@@ -115,8 +115,15 @@ export type MomentOps = {
   running(): Promise<boolean | null>;
   /** The editor's activity; throws when it can't say. */
   activity(): Promise<{ pie: boolean; dirty: number }>;
+  /** Whether a checkpoint's save may end the play under way: the agent's own, or a run's while agents may use Unreal as the person plays. */
+  mayEndPlay(): Promise<boolean>;
   /** Saves the editor's work (a play session ended first), each editor call within its moment's limit; throws its refusal. */
   save(): Promise<Saved>;
+  /**
+   * Sets the linked project up in this profile when it has no set-up record here (another profile
+   * set it up), quitting Unreal first when that changes its files; throws its refusal.
+   */
+  setUp(): Promise<void>;
   /** Ends the project's editor; throws when it couldn't. */
   end(): Promise<unknown>;
   /** Starts reopening the game's Unreal in the background, updating an outdated helper while it is closed when asked. */
@@ -193,14 +200,15 @@ async function saving(ops: MomentOps, dirty: number): Promise<SaveRead> {
 }
 
 /**
- * A checkpoint's save: never during a play session or of an editor that can't say whether one runs.
+ * A checkpoint's save: never during a play session it may not end (the save ends one it may) or of
+ * an editor that can't say whether one runs.
  * A run saves even with nothing unsaved (as its save points did); a chat saves only what is unsaved.
  */
 async function checkpointSave(ops: MomentOps, hook: HookContext): Promise<SaveRead> {
   if (!(await ops.answers())) return { outcome: SaveOutcome.NotAnswering };
   const activity = await ops.activity().catch(() => null);
   if (!activity) return { outcome: SaveOutcome.CantTell };
-  if (activity.pie) return { outcome: SaveOutcome.Playing };
+  if (activity.pie && !(await ops.mayEndPlay().catch(() => false))) return { outcome: SaveOutcome.Playing };
   if (activity.dirty === 0 && !inRun(hook)) return { outcome: SaveOutcome.Clean };
   return saving(ops, activity.dirty);
 }
@@ -400,12 +408,18 @@ async function closedUpdate(ops: MomentOps): Promise<{ note: string; ended: bool
 }
 
 /**
- * `open-for-run` at a run's start: Unreal open, with the plugin's Genex editor helper and the
+ * `open-for-run` at a run's start: the linked project set up in this profile (one another profile
+ * set up is recorded as it is), Unreal open, with the plugin's Genex editor helper and the
  * template's facts exported. Blocked when Unreal can't be opened or the project has no helper (the
  * Loop can't save or capture it). No snapshot is taken before a helper update: the update replaces
  * only the helper's folder, which the game's history holds.
  */
 export async function openForRun(ops: MomentOps): Promise<HookAnswer> {
+  const notSetUp = await ops.setUp().then(
+    () => null,
+    (failure: unknown) => errorMessage(failure),
+  );
+  if (notSetUp !== null) return { block: MOMENT_WORDS.NotSetUp(notSetUp) };
   // Unreal answers Genex only through its helper: a project without one is told so before any open.
   const before = await ops.state().catch(() => null);
   if (before?.helper === HelperState.Missing) return { block: MOMENT_WORDS.NoHelper };

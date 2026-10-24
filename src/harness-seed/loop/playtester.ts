@@ -35,7 +35,11 @@ import { PageMethod } from "./page-contract.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import { GameStack } from "./native-contract.ts";
+import { clipWords } from "./word-clip.ts";
 import type { CheckResult } from "./checks.ts";
+import { describeComputer, PlayRole, playWithComputer, type ComputerGrant } from "./computer-loop.ts";
+import { COMPUTER_ONLY_LINE } from "./hands-on-prompts.ts";
+import { FacetRole } from "./facet/state.ts";
 
 /** The preview tools a direct play session may call. */
 const PLAY_TOOL_NAMES = ["press_keys", "look", "click", "screenshot", "game_state"];
@@ -151,7 +155,7 @@ function playResult(check: Check, entry: AnyRecord | undefined): CheckResult {
       ? ""
       : `playtester answered ${answer}${entry?.note ? `: ${String(entry.note).slice(0, CLIP_DETAIL)}` : ""}`,
     answer,
-    note: typeof entry?.note === "string" ? entry.note.slice(0, CLIP_REASON) : "",
+    note: typeof entry?.note === "string" ? clipWords(entry.note, CLIP_REASON) : "",
   };
 }
 
@@ -268,10 +272,10 @@ async function delegatedPlaytest(
   { run, spec, root, entry, handle, deadline, iteration, maxActions = 20 }: PlaytestOptions,
   { engineId, model: playModel, prompt }: { engineId: string; model: string | undefined; prompt: string },
 ): Promise<Played> {
-  const timeoutMs = Math.max(
-    MIN_DELEGATE_TIMEOUT_MS,
-    Math.min(PLAYTEST_MAX_MS, (deadline ?? Date.now() + PLAYTEST_MAX_MS) - Date.now()),
-  );
+  // The budget is measured before the window is built: a build is never play time.
+  const budgetMs = (deadline ?? Date.now() + PLAYTEST_MAX_MS) - Date.now();
+  if (handle) await readyWindow(ctx, { project: run.project, root, entry, handle });
+  const timeoutMs = Math.max(MIN_DELEGATE_TIMEOUT_MS, Math.min(PLAYTEST_MAX_MS, budgetMs));
   const result = await ctx.call(HostMethod.EngineDelegate, {
     engine: engineId,
     prompt,
@@ -300,6 +304,22 @@ async function delegatedPlaytest(
   return { actions: result.turns ?? 0, transcript: result.summary ?? "" };
 }
 
+/**
+ * Build and load the build under test in the playtester's own window and wait until it is ready,
+ * before the session's clock starts: a fresh folder's first build can take minutes, and a session
+ * whose first look waits on it plays nothing. A window that does not come ready still plays: the
+ * playtester then sees and reports what it shows.
+ */
+async function readyWindow(
+  ctx: HarnessCtx,
+  { project, root, entry, handle }: { project: string; root: string; entry?: string; handle: string },
+): Promise<void> {
+  await ctx
+    .call(HostMethod.PreviewLoad, { project, ...(root ? { root } : {}), ...(entry ? { entry } : {}), handle })
+    .catch(() => null);
+  await ctx.call(HostMethod.PreviewReady, { handle }).catch(() => null);
+}
+
 /** What the direct-engine session is handed. */
 type DirectPlaytest = PlaytestOptions & {
   engineId: string;
@@ -309,8 +329,13 @@ type DirectPlaytest = PlaytestOptions & {
   maxActions: number;
 };
 
-/** The direct-engine session: the same preview tools, a small in-memory tool loop. */
+/**
+ * The direct-engine session: the full `computer` tool through `preview.computer` on its leased
+ * window when the host runs one there, else the preview shorthands in a small in-memory tool loop.
+ */
 async function directPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promise<Played> {
+  const computer = await computerPlaytest(ctx, session);
+  if (computer) return computer;
   const { maxActions, deadline, brief } = session;
   const wrapped = await openPlaySession(ctx, session);
   const toolset = previewTools.filter((tool) => PLAY_TOOL_NAMES.includes(tool.name));
@@ -322,6 +347,43 @@ async function directPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promise
     if (transcript !== null) return { actions: loop.actions, transcript };
   }
   return { actions: loop.actions, transcript: "" };
+}
+
+/**
+ * The direct session on the one `computer` tool every session engine holds, or null when there is
+ * no leased window or the host cannot run the tool on it (an older host): the shorthands then play.
+ */
+async function computerPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promise<Played | null> {
+  const { run, spec, root, entry, handle, iteration, maxActions, deadline, engineId, model, system, brief } = session;
+  if (!handle) return null;
+  const grant: ComputerGrant = {
+    project: run.project,
+    root,
+    handle,
+    runId: run.runId,
+    facetId: spec?.id ?? FacetRole.Integration,
+    iteration: iteration ?? 0,
+    ...(entry ? { entry } : {}),
+    setup: { ...(run.setup ?? {}), begin: false },
+    label: PlayRole.Playtester,
+    role: PlayRole.Playtester,
+    maxActions,
+  };
+  const tool = await describeComputer(ctx, grant);
+  if (!tool) return null;
+  const played = await playWithComputer(ctx, {
+    engineId,
+    model,
+    system,
+    brief: `${brief}\n\n${COMPUTER_ONLY_LINE}`,
+    grant,
+    tool,
+    maxActions,
+    deadline: deadline ?? null,
+    role: CompletionRole.Playtester,
+    runId: run.runId,
+  });
+  return { actions: played.actions, transcript: played.transcript };
 }
 
 /** Load the build in the session's preview (on its lease, when it has one) and start it. */

@@ -26,11 +26,15 @@ export interface ShaderCanvasMode {
   darkStrength: number;
 }
 
-/** Draws `body` with `settings`' colours, speed, size and picture; moves only while `moving`. */
+/**
+ * Draws `body` with `settings`' colours, speed, size and picture; moves only while `moving`, and
+ * draws nothing while `covered`.
+ */
 export function ShaderCanvas({
   body,
   settings,
   moving,
+  covered = false,
   mode,
   className,
   onState,
@@ -38,6 +42,8 @@ export function ShaderCanvas({
   body: string;
   settings: BackdropSettings;
   moving: boolean;
+  /** A page lies over the canvas's own (Play over home): hidden there, it asks for no frames. */
+  covered?: boolean;
   mode: ShaderCanvasMode;
   className: string;
   onState?: (state: StageState) => void;
@@ -82,6 +88,9 @@ export function ShaderCanvas({
       effect: settings.effect === BackdropEffect.None ? null : { settings, font: theme.font },
     });
   }, [body, settings, scheme, appearance, moving]);
+  useEffect(() => {
+    stage.current?.cover(covered);
+  }, [covered]);
   return (
     <canvas
       ref={canvas}

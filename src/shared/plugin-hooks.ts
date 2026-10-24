@@ -113,12 +113,20 @@ export const LOCK_ID = /^[a-z][a-z0-9-]{0,39}$/;
 /** The longest lock label, which names the app the person sees ("Working in Unreal"). */
 export const LOCK_LABEL_CHARS = 60;
 
-/** One of a plugin's handlers: its harness tool `tool` runs at `on`, for the games its `facts` reach (every game when absent). */
+/**
+ * One of a plugin's handlers: its harness tool `tool` runs at `on`, for the games its `facts` reach
+ * (every game when absent). `messages` (only at `checkpoint.before`) runs it before each chat
+ * message's checkpoint too, within that message's short wait, so a Rewind brings back what it saved.
+ */
 export interface PluginHook {
   on: HookEvent;
   tool: string;
   facts?: string[];
+  messages?: boolean;
 }
+
+/** The one moment whose handlers may also run before each chat message's checkpoint (`PluginHook.messages`). */
+export const MESSAGE_HOOK_EVENT = HookEvent.CheckpointBefore;
 
 /**
  * Something one holder at a time may use, such as an editor: the tools and connectors that `need`
@@ -300,17 +308,32 @@ const isToolMoment = (on: HookEvent): boolean => on === HookEvent.ToolBefore || 
  * plugin `own`, whose tool is called; without one, none.
  */
 export function hookPlan(plugins: readonly HookedPlugin[], on: HookEvent, game: GameKind, own?: string): HookStep[] {
-  return plugins
-    .filter((plugin) => !isToolMoment(on) || plugin.id === own)
-    .flatMap(({ id, manifest }) =>
-      (manifest.hooks ?? [])
-        .filter((hook) => hook.on === on && scopeReaches(hook.facts, game))
-        .map((hook) => ({
-          plugin: id,
-          tool: hook.tool,
-          needs: [...(manifest.tools.find((tool) => tool.name === hook.tool)?.needs ?? [])],
-        })),
-    );
+  return stepsOf(
+    plugins.filter((plugin) => !isToolMoment(on) || plugin.id === own),
+    game,
+    (hook) => hook.on === on,
+  );
+}
+
+/**
+ * The handlers a chat message's checkpoint runs for a game: the `checkpoint.before` hooks that ask
+ * for each message (`messages`), in the order `hookPlan` gives them.
+ */
+export function messageCheckpointPlan(plugins: readonly HookedPlugin[], game: GameKind): HookStep[] {
+  return stepsOf(plugins, game, (hook) => hook.on === MESSAGE_HOOK_EVENT && hook.messages === true);
+}
+
+/** The steps of the hooks `keep` picks whose facts reach the game: plugin order, then declaration order. */
+function stepsOf(plugins: readonly HookedPlugin[], game: GameKind, keep: (hook: PluginHook) => boolean): HookStep[] {
+  return plugins.flatMap(({ id, manifest }) =>
+    (manifest.hooks ?? [])
+      .filter((hook) => keep(hook) && scopeReaches(hook.facts, game))
+      .map((hook) => ({
+        plugin: id,
+        tool: hook.tool,
+        needs: [...(manifest.tools.find((tool) => tool.name === hook.tool)?.needs ?? [])],
+      })),
+  );
 }
 
 /** The moments some plugin has a handler at for a game, in declaration order (`tool.*` counting each plugin's own). */
@@ -322,15 +345,30 @@ export function hookEventsOf(plugins: readonly HookedPlugin[], game: GameKind): 
 export interface PersonFirstAnswer {
   personActive: boolean;
   unsaved?: number;
+  /**
+   * The person is using it, but the plugin lets agents go ahead of them (`personActive: false`),
+   * and says so for the first time: the chat the call answers to tells them once.
+   */
+  wentAhead?: boolean;
+}
+
+/** What the chat is told when an agent went ahead of the person in what a plugin's lock guards (`agent_went_ahead`). */
+export interface AgentWentAheadPayload {
+  project: string;
+  /** The plugin whose lock let the agent go ahead: its settings are where the person turns it off. */
+  pluginId: string;
+  /** The lock's label: the app the person was using. */
+  label: string;
 }
 
 /** A probe's answer, or null when Genex can't tell (no boolean `personActive`, or an `unsaved` that is no count). */
 export function personFirstOf(answer: unknown): PersonFirstAnswer | null {
   if (!isRecord(answer) || typeof answer.personActive !== "boolean") return null;
   const { unsaved } = answer;
-  if (unsaved === undefined) return { personActive: answer.personActive };
+  const wentAhead = answer.personActive === false && answer.wentAhead === true ? { wentAhead: true } : {};
+  if (unsaved === undefined) return { personActive: answer.personActive, ...wentAhead };
   if (typeof unsaved !== "number" || !Number.isSafeInteger(unsaved) || unsaved < 0) return null;
-  return { personActive: answer.personActive, unsaved };
+  return { personActive: answer.personActive, unsaved, ...wentAhead };
 }
 
 /** Why a checkpoint asked only if something is unsaved was skipped. Written in records: never rename a value. */

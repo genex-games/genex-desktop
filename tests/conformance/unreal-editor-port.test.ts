@@ -362,6 +362,31 @@ describe("Unreal serves this project", () => {
     }
   });
 
+  // UE 5.8 answers a tool call as an event stream: the answer comes at once, but the stream stays
+  // open until the connection idles out about 15 s later.
+  it("does: its own editor answering the tool call in an event stream it keeps open", async () => {
+    const epic = await serveHttp((hit, body, response) => {
+      if (hit.method === "DELETE") return void response.writeHead(202).end();
+      const message = JSON.parse(body);
+      if (message.id === undefined) return void response.writeHead(202).end();
+      if (message.method === "initialize") return rpc(response, body, EPIC_INITIALIZE, "epic-session-1");
+      const text = JSON.stringify({ returnValue: DRIFT_FILE });
+      const answer = { jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text }] } };
+      response.writeHead(200, {
+        "content-type": "text/event-stream;charset=utf-8",
+        "mcp-session-id": "epic-session-1",
+      });
+      response.write(`event: message\r\ndata: ${JSON.stringify(answer)}\r\n\r\n`);
+    });
+    try {
+      const started = Date.now();
+      assert.equal(await editorServes(editorEndpoint(String(epic.port)), DRIFT_FILE), true);
+      assert.ok(Date.now() - started < 1000, "read the answer without waiting for the stream to end");
+    } finally {
+      await epic.close();
+    }
+  });
+
   it("does not, and gives up within a second: a server that accepts and never answers", async () => {
     const silent = await serveHttp(() => undefined);
     try {

@@ -203,7 +203,7 @@ pub const ASSET_READ_MAX_BYTES: u64 = 256 * 1024 * 1024;
 #[non_exhaustive]
 pub enum AssetErrorCode {
     /// The path breaks the asset-path rule (absolute, `..`, `.`, an empty segment, a backslash,
-    /// NUL), or is a link, or leads out of the asset folder once its links are followed.
+    /// NUL), or is a link or passes through one below the asset folder.
     UnsafePath,
     /// The build has no asset at the path.
     Missing,
@@ -587,6 +587,17 @@ impl Assets {
         Ok(bytes)
     }
 
+    /// The bytes of `path` outside the reset window and the group rule, for the runtime's own reads
+    /// (a named group's members once resident, STR-29; the asset index): the cached bytes, else
+    /// one read through the source, kept for later seeds.
+    pub(crate) fn read_cached(&self, path: &str) -> Result<AssetBytes, AssetError> {
+        if !is_safe_asset_path(path) {
+            return Err(AssetError::new(AssetErrorCode::UnsafePath, path.to_owned()));
+        }
+        let cached = self.reads.borrow().bytes.get(path).cloned();
+        cached.map_or_else(|| self.read(path), Ok)
+    }
+
     /// Read `path` from the source once and keep it for later seeds.
     fn read(&self, path: &str) -> Result<AssetBytes, AssetError> {
         let bytes = self.source.read(path)?;
@@ -665,6 +676,12 @@ impl Assets {
         self.requested.borrow().clone()
     }
 
+    /// The characters the game made (`gfx.character`) whose rigs imported, in path order: a
+    /// presenter skins them before a frame draws one (game systems R-20).
+    pub(crate) fn character_paths(&self) -> Vec<String> {
+        self.reads.borrow().rigs.iter().filter(|(_, rig)| rig.is_ok()).map(|(path, _)| path.clone()).collect()
+    }
+
     pub(crate) fn clear(&self) {
         self.requested.borrow_mut().clear();
     }
@@ -721,8 +738,10 @@ impl Gfx {
     /// shared across seeds. Refused `animation-asset-invalid`: an unsafe path, a file the build
     /// does not have or cannot read now, or one that is not a GLB with a usable skin (no skinned
     /// mesh node, more than 256 joints, a broken node tree, a non-finite transform). A refusal
-    /// never crashes; the model handle of the same path draws the checker.
+    /// never crashes; the model handle of the same path draws the checker. Refused
+    /// `animation-disabled` in a game built with `[animation] enabled = false`.
     pub fn character(&self, path: &str) -> Result<CharacterAsset, AnimationError> {
+        crate::animation::built()?;
         let (rig, set) = self.assets.rig(path)?;
         Ok(CharacterAsset { path: Arc::from(path), rig, set })
     }
@@ -731,8 +750,10 @@ impl Gfx {
     /// animations, in `on_reset` (an asset of the boot or sim group, as [`Assets::bytes`] reads).
     /// Refused `animation-asset-invalid`: an unsafe path, a file the build does not have or cannot
     /// read now, or one that is not a usable GLB; `animation-clip-missing`: a GLB with no
-    /// animations. Draw it with `frame.model_posed`.
+    /// animations; `animation-disabled` in a game built with `[animation] enabled = false`. Draw
+    /// it with `frame.model_posed`.
     pub fn node_clips(&self, path: &str) -> Result<crate::node_anim::NodeClips, AnimationError> {
+        crate::animation::built()?;
         let bytes = self.assets.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path:?}: {error}")))?;
         crate::node_anim::NodeClips::from_glb(path, &bytes)
     }

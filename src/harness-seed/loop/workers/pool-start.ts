@@ -20,8 +20,10 @@ import {
 import { poolWorkerId, recordWorkerFinished, recordWorkerStarted } from "./events.ts";
 import { changedBetween, gameFingerprint } from "./game-change.ts";
 import { holdInPlace, releaseInPlace } from "./in-place.ts";
+import { changedFiles, keptReport } from "./handback.ts";
 import { commitCopy, removeCopy } from "./pool-merge.ts";
 import { POOL_WORDS, workerBrief } from "./prompts.ts";
+import { noteSandboxRefusal, refusedStart, sandboxRefusalOn, sandboxRefused } from "./sandbox-refusal.ts";
 import {
   eventScope,
   gameGitWrite,
@@ -101,10 +103,15 @@ function askOf(state: PoolState, args: AnyRecord): StartAsk | { refused: string 
   return { title, task: clip(args.task.trim(), MAX_TASK_CHARS), isolation, type: typed.type, research, ...read };
 }
 
-/** Why a start that asks well still cannot start now: the pool is full. Whether the game folder is free, the host says (`holdInPlace`). */
+/**
+ * Why a start that asks well still cannot start now: the pool is full, by the person's Settings
+ * (`allowed`), said before anything is made. Whether the game folder is free, the host says (`holdInPlace`).
+ */
 function roomProblem(state: PoolState): string | null {
   const running = runningRecords(state);
-  return running.length >= MAX_WORKERS_AT_ONCE ? POOL_WORDS.tooMany(running.length) : null;
+  // A kept pool.ts opens a pool without `allowed`.
+  const allowed = state.allowed ?? MAX_WORKERS_AT_ONCE;
+  return running.length >= allowed ? POOL_WORDS.tooMany(running.length, allowed) : null;
 }
 
 /** A new worker's record. */
@@ -157,6 +164,9 @@ function copyRefusal(err: unknown): string {
 
 /** `worker_start`: the worker's id once it runs in the background, or why it did not start. */
 export async function startWorker(state: PoolState, args: AnyRecord): Promise<string> {
+  // An engine that refused a worker for a sandbox this computer cannot run refuses every one (sandbox-refusal.ts).
+  const unboxed = sandboxRefusalOn(state.scope.engine, state.scope.clock.now());
+  if (unboxed) return refusedStart(state.scope.ctx, unboxed);
   const ask = askOf(state, args);
   if ("refused" in ask) return ask.refused;
   const room = roomProblem(state);
@@ -303,13 +313,28 @@ async function runWorker(state: PoolState, record: WorkerRecord, ask: StartAsk, 
   let result = await delegateLeg(state, record, ask, { prompt, resume: null });
   for (let steer = takeSteer(state, record); steer && result.sessionId; steer = takeSteer(state, record))
     result = await delegateLeg(state, record, ask, { prompt: steer, resume: result.sessionId });
-  if (record.isolation === WorkerIsolation.Copy) await commitCopy(state, record);
-  if (!isWorking(record)) return ended(state, record, record.state, record.error);
+  if (record.isolation === WorkerIsolation.Copy) {
+    await commitCopy(state, record);
+    record.changed = await changedFiles(state, record);
+  }
+  // Its own last words are the lead's to read in full, however its session ended.
+  const report = result.summary || null;
+  if (!isWorking(record)) return ended(state, record, record.state, record.error, report);
   if (!result.ok) {
     const why = clip(result.errorText || result.summary || result.stopReason || "", CLIP_DETAIL);
-    return ended(state, record, WorkerState.Failed, why, null, WorkerStopCode.Error);
+    return ended(state, record, WorkerState.Failed, why, report, failedCode(state, result));
   }
-  return ended(state, record, WorkerState.Done, null, result.summary ?? null);
+  return ended(state, record, WorkerState.Done, null, report);
+}
+
+/**
+ * Why a worker's session that ended not ok stopped, in the app's code: its engine refused it for a
+ * sandbox this computer cannot run (kept, so no other worker is started on it), else an error.
+ */
+function failedCode(state: PoolState, result: DelegateResult): WorkerStopCode {
+  if (!sandboxRefused(result)) return WorkerStopCode.Error;
+  noteSandboxRefusal(state.scope.engine, result.errorText, state.scope.clock.now());
+  return WorkerStopCode.SandboxUnavailable;
 }
 
 /** What the lead steered into a running worker, all of it, for its next leg; null when nothing waits. */
@@ -325,7 +350,8 @@ export const scopeEnd = (state: PoolState): WorkerStopCode =>
 
 /**
  * A worker's end: where it stands and why (the lead's words, and `code`, the app's: by default what
- * a stop already set), persisted and recorded with its own summary when it gave one.
+ * a stop already set), persisted with its own report and recorded with that report's first sentence
+ * when it gave one.
  */
 export async function ended(
   state: PoolState,
@@ -340,6 +366,7 @@ export async function ended(
   record.stopCode = next === WorkerState.Done ? null : code;
   record.question = null;
   record.endedAt = state.scope.clock.now();
+  record.report = keptReport(summary) ?? record.report ?? null;
   // Before the folder is free for another writer: did this one change it? The end reads the
   // worker's changes on top of the start's work, so it has as long as the start had.
   if (record.isolation === WorkerIsolation.Lock && next === WorkerState.Done)

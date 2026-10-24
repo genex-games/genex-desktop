@@ -72,6 +72,8 @@ image = { workspace = true }
 # The capture and performance rows render headless on the host GPU (Metal on the Mac) through
 # genex-render, with the web shell's frame-to-scene bridge, and write PNGs and JSON records.
 [dev-dependencies]
+# characters_perf.rs animates its 60-joint hero (the game itself switches animation off).
+genex = { workspace = true, features = ["animation"] }
 genex-platform-web = { workspace = true }
 # characters_perf.rs builds its 60-joint rig with genex-anim's fixture writer (by path), which
 # names glam directly; the workspace's one glam, the version genex re-exports.

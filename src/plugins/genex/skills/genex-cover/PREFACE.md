@@ -18,6 +18,13 @@ it.
   `none` left by an earlier publish is not this one's: a draft of a public game sends nothing.
 - Neither applies to a game whose owner keeps its code untouched (see below): it gets no
   `genex-cover` demo.
+- Make the cover in the same turn the game first looks like itself: a small side task beside the
+  build, never a turn of its own. Until a `genex-cover` demo exists, Studio keeps a plain frame of
+  the game as it loads so Publish always shows a cover; yours replaces it.
+- The person can ask for another from Publish: "Make another Genex cover for this game: …" with
+  what they want, or "a different moment". Stage a different honest moment (or what they asked
+  for), point `genex-cover` at it and shoot it; the new shot shows on Publish's banner, where the
+  arrows also flip back to the last few.
 
 ## The cover shot is the demo named `genex-cover`
 
@@ -61,6 +68,19 @@ it.
 - A game whose code its owner keeps untouched (a folder they brought and asked only to publish;
   never a game Studio built) gets no `genex-cover` demo: Publish then sends no cover and Genex keeps
   its own. A game Studio built gets its demo before its next publish.
+
+## The clip is the demo named `genex-clip`
+
+- Beside the cover, a demo named exactly `genex-clip` starts a moment the game then plays by itself:
+  five seconds of real play, which genex.games runs over the cover on its cards. Stage it like the
+  cover (a loaded place, overlays hidden) but end it running, never with `__studio.pause()`: the game
+  drives itself from there with its own scripted input (the hero runs the track, the camera follows
+  the action), with no input from Studio and nothing a player would not see.
+- `genex__cover {"operation":"clip"}` records it in a hidden 960×540 window and keeps it as the
+  game's clip, answering with its first frame and `motion` (the share of frames that moved): near 0
+  is frozen, and Genex refuses frozen or flashing footage. Publish sends the kept clip after the
+  cover; the owner's own clip on genex.games always stands.
+- The person can ask for another clip the same way as a cover ("Make another Genex clip …").
 
 ## Check it: `genex__cover`
 

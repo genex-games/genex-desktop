@@ -6,14 +6,13 @@ Studio pairs a separate assistant conversation with Activity. The tool-free assi
 Studio from a bounded view of settings, games, recent activity and proposals; chatting commissions
 no game and grants no authority over the harness. **How it works**, beside its title, explains the loop.
 
-Its composer offers text, images, model, effort and Send/Stop; no game roles, Loop
-or tools.
+Its composer offers text, images, model, effort and Send/Stop; no roles, Loop or tools.
 
 ## Activity and review
 
 Activity orders pending suggestions, **Recent runs**, then **What Harness has learned**.
-Restores, restarts and app updates are omitted. The host restores a failed harness update;
-failed recovery offers **Reset harness to shipped version** or Quit. Run rows show the game,
+Restores, restarts and app updates are omitted. A failed harness update is restored; failed
+recovery offers **Reset harness to shipped version** or Quit. Run rows show the game,
 request and outcome; expanding shows captures, Play build and Open game chat. Empty Activity offers **Start building** or **New game**; runs start from a game's Mode menu.
 
 ## Learning and instructions
@@ -22,8 +21,7 @@ Learning starts on; **Apply suggestions automatically** starts off on fresh inst
 in Activity's header turns all learning on or off; Harness's own edits are listed there, each
 undoable.
 Off, Harness learns nothing new (no review, suggestions, lessons, recipe statistics or automatic
-apply); what it learned stays in use and undoable, waiting suggestions stay actionable and runs
-are recorded.
+apply); what it learned stays in use and undoable, waiting suggestions actionable, runs recorded.
 
 Harness learns from run evidence and proposes reusable instruction changes; proposed, applied,
 checked and game-quality results are distinct. A game chat shows one plain line about what

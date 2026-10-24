@@ -9,15 +9,17 @@
  * Unreal project only.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import type { PluginInfo, PluginManifest } from "../../src/shared/plugins.ts";
+import { CoreFact, type FactRef } from "../../src/shared/project-facts.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { CapabilityAudience, planningCapabilities } from "../../src/main/planning-capabilities.ts";
 import { offersUnrealGame } from "../../src/harness-seed/loop/unreal-prompts.ts";
+import { coreLite } from "../helpers/core-lite.ts";
 import { copyOfExample, EXAMPLE_PLUGIN, PLUGIN_SDK_BACKEND } from "../helpers/plugins.ts";
 import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -135,7 +137,7 @@ test("the capability facts a session without plugin tools reads carry only the s
 });
 
 /** The bundled plugins whose skills a game's brief can carry, all turned on. */
-const BUNDLED = ["blender", "genex", "unreal"];
+const BUNDLED = ["blender", "genex", "roblox", "unreal"];
 /** The web-only skills of the bundled plugins: three.js loading, multiplayer, embed sign-in, Genex's web publishing and play-time lanes. */
 const WEB_ONLY = [
   "blender/local-modeling",
@@ -168,6 +170,11 @@ const UNREAL_EDITOR_TOOLS = [
   "unreal__check-part",
   "unreal__cpp-status",
   "unreal__add-cpp-module",
+  "unreal__motion-status",
+  "unreal__add-motion-matching",
+  "unreal__open-editor",
+  "unreal__quit-editor",
+  "unreal__editor-status",
 ];
 const UNREAL_SKILL = "unreal/unreal-editor";
 /** The Unreal plugin's tools and skill for a game that holds an Unreal plugin only. */
@@ -181,6 +188,42 @@ const UNREAL_PLUGIN_SKILL = "unreal/unreal-plugin";
 /** What a web game no longer gets from the Unreal plugin: its editor's and its plugin projects' tools and skills. */
 const UNREAL_ONLY_TOOLS = [...UNREAL_EDITOR_TOOLS, ...UNREAL_PLUGIN_TOOLS];
 const UNREAL_ONLY_SKILLS = [UNREAL_SKILL, UNREAL_PLUGIN_SKILL];
+/** The Roblox plugin's skills, in manifest order: they reach a game that holds a Roblox place only. */
+const ROBLOX_SKILLS = [
+  "roblox/roblox-studio",
+  "roblox/luau",
+  "roblox/remotes",
+  "roblox/player-data",
+  "roblox/purchases",
+  "roblox/ui-scale",
+  "roblox/assets",
+  "roblox/get-started",
+  "roblox/publish",
+];
+/** The skills a web game never gets: those of an engine's own project. */
+const ENGINE_ONLY_SKILLS = [...UNREAL_ONLY_SKILLS, ...ROBLOX_SKILLS];
+/** The Roblox plugin's agent tools (the reader of its file skills, check-scripts), which reach a Roblox game only. */
+const ROBLOX_ONLY_TOOLS = [
+  "roblox__skill",
+  "roblox__check-scripts",
+  "roblox__generate-mesh",
+  "roblox__generate-model",
+  "roblox__generate-texture",
+  "roblox__generate-material",
+  "roblox__segment-mesh",
+  "roblox__roblox-playtest",
+  "roblox__roblox-explore",
+  "roblox__upload-image",
+  "roblox__store-image",
+  "roblox__insert-asset",
+  "roblox__check-model",
+  "roblox__import-model",
+  "roblox__publish-update",
+  "roblox__first-publish",
+  "roblox__publish-result",
+  "roblox__places",
+  "roblox__add-luau-checks",
+];
 
 /** A manifest as it was before skills could name engines or facts: every scope field taken out. */
 function unscoped(manifest: PluginManifest): void {
@@ -200,7 +243,7 @@ function unscoped(manifest: PluginManifest): void {
   delete manifest.scaffolds;
 }
 
-test("the bundled plugins' web guidance is what it was before skills named engines, but the Unreal editor's skill and tools; an Unreal game's drops the web-only skills", async () => {
+test("the bundled plugins' web guidance is what it was before skills named engines, but the engines' own skills and the Unreal editor's tools; an Unreal game's drops the web-only skills", async () => {
   const resources = await makeResources({ tsc: false });
   // The same packages as they were before `engines` and `facts` existed: every scope field taken out.
   const before = path.join(await tmpDir("studio-skill-engines-before-"), "resources");
@@ -220,18 +263,26 @@ test("the bundled plugins' web guidance is what it was before skills named engin
     // A web game no longer gets the Unreal editor's skill and tools: they reach an Unreal project only.
     assert.deepEqual(
       web.tools,
-      was.tools.filter((tool) => !UNREAL_ONLY_TOOLS.includes(tool.name)),
+      was.tools.filter((tool) => ![...UNREAL_ONLY_TOOLS, ...ROBLOX_ONLY_TOOLS].includes(tool.name)),
       "a web game's tools",
     );
     assert.deepEqual(
       web.applied,
-      { ...was.applied, skills: was.applied.skills.filter((skill) => !UNREAL_ONLY_SKILLS.includes(skill)) },
+      {
+        // Every bundled plugin takes part: Roblox's and Unreal's place tools (new-game, use-project) reach any game.
+        plugins: was.applied.plugins,
+        skills: was.applied.skills.filter((skill) => !ENGINE_ONLY_SKILLS.includes(skill)),
+      },
       "a web game's plugins and skills",
     );
-    const unrealBlock = was.guidance
+    const engineBlock = was.guidance
       .split("\n\n")
-      .filter((part) => !UNREAL_ONLY_SKILLS.some((skill) => part.startsWith(`[${skill}]`)));
-    assert.equal(web.guidance, unrealBlock.join("\n\n"), "a web game's guidance, byte for byte but the Unreal skills");
+      .filter((part) => !ENGINE_ONLY_SKILLS.some((skill) => part.startsWith(`[${skill}]`)));
+    assert.equal(
+      web.guidance,
+      engineBlock.join("\n\n"),
+      "a web game's guidance, byte for byte but the engines' skills",
+    );
     const unreal = now.snapshot(GameEngine.Unreal);
     for (const skill of WEB_ONLY) assert.ok(!unreal.applied.skills.includes(skill), `${skill} is the web's only`);
     for (const skill of WEB_ONLY) assert.ok(web.applied.skills.includes(skill), skill);
@@ -249,5 +300,131 @@ test("the bundled plugins' web guidance is what it was before skills named engin
   } finally {
     now.cancel();
     old.cancel();
+  }
+});
+
+/** One fact at the folder's root. */
+const at = (id: string): FactRef => ({ id, path: "." });
+/** The fact a Roblox place gives its game. */
+const ROBLOX_PROJECT = "roblox-project";
+/** Words the person's guidance never uses: the hours control has no time of day, and Roblox's skills never speak of Unreal. */
+const BANNED_WORDS = /overnight|night|morning|tonight|Unreal/i;
+/** One plugin's skills in a snapshot. */
+const skillsOf = (applied: { skills: string[] }, plugin: string) =>
+  applied.skills.filter((skill) => skill.startsWith(`${plugin}/`));
+
+test("Roblox's skills reach only a game that holds a Roblox place, and Unreal's only an Unreal game", async () => {
+  const resources = await makeResources({ tsc: false });
+  const registry = await bundledRegistry(path.join(resources, "plugins"));
+  try {
+    const roblox = registry.snapshot([at(ROBLOX_PROJECT)]);
+    const unreal = registry.snapshot([at(CoreFact.UnrealProject)]);
+    const web = registry.snapshot([at(CoreFact.WebGame)]);
+    assert.deepEqual(skillsOf(roblox.applied, "roblox"), ROBLOX_SKILLS, "a Roblox game reads every Roblox skill");
+    assert.deepEqual(skillsOf(unreal.applied, "roblox"), [], "an Unreal game reads none");
+    assert.deepEqual(skillsOf(web.applied, "roblox"), [], "a web game reads none");
+    assert.deepEqual(registry.snapshot().applied.skills, web.applied.skills, "nor does a game with no kind yet");
+    assert.deepEqual(skillsOf(roblox.applied, "unreal"), [], "a Roblox game reads no Unreal skill");
+    for (const skill of UNREAL_ONLY_SKILLS)
+      assert.ok(
+        registry.snapshot([at(CoreFact.UnrealProject), at(CoreFact.UnrealPlugin)]).applied.skills.includes(skill),
+        skill,
+      );
+    for (const skill of WEB_ONLY) assert.ok(!roblox.applied.skills.includes(skill), `${skill} is the web's only`);
+    // The brief names each file skill with the call that reads it; only a Roblox game holds that reader.
+    for (const skill of ROBLOX_SKILLS) assert.match(roblox.guidance, new RegExp(`\\[${skill}\\]`));
+    assert.doesNotMatch(web.guidance, /\[roblox\//);
+    assert.doesNotMatch(unreal.guidance, /\[roblox\//);
+    const names = (tools: { name: string }[]) => tools.map((tool) => tool.name);
+    assert.ok(names(roblox.tools).includes("roblox__skill"));
+    assert.ok(!names(web.tools).includes("roblox__skill"));
+    assert.ok(!names(unreal.tools).includes("roblox__skill"));
+  } finally {
+    registry.cancel();
+  }
+});
+
+test("each Roblox skill fits a skill's 16000 characters and names no time of day", async () => {
+  const resources = await makeResources({ tsc: false });
+  const root = path.join(resources, "plugins", "roblox");
+  const manifest = validateManifest(JSON.parse(await readFile(path.join(root, "plugin.json"), "utf8")));
+  assert.deepEqual(
+    manifest.skills.map((skill) => `roblox/${skill.name}`),
+    ROBLOX_SKILLS,
+  );
+  for (const skill of manifest.skills) {
+    assert.deepEqual(skill.facts, [ROBLOX_PROJECT], `${skill.name} is scoped by the Roblox fact`);
+    assert.equal(skill.engines, undefined, `${skill.name} names no engine`);
+    const text = "file" in skill ? await readFile(path.join(root, skill.file), "utf8") : skill.text;
+    assert.ok(text.length > 0 && text.length <= 16_000, `${skill.name}: ${text.length} characters`);
+    assert.doesNotMatch(text, BANNED_WORDS, skill.name);
+    if ("summary" in skill) assert.doesNotMatch(skill.summary, BANNED_WORDS, skill.name);
+  }
+});
+
+test("a Roblox game's chat lists the Roblox skills and a web game's does not", async (t) => {
+  const { core, close } = await coreLite();
+  t.after(async () => {
+    // A core that was never started leaves its plugins' processes to the test.
+    core.plugins.cancel();
+    await close();
+  });
+  await core.plugins.setEnabled("roblox", true);
+  const web = await core.games.scaffold("kite-skills");
+  const obby = await core.games.scaffold("obby-skills");
+  // A game folder that holds a Roblox place and nothing of the web template.
+  await rm(path.join(obby.dir, "index.html"));
+  const meta = path.join(obby.dir, "studio.json");
+  const { contractVersion: _starter, ...kept } = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
+  await writeFile(meta, JSON.stringify(kept));
+  await writeFile(path.join(obby.dir, "place.rbxl"), "");
+  assert.deepEqual(
+    (await core.games.factsOf(obby.name)).map((fact) => fact.id),
+    [ROBLOX_PROJECT],
+  );
+  const api = core.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
+  /** The skill names the chat's capability facts list for the plugin `roblox`. */
+  const robloxSkills = async (project: string) => {
+    const text = String(
+      await api["capabilities.describe"]?.({ project, threadId: await core.createGameThread(project) }),
+    );
+    const facts = text
+      .split("\n\n")
+      .map((part) => {
+        try {
+          return JSON.parse(part) as { plugins?: Array<{ id: string; skills: Array<{ name: string }> }> };
+        } catch {
+          return {};
+        }
+      })
+      .find((part) => part.plugins);
+    return (
+      facts?.plugins?.find((plugin) => plugin.id === "roblox")?.skills.map((skill) => `roblox/${skill.name}`) ?? []
+    );
+  };
+  assert.deepEqual(await robloxSkills(obby.name), ROBLOX_SKILLS);
+  assert.deepEqual(await robloxSkills(web.name), []);
+});
+
+test("a Godot or Unity game's web export in web/ is its engine's build: no web-only skill reaches the game for it", async () => {
+  const resources = await makeResources({ tsc: false });
+  const registry = await bundledRegistry(path.join(resources, "plugins"));
+  try {
+    const rows: Array<[string, FactRef[]]> = [
+      [CoreFact.GodotProject, [{ id: CoreFact.GodotProject, path: "godot" }]],
+      [CoreFact.UnityProject, [{ id: CoreFact.UnityProject, path: "unity" }]],
+    ];
+    for (const [kind, project] of rows) {
+      const exported = registry.snapshot([...project, { id: CoreFact.WebGame, path: "web" }]);
+      for (const skill of WEB_ONLY) assert.ok(!exported.applied.skills.includes(skill), `${kind}: ${skill}`);
+      assert.ok(exported.applied.skills.includes("genex/publishing-apps"), `${kind}: its apps' publishing stays`);
+    }
+    const web = registry.snapshot([at(CoreFact.WebGame)]);
+    for (const skill of WEB_ONLY) assert.ok(web.applied.skills.includes(skill), `a web game keeps ${skill}`);
+    const beside = registry.snapshot([at(CoreFact.WebGame), { id: CoreFact.GodotProject, path: "godot" }]);
+    for (const skill of WEB_ONLY)
+      assert.ok(beside.applied.skills.includes(skill), `a web game at the root keeps ${skill}`);
+  } finally {
+    registry.cancel();
   }
 });

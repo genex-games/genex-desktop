@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
 import { directorBrief, singleWorkerBrief } from "../../src/harness-seed/loop/director/briefs.ts";
@@ -28,6 +29,9 @@ import { leadBrief } from "../../src/harness-seed/loop/unreal/lead-prompts.ts";
 import { TemplateKind } from "../../src/harness-seed/loop/unreal/template-kind.ts";
 import { engineChoiceRule, UNREAL_NEW_GAME_TOOL } from "../../src/harness-seed/loop/unreal-prompts.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
+
+/** What every Auto chat is handed (flipped from none): the Loop's start, for a Loop asked for in words. */
+const AUTO_LOOP = "start_autopilot";
 
 const CLAUDE = "claude-code";
 const ASK = "make a castle exploration game";
@@ -57,6 +61,7 @@ function game(facts: unknown[], extra: Record<string, unknown> = {}) {
 const NEW_GAME_TOOL = { name: UNREAL_NEW_GAME_TOOL, description: "Make the game's Unreal project.", parameters: {} };
 const UNREAL_KIND = { plugin: "unreal", name: "Unreal Engine", tool: UNREAL_NEW_GAME_TOOL, makes: ["unreal-project"] };
 const TOY_KIND = { plugin: "toy", name: "Toy Engine", tool: "toy__new-toy", makes: ["toy-project"] };
+const GODOT_KIND = { plugin: "godot", name: "Godot", tool: "godot__new-game", makes: ["godot-project"] };
 const UNREAL_ON = { tools: [NEW_GAME_TOOL], kinds: [UNREAL_KIND] };
 const NONE_ON = { tools: [], kinds: [] };
 
@@ -109,7 +114,7 @@ describe("the first message on a project with no kind", () => {
     assert.ok(prompt.includes(START_WEB_GAME), "web starts with start_web_game");
     assert.ok(prompt.includes(PLUGINS_FIND), "anything else goes through plugins_find");
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, [], "no question card");
+    assert.deepEqual(bridged, [AUTO_LOOP], "no question card");
     assert.equal(capture, true, "served as a web game until it picks");
     assert.match(prompt, /folder is empty: there is nothing to inspect yet/);
   });
@@ -117,12 +122,21 @@ describe("the first message on a project with no kind", () => {
   it("with an engine plugin on, the first message on a project with no kind asks with the card, and web still starts with start_web_game", async () => {
     const { lines, prompt, bridged } = await firstMessage(game([]), UNREAL_ON);
     assert.ok(lines.includes(engineChoiceRule(CLAUDE, null, [UNREAL_KIND])), "the engine question, as its own line");
-    assert.deepEqual(bridged, ["ask_user"]);
+    assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"]);
     assert.ok(prompt.includes(START_WEB_GAME), "the web answer starts the web starter");
     const both = await firstMessage(game([]), { tools: [NEW_GAME_TOOL], kinds: [UNREAL_KIND, TOY_KIND] });
     assert.ok(both.prompt.includes('"Toy Engine"'), "every engine plugin on is an option");
     assert.ok(both.prompt.includes(toolCall(CLAUDE, TOY_KIND.tool)), "with its own kind tool");
-    assert.deepEqual(both.bridged, ["ask_user"]);
+    assert.deepEqual(both.bridged, [AUTO_LOOP, "ask_user"]);
+  });
+
+  it("a project with no kind hears the web starter's rules as the web answer's, never as every kind's", async () => {
+    for (const on of [NONE_ON, UNREAL_ON]) {
+      const { lines } = await firstMessage(game([]), on);
+      const web = lines.filter((line) => line.includes("window.__studio"));
+      assert.equal(web.length, 1, "said once");
+      assert.match(web[0] ?? "", /^For a game that plays in Genex \(the web answer\)/, "and only for the web answer");
+    }
   });
 
   it("a project still with no kind is offered the kinds on every message, not only the chat's first", async () => {
@@ -132,7 +146,7 @@ describe("the first message on a project with no kind", () => {
       { role: "user", content: "make it in Unreal Engine" },
     ];
     const { prompt, bridged } = await firstMessage(game([]), UNREAL_ON, later);
-    assert.deepEqual(bridged, ["ask_user"], "the card is still there after a greeting");
+    assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"], "the card is still there after a greeting");
     assert.ok(prompt.includes(toolCall(CLAUDE, UNREAL_NEW_GAME_TOOL)), "the Unreal kind tool is named");
     assert.doesNotMatch(prompt, /picked by this first message/, "the identity does not say this is the first message");
 
@@ -160,7 +174,7 @@ describe("the first message on a project with no kind", () => {
       assert.match(prompt, /files of its own of a kind Genex has no rules for/);
       assert.match(prompt, /look through them first/);
       assert.ok(prompt.includes(PLUGINS_FIND), "a plugin is looked for");
-      assert.deepEqual(bridged, [], "no question card: it has a kind, just not one Genex knows");
+      assert.deepEqual(bridged, [AUTO_LOOP], "no question card: it has a kind, just not one Genex knows");
     }
     const unreadable = await firstMessage(game([], { holds: "unreadable" }), NONE_ON);
     assert.ok(!unreadable.prompt.includes(START_WEB_GAME), "an unreadable folder takes no starter");
@@ -175,7 +189,7 @@ describe("the first message on a project with no kind", () => {
     };
     for (const [label, facts] of Object.entries(kinds)) {
       const { prompt, bridged } = await firstMessage(game(facts), UNREAL_ON);
-      assert.deepEqual(bridged, [], label);
+      assert.deepEqual(bridged, [AUTO_LOOP], label);
       assert.doesNotMatch(prompt, /FIRST, THE ENGINE/, label);
       assert.ok(!prompt.includes(START_WEB_GAME), `${label}: nothing to start`);
     }
@@ -189,7 +203,7 @@ describe("the rules each kind gets", () => {
     assert.match(prompt, /can't save inside the editor before a checkpoint/);
     assert.ok(prompt.includes(PLUGINS_FIND), "it may offer the plugin");
     assert.ok(!prompt.includes("unreal-editor__call_tool"), "no tool it was not handed");
-    assert.deepEqual(bridged, []);
+    assert.deepEqual(bridged, [AUTO_LOOP]);
     assert.equal(capture, false);
   });
 
@@ -216,6 +230,56 @@ describe("the rules each kind gets", () => {
     // A plugin's own kind has its plugin on already: nothing to look for.
     const toy = await firstMessage(game([fact("toy-project", ".", "plugin:toy-engine")]), NONE_ON);
     assert.ok(!toy.prompt.includes(PLUGINS_SUGGEST), "a plugin's kind");
+  });
+
+  it("one of Genex's own kinds that a plugin on makes has that plugin already: nothing to look for", async () => {
+    const godot = game([fact(CoreFact.GodotProject, "godot")], { built: true, shape: { own: true } });
+    const on = await firstMessage(godot, { tools: [], kinds: [GODOT_KIND] });
+    assert.ok(!on.prompt.includes(PLUGINS_FIND), "its plugin is on");
+    assert.match(on.prompt, /a Godot project/);
+    const off = await firstMessage(godot, { tools: [], kinds: [TOY_KIND] });
+    assert.ok(off.prompt.includes(PLUGINS_FIND), "another plugin's kind covers nothing here");
+  });
+
+  it("a game linked to a Godot project outside its folder works in that project, its notes in the workspace", () => {
+    const brief = buildContractorBrief({
+      ask: ASK,
+      engine: CLAUDE,
+      folderLabel: "AI Games/moon",
+      gameEngine: GameEngine.Godot,
+      engineProject: "/Users/me/Documents/Godot Projects/Void/project.godot",
+      facts: [fact(CoreFact.GodotProject, "/Users/me/Documents/Godot Projects/Void", "link")] as never,
+    });
+    assert.match(
+      brief,
+      /The game's work happens in its Godot project in `\/Users\/me\/Documents\/Godot Projects\/Void\/`/,
+    );
+    assert.match(
+      brief,
+      /The game's work lands in its Godot project in `[^`]+`; its notes stay in this workspace \(folder `AI Games\/moon`\)/,
+    );
+    assert.doesNotMatch(brief, /The game's work stays in this workspace/);
+  });
+
+  it("a plugin's web build in a folder is said once as a build, never handed the web game's rules", () => {
+    const brief = buildContractorBrief({
+      ask: ASK,
+      engine: CLAUDE,
+      facts: [
+        fact(CoreFact.GodotProject, "godot"),
+        fact(CoreFact.WebGame, "web"),
+        fact("godot-web-export", "web", "plugin:godot"),
+      ] as never,
+    });
+    assert.ok(!brief.includes("window.__studio"), "no web game's rules for the build");
+    assert.match(brief, /The web page in `web\/` is a web build a plugin exports[^\n]*Never edit its files/);
+    assert.ok(!brief.includes("godot-web-export"), "the plugin's fact needs no line of its own");
+    const site = buildContractorBrief({
+      ask: ASK,
+      engine: CLAUDE,
+      facts: [fact(CoreFact.GodotProject, "godot"), fact(CoreFact.WebGame, "site")] as never,
+    });
+    assert.ok(site.includes("window.__studio"), "a web game no plugin claims keeps its rules");
   });
 
   it("each kind gets its own rules, named by path when there are two", () => {
@@ -259,7 +323,7 @@ describe("the rules each kind gets", () => {
       skills: Array<{ name: string; text?: string }>;
     };
     const skill = manifest.skills.find((s) => s.name === "unreal-editor")?.text ?? "";
-    assert.match(skill, /unreal__use-project links the project in this game's folder/);
+    assert.match(skill, /unreal__use-project links a project to this game[^\n]*setting it up for Genex first/);
     const linked = buildContractorBrief({
       ask: ASK,
       engine: CLAUDE,
@@ -277,6 +341,20 @@ describe("the rules each kind gets", () => {
     assert.doesNotMatch(handoffText, /preview/);
     assert.doesNotMatch(prompt, /window\.__studio|checkpoint/);
     assert.match(prompt, /a Godot project/);
+  });
+
+  it("a Godot game set up for Genex's play gets the window its computer tool drives, and no web page's checks", async () => {
+    const bridge = { own: true, runtime: "bridge", play: { command: "bin/play", args: [] } };
+    const godot = game([fact(CoreFact.GodotProject, "godot")], { built: true, shape: bridge });
+    const { capture, validated, prompt } = await firstMessage(godot, NONE_ON);
+    assert.equal(capture, true, "a window of the game, which it plays through bin/play");
+    assert.equal(validated, false, "no page contract check");
+    assert.doesNotMatch(prompt, /window\.__studio/);
+    const declaredOnly = game([fact(CoreFact.GodotProject, "godot")], {
+      built: true,
+      shape: { own: true, runtime: "bridge" },
+    });
+    assert.equal((await firstMessage(declaredOnly, NONE_ON)).capture, false, "no play command, nothing to start");
   });
 
   it("a folder of a kind Genex doesn't know is served as no web game: no web capture, contract check or Reload checkpoint", async () => {
@@ -405,6 +483,15 @@ describe("every worker's brief", () => {
       inputs: [],
     });
     assert.match(onUnreal, /The game engine's editor is the lead's alone: you have none of its tools/);
+    const onRoblox = workerBrief({
+      identity: { folderLabel: "AI Games/obby", facts: [fact(CoreFact.RobloxProject)] as never },
+      task: "write the checkpoint script",
+      isolation: WorkerIsolation.Copy,
+      research: false,
+      typeDescription: null,
+      inputs: [],
+    });
+    assert.match(onRoblox, /The game engine's editor is the lead's alone/, "Roblox Studio is the lead's too");
 
     const single = singleWorkerBrief({
       run: RUN,

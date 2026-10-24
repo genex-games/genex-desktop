@@ -1,7 +1,7 @@
 /** Harness RPC: the event log, threads, artifacts and turns. */
 import { HostMethod, type HarnessHostHandlers } from "../../shared/harness-api.ts";
 import { inboxOf } from "../core/inbox.ts";
-import { refuseHostRecords } from "../core/harness-events.ts";
+import { refuseHostRecords, vouchedInteractions } from "../core/harness-events.ts";
 import { threadOr } from "../core/main-thread.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 
@@ -17,7 +17,7 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.EventsAppend]: async (p) => {
       const threadId = threadOr(core, p.threadId);
       refuseHostRecords(p.batch);
-      const latest = await core.append(p.batch, threadId);
+      const latest = await core.append(vouchedInteractions(p.batch), threadId);
       await x.rewind.forgetCompactedSession(threadId, p.batch);
       x.rewind.checkpointQueueRecords(threadId, p.batch);
       // A message the queue answered or took back is nobody's to answer any more; one still

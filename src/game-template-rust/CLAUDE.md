@@ -36,14 +36,19 @@ exists only on screen derives from simulation state (a tick counter the world ke
 own `state/` folder to save in, never this one. `target/` is scratch: never committed, served or
 judged.
 
+The game fills any window: `main.rs` sets `.fit(Fit::Expand)` and `genex.toml` `fit = "expand"`
+(keep both alike). The 960x540 world stays whole and centred and the scene shows more past it on
+the window's long side, so frame the camera for 16:9 and keep the HUD inside the world; use
+`Fit::Letterbox` only for a fixed picture (`docs/api/ctx.md`).
+
 Every device must offer WebGPU core; there is no WebGL path. A game that names a native-enhanced
 feature in `genex.toml` has no web build, so add one only when the brief needs it. A web export
 over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most
 32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
-`invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
-Rapier (a fifth of the web build) out; one that plays no sound sets `[audio] enabled = false`,
-which leaves the mixer and decoders out.
+`invalid-web-budget`. A system the game does not use stays switched off in `genex.toml`, which
+keeps the web build small: this game starts with `[nav]`, `[streaming]` and `[animation]` off, and
+Game systems below names each switch and what a switched-off system answers.
 Every destination shows a loading screen until the first lit frame; never draw your own. Give it
 the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
 logo under `assets/`), as `docs/api/loading-screen.md` shows.
@@ -154,6 +159,20 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 ## Game systems
 
 Use the built-in system before writing your own; each page holds the how and its refusals.
+Five systems have a `genex.toml` switch (`docs/api/genex-toml.md`). A switched-off system leaves
+its engine out of the build; facade calls still compile, but they are refused:
+
+| Switch | Off means | Refused |
+| --- | --- | --- |
+| `[physics]` | no Rapier (a fifth of the web build); `sim.physics` is never stepped | code that reaches for Rapier does not compile |
+| `[audio]` | no mixer or decoders | every sound is missing, `audio-disabled` |
+| `[nav]` | no walkers or paths | `game.navigation` fails install, `nav-disabled` |
+| `[streaming]` | no streamed cells | `game.streaming` fails install, `streaming-disabled` |
+| `[animation]` | no rigs or animators | `gfx.character` and every animator, `animation-disabled` |
+
+Set the table's `enabled = true` in the same change that first calls the system, and leave
+off what the brief never uses. A `*-disabled` refusal means the switch is off: turn it on, never
+write your own system around it.
 
 - **Input**: name actions once with `game.input(ActionMap::new()..)` and read `ctx.actions`, so
   keys, pads and on-screen touch controls drive the same action; `controls_panel(ui)` rebinds,
@@ -161,23 +180,46 @@ Use the built-in system before writing your own; each page holds the how and its
   keys, touches and pads are `docs/api/ctx.md`).
 - **UI and settings**: text, locales and the kit's menus through `game.ui(..)` and `genex::ui`
   (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
-  (`docs/api/settings.md`).
-- **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`).
+  (`docs/api/settings.md`). `on_ui` hooks already draw inside the safe area plus a 16 pt margin
+  and at the player's text size, so add no edge margin of your own; `genex::ui::safe_area(ui)` is
+  only for a child placed back at the screen edge (zero inside the hook's rect). Give every game
+  option's label key an `.ftl` line: a missing one reads as words and records `text-missing`.
+- **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`). A
+  compiled cell pack is read with `genex::pack::CellPacks::from_table(ASSETS, "<folder>")`, and
+  `genex::digest` hashes the game's own data: a game depends on `genex` alone. A level that loads
+  an interior while playing requires its `[[asset_group]]` with `sim.stream.require("<group>")`
+  and waits for `sim.stream.ready(ticket)`. On the web a required group and a pack's cells and
+  terrain tiles around the player are fetched while playing (`state().volatile.webStream` lists
+  the resident cells), so a streamed world plays in Web as in Native.
 - **Moving things**: `game.navigation(..)` for walkers and paths (`docs/api/navigation.md`),
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
   `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn
-  its capsule at the feet and draw the model at the capsule, never placed by its centre.
+  its capsule at the feet, draw the model at the capsule, never placed by its centre, and call
+  `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground
+  (`docs/api/animation.md`).
+- **Physics**: crates, debris, a wrecking ball on a rope, a door on a hinge are Rapier bodies in
+  `sim.physics`, built in `on_reset` and stepped by the runtime after `on_update`; never step it
+  yourself. Draw each moving body in `on_draw` under its own `frame.id(..)`, save each body's pose
+  and velocities in a section of its own, and probe each mechanic (`docs/api/physics.md`).
 - **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
   tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
   cards past their last level, declared once in `on_reset`. A model only streamed cells draw
   bakes its card only if `wire` registers it with `game.impostor_bake(..)`; otherwise it keeps
   its last level, named `impostor-not-baked` (`docs/api/drawing.md`).
-- **Sound**: `gfx.sound(..)` in `on_reset`, `ctx.audio` to play; prove it played from
-  `state().volatile.audio`, never by ear (`docs/api/audio.md`).
-- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`); multiplayer is
-  `docs/api/net.md`.
+- **Sound**: switch `[audio]` on (the template ships it off), `gfx.sound(..)` in `on_reset`,
+  `ctx.audio` to play; prove it played from `state().volatile.audio`, never by ear
+  (`docs/api/audio.md`).
+- **Ground** across the world is one `Terrain` made in `on_reset` and drawn with
+  `frame.terrain(..)`; stand things on it with `terrain.height(x, z)` (`docs/api/terrain.md`).
+- **Saves**: `game.saves(..)` and `ctx.slots()` (`docs/api/saves.md`). With `game.input` a slot
+  keeps the input actions itself, so a load mid-hold replays exactly; a slot holds at most 61 game
+  sections.
+- **Multiplayer**: `game.net(..)` and `sim.net`; connect only after the player picks Play
+  online, move yourself locally and rule on `.state_raw()`. Only the published draft in two
+  windows proves online play (`docs/api/net.md`).
 - **A hitch**: time the suspects with `genex::profile_scope!` and read `volatile.profile`
-  (`docs/api/profiling.md`).
+  on a native run; the web has none yet (`docs/api/profiling.md`). **A crash** leaves a record
+  naming its line, seed and tick: give each `expect` the rule that broke and never catch a panic.
 
 ## Extension ladder
 

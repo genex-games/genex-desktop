@@ -15,7 +15,7 @@ workspace = true
 # genex-render renderer for captures and, on a Mac, Live's frames through genex-frames. An export
 # is built without it and never links genex-studio (the admission symbol scan proves that).
 [features]
-default = ["physics", "audio"]
+default = ["physics", "audio", "nav", "streaming", "animation"]
 studio = ["dep:genex-studio", "dep:genex-frames"]
 # Rapier 3D, stepped once per tick (`Sim::physics`). A game with `[physics] enabled = false` in its
 # genex.toml is built without it: about a fifth of a web build's code (renderer pass 2, D11).
@@ -27,6 +27,15 @@ physics = ["dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-str
 # `genex::audio` keeps its whole surface, every sound is missing (`audio-disabled`) and `ctx.audio`
 # plays nothing, so the game's code compiles unchanged.
 audio = ["genex-audio/mixer"]
+# The game systems a game can switch off in its genex.toml (`[nav]`, `[streaming]`, `[animation]`
+# `enabled = false`; release R-1, owner call E11): the runtime then links none of that system's
+# engine. Its surface stays (types, methods, `sim.nav`, `sim.stream`) so the game's code compiles
+# unchanged, and what the switched-off system would do is refused with a typed code:
+# `game.navigation` and `game.nav_bake` refuse install `nav-disabled`, `game.streaming` refuses
+# install `streaming-disabled`, and an animator is refused `animation-disabled`.
+nav = []
+streaming = []
+animation = []
 # Multiplayer (G6 MP-4a), chosen by the build for a game with `[net]` in its genex.toml: `net` links
 # the relay (exports and the web draft; a run Studio serves still uses the loopback room),
 # `net-loopback` the in-process room only (Live, dev, judge and device-launch builds). Both (only a

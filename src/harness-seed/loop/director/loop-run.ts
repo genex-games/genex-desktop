@@ -28,7 +28,7 @@ import {
   writeRunArtifact,
 } from "../run-events.ts";
 import type { FactRef, LoopProfile } from "../folder-facts.ts";
-import type { HookedGame } from "../hooks.ts";
+import type { LoopGame } from "../engine-judges.ts";
 import { isCommit } from "../shell.ts";
 import { isTruncatedState, statePathsNamedByChecks } from "../state-shape.ts";
 import { verdictRecord } from "../verdict.ts";
@@ -60,6 +60,7 @@ import type { NoteKind } from "./wake-schedule.ts";
 import type * as artDirectionFunctions from "./art-direction.ts";
 import type { LastShip } from "./art-direction.ts";
 import type { FinishTally } from "../finish-check.ts";
+import type { StopWhy } from "../finish-contract.ts";
 import { noteKeptWork } from "./kept-work.ts";
 import type * as integrateFunctions from "./integrate.ts";
 import type * as loopRunFunctions from "./loop-run.ts";
@@ -139,6 +140,8 @@ export interface Worker {
   promise?: Promise<unknown>;
   /** The engine limit that ended its session, when one did (`noteWorkerLimit`). */
   limit?: AnyRecord;
+  /** Its engine refused it: the sandbox a worker runs in cannot run on this computer (`workers/sandbox-refusal.ts`). */
+  sandboxRefused?: boolean;
   /** A conflict worker's merge (conflict-worker.ts): opened in its worktree before its session. */
   merging?: ConflictMerge | null;
   /**
@@ -272,6 +275,8 @@ export interface LoopRunState {
    * goes on counting the reviewer's no's. Absent until the lead claims the goal.
    */
   finishTally?: FinishTally;
+  /** Why the run stopped short of its goal, as the close that ends it said (`CloseOptions.ended`); its result card reads it. */
+  endedWhy?: StopWhy;
   /** The art director's last word on the integration branch (art-direction.ts); absent until it looks. */
   lastShip?: LastShip | null;
   /** A goal build's finish was turned back once for the art director's defects: never again. */
@@ -314,8 +319,10 @@ export interface LoopRunData {
   /**
    * The game as far as Genex's moments go (`game.list`'s `hookEvents`): the run announces a moment
    * only when the game's plugins hook it. Absent on a run a kept older setup.ts made: it announces none.
+   * Whether the studio plays it in its engine's editor, and the judges that play it there
+   * (`editorPlay`, `judges`), ride beside them; a kept older setup.ts leaves them out.
    */
-  game?: HookedGame;
+  game?: LoopGame;
   capacity: HarnessResult<"preview.capacity"> | null;
   /**
    * The game the run's windows judge (its destinations, from the library once the game is

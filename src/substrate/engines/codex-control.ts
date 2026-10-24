@@ -2,6 +2,7 @@ import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
 import { CatalogError, CATALOG_DEADLINE_MS } from "./model-catalog.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
+import { t } from "../../shared/i18n.ts";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const Method = { Initialize: "initialize", Initialized: "initialized" } as const;
@@ -28,7 +29,7 @@ export function codexControl(binary: string, args: string[], env: NodeJS.Process
     void close();
   };
   const timer = setTimeout(
-    () => fail(new CatalogError(ModelCatalogProblemCode.Timeout, "Model discovery timed out. Try again.")),
+    () => fail(new CatalogError(ModelCatalogProblemCode.Timeout, t("Model discovery timed out. Try again."))),
     timeoutMs,
   );
   const send = (message: object): void => {
@@ -54,7 +55,7 @@ export function codexControl(binary: string, args: string[], env: NodeJS.Process
       item.reject(
         new CatalogError(
           row.error.code === -32601 ? ModelCatalogProblemCode.Unsupported : ModelCatalogProblemCode.Provider,
-          "The CLI could not list models.",
+          t("The CLI could not list models."),
         ),
       );
       return;
@@ -65,7 +66,7 @@ export function codexControl(binary: string, args: string[], env: NodeJS.Process
   child.stdout?.on("data", (chunk: string) => {
     bytes += Buffer.byteLength(chunk);
     if (bytes > MAX_BYTES) {
-      fail(new CatalogError(ModelCatalogProblemCode.Malformed, "The CLI model response is too large."));
+      fail(new CatalogError(ModelCatalogProblemCode.Malformed, t("The CLI model response is too large.")));
       return;
     }
     const lines = `${buffer}${chunk}`.split("\n");
@@ -73,10 +74,11 @@ export function codexControl(binary: string, args: string[], env: NodeJS.Process
     try {
       for (const line of lines) if (line.trim()) answer(line);
     } catch {
-      fail(new CatalogError(ModelCatalogProblemCode.Malformed, "The CLI returned an invalid control response."));
+      fail(new CatalogError(ModelCatalogProblemCode.Malformed, t("The CLI returned an invalid control response.")));
     }
   });
-  const disconnected = () => fail(new CatalogError(ModelCatalogProblemCode.Provider, "Model discovery disconnected."));
+  const disconnected = () =>
+    fail(new CatalogError(ModelCatalogProblemCode.Provider, t("Model discovery disconnected.")));
   child.on("error", disconnected);
   child.on("close", disconnected);
   child.stdin?.on("error", disconnected);

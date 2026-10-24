@@ -224,7 +224,7 @@ function ShellFixture() {
       <button type="button" data-fixture-new onClick={navigation.newGame}>
         New game
       </button>
-      <HomeLayer app={app} dialogs={dialogs} chrome={chrome} handoff={handoff} />
+      <HomeLayer app={app} dialogs={dialogs} chrome={chrome} handoff={handoff} under={false} />
       <AppDialogs
         dialogs={dialogs}
         firstAsks={{}}

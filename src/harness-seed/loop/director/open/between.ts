@@ -6,8 +6,9 @@
  * while a worker writes in the folder in place); then the rewind the lead asked for (Genex's restore
  * of the save point, the plugins' steps around it, then a wait until the app answers) and the restart
  * (the project's restore moments with no file changed, then the wait), both waiting while a worker
- * writes in place. Each outcome is one line the lead's next message carries. Never under a running
- * turn, never after the Loop closed, and no recovery starts while this runs.
+ * writes in place; then, when the turn kept a save point the folder still holds, the game's judges
+ * play it in turn (`judge-rounds.ts`). Each outcome is one line the lead's next message carries.
+ * Never under a running turn, never after the Loop closed, and no recovery starts while this runs.
  *
  * Whether the turn did something is read from what the lead did (`didWork`), never from how the folder
  * stands after it: a rewind or restart newly asked for, a claim turned down, a worker marked, or the
@@ -58,6 +59,7 @@ import {
 import { FOLDER_GIT } from "./folder-git.ts";
 import { heldForLead, OPEN_NEWS } from "./prompts.ts";
 import { checkpointNow, queued, recordSavePoint } from "./save-point.ts";
+import { judgeRound } from "./judge-rounds.ts";
 import { activeWork } from "./active-work.ts";
 import {
   markedSince,
@@ -389,7 +391,10 @@ async function betweenTurns(loopRun: LoopRun, open: OpenLoop): Promise<void> {
   // A turn that kept a save point left nothing for an autosave.
   const autosaved = !savedInTurn && (await autosaveUnlessWriting(loopRun, open, writers));
   let next = autosaved ? await keptByApp(loopRun, open, ended, read) : ended;
-  if (await asksAtTurnEnd(loopRun, open, writers)) next = await folderMark(loopRun, open);
+  const rewound = await asksAtTurnEnd(loopRun, open, writers);
+  if (rewound) next = await folderMark(loopRun, open);
+  // The game's judges play the save point the turn kept; a folder taken back to an older one has none to play.
+  else if (savedInTurn || autosaved) await judgeRound(loopRun, open);
   await nextTurnFrom(loopRun, open, next, nextStart);
 }
 

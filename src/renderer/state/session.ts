@@ -8,6 +8,7 @@ import {
   SHIPPED_STACK_DEFAULT_SWITCH,
   type StackDefaultSwitch,
 } from "../../shared/game-project.ts";
+import { PLAY_ORIGIN } from "../../shared/play.ts";
 
 /** Where the bootstrap stands. */
 export const SessionStatus = {
@@ -28,6 +29,8 @@ export interface SessionState {
   rustCreation: boolean;
   /** The new-game stack switch main read from the settings: the stack Create game starts on. */
   stackDefault: StackDefaultSwitch;
+  /** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
+  playWeb: string;
 }
 
 export const initialSession = (): SessionState => ({
@@ -37,6 +40,7 @@ export const initialSession = (): SessionState => ({
   developer: false,
   rustCreation: false,
   stackDefault: SHIPPED_STACK_DEFAULT_SWITCH,
+  playWeb: PLAY_ORIGIN.web,
 });
 
 export function bootstrapStarted(state: SessionState): SessionState {
@@ -45,7 +49,13 @@ export function bootstrapStarted(state: SessionState): SessionState {
 
 export function bootstrapReady(
   state: SessionState,
-  opening: { welcome?: boolean; developer?: boolean; rustCreation?: boolean; stackDefault?: StackDefaultSwitch },
+  opening: {
+    welcome?: boolean;
+    developer?: boolean;
+    rustCreation?: boolean;
+    stackDefault?: StackDefaultSwitch;
+    playWeb?: string;
+  },
 ): SessionState {
   return {
     ...state,
@@ -55,6 +65,7 @@ export function bootstrapReady(
     developer: opening.developer === true,
     rustCreation: opening.rustCreation === true,
     stackDefault: parseStackDefaultSwitch(opening.stackDefault),
+    playWeb: opening.playWeb ?? PLAY_ORIGIN.web,
   };
 }
 

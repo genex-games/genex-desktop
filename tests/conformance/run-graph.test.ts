@@ -982,6 +982,7 @@ describe("the plugins' asset jobs in the run graph", () => {
       {
         pluginName: "Local Blender",
         name: "tank-inspect",
+        facetId: null,
         files: ["assets/blender/b-1/model.glb", "assets/blender/b-1/render.png"],
         size: [1, 0.579, 0.4685],
         triangles: 144143,

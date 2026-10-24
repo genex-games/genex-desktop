@@ -3,14 +3,17 @@
  * typed `handle()`. A listed game inside the allowed root reaches the core's swap and its answer
  * comes back; a fixture profile refuses the channel (native-classified: it writes into a running
  * game's copy and sends it an op); a payload that names no listed game is refused before the core
- * is asked anything.
+ * is asked anything. `studio:live.prepare`: Live's background build of a listed game's folder, for
+ * its web view (Web) or its Native view (Mac) alone, refused for anything else before the core.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { IpcSender } from "../../src/main/ipc-handle.ts";
 import { createIpcHandle } from "../../src/main/ipc-handle.ts";
 import { type LiveAssetsIpcCore, registerLiveAssetsIpc } from "../../src/main/ipc/live-assets.ts";
+import { BuildTarget } from "../../src/shared/game-project.ts";
 import { LiveAssetsOutcome, type LiveAssetsAnswer } from "../../src/shared/live-assets.ts";
+import { LivePrepare } from "../../src/shared/live-behind.ts";
 
 type Listener = (event: IpcSender, payload: unknown) => Promise<unknown>;
 
@@ -37,6 +40,10 @@ function liveAssetsIpc(fixture: boolean) {
       asked.push(project);
       return SWAPPED;
     },
+    prepareLiveBuild: async (project, target) => {
+      asked.push(`${project} ${target}`);
+      return LivePrepare.Built;
+    },
   };
   const listeners = new Map<string, Listener>();
   const handle = createIpcHandle(
@@ -45,9 +52,11 @@ function liveAssetsIpc(fixture: boolean) {
   );
   registerLiveAssetsIpc(handle, core);
   const listener = listeners.get("studio:live.reloadAssets");
-  assert.ok(listener, "the channel is registered");
+  const prepare = listeners.get("studio:live.prepare");
+  assert.ok(listener && prepare, "the channels are registered");
   const invoke = (payload: unknown) => listener({} as IpcSender, payload);
-  return { invoke, asked, allowed };
+  const invokePrepare = (payload: unknown) => prepare({} as IpcSender, payload);
+  return { invoke, invokePrepare, asked, allowed };
 }
 
 describe("studio:live.reloadAssets", () => {
@@ -81,6 +90,42 @@ describe("studio:live.reloadAssets", () => {
     it(`refuses ${name} and asks the core nothing`, async () => {
       const ipc = liveAssetsIpc(false);
       const answer = (await ipc.invoke(payload)) as { ok: boolean };
+      assert.equal(answer.ok, false);
+      assert.deepEqual(ipc.asked, []);
+    });
+  }
+});
+
+describe("studio:live.prepare", () => {
+  it("builds a listed game's folder for Live's web view or its Native view, in a fixture profile too", async () => {
+    for (const fixture of [false, true]) {
+      const ipc = liveAssetsIpc(fixture);
+      assert.deepEqual(await ipc.invokePrepare({ project: "forest", target: BuildTarget.Web }), {
+        ok: true,
+        value: LivePrepare.Built,
+      });
+      assert.deepEqual(await ipc.invokePrepare({ project: "forest", target: BuildTarget.Mac }), {
+        ok: true,
+        value: LivePrepare.Built,
+      });
+      assert.deepEqual(ipc.asked, [`forest ${BuildTarget.Web}`, `forest ${BuildTarget.Mac}`]);
+      assert.deepEqual(ipc.allowed, ["/games/forest", "/games/forest"]);
+    }
+  });
+
+  const HOSTILE: Array<[string, unknown]> = [
+    ["no payload", undefined],
+    ["no target", { project: "forest" }],
+    ["a destination Live never builds in the background", { project: "forest", target: BuildTarget.Ios }],
+    ["a made-up destination", { project: "forest", target: "mac; rm -rf ~" }],
+    ["a climbing path", { project: "../forest", target: BuildTarget.Web }],
+    ["an unlisted game", { project: "desert", target: BuildTarget.Web }],
+    ["an inherited field", Object.create({ project: "forest", target: BuildTarget.Web })],
+  ];
+  for (const [name, payload] of HOSTILE) {
+    it(`refuses ${name} and builds nothing`, async () => {
+      const ipc = liveAssetsIpc(false);
+      const answer = (await ipc.invokePrepare(payload)) as { ok: boolean };
       assert.equal(answer.ok, false);
       assert.deepEqual(ipc.asked, []);
     });

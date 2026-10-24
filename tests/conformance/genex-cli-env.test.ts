@@ -5,11 +5,14 @@
  * own opt-outs reach the CLI; nothing else of Studio's environment does.
  */
 import assert from "node:assert/strict";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { PluginToolService } from "../../src/main/core/plugin-tools.ts";
 import { genexCliEnv } from "../../src/plugins/genex/adapter.ts";
 import type { PluginMcpServer } from "../../src/shared/plugins.ts";
+import { windowsHomeEnv } from "../../src/substrate/child-env.ts";
 import type { PluginMcpLaunch } from "../../src/substrate/plugins/registry.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 const api = "https://api.genex.games";
 
@@ -130,5 +133,34 @@ describe("Genex CLI started as the Genex plugin's MCP server (host-cli, DOC-1)",
 
   it("adds nothing Genex-specific to a plugin's own node server", async () => {
     assert.equal((await withParent({ DO_NOT_TRACK: "1" }, "node")).GENEX_TELEMETRY, undefined);
+  });
+
+  it("starts the server with its own home, and on Windows its own profile folders inside it", async () => {
+    const root = await tmpDir("studio-genex-mcp-home-");
+    const target = await service
+      .pluginMcpLaunch("genex", server("host-cli"), { ...launch, storageRoot: async () => root })
+      .resolve?.(null);
+    const home = path.join(root, "mcp", "home");
+    const env = target?.extraEnv ?? {};
+    assert.equal(env.HOME, home);
+    // The CLI's legacy cleanup finds `~` through os.homedir(), which reads USERPROFILE on Windows.
+    assert.deepEqual(
+      [env.USERPROFILE, env.APPDATA, env.LOCALAPPDATA],
+      process.platform === "win32"
+        ? [home, path.join(home, "AppData", "Roaming"), path.join(home, "AppData", "Local")]
+        : [undefined, undefined, undefined],
+    );
+  });
+});
+
+describe("a contained home's Windows profile folders", () => {
+  it("are USERPROFILE, APPDATA and LOCALAPPDATA inside it on Windows, and nothing elsewhere", () => {
+    assert.deepEqual(windowsHomeEnv("C:\\s\\home", "win32"), {
+      USERPROFILE: "C:\\s\\home",
+      APPDATA: "C:\\s\\home\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\s\\home\\AppData\\Local",
+    });
+    assert.deepEqual(windowsHomeEnv("/s/home", "darwin"), {});
+    assert.deepEqual(windowsHomeEnv("/s/home", "linux"), {});
   });
 });

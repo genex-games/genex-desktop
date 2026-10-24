@@ -94,7 +94,66 @@ function chatBuild(): EventEnvelope[] {
   );
 }
 
+/** A delegated builder's mirrored record carrying `parts`, as the evals read it from the same log. */
+const delegated = (parts: Array<Record<string, unknown>>, runId?: string): EventData =>
+  custom("delegated.claude-code", {
+    ...(runId ? { runId } : {}),
+    delegationId: "dlg-1",
+    data: { session_id: "s1", parts },
+  });
+const toolUse = (id: string, name: string, input: Record<string, unknown> = {}) => ({
+  type: "tool_use",
+  id,
+  name,
+  input,
+});
+
 describe("a chat-only build's turn", () => {
+  it("counts its builders' tool calls by category, as the evals count a lab run's, and never the chat's own requests", () => {
+    const events = log(
+      [0, processing("m1")],
+      [0, { type: "turn_started" }],
+      [1, reply("claude-opus-5-5[1m]", 10)],
+      [2, { type: "tool_requested", tool_call_id: "c1", request: { name: "mcp__studio__delegate", arguments: {} } }],
+      [3, delegated([toolUse("t1", "Read", { file_path: "src/main.ts" }), toolUse("t2", "Edit")])],
+      [4, delegated([toolUse("t3", "Bash", { command: "npm run build" }), { type: "tool_result", tool_use_id: "t3" }])],
+      // The same call mirrored again (a resent record) counts once.
+      [
+        5,
+        delegated([toolUse("t3", "Bash", { command: "npm run build" }), toolUse("t4", "Bash", { command: "ls src" })]),
+      ],
+      [30, build(true, 20_000, 900)],
+      [70, reply("claude-opus-5-5[1m]", 30)],
+      [90, { type: "turn_ended", status: "ok" }],
+    );
+    const facts = turnFacts({ events, permissionMode: null }, M4);
+    assert.ok(facts);
+    assert.deepEqual(facts.calls.tools, { total: 4, byCategory: { read: 1, edit: 1, build: 1, search: 1 } });
+  });
+
+  it("leaves a run's records in the same thread to that run's row: its tool calls, tokens and context", () => {
+    const events = log(
+      [0, processing("m1")],
+      [0, { type: "turn_started" }],
+      [1, reply("claude-opus-5-5[1m]", 10)],
+      [2, { type: "tool_requested", tool_call_id: "c1", request: { name: "mcp__studio__delegate", arguments: {} } }],
+      [3, delegated([toolUse("t1", "Read")])],
+      // A run started earlier in this thread is still working: its records carry its runId.
+      [4, delegated([toolUse("w1", "Edit"), toolUse("w2", "Bash", { command: "npm test" })], "run-1")],
+      [5, custom("context_usage", { engine: EngineId.ClaudeCode, percent: 40 })],
+      [6, custom("context_usage", { runId: "run-1", engine: EngineId.ClaudeCode, percent: 88 })],
+      [7, custom("completion_call", { runId: "run-1", role: "judge", usage: { input_tokens: 7, output_tokens: 3 } })],
+      [30, build(true, 20_000, 900)],
+      [70, reply("claude-opus-5-5[1m]", 30)],
+      [90, { type: "turn_ended", status: "ok" }],
+    );
+    const facts = turnFacts({ events, permissionMode: null }, M4);
+    assert.ok(facts);
+    assert.deepEqual(facts.calls.tools, { total: 1, byCategory: { read: 1 } });
+    assert.equal(facts.context.leadPeakPct, 40);
+    assert.equal(facts.tokensByRole[TokenRole.Judges], undefined);
+  });
+
   it("measures builds, tokens by role, timing and context from typed fields only", () => {
     const facts = turnFacts({ events: chatBuild(), permissionMode: PermissionMode.AcceptEdits }, M4);
     assert.ok(facts);
@@ -129,7 +188,8 @@ describe("a chat-only build's turn", () => {
     assert.equal(facts.tokensByRole[TokenRole.Judges]?.output, 3);
     assert.equal(facts.tokens.output, 83);
     assert.deepEqual(facts.context, { leadPeakPct: 38.5, compactions: 1 });
-    assert.deepEqual(facts.calls, { modelCalls: 2, tools: { total: 1, byCategory: {} } });
+    // Flipped: the chat's own `delegate` request is not a tool call of the build; this turn mirrors no builder calls.
+    assert.deepEqual(facts.calls, { modelCalls: 2, tools: { total: 0, byCategory: {} } });
     const row = buildFieldRow(facts, {
       installId: "0123456789abcdef0123456789abcdef",
       consentVersion: "2026-10-01",
@@ -453,6 +513,21 @@ describe("a launched run", () => {
       livenessMax: 8,
       scoreboard: { passing: 4, total: 5, regressions: 1 },
     });
+  });
+
+  it("counts its own workers' tool calls by category, and no other run's", () => {
+    const events = loopRun();
+    const finished = events.pop() as EventEnvelope;
+    events.push(
+      ...log(
+        [12, delegated([toolUse("w1", "Write"), toolUse("w2", "Bash", { command: "npx vitest run" })], "run-1")],
+        [13, delegated([toolUse("x1", "Read")], "run-2")],
+      ),
+      finished,
+    );
+    const facts = runFacts({ events, permissionMode: null }, "run-1", M4);
+    assert.ok(facts);
+    assert.deepEqual(facts.calls.tools, { total: 2, byCategory: { edit: 1, build: 1 } });
   });
 
   it("makes no row before the run finished, and refuses a stop code that is a sentence", () => {

@@ -365,3 +365,21 @@ test("a palette's graph accent colours the builds graph alone; unset, the graph 
   assert.equal(set["--graph"], "#7c5cff");
   assert.equal(set["--accent-primary"], base.accent);
 });
+
+test("a box inside a card has a soft edge: the card's own edge on a light theme, the control edge on a dark one", () => {
+  for (const preset of PRESETS) {
+    const v = themeVariables(preset.colors);
+    const soft = preset.scheme === "light" ? v["--border"] : v["--line-strong"];
+    assert.ok(soft, preset.id);
+    assert.equal(v["--line-soft"], soft, preset.id);
+  }
+});
+
+test("a floating menu's edge is the prompt bar's on a light theme and the control edge on a dark one", () => {
+  for (const preset of PRESETS) {
+    const v = themeVariables(preset.colors);
+    const edge = preset.scheme === "light" ? "var(--prompt-bar-edge)" : v["--line-strong"];
+    assert.ok(edge, preset.id);
+    assert.equal(v["--menu-edge"], edge, preset.id);
+  }
+});

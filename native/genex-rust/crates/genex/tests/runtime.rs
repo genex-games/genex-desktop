@@ -254,8 +254,9 @@ fn an_injected_click_on_an_egui_button_reaches_on_ui() {
     });
     let mut rt = runtime(game);
     rt.seed(1);
-    // The button is laid out at the top-left; aim a few pixels into it.
-    let (x, y) = (12.0 / 400.0, 10.0 / 300.0);
+    // The button is laid out at the top-left, inside the HUD's 16 pt margin (R-25); aim a few
+    // pixels into it.
+    let (x, y) = (24.0 / 400.0, 24.0 / 300.0);
     rt.inject(Input::pointer(x, y));
     rt.step(FIXED_STEP_MS);
     rt.inject(Input::click_at(x, y));
@@ -273,8 +274,9 @@ fn the_keyboard_is_wanted_once_a_tap_focuses_a_hud_text_field() {
     rt.seed(1);
     rt.step(FIXED_STEP_MS);
     assert!(!rt.keyboard_wanted(), "no field has focus before a tap");
-    // The field is laid out at the top-left; aim a few pixels into it.
-    let (x, y) = (12.0 / 400.0, 10.0 / 300.0);
+    // The field is laid out at the top-left, inside the HUD's 16 pt margin (R-25); aim a few
+    // pixels into it.
+    let (x, y) = (24.0 / 400.0, 24.0 / 300.0);
     rt.inject(Input::pointer(x, y));
     rt.step(FIXED_STEP_MS);
     rt.inject(Input::click_at(x, y));

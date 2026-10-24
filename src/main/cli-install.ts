@@ -6,6 +6,7 @@
  */
 import { CliInstallOperation, CliInstallPhase, CliInstallProblem, type CliInstallJob } from "../shared/cli-install.ts";
 import type { CodingProvider } from "../shared/coding-cli.ts";
+import { t } from "../shared/i18n.ts";
 import { EngineId } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
 import type { InstallOutcome } from "../substrate/cli-installer.ts";
@@ -23,9 +24,13 @@ export interface CliInstallsDeps {
   now?: () => Date;
 }
 
-/** Why an install request is refused, and what the log keeps of a failed one. */
+/**
+ * Why an install request is refused, and what the log keeps of a failed one. Only `busy` reaches a
+ * person (the Install button shows it); the rest is the log's or a developer's, in English.
+ */
 const MESSAGE = {
   unknownProvider: (provider: unknown) => `unknown coding CLI: ${String(provider)}`,
+  busy: () => t("Wait for active work to finish before updating."),
   failed: (provider: CodingProvider, problem: CliInstallProblem, detail: string) =>
     `cli install ${provider} failed (${problem}): ${detail}`,
   notFound: "the installer finished but the CLI was not found or does not work",
@@ -88,8 +93,7 @@ export function createCliInstalls(deps: CliInstallsDeps) {
       if (!isInstallable(provider)) throw new Error(MESSAGE.unknownProvider(provider));
       const current = jobs.get(provider);
       if (current?.phase === CliInstallPhase.Installing) return current;
-      if (operation === CliInstallOperation.Update && deps.busy?.())
-        throw new Error("Wait for active work to finish before updating.");
+      if (operation === CliInstallOperation.Update && deps.busy?.()) throw new Error(MESSAGE.busy());
       const job = publish({ provider, operation, phase: CliInstallPhase.Installing, startedAt: now().toISOString() });
       running.set(
         provider,

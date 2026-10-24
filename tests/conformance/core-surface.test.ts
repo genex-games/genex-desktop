@@ -16,6 +16,7 @@ const METHODS = [
   "_computerToolsFor",
   "_directorToolsFor",
   "_playtestToolsFor",
+  "_runOfGame",
   "acceptStagedProposal",
   "activeBuilders",
   "activityEvents",
@@ -55,8 +56,11 @@ const METHODS = [
   "landBuild",
   "listAllEvents",
   "liveAssetsLoaded",
+  // The build copy Live serves, which Live's Native view builds instead of the game folder.
+  "liveRootOf",
   "liveState",
   "loadPreview",
+  "loadWebBuild",
   // Home's Make your own writes a live background on the model the user picked (backdrop-generation.ts).
   "makeBackdrop",
   "messageImages",
@@ -72,6 +76,8 @@ const METHODS = [
   // The stage strip's Play/Stop (studio:preview.play, studio:preview.stop).
   "playLive",
   "pluginBinding",
+  // Live's background build of a compiled game's changed folder (studio:live.prepare).
+  "prepareLiveBuild",
   "presentProjectAssets",
   "previewProjectAsset",
   "projectAssets",
@@ -104,6 +110,7 @@ const METHODS = [
   "resolveConsent",
   "resumeAutopilot",
   "retainedAssetFile",
+  "retryMention",
   "rewindChat",
   "rewindPreview",
   "rollbackTo",
@@ -112,6 +119,8 @@ const METHODS = [
   "runPreviewIdentity",
   "saveReferenceFrames",
   "saveRunArtifact",
+  // Whether a game is a remix whose setup scripts the person has not trusted (installs, genex__package).
+  "scriptsGuarded",
   "selfChangeList",
   "sendUserMessage",
   "setGamesRoot",
@@ -119,6 +128,7 @@ const METHODS = [
   "showBuild",
   "snapshot",
   "start",
+  "startEngine",
   "stop",
   "stopJob",
   "stopLive",
@@ -127,6 +137,7 @@ const METHODS = [
   "storageSpace",
   "threadForGame",
   "undoEngineLink",
+  "undoRewind",
   "undoSelfChange",
   "updateGame",
   "updateSettings",
@@ -224,12 +235,13 @@ test("before any install the toolchain status is the empty store on this host, a
       ...(host ? { unhosted: [] } : {}),
     },
   );
-  // Composer Stop and the studio's own stop end every C++ build in flight; with none, nothing fails.
+  // The studio's own stop ends every C++ build in flight; with none, nothing fails. A composer Stop
+  // ends only its own game's (`native-lifecycle.test.ts`): a chat with no game ends none.
   const cancelled = t.mock.method(lite.core.cppBuilds, "cancelAll");
   await lite.core.stopThread("no-such-thread").catch(() => {});
-  assert.equal(cancelled.mock.callCount(), 1);
+  assert.equal(cancelled.mock.callCount(), 0);
   await lite.close();
-  assert.equal(cancelled.mock.callCount(), 2);
+  assert.equal(cancelled.mock.callCount(), 1);
 });
 
 test("the Command Line Tools probe runs only xcode-select -p and pkgutil, and nothing off a Mac", async () => {

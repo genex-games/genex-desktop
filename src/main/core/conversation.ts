@@ -17,6 +17,7 @@ import {
 } from "../../shared/coordinator.ts";
 import { CustomEvent, customEventData, customRecord, type AnyCustomPayload } from "../../shared/custom-events.ts";
 import { EventKind, ThreadKind, type ConversationRecord, type EventEnvelope } from "../../shared/event-log.ts";
+import { t } from "../../shared/i18n.ts";
 import { crossesCompletionEngine } from "../../shared/model-roles.ts";
 import { ToolPermissionBy } from "../../shared/permissions.ts";
 import { RunState } from "../../shared/run-state.ts";
@@ -29,6 +30,7 @@ import {
   DispatchActionType,
   HarnessCapability,
   HarnessState,
+  MessageOrigin,
   type DispatchAction,
   type ReferenceFrame,
 } from "../../shared/protocol.ts";
@@ -40,6 +42,32 @@ import { settleWithin } from "../app-lifecycle.ts";
 import { threadOr } from "./main-thread.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
 import { isQueueMessageId } from "./rewind.ts";
+import {
+  type MentionSources,
+  type MentionTarget,
+  type ResolvedMentions,
+  resolveMentions,
+  tagOf,
+} from "./mention-tags.ts";
+import {
+  type MentionOutcome,
+  type MentionRef,
+  MentionResult,
+  MentionRetry,
+  readMentionRefs,
+} from "../../shared/prompt-mention.ts";
+
+/** A message with no tags. */
+const NO_TAGS: ResolvedMentions = { readRoots: [], context: "", outcomes: [] };
+
+/** Where tags come from when the core has no genex.games: every genex.games tag says it did not arrive. */
+const OFFLINE_SOURCES: MentionSources = {
+  world: () => Promise.reject(new Error("offline")),
+  me: async () => null,
+  clone: () => Promise.reject(new Error("offline")),
+  assetManifest: () => Promise.reject(new Error("offline")),
+  addFromLibrary: () => Promise.reject(new Error("offline")),
+};
 
 /** Which build `show_build` and `land_build` mean when the coordinator names none: the run's own. */
 const INTEGRATION_BUILD = "integration";
@@ -83,21 +111,26 @@ const PLACEHOLDER_TITLES: readonly string[] = [NEW_GAME_TITLE, NEW_CHAT_TITLE];
 /** Characters of a first message kept as the thread's title. */
 const THREAD_TITLE_CHARS = 56;
 
-/** User-facing copy of this module, and what the coordinator reads when a tool call is refused. */
+/**
+ * User-facing copy of this module, and what the coordinator reads when a tool call is refused.
+ * The tag line and the commission refusals (the chat's error, kept in its log) are said to the
+ * person in their language; the tag retry line is the agent's, and the rest are tool results.
+ */
 const MESSAGE = {
-  autopilotOutdated:
-    "This build of the studio can't run a timed build yet — your brief is saved above, and sending it again once the " +
-    "studio has updated itself will start the build. (Its own loop code predates timed builds: the seed's " +
-    "harness-seed/loop needs to be merged into it, or the seed copies restored so the next launch upgrades them.)",
-  localRolesOutdated:
-    "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — " +
-    "your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge " +
-    "the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.",
-  loopOutdated:
-    "Loop can't start: the studio's own loop code predates the composer's Loop feature, so it doesn't know how to " +
-    "run a timed build. To fix it, ask the studio in chat to merge the seed's Loop handling " +
-    "(harness-seed/loop) into its own loop code and restart itself — or restore the seed copies so the next " +
-    "launch upgrades them. Your brief is saved above; send it again once the loop code is current.",
+  tagNoGame: () => t("Tags belong to a game's chat"),
+  tagRetried: (handle: string) => `@${handle} did not arrive with my last message; it is attached now.`,
+  autopilotOutdated: () =>
+    t(
+      "This build of the studio can't run a timed build yet — your brief is saved above, and sending it again once the studio has updated itself will start the build. (Its own loop code predates timed builds: the seed's harness-seed/loop needs to be merged into it, or the seed copies restored so the next launch upgrades them.)",
+    ),
+  localRolesOutdated: () =>
+    t(
+      "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.",
+    ),
+  loopOutdated: () =>
+    t(
+      "Loop can't start: the studio's own loop code predates the composer's Loop feature, so it doesn't know how to run a timed build. To fix it, ask the studio in chat to merge the seed's Loop handling (harness-seed/loop) into its own loop code and restart itself — or restore the seed copies so the next launch upgrades them. Your brief is saved above; send it again once the loop code is current.",
+    ),
   unknownTool: (name: string) => `unknown coordinator tool: ${name}`,
   inPlan:
     "The chat is in Plan mode, so this did not run: starting, continuing, resuming or landing a build waits until the plan is approved. Put it in your plan instead.",
@@ -169,6 +202,15 @@ function payloadsOf(events: readonly EventEnvelope[], name: CustomEvent): AnyCus
 function chatSteers(events: readonly EventEnvelope[]): AnyCustomPayload[] {
   return payloadsOf(events, CustomEvent.RunSteering).filter((steer) => steer.how !== SteerDelivery.Lead);
 }
+
+/** A message's pictures as saved in its game: every file they are, and the ones it added. */
+interface SavedPictures {
+  files: string[];
+  added: string[];
+}
+
+/** No pictures saved: none sent, no game to save them in, or the save failed. */
+const NO_PICTURES: SavedPictures = Object.freeze({ files: [], added: [] }) as SavedPictures;
 
 /** Does a game thread's next message go to a plan review first? */
 function needsPlanReview(options: ComposerSendOptions, waiting: PlanReview | undefined): boolean {
@@ -257,9 +299,10 @@ export class ConversationService {
     this.#x.selfImprovement.touchActivity();
     if (await this.#requestPlanReview(text, options, sentAt)) return;
     const target = await this.#messageTarget(text, options);
+    const tags = await this.#resolveTags(target, options);
     const { extraReads, stills } = target.studioThread
       ? { extraReads: [], stills: options.frames }
-      : await this.#namedPaths(text, target, options.frames);
+      : await this.#namedPaths(text, target, options.frames, tags.readRoots);
     const { sendOptions, resume } =
       !target.studioThread && options.engine
         ? await this.#resumeContractor(target.threadId, options)
@@ -268,8 +311,15 @@ export class ConversationService {
       await this.#core.games.ensureCover(target.project);
       this.#core.emit(UiEvent.GameChanged, { project: target.project });
     }
-    const references = await this.#saveMoodBoard(target.project, sendOptions);
-    const action = this.#userMessageAction(text, target, sendOptions, { resume, extraReads, stills, references });
+    const pictures = await this.#saveMoodBoard(target.project, sendOptions);
+    // The agent reads the tags' lines after the person's words; the chat shows the words alone.
+    const action = this.#userMessageAction(text + tags.context, target, sendOptions, {
+      resume,
+      extraReads,
+      stills,
+      references: pictures.added,
+      pictureFiles: pictures.files,
+    });
     const refusal = this.#commissionRefusal(sendOptions);
     if (refusal) {
       // The renderer already cleared the composer — the brief must survive in the log, ahead of
@@ -288,6 +338,54 @@ export class ConversationService {
     const messageId = action.type === DispatchActionType.UserMessage ? action.messageId : undefined;
     if (!target.studioThread) this.#x.permissions.notePersonMessage(target.threadId, messageId);
     await this.#core.host.dispatch(action);
+    // After the message, so the chat shows each tag's line under it.
+    if (tags.outcomes.length)
+      await this.#core.append(
+        [customEventData(CustomEvent.MentionTagged, { ...(messageId ? { messageId } : {}), tags: tags.outcomes })],
+        target.threadId,
+      );
+  }
+
+  /**
+   * A failed tag of a sent message, tried again or taken off. Again resolves it as a send would
+   * and, when it now attaches, tells the agent in a line the chat leaves out; either way the
+   * message's result card shows the tag's new result.
+   */
+  async retryMention(threadId: string, messageId: string, ref: MentionRef, action: MentionRetry): Promise<void> {
+    const record = await this.#core.store.getRecord(threadId);
+    const meta = record.metadata as ThreadMeta;
+    const project = meta?.kind === ThreadKind.Game ? meta.project : undefined;
+    if (!project) throw new Error(MESSAGE.tagNoGame());
+    const recordTags = (tags: MentionOutcome[]) =>
+      this.#core.append([customEventData(CustomEvent.MentionTagged, { messageId, tags })], threadId);
+    if (action === MentionRetry.Remove) {
+      await recordTags([{ ...tagOf(ref), result: MentionResult.Removed }]);
+      return;
+    }
+    const target = { threadId, project, newProject: false, studioThread: false };
+    const tags = await this.#resolveTags(target, { mentions: [ref] });
+    await recordTags(tags.outcomes);
+    if (tags.outcomes.every((tag) => tag.result === MentionResult.Unavailable)) return;
+    await this.sendUserMessage(`${MESSAGE.tagRetried(ref.handle)}${tags.context}`, {
+      thread: threadId,
+      origin: MessageOrigin.TagRetry,
+    });
+  }
+
+  /** The message's @ tags made real for its game; none outside a game's chat. */
+  async #resolveTags(target: MessageTarget, options: ComposerSendOptions): Promise<ResolvedMentions> {
+    const refs = readMentionRefs(options.mentions);
+    const project = target.project;
+    if (!refs.length || !project || target.studioThread) return NO_TAGS;
+    const games = await this.#core.games.list();
+    const game = games.find((entry) => entry.name === project);
+    const tagTarget: MentionTarget = {
+      project,
+      gameDir: this.#core.games.dirFor(project),
+      webGame: !game?.engine,
+      libraryDir: async (name) => (name === project ? null : (games.find((entry) => entry.name === name)?.dir ?? null)),
+    };
+    return resolveMentions(refs, tagTarget, this.#core.options.mentionSources ?? OFFLINE_SOURCES);
   }
 
   /** A game thread whose plan is under review, or that asked for one, sends the message there. */
@@ -321,20 +419,25 @@ export class ConversationService {
 
   /**
    * The mood board becomes durable project data the moment it commissions a run — the next
-   * interview finds it in <project>/references/ even if the chat is long gone. Returns the files
-   * this message added (relative to the game), which rewinding it takes back.
+   * interview finds it in <project>/references/ even if the chat is long gone. Returns, relative to
+   * the game, every file the pictures are saved as (`files`: a run's lead reads them there, a picture
+   * sent before included) and the files this message added (`added`), which rewinding it takes back.
    */
-  async #saveMoodBoard(project: string | undefined, options: ComposerSendOptions): Promise<string[]> {
+  async #saveMoodBoard(project: string | undefined, options: ComposerSendOptions): Promise<SavedPictures> {
     const frames = options.frames ?? options.autopilot?.frames;
-    if (!frames?.length || !project) return [];
+    if (!frames?.length || !project) return NO_PICTURES;
     const dir = this.#core.games.dirFor(project);
     try {
       const saved = await this.#core.saveReferenceFrames(project, frames);
-      // Only files this message added: a picture sent before is the game's already.
-      return saved.filter((entry) => entry.created).map((entry) => toPosixRelative(path.relative(dir, entry.file)));
+      const relative = (file: string) => toPosixRelative(path.relative(dir, file));
+      return {
+        files: saved.map((entry) => relative(entry.file)),
+        // Only files this message added: a picture sent before is the game's already.
+        added: saved.filter((entry) => entry.created).map((entry) => relative(entry.file)),
+      };
     } catch (err) {
       this.#core.options.onLog?.(`[core] mood board save failed: ${errorMessage(err)}`, "stderr");
-      return [];
+      return NO_PICTURES;
     }
   }
 
@@ -388,12 +491,14 @@ export class ConversationService {
 
   /**
    * Folders and stills the message names: a folder may become the thread's game, still folders
-   * become read roots the thread remembers, and still files travel with the message.
+   * and the folders of other named files become read roots the thread remembers, and still files
+   * travel with the message.
    */
   async #namedPaths(
     text: string,
     target: MessageTarget,
     frames: ReferenceFrame[] | undefined,
+    taggedRoots: readonly string[] = [],
   ): Promise<{ extraReads: string[]; stills: ReferenceFrame[] | undefined }> {
     const named = await resolveNamedPaths(text, { home: this.#core.games.homeDir });
     const { workspace } = named;
@@ -403,7 +508,9 @@ export class ConversationService {
     if (!project) return { extraReads: [], stills: frames };
     const record = await this.#core.store.getRecord(target.threadId).catch(() => null);
     const meta = (record?.metadata ?? {}) as { extraReads?: string[] };
-    const extraReads = [...new Set([...(meta.extraReads ?? []), ...named.stillRoots])];
+    const extraReads = [
+      ...new Set([...(meta.extraReads ?? []), ...named.stillRoots, ...named.fileRoots, ...taggedRoots]),
+    ];
     this.#x.delegation.addReadRoots(project, extraReads);
     // updateThread merges: only the key this changes, so a stale copy never overwrites others.
     if (record && extraReads.length) await this.#core.store.updateThread(target.threadId, { metadata: { extraReads } });
@@ -456,6 +563,8 @@ export class ConversationService {
       extraReads: string[];
       stills: ReferenceFrame[] | undefined;
       references: string[];
+      /** Every file its pictures are saved as in the game, new or already there: a run's lead reads them. */
+      pictureFiles: string[];
     },
   ): DispatchAction {
     const { project, newProject, studioThread } = target;
@@ -476,6 +585,7 @@ export class ConversationService {
       ...(projectDir ? { projectDir } : {}),
       ...(extraReads.length ? { extraReads } : {}),
       ...(stills?.length ? { stills } : {}),
+      ...(context.pictureFiles.length ? { pictureFiles: context.pictureFiles } : {}),
       ...(options.origin ? { origin: options.origin } : {}),
     };
   }
@@ -514,10 +624,10 @@ export class ConversationService {
   #commissionRefusal(options: ComposerSendOptions): string | null {
     const host = this.#core.host;
     if (host.state !== HarnessState.Ready) return null;
-    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return MESSAGE.autopilotOutdated;
-    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return MESSAGE.loopOutdated;
+    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return MESSAGE.autopilotOutdated();
+    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return MESSAGE.loopOutdated();
     const localRoles = crossesCompletionEngine(options.engine ?? "", options.autopilot?.roles);
-    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return MESSAGE.localRolesOutdated;
+    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return MESSAGE.localRolesOutdated();
     return null;
   }
 

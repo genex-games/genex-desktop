@@ -378,6 +378,8 @@ function opsOf(host: Internals): MomentOps {
     answers: async () => (await read().catch(() => null))?.answering === true,
     running: async () => (await read()).running,
     activity: async () => (await call("editor-activity")) as EditorActivity,
+    // The lead host's plays are the queue's checks, which end themselves: a save never ends one.
+    mayEndPlay: async () => false,
     save: async () => {
       const saved = (await call("save-all")) as { saved?: unknown; dirty?: unknown };
       return { saved: saved?.saved !== false, dirty: Array.isArray(saved?.dirty) ? saved.dirty.map(String) : [] };
@@ -386,6 +388,8 @@ function opsOf(host: Internals): MomentOps {
       await call("end-editor");
       if (host.editor.answering) throw new Error("it still answers after Genex ended it");
     },
+    // The lead host's project is set up in this profile.
+    setUp: async () => {},
     reopen: () => call("reopen-editor"),
     state: read,
     start: async () => null,

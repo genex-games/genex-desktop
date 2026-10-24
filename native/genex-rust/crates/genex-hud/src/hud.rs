@@ -224,6 +224,19 @@ impl Drop for Hud {
     }
 }
 
+impl HudPaint {
+    /// Move every primitive and its clip by `delta` points: a display that places the world's
+    /// rectangle away from its target's corner (`fit = "expand"`) paints the HUD on it.
+    pub fn translate(&mut self, delta: egui::Vec2) {
+        for primitive in &mut self.primitives {
+            primitive.clip_rect = primitive.clip_rect.translate(delta);
+            if let egui::epaint::Primitive::Mesh(mesh) = &mut primitive.primitive {
+                mesh.translate(delta);
+            }
+        }
+    }
+}
+
 impl Drop for HudPaint {
     fn drop(&mut self) {
         // A display takes the deltas it applies (`std::mem::take`); the rest are dropped on purpose.

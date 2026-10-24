@@ -191,8 +191,9 @@ export function connectorStep(
   call: Partial<Pick<ConnectorCall, "tool" | "toolset" | "toolName" | "args">>,
 ): ConnectorStep {
   const toolset = call.toolset ? className(call.toolset) : undefined;
-  const tool = call.toolName ?? call.tool ?? "";
-  if (!call.toolName) return gatewayStep(tool, toolset);
+  // A description may name one tool, to read only its schema: still a reading, never that tool's call.
+  if (!call.toolName || call.tool === GatewayTool.DescribeToolset) return gatewayStep(call.tool ?? "", toolset);
+  const tool = call.toolName;
   const rule = toolset ? STEPS[`${toolset}.${tool}`] : undefined;
   if (!rule) return { action: StepAction.Other, tool, ...(toolset ? { toolset } : {}) };
   const args = call.args ?? {};

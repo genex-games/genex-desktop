@@ -144,7 +144,7 @@ fn invalid_sizes_radii_and_anchor_counts_are_refused() {
     }
     assert_eq!(view_cells(&grid, Vec2::new(f32::NAN, 0.0), 100.0, 10.0).unwrap_err().code, StreamErrorCode::Invalid);
     let wires: Vec<&str> = StreamErrorCode::ALL.iter().map(|c| c.wire()).collect();
-    assert_eq!(wires, ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world", "stream-not-registered", "stream-hold-timeout", "stream-snapshot-invalid", "stream-drain-timeout"]);
+    assert_eq!(wires, ["stream-invalid", "stream-too-many-anchors", "stream-out-of-world", "stream-not-registered", "stream-hold-timeout", "stream-snapshot-invalid", "stream-drain-timeout", "stream-unknown-group"]);
 }
 
 /// Chebyshev distance in cells from `cell` to the nearest anchor.

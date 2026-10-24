@@ -716,7 +716,7 @@ describe("context management", () => {
       return (await materializePrompt(ctx as never, { threadId: "t1", project: "g" } as never)).systemPrompt;
     };
     const neutral = await systemFor({ name: "g", web: false });
-    assert.match(neutral, /You build games on this Mac/, "the shipped identity was read");
+    assert.match(neutral, /You build games on this computer/, "the shipped identity was read");
     assert.doesNotMatch(neutral, /three\.js/i);
     assert.match(await systemFor({ name: "g", web: true }), /three\.js/);
     assert.match(await systemFor({ name: "g" }), /three\.js/, "a descriptor without the flag is a web game");

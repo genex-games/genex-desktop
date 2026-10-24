@@ -9,13 +9,15 @@
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { EventData } from "../../../types/host-api.d.ts";
 import { LoopProfile } from "../../folder-facts.ts";
-import { FINISH_REPORT } from "../../finish-check.ts";
+import { FINISH_REPORT, stillToFixOf } from "../../finish-check.ts";
+import { StopWhy } from "../../finish-contract.ts";
 import { gitAt } from "../../git.ts";
 import { CheckpointSkip, HookEvent, hooksOn, runScope, takeCheckpoint } from "../../hooks.ts";
 import { HostMethod } from "../../host-methods.ts";
 import { EventKind, ExecutionStatus, JournalPhase, RunEvent, writeRunArtifact } from "../../run-events.ts";
 import { CLIP_REASON, clip } from "../../text.ts";
 import { SECOND_MS, sleep } from "../../time.ts";
+import { loopHoursOf } from "../../time-cap.ts";
 import { TIME_CAP_WORDS } from "../../time-cap-prompts.ts";
 import { closeRunPool } from "../../workers/run-pool.ts";
 import { latchClose } from "../close-latch.ts";
@@ -32,6 +34,8 @@ export interface OpenEnd {
   notDone?: readonly string[];
   /** Its time ran out before any claim was checked: the report says no reviewer read one (time-cap.ts). */
   unchecked?: boolean;
+  /** Why it stopped short of the goal, for its result card: its time ran out, or the no's stopped it (else a Stop or another end). */
+  why?: StopWhy;
   /** A reviewer's check ended it (a yes, or the no's that stop a Loop): never a pause, whatever else holds. */
   checked?: boolean;
   /** The Loop pauses for a Resume whatever else holds (the project's app couldn't be brought back). */
@@ -110,6 +114,17 @@ function limitRecord(limit: AnyRecord): AnyRecord {
   };
 }
 
+/**
+ * What a close that is neither the goal reached nor a pause leaves for its result card: the last
+ * no's lists, why the Loop stopped (its own `why`, else the person's Stop or another end), its hours.
+ */
+function leftToFix(loopRun: LoopRun, end: OpenEnd, paused: boolean): AnyRecord {
+  if (paused || end.victory) return {};
+  const why = end.why ?? (loopRun.ctx.cancelled ? StopWhy.Person : StopWhy.Ended);
+  const left = stillToFixOf(loopRun.state.finishTally, { why, hours: loopHoursOf(loopRun.run) });
+  return left ? { stillToFix: left } : {};
+}
+
 /** The report's last fields: how the Loop ended, what it kept, and how it reads on the run's card. */
 function finishReport(
   loopRun: LoopRun,
@@ -137,6 +152,7 @@ function finishReport(
     savePoints: journal.savePoints.map(({ label, snapshotId }) => ({ label, snapshotId })),
     ...(kept ? { lastCheckpoint: kept } : {}),
     ...(notDone.length ? { notDone } : {}),
+    ...leftToFix(loopRun, end, paused),
     ...(state.limit ? { limit: limitRecord(state.limit) } : {}),
     finishedAt: new Date().toISOString(),
   });

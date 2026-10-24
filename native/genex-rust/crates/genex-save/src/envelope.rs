@@ -1,6 +1,9 @@
 //! The save envelope: one slot's sections with the sim position they were read at, as canonical
 //! JSON (serde_json with `preserve_order`, ryu floats, no whitespace, members in the documented
-//! order) so the same state always gives the same bytes on every target.
+//! order) so the same state always gives the same bytes on every target. serde_json's default
+//! float parser can land an ulp off the ryu text it wrote, so [`parse_document`] sets each float
+//! back to core's correctly rounded parse of its own token: every finite float reads back to the
+//! bits it was written from. A non-finite one has no JSON number and serialises as `null`.
 //!
 //! ```json
 //! {"genex":"save","format":1,"schema":3,"game":"<save name>","tick":18000,"seed":7,
@@ -17,7 +20,7 @@
 use std::io::{self, Write};
 
 use genex_core::digest::{FNV_OFFSET_BASIS, fnv1a64_from, hex64};
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 use crate::codec;
 use crate::error::{SaveError, SaveErrorCode};
@@ -114,8 +117,7 @@ pub fn encode(envelope: &Envelope) -> Result<Vec<u8>, SaveError> {
 /// not exactly what [`encode`] writes, a digest mismatch included.
 pub fn decode(stored: &[u8]) -> Result<Envelope, SaveError> {
     let json = codec::unpack(stored)?;
-    let document: Value = serde_json::from_slice(&json).map_err(|e| SaveError::corrupt(format!("not JSON: {e}")))?;
-    let Value::Object(members) = document else {
+    let Value::Object(members) = parse_document(&json)? else {
         return Err(SaveError::new(SaveErrorCode::FormatUnknown, "not a genex save"));
     };
     if members.get("genex").and_then(Value::as_str) != Some(SAVE_MARK) {
@@ -134,6 +136,76 @@ pub fn decode(stored: &[u8]) -> Result<Envelope, SaveError> {
         return Err(SaveError::corrupt("the envelope is not in canonical form"));
     }
     Ok(envelope)
+}
+
+/// The JSON document in unpacked envelope bytes with every float exact: serde_json's default
+/// parser can land an ulp off a float's text, so each one is set to core's correctly rounded
+/// `str::parse::<f64>` of its own token. Refuses `save-corrupt` for bytes that are not JSON.
+pub fn parse_document(json: &[u8]) -> Result<Value, SaveError> {
+    let mut document: Value = serde_json::from_slice(json).map_err(|e| SaveError::corrupt(format!("not JSON: {e}")))?;
+    exact_floats(json, &mut document);
+    Ok(document)
+}
+
+/// Pairs `document`'s numbers with `json`'s number tokens in document order and sets each float
+/// from its token (an integer serde_json holds as u64 or i64 is exact and stays). Only a document
+/// with a duplicate member pairs them out of step, and the canonical compare refuses it anyway.
+fn exact_floats(json: &[u8], document: &mut Value) {
+    let mut tokens = NumberTokens { json, at: 0 };
+    let mut stack: Vec<Box<dyn Iterator<Item = &mut Value> + '_>> = vec![Box::new(std::iter::once(document))];
+    while let Some(top) = stack.last_mut() {
+        let Some(value) = top.next() else {
+            stack.pop();
+            continue;
+        };
+        match value {
+            Value::Array(items) => stack.push(Box::new(items.iter_mut())),
+            Value::Object(map) => stack.push(Box::new(map.values_mut())),
+            Value::Number(number) => {
+                let token = tokens.next();
+                if let Some(exact) = token.filter(|_| number.is_f64()).and_then(parse_float) {
+                    *number = exact;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The correctly rounded finite float a JSON number token spells, if it spells one.
+fn parse_float(token: &[u8]) -> Option<Number> {
+    std::str::from_utf8(token).ok()?.parse::<f64>().ok().and_then(Number::from_f64)
+}
+
+/// The number tokens of JSON text in document order, string contents and escapes skipped.
+struct NumberTokens<'a> {
+    json: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Iterator for NumberTokens<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let number_byte = |byte: &u8| matches!(byte, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E');
+        let mut in_string = false;
+        while let Some(&byte) = self.json.get(self.at) {
+            let start = self.at;
+            self.at += 1;
+            match byte {
+                b'\\' if in_string => self.at += 1,
+                b'"' => in_string = !in_string,
+                b'-' | b'0'..=b'9' if !in_string => {
+                    while self.json.get(self.at).is_some_and(number_byte) {
+                        self.at += 1;
+                    }
+                    return self.json.get(start..self.at);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
 }
 
 /// The envelope and its stored digest from a document's members, or what is wrong with them.

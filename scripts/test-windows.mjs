@@ -2,7 +2,8 @@
  * The Windows CI test entry (`npm run test:windows`, .github/workflows/windows.yml).
  *
  * 1. Required: node --test over tests/windows-suite.json, the files known to be meaningful on
- *    Windows. Its result is the exit code.
+ *    Windows. Its result is the exit code. The files in RUN_ALONE run after the others, one at a
+ *    time.
  * 2. Informational: the rest of the fast group (files the suite does not list), with a per-test
  *    cap. It prints pass/fail counts, every failing file and test with its error, so the Windows
  *    backlog can be burned down, and never changes the exit code.
@@ -15,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { importGraph, rigTests, testEnv, testFiles } from "./affected-tests.mjs";
+import { importGraph, rigTests, TEST_PRELOAD, testEnv, testFiles } from "./affected-tests.mjs";
 import { TestOutcome } from "./test-windows-reporter.mjs";
 
 const SUITE_FILE = "tests/windows-suite.json";
@@ -24,6 +25,13 @@ const REPORTER = pathToFileURL(path.join(import.meta.dirname, "test-windows-repo
 /** One hung test must not eat the job: the informational pass caps each test and the whole run. */
 const FAST_TEST_TIMEOUT_MS = 120_000;
 const FAST_RUN_TIMEOUT_MS = 20 * 60_000;
+
+/**
+ * Suite files that change the whole machine: they reserve the sandbox's proxy ports (60080-60089)
+ * as winnat does, so a sandbox another file starts meanwhile finds every port refused. They run
+ * after the rest of the suite, one at a time.
+ */
+export const RUN_ALONE = Object.freeze(["tests/conformance/sandbox-windows-ports.test.ts"]);
 
 /** Why a curated suite entry is refused, in its wire spelling. */
 export const SuiteProblem = Object.freeze({
@@ -104,12 +112,18 @@ export function unlisted(files, suite) {
 /** Clean files of a run that the curated suite does not list yet. */
 export const suiteCandidates = ({ cleanFiles }, suite) => unlisted(cleanFiles, suite);
 
-/** Run `files` under node --test: the spec reporter on stdout, the outcome reporter to a file. */
-function runTests(root, files, { name, testArgs = [], timeoutMs }) {
+/**
+ * Run `files` under node --test: the spec reporter on stdout, the outcome reporter to a file. Each
+ * file's process carries the leftover-children check, so a file that leaves a child running fails
+ * by name and exits instead of holding the run open. `quiet` keeps the spec reporter's lines out of
+ * this process's output (a test of this runner).
+ */
+export function runTests(root, files, { name, testArgs = [], timeoutMs, quiet = false }) {
   const outcomesPath = path.join(root, EVIDENCE_DIR, `${name}.jsonl`);
   fs.mkdirSync(path.dirname(outcomesPath), { recursive: true });
   fs.rmSync(outcomesPath, { force: true });
   const args = [
+    ...TEST_PRELOAD,
     "--test",
     "--test-reporter=spec",
     "--test-reporter-destination=stdout",
@@ -118,11 +132,17 @@ function runTests(root, files, { name, testArgs = [], timeoutMs }) {
     ...testArgs,
     ...files,
   ];
-  const run = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit", env: testEnv(), timeout: timeoutMs });
+  const stdio = quiet ? "ignore" : "inherit";
+  const run = spawnSync(process.execPath, args, { cwd: root, stdio, env: testEnv(), timeout: timeoutMs });
   const lines = fs.existsSync(outcomesPath) ? fs.readFileSync(outcomesPath, "utf8").split("\n") : [];
   const outcomes = lines.filter(Boolean).map((line) => JSON.parse(line));
-  const report = { name, fileCount: files.length, ended: endedBy(run), status: run.status };
-  Object.assign(report, summarizeOutcomes(outcomes, root));
+  const report = {
+    name,
+    fileCount: files.length,
+    ended: endedBy(run),
+    status: run.status,
+    ...summarizeOutcomes(outcomes, root),
+  };
   fs.writeFileSync(path.join(root, EVIDENCE_DIR, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
   return report;
 }
@@ -150,10 +170,23 @@ const listing = (name, files) => [`${name} (${files.length}):`, "", ...files.map
 /** One failed test for the summary: where, which, and the first line of why. */
 const failureLine = ({ file, name, error }) => `${file} › ${name}: ${String(error ?? "").split("\n")[0]}`;
 
+/** The required suite's runs, in order: every file but RUN_ALONE's together, then those alone. */
+export function requiredBatches(suite) {
+  const alone = suite.filter((file) => RUN_ALONE.includes(file));
+  const batches = [{ name: "required", title: "Windows required suite", files: unlisted(suite, alone), testArgs: [] }];
+  if (alone.length === 0) return batches;
+  const title = "Windows required suite, files that run alone";
+  return [...batches, { name: "required-alone", title, files: alone, testArgs: ["--test-concurrency=1"] }];
+}
+
 function runRequired(root, suite) {
-  const report = runTests(root, suite, { name: "required" });
-  publish("Windows required suite", report, [["Failing files", report.failingFiles]]);
-  return report.status === 0 ? 0 : 1;
+  let status = 0;
+  for (const { name, title, files, testArgs } of requiredBatches(suite)) {
+    const report = runTests(root, files, { name, testArgs });
+    publish(title, report, [["Failing files", report.failingFiles]]);
+    if (report.status !== 0) status = 1;
+  }
+  return status;
 }
 
 function runInformational(root, suite) {

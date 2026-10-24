@@ -1,6 +1,7 @@
 /** The plugins page's building blocks: its sections and pictures, a plugin's row, its on/off toggle and its account step. */
 import type { JSX, ReactNode } from "react";
 import { GENEX_PLUGIN_ID } from "../../../shared/genex.ts";
+import { intlLocale, t } from "../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import { installPluginUpdate } from "../../state/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -18,14 +19,17 @@ import {
   pluginIconUrl,
   RowAccountStep,
   rowAccountStep,
+  routerLine,
   shownDescription,
   shownName,
 } from "./labels.ts";
 import type { PluginsPage } from "./page.ts";
+import { CreditsShard } from "../../play/CreditsShard.tsx";
+import { signInToGenex } from "../../play/use-genex-sign-in.ts";
 
 const ACCOUNT_WORDS = PLUGINS_WORDS.account;
 /** Credits read with the reader's own digit grouping. */
-const NUMBER = new Intl.NumberFormat();
+const NUMBER = new Intl.NumberFormat(intlLocale());
 
 /** A skill's square glyph, in the interface's icon colour. */
 export function Mark({ kind = "plugins", large = false }: { kind?: IconName; large?: boolean }): JSX.Element {
@@ -77,7 +81,7 @@ export function PluginToggle({ plugin, page }: { plugin: PluginInfo; page: Plugi
     <Toggle
       on={plugin.enabled}
       disabled={page.busy}
-      ariaLabel={`Use ${shownName(plugin)}`}
+      ariaLabel={t("Use {name}", { name: shownName(plugin) })}
       onChange={(on) =>
         void page.act(async () => {
           page.setSelected(null);
@@ -123,6 +127,26 @@ function creditsWords(credits: CreditsView | null | undefined): string | null {
   return credits?.kind === CreditsKind.Count ? ACCOUNT_WORDS.credits(NUMBER.format(credits.count)) : null;
 }
 
+/** A row's Connect; Genex's account is the app's, so its row signs in as the plate and Settings do. */
+function ConnectButton({ plugin, page }: { plugin: PluginInfo; page: PluginsPage }): JSX.Element {
+  const genex = plugin.manifest.id === GENEX_PLUGIN_ID;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant={genex ? "default" : "secondary"}
+          disabled={page.busy}
+          aria-label={genex ? ACCOUNT_WORDS.signInLabel : t("Connect {name}", { name: shownName(plugin) })}
+          onClick={genex ? () => void signInToGenex() : () => void connectAccount(plugin, page)}
+        >
+          {genex ? ACCOUNT_WORDS.signIn : ACCOUNT_WORDS.connect}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{ACCOUNT_WORDS.connectHint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
  * A plugin's account where its row (or page) needs it: one Connect button, the browser step with
  * Cancel, Reconnect after a failure, or, once connected, the balance and no button at all.
@@ -144,24 +168,10 @@ export function AccountStep({
   const connect = () => void connectAccount(plugin, page);
   switch (step) {
     case RowAccountStep.Connect:
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={manifest.id === GENEX_PLUGIN_ID ? "default" : "secondary"}
-              disabled={page.busy}
-              aria-label={`Connect ${name}`}
-              onClick={connect}
-            >
-              {ACCOUNT_WORDS.connect}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{ACCOUNT_WORDS.connectHint}</TooltipContent>
-        </Tooltip>
-      );
+      return <ConnectButton plugin={plugin} page={page} />;
     case RowAccountStep.Reconnect:
       return (
-        <Button disabled={page.busy} aria-label={`Reconnect ${name}`} onClick={connect}>
+        <Button disabled={page.busy} aria-label={t("Reconnect {name}", { name })} onClick={connect}>
           {ACCOUNT_WORDS.reconnect}
         </Button>
       );
@@ -182,7 +192,12 @@ export function AccountStep({
       );
     default: {
       const balance = step === RowAccountStep.Connected ? creditsWords(credits) : null;
-      return balance ? <span className="extension-credits">{balance}</span> : null;
+      return balance ? (
+        <span className="extension-credits">
+          <CreditsShard size={13} />
+          {balance}
+        </span>
+      ) : null;
     }
   }
 }
@@ -191,8 +206,19 @@ export function AccountStep({
 export function ReinstallButton({ plugin, page }: { plugin: PluginInfo; page: PluginsPage }): JSX.Element {
   return (
     <Button disabled={page.busy} onClick={() => void page.act(() => window.studio.pluginInstall(plugin.manifest.id))}>
-      {plugin.removed ? "Reinstall" : "Allow…"}
+      {plugin.removed ? t("Reinstall") : t("Allow…")}
     </Button>
+  );
+}
+
+/** The line under a row's name: Genex's in two parts, the account's half quieter; any other plugin's as it wrote it. */
+function RowLine({ plugin, description }: { plugin: PluginInfo; description: string }): JSX.Element {
+  if (plugin.manifest.id !== GENEX_PLUGIN_ID) return <>{description}</>;
+  const { lead, tail } = routerLine(plugin);
+  return (
+    <>
+      {lead} <span className="extension-description-tail">{tail}</span>
+    </>
   );
 }
 
@@ -215,18 +241,20 @@ function PluginRow({
       <button
         type="button"
         className="extension-open"
-        aria-label={`View ${name}`}
+        aria-label={t("View {name}", { name })}
         onClick={() => page.openPlugin(manifest.id)}
       >
         <PluginPicture plugin={plugin} />
         <span className="extension-copy">
           <span className="extension-name">{name}</span>
           <span className="extension-description" title={description}>
-            {description}
+            <RowLine plugin={plugin} description={description} />
           </span>
           {plugin.error && <span className="text-xs text-red">{plugin.error}</span>}
           {plugin.pendingVersion && (
-            <span className="text-xs text-orange">Update {plugin.pendingVersion} waits for active sessions.</span>
+            <span className="text-xs text-orange">
+              {t("Update {version} waits for active sessions.", { version: plugin.pendingVersion })}
+            </span>
           )}
         </span>
       </button>
@@ -234,10 +262,10 @@ function PluginRow({
       {update && (
         <Button
           disabled={page.busy}
-          aria-label={`Update ${name}`}
+          aria-label={t("Update {name}", { name })}
           onClick={() => void page.act(() => installPluginUpdate(window.studio, update))}
         >
-          Update to {update.version}
+          {t("Update to {version}", { version: update.version })}
         </Button>
       )}
       {isOffList(plugin) ? (

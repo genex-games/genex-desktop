@@ -1,11 +1,14 @@
 /**
  * Where the web game view sits: over the stage's slot, or nowhere while something else owns the
  * stage or Live shows the Mac build itself (Native). The native web view paints above the page, so
- * a floating panel or a dialog over the slot takes it away; Live's own canvas (`NativeLiveCanvas`)
- * is part of the page, so overlays draw over it and nothing ever takes it away.
+ * a floating panel or a dialog over the slot takes it away and rests the game; a card (the Genex
+ * promo) takes it away too but lets the game draw on, out of sight at the slot's size, with its
+ * frames shown in the slot under the card. Live's own canvas (`NativeLiveCanvas`) is part of the
+ * page, so overlays draw over it and nothing ever takes it away.
  */
 import type { RefObject } from "react";
-import { useEffect } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { SECOND_MS } from "../../../shared/duration.ts";
 import { NATIVE_VIEW_ATTRIBUTE } from "../../native-view.ts";
 import { scheduleBounds } from "./bounds-schedule.ts";
 
@@ -18,8 +21,11 @@ export type Box = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | 
 const HIDDEN_BOUNDS: Bounds = { x: 0, y: 0, width: 0, height: 0 };
 
 /** The floating panels a native view would paint over; the developer colour tweaker is dragged like one. */
-const FLOATING_PANELS =
-  '[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-color-tweaker], [data-genex-promo]';
+const FLOATING_PANELS = '[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-color-tweaker]';
+/** The cards that float over the stage while its game draws on under them: the Genex promo. */
+const CARD_PANELS = "[data-genex-promo]";
+/** How often the slot under a card takes the game's newest frame, while the view draws out of sight. */
+const CARD_STILL_MS = 0.5 * SECOND_MS;
 const OVERLAY_MOTION_MS = 400;
 const OVERLAY_MOTION_EVENTS = ["animationstart", "animationend", "transitionrun", "transitionend"];
 const MODAL_DIALOG = '[data-slot="dialog-content"]';
@@ -30,8 +36,21 @@ export const Overlay = {
   Floating: "floating",
   /** A dialog: the web view gives way wherever it is. */
   Modal: "modal",
+  /** A card over the slot (the Genex promo): the web view gives way, and its game draws on out of sight. */
+  Card: "card",
 } as const;
 export type Overlay = (typeof Overlay)[keyof typeof Overlay];
+
+/** How the slot's web view stands under what covers it. */
+export const ViewCover = {
+  /** Nothing covers the slot: the game paints in it. */
+  None: "none",
+  /** Only cards cover it: the game draws on at the slot's size, out of the window, its frames held in the slot. */
+  Card: "card",
+  /** A dialog, a popover or a floating cover: the view leaves and the game rests under the frame it left. */
+  Rest: "rest",
+} as const;
+export type ViewCover = (typeof ViewCover)[keyof typeof ViewCover];
 
 /** One overlay and where it is. */
 export interface OverlayBox {
@@ -47,10 +66,109 @@ function overlaps(panel: Box, rect: Box): boolean {
   );
 }
 
-/** Whether an overlay takes the web view away: any dialog, or a floating panel over the slot. */
+/** Whether an overlay takes the web view away: any dialog, or a floating panel or a card over the slot. */
 function takesView(overlay: OverlayBox, slot: Box): boolean {
   if (overlay.kind === Overlay.Modal) return true;
-  return overlay.kind === Overlay.Floating && overlaps(overlay.rect, slot);
+  return overlaps(overlay.rect, slot);
+}
+
+/** Marks the slot while it holds the game's cover frame. */
+export const COVER_STILL_ATTRIBUTE = "data-live-still";
+
+/**
+ * The game as it looked when a dialog or popover covered it, painted on the slot the native view
+ * left (null clears it). Without it the slot shows the stage's empty background: a black game.
+ */
+function holdStill(element: HTMLElement, still: string | null): void {
+  element.style.backgroundImage = still ? `url("${still}")` : "";
+  element.style.backgroundSize = still ? "100% 100%" : "";
+  element.toggleAttribute(COVER_STILL_ATTRIBUTE, Boolean(still));
+}
+
+type Viewport = { width: number; height: number };
+
+/**
+ * Sends the slot's rectangle to main. When something comes to cover the game, the game is
+ * photographed first and hidden after, so the dialog opens over the frame instead of a black slot.
+ * Each cover has a number: a frame or a hide that arrives after its cover ended is dropped.
+ */
+/** Resolves after `count` painted frames: what the slot shows has reached the screen. */
+function afterFrames(count: number): Promise<void> {
+  return new Promise((resolve) => {
+    const step = (left: number): void => {
+      if (left <= 0) resolve();
+      else requestAnimationFrame(() => step(left - 1));
+    };
+    step(count);
+  });
+}
+
+/** The frame decoded, so painting it costs nothing when the view leaves; a frame that cannot decode is none. */
+async function decodedStill(still: string | null): Promise<string | null> {
+  if (!still) return null;
+  const image = new Image();
+  image.src = still;
+  return image.decode().then(
+    () => still,
+    () => null,
+  );
+}
+
+function boundsSender(element: HTMLElement, watching: boolean) {
+  let shown: ViewCover = ViewCover.None;
+  let cover = 0;
+  let refresh = 0;
+  const send = (bounds: Bounds, viewport: Viewport): Promise<unknown> =>
+    window.studio.previewBounds({ ...bounds, watching, viewport }).catch(() => false);
+  // Covering: the frame is decoded and painted under the view before the view leaves, so no
+  // frame of the empty slot ever shows. Uncovering: the view comes back over the frame first,
+  // and the frame goes two painted frames later. Either way the stage never blinks black.
+  const coverWith = async (mine: number, bounds: Bounds, viewport: Viewport): Promise<void> => {
+    const still = await decodedStill(await window.studio.previewCoverStill().catch(() => null));
+    if (mine !== cover) return;
+    if (still) {
+      holdStill(element, still);
+      await afterFrames(2);
+      if (mine !== cover) return;
+    }
+    await send(bounds, viewport);
+  };
+  const uncover = async (mine: number, bounds: Bounds, viewport: Viewport): Promise<void> => {
+    await send(bounds, viewport);
+    await afterFrames(2);
+    if (mine === cover) holdStill(element, null);
+  };
+  // Under a card the game draws on out of sight: the slot takes its newest frame now and then.
+  const refreshStill = async (mine: number): Promise<void> => {
+    const still = await decodedStill(await window.studio.previewCoverStill().catch(() => null));
+    if (still && mine === cover && shown === ViewCover.Card) holdStill(element, still);
+  };
+  const stopRefresh = (): void => {
+    window.clearInterval(refresh);
+    refresh = 0;
+  };
+  return {
+    send(bounds: Bounds, now: ViewCover, viewport: Viewport): void {
+      const was = shown;
+      shown = now;
+      stopRefresh();
+      if (now === ViewCover.None) {
+        if (was === ViewCover.None) void send(bounds, viewport);
+        else void uncover(++cover, bounds, viewport);
+        return;
+      }
+      if (was === ViewCover.None) void coverWith(++cover, bounds, viewport);
+      else void send(bounds, viewport);
+      const mine = cover;
+      if (now === ViewCover.Card) refresh = window.setInterval(() => void refreshStill(mine), CARD_STILL_MS);
+    },
+    /** The slot stops tracking: any frame on its way is dropped and the slot is cleared. */
+    end(): void {
+      cover++;
+      stopRefresh();
+      holdStill(element, null);
+    },
+  };
 }
 
 /** Why the native view gives the rectangle back to the DOM: anything on the stage that is not the running game. */
@@ -66,6 +184,8 @@ export interface StageCover {
   toolbarOpen: boolean;
   /** Live shows the Unreal card: the game plays in the Unreal editor, so no web page belongs here. */
   cardOnStage: boolean;
+  /** Live shows a plugin's card: its game plays in the plugin's engine, so no web page belongs here. */
+  pluginCardOnStage: boolean;
   /** Live shows the latest pictures of a folder with no page: no web page belongs here either. */
   stillsOnStage: boolean;
   /** The person stopped the game: its view holds a blank page, and the stage says it is stopped. */
@@ -76,30 +196,75 @@ export interface StageCover {
   native: boolean;
 }
 
-/** Whether the stage shows the running game at all. */
-const showsGame = (cover: StageCover): boolean =>
+/** Whether the studio window is shown: not hidden or minimized (a window merely covered by others still counts as shown). */
+function useWindowShown(): boolean {
+  return useSyncExternalStore(
+    (changed) => {
+      document.addEventListener("visibilitychange", changed);
+      return () => document.removeEventListener("visibilitychange", changed);
+    },
+    () => document.visibilityState !== "hidden",
+  );
+}
+
+/**
+ * Whether the stage shows the running game at all. The compact sidebar and the stage toolbar's
+ * panels only float over it: they cover the game like a popover does (see `overlaid`), so the
+ * game is photographed before it leaves rather than leaving a black stage behind them.
+ */
+const showsGame = (cover: StageCover, windowShown: boolean): boolean =>
+  windowShown &&
   cover.visible &&
   Boolean(cover.project) &&
   ![
-    cover.sidebarOverlay,
     cover.buildsOpen,
     cover.assetsOpen,
     cover.fileOpen,
     cover.showEmpty,
     cover.liveLoading,
-    cover.toolbarOpen,
     cover.cardOnStage,
+    cover.pluginCardOnStage,
     cover.stillsOnStage,
     cover.stopped,
   ].some(Boolean);
 
 /**
- * Where the web game view goes for a slot at `slot` with `overlays` near it: the slot, or nowhere
- * while the stage shows no game, Live shows the Mac build, or an overlay takes the view away.
+ * Where the web game view goes for a slot at `slot` with `overlays` near it: the slot; out of the
+ * window at the slot's size while only a card covers it, so the game draws on; or nowhere while the
+ * stage shows no game (or the window is out of sight), Live shows the Mac build, or anything else
+ * covers the slot.
  */
-export function webViewBounds(cover: StageCover, slot: Box, overlays: readonly OverlayBox[]): Bounds {
-  if (!showsGame(cover) || cover.native) return HIDDEN_BOUNDS;
-  if (overlays.some((overlay) => takesView(overlay, slot))) return HIDDEN_BOUNDS;
+export function webViewBounds(
+  cover: StageCover,
+  slot: Box,
+  overlays: readonly OverlayBox[],
+  windowShown = true,
+): Bounds {
+  if (!showsGame(cover, windowShown) || cover.native) return HIDDEN_BOUNDS;
+  return coveredBounds(slot, webViewCover(slot, overlays, cover.toolbarOpen || cover.sidebarOverlay));
+}
+
+/**
+ * How what covers a slot the game could otherwise show leaves the view: nothing over it; only
+ * cards, under which the game draws on; or an overlay or a floating cover (the compact sidebar, a
+ * toolbar panel) that rests it. A covered game is photographed before the view leaves (`boundsSender`).
+ */
+export function webViewCover(slot: Box, overlays: readonly OverlayBox[], floatingCover: boolean): ViewCover {
+  const taking = overlays.filter((overlay) => takesView(overlay, slot));
+  if (floatingCover || taking.some((overlay) => overlay.kind !== Overlay.Card)) return ViewCover.Rest;
+  return taking.length > 0 ? ViewCover.Card : ViewCover.None;
+}
+
+/** The view's rectangle for a slot it stands in as `cover` says. */
+function coveredBounds(slot: Box, cover: ViewCover): Bounds {
+  if (cover === ViewCover.Rest) return HIDDEN_BOUNDS;
+  const bounds = slotBounds(slot);
+  // Main counts a view with an area as on the stage, so its page stays visible and draws on.
+  return cover === ViewCover.Card ? { ...bounds, x: -bounds.width, y: -bounds.height } : bounds;
+}
+
+/** The slot's own rectangle, as main places the view. */
+function slotBounds(slot: Box): Bounds {
   return { x: slot.left, y: slot.top, width: Math.max(0, slot.width), height: Math.max(0, slot.height) };
 }
 
@@ -113,12 +278,13 @@ export function nativeCanvasShown(cover: Pick<StageCover, "native" | "project" |
   return cover.native && Boolean(cover.project) && !cover.stopped;
 }
 
+/** The overlays of `kind` the page holds under `selector`, each with where it is. */
+const overlaysOf = (selector: string, kind: Overlay): OverlayBox[] =>
+  [...document.querySelectorAll(selector)].map((panel) => ({ kind, rect: panel.getBoundingClientRect() }));
+
 /** The overlays on the page right now, each with where it is. */
 function overlaysNow(): OverlayBox[] {
-  const floating = [...document.querySelectorAll(FLOATING_PANELS)].map((panel) => ({
-    kind: Overlay.Floating,
-    rect: panel.getBoundingClientRect(),
-  }));
+  const floating = [...overlaysOf(FLOATING_PANELS, Overlay.Floating), ...overlaysOf(CARD_PANELS, Overlay.Card)];
   const modal = document.querySelector(MODAL_DIALOG);
   return modal ? [...floating, { kind: Overlay.Modal, rect: modal.getBoundingClientRect() }] : floating;
 }
@@ -128,6 +294,14 @@ function overlaysNow(): OverlayBox[] {
 // paint over it).
 /** Report the slot's rectangle to main while the game shows, and zero it the moment anything covers it. */
 export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cover: StageCover): void {
+  // The game view never throttles itself (agents watch it in the background), so a window out of
+  // sight takes it off the stage like any cover: its frames pause and it comes back as it was.
+  const windowShown = useWindowShown();
+  // The floating covers change without re-placing the view: report() reads them when they move.
+  const overlaid = useRef(false);
+  overlaid.current = cover.toolbarOpen || cover.sidebarOverlay;
+  const reportNow = useRef<(() => void) | null>(null);
+  useEffect(() => reportNow.current?.(), [cover.toolbarOpen, cover.sidebarOverlay]);
   const {
     project,
     buildsOpen,
@@ -136,9 +310,8 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     showEmpty,
     liveLoading,
     visible,
-    sidebarOverlay,
-    toolbarOpen,
     cardOnStage,
+    pluginCardOnStage,
     stillsOnStage,
     watching,
     stopped,
@@ -148,28 +321,34 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
   useEffect(() => {
     const element = slot.current;
     if (!element) return;
-    if (!showsGame(cover) || native) {
+    if (!showsGame(cover, windowShown) || native) {
       element.removeAttribute(NATIVE_VIEW_ATTRIBUTE);
+      holdStill(element, null);
       void window.studio.previewBounds({ ...HIDDEN_BOUNDS, watching });
       return;
     }
     let lastBounds = "";
+    const sender = boundsSender(element, watching);
     const report = (): void => {
       // A native view paints above DOM overlays. Modal dialogs must take it away; an anchored panel
-      // in the chat must not blank an unrelated game surface.
-      const bounds = webViewBounds(cover, element.getBoundingClientRect(), overlaysNow());
+      // in the chat must not blank an unrelated game surface; the floating covers take it too.
+      const rect = element.getBoundingClientRect();
+      const covered = webViewCover(rect, overlaysNow(), overlaid.current);
+      const bounds = coveredBounds(rect, covered);
       // What floats beside the stage reads where the game paints from here (native-view.ts).
-      element.toggleAttribute(NATIVE_VIEW_ATTRIBUTE, bounds.width > 0 && bounds.height > 0);
+      const paints = covered === ViewCover.None && bounds.width > 0 && bounds.height > 0;
+      element.toggleAttribute(NATIVE_VIEW_ATTRIBUTE, paints);
       // The window size it was measured in lets main carry the slot through a resize in progress.
       const viewport = { width: window.innerWidth, height: window.innerHeight };
       const key = JSON.stringify([bounds, viewport]);
       if (key !== lastBounds) {
         lastBounds = key;
-        void window.studio.previewBounds({ ...bounds, watching, viewport });
+        sender.send(bounds, covered, viewport);
       }
       // Overlay style mutations report positioning and exit changes without an idle frame loop.
     };
     report();
+    reportNow.current = report;
     const layout = scheduleBounds(report, window);
     const schedule = layout.signal;
     const stopOverlays = observeOverlays(report);
@@ -181,6 +360,8 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
       stopOverlays();
       layout.stop();
       window.removeEventListener("resize", schedule);
+      reportNow.current = null;
+      sender.end();
       element.removeAttribute(NATIVE_VIEW_ATTRIBUTE);
       void window.studio.previewBounds({ ...HIDDEN_BOUNDS, watching: false });
     };
@@ -192,19 +373,19 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     showEmpty,
     liveLoading,
     visible,
-    sidebarOverlay,
-    toolbarOpen,
     cardOnStage,
+    pluginCardOnStage,
     stillsOnStage,
     watching,
     stopped,
     native,
+    windowShown,
   ]);
 }
 
 /** Track only overlay movement, with no animation frame left running after it settles. */
 function observeOverlays(report: () => void): () => void {
-  const selector = `${FLOATING_PANELS}, ${MODAL_DIALOG}`;
+  const selector = `${FLOATING_PANELS}, ${CARD_PANELS}, ${MODAL_DIALOG}`;
   const relevant = (node: Node): boolean =>
     node instanceof Element && (Boolean(node.closest(selector)) || Boolean(node.querySelector(selector)));
   let frame = 0;

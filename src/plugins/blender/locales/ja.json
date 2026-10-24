@@ -1,0 +1,17 @@
+{
+  "Blender": "Blender",
+  "Cancel download": "ダウンロードをキャンセル",
+  "Checking runtime…": "Blenderを確認しています…",
+  "Download Blender 5.2.1": "Blender 5.2.1をダウンロード",
+  "Download Blender 5.2.1 (350 to 400 MB) into Genex's Local Blender storage, so agents can model with it. Genex verifies its digest, and your own Blender stays as it is.": "Blender 5.2.1（350〜400 MB）をGenexのLocal Blender用ストレージにダウンロードして、エージェントがモデリングに使えるようにします。Genexがチェックサムを確認します。あなたのBlenderはそのまま残ります。",
+  "Download pinned Blender": "Genex用Blenderをダウンロード",
+  "Download the pinned Blender 5.2.1 runtime (350 to 400 MB) into this plugin’s storage. Studio verifies its digest. Existing external Blender installations stay unchanged.": "固定バージョンのBlender 5.2.1（350〜400 MB）をこのプラグインのストレージにダウンロードします。Studioがチェックサムを確認します。すでにあるBlenderのインストールはそのままです。",
+  "Download: {phase} · {done} / {total} MiB": "ダウンロード：{phase} · {done} / {total} MiB",
+  "Download: {phase} · {done} / {total} MiB · {error}": "ダウンロード：{phase} · {done} / {total} MiB · {error}",
+  "Local Blender": "Local Blender",
+  "Model 3D assets with Blender on this computer. No account or credits.": "このコンピューターのBlenderで3Dアセットをモデリングします。アカウントもクレジットも不要です。",
+  "Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.": "このMacでアセットをモデリングします。Genexのアカウントやクレジットは使いません。このプラグインを有効にすると、このチャットの次の返信からツールが使えるようになります。",
+  "Recheck": "再確認",
+  "Runtime and jobs": "ランタイムとジョブ",
+  "The Blender program to use (blender.exe on Windows), when Genex doesn't find yours": "GenexがあなたのBlenderを見つけられないときに使うBlenderのプログラム（Windowsではblender.exe）"
+}

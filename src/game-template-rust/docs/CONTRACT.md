@@ -143,7 +143,7 @@ data, never prose to match: read the code, then read the run's `problem`.
 | `engine-unrecorded` | `genex.toml`'s `[engine]` row and the person's eject disagree (a row the person never made, or one removed or changed): nothing was built. Put the row back as the eject wrote it. |
 | `ready-timeout` | The game did not announce itself within the start deadline: 20 s from its start or from the facade's last `starting` event (each finished boot step), at most 60 s in all. |
 | `unresponsive` | The game stopped answering verbs. A verb asked while the game starts waits for its `ready`. |
-| `memory-cap` | The game passed its memory cap. |
+| `memory-cap` | The game's memory passed this computer's cap (8 GiB, a quarter of a larger computer's memory, at most half of a smaller one's) and the host stopped it; the failure names the footprint and the cap. Past 4 GiB a desktop run keeps going: the look warns, with the peak, only when the game also ships to the web or a phone. |
 | `unknown-op` | The game has no such verb. |
 | `unavailable` | The game knows the verb but this build cannot serve it yet (`renderSettings` before the renderer's settings, `reloadAssets` before its runtime lands). |
 | `busy` | The game is still applying an earlier `reloadAssets`: the studio asks again once it settles. |

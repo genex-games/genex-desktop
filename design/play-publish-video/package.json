@@ -1,0 +1,22 @@
+{
+  "name": "play-publish-video",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Looping Remotion film of publishing a game to Play, for the Play sidebar card",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "sh scripts/render.sh",
+    "still": "remotion still PlayPublish"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.529",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.529"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

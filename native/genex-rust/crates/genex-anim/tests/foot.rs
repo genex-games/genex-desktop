@@ -12,7 +12,7 @@
 mod support;
 
 use genex_anim::character::GroundHit;
-use genex_anim::foot::{Foot, FootPlacer, FootPlan, FootRig, FootSettings, MAX_FOOT_TILT, PLANT_JOINTS_MAX, apply_plan, height_ground};
+use genex_anim::foot::{ANKLE_CONTACT_BAND, Foot, FootPlacer, FootPlan, FootRig, FootSettings, MAX_FOOT_TILT, PLANT_JOINTS_MAX, apply_plan, height_ground};
 use genex_anim::humanoid::{HumanoidBone, HumanoidMap};
 use genex_anim::import::{Rig, import_rig};
 use genex_anim::math::Trs;
@@ -312,6 +312,26 @@ fn planting_samples_only_the_leg_chains_at_most_12_joints() {
     let mut placer = FootPlacer::new(FootSettings::default());
     placer.plant(&foot_rig(rig.skeleton()), rig.skeleton().rest_pose(), Mat4::IDENTITY, [false, false], TICK, |_, _| None);
     assert_eq!(placer.sampled(), 8);
+}
+
+/// Release R-22 (new behaviour): a game that marks no foot contacts gets them from height. At rest
+/// both feet are down; a thigh swung forward lifts its foot past the 3 cm band and only that foot
+/// is up; a pose shorter than the skeleton has neither foot down.
+#[test]
+fn contacts_by_height_say_which_feet_stand_within_the_band() {
+    let rig = ual_rig();
+    let skeleton = rig.skeleton();
+    let feet = foot_rig(skeleton);
+    let rest = skeleton.rest_pose().to_vec();
+    assert_eq!(feet.contacts(&model_of(skeleton, &rest)), [true, true]);
+    let mut pose = rest.clone();
+    let thigh = joint(skeleton, HumanoidBone::LeftUpperLeg);
+    pose[thigh].rotation = Quat::from_rotation_x(-0.5) * pose[thigh].rotation;
+    let model = model_of(skeleton, &pose);
+    let lifted = position(&model, joint(skeleton, HumanoidBone::LeftFoot)).y - feet.ankle_height(Foot::Left);
+    assert!(lifted > ANKLE_CONTACT_BAND, "the swung foot rose {lifted} m");
+    assert_eq!(feet.contacts(&model), [false, true]);
+    assert_eq!(feet.contacts(&model[..2]), [false, false]);
 }
 
 #[test]

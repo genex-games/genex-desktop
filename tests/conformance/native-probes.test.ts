@@ -47,6 +47,7 @@ import { raylibLanes } from "../helpers/game-lanes.ts";
 import { ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { factsOfEngine } from "../../src/shared/project-facts.ts";
+import { M2, macBinary } from "../fixtures/rust-bundles/binaries.ts";
 
 const OPENGL = "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL";
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
@@ -250,6 +251,31 @@ describe("native.build's admission facts", () => {
     assert.equal(web.admission, null);
   });
 
+  it("a Rust · wgpu Mac build is judged by the Rust policy, never by raylib's ANGLE rule", async () => {
+    // A Rust game draws through Metal and links no ANGLE: the harness's native parity, fork and
+    // health checks refused every Rust Mac build `missing-angle-import` before this row.
+    const out = path.join(await realpath(await tmpDir("native-out-rust-")), "out");
+    await mkdir(out, { recursive: true });
+    for (const name of Object.values(NATIVE_MAC_EXECUTABLES)) {
+      await writeFile(path.join(out, name), macBinary(), { mode: 0o755 });
+    }
+    const before = await readdir(out);
+    const rust = await admissionFacts(out, GameStack.RustWgpu, null);
+    assert.equal(rust.refusal, null, `admitted: ${rust.detail}`);
+    assert.deepEqual(rust.imports, [...M2.mac.dylibs]);
+    assert.equal(rust.angleManifestSha256, null, "a Rust build names no store ANGLE");
+    const raylib = await admissionFacts(out, GameStack.RaylibCpp, null);
+    assert.equal(raylib.refusal, NativeRefusal.MissingAngleImport, "the same image under raylib's rule");
+    const opengl = path.join(await realpath(await tmpDir("native-out-rust-gl-")), "out");
+    await mkdir(opengl, { recursive: true });
+    const withGl = macBinary({ dylibs: [...M2.mac.dylibs, OPENGL] });
+    await writeFile(path.join(opengl, NATIVE_MAC_EXECUTABLES[NativeRunMode.Headless]), withGl, { mode: 0o755 });
+    const refused = await admissionFacts(opengl, GameStack.RustWgpu, null);
+    assert.equal(refused.refusal, NativeRefusal.LinksOpenGl, "the Rust policy still refuses OpenGL");
+    assert.ok(refused.imports.includes(OPENGL), "the import that failed it is in the facts");
+    assert.deepEqual(await readdir(out), before, "nothing was written beside the build");
+  });
+
   it("hostile executables answer a refusal with whatever facts could be read, and nothing runs", async () => {
     const rows: Array<{ label: string; bytes: Buffer | null; refusal: string }> = [
       { label: "missing", bytes: null, refusal: NativeRefusal.NotAnExecutable },
@@ -271,7 +297,7 @@ describe("native.build's admission facts", () => {
       const out = path.join(await realpath(await tmpDir("native-out-hostile-")), "out");
       await mkdir(out, { recursive: true });
       if (bytes) await writeFile(path.join(out, NATIVE_MAC_EXECUTABLES[NativeRunMode.Headless]), bytes);
-      const facts = await admissionFacts(out, null);
+      const facts = await admissionFacts(out, GameStack.RaylibCpp, null);
       assert.equal(facts.refusal, refusal, label);
       assert.equal(facts.angleManifestSha256, null, label);
       assert.deepEqual(await readdir(out), bytes ? [NATIVE_MAC_EXECUTABLES[NativeRunMode.Headless]] : [], label);
@@ -398,7 +424,7 @@ describe("the probes against a real headless run of the starter", {
         recordLock: false,
       });
       assert.ok(built.ok && built.output, JSON.stringify(built.problem));
-      const facts = await admissionFacts(built.output, null);
+      const facts = await admissionFacts(built.output, GameStack.RaylibCpp, null);
       evidence.push(`admission ${JSON.stringify(facts)}`);
       assert.equal(facts.refusal, null, JSON.stringify(facts));
       assert.ok(MAC_ANGLE_IMPORTS.every((name) => facts.imports.includes(name)));

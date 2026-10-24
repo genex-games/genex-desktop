@@ -70,6 +70,11 @@ target pair, so a Rust pair never inherits a raylib game's. Phone builds are bui
 only: their rows are unmeasured, so gameplay is judged on the Mac or web build of the same code,
 and no judge starts a Simulator, emulator or phone.
 
+A native look also reads its run's memory (`native.status`). Over the 4 GiB budget is normal on a
+desktop: the look warns, never fails, and only for a game that also ships to the web or a phone,
+naming the measured peak. A run the host killed past its memory cap (`memory-cap`) fails, naming
+the footprint and the cap.
+
 These are test cases, not human-labelled quality results. Begin without model calls by checking
 capture reproducibility, malformed responses, budget limits and blind-label handling through the
 existing conformance and harness suites. A real-model campaign requires its own authorized
@@ -79,6 +84,29 @@ the round waits, so a lapsed account leaves no verdicts, never ties or "no" answ
 
 Captures, judge verdicts and human labels stay in ignored evidence directories; only metrics-only
 baselines and per-release ledger exports under `evals/` are committed ([evals](evals.md)).
+
+## Engine plugins' judges
+
+An engine plugin may declare its own judges ([plugins](plugins.md#judges)): a brief, a number of
+players and a probe. They follow the blind rule of every judge: the brief states what to check in
+the player's words and never mentions code, and the probe answers measurements and pictures of the
+running play, never source. The host adds the brief to the rubric, so evaluate a plugin judge as a
+judge plus its brief: hold the brief file and the probe tool's version fixed in each comparison,
+record the judge id with the model and prompt version, and compare against the same game judged
+with no plugin judge. A probe's pictures are evidence the judge saw, not a verdict; keep them with
+the captures.
+
+Roblox Studio's plugin declares three, each with a brief in `src/plugins/roblox/judges/` and a probe
+in `src/plugins/roblox/probes.ts`:
+
+- **Multiplayer** (3 test players, `players-state`): a picture per player, and each client's view of
+  every player against the server's.
+- **Cheater** (1 player, `cheat-remotes`): hostile values sent to every remote from the client, the
+  server's leaderstats and attributes read before and after each; skipped when live saved data is
+  reachable.
+- **Phone** (1 player, `phone-check`): a phone and a tablet, upright and sideways, through Studio's
+  Device Simulator, a picture of each, interface overlap, off-screen and safe-area findings, and the
+  place's memory against `PHONE_MEMORY_BUDGET_MB`.
 
 ## Human review and metrics
 

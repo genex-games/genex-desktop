@@ -24,6 +24,11 @@ import unreal
 
 KMH_PER_CM_PER_S = 0.036
 MIN_HOLD_SECONDS = 0.05
+# The mouse's own keys: its movement (2D, in pixels) and its wheel (notches, up positive).
+MOUSE_MOVE = 'Mouse2D'
+MOUSE_WHEEL = 'MouseWheelAxis'
+# A mouse movement lasts one frame of the game; its wall-clock cap is a wait of almost no game time.
+ONE_FRAME_S = 1e-6
 # A game-time wait of s seconds ends after WALL_FACTOR * s + WALL_GRACE_S wall seconds at most.
 WALL_FACTOR = 4.0
 WALL_GRACE_S = 10.0
@@ -269,6 +274,60 @@ def hold(name: str, x: float, y: float, seconds: float) -> str:
     held_input = resolve(name)
     press(held_input, x, y, held_seconds)
     return json.dumps({'held': held_input.label, 'seconds': held_seconds})
+
+
+def _try_run(command: str) -> None:
+    """Runs a console command in the play session, when there still is one."""
+    try:
+        _run(command)
+    except RuntimeError:  # the play session already ended and took its input with it
+        pass
+
+
+def _one_frame(key: str, value: str, still: str) -> None:
+    """Forces `key` to `value` for one frame of the game, as one frame of a mouse is. Unreal lets go
+    of a forced analog key by injecting its opposite (the mouse moved straight back), so the key is
+    forced to `still` for the next frame and let go after that, when its opposite is nothing."""
+    _run(f'Input.+key {key} {value}')
+    stage = {'frames': 0, 'last': game_seconds(), 'until_wall': wall_clock() + wall_cap(ONE_FRAME_S)}
+
+    def let_go() -> None:
+        _try_run(f'Input.-key {key}')
+
+    def step(game_now: float, wall_now: float) -> bool:
+        if wall_now >= stage['until_wall']:
+            let_go()
+            return False
+        if game_now <= stage['last']:
+            return True
+        stage['last'] = game_now
+        stage['frames'] += 1
+        if stage['frames'] == 1:
+            _try_run(f'Input.+key {key} {still}')
+            return True
+        let_go()
+        return False
+
+    watch(step, let_go)
+
+
+def move_mouse(dx: float, dy: float, wheel: float) -> dict:
+    """Moves the player's mouse by (dx, dy) pixels, down on screen being +dy, and turns its wheel by
+    `wheel` notches, up being +, for one frame of the game: what a mouse does in that frame."""
+    game_world()
+    if dx or dy:
+        # Unreal's mouse Y grows upward, a screen's downward.
+        _one_frame(MOUSE_MOVE, f'X={dx:g} Y={-dy:g}', 'X=0 Y=0')
+    if wheel:
+        _one_frame(MOUSE_WHEEL, f'{wheel:g}', '0')
+    return {'moved': [dx, dy], 'wheel': wheel}
+
+
+def set_paused(paused: bool) -> dict:
+    """Pauses or resumes the play session's game, as its own pause does; what it is now."""
+    world = game_world()
+    unreal.GameplayStatics.set_game_paused(world, bool(paused))
+    return {'paused': bool(unreal.GameplayStatics.is_game_paused(world))}
 
 
 def release_all() -> int:

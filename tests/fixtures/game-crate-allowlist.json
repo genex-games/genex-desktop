@@ -1,0 +1,4 @@
+{
+  "about": "The crates a generated game may name in genex.toml's [crates] without a person's approval, at a version requirement: one table both sides hold, the host's GAME_CRATE_ALLOWLIST (src/substrate/genex-toml.ts, tests/conformance/genex-toml.test.ts) and genex's (native/genex-rust/crates/genex/src/manifest.rs, crates/genex/tests/manifest.rs). Every name is also in the vendor allowlist. Change both sides with this file.",
+  "crates": ["fastrand", "noise", "pathfinding"]
+}

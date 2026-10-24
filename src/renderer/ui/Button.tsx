@@ -47,6 +47,10 @@ const buttonVariants = cva(
         "accent-tint": accentChipClass(),
         // The prompt bar's model pill: the quiet fill of an action that is available but not due.
         pill: "pill-quiet shadow-none",
+        // Play's blue, as the profile's people buttons wear it: the tint with its edge, and the
+        // filled blue once the action is due. Publish on the stage strip.
+        "play-tint": "play-tint",
+        "play-fill": "play-fill",
       },
       size: {
         // `sm` is the DEFAULT size of this product (AG-893). It reads tighter

@@ -428,3 +428,75 @@ fn state_is_unchanged_without_game_saves_and_reports_volatile_saves_with_it() {
     assert_eq!(saves["slots"][0]["state"], json!("ready"));
     assert_eq!(saves["slots"][0]["tick"], json!(SAVE_TICK));
 }
+
+/// The jump game for the action-state section (R-25): `KeyJ` is the `jump` action, held from
+/// [`HOLD_FROM`] to [`HOLD_TO`] across the save; the world sums what the actions read each tick.
+const HOLD_FROM: u64 = 10;
+const HOLD_TO: u64 = 60;
+const HOLD_SAVE_TICK: u64 = 30;
+const HOLD_END: u64 = 80;
+const JUMP: genex::actions::ActionId = genex::actions::ActionId::new("jump");
+
+#[derive(Default, Serialize, Deserialize)]
+struct Hold {
+    held: u64,
+    presses: u32,
+}
+
+fn hold_game() -> Game<Hold> {
+    use genex::actions::{ActionMap, Context, ContextId};
+    let mut game = Game::new(Hold::default()).title("Hold").world_size(400, 300);
+    game.saves(SaveConfig::schema(1));
+    game.save_world();
+    game.input(ActionMap::new().context(Context::new(ContextId::new("play"), 0).button(JUMP, &[Key::KeyJ.into()])));
+    game.on_update(|sim, ctx| {
+        sim.world.held += u64::from(ctx.actions.held_ticks(JUMP));
+        sim.world.presses += u32::from(ctx.actions.pressed(JUMP));
+        if ctx.tick + 1 == HOLD_SAVE_TICK {
+            ctx.slots().save(SLOT, "held").expect("the save is queued");
+        }
+        if ctx.keys.pressed(Key::KeyL) {
+            ctx.slots().load(SLOT).expect("the load is queued");
+        }
+    });
+    game.probe("hold", |sim| json!({ "held": sim.world.held, "presses": sim.world.presses }));
+    game
+}
+
+/// Run to `to`, holding `KeyJ` from [`HOLD_FROM`] to [`HOLD_TO`].
+fn hold_script(rt: &mut Runtime<Hold>, to: u64) {
+    while rt.tick() < to {
+        let tick = rt.tick();
+        if tick == HOLD_FROM {
+            rt.inject(Input::key_down(Key::KeyJ));
+        }
+        if tick == HOLD_TO {
+            rt.inject(Input::key_up(Key::KeyJ));
+        }
+        rt.step(FIXED_STEP_MS);
+    }
+}
+
+/// R-25: the evaluated actions were not part of a slot, so a load mid-hold kept the actions of the
+/// tick it was asked on (a released key) and the replay read a fresh press. The slot's
+/// `genex.input` section restores them: the replay's checksum equals the uninterrupted run's.
+#[test]
+fn a_load_mid_hold_restores_the_actions_and_replays_equal() {
+    let mut rt = Runtime::new(hold_game()).expect("installs");
+    rt.use_studio_saves(&state_dir("hold"));
+    rt.seed(1);
+    hold_script(&mut rt, HOLD_END);
+    let uninterrupted = rt.checksum();
+    let probe = rt.probes()["hold"].clone();
+    assert_eq!(probe["presses"], json!(1), "one press in the uninterrupted run: {probe}");
+    rt.inject(Input::key_tap(Key::KeyL));
+    rt.step(FIXED_STEP_MS);
+    // The key is still down at the slot's tick, as it was when the slot was saved.
+    rt.inject(Input::key_down(Key::KeyJ));
+    rt.step(FIXED_STEP_MS);
+    assert_eq!(rt.tick(), HOLD_SAVE_TICK + 1);
+    hold_script(&mut rt, HOLD_END);
+    assert_eq!(rt.probes()["hold"], probe, "the replay reads the same actions");
+    assert_eq!(rt.checksum(), uninterrupted);
+    assert_eq!(rt.state()["volatile"]["saves"]["lastLoad"]["checksumMatch"], json!(true));
+}

@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { findLeaks, isolationInputs } from "../../scripts/evals/check-isolation.ts";
 import { caseById, readCases } from "../../scripts/evals/cases.ts";
 import { CaseMode } from "../../scripts/evals/vocabulary.ts";
+import { loadRecipes, recipesForChecks } from "../../src/harness-seed/loop/library.ts";
 import { PageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import {
   NativeEnhancedFeature,
@@ -118,6 +119,7 @@ const FACADE = JSON.parse(
   terrain: { calls: string[]; refusals: string[] };
   particles: { calls: string[]; refusals: string[] };
   audio: { calls: string[]; refusals: string[] };
+  animation: { calls: string[]; refusals: string[] };
   input: { calls: string[]; refusals: string[] };
   lod: { calls: string[]; refusals: string[] };
   fog: { calls: string[] };
@@ -131,10 +133,12 @@ const FACADE = JSON.parse(
 
 /** Every call group the fixture pins (a top-level entry with a `calls` list), by its key. */
 function pinnedCallGroups(): Array<[string, string[]]> {
-  return Object.entries(FACADE as Record<string, unknown>).flatMap(([key, entry]) => {
+  const groups = Object.entries(FACADE as Record<string, unknown>).flatMap(([key, entry]) => {
     const calls = (entry as { calls?: unknown } | null)?.calls;
     return Array.isArray(calls) ? [[key, calls as string[]] as [string, string[]]] : [];
   });
+  // The draw-id calls are a flat list, pinned all the same: the Physics page draws every body under one.
+  return [...groups, ["temporalCalls", FACADE.temporalCalls]];
 }
 
 /**
@@ -183,6 +187,7 @@ const GAME_SYSTEMS_PAGES = [
   "saves",
   "net",
   "profiling",
+  "physics",
 ] as const;
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -320,6 +325,7 @@ const PINNED_CALL_PAGES = [
   "input",
   "navigation",
   "net",
+  "physics",
   "profiling",
   "saves",
   "settings",
@@ -328,12 +334,14 @@ const PINNED_CALL_PAGES = [
 ] as const;
 
 /**
- * Names those pages call that are not the game systems' facade calls: Rust's and serde_json's own
- * methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
- * `frame.sphere`, `genex::render::settings_button`), egui's `ui.painter` and a game's own helper
- * in the profiling example (`enemy.think`).
+ * Names those pages call that are not the game systems' facade calls: Rust's, glam's and serde's
+ * own methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
+ * `frame.sphere`, `frame.cube`, `Color::rgb`, `Transform`'s `.with_rotation`,
+ * `genex::render::settings_button`), egui's `ui.painter` and a game's own helper in the profiling
+ * example (`enemy.think`).
  */
 const NOT_GAME_SYSTEMS_CALLS = new Set([
+  "and_then",
   "any",
   "as_bool",
   "as_f64",
@@ -363,12 +371,27 @@ const NOT_GAME_SYSTEMS_CALLS = new Set([
   "to_owned",
   "to_vec",
   "unwrap_or",
+  "clone",
+  "deserialize",
+  "filter",
+  "filter_map",
+  "flat_map",
+  "from_xyzw",
+  "map_err",
+  "min",
+  "normalize_or_zero",
+  "to_string",
+  "zip",
   "on_draw",
   "on_reset",
   "on_ui",
   "on_update",
+  "probe_volatile",
   "painter",
   "settings_button",
+  "cube",
+  "rgb",
+  "with_rotation",
   "sphere",
   "split",
   "tag",
@@ -998,6 +1021,7 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "nav.add_mesh",
     "NavAgent::new",
     "nav.add_agent",
+    ".with_speed",
     "nav.move_to",
     "nav.update",
     "nav.desired_velocity",
@@ -1073,6 +1097,63 @@ const GAME_SYSTEMS_RECIPES: Record<string, readonly string[]> = {
     "Toasts::show",
     "ui.ctx",
   ],
+  "rust.terrain": [
+    "Terrain::from_fn",
+    ".with_layers",
+    "TerrainLayer::flat",
+    "Grass::meadow",
+    ".with_grass",
+    "TerrainTexel::blend",
+    ".with_control",
+    "Scatter::new",
+    ".on_flat_ground",
+    ".with_cap",
+    "terrain.scatter",
+    "terrain.height",
+    "frame.terrain",
+  ],
+  "rust.multiplayer": [
+    "game.net",
+    "NetConfig::new",
+    ".publish_hz",
+    ".decimals",
+    ".interp_delay_ticks",
+    "sim.net.status",
+    "sim.net.connect",
+    "sim.net.leave",
+    "sim.net.set_me",
+    "sim.net.events",
+    "sim.net.remotes",
+    ".state_raw",
+    "sim.net.is_host",
+    "sim.net.connected",
+    "sim.net.set_shared",
+    "driver.net",
+  ],
+  "rust.crash-records": ["genex::profile_scope!", "ScopeName::new", "genex::profile::counter"],
+  "rust.physics-bodies": [
+    "RigidBodyBuilder::fixed",
+    "RigidBodyBuilder::dynamic",
+    "RigidBodyBuilder::kinematic_position_based",
+    "ColliderBuilder::cuboid",
+    "ColliderBuilder::ball",
+    ".mass",
+    ".ccd_enabled",
+    "physics.insert",
+    "physics.insert_body",
+    "body.set_next_kinematic_translation",
+    "RopeJointBuilder::new",
+    "physics.insert_impulse_joint",
+    "physics.intersect_shape",
+    "QueryFilter::only_dynamic",
+    "body.apply_impulse",
+    "physics.cast_ray",
+    "ray.point_at",
+    "physics.contact_pair",
+    "physics.active_bodies",
+    "handle.into_raw_parts",
+    "frame.id",
+  ],
 };
 
 /** The seed skill a Rust game's lead reads before reaching past the facade (UIS-19 adds its menu and save lines). */
@@ -1083,7 +1164,22 @@ const LADDER_SKILL = path.join(REPO, "src", "harness-seed", "skills", "rust-exte
  * (`clone`, `count`, `is_err`, `is_none_or`) and `genex::math`'s, which the determinism rules name
  * without calling (`round`, `sin`, `cos`).
  */
-const SKETCH_STD_CALLS = new Set(["clone", "count", "is_err", "is_none_or", "round", "sin", "cos"]);
+const SKETCH_STD_CALLS = new Set([
+  "abs",
+  "and_then",
+  "clone",
+  "count",
+  "first",
+  "get",
+  "is_err",
+  "is_none_or",
+  "is_some",
+  "is_some_and",
+  "min",
+  "round",
+  "sin",
+  "cos",
+]);
 
 describe("the seed's game-systems recipes (EP-R1)", () => {
   it("ship as Rust techniques the library keeps whole", () => {
@@ -1161,5 +1257,169 @@ describe("the seed's game-systems recipes (EP-R1)", () => {
     assert.ok(rules.includes(".with_impostor("), "the guide names impostors");
     assert.match(rules, /by (?:its|their) feet/, "the guide says a character stands by its feet");
     assert.ok(rules.includes("docs/api/input.md"), "input routes to the Input page");
+  });
+});
+
+/** The game systems a `genex.toml` table switches (`[physics]`, `[audio]`, ...), as the manifest parser reads them. */
+function switchedSystems(): string[] {
+  const parsed = parseGenexToml(`[game]\ntitle = "Switches"\n`);
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  return Object.entries(parsed.manifest).flatMap(([key, value]) => (typeof value === "boolean" ? [key] : []));
+}
+
+/** The codes a switched-off system's calls are refused with, as the facade pins them (`nav-disabled`, ...). */
+const SWITCH_REFUSALS = [...FACADE.installRefusals, ...FACADE.animation.refusals, ...FACADE.audio.refusals].filter(
+  (code) => code.endsWith("-disabled"),
+);
+
+/** The `genex.toml` part of a sketch: everything before its first Rust file. */
+const sketchToml = (sketch: string): string => sketch.split(/^\/\/ src\//m)[0] ?? "";
+
+/** The system recipes whose sketches must switch on what they call, with the tables each needs on. */
+const RECIPE_SWITCHES: Record<string, readonly string[]> = {
+  "rust.streamed-world": ["streaming"],
+  "rust.nav-agents": ["nav", "animation"],
+  "rust.animated-characters": ["animation"],
+  // Gate GR: the template ships audio off too, so its web export stays under 90% of the budget.
+  "rust.audio-checks": ["audio"],
+};
+
+describe("the in-app agent knows every game system and its switch (R-32)", () => {
+  const rules = () => section(read("CLAUDE.md"), "Game systems");
+
+  it("the Game systems rules name each genex.toml switch and the code a switched-off system answers", () => {
+    const systems = switchedSystems();
+    assert.ok(systems.length >= 5, `the parser switches ${systems.join(", ")}`);
+    for (const system of systems) assert.ok(rules().includes(`[${system}]`), `the rules name the [${system}] switch`);
+    assert.ok(SWITCH_REFUSALS.length >= 4, `the facade pins ${SWITCH_REFUSALS.join(", ")}`);
+    for (const code of SWITCH_REFUSALS) assert.ok(rules().includes(`\`${code}\``), `the rules name ${code}`);
+  });
+
+  it("the Game systems rules route a streamed world to the pack reader, its digest and named groups", () => {
+    for (const call of ["CellPacks::from_table(", "genex::digest", "sim.stream.require(", "sim.stream.ready("])
+      assert.ok(rules().includes(call), `the rules name ${call}`);
+  });
+
+  it("the Streaming page and the rules teach the web's fetches while playing, and state no web gap", () => {
+    // Gate GR, wired by WS: each frame the web shell wants every group the game requires and the
+    // cell bodies and terrain tiles around its anchors, and hands what arrived to the sim's reads,
+    // so no text may still say the web fetches none of them, or send a streamed world to Native.
+    const groups = "On the web a required group is fetched while playing";
+    const cells = "On the web a pack's cells and terrain tiles around the anchors are fetched while playing";
+    const rulesText = rules().replace(/\s+/g, " ");
+    assert.ok(
+      rulesText.includes(
+        "On the web a required group and a pack's cells and terrain tiles around the player are fetched while playing",
+      ),
+      "the rules teach the web's fetches",
+    );
+    const page = read(`${API_PAGES}/streaming.md`).replace(/\s+/g, " ");
+    assert.ok(page.includes(groups), "the Streaming page teaches the group fetch");
+    assert.ok(page.includes(cells), "the Streaming page teaches the cell fetch");
+    assert.ok(page.includes("`state().volatile.webStream`"), "the Streaming page names the receipt");
+    const shell = read("web/shell.html").replace(/\s+/g, " ");
+    for (const [name, text] of [
+      ["the rules", rulesText],
+      ["the Streaming page", page],
+      ["the shell", shell],
+    ] as const) {
+      assert.ok(!text.includes("not fetched yet"), `${name} state no web fetch gap`);
+      assert.ok(
+        !text.includes("judged on a native run") && !text.includes("judge a streamed world on a native run"),
+        `${name} send no streamed world to Native`,
+      );
+      assert.ok(!text.includes("loads what it needs up front"), `${name} ask no web game to load everything up front`);
+    }
+    assert.ok(!shell.includes("none is fetched yet"), "the shell states no fetch gap");
+  });
+
+  it("the Game systems rules teach only calls the fixture pins", () => {
+    const pinned = new Set(
+      pinnedCallGroups().flatMap(([, calls]) => calls.flatMap((call) => call.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])),
+    );
+    const unpinned = [...calledNames(rules())].filter((name) => !pinned.has(name) && !NOT_GAME_SYSTEMS_CALLS.has(name));
+    assert.deepEqual(unpinned, []);
+  });
+
+  it("each system recipe's sketch switches on the tables its calls need, in rows the build accepts", () => {
+    for (const [id, systems] of Object.entries(RECIPE_SWITCHES)) {
+      const toml = sketchToml(seedRecipe(id).sketch);
+      const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${toml.replace(/^#.*\n/gm, "")}`);
+      assert.ok(parsed.ok, `${id}: ${JSON.stringify(parsed)}`);
+      const manifest = parsed.manifest as unknown as Record<string, unknown>;
+      for (const system of systems) {
+        assert.ok(toml.includes(`[${system}]`), `${id}'s sketch has a [${system}] row`);
+        assert.equal(manifest[system], true, `${id} switches ${system} on`);
+        assert.ok(toml.includes(`${system}-disabled`), `${id} names what a switched-off ${system} answers`);
+      }
+    }
+  });
+
+  it("the feet recipe teaches a Rust game to stand a character by its feet, with pinned calls", () => {
+    const recipe = seedRecipe("characters.feet-on-the-ground") as SeedRecipe & { port?: string };
+    const text = `${recipe.intent}\n${recipe.port ?? ""}`;
+    for (const call of ["Character::spawn(", "terrain.height(", ".feet(", "plant_feet("])
+      assert.ok(text.includes(call), `characters.feet-on-the-ground names ${call}`);
+  });
+
+  it("CLAUDE.own.md and the ladder skill name every switched-off system's code", () => {
+    const own = read("CLAUDE.own.md");
+    const skill = readFileSync(LADDER_SKILL, "utf8");
+    assert.ok(own.includes("docs/api/"), "CLAUDE.own.md routes to the topic pages");
+    for (const code of SWITCH_REFUSALS) {
+      assert.ok(own.includes(code), `CLAUDE.own.md names ${code}`);
+      assert.ok(skill.includes(code), `the ladder skill names ${code}`);
+    }
+  });
+});
+
+/** The mechanics the physics recipe sketches, each with the probe that measures it (lane PH). */
+const PHYSICS_PROBES = ["pile", "blast", "wrecking-ball", "shots"] as const;
+
+/** A physics brief in a person's words, as a failing check carries it. */
+const PHYSICS_CHECK = {
+  id: "crate-wall-knockdown",
+  kind: "physics",
+  ask: "2,000 crates I knock down with a wrecking ball and explosives",
+};
+
+describe("the in-app agent is taught general physics (lane PH)", () => {
+  const page = () => read(`${API_PAGES}/physics.md`).replace(/\s+/g, " ");
+
+  it("the index lists the Physics page and the Game systems rules route to it", () => {
+    assert.equal(pageOf("Physics"), "docs/api/physics.md");
+    assert.ok(section(read("CLAUDE.md"), "Game systems").includes("docs/api/physics.md"));
+  });
+
+  it("the Physics page states when physics steps, the switch, and what a save does not restore", () => {
+    const text = page();
+    assert.match(text, /once per tick, after the `on_update` and `on_ui` hooks/, "when the runtime steps");
+    assert.ok(
+      text.includes("`[physics] enabled = false`") && text.includes("`build-failed`"),
+      "the switch and its answer",
+    );
+    assert.match(text, /contacts and sleep are not (?:saved|restored)/, "a loaded pile settles again");
+    assert.ok(text.includes("frame.id("), "moving bodies are drawn under draw ids");
+  });
+
+  it("the physics recipe is what a physics brief retrieves", async () => {
+    const recipes = await loadRecipes(path.join(REPO, "src", "harness-seed"));
+    const hits = recipesForChecks(recipes, [PHYSICS_CHECK], 3, { stack: GameStack.RustWgpu });
+    assert.equal(hits[0]?.recipe.id, "rust.physics-bodies", hits.map((hit) => hit.recipe.id).join(", "));
+  });
+
+  it("the physics recipe switches physics on and gives each mechanic a probe its intent names", () => {
+    const recipe = seedRecipe("rust.physics-bodies");
+    const parsed = parseGenexToml(`[game]\ntitle = "Sketch"\n${sketchToml(recipe.sketch).replace(/^#.*\n/gm, "")}`);
+    assert.ok(parsed.ok, JSON.stringify(parsed));
+    assert.equal(
+      (parsed.manifest as unknown as Record<string, unknown>).physics,
+      true,
+      "the sketch switches physics on",
+    );
+    for (const probe of PHYSICS_PROBES) {
+      assert.ok(recipe.sketch.includes(`game.probe("${probe}"`), `the sketch probes ${probe}`);
+      assert.ok(recipe.intent.includes(`"${probe}"`), `the intent names the ${probe} probe`);
+    }
   });
 });

@@ -15,6 +15,9 @@ import {
   NativeRunState,
   type NativeRunStatus,
 } from "../../../shared/native-contract.ts";
+import type { CompiledStack } from "../../../shared/game-project.ts";
+import { UiEvent } from "../../../shared/ui-events.ts";
+import { CLOCK_TICK_MS } from "../../asset-making.ts";
 import { useNative } from "../../state/hooks.ts";
 import { nativeEmbedOf, nativeStoreFor } from "../../state/native.ts";
 import { studio } from "../../state/studio.ts";
@@ -23,6 +26,7 @@ import { NATIVE_WORDS } from "../../words.ts";
 import { TroubleDetails } from "./build-problem.tsx";
 import {
   awaitsFirstFrame,
+  buildingWords,
   CanvasAction,
   CanvasPhase,
   canvasActions,
@@ -35,7 +39,7 @@ import {
   NO_HELD,
   padAction,
   padChanges,
-  pointerOnRing,
+  pointerMoveAction,
   queueAction,
   releaseActions,
   releasesCapture,
@@ -255,12 +259,13 @@ function useEmbedHold(box: RefObject<HTMLDivElement | null>, project: string, re
   return measured;
 }
 
-/** Per-capture bookkeeping: what waits for the next frame, what the game holds, the pads last sent. */
+/** Per-capture bookkeeping: what waits for the next frame, what the game holds, the pads last sent, whether it looks with the mouse. */
 interface CaptureState {
   queue: NativeInputAction[];
   held: typeof NO_HELD;
   pads: ReturnType<typeof padChanges>["last"];
   composing: boolean;
+  mouseLook: boolean;
 }
 
 /** The pads connected now, in the standard mapping's bounds. */
@@ -333,7 +338,24 @@ function listenKeyboard(
   );
 }
 
-/** Listens on the canvas while captured: the place in the game's ring (the last frame's size), buttons and the wheel. */
+/** Whether Live's canvas holds the pointer lock (mouse look). */
+const lockedBy = (element: HTMLElement): boolean => document.pointerLockElement === element;
+
+/** Ask for the pointer lock on `element`; a refusal (no gesture, the window not focused) leaves the cursor free. */
+function lockPointer(element: HTMLElement): void {
+  try {
+    const asked: unknown = element.requestPointerLock();
+    if (asked instanceof Promise) asked.catch(() => {});
+  } catch {
+    // The canvas keeps the keyboard and a free cursor; the next press asks again.
+  }
+}
+
+/**
+ * Listens on the canvas while captured: buttons, the wheel, and a move as the place in the game's
+ * ring (the last frame's size) or, while the pointer is locked for mouse look, as look. A press
+ * while a mouse-look game's pointer is free asks for the lock again.
+ */
 function listenPointer(
   element: HTMLElement,
   canvas: HTMLCanvasElement,
@@ -343,8 +365,9 @@ function listenPointer(
 ): void {
   const move = (event: PointerEvent): void => {
     const ring = { width: canvas.width, height: canvas.height };
-    const client = { x: event.clientX, y: event.clientY };
-    push({ type: "move", ...pointerOnRing(client, element.getBoundingClientRect(), ring) });
+    const at = { locked: lockedBy(element), rect: element.getBoundingClientRect(), ring, dpr: window.devicePixelRatio };
+    const action = pointerMoveAction(event, at);
+    if (action) push(action);
   };
   element.addEventListener("pointermove", move, { signal });
   element.addEventListener(
@@ -352,6 +375,7 @@ function listenPointer(
     (event) => {
       // No focus change: the hidden field keeps the keyboard.
       event.preventDefault();
+      if (state.mouseLook && !lockedBy(element)) lockPointer(element);
       move(event);
       const button = mouseButtonOf(event.button);
       if (button) push({ type: "mousedown", button });
@@ -380,18 +404,38 @@ function listenPointer(
   element.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
 }
 
+/** While captured with mouse look: the pointer lock ending (Esc, the system taking it) releases the capture too. */
+function listenLock(element: HTMLElement, input: HTMLTextAreaElement, signal: AbortSignal): void {
+  let locked = lockedBy(element);
+  document.addEventListener(
+    "pointerlockchange",
+    () => {
+      const now = lockedBy(element);
+      if (locked && !now) input.blur();
+      locked = now;
+    },
+    { signal },
+  );
+}
+
 /**
  * Click-to-capture. While captured, keys, text, pointer, wheel and pads go to the game, batched
- * into one `nativeInput` per animation frame; nothing goes while not. Esc, ⌘, a click elsewhere,
- * Genex losing focus or the canvas losing its place release it, and everything held is let go.
+ * into one `nativeInput` per animation frame; nothing goes while not. A game played with mouse
+ * look (`mouseLook`) also takes the pointer lock, as the web game's page does, and its moves are
+ * look. Esc, ⌘, a click elsewhere, Genex losing focus or the canvas losing its place release it,
+ * the lock with it, and everything held is let go.
  */
 function useCapture(
   project: string,
-  box: RefObject<HTMLDivElement | null>,
-  canvasRef: RefObject<HTMLCanvasElement | null>,
-  keyboard: RefObject<HTMLTextAreaElement | null>,
+  refs: {
+    box: RefObject<HTMLDivElement | null>;
+    canvas: RefObject<HTMLCanvasElement | null>;
+    keyboard: RefObject<HTMLTextAreaElement | null>;
+  },
   enabled: boolean,
+  mouseLook: boolean,
 ) {
+  const { box, canvas: canvasRef, keyboard } = refs;
   const [captured, setCaptured] = useState(false);
   const send = useCallback(
     (actions: NativeInputAction[]): void => {
@@ -407,7 +451,7 @@ function useCapture(
     const canvas = canvasRef.current;
     const input = keyboard.current;
     if (!captured || !element || !canvas || !input) return;
-    const state: CaptureState = { queue: [], held: NO_HELD, pads: new Map(), composing: false };
+    const state: CaptureState = { queue: [], held: NO_HELD, pads: new Map(), composing: false, mouseLook };
     const push = (action: NativeInputAction): void => {
       state.queue = queueAction(state.queue, action);
       state.held = heldAfter(state.held, action);
@@ -426,19 +470,23 @@ function useCapture(
     const listening = new AbortController();
     listenKeyboard(input, push, state, listening.signal);
     listenPointer(element, canvas, push, state, listening.signal);
+    if (mouseLook) listenLock(element, input, listening.signal);
     input.addEventListener("blur", () => setCaptured(false), { signal: listening.signal });
     return () => {
       cancelAnimationFrame(frame);
       listening.abort();
       send([...state.queue, ...releaseActions(state.held)]);
+      if (lockedBy(element)) document.exitPointerLock();
       if (document.activeElement === input) input.blur();
     };
-  }, [captured, box, canvasRef, keyboard, send]);
+  }, [captured, box, canvasRef, keyboard, send, mouseLook]);
   const capture = useCallback((): void => {
     if (!enabled) return;
     keyboard.current?.focus({ preventScroll: true });
+    // Asked inside the press itself: a pointer lock needs the person's gesture.
+    if (mouseLook && box.current) lockPointer(box.current);
     setCaptured(true);
-  }, [enabled, keyboard]);
+  }, [enabled, keyboard, mouseLook, box]);
   return { captured, capture };
 }
 
@@ -446,20 +494,41 @@ function useCapture(
 const shownOf = (status: NativeRunStatus | null): ShownRun | null =>
   status ? { project: status.project, runId: status.runId } : null;
 
+/** What a Mac build under way is: of the build copy Live shows or of the game folder, and the game's stack. */
+export interface CanvasBuild {
+  copy: boolean;
+  stack: CompiledStack | null;
+}
+
+/** Now, moving on once a second while `running`: the clock a build under way is counted on. */
+function useClock(running: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(timer);
+  }, [running]);
+  return now;
+}
+
 /** What the canvas says over the game when it is not simply playing, with its buttons. */
 function CanvasCard({
   phase,
   status,
+  build,
   popOut,
   onAction,
 }: {
   phase: CanvasPhase;
   status: NativeRunStatus | null;
+  build: CanvasBuild;
   /** Whether the game has a window of its own to pop out to. */
   popOut: boolean;
   onAction: (action: CanvasAction) => void;
 }): JSX.Element {
-  const { title, detail } = canvasWords(phase, status);
+  const now = useClock(status?.state === NativeRunState.Building);
+  const { title, detail } = buildingWords(status, { ...build, now }) ?? canvasWords(phase, status);
   const actions = canvasActions(phase, status, { popOut });
   const busy = phase === CanvasPhase.Starting;
   const boot = busy ? startingProgress(status) : null;
@@ -563,14 +632,42 @@ function CaptureHint({
   );
 }
 
+/**
+ * Whether Live's Native view fills the screen (`native.full-screen`, main's `game-full-screen.ts`):
+ * the window is full screen and the canvas covers all of it until a held Esc or the exit button.
+ */
+function useFullScreen(): boolean {
+  const [on, setOn] = useState(false);
+  useEffect(
+    () =>
+      window.studio.onEvent((event) => {
+        if (event.type === UiEvent.NativeFullScreen) setOn(event.payload.on);
+      }),
+    [],
+  );
+  return on;
+}
+
+/** The canvas's box: in its slot, or over the whole window in full screen; out of sight while Live is not seen. */
+function boxClass(active: boolean, fullScreen: boolean): string {
+  if (fullScreen) return "fixed inset-0 z-50 bg-black";
+  return active ? "absolute inset-0 bg-black" : "invisible absolute inset-0 bg-black";
+}
+
 /** Live's canvas for `project`'s Mac build; `active` while Live is on the stage and the stage is seen. */
 export function NativeLiveCanvas({
   project,
   active,
+  build,
+  mouseLook,
   onPopOut,
 }: {
   project: string;
   active: boolean;
+  /** What a Mac build under way is made of, for the card's words. */
+  build: CanvasBuild;
+  /** The game is played with mouse look: a click into it takes the pointer lock (`GameProject.mouseLook`). */
+  mouseLook: boolean;
   /** Null for a game with no window of its own (a Rust game): the card never offers Pop out. */
   onPopOut: (() => void) | null;
 }): JSX.Element {
@@ -583,7 +680,13 @@ export function NativeLiveCanvas({
   const veiled = awaitsFirstFrame(phase, embed.status, drawnRun);
   const playing = phase === CanvasPhase.Playing;
   const measured = useEmbedHold(box, project, embed.status?.state === NativeRunState.Ready);
-  const { captured, capture } = useCapture(project, box, canvas, keyboard, active && playing);
+  const fullScreen = useFullScreen();
+  const seen = active || fullScreen;
+  const { captured, capture } = useCapture(project, { box, canvas, keyboard }, seen && playing, mouseLook);
+  // Full screen gives the game the keyboard at once, as the web view's does; mouse look still asks for its lock.
+  useEffect(() => {
+    if (fullScreen) capture();
+  }, [fullScreen, capture]);
   const act = (action: CanvasAction): void => {
     if (action === CanvasAction.PopOut) {
       onPopOut?.();
@@ -597,7 +700,8 @@ export function NativeLiveCanvas({
       ref={box}
       data-stage-native-canvas={phase}
       data-captured={captured || undefined}
-      className={active ? "absolute inset-0 bg-black" : "invisible absolute inset-0 bg-black"}
+      data-full-screen={fullScreen || undefined}
+      className={boxClass(active, fullScreen)}
     >
       <canvas ref={canvas} className="block h-full w-full" />
       <textarea
@@ -611,7 +715,9 @@ export function NativeLiveCanvas({
       />
       {playing ? <CaptureHint captured={captured} onCapture={capture} veiled={veiled} /> : null}
       {veiled ? <FirstFrameVeil /> : null}
-      {playing ? null : <CanvasCard phase={phase} status={embed.status} popOut={onPopOut !== null} onAction={act} />}
+      {playing ? null : (
+        <CanvasCard phase={phase} status={embed.status} build={build} popOut={onPopOut !== null} onAction={act} />
+      )}
     </div>
   );
 }

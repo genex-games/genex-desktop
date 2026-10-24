@@ -6,23 +6,33 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { setImmediate as tick } from "node:timers/promises";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { KEEP_AWAKE_FALLBACK_MS, KeepAwake, type FallbackTimers } from "../../src/main/keep-awake.ts";
 import { registerRunsIpc, extFromMime, safeLabel, type RunsIpcDeps } from "../../src/main/ipc/runs.ts";
 import { registerLoginIpc, type LoginIpcDeps } from "../../src/main/ipc/login.ts";
 import { badgeText, registerNotificationsIpc } from "../../src/main/ipc/notifications.ts";
 import { registerModelsIpc, type ModelsIpcDeps } from "../../src/main/ipc/models.ts";
+import { createProviderUsage } from "../../src/main/core/provider-usage.ts";
+import { type ProviderUsageReport, UsageState } from "../../src/shared/provider-usage.ts";
 import { registerUpdateIpc } from "../../src/main/ipc/update.ts";
 import { registerStorageIpc } from "../../src/main/ipc/storage.ts";
 import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
-import { createLoginControllers, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
+import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
+import { gameLinks } from "../../src/main/play/game-links.ts";
+import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
+import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
+import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
+import { mkdtempSync, existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { ClaudeLoginState } from "../../src/shared/claude-login.ts";
 import type { CodexLoginState } from "../../src/shared/codex-login.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
 import { UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { Duplex, PassThrough } from "node:stream";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { registerGamesIpc, type GamesIpcDeps } from "../../src/main/ipc/games.ts";
@@ -32,7 +42,7 @@ import { type CreateOptions, GameWorkspaces, ScaffoldCaller } from "../../src/su
 import { registerNativeIpc } from "../../src/main/ipc/native.ts";
 import { createGameCrashStore } from "../../src/main/core/game-crashes.ts";
 import { type GameCrashesAnswer, parseCrashRecord } from "../../src/shared/crash-record.ts";
-import { fixtureNativeRuns } from "../../src/main/dev/fixture-native.ts";
+import { fixtureNativeRuns } from "../../src/main/dev/fixture-native-runs.ts";
 import { FixtureName } from "../../src/main/dev/fixture-kit.ts";
 import { FIXTURE_CPP_GAMES } from "../../src/main/dev/fixture-toolchains.ts";
 import {
@@ -319,16 +329,37 @@ const codexIdle: CodexLoginState = {
   hasBrowserUrl: false,
 };
 
-function loginFixture(logins: Record<string, Awaited<ReturnType<SubscriptionEngine["resolveLogin"]>>>, busy = false) {
+function loginFixture(
+  logins: Record<string, Awaited<ReturnType<SubscriptionEngine["resolveLogin"]>>>,
+  busy = false,
+  accountsFor: { signedIn?: string[]; emails?: Record<string, string> } = {},
+) {
   const started: string[] = [];
+  const accountsRoot = mkdtempSync(path.join(os.tmpdir(), "studio-ipc-accounts-"));
+  const signedIn = new Set(accountsFor.signedIn ?? []);
   const engines = new Map<string, SubscriptionEngine>(
     ["claude-code", "codex"].map((id) => [
       id,
       {
         engineHome: `/homes/${id}`,
+        systemHome: `/system/${id}`,
+        accounts: new SubscriptionAccounts({
+          systemHome: `/system/${id}`,
+          studioHome: `/homes/${id}`,
+          root: path.join(accountsRoot, id),
+          signedIn: async (home) => signedIn.has(home),
+        }),
         resolveLogin: async () => logins[id] ?? { source: "none", home: null },
         recheckLogin: async () => {
           started.push(`recheck ${id}`);
+        },
+        runOnAccount: async (account) => {
+          started.push(`use ${id} ${account}`);
+          return { code: EngineStatusCode.Ready, detail: "" };
+        },
+        accountEmail: async (home) => {
+          started.push(`email ${id} ${home}`);
+          return accountsFor.emails?.[home] ?? null;
         },
       },
     ]),
@@ -368,8 +399,144 @@ function loginFixture(logins: Record<string, Awaited<ReturnType<SubscriptionEngi
   };
   const { handle, invoke } = registrar();
   registerLoginIpc(handle, deps);
-  return { invoke, started };
+  return { invoke, started, engines, accountsRoot, signedIn };
 }
+
+describe("a subscription's accounts", () => {
+  it("signs one more account in to a fresh home of its own, never over another's", async () => {
+    for (const engine of ["claude-code", "codex"]) {
+      const { invoke, started, accountsRoot } = loginFixture({});
+      await invoke("studio:subscription.signin", { engine, account: "new" });
+      const home = path.join(accountsRoot, engine, "account-2");
+      assert.equal(started.at(-1), engine === "codex" ? `codex ${home} browser` : `claude ${home}`);
+      assert.ok(existsSync(home));
+    }
+  });
+
+  it("signs Claude in to the Terminal login where the CLI keeps it, and never prepares Codex's own home", async () => {
+    const claude = loginFixture({});
+    await claude.invoke("studio:subscription.signin", { engine: "claude-code", account: AccountId.Terminal });
+    assert.deepEqual(claude.started, ["claude null"]);
+    const codex = loginFixture({ codex: { source: "system", home: "/system/codex" } });
+    await codex.invoke("studio:subscription.signin", { engine: "codex", account: AccountId.Terminal });
+    assert.deepEqual(codex.started, ["codex /homes/codex browser"], "Studio never writes into ~/.codex");
+  });
+
+  it("signs in again to the account in use when it is one Studio added, and only then", async () => {
+    const logins: Parameters<typeof loginFixture>[0] = {};
+    const { invoke, started, accountsRoot } = loginFixture(logins);
+    const added = path.join(accountsRoot, "codex", "account-3");
+    logins.codex = { source: "isolated", home: added };
+    logins["claude-code"] = { source: "isolated", home: "/elsewhere" };
+    await invoke("studio:subscription.signin", { engine: "codex" });
+    await invoke("studio:subscription.signin", { engine: "claude-code" });
+    logins.codex = { source: "isolated", home: "/elsewhere" };
+    await invoke("studio:subscription.signin", { engine: "codex" });
+    assert.deepEqual(started, [`codex ${added} browser`, "claude /elsewhere", "codex /homes/codex browser"]);
+  });
+
+  it("refuses a sign-in to an id that is no account's, and writes nothing", async () => {
+    for (const account of ["../x", "/etc", "account-1", "ACCOUNT-2"]) {
+      const { invoke, started, accountsRoot } = loginFixture({});
+      const answer = await invoke("studio:subscription.signin", { engine: "claude-code", account });
+      assert.equal(answer.ok, false, account);
+      assert.deepEqual(started, []);
+      assert.equal(existsSync(path.join(accountsRoot, "claude-code")), false);
+    }
+  });
+
+  it("switches accounts through the engine, Codex never while work is in flight", async () => {
+    const { invoke, started } = loginFixture({});
+    assert.deepEqual(await invoke("studio:subscription.use-account", { engine: "claude-code", account: "studio" }), {
+      ok: true,
+      value: { code: EngineStatusCode.Ready, detail: "" },
+    });
+    assert.deepEqual(started, ["use claude-code studio"]);
+    const busy = loginFixture({}, true);
+    const refused = await busy.invoke("studio:subscription.use-account", { engine: "codex", account: "studio" });
+    assert.equal(refused.ok, false);
+    assert.deepEqual(busy.started, []);
+  });
+
+  it("lists the accounts with each email asked for once and kept", async () => {
+    const { invoke, started } = loginFixture({}, false, {
+      signedIn: ["/system/claude-code", "/homes/claude-code"],
+      emails: { "/homes/claude-code": "me@example.com" },
+    });
+    const first = await invoke("studio:subscription.accounts", { engine: "claude-code" });
+    assert.deepEqual(first, {
+      ok: true,
+      value: [
+        { id: "terminal", email: null, terminal: true, signedIn: true, active: false },
+        { id: "studio", email: "me@example.com", terminal: false, signedIn: true, active: true },
+      ],
+    });
+    await invoke("studio:subscription.accounts", { engine: "claude-code" });
+    assert.deepEqual(started, ["email claude-code /system/claude-code", "email claude-code /homes/claude-code"]);
+  });
+
+  it("never signs the Terminal login out, nor an id that is no account's", async () => {
+    for (const account of [AccountId.Terminal, "../../x"]) {
+      const { invoke, started } = loginFixture({});
+      const answer = await invoke("studio:subscription.forget-studio-login", { engine: "claude-code", account });
+      assert.equal(answer.ok, false, account);
+      assert.deepEqual(started, []);
+    }
+  });
+
+  it("forgetting the account in use runs the next signed-in one", async () => {
+    const { invoke, engines, signedIn, accountsRoot } = loginFixture({}, false, {
+      signedIn: ["/system/claude-code"],
+    });
+    const accounts = engines.get("claude-code")?.accounts;
+    assert.ok(accounts);
+    const added = await accounts.newAccount();
+    signedIn.add(added.home);
+    await accounts.remember(added.id, { email: "work@example.com" });
+    await accounts.choose(added.id);
+    await invoke("studio:subscription.forget-studio-login", { engine: "claude-code", account: added.id });
+    assert.equal(await accounts.chosen(), AccountId.Terminal);
+    assert.equal(existsSync(path.join(accountsRoot, "claude-code", added.id)), false);
+  });
+
+  it("never shows a forgotten account's email on the next account given its id", async () => {
+    const emails: Record<string, string> = {};
+    const { invoke, engines, signedIn } = loginFixture({}, false, { signedIn: ["/system/claude-code"], emails });
+    const engine = engines.get("claude-code");
+    assert.ok(engine);
+    const first = await engine.accounts.newAccount();
+    signedIn.add(first.home);
+    await settleSignIn(engine, first.home);
+    // Its CLI names the email only later, when the list asks.
+    emails[first.home] = "old@example.com";
+    const listed = async () => {
+      const answer = await invoke("studio:subscription.accounts", { engine: "claude-code" });
+      assert.ok(answer.ok);
+      return (answer.value as { id: string; email: string | null }[]).find((entry) => entry.id === first.id)?.email;
+    };
+    assert.equal(await listed(), "old@example.com");
+    await invoke("studio:subscription.forget-studio-login", { engine: "claude-code", account: first.id });
+    const next = await engine.accounts.newAccount();
+    assert.equal(next.id, first.id, "a forgotten account's id is given again");
+    signedIn.add(next.home);
+    delete emails[next.home];
+    await settleSignIn(engine, next.home);
+    assert.equal(await listed(), null, "the new person's CLI reports no email, so none shows");
+  });
+
+  it("a finished sign-in remembers its account with its email and runs on it", async () => {
+    const { engines, signedIn, started } = loginFixture({}, false, { signedIn: ["/system/codex"] });
+    const engine = engines.get("codex");
+    assert.ok(engine);
+    const added = await engine.accounts.newAccount();
+    signedIn.add(added.home);
+    await settleSignIn(engine, added.home, "work@example.com");
+    assert.equal(await engine.accounts.chosen(), added.id);
+    const listed = (await engine.accounts.list()).find((entry) => entry.id === added.id);
+    assert.equal(listed?.email, "work@example.com");
+    assert.deepEqual(started, ["recheck codex"]);
+  });
+});
 
 describe("both sign-in paths go through the controllers", () => {
   it("Claude signs in to the studio's own home, the env home, or the Mac-wide login, as the engine resolves it", async () => {
@@ -555,35 +722,42 @@ describe("both sign-in paths go through the controllers", () => {
 });
 
 describe("the composer's plan limits", () => {
-  it("come from every ready subscription and never from a signed-out, missing or failing one", async () => {
+  it("answer with the limits as they stand at once, and push each subscription's fresh read", async () => {
     const usage = {
       measuredAt: "2026-09-24T00:00:00.000Z",
       windows: [{ id: "five_hour", label: "5-hour limit", percent: 12 }],
     };
-    const engines: Record<string, { status(): Promise<{ code: string }>; readUsage?(): Promise<unknown> }> = {
-      "claude-code": { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-      codex: {
-        status: async () => ({ code: "needs_login" }),
-        readUsage: async () => {
-          throw new Error("must not be asked");
-        },
-      },
-      ollama: { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-    };
-    const core = {
-      engines: { has: (id: string) => id in engines, get: (id: string) => engines[id] },
-    } as unknown as ModelsIpcDeps["core"];
+    const pushed: ProviderUsageReport[][] = [];
+    let answer: (value: typeof usage) => void = () => {};
+    const service = createProviderUsage({
+      engines: ["claude-code"],
+      source: () => ({
+        status: async () => ({ code: "ready" }),
+        account: async () => "terminal",
+        readUsage: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      }),
+      push: (reports) => pushed.push(reports),
+    });
+    const core = { engines: { has: () => false, get: () => null } } as unknown as ModelsIpcDeps["core"];
     const { handle, invoke } = registrar();
-    registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "claude-code", usage }] });
-    engines.codex = {
-      status: async () => ({ code: "ready" }),
-      readUsage: async () => {
-        throw new Error("offline");
-      },
-    };
-    delete engines["claude-code"];
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "codex", usage: null }] });
+    registerModelsIpc(handle, {
+      core,
+      subscription: () => null,
+      pushUiEvent: () => {},
+      openRouterLogin: noSignIn,
+      usage: service,
+    });
+    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [] }, "the panel never waits on a read");
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Checking)) await tick();
+    answer(usage);
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Ready)) await tick();
+    assert.deepEqual(await invoke("studio:provider-usage"), {
+      ok: true,
+      value: [{ engine: "claude-code", state: UsageState.Ready, account: "terminal", usage }],
+    });
   });
 });
 
@@ -693,7 +867,13 @@ it("model refresh validates provider identities before invoking discovery", asyn
   // Only the registrar's engine registry is needed; no profile or credentials are opened.
   const core = { engines };
   const { handle, invoke } = registrar();
-  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
+  registerModelsIpc(handle, {
+    core,
+    subscription: () => null,
+    pushUiEvent: () => {},
+    openRouterLogin: noSignIn,
+    usage: noUsage,
+  });
   for (const provider of [undefined, null, 7, {}, "../codex", "ollama", ""]) {
     assert.equal((await invoke("studio:models.refresh", { provider })).ok, false);
     assert.equal(calls, 0);
@@ -993,6 +1173,7 @@ describe("a C++ game's own window over IPC", () => {
       lines: [],
       needsInstall: false,
       install: null,
+      skippedScripts: null,
       showingLastBuild: false,
       at: "2026-10-01T05:00:00.000Z",
       reason: BuildProblemCode.ToolchainMissing,
@@ -1184,6 +1365,7 @@ async function embedIpc(
     nativeRuns,
     games: { list: async () => (options.list ? options.list([game]) : [game]) },
     assertProjectAllowed: async () => {},
+    liveRootOf: () => undefined,
   } as unknown as Parameters<typeof registerNativeIpc>[1];
   const listeners = new Map<string, Listener>();
   const handle = createIpcHandle(
@@ -1608,6 +1790,7 @@ describe("the native-game fixture's scripted registry", () => {
       nativeRuns: registry,
       games: { list: async () => games },
       assertProjectAllowed: async () => {},
+      liveRootOf: () => undefined,
     } as unknown as Parameters<typeof registerNativeIpc>[1];
     const listeners = new Map<string, Listener>();
     const handle = createIpcHandle(
@@ -1795,6 +1978,7 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
   registerModelsIpc(handle, {
     core: { engines },
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -1805,6 +1989,9 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
 });
 
 /** A browser sign-in that is never started: the registrars under test do not reach it. */
+/** No subscription's limits: the tests that use it never ask for them. */
+const noUsage: ModelsIpcDeps["usage"] = { snapshot: () => [], refresh: async () => {} };
+
 const noSignIn: ModelsIpcDeps["openRouterLogin"] = {
   start: async () => {
     throw new Error("no browser sign-in in this test");
@@ -1832,6 +2019,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: noSignIn,
     });
@@ -1897,6 +2085,7 @@ it("the browser sign-in hands its key to the engine, and only how it ended comes
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: {
         start: (saveKey) => login.start(saveKey),
@@ -1938,6 +2127,7 @@ it("deleting a model asks the local engine that owns it and announces the change
   registerModelsIpc(handle, {
     core,
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -2030,5 +2220,79 @@ describe("the in-window update prompt", () => {
     assert.deepEqual(await fixture.invoke("studio:update.check"), { ok: true, value: off });
     assert.equal((await fixture.invoke("studio:update.download")).ok, false);
     assert.deepEqual(fixture.restarts, []);
+  });
+});
+
+describe("Play's share menu", () => {
+  /** Play's channels with only Share… and game links live: every menu it pops is kept. */
+  function shareRig(web: string, links = gameLinks(), here: NativeHost | null = null) {
+    const { handle, invoke } = registrar();
+    const shared: Array<[string, unknown]> = [];
+    const unused = {} as unknown;
+    registerPlayIpc(handle, {
+      gallery: unused as PlayIpcDeps["gallery"],
+      gameLinks: links,
+      remix: async () => "",
+      remixReady: async () => ({}),
+      viewer: () => null,
+      installs: () => null,
+      here: () => here,
+      sessions: () => null,
+      reveal: () => {},
+      people: unused as PlayIpcDeps["people"],
+      creators: unused as PlayIpcDeps["creators"],
+      credits: unused as PlayIpcDeps["credits"],
+      manage: unused as PlayIpcDeps["manage"],
+      web,
+      share: (url, at) => shared.push([url, at]),
+    });
+    return { invoke, shared };
+  }
+
+  it("hands the page the game a genex:// link asked for, once", async () => {
+    const links = gameLinks();
+    const { invoke } = shareRig("https://genex.games", links);
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+    links.arrive("genex://game/iron-tide");
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: "iron-tide" });
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+  });
+
+  it("names this computer even where Genex installs no native game, so a page can say why", async () => {
+    const windows: NativeHost = { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.26100" };
+    const { invoke } = shareRig("https://genex.games", gameLinks(), windows);
+    assert.deepEqual(await invoke("studio:play.installs"), {
+      ok: true,
+      value: { installed: [], progress: [], host: windows },
+    });
+  });
+
+  it("pops for a page of the website Play links to, by the button that asked", async () => {
+    const { invoke, shared } = shareRig("https://genex.games");
+    const answer = await invoke("studio:play.share", {
+      url: "https://genex.games/@rabneba/invite",
+      at: { x: 10, y: 20 },
+    });
+    assert.equal(answer.ok, true);
+    assert.deepEqual(shared, [["https://genex.games/@rabneba/invite", { x: 10, y: 20 }]]);
+  });
+
+  it("never pops for anything else", async () => {
+    const { invoke, shared } = shareRig("http://localhost:5173");
+    for (const url of [
+      "https://genex.games/@rabneba",
+      "http://localhost:5174/@rabneba",
+      "http://user@localhost:5173/@rabneba",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "",
+      7,
+    ]) {
+      const answer = await invoke("studio:play.share", { url });
+      assert.equal(answer.ok, false, String(url));
+    }
+    assert.deepEqual(shared, []);
+    await invoke("studio:play.share", { url: "http://localhost:5173/@rab", at: { x: -1, y: "top" } });
+    assert.deepEqual(shared, [["http://localhost:5173/@rab", undefined]], "a point off the window is no point");
   });
 });

@@ -22,7 +22,7 @@ merges explicit edges from `tests/test-map.json`.
 ```sh
 node scripts/affected-tests.mjs                     # list L1 (pure) and L3 (rig) tests
 node scripts/affected-tests.mjs --json              # machine-readable selection
-node scripts/affected-tests.mjs --run               # run L1 in parallel, L3 serially
+node scripts/affected-tests.mjs --run               # run L1 with two workers, L3 serially
 node scripts/affected-tests.mjs --tier L1 --run     # skip the slow rig group while iterating
 node scripts/affected-tests.mjs --files src/shared/chat-activity.ts --run
 node scripts/affected-tests.mjs --staged --run      # only what is staged
@@ -37,7 +37,8 @@ folders instead of importing them.
 
 - Area ids with their docs and sources: `docs/agent/knowledge-map.json`;
   `npm run review:context -- --area <id>` lists the docs and checks for one area.
-- One or more files: `npm test -- tests/conformance/<name>.test.ts [more files]`.
+- One or more files: `npm test -- tests/conformance/<name>.test.ts [more files]`. This avoids
+  building the affected graph, so prefer it for red/green iteration.
 - One behaviour while iterating:
   `npm test -- --test-name-pattern='<test name>' tests/conformance/<name>.test.ts`.
 
@@ -66,5 +67,6 @@ A template change also needs `npm run verify:harness`; a facade change follows
   `tests/test-map.json` edge is missing; add it rather than skipping verification.
 - On failure keep the log, decide whether product, expectation, fixture or environment is
   wrong, and rerun only after a specific change. Never raise deadlines to get green.
-- Full `npm test` / `npm run verify` only for broad changes or when asked.
+- Full `npm test` / `npm run verify` only for broad changes or when asked. Full Node tests run
+  the fast group with two workers, then rigs serially; rigs still run after fast failures.
 - Report which layers and files ran.

@@ -13,6 +13,7 @@
  */
 import path from "node:path";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { t } from "../shared/i18n.ts";
 import { SecretStorageIssue } from "../shared/secret-storage.ts";
 import { ensureDir, pathExists } from "./fsx.ts";
 
@@ -33,20 +34,20 @@ const MESSAGE = {
   PlaintextRefused: "refusing to store a secret without OS encryption — pass allowPlaintext to accept the risk",
 } as const;
 
-/** What a refusal says in the log and over IPC, by why the store is locked. */
+/** What a refusal says in the log and over IPC, by why the store is locked; functions, as main sets its language after this loads. */
 const LOCKED_MESSAGE = {
-  [SecretStorageIssue.OsCredentialsDisabled]: "OS credential access is disabled for this process.",
-  [SecretStorageIssue.EncryptionUnavailable]: "OS encryption is unavailable; secret storage remains locked.",
-  [SecretStorageIssue.NoKeyring]:
-    "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.",
-} as const satisfies Record<SecretStorageIssue, string>;
+  [SecretStorageIssue.OsCredentialsDisabled]: () => t("OS credential access is disabled for this process."),
+  [SecretStorageIssue.EncryptionUnavailable]: () => t("OS encryption is unavailable; secret storage remains locked."),
+  [SecretStorageIssue.NoKeyring]: () =>
+    t("No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex."),
+} as const satisfies Record<SecretStorageIssue, () => string>;
 
 /** The secret store is locked, and `issue` says why; nothing was written. */
 export class SecretStorageUnavailableError extends Error {
   readonly issue: SecretStorageIssue;
 
   constructor(issue: SecretStorageIssue) {
-    super(LOCKED_MESSAGE[issue]);
+    super(LOCKED_MESSAGE[issue]());
     this.issue = issue;
   }
 }

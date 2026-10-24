@@ -3,7 +3,9 @@ name: Windows
 # on demand; PRs into dev skip these billed minutes. Required: install, typecheck, lint, the one-time
 # sandbox setup and the curated suite in tests/windows-suite.json. A dispatch with `backlog` also
 # runs the rest of the fast group as an informational pass (it lists the failing files and never
-# fails the job); one with `files` runs just those test files after the sandbox setup. The hosted
+# fails the job); one with `files` runs just those test files after the sandbox setup, and one with
+# `desktop` only drives computer control. Unless it names files, it drives computer control on the
+# runner's desktop. The hosted
 # runner is elevated and disposable, so the sandbox install needs no UAC prompt. No secrets;
 # pull_request runs with the fork's read-only token.
 #
@@ -35,6 +37,10 @@ on:
         description: Also run the rest of the fast group (the informational pass, about 20 minutes)
         type: boolean
         default: false
+      desktop:
+        description: Only drive computer control on the desktop; skips typecheck, lint and the tests
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -61,13 +67,14 @@ jobs:
       - run: npm ci
       - name: Fetch the importer's pinned Basis build
         run: node scripts/toolchains/importer-tools.ts fetch
-      - if: ${{ !inputs.files }}
+      - if: ${{ !inputs.files && !inputs.desktop }}
         run: npm run typecheck
-      - if: ${{ !inputs.files }}
+      - if: ${{ !inputs.files && !inputs.desktop }}
         run: npm run lint
       - name: Windows sandbox setup (srt-sandbox user and WFP filters)
         run: node scripts/ci-windows-sandbox.mjs
       - name: Tests
+        if: ${{ !inputs.desktop }}
         env:
           FILES: ${{ inputs.files }}
           BACKLOG: ${{ inputs.backlog }}
@@ -77,11 +84,19 @@ jobs:
           if [ -n "$FILES" ]; then node --test --test-reporter=tap --test-concurrency=1 --test-timeout=300000 --test-force-exit $FILES
           elif [ "$BACKLOG" = true ]; then npm run test:windows
           else npm run test:windows -- --suite-only; fi
+      # Computer control on the runner's own desktop: the bundled driver embedded on its named pipe,
+      # driven through the desktop tool by a scripted agent (Notepad, the refusals, the stop, no
+      # driver left behind).
+      - name: Computer control on the desktop
+        if: ${{ !cancelled() && !inputs.files }}
+        run: node tests/e2e/run-windows-desktop-control.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: windows-tests
-          path: .studio-dev/evidence/windows-tests
+          path: |
+            .studio-dev/evidence/windows-tests
+            .studio-dev/evidence/windows-desktop-control
           if-no-files-found: ignore
   rust-warp-build:
     # Builds the gnullvm binary and its decoy on Linux; billed only through the Windows job it feeds.

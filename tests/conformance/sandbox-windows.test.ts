@@ -11,8 +11,9 @@
  * GENEX_WINDOWS_SANDBOX=ready). `windows-sandbox.test.ts` covers the same rules everywhere with fakes.
  */
 import assert from "node:assert/strict";
-import { existsSync, realpathSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -20,10 +21,12 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
 import { HarnessInbox } from "../../src/substrate/harness-inbox.ts";
 import { SandboxLaunchCode, SandboxLaunchError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, killChild } from "../../src/substrate/spawn.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import { granteeOf, sandboxGroupOf, srtWinPath } from "../../src/substrate/windows-sandbox.ts";
+import { removeTree, tmpDir } from "../helpers/tmp.ts";
 
 /** Why this machine cannot run the suite, or false when it can. */
 function skipReason(): string | false {
@@ -36,12 +39,16 @@ const SKIP = skipReason();
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const BOOTSTRAP = path.join(REPO, "src", "harness-boot", "bootstrap.mjs");
 const FIXTURE_OK = path.join(REPO, "tests", "fixtures", "harness-ok");
+const FAKE_PLAY_GAME = path.join(REPO, "tests", "fixtures", "fake-play-game.mjs");
 const ELECTRON_DIST = path.join(REPO, "node_modules", "electron", "dist");
 const RUN_TIMEOUT_MS = 60_000;
 const TEST_TIMEOUT_MS = 180_000;
 const HEARTBEAT_WAIT_MS = 30_000;
 const KILL_SETTLE_MS = 4_000;
 const SECRET = "profile-secret-content";
+const OPEN = "readable-beside-the-secret";
+/** BUILTIN\Guests, a SID nothing here runs as: its entry only marks what a walk rewrites. */
+const GUESTS = "S-1-5-32-546";
 
 /** A value for Git Bash: forward slashes, single-quoted. */
 const q = (value: string) => `'${value.replaceAll("\\", "/").replaceAll("'", `'\\''`)}'`;
@@ -53,6 +60,23 @@ let scratch: string;
 let secrets: string;
 let profileDir: string;
 let electronInstall: string;
+/** A folder in the profile outside every grant that the sandbox user may read, and the denied folder in it. */
+let deniedHome: string;
+let deniedKeys: string;
+/** A denied folder directly in the profile, and a folder beside it that kept what it inherited elsewhere. */
+let profileSecret: string;
+let movedProbe: string;
+/** The sandbox users' group, which Genex's own denies name; null where srt-win stamps every deny. */
+let sandboxGroup: string | null = null;
+
+/** A path's own DACL as SDDL, read through icacls, which saves it without changing anything. */
+function sddl(target: string): string {
+  const file = path.join(os.tmpdir(), `genex-acl-${process.pid}-${Math.random().toString(36).slice(2)}.txt`);
+  execFileSync("icacls", [target, "/save", file], { stdio: "ignore" });
+  const text = readFileSync(file, "utf16le");
+  rmSync(file, { force: true });
+  return text;
+}
 
 before(async () => {
   if (SKIP) return;
@@ -73,10 +97,31 @@ before(async () => {
   await writeFile(path.join(secrets, "token.txt"), SECRET);
   await writeFile(path.join(profileDir, "private.txt"), SECRET);
   if (existsSync(ELECTRON_DIST)) await cp(ELECTRON_DIST, electronInstall, { recursive: true });
+  // Readable to the sandbox user the way another srt host's grant would make it: only the deny on
+  // `keys` keeps the token in it closed.
+  const srt = await import("@anthropic-ai/sandbox-runtime");
+  const status = await srt.getWindowsSandboxUserStatusAsync({ srtWin: srt.resolveSrtWin({ path: srtWinPath() }) });
+  sandboxGroup = sandboxGroupOf(status);
+  deniedHome = path.join(root, "denied-home");
+  deniedKeys = path.join(deniedHome, "keys");
+  await mkdir(deniedKeys, { recursive: true });
+  await writeFile(path.join(deniedHome, "open.txt"), OPEN);
+  await writeFile(path.join(deniedKeys, "token.txt"), SECRET);
+  execFileSync("icacls", [deniedHome, "/grant", `*${granteeOf(status)}:(OI)(CI)(RX)`], { stdio: "ignore" });
+  // srt-win's stamp of a deny walked everything under its parent, here the whole profile; a folder
+  // moved in keeps what it inherited where it was made until such a walk works it out again.
+  profileSecret = path.join(os.homedir(), `genex-deny-direct-${process.pid}`);
+  movedProbe = path.join(os.homedir(), `genex-moved-probe-${process.pid}`);
+  await mkdir(profileSecret, { recursive: true });
+  const elsewhere = path.join(root, "elsewhere");
+  await mkdir(elsewhere);
+  execFileSync("icacls", [elsewhere, "/grant", `*${GUESTS}:(OI)(CI)(RA)`], { stdio: "ignore" });
+  await mkdir(path.join(elsewhere, "moved"));
+  await rename(path.join(elsewhere, "moved"), movedProbe);
   sandbox = await ProcessSandbox.create({
     writableRoots: [workspace],
     scratchDir: scratch,
-    secretPaths: [secrets],
+    secretPaths: [secrets, deniedKeys, profileSecret],
     readableRoots: [electronInstall],
   });
 });
@@ -86,6 +131,8 @@ after(async () => {
   const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
   await SandboxManager.reset();
   await rm(profileDir, { recursive: true, force: true });
+  await removeTree(profileSecret);
+  await removeTree(movedProbe);
   await rm(path.dirname(electronInstall), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
 });
 
@@ -144,6 +191,32 @@ describe("Windows sandbox: identity and files", { skip: SKIP, timeout: TEST_TIME
     }
   });
 
+  it("refuses a denied folder in the profile even where the folder above it lets the sandbox user read", async () => {
+    const open = await inside(`cat ${q(path.join(deniedHome, "open.txt"))}`);
+    assert.equal(open.stdout, OPEN, `the folder above is readable, so the deny is what holds: ${open.stderr}`);
+    const token = await inside(`cat ${q(path.join(deniedKeys, "token.txt"))}`);
+    assert.notEqual(token.code, 0, `the token must not be readable: ${token.stdout}`);
+    assert.ok(!token.stdout.includes(SECRET), "the token leaked");
+    const listing = await inside(`ls -A ${q(deniedKeys)}`);
+    assert.equal(listing.stdout.trim(), "", `the denied folder must not be listable: ${listing.stderr}`);
+  });
+
+  it("denies a folder directly in the profile without rewriting anything else in the profile", async (t) => {
+    if (!sandboxGroup) return t.skip("no sandbox users' group here: srt-win stamps every deny");
+    assert.match(sddl(profileSecret), new RegExp(`\\(D;OICI;FA;;;${sandboxGroup}\\)`), "denied, passed down");
+    // SDDL spells FILE_DELETE_CHILD (0x40) DT, the directory-service "delete tree" right of the same bit.
+    assert.match(
+      sddl(os.homedir()),
+      new RegExp(`\\(D;;(?:0x40|DT);;;${sandboxGroup}\\)`),
+      "guarded by the profile alone",
+    );
+    assert.match(
+      sddl(movedProbe),
+      /\(A;[A-Z]*ID[A-Z]*;(?:0x80|LO);;;BG\)/,
+      "nothing else in the profile was rewritten",
+    );
+  });
+
   it("refuses a per-run write outside the session's grants before starting anything", async () => {
     await assert.rejects(
       inside("true", { policy: { allowWrite: [profileDir] } }),
@@ -191,6 +264,32 @@ describe("Windows sandbox: stdio", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () 
   it("pipes a run's stdin to the command", async () => {
     const result = await inside("cat", { stdin: "from-the-host\n" });
     assert.equal(result.stdout, "from-the-host\n", result.stderr);
+  });
+
+  it("hands a long-lived process its input, as OpenCode's brief must reach `opencode run`", async () => {
+    const { child } = await sandbox.spawnLongLived({ command: "cat", cwd: workspace, stdin: "the brief\n" });
+    let output = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    const code = await new Promise((resolve) => child.once("close", resolve));
+    assert.equal(code, 0);
+    assert.equal(output, "the brief\n");
+  });
+
+  it("drives a Play Protocol game it started, its requests reaching the game through the input relay", async () => {
+    const launched = await launchGameBridge({
+      sandbox,
+      command: `${q(process.execPath)} ${q(FAKE_PLAY_GAME)}`,
+      cwd: workspace,
+      stopGraceMs: 2_000,
+    });
+    try {
+      assert.equal(launched.target.hello?.protocol, 3);
+    } finally {
+      await launched.stop();
+    }
   });
 
   it("boots the harness bootstrap and hears it over the loopback inbox (stdin does not reach it)", async () => {
@@ -245,6 +344,51 @@ describe("Windows sandbox: environment", { skip: SKIP, timeout: TEST_TIMEOUT_MS 
     assert.match(git.stdout, /first/);
   });
 
+  it("still opens a workspace under AppData after another srt host stamps and restores beside it", async (t) => {
+    // Claude Code 2.1 runs sandbox-runtime's own Windows sandbox as the same srt-sandbox user, so
+    // its grants, deny stamps and their cleanup land on the folders above Genex's grants.
+    const srt = await import("@anthropic-ai/sandbox-runtime");
+    const srtWin = srt.resolveSrtWin({ path: srtWinPath() });
+    const status = await srt.getWindowsSandboxUserStatusAsync({ srtWin });
+    t.diagnostic(`sandbox user ${status.sid}, group ${status.groupSid}, in group ${status.inSandboxGroup}`);
+    const appData = path.join(os.homedir(), "AppData");
+    const local = process.env.LOCALAPPDATA ?? path.join(appData, "Local");
+    const tag = `genex-other-host-${process.pid}`;
+    const theirs = [path.join(appData, tag), path.join(local, tag), path.join(os.homedir(), tag)];
+    for (const dir of theirs) await mkdir(dir, { recursive: true });
+    const holder = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    assert.ok(status.sid, "the sandbox user has a SID");
+    const acl = { sandboxUserSid: status.sid, holderPid: holder.pid, srtWin };
+    try {
+      srt.grantWindowsAcl({ ...acl, read: [theirs[2]], write: [theirs[1]] });
+      srt.stampWindowsAcl({ ...acl, denyRead: [theirs[0]], denyWrite: [] });
+      srt.restoreWindowsAcl(acl);
+      srt.revokeWindowsAcl(acl);
+    } finally {
+      holder.kill();
+      for (const dir of theirs) await removeTree(dir);
+    }
+    t.diagnostic(execFileSync("icacls", [appData], { encoding: "utf8" }));
+    await writeFile(path.join(workspace, "after-other.cjs"), 'module.exports = "after-other-ok";');
+    const node = await inside(`node -e 'console.log(require("./after-other.cjs"))'`);
+    assert.equal(node.stdout.trim(), "after-other-ok", node.stderr);
+  });
+
+  it("opens each folder above the workspace by handle, as Node's stat does before Windows 11 24H2", async () => {
+    // Without GetFileInformationByName (Windows 10, Windows 11 before 24H2), libuv's stat opens
+    // the path with FILE_READ_ATTRIBUTES, and CreateFileW adds SYNCHRONIZE to every synchronous
+    // open: a folder that grants only read attributes refuses it, and the harness's realpath of
+    // its own entry fails with EPERM on AppData. A newer Windows asks by name and never opens it.
+    const above: string[] = [];
+    for (let dir = path.dirname(workspace); dir !== os.homedir() && dir !== path.dirname(dir); dir = path.dirname(dir))
+      above.unshift(dir);
+    const probe = await inside(powershellCommand(openFoldersScript(above)));
+    assert.equal(probe.code, 0, probe.stderr);
+    const refused = probe.stdout.split(/\r?\n/).filter((line) => line.startsWith("refused"));
+    assert.deepEqual(refused, [], probe.stdout);
+    assert.equal(probe.stdout.match(/^opened /gm)?.length, above.length, probe.stdout);
+  });
+
   it("boots an Electron-as-Node entry installed under %LOCALAPPDATA%, which spawns Git", {
     skip: existsSync(ELECTRON_DIST) ? false : "no Electron binary in node_modules",
   }, async () => {
@@ -266,6 +410,39 @@ describe("Windows sandbox: environment", { skip: SKIP, timeout: TEST_TIMEOUT_MS 
     assert.match(await readFile(out, "utf8"), /git version/);
   });
 });
+
+/** Windows PowerShell running `script`, from Git Bash inside the sandbox. */
+function powershellCommand(script: string): string {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  return `${q("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")} -NoLogo -NoProfile -NonInteractive -EncodedCommand ${encoded} < /dev/null`;
+}
+
+/**
+ * Open each folder as libuv's stat does without GetFileInformationByName: CreateFileW for read
+ * attributes with backup semantics, synchronous. Prints `opened <dir>` or `refused <error> <dir>`.
+ */
+function openFoldersScript(dirs: readonly string[]): string {
+  const list = dirs.map((dir) => `'${dir.replaceAll("'", "''")}'`).join(", ");
+  return `
+$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'GenexOpen'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+$type = $assembly.DefineDynamicModule('GenexOpen').DefineType('GenexOpen', 'Public, Class')
+$import = [Runtime.InteropServices.DllImportAttribute]
+$fields = [Reflection.FieldInfo[]]@($import.GetField('SetLastError'), $import.GetField('CharSet'))
+$values = [object[]]@($true, [Runtime.InteropServices.CharSet]::Unicode)
+foreach ($native in @(
+    @('CreateFileW', [IntPtr], [Type[]]@([string], [int], [int], [IntPtr], [int], [int], [IntPtr])),
+    @('CloseHandle', [bool], [Type[]]@([IntPtr])))) {
+  $method = $type.DefineMethod($native[0], 'Public, Static, PinvokeImpl', $native[1], $native[2])
+  $attribute = New-Object Reflection.Emit.CustomAttributeBuilder($import.GetConstructor([Type[]]@([string])), [object[]]@('kernel32.dll'), [Reflection.PropertyInfo[]]@(), [object[]]@(), $fields, $values)
+  $method.SetCustomAttribute($attribute)
+}
+$api = $type.CreateType()
+foreach ($dir in @(${list})) {
+  $handle = $api::CreateFileW($dir, 0x80, 7, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero); $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  if ($handle -eq [IntPtr](-1)) { "refused $code $dir" } else { [void]$api::CloseHandle($handle); "opened $dir" }
+}
+`;
+}
 
 /** A dual-stack HTTP server on the host's loopback. */
 async function hostServer(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -386,6 +563,24 @@ describe("Windows sandbox: kill", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () =
     const atKill = await beats(file);
     await sleep(KILL_SETTLE_MS);
     assert.equal(await beats(file), atKill, "nothing keeps beating after the kill");
+  });
+
+  it("a long-lived process that exits by itself leaves no background child running", async () => {
+    const file = path.join(workspace, "orphan.hb");
+    // The heartbeat ends itself after a minute, so a failure here leaves nothing running for long.
+    const orphan = `node -e 'setInterval(()=>require("fs").appendFileSync("orphan.hb", "b\\n"),200);setTimeout(()=>process.exit(),60000)'`;
+    const { child } = await sandbox.spawnLongLived({ command: `${orphan} & sleep 3; exit 0`, cwd: workspace });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    try {
+      assert.ok((await beatsReach(file, 3)) >= 3, "the background heartbeat started");
+      await exited;
+    } finally {
+      killChild(child);
+    }
+    await sleep(KILL_SETTLE_MS);
+    const atExit = await beats(file);
+    await sleep(KILL_SETTLE_MS);
+    assert.equal(await beats(file), atExit, "the shell's background child ended with it");
   });
 
   it("killing a long-lived process ends its children", async () => {

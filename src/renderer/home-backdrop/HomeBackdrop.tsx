@@ -249,18 +249,20 @@ export function BackdropPreview({
   return <BackdropCanvas settings={settings} drawing={drawing} canvas={canvas} className="backdrop-preview-art" />;
 }
 
-/** The live background the settings choose, moving unless Reduce Motion is on. */
+/** The live background the settings choose, moving unless Reduce Motion is on; nothing drawn while `covered`. */
 function LiveBackground({
   settings,
   mode,
   className,
+  covered = false,
 }: {
   settings: BackdropSettings;
   mode: ShaderCanvasMode;
   className: string;
+  covered?: boolean;
 }): JSX.Element {
   const { body } = shaderFor(settings.shader, useMadeShaders());
-  return <ShaderCanvas body={body} settings={settings} moving mode={mode} className={className} />;
+  return <ShaderCanvas body={body} settings={settings} moving covered={covered} mode={mode} className={className} />;
 }
 
 /** `value`, once it has stopped changing for `ms`; the first value, and any with no wait, at once. */
@@ -277,9 +279,10 @@ function useSettledValue<T>(value: T, ms: number): T {
 /**
  * Home's own background, read from the saved settings; only it re-renders when they change. It
  * follows a slider as it moves, except beneath Settings, where the preview follows and home
- * redraws once the slider settles.
+ * redraws once the slider settles. While Play or Plugins lies over home (`covered`), a live
+ * background draws nothing: the page hides it, and it would otherwise draw every frame unseen.
  */
-export function HomeBackground(): JSX.Element | null {
+export function HomeBackground({ covered = false }: { covered?: boolean }): JSX.Element | null {
   const settle = useBackdropPreviewShown() ? HOME_SETTLE_MS : 0;
   const settings = useSettledValue(useBackdrop(), settle);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -290,7 +293,7 @@ export function HomeBackground(): JSX.Element | null {
   if (live)
     return (
       <div className="home-backdrop-frame">
-        <LiveBackground settings={settings} mode={HOME_LIVE} className="home-backdrop-live" />
+        <LiveBackground settings={settings} mode={HOME_LIVE} className="home-backdrop-live" covered={covered} />
       </div>
     );
   if (!shown) return null;

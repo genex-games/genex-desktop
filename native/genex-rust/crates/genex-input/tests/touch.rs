@@ -12,7 +12,7 @@ use genex_input::map::{ActionMap, Context};
 use genex_input::state::{ActionState, Device, Devices, evaluate_with};
 use genex_input::touch::{
     Anchor, ControlKind, PadTarget, ShowWhen, StickMode, TOUCH_CONTROLS_MAX, TouchControls, TouchFrame, TouchState,
-    evaluate_touch,
+    evaluate_touch, evaluate_touch_from,
 };
 
 const WORLD: [u32; 2] = [1280, 720];
@@ -414,4 +414,94 @@ fn zones_are_world_rects_for_the_painter_and_accesskit() {
     );
     assert_eq!(controls.controls()[1].label, "Jump");
     assert_eq!(controls.controls()[0].label, "move", "a stick is labelled by its id");
+}
+
+// ---- the desktop mouse (release R-26) -------------------------------------------------------------
+
+/// The finger the desktop shell emulates from Mouse1 (the facade's touch 0).
+const MOUSE_FINGER: u32 = 0;
+
+#[test]
+fn the_mouse_finger_presses_no_hidden_control_and_stays_free() {
+    // Red before R-26: a desktop click in a corner pressed the invisible Jump button.
+    for show in [ShowWhen::Touch, ShowWhen::Never] {
+        let controls = layout(StickMode::Floating).show(show);
+        let mut state = TouchState::new(&controls);
+        for phase in [TouchPhase::Began, TouchPhase::Held, TouchPhase::Ended] {
+            let tick = tick(&[point(MOUSE_FINGER, JUMP_CENTRE, phase)]);
+            let frame = evaluate_touch_from(&controls, WORLD, &mut state, &tick, Some(MOUSE_FINGER));
+            assert_eq!(frame.value(JUMP_BUTTON), [0.0, 0.0], "{show:?} {phase:?}: the hidden button is not pressed");
+            assert!(!frame.claimed(MOUSE_FINGER), "{show:?} {phase:?}: the click stays the game's");
+            assert_eq!(state.finger(JUMP_BUTTON), None, "{show:?} {phase:?}");
+        }
+        let tapped = tick(&[point(MOUSE_FINGER, JUMP_CENTRE, TouchPhase::Tapped)]);
+        let frame = evaluate_touch_from(&controls, WORLD, &mut state, &tapped, Some(MOUSE_FINGER));
+        assert_eq!(frame.value(JUMP_BUTTON), [0.0, 0.0], "{show:?}: a click (one-tick tap) is not a press either");
+        assert_eq!(frame.free(&tapped).count(), 1, "{show:?}");
+    }
+}
+
+#[test]
+fn the_mouse_finger_presses_an_always_shown_control_and_real_fingers_press_every_layout() {
+    let controls = layout(StickMode::Floating).show(ShowWhen::Always);
+    let mut state = TouchState::new(&controls);
+    let began = tick(&[point(MOUSE_FINGER, JUMP_CENTRE, TouchPhase::Began)]);
+    let frame = evaluate_touch_from(&controls, WORLD, &mut state, &began, Some(MOUSE_FINGER));
+    assert_eq!(frame.value(JUMP_BUTTON), [1.0, 0.0], "a click on a control the player sees presses it");
+    assert!(frame.claimed(MOUSE_FINGER));
+    for show in [ShowWhen::Touch, ShowWhen::Never, ShowWhen::Always] {
+        let controls = layout(StickMode::Floating).show(show);
+        let mut state = TouchState::new(&controls);
+        // A real finger 0 (no Mouse1 emulation on the tick) is a finger like any other.
+        let frame = evaluate_touch_from(&controls, WORLD, &mut state, &began, None);
+        assert_eq!(frame.value(JUMP_BUTTON), [1.0, 0.0], "{show:?}");
+        let mut plain = TouchState::new(&controls);
+        assert_eq!(evaluate_touch(&controls, WORLD, &mut plain, &began), frame, "{show:?}: evaluate_touch has no mouse finger");
+    }
+}
+
+#[test]
+fn a_mouse_finger_that_was_refused_does_not_take_a_control_it_slides_onto_later() {
+    let controls = layout(StickMode::Fixed).show(ShowWhen::Touch);
+    let mut state = TouchState::new(&controls);
+    let rows = [
+        point(MOUSE_FINGER, [640.0, 360.0], TouchPhase::Began),
+        point(MOUSE_FINGER, STICK_CENTRE, TouchPhase::Held),
+        point(MOUSE_FINGER, offset(STICK_CENTRE, [40.0, 0.0]), TouchPhase::Held),
+    ];
+    for row in rows {
+        let frame = evaluate_touch_from(&controls, WORLD, &mut state, &tick(&[row]), Some(MOUSE_FINGER));
+        assert_eq!(frame.value(MOVE_STICK), [0.0, 0.0]);
+    }
+}
+
+#[test]
+fn touching_is_true_only_while_a_finger_is_down() {
+    let controls = layout(StickMode::Floating);
+    let mut state = TouchState::new(&controls);
+    let away = [640.0, 360.0];
+    let rows: [(&[TouchPoint], bool); 4] = [
+        (&[], false),
+        (&[point(4, away, TouchPhase::Began)], true),
+        (&[point(4, away, TouchPhase::Held)], true),
+        (&[point(4, away, TouchPhase::Ended)], false),
+    ];
+    for (points, touching) in rows {
+        assert_eq!(evaluate_touch(&controls, WORLD, &mut state, &tick(points)).touching(), touching, "{points:?}");
+    }
+}
+
+#[test]
+fn a_label_names_the_last_stick_or_dpad_and_misuse_is_refused() {
+    let controls = TouchControls::new()
+        .stick(MOVE_STICK, Anchor::BottomLeft([160.0, 160.0]), 80.0, StickMode::Floating)
+        .label("Move")
+        .dpad(DPAD, Anchor::TopRight([120.0, 120.0]), 160.0);
+    controls.validate(WORLD).expect("a labelled layout validates");
+    let labels: Vec<(&str, bool)> = controls.controls().iter().map(|c| (c.label.as_str(), c.shows_label)).collect();
+    assert_eq!(labels, [("Move", true), ("dpad", false)], "an unlabelled d-pad keeps its id as its AccessKit name only");
+    let early = TouchControls::new().label("Move");
+    assert_eq!(early.validate(WORLD).map_err(|e| e.code), Err(InputErrorCode::TouchControlsInvalid));
+    let long = TouchControls::new().stick(MOVE_STICK, Anchor::BottomLeft([160.0, 160.0]), 80.0, StickMode::Fixed).label(&"m".repeat(33));
+    assert_eq!(long.validate(WORLD).map_err(|e| e.code), Err(InputErrorCode::TouchControlsInvalid));
 }

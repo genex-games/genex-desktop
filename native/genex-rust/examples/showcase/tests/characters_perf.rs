@@ -149,7 +149,7 @@ fn past_the_cap_the_smallest_draws_skin_in_the_vertex_stage_and_take_no_job() {
     assert!(vertex_skinned_draws(&scene, &library, SkinVertexPolicy::Auto).is_empty(), "30 near walkers: all over 240 px");
 
     let cap = skinned_compute_instances_max(mobile(PerformanceTier::High), TargetOs::Ios);
-    let vertex = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, cap);
+    let vertex = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, cap, &[]);
     let counts = SkinnedInstances::of(scene.skinned.len(), &vertex, Some(cap));
     assert_eq!((counts.compute, counts.vertex), (16, 14), "{counts:?}");
     // The overflow is the smallest on screen: the farthest 14 of the file.
@@ -160,27 +160,44 @@ fn past_the_cap_the_smallest_draws_skin_in_the_vertex_stage_and_take_no_job() {
     assert_eq!(plan.skin_jobs.len(), 16, "one job per compute instance, none for the overflow");
 
     // Within the cap nothing changes; the explicit policies ignore it.
-    assert_eq!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 30), vertex_skinned_draws(&scene, &library, SkinVertexPolicy::Auto));
-    assert!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Compute, 4).is_empty(), "Compute keeps every draw on compute");
-    assert_eq!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Vertex, 4), vec![true; 30]);
+    assert_eq!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 30, &[]), vertex_skinned_draws(&scene, &library, SkinVertexPolicy::Auto));
+    assert!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Compute, 4, &[]).is_empty(), "Compute keeps every draw on compute");
+    assert_eq!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Vertex, 4, &[]), vec![true; 30]);
 }
 
 #[test]
-fn a_transparent_draw_past_the_cap_stays_on_compute_and_ties_go_to_the_later_draw() {
+fn a_transparent_draw_past_the_cap_stays_on_compute_and_ties_go_to_the_later_job() {
+    let mut library = MeshLibrary::new();
+    let one = walker();
+    // Three copies of the walker (three jobs, lane CP: the cap counts jobs) in one pose at one spot
+    // (an exact tie on screen); the farthest of all is glass.
+    let skins: Vec<SkinId> = (0..3).map(|_| library.add_skinned(&one).expect("the walker")).collect();
+    let mut scene = Scene::new(crowd_camera(), [20, 24, 30, 255]);
+    for skin in &skins {
+        scene.draw_skinned(*skin, translation(0.0, 0.0, -2.0), walk(&one, 0.1), RenderMaterial::color([200, 140, 90, 255]));
+    }
+    scene.draw_skinned(skins[0], translation(0.0, 0.0, -6.0), walk(&one, 0.5), RenderMaterial::color([200, 200, 255, 120]));
+    // Four jobs against a cap of 2: two must move, the glass cannot, so two of the tied three.
+    let vertex = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 2, &[]);
+    assert_eq!(vertex, [false, true, true, false], "the glass stays on compute; of the tied three the later two move");
+    let alone = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 0, &[]);
+    assert_eq!(alone, [true, true, true, false], "a cap of 0 still keeps the glass on compute");
+}
+
+#[test]
+fn draws_sharing_a_pose_are_one_job_under_the_cap_and_leave_it_together() {
     let mut library = MeshLibrary::new();
     let one = walker();
     let skin = library.add_skinned(&one).expect("the walker");
     let mut scene = Scene::new(crowd_camera(), [20, 24, 30, 255]);
-    // Three walkers in one pose at one spot (an exact tie on screen); the farthest of all is glass.
-    for _ in 0..3 {
-        scene.draw_skinned(skin, translation(0.0, 0.0, -2.0), walk(&one, 0.1), RenderMaterial::color([200, 140, 90, 255]));
+    // Three walkers in one pose (one job), then glass (another).
+    for x in [-1.0, 0.0, 1.0] {
+        scene.draw_skinned(skin, translation(x, 0.0, -2.0), walk(&one, 0.1), RenderMaterial::color([200, 140, 90, 255]));
     }
     scene.draw_skinned(skin, translation(0.0, 0.0, -6.0), walk(&one, 0.5), RenderMaterial::color([200, 200, 255, 120]));
-    // Four on compute against a cap of 2: two must move, the glass cannot, so two of the tied three.
-    let vertex = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 2);
-    assert_eq!(vertex, [false, true, true, false], "the glass stays on compute; of the tied three the later two move");
-    let alone = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 0);
-    assert_eq!(alone, [true, true, true, false], "a cap of 0 still keeps the glass on compute");
+    assert!(vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 2, &[]).is_empty(), "two jobs under a cap of 2");
+    let vertex = vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, 1, &[]);
+    assert_eq!(vertex, [true, true, true, false], "the shared job leaves whole; the glass stays");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -256,13 +273,16 @@ fn crowd_game(count: usize) -> Game<Crowd> {
             (Limb::LeftArm, vec3(0.4, 1.2, 0.2), Vec3::NEG_Y),
             (Limb::RightArm, vec3(-0.4, 1.2, 0.2), Vec3::NEG_Y),
         ];
+        // Each its own phase of the cycle, so each poses its own skin job (a shared pose would be
+        // one job for all of them, lane CP).
         sim.world.heroes = (0..count)
-            .map(|_| {
+            .map(|i| {
                 let mut animator = hero.animator(&graph).expect("an animator");
                 animator.set_bool(fast, true);
                 for (limb, target, pole) in limbs {
                     animator.reach(limb, Some(LimbTarget { target, pole, weight: 1.0 }));
                 }
+                animator.update(0.013 * i as f32);
                 animator
             })
             .collect();

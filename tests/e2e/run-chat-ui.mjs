@@ -4,6 +4,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { request } from "../../scripts/studio-dev/client.ts";
+import { pressStageView } from "./stage-views.mjs";
 import { sourceIdentity } from "../../scripts/studio-dev/files.mjs";
 const root = process.cwd(),
   profile = `chat-ui-${Date.now()}`,
@@ -246,7 +247,7 @@ try {
     await capture("current-task");
   });
   await check("generated image loads, opens a modal and opens the project Assets view", async () => {
-    await op("click", { selector: "[data-stage-action=live]" });
+    await pressStageView((selector) => op("click", { selector }), "live");
     await until(async () => (await snap()).stage.stageView === "live", "native Live visible");
     await op("game.state");
     await scroll(-350);

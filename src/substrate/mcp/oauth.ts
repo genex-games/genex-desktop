@@ -10,6 +10,7 @@ import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprot
 import { validUrl, type SecretPort } from "./store.ts";
 import { redactValues } from "../../shared/redact.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** Where a connector's browser sign-in stands (`McpConnectorView.authentication.state`). */
 export const McpAuthState = {
@@ -36,21 +37,29 @@ const CALLBACK_HOST = "127.0.0.1";
 const CALLBACK_PATH = "/mcp/callback";
 /** Random bytes behind one sign-in's `state` parameter. */
 const STATE_BYTES = 32;
+/** The callback page's type: its words are in the person's language, so the browser is told they are UTF-8. */
+const PLAIN_TEXT = "text/plain; charset=utf-8";
 
+/**
+ * What a sign-in says. The words that are functions are the person's, in their language: the
+ * connector card's sign-in line, the page the browser returns to, and a refusal of their own
+ * Connect. The plain strings stay English: the connector's transport meets them on every
+ * connection, a tool call the agent made included, and the model reads that error.
+ */
 const MESSAGE = {
   Cancelled: "Connection cancelled",
-  NoCallback: "Could not open the local sign-in callback",
-  SignInExpired: "Sign-in expired. Connect again to retry.",
-  SignInFailed: "Sign-in could not be completed. Connect again to retry.",
-  InvalidState: "Invalid authorization state.",
-  NotCompleted: "Sign-in was not completed. Return to Studio.",
-  ReturnToStudio: "Return to Studio to see connection status.",
-  UnlockFailed: "Could not unlock the saved connection. Retry Connect.",
-  SaveFailed: "Could not save the connection. Connect again to retry.",
+  NoCallback: () => t("Could not open the local sign-in callback"),
+  SignInExpired: () => t("Sign-in expired. Connect again to retry."),
+  SignInFailed: () => t("Sign-in could not be completed. Connect again to retry."),
+  InvalidState: () => t("Invalid authorization state."),
+  NotCompleted: () => t("Sign-in was not completed. Return to Studio."),
+  ReturnToStudio: () => t("Return to Studio to see connection status."),
+  UnlockFailed: () => t("Could not unlock the saved connection. Retry Connect."),
+  SaveFailed: () => t("Could not save the connection. Connect again to retry."),
   ConnectFirst: "Connect this account in Studio first",
   SignInRequired: "Sign-in required. Press Connect in Studio.",
   InsecureBrowserUrl: "The authorization server did not provide a secure browser URL",
-  NoSecureStorage: "OAuth requires protected credential storage, which is unavailable in this profile.",
+  NoSecureStorage: () => t("OAuth requires protected credential storage, which is unavailable in this profile."),
   InvalidSavedAccount: "Invalid saved OAuth account",
   InvalidSavedCallback: "Invalid saved OAuth callback",
   StorageUnavailable: "Protected credential storage is unavailable",
@@ -169,7 +178,7 @@ export class McpOAuthAccount {
   async unlock(): Promise<void> {
     if (this.#unlocked) return;
     if (this.#unlocking) return this.#unlocking;
-    if (!this.store) throw new Error(MESSAGE.NoSecureStorage);
+    if (!this.store) throw new Error(MESSAGE.NoSecureStorage());
     const epoch = this.#epoch;
     const store = this.store;
     const pending = this.#serialize(async () => {
@@ -182,7 +191,7 @@ export class McpOAuthAccount {
       this.#set(parsed.tokens ? McpAuthState.Connected : McpAuthState.SignedOut);
     })
       .catch((error) => {
-        if (epoch === this.#epoch) this.#set(McpAuthState.Failed, MESSAGE.UnlockFailed);
+        if (epoch === this.#epoch) this.#set(McpAuthState.Failed, MESSAGE.UnlockFailed());
         throw error;
       })
       .finally(() => {
@@ -222,13 +231,13 @@ export class McpOAuthAccount {
     this.#server = server;
     await this.#listenForCallback(server, epoch);
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error(MESSAGE.NoCallback);
+    if (!address || typeof address === "string") throw new Error(MESSAGE.NoCallback());
     const redirect = `http://${CALLBACK_HOST}:${address.port}${CALLBACK_PATH}`;
     if (this.#saved.redirect && this.#saved.redirect !== redirect) delete this.#saved.client;
     this.#saved.redirect = redirect;
     this.#timer = setTimeout(() => {
       this.cancel();
-      this.#set(McpAuthState.Failed, MESSAGE.SignInExpired);
+      this.#set(McpAuthState.Failed, MESSAGE.SignInExpired());
     }, SIGN_IN_TIMEOUT_MS);
     this.#timer.unref();
     server.unref();
@@ -248,19 +257,19 @@ export class McpOAuthAccount {
       return;
     }
     if (!this.#stateMatches(url)) {
-      response.writeHead(400).end(MESSAGE.InvalidState);
+      response.writeHead(400, { "Content-Type": PLAIN_TEXT }).end(MESSAGE.InvalidState());
       return;
     }
     const code = url.searchParams.get("code");
     if (!code || url.searchParams.has("error")) {
-      response.writeHead(200, { "Content-Type": "text/plain" }).end(MESSAGE.NotCompleted);
+      response.writeHead(200, { "Content-Type": PLAIN_TEXT }).end(MESSAGE.NotCompleted());
       this.cancel();
       this.#set(McpAuthState.SignedOut);
       return;
     }
     // Consume the callback before exchanging: duplicate browser requests cannot redeem it twice.
     this.#state = "";
-    response.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" }).end(MESSAGE.ReturnToStudio);
+    response.writeHead(200, { "Content-Type": PLAIN_TEXT, "Cache-Control": "no-store" }).end(MESSAGE.ReturnToStudio());
     void this.#redeem(code, openBrowser, epoch);
   }
   /** Exchange the authorization code for tokens; a cancelled sign-in's late answer changes nothing. */
@@ -280,7 +289,7 @@ export class McpOAuthAccount {
     } catch {
       if (epoch !== this.#epoch) return;
       this.#finish();
-      this.#set(McpAuthState.Failed, MESSAGE.SignInFailed);
+      this.#set(McpAuthState.Failed, MESSAGE.SignInFailed());
     }
   }
   /** Reuse a registered loopback port when possible; otherwise register the new redirect URI. */
@@ -350,7 +359,7 @@ export class McpOAuthAccount {
         } catch (error) {
           if (epoch === this.#epoch) {
             delete this.#saved.tokens;
-            this.#set(McpAuthState.Failed, MESSAGE.SaveFailed);
+            this.#set(McpAuthState.Failed, MESSAGE.SaveFailed());
           }
           throw error;
         }

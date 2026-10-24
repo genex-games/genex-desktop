@@ -156,6 +156,17 @@ describe("the command's refusals", () => {
   }
 });
 
+describe("Quaternius' CC0 packs on OpenGameArt (owner call AN-21)", () => {
+  it("allows a manifest row on OpenGameArt's file store", () => {
+    const url = "https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip";
+    assert.equal(checkedUrl(url).hostname, "opengameart.org");
+    assert.equal(
+      refusal(() => checkManifest({ assets: [asset({ files: [file({ url })] })] })),
+      undefined,
+    );
+  });
+});
+
 describe("hostile manifest rows are refused before anything downloads", () => {
   const urls: [string, string, AssetRefusal][] = [
     ["plain http", "http://dl.polyhaven.org/file/a.jpg", AssetRefusal.HostNotAllowed],
@@ -168,6 +179,22 @@ describe("hostile manifest rows are refused before anything downloads", () => {
     ["credentials in the URL", "https://user:pass@dl.polyhaven.org/a.jpg", AssetRefusal.HostNotAllowed],
     ["another port", "https://dl.polyhaven.org:8443/a.jpg", AssetRefusal.HostNotAllowed],
     ["not a URL", "dl.polyhaven.org/a.jpg", AssetRefusal.ManifestInvalid],
+    ["OpenGameArt over plain http", "http://opengameart.org/sites/default/files/a.zip", AssetRefusal.HostNotAllowed],
+    [
+      "OpenGameArt with credentials",
+      "https://u:p@opengameart.org/sites/default/files/a.zip",
+      AssetRefusal.HostNotAllowed,
+    ],
+    [
+      "OpenGameArt on another port",
+      "https://opengameart.org:8443/sites/default/files/a.zip",
+      AssetRefusal.HostNotAllowed,
+    ],
+    [
+      "a subdomain of OpenGameArt",
+      "https://www.opengameart.org/sites/default/files/a.zip",
+      AssetRefusal.HostNotAllowed,
+    ],
   ];
   for (const [what, url, code] of urls) {
     it(`refuses ${what}`, () => {

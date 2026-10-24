@@ -34,6 +34,8 @@ export interface Launch {
   title: string | null;
   project: string | null;
   threadId: string | null;
+  /** The games the library listed when the message left home: a game listed since is the one it makes. */
+  known: readonly string[];
 }
 
 export interface LaunchState {
@@ -55,7 +57,7 @@ const current = (state: LaunchState, id: string): state is LaunchState & { launc
 /** A new launch replaces whatever home was holding. */
 export function launchStarted(
   state: LaunchState,
-  input: { id: string; text: string; extras: ComposerExtras | undefined; at: number },
+  input: { id: string; text: string; extras: ComposerExtras | undefined; at: number; known: readonly string[] },
 ): LaunchState {
   return {
     ...state,
@@ -118,11 +120,24 @@ export interface LaunchInSidebar {
   project: string | null;
 }
 
-/** The sidebar's one row for a launch, given which games the library lists. */
-export function launchInSidebar(launch: Launch | null, listed: (project: string) => boolean): LaunchInSidebar {
+/** The sidebar's one row for a launch, given the games the library lists. */
+export function launchInSidebar(launch: Launch | null, games: readonly { name: string }[]): LaunchInSidebar {
   if (!launch) return { placeholder: false, title: null, project: null };
-  const project = launch.project && listed(launch.project) ? launch.project : null;
+  const project = launchedGame(launch, games);
   return { placeholder: project === null, title: launch.title, project };
+}
+
+/**
+ * The listed game a launch is becoming: the one it made, or, while it is being made, the one game
+ * listed since the launch started. Main lists and announces a new game before it hands it back,
+ * so a library refresh can list it first.
+ */
+function launchedGame(launch: Launch, games: readonly { name: string }[]): string | null {
+  const listed = games.map((game) => game.name);
+  if (launch.project) return listed.includes(launch.project) ? launch.project : null;
+  if (launch.phase !== LaunchPhase.Opening) return null;
+  const since = listed.filter((name) => !launch.known.includes(name));
+  return since.length === 1 ? (since[0] ?? null) : null;
 }
 
 export type LaunchStore = StoreApi<LaunchState>;

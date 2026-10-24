@@ -19,7 +19,9 @@ import { loopRunClock } from "../director/journal.ts";
 import { openLeadLine } from "../director/lead-line.ts";
 import { type LeadSeat, leadSeat } from "../director/lead-session.ts";
 import { directors } from "../director/tool-specs.ts";
-import { FINISH_REPORT, notDoneOf } from "../finish-check.ts";
+import { FINISH_REPORT, notDoneOf, stillToFixOf } from "../finish-check.ts";
+import { StopWhy } from "../finish-contract.ts";
+import { loopHoursOf } from "../time-cap.ts";
 import { factsOfGame } from "../folder-facts.ts";
 import { engineOfGame, GameEngine } from "../game-engine.ts";
 import { fireHooks, HookEvent, notesText, runScope } from "../hooks.ts";
@@ -387,7 +389,22 @@ function reportOf(lead: LeadRun, end: RunEnd): AnyRecord {
     endReason: end.reason,
     ...(end.why ? { stoppedBecause: end.why } : {}),
     ...notDoneOfEnd(lead, end),
+    ...leftToFix(lead, end),
   };
+}
+
+/** Why a run that ended short of the goal stopped, by its end reason, as its result card says it. */
+const STOP_WHY_OF_END: Partial<Record<LeadEndReason, StopWhy>> = {
+  [LeadEndReason.NotDone]: StopWhy.Stuck,
+  [LeadEndReason.TimeUp]: StopWhy.Time,
+};
+
+/** What a close that is neither the goal reached nor a pause leaves for its result card: the last no's lists, why, the hours. */
+function leftToFix(lead: LeadRun, end: RunEnd): { stillToFix?: AnyRecord } {
+  if (end.status === ExecutionStatus.Paused || end.reason === LeadEndReason.GoalReached) return {};
+  const why = STOP_WHY_OF_END[end.reason] ?? StopWhy.Ended;
+  const left = stillToFixOf(lead.journal.finishTally, { why, hours: loopHoursOf(lead.run) });
+  return left ? { stillToFix: left } : {};
 }
 
 /**

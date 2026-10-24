@@ -72,13 +72,17 @@ until their relevant inputs change.
 
 Single files: `npm test -- tests/conformance/<name>.test.ts`. A UI change also needs a rendered
 look, not just a build; follow the [design workflow](docs/agent/design.md).
+Named tests avoid graph setup. Full `npm test` runs non-rig files with two workers, then rigs
+serially; use it at broad checkpoints. On Apple Silicon, `node -p process.arch` should say
+`arm64` after `nvm use`, so tests do not run through Rosetta.
 
 ## Continuous integration
 
-- **Check** (`.github/workflows/check.yml`) runs on every pull request and push: architecture
-  boundaries, typecheck, Biome lint, test-style, baseline behavior contracts and affected L1
-  tests in the Linux `gate` job. PR tests compare against the target branch's exact base SHA. The macOS
-  `fast` job runs non-rig tests only on PRs targeting `main`, pushes to `main`, and dispatches.
+- **Check** (`.github/workflows/check.yml`) runs on every pull request and dev/main push:
+  independent static checks, up to six jobs covering regular baseline/affected L1 files,
+  three mandatory seed-upgrade jobs, and selected harness groups. The Linux `gate` requires all selected work
+  to pass. PR selection uses the target branch's exact base SHA. The macOS `fast` aggregate
+  covers up to six non-rig shards only on PRs targeting `main`, pushes to `main`, and dispatches.
 - **Rig** (`rig.yml`) runs the serial rig group on pull requests labelled `full-tests` and on
   demand. Add that label when you touch core, harness or engine code.
 - **Developer documentation** (`context.yml`) checks handbook size, links and the knowledge map.

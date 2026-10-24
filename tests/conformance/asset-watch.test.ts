@@ -27,12 +27,16 @@ import {
   planAssetSwap,
   recordWebSwap,
   type ShownGame,
+  swapRefusal,
   webSwapRefusal,
 } from "../../src/main/asset-watch.ts";
+import { LiveGate } from "../../src/main/core/live-gate.ts";
 import { SECOND_MS } from "../../src/shared/duration.ts";
-import { LiveAssetsOutcome, LiveAssetsRebuild } from "../../src/shared/live-assets.ts";
+import { LiveAssetsOutcome, LiveAssetsRebuild, liveAssetsRebuild } from "../../src/shared/live-assets.ts";
+import { LiveBehindReason } from "../../src/shared/live-behind.ts";
 import { NATIVE_RELOAD_FILES_MAX, type NativeReloadFile, type NativeTimers } from "../../src/shared/native-contract.ts";
 import { fnv1a64Hex } from "../../src/substrate/native-game-port.ts";
+import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** A clock the test moves by hand. */
@@ -332,20 +336,20 @@ describe("the web page's copy", () => {
   });
 });
 
-describe("LiveAssets (the watcher and Reload's swap)", () => {
-  /** A watch the test fires by hand. */
-  function handWatch(): FolderWatch & { fire(name: string | null): void; closed: number } {
-    let listener: ((name: string | null) => void) | null = null;
-    const watch = Object.assign(
-      (_dir: string, on: (name: string | null) => void) => {
-        listener = on;
-        return { close: () => (watch.closed += 1) };
-      },
-      { fire: (name: string | null) => listener?.(name), closed: 0 },
-    );
-    return watch;
-  }
+/** A watch the test fires by hand. */
+function handWatch(): FolderWatch & { fire(name: string | null): void; closed: number } {
+  let listener: ((name: string | null) => void) | null = null;
+  const watch = Object.assign(
+    (_dir: string, on: (name: string | null) => void) => {
+      listener = on;
+      return { close: () => (watch.closed += 1) };
+    },
+    { fire: (name: string | null) => listener?.(name), closed: 0 },
+  );
+  return watch;
+}
 
+describe("LiveAssets (the watcher and Reload's swap)", () => {
   async function rig(files: Record<string, string | Buffer>, shown: Partial<ShownGame> = {}) {
     const { game, served } = await gameAndServed(files);
     const timers = fakeTimers();
@@ -444,5 +448,104 @@ describe("LiveAssets (the watcher and Reload's swap)", () => {
     const answer = await t.live.reload("forest");
     assert.equal(answer.reason, LiveAssetsRebuild.Refused);
     assert.deepEqual(t.caughtUp, []);
+  });
+});
+
+/**
+ * Release R-5: the host's reload loop end to end, with a hand-fired watch and a hand-moved clock.
+ * The live evidence (GE live-app r2): a 179 B PNG copied over `assets/textures/swatch.png` lit no
+ * Reload for about 49 s, and a changed-folder Reload in the Native view kept the old build.
+ */
+describe("the host reload loop (release R-5)", () => {
+  /** A game folder as Studio makes one: one commit, then assets the import added, untracked. */
+  async function committedGame(): Promise<{ game: string; served: string }> {
+    const { game, served } = await gameAndServed({ "textures/swatch.png": Buffer.alloc(179, 1) });
+    await writeTree(game, { "src/main.rs": "fn main() {}\n", "genex.toml": "[game]\n" });
+    await gitFile(["init", "-q"], { cwd: game });
+    await gitFile(["add", "src", "genex.toml"], { cwd: game });
+    await gitFile(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "initial"], { cwd: game });
+    return { game, served };
+  }
+
+  it("R5-1. an asset-only PNG change is offered to Reload within one debounce, even in an untracked folder", async () => {
+    const { game, served } = await committedGame();
+    const timers = fakeTimers();
+    const watch = handWatch();
+    const gate = new LiveGate({
+      emit: () => {},
+      gameDir: () => game,
+      showing: () => ({ project: "forest", root: null }),
+      showingHead: () => null,
+    });
+    const offered: Array<Promise<void>> = [];
+    const live = new LiveAssets({
+      gameDir: () => game,
+      shown: () => ({ assetsDir: served, webRoot: null, serves: async () => true, reload: async () => null }),
+      offer: (project) => offered.push(gate.offer({ project, root: null })),
+      caughtUp: async () => {},
+      timers,
+      watch,
+    });
+    // Live loads the game: the gate records the folder's print, the watcher starts.
+    await gate.loaded("forest", { print: await gate.printBefore("forest", null), root: null });
+    live.liveLoaded("forest");
+    // The same 179 bytes' length, other bytes, written in place (`cp` over it): git lists only `?? assets/`.
+    await writeFile(path.join(game, "assets", "textures", "swatch.png"), Buffer.alloc(179, 2));
+    watch.fire("assets/textures/swatch.png");
+    timers.advance(ASSET_WATCH_DEBOUNCE_MS - 1);
+    assert.equal(offered.length, 0, "the burst is still settling");
+    timers.advance(1);
+    await Promise.all(offered);
+    assert.equal(offered.length, 1, "one batch, one offer");
+    assert.equal(gate.state("forest").reason, LiveBehindReason.Changed, "Reload is lit");
+  });
+
+  it("R5-2. the pure route: an asset-only change goes to reloadAssets; code, a missing run or an old build go to a rebuild", () => {
+    const assetOnly = { shown: true, serves: true, watchedSource: false, sourceMoved: false };
+    assert.equal(swapRefusal(assetOnly), null, "an asset-only change is swapped in by reloadAssets");
+    assert.equal(swapRefusal({ ...assetOnly, shown: false }), LiveAssetsRebuild.NoRun);
+    assert.equal(swapRefusal({ ...assetOnly, serves: false }), LiveAssetsRebuild.NotServed);
+    assert.equal(swapRefusal({ ...assetOnly, watchedSource: true }), LiveAssetsRebuild.Source);
+    assert.equal(
+      swapRefusal({ ...assetOnly, sourceMoved: true }),
+      LiveAssetsRebuild.Source,
+      "code the watcher has not reported yet still needs a build",
+    );
+  });
+
+  it("R5-3. a changed-folder Reload whose code events have not arrived rebuilds, so the new build runs", async () => {
+    const { game, served } = await committedGame();
+    const timers = fakeTimers();
+    const watch = handWatch();
+    const sent: NativeReloadFile[][] = [];
+    const live = new LiveAssets({
+      gameDir: () => game,
+      shown: () => ({
+        assetsDir: served,
+        webRoot: null,
+        serves: async () => true,
+        reload: async (named) => {
+          sent.push(named);
+          return { reloaded: named.map((file) => file.path), refused: [], pending: 0 };
+        },
+      }),
+      offer: () => {},
+      caughtUp: async () => {},
+      timers,
+      watch,
+    });
+    live.liveLoaded("forest");
+    await live.settled("forest");
+    // Another game's files copied over this one: code and assets. FSEvents names only the asset in time.
+    await writeTree(game, {
+      "src/main.rs": "fn main() { other() }\n",
+      "assets/textures/swatch.png": Buffer.alloc(179, 3),
+    });
+    watch.fire("assets/textures/swatch.png");
+    timers.advance(ASSET_WATCH_DEBOUNCE_MS);
+    const answer = await live.reload("forest");
+    assert.deepEqual(answer, liveAssetsRebuild(LiveAssetsRebuild.Source), "Reload rebuilds: the new build id starts");
+    assert.deepEqual(sent, [], "nothing was swapped into the old build");
+    assert.ok((await readFile(path.join(served, "textures", "swatch.png"))).equals(Buffer.alloc(179, 1)));
   });
 });

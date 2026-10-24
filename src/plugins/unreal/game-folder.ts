@@ -6,6 +6,7 @@
  */
 import { lstat, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { t } from "../../shared/i18n.ts";
 import { CreateError, CreateErrorCode } from "./create-project.ts";
 
 /** The project's folder inside the game. */
@@ -25,9 +26,10 @@ const IGNORE_FILE = ".gitignore";
 const CLEANUP_RETRIES = 5;
 const CLEANUP_RETRY_MS = 200;
 
+/** New game's refusals for the game's folder, in the person's words: the panel shows them as they are. */
 const MESSAGE = {
-  HasProject: "This game already has an unreal folder, so New game can't make its project there.",
-  IgnoreIsLink: "This game's .gitignore is a link, so Genex won't write through it.",
+  HasProject: () => t("This game already has an unreal folder, so New game can't make its project there."),
+  IgnoreIsLink: () => t("This game's .gitignore is a link, so Genex won't write through it."),
 } as const;
 
 const lstatOrNull = (file: string) => lstat(file).catch(() => null);
@@ -35,9 +37,9 @@ const lstatOrNull = (file: string) => lstat(file).catch(() => null);
 /** Refuses a game that already has something at `unreal`, or whose ignore file isn't a plain file. */
 export async function assertGameFolderFree(gameDir: string): Promise<void> {
   if (await lstatOrNull(path.join(gameDir, GAME_PROJECT_FOLDER)))
-    throw new CreateError(CreateErrorCode.NameTaken, MESSAGE.HasProject);
+    throw new CreateError(CreateErrorCode.NameTaken, MESSAGE.HasProject());
   const ignore = await lstatOrNull(path.join(gameDir, IGNORE_FILE));
-  if (ignore && !ignore.isFile()) throw new CreateError(CreateErrorCode.Link, MESSAGE.IgnoreIsLink);
+  if (ignore && !ignore.isFile()) throw new CreateError(CreateErrorCode.Link, MESSAGE.IgnoreIsLink());
 }
 
 /** Adds the lines a project inside the game needs to its ignore file; what is there stays. */

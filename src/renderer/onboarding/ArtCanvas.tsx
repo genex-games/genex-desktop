@@ -10,6 +10,12 @@ import { DARK_SCHEME_QUERY, REDUCED_MOTION_QUERY } from "../ui/media-queries.ts"
 import { toRgb } from "../ui/WireArt.tsx";
 import type { Palette } from "./art.ts";
 
+/**
+ * How often a moving canvas measures its on-screen width again. Measuring reads layout, and in a
+ * window that lays out every frame (a reply streaming beside it) that is a forced layout per frame.
+ */
+const ZOOM_REFRESH_MS = 500;
+
 /** Paints one frame. `now` is performance.now(), or null for a still frame. */
 export type Draw = (ctx: CanvasRenderingContext2D, palette: Palette, now: number | null) => void;
 
@@ -96,11 +102,17 @@ export function ArtCanvas({
       visible = false,
       frame = 0,
       timer: ReturnType<typeof setTimeout> | undefined,
-      scale = 0;
+      scale = 0,
+      zoom = 1,
+      zoomAt = Number.NEGATIVE_INFINITY;
 
     const paint = (now: number | null) => {
       // A stage scaled up by its parent still gets a pixel for every display pixel.
-      const zoom = canvas.getBoundingClientRect().width / width || 1;
+      const at = now ?? performance.now();
+      if (now === null || at - zoomAt >= ZOOM_REFRESH_MS) {
+        zoom = canvas.getBoundingClientRect().width / width || 1;
+        zoomAt = at;
+      }
       const ratio = Math.min(3, Math.max(1, (window.devicePixelRatio || 1) * zoom));
       if (ratio !== scale) {
         scale = ratio;

@@ -18,7 +18,10 @@ import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
 import type { NativeLogBatch, NativeRunStatus } from "./native-contract.ts";
+import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { ToolPermissionState } from "./permissions.ts";
+import type { PlayViewerEvent, RemixProgress } from "./play.ts";
+import type { NativeInstalls, NativeSession } from "./play-native.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
@@ -90,6 +93,8 @@ export interface UiEventMap {
   "harness.status": { threadId?: string; status?: string; all?: ThreadStatusMap };
   "harness.log": { line: string; stream: "stdout" | "stderr" };
   "harness.boot": Partial<BootNotice>;
+  /** The open studio's harness would not start (main's own, never the harness's): why, for its line. */
+  "harness.start-failed": { failure: string };
   "seed.upgraded": { added: string[]; updated: string[]; kept: string[]; retired: string[] };
   "watchdog.triggered": { reason: string; snapshot: string | null };
   "watchdog.recovered": { reason: string; ok: boolean; reseeded?: boolean };
@@ -104,6 +109,8 @@ export interface UiEventMap {
   "engines.changed": { engine?: string };
   "engine.auth": { engine?: string; message?: string };
   "engine.fallback": { from?: string; to?: string; kind?: string; role?: string };
+  /** Every subscription's plan limits as they stand now, sent whenever one of them changes. */
+  "provider.usage": { reports: ProviderUsageReport[] };
   "model.install": ModelInstallJob;
   /** An in-app Claude Code or Codex install started, finished or failed. */
   "cli.install": CliInstallJob;
@@ -127,6 +134,8 @@ export interface UiEventMap {
   "native.status": NativeRunStatus;
   /** A native run's stderr lines, cut and batched (`NativeRuns`). */
   "native.log": NativeLogBatch;
+  /** Full screen of Live's Native view began (`on`) or ended: its canvas covers the window meanwhile (`game-full-screen.ts`). */
+  "native.full-screen": { on: boolean };
   "game.archived": { project: string; trash: boolean };
   "delegation.started": { project: string; engine: string; active: number };
   "delegation.finished": { project: string; engine: string; active: number };
@@ -175,6 +184,18 @@ export interface UiEventMap {
   "live.behind": LiveBehindEvent;
   /** ⌥⌘M pressed while the Live game had the keyboard: the renderer owns the switch and flips it. */
   "preview.sound.toggle": { at: number };
+
+  // — play —
+  /** Play's game viewer loaded, played, failed or closed (`main/play/viewer.ts`). */
+  "play.viewer": PlayViewerEvent;
+  /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
+  "play.remix": RemixProgress;
+  /** Play's installed games or an install changed: every one, as `studio:play.installs` answers (`main/play/native-installs.ts`). */
+  "play.installs": NativeInstalls;
+  /** A native game started, came on screen, ended or failed to start: every session (`main/play/native-launch.ts`). */
+  "play.sessions": NativeSession[];
+  /** A `genex://game/<slug>` link waits for the page to take it (`studio:play.take-game-link`, `main/play/game-links.ts`). */
+  "play.game-link": Record<string, never>;
 
   // — plugins and connectors —
   "plugins.changed": PluginChange;
@@ -253,6 +274,7 @@ export const UiEvent = {
   HarnessStatus: "harness.status",
   HarnessLog: "harness.log",
   HarnessBoot: "harness.boot",
+  HarnessStartFailed: "harness.start-failed",
   SeedUpgraded: "seed.upgraded",
   WatchdogTriggered: "watchdog.triggered",
   WatchdogRecovered: "watchdog.recovered",
@@ -263,6 +285,7 @@ export const UiEvent = {
   EnginesChanged: "engines.changed",
   EngineAuth: "engine.auth",
   EngineFallback: "engine.fallback",
+  ProviderUsage: "provider.usage",
   ModelInstall: "model.install",
   CliInstall: "cli.install",
   ToolchainInstall: "toolchain.install",
@@ -271,6 +294,7 @@ export const UiEvent = {
   BuildProgress: "build.progress",
   NativeStatus: "native.status",
   NativeLog: "native.log",
+  NativeFullScreen: "native.full-screen",
   GameArchived: "game.archived",
   DelegationStarted: "delegation.started",
   DelegationFinished: "delegation.finished",
@@ -303,6 +327,11 @@ export const UiEvent = {
   PreviewFrame: "preview.frame",
   LiveBehind: "live.behind",
   PreviewSoundToggle: "preview.sound.toggle",
+  PlayViewer: "play.viewer",
+  PlayRemix: "play.remix",
+  PlayInstalls: "play.installs",
+  PlaySessions: "play.sessions",
+  PlayGameLink: "play.game-link",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
@@ -382,6 +411,7 @@ const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
   UiEvent.ToolchainInstall,
   UiEvent.NativeStatus,
   UiEvent.NativeLog,
+  UiEvent.NativeFullScreen,
 ]);
 
 /** Whether a harness notification names an event only the host sends. */

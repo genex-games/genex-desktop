@@ -5,6 +5,7 @@
  * travel — callbacks, abort signals and the host-injected tool handlers.
  */
 import type { Message, Usage } from "./event-log.ts";
+import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { PreviewSetup } from "./preview-contract.ts";
 
 export interface ToolDefinition {
@@ -45,6 +46,19 @@ export interface StudioToolSpec {
     properties: Record<string, { type: string; description?: string }>;
     required?: string[];
   };
+  /**
+   * Called only when the person asks for it in words (an Auto chat's Loop start): it doesn't make the
+   * session an interview, so messages still join it mid-turn, and no nudge names it.
+   */
+  onlyWhenAsked?: boolean;
+}
+
+/**
+ * Whether a session handed `tools` is an interview: one with a question or a launch it decides on,
+ * which reads no message mid-turn. Tools called only when asked don't make it one.
+ */
+export function isInterview(tools: readonly StudioToolSpec[] | undefined): boolean {
+  return (tools ?? []).some((tool) => tool.onlyWhenAsked !== true);
 }
 
 /** A live studio tool: the flat projection, plus the real schema when the flat one cannot say it. */
@@ -83,8 +97,26 @@ export interface DelegatePlaytestGrant {
   handle?: string;
   entry?: string;
   setup?: PreviewSetup | null;
-  role?: "playtester" | "scout";
+  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
+  role?: "playtester" | "scout" | "judge";
   label?: string;
+  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
+  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
+  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
+  maxActions?: number;
+  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
+  pacing?: "paced" | "stepped";
+  /**
+   * How many players a game played in its engine's editor opens for this session (1 to
+   * `MAX_PLAY_PLAYERS`, never more than its engine declares); absent is one.
+   */
+  players?: number;
+  /**
+   * A judge the game's engine plugin declares (`PluginJudge.id`), for a `judge` role on a game played
+   * in its editor: the host appends its brief to the session's rubric, opens its players and runs
+   * its probe once the play opens. A judge the game does not have is refused.
+   */
+  judge?: string;
 }
 
 /**
@@ -158,6 +190,12 @@ export const StopReason = {
   NoProgress: "no_progress",
   MaxTurns: "max_turns",
   Aborted: "aborted",
+  /**
+   * The CLI refused the session before it did anything: the sandbox it asked for cannot run on this
+   * computer (Claude Code's `failIfUnavailable`). No build exists, and another session on the same
+   * engine would be refused the same way.
+   */
+  SandboxUnavailable: "sandbox_unavailable",
 } as const;
 export type StopReason = (typeof StopReason)[keyof typeof StopReason];
 
@@ -226,4 +264,12 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
+  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
+  trace?: ComputerTraceSummary;
+  /**
+   * Genex tool calls the session made after its turn ended (a background task woke it), which no
+   * answer could reach: by the name the agent called it by, without the server's prefix, and its
+   * arguments as JSON.
+   */
+  cutAfterTurn?: Array<{ tool: string; args: string }>;
 }

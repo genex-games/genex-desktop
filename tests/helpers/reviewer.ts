@@ -12,9 +12,15 @@ import { HostMethod } from "../../src/shared/harness-api.ts";
 /** The folder under scratch where the host seats the Loops' reviewers. */
 const REVIEWERS_FOLDER = "reviewers";
 
-/** A reviewer's session result: yes or no, with its reasons, as the brief's JSON at the end of its summary. */
-export function reviewerAnswer(verdict: string, reasons: readonly string[] = [], engine = "claude-code") {
-  const answer = JSON.stringify({ verdict, reasons, notDone: [] });
+/** A reviewer's session result: yes or no, with its reasons, what isn't done and what is, as the brief's JSON at the end of its summary. */
+export function reviewerAnswer(
+  verdict: string,
+  reasons: readonly string[] = [],
+  engine = "claude-code",
+  notDone: readonly string[] = [],
+  done: readonly string[] = [],
+) {
+  const answer = JSON.stringify({ verdict, reasons, done, notDone });
   return {
     ok: true,
     engine,

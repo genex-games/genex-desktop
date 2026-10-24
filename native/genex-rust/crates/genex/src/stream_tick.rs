@@ -33,6 +33,7 @@ use glam::{Vec2, Vec3};
 
 use crate::gfx::Assets;
 use crate::sim::Sim;
+use crate::stream_groups::GroupCatalog;
 use crate::stream::{
     CellContent, CellPart, ContentBuild, STREAM_CELL_COLLIDERS_MAX, STREAM_CELL_INSTANCES_MAX, STREAM_CELL_THINGS_MAX, StreamError, StreamErrorCode,
     Streaming,
@@ -121,6 +122,8 @@ pub struct StreamState {
     left: Vec<CellId>,
     /// The streamed terrain tiles (STR-23).
     terrain: Option<crate::TerrainTiles>,
+    /// The named asset groups required (STR-29, `stream_groups.rs`).
+    groups: crate::stream_groups::GroupSet,
 }
 
 /// The cells a slot load's rebuild entered ahead of the tick's commit ([`StreamTick::rebuild_restored`]),
@@ -143,6 +146,39 @@ impl StreamState {
     /// Whether the game registered `game.streaming`.
     pub fn registered(&self) -> bool {
         self.cells.is_some()
+    }
+
+    /// Require the named asset group `group` (`[[asset_group]]` in genex.toml): its ticket, ready
+    /// [`crate::STREAM_GROUP_PREFETCH_TICKS`] ticks from now ([`StreamState::ready`]). Requiring a
+    /// group already required gives its ticket again. Works without `game.streaming`. Refuses
+    /// `stream-unknown-group` for a group the build does not declare (before the build's groups are
+    /// known, the next commit refuses the ticket instead: [`StreamState::group_refusal`]) and
+    /// `stream-invalid` past [`crate::STREAM_GROUPS_REQUIRED_MAX`] groups; a refusal changes nothing.
+    pub fn require(&mut self, group: &str) -> Result<crate::StreamTicket, StreamError> {
+        self.groups.require(group)
+    }
+
+    /// The handles of `ticket`'s group (its members' bytes and models) from the tick it is ready
+    /// on, the same on every destination; None before, and after `release_group`.
+    pub fn ready(&self, ticket: crate::StreamTicket) -> Option<crate::GroupHandles> {
+        self.groups.ready(ticket)
+    }
+
+    /// Why `ticket` will never be ready: `stream-unknown-group` for a group the build does not
+    /// declare, required before the build's groups were known (the first require of a run).
+    pub fn group_refusal(&self, ticket: crate::StreamTicket) -> Option<StreamErrorCode> {
+        self.groups.refusal(ticket)
+    }
+
+    /// Let the named group `group` go (nothing when it is not required): its ticket answers None
+    /// from now on, and requiring it again gives equal handles.
+    pub fn release_group(&mut self, group: &str) {
+        self.groups.release(group);
+    }
+
+    /// The named groups required and not released, ascending (what a shell fetches).
+    pub fn required_groups(&self) -> impl Iterator<Item = &str> + '_ {
+        self.groups.required()
     }
 
     /// Place the anchor `name` (the player, a vehicle) at `at` (world x, y, z; y is ignored); it
@@ -280,6 +316,19 @@ impl StreamState {
         let moved = grid::diff(cells.active(), &next);
         Some((next, moved))
     }
+
+    /// The cells around the anchors, ascending: the active set, the set the next commit makes and
+    /// the prefetch ring past it (what the builders build). A shell that fetches cell files while
+    /// playing (the web's) asks for these; empty without `game.streaming`.
+    pub(crate) fn around(&self) -> Vec<CellId> {
+        let Some(cells) = self.cells.as_ref() else { return Vec::new() };
+        let mut around: BTreeSet<CellId> = cells.active().clone();
+        if let Some((next, _)) = self.next() {
+            around.extend(next);
+        }
+        around.extend(cells.prefetch(&self.anchor_cells()).unwrap_or_default());
+        around.into_iter().collect()
+    }
 }
 
 /// Report a commit that follows a slot load's rebuild against the set before the load: `entered`
@@ -373,6 +422,8 @@ pub(crate) struct StreamTick {
     holding_ms: f64,
     timeouts: u64,
     refused: Vec<(CellId, StreamErrorCode)>,
+    /// The build's named groups, read once from the asset index (STR-29).
+    catalog: Option<Arc<GroupCatalog>>,
 }
 
 impl StreamTick {
@@ -390,7 +441,15 @@ impl StreamTick {
             holding_ms: 0.0,
             timeouts: 0,
             refused: Vec::new(),
+            catalog: None,
         }
+    }
+
+    /// Hand `sim.stream` the build's named groups, read once from `assets`' index the first time a
+    /// game requires a group, then kept for later seeds and loads (STR-29).
+    fn attach_groups<W>(&mut self, sim: &mut Sim<W>, assets: &Assets) {
+        let catalog = self.catalog.get_or_insert_with(|| Arc::new(GroupCatalog::read(assets)));
+        sim.stream.groups.attach(Arc::clone(catalog));
     }
 
     /// Run builds on `pool` from now on (tests and tools: a thread count to compare).
@@ -449,6 +508,37 @@ impl StreamTick {
         assets: &Assets,
         budget: &mut HoldBudget,
     ) -> Result<(), Held> {
+        // A seed or load after the groups were read gets them again with no read.
+        let known_here = self.catalog.is_some() && !sim.stream.groups.attached();
+        if known_here || sim.stream.groups.wants_catalog() {
+            self.attach_groups(sim, assets);
+        }
+        // A named group due now whose members are not all resident holds the tick, as a late
+        // cell build does: nothing changed, and the tick runs once they arrive (STR-29).
+        if !sim.stream.groups.due_resident(assets) {
+            if !self.holding {
+                self.holding = true;
+                self.stalls += 1;
+            }
+            return Err(Held);
+        }
+        self.commit_cells(sim, hooks, assets, budget)?;
+        self.end_hold();
+        sim.stream.groups.commit(assets);
+        Ok(())
+    }
+
+    /// The cells' part of the commit slot ([`StreamTick::commit`]).
+    fn commit_cells<W>(
+        &mut self,
+        sim: &mut Sim<W>,
+        hooks: &[Box<dyn StreamCommit<W>>],
+        assets: &Assets,
+        budget: &mut HoldBudget,
+    ) -> Result<(), Held> {
+        if !crate::stream::STREAMING_BUILT {
+            return Ok(());
+        }
         let Some((next, moved)) = sim.stream.next() else { return Ok(()) };
         for cell in &moved.entered {
             self.ensure(*cell, Priority::Sim);
@@ -496,6 +586,9 @@ impl StreamTick {
         assets: &Assets,
         budget: &mut HoldBudget,
     ) -> Result<bool, Held> {
+        if !crate::stream::STREAMING_BUILT {
+            return Ok(false);
+        }
         let Some(restored) = sim.stream.restored.clone() else { return Ok(false) };
         let Some(before) = sim.stream.cells.as_ref().map(|cells| cells.active().clone()) else { return Ok(false) };
         let moved = grid::diff(&before, &restored);
@@ -603,6 +696,9 @@ impl StreamTick {
     /// After the tick's hooks: start the builds the next commit enters (`Sim`) and the prefetch
     /// ring (`Prefetch`), and drop builds no longer wanted.
     pub(crate) fn prefetch<W>(&mut self, sim: &Sim<W>) {
+        if !crate::stream::STREAMING_BUILT {
+            return;
+        }
         let Some((_, moved)) = sim.stream.next() else { return };
         let Some(cells) = sim.stream.cells.as_ref() else { return };
         let ring = cells.prefetch(&sim.stream.anchor_cells()).unwrap_or_default();

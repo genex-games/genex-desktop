@@ -5,6 +5,7 @@
 //! [game]
 //! title = "Pond"            # required
 //! world_size = [960, 540]   # optional, each side 64..=4096
+//! fit = "expand"            # optional: letterbox (default) | expand
 //! save_name = "pond"        # optional: letters, digits, space, _ - .
 //!
 //! [crates]                  # optional: the reviewed allowlist by requirement, or a crate the
@@ -32,6 +33,9 @@
 //!
 //! [audio]                   # optional: a game without sound is built without the mixer and decoders
 //! enabled = false           # default true
+//!
+//! [nav]                     # optional: [streaming] and [animation] alike; a game that never uses
+//! enabled = false           # the system is built without it (default true)
 //!
 //! [[texture]]               # optional: a loose texture's usage, where no material slot tells it
 //! path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP
@@ -178,7 +182,7 @@ pub const PARTICLE_CALLS: [&str; 9] =
 /// `TerrainLayer::flat(..)`, `.with_layers(..)`) and control map (`TerrainTexel::blend(..)`,
 /// `.with_control(..)`), drawn each frame (`frame.terrain(..)`) and asked for its height
 /// (`terrain.height(..)`).
-pub const TERRAIN_CALLS: [&str; 13] = [
+pub const TERRAIN_CALLS: [&str; 15] = [
     "Terrain::from_fn",
     "Terrain::from_heights",
     "TerrainLayer::textured",
@@ -193,6 +197,9 @@ pub const TERRAIN_CALLS: [&str; 13] = [
     ".with_grass",
     "Scatter::new",
     "terrain.scatter",
+    // Gate GR: the scatter rule's flat-ground and cap steps the terrain recipe sketches.
+    ".on_flat_ground",
+    ".with_cap",
 ];
 /// The look's fog calls of the facade, as agents call them: the fog a config draws
 /// (`RenderConfig::new().fog(..)`), made from `Fog::default()` and shaped (`.with_density(..)`,
@@ -206,8 +213,8 @@ pub const FOG_CALLS: [&str; 8] =
 /// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
 /// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26; the
 /// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
-/// a ragdoll view's `.apply`, pinned at gate GI).
-pub const ANIMATION_CALLS: [&str; 86] = [
+/// a ragdoll view's `.apply`, pinned at gate GI; the planted feet, release R-22).
+pub const ANIMATION_CALLS: [&str; 88] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
@@ -218,12 +225,13 @@ pub const ANIMATION_CALLS: [&str; 86] = [
     "CharacterDraw::new", ".tint", ".material", "Motion::clip", ".once", ".above", ".below", ".at_end", ".synced",
     ".inertialize", ".priority", ".interruptible", ".layer_mask", ".event", ".vec2", ".bool", ".set_vec2", ".set_bool",
     ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
-    ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips",
+    ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips", ".plant_feet",
+    "animation::height_ground",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
 /// active set, the commit, scatter rules and the tiles' readers the page teaches, pinned at gate GI).
-pub const STREAM_CALLS: [&str; 53] = [
+pub const STREAM_CALLS: [&str; 69] = [
     "Streaming::grid", ".sim_radius", ".hysteresis", ".prefetch", ".anchors", "game.streaming", "game.cell_content",
     "CellBuild::default", ".thing", "sim.stream.set_anchor", "sim.stream.clear_anchor", "sim.stream.entered",
     "sim.stream.left", ".part", "CellColliders::new", ".with", "game.stream_colliders", ".handles", ".view_radius",
@@ -233,11 +241,13 @@ pub const STREAM_CALLS: [&str; 53] = [
     "cell.refused", "Scatter::new", ".with_scale", ".following_ground", "sim.stream.active", "sim.stream.is_active",
     "sim.stream.kept", "game.stream_commit", ".cell_size", ".samples", ".is_procedural", ".authored_cells",
     ".tile_heights", ".tile", ".collider", ".cell_colliders",
+    "CellPacks::from_table", "CellPacks::read", "packs.cell", "packs.cells", "packs.world", "packs.digest", "digest::fnv1a64", "digest::fnv1a64_from", "digest::hex64", "sim.stream.require", "sim.stream.ready", "sim.stream.group_refusal", "sim.stream.release_group", "sim.stream.required_groups", "handles.bytes", "handles.paths",
 ];
 /// The navigation calls of the facade (NAV-11; agents, links, bodies, queries and saves, NAV-12;
 /// collider input, NAV-5; debug drawing, NAV-16; offline bakes, NAV-14; tiles, triangle input,
-/// custom areas, saved meshes, two-way links and streamed islands the page teaches, pinned at gate GI).
-pub const NAV_CALLS: [&str; 64] = [
+/// custom areas, saved meshes, two-way links and streamed islands the page teaches, pinned at gate GI;
+/// an agent's speed, which the nav-agents recipe sets, pinned at gate GR).
+pub const NAV_CALLS: [&str; 65] = [
     "frame.lines", "game.navigation", "NavConfig::walker", "NavInput::new", "NavMesh::bake", "NavMesh::bake_tile",
     "NavMesh::from_bytes_for", "nav.add_mesh", "nav.add_tile", "nav.remove_tile", "nav.set_area_cost",
     "nav.set_area_open", "nav.add_obstacle", "nav.move_obstacle", "nav.remove_obstacle", "nav.pending_rebuilds",
@@ -248,15 +258,15 @@ pub const NAV_CALLS: [&str; 64] = [
     "nav.probe", "nav.snapshot", "nav.restore", ".with_colliders", ".with_static_colliders", "frame.nav_debug",
     "NavDebug::mesh", "NavDebug::borders", "NavDebug::everything", ".with_links", ".with_paths", "game.nav_bake",
     "NavArea::custom", ".with_tile", ".with_triangles", "sim.nav.config", "mesh.to_bytes", "mesh.source",
-    "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes",
+    "config.tile_of", "nav.tiles", "nav.digest", ".both_ways", "NavIsland::from_bytes", ".with_speed",
 ];
 /// The input calls of the facade (IN-11, IN-12).
-pub const INPUT_CALLS: [&str; 31] = [
+pub const INPUT_CALLS: [&str; 32] = [
     "game.input", "game.touch_controls", "ActionMap::new", ".context", "Context::new", ".button", ".axis1", ".axis2",
     ".when", ".modify", ".pass_through", ".starts_off", "ctx.actions.down", "ctx.actions.pressed",
     "ctx.actions.released", "ctx.actions.fired", "ctx.actions.value", "ctx.actions.axis2", "ctx.actions.held_ticks",
     "ctx.actions.device", "ctx.actions.glyph", "ctx.actions.is_on", "ctx.actions.enable", "ctx.actions.disable",
-    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".show", "controls_panel", "glyph_ui",
+    "ctx.actions.free_touches", "TouchControls::new", ".stick", ".dpad", ".label", ".show", "controls_panel", "glyph_ui",
 ];
 /// The sim-side asset read calls of the facade, as a reset calls them (SF-1a); `.wire` is a
 /// refusal code's wire spelling and `.triangle_count` counts a model's triangles.
@@ -528,8 +538,9 @@ vocabulary! {
     }
 }
 
-/// Extra crates a game may name without a person's approval (plan "Agent policy").
-pub const GAME_CRATE_ALLOWLIST: [&str; 2] = ["fastrand", "noise"];
+/// Extra crates a game may name without a person's approval (plan "Agent policy"), held with the
+/// host's copy to `tests/fixtures/game-crate-allowlist.json` (`tests/manifest.rs`).
+pub const GAME_CRATE_ALLOWLIST: [&str; 3] = ["fastrand", "noise", "pathfinding"];
 const MAX_TITLE_CHARS: usize = 80;
 const MAX_SAVE_NAME_CHARS: usize = 64;
 /// The longest crate name: a letter, then letters, digits, `-` and `_`.
@@ -569,6 +580,15 @@ pub struct GenexToml {
     /// Whether the game is built with audio's mixer and decoders.
     #[serde(default)]
     pub audio: AudioSection,
+    /// Whether the game is built with navigation (release R-1).
+    #[serde(default)]
+    pub nav: SystemSwitch,
+    /// Whether the game is built with world streaming (release R-1).
+    #[serde(default)]
+    pub streaming: SystemSwitch,
+    /// Whether the game is built with animation (release R-1).
+    #[serde(default)]
+    pub animation: SystemSwitch,
     /// Loose textures' usages, read by the host's import step (C-10).
     #[serde(default)]
     pub texture: Vec<TextureRow>,
@@ -626,6 +646,10 @@ pub struct GameSection {
     /// The fixed world target size in pixels.
     #[serde(default = "default_world_size")]
     pub world_size: [u32; 2],
+    /// How the world fills a window of another aspect, `letterbox` or `expand` (lane EF); none is
+    /// letterbox. Checked as text so any other word is refused `invalid-fit`.
+    #[serde(default)]
+    pub fit: Option<String>,
     /// The save folder name.
     #[serde(default)]
     pub save_name: Option<String>,
@@ -633,6 +657,13 @@ pub struct GameSection {
 
 fn default_world_size() -> [u32; 2] {
     [960, 540]
+}
+
+impl GameSection {
+    /// The fit the game declares: letterbox when it names none (a refused word never parses).
+    pub fn fit(&self) -> crate::Fit {
+        self.fit.as_deref().and_then(crate::Fit::from_wire).unwrap_or_default()
+    }
 }
 
 /// `[[crate_request]]`: one crate at one exact release, and why.
@@ -999,6 +1030,25 @@ impl AudioSection {
     }
 }
 
+/// `[nav]`, `[streaming]` and `[animation]`: a game that never uses the system turns it off and is
+/// built without it (the facade feature of the same name; the host writes the facade line without
+/// default features). Its code compiles unchanged and what the system would do is refused
+/// (`nav-disabled`, `streaming-disabled`, `animation-disabled`). Release R-1.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SystemSwitch {
+    /// False builds the game without the system; none or true keeps it.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+impl SystemSwitch {
+    /// Whether the game is built with the system (the default).
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
 /// A `[[texture]]` row: a loose texture's usage, for what no material slot can tell (C-10).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1169,6 +1219,8 @@ pub enum ManifestErrorCode {
     AssetBudgetOutOfRange,
     /// An `[assets] phone_max_texture_px` that is not a power of two from [`PHONE_TEXTURE_CAP_MIN_PX`] to [`PHONE_TEXTURE_CAP_MAX_PX`].
     InvalidTextureCap,
+    /// A `[game] fit` other than `letterbox` or `expand`.
+    InvalidFit,
 }
 
 impl ManifestErrorCode {
@@ -1178,6 +1230,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::Syntax => "manifest-syntax",
             ManifestErrorCode::InvalidTitle => "invalid-title",
             ManifestErrorCode::InvalidWorldSize => "invalid-world-size",
+            ManifestErrorCode::InvalidFit => "invalid-fit",
             ManifestErrorCode::InvalidSaveName => "invalid-save-name",
             ManifestErrorCode::CrateNotAllowlisted => "crate-not-allowlisted",
             ManifestErrorCode::InvalidWgslPath => "invalid-wgsl-path",
@@ -1390,6 +1443,9 @@ fn check_game(game: &GameSection) -> Result<(), ManifestError> {
     if !game.world_size.iter().all(|side| (MIN_WORLD_PX..=MAX_WORLD_PX).contains(side)) {
         let [w, h] = game.world_size;
         return Err(ManifestError::new(ManifestErrorCode::InvalidWorldSize, format!("{w}x{h}")));
+    }
+    if let Some(fit) = game.fit.as_deref().filter(|fit| crate::Fit::from_wire(fit).is_none()) {
+        return Err(ManifestError::new(ManifestErrorCode::InvalidFit, format!("{fit:?}")));
     }
     match &game.save_name {
         Some(name) if !valid_save_name(name) => Err(ManifestError::new(ManifestErrorCode::InvalidSaveName, name.clone())),

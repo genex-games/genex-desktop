@@ -11,6 +11,7 @@ import { type EngineEjectAnswer, ExtensionRefusal } from "../../../shared/game-c
 import { type GameProject, GameStack, stackOf } from "../../../shared/game-project.ts";
 import { type Notify, notifyProblem } from "../../state/toasts.ts";
 import { Button } from "../../ui/Button.tsx";
+import { t } from "../../../shared/i18n.ts";
 
 /** Where the row stands: the engine the game builds with, or the question before a change. */
 const EjectStep = {
@@ -23,31 +24,44 @@ type EjectStep = (typeof EjectStep)[keyof typeof EjectStep];
 
 /** The row's own words. */
 const MESSAGE = {
-  heading: "Game engine",
-  store: "Genex’s engine: it updates with Genex.",
+  heading: t("Game engine"),
+  store: t("Genex’s engine: it updates with Genex."),
   ejected: (version: string | null) =>
-    `This game’s own copy${version ? ` of engine ${version}` : ""}, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.`,
-  askEject:
+    version
+      ? t(
+          "This game’s own copy of engine {version}, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.",
+          { version },
+        )
+      : t(
+          "This game’s own copy, in its engine folder. It no longer updates; Live and export need a passing conformance run of each build.",
+        ),
+  askEject: t(
     "Copy the engine into this game’s engine folder? The game stops getting engine updates, and Live and export wait until each new build passes the conformance checks.",
-  askGiveBack:
+  ),
+  askGiveBack: t(
     "Go back to Genex’s engine? Genex saves a snapshot of the game first, then removes its engine folder and every change in it.",
-  eject: "Eject engine",
-  confirmEject: "Eject",
-  giveBack: "Use Genex’s engine",
-  confirmGiveBack: "Remove the engine folder",
-  cancel: "Cancel",
+  ),
+  eject: t("Eject engine"),
+  confirmEject: t("Eject"),
+  giveBack: t("Use Genex’s engine"),
+  confirmGiveBack: t("Remove the engine folder"),
+  cancel: t("Cancel"),
   refusal: {
-    [ExtensionRefusal.EjectTargetExists]:
+    [ExtensionRefusal.EjectTargetExists]: t(
       "This game already has an engine folder, so nothing was copied. Remove it or use Genex’s engine first.",
-    [ExtensionRefusal.EjectSourceTampered]:
+    ),
+    [ExtensionRefusal.EjectSourceTampered]: t(
       "Genex’s copy of the engine doesn’t match its checksums, so nothing was copied. Reinstall the Rust setup and try again.",
-    [ExtensionRefusal.EjectLockMissing]:
+    ),
+    [ExtensionRefusal.EjectLockMissing]: t(
       "The engine this game was built with is no longer installed, so nothing was copied. Build the game once, then try again.",
-    [ExtensionRefusal.EjectNeedsMac]:
+    ),
+    [ExtensionRefusal.EjectNeedsMac]: t(
       "Ejecting needs a Mac, with macOS among this game’s destinations: the conformance checks run on its Mac build. Nothing was copied.",
-    [ExtensionRefusal.Unavailable]: "This version of Genex can’t eject an engine.",
+    ),
+    [ExtensionRefusal.Unavailable]: t("This version of Genex can’t eject an engine."),
   } as Partial<Record<ExtensionRefusal, string>>,
-  refused: "The engine didn’t change.",
+  refused: t("The engine didn’t change."),
 } as const;
 
 /** What the row says for `step`, or the last answer's refusal. */

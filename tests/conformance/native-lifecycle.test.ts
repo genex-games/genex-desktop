@@ -1,8 +1,9 @@
 /**
  * When the studio ends native games (`core/native-lifecycle.ts`), over a fake registry that knows
  * which runs exist: window close ends every run, a renderer crash ends the embedded ones, composer
- * Stop cancels C++ builds before it ends agent runs and leaves the person's Play window, harness
- * death ends its leases' runs, and the quit step that stops native games is bounded. Nothing pauses.
+ * Stop cancels its own game's builds before it ends that game's agent runs and leaves other games
+ * and the person's Play window, harness death ends its leases' runs, and the quit step that stops
+ * native games is bounded. Nothing pauses.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -17,9 +18,10 @@ import { runShutdown, shutdownSteps, type ShutdownTimers } from "../../src/main/
 import { NATIVE_STOP_BUDGET_MS, NativeRunMode } from "../../src/shared/native-contract.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
-/** One fake run: its mode and the lease that started it. */
+/** One fake run: its game, its mode and the lease that started it. */
 interface FakeRun {
   runId: string;
+  project: string;
   mode: NativeRunMode;
   owner: string | null;
 }
@@ -31,7 +33,7 @@ function fakeRuns(runs: FakeRun[]) {
   const end = (keep: (run: FakeRun) => boolean) => {
     for (const run of [...live.values()]) if (!keep(run)) live.delete(run.runId);
   };
-  const registry: Pick<NativeRunsHost, "stopAll" | "stopMode" | "stopAgentRuns" | "stopOwnedBy"> & {
+  const registry: Pick<NativeRunsHost, "stopAll" | "stopMode" | "stopAgentRuns" | "stopProject" | "stopOwnedBy"> & {
     pause(): never;
   } = {
     stopAll: async () => {
@@ -46,6 +48,10 @@ function fakeRuns(runs: FakeRun[]) {
       calls.push("stopAgentRuns");
       end((run) => run.mode !== NativeRunMode.Headless);
     },
+    stopProject: async (project, modes) => {
+      calls.push(`stopProject:${project}:${modes.join(",")}`);
+      end((run) => run.project !== project || !modes.includes(run.mode));
+    },
     stopOwnedBy: async (owner) => {
       calls.push(`stopOwnedBy:${owner}`);
       end((run) => run.owner !== owner);
@@ -58,10 +64,10 @@ function fakeRuns(runs: FakeRun[]) {
 }
 
 const RUNS: FakeRun[] = [
-  { runId: "play", mode: NativeRunMode.Window, owner: null },
-  { runId: "agent-1", mode: NativeRunMode.Headless, owner: "harness:1" },
-  { runId: "agent-2", mode: NativeRunMode.Headless, owner: "harness:2" },
-  { runId: "live", mode: NativeRunMode.Embedded, owner: null },
+  { runId: "play", project: "pond", mode: NativeRunMode.Window, owner: null },
+  { runId: "agent-1", project: "pond", mode: NativeRunMode.Headless, owner: "harness:1" },
+  { runId: "agent-2", project: "lake", mode: NativeRunMode.Headless, owner: "harness:2" },
+  { runId: "live", project: "pond", mode: NativeRunMode.Embedded, owner: null },
 ];
 
 describe("when the studio ends native games", () => {
@@ -79,12 +85,16 @@ describe("when the studio ends native games", () => {
     assert.deepEqual(live(), ["agent-1", "agent-2", "play"]);
   });
 
-  it("composer Stop cancels C++ builds first, then ends agent runs, and leaves the Play window", async () => {
+  it("composer Stop cancels its game's builds first, then ends that game's agent runs, and leaves the rest", async () => {
     const { registry, calls, live } = fakeRuns(RUNS);
-    const builds = { cancelAll: () => void calls.push("cancelAll") };
-    await nativeOnComposerStop(builds, registry);
-    assert.deepEqual(calls, ["cancelAll", "stopAgentRuns"]);
-    assert.deepEqual(live(), ["live", "play"]);
+    const builds = { cancelGame: (project: string) => void calls.push(`cancelGame:${project}`) };
+    await nativeOnComposerStop(builds, registry, "pond");
+    assert.deepEqual(calls, ["cancelGame:pond", `stopProject:pond:${NativeRunMode.Headless}`]);
+    assert.deepEqual(
+      live(),
+      ["agent-2", "live", "play"],
+      "another game's agent run and the person's views keep running",
+    );
   });
 
   it("harness death ends the runs its own leases started", async () => {
@@ -96,16 +106,38 @@ describe("when the studio ends native games", () => {
 });
 
 describe("the studio's own wiring", () => {
-  it("composer Stop reaches the registry: builds are cancelled before agent runs end", async (t) => {
+  /** A lite core whose C++ lane and registry record what a Stop cancels and ends. */
+  async function stopRig() {
     const lite = await coreLite();
-    const { registry, calls } = fakeRuns(RUNS);
-    const cancelAll = t.mock.method(lite.core.cppBuilds, "cancelAll", () => void calls.push("cancelAll"));
-    Object.assign(lite.core.nativeRuns, { stopAgentRuns: registry.stopAgentRuns });
+    const { registry, calls, live } = fakeRuns(RUNS);
+    Object.assign(lite.core.cppBuilds, {
+      cancelAll: () => void calls.push("cancelAll"),
+      cancelGame: (project: string) => void calls.push(`cancelGame:${project}`),
+    });
+    Object.assign(lite.core.nativeRuns, { stopAgentRuns: registry.stopAgentRuns, stopProject: registry.stopProject });
+    return { lite, calls, live };
+  }
+
+  /** The Stop's game work is started at once, after the thread's record is read: the thread's own stop does not wait for it. */
+  async function settled(calls: string[], count: number): Promise<void> {
+    for (let i = 0; i < 50 && calls.length < count; i++) await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  it("composer Stop in one game's chat cancels that game's builds before its agent runs end, and never another game's", async () => {
+    const { lite, calls, live } = await stopRig();
+    const thread = await lite.core.store.createThread({ title: "Pond", metadata: { kind: "game", project: "pond" } });
+    await lite.core.stopThread(thread).catch(() => {});
+    await settled(calls, 2);
+    assert.deepEqual(calls, ["cancelGame:pond", `stopProject:pond:${NativeRunMode.Headless}`]);
+    assert.deepEqual(live(), ["agent-2", "live", "play"]);
+    await lite.close();
+  });
+
+  it("composer Stop in a chat with no game cancels no game's builds", async () => {
+    const { lite, calls } = await stopRig();
     await lite.core.stopThread("no-such-thread").catch(() => {});
-    // The agent runs' stop is started at once; the thread's own stop does not wait for it.
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(cancelAll.mock.callCount(), 1);
-    assert.deepEqual(calls, ["cancelAll", "stopAgentRuns"]);
+    await settled(calls, 1);
+    assert.deepEqual(calls, []);
     await lite.close();
   });
 });

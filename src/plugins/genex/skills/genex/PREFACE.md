@@ -22,7 +22,8 @@ Where it disagrees with this preface, this preface wins.
   first; it reports the account, credits and live lanes that `doctor` would. Its description lists
   the operations and which provider each lane is; its `options` parameter lists each lane's
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
-  so wire in those local paths.
+  so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
+  which the game loads as `res://assets/...`.
 - `doctor`, `budget`, `llm models`, `llm status`, `llm cancel` and `shop list`: `genex__cli`.
   `budget --assets` is not available: Studio's own asset allowance and the user's approval govern
   asset spending.

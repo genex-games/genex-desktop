@@ -397,6 +397,31 @@ describe("genex__package: a pinned Genex SDK install into the bound game", () =>
       },
       /no package\.json/,
     ],
+    [
+      "a Godot game, which takes Genex's multiplayer in its project instead",
+      async (lib) => {
+        const game = lib.games["space-race"] ?? "";
+        await exec("git", ["rm", "-q", "package.json"], { cwd: game, env: GIT_ENV });
+        await mkdir(path.join(game, "godot"), { recursive: true });
+        await writeFile(path.join(game, "godot", "project.godot"), "config_version=5\n");
+        return { args: { package: "@genex-ai/multiplayer" }, directory: game };
+      },
+      /Godot game.*godot__multiplayer/,
+    ],
+    [
+      "a Unity game, which takes Genex's multiplayer in its project instead",
+      async (lib) => {
+        const game = lib.games["space-race"] ?? "";
+        await exec("git", ["rm", "-q", "package.json"], { cwd: game, env: GIT_ENV });
+        await mkdir(path.join(game, "unity", "ProjectSettings"), { recursive: true });
+        await writeFile(
+          path.join(game, "unity", "ProjectSettings", "ProjectVersion.txt"),
+          "m_EditorVersion: 6000.0.30f1\n",
+        );
+        return { args: { package: "@genex-ai/multiplayer" }, directory: game };
+      },
+      /Unity game.*unity__multiplayer/,
+    ],
   ];
   for (const [name, arrange, message] of hostile) {
     it(`installs nothing for ${name}`, async () => {
@@ -459,12 +484,25 @@ describe("genex__package in a game made from Studio's template", () => {
     assert.equal(await readFile(lib.page, "utf8"), html, "a second call changes nothing");
   });
 
+  it("maps Studio's copies of multiplayer beside player identity and the connect module, and nothing runs", async () => {
+    const lib = await templateLibrary();
+    const answer = await lib.packages.add({ package: "@genex-ai/multiplayer" }, lib.binding);
+    assert.equal(answer.ok, true);
+    assert.equal(lib.runner.seen.length, 0, "no package manager runs");
+    assert.match(answer.lines.join("\n"), /never call initEmbed\(\)/);
+    const html = await readFile(lib.page, "utf8");
+    const [, body = ""] = /<script type="importmap">([\s\S]*?)<\/script>/.exec(html) ?? [];
+    const imports = JSON.parse(body).imports;
+    assert.equal(imports["@genex-ai/multiplayer"], "/vendor/genex/multiplayer/index.js");
+    assert.equal(imports["@genex-ai/multiplayer/schema"], "/vendor/genex/multiplayer/schema.js");
+    assert.equal(imports[sdk], "/vendor/genex/embed-sdk/index.js", "multiplayer brings player identity");
+    assert.equal(imports.three, "/vendor/three.module.js", "the template's own entries stay");
+    assert.equal(html.match(/\/vendor\/genex\/connect\.js/g)?.length, 1, "the connect module loads once");
+    await lib.packages.add({ package: "@genex-ai/multiplayer" }, lib.binding);
+    assert.equal(await readFile(lib.page, "utf8"), html, "a second call changes nothing");
+  });
+
   const refused: Array<[string, (lib: Awaited<ReturnType<typeof templateLibrary>>) => Promise<unknown>, RegExp]> = [
-    [
-      "multiplayer, which Studio has no copy of",
-      async () => ({ package: "@genex-ai/multiplayer" }),
-      /no copy of @genex-ai\/multiplayer/,
-    ],
     [
       "a page that is a link out of the game",
       async (lib) => {

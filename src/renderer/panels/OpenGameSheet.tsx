@@ -15,7 +15,7 @@ import { useMemo, useRef, useState } from "react";
 import { DialogSurface } from "../ui/dialog.tsx";
 import type { FolderInspection } from "../types.ts";
 import {
-  ENGINE_EXPORT_REFUSAL,
+  engineExportRefusal,
   openOptions,
   type OpenChoice,
   type OpenOption,
@@ -24,30 +24,34 @@ import {
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Switch } from "../ui/switch.tsx";
-import { plural } from "../../shared/skill-words.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The sheet's words. */
 const MESSAGE = {
-  title: "Open a game folder",
-  which: "Which game should Genex open?",
-  details: "Details",
-  problems: "Before a build can be reviewed",
-  addsNothing: "Nothing is added to this folder.",
-  adds: (files: number) => `Genex adds ${plural(files, "file")}. Everything else stays as it is.`,
-  trustLabel: "Trust this folder's Claude settings and hooks",
-  trustDetail: "Hooks can run commands with your access.",
-  cancel: "Cancel",
-  opening: "Opening…",
-  open: "Open",
-} as const;
+  title: t("Open a game folder"),
+  which: t("Which game should Genex open?"),
+  details: t("Details"),
+  problems: t("Before a build can be reviewed"),
+  addsNothing: t("Nothing is added to this folder."),
+  adds: (count: number) =>
+    t("{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.", {
+      count,
+    }),
+  trustLabel: t("Trust this folder's Claude settings and hooks"),
+  trustDetail: t("Hooks can run commands with your access."),
+  cancel: t("Cancel"),
+  opening: t("Opening…"),
+  open: t("Open"),
+};
 
 /** The files whose name does not say what they are for — the rest are the game's own. */
 const WHAT_FOR: Record<string, string> = {
-  ".git": "version history, so any change can be undone",
-  ".gitignore":
+  ".git": t("version history, so any change can be undone"),
+  ".gitignore": t(
     "a few lines, keeping Genex's scratch, installed packages, build output and secrets out of your commits",
-  "studio.json": "how Genex runs this game",
-  "src/studio.js": "the contract reviewers read",
+  ),
+  "studio.json": t("how Genex runs this game"),
+  "src/studio.js": t("the contract reviewers read"),
 };
 
 /** A phrase as a line of its own: "a 3D game" → "A 3D game". */
@@ -184,7 +188,7 @@ function ChosenDetails({ chosen }: { chosen: OpenOption }): JSX.Element {
           data-testid="engine-export-card"
           className="rounded-control bg-inset px-3 py-2 text-xs leading-relaxed text-ink-2"
         >
-          {ENGINE_EXPORT_REFUSAL}
+          {engineExportRefusal()}
         </div>
       ) : null}
       <details

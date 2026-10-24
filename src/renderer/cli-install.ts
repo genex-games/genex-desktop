@@ -5,23 +5,27 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { CliInstallOperation, CliInstallPhase, CliInstallProblem, type CliInstallJob } from "../shared/cli-install.ts";
+import { t } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
 import { problemWords } from "./words.ts";
 
 /** What each failed install says, by why it failed. */
 const PROBLEM: Record<CliInstallProblem, (name: string) => string> = {
-  [CliInstallProblem.Download]: (name) => `Couldn't download ${name}. Check your internet connection and try again.`,
-  [CliInstallProblem.Installer]: (name) => `${name} didn't install. Try again.`,
-  [CliInstallProblem.TimedOut]: (name) => `Installing ${name} took too long. Try again.`,
-  [CliInstallProblem.NotFound]: (name) => `${name} installed, but Genex can't find it. Try again.`,
+  [CliInstallProblem.Download]: (name) =>
+    t("Couldn't download {name}. Check your internet connection and try again.", { name }),
+  [CliInstallProblem.Installer]: (name) => t("{name} didn't install. Try again.", { name }),
+  [CliInstallProblem.TimedOut]: (name) => t("Installing {name} took too long. Try again.", { name }),
+  [CliInstallProblem.NotFound]: (name) => t("{name} installed, but Genex can't find it. Try again.", { name }),
 };
 
 /** What a failed install says, or null when the job did not fail. */
 export function cliInstallProblemWords(job: CliInstallJob | null): string | null {
   if (job?.phase !== CliInstallPhase.Failed || !job.problem) return null;
   if (job.operation === CliInstallOperation.Update)
-    return "Could not update this installation. Open the installation guide or use its package manager, then check again.";
+    return t(
+      "Could not update this installation. Open the installation guide or use its package manager, then check again.",
+    );
   return PROBLEM[job.problem](providerInfo(job.provider)?.label ?? job.provider);
 }
 

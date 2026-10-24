@@ -84,6 +84,28 @@ test("an installer runs from its saved file under the shell it was written for, 
   );
 });
 
+test("the Windows installer runs in a PowerShell that builds its own module path, not PowerShell 7's", async () => {
+  // R12: Genex started from a pwsh 7 terminal handed Windows PowerShell 5.1 pwsh's module path,
+  // and Claude Code's install.ps1 died on "The term 'Get-FileHash' is not recognized".
+  for (const provider of ["claude-code", "codex"] as const) {
+    const seen: Array<Record<string, string>> = [];
+    const outcome = await installCodingCli(provider, {
+      platform: "win32",
+      env: { ...PARENT, SystemRoot: "C:\\Windows", PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules" },
+      fetch: serving("Write-Output installed"),
+      tmpRoot: await tmpDir("cli-installer-"),
+      run: async (_command, { env }) => {
+        seen.push(env);
+        return { code: 0, output: "", timedOut: false };
+      },
+    });
+    assert.deepEqual(outcome, { ok: true }, provider);
+    const names = Object.keys(seen[0] ?? {}).map((name) => name.toUpperCase());
+    assert.ok(!names.includes("PSMODULEPATH"), `${provider}: no inherited module path`);
+    assert.equal(seen[0]?.SystemRoot, "C:\\Windows", `${provider}: the rest of the environment arrives`);
+  }
+});
+
 test("an installer that cannot be fetched whole over HTTPS is never run and leaves nothing behind", async () => {
   const hostile: [string, typeof fetch][] = [
     ["not found", serving("echo hi", { status: 404 })],

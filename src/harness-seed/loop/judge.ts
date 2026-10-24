@@ -49,6 +49,7 @@ import type { CompleteResponse, HarnessCompleteParams, MessageImage, StillSource
 import { CheckKind, CheckOrigin, CheckWeight, type Check } from "./spec.ts";
 import { ReferenceKind } from "./run-events.ts";
 import { clip, CLIP_BRIEF, CLIP_DETAIL, CLIP_QUOTE, CLIP_REASON } from "./text.ts";
+import { clipWords } from "./word-clip.ts";
 import { normalizeBigMove } from "./big-move.ts";
 import { FacetStage, FINISH_POLISH_NOTES, stageOf } from "./facet/stage.ts";
 import { FINISH_RUBRIC_FALLBACK, FINISH_STAGE_LINE } from "./facet/stage-prompts.ts";
@@ -1331,7 +1332,7 @@ function visionResult(check: Check, raw: AnyRecord | null | undefined): CheckRes
       : `judge answered ${answer ?? "nothing usable"} (confidence ${confidence.toFixed(2)})${raw?.note ? `: ${String(raw.note).slice(0, CLIP_DETAIL)}` : ""}`,
     answer,
     confidence,
-    note: typeof raw?.note === "string" ? raw.note.slice(0, CLIP_REASON) : "",
+    note: typeof raw?.note === "string" ? clipWords(raw.note, CLIP_REASON) : "",
   };
 }
 

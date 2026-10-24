@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SECOND_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 import {
   TERMINAL_LIMITS,
   TerminalKind,
@@ -19,15 +20,31 @@ export const INTERRUPTED_EXIT_CODE = 130;
 
 /** What the terminal panel reads when a session cannot open, take input or continue. */
 const MESSAGE = {
-  closing: "Terminals are closing. Try again in a moment.",
-  tooMany: "Close a terminal session before opening another.",
-  couldNotStart: "The terminal could not start. Try opening it again.",
-  endedUnexpectedly: "Terminal process ended unexpectedly.",
-  closed: "This terminal session has closed.",
-  inputTooLarge: "Terminal input is too large. Paste a smaller selection.",
-  stopFirst: "Stop this terminal before closing its session.",
-  commandRunning: "A command is already running for this game. Wait for it to finish or stop it.",
+  closing: () => t("Terminals are closing. Try again in a moment."),
+  tooMany: () => t("Close a terminal session before opening another."),
+  couldNotStart: () => t("The terminal could not start. Try opening it again."),
+  endedUnexpectedly: () => t("Terminal process ended unexpectedly."),
+  closed: () => t("This terminal session has closed."),
+  inputTooLarge: () => t("Terminal input is too large. Paste a smaller selection."),
+  stopFirst: () => t("Stop this terminal before closing its session."),
+  commandRunning: () => t("A command is already running for this game. Wait for it to finish or stop it."),
 } as const;
+
+/**
+ * Why the terminal host ended a session on its own. The host is a separate process that never
+ * learns the app's language, so it sends this code and main says it in the person's words.
+ */
+export const HostFailure = {
+  BufferFull: "buffer-full",
+  Broken: "broken",
+} as const;
+export type HostFailure = (typeof HostFailure)[keyof typeof HostFailure];
+
+/** What the terminal panel reads for each {@link HostFailure}. */
+const HOST_FAILURE_WORDS = {
+  [HostFailure.BufferFull]: () => t("Terminal output exceeded its buffer limit. Open a new session."),
+  [HostFailure.Broken]: () => t("Could not start or communicate with the terminal. Open a new session."),
+} as const satisfies Record<HostFailure, () => string>;
 
 /** What the terminal host utility tells main. */
 export const HostEventType = {
@@ -73,7 +90,7 @@ export type HostEvent =
   | { type: typeof HostEventType.Data; data: string }
   | { type: typeof HostEventType.Link; url: string }
   | { type: typeof HostEventType.Started }
-  | { type: typeof HostEventType.Exit; code: number; error?: string };
+  | { type: typeof HostEventType.Exit; code: number; failure?: HostFailure };
 interface Entry {
   state: TerminalSession;
   host: TerminalHost;
@@ -101,10 +118,10 @@ export class TerminalService {
     return [...this.#entries.values()].map((entry) => ({ ...entry.state }));
   }
   open(launch: TerminalLaunch): TerminalSession {
-    if (this.#disposing) throw new Error(MESSAGE.closing);
+    if (this.#disposing) throw new Error(MESSAGE.closing());
     const existing = this.#openFor(launch);
     // A second command would take the first one's place in the chat that offered it.
-    if (existing && launch.kind === TerminalKind.Command) throw new Error(MESSAGE.commandRunning);
+    if (existing && launch.kind === TerminalKind.Command) throw new Error(MESSAGE.commandRunning());
     if (existing) {
       this.emit({ type: "session", session: { ...existing.state }, reveal: revealsDock(launch.kind) });
       return { ...existing.state };
@@ -133,7 +150,7 @@ export class TerminalService {
       link: null,
       timer: setTimeout(() => {
         host.kill();
-        this.#finish(entry, 1, MESSAGE.couldNotStart);
+        this.#finish(entry, 1, MESSAGE.couldNotStart());
       }, START_TIMEOUT_MS),
     };
     this.#entries.set(state.id, entry);
@@ -143,7 +160,7 @@ export class TerminalService {
     });
     host.on("exit", (code) => {
       const expected = state.phase === "stopping" || state.phase === "exited";
-      this.#finish(entry, code || 1, expected ? undefined : MESSAGE.endedUnexpectedly);
+      this.#finish(entry, code || 1, expected ? undefined : MESSAGE.endedUnexpectedly());
     });
     // A command a reply offered shows its output in the chat, a Settings sign-in in Settings; the
     // dock opens for them only when asked.
@@ -161,7 +178,7 @@ export class TerminalService {
   #makeRoom(): void {
     for (const entry of this.#entries.values())
       if (this.#entries.size >= TERMINAL_LIMITS.sessions && entry.state.phase === "exited") this.remove(entry.state.id);
-    if (this.#entries.size >= TERMINAL_LIMITS.sessions) throw new Error(MESSAGE.tooMany);
+    if (this.#entries.size >= TERMINAL_LIMITS.sessions) throw new Error(MESSAGE.tooMany());
   }
   #onHostEvent(entry: Entry, message: HostEvent): void {
     const { state, host, launch } = entry;
@@ -185,7 +202,7 @@ export class TerminalService {
         launch.onUrl?.(message.url);
         return;
       case HostEventType.Exit:
-        this.#finish(entry, message.code, message.error);
+        this.#finish(entry, message.code, message.failure && HOST_FAILURE_WORDS[message.failure]?.());
     }
   }
   /** Keep the newest https page a session printed, and tell the page it has one to open. */
@@ -212,7 +229,7 @@ export class TerminalService {
   }
   #get(id: string): Entry {
     const entry = this.#entries.get(id);
-    if (!entry) throw new Error(MESSAGE.closed);
+    if (!entry) throw new Error(MESSAGE.closed());
     return entry;
   }
   /** The newest sign-in page this session printed, or null when it printed none. */
@@ -226,7 +243,7 @@ export class TerminalService {
   write(id: string, data: string): void {
     const entry = this.#get(id);
     if (entry.state.phase !== "running") return;
-    if (typeof data !== "string" || data.length > TERMINAL_LIMITS.input) throw new Error(MESSAGE.inputTooLarge);
+    if (typeof data !== "string" || data.length > TERMINAL_LIMITS.input) throw new Error(MESSAGE.inputTooLarge());
     entry.host.postMessage({ type: HostCommand.Input, data });
   }
   resize(id: string, cols: number, rows: number): void {
@@ -256,7 +273,7 @@ export class TerminalService {
   }
   remove(id: string): void {
     const entry = this.#get(id);
-    if (entry.state.phase !== "exited") throw new Error(MESSAGE.stopFirst);
+    if (entry.state.phase !== "exited") throw new Error(MESSAGE.stopFirst());
     entry.host.kill();
     this.#entries.delete(id);
     this.emit({ type: "removed", id });

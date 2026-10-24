@@ -22,6 +22,15 @@ import { pathToFileURL } from "node:url";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
 import { createGenexPlugin } from "../../src/plugins/genex/backend.ts";
 import {
+  CLIP_MESSAGE,
+  CLIP_VIEW,
+  COVER_CLIP,
+  clipSentRecord,
+  clipToSend,
+  readClipAnswer,
+} from "../../src/plugins/genex/clip.ts";
+import {
+  COVER_AUTO_GAP_MS,
   COVER_MAX_BYTES,
   COVER_VIEW,
   type CoverCamera,
@@ -32,8 +41,13 @@ import {
   parseCoverAnswer,
   parseCoverView,
 } from "../../src/plugins/genex/cover.ts";
-import { coverAsk } from "../../src/renderer/panels/plugins/genex/genex-publish-view.ts";
-import { GenexCoverOutcome, type GenexCoverSent, type GenexCoverShot } from "../../src/shared/genex.ts";
+import { needsCover } from "../../src/renderer/panels/plugins/genex/genex-publish-view.ts";
+import {
+  GenexCoverOrigin,
+  GenexCoverOutcome,
+  type GenexCoverSent,
+  type GenexCoverShot,
+} from "../../src/shared/genex.ts";
 import { PluginConsentDeclined, PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import {
   buildGenexPluginFor,
@@ -129,6 +143,30 @@ async function until(check: () => boolean | Promise<boolean>, what: string, ms =
     await sleep(50);
   }
 }
+
+/**
+ * What genex.games keeps of an uploaded clip, mirrored from its transcoder (genex-demo
+ * `apps/api/src/cover/clip-transcoder.ts`, `leadInMsFor` and the 150-frame check): it trims up to
+ * 300 ms of the start, everything past five seconds, then needs 150 frames at 30 fps, else the clip
+ * is refused as too short.
+ */
+const GENEX_KEEPS = { frames: 150, fps: 30, maxLeadInMs: 300 } as const;
+const framesGenexKeeps = (durationMs: number): number => {
+  const keptMs = (GENEX_KEEPS.frames / GENEX_KEEPS.fps) * 1000;
+  const leadInMs = Math.min(GENEX_KEEPS.maxLeadInMs, Math.max(0, Math.round(durationMs - keptMs)));
+  return Math.min(GENEX_KEEPS.frames, Math.floor(((durationMs - leadInMs) * GENEX_KEEPS.fps) / 1000));
+};
+
+describe("the clip's length", () => {
+  it("leaves genex.games five whole seconds after it trims the start, a frame short or not", () => {
+    // The incident: Simple Fast Tic Tac Toe's 5.0077 s recording kept 149 frames and was refused.
+    assert.equal(framesGenexKeeps(5007.7), 149);
+    const asked = COVER_CLIP.seconds * 1000;
+    const oneFrame = 1000 / COVER_CLIP.fps;
+    for (const recorded of [asked - oneFrame, asked, asked + oneFrame])
+      assert.equal(framesGenexKeeps(recorded), GENEX_KEEPS.frames, `${recorded} ms recorded`);
+  });
+});
 
 describe("which frame is sent", () => {
   const shot = (sha256: string): GenexCoverShot => ({
@@ -305,7 +343,13 @@ describe("genex__cover", () => {
           still: { demo: COVER_VIEW, width: 1920, height: 1080, maxBytes: COVER_MAX_BYTES },
         },
       ]);
-      assert.deepEqual(await filesUnder(fx.storage), [`covers/${PROJECT}/shot.json`, `covers/${PROJECT}/shot.png`]);
+      assert.deepEqual(await filesUnder(fx.storage), [
+        `covers/${PROJECT}/agent.json`,
+        `covers/${PROJECT}/candidates.json`,
+        `covers/${PROJECT}/candidates/${sha256(png("first"))}.png`,
+        `covers/${PROJECT}/shot.json`,
+        `covers/${PROJECT}/shot.png`,
+      ]);
       const saved = await readFile(path.join(fx.storage, "covers", PROJECT, "shot.png"));
       assert.deepEqual(saved, png("first"), "the host's still, never the frame planted in the game");
       assert.equal(shot.shot.width, 1920);
@@ -347,7 +391,7 @@ describe("genex__cover", () => {
         [],
         "a shot asks the host for nothing else",
       );
-      await assert.rejects(fx.tool({ operation: "upload" }), /shoot or status/);
+      await assert.rejects(fx.tool({ operation: "upload" }), /shoot, clip or status/);
     } finally {
       if (posix) await chmod(fx.game, 0o755);
     }
@@ -830,7 +874,7 @@ describe("the owner's own cover, while Studio keeps no shot", () => {
         camera(() => noDemo),
       );
       assert.equal(first.cover?.last?.kind, GenexCoverOutcome.None, first.job?.error);
-      assert.equal(coverAsk(first), true, "no shot and no cover the owner chose: the dialog asks");
+      assert.equal(needsCover(first), true, "no shot and no cover the owner chose: Studio takes one");
       // The owner sets the game's cover on genex.games; Studio still has no genex-cover shot.
       fx.live.coverSource = "owner";
       const owned = await fx.publish(
@@ -844,7 +888,7 @@ describe("the owner's own cover, while Studio keeps no shot", () => {
       assert.equal(owned.cover?.last?.coverUrl, OWNER_COVER);
       assert.equal(owned.warnings?.includes(COVER_MESSAGE.NoShotSent), false, "nobody is told no cover was sent");
       assert.deepEqual(fx.seen.mints, [], "nothing is uploaded");
-      assert.equal(coverAsk(owned), false, "the dialog asks for no cover over the owner's");
+      assert.equal(needsCover(owned), false, "Studio takes no cover over the owner's");
     } finally {
       await fx.close();
     }
@@ -862,7 +906,7 @@ describe("the owner's own cover, while Studio keeps no shot", () => {
       const status = await fx.genex.coverStatus(PROJECT);
       assert.equal((status.hosted as { coverSource: string }).coverSource, "owner");
       assert.equal((status.last as GenexCoverSent).kind, GenexCoverOutcome.KeptOwner);
-      assert.equal(coverAsk(await fx.genex.publishView(PROJECT)), false);
+      assert.equal(needsCover(await fx.genex.publishView(PROJECT)), false);
       assert.deepEqual(fx.seen.mints, [], "a status check uploads nothing");
     } finally {
       await fx.close();
@@ -998,7 +1042,12 @@ describe("a shot taken while a send runs", () => {
       assert.equal(next.kind, GenexCoverOutcome.Applied, "the newer shot is not mistaken for one Genex has");
       assert.deepEqual(fx.seen.puts.at(-1), png("third"));
       const left = await filesUnder(path.join(fx.host, "covers", PROJECT));
-      assert.deepEqual(left, ["sent.json", "shot.json", "shot.png"], "no copy of a sent frame is left behind");
+      const beside = left.filter((name) => !name.startsWith("candidates"));
+      assert.deepEqual(
+        beside,
+        ["agent.json", "sent.json", "shot.json", "shot.png"],
+        "no copy of a sent frame is left behind",
+      );
     } finally {
       await fx.close();
     }
@@ -1047,4 +1096,390 @@ test("genex__cover-set waits for the user's yes, and a no sends nothing; genex__
     registry.cancel();
     await server.close();
   }
+});
+
+/** A camera that answers the genex-cover demo with `demo()` and Studio's plain frame with `plain()`, recording which it was asked for. */
+function twoViewCamera(demo: () => unknown, plain: () => unknown) {
+  const asked: Array<"demo" | "plain"> = [];
+  const lens: CoverCamera & { asked: typeof asked } = {
+    invokedAt: Date.now(),
+    asked,
+    shoot: async (view) => {
+      asked.push(view ? "plain" : "demo");
+      return view ? plain() : demo();
+    },
+  };
+  return lens;
+}
+
+/** A Genex plugin with no account and no network, on a clock the test moves. */
+async function localGenex() {
+  const temp = await tmpDir("studio-genex-cover-auto-");
+  const clock = { now: Date.parse("2026-10-16T12:00:00Z") };
+  const genex = new GenexTools(temp, "http://127.0.0.1:9", {
+    credentials: { get: async () => null, set: async () => {}, clear: async () => {} },
+    now: () => clock.now,
+  });
+  await genex.init();
+  const dir = path.join(temp, "covers", PROJECT);
+  return { genex, clock, dir };
+}
+
+describe("the frames the person flips between", () => {
+  it("keeps the last four shots, newest first, each image once", async () => {
+    let tag = "one";
+    const fx = await coverBackend(() => still(tag));
+    const shas: string[] = [];
+    for (const next of ["one", "two", "three", "four", "five"]) {
+      tag = next;
+      shas.push((await fx.tool({ operation: "shoot" })).shot.sha256);
+    }
+    const dir = path.join(fx.storage, "covers", PROJECT);
+    const listed = JSON.parse(await readFile(path.join(dir, "candidates.json"), "utf8")) as GenexCoverShot[];
+    assert.deepEqual(
+      listed.map((c) => c.sha256),
+      shas.slice(1).reverse(),
+      "newest first, the oldest gone",
+    );
+    assert.deepEqual(
+      (await readdir(path.join(dir, "candidates"))).sort(),
+      shas
+        .slice(1)
+        .map((sha) => `${sha}.png`)
+        .sort(),
+      "the oldest image went with its record",
+    );
+    tag = "three";
+    await fx.tool({ operation: "shoot" });
+    const again = JSON.parse(await readFile(path.join(dir, "candidates.json"), "utf8")) as GenexCoverShot[];
+    assert.equal(again.length, 4, "a frame shot again moves to the front instead of twice");
+    assert.equal(again[0]?.sha256, shas[2]);
+  });
+
+  it("makes a picked frame the kept shot, pinned, and refuses a name that is no candidate", async () => {
+    const { genex, dir } = await localGenex();
+    await genex.coverShoot(
+      PROJECT,
+      camera(() => still("first")),
+    );
+    await genex.coverShoot(
+      PROJECT,
+      camera(() => still("second")),
+    );
+    const first = sha256(png("first"));
+    const picked = await genex.coverPick(PROJECT, first);
+    assert.equal(picked.cover?.shot?.sha256, first);
+    assert.equal(picked.cover?.shot?.pinned, true);
+    assert.deepEqual(await readFile(path.join(dir, "shot.png")), png("first"));
+    assert.deepEqual(
+      picked.cover?.candidates?.map((c) => c.sha256),
+      [sha256(png("second")), first],
+      "picking reorders nothing",
+    );
+    for (const hostile of ["../shot", "a".repeat(64), first.toUpperCase(), 42, null])
+      await assert.rejects(genex.coverPick(PROJECT, hostile), /no longer among/, String(hostile));
+    assert.deepEqual(await readFile(path.join(dir, "shot.png")), png("first"), "a refused pick changes nothing");
+    const fresh = await genex.coverShoot(
+      PROJECT,
+      camera(() => still("third")),
+    );
+    assert.equal((fresh.shot as GenexCoverShot).pinned, undefined, "a new shot replaces the pick");
+  });
+});
+
+describe("Studio's own cover step", () => {
+  it("shoots the genex-cover demo when the game has one", async () => {
+    const { genex } = await localGenex();
+    const lens = twoViewCamera(
+      () => still("demo"),
+      () => still("plain"),
+    );
+    const state = await genex.coverAuto(PROJECT, lens);
+    assert.deepEqual(lens.asked, ["demo"]);
+    assert.equal(state.cover?.shot?.sha256, sha256(png("demo")));
+    assert.equal(state.cover?.shot?.origin, undefined, "a demo's frame");
+  });
+
+  it("takes a plain frame of a game with no demo, and replaces it with the demo's once there is one", async () => {
+    const { genex, clock } = await localGenex();
+    let demo: unknown = noDemo;
+    const lens = twoViewCamera(
+      () => demo,
+      () => still("plain"),
+    );
+    const plain = await genex.coverAuto(PROJECT, lens);
+    assert.deepEqual(lens.asked, ["demo", "plain"]);
+    assert.equal(plain.cover?.shot?.origin, GenexCoverOrigin.Studio);
+    clock.now += COVER_AUTO_GAP_MS;
+    demo = still("demo");
+    const staged = await genex.coverAuto(PROJECT, lens);
+    assert.equal(staged.cover?.shot?.sha256, sha256(png("demo")));
+    assert.equal(staged.cover?.shot?.origin, undefined);
+  });
+
+  it("never puts a plain frame over a demo's frame, nor any frame over a pick or the owner's cover", async () => {
+    const { genex, clock, dir } = await localGenex();
+    await genex.coverShoot(
+      PROJECT,
+      camera(() => still("demo")),
+    );
+    const lens = twoViewCamera(
+      () => noDemo,
+      () => still("plain"),
+    );
+    const kept = await genex.coverAuto(PROJECT, lens);
+    assert.deepEqual(lens.asked, ["demo"], "the demo is gone, so no new frame, and no plain one over its last");
+    assert.equal(kept.cover?.shot?.sha256, sha256(png("demo")));
+
+    clock.now += COVER_AUTO_GAP_MS;
+    await genex.coverPick(PROJECT, sha256(png("demo")));
+    const pinnedLens = twoViewCamera(
+      () => still("other"),
+      () => still("plain"),
+    );
+    await genex.coverAuto(PROJECT, pinnedLens);
+    assert.deepEqual(pinnedLens.asked, [], "the person's pick stands");
+
+    await rm(path.join(dir, "shot.json"));
+    await writeFile(
+      path.join(dir, "sent.json"),
+      JSON.stringify({ kind: "kept_owner", at: new Date(clock.now).toISOString(), coverSource: "owner" }),
+    );
+    const ownerLens = twoViewCamera(
+      () => still("other"),
+      () => still("plain"),
+    );
+    await genex.coverAuto(PROJECT, ownerLens);
+    assert.deepEqual(ownerLens.asked, [], "the owner's cover on Genex stands");
+  });
+
+  it("takes a game's cover at most once in a while", async () => {
+    const { genex, clock } = await localGenex();
+    const lens = twoViewCamera(
+      () => still("demo"),
+      () => still("plain"),
+    );
+    await genex.coverAuto(PROJECT, lens);
+    clock.now += COVER_AUTO_GAP_MS - 1;
+    await genex.coverAuto(PROJECT, lens);
+    assert.deepEqual(lens.asked, ["demo"]);
+    clock.now += 1;
+    await genex.coverAuto(PROJECT, lens);
+    assert.deepEqual(lens.asked, ["demo", "demo"]);
+  });
+});
+
+describe("a picked frame at publish", () => {
+  it("goes as it is: the publish shoots no new frame over the person's pick", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await coverFixture();
+    try {
+      await fx.genex.coverShoot(
+        PROJECT,
+        camera(() => still("picked")),
+      );
+      await fx.genex.coverShoot(
+        PROJECT,
+        camera(() => still("later")),
+      );
+      await fx.genex.coverPick(PROJECT, sha256(png("picked")));
+      const lens = camera(() => still("fresh"));
+      const done = await fx.publish("gallery", lens);
+      assert.equal(done.job?.state, "done", done.job?.error);
+      assert.equal(lens.shots, 0, "no shot over the pick");
+      assert.deepEqual(fx.seen.puts, [png("picked")]);
+    } finally {
+      await fx.close();
+    }
+  });
+});
+
+/** A WebM's first bytes (its EBML header), tagged so two recordings differ. */
+const webm = (tag: string) => Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from(`clip ${tag}`)]);
+/** What the host's `observe` answers for a clip of the genex-clip demo. */
+const recording = (tag: string, motion = 0.6) => ({
+  clip: {
+    video: webm(tag),
+    mimeType: "video/webm",
+    width: 960,
+    height: 540,
+    durationMs: 5000,
+    view: { demo: CLIP_VIEW },
+    poster: Buffer.from(`poster of ${tag}`),
+    motion,
+  },
+});
+
+describe("which frames the agent took itself", () => {
+  it("reports when the agent last kept a shot and a clip; Studio's own takes leave those times", async () => {
+    const { genex, clock, dir } = await localGenex();
+    const agentAt = new Date(clock.now).toISOString();
+    await genex.coverShoot(
+      PROJECT,
+      camera(() => still("agent")),
+    );
+    await genex.coverClip(PROJECT, { ...camera(() => still("x")), record: async () => recording("agent") });
+    assert.deepEqual((await genex.publishView(PROJECT)).cover?.agentTook, { shot: agentAt, clip: agentAt });
+
+    clock.now += COVER_AUTO_GAP_MS;
+    const lens = {
+      ...twoViewCamera(
+        () => still("studio"),
+        () => still("plain"),
+      ),
+      record: async () => recording("studio"),
+    };
+    const auto = await genex.coverAuto(PROJECT, lens);
+    assert.equal(auto.cover?.shot?.sha256, sha256(png("studio")), "Studio's take is the kept shot now");
+    assert.equal(auto.cover?.clip?.sha256, sha256(webm("studio")), "and its clip the kept clip");
+    assert.deepEqual(auto.cover?.agentTook, { shot: agentAt, clip: agentAt }, "the agent's times stand");
+
+    clock.now += 1000;
+    await genex.coverShoot(
+      PROJECT,
+      camera(() => noDemo),
+    );
+    await genex.coverClip(PROJECT, {
+      ...camera(() => still("x")),
+      record: async () => ({ clipProblem: { code: "view_unknown" } }),
+    });
+    assert.deepEqual(
+      (await genex.publishView(PROJECT)).cover?.agentTook,
+      { shot: agentAt, clip: agentAt },
+      "a shot or clip that kept nothing is no new time",
+    );
+    for (const hostile of ["{", "[]", '{"shot":7,"clip":"soon"}', '{"shot":"2026-10-16T12:00:00.000Z","extra":1}']) {
+      await writeFile(path.join(dir, "agent.json"), hostile);
+      const read = (await genex.publishView(PROJECT)).cover?.agentTook;
+      const sound = hostile.includes('"shot":"') ? { shot: "2026-10-16T12:00:00.000Z" } : {};
+      assert.deepEqual(read, sound, hostile);
+    }
+  });
+
+  it("says nothing of the agent before it took any", async () => {
+    const { genex } = await localGenex();
+    await genex.coverAuto(
+      PROJECT,
+      twoViewCamera(
+        () => still("studio"),
+        () => still("plain"),
+      ),
+    );
+    assert.deepEqual((await genex.publishView(PROJECT)).cover?.agentTook, {});
+  });
+});
+
+describe("the cover clip", () => {
+  it("records only the genex-clip demo into the cover's storage and says when it is frozen", async () => {
+    const { genex, dir } = await localGenex();
+    let answer: unknown = recording("first");
+    const lens = { ...camera(() => still("x")), record: async () => answer };
+    const kept = await genex.coverClip(PROJECT, lens);
+    assert.equal((kept.clip as { sha256: string }).sha256, sha256(webm("first")));
+    assert.deepEqual(await readFile(path.join(dir, "clip.webm")), webm("first"));
+    assert.deepEqual(kept.images, [
+      {
+        mimeType: "image/jpeg",
+        data: Buffer.from("poster of first").toString("base64"),
+        label: CLIP_MESSAGE.PosterLabel,
+      },
+    ]);
+    assert.equal(kept.guidance, CLIP_MESSAGE.Kept);
+    answer = recording("still", 0.02);
+    assert.equal((await genex.coverClip(PROJECT, lens)).guidance, CLIP_MESSAGE.Frozen);
+    answer = { clipProblem: { code: "view_unknown", available: ["jump"] } };
+    const missing = await genex.coverClip(PROJECT, lens);
+    assert.equal((missing.problem as { code: string }).code, "view_unknown");
+    assert.equal(missing.guidance, CLIP_MESSAGE.NoDemo);
+    assert.equal((missing.kept as { sha256: string }).sha256, sha256(webm("still")), "the last clip is kept");
+    for (const malformed of [
+      { clip: { ...recording("x").clip, mimeType: "video/ogg" } },
+      { clip: { ...recording("x").clip, motion: 2 } },
+      { clip: { ...recording("x").clip, video: "not bytes" } },
+      { image: Buffer.from("an ordinary observation") },
+    ])
+      assert.deepEqual(
+        readClipAnswer(malformed),
+        { problem: { code: "unavailable" } },
+        JSON.stringify(Object.keys(malformed)),
+      );
+    const state = await genex.publishView(PROJECT);
+    assert.equal(state.cover?.clip?.sha256, sha256(webm("still")), "Publish reads the kept clip");
+  });
+
+  it("reads the CLI's answer about a clip by its fields", () => {
+    const clip = {
+      sha256: "c".repeat(64),
+      mimeType: "video/webm",
+      bytes: 10,
+      width: 960,
+      height: 540,
+      durationMs: 5000,
+      motion: 0.5,
+      takenAt: "2026-10-16T12:00:00Z",
+    };
+    const at = "2026-10-16T12:01:00Z";
+    const line = (value: unknown) => JSON.stringify(value);
+    const clipUrl = "https://cdn.genex.technology/covers/racing/clip.mp4";
+    const rows: Array<[string, string, Record<string, unknown>]> = [
+      ["applied", line({ kind: "applied", clipUrl, clipSource: "agent" }), { kind: "applied", coverUrl: clipUrl }],
+      ["outranked", line({ kind: "outranked", clipUrl: null, clipSource: "owner" }), { kind: "outranked" }],
+      ["frozen", line({ kind: "rejected", reason: "frozen" }), { kind: "rejected", reason: "frozen" }],
+      ["lane closed", line({ kind: "failed", message: "doesn't take cover clips" }), { kind: "failed" }],
+      ["an older CLI with no --clip", "error: unknown option '--clip'", { kind: "failed" }],
+      ["an unknown kind", line({ kind: "painted" }), { kind: "failed" }],
+    ];
+    for (const [name, stdout, expected] of rows) {
+      const record = clipSentRecord(stdout, clip, at);
+      for (const [key, value] of Object.entries(expected)) assert.equal(record[key as "kind"], value, name);
+      assert.equal(record.sha256, clip.sha256, name);
+    }
+    assert.equal(clipToSend(clip, null), true, "never sent");
+    assert.equal(clipToSend(clip, { kind: "applied", at, sha256: clip.sha256 }), false, "Genex has these bytes");
+    assert.equal(clipToSend(clip, { kind: "failed", at, sha256: clip.sha256 }), true, "it did not get there");
+    assert.equal(clipToSend(clip, { kind: "applied", at, sha256: "d".repeat(64) }), true, "a newer clip");
+    assert.equal(clipToSend(null, null), false, "nothing kept");
+  });
+
+  it("goes after the cover at publish, and a clip that cannot go changes nothing about the cover", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await coverFixture();
+    try {
+      await fx.genex.coverClip(PROJECT, { ...camera(() => still("x")), record: async () => recording("ride") });
+      const done = await fx.publish(
+        "gallery",
+        camera(() => still("cover")),
+      );
+      assert.equal(done.job?.state, "done", done.job?.error);
+      assert.equal(done.cover?.last?.kind, GenexCoverOutcome.Applied, "the cover went");
+      assert.deepEqual(fx.seen.puts, [png("cover")], "only the cover reached the fixture's cover routes");
+      assert.equal(done.cover?.clipLast?.sha256, sha256(webm("ride")), "the clip's send was recorded");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("stays home on genex__cover-set: the approved send carries only the picture", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await coverFixture();
+    try {
+      await fx.genex.coverClip(PROJECT, { ...camera(() => still("x")), record: async () => recording("ride") });
+      await fx.publish(
+        "gallery",
+        camera(() => still("first")),
+      );
+      await fx.genex.coverClip(PROJECT, { ...camera(() => still("x")), record: async () => recording("later") });
+      await fx.genex.coverShoot(
+        PROJECT,
+        camera(() => still("second")),
+      );
+      const sent = await fx.genex.coverSet(PROJECT);
+      assert.equal(sent.kind, GenexCoverOutcome.Applied, "the picture went");
+      const after = await fx.genex.publishWait(PROJECT);
+      assert.equal(after.cover?.clip?.sha256, sha256(webm("later")), "the newer clip is kept");
+      assert.equal(after.cover?.clipLast?.sha256, sha256(webm("ride")), "and no send of it was attempted");
+    } finally {
+      await fx.close();
+    }
+  });
 });

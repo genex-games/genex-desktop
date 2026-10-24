@@ -247,6 +247,8 @@ describe("rollback cases", () => {
       welcome: false,
       developer: false,
       rustCreation: true,
+      playWeb: "https://genex.games",
+      engines: { bootstrap: async () => [] },
     });
     const bootstrap = handlers.get("studio:bootstrap");
     assert.ok(bootstrap);

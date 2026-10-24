@@ -5,8 +5,9 @@
  * Two rules decide the order, and both are about a person looking for something they just made:
  *
  *   1. Sources come in a fixed order — Genex first, then Blender, then any other plugin
- *      alphabetically, with the files you dropped in yourself last. A plugin installed during a run
- *      must not reshuffle yesterday's canvas.
+ *      alphabetically, then what Add brought from the library and the community, with the files
+ *      you dropped in yourself last. A plugin installed during a run must not reshuffle
+ *      yesterday's canvas.
  *   2. Inside a source, jobs are newest first, and the files of one job keep their own order by
  *      path. A generation that takes minutes therefore appears at the top and stays there.
  *
@@ -15,6 +16,8 @@
  */
 import type { MakingJob } from "../shared/asset-making.ts";
 import { type AssetKind, type AssetSource, assetKind, type ProjectAsset } from "../shared/game-assets.ts";
+import { t } from "../shared/i18n.ts";
+import { ASSET_LIBRARY_WORDS } from "./words.ts";
 
 /** The sources the studio names itself (`AssetSource`); any other source is a plugin id. */
 export const Source = {
@@ -22,6 +25,9 @@ export const Source = {
   Blender: "blender",
   /** files nobody generated: dropped into the game folder by hand */
   Imported: "imported",
+  /** brought in from the account's library or the community by Add (`assets/library/`, `assets/community/`) */
+  Library: "library",
+  Community: "community",
 } as const satisfies Record<string, AssetSource>;
 
 export interface AssetRect {
@@ -67,18 +73,24 @@ export const CARD_W = 184;
 export const CARD_IMAGE_H = 168;
 export const CARD_PLAIN_H = 112;
 export const COLUMNS = 5;
+/** The room each row of a card's status (a share's steps or outcome) takes under it. */
+export const CARD_LINE_H = 30;
 const CARD_GAP = 14;
 const GROUP_GAP = 36;
 const GROUP_HEAD_H = 30;
 const PAD = 32;
 
 const KNOWN_FIRST: readonly string[] = [Source.Genex, Source.Blender];
+/** After the plugins: what Add brought in, then the files dropped in by hand. */
+const KNOWN_LAST: readonly string[] = [Source.Library, Source.Community, Source.Imported];
 
 /** What each named source is called on screen. */
 const SOURCE_LABEL = new Map<string, string>([
   [Source.Genex, "Genex"],
   [Source.Blender, "Blender"],
-  [Source.Imported, "Your files"],
+  [Source.Library, ASSET_LIBRARY_WORDS.myLibrary],
+  [Source.Community, ASSET_LIBRARY_WORDS.community],
+  [Source.Imported, t("Your files")],
 ]);
 
 /** What a source is called on screen. A plugin id nobody ships is shown as it is. */
@@ -87,9 +99,10 @@ export function sourceLabel(source: string): string {
 }
 
 function sourceRank(source: string): number {
-  const known = KNOWN_FIRST.indexOf(source);
-  if (known >= 0) return known;
-  return source === Source.Imported ? KNOWN_FIRST.length + 1 : KNOWN_FIRST.length;
+  const first = KNOWN_FIRST.indexOf(source);
+  if (first >= 0) return first;
+  const last = KNOWN_LAST.indexOf(source);
+  return last >= 0 ? KNOWN_FIRST.length + 1 + last : KNOWN_FIRST.length;
 }
 
 function compareSources(a: string, b: string): number {
@@ -179,17 +192,24 @@ export function cardHeight(kind: AssetKind): number {
   return kind === "other" ? CARD_PLAIN_H : CARD_IMAGE_H;
 }
 
+const NO_LINES: ReadonlyMap<string, number> = new Map();
+
 /**
  * Deterministic rectangles: source groups contain a continuous grid in job order.
- * A completed job needs no metadata row or empty band between its previews.
+ * A completed job needs no metadata row or empty band between its previews. A row with a card
+ * in `lines` (rows of status by file) leaves {@link CARD_LINE_H} a row under its cards for them.
  */
-export function layoutAssets(assets: readonly ProjectAsset[], waiting: readonly MakingJob[] = []): AssetsLayout {
+export function layoutAssets(
+  assets: readonly ProjectAsset[],
+  waiting: readonly MakingJob[] = [],
+  lines: ReadonlyMap<string, number> = NO_LINES,
+): AssetsLayout {
   const groups = groupAssets(assets, waiting);
   const rects: Record<string, AssetRect> = {};
   const widths: number[] = [];
   let y = PAD;
   for (const group of groups) {
-    const rect = placeGroup(rects, group, y);
+    const rect = placeGroup(rects, group, y, lines);
     widths.push(rect.w);
     y = rect.y + rect.h + GROUP_GAP;
   }
@@ -205,10 +225,15 @@ interface GridCursor {
 }
 
 /** One group: its header, then its jobs' cards in one continuous grid. Returns the group's rect. */
-function placeGroup(rects: Record<string, AssetRect>, group: AssetGroup, top: number): AssetRect {
+function placeGroup(
+  rects: Record<string, AssetRect>,
+  group: AssetGroup,
+  top: number,
+  lines: ReadonlyMap<string, number>,
+): AssetRect {
   const grid: GridCursor = { column: 0, rowTop: top + GROUP_HEAD_H, rowHeight: 0 };
   for (const job of group.jobs) {
-    const jobRects = jobCards(group, job).map((card) => placeCard(rects, grid, card));
+    const jobRects = jobCards(group, job, lines).map((card) => placeCard(rects, grid, card));
     const [first] = jobRects;
     if (!first) continue;
     const left = Math.min(...jobRects.map((r) => r.x));
@@ -231,21 +256,25 @@ function placeGroup(rects: Record<string, AssetRect>, group: AssetGroup, top: nu
   return rect;
 }
 
+/** One card to place: its rect's id, its height, and the room its line needs under it. */
+interface CardSlot {
+  id: string;
+  height: number;
+  below: number;
+}
+
 /** A waiting job is one card; a delivered one is a card per file. */
-function jobCards(group: AssetGroup, job: AssetGroupJob): Array<{ id: string; height: number }> {
-  if (job.waiting) return [{ id: `pending:${group.source}:${job.jobId ?? ""}`, height: CARD_IMAGE_H }];
+function jobCards(group: AssetGroup, job: AssetGroupJob, lines: ReadonlyMap<string, number>): CardSlot[] {
+  if (job.waiting) return [{ id: `pending:${group.source}:${job.jobId ?? ""}`, height: CARD_IMAGE_H, below: 0 }];
   return job.assets.map((asset) => ({
     id: `asset:${asset.file}`,
     height: cardHeight(asset.kind ?? assetKind(asset.file)),
+    below: (lines.get(asset.file) ?? 0) * CARD_LINE_H,
   }));
 }
 
 /** The next cell of the grid, wrapping to a new row after `COLUMNS` cards. */
-function placeCard(
-  rects: Record<string, AssetRect>,
-  grid: GridCursor,
-  card: { id: string; height: number },
-): AssetRect {
+function placeCard(rects: Record<string, AssetRect>, grid: GridCursor, card: CardSlot): AssetRect {
   if (grid.column === COLUMNS) {
     grid.column = 0;
     grid.rowTop += grid.rowHeight + CARD_GAP;
@@ -253,7 +282,7 @@ function placeCard(
   }
   const rect = { x: PAD + grid.column * (CARD_W + CARD_GAP), y: grid.rowTop, w: CARD_W, h: card.height };
   rects[card.id] = rect;
-  grid.rowHeight = Math.max(grid.rowHeight, card.height);
+  grid.rowHeight = Math.max(grid.rowHeight, card.height + card.below);
   grid.column++;
   return rect;
 }

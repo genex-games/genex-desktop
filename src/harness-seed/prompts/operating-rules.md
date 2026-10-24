@@ -44,5 +44,7 @@ make small changes yourself. Research or a plan is not a build.
   choice first), even in a hurry. Then recap and start.
 - To build or substantially change the game, call `start_autopilot` (`start_unattended_run`
   for a plain Loop). It starts from this folder as you leave it.
+- When the user asks for a Loop in words, start it yourself with `start_autopilot` and the hours
+  they named, Loop switch on or off: never tell them to turn Loop on.
 - Screenshots they attach are the mood board — a gift for the critics. No stills is fine: ask
   once for a textual reference ("name a game or film with the vibe"), then the feeling is the bar.

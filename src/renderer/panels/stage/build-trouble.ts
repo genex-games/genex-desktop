@@ -4,16 +4,21 @@
  * the conformance tests hold it without a DOM.
  */
 import { type BuildDiagnostic, type BuildProblem, BuildProblemCode } from "../../../shared/build-problem.ts";
+import { t } from "../../../shared/i18n.ts";
 import { missingFor, PrewarmState, type ToolchainStatus } from "../../../shared/toolchain.ts";
 import { BUILD_PROBLEM_WORDS, NATIVE_WORDS } from "../../words.ts";
 
 /** The strip's sentences for a command that ran and failed (every build problem before typed reasons). */
 const MESSAGE = {
-  needsInstall: "Its packages aren’t installed yet.",
-  showingLastBuild: "Showing the last working build. The newest changes aren’t included.",
-  fix: "Fix the build error, then try again.",
+  needsInstall: () => t("Its packages aren’t installed yet."),
+  showingLastBuild: () => t("Showing the last working build. The newest changes aren’t included."),
+  fix: () => t("Fix the build error, then try again."),
+  /** Details' line for an install that failed, and for the build's command with its exit. */
+  installFailed: (command: string) => t("{command} failed", { command }),
+  exited: (command: string, code: number | null) =>
+    t("{command} (exit {code})", { command, code: code ?? t("stopped") }),
   /** Details for a build the PE or ELF gate refused: the file in `out/` and the rule, as the gate named them. */
-  gateFile: (file: string, refusal: string) => `Safety check: ${file} (${refusal})`,
+  gateFile: (file: string, refusal: string) => t("Safety check: {file} ({refusal})", { file, refusal }),
 } as const;
 
 /** The C++ lane parses at most this many diagnostics; the strip shows no more than that. */
@@ -62,8 +67,8 @@ export function reconciledProblem(problem: BuildProblem, status: ToolchainStatus
  * the facts it gave, never a made-up command line; none at all means no Details.
  */
 export function detailLines(problem: BuildProblem, installLines: readonly string[] | null): string[] {
-  const install = installLines ? [`${problem.install ?? "install"} failed`, ...installLines, ""] : [];
-  const command = problem.command ? [`${problem.command} (exit ${problem.code ?? "stopped"})`] : [];
+  const install = installLines ? [MESSAGE.installFailed(problem.install ?? "install"), ...installLines, ""] : [];
+  const command = problem.command ? [MESSAGE.exited(problem.command, problem.code)] : [];
   const gate = problem.gate ? [MESSAGE.gateFile(problem.gate.file, problem.gate.refusal)] : [];
   return [...install, ...command, ...gate, ...problem.lines];
 }
@@ -89,8 +94,8 @@ export function troubleWords(problem: BuildProblem): string {
   const gate = reason === BuildProblemCode.GateRefused ? gateWords(problem) : null;
   if (gate) return `${BUILD_PROBLEM_WORDS[reason]} ${gate}`;
   if (reason !== BuildProblemCode.CommandFailed) return BUILD_PROBLEM_WORDS[reason];
-  if (problem.needsInstall) return MESSAGE.needsInstall;
-  return problem.showingLastBuild ? MESSAGE.showingLastBuild : MESSAGE.fix;
+  if (problem.needsInstall) return MESSAGE.needsInstall();
+  return problem.showingLastBuild ? MESSAGE.showingLastBuild() : MESSAGE.fix();
 }
 
 /** Where a diagnostic points, as a compiler prints it: `file:line:col`, as much of it as is known. */

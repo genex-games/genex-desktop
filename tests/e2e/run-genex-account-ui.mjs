@@ -31,9 +31,9 @@ app.whenReady().then(async()=>{const w=new BrowserWindow({show:false,width:900,h
  const js=s=>w.webContents.executeJavaScript(s);const text=()=>js('document.body.innerText');
  const until=async(fn)=>{for(let i=0;i<100;i++){if(await fn())return;await wait(50);}throw Error('condition timed out');};
  const check=(name,ok)=>{checks.push({name,ok});if(!ok)throw Error(name);};
- await until(async()=>(await text()).includes('Connect Genex'));
+ await until(async()=>js('[...document.querySelectorAll("button")].some(b=>b.textContent==="Connect")'));
  check('a never-connected profile offers Connect, not unlock',!(await text()).includes('could not be unlocked'));
- await js('[...document.querySelectorAll("button")].find(b=>b.textContent==="Connect Genex").click()');
+ await js('[...document.querySelectorAll("button")].find(b=>b.textContent==="Connect").click()');
  await until(async()=>(await text()).includes('Reconnect'));
  await wait(300);
  check('one connect',await js('window.test.connects()')===1);

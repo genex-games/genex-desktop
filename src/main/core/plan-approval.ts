@@ -25,6 +25,7 @@ import {
   plansByTurn,
 } from "../../shared/permissions.ts";
 import type { ModelTokenUsage, Usage } from "../../shared/event-log.ts";
+import { t } from "../../shared/i18n.ts";
 import type {
   DelegatePermissions,
   DelegateRequest,
@@ -39,7 +40,7 @@ const MAX_PLAN_REVISIONS = 20;
 
 /** What the plan card adds for a build held back: what it would build. */
 const MESSAGE = {
-  build: (ask: string) => `**Build to start:** ${ask}`,
+  build: (ask: string) => t("**Build to start:** {ask}", { ask }),
 } as const;
 
 /** The argument in which each held build says what it would build. */

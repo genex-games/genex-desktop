@@ -9,6 +9,7 @@
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { GameLibraryEntry, GameUpdate } from "../../shared/game-library.ts";
 import type { GameName, GameNameRequest } from "../../shared/game-project.ts";
+import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { WorkClass } from "../../shared/harness-api.ts";
 import type { CompleteRequest, CompleteResponse, Engine } from "../../substrate/engines/types.ts";
 import { GAME_NAME_SYSTEM_PROMPT, gameNameRequest, NO_GAME_REPLY } from "./game-naming-prompts.ts";
@@ -79,8 +80,22 @@ async function namingEngine(deps: NamingDeps, engineId: string | undefined): Pro
   }
 }
 
-/** The model's reply, or null when it fails or runs out of time. */
-async function askForName(deps: NamingDeps, engine: Engine, request: GameNameRequest): Promise<string | null> {
+/** What the model answered: its reply, or null when it failed or ran out of time; why, when it is out of usage. */
+interface NamingAnswer {
+  reply: string | null;
+  limited?: string;
+}
+
+/** The engine's own words when it failed for a usage cap that no wait in this turn outlives. */
+function usageLimit(err: unknown): string | undefined {
+  const failure = err as { kind?: unknown; message?: unknown } | null;
+  return failure?.kind === EngineFailureKind.UsageLimit && typeof failure.message === "string"
+    ? failure.message
+    : undefined;
+}
+
+/** The model's reply, or null when it fails or runs out of time, with the words of a usage cap it hit. */
+async function askForName(deps: NamingDeps, engine: Engine, request: GameNameRequest): Promise<NamingAnswer> {
   const timeoutMs = deps.timeoutMs ?? NAMING_TIMEOUT_MS;
   const signal = AbortSignal.timeout(timeoutMs);
   const ask: CompleteRequest = {
@@ -103,9 +118,10 @@ async function askForName(deps: NamingDeps, engine: Engine, request: GameNameReq
   try {
     const response = await Promise.race([answered, timedOut]);
     const content = response?.message.content;
-    return typeof content === "string" ? content : null;
-  } catch {
-    return null;
+    return { reply: typeof content === "string" ? content : null };
+  } catch (err) {
+    const limited = usageLimit(err);
+    return limited === undefined ? { reply: null } : { reply: null, limited };
   } finally {
     answered.catch(() => {});
   }
@@ -117,15 +133,19 @@ const describesNoGame = (name: string): boolean => name.toUpperCase() === NO_GAM
 /**
  * A name for a game started from `request.prompt`: the model's; Untitled game, waiting for an
  * idea, when the message describes none; else the request's own words, waiting for the model's.
+ * When the engine the person picked answered with a usage cap, the name says so (`limited`): the
+ * game's first turn could not run on it either.
  */
 export async function nameGame(deps: NamingDeps, request: GameNameRequest): Promise<GameName> {
   if (typeof request?.prompt !== "string") throw new Error("A game is named from text.");
   const engine = await namingEngine(deps, request.engine);
-  const reply = engine && request.prompt.trim() ? await askForName(deps, engine, request) : null;
-  const named = reply ? nameFromReply(reply) : null;
+  const answer = engine && request.prompt.trim() ? await askForName(deps, engine, request) : { reply: null };
+  const named = answer.reply ? nameFromReply(answer.reply) : null;
   if (named && describesNoGame(named)) return { title: UNTITLED_GAME, provisional: true };
   if (named) return { title: named };
-  return { title: nameFromRequest(request.prompt), provisional: true };
+  const fallback = { title: nameFromRequest(request.prompt), provisional: true };
+  // Only the picked engine's cap is the turn's: the first ready engine may not be the one it runs on.
+  return request.engine && answer.limited ? { ...fallback, limited: answer.limited } : fallback;
 }
 
 /** What renaming a game from its first idea needs: the library, the namer, and who to tell. */

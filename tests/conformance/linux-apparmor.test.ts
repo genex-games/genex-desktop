@@ -35,6 +35,7 @@ import {
   profilePathRefusal,
   profileRemoveCommand,
   usernsRestricted,
+  withFollowing,
   writableByOthers,
   writeLinuxPackageScripts,
   type AppArmorSystem,
@@ -433,6 +434,39 @@ describe("the deb and rpm maintainer scripts", { skip: POSIX_ONLY }, () => {
       await runScript(linuxPackageScripts(system)[LinuxPackageScript.DebPostinst], [step], env, root);
     assert.equal(existsSync(packaged(system).file), false);
     assert.deepEqual(await parserCalls(), []);
+  });
+
+  it("the rpm's scriptlets run the repository's after the profile's, as the make step writes them", async () => {
+    // An rpm has one %post and one %postun: the profile's and the Genex repository's share them.
+    const repoPost = await readFile(path.join(REPO, "build", "linux", "rpm-post"), "utf8");
+    const repoPostun = await readFile(path.join(REPO, "build", "linux", "rpm-postun"), "utf8");
+    const { root, system, env } = await fakeSystem();
+    // The repository's scriptlets also copy the key and test a setting: the host's tools for that.
+    await mkdir(path.join(root, "more"));
+    const more = await hostTools(path.join(root, "more"), ["grep", "mkdir", "cp", "chmod"]);
+    const packageEnv = { ...env, PATH: `${env.PATH}:${more}`, GENEX_PACKAGE_ROOT: root };
+    const resources = path.join(root, "usr", "lib", "genex", "resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(path.join(resources, "genex-archive-keyring.asc"), "key");
+    await mkdir(path.join(root, "etc", "yum.repos.d"), { recursive: true });
+    const scripts = linuxPackageScripts(system);
+    const post = withFollowing(scripts[LinuxPackageScript.RpmPost], repoPost);
+    await runScript(post, ["1"], packageEnv, root);
+    assert.ok(existsSync(packaged(system).file), "the profile is installed");
+    assert.ok(existsSync(path.join(root, "etc", "yum.repos.d", "genex.repo")), "the repository is added");
+    const postun = withFollowing(scripts[LinuxPackageScript.RpmPostun], repoPostun);
+    await runScript(postun, ["0"], packageEnv, root);
+    assert.equal(existsSync(packaged(system).file), false, "the profile goes with the package");
+    assert.equal(existsSync(path.join(root, "etc", "yum.repos.d", "genex.repo")), false, "so does the repository");
+    // Written by the make step, each follows its own; a script with none following is the profile's alone.
+    const dir = path.join(await tmpDir("genex-package-scripts-"), "scripts");
+    await writeLinuxPackageScripts(dir, { [LinuxPackageScript.RpmPost]: repoPost });
+    const files = linuxPackageScriptFiles(dir);
+    assert.equal(
+      await readFile(files[LinuxPackageScript.RpmPost], "utf8"),
+      withFollowing(linuxPackageScripts().post, repoPost),
+    );
+    assert.equal(await readFile(files[LinuxPackageScript.RpmPostun], "utf8"), linuxPackageScripts().postun);
   });
 
   it("unload and delete the profile on removal, and keep it across an upgrade", async () => {

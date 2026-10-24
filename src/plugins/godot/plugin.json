@@ -1,0 +1,438 @@
+{
+  "apiVersion": 3,
+  "id": "godot",
+  "version": "0.11.2",
+  "icon": "icon.svg",
+  "name": "Godot",
+  "publisher": "Genex",
+  "description": "Agents build your game in Godot 4 on this computer: they make its project, write its scenes and GDScript, check it and look at it with Godot's own tools. Open it in your Godot editor any time.",
+  "backend": "backend.mjs",
+  "capabilities": ["game-engine", "native-runtime"],
+  "detect": [
+    {
+      "fact": "godot-web-export",
+      "files": ["**/index.pck"],
+      "notUnder": ["**/.godot/"]
+    }
+  ],
+  "engine": {
+    "id": "godot",
+    "label": "Godot",
+    "projectFiles": ["project.godot"],
+    "fact": "godot-project",
+    "projectInFolder": true,
+    "writesProjectFiles": true
+  },
+  "tools": [
+    {
+      "name": "show-steps",
+      "description": "Show the user the Godot setup card in this game's chat: Genex installs Godot 4 for them (Do it for me). Use it when the user wants a Godot game and this computer has no Godot 4.3 or newer (new-game refuses, or the engine question says Godot needs installing first); then tell them in one line and end your reply, and the chat tells you when Godot is ready. It does nothing when Godot is installed.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "new-game",
+      "timeoutMs": 540000,
+      "description": "Make this game's Godot project from a template, in the game's godot/ folder: 2d (a player square that moves, a Camera2D) or 3d (a capsule player that walks and jumps, a floor, a sky and a hero camera). Use it once, when the user picks Godot for a game with no project yet. It needs Godot 4 installed; it refuses when the game already has a Godot project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "template": {
+            "type": "string",
+            "enum": ["2d", "3d"],
+            "description": "The starting project: 2d or 3d."
+          },
+          "name": {
+            "type": "string",
+            "description": "The game's name as Godot shows it: 1 to 40 letters, digits, spaces, dashes or underscores."
+          }
+        },
+        "required": ["template", "name"]
+      },
+      "makes": ["godot-project"],
+      "ready": "engine-status"
+    },
+    {
+      "name": "check",
+      "timeoutMs": 540000,
+      "description": "Import this game's Godot project and load every script, scene and resource in it, so Godot names each parse error, missing file and broken reference with its file and line. Call it after every change; fix what it finds before you say a change works. Changes nothing in the project but Godot's .godot cache.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "facts": ["godot-project"]
+    },
+    {
+      "name": "run-scene",
+      "timeoutMs": 540000,
+      "description": "Play a scene of this game's Godot project headless for a few seconds of game time at a fixed 60 frames a second, pressing keys when you give them, and answer what it printed (print()) and the errors it raised, by file and line. Use it to see that game logic and controls run; it shows nothing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scene": {
+            "type": "string",
+            "description": "The scene, as res://levels/one.tscn or levels/one.tscn. Leave it out for the main scene."
+          },
+          "seconds": {
+            "type": "number",
+            "description": "Game seconds to play, a whole number from 1 to 60; 5 when left out."
+          },
+          "keys": {
+            "type": "string",
+            "description": "Keys to press, in order: a key and its seconds held (\"right 1.5\"), a key alone for a tap (\"space\"), or \"wait 1\"; comma-separated, at most 60 seconds. Keys: left, right, up, down, space, enter, escape, tab, shift, ctrl, alt, backspace, or one letter or digit."
+          }
+        }
+      },
+      "facts": ["godot-project"]
+    },
+    {
+      "name": "screenshot",
+      "timeoutMs": 540000,
+      "description": "See this game playing: play a scene of its Godot project in a window off the screen, press keys when you give them, and answer what each camera in the genex_shot group sees (else the scene's own camera) at a moment of play, as pictures you look at; frames adds a short recording up to that moment. Use it to check controls, motion and what a player sees.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scene": {
+            "type": "string",
+            "description": "The scene, as res://levels/one.tscn or levels/one.tscn. Leave it out for the main scene."
+          },
+          "max": {
+            "type": "number",
+            "description": "The most pictures, 1 to 4; 4 when left out."
+          },
+          "seconds": {
+            "type": "number",
+            "description": "When the stills are taken, in seconds of play: 0.1 to 60; 1 when left out."
+          },
+          "keys": {
+            "type": "string",
+            "description": "Keys to press, in order: a key and its seconds held (\"right 1.5\"), a key alone for a tap (\"space\"), or \"wait 1\"; comma-separated, at most 60 seconds. Keys: left, right, up, down, space, enter, escape, tab, shift, ctrl, alt, backspace, or one letter or digit."
+          },
+          "frames": {
+            "type": "number",
+            "description": "Also a recording of the first camera: 2 to 8 frames spread up to that moment. Left out: stills only."
+          }
+        }
+      },
+      "facts": ["godot-project"]
+    },
+    {
+      "name": "class-reference",
+      "timeoutMs": 540000,
+      "description": "Godot's API exactly as the installed version has it: ask for a class (CharacterBody3D) to get what it extends and all its properties, methods with their types, signals and constants; ask for a word (velocity) to get the classes and members whose names hold it. Use it instead of guessing from older Godot versions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "A class name or a word of a member's name: 2 to 60 letters, digits or underscores."
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "web-export",
+      "timeoutMs": 540000,
+      "facts": ["godot-project"],
+      "description": "Export the game for the web with Godot's own Web export into web/ at the game's root: Live's Web game tab plays it and Publish puts it online. Call it when the person wants to play the game in Genex's web preview or publish it, and again after changing the project. It fetches Godot's Web export template for this Godot version when it is missing (10 MB).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "export-templates",
+      "timeoutMs": 540000,
+      "facts": ["godot-project"],
+      "description": "Get Godot's export templates for this Godot version so Godot's own command line can export the game as an app: web, windows, mac and linux (comma-separated; all four when left out). Genex fetches only those templates from Godot's own release (web 10 MB, Windows 40 MB, Mac 125 MB, Linux 70 MB, 64-bit x86) into the person's templates folder; on Windows it also puts them where Genex's sandbox, and so your shell, reads them. For mac it sets project.godot to import ETC2/ASTC textures, which a Mac export needs. Call it once before exporting an app with godot --headless --export-release; for the web, call web-export instead, which fetches its own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platforms": {
+            "type": "string",
+            "description": "The platforms to export for: web, windows, mac, linux, comma-separated. All four when left out."
+          }
+        }
+      }
+    },
+    {
+      "name": "multiplayer",
+      "timeoutMs": 540000,
+      "facts": ["godot-project"],
+      "description": "Make this Godot game playable online with Genex multiplayer, on the web and in native builds alike (web and native players meet in the same rooms): adds Genex's multiplayer addon and its GenexMultiplayer autoload, the Colyseus GDExtension native builds connect with (a one-time download, about 100 MB, kept by Genex), the game's Genex project in project.godot's [genex] section, its matchmaking in genex.json, and Genex's Web preset loading the multiplayer bridge. Call it once when the person wants people to play together, then read the godot-multiplayer skill and write the online play; call it again with slug after the first publish only to test online in the editor or a build started by hand (Genex's Play and the published page name the game to the others). Never add npm, a package.json or an HTML shell to a Godot game for this.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "matchmaking": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "How players are matched, as Genex reads it at publish: {\"preset\": \"open\" | \"duel\" | \"arena\" | \"teams\" | \"private\", \"winCondition\"?: \"lastStanding\" | \"firstToScore\" | \"highScoreInTime\" | \"firstToFinish\", \"config\"?: {\"minPlayers\": 2, \"maxPlayers\": 10, …}}. Leave it out to keep the game's current matchmaking."
+          },
+          "slug": {
+            "type": "string",
+            "description": "The game's Genex project (genex__publish-status names it after the first publish), for the editor and builds started by hand; Genex's Play and the published page name it to the others. Lowercase letters, digits and dashes."
+          }
+        }
+      }
+    },
+    {
+      "name": "set-up",
+      "timeoutMs": 540000,
+      "description": "Set this game's existing Godot project up for Genex's play, so Genex's computer tool, playtesters and judges can start it, press keys, point, step its clock and read its state: adds Genex's addon (addons/genex, a script that sleeps unless Genex starts the game) and its autoload, bin/play and studio.json's runtime. A game New Godot game made is set up already. The person confirms first.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "facts": ["godot-project"],
+      "confirmation": "Set this Godot game up for Genex's play: add Genex's addon and its autoload to the project, bin/play, and runtime: bridge in studio.json?"
+    },
+    {
+      "name": "engine-status",
+      "audience": "harness",
+      "description": "Whether this computer's Godot can make a new Godot game now, and the words the engine question offers it with.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "checkpoint-check",
+      "audience": "harness",
+      "description": "At a checkpoint, Godot's check of the game's project: a note of the problems it found, never a block.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "save-all",
+      "audience": "harness",
+      "description": "Before a checkpoint or a restore, the person's open Godot editor saves its scenes and scripts through the Genex addon: a note of what stayed unsaved, and before a restore a block until the person saves it.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "reload-editor",
+      "audience": "harness",
+      "description": "After a restore, the person's open Godot editor reads its files again and reloads its open scenes through the Genex addon.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "keep-web-build",
+      "audience": "harness",
+      "description": "At the end of each turn and after a restore, Godot's web build in web/ made again when the project changed since the last one, so Live's Web game tab and Publish have the game as it is. Needs Godot's Web template; a failure is a note.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "hero-shots",
+      "audience": "harness",
+      "description": "Stills of the game's main scene from its genex_shot cameras: a run's save point thumbnails, and the viewport observer's pictures.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "skills": [
+    {
+      "name": "godot-multiplayer",
+      "facts": ["godot-project"],
+      "tools": ["multiplayer"],
+      "summary": "Genex multiplayer for this Godot game, web and native in the same rooms: godot__multiplayer sets it up, then GenexMultiplayer joins, syncs players, shared state and host-run objects. MANDATORY before any online or multiplayer code; the genex-threejs-* skills don't apply to a Godot game.",
+      "file": "skills/godot-multiplayer.md"
+    },
+    {
+      "name": "godot",
+      "facts": ["godot-project"],
+      "tools": ["check", "run-scene", "screenshot", "class-reference", "web-export"],
+      "text": "This game is a Godot 4 project: the folder with project.godot. Build it in Godot's own files, never as a web page: scenes (.tscn, Godot's text format) and GDScript (.gd), in the project's folder; res:// is that folder. Keep scenes small and readable: a node per line block, ext_resource for scripts and assets, sub_resource for shapes and materials. Use typed GDScript 4 (var speed: float, func _physics_process(delta: float) -> void), @export for tuning values and Input actions (ui_left, ui_accept or ones you add to project.godot's [input]). When you are unsure of an API, ask godot__class-reference rather than guessing from Godot 3 (no KinematicBody, yield or onready without @). After every change call godot__check and fix each error it names; godot__run-scene plays a scene headless (pressing keys when you give them, e.g. \"right 1, space\") and answers its prints and runtime errors; godot__screenshot shows you the game at a moment of play, after keys, with an optional short recording: use it to check that controls work, not only that the first frame draws. Fill whatever size the game is shown at, as a web game fills its page: Genex's Live tab and the published page are any size and resize. Keep project.godot's window/stretch/aspect=\"expand\" (never \"keep\", which adds black bars), place things inside what the camera shows (in 2D, get_canvas_transform().affine_inverse() * get_viewport_rect(); a centred Camera2D shifts it) rather than a fixed 1280×720, and anchor UI to the screen's edges. Keep a Camera3D or Camera2D in the genex_shot group framing what matters: screenshots, save points and the reviewer look through it, 3 seconds into the main scene with no keys pressed. If the game starts on a title screen or needs input to show play, set genex/shot_keys (e.g. \"enter 0.2, wait 1\") and genex/shot_seconds in project.godot's [genex] section so those pictures show real play. Generated assets (Genex's, Blender's) are delivered into the project under assets/<plugin>/<job>/: load them as res://assets/... paths. To play the game in Genex's web preview or publish it, call godot__web-export: Godot's Web export goes into web/ at the game's root (it is Godot's build: never edit it, export again after changes). For online play or multiplayer, read the godot-multiplayer skill and call godot__multiplayer: Genex's own addon, never npm or a web page. Never edit the .godot folder: it is Godot's cache. The person may have the project open in their own Godot editor, which reloads files you change; don't ask them to close it."
+    }
+  ],
+  "panels": [
+    {
+      "id": "setup",
+      "title": "Godot",
+      "file": "panel.html",
+      "placement": "settings"
+    }
+  ],
+  "settings": [],
+  "actions": [
+    {
+      "name": "status",
+      "label": "Godot on this computer"
+    },
+    {
+      "name": "create",
+      "label": "New Godot game",
+      "native": true
+    },
+    {
+      "name": "open-editor",
+      "label": "Open in Godot",
+      "native": true
+    },
+    {
+      "name": "get-godot",
+      "label": "Get Godot",
+      "native": true
+    },
+    {
+      "name": "toolbar-status",
+      "label": "Godot status"
+    },
+    {
+      "name": "stage-status",
+      "label": "Godot on the Live stage"
+    },
+    {
+      "name": "set-up",
+      "label": "Set up for Genex",
+      "confirmation": "Set this Godot game up for Genex's play?",
+      "native": true
+    },
+    {
+      "name": "web-export",
+      "label": "Export for the web",
+      "native": true
+    },
+    {
+      "name": "use-project",
+      "label": "Use this project"
+    },
+    { "name": "steps", "label": "Godot setup" },
+    { "name": "install-godot", "label": "Install Godot", "native": true },
+    { "name": "stop-install", "label": "Stop installing Godot", "native": true },
+    { "name": "skip", "label": "Don't use Godot", "native": true },
+    {
+      "name": "download-godot",
+      "label": "Download Godot 4.7.2",
+      "confirmation": "Download Godot 4.7.2 (86 MB) from Godot's own releases into Genex's folder? Genex checks the download, and any Godot you have stays as it is.",
+      "native": true
+    }
+  ],
+  "toolbar": [
+    {
+      "id": "editor",
+      "label": "Godot",
+      "ariaLabel": "Godot editor",
+      "icon": "godot",
+      "facts": ["godot-project"],
+      "target": {
+        "kind": "panel",
+        "id": "setup"
+      },
+      "status": "toolbar-status"
+    }
+  ],
+  "hooks": [
+    {
+      "on": "checkpoint.before",
+      "tool": "save-all",
+      "facts": ["godot-project"]
+    },
+    {
+      "on": "checkpoint.before",
+      "tool": "checkpoint-check",
+      "facts": ["godot-project"]
+    },
+    {
+      "on": "checkpoint.after",
+      "tool": "hero-shots",
+      "facts": ["godot-project"]
+    },
+    {
+      "on": "restore.before",
+      "tool": "save-all",
+      "facts": ["godot-project"]
+    },
+    {
+      "on": "restore.after",
+      "tool": "reload-editor",
+      "facts": ["godot-project"]
+    },
+    {
+      "on": "turn.end",
+      "tool": "keep-web-build",
+      "facts": ["godot-project"]
+    },
+    {
+      "on": "restore.after",
+      "tool": "keep-web-build",
+      "facts": ["godot-project"]
+    }
+  ],
+  "observers": [
+    {
+      "id": "viewport",
+      "facts": ["godot-project"],
+      "tool": "hero-shots",
+      "live": "card",
+      "status": "stage-status"
+    }
+  ],
+  "scaffolds": [
+    {
+      "id": "game",
+      "label": "Godot game",
+      "tool": "new-game"
+    }
+  ],
+  "nativeRuntimes": [
+    {
+      "id": "godot",
+      "label": "Godot",
+      "candidates": [
+        "/Applications/Godot.app/Contents/MacOS/Godot",
+        "home:Applications/Godot.app/Contents/MacOS/Godot",
+        "/Applications/Godot_mono.app/Contents/MacOS/Godot",
+        "home:Downloads/Godot.app/Contents/MacOS/Godot",
+        "/opt/homebrew/bin/godot",
+        "/usr/local/bin/godot"
+      ],
+      "version": {
+        "args": ["--version"],
+        "pattern": "^(\\d+\\.\\d+(?:\\.\\d+)?)\\.",
+        "minimum": "4.3.0"
+      },
+      "install": {
+        "platform": "win32-x64",
+        "action": "download-godot",
+        "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip",
+        "sha256": "731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953",
+        "bytes": 86013866,
+        "unpackedBytes": 200000000,
+        "format": "zip",
+        "entry": "Godot_v4.7.2-stable_win64.exe",
+        "executable": "Godot_v4.7.2-stable_win64.exe",
+        "notices": []
+      },
+      "installs": [
+        {
+          "platform": "win32-arm64",
+          "action": "download-godot",
+          "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_windows_arm64.exe.zip",
+          "sha256": "2d206e0b1d2366eb3508971c670c52333dcd7218b818102d77ca7ceaa86892ba",
+          "bytes": 84263370,
+          "unpackedBytes": 210000000,
+          "format": "zip",
+          "entry": "Godot_v4.7.2-stable_windows_arm64.exe",
+          "executable": "Godot_v4.7.2-stable_windows_arm64.exe",
+          "notices": []
+        }
+      ]
+    }
+  ],
+  "nativeJobs": []
+}

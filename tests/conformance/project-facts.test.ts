@@ -21,7 +21,11 @@ import {
   type FactRule,
   WEB_LOOP_FACTS,
 } from "../../src/shared/project-facts.ts";
+import { GameEngine } from "../../src/shared/game-engine.ts";
+import { webFolderOf } from "../../src/shared/project-workspace.ts";
+import { PluginSourceKind } from "../../src/shared/plugins.ts";
 import { writeEngineBinding } from "../../src/substrate/game-engine-binding.ts";
+import { ENGINES, GODOT_ENGINE, TOY_ENGINE, UNREAL_ENGINE } from "../helpers/engines.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { detectFacts, projectFiles } from "../../src/substrate/project-facts.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
@@ -67,7 +71,16 @@ describe("the core table", () => {
         ["index.html", "dist/index.html", "node_modules/x/index.html", "docs/index.html"],
         ["web-game@."],
       ],
+      [
+        "a Unity game's own WebGL template beside its web build",
+        ["unity/Assets/WebGLTemplates/Genex/index.html", "unity/ProjectSettings/ProjectVersion.txt", "web/index.html"],
+        ["unity-project@unity", "web-game@web"],
+      ],
       ["a Godot project", ["project.godot", "scenes/main.tscn"], ["godot-project@."]],
+      ["a Roblox place at the root", ["Obby.rbxl", "src/server/main.server.luau"], ["roblox-project@."]],
+      ["a Roblox place in XML one folder down", ["places/Obby.rbxlx"], ["roblox-project@places"]],
+      ["a Rojo project", ["default.project.json", "src/shared/util.luau"], ["roblox-project@."]],
+      ["another JSON project file", ["game.project.json", "package.json"], []],
       ["nothing a kind is known by", ["README.md", "idea.txt"], []],
     ];
     for (const [name, files, facts] of table) assert.deepEqual(found(files), facts, name);
@@ -91,6 +104,13 @@ describe("the core table", () => {
       ["Plugins/Kit/Binaries/x.dylib", "Plugins/*/Binaries/", true],
       ["Plugins/Binaries/x.dylib", "Plugins/*/Binaries/", false],
       ["Saved/a", "../Saved/", false],
+      ["frame_0001.png", "*[0-9].png", true],
+      ["12.png", "*[0-9].png", true],
+      ["poster.png", "*[0-9].png", false],
+      ["frame_0001.jpg", "*[0-9].png", false],
+      ["take_1.mp4", "*[0-9].png", false],
+      ["frame_0001.png", "*[a-z].png", false],
+      ["frame_0001.png", "*[0-9.png", false],
     ];
     for (const [file, glob, matches] of table) assert.equal(globMatches(file, glob), matches, `${file} ~ ${glob}`);
   });
@@ -204,18 +224,40 @@ describe("what the walk leaves out", () => {
     assert.deepEqual(await detectFacts(deeper, []), [], "one folder deeper is never read");
   });
 
-  it("stops at exactly its cap of entries", async () => {
+  it("stops at exactly its cap of files", async () => {
     const dir = await realpath(await tmpDir("studio-facts-cap-"));
     for (let i = 0; i < 100; i++) await writeFile(path.join(dir, `f${String(i).padStart(3, "0")}`), "");
-    assert.equal((await projectFiles(dir, { maxEntries: 50 })).length, 50);
-    assert.equal((await projectFiles(dir, { maxEntries: 7 })).length, 7);
+    assert.equal((await projectFiles(dir, { maxFiles: 50 })).length, 50);
+    assert.equal((await projectFiles(dir, { maxFiles: 7 })).length, 7);
     assert.equal((await projectFiles(dir)).length, 100, "under the cap, every file");
   });
 
-  it("throws for a folder that is gone, and skips one below the root it can't read", async () => {
+  it("reads at most its cap of folders, the root among them", async () => {
+    const dir = await realpath(await tmpDir("studio-facts-folders-"));
+    for (let i = 0; i < 10; i++) await put(dir, `f${i}/game.blend`);
+    const files = await projectFiles(dir, { maxFolders: 4 });
+    assert.deepEqual(files, ["f0/game.blend", "f1/game.blend", "f2/game.blend"], "the root and three folders");
+  });
+
+  it("counts only the files it keeps, so folders of other files never use up the walk", async () => {
+    const dir = await realpath(await tmpDir("studio-facts-keep-"));
+    await Promise.all(Array.from({ length: 30 }, (_, i) => put(dir, `a/shot-${i}.png`)));
+    await put(dir, "b/Game.uproject");
+    const keep = (rel: string) => rel.endsWith(".uproject");
+    assert.deepEqual(await projectFiles(dir, { maxFiles: 5, keep }), ["b/Game.uproject"]);
+    assert.equal((await projectFiles(dir, { maxFiles: 5 })).length, 5, "without keep, every file counts");
+  });
+
+  it("throws for a folder that is gone", async () => {
     const dir = await realpath(await tmpDir("studio-facts-gone-"));
     await assert.rejects(projectFiles(path.join(dir, "missing")), "a missing root is no empty folder");
     await assert.rejects(detectFacts(path.join(dir, "missing"), []));
+  });
+
+  it("skips a folder below the root it can't read", {
+    skip: process.platform === "win32" && "a folder's mode shuts no one out on Windows",
+  }, async () => {
+    const dir = await realpath(await tmpDir("studio-facts-shut-"));
     await put(dir, "shut/project.godot");
     await put(dir, "open/Game.uproject");
     await chmod(path.join(dir, "shut"), 0o000);
@@ -228,6 +270,29 @@ describe("what the walk leaves out", () => {
     } finally {
       await chmod(path.join(dir, "shut"), 0o755);
     }
+  });
+});
+
+describe("a game whose other folders fill up with files", () => {
+  /** Empty files at `rels` under `dir`, with their folders. */
+  const putAll = async (dir: string, rels: readonly string[]) => {
+    for (const rel of rels) await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+    await Promise.all(rels.map((rel) => writeFile(path.join(dir, rel), "")));
+  };
+
+  // A Unity game whose run kept 4,800 screenshots in docs/ lost its kind: the walk spent its whole
+  // budget there and never reached unity/ProjectSettings, so its editor's tools went away mid-run.
+  it("still finds its Unity project beside a docs folder of thousands of screenshots", async () => {
+    const game = await realpath(await tmpDir("studio-facts-crowded-"));
+    const shots = Array.from({ length: 60 }, (_, folder) =>
+      Array.from({ length: 80 }, (_, shot) => `docs/proof-v${folder}/shot-${shot}.png`),
+    ).flat();
+    await putAll(game, [...shots, "assets/props/altar.glb", "unity/Assets/Scenes/Main.unity"]);
+    await putAll(game, ["unity/ProjectSettings/ProjectVersion.txt", "unity/Packages/manifest.json"]);
+    assert.deepEqual(
+      (await detectFacts(game, [])).map((fact) => `${fact.id}@${fact.path}`),
+      ["unity-project@unity"],
+    );
   });
 });
 
@@ -384,7 +449,7 @@ describe("a listed game's facts", () => {
     await mkdir(path.join(linked.dir, "unreal"));
     const uproject = path.join(linked.dir, "unreal", "X.uproject");
     await writeFile(uproject, "{}\n");
-    await writeEngineBinding(linked.dir, uproject);
+    await writeEngineBinding(linked.dir, uproject, UNREAL_ENGINE.id, ENGINES);
     assert.deepEqual(
       await factsOf(linked.name),
       [`${CoreFact.UnrealProject}@unreal:${FactSource.Link}`],
@@ -400,13 +465,132 @@ describe("a listed game's facts", () => {
     assert.deepEqual((await listed(ported.name)).portedFrom, portedFrom);
   });
 
+  it("a Unity or Godot game's web version in web/ is its web game, never hidden by the web starter at its root", async () => {
+    const portedFrom = [{ id: CoreFact.WebGame, path: ".", source: FactSource.Core }];
+    /** A game New game made from the web starter, with these files written into it, its port recorded or not. */
+    const made = async (name: string, files: string[], ported: boolean) => {
+      const game = await lite.core.games.scaffold(name);
+      for (const file of files) {
+        await mkdir(path.dirname(path.join(game.dir, file)), { recursive: true });
+        await writeFile(path.join(game.dir, file), "made by the engine\n");
+      }
+      const meta = JSON.parse(await readFile(path.join(game.dir, "studio.json"), "utf8")) as object;
+      if (ported)
+        await writeFile(path.join(game.dir, "studio.json"), `${JSON.stringify({ ...meta, portedFrom }, null, 2)}\n`);
+      return game.name;
+    };
+    const unity = ["unity/ProjectSettings/ProjectVersion.txt", "web/index.html", "web/Build/web.loader.js"];
+    const godot = ["godot/project.godot", "web/index.html", "web/index.pck"];
+    const rows: Array<[string, string, string[], boolean, string[], string | null]> = [
+      [
+        "a Unity game with its WebGL build",
+        "unity-web",
+        unity,
+        true,
+        ["unity-project@unity:core", "web-game@web:core"],
+        "web",
+      ],
+      [
+        "a Godot game with its web export",
+        "godot-web",
+        godot,
+        true,
+        ["godot-project@godot:core", "web-game@web:core"],
+        "web",
+      ],
+      [
+        "a Unity game whose port Genex never saw",
+        "unity-unported",
+        unity,
+        false,
+        ["unity-project@unity:core", "web-game@web:core"],
+        "web",
+      ],
+      [
+        "a Unity game with no web build yet keeps what it had",
+        "unity-no-web",
+        ["unity/ProjectSettings/ProjectVersion.txt"],
+        false,
+        ["web-game@.:core", "unity-project@unity:core"],
+        null,
+      ],
+      [
+        "a web game with a page in web/ stays one web game",
+        "web-in-web",
+        ["web/index.html"],
+        false,
+        ["web-game@.:core"],
+        null,
+      ],
+    ];
+    for (const [title, name, files, ported, facts, webFolder] of rows) {
+      await made(name, files, ported);
+      assert.deepEqual(await factsOf(name), facts, title);
+      assert.equal(webFolderOf(await listed(name)), webFolder, `${title}: the page Live plays and Publish sends`);
+    }
+  });
+
+  it("a root page of the folder's own, or a web game built on the starter, keeps its place beside an engine's web build; a linked game and Web/ get theirs", async () => {
+    /** A game whose files are these, written into a folder New game left empty or into the web starter. */
+    const holding = async (name: string, files: string[], start: "empty" | "starter") => {
+      const game = start === "empty" ? await lite.core.games.makeEmpty(name) : await lite.core.games.scaffold(name);
+      for (const file of files) {
+        await mkdir(path.dirname(path.join(game.dir, file)), { recursive: true });
+        await writeFile(path.join(game.dir, file), "the folder's own\n");
+      }
+      return game;
+    };
+    const ownUnity = await holding(
+      "own-unity",
+      ["index.html", "unity/ProjectSettings/ProjectVersion.txt", "web/index.html"],
+      "empty",
+    );
+    assert.deepEqual(await factsOf(ownUnity.name), ["web-game@.:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(ownUnity.name)), null, "the folder's own page is its web game");
+    const ownGodot = await holding("own-godot", ["index.html", "godot/project.godot", "web/index.html"], "empty");
+    assert.deepEqual(await factsOf(ownGodot.name), ["web-game@.:core", "godot-project@godot:core"]);
+    assert.equal(webFolderOf(await listed(ownGodot.name)), null, "and a Godot game's");
+    const builtUnity = await holding(
+      "built-unity",
+      ["src/main.js", "unity/ProjectSettings/ProjectVersion.txt", "web/index.html"],
+      "starter",
+    );
+    assert.deepEqual(await factsOf(builtUnity.name), ["web-game@.:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(builtUnity.name)), null, "a web game built on the starter keeps its page");
+    const builtGodot = await holding(
+      "built-godot",
+      ["src/main.js", "godot/project.godot", "web/index.html"],
+      "starter",
+    );
+    assert.deepEqual(await factsOf(builtGodot.name), ["web-game@.:core", "godot-project@godot:core"]);
+    assert.equal(webFolderOf(await listed(builtGodot.name)), null, "beside a Godot project too");
+
+    const elsewhere = await realpath(await tmpDir("studio-linked-godot-web-"));
+    await writeFile(path.join(elsewhere, "project.godot"), "config_version=5\n");
+    const linked = await holding("linked-godot-web", ["web/index.html", "web/index.pck"], "starter");
+    await writeEngineBinding(linked.dir, path.join(elsewhere, "project.godot"), GODOT_ENGINE.id, ENGINES);
+    assert.deepEqual(await factsOf(linked.name), [
+      `${CoreFact.GodotProject}@${elsewhere}:${FactSource.Link}`,
+      "web-game@web:core",
+    ]);
+    assert.equal(webFolderOf(await listed(linked.name)), "web", "a linked game's export plays too");
+
+    const cased = await holding(
+      "unity-cased-web",
+      ["unity/ProjectSettings/ProjectVersion.txt", "Web/index.html", "Web/Build/Web.loader.js"],
+      "starter",
+    );
+    assert.deepEqual(await factsOf(cased.name), ["web-game@Web:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(cased.name)), "Web", "Web/ is the same folder");
+  });
+
   it("a link to a project outside the game is one absolute fact, and stands for the game's Unreal project", async () => {
     const elsewhere = await realpath(await tmpDir("studio-outside-uproject-"));
     const outside = path.join(elsewhere, "B.uproject");
     await writeFile(outside, "{}\n");
 
     const far = await lite.core.games.scaffold("far-link");
-    await writeEngineBinding(far.dir, outside);
+    await writeEngineBinding(far.dir, outside, UNREAL_ENGINE.id, ENGINES);
     assert.deepEqual(
       await factsOf(far.name),
       [`${CoreFact.UnrealProject}@${elsewhere}:${FactSource.Link}`],
@@ -420,12 +604,42 @@ describe("a listed game's facts", () => {
     await mkdir(path.join(switched.dir, "unreal"));
     const own = path.join(switched.dir, "unreal", "A.uproject");
     await writeFile(own, "{}\n");
-    await writeEngineBinding(switched.dir, own);
-    await writeEngineBinding(switched.dir, outside);
+    await writeEngineBinding(switched.dir, own, UNREAL_ENGINE.id, ENGINES);
+    await writeEngineBinding(switched.dir, outside, UNREAL_ENGINE.id, ENGINES);
     assert.deepEqual(
       await factsOf(switched.name),
       [`${CoreFact.UnrealProject}@${elsewhere}:${FactSource.Link}`],
       "the link stands for the game's Unreal project; its own project's files are no second one",
     );
+  });
+
+  it("a link to another engine's project is that engine's fact, not Unreal's", async () => {
+    await lite.core.plugins.installLocal(TOY_PLUGIN, PluginSourceKind.Local, []);
+    const garden = await lite.core.games.scaffold("toy-link");
+    await mkdir(path.join(garden.dir, "garden"));
+    const toyproj = path.join(garden.dir, "garden", "Garden.toyproj");
+    await writeFile(toyproj, "toy\n");
+    await writeEngineBinding(garden.dir, toyproj, TOY_ENGINE.id, ENGINES);
+    assert.deepEqual(
+      await factsOf(garden.name),
+      [`toy-project@garden:${FactSource.Link}`],
+      "the toy engine's fact at its project's folder, and the template beside it no web game",
+    );
+  });
+
+  it("a link to a Godot project outside the game is one absolute Godot fact; the game's own godot/ is no second one", async () => {
+    const elsewhere = await realpath(await tmpDir("studio-outside-godot-"));
+    await writeFile(path.join(elsewhere, "project.godot"), "config_version=5\n");
+    const game = await lite.core.games.scaffold("godot-link");
+    await mkdir(path.join(game.dir, "godot"));
+    await writeFile(path.join(game.dir, "godot", "project.godot"), "config_version=5\n");
+    const { binding } = await writeEngineBinding(
+      game.dir,
+      path.join(elsewhere, "project.godot"),
+      GODOT_ENGINE.id,
+      ENGINES,
+    );
+    assert.equal(binding.kind, GameEngine.Godot, "linked as the Godot plugin's engine");
+    assert.deepEqual(await factsOf(game.name), [`${CoreFact.GodotProject}@${elsewhere}:${FactSource.Link}`]);
   });
 });

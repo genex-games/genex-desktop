@@ -42,16 +42,20 @@ game.on_update(|sim, ctx| {
   count.
 - **Sections.** `game.save_world()` is the section `world`. `game.save_section(name, save, load)`
   adds any other: `save` reads the `Sim` and returns JSON, `load` writes it back onto the restored
-  `Sim`. Physics bodies, facet state and anything outside `sim.world` need their own section. With
-  `game.navigation` the runtime adds `genex.nav` (`sim.nav`'s snapshot, `docs/api/navigation.md`),
+  `Sim`. Physics bodies (`docs/api/physics.md`), facet state and anything outside `sim.world` need
+  their own section. Floats are plain JSON numbers and load back exact; a NaN or an infinity saves
+  as `null`, which a typed load refuses (`save-section-invalid`). With `game.navigation` the
+  runtime adds `genex.nav` (`sim.nav`'s snapshot, `docs/api/navigation.md`),
   and with `game.streaming` it adds `genex.stream` (`docs/api/streaming.md`;
-  `sim.stream.snapshot()`: anchors, kept cells and active cells). A slot holds at most 62 game
-  sections; names are at most 48 characters.
+  `sim.stream.snapshot()`: anchors, kept cells and active cells). With `game.input` it adds
+  `genex.input` (the evaluated actions and the pad family in use), so a load mid-hold reads the
+  hold on, not a fresh press; a slot saved without it loads with fresh actions. A slot holds at
+  most 61 game sections; names are at most 48 characters.
 - **Saving.** `slots.save(slot, label)` queues a save written at the end of the tick, after
   physics. A save only reads, so it never changes the checksum. A slot name is 1 to 32 of
   `[a-z0-9-]` with no leading dash; `autosave-*` is the ring's. A label is at most 64 characters.
 - **Loading.** `slots.load(slot)` restores before the next tick. The runtime builds a fresh `Sim`,
-  runs the reset hooks with the slot's seed, restores `genex.nav`, `genex.stream` and then the
+  runs the reset hooks with the slot's seed, restores `genex.nav`, `genex.stream`, `genex.input` and then the
   game's sections in registration order, and sets the tick and `ctx.rng`. Only then does it
   replace the running game, so a refused load leaves it untouched. A streamed world's slot cells
   and their colliders are rebuilt through the commit hooks before the next tick's commit, which

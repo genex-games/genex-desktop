@@ -103,6 +103,9 @@ mod desktop;
 /// (`genex::profile_scope!("enemy_ai")`); write-only, never in the checksum.
 pub use genex_profile::profile_scope;
 pub use camera::{Camera, Projection};
+/// How the world fills a window of another aspect: letterboxed, or expanded to fill it with the
+/// world kept whole and centred (`Game::fit`, `genex.toml [game] fit`).
+pub use genex_render::letterbox::Fit;
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use decal::Decal;
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
@@ -156,6 +159,10 @@ pub use present_files::AssetFiles;
 /// host glue.
 #[doc(hidden)]
 pub use stream_source::{AsyncSource, StreamAnswer, StreamBytes, StreamRequest};
+/// A compiled cell pack read whole and the pack format (release R-8): `genex::pack::CellPacks`.
+pub use stream_source::pack;
+/// FNV-1a 64, the digest the checksum and captures use, for a game's own digests (release R-8).
+pub use genex_core::digest;
 /// The native async source: the compiled table, then `assets/` by real path on the job pool.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -177,6 +184,8 @@ pub use terrain_tiles::{
     TERRAIN_HEIGHT_RANGE_DEFAULT, TERRAIN_INDEX_BYTES_MAX, TERRAIN_TILE_BYTES_MAX, TERRAIN_TILE_SAMPLES, TERRAIN_TILES_FORMAT, TERRAIN_TILES_MAX,
     TERRAIN_TILES_VERSION, TerrainTiles,
 };
+/// Named asset groups loaded during play (STR-29): `sim.stream.require`, `ready`, `release_group`.
+pub use stream_groups::{GroupHandles, STREAM_GROUP_PREFETCH_TICKS, STREAM_GROUPS_REQUIRED_MAX};
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 #[cfg(feature = "physics")]
 /// A cell's static colliders and the ledger of streamed colliders (STR-10).
@@ -225,7 +234,7 @@ pub mod prelude {
     pub use crate::ui::{TextArgs, UiConfig, UiScale};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
-        Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
+        Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
         Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};

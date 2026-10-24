@@ -146,3 +146,39 @@ fn driving_the_panel_by_labels_rebinds_jump_writes_the_file_and_changes_the_dige
     assert_eq!(rt.sim().world.jumps, 1, "KeyJ jumps now");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+
+/// The centre of the jump button's zone, as a fraction of the world (where a click lands on it).
+fn jump_zone_centre(show: ShowWhen) -> [f32; 2] {
+    let [x0, y0, x1, y1] = layout(show).controls()[0].zone(WORLD);
+    [(x0 + x1) / 2.0 / WORLD[0] as f32, (y0 + y1) / 2.0 / WORLD[1] as f32]
+}
+
+#[test]
+fn a_desktop_click_on_a_hidden_controls_rect_stays_the_games_click() {
+    // Red before R-26: Mouse1 (touch 0) pressed the invisible Jump button.
+    let mut rt = runtime(game(ShowWhen::Touch));
+    rt.step(FIXED_STEP_MS);
+    assert_eq!(rt.state()["__input"]["touchControls"]["shown"], json!(false), "hidden on a keyboard and mouse");
+    let [x, y] = jump_zone_centre(ShowWhen::Touch);
+    rt.inject(Input::click_at(x, y));
+    rt.step(FIXED_STEP_MS * 2.0);
+    assert_eq!((rt.sim().world.jumps, rt.sim().world.free), (0, 1), "no jump; the click is a free touch");
+    // A finger on the same spot presses it: the controls work for touches whether shown or not.
+    let [px, py] = [x * WORLD[0] as f32, y * WORLD[1] as f32];
+    rt.inject(Input::touch_start(1, px, py));
+    rt.step(FIXED_STEP_MS * 2.0);
+    rt.inject(Input::touch_end(1, px, py));
+    rt.step(FIXED_STEP_MS * 2.0);
+    assert_eq!(rt.sim().world.jumps, 1, "a finger presses it");
+}
+
+#[test]
+fn the_touch_prompt_reads_the_buttons_label() {
+    // Red before R-26: the prompt read the control id.
+    let mut rt = runtime(game(ShowWhen::Touch));
+    rt.inject(Input::touch_start(3, 20.0, 20.0));
+    rt.step(FIXED_STEP_MS * 2.0);
+    assert_eq!(rt.sim().world.prompt, "Jump");
+    assert_eq!(rt.state()["__input"]["touchControls"]["shown"], json!(true), "shown once the player touches");
+}

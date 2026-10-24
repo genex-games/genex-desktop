@@ -511,7 +511,15 @@ export class EventStore {
     if (head === null) return [];
     const upTo = options.upToInclusive && compareIds(options.upToInclusive, head) < 0 ? options.upToInclusive : head;
     const ids = await this.#idsThrough(threadId, head);
-    const selected = ids.slice(options.after ? countThrough(ids, options.after) : 0, countThrough(ids, upTo));
+    const start = options.after ? countThrough(ids, options.after) : 0;
+    const end = countThrough(ids, upTo);
+    // Bound references before materializing them: rebuilding a checkpoint reads many small pages
+    // of one history, and mapping every remaining id on each page makes that rebuild quadratic.
+    // A fractional limit has always returned the next whole row; zero and NaN mean unbounded.
+    const count = options.limit ? Math.max(0, Math.ceil(options.limit)) : Number.POSITIVE_INFINITY;
+    const selected = options.tail
+      ? ids.slice(Math.max(start, end - count), end)
+      : ids.slice(start, Math.min(end, start + count));
     return this.#readBodies(
       selected.map((id) => ({ threadId, id })),
       { ...(options.limit ? { limit: options.limit } : {}), ...(options.tail ? { tail: true } : {}) },

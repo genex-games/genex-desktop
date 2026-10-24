@@ -7,7 +7,9 @@
 //! Which draws take the path is [`vertex_skinned_draws`]: under [`SkinVertexPolicy::Auto`] a draw
 //! whose skinned sphere covers fewer than [`SKIN_VERTEX_BELOW_PX`] at the nominal output height
 //! (LOD's screen-size metric, [`crate::scene::screen_height_px`]) and whose every part is plain
-//! opaque. Masked, double-sided and transparent parts keep compute skinning.
+//! opaque, unless it shares its skinning job with another draw (one pose of a crowd, lane CP):
+//! that job skins once by compute and its draws are rows of one GPU-culled instanced batch. Masked,
+//! double-sided and transparent parts keep compute skinning.
 //!
 //! The GPU side is two vertex-stage storage tables (the binding ledger's AN-18 row): the library's
 //! skin rows and this frame's vertex skin table ([`SkinVertexFrame`]: each part's record, then the
@@ -19,7 +21,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::instance::instance_row;
 use crate::motion::DrawId;
-use crate::scene::{DrawVariant, FramePlan, MeshId, MeshLibrary, Scene, SkinnedDraw, screen_height_px};
+use crate::scene::{DrawVariant, FramePlan, MeshId, MeshLibrary, Scene, SkinnedDraw, pose_owners, screen_height_px};
+use crate::skinned_lod::SkinnedPick;
 use crate::skin::skinned_bounds;
 
 /// The world pass's entry module: the forward module's sources (`shaders::FORWARD`), the shared
@@ -185,6 +188,10 @@ struct Drawn {
     joints: Vec<[f32; 16]>,
 }
 
+/// A vertex-skinned draw's palettes in the table: this frame's base, last frame's base and last
+/// frame's model (None without history).
+type DrawPalettes = (u32, u32, Option<[f32; 16]>);
+
 /// Whose history a vertex-skinned draw reads: its id, or, without one, its mesh (as compute
 /// skinning's motion keys an id-less row by its mesh and draw order).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -228,53 +235,83 @@ fn draw_sphere(draw: &SkinnedDraw, library: &MeshLibrary) -> Option<[f32; 4]> {
 /// (empty: none). A draw naming a mesh outside `library` keeps compute skinning (the plan refuses
 /// it there).
 pub fn vertex_skinned_draws(scene: &Scene, library: &MeshLibrary, policy: SkinVertexPolicy) -> Vec<bool> {
-    vertex_skinned_draws_within(scene, library, policy, u32::MAX)
+    vertex_skinned_draws_within(scene, library, policy, u32::MAX, &[])
 }
 
-/// [`vertex_skinned_draws`] held to a class's compute cap (game systems AN-23,
-/// [`crate::presets::skinned_compute_instances_max`]): under [`SkinVertexPolicy::Auto`], when more
-/// than `compute_max` draws would skin by compute, the smallest on screen of those that can take
-/// the path (plain opaque) skin in the vertex stage instead, ties going to the later draw, until
-/// `compute_max` remain. Masked, double-sided and transparent draws stay on compute past the cap.
-/// The other policies ignore the cap (they are the tests' and goldens' explicit choices).
-pub fn vertex_skinned_draws_within(scene: &Scene, library: &MeshLibrary, policy: SkinVertexPolicy, compute_max: u32) -> Vec<bool> {
+/// [`vertex_skinned_draws`] for draws skinning the levels `picks` gives them (empty: each its
+/// base; [`crate::scene::skinned_levels`]), held to a class's compute cap (game systems AN-23,
+/// [`crate::presets::skinned_compute_instances_max`]).
+///
+/// Under [`SkinVertexPolicy::Auto`] a draw that shares its skinning job with another (the same
+/// skin and level posed by a bit-identical palette, AN-16b) stays on compute whatever its size: the
+/// job skins once and every sharer is a row of the GPU-culled instanced batch, in the prepass, the
+/// world pass and each cascade (lane CP). The cap counts jobs, not draws: when more than
+/// `compute_max` jobs would run, the jobs smallest on screen (by their largest draw) of those whose
+/// every draw can take the path (plain opaque, not crossfading) leave it, ties going to the later
+/// job, until `compute_max` remain; masked, double-sided, transparent and crossfading draws stay
+/// on compute past the cap. The other policies ignore sharing and the cap (they are the tests' and
+/// goldens' explicit choices).
+pub fn vertex_skinned_draws_within(scene: &Scene, library: &MeshLibrary, policy: SkinVertexPolicy, compute_max: u32, picks: &[SkinnedPick]) -> Vec<bool> {
     if policy == SkinVertexPolicy::Compute || scene.skinned.is_empty() {
         return Vec::new();
     }
-    let takes = |draw: &SkinnedDraw| {
-        if !plain_opaque(draw) {
-            return false;
-        }
-        if policy == SkinVertexPolicy::Vertex {
-            return library.entry(draw.skin.mesh()).is_some();
-        }
-        draw_sphere(draw, library).is_some_and(|sphere| screen_height_px(&scene.camera, sphere) < SKIN_VERTEX_BELOW_PX)
+    let flags = if policy == SkinVertexPolicy::Vertex {
+        scene.skinned.iter().map(|draw| plain_opaque(draw) && library.entry(draw.skin.mesh()).is_some()).collect()
+    } else {
+        auto_flags(scene, library, compute_max, picks)
     };
-    let mut flags: Vec<bool> = scene.skinned.iter().map(takes).collect();
-    if policy == SkinVertexPolicy::Auto {
-        hold_compute_cap(scene, library, &mut flags, compute_max);
-    }
     if flags.iter().any(|flag| *flag) { flags } else { Vec::new() }
 }
 
-/// Move the smallest plain opaque compute draws of `scene` to the vertex stage until at most
-/// `compute_max` of `flags` stay on compute (AN-23).
-fn hold_compute_cap(scene: &Scene, library: &MeshLibrary, flags: &mut [bool], compute_max: u32) {
-    let compute = flags.iter().filter(|flag| !**flag).count();
-    let over = compute.saturating_sub(usize::try_from(compute_max).unwrap_or(usize::MAX));
+/// [`SkinVertexPolicy::Auto`]'s flags (see [`vertex_skinned_draws_within`]).
+fn auto_flags(scene: &Scene, library: &MeshLibrary, compute_max: u32, picks: &[SkinnedPick]) -> Vec<bool> {
+    let pick_of = |at: usize| picks.get(at).copied().unwrap_or(SkinnedPick::BASE);
+    let owners = pose_owners(scene, |at| Some(pick_of(at)));
+    let mut sharers = vec![0u32; owners.len()];
+    for owner in &owners {
+        sharers[*owner] += 1;
+    }
+    let pixels: Vec<Option<f32>> = scene.skinned.iter().map(|draw| draw_sphere(draw, library).map(|sphere| screen_height_px(&scene.camera, sphere))).collect();
+    let plain: Vec<bool> = scene.skinned.iter().map(plain_opaque).collect();
+    let small = |at: usize| pixels[at].is_some_and(|px| px < SKIN_VERTEX_BELOW_PX);
+    let mut flags: Vec<bool> = (0..owners.len()).map(|at| plain[at] && sharers[owners[at]] < 2 && small(at)).collect();
+    let movable = |at: usize| plain[at] && pixels[at].is_some() && !pick_of(at).is_band();
+    hold_compute_cap(&owners, &pixels, movable, &mut flags, compute_max);
+    flags
+}
+
+/// A skinning job on compute: the largest of its draws on screen, and whether every one of its
+/// draws can take the vertex path.
+#[derive(Clone, Copy)]
+struct Job {
+    pixels: f32,
+    movable: bool,
+}
+
+/// Move the jobs smallest on screen whose every draw is `movable` to the vertex stage until at
+/// most `compute_max` jobs (draws by their `owners`) stay on compute (AN-23, counted in jobs).
+fn hold_compute_cap(owners: &[usize], pixels: &[Option<f32>], movable: impl Fn(usize) -> bool, flags: &mut [bool], compute_max: u32) {
+    let mut jobs: Vec<Option<Job>> = vec![None; owners.len()];
+    for (at, owner) in owners.iter().enumerate().filter(|(at, _)| !flags[*at]) {
+        let job = jobs[*owner].get_or_insert(Job { pixels: f32::NEG_INFINITY, movable: true });
+        job.pixels = job.pixels.max(pixels[at].unwrap_or(f32::INFINITY));
+        job.movable &= movable(at);
+    }
+    let running = jobs.iter().flatten().count();
+    let over = running.saturating_sub(usize::try_from(compute_max).unwrap_or(usize::MAX));
     if over == 0 {
         return;
     }
-    let mut movable: Vec<(f32, usize)> = scene
-        .skinned
-        .iter()
-        .enumerate()
-        .filter(|(at, draw)| !flags[*at] && plain_opaque(draw))
-        .filter_map(|(at, draw)| draw_sphere(draw, library).map(|sphere| (screen_height_px(&scene.camera, sphere), at)))
-        .collect();
-    movable.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
-    for (_, at) in movable.into_iter().take(over) {
-        flags[at] = true;
+    let mut candidates: Vec<(f32, usize)> = jobs.iter().enumerate().filter_map(|(owner, job)| job.filter(|job| job.movable).map(|job| (job.pixels, owner))).collect();
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+    let mut leaving = vec![false; owners.len()];
+    for (_, owner) in candidates.into_iter().take(over) {
+        leaving[owner] = true;
+    }
+    for (at, owner) in owners.iter().enumerate() {
+        if leaving[*owner] {
+            flags[at] = true;
+        }
     }
 }
 
@@ -304,13 +341,13 @@ pub fn build_frame(scene: &Scene, library: &MeshLibrary, plan: &FramePlan, histo
     let mesh_ordinals = id_less_ordinals(scene);
     let mut now: BTreeMap<(HistoryScope, u32), Drawn> = BTreeMap::new();
     // Each draw's palettes (this frame's, last frame's): appended once per draw.
-    let mut palettes: BTreeMap<u32, (u32, u32, Option<[f32; 16]>)> = BTreeMap::new();
+    let mut palettes: Vec<Option<DrawPalettes>> = vec![None; scene.skinned.len()];
     for (at, part) in plan.vertex_skinned.iter().enumerate() {
         let Some(draw) = scene.skinned.get(part.draw as usize) else { continue };
         // The level the plan picked (game systems AN-25): its geometry, the draw's palette.
         let Some(entry) = library.entry(part.skin.mesh()) else { continue };
         let Some(skin_part) = library.skin_parts(part.skin).get(part.part as usize) else { continue };
-        let (joint_base, prev_joint_base, prev_model) = *palettes.entry(part.draw).or_insert_with(|| {
+        let (joint_base, prev_joint_base, prev_model) = *palettes[part.draw as usize].get_or_insert_with(|| {
             let joint_base = frame.table.len() as u32;
             frame.table.extend_from_slice(&draw.joints);
             let key = match draw.id {

@@ -17,7 +17,7 @@ import time
 
 import unreal
 
-from genex_loop import editor, paths
+from genex_loop import editor, editor_log, paths
 from genex_loop.errors import Refused, short_message
 
 # A module or class name as Unreal's /Script/<Module>.<Class> path spells it (no A/U prefix).
@@ -29,7 +29,6 @@ SOURCE_FOLDER = 'Source'
 MAC_PLATFORM = 'darwin'
 BINARIES = ('Binaries', 'Mac')
 HOT_LIBRARY = 'libUnrealEditor-{module}-[0-9]+[.]dylib'
-LOG_EXTENSION = '.log'
 LOG_LINES_CAP = 20
 LOG_LINE_CHARS = 500
 # A hot reload logs about 11 kB (as measured on 5.8.3), a failed compile a little more; past this nothing is read.
@@ -100,26 +99,6 @@ def _compiled(module: str, before: dict[str, int]) -> bool:
     return any(name not in before or written > before[name] for name, written in _hot_libraries(module).items())
 
 
-def _log_file() -> str | None:
-    """The editor's own log: the newest plain .log file in the project's log folder."""
-    folder = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_log_dir())
-    try:
-        with os.scandir(folder) as entries:
-            logs = [(entry.stat(follow_symlinks=False).st_mtime_ns, entry.path) for entry in entries
-                    if entry.name.endswith(LOG_EXTENSION) and entry.is_file(follow_symlinks=False)]
-    except OSError:  # no log folder
-        return None
-    return max(logs)[1] if logs else None
-
-
-def _log_size(file: str | None) -> int:
-    """How long the log is now (0 without one)."""
-    try:
-        return os.stat(file).st_size if file else 0
-    except OSError:
-        return 0
-
-
 def _home_pattern() -> re.Pattern | None:
     """The owner's home folder where it starts a path (not a longer name), or None without one."""
     home = os.path.expanduser('~').rstrip('/')
@@ -144,18 +123,8 @@ def _log_lines(file: str | None, offset: int) -> list[str]:
     """The error and hot reload lines the log gained after `offset`, once each, without time stamps;
     none when the log is shorter than `offset` (a new log replaced it: nothing to tell this call's
     lines from an older session's)."""
-    if not file:
-        return []
-    try:
-        with open(file, 'rb') as handle:
-            if os.fstat(handle.fileno()).st_size < offset:
-                return []
-            handle.seek(offset)
-            text = handle.read(LOG_READ_BYTES).decode('utf-8', errors='replace')
-    except OSError:
-        return []
     kept: list[str] = []
-    for raw in text.splitlines():
+    for raw in editor_log.read_since(file, offset, LOG_READ_BYTES).splitlines():
         if not any(mark in raw for mark in LOG_MARKS):
             continue
         line = raw[LOG_PREFIX.match(raw).end():].strip()
@@ -193,9 +162,7 @@ def recompile_module(module: str, classes: list[str]) -> dict:
     if editor.play_world() is not None:
         raise Refused(MESSAGE['play'], module=module)
     before = _hot_libraries(module)
-    unreal.log_flush()
-    log = _log_file()
-    offset = _log_size(log)
+    log, offset = editor_log.mark()
     failure = _recompile(module)
     unreal.log_flush()
     compiled = _compiled(module, before)

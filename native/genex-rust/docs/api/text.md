@@ -23,7 +23,7 @@ hud-coins = { $coins ->
 - **Plurals** follow each language's CLDR rules: French puts 0 in `one` (`0 pièce`), English in
   `other` (`0 coins`). Always write the `*[other]` default.
 - **The settings menu's own words** are keys too, English when the game's file lacks them:
-  `settings-tab-<tab>`, `settings-preset`, `settings-custom`, `settings-reset`, `settings-on`,
+  `settings-tab-<tab>`, `settings-preset`, `settings-custom`, `settings-default`, `settings-reset`, `settings-on`,
   `settings-off`, `settings-audio-<bus>`, `settings-language`, `settings-ui-scale`,
   `settings-text-size`, `settings-subtitles`, `settings-reduced-motion`, `settings-screen-shake`,
   the preset names `default`, `quiet`, `dialogue`, `comfort`, the choices `auto`,

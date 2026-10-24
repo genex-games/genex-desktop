@@ -1,0 +1,1966 @@
+/* ── Play's people: friends, profiles, stats, Top creators, the account's avatar ─────────────────── */
+/* genex.games' blue in its roles: the light tint of secondary actions, the gradient of the one primary
+   action, the translucent chips, the green of people playing now and of Accept, the requests badge.
+   The tinted families (chips, tint buttons, the credits card, the invite card) wear the Play / Create
+   switch's selected blue until the colour tweaker's "Play: chips, buttons and cards" group gives one
+   its own hue (`--*-hue`), so a theme that sets Play's blue carries them. That group and "Play: people
+   and stats" set the other colours here by name; their defaults for an unset role are copied in
+   `PEOPLE_COLORS`, tweaker.ts: change both together. */
+:root {
+  --people-blue: var(--play-selected, var(--play-blue));
+  --people-tint-color: var(--people-tint-hue, var(--people-blue));
+  --people-chip-color: var(--people-chip-hue, var(--people-blue));
+  --credits-card-color: var(--credits-card-hue, var(--people-chip-color));
+  --people-invite-color: var(--people-invite-hue, var(--people-blue));
+  --people-tint: color-mix(in srgb, var(--people-tint-color) 16%, transparent);
+  --people-tint-hover: color-mix(in srgb, var(--people-tint-color) 24%, transparent);
+  --people-tint-edge: color-mix(in srgb, var(--people-tint-color) 55%, transparent);
+  --people-primary-top: #4b60bf;
+  --people-primary-bottom: #3f51a8;
+  --people-accept: rgb(34 165 91 / 0.16);
+  --people-accept-hover: rgb(34 165 91 / 0.24);
+  --people-accept-edge: rgb(34 165 91 / 0.5);
+  --people-accept-ink: #7cd194;
+  --people-quiet: color-mix(in oklab, var(--ink) 8%, transparent);
+  --people-quiet-edge: color-mix(in oklab, var(--ink) 16%, transparent);
+  --people-live: #22a55b;
+  --people-live-ink: #5fd18b;
+  --people-pro: #8d9bff;
+  --people-pro-ring: rgb(103 120 245 / 0.7);
+  --people-request: #3f61f5;
+  --people-card-hover: var(--hover);
+  /* On the dark canvas a chip's edge is its hue lifted toward white, so it reads as a rim. */
+  --people-chip-top: color-mix(in srgb, var(--people-chip-color) 22%, transparent);
+  --people-chip-bottom: color-mix(in srgb, var(--people-chip-color) 10%, transparent);
+  --people-chip-edge: color-mix(in srgb, color-mix(in srgb, var(--people-chip-color) 75%, #ffffff) 40%, transparent);
+  --people-chip-shine: rgb(255 255 255 / 0.06);
+  --people-chip-ink: #9fb0ff;
+  --people-chip-number: #d3dbff;
+  --credits-card: color-mix(in srgb, var(--credits-card-color) 10%, transparent);
+  --credits-card-edge: color-mix(in srgb, color-mix(in srgb, var(--credits-card-color) 75%, #ffffff) 40%, transparent);
+  /* The soft shadow under the bare tool marks on the Credits tab. */
+  --credits-mark-shadow: rgb(0 0 0 / 0.7);
+  --people-invite: color-mix(in srgb, var(--people-invite-color) 12%, transparent);
+  --people-invite-edge: color-mix(in srgb, var(--people-invite-color) 34%, transparent);
+  --stats-up: #5fd18b;
+  --stats-down: #ff8a7a;
+  --stats-line: #7d8ff0;
+  --stats-soft: #4a538a;
+  --stats-fill: rgb(125 143 240 / 0.22);
+  --stats-grid: color-mix(in oklab, var(--ink) 9%, transparent);
+  --stats-ink: var(--ink-3);
+  --stats-text: var(--ink);
+  --stats-surface: var(--popover);
+  --stats-edge: var(--line-strong);
+  --stats-crosshair: color-mix(in oklab, var(--ink) 28%, transparent);
+  --shard-light: #aeb7e2;
+  --shard-mid: #6b7fdc;
+  --shard-dark: #4555a8;
+  --shard-earned-light: #9fe1b9;
+  --shard-earned-mid: #2bbd64;
+  --shard-earned-dark: #1a713c;
+}
+:root[data-theme="light"] {
+  --people-tint: color-mix(in srgb, var(--people-tint-color) 12%, transparent);
+  --people-tint-hover: color-mix(in srgb, var(--people-tint-color) 18%, transparent);
+  --people-tint-edge: color-mix(in srgb, var(--people-tint-color) 40%, transparent);
+  --people-accept: rgb(34 165 91 / 0.13);
+  --people-accept-hover: rgb(34 165 91 / 0.2);
+  --people-accept-edge: rgb(34 165 91 / 0.45);
+  --people-accept-ink: #0f5a2f;
+  --people-quiet: #ededee;
+  --people-quiet-edge: #cfcfd2;
+  --people-live-ink: #16803f;
+  --people-pro: #4353d9;
+  --people-pro-ring: rgb(67 83 217 / 0.6);
+  --people-card-hover: #f3f3f4;
+  --people-chip-top: color-mix(in srgb, var(--people-chip-color) 13%, transparent);
+  --people-chip-bottom: color-mix(in srgb, var(--people-chip-color) 5%, transparent);
+  --people-chip-edge: color-mix(in srgb, var(--people-chip-color) 32%, transparent);
+  --people-chip-shine: rgb(255 255 255 / 0.55);
+  --people-chip-ink: #3d58d8;
+  --people-chip-number: #1e33b4;
+  --credits-card: color-mix(in srgb, var(--credits-card-color) 5%, transparent);
+  --credits-card-edge: color-mix(in srgb, var(--credits-card-color) 32%, transparent);
+  --credits-mark-shadow: rgb(24 28 60 / 0.3);
+  --people-invite: color-mix(in srgb, var(--people-invite-color) 7%, transparent);
+  --people-invite-edge: color-mix(in srgb, var(--people-invite-color) 22%, transparent);
+  --stats-up: #16803f;
+  --stats-down: #b42318;
+  --stats-line: #4b60bf;
+  --stats-soft: #b3bce6;
+  --stats-fill: rgb(75 96 191 / 0.16);
+  --stats-grid: #eeeeef;
+  --stats-ink: #5f6061;
+  --stats-text: #101112;
+  --stats-surface: #ffffff;
+  --stats-edge: #e4e4e7;
+  --stats-crosshair: #c9ccd8;
+  --shard-mid: #4b60bf;
+  --shard-dark: #313e7c;
+}
+
+/* ── Buttons: the tint (Join, Copy, More, Invite), the primary gradient, Accept's green, the quiet grey ── */
+.people-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--people-tint);
+  box-shadow: inset 0 0 0 1px var(--people-tint-edge);
+  color: var(--ink);
+  font: 13px / 1 var(--font-family-mono);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    filter var(--duration-quick);
+}
+.people-button:hover {
+  background: var(--people-tint-hover);
+}
+.people-button[data-tone="primary"] {
+  background: linear-gradient(180deg, var(--people-primary-top), var(--people-primary-bottom));
+  box-shadow:
+    0 0.5px 1.5px rgb(75 96 191 / 0.25),
+    inset 0 0.8px 0 -0.25px rgb(255 255 255 / 0.2);
+  color: #ffffff;
+}
+.people-button[data-tone="primary"]:hover {
+  filter: brightness(1.1);
+}
+.people-button[data-tone="accept"] {
+  background: var(--people-accept);
+  box-shadow: inset 0 0 0 1px var(--people-accept-edge);
+  color: var(--people-accept-ink);
+}
+.people-button[data-tone="accept"]:hover {
+  background: var(--people-accept-hover);
+}
+.people-button[data-tone="quiet"] {
+  background: var(--people-quiet);
+  box-shadow: inset 0 0 0 1px var(--people-quiet-edge);
+  color: var(--ink-2);
+}
+.people-button[data-tone="quiet"]:hover {
+  background: var(--hover);
+}
+/* Play's blue on a Button (`variant="play-tint"` / `"play-fill"`): the people buttons' tint and filled
+   blue, in the Button's own size and corners. Publish on the stage strip wears them. */
+.play-tint {
+  background: var(--people-tint);
+  box-shadow: inset 0 0 0 1px var(--people-tint-edge);
+  color: var(--ink);
+}
+.play-tint:enabled:hover {
+  background: var(--people-tint-hover);
+}
+.play-fill {
+  background: linear-gradient(180deg, var(--people-primary-top), var(--people-primary-bottom));
+  box-shadow:
+    0 0.5px 1.5px rgb(75 96 191 / 0.25),
+    inset 0 0.8px 0 -0.25px rgb(255 255 255 / 0.2);
+  color: #ffffff;
+}
+.play-fill:enabled:hover {
+  filter: brightness(1.1);
+}
+.people-button-icon {
+  width: 32px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-3);
+}
+.people-button-icon:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.people-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.people-button:focus-visible,
+.people-more:focus-visible,
+.people-arrow:focus-visible,
+.friend-card-open:focus-visible,
+.person-tile:focus-visible,
+.plate-end:focus-visible,
+.profile-edit:focus-visible,
+.handle-suggestion:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+/* The play mark in Join and on a tile's game is filled, as the site draws it. */
+.people-play-glyph {
+  fill: currentColor;
+  stroke: none;
+}
+.people-more,
+.people-arrow {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.people-more:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.people-arrow {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--people-quiet);
+  color: var(--ink-2);
+}
+.people-arrow:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.people-arrow:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* ── A person's avatar with its ring: green while playing (with a dot), a blue ring for Pro ── */
+.people-avatar {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  border-radius: 50%;
+}
+.people-avatar:not([data-gear])[data-live] > .cy-avatar,
+.people-avatar:not([data-gear])[data-live] > .person-avatar {
+  box-shadow:
+    0 0 0 2.5px var(--page),
+    0 0 0 4.5px var(--people-live);
+}
+.people-avatar:not([data-gear])[data-pro] > .cy-avatar,
+.people-avatar:not([data-gear])[data-pro] > .person-avatar {
+  box-shadow:
+    0 0 0 2.5px var(--page),
+    0 0 0 4.5px var(--people-pro-ring);
+}
+.people-live-dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--people-live);
+  box-shadow: 0 0 0 3px var(--page);
+}
+.people-avatar[data-gear] .people-live-dot {
+  right: 6px;
+  bottom: 6px;
+  width: 12px;
+  height: 12px;
+  box-shadow: 0 0 0 2.5px var(--page);
+}
+.people-pro {
+  margin-inline-start: 5px;
+  color: var(--people-pro);
+  font: 500 10px / 1 var(--font-family-mono);
+  letter-spacing: 0.04em;
+  vertical-align: 2px;
+}
+.people-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── The friend card: a big avatar with the name under it, one line, and what can be done ── */
+.friend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+}
+.friend-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 18px 12px 14px;
+  border-radius: 14px;
+  text-align: center;
+  transition: background-color var(--duration-quick);
+}
+.friend-card:hover,
+.friend-card:focus-within {
+  background: var(--people-card-hover);
+}
+.friend-card-open {
+  margin-bottom: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.friend-card-name {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* The status sits close under the name: 2px, not the card's 6px. */
+.friend-card-sub {
+  max-width: 100%;
+  min-height: 16px;
+  margin-top: -4px;
+  overflow: hidden;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.friend-card-sub[data-live] {
+  color: var(--people-live-ink);
+}
+.friend-card-actions {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+}
+.friend-card-actions > .people-button:not(.people-button-icon) {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 10px;
+}
+.friend-card-more {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity var(--duration-quick);
+}
+.friend-card:hover .friend-card-more,
+.friend-card:focus-within .friend-card-more,
+.friend-card-more[data-state="open"] {
+  opacity: 1;
+}
+.friend-card-placeholder {
+  min-height: 150px;
+  gap: 12px;
+}
+.friend-card-placeholder .people-placeholder-avatar {
+  width: 72px;
+  height: 72px;
+}
+
+/* ── A row of people that scrolls sideways (a profile's friends, Top creators) ── */
+.people-carousel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.people-carousel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 32px;
+}
+.people-carousel-title,
+.profile-section-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 500;
+}
+.people-carousel-note,
+.profile-section-count,
+.people-carousel-title[data-quiet] {
+  color: var(--ink-3);
+  font: 13px / 1 var(--font-family-mono);
+}
+.people-carousel-arrows {
+  display: flex;
+  gap: 6px;
+  margin-inline-start: auto;
+  align-self: center;
+}
+/* Sideways only: a wheel turned over the row scrolls the page. (overflow-x alone makes the row
+   scroll both ways, so the little its tiles overflow would take the wheel.) */
+.people-rail {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+.people-rail::-webkit-scrollbar {
+  display: none;
+}
+.people-rail[data-more] {
+  mask-image: linear-gradient(90deg, #000 90%, transparent);
+}
+.person-tile {
+  display: flex;
+  flex: 0 0 120px;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  text-align: center;
+  scroll-snap-align: start;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.person-tile:hover {
+  background: var(--people-card-hover);
+}
+.person-tile-name {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  font-size: 13px;
+  white-space: nowrap;
+}
+/* The status sits close under the name: 2px, not the tile's 5px. */
+.person-tile-sub {
+  margin-top: -3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 14px;
+  color: var(--ink-3);
+  font: 11px / 14px var(--font-family-mono);
+}
+.person-tile-sub-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.person-tile-sub[data-live] {
+  color: var(--people-live-ink);
+}
+
+/* ── The Friends page: the grids beside the invite and visibility cards; under 760px they stack ── */
+.people-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px 32px;
+  max-width: 1080px;
+  margin-inline: auto;
+}
+.people-main {
+  display: flex;
+  flex: 999 1 460px;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+/* The aside never grows with its content: Copy turning into Copied takes its width from the link.
+   It is wide enough for a whole invite link (`genex.games/@<handle>/invite`) beside Copy. */
+.people-aside {
+  position: sticky;
+  top: 64px;
+  display: flex;
+  flex: 1 1 330px;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  max-width: 340px;
+}
+.people-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 34px;
+  letter-spacing: -0.02em;
+}
+.people-title-count {
+  color: var(--ink-3);
+  font: 400 20px / 1 var(--font-family-mono);
+  letter-spacing: 0;
+}
+.people-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding-inline: 12px;
+  border-radius: 10px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink-3);
+  cursor: text;
+}
+:root[data-theme="light"] .people-search {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px #e4e4e7;
+}
+.people-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--play-search-focus, color-mix(in oklab, var(--ink) 28%, transparent));
+}
+.people-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+}
+.people-search input::placeholder {
+  color: var(--ink-3);
+}
+.people-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.people-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.people-section-head {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--ink-3);
+  font: 400 12px / 16px var(--font-family-mono);
+}
+/* A quiet line under a section's heading: offline, why nobody shows as playing. */
+.people-section-note {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+/* Offline: the title's mark sits on its line; search waits, dimmed. */
+.people-title .play-offline-chip {
+  margin-inline: 12px 0;
+  vertical-align: 6px;
+}
+.people-search[data-offline] {
+  cursor: default;
+  opacity: 0.55;
+}
+.people-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 8px;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 20px;
+}
+/* The invite card: its old shape, a light blue tint, the credits it earns in the title row. */
+.people-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--people-invite);
+  box-shadow: inset 0 0 0 1px var(--people-invite-edge);
+}
+.people-invite-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.people-invite-title {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+}
+.people-invite-bonus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  font: 13px / 1 var(--font-family-mono);
+}
+.people-invite-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.people-invite-link {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.people-invite-link input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: 32px;
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 9px;
+  outline: none;
+  background: var(--page);
+  box-shadow: inset 0 0 0 1px var(--people-invite-edge);
+  color: var(--ink-2);
+  font: 12px / 16px var(--font-family-mono);
+  text-overflow: ellipsis;
+}
+/* Post on X and Share…, side by side under a link; alone, Post on X takes the row. */
+.share-row {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+}
+.share-row-button {
+  height: 30px;
+  gap: 6px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
+.people-visibility {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+}
+.people-visibility-title {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+}
+.people-visibility-text {
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+/* Nobody yet: the invite, centred, with search under it. */
+.people-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  max-width: 440px;
+  margin: 72px auto 0;
+  text-align: center;
+}
+.people-empty-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 26px;
+  text-wrap: balance;
+}
+.people-empty .people-invite,
+.people-empty .friend-grid {
+  text-align: start;
+}
+.people-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+.people-or::before,
+.people-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.people-placeholder-avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--play-placeholder);
+}
+.people-placeholder-title {
+  width: 160px;
+  height: 24px;
+}
+
+/* ── Beside the plate's name: the credits (which open Credits), or the Offline mark ── */
+.plate-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding-inline: 4px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 11px / 16px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.plate-end:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+/* ── A profile: centred, at most 1080px wide ── */
+.profile-page {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+  padding-top: 8px;
+}
+/* The game stats sit close under the friends: the tiles' own padding already spaces them. */
+.profile-page > [data-profile-friends] + .stats-strip-section {
+  margin-top: -20px;
+}
+.profile-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.profile-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.profile-name {
+  margin: 0;
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 34px;
+  letter-spacing: -0.02em;
+}
+.profile-pro {
+  margin-inline-start: 6px;
+  color: var(--people-pro);
+  font: 500 11px / 1 var(--font-family-mono);
+  letter-spacing: 0.04em;
+  vertical-align: 6px;
+}
+.profile-name-row > .people-button {
+  height: 30px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
+.profile-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+/* The chips: bluish, translucent, minimal, the number bold and darker. */
+.profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--people-chip-top), var(--people-chip-bottom));
+  box-shadow:
+    inset 0 0 0 1px var(--people-chip-edge),
+    inset 0 1px 0 var(--people-chip-shine);
+  color: var(--people-chip-ink);
+  font: 12px / 1 var(--font-family-mono);
+  white-space: nowrap;
+}
+.profile-chip b {
+  color: var(--people-chip-number);
+  font-size: 13px;
+  font-weight: 500;
+}
+.profile-edit {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  cursor: pointer;
+}
+.profile-edit:hover {
+  filter: brightness(1.08);
+}
+/* The @handle under the name, quiet: it is also the profile's address on genex.games. */
+.profile-handle {
+  color: var(--ink-3);
+  font: 13px / 18px var(--font-family-mono);
+}
+.profile-joined {
+  margin-inline: 4px;
+  color: var(--ink-3);
+  font: 12px / 1 var(--font-family-mono);
+}
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.profile-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.profile-placeholder-avatar {
+  width: 123px;
+  height: 123px;
+}
+
+/* A profile's card titles that do not fit scroll back and forth; Reduce Motion leaves them cut off. */
+.play-card-title[data-marquee] {
+  text-overflow: clip;
+  mask-image: linear-gradient(90deg, transparent, #000 8px, #000 calc(100% - 12px), transparent);
+}
+.play-card-title-text {
+  display: inline-block;
+}
+.play-card-title[data-marquee] > .play-card-title-text {
+  padding-inline-start: 8px;
+  animation: play-marquee 9s ease-in-out infinite alternate;
+}
+@keyframes play-marquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  88%,
+  100% {
+    transform: translateX(var(--marquee, 0));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .play-card-title[data-marquee] {
+    text-overflow: ellipsis;
+    mask-image: none;
+  }
+  .play-card-title[data-marquee] > .play-card-title-text {
+    display: inline;
+    padding: 0;
+    animation: none;
+  }
+}
+
+/* ── The profile's last 7 days: one slim strip of numbers ── */
+.stats-strip-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stats-strip-label,
+.stats-only-you,
+.stats-tile-label,
+.stats-tile-note {
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.stats-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 8px;
+  min-height: 52px;
+  padding: 10px 10px 10px 4px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.stats-strip-value {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 7px;
+  min-width: max-content;
+  padding-inline: 18px;
+}
+.stats-strip-live {
+  align-items: center;
+}
+.stats-strip-number {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.stats-strip-noun {
+  color: var(--stats-ink);
+  font: 12px / 1 var(--font-family-mono);
+}
+.stats-strip-separator {
+  flex: none;
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+}
+.stats-strip-line {
+  padding-inline: 18px;
+  color: var(--ink-2);
+  font: 12px / 16px var(--font-family-mono);
+}
+.stats-strip-waiting {
+  width: 220px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--play-placeholder);
+}
+.stats-strip-action {
+  height: 30px;
+  margin-inline-start: auto;
+  padding-inline: 10px;
+  font-size: 12px;
+  gap: 4px;
+}
+.stats-live-dot {
+  display: inline-block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--people-live);
+  box-shadow: 0 0 0 3px rgb(34 165 91 / 0.18);
+}
+.stats-live-dot[data-off] {
+  background: var(--line-strong);
+  box-shadow: none;
+}
+.stats-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--stats-ink);
+  font: 500 12px / 1 var(--font-family-mono);
+}
+.stats-change[data-change="up"] {
+  color: var(--stats-up);
+}
+.stats-change[data-change="down"] {
+  color: var(--stats-down);
+}
+
+/* ── The stats page ── */
+.stats-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+}
+.stats-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.stats-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 500;
+}
+.stats-periods {
+  display: flex;
+  gap: 2px;
+  margin-inline-start: auto;
+  padding: 2px;
+  border-radius: 10px;
+}
+.stats-period {
+  height: 28px;
+  padding-inline: 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 12px / 1 var(--font-family-mono);
+  cursor: pointer;
+}
+.stats-period:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 1px;
+}
+.stats-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.stats-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 132px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.stats-tile-value {
+  color: var(--ink);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stats-tile-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.stats-tile-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.stats-spark {
+  display: block;
+  margin-top: 4px;
+}
+.stats-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 18px 12px;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.stats-chart-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.stats-area {
+  margin: 0;
+}
+.stats-area-canvas {
+  display: block;
+  width: 100%;
+  height: 260px;
+  cursor: crosshair;
+}
+.stats-table {
+  display: flex;
+  flex-direction: column;
+}
+.stats-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(56px, 1fr) minmax(56px, 1fr) 170px 90px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.stats-row-head {
+  padding-block: 0 8px;
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.stats-cell-number {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.stats-cell-quiet {
+  color: var(--ink-3);
+}
+.stats-cell-game {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.stats-thumb {
+  flex: none;
+  width: 56px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--play-placeholder);
+}
+.stats-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.stats-game-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .stats-row {
+    grid-template-columns: minmax(0, 2fr) minmax(48px, 1fr) minmax(48px, 1fr) 80px;
+  }
+  .stats-row > :nth-child(4) {
+    display: none;
+  }
+}
+.stats-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.stats-tile-placeholder,
+.stats-chart-placeholder {
+  background: var(--play-placeholder);
+  box-shadow: none;
+}
+.stats-chart-placeholder {
+  display: block;
+  height: 300px;
+}
+
+/* ── The credits shard: genex.games' pixel mark, its pixels landing once in a shuffled order ── */
+.credits-shard {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+}
+.credits-shard rect {
+  animation: shard-land 1ms linear var(--shard-delay, 0ms) both;
+}
+.credits-shard rect[data-shade="L"] {
+  fill: var(--shard-light);
+}
+.credits-shard rect[data-shade="M"] {
+  fill: var(--shard-mid);
+}
+.credits-shard rect[data-shade="D"] {
+  fill: var(--shard-dark);
+}
+.credits-shard[data-tone="earned"] rect[data-shade="L"] {
+  fill: var(--shard-earned-light);
+}
+.credits-shard[data-tone="earned"] rect[data-shade="M"] {
+  fill: var(--shard-earned-mid);
+}
+.credits-shard[data-tone="earned"] rect[data-shade="D"] {
+  fill: var(--shard-earned-dark);
+}
+@keyframes shard-land {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .credits-shard rect {
+    animation: none;
+  }
+}
+
+/* ── Settings → Genex account ── */
+.account-section {
+  display: flex;
+  flex-direction: column;
+}
+.account-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 20px;
+  padding-block: 18px;
+  border-top: 1px solid var(--line);
+}
+.account-row:first-child {
+  border-top: 0;
+  padding-top: 6px;
+}
+.account-row-label {
+  padding-top: 4px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.account-row-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.account-choices {
+  display: flex;
+  gap: 10px;
+}
+.account-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 132px;
+  padding: 12px 10px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+.account-choice[aria-checked="true"] {
+  background: color-mix(in srgb, var(--play-blue) 8%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--play-blue) 55%, transparent);
+}
+.account-choice:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.account-choice:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.account-choice-empty {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--field);
+  color: var(--ink-3);
+}
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.account-note {
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+/* A Pro's nameplate in Settings: the sidebar's plate, its width, without the menu or the credits. */
+.account-nameplate {
+  display: flex;
+  width: 248px;
+  max-width: 100%;
+}
+.account-nameplate-row {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 6px;
+}
+.account-name-line {
+  display: flex;
+  gap: 8px;
+}
+.account-name-field {
+  width: 280px;
+  max-width: 100%;
+  height: 34px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 9px;
+  outline: none;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink);
+  font-size: 14px;
+}
+.account-name-field:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--focus-edge);
+}
+/* The balance, then Buy credits; under them, what credits pay for. */
+.account-credits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+}
+.account-note-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.account-note-link:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* Sign out beside the title, at the header's far end (left of the dialog's close). */
+.account-sign-out {
+  margin-inline-start: auto;
+  height: 30px;
+}
+/* Signed out: the account card, one line and one press, in the middle of the section. */
+.account-sign-in {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding-block: 28px 12px;
+  text-align: center;
+}
+.account-sign-in > p {
+  max-width: 40ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 22px;
+  text-wrap: balance;
+}
+.account-sign-in-art {
+  width: 280px;
+  height: 196px;
+  max-width: 100%;
+}
+.account-sign-in-button,
+.account-sign-in-presses > * {
+  height: 36px;
+  padding-inline: 18px;
+}
+.account-sign-in-presses {
+  display: flex;
+  gap: 8px;
+}
+.account-code {
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  letter-spacing: 0.04em;
+}
+
+/* Nickname: the row shows the @handle and Edit; editing, the welcome's field with Save and Cancel. */
+.account-nickname-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+.account-handle {
+  color: var(--ink);
+  font: 14px / 20px var(--font-family-mono);
+}
+.account-handle[data-none] {
+  color: var(--ink-3);
+}
+.account-nickname-editor {
+  width: 100%;
+}
+/* Editing, the label sits level with the taller box's text. */
+.account-row[data-editing] > .account-row-label {
+  padding-top: 11px;
+}
+
+/* ── The nickname field: the profile's address fixed in the box, the state at its right end ── */
+.handle-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: start;
+}
+.handle-field-label {
+  color: var(--ink-2);
+  font: 12px / 16px var(--font-family-mono);
+}
+.handle-field-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.handle-box {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 42px;
+  padding-inline: 12px;
+  border-radius: 10px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  font: 14px / 1 var(--font-family-mono);
+  cursor: text;
+}
+.handle-box:focus-within {
+  box-shadow: inset 0 0 0 1px var(--focus-edge);
+}
+.handle-box-prefix {
+  flex: none;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+/* No width of its own: an input's intrinsic one would widen a narrow dialog past its edge. */
+.handle-box-input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+.handle-box-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding-inline-start: 8px;
+  font: 12px / 1 var(--font-family-mono);
+  white-space: nowrap;
+}
+.handle-box-state[data-tone="ok"] {
+  color: var(--people-live-ink);
+}
+.handle-box-state[data-tone="bad"] {
+  color: var(--red);
+}
+.handle-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  color: var(--ink-3);
+  font: 12px / 18px var(--font-family-mono);
+}
+.handle-suggestion {
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--people-quiet);
+  color: var(--ink);
+  font: 12px / 18px var(--font-family-mono);
+  cursor: pointer;
+}
+.handle-suggestion:hover {
+  background: var(--hover);
+}
+
+/* ── Share your profile: the link preview at a glance, then the link and the ways to pass it on ── */
+.share-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 372px;
+  padding: 16px;
+}
+.share-popover-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.share-preview {
+  flex: none;
+  width: 340px;
+  height: 178px;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+/* genex.games draws the preview dark in either theme, so its colours are its own, not the theme's. */
+.share-card {
+  --ink: #eef0f4;
+  --ink-3: #7c808b;
+  --people-pro: #8d9bff;
+  --people-chip-top: color-mix(in srgb, var(--people-chip-color) 22%, transparent);
+  --people-chip-bottom: color-mix(in srgb, var(--people-chip-color) 10%, transparent);
+  --people-chip-edge: color-mix(in srgb, color-mix(in srgb, var(--people-chip-color) 75%, #ffffff) 40%, transparent);
+  --people-chip-shine: rgb(255 255 255 / 0.06);
+  --people-chip-ink: #9fb0ff;
+  --people-chip-number: #d3dbff;
+  position: relative;
+  width: 600px;
+  height: 315px;
+  /* 340 / 600: the 1200 × 630 picture at the popover's width. */
+  transform: scale(0.5667);
+  transform-origin: 0 0;
+  background: #0b0b0e;
+  color: var(--ink);
+}
+.share-card-word {
+  position: absolute;
+  top: 22px;
+  left: 26px;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+}
+.share-card-url {
+  position: absolute;
+  top: 22px;
+  right: 26px;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+.share-card-body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: center;
+  gap: 22px;
+  height: 100%;
+  padding-inline: 30px;
+}
+.share-card-who {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.share-card-name {
+  overflow: hidden;
+  font-size: 34px;
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-card-name .profile-pro {
+  font-size: 13px;
+  vertical-align: 10px;
+}
+.share-card-chips {
+  display: flex;
+  gap: 6px;
+}
+.share-card-covers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+.share-card-cover {
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  background-color: #1b1b20;
+  background-position: center;
+  background-size: cover;
+}
+
+/* ── First sign-in: the avatar built under a beam over its wireframe ── */
+.avatar-welcome-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 30px 14px;
+  text-align: center;
+}
+.avatar-welcome-stage {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  /* The stage's top is empty above the body's gear: the card starts closer to the avatar. */
+  margin-top: -18px;
+}
+.avatar-welcome-wire {
+  position: absolute;
+  inset: 0;
+  stroke: #7f8ff2;
+  stroke-width: 1;
+  opacity: 0.45;
+}
+.avatar-welcome-built {
+  position: absolute;
+  inset: 0;
+  animation: avatar-build 2.6s cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+.avatar-welcome-beam {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: #7f8ff2;
+  box-shadow: 0 0 12px 2px rgb(127 143 242 / 0.55);
+  animation: avatar-beam 2.6s cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+@keyframes avatar-build {
+  from {
+    clip-path: inset(100% 0 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes avatar-beam {
+  0% {
+    top: 100%;
+    opacity: 1;
+  }
+  85% {
+    top: 0;
+    opacity: 1;
+  }
+  100% {
+    top: 0;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-welcome-built {
+    animation: none;
+  }
+  .avatar-welcome-beam {
+    display: none;
+  }
+}
+.avatar-welcome-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.avatar-welcome-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 500;
+}
+.avatar-welcome-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.avatar-welcome-mix {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.avatar-welcome-mix li {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding-inline: 9px;
+  border-radius: 7px;
+  background: var(--people-quiet);
+  color: var(--ink-3);
+  font: 12px / 1 var(--font-family-mono);
+}
+/* Regenerate beside Continue, which takes the rest of the row. */
+.avatar-welcome-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.avatar-welcome-continue {
+  flex: 1;
+  height: 38px;
+}
+.avatar-welcome-regenerate {
+  height: 38px;
+}
+.avatar-welcome-regenerate[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+/* A refused Regenerate, in the note's place: orange, with Try again. */
+.avatar-welcome-error {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--orange);
+  font: 11px / 1.4 var(--font-family-mono);
+}
+.avatar-welcome-retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+:root[data-theme="light"] .avatar-welcome-error {
+  color: color-mix(in oklab, var(--orange) 60%, var(--ink));
+}
+.avatar-welcome-note {
+  color: var(--ink-3);
+  font: 11px / 1.4 var(--font-family-mono);
+}
+/* Top creators at the head of Games, over the tabs and search. The row's head drags the window
+   like the bar does; the people under it take the pointer and the wheel. Its small heading sits
+   in the middle of the head, beside the arrows, close over the faces. */
+.play-top {
+  padding: 22px 20px 0;
+}
+.play-top:empty {
+  display: none;
+}
+.play-top > [data-top-creators] {
+  gap: 0;
+  margin-bottom: 4px;
+  -webkit-app-region: no-drag;
+}
+.play-top .people-carousel-head {
+  align-items: center;
+  -webkit-app-region: drag;
+}
+/* A creator's tile while the row loads: a 54px face in the 68px box a ringed avatar takes, and a
+   bar on each of the two text lines, so the row keeps its height when people arrive. */
+.person-tile-placeholder {
+  cursor: default;
+  animation: play-fade-in 200ms 120ms ease-out both;
+}
+.person-tile-placeholder:hover {
+  background: transparent;
+}
+.person-tile-placeholder .people-placeholder-avatar {
+  width: 54px;
+  height: 54px;
+  margin: 7px;
+}
+.person-tile-placeholder .play-bar {
+  display: inline-block;
+  width: 72px;
+  height: 10px;
+  vertical-align: middle;
+  background: var(--play-placeholder);
+}
+.person-tile-placeholder .person-tile-sub .play-bar {
+  width: 88px;
+  height: 8px;
+}
+/* The shard before a balance on a Plugins row. */
+.extension-credits {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.usage-credits dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+/* ── The friends under the games in the sidebar (`play/SidebarFriends.tsx`) ── */
+/* About four and a half rows, then they scroll on their own: the half row says there are more. */
+.sidebar-friends {
+  --page: var(--sidebar);
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The word Friends is the way to the Friends page: the games' heading type, with its ↗ always on. */
+.sidebar-friends-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 12px 0 4px 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-control);
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.sidebar-friends-heading:hover,
+.sidebar-friends-heading[aria-current="page"] {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+.sidebar-friends-heading:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+.sidebar-friends-heading .sidebar-badge {
+  min-width: 18px;
+  height: 16px;
+  padding-inline: 5px;
+  line-height: 16px;
+}
+.sidebar-friends-arrow {
+  opacity: 0.6;
+  transition: opacity var(--duration-quick);
+}
+.sidebar-friends-heading:hover .sidebar-friends-arrow {
+  opacity: 1;
+}
+/* 4½ rows of a friend in a game (45px and the list's 2px gap), and a 16px foot the fade lies on. */
+.sidebar-friends-scroll {
+  max-height: calc(4.5 * 47px + 16px);
+  padding-block-end: 16px;
+  overflow-x: hidden;
+}
+/* The friends fade in under the heading once scrolled, and out at their foot while more wait below:
+   the games' own fades (`.sidebar-fade`, `.sidebar-lists::after`). */
+.sidebar-friends-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Taller than the games' fade: a friend's row is two lines, and a soft edge reads as more above. */
+.sidebar-friends-list > .sidebar-fade {
+  height: 32px;
+  background: linear-gradient(var(--sidebar) 15%, transparent);
+}
+.sidebar-friends-list[data-scrolled="true"] > .sidebar-fade {
+  opacity: 1;
+}
+.sidebar-friends-list::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0 7px;
+  bottom: 0;
+  height: 24px;
+  background: linear-gradient(transparent, var(--sidebar));
+  pointer-events: none;
+}
+.sidebar-friends .sidebar-games {
+  gap: 2px;
+}
+.sidebar-friend-open {
+  gap: 10px;
+  padding-block: 5px;
+  padding-inline-end: 8px;
+}
+.sidebar-friend-who {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+/* The name gives way before its Pro tag. */
+.sidebar-friend-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  line-height: 19px;
+}
+.sidebar-friend-name .people-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-friend-name .people-pro {
+  flex: none;
+  margin-inline-start: 6px;
+  vertical-align: 0;
+}
+/* The game they are in: one green line. */
+.sidebar-friend-playing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--people-live-ink);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: normal;
+}
+.sidebar-friend-playing > .gi {
+  flex: none;
+}
+/* A small face keeps a thin ring and a small dot. */
+.sidebar-friend .people-avatar:not([data-gear])[data-live] > .cy-avatar,
+.sidebar-friend .people-avatar:not([data-gear])[data-live] > .person-avatar {
+  box-shadow:
+    0 0 0 1.5px var(--page),
+    0 0 0 3px var(--people-live);
+}
+.sidebar-friend .people-avatar:not([data-gear])[data-pro] > .cy-avatar,
+.sidebar-friend .people-avatar:not([data-gear])[data-pro] > .person-avatar {
+  box-shadow:
+    0 0 0 1.5px var(--page),
+    0 0 0 3px var(--people-pro-ring);
+}
+.sidebar-friend .people-live-dot {
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px var(--page);
+}
+.sidebar-friend:is(:hover, :focus-within) {
+  --page: var(--sidebar-hover);
+}
+/* Join, on hover, for a friend who is playing. */
+.sidebar-friend-join {
+  position: absolute;
+  inset-inline-end: 6px;
+  height: 24px;
+  padding-inline: 10px;
+  border-radius: 12px;
+  background: var(--people-accept);
+  color: var(--people-accept-ink);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick),
+    background-color var(--duration-quick);
+}
+.sidebar-friend-join:hover {
+  background: var(--people-accept-hover);
+}
+.sidebar-friend:is(:hover, :focus-within) .sidebar-friend-join {
+  opacity: 1;
+}
+.sidebar-friend:is(:hover, :focus-within):has(.sidebar-friend-join) .sidebar-friend-open {
+  padding-inline-end: 64px;
+}

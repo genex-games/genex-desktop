@@ -5,7 +5,8 @@
 //! `gx_lod_fade_coverage` in `shaders/common.wgsl`). The two levels of one crossfade cover each
 //! pixel, or each sample, exactly once, the incoming level in proportion to its share:
 //! - MSAA covers samples (`sample_mask`), so a pixel holds both levels in proportion, no stipple;
-//! - TAA turns the threshold each frame, so the resolve averages the two levels;
+//! - TAA turns the threshold each frame through evenly spaced eighths, so the resolve's average
+//!   over a jitter cycle shows each pixel at its share, no stipple (R-12);
 //! - an alpha-tested fade keeps alpha-to-coverage and cuts whole pixels (WebGPU refuses
 //!   `sample_mask` with alpha-to-coverage);
 //! - the sun's casters cut the other level's texels by the unturned threshold.
@@ -226,6 +227,54 @@ fn metal_the_dither_covers_each_sample_once_and_the_incoming_share_in_proportion
     }
 }
 
+/// The frames of the shortest TAA jitter cycle (`JitterCycle::Eight`): a settled capture averages
+/// them, and every longer cycle (sixteen, TAA upscaling's) holds whole runs of them.
+const TEMPORAL_CYCLE: u32 = 8;
+
+/// R-12 (D22: no crossfade stipple under TAA): over any [`TEMPORAL_CYCLE`] consecutive frames the
+/// turned one-sample dither keeps each pixel's incoming level in `floor(8 s)` or `ceil(8 s)` of
+/// them, so the resolve's average over a cycle shows every pixel at its share (within a frame's
+/// eighth) and no pixel-to-pixel stipple. The golden-ratio walk left a pixel up to three eighths
+/// off at a half (the 6.74 neighbour luma of GC's 50 % captures against MSAA's 0.35).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_turned_dither_keeps_each_pixel_by_its_share_over_a_jitter_cycle() {
+    let Some(gpu) = gpu() else { return };
+    let mut cases = Vec::new();
+    let steps = [1u32, 64, 128, 256, 300, 512, 700, 768, 1000, 1023];
+    let starts = [0u32, 3, 60, 61, 1_000_003];
+    for step in steps {
+        let share = step as f32 / 1024.0;
+        for start in starts {
+            for frame in 0..TEMPORAL_CYCLE {
+                for y in 0..16 {
+                    for x in 0..16 {
+                        let pixel = [x as f32 * 7.0 + 0.5, y as f32 * 5.0 + 0.5];
+                        cases.push(DitherCase { fade_out: 1.0 - share, fade_in: -share, pixel, frame_key: start + frame, samples: 1, pad: [0; 2] });
+                    }
+                }
+            }
+        }
+    }
+    let masks = run_dither(&gpu, &cases);
+    // (share step, the cycle's first frame, pixel) -> frames the incoming level kept the pixel.
+    let mut kept: std::collections::BTreeMap<(u32, u32, [u32; 2]), u32> = Default::default();
+    let pixels_per_frame = 16 * 16;
+    for (at, (case, [_, fade_in])) in cases.iter().zip(&masks).enumerate() {
+        let start = starts[(at / (pixels_per_frame * TEMPORAL_CYCLE as usize)) % starts.len()];
+        let step = (-case.fade_in * 1024.0).round() as u32;
+        *kept.entry((step, start, case.pixel.map(|v| v as u32))).or_default() += fade_in.count_ones();
+    }
+    let mut worst = Vec::new();
+    for ((step, start, pixel), frames) in kept {
+        let exact = step as f32 / 1024.0 * TEMPORAL_CYCLE as f32;
+        if (frames as f32) < exact.floor() || (frames as f32) > exact.ceil() {
+            worst.push(format!("share {step}/1024 from frame {start} at {pixel:?}: kept {frames} of {TEMPORAL_CYCLE}"));
+        }
+    }
+    assert!(worst.is_empty(), "{} pixels off their share over a cycle, e.g. {:?}", worst.len(), &worst[..worst.len().min(6)]);
+}
+
 fn run_dither(gpu: &Gpu, cases: &[DitherCase]) -> Vec<[u32; 2]> {
     let device = &gpu.device;
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("lod dither"), source: wgpu::ShaderSource::Wgsl(dither_shader().into()) });
@@ -433,6 +482,9 @@ struct Shown {
     variance: f32,
     /// Pixels both levels cover that the crossfade left at the clear colour.
     holes: usize,
+    /// The mean linear-luma step (0..255) from each inside pixel to its right and lower
+    /// neighbours: a stipple lifts it far above the quad's own shading gradient.
+    neighbour: f32,
     /// The inside's pixels.
     inside: usize,
 }
@@ -448,6 +500,7 @@ fn shown(finer: &Capture, coarser: &Capture, pair: &Capture, clear: [u8; 3]) -> 
     let contrast = |x: usize, y: usize| (luma(&px(finer, x, y)) - luma(&px(coarser, x, y))).abs() >= CONTRAST_MIN;
     let is_clear = |p: [u8; 4]| p[..3].iter().zip([clear[2], clear[1], clear[0]]).all(|(a, b)| a.abs_diff(b) <= CHANNEL_TOLERANCE);
     let (mut shares, mut holes) = (Vec::new(), 0);
+    let mut steps = Vec::new();
     for y in 1..h - 1 {
         for x in 1..w - 1 {
             let covered = !is_clear(px(finer, x, y)) && !is_clear(px(coarser, x, y));
@@ -455,13 +508,16 @@ fn shown(finer: &Capture, coarser: &Capture, pair: &Capture, clear: [u8; 3]) -> 
             if (0..9).all(|k| contrast(x + k % 3 - 1, y + k / 3 - 1)) {
                 let (f, c, p) = (luma(&px(finer, x, y)), luma(&px(coarser, x, y)), luma(&px(pair, x, y)));
                 shares.push(((f - p) / (f - c)).clamp(0.0, 1.0));
+                steps.push((p - luma(&px(pair, x + 1, y))).abs());
+                steps.push((p - luma(&px(pair, x, y + 1))).abs());
             }
         }
     }
     let inside = shares.len();
     let share = shares.iter().sum::<f32>() / inside.max(1) as f32;
     let variance = shares.iter().map(|s| (s - share) * (s - share)).sum::<f32>() / inside.max(1) as f32;
-    Shown { share, variance, holes, inside }
+    let neighbour = steps.iter().sum::<f32>() / steps.len().max(1) as f32;
+    Shown { share, variance, holes, neighbour, inside }
 }
 
 /// The plan's red row: a crossfading pair at shares 0.25, 0.5 and 0.75 on `path` shows the
@@ -541,6 +597,31 @@ fn metal_a_crossfading_pair_shows_its_share_on_mobile_high() {
     let Some(gpu) = gpu() else { return };
     let path = PATHS[3];
     assert_crossfade(path, &crossfade_row(&gpu, path));
+}
+
+/// How much more pixel-to-pixel step a temporal path's settled crossfade may show than MSAA's
+/// (R-12: within 2x of MSAA, whose four samples cover each pixel in proportion).
+const TEMPORAL_NEIGHBOUR_RATIO_MAX: f32 = 2.0;
+
+/// R-12 (D22: no crossfade stipple): a crossfading pair's settled capture on each temporal path
+/// (TAA with the motion prepass, the `Equal` main pass, mobile-high) steps from pixel to pixel
+/// within [`TEMPORAL_NEIGHBOUR_RATIO_MAX`] of the MSAA path's at the same share. Red on the
+/// golden-ratio walk: 6.74 against 0.35 at a half (GC visual r2).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_temporal_crossfades_show_no_more_stipple_than_msaa() {
+    let Some(gpu) = gpu() else { return };
+    let msaa = crossfade_row(&gpu, PATHS[0]);
+    let mut failures = Vec::new();
+    for path in &PATHS[1..] {
+        for ((share, temporal), (_, reference)) in crossfade_row(&gpu, *path).iter().zip(&msaa) {
+            eprintln!("{}: share {share}: neighbour step {:.3} against MSAA's {:.3}", path.name, temporal.neighbour, reference.neighbour);
+            if temporal.neighbour > TEMPORAL_NEIGHBOUR_RATIO_MAX * reference.neighbour {
+                failures.push(format!("{} at {share}: {:.3} against MSAA's {:.3}", path.name, temporal.neighbour, reference.neighbour));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "a stipple under the temporal crossfade: {failures:?}");
 }
 
 /// The plan's acceptance: a cube crossfading with itself (its coarser level the same triangles)

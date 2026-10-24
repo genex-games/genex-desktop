@@ -50,7 +50,7 @@ impl SkinLods {
 
 /// What a skinned draw skins this frame: one level whole, or in the fade band the two levels the
 /// cull crossfades (`finer` fading out while `finer + 1` fades in).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SkinnedPick {
     /// One level (0 the base mesh), drawn whole.
     Whole(u32),

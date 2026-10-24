@@ -36,7 +36,7 @@ Reads follow one rule on every destination (desktop, web, phones):
 
 | Refusal | When |
 |-|-|
-| `unsafe-path` | The path is absolute, climbs (`..`), has `.`, an empty segment, a backslash or NUL, is a link, or leads out of `assets/` once links are followed. |
+| `unsafe-path` | The path is absolute, climbs (`..`), has `.`, an empty segment, a backslash or NUL, or is a link or passes through one under `assets/`. |
 | `missing` | The build has no file at the path. |
 | `too-large` | The file is over 256 MiB. |
 | `malformed` | `triangles` of a file that is not a GLB with triangles (or a `.gltf` whose buffers are not embedded), or of a GLB refused before it is read: a damaged container, an index naming an entry that does not exist, data past its buffer, a layout glTF does not give an attribute, or a node that is its own ancestor; `.json()` of bytes that are not JSON. |

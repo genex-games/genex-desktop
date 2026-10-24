@@ -4,12 +4,13 @@
  * `listDevBuilds` names each build's referencing profiles; `pruneDevBuilds` removes the orphans:
  * a `b-<uuid>` folder (never a link) that no profile's launch, attempt or controller record names
  * and that is older than {@link BUILD_PRUNE_GRACE_MS}, since a start still building one has not
- * written its record yet. A profile record that cannot be read refuses the prune.
+ * written its record yet. A profile record that cannot be read, or of another version, refuses the
+ * prune. Every start prunes ({@link pruneUnusedBuilds}); `studio:dev builds --prune` does on demand.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { HOUR_MS } from "../../src/shared/duration.ts";
-import { safeChild } from "./files.mjs";
+import { readVersion, safeChild } from "./files.mjs";
 
 /** A build younger than this may be one a concurrent start is still making: never pruned. */
 export const BUILD_PRUNE_GRACE_MS = HOUR_MS;
@@ -45,7 +46,7 @@ function plainEntries(dir: string): fs.Dirent[] {
 function recordedBuild(file: string): string | null {
   if (!fs.existsSync(file)) return null;
   try {
-    const buildId = JSON.parse(fs.readFileSync(file, "utf8"))?.buildId;
+    const { buildId } = readVersion(file);
     return typeof buildId === "string" ? buildId : null;
   } catch (error) {
     throw new Error(`cannot read ${file}; nothing is pruned: ${(error as Error).message}`);
@@ -96,4 +97,16 @@ export function pruneDevBuilds(root: string, now: number): { removed: string[]; 
   const orphans = listDevBuilds(root, now).builds.filter((build) => build.orphan);
   for (const build of orphans) fs.rmSync(safeChild(root, `builds/${build.buildId}`), { recursive: true });
   return { removed: orphans.map((build) => build.buildId), bytes: orphans.reduce((sum, b) => sum + b.bytes, 0) };
+}
+
+/**
+ * The prune each `studio:dev start` runs after writing its launch record, so every start does not
+ * keep another copy of the app: the orphans' ids, or none when a profile's record cannot be read.
+ */
+export function pruneUnusedBuilds(root: string, now: number = Date.now()): string[] {
+  try {
+    return pruneDevBuilds(root, now).removed;
+  } catch {
+    return [];
+  }
 }

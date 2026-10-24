@@ -1753,7 +1753,11 @@ export function installStudioShim(rawOptions: Foreign) {
     const gate = animationGate({ request: natives.raf, cancel: natives.cancelRaf });
     natives.raf = gate.request;
     natives.cancelRaf = gate.cancel;
-    installPageGlobal(win, "__studioAnimation", Object.freeze({ setVisible: gate.setVisible }));
+    installPageGlobal(
+      win,
+      "__studioAnimation",
+      Object.freeze({ setVisible: gate.setVisible, setMaxFps: gate.setMaxFps }),
+    );
   }
   const random = options.seed === null ? null : installSeededRandom(win, options.seed);
   const watch = watchCanvases(win);

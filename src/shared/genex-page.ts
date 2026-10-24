@@ -1,9 +1,10 @@
 /**
- * Edits to a web game's entry page that connect it to Genex, as text: Studio's copy of
- * `@genex-ai/embed-sdk` in a template game's import map, the module that connects the page beside
- * it, and the `<head>` tag the games host injects its environment into.
+ * Edits to a web game's entry page that connect it to Genex, as text: Studio's copies of
+ * `@genex-ai/embed-sdk` (and `@genex-ai/multiplayer` when asked) in a template game's import map,
+ * the module that connects the page beside them, and the `<head>` tag the games host injects its
+ * environment into.
  */
-import { GENEX_EMBED_VENDOR } from "./genex.ts";
+import { GENEX_EMBED_VENDOR, type GenexGamePackage, studioSdkImports, studioSdkPackages } from "./genex.ts";
 
 /** The package a page imports the SDK by. */
 const SDK_PACKAGE = "@genex-ai/embed-sdk";
@@ -84,33 +85,54 @@ function indentOf(body: string): string {
   return /^([ \t]*)\S/m.exec(body)?.[1] ?? "";
 }
 
-/**
- * A template game's page with Studio's copy of the SDK in its first import map, at `/vendor`, and
- * the connect module loaded right after the map. Null when the page has no import map, or one that
- * does not parse or is scoped: such a page is not the template's, and is not edited.
- */
-export function withGenexSdkImport(html: string): string | null {
+/** The page's first import map: where it sits, its tag's three parts read from the page itself, and its JSON. */
+function firstImportMap(html: string) {
   const [found] = importMaps(html);
   if (!found) return null;
   // The groups are read from the page itself: the search ran on a copy with its comments blanked.
   const whole = html.slice(found.index, found.index + found[0].length);
   const [, open = "", body = "", close = ""] = new RegExp(IMPORT_MAP.source, "i").exec(whole) ?? [];
-  let map: { imports?: Record<string, string>; scopes?: unknown };
+  let map: { imports?: Record<string, unknown>; scopes?: unknown };
   try {
     map = JSON.parse(body);
   } catch {
     return null;
   }
-  if (map === null || typeof map !== "object" || map.scopes !== undefined) return null;
-  if (Object.hasOwn(map.imports ?? {}, SDK_PACKAGE)) return withConnectScript(html, connectModuleSrc("/vendor"));
-  const imports = { ...map.imports, [SDK_PACKAGE]: `/vendor/${GENEX_EMBED_VENDOR.Entry}` };
-  const indent = indentOf(body);
-  const json = JSON.stringify({ ...map, imports }, null, 2)
+  if (map === null || typeof map !== "object" || Array.isArray(map)) return null;
+  return { at: found.index, length: whole.length, open, body, close, map };
+}
+
+/** The Genex packages a template game's page takes from Studio's copies, by its first import map. */
+export function pageStudioSdkPackages(html: string): GenexGamePackage[] {
+  return studioSdkPackages(firstImportMap(html)?.map.imports ?? {});
+}
+
+/**
+ * A template game's page with Studio's copies of `name` (and what it needs) in its first import
+ * map, at `/vendor`, and the connect module loaded right after the map. Null when the page has no
+ * import map, or one that does not parse or is scoped: such a page is not the template's, and is not
+ * edited.
+ */
+export function withGenexSdkImport(html: string, name: GenexGamePackage = "@genex-ai/embed-sdk"): string | null {
+  const found = firstImportMap(html);
+  if (!found || found.map.scopes !== undefined) return null;
+  const wanted = studioSdkImports(name);
+  const current = found.map.imports ?? {};
+  const missing = Object.keys(wanted).some((specifier) => !Object.hasOwn(current, specifier));
+  if (!missing) return withConnectScript(html, connectModuleSrc("/vendor"));
+  const imports = { ...current, ...missingOnly(wanted, current) };
+  const indent = indentOf(found.body);
+  const json = JSON.stringify({ ...found.map, imports }, null, 2)
     .split("\n")
     .map((line) => indent + line)
     .join("\n");
-  const closeIndent = /\n([ \t]*)$/.exec(body)?.[1] ?? "";
-  const rewritten = `${open}\n${json}\n${closeIndent}${close}`;
-  const page = html.slice(0, found.index) + rewritten + html.slice(found.index + whole.length);
+  const closeIndent = /\n([ \t]*)$/.exec(found.body)?.[1] ?? "";
+  const rewritten = `${found.open}\n${json}\n${closeIndent}${found.close}`;
+  const page = html.slice(0, found.at) + rewritten + html.slice(found.at + found.length);
   return withConnectScript(page, connectModuleSrc("/vendor"));
+}
+
+/** The entries of `wanted` the map does not name yet: a specifier the game already maps keeps its own URL. */
+function missingOnly(wanted: Record<string, string>, current: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(wanted).filter(([specifier]) => !Object.hasOwn(current, specifier)));
 }

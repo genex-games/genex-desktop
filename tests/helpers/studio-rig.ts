@@ -15,10 +15,10 @@ import {
   type StudioCoreOptions,
 } from "../../src/main/studio-core.ts";
 import { startFakeOllama, type FakeOllama, type FakeOllamaOptions } from "./fake-ollama.ts";
-import { makeResources } from "./resources.ts";
+import { sharedResources } from "./resources.ts";
 import { closeBeforeCleanup, tmpDir } from "./tmp.ts";
 
-export { makeResources };
+export { makeResources } from "./resources.ts";
 
 export interface FakePreview extends PreviewPort {
   /** What `state()` will report next; tests mutate this to simulate a better or broken build. */
@@ -299,7 +299,7 @@ export async function startRig(
     >
   > = {},
 ): Promise<Rig> {
-  const resources = await makeResources();
+  const resources = await sharedResources();
   // Real, not /var/folders behind the /private link: the studio sends a contractor to the real
   // path of the worktree it checked (M1), exactly as it does under ~/Library in the app.
   const userData = path.join(await realpath(await tmpDir("studio-rig-")), "userData");

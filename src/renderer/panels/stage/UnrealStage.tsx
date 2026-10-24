@@ -24,16 +24,19 @@ import {
   UNREAL_PLUGIN_ID,
   UnrealPluginAction,
   type UnrealStageStatus,
-  UnrealStageStep,
   unrealOpener,
   unrealProjectOf,
 } from "../../unreal-game.ts";
 import { problemWords, UNREAL_WORDS } from "../../words.ts";
 import { openPluginSetup } from "../../plugin-setup.ts";
+import { type StatusPoll, startStatusPoll } from "../../status-poll.ts";
 import {
   keepStageStatus,
   keptStageStatus,
   type ReceivedStatus,
+  type ReopenMark,
+  ReopenStep,
+  reopenStep,
   StageAct,
   type StageView,
   stageView,
@@ -63,26 +66,35 @@ const openUnrealPanel = () => openPluginSetup(UNREAL_PLUGIN_ID);
 const NOT_ASKED: ReceivedStatus = { status: null, at: 0 };
 
 /**
- * The plugin's `stage-status` for this game, asked every few seconds while the card shows. A card
- * that comes back starts from the game's last answer, so switching tabs never replays a guess.
+ * The plugin's `stage-status` for this game, asked every few seconds while the card shows, one ask
+ * at a time. A card that comes back starts from the game's last answer, so switching tabs never
+ * replays a guess; a new game restarts the asking and drops the last game's answers, and a new
+ * plugin list restarts it only when the plugin itself changed.
  */
 function useStageStatus(plugin: PluginInfo | null, game: string) {
   const [latest, setLatest] = useState(() => ({ game, received: keptStageStatus(game) ?? NOT_ASKED }));
   const received = latest.game === game ? latest.received : (keptStageStatus(game) ?? NOT_ASKED);
-  const refresh = useCallback(async () => {
-    if (!plugin) return;
-    const answer = await window.studio
-      .pluginAction(plugin.manifest.id, UnrealPluginAction.StageStatus, {}, game)
-      .catch(() => null);
-    const next = { status: parseStageStatus(answer), at: Date.now() };
-    keepStageStatus(game, next);
-    setLatest({ game, received: next });
-  }, [plugin, game]);
+  const poll = useRef<StatusPoll | null>(null);
+  const pluginId = plugin?.manifest.id;
   useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), STATUS_POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+    if (!pluginId) return;
+    const ask = () => window.studio.pluginAction(pluginId, UnrealPluginAction.StageStatus, {}, game).catch(() => null);
+    const read = startStatusPoll(
+      ask,
+      (answer) => {
+        const next = { status: parseStageStatus(answer), at: Date.now() };
+        keepStageStatus(game, next);
+        setLatest({ game, received: next });
+      },
+      STATUS_POLL_MS,
+    );
+    poll.current = read;
+    return () => {
+      read.stop();
+      if (poll.current === read) poll.current = null;
+    };
+  }, [pluginId, game]);
+  const refresh = useCallback(() => poll.current?.refresh() ?? Promise.resolve(), []);
   return { received, refresh };
 }
 
@@ -152,31 +164,39 @@ const failed = (deps: PressDeps) => (err: unknown) => {
  * The card's button, busy from a press until its sequence ends. A restart opens the project once
  * the status says no editor runs any more (Unreal may first ask to save) and opening is the step,
  * or gives up after {@link QUIT_WAIT_MS}: a quit the person cancelled opens nothing, and a project
- * whose port another app now holds shows Set up again instead.
+ * whose port another app now holds shows Set up again instead (`reopenStep`). Another game on the
+ * stage starts with no restart waiting and the button free, so a restart never opens the wrong game.
  */
 function usePress(deps: PressDeps, status: UnrealStageStatus | null) {
   const [busy, setBusy] = useState(false);
-  const reopenBy = useRef<number | null>(null);
+  const reopen = useRef<ReopenMark | null>(null);
+  // Each press, and each game the stage shows, takes the next number; only the latest press frees the button.
+  const presses = useRef(0);
+  const { plugin, game } = deps;
+  useEffect(() => {
+    presses.current += 1;
+    reopen.current = null;
+    setBusy(false);
+  }, [game]);
   const run = async (which: StageAct) => {
+    const mine = ++presses.current;
     setBusy(true);
     try {
-      if (await press(deps, which)) reopenBy.current = Date.now() + QUIT_WAIT_MS;
+      if (await press(deps, which)) reopen.current = { game, until: Date.now() + QUIT_WAIT_MS };
     } catch (err) {
       failed(deps)(err);
     } finally {
-      setBusy(false);
+      if (presses.current === mine) setBusy(false);
       await deps.refresh();
     }
   };
-  const { plugin } = deps;
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new status is the trigger; deps are read as they are now
   useEffect(() => {
-    const until = reopenBy.current;
-    if (until === null || !plugin || !status) return;
-    if (Date.now() > until) reopenBy.current = null;
-    if (status.editors !== 0 || reopenBy.current === null) return;
-    reopenBy.current = null;
-    if (status.next !== UnrealStageStep.Open) return;
+    if (!plugin) return;
+    const step = reopenStep(reopen.current, game, status, Date.now());
+    if (step === ReopenStep.Wait) return;
+    reopen.current = null;
+    if (step !== ReopenStep.Open) return;
     void openProject(deps, plugin)
       .catch(failed(deps))
       .finally(() => void deps.refresh());

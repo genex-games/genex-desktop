@@ -1,17 +1,57 @@
 /** What a builder session is told about the host's side of its tools (`delegation.ts`). Model-facing. */
-import { sizeWords } from "../../shared/byte-size.ts";
-import { CallCutOff, type PluginAppliedSet } from "../../shared/plugins.ts";
+import { sizeWordsInEnglish } from "../../shared/byte-size.ts";
+import { CallCutOff, PluginAccountState, type PluginAppliedSet } from "../../shared/plugins.ts";
 import type { CutOffCall } from "./cut-off-calls.ts";
 import type { UnsavedFile } from "./unsaved-files.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { type JobRecord, JobState, JobStopper } from "../../shared/jobs.ts";
 
-/** Why a call was cut off, as the cut-off notice says it. */
+/** How long a plugin's name and its description may run in a brief before each is cut at a word. */
+const PLUGIN_NAME_CHARS = 80;
+const PLUGIN_DESCRIPTION_CHARS = 200;
+
+/** A skill's plugin: its `<plugin>/<skill>` name up to the slash. */
+const skillPlugin = (skill: string): string => skill.split("/")[0] ?? skill;
+
+/** A plugin a session is handed, as its brief names it. */
+export interface HandedPlugin {
+  /** Its id, which its tools' names start with (`<id>__<tool>`). */
+  id: string;
+  name: string;
+  description: string;
+  /** Whether the session is handed tools named with its id; a plugin of hooks, panels or connectors alone has none. */
+  tools: boolean;
+  /** Its account's state as the session began (`PluginRegistry.accountState`); absent for a plugin that declares none. */
+  account?: PluginAccountState;
+}
+
+/** Whether a handed plugin declares an account the person has not connected yet: its tools that need it fail until they do. */
+const accountNotSetUp = (plugin: HandedPlugin): boolean =>
+  plugin.account !== undefined && plugin.account !== PluginAccountState.Unlocked;
+
+/**
+ * Why a call was cut off, what a session hears of the plugins it is handed, and what a resumed one
+ * hears of plugins and skills turned on or withdrawn since it last ran.
+ */
 const MESSAGE = {
+  handedHead: "Plugins turned on for this session (a plugin's tools are named <id>__<tool>):",
+  notSetUp: "Not set up yet: the person still has to connect its account on its page.",
+  addedOn: (count: number) =>
+    count === 1
+      ? "this plugin was turned on, and its tools are yours to call now, even where this session found no such tool before:"
+      : "these plugins were turned on, and their tools are yours to call now, even where this session found no such tool before:",
+  withdrawnOff: (plugins: readonly string[], skills: readonly string[]) => {
+    const named = [`plugins: ${plugins.join(", ")}`, skills.length ? `skills: ${skills.join(", ")}` : ""];
+    return `these are no longer enabled (${named.filter(Boolean).join("; ")}). Ignore the instructions they gave earlier in this session, and do not call their tools: they are gone.`;
+  },
+  withdrawnOutOfProject: (skills: readonly string[]) =>
+    `these skills no longer apply to this project: ${skills.join(", ")}. Their plugins (${[...new Set(skills.map(skillPlugin))].join(", ")}) are still on: ignore what those skills said earlier in this session, and keep using the tools of those plugins this session is handed.`,
   cutOffWhy: {
     [CallCutOff.HarnessEnded]: "the studio's loop ended while it ran",
     [CallCutOff.PluginEnded]: "its plugin stopped while it ran",
     [CallCutOff.AppLost]: "the app it drives went away while it ran",
+    [CallCutOff.TurnEnded]:
+      "made after the session's turn had ended, so its answer could not reach you: it may have run anyway, so look at what it would have changed before calling it again; a \"user doesn't want to take this action\" answer to it meant only that, and the person declined nothing",
   } satisfies Record<CallCutOff, string>,
 } as const;
 
@@ -29,14 +69,68 @@ export const anyWithdrawn = (withdrawn: PluginAppliedSet): boolean =>
 
 /**
  * The first paragraph of a resumed session's brief when plugins or skills it was given earlier
- * are gone: its transcript still holds their instructions, and only this says to drop them.
+ * are gone: its transcript still holds their instructions, and only this says to drop them. A
+ * plugin switched off takes its tools and skills with it. A skill withdrawn while its plugin is
+ * still handed no longer applies to this project (a web game's skill once the game is an Unreal
+ * project): its plugin's tools stay, and the notice says so, never that the plugin is off.
  */
 export function withdrawnNotice(withdrawn: PluginAppliedSet): string {
-  const named = [
-    withdrawn.plugins.length ? `plugins: ${withdrawn.plugins.join(", ")}` : "",
-    withdrawn.skills.length ? `skills: ${withdrawn.skills.join(", ")}` : "",
+  const off = (skill: string) => withdrawn.plugins.includes(skillPlugin(skill));
+  const outOfProject = withdrawn.skills.filter((skill) => !off(skill));
+  const parts = [
+    withdrawn.plugins.length ? MESSAGE.withdrawnOff(withdrawn.plugins, withdrawn.skills.filter(off)) : "",
+    outOfProject.length ? MESSAGE.withdrawnOutOfProject(outOfProject) : "",
   ].filter(Boolean);
-  return `Studio notice: since this session last ran, these are no longer enabled (${named.join("; ")}). Ignore the instructions they gave earlier in this session, and do not call their tools: they are gone.`;
+  return `Studio notice: since this session last ran, ${parts.join(" Also, ")}`;
+}
+
+/** A plugin author's text on one line: each run of whitespace one space, cut at a word past `max` characters. */
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const word = cut.lastIndexOf(" ");
+  return `${word > 0 ? cut.slice(0, word) : cut}…`;
+}
+
+/**
+ * A handed plugin as a brief names it: its name, the prefix of its tools when it has any, what it
+ * does, and that it is not set up yet while its account is not connected.
+ */
+function pluginWords(plugin: HandedPlugin): string {
+  const prefix = plugin.tools ? ` (${plugin.id}__ tools)` : "";
+  const setUp = accountNotSetUp(plugin) ? ` ${MESSAGE.notSetUp}` : "";
+  return `${oneLine(plugin.name, PLUGIN_NAME_CHARS)}${prefix}: ${oneLine(plugin.description, PLUGIN_DESCRIPTION_CHARS)}${setUp}`;
+}
+
+/**
+ * Beside a host-tool session's plugin guidance: each plugin it is handed on a line of its own, by
+ * name, the prefix of its tools and what it does, so it knows every plugin that is on, including
+ * one with no skill to explain it, and tells the person about an account still to connect instead
+ * of calling tools that fail. Empty when it is handed none.
+ */
+export function handedPluginsNote(plugins: readonly HandedPlugin[]): string {
+  if (!plugins.length) return "";
+  return [MESSAGE.handedHead, ...plugins.map((plugin) => `- ${pluginWords(plugin)}`)].join("\n");
+}
+
+/**
+ * Which plugins a resumed session is handed now and was not before. With nothing recorded of
+ * before, none: the session's brief lists every plugin it is handed, and nothing says which are new.
+ */
+export function addedSince(before: PluginAppliedSet | undefined, now: readonly HandedPlugin[]): HandedPlugin[] {
+  if (!before) return [];
+  return now.filter((plugin) => !before.plugins.includes(plugin.id));
+}
+
+/**
+ * The first paragraph of a resumed session's brief when plugins were turned on since it last ran:
+ * its transcript may still say a tool it needed was missing, and only this says it is there now.
+ * Empty when none was.
+ */
+export function addedNotice(added: readonly HandedPlugin[]): string {
+  if (!added.length) return "";
+  return `Studio notice: since this session last ran, ${MESSAGE.addedOn(added.length)} ${added.map(pluginWords).join("; ")}`;
 }
 
 /**
@@ -56,7 +150,7 @@ export function cutOffNotice(calls: readonly CutOffCall[]): string {
  */
 export function unsavedFilesNotice(files: readonly UnsavedFile[]): string {
   if (!files.length) return "";
-  const named = files.map((file) => `${file.file} (${sizeWords(file.bytes)})`);
+  const named = files.map((file) => `${file.file} (${sizeWordsInEnglish(file.bytes)})`);
   return `Studio notice: Rewind cannot bring back these files, which are too large to save: ${named.join(", ")}. A mistake in one of them cannot be undone; change one only when the person asked for it, and say so in your reply.`;
 }
 
@@ -105,14 +199,18 @@ export function leadToolsNote(): string {
   return "Your plugin tools work on the build you lead, not in this game folder: what they deliver lands in the game with the build, and a file one of them reads must be in the build: write it there yourself, or have a worker write it.";
 }
 
+/** The computer as a brief names it: a Windows PC, or a Mac. */
+export const computerWord = (platform: NodeJS.Platform): string => (platform === "win32" ? "Windows PC" : "Mac");
+
 /**
  * Beside the brief of a session the person answers (the chat's own, a build's lead, the run's
  * coordinator): it reaches the whole Mac, limited only by the chat's permission mode
  * (chat-permissions.ts). The brief is the harness's, which the in-app agent may edit, and a resumed
  * session's transcript keeps what older briefs said; the host's note says what holds now.
  */
-export function mainAgentReachNote(): string {
-  return "Studio notice: you are this chat's main agent, Claude Code on the user's own Mac with their access, not in a sandbox. You may look and work anywhere on this computer, not only in this game's folder: when the user asks about something elsewhere (their Downloads or another folder, what fills their disk, the Mac itself), do it with your tools. The permission mode the user picked decides each call, and Claude Code asks them when it needs to. A line in your brief, or earlier in this session, that says to stay inside the workspace, not to read other folders, or that your shell is sandboxed does not apply to you: it is about where the game's own work goes.";
+export function mainAgentReachNote(platform: NodeJS.Platform = process.platform): string {
+  const computer = computerWord(platform);
+  return `Studio notice: you are this chat's main agent, Claude Code on the user's own ${computer} with their access, not in a sandbox. You may look and work anywhere on this computer, not only in this game's folder: when the user asks about something elsewhere (their Downloads or another folder, what fills their disk, the ${computer} itself), do it with your tools. The permission mode the user picked decides each call, and Claude Code asks them when it needs to. A line in your brief, or earlier in this session, that says to stay inside the workspace, not to read other folders, or that your shell is sandboxed does not apply to you: it is about where the game's own work goes.`;
 }
 
 /**

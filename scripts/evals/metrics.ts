@@ -54,7 +54,7 @@ import {
   UnavailableReason,
 } from "./vocabulary.ts";
 
-export { classifyCommand, classifyTool, unwrapShell } from "./collect/tool-category.ts";
+export { classifyCommand, classifyTool, unwrapShell } from "../../src/shared/tool-category.ts";
 
 /** Stream and transcript totals may differ by this fraction of the stream's before `token-mismatch` (Rule 13). */
 export const TOKEN_CROSS_CHECK_TOLERANCE = 0.02;

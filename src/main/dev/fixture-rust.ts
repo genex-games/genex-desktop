@@ -35,6 +35,7 @@ import { lockFolder, RECEIPT_FILE, RUST_COMPONENT_LAYOUT } from "../../substrate
 import { lockOf, writeCurrentLock } from "../../substrate/toolchain-store/lock.ts";
 import {
   RUST_BASE_FILE,
+  RUST_DEV_PROFILE_SETTINGS,
   RUST_HOST_TRIPLE,
   RUST_PREWARM_FILE,
   RUST_TRIPLE,
@@ -90,8 +91,11 @@ export const FIXTURE_RUST_WEB_FILES = { module: "game.js", wasm: "game_bg.wasm",
 const WEB_OUTPUT_DIR = "share/genex-fixture-web";
 /** In the sysroot: the dev-flavour game the stub cargo admits (a script starting the fd-3 stub). */
 const STUDIO_GAME_FILE = "share/genex-fixture/studio-game";
-/** What the stub cargo looks for in the staged manifest: the facade's `studio` feature (`cargoManifest`). */
-const STUDIO_FEATURE_LINE = 'features = ["studio"]';
+/**
+ * What the stub cargo looks for in the staged manifest: the facade's `studio` feature
+ * (`cargoManifest`), always the first named, alone or before the system switches a game keeps.
+ */
+const STUDIO_FEATURE_START = 'features = ["studio"';
 /** The compiler flags the lane builds every game with, recorded in each prewarm as the store does. */
 const FIXTURE_RUSTFLAGS = ["-F", "unsafe_code"];
 /** In each prewarmed target folder: the one output the record names, so a locate finds it present. */
@@ -200,7 +204,7 @@ out="$CARGO_TARGET_DIR/$triple/$profile"
 case "$triple" in
   wasm32-*) exe="$out/game.wasm"; /bin/cp ${wasm} "$exe" || exit 101 ;;
   *) exe="$out/game"
-     if /usr/bin/grep -qF ${shellQuote(STUDIO_FEATURE_LINE)} "$manifest"; then
+     if /usr/bin/grep -qF ${shellQuote(STUDIO_FEATURE_START)} "$manifest"; then
        /bin/cp ${studio} "$exe" && /bin/chmod 755 "$exe" || exit 101
      else
        printf '#!/bin/sh\\necho "genex fixture game: built by the stub cargo; it draws nothing"\\n' > "$exe" || exit 101
@@ -454,6 +458,7 @@ async function seedRustPrewarm(store: string, lock: ToolchainLock, target: Build
     target,
     triple,
     rustflags: FIXTURE_RUSTFLAGS,
+    profile: [...RUST_DEV_PROFILE_SETTINGS],
     steps: [],
     outputs: [output],
     units: 0,

@@ -15,14 +15,17 @@ import path from "node:path";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import { pathShapeProblem, realInside } from "./folder-paths.ts";
 import { HostMethod } from "./host-methods.ts";
+import { InteractionStatus } from "./interaction-evidence.ts";
+import { InteractionObjective, InteractionSource } from "./interaction-words.ts";
 import { JobState } from "./jobs/contract.ts";
 import { isPlainRecord } from "./json.ts";
 import { type CaptureImage, REVIEW_PICTURE_MAX_BYTES } from "./observers.ts";
+import { EventKind, RunEvent } from "./run-events.ts";
 import { clipMarked } from "./text.ts";
 import { minutes } from "./time.ts";
 
 /** How many names of the lead's proof are read; the rest are refused in one line. */
-export const MAX_PROOF_FILES = 8;
+export const MAX_PROOF_FILES = 16;
 /** The largest proof file read. */
 export const PROOF_FILE_MAX_BYTES = 8 * 1024 * 1024;
 /** How much of one text file the reviewer reads. */
@@ -222,6 +225,20 @@ export async function proofPathsIn(folder: string, names: readonly unknown[]): P
   return paths;
 }
 
+/**
+ * Whether a file the lead names as proof was written after `since` (its clock's time): placed inside
+ * its folder as a read is (by its shape, by the real path, a regular file within the cap); a name it
+ * refuses, or a link that leads out, is never fresh. At most `MAX_PROOF_FILES` names, as read.
+ */
+export async function freshProofIn(folder: string, names: readonly unknown[], since: number): Promise<boolean> {
+  for (const name of askedNames(names).slice(0, MAX_PROOF_FILES)) {
+    const where = await placed(folder, name);
+    const info = "real" in where ? await stat(where.real).catch(() => null) : null;
+    if (info && info.mtimeMs > since) return true;
+  }
+  return false;
+}
+
 /** The names the lead gave, trimmed: anything that is not text is no name. */
 const askedNames = (names: readonly unknown[]): string[] =>
   names.flatMap((name) => (typeof name === "string" && name.trim() ? [name.trim()] : []));
@@ -277,4 +294,49 @@ export async function jobLines(ctx: HarnessCtx, run: Run): Promise<string[]> {
   const ended = jobsOf(answer).filter((job) => job.state !== JobState.Running && typeof job.title === "string");
   ended.sort((a, b) => endSeqOf(a) - endSeqOf(b));
   return ended.slice(-MAX_JOB_LINES).map(jobLine);
+}
+
+/** How many blind judges' questions the reviewer is told of (the newest), and how much of each note. */
+const MAX_JUDGE_LINES = 8;
+const JUDGE_NOTE_CHARS = 300;
+
+/** What a judge's answer rests on, in the reviewer's words. */
+const JUDGE_BASIS = {
+  verified: "studio-verified: Genex saw the goal state reached",
+  word: "the judge's word",
+} as const;
+
+/** A judge's status as its answer. */
+const judgeAnswer = (status: unknown): string => {
+  if (status === InteractionStatus.Passed) return "yes";
+  return status === InteractionStatus.Failed ? "no" : "no answer";
+};
+
+/** One judge record as the reviewer reads it: its question, its answer, what it rests on, its note. */
+function judgeLine(payload: AnyRecord): string {
+  const basis = payload.objective === InteractionObjective.StudioVerified ? JUDGE_BASIS.verified : JUDGE_BASIS.word;
+  const note =
+    typeof payload.note === "string" && payload.note ? ` — ${clipMarked(payload.note, JUDGE_NOTE_CHARS)}` : "";
+  return `${clipMarked(String(payload.label ?? ""), NAME_CHARS)}: ${judgeAnswer(payload.status)} (${basis})${note}`;
+}
+
+/**
+ * The blind judges' answers on this run (`judge_play`, the hands-on judge), for the reviewer: each
+ * question's latest answer, newest last. A failed read is none.
+ */
+export async function judgeLines(ctx: HarnessCtx, run: Run, threadId: string): Promise<string[]> {
+  const events = await ctx.call(HostMethod.EventsList, { threadId }).catch(() => []);
+  const latest = new Map<string, AnyRecord>();
+  for (const event of Array.isArray(events) ? events : []) {
+    const data: unknown = isPlainRecord(event) ? event.data : null;
+    if (!isPlainRecord(data) || data.type !== EventKind.Custom || data.event_type !== RunEvent.RunInteractionEvidence)
+      continue;
+    const payload = data.payload;
+    if (!isPlainRecord(payload) || payload.runId !== run.runId) continue;
+    if (payload.source !== InteractionSource.HandsOnJudge) continue;
+    const label = String(payload.label ?? "");
+    latest.delete(label);
+    latest.set(label, payload);
+  }
+  return [...latest.values()].slice(-MAX_JUDGE_LINES).map(judgeLine);
 }

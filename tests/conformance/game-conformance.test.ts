@@ -786,6 +786,7 @@ function scriptedRuns(script: string, args: readonly string[]): NativeRunsHost {
     sweepOrphans: unused,
     onFocus: () => () => {},
     embed: unused,
+    reembed: unused,
     resize: () => false,
     input: unused,
     showEmbedded: () => {},

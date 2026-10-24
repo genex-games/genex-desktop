@@ -7,7 +7,10 @@
 import type { FacetLoop } from "./state.ts";
 
 /** What the paused clock reads and moves on the loop. */
-type ClockLoop = Pick<FacetLoop, "deadline" | "deadlineCeiling" | "onDeadline" | "sleepFor">;
+type ClockLoop = Pick<FacetLoop, "deadline" | "deadlineCeiling" | "onDeadline" | "sleepFor"> & {
+  /** The clock `sleepFor` moves and `deadline` is read on; the wall clock when the loop has none. */
+  now?: () => number;
+};
 
 /** The latest the facet's deadline may move to while its provider is away. */
 export function clockRoom(loop: ClockLoop): number {
@@ -29,7 +32,8 @@ export function pauseClock(loop: ClockLoop, ms: number): void {
 
 /** Sleep `ms` waiting for the provider, the clock paused for as long as the sleep really took. */
 export async function sleepOnPausedClock(loop: ClockLoop, ms: number): Promise<void> {
-  const from = Date.now();
+  const read = () => loop.now?.() ?? Date.now();
+  const from = read();
   await loop.sleepFor(ms);
-  pauseClock(loop, Date.now() - from);
+  pauseClock(loop, read() - from);
 }

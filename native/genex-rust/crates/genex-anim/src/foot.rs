@@ -71,6 +71,10 @@ pub const DEFAULT_PROBE_DOWN: f32 = 1.0;
 /// The step [`height_ground`] takes each side of a point to find the slope, in metres.
 pub const HEIGHT_NORMAL_STEP: f32 = 0.05;
 
+/// How far above its rest height an animated ankle still counts as down for
+/// [`FootRig::contacts`], in metres (AN-6's default height band).
+pub const ANKLE_CONTACT_BAND: f32 = crate::events::DEFAULT_HEIGHT_BAND;
+
 /// The snapshot format [`FootPlacer::snapshot`] writes and [`FootPlacer::restore`] reads.
 pub const FOOT_SNAPSHOT_VERSION: u32 = 1;
 
@@ -218,6 +222,16 @@ impl FootRig {
     /// modelled standing on its origin.
     pub fn ankle_height(&self, foot: Foot) -> f32 {
         self.ankle_heights[foot.index()]
+    }
+
+    /// Which feet a model-space pose has down, by height alone (release R-22, for a game that
+    /// marks no foot contacts): an ankle at most [`ANKLE_CONTACT_BAND`] above its rest height is
+    /// down. A pose shorter than the skeleton has neither foot down.
+    pub fn contacts(&self, model: &[Mat4]) -> [bool; 2] {
+        Foot::ALL.map(|foot| {
+            let ankle = model.get(usize::from(self.ankle(foot).raw()));
+            ankle.is_some_and(|ankle| ankle.w_axis.y <= self.ankle_height(foot) + ANKLE_CONTACT_BAND)
+        })
     }
 }
 

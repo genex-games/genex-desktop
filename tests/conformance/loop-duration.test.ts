@@ -1,7 +1,7 @@
 /** The Loop's time limit: shown as hours and minutes, typed in any of the shapes people write. */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatDuration, parseDuration, shortDuration } from "../../src/renderer/ui/loop-duration.ts";
+import { formatDuration, limitWords, parseDuration, shortDuration } from "../../src/renderer/ui/loop-duration.ts";
 
 describe("the Loop's time limit", () => {
   it("shows hours and minutes, dropping a zero part", () => {
@@ -12,6 +12,17 @@ describe("the Loop's time limit", () => {
       "1 h",
       "0 m",
       "24 h",
+    ]);
+  });
+
+  it("spells a limit out in words for the Mode caption", () => {
+    assert.deepEqual([30, 60, 120, 105, 61, 1440].map(limitWords), [
+      "30 minutes",
+      "1 hour",
+      "2 hours",
+      "1 hour 45 minutes",
+      "1 hour 1 minute",
+      "24 hours",
     ]);
   });
 

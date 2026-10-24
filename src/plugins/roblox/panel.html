@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><!-- STUDIO_PANEL_FONTS --><style>
+:root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--warn:#efbe72;--err:#f08287;color-scheme:dark;
+  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--outline:color-mix(in srgb,var(--fg) 14%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));
+  /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
+  --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+  --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E")}
+/* Chosen for at least 4.5:1 on every light theme's background. */
+:root[data-scheme="light"]{--warn:#95570b;--err:#b3303d;--outline:rgb(0 0 0/.1);color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 28px 22px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
+@media (max-width:480px){body{padding:20px 16px}}
+main{max-width:640px;display:grid;gap:20px}
+section{display:grid;gap:16px;min-width:0}
+h2{margin:0;font-size:20px;line-height:28px;font-weight:500}
+h2:focus,.step-name:focus{outline:none}
+.intro{display:grid;gap:6px}
+p,ol,ul{margin:0}
+p,li{text-wrap:pretty}
+.quiet{color:var(--quiet)}
+.small{font-size:13px;line-height:18px}
+.mono{font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+/* Genex's buttons: 32px, a rounded fill and no border, the label in Geist Mono. */
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:0 14px;font-family:var(--mono);font-size:14px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;color:inherit;cursor:pointer;background:var(--field);border:0;border-radius:11px;-webkit-tap-highlight-color:transparent;transition-property:scale,background-color,color;transition-duration:150ms;transition-timing-function:cubic-bezier(.22,1,.36,1)}
+button:hover{background:var(--hover)}
+button:active:not(:disabled,[aria-disabled="true"]){scale:.96}
+button.primary{background:var(--accent-fill,var(--accent));color:var(--accent-text,#fff)}
+button.primary:hover{background:var(--accent-hover,var(--accent-fill,var(--accent)))}
+button.quiet{background:transparent;color:var(--quiet);padding:0 10px}
+button.quiet:hover{background:var(--hover);color:var(--fg)}
+/* A quiet button lines its text up with the edge when it leads its row. */
+.actions > button.quiet:first-child{margin-inline-start:-10px}
+button:disabled,button[aria-disabled="true"]{opacity:.5;cursor:not-allowed;scale:none}
+button:disabled:hover{background:var(--field)}
+button svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* Genex's live status: a small orb that breathes, as the chat's status line has. */
+.orb{width:12px;height:12px;flex:none;border-radius:50%;background:radial-gradient(circle at 38% 36%,var(--fg) 0 14%,color-mix(in srgb,var(--accent) 65%,var(--fg)) 40%,var(--accent) 72%,transparent 74%);animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{50%{opacity:.5}}
+.waiting{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--quiet)}
+.step .waiting:not(.detail){margin-top:6px}
+/* The steps: each its own rounded block with a 1px outline, 8px apart. */
+.steps{padding:0;list-style:none;display:grid;gap:8px}
+.step{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--outline)}
+.step .mark{width:16px;height:16px;flex:none;margin-top:3px;border-radius:50%;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg));position:relative}
+.step.done .mark{box-shadow:none;background:color-mix(in srgb,var(--accent) 34%,var(--bg))}
+.step.done .mark::after{content:"";position:absolute;inset:3px;background:var(--fg);-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
+.step.now .mark{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.step-body{flex:1;display:grid;gap:4px;min-width:0}
+.step-name{font-size:15px;line-height:22px}
+.step.done .step-name,.step.later .step-name{color:var(--quiet)}
+.step .actions{margin-top:8px}
+.say{font-size:13px;line-height:18px}
+.say:empty{display:none}
+.say[data-tone="err"]{color:var(--err)}
+/* Studio's own clicks, one key-like chip each, wrapping on a narrow panel. */
+.path-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:2px}
+.kbd{display:inline-flex;align-items:center;min-height:22px;padding-inline:7px;border-radius:6px;background:var(--field);box-shadow:inset 0 0 0 1px var(--outline);font:12px/1 var(--mono);color:var(--fg);overflow-wrap:anywhere}
+.or{margin-top:6px}
+/* Studio's own publish clicks under a publish button: the words over the clicks, as the MCP step shows them. */
+.or-in-studio{display:grid;gap:4px;margin-top:6px}
+.or-in-studio .or{margin-top:0}
+/* A done step's warning: the sign, the words, and Studio's clicks to act on it. */
+.notes{display:grid;gap:6px;margin-top:6px;color:var(--warn)}
+.notes p{display:flex;gap:10px;font-size:13px;line-height:18px}
+.notes p::before{content:"";width:16px;height:16px;flex:none;margin-top:1px;background:currentColor;-webkit-mask:var(--warning) center/contain no-repeat;mask:var(--warning) center/contain no-repeat}
+.notes .path-line{margin-inline-start:26px}
+.first-publish{display:grid;gap:4px;margin-top:6px}
+/* A first publish's name: a label over a 32px field, as wide as the block allows. */
+.field{display:grid;gap:4px;margin-top:8px}
+.field label{font-size:13px;line-height:18px;color:var(--quiet)}
+.field input{min-height:32px;width:100%;max-width:320px;padding:0 10px;font:14px/20px var(--sans);color:var(--fg);background:var(--field);border:0;border-radius:11px;box-shadow:inset 0 0 0 1px var(--outline)}
+/* Places: each its own rounded block, its name and where it is, its button at the end. */
+.places{padding:0;list-style:none;display:grid;gap:8px}
+.place{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 12px;padding:12px 14px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--outline)}
+.place .name{font-size:15px;line-height:22px;overflow-wrap:anywhere}
+.place .where{grid-column:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);letter-spacing:-.02em;color:var(--quiet)}
+.place button{grid-column:2;grid-row:1/span 2}
+@media (max-width:400px){.place{grid-template-columns:minmax(0,1fr)}.place button{grid-column:1;grid-row:auto;justify-self:start;margin-top:8px}}
+.sub-h{font:13px/18px var(--mono);letter-spacing:-.02em;color:var(--quiet)}
+.legal{padding-top:14px;border-top:1px solid var(--line);color:var(--quiet);font-size:12px;line-height:18px}
+.problem{color:var(--err);white-space:pre-wrap;overflow-wrap:anywhere}
+.problem:empty{display:none}
+@media (prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){scale:none}.orb{animation:none}}
+/* On a dialog's card the dialog holds the heading and the padding: the page keeps a thin edge for focus rings. */
+:root[data-surface="card"] body{padding:4px}
+/* A rare action for the whole page: words with a line under them, no padding, no fill. */
+button.link{min-height:0;padding:0;border-radius:4px;background:none;color:var(--quiet);font:13px/18px var(--sans);letter-spacing:0;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:3px}
+button.link:hover,button.link:disabled:hover{background:none;color:var(--fg);text-decoration-color:currentColor}
+/* Last, so it wins over every class that sets a display. */
+[hidden]{display:none}
+</style></head><body>
+<main id="app" aria-busy="true">
+<section id="setup" aria-labelledby="title">
+  <div class="intro" data-panel-head><h2 id="title" tabindex="-1" data-t>Set up Roblox Studio</h2><p class="quiet" id="intro" data-t>Looking for Roblox Studio…</p></div>
+  <p class="problem" id="problem" role="alert"></p>
+  <ol class="steps" id="steps" aria-label="Setup steps" data-t="aria-label"></ol>
+  <div class="actions" id="setup-more" hidden><button type="button" class="link" id="undo" data-action="undo-setup" data-t>Undo Set up</button><button type="button" class="link" id="luau" data-action="add-luau-checks" data-t hidden>Add Luau checks</button></div>
+  <p class="say quiet" id="setup-say" role="status"></p>
+</section>
+<section id="places" aria-labelledby="places-title" hidden>
+  <div class="intro" data-panel-head><h2 id="places-title" tabindex="-1" data-t>Choose your place</h2><p class="quiet" data-t>Places open in Studio right now.</p></div>
+  <p class="waiting" id="places-loading"><span class="orb" aria-hidden="true"></span><span data-t>Looking for places</span></p>
+  <p class="quiet" id="places-none" data-t hidden>No place is open in Roblox Studio.</p>
+  <ul class="places" id="open-places" aria-label="Places open in Studio" data-t="aria-label"></ul>
+  <p class="sub-h" id="files-title" data-t hidden>Place files on this computer</p>
+  <ul class="places" id="file-places" aria-labelledby="files-title" hidden></ul>
+  <p class="sub-h" id="places-start" data-t>Or start one</p>
+  <div class="actions"><button type="button" id="places-new" data-action="create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span data-t>New Roblox game</span></button><button type="button" id="places-file" data-t>Open a place file…</button></div>
+  <p class="say" id="places-say" role="status"></p>
+  <div class="actions"><button type="button" class="link" id="places-back" data-panel-back data-t>Back</button></div>
+</section>
+<p class="sr-only" id="announce" role="status"></p>
+<footer class="legal" data-t>Not affiliated with Roblox Corporation. For people 18 and over.</footer>
+</main>
+<!-- STUDIO_PANEL_SDK -->
+<script type="module">
+const api = window.studioPlugin;
+// The panel's words are in Genex's language once the host has named it (plugin-sdk/words.js).
+await api.ready;
+const { t } = api;
+const $ = (id) => document.getElementById(id);
+const SECOND_MS = 1000;
+const REFRESH_MS = 3 * SECOND_MS;
+/**
+ * How long the panel waits for an action that takes longer than most: Restart Studio waits for
+ * Studio to quit (the person may be saving), Do it for me and publishing for the person's
+ * answers to their cards, New Roblox game for Studio to open, and Add Luau checks for its downloads.
+ * The rest get the SDK's own wait.
+ */
+const LONG_WAIT_MS = 4 * 60 * SECOND_MS;
+/** WCAG's minimum contrast for small text, and the least share of the text colour the quiet colour starts from. */
+const TEXT_CONTRAST_MIN = 4.5;
+const QUIET_SHARE_MIN = 64;
+const WHITE = "#ffffff", BLACK = "#000000";
+/** How far an older host's accent moves toward its button text's opposite on hover. */
+const HOVER_SHARE = 88;
+/** The backend actions plugin.json declares (RobloxAction). Wire values: never rename. */
+const Action = {
+  Status: "status",
+  Setup: "setup",
+  UndoSetup: "undo-setup",
+  RestartStudio: "restart-studio",
+  DoItForMe: "do-it-for-me",
+  GetStudio: "get-studio",
+  CancelGetStudio: "cancel-get-studio",
+  OpenStudio: "open-studio",
+  Places: "places",
+  UsePlace: "use-place",
+  Create: "create",
+  AddLuauChecks: "add-luau-checks",
+  PublishUpdate: "publish-update",
+  FirstPublish: "first-publish",
+};
+/** The rows' ids, as the backend names them (RobloxStepId). Wire values: never rename. */
+const Step = { Studio: "studio", SignIn: "sign-in", Helper: "helper", Mcp: "mcp", Place: "place" };
+/** An open place's kind, as the backend names it (PlaceKind). Wire values: never rename. */
+const PlaceKind = { File: "file", Published: "published", Unsaved: "unsaved" };
+/** Why a request failed, as Studio's bridge names it (PanelErrorCode): the person cancelled Studio's confirmation. Wire values: never rename. */
+const ErrorCode = { Cancelled: "cancelled" };
+const WAITS = {
+  [Action.RestartStudio]: { timeoutMs: LONG_WAIT_MS },
+  [Action.DoItForMe]: { timeoutMs: LONG_WAIT_MS },
+  [Action.Create]: { timeoutMs: LONG_WAIT_MS },
+  [Action.UsePlace]: { timeoutMs: LONG_WAIT_MS },
+  [Action.AddLuauChecks]: { timeoutMs: LONG_WAIT_MS },
+  [Action.PublishUpdate]: { timeoutMs: LONG_WAIT_MS },
+  [Action.FirstPublish]: { timeoutMs: LONG_WAIT_MS },
+};
+/** The panel's own words; each step's words come from the backend, as the chat's steps card shows them. */
+const WORDS = {
+  intro: t("Genex sets up what it can and checks each step by itself."),
+  allDone: t("Everything Roblox Studio needs from you is done."),
+  done: t("Done:"),
+  orInStudio: t("Or in Studio:"),
+  choosePlace: t("Choose your place"),
+  chooseAnother: t("Choose another place"),
+  publish: t("Publish an update"),
+  firstPublish: t("Publish to Roblox"),
+  publishName: t("Name on Roblox"),
+  firstPublishYourself: t("Not on Roblox yet. To publish it yourself, in Studio:"),
+  firstPublishThen: t("Genex links this game to it by itself once it is published."),
+  publishYourself: t("Publish updates yourself, in Studio:"),
+  answerInChat: t("Genex may ask you something in this game's chat first: close this panel to answer it there."),
+  newGame: t("New Roblox game"),
+  noGame: t("Open a game first to use a place you already have, or start a new one."),
+  use: t("Use in this game"),
+  published: (placeId) => t("Published · place {placeId}", { placeId }),
+  unsaved: t("Not saved to a file yet"),
+  savedFile: t("Saved to a file"),
+  takenBy: (game) => t("Builds in {game}", { game }),
+  here: t("This game builds here"),
+  pickerTitle: t("Choose a place file"),
+  failed: t("Genex couldn't ask Roblox Studio. Close this panel and open it again."),
+};
+/** The place files Choose a place file offers. */
+const PLACE_EXTENSIONS = ["rbxl", "rbxlx"];
+
+/** The longest name Roblox takes for a new game (MAX_GAME_NAME_CHARS). */
+const MAX_GAME_NAME_CHARS = 50;
+
+/**
+ * What the panel shows: the last status, the open game, a step's answer in words, the press under
+ * way, and the name typed for a first publish (kept across redraws).
+ */
+const ui = { status: null, game: null, said: null, pending: null, view: "setup", drawn: "", publishName: null };
+let closed = false;
+
+const text = (tag, className, value) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (value !== undefined) node.textContent = value;
+  return node;
+};
+
+/** A button that runs `run` once at a time; while it runs, it stays focusable and says it is busy. */
+function actionButton(label, run, options = {}) {
+  const node = text("button", options.className ?? "", "");
+  node.type = "button";
+  if (options.icon) node.append(plusIcon());
+  node.append(label);
+  if (options.key) node.dataset.key = options.key;
+  if (options.action) node.dataset.action = options.action;
+  if (options.disabled) node.disabled = true;
+  if (ui.pending === options.key) node.setAttribute("aria-disabled", "true");
+  node.onclick = () => {
+    if (ui.pending || node.getAttribute("aria-disabled") === "true") return;
+    void run(node);
+  };
+  return node;
+}
+
+function plusIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M12 5v14M5 12h14");
+  svg.append(path);
+  return svg;
+}
+
+/** Studio's own clicks, one chip each, with a › between them. */
+function pathLine(clicks) {
+  const line = text("span", "path-line");
+  line.dataset.clickPath = "";
+  clicks.forEach((click, at) => {
+    if (at > 0) line.append(text("span", "quiet", "›"));
+    line.append(text("span", "kbd", click));
+  });
+  return line;
+}
+
+/** Sends an action and shows its answer under its step; a declined confirmation shows nothing. */
+async function send(name, args, where) {
+  ui.pending = where.key;
+  // Do it for me and publishing may wait on a question in the game's chat, behind this panel.
+  ui.said = ASKS_IN_CHAT.has(name) ? { at: where.at, text: WORDS.answerInChat } : null;
+  draw(true);
+  try {
+    const answer = await api.call("action", name, args, WAITS[name]);
+    if (typeof answer?.message === "string") ui.said = { at: where.at, text: answer.message };
+    return answer;
+  } catch (e) {
+    if (e?.code !== ErrorCode.Cancelled) ui.said = { at: where.at, text: e?.message ?? String(e), error: true };
+    return null;
+  } finally {
+    ui.pending = null;
+    await refresh();
+    draw(true);
+    announce(ui.said?.text ?? "");
+  }
+}
+
+/**
+ * Says an answer in the panel's one live region, which stays in the page: a region drawn afresh
+ * with its words already in it isn't read out. Cleared first, so the same words are said again.
+ */
+function announce(words) {
+  const region = $("announce");
+  region.textContent = "";
+  if (words) requestAnimationFrame(() => (region.textContent = words));
+}
+
+/** The answer said for a step, as a line under it; the live region says it aloud. */
+function sayLine(at) {
+  const line = text("p", "say quiet");
+  if (ui.said?.at === at) {
+    line.textContent = ui.said.text;
+    if (ui.said.error) line.dataset.tone = "err";
+  }
+  return line;
+}
+
+/** The actions that may wait on a question in the game's chat (a card the panel covers). */
+const ASKS_IN_CHAT = new Set([Action.DoItForMe, Action.PublishUpdate, Action.FirstPublish]);
+
+/** Studio's own clicks for publishing, as one path: "File › Publish to Roblox". */
+const PUBLISH_CLICKS = ["File", "Publish to Roblox"];
+
+/** The name field of a first publish: the game's title until the person types another. */
+function nameField(suggested) {
+  const field = text("div", "field");
+  const input = document.createElement("input");
+  input.id = "publish-name";
+  input.type = "text";
+  input.maxLength = MAX_GAME_NAME_CHARS;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.value = ui.publishName ?? suggested ?? "";
+  input.dataset.key = "publish-name";
+  input.oninput = () => (ui.publishName = input.value);
+  const label = text("label", "", WORDS.publishName);
+  label.htmlFor = input.id;
+  field.append(label, input);
+  return { field, input };
+}
+
+/**
+ * Studio's own clicks under a publish button, as the MCP step shows its own: where computer control
+ * can't click after all (macOS's permissions refused), the person still sees how to publish.
+ */
+function orInStudio() {
+  const line = text("div", "or-in-studio");
+  line.dataset.orInStudio = "";
+  line.append(text("span", "small quiet or", WORDS.orInStudio), pathLine(PUBLISH_CLICKS));
+  return line;
+}
+
+/** A place never published: Publish to Roblox under its name where Genex can click, else Studio's own clicks. */
+function firstPublishParts(actions, publish) {
+  if (publish.canClick) {
+    const { field, input } = nameField(publish.name);
+    const run = () => send(Action.FirstPublish, { name: input.value.trim() }, { key: "first-publish", at: Step.Place });
+    actions.prepend(actionButton(WORDS.firstPublish, run, { className: "primary", key: "first-publish", action: Action.FirstPublish }));
+    actions.before(field);
+    actions.after(orInStudio());
+    return;
+  }
+  // Genex can't click in Studio here: the person's own clicks, and Genex links the game after.
+  const first = text("div", "first-publish");
+  first.dataset.firstPublish = "";
+  first.append(text("p", "small quiet", WORDS.firstPublishYourself), pathLine(PUBLISH_CLICKS));
+  first.append(text("p", "small quiet", WORDS.firstPublishThen));
+  actions.before(first);
+}
+
+/**
+ * A linked place's publishing, once every step is done: Publish an update leads the place's buttons
+ * for a place Roblox has, Publish to Roblox under the game's name for one it hasn't; where Genex
+ * can't click in Studio, Studio's own clicks instead.
+ */
+function publishParts(actions, body) {
+  const publish = ui.status?.publish;
+  if (!ui.game || !publish || ui.status?.now) return;
+  if (!publish.published) firstPublishParts(actions, publish);
+  else if (publish.canClick) {
+    const run = () => send(Action.PublishUpdate, {}, { key: "publish", at: Step.Place });
+    actions.prepend(actionButton(WORDS.publish, run, { className: "primary", key: "publish", action: Action.PublishUpdate }));
+    actions.after(orInStudio());
+  } else {
+    // Genex can't click in Studio here (no computer control): the person's own clicks.
+    const own = text("div", "first-publish");
+    own.dataset.publishClicks = "";
+    own.append(text("p", "small quiet", WORDS.publishYourself), pathLine(PUBLISH_CLICKS));
+    actions.before(own);
+  }
+  body.append(sayLine(Step.Place));
+}
+
+/** The place step's own buttons: Choose your place in a game, and New Roblox game anywhere. */
+function placeButtons(row) {
+  const actions = text("div", "actions");
+  if (row.done) {
+    if (ui.game) actions.append(actionButton(WORDS.chooseAnother, showPlaces, { key: "change-place" }));
+    return actions;
+  }
+  if (ui.game)
+    actions.append(
+      actionButton(WORDS.choosePlace, showPlaces, { className: "primary", key: "choose-place", action: Action.Places }),
+    );
+  const create = (node) => send(Action.Create, {}, { key: "new-game", at: Step.Place, node });
+  const primary = ui.game ? "" : "primary";
+  actions.append(actionButton(WORDS.newGame, create, { className: primary, key: "new-game", action: Action.Create, icon: true }));
+  return actions;
+}
+
+/** A row's buttons on the step that is next: its own, then its further choices. */
+function rowButtons(row) {
+  const actions = text("div", "actions");
+  const choices = [row.action, ...(row.more ?? [])].filter(Boolean);
+  choices.forEach((choice, at) => {
+    const key = `${row.id}:${choice.name}`;
+    const primary = at === 0 && choice.name !== Action.CancelGetStudio ? "primary" : "";
+    const run = () => send(choice.name, choice.args ?? {}, { key, at: row.id });
+    actions.append(actionButton(choice.label, run, { className: primary, key, action: choice.name }));
+  });
+  return actions;
+}
+
+/** The step that is next, opened: its buttons, its note, Studio's clicks and what Genex waits for. */
+function openRow(body, row) {
+  if (row.id === Step.Place) {
+    if (!ui.game) body.append(text("p", "small quiet", WORDS.noGame));
+    body.append(placeButtons(row));
+  } else if (row.action || row.more?.length) body.append(rowButtons(row));
+  if (row.note) body.append(text("p", "note small quiet", row.note));
+  if (row.clickPath?.length) {
+    body.append(text("span", "small quiet or", WORDS.orInStudio));
+    body.append(pathLine(row.clickPath));
+  }
+  if (row.waiting) {
+    const waiting = text("div", "waiting");
+    waiting.append(text("span", "orb"), row.waiting);
+    waiting.firstChild.setAttribute("aria-hidden", "true");
+    body.append(waiting);
+  }
+  body.append(sayLine(row.id));
+}
+
+/** A step's place in the setup: done, the next one, or still to come. */
+function stateOf(row, now) {
+  if (row.done) return "done";
+  return row.id === now ? "now" : "later";
+}
+
+/**
+ * Whether a step that isn't next still shows its line and buttons: the place step, while the MCP
+ * step waits for Studio, which answers only once a place is open in it.
+ */
+const opensBeside = (row, now) => row.id === Step.Place && !row.done && now === Step.Mcp;
+
+/** One step as a block: its mark, its name, its line, and on the next step what to do. */
+function stepItem(row, now) {
+  const beside = opensBeside(row, now);
+  const state = beside ? "now" : stateOf(row, now);
+  const item = text("li", `step ${state}`);
+  item.dataset.step = row.id;
+  if (state === "now" && !beside) item.setAttribute("aria-current", "step");
+  const mark = text("span", "mark");
+  mark.setAttribute("aria-hidden", "true");
+  const body = text("div", "step-body");
+  if (row.done) body.append(text("span", "sr-only", WORDS.done));
+  const name = text("span", "step-name", row.label);
+  name.tabIndex = -1;
+  name.dataset.key = `name:${row.id}`;
+  body.append(name);
+  if (state !== "later") {
+    const detail = row.busy ? text("div", "waiting detail") : text("span", "small quiet detail");
+    if (row.busy) {
+      detail.append(text("span", "orb"), row.detail);
+      detail.firstChild.setAttribute("aria-hidden", "true");
+    } else detail.textContent = row.detail;
+    body.append(detail);
+  }
+  if (state === "now") openRow(body, row);
+  if (row.warning) {
+    const notes = text("div", "notes");
+    notes.dataset.warning = "";
+    notes.append(text("p", "", row.warning.text), pathLine(row.warning.clickPath));
+    body.append(notes);
+  }
+  if (row.done && row.id === Step.Place) {
+    const actions = placeButtons(row);
+    body.append(actions);
+    publishParts(actions, body);
+  }
+  item.append(mark, body);
+  return item;
+}
+
+/** Draws the setup view from the last status, keeping focus on the same control. */
+function draw(force = false) {
+  const status = ui.status;
+  if (!status) return;
+  const key = JSON.stringify([status.rows, status.now, status.luau, status.publish, ui.game, ui.said, ui.pending]);
+  if (!force && key === ui.drawn) return;
+  ui.drawn = key;
+  const focused = document.activeElement?.dataset?.key;
+  const rows = Array.isArray(status.rows) ? status.rows : [];
+  $("steps").replaceChildren(...rows.map((row) => stepItem(row, status.now)));
+  $("intro").textContent = status.now ? WORDS.intro : WORDS.allDone;
+  $("setup-more").hidden = !status.steps?.helper;
+  const undo = $("undo");
+  if (ui.pending === "undo") undo.setAttribute("aria-disabled", "true");
+  else undo.removeAttribute("aria-disabled");
+  const luau = $("luau");
+  luau.hidden = status.luau?.offered !== true;
+  if (ui.pending === "luau") luau.setAttribute("aria-disabled", "true");
+  else luau.removeAttribute("aria-disabled");
+  $("setup-say").textContent = ui.said?.at === "setup" ? ui.said.text : "";
+  if (!focused) return;
+  // The control pressed may be gone (its step is done): the step that is next takes focus instead.
+  const same = document.querySelector(`[data-key="${CSS.escape(focused)}"]`);
+  const next = status.now ? document.querySelector(`[data-key="name:${CSS.escape(status.now)}"]`) : null;
+  (same ?? next ?? $("title")).focus();
+}
+
+async function refresh() {
+  if (closed) return;
+  try {
+    const status = await api.call("action", Action.Status, {});
+    if (closed) return;
+    ui.status = status;
+    $("problem").textContent = "";
+    draw();
+  } catch (e) {
+    if (!closed) $("problem").textContent = e?.message ?? WORDS.failed;
+  } finally {
+    $("app").setAttribute("aria-busy", "false");
+  }
+}
+
+/** Where a listed place is: published with its id, a file, or not saved yet; or the game it builds in. */
+function whereOf(place) {
+  if (place.here) return WORDS.here;
+  if (place.linkedTo) return WORDS.takenBy(place.linkedTo);
+  if (place.file) return place.file;
+  if (place.kind === PlaceKind.Published && place.placeId) return WORDS.published(place.placeId);
+  return place.kind === PlaceKind.Unsaved ? WORDS.unsaved : WORDS.savedFile;
+}
+
+/** One place as a block; the first free one's button leads. */
+function placeItem(place, args, lead) {
+  const item = text("li", "place");
+  item.append(text("span", "name", place.label ?? place.name), text("span", "where", whereOf(place)));
+  if (place.here) return item;
+  const key = `use:${args.studio ?? args.file}`;
+  const run = () => linkPlace(args, key);
+  item.append(actionButton(WORDS.use, run, { className: lead ? "primary" : "", key, disabled: Boolean(place.linkedTo) }));
+  return item;
+}
+
+function drawPlaces(answer) {
+  const open = answer?.open ?? [];
+  const files = answer?.files ?? [];
+  let lead = true;
+  const leads = (place) => {
+    const first = lead && !place.here && !place.linkedTo;
+    if (first) lead = false;
+    return first;
+  };
+  $("open-places").replaceChildren(...open.map((place) => placeItem(place, { studio: place.studio }, leads(place))));
+  $("file-places").replaceChildren(
+    ...files.filter((file) => !file.open).map((file) => placeItem(file, { file: file.file }, leads(file))),
+  );
+  $("places-none").hidden = open.length > 0;
+  $("files-title").hidden = $("file-places").hidden = $("file-places").children.length === 0;
+}
+
+/** Choose your place: asks the backend for the places now (it reads Documents on this press only). */
+async function showPlaces() {
+  ui.view = "places";
+  $("setup").hidden = true;
+  $("places").hidden = false;
+  // A game that builds in a place can't make another; it chooses one from the list.
+  $("places-new").hidden = $("places-start").hidden = ui.status?.steps?.place === true;
+  $("places-loading").hidden = false;
+  $("places-say").textContent = "";
+  $("places-title").focus();
+  try {
+    drawPlaces(await api.call("action", Action.Places, {}));
+  } catch (e) {
+    if (e?.code !== ErrorCode.Cancelled) $("places-say").textContent = e?.message ?? WORDS.failed;
+  } finally {
+    $("places-loading").hidden = true;
+  }
+}
+
+/** Back to the steps, focus where the person left them. */
+function showSetup(focusKey) {
+  ui.view = "setup";
+  $("places").hidden = true;
+  $("setup").hidden = false;
+  draw(true);
+  const target = document.querySelector(`[data-key="${CSS.escape(focusKey)}"]`);
+  (target ?? $("title")).focus();
+}
+
+/** Use in this game: links the place, then shows the steps with the place ticked. */
+async function linkPlace(args, key) {
+  if (ui.pending) return;
+  ui.pending = key;
+  $("places-say").textContent = "";
+  try {
+    const answer = await api.call("action", Action.UsePlace, args, WAITS[Action.UsePlace]);
+    if (!answer?.linked) {
+      $("places-say").textContent = answer?.message ?? WORDS.failed;
+      return;
+    }
+    ui.said = { at: Step.Place, text: answer.message };
+    await refresh();
+    showSetup(`name:${Step.Place}`);
+    announce(answer.message);
+  } catch (e) {
+    if (e?.code !== ErrorCode.Cancelled) $("places-say").textContent = e?.message ?? WORDS.failed;
+  } finally {
+    ui.pending = null;
+  }
+}
+
+async function choosePlaceFile() {
+  const file = await api.chooseFile({ title: WORDS.pickerTitle, extensions: PLACE_EXTENSIONS }).catch(() => null);
+  if (file) await linkPlace({ file }, "use:file");
+}
+
+async function newGameFromPlaces() {
+  if (ui.pending) return;
+  ui.pending = "places-new";
+  $("places-say").textContent = "";
+  try {
+    const answer = await api.call("action", Action.Create, {}, WAITS[Action.Create]);
+    await refresh();
+    if (answer?.created) {
+      ui.said = { at: Step.Place, text: answer.message };
+      showSetup(`name:${Step.Place}`);
+      announce(answer.message);
+      return;
+    }
+    if (typeof answer?.message === "string") $("places-say").textContent = answer.message;
+  } catch (e) {
+    if (e?.code !== ErrorCode.Cancelled) $("places-say").textContent = e?.message ?? WORDS.failed;
+  } finally {
+    ui.pending = null;
+  }
+}
+
+$("places-back").onclick = () => showSetup(ui.status?.steps?.place ? "change-place" : "choose-place");
+$("places-file").onclick = () => void choosePlaceFile();
+$("places-new").onclick = () => void newGameFromPlaces();
+$("luau").dataset.key = "luau";
+$("luau").onclick = () => {
+  if (ui.pending) return;
+  void send(Action.AddLuauChecks, {}, { key: "luau", at: "setup" });
+};
+$("undo").dataset.key = "undo";
+$("undo").onclick = () => {
+  if (ui.pending) return;
+  void send(Action.UndoSetup, {}, { key: "undo", at: "setup" });
+};
+
+/** A CSS colour as sRGB channels 0–255, read through a canvas so any CSS spelling works; black if unreadable. */
+function channels(colour) {
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.fillStyle = colour;
+  const hex = /^#(..)(..)(..)$/.exec(probe.fillStyle);
+  return hex ? hex.slice(1).map((x) => Number.parseInt(x, 16)) : [0, 0, 0];
+}
+
+/** WCAG relative luminance of sRGB channels 0–255. */
+function luminance(rgb) {
+  const [r, g, b] = rgb.map((c) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two sRGB colours. */
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const hexOf = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+const mix = (fg, bg, share) => fg.map((c, i) => Math.round((c * share) / 100 + (bg[i] * (100 - share)) / 100));
+
+/** The quiet text colour: the least share of the text colour, from 64%, that still reads at 4.5:1 on the background. */
+function quietColour(fg, bg) {
+  for (let share = QUIET_SHARE_MIN; share < 100; share++) {
+    const quiet = mix(fg, bg, share);
+    if (contrast(quiet, bg) >= TEXT_CONTRAST_MIN) return hexOf(quiet);
+  }
+  return hexOf(fg);
+}
+
+/**
+ * The primary button's colours: the host's readable accent fill, text and hover when it sends them;
+ * for an older host, its raw accent with white or black text, whichever reads better.
+ */
+function accentButton(theme) {
+  if (theme.accentFill && theme.accentForeground && theme.accentHover)
+    return { fill: theme.accentFill, text: theme.accentForeground, hover: theme.accentHover };
+  const accent = channels(theme.accent);
+  const white = contrast(accent, channels(WHITE)) >= contrast(accent, channels(BLACK));
+  const away = channels(white ? BLACK : WHITE);
+  return { fill: theme.accent, text: white ? WHITE : BLACK, hover: hexOf(mix(accent, away, HOVER_SHARE)) };
+}
+
+/** The host's theme colours; the quiet text follows its background. */
+function applyTheme(c) {
+  const root = document.documentElement;
+  root.style.setProperty("--bg", c.theme.background);
+  root.style.setProperty("--fg", c.theme.foreground);
+  root.style.setProperty("--accent", c.theme.accent);
+  const button = accentButton(c.theme);
+  root.style.setProperty("--accent-fill", button.fill);
+  root.style.setProperty("--accent-text", button.text);
+  root.style.setProperty("--accent-hover", button.hover);
+  const bg = channels(c.theme.background);
+  root.style.setProperty("--quiet", quietColour(channels(c.theme.foreground), bg));
+  const [r, g, b] = bg.map((x) => x / 255);
+  root.dataset.scheme = 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark";
+}
+
+/** The host's context: its theme, and the open game, which Choose your place links. */
+function readContext() {
+  return api
+    .call("context")
+    .then((c) => {
+      if (c?.theme) applyTheme(c);
+      ui.game = c?.project ?? null;
+      draw(true);
+    })
+    .catch(() => {});
+}
+void readContext().then(refresh);
+api.onContextChanged?.(() => {
+  void readContext().then(refresh);
+});
+const timer = setInterval(() => {
+  if (document.visibilityState === "visible" && ui.view === "setup") void refresh();
+}, REFRESH_MS);
+window.addEventListener("pagehide", () => {
+  closed = true;
+  clearInterval(timer);
+});
+</script></body></html>

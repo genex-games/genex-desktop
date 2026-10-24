@@ -788,10 +788,11 @@ describe("the same agent after the build", () => {
       assert.equal(turn.request.resume, chatSession, "every answer is the chat's own session");
       assert.notEqual(turn.request.readOnly, true);
     }
-    // Loop off: nothing to record after a finished build — no reopen, no launch, no question.
+    // Loop off after a finished build: no reopen and no question. Named flip: the start of a new
+    // Loop, for one asked in words, is always held (it used to be no launch at all).
     assert.deepEqual(
       afters.map((turn) => offeredTools(turn.request)),
-      afters.map(() => []),
+      afters.map(() => ["start_autopilot"]),
     );
     assert.deepEqual(
       requests.filter((r) => r.kind === Kind.Coordinator || r.kind === Kind.FollowUp).map((r) => r.kind),
@@ -855,7 +856,8 @@ describe("the same agent after the build", () => {
     // A question alone never restarts the build.
     await answered(rig, threadId, "is the moon red yet?", engine, 2);
     assert.equal(results.status.run.state, "paused", JSON.stringify(results.status.run));
-    assert.deepEqual(results.offered, ["resume_run"], "a paused run can be resumed from the chat");
+    // Named flip: a new Loop's start, for one asked in words, sits beside the resume.
+    assert.deepEqual(results.offered, ["start_autopilot", "resume_run"], "a paused run can be resumed from the chat");
     let log = await rig.core.store.listEvents(threadId);
     assert.equal(customEvents(log, "run_registered").length, 1, "the question resumed nothing");
     assert.equal(leadPrompts.length, 1);
@@ -1118,7 +1120,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     assert.equal(requests.filter((r) => r.kind === Kind.Lead).length, 1, "no lead turn after the Stop");
   });
 
-  it("S7b. 'continue with…' sent with Loop on after a paused run resumes it with the time it had left: the resume alone is offered, never a reopen or a launch", {
+  it("S7b. 'continue with…' sent with Loop on after a paused run resumes it with the time it had left: the resume is offered, never a reopen, and a new Loop's start only beside it", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "claude-code";
@@ -1145,7 +1147,12 @@ describe("the same agent after the build: the resume it asks for, and the sessio
         workingTime: registered.map(workingTime),
       },
       // The launch names no hours, so it is an ∞ build with its 24 h ceiling (origin/dev's launch).
-      { offered: [["resume_run"]], runs: 1, resumed: [false, true], workingTime: [86_400_000, 86_400_000] },
+      {
+        offered: [["start_autopilot", "resume_run"]],
+        runs: 1,
+        resumed: [false, true],
+        workingTime: [86_400_000, 86_400_000],
+      },
       "the same run resumed on its own budget: the Loop's three hours are not a new one",
     );
     assert.match(leadPrompts[1] ?? "", /THE USER SAYS[\s\S]*continue with a red moon/);

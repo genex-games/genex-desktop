@@ -24,16 +24,20 @@ pub enum AnimationErrorCode {
     /// A clip name the asset does not have, or an asset with no clips where clips are needed (a
     /// node-animated GLB with no animations, AN-27).
     ClipMissing,
+    /// A character, node clips or an animator asked of a game built with `[animation] enabled =
+    /// false` in its genex.toml: the facade links no animation (release R-1).
+    Disabled,
 }
 
 impl AnimationErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [AnimationErrorCode; 5] = [
+    pub const ALL: [AnimationErrorCode; 6] = [
         AnimationErrorCode::AssetInvalid,
         AnimationErrorCode::GraphInvalid,
         AnimationErrorCode::RagdollProfileInvalid,
         AnimationErrorCode::RetargetUnmapped,
         AnimationErrorCode::ClipMissing,
+        AnimationErrorCode::Disabled,
     ];
 
     /// The code's wire spelling.
@@ -44,6 +48,7 @@ impl AnimationErrorCode {
             AnimationErrorCode::RagdollProfileInvalid => "ragdoll-profile-invalid",
             AnimationErrorCode::RetargetUnmapped => "animation-retarget-unmapped",
             AnimationErrorCode::ClipMissing => "animation-clip-missing",
+            AnimationErrorCode::Disabled => "animation-disabled",
         }
     }
 }
@@ -76,6 +81,11 @@ impl AnimationError {
     /// An `animation-clip-missing` refusal.
     pub fn clip_missing(detail: impl Into<String>) -> AnimationError {
         AnimationError { code: AnimationErrorCode::ClipMissing, detail: detail.into() }
+    }
+
+    /// An `animation-disabled` refusal.
+    pub fn disabled(detail: impl Into<String>) -> AnimationError {
+        AnimationError { code: AnimationErrorCode::Disabled, detail: detail.into() }
     }
 
     /// An `animation-graph-invalid` refusal.

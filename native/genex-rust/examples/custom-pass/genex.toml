@@ -6,6 +6,25 @@
 title = "Custom pass"
 world_size = [160, 90]
 
+# The game systems it does not use stay out of its build; the Cargo.toml names the same set as genex
+# features (release R-3), physics among them.
+
+# Sounds and music: genex::audio and ctx.audio (docs/api/audio.md).
+[audio]
+enabled = false
+
+# Walkers that find paths: game.navigation and sim.nav (docs/api/navigation.md).
+[nav]
+enabled = false
+
+# A world streamed in cells round the player: game.streaming (docs/api/streaming.md).
+[streaming]
+enabled = false
+
+# Animated characters: gfx.character and the Animator (docs/api/animation.md).
+[animation]
+enabled = false
+
 [[wgsl]]
 path = "shaders/halo.wgsl"
 kind = "pass"

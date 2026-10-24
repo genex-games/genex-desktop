@@ -1,9 +1,42 @@
-/** Settings → Privacy: Share build metrics (off by default), See what would be sent, Delete what I shared. */
+/**
+ * Settings → Privacy: Share build metrics (off by default), See what would be sent, Delete what I
+ * shared, and Genex's privacy policy and terms at the bottom of the tab.
+ */
 import { type JSX, useEffect, useState } from "react";
 import type { FieldRow, RunSharingStatus } from "../../shared/run-sharing.ts";
 import { Button } from "../ui/Button.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { PRIVACY_WORDS, privacyDeleteWords, problemWords } from "../words.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
+
+/** Where Privacy's links go, in the order the line shows them. */
+const POLICY_LINKS = [
+  { id: "policy", url: "https://genex.games/privacy", label: PRIVACY_WORDS.links.policy },
+  { id: "terms", url: "https://genex.games/terms", label: PRIVACY_WORDS.links.terms },
+] as const;
+
+/** The links at the bottom of the tab, quiet and underlined as links read; each opens in the browser. */
+function PolicyLinks(): JSX.Element {
+  return (
+    <p
+      data-privacy-links
+      className="mt-auto flex flex-wrap gap-x-4 gap-y-1 px-4 pt-6 text-body-sm text-muted-foreground"
+    >
+      {POLICY_LINKS.map((link) => (
+        <button
+          key={link.id}
+          type="button"
+          data-privacy-link={link.id}
+          onClick={() => void window.studio.openUrl(link.url)}
+          className="cursor-pointer underline decoration-current/35 decoration-[0.5px] underline-offset-[5px] hover:text-ink-2 hover:decoration-current/70 focus-visible:text-ink-2 focus-visible:outline-none"
+        >
+          {link.label}
+        </button>
+      ))}
+    </p>
+  );
+}
 
 /** The line under the switch: paused, a launch that never sends, rows waiting, or nothing. */
 function statusLine(status: RunSharingStatus): string | null {
@@ -160,28 +193,31 @@ export function PrivacySection(): JSX.Element {
   );
   if (!status)
     return (
-      <div data-privacy-settings className="appearance-section">
+      <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
         {alert || (
-          <p role="status" className="text-ink-3">
-            {PRIVACY_WORDS.loading}
-          </p>
+          <Pending label={PRIVACY_WORDS.loading}>
+            <SkeletonRows control={SkeletonControl.Button} />
+          </Pending>
         )}
+        <PolicyLinks />
       </div>
     );
   if (!status.available)
     return (
-      <div data-privacy-settings className="appearance-section">
-        <p className="text-ink-3">{PRIVACY_WORDS.removed}</p>
+      <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
+        <p className="mb-4 text-ink-3">{PRIVACY_WORDS.removed}</p>
+        <PolicyLinks />
       </div>
     );
   return (
-    <div data-privacy-settings className="appearance-section">
+    <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
       <section className="appearance-theme settings-rows">
         <ShareRow status={status} busy={busy} onChange={(on) => void change(on)} />
         <PreviewRow />
         <DeleteRow />
       </section>
       {alert}
+      <PolicyLinks />
     </div>
   );
 }

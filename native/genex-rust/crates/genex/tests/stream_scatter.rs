@@ -189,6 +189,38 @@ fn a_cell_that_leaves_the_view_drops_its_group_and_its_rows_stop_uploading() {
 }
 
 #[test]
+fn a_cell_that_leaves_and_reenters_within_the_view_hysteresis_uploads_no_row_again() {
+    // Red (release R-9, STR-20 re-entry): the view set dropped a cell the moment its nearest point
+    // passed the view radius, so a camera wobbling across that edge rebuilt the cell and uploaded
+    // its group's rows again. A built cell now stays until it is a cell side past the radius.
+    let terrain = terrain();
+    let runtime = runtime(&terrain, rule(0.3), |cell| cell == CellId::new(0, 0), 2.0 * CELL);
+    let mut view = view();
+    let mut assets = AssetCache::default();
+    let library = MeshLibrary::new();
+    let plan_of = |frame: &Frame, at: Vec2, assets: &AssetCache| FramePlan::build(&to_scene(frame, &camera_at(at), assets), &library, 16.0 / 9.0).expect("plan");
+    let near = vec2(0.5 * CELL, 0.5 * CELL);
+    // The cell's nearest point is 70 m away: past the 64 m view radius, within one cell side of it.
+    let edge = vec2(CELL + 70.0, 0.5 * CELL);
+    let first = plan_of(&frame(&mut view, &runtime, near, &mut assets), near, &assets);
+    let ids: Vec<u64> = first.retained.iter().map(|span| span.group.id()).collect();
+    assert_eq!(ids.len(), 1, "the cell's group is a retained span");
+    let added = view.stats().groups_added;
+    assert_eq!(added, 1, "one group handed to the renderer");
+    let _ = frame(&mut view, &runtime, edge, &mut assets);
+    let back = plan_of(&frame(&mut view, &runtime, near, &mut assets), near, &assets);
+    let back_ids: Vec<u64> = back.retained.iter().map(|span| span.group.id()).collect();
+    assert_eq!(back_ids, ids, "the same group: the cell was not rebuilt");
+    assert_eq!(view.stats().groups_added, added, "the upload counter: no group handed over again");
+    let rows = back.instances.len();
+    assert!(instance_upload_ranges(rows, &back.retained, Some(&first.retained)).is_empty(), "no row uploads again");
+    // Past the band the cell goes, as before.
+    let far = vec2(CELL + 2.0 * CELL + CELL + 1.0, 0.5 * CELL);
+    let gone = frame(&mut view, &runtime, far, &mut assets);
+    assert_eq!(groups_in(&gone), 0, "a cell more than a cell side past the radius is dropped");
+}
+
+#[test]
 fn a_cell_whose_groups_pass_the_instance_cap_is_refused_and_draws_nothing() {
     // New behaviour (STR-20): the cap the sim counts parts' instances against holds for groups.
     let mut game = Game::new(World).title("Stream scatter cap");

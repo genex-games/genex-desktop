@@ -1,0 +1,7 @@
+# The rpm's %postun: on uninstall ($1 is 0) take the Genex package repository and its key away;
+# an upgrade keeps them. GENEX_PACKAGE_ROOT exists only for the tests. Nothing here may fail.
+ROOT="${GENEX_PACKAGE_ROOT:-}"
+if [ "$1" = 0 ]; then
+  rm -f "$ROOT/etc/yum.repos.d/genex.repo" "$ROOT/etc/pki/rpm-gpg/RPM-GPG-KEY-genex"
+fi
+exit 0

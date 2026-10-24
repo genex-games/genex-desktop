@@ -31,6 +31,7 @@ import { type CoverLook, firstCoverRecipe, rollCoverRecipe } from "../shared/cov
 import type { StudioPlatform } from "../shared/boot.ts";
 import { assetFormat } from "../shared/game-assets.ts";
 import { ExportError, ExportRefusal } from "../shared/game-export-contract.ts";
+import { t } from "../shared/i18n.ts";
 import { folderNameFromTitle, MAX_SLUG_LENGTH, PROJECT_NAME_RE, slugFromName } from "../shared/game-folder-name.ts";
 import {
   displayCover,
@@ -46,6 +47,7 @@ import {
   CreationRefusal,
   DEFAULT_DESTINATIONS,
   DESKTOP_TARGETS,
+  declaresMouseLook,
   type FolderInspection,
   type FolderPreflight,
   type GameCandidate,
@@ -59,7 +61,12 @@ import {
   stackForTargets,
   stackOf,
 } from "../shared/game-project.ts";
-import type { EngineBinding } from "../shared/game-engine.ts";
+import {
+  type EngineBinding,
+  type EngineCatalog,
+  type EngineDeclaration,
+  linkedEngineOf,
+} from "../shared/game-engine.ts";
 import { hostOf, TargetRefusal } from "../shared/game-targets.ts";
 import { type DestinationCheck, parseDestinationCheck } from "../shared/native-contract.ts";
 import {
@@ -76,7 +83,9 @@ import {
   type ProjectStarter,
   type ScaffoldRecord,
   type SourcedFactRule,
+  engineWebVersion,
   settleFacts,
+  withEngineWebVersion,
 } from "../shared/project-facts.ts";
 import {
   copySkipRulesFor,
@@ -86,6 +95,7 @@ import {
   type PluginWorkspace,
 } from "../shared/project-workspace.ts";
 import { readEngineBinding } from "./game-engine-binding.ts";
+import { usesGenexMultiplayer } from "./genex-game-manifest.ts";
 import { EXPORT_STAGING_DIR, exportPublicGame, type ExportOptions, type ExportResult } from "./game-export.ts";
 import { ownNotes, ownRules, REFERENCES_README } from "./game-workspace-prompts.ts";
 import { type GameValidation, validateGameDir } from "./game-validation.ts";
@@ -106,7 +116,7 @@ import {
 import { bundleIdOf, isBundleId } from "./native-bundle.ts";
 import { ensureFactIgnoreRules, ensureIgnoreRules, ignoreRulesToWrite, nestedRepos } from "./nested-repos.ts";
 import { isBelow, isInside, samePath, throughClaudeFolder, toPosixRelative } from "./paths.ts";
-import { detectFacts, readStudioRecord, STUDIO_JSON_MAX_BYTES } from "./project-facts.ts";
+import { detectFoundFacts, readStudioRecord, STUDIO_JSON_MAX_BYTES } from "./project-facts.ts";
 import type { HookEvent } from "../shared/plugin-hooks.ts";
 import {
   COMPILED_SHAPES,
@@ -128,6 +138,7 @@ import {
   recordsShape,
   webGameSignal,
 } from "./project-shape.ts";
+import { renderDumpRules } from "./render-dumps.ts";
 import { ensureRepo } from "./snapshots.ts";
 import { workspaceContentStamp } from "./workspace-content.ts";
 
@@ -451,6 +462,8 @@ export async function assertWritableGame(dir: string): Promise<void> {
 export interface AdoptOptions {
   /** Allow project configuration only after the person explicitly trusts this folder. */
   trustProjectSettings?: boolean;
+  /** Someone else's game (a Play remix): its setup scripts run only once the person trusts them. */
+  guardScripts?: boolean;
   title?: string;
   /**
    * The game to open inside the picked folder — a `rel` from `inspect`, one folder down.
@@ -515,25 +528,30 @@ export interface ProjectIndexFile {
   presentation?: Record<string, GameLibraryEntry>;
 }
 
+/**
+ * What a refusal says. The words a person reads (opening, moving, renaming or exporting a game)
+ * are functions, as main sets its language after this loads; the starter's refusals answer the
+ * agent and stay English.
+ */
 const MESSAGE = {
   InvalidName: (name: string) =>
     `invalid project name ${JSON.stringify(name)} — use lowercase letters, digits, - and _`,
-  FolderGone: "This game folder is no longer available.",
+  FolderGone: () => t("This game folder is no longer available."),
   InvalidPin: "Invalid pin state.",
   NotChosenCover: "Expected a chosen cover.",
-  SubdirIsPath: "open a game folder inside the one you picked, not a path",
-  NoSuchSubdir: (child: string, where: string) => `there is no "${child}" folder in ${where}`,
-  BannedFolder: "pick a project folder, not your home directory or the whole library",
-  AppFolder: "that folder belongs to the app itself — pick a game folder you own",
-  BuildBeforeExport: "Build the current game successfully before exporting",
-  DeclareExportFiles:
-    "Declare the public files/directories in studio.json exportFiles before exporting this custom project",
-  BadExportFiles: "exportFiles must be a nonempty list of public paths",
-  InsideGame: "Choose a folder outside your games.",
-  RootNotEmpty: "Choose an empty folder. This one already has other folders in it.",
-  LocationGone: "That folder is no longer there. Choose another one.",
-  LocationNotFolder: "Choose a folder, not a file.",
-  LocationRefused: "Studio can't create games there. Choose another folder.",
+  SubdirIsPath: () => t("open a game folder inside the one you picked, not a path"),
+  NoSuchSubdir: (child: string, where: string) => t('there is no "{child}" folder in {where}', { child, where }),
+  BannedFolder: () => t("pick a project folder, not your home directory or the whole library"),
+  AppFolder: () => t("that folder belongs to the app itself — pick a game folder you own"),
+  BuildBeforeExport: () => t("Build the current game successfully before exporting"),
+  DeclareExportFiles: () =>
+    t("Declare the public files/directories in studio.json exportFiles before exporting this custom project"),
+  BadExportFiles: () => t("exportFiles must be a nonempty list of public paths"),
+  InsideGame: () => t("Choose a folder outside your games."),
+  RootNotEmpty: () => t("Choose an empty folder. This one already has other folders in it."),
+  LocationGone: () => t("That folder is no longer there. Choose another one."),
+  LocationNotFolder: () => t("Choose a folder, not a file."),
+  LocationRefused: () => t("Studio can't create games there. Choose another folder."),
   UnknownStack: "Choose a stack the studio knows: Three.js or Rust · wgpu.",
   BadTargets: "Choose one to four destinations the studio knows, each once.",
   BrowserOnly: "A Three.js game plays in the browser only. Choose Rust · wgpu to play it on the desktop too.",
@@ -606,7 +624,7 @@ async function assertNoOtherFolders(target: string, known: ReadonlySet<string>):
   });
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || !PROJECT_NAME_RE.test(entry.name)) continue;
-    if (!known.has(await realpath(path.join(target, entry.name)))) throw new Error(MESSAGE.RootNotEmpty);
+    if (!known.has(await realpath(path.join(target, entry.name)))) throw new Error(MESSAGE.RootNotEmpty());
   }
 }
 
@@ -667,6 +685,18 @@ interface FactRecord {
   scaffoldStamp: string | undefined;
 }
 
+/**
+ * The web starter's files that tell its page from a game built on it: the page, and the game code it
+ * boots, which every build of a web game changes. Neither has changed in the template since 0.1.0.
+ */
+const STARTER_PAGE_FILES = ["index.html", "src/main.js"] as const;
+
+/** Whether `text` is the template's `template` with its title placeholders filled by any one-line title. */
+function filledTemplate(template: string, text: string): boolean {
+  const escaped = template.split(TITLE_PLACEHOLDER).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${escaped.join("[^\\n]*")}$`).test(text);
+}
+
 /** A game's studio.json as an object, or null when it is missing or does not parse. */
 async function readStudioMeta(dir: string): Promise<Record<string, unknown> | null> {
   return readStudioRecord(dir);
@@ -682,15 +712,16 @@ const scaffoldRules = (scaffold: ScaffoldRecord | null): SourcedFactRule[] =>
   (scaffold?.facts ?? []).map((rule) => ({ rule, source: FactSource.Scaffold }));
 
 /**
- * The engine link as a fact: `unreal-project` at the linked `.uproject`'s folder, relative to the
- * game (`.` for its root), or absolute when the project lies outside it.
+ * The engine link as a fact: the fact its engine declares (`unreal-project` for Unreal) at the
+ * linked project file's folder, relative to the game (`.` for its root), or absolute when the
+ * project lies outside it.
  */
-async function linkFact(dir: string, engine: EngineBinding): Promise<ProjectFact> {
+async function linkFact(dir: string, link: EngineBinding, engine: EngineDeclaration): Promise<ProjectFact> {
   const root = await realpath(dir).catch(() => dir);
-  const folder = path.dirname(engine.project);
+  const folder = path.dirname(link.project);
   const inside = isInside(root, folder);
   const at = inside ? toPosixRelative(path.relative(root, folder)) || "." : folder;
-  return { id: CoreFact.UnrealProject, path: at, source: FactSource.Link };
+  return { id: engine.fact, path: at, source: FactSource.Link };
 }
 
 /** A cover the user (or a render they asked for) chose: a custom shader, or a recipe that is not a placeholder. */
@@ -740,6 +771,8 @@ export class GameWorkspaces {
   readonly #workspaceSections: () => readonly PluginWorkspace[];
   /** The moments the enabled plugins hook for a game of a kind, read at each description. */
   readonly #hookEvents: (game: GameKind) => readonly HookEvent[];
+  /** The engines the installed plugins declare, which a game's engine link may name, read at each read of a link. */
+  readonly #engines: () => EngineCatalog;
   /** Real paths of games whose starter was found changed: never stamped again in this app run. */
   readonly #touched = new Set<string>();
 
@@ -765,6 +798,7 @@ export class GameWorkspaces {
     factRules?: () => readonly SourcedFactRule[];
     workspaceSections?: () => readonly PluginWorkspace[];
     hookEvents?: (game: GameKind) => readonly HookEvent[];
+    engines?: () => EngineCatalog;
   }) {
     this.root = options.root;
     this.templateDir = options.templateDir;
@@ -784,6 +818,7 @@ export class GameWorkspaces {
     this.#factRules = options.factRules ?? (() => []);
     this.#workspaceSections = options.workspaceSections ?? (() => []);
     this.#hookEvents = options.hookEvents ?? (() => []);
+    this.#engines = options.engines ?? (() => new Map());
   }
 
   dirFor(name: string): string {
@@ -1105,7 +1140,7 @@ export class GameWorkspaces {
     await this.loadIndex();
     if (!isProjectStarter(starter)) throw new Error(MESSAGE.UnknownStarter);
     const dir = this.dirFor(name);
-    if (!(await pathExists(path.join(dir, "studio.json")))) throw new Error(MESSAGE.FolderGone);
+    if (!(await pathExists(path.join(dir, "studio.json")))) throw new Error(MESSAGE.FolderGone());
     const kind = await this.kindOf(name);
     if (kind.facts.length > 0) throw new Error(MESSAGE.AlreadyKind(kind.facts));
     if (!kindPending(kind)) throw new Error(MESSAGE.OwnKind);
@@ -1193,17 +1228,17 @@ export class GameWorkspaces {
   async location(dir: string, allowed?: LocationCheck): Promise<string> {
     await this.loadIndex();
     await ensureDir(this.root);
-    if (!path.isAbsolute(dir)) throw new Error(MESSAGE.LocationRefused);
+    if (!path.isAbsolute(dir)) throw new Error(MESSAGE.LocationRefused());
     const real = await realpath(dir).catch(() => null);
-    if (!real) throw new Error(MESSAGE.LocationGone);
-    if (!(await stat(real)).isDirectory()) throw new Error(MESSAGE.LocationNotFolder);
+    if (!real) throw new Error(MESSAGE.LocationGone());
+    if (!(await stat(real)).isDirectory()) throw new Error(MESSAGE.LocationNotFolder());
     const root = await realpath(this.root);
     if (real === root) return real;
     const appData = isInside(await presentationPath(this.userData), real) && !isInside(root, real);
     const refused = real === path.parse(real).root || appData || throughClaudeFolder(real);
-    if (refused) throw new Error(MESSAGE.LocationRefused);
+    if (refused) throw new Error(MESSAGE.LocationRefused());
     const games = await this.#knownGameFolders(await this.list(), real);
-    if ([...games].some((game) => isInside(game, real))) throw new Error(MESSAGE.InsideGame);
+    if ([...games].some((game) => isInside(game, real))) throw new Error(MESSAGE.InsideGame());
     await allowed?.(real);
     return real;
   }
@@ -1243,7 +1278,7 @@ export class GameWorkspaces {
     // would have put it somewhere else. It is empty, so it goes again, and nothing is recorded.
     if ((await realpath(dir)) !== dir) {
       await rmdir(dir).catch(() => {});
-      throw new Error(MESSAGE.LocationRefused);
+      throw new Error(MESSAGE.LocationRefused());
     }
     const inRoot = new Set(await readdir(this.root));
     const name = uniqueName(slugFromName(title), { has: (taken) => this.#aliases.has(taken) || inRoot.has(taken) });
@@ -1282,7 +1317,7 @@ export class GameWorkspaces {
     const newRoot = await presentationPath(target);
     for (const game of games) {
       const dir = await realpath(game.dir);
-      if (isInside(dir, newRoot)) throw new Error(MESSAGE.InsideGame);
+      if (isInside(dir, newRoot)) throw new Error(MESSAGE.InsideGame());
       known.add(dir);
     }
     return known;
@@ -1329,24 +1364,40 @@ export class GameWorkspaces {
   /**
    * Remember the folder's content as New game just made it (`GameProject.scaffoldStamp`): a later
    * turn reads "nothing built yet" from the folder still matching it. The stamp lists files through
-   * git, so the folder's repository must exist; a folder that cannot be stamped records nothing.
+   * git, so the folder's repository must exist; a folder that cannot be stamped records no stamp.
+   * Either way the game waits for its first build (`GameProject.awaitingFirstBuild`).
    */
   async rememberScaffold(name: string): Promise<GameProject> {
     await this.loadIndex();
     const dir = this.dirFor(name);
     const stamp = await workspaceContentStamp(dir);
-    if (stamp) {
-      const key = await presentationPath(dir);
-      this.#presentation.set(key, { ...this.#presentation.get(key), scaffoldStamp: stamp });
-      await this.#saveIndex();
-    }
+    const key = await presentationPath(dir);
+    const stamped = stamp ? { scaffoldStamp: stamp } : {};
+    this.#presentation.set(key, { ...this.#presentation.get(key), ...stamped, awaitingFirstBuild: true });
+    await this.#saveIndex();
     return this.#describe(name, dir);
+  }
+
+  /**
+   * Record that an answer ended with the game built (`GameProject.awaitingFirstBuild`): once, as it
+   * stays built whatever comes after. True when this call recorded it.
+   */
+  async markBuilt(name: string): Promise<boolean> {
+    await this.loadIndex();
+    const key = await presentationPath(this.dirFor(name));
+    const entry = this.#presentation.get(key);
+    if (!entry?.awaitingFirstBuild) return false;
+    const built: GameLibraryEntry = { ...entry };
+    delete built.awaitingFirstBuild;
+    this.#presentation.set(key, built);
+    await this.#saveIndex();
+    return true;
   }
 
   async update(name: string, patch: GameUpdate): Promise<GameProject> {
     await this.loadIndex();
     const dir = await realpath(this.dirFor(name));
-    if (!(await pathExists(dir))) throw new Error(MESSAGE.FolderGone);
+    if (!(await pathExists(dir))) throw new Error(MESSAGE.FolderGone());
     const changes: GameUpdate = {};
     if (patch.title !== undefined) changes.title = validateGameTitle(patch.title);
     if (patch.pinned !== undefined) {
@@ -1409,6 +1460,7 @@ export class GameWorkspaces {
       await this.touch(existing.name);
       await this.#ensurePlayable(existing.dir, existing.name, options.title ?? existing.title, options);
       await this.#rememberTrust(existing.dir, options.trustProjectSettings === true);
+      if (options.guardScripts) await this.#guardScripts(existing.dir, true);
       return this.#describe(existing.name, existing.dir);
     }
 
@@ -1422,9 +1474,25 @@ export class GameWorkspaces {
     const title = options.title ?? path.basename(resolved);
     await this.#ensurePlayable(resolved, name, title, options);
     await this.#rememberTrust(resolved, options.trustProjectSettings === true);
+    if (options.guardScripts) await this.#guardScripts(resolved, true);
     await this.#saveIndex();
     await this.touch(name);
     return this.#describe(name, resolved);
+  }
+
+  /** The person trusts this game's setup scripts: its installs run them from now on. */
+  async trustScripts(name: string): Promise<void> {
+    await this.loadIndex();
+    await this.#guardScripts(this.dirFor(name), false);
+  }
+
+  async #guardScripts(dir: string, guarded: boolean): Promise<void> {
+    const key = await presentationPath(dir);
+    const entry = { ...this.#presentation.get(key) };
+    if (guarded) entry.guardScripts = true;
+    else delete entry.guardScripts;
+    this.#presentation.set(key, entry);
+    await this.#saveIndex();
   }
 
   async #rememberTrust(dir: string, trusted: boolean): Promise<void> {
@@ -1469,13 +1537,14 @@ export class GameWorkspaces {
     const shape = await readProjectShape(dir);
     const { destinations } = await readGameDestinations(dir, shape, this.#host);
     const presentation = this.#presentation.get(await realpath(dir));
-    const engine = await readEngineBinding(dir);
+    const engine = await this.#engineLink(dir);
     const portedFrom = parsePortedFrom(parsed.portedFrom);
     const scaffold = parseScaffoldRecord(parsed.scaffold);
     const record = { engine, portedFrom, scaffoldStamp: presentation?.scaffoldStamp };
     // A folder that can't be read is still listed: it has no facts and is of no kind Genex can name.
     const { facts, holds } = await this.#kind(dir, record).catch(unreadableKind);
     const hookEvents = this.#hookEvents({ facts, ...(holds ? { holds } : {}) });
+    const declared = engine ? this.#engines().get(engine.kind) : undefined;
     return {
       name,
       dir,
@@ -1484,7 +1553,6 @@ export class GameWorkspaces {
       pinned: presentation?.pinned ?? false,
       cover: presentation?.cover,
       lastOpenedAt: this.#recents.find((row) => row.name === name)?.openedAt,
-      ...(presentation?.provisional ? { provisional: true } : {}),
       createdAt: parsed.createdAt ?? "",
       pathLabel: this.pathLabel(dir),
       library: isInside(this.root, dir),
@@ -1493,13 +1561,16 @@ export class GameWorkspaces {
       destinations,
       ...nativeChecksField(presentation),
       ...(engine ? { engine } : {}),
+      ...(declared ? { linkedEngine: linkedEngineOf(declared) } : {}),
       facts,
       ...(holds ? { holds } : {}),
       ...(hookEvents.length > 0 ? { hookEvents: [...hookEvents] } : {}),
       ...(portedFrom.length > 0 ? { portedFrom } : {}),
       ...(scaffold ? { scaffold: { plugin: scaffold.plugin, id: scaffold.id, label: scaffold.label } } : {}),
       web: hasFact(facts, CoreFact.WebGame, "."),
-      ...(presentation?.scaffoldStamp ? { scaffoldStamp: presentation.scaffoldStamp } : {}),
+      ...presentationFlags(presentation),
+      ...((await usesGenexMultiplayer(dir)) ? { multiplayer: true } : {}),
+      ...(declaresMouseLook(meta) ? { mouseLook: true } : {}),
     };
   }
 
@@ -1546,7 +1617,7 @@ export class GameWorkspaces {
     await this.loadIndex();
     const dir = this.dirFor(name);
     const presentation = this.#presentation.get(await presentationPath(dir));
-    const engine = await readEngineBinding(dir);
+    const engine = await this.#engineLink(dir);
     const portedFrom = parsePortedFrom((await readStudioMeta(dir))?.portedFrom);
     return this.#kind(dir, { engine, portedFrom, scaffoldStamp: presentation?.scaffoldStamp });
   }
@@ -1561,7 +1632,7 @@ export class GameWorkspaces {
   async rawFactsOf(name: string, scaffold?: ScaffoldRecord): Promise<ProjectFact[]> {
     await this.loadIndex();
     const dir = this.dirFor(name);
-    return this.#rawFacts(dir, await readEngineBinding(dir), scaffold);
+    return this.#rawFacts(dir, await this.#engineLink(dir), scaffold);
   }
 
   /**
@@ -1569,13 +1640,25 @@ export class GameWorkspaces {
    * of `scaffold`, else of the scaffold studio.json records) and its engine link.
    */
   async #rawFacts(dir: string, engine: EngineBinding | undefined, scaffold?: ScaffoldRecord): Promise<ProjectFact[]> {
+    return settleFacts(await this.#foundFacts(dir, engine, scaffold));
+  }
+
+  /** `#rawFacts` before they are settled: a web game below another (an engine's web version) is still there. */
+  async #foundFacts(dir: string, engine: EngineBinding | undefined, scaffold?: ScaffoldRecord): Promise<ProjectFact[]> {
     const recorded = scaffold ?? (await readScaffold(dir));
-    const detected = await detectFacts(dir, [...this.#factRules(), ...scaffoldRules(recorded)]);
-    if (!engine) return detected;
-    // The link stands for the game's Unreal project: a project file it holds besides (one the game
-    // made before it was switched to another) is no second one, and its files are the link's own.
-    const others = detected.filter((fact) => fact.id !== CoreFact.UnrealProject);
-    return settleFacts([await linkFact(dir, engine), ...others]);
+    const detected = await detectFoundFacts(dir, [...this.#factRules(), ...scaffoldRules(recorded)]);
+    const declared = engine ? this.#engines().get(engine.kind) : undefined;
+    if (!engine || !declared) return detected;
+    // The link stands for the game's project in its engine: a project file of that engine it holds
+    // besides (one the game made before it was switched to another) is no second one, and its files
+    // are the link's own.
+    const linked = await linkFact(dir, engine, declared);
+    return [linked, ...detected.filter((fact) => fact.id !== linked.id)];
+  }
+
+  /** The game's engine link among the installed plugins' engines, or undefined for a web game. */
+  #engineLink(dir: string): Promise<EngineBinding | undefined> {
+    return readEngineBinding(dir, this.#engines());
   }
 
   /**
@@ -1589,7 +1672,7 @@ export class GameWorkspaces {
 
   /** The ignore rules of the facts a folder holds now, each placed at its fact's folder (one walk). */
   async #ignoreRules(dir: string): Promise<PlacedRule[]> {
-    const facts = await this.#rawFacts(dir, await readEngineBinding(dir));
+    const facts = await this.#rawFacts(dir, await this.#engineLink(dir));
     return ignoreRulesFor(facts, this.#workspaceSections());
   }
 
@@ -1601,7 +1684,7 @@ export class GameWorkspaces {
   async copyRulesOf(name: string): Promise<{ skip: PlacedRule[]; ignored: PlacedRule[] }> {
     await this.loadIndex();
     const dir = this.dirFor(name);
-    const facts = await this.#rawFacts(dir, await readEngineBinding(dir));
+    const facts = await this.#rawFacts(dir, await this.#engineLink(dir));
     const sections = this.#workspaceSections();
     const ignored = ignoreRulesFor(facts, sections);
     const skipOnly = copySkipRulesFor(facts, sections).filter(
@@ -1615,11 +1698,12 @@ export class GameWorkspaces {
    * checkpoints): tops up its `.gitignore` with the lines of the facts it holds now, so a port never
    * sweeps the new engine's scratch into history, and answers the placed rules. Only the facts'
    * lines: the generic rules and the file itself were written when the folder was opened, and a
-   * person who changed them since keeps their change. A file already in history stays there; a
-   * linked or missing ignore file is left alone.
+   * person who changed them since keeps their change. The numbered frames a video was rendered
+   * from join them (`renderDumpRules`), so no commit copies them into history. A file already in
+   * history stays there; a linked or missing ignore file is left alone.
    */
   async ensureWorkspaceRules(dir: string): Promise<PlacedRule[]> {
-    const rules = await this.#ignoreRules(dir);
+    const rules = [...(await this.#ignoreRules(dir)), ...(await renderDumpRules(dir))];
     await ensureFactIgnoreRules(dir, rules.map(ignoreLine));
     return rules;
   }
@@ -1627,16 +1711,20 @@ export class GameWorkspaces {
   /**
    * The facts a game lists: its raw facts minus what a port replaced (`portedFrom`), minus the web
    * template an engine link left beside its project (a link with no `portedFrom` is an older
-   * record), and none at all for a starter nothing has been built in yet (no kind picked). With no
-   * facts, what the folder holds besides (`folderHolds`).
+   * record), with a Unity or Godot game's web version in web/ as its web game
+   * (`withEngineWebVersion`), and none at all for a starter nothing has been built in yet (no kind
+   * picked). With no facts, what the folder holds besides (`folderHolds`).
    */
   async #kind(dir: string, record: FactRecord): Promise<FolderKind> {
-    const raw = await this.#rawFacts(dir, record.engine);
+    const found = await this.#foundFacts(dir, record.engine);
+    const raw = settleFacts(found);
     const linkedLegacy = record.engine !== undefined && record.portedFrom.length === 0;
-    const facts = raw.filter((fact) => {
+    const counted = raw.filter((fact) => {
       if (hasFact(record.portedFrom, fact.id, fact.path)) return false;
       return !(linkedLegacy && fact.id === CoreFact.WebGame && fact.path === ".");
     });
+    const besideWebVersion = engineWebVersion(counted, found) !== null && hasFact(counted, CoreFact.WebGame, ".");
+    const facts = withEngineWebVersion(counted, found, besideWebVersion && (await this.#starterPageAtRoot(dir)));
     // New game's untouched starter is the template as it was made: nothing of the person's yet.
     if (await this.#untouchedStarter(dir, raw, record.scaffoldStamp)) return { facts: [], holds: FolderHolds.Nothing };
     if (facts.length > 0) return { facts };
@@ -1658,6 +1746,18 @@ export class GameWorkspaces {
     if (stamp === scaffoldStamp) return true;
     if (stamp) this.#touched.add(key);
     return false;
+  }
+
+  /** Whether the folder's root page is still the web starter's (`STARTER_PAGE_FILES`), nothing built on it. */
+  async #starterPageAtRoot(dir: string): Promise<boolean> {
+    for (const file of STARTER_PAGE_FILES) {
+      const [own, template] = await Promise.all([
+        readFile(path.join(dir, file), "utf8").catch(() => null),
+        readFile(path.join(this.templateDir, file), "utf8").catch(() => null),
+      ]);
+      if (own === null || template === null || !filledTemplate(template, own)) return false;
+    }
+    return true;
   }
 
   /** Write a detected shape into studio.json once, so the folder's way of running is explicit and editable. */
@@ -1694,7 +1794,7 @@ export class GameWorkspaces {
     const child = (subdir ?? ".").trim();
     if (child === "" || child === ".") return resolved;
     if (child !== path.basename(child) || child.startsWith(".")) {
-      throw new Error(MESSAGE.SubdirIsPath);
+      throw new Error(MESSAGE.SubdirIsPath());
     }
     const target = await realpath(path.join(resolved, child)).catch(() => null);
     if (!target || !isInside(resolved, target)) {
@@ -1713,10 +1813,10 @@ export class GameWorkspaces {
       this.root,
     ];
     if (banned.some((item) => path.resolve(item) === resolved)) {
-      throw new Error(MESSAGE.BannedFolder);
+      throw new Error(MESSAGE.BannedFolder());
     }
     if (isInside(this.userData, resolved) && !isInside(this.root, resolved)) {
-      throw new Error(MESSAGE.AppFolder);
+      throw new Error(MESSAGE.AppFolder());
     }
   }
 
@@ -2082,12 +2182,12 @@ export class GameWorkspaces {
     if (builtOutput) return exportPublicGame(builtOutput, targetDir, await readdir(builtOutput), undefined, staged);
     // A compiled game's public copy is its web build, never its sources: with no build there is nothing to export.
     if (isCompiledStack(stackOf(recorded))) {
-      throw new ExportError(ExportRefusal.BuildFailed, MESSAGE.BuildBeforeExport);
+      throw new ExportError(ExportRefusal.BuildFailed, MESSAGE.BuildBeforeExport());
     }
-    if (shape?.build) throw new Error(MESSAGE.BuildBeforeExport);
-    if (shape && !config?.exportFiles) throw new Error(MESSAGE.DeclareExportFiles);
+    if (shape?.build) throw new Error(MESSAGE.BuildBeforeExport());
+    if (shape && !config?.exportFiles) throw new Error(MESSAGE.DeclareExportFiles());
     const roots = config?.exportFiles ?? (await defaultExportRoots(dir));
-    if (!isExportList(roots)) throw new Error(MESSAGE.BadExportFiles);
+    if (!isExportList(roots)) throw new Error(MESSAGE.BadExportFiles());
     return exportPublicGame(dir, targetDir, roots, shape ? undefined : this.vendorDir, staged);
   }
 }
@@ -2281,4 +2381,15 @@ async function templateFiles(from: string, skip: ReadonlySet<string>, rel = ""):
     else files.push(relative);
   }
   return files;
+}
+
+/** The listing's flags a game's library entry carries, each only when set. */
+function presentationFlags(
+  presentation: GameLibraryEntry | undefined,
+): Pick<GameProject, "provisional" | "scaffoldStamp" | "awaitingFirstBuild"> {
+  return {
+    ...(presentation?.provisional ? { provisional: true } : {}),
+    ...(presentation?.scaffoldStamp ? { scaffoldStamp: presentation.scaffoldStamp } : {}),
+    ...(presentation?.awaitingFirstBuild ? { awaitingFirstBuild: true } : {}),
+  };
 }

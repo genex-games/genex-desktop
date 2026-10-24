@@ -35,6 +35,7 @@ function problem(fields: Partial<BuildProblem> = {}): BuildProblem {
     lines: [],
     needsInstall: false,
     install: null,
+    skippedScripts: null,
     showingLastBuild: false,
     at: "2026-10-01T00:00:00.000Z",
     ...fields,

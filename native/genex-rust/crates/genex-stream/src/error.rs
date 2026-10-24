@@ -32,11 +32,14 @@ pub enum StreamErrorCode {
     /// loading: the capture was drawn with what was resident, and
     /// `state().volatile.__stream.view.timeout` names it until a drain settles (STR-25).
     DrainTimeout,
+    /// `sim.stream.require` named a group the build's `genex.toml` does not declare
+    /// (`[[asset_group]]`); nothing was required (STR-29, the facade's `stream_groups.rs`).
+    UnknownGroup,
 }
 
 impl StreamErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [StreamErrorCode; 7] = [
+    pub const ALL: [StreamErrorCode; 8] = [
         StreamErrorCode::Invalid,
         StreamErrorCode::TooManyAnchors,
         StreamErrorCode::OutOfWorld,
@@ -44,6 +47,7 @@ impl StreamErrorCode {
         StreamErrorCode::HoldTimeout,
         StreamErrorCode::SnapshotInvalid,
         StreamErrorCode::DrainTimeout,
+        StreamErrorCode::UnknownGroup,
     ];
 
     /// The code's wire spelling.
@@ -56,6 +60,7 @@ impl StreamErrorCode {
             StreamErrorCode::HoldTimeout => "stream-hold-timeout",
             StreamErrorCode::SnapshotInvalid => "stream-snapshot-invalid",
             StreamErrorCode::DrainTimeout => "stream-drain-timeout",
+            StreamErrorCode::UnknownGroup => "stream-unknown-group",
         }
     }
 }
