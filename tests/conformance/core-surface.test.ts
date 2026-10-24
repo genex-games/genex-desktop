@@ -71,6 +71,9 @@ const METHODS = [
   // The stage strip's Play/Stop (studio:preview.play, studio:preview.stop).
   "playLive",
   "pluginBinding",
+  "pluginNativeJobs",
+  "pluginNativeJob",
+  "pluginCancelNativeJob",
   "presentProjectAssets",
   "previewProjectAsset",
   "projectAssets",

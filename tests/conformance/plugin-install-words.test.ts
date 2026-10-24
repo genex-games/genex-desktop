@@ -36,6 +36,40 @@ const SCANNED: PluginScan = {
 /** The dialog's blocks, split where it leaves a blank line. */
 const blocks = (detail: string): string[] => detail.split("\n\n");
 
+test("native install consent discloses the declared duration and GPU use", () => {
+  const manifest: PluginManifest = {
+    ...example,
+    nativeJobs: [
+      {
+        id: "shape",
+        runtime: "worker",
+        args: [],
+        inputs: [],
+        values: {},
+        outputs: ["shape.glb"],
+        timeoutMs: 2100000,
+        maxOutputBytes: 1000,
+        maxAssetBytes: 4096,
+        gpu: true,
+      },
+      {
+        id: "export",
+        runtime: "worker",
+        args: [],
+        inputs: [],
+        values: {},
+        outputs: ["a.txt"],
+        timeoutMs: 1000,
+        maxOutputBytes: 1000,
+        maxAssetBytes: 4096,
+      },
+    ],
+  };
+  const detail = installDetail({ manifest, origin: INDEX });
+  assert.ok(detail.includes("shape: up to 35 min per background job; uses the GPU."));
+  assert.ok(detail.includes("export: up to 1 s per background job."));
+});
+
 test("characterization: a first install from the catalog gives one block each, in plain words", () => {
   assert.deepEqual(blocks(installDetail({ manifest: genex, origin: INDEX, scan: SCANNED })), [
     "From GitHub genex-games/genex-plugins@aaaaaaaaaaaa (cataloged, not audited)\nPublisher: Genex",

@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promis
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { running as processRunning } from "../helpers/processes.ts";
 import { PluginNativeServices } from "../../src/substrate/plugins/native.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import type { PluginManifest, PluginNativeResult } from "../../src/shared/plugins.ts";
@@ -96,6 +98,40 @@ test("native manifests require declared recipes, safe aliases, a pinned digest a
     };
     assert.throws(() => validateManifest(m), /trusted/);
   } finally {
+    await f.close();
+  }
+});
+
+test("a real background job has a running receipt and native.cancel stops its sandboxed worker", {
+  skip: process.platform !== "darwin" && "managed native execution uses macOS Seatbelt",
+}, async () => {
+  const f = await setup();
+  try {
+    const recipe = f.manifest.nativeJobs?.[0];
+    assert.ok(recipe);
+    recipe.timeoutMs = 300000;
+    await writeFile(path.join(f.game, "wait.sh"), 'printf \'%s\' "$$" > "$1"\n/bin/sleep 60');
+    const answer = (await f.call("native.run", {
+      job: "write",
+      inputs: { script: "wait.sh" },
+      values: {},
+      background: true,
+    })) as { id: string };
+    assert.deepEqual(Object.keys(answer), ["id"]);
+    const running = (await f.call("native.result", answer)) as PluginNativeResult;
+    assert.equal(running.state, "running");
+    let pid = 0;
+    for (let attempt = 0; attempt < 500 && !pid; attempt++) {
+      pid = Number(await readFile(path.join(running.output, "result.txt"), "utf8").catch(() => "0"));
+      if (!pid) await delay(10);
+    }
+    assert.ok(pid, "the real sandboxed worker started");
+    assert.equal(await f.call("native.cancel", answer), true);
+    await f.service.stop();
+    assert.equal(((await f.call("native.result", answer)) as PluginNativeResult).state, "cancelled");
+    assert.equal(await processRunning(pid), false);
+  } finally {
+    await f.service.stop();
     await f.close();
   }
 });

@@ -19,6 +19,7 @@ import { GenexDetail } from "./genex/GenexDetail.tsx";
 import { hasOwnPage, isActive, isOffList } from "./labels.ts";
 import type { OpenPanel, PluginsPage } from "./page.ts";
 import { PluginConnections } from "./PluginConnections.tsx";
+import { NativeJobLimits, NativeJobs } from "./NativeJobs.tsx";
 import { AccountStep, ReinstallButton, Section } from "./rows.tsx";
 import type { ShownSkill } from "./skills-sections.ts";
 
@@ -105,6 +106,8 @@ function GenericDetail({
   return (
     <>
       <PluginNotes detail={detail} />
+      <NativeJobLimits manifest={detail.manifest} />
+      {Boolean(detail.manifest.nativeJobs?.length) && <NativeJobs key={detail.manifest.id} id={detail.manifest.id} />}
       {blender && isActive(detail) && <BlenderRuntimeCard plugin={detail} />}
       <div className="extensions-detail-actions">
         <AccountStep plugin={detail} page={page} />

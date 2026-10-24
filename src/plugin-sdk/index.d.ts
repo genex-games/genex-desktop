@@ -631,10 +631,19 @@ export interface PluginHostCall {
   (method: "runtime.installation", args: { runtime: string }): Promise<PluginRuntimeInstall | null>;
   /** User setup actions only. Downloaded partial bytes remain available for retry. */
   (method: "runtime.cancelInstall", args: { runtime: string }): Promise<true>;
+  /** Start a durable job without waiting. Poll native.result; native.cancel stops it. */
   (
     method: "native.run",
-    args: { job: string; inputs: Record<string, string>; values: Record<string, string> },
+    args: { job: string; inputs: Record<string, string>; values: Record<string, string>; background: true },
+  ): Promise<{ id: string }>;
+  (
+    method: "native.run",
+    args: { job: string; inputs: Record<string, string>; values: Record<string, string>; background?: false },
   ): Promise<PluginNativeResult>;
+  (
+    method: "native.run",
+    args: { job: string; inputs: Record<string, string>; values: Record<string, string>; background: boolean },
+  ): Promise<PluginNativeResult | { id: string }>;
   (method: "native.jobs"): Promise<PluginNativeResult[]>;
   /**
    * `game-engine`: starts a long job in Genex's process sandbox and answers its id at once; Genex owns
@@ -645,6 +654,8 @@ export interface PluginHostCall {
   (method: "sandbox.result", args: { id: string }): Promise<PluginSandboxJob | null>;
   (method: "sandbox.stop", args: { id: string }): Promise<{ stopped: boolean }>;
   (method: "native.result", args: { id: string }): Promise<PluginNativeResult | null>;
+  /** True when cancellation was requested; false for a finished or unowned job. */
+  (method: "native.cancel", args: { id: string }): Promise<boolean>;
   /**
    * Every setting this version declares: the stored value when it has the declared type, else the
    * default. A key an earlier version declared, or stored under another type, is never returned.

@@ -6,8 +6,15 @@ import type { HookContext, PluginHook, PluginLock } from "./plugin-hooks.ts";
 import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches, withoutEngineWebVersion } from "./project-facts.ts";
 import type { WorkerIsolation } from "./workers.ts";
 import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
-import { MINUTE_MS } from "./duration.ts";
+import { MINUTE_MS, SECOND_MS } from "./duration.ts";
 import { t } from "./i18n.ts";
+
+/** Foreground native calls retain the five-minute limit. */
+export const NATIVE_JOB_TIMEOUT_MS = 5 * MINUTE_MS;
+/** Every background recipe has the same maximum worker budget. */
+export const NATIVE_BACKGROUND_TIMEOUT_MS = 35 * MINUTE_MS;
+/** Cleanup is outside the worker's compute budget and must finish promptly. */
+export const NATIVE_JOB_CLEANUP_TIMEOUT_MS = 10 * SECOND_MS;
 
 /** Where a plugin's native runtime stands on this Mac (`PluginNativeStatus.state`). */
 export const NativeRuntimeState = {
@@ -108,6 +115,12 @@ export interface PluginRuntimeInstall {
   updatedAt: string;
   error?: string;
 }
+/** Lightweight host job list; logs and output files load only on demand. */
+export type PluginNativeJobSummary = Pick<
+  PluginNativeResult,
+  "id" | "recipe" | "runtime" | "state" | "project" | "createdAt" | "finishedAt"
+>;
+
 export interface PluginNativeResult {
   inputs?: Record<string, { file: string; sha256: string }>;
   id: string;
@@ -1070,6 +1083,7 @@ export const PluginService = {
   NativeRun: "native.run",
   NativeJobs: "native.jobs",
   NativeResult: "native.result",
+  NativeCancel: "native.cancel",
   RuntimeDetect: "runtime.detect",
   RuntimeInstall: "runtime.install",
   RuntimeInstallation: "runtime.installation",

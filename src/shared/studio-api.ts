@@ -53,6 +53,7 @@ import type {
   PluginCatalogEntry,
   PluginIndexView,
   PluginPanelDocument,
+  PluginNativeResult,
 } from "./plugins.ts";
 import type { PluginFileRequest } from "./plugin-file-request.ts";
 import type { McpConnectorView, McpTestResult, McpToolSummary } from "./mcp.ts";
@@ -200,6 +201,11 @@ export interface StudioApi {
   pluginSkillText(id: string, name: string, file?: string): Promise<string>;
   pluginsList(): Promise<PluginInfo[]>;
   pluginsCatalog(): Promise<PluginCatalogEntry[]>;
+  /** The installed plugin's durable native job records, including interrupted jobs. */
+  pluginNativeJobs(id: string): Promise<import("./plugins.ts").PluginNativeJobSummary[]>;
+  pluginNativeJob(id: string, jobId: string): Promise<PluginNativeResult | null>;
+  /** The person's Cancel on a job owned by this installed plugin. */
+  pluginCancelNativeJob(id: string, jobId: string): Promise<boolean>;
   pluginEnable(id: string, enabled: boolean): Promise<void>;
   pluginRemove(id: string): Promise<void>;
   pluginInstall(id?: string): Promise<void>;

@@ -123,7 +123,7 @@ undeclared method is a compile error.
 | `credentials.session` | `credentials`, API 3 | Reuse an explicitly unlocked host-memory lease; never opens the OS store |
 | `runtime.detect` / `runtime.installation` | `native-runtime`, API 3 | Read declared native runtime readiness and durable installation progress |
 | `runtime.install` / `runtime.cancelInstall` | `native-runtime`, API 3 | Fixed pinned installation through a real declared user action, or an agent tool of the same name with a `confirmation` card the person answers (the call answers once the download starts); cancelling is the person's action only |
-| `native.run` / `native.jobs` / `native.result` | `native-runtime`, API 3 | Project-bound fixed job recipes, cancellation and durable results; no automatic replay |
+| `native.run` / `native.jobs` / `native.result` / `native.cancel` | `native-runtime`, API 3 | Project-bound recipes and durable results; `background: true` returns the job id, up to the manifest's 35-minute ceiling; foreground calls stay capped at five minutes; no automatic replay |
 | `game.engine.link` / `game.engine.read` | `game-engine` | Link the bound game to an engine project file, an Unreal `.uproject` or a Godot `project.godot` (checked by real path; the chat shows it with Undo), or read its link. The host keeps it in `storage.root/links/<game>.json`; a call to your MCP server never links a game |
 | `game.engine.steps` | `game-engine` | Show your setup card (your `steps` action's answer, read live) in the calling chat; see [Setup in the chat](#setup-in-the-chat) |
 | `game.snapshot` | `game-engine` | `{reason}` → `{snapshotId}`: a game snapshot of the bound game, listed in Rewind under `reason` (one plain line, at most 200 characters), before you change files there |

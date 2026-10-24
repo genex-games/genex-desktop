@@ -4,6 +4,7 @@
  * are tested without Electron.
  * `plugin-install-dialog.ts` and the plugins IPC show them.
  */
+import { nativeJobDisclosure } from "../shared/native-job-disclosure.ts";
 import {
   PluginCapability,
   PluginHostTool,
@@ -328,6 +329,7 @@ export function installDetail(facts: PluginInstallFacts): string {
     MESSAGE.unsandboxed(),
     localAccessBlock(manifest, origin, staysOn),
     capabilityBlock(manifest, before),
+    ...nativeJobDisclosure(manifest),
     serverBlock(manifest, before),
     folderBlock(manifest, before),
     hostToolBlock(manifest, before),

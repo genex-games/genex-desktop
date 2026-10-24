@@ -111,6 +111,18 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   // In the app's language: each manifest's texts from the plugin's own catalog.
   handle("studio:plugins.list", async () => core.plugins.displayList());
   handle("studio:plugins.catalog", async () => core.plugins.catalog());
+  handle("studio:plugins.native-jobs", async (p) => {
+    if (typeof p?.id !== "string") throw new Error(MESSAGE.notFound());
+    return core.pluginNativeJobs(p.id);
+  });
+  handle("studio:plugins.native-job", async (p) => {
+    if (typeof p?.id !== "string" || typeof p?.jobId !== "string") throw new Error(MESSAGE.notFound());
+    return core.pluginNativeJob(p.id, p.jobId);
+  });
+  handle("studio:plugins.cancel-native-job", async (p) => {
+    if (typeof p?.id !== "string" || typeof p?.jobId !== "string") throw new Error(MESSAGE.notFound());
+    return core.pluginCancelNativeJob(p.id, p.jobId);
+  });
   handle("studio:plugins.enable", async (p) => {
     if (typeof p.enabled !== "boolean") throw new Error(MESSAGE.invalidState);
     await core.plugins.setEnabled(p.id, p.enabled);
