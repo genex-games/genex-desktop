@@ -141,14 +141,16 @@ async function studio(runs: Run[]) {
     activityItems: async () =>
       runs.map(({ project, runId, state }) => ({ project, runId, runOutcome: outcome(state), at: "" })),
   };
+  const sweeps = { count: 0 };
   const internals = {
     activeDelegations,
     activeRunIds,
     servedRoots,
     rewind: { checkpoints: { exclusive: <T>(_dir: string, work: () => Promise<T>) => work() } },
+    gameBuilds: { sweep: async () => ++sweeps.count },
   };
   const storage = new StorageSpaceService(core as never, internals as never);
-  return { layout, shown, show, activeRunIds, activeDelegations, storage };
+  return { layout, shown, show, activeRunIds, activeDelegations, storage, sweeps };
 }
 
 /** Runs newest first: each game's first finished one is its newest build. */
@@ -164,7 +166,7 @@ const RUNS: Run[] = [
 
 describe("freeing space", () => {
   it("in one game deletes its older builds and old shown copies, and keeps the rest", async () => {
-    const { layout, shown, show, storage } = await studio(RUNS);
+    const { layout, shown, show, storage, sweeps } = await studio(RUNS);
     const pictures = await diskBytes(path.join(layout.runs, "run_g_old"));
     const copies =
       (await diskBytes(path.join(layout.scratch, "autopilot", "run_g_old"))) +
@@ -178,6 +180,7 @@ describe("freeing space", () => {
     const freed = await storage.free("g");
     assert.ok(freed.freedBytes >= pictures + copies, `${freed.freedBytes}`);
     assert.deepEqual(freed.skipped, []);
+    assert.equal(sweeps.count, 1, "the build lanes sweep the copies' build folders");
     const all = RUNS.map((run) => run.runId).filter((runId) => runId !== "run_g_old");
     assert.deepEqual(await names(layout.runs), [...all].sort(), "only g's older build's pictures went");
     assert.deepEqual(await names(path.join(layout.scratch, "autopilot")), [...all].sort());
@@ -214,7 +217,7 @@ describe("freeing space", () => {
   });
 
   it("refuses in a game that is working and deletes nothing", async () => {
-    const { layout, show, activeRunIds, storage } = await studio(RUNS);
+    const { layout, show, activeRunIds, storage, sweeps } = await studio(RUNS);
     const before = [await names(layout.runs), await names(show)];
     activeRunIds.add("run_g_paused");
     await assert.rejects(storage.free("g"), /Wait for this game's work to finish/);
@@ -222,6 +225,7 @@ describe("freeing space", () => {
     activeRunIds.add("run_untied");
     await assert.rejects(storage.free("g"), /Wait for this game's work to finish/, "a run no record ties to a game");
     assert.deepEqual([await names(layout.runs), await names(show)], before);
+    assert.equal(sweeps.count, 0, "a refused free sweeps no build folders");
   });
 
   it("keeps a run that is still going even when its record says it finished", async () => {

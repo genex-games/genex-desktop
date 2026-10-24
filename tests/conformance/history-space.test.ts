@@ -462,6 +462,7 @@ describe("which runs a clear counts as ended", () => {
       activeRunIds,
       servedRoots: new Map(),
       rewind: { checkpoints: { exclusive: <T>(_dir: string, work: () => Promise<T>) => work() } },
+      gameBuilds: { sweep: async () => 0 },
     };
     return { dir: repo.dir, activeRunIds, storage: new StorageSpaceService(core as never, internals as never) };
   }
