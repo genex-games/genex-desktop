@@ -145,7 +145,7 @@ import {
   type RustLaneReport,
 } from "./rust-build-diagnostics.ts";
 import {
-  freshestDonor,
+  idleDonors,
   RustTargetSeed,
   RustTargetSharing,
   rustTargetSharing,
@@ -153,7 +153,7 @@ import {
   sweepProject,
   sweepShared,
 } from "./rust-build-cache.ts";
-import { hostTreeCloner, type TreeCloner } from "../substrate/clone-tree.ts";
+import { type CloneFile, hostTreeCloner, type TreeCloner } from "../substrate/clone-tree.ts";
 
 const MESSAGE = {
   notAllowed: (names: readonly string[]) =>
@@ -778,6 +778,8 @@ export class RustBuilds implements GameBuildLane {
   readonly #lending = new Map<string, Promise<void>>();
   /** Shared targets a build holds or waits for: the last holder's turn, which the next waits on. */
   readonly #holds = new Map<string, Promise<void>>();
+  /** The sweep a new build folder started, while it runs ({@link RustBuilds.sweep}). */
+  #sweeping: Promise<number> | null = null;
 
   constructor(options: RustBuildsOptions) {
     this.options = options;
@@ -854,6 +856,18 @@ export class RustBuilds implements GameBuildLane {
       removed += await sweepProject(project, guard);
     }
     return removed + (await sweepShared(root, (dir) => this.#sharedBusy(dir)));
+  }
+
+  /** One sweep for every new build folder that asks while it runs; a sweep that fails removes nothing more. */
+  #sweepOnce(): Promise<number> {
+    if (this.#sweeping) return this.#sweeping;
+    const sweeping = this.sweep()
+      .catch(() => 0)
+      .finally(() => {
+        if (this.#sweeping === sweeping) this.#sweeping = null;
+      });
+    this.#sweeping = sweeping;
+    return sweeping;
   }
 
   /** The folders the app serves from now; null when it cannot say. */
@@ -983,6 +997,8 @@ export class RustBuilds implements GameBuildLane {
         extension: ExtensionRefusal.BuildScriptRefused,
       });
     }
+    // A new build folder is about to cost disk: the folders nothing builds again go first.
+    if (!(await lstat(pending.bin).catch(() => null))) await this.#sweepOnce();
     const target = await this.#targetOf(pending);
     // A copy cloning this folder's target finishes first; a shared target builds one copy at a time.
     await this.#lending.get(pending.bin);
@@ -1228,7 +1244,8 @@ export class RustBuilds implements GameBuildLane {
     }
     const bakeCache = this.options.bakes?.cache(plan.game.project) ?? null;
     const webDir = web ? path.join(plan.bin, WEB_DIR) : null;
-    const written = await writeOutput(plan, shipped, webDir, this.options.admit, bakeCache);
+    const built = { exe: shipped, web: webDir, cloneFile: this.#fileCloner() };
+    const written = await writeOutput(plan, built, this.options.admit, bakeCache);
     if (!written.ok && "packageRefused" in written) {
       return this.#outcome(plan, BuildProblemCode.CommandFailed, {
         lines: [written.packageRefused],
@@ -1474,6 +1491,11 @@ export class RustBuilds implements GameBuildLane {
     return this.options.cloner === undefined ? hostTreeCloner(this.options.platform) : this.options.cloner;
   }
 
+  /** The host's copy-on-write clone of one file, or null where it has none. */
+  #fileCloner(): CloneFile | null {
+    return this.#cloner()?.cloneFile ?? null;
+  }
+
   /**
    * Waits for the shared target `dir` and holds it: the release, or null when Stop came first.
    * Each holder's turn is a promise the next waits on, so a game's copies build in the order asked.
@@ -1530,12 +1552,13 @@ export class RustBuilds implements GameBuildLane {
   }
 
   /**
-   * Clones the target of the freshest idle copy of the game into `to`: the donor's next build
-   * waits until the clone is done, and a donor that started building is never taken.
+   * Clones the target of the freshest idle copy of the game into `to`, else of the next freshest
+   * when that clone fails (a link in its target): each donor's next build waits until its clone is
+   * done, and a donor that started building is never taken.
    */
   async #cloneFromCopy(pending: Pending, to: string): Promise<boolean> {
     if (!SAFE_PROJECT.test(pending.game.project)) return false;
-    const donor = await freshestDonor({
+    const donors = await idleDonors({
       root: this.options.root,
       bin: pending.bin,
       folder: pending.game.project,
@@ -1543,8 +1566,14 @@ export class RustBuilds implements GameBuildLane {
       admittedOf: (bin) => `${bin}${ADMITTED_SUFFIX}`,
       busy: (bin) => this.#inFlight.has(bin),
     });
+    for (const donor of donors) if (await this.#cloneFrom(donor, to)) return true;
+    return false;
+  }
+
+  /** Clones `donor`'s target into `to`, lending it meanwhile; false when it is building now or the clone fails. */
+  async #cloneFrom(donor: string, to: string): Promise<boolean> {
     // Checked again with no await before the lend is recorded: a build of the donor that started meanwhile wins.
-    if (donor === null || this.#inFlight.has(donor)) return false;
+    if (this.#inFlight.has(donor)) return false;
     let lent = () => {};
     const lending = new Promise<void>((resolve) => {
       lent = resolve;
@@ -2198,17 +2227,17 @@ type WrittenOutput =
  */
 async function writeOutput(
   plan: Plan,
-  exe: string,
-  web: string | null,
+  built: BuiltFiles,
   admit: RustOutputAdmit | undefined,
   bakeCache: string | null,
 ): Promise<WrittenOutput> {
+  const { web } = built;
   const out = `${plan.bin}${OUT_SUFFIX}`;
   const fresh = `${out}.new`;
   await rm(fresh, { recursive: true, force: true });
   await mkdir(fresh);
   if (web) await copyRegularFiles(web, fresh);
-  else await copyExecutables(plan, exe, fresh);
+  else await copyExecutables(plan, built, fresh);
   const pack = plan.builder.assets
     ? await packageAssets({
         from: path.join(stageDir(plan.bin), ASSETS_DIR),
@@ -2255,15 +2284,34 @@ async function trustedLockRows(gameDir: string): Promise<AssetLockEntry[] | null
   return lock?.state === AssetLockState.Trusted ? lock.entries : null;
 }
 
+/** What a build hands `<bin>.out`: cargo's executable, the web branch's package, and the host's file clone. */
+interface BuiltFiles {
+  exe: string;
+  web: string | null;
+  /** The host's copy-on-write file clone (APFS's `cp -c`, a reflink); null where it has none. */
+  cloneFile: CloneFile | null;
+}
+
 /**
- * The executable under each of the builder's names. A clone where the file system makes one (APFS):
- * a file of its own, which a later write to cargo's copy never reaches, made without copying the
- * bytes; elsewhere a plain copy.
+ * The executable under each of the builder's names: a copy-on-write clone where the host makes one
+ * (a file of its own, which a later write to cargo's copy never reaches, sharing its blocks: on
+ * APFS Node's `COPYFILE_FICLONE` copies every byte), else, or when the clone fails, a plain copy.
  */
-async function copyExecutables(plan: Plan, exe: string, to: string): Promise<void> {
+async function copyExecutables(plan: Plan, built: BuiltFiles, to: string): Promise<void> {
+  const { exe, cloneFile } = built;
   for (const name of plan.builder.executables) {
-    await copyFile(exe, path.join(to, name), FS_CONSTANTS.COPYFILE_FICLONE);
-    await chmod(path.join(to, name), 0o755);
+    const file = path.join(to, name);
+    const cloned = cloneFile
+      ? await cloneFile(exe, file).then(
+          () => true,
+          () => false,
+        )
+      : false;
+    if (!cloned) {
+      await rm(file, { force: true });
+      await copyFile(exe, file, FS_CONSTANTS.COPYFILE_FICLONE);
+    }
+    await chmod(file, 0o755);
   }
 }
 

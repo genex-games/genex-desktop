@@ -27,6 +27,8 @@ export interface TreeCloner {
   supported: (root: string) => Promise<boolean>;
   /** Clones the folder `from` to the absent `to`; throws, leaving nothing at `to`, where it cannot. */
   clone: (from: string, to: string) => Promise<void>;
+  /** Clones the one regular file `from` to the absent `to`, timestamps kept; throws, leaving nothing at `to`, where it cannot. */
+  cloneFile?: CloneFile;
 }
 
 /** One file cloned copy-on-write from `from` to the absent `to`; it throws where the filesystem cannot clone. */
@@ -46,6 +48,8 @@ export interface TreeClonerDeps {
 /** macOS's own `cp`: `-c` clones through clonefile(2), `-R` a folder, `-p` with its timestamps. */
 const MAC_CP = "/bin/cp";
 const MAC_CP_ARGS = ["-c", "-R", "-p", "--"] as const;
+/** The same for one file: `-c` clones it, `-p` keeps its timestamps and mode. */
+const MAC_CP_FILE_ARGS = ["-c", "-p", "--"] as const;
 /** The folder whose filesystem a Mac's clone check compares a root's with: the system volume, APFS. */
 const MAC_SYSTEM_VOLUME = "/";
 /** The probe file a Linux clone check writes into a root, and removes. */
@@ -80,14 +84,23 @@ function macCloner(deps: TreeClonerDeps): TreeCloner {
     },
     clone: async (from, to) => {
       await refuseLinks(from);
-      try {
-        await exec(MAC_CP, [...MAC_CP_ARGS, from, to]);
-      } catch (error) {
-        await rm(to, { recursive: true, force: true });
-        throw error;
-      }
+      await execLeavingNothing(exec, [...MAC_CP_ARGS, from, to], to);
+    },
+    cloneFile: async (from, to) => {
+      if (!(await lstat(from)).isFile()) throw new Error(MESSAGE.notRegular(from));
+      await execLeavingNothing(exec, [...MAC_CP_FILE_ARGS, from, to], to);
     },
   };
+}
+
+/** Runs the system's `cp` with `args`; when it fails, nothing is left at `to`. */
+async function execLeavingNothing(exec: CloneExec, args: readonly string[], to: string): Promise<void> {
+  try {
+    await exec(MAC_CP, args);
+  } catch (error) {
+    await rm(to, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Linux and the rest: a probe file clones in the root, and the folder clones file by file. */
@@ -108,6 +121,10 @@ function fileCloner(cloneFile: CloneFile): TreeCloner {
       }
     },
     clone: (from, to) => cloneTreeByFile(from, to, cloneFile),
+    cloneFile: async (from, to) => {
+      if (!(await lstat(from)).isFile()) throw new Error(MESSAGE.notRegular(from));
+      await cloneFile(from, to);
+    },
   };
 }
 

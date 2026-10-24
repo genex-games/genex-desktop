@@ -13,7 +13,7 @@ import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, symlink, utimes
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
-  freshestDonor,
+  idleDonors,
   RustTargetSharing,
   rustTargetSharing,
   sharedTargetDir,
@@ -132,9 +132,9 @@ describe("a new copy's target is cloned from the freshest idle copy of the same 
     await made(`big-pond-${"6".repeat(12)}`, WEB, NOW);
     await made(`pond-${"7".repeat(12)}`, WEB, null);
     const bin = path.join(root, `pond-${"8".repeat(12)}`, WEB);
-    assert.equal(await freshestDonor(donorQuery(root, bin)), fresher);
-    assert.equal(await freshestDonor(donorQuery(root, bin, new Set([fresher]))), older, "a busy copy lends nothing");
-    assert.equal(await freshestDonor(donorQuery(root, fresher, new Set([older]))), null, "never its own folder");
+    assert.deepEqual(await idleDonors(donorQuery(root, bin)), [fresher, older], "the freshest first");
+    assert.deepEqual(await idleDonors(donorQuery(root, bin, new Set([fresher]))), [older], "a busy copy lends nothing");
+    assert.deepEqual(await idleDonors(donorQuery(root, fresher, new Set([older]))), [], "never its own folder");
   });
 
   it("refuses a donor reached through a link: a linked game folder, build folder or target", {
@@ -151,7 +151,7 @@ describe("a new copy's target is cloned from the freshest idle copy of the same 
     await mkdir(linkedTarget, { recursive: true });
     await symlink(path.join(outside, "target"), path.join(linkedTarget, "target"));
     await writeFile(`${linkedTarget}.admitted`, "[]");
-    assert.equal(await freshestDonor(donorQuery(root, bin)), null);
+    assert.deepEqual(await idleDonors(donorQuery(root, bin)), []);
     assert.ok(parent);
   });
 });

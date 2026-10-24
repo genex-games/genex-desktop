@@ -83,6 +83,40 @@ describe("a Mac clones with cp -c, only on the system volume's filesystem (BC)",
     assert.equal(ran, false);
   });
 
+  it("clones one file with cp -c -p, refuses a link before cp runs, and leaves nothing when it fails (LK)", async () => {
+    const parent = await realpath(await tmpDir("clone-mac-file-"));
+    const from = path.join(await source(parent), "debug", "engine");
+    const runs: string[][] = [];
+    const cloner = hostTreeCloner("darwin", {
+      fsType: async () => APFS,
+      exec: async (file, args) => {
+        runs.push([file, ...args]);
+        await writeFile(String(args.at(-1)), "half");
+        throw new Error("cp: clonefile failed");
+      },
+    });
+    const to = path.join(parent, "game");
+    await assert.rejects(cloner?.cloneFile?.(from, to) ?? Promise.resolve());
+    assert.deepEqual(runs, [["/bin/cp", "-c", "-p", "--", from, to]]);
+    assert.equal(await exists(to), false, "nothing left at the copy");
+    if (NO_LINKS) return;
+    const link = path.join(parent, "link");
+    await symlink(from, link);
+    await assert.rejects(cloner?.cloneFile?.(link, path.join(parent, "linked")) ?? Promise.resolve());
+    assert.equal(runs.length, 1, "cp never ran for the link");
+  });
+
+  it("clones one file for real with the system's cp on this Mac, timestamps kept (LK)", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const parent = await realpath(await tmpDir("clone-mac-file-real-"));
+    const from = path.join(await source(parent), "debug", "engine");
+    const to = path.join(parent, "game");
+    await hostTreeCloner("darwin")?.cloneFile?.(from, to);
+    assert.equal(await readFile(to, "utf8"), "engine");
+    assert.equal((await stat(to)).mtimeMs, 1_700_000_000_000);
+  });
+
   it("clones for real with the system's cp on this Mac, timestamps kept", {
     skip: process.platform !== "darwin",
   }, async () => {
@@ -141,6 +175,22 @@ describe("Linux reflinks file by file where a probe clones; Windows has no clone
       await assert.rejects(cloneTreeByFile(from, linked, cloneFile));
       assert.equal(await exists(linked), false);
     }
+  });
+
+  it("clones one file by the reflink, and refuses a link without calling it (LK)", async () => {
+    const parent = await realpath(await tmpDir("clone-linux-file-"));
+    const from = path.join(await source(parent), "debug", "engine");
+    const { cloneFile, calls } = reflinks();
+    const cloner = hostTreeCloner("linux", { cloneFile });
+    await cloner?.cloneFile?.(from, path.join(parent, "game"));
+    assert.deepEqual(calls, [from]);
+    assert.equal(await readFile(path.join(parent, "game"), "utf8"), "engine");
+    if (NO_LINKS) return;
+    await symlink(from, path.join(parent, "link"));
+    await assert.rejects(
+      cloner?.cloneFile?.(path.join(parent, "link"), path.join(parent, "linked")) ?? Promise.resolve(),
+    );
+    assert.equal(calls.length, 1);
   });
 
   it("a Windows host has no cloner: Node exposes no ReFS block cloning, and NTFS has none", () => {

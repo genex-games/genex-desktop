@@ -72,7 +72,10 @@ was built with, and one made with another is stale: a profile change prewarms ag
 folder starts its first build from a copy-on-write clone of the profile's prewarm for that lock
 and destination (`warmTarget`, `cloneRustTarget`), so it compiles the game's crates, not the
 engine, and on APFS the clone costs no disk until cargo rewrites a file. Measure a live profile
-by allocated blocks (`df` before and after, not `du`, which counts every clone in full).
+by allocated blocks (`df` before and after, not `du`, which counts every clone in full); a build
+folder's `.receipt.json` names where its target came from (`cache.seed`: `copy`, `prewarm`, `cold`).
+What a copy costs on its own is the game crate's outputs, its `.stage` (the game's sources and
+assets, copied) and the `.out` assets; the `.out` executable is a clone.
 
 A developer checkout needs no flag for the same: the engine workspace's own `[profile.dev]`
 (`native/genex-rust/Cargo.toml`) already keeps line tables only with incremental folders off

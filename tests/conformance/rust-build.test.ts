@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -1264,6 +1264,75 @@ describe("copies of a game reuse its compiled engine instead of rebuilding it (B
     assert.deepEqual(copy.rust?.receipt?.cache, { sharing: RustTargetSharing.Clone, seed: RustTargetSeed.Cold });
     const target = path.join((copy.output ?? "").slice(0, -".out".length), "target", "debug");
     assert.deepEqual((await readdir(target)).sort(), ["engine"], "only what the cold build wrote");
+  });
+
+  it("a donor whose target holds a link (cargo's dSYM link after a Mac export) lends nothing; the next freshest copy does (LK)", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-linked-"));
+    const open = openSandboxes();
+    const { cloner } = cloning();
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner });
+    const { first, second } = await copies(parent);
+    assert.equal((await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live)).ok, true);
+    const fresher = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(fresher.ok, true, JSON.stringify(fresher.problem));
+    const fresherTarget = path.join((fresher.output ?? "").slice(0, -".out".length), "target", "debug");
+    await symlink(path.join(fresherTarget, "engine"), path.join(fresherTarget, "game.dSYM"));
+    const third = gameOf(await rustGame(path.join(parent, "worktrees", "w2")));
+    const copy = await builds.ensure(third, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(copy.ok, true, JSON.stringify(copy.problem));
+    assert.deepEqual(copy.rust?.receipt?.cache, { sharing: RustTargetSharing.Clone, seed: RustTargetSeed.Copy });
+    assert.equal((await saw(copy)).saw, "reused", "the engine was not compiled again");
+  });
+
+  it("a new build folder first sweeps the copies whose source is gone, never the donor or the one building (LK)", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-sweep-"));
+    const open = openSandboxes();
+    const { cloner } = cloning();
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner });
+    const { first, second } = await copies(parent);
+    const kept = await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    const removed = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    const removedBin = (removed.output ?? "").slice(0, -".out".length);
+    // A playtest or integration copy the run removed itself: no worktree hook told the host.
+    await rm(second.dir, { recursive: true, force: true });
+    const third = gameOf(await rustGame(path.join(parent, "worktrees", "w2")));
+    const copy = await builds.ensure(third, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(copy.ok, true, JSON.stringify(copy.problem));
+    assert.equal(await lstat(path.dirname(removedBin)).catch(() => null), null, "the gone copy's folders went");
+    assert.equal((await lstat(kept.output ?? "")).isDirectory(), true, "the live copy's output stays");
+    assert.equal(copy.rust?.receipt?.cache?.seed, RustTargetSeed.Copy, "the copy still cloned the live one");
+  });
+
+  it("the admitted executable is a clone of cargo's where the host clones, a copy where a clone fails (LK)", async () => {
+    const parent = await realpath(await tmpDir("rust-exe-clone-"));
+    const open = openSandboxes();
+    const { cloner } = cloning();
+    const cloned: { from: string; to: string }[] = [];
+    const state = { fail: false };
+    const withFile: TreeCloner = {
+      ...cloner,
+      cloneFile: async (from, to) => {
+        cloned.push({ from, to });
+        if (state.fail) throw new Error("clonefile failed");
+        await copyFile(from, to);
+      },
+    };
+    const { builds } = await lane(parent, open.sandbox, { cloner: withFile });
+    const game = gameOf(await rustGame(parent));
+    const built = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(built.ok, true, JSON.stringify(built.problem));
+    const bin = (built.output ?? "").slice(0, -".out".length);
+    assert.deepEqual(
+      cloned.map(({ to }) => to),
+      ["game", "game-headless"].map((name) => path.join(`${bin}.out.new`, name)),
+      "each of the Mac builder's names",
+    );
+    for (const { from } of cloned) assert.ok(from.startsWith(path.join(bin, "target") + path.sep), from);
+    state.fail = true;
+    await writeFile(path.join(game.dir, "src", "main.rs"), "fn main() { /* changed */ }\n");
+    const again = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(again.ok, true, JSON.stringify(again.problem));
+    assert.equal(await readFile(path.join(again.output ?? "", "game"), "utf8"), "#!/bin/sh\necho game\n");
   });
 
   it("a host that cannot clone builds every copy of a game in one shared target, one build at a time", async () => {

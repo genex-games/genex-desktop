@@ -11,7 +11,7 @@
  *
  * - Where the filesystem clones copy-on-write (APFS's `clonefile`, btrfs's and XFS's reflinks:
  *   `substrate/clone-tree.ts`), a new build folder's target is cloned from the freshest idle build
- *   of the same game, destination and lock ({@link freshestDonor}): the clone costs no blocks until
+ *   of the same game, destination and lock ({@link idleDonors}): the clone costs no blocks until
  *   cargo rewrites a file, and the copies keep building in parallel.
  * - Where it does not (NTFS, ext4, and every Windows host: Node exposes no ReFS block cloning),
  *   every copy of a game builds a destination and lock in one shared target folder
@@ -100,7 +100,7 @@ export function sharedTargetDir(root: string, folder: string | null, build: stri
   return path.join(path.resolve(root), RUST_SHARED_FOLDER, name, build);
 }
 
-/** What {@link freshestDonor} looks for: the new build folder, its game's folder name, and the lane's state. */
+/** What {@link idleDonors} looks for: the new build folder, its game's folder name, and the lane's state. */
 export interface DonorQuery {
   root: string;
   /** The build folder that needs a target: `<root>/<folder>-<sha12>/<target>-<lock12>`. */
@@ -116,23 +116,24 @@ export interface DonorQuery {
 }
 
 /**
- * The build folder of another copy of the same game, destination and lock whose target a new one
- * clones: the most recently admitted one that is idle, a real folder with a real target, reached
- * through no link. Null when there is none.
+ * The build folders of the other copies of the same game, destination and lock whose target a new
+ * one may clone, the most recently admitted first: each idle, a real folder with a real target,
+ * reached through no link. A new folder takes the first whose clone succeeds, so one donor whose
+ * target cannot clone (a link cargo left in it) does not send every new copy to the prewarm.
  */
-export async function freshestDonor(query: DonorQuery): Promise<string | null> {
+export async function idleDonors(query: DonorQuery): Promise<string[]> {
   const root = path.resolve(query.root);
   const own = path.dirname(path.resolve(query.bin));
   const build = path.basename(query.bin);
-  let best: { bin: string; at: number } | null = null;
+  const found: { bin: string; at: number }[] = [];
   for (const name of await readdir(root).catch(() => [] as string[])) {
     const project = path.join(root, name);
     if (!copyOfGame(name, query.folder) || project === own) continue;
     const bin = path.join(project, build);
     const at = await donorAdmittedAt(bin, project, query);
-    if (at !== null && (best === null || at > best.at)) best = { bin, at };
+    if (at !== null) found.push({ bin, at });
   }
-  return best?.bin ?? null;
+  return found.sort((a, b) => b.at - a.at).map((donor) => donor.bin);
 }
 
 /** Whether `name` is a build folder of a copy of the game named `folder`: `<folder>-<12 hex>`, exactly. */

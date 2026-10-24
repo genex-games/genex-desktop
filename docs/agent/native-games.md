@@ -58,12 +58,15 @@ folder, `<game>-<sha12(real source)>/<target>-<lock12>`, and they share the comp
 root clones copy-on-write ([`clone-tree.ts`](../../src/substrate/clone-tree.ts): `cp -c` on
 APFS, since Node's `COPYFILE_FICLONE` copies there; reflinks on btrfs and XFS) a new folder's
 target is cloned from the most recently admitted idle copy of the same game, destination and lock
-(`copy`), else the store's prewarm (`prewarm`), else empty (`cold`), and copies build in parallel;
-the donor's next build waits for the clone. Where it cannot (Windows, NTFS, ext4, HFS+) the game's
+whose clone succeeds (`copy`; a target holding a link, as cargo's dSYM link after a Mac export, is
+passed over), else the store's prewarm (`prewarm`), else empty (`cold`), and copies build in
+parallel; the donor's next build waits for the clone. The admitted executable in `<bin>.out` is a
+clone of cargo's too (`TreeCloner.cloneFile`: Node's `COPYFILE_FICLONE` copies every byte on APFS). Where it cannot (Windows, NTFS, ext4, HFS+) the game's
 copies build one at a time in one target, `shared/<game>-targets/<target>-<lock12>`. Every command
 starts with `RUSTC_BOOTSTRAP` set empty as the prewarm's `rustEnv` does, or proc-macro2's build
 script reruns and every derive-using unit with it. The sweep (`gameBuilds.sweep()`: at start, after
-a worktree goes and after freeing a game's space) removes a build folder whose source is gone, an
+a worktree goes and after freeing a game's space; the lane's own before it makes a new build
+folder, so a copy removed without a worktree hook goes before the next one costs disk) removes a build folder whose source is gone, an
 unstamped one after `UNSTAMPED_GRACE_MS`, one of a lock that is neither current nor a game's recorded
 lock the store still holds (`installedRustLock`), and a shared target no copy builds in, never one building,
 lending or served by a preview, nor anything through a link; one it cannot remove is skipped.
