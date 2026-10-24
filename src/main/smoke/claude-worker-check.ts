@@ -36,11 +36,13 @@ export const CLAUDE_WORKER_CHECK = {
 /** The worker's whole turn, CLI start included. */
 const WORKER_TIMEOUT_MS = 3 * MINUTE_MS;
 /**
- * The vendor installer's time here. The person's Install button allows it 10 minutes, longer than
- * the whole self test's 8 (`run-electron-e2e.mjs`), so a stalled install ended the run with nothing
- * said; this limit reports it, with what the installer last printed, inside that budget.
+ * The vendor installer's time here. The person's Install button allows it 10 minutes, as long as
+ * the whole self test with this stage (`run-electron-e2e.mjs`), so a stalled install would end the
+ * run with nothing said; this limit reports it, with what the installer last printed, inside that
+ * budget. Most of an install on Windows is Defender scanning the 283 MB executable: 33 to 61 s on
+ * four cores, 154 to 270 s on the release canary's two-core Windows 10, which 4 minutes cut off.
  */
-const CLI_INSTALL_TIMEOUT_MS = 4 * MINUTE_MS;
+const CLI_INSTALL_TIMEOUT_MS = 6 * MINUTE_MS;
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
