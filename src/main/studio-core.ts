@@ -90,7 +90,7 @@ import { BonsaiEngine } from "../substrate/engines/bonsai.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
-import { OpenCodeEngine } from "../substrate/engines/opencode.ts";
+import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
 import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
 import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../substrate/engines/local-server.ts";
@@ -1006,7 +1006,10 @@ export class StudioCore {
     // Windows: native jobs work in, and read pinned runtimes from, folders granted now. srt-win
     // changes grants only while no sandboxed command runs, and agents keep commands running.
     const windows = process.platform === StudioPlatform.Windows;
-    if (windows) await mkdir(this.layout.nativeRuntimes, { recursive: true });
+    // OpenCode's own folders too: its sessions run as the sandbox user and read their sign-ins there.
+    const openCode = windows ? openCodeSessionFolders() : [];
+    if (windows)
+      await Promise.all([this.layout.nativeRuntimes, ...openCode].map((dir) => mkdir(dir, { recursive: true })));
     return ProcessSandbox.create({
       writableRoots: [
         this.layout.workspaces,
@@ -1015,6 +1018,7 @@ export class StudioCore {
         this.layout.gamesRoot,
         ...games.map((game) => game.dir),
         ...(windows ? [this.layout.nativeWork] : []),
+        ...openCode,
       ],
       scratchDir: this.layout.scratch,
       secretPaths: this.#protectedPaths(),

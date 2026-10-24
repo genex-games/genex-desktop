@@ -678,6 +678,21 @@ function openCodeFolders(
   };
 }
 
+/**
+ * The folders every session writes (sign-ins and sessions, logs, model catalog). A Windows sandbox
+ * changes its grants only while no sandboxed command runs, and the harness keeps one running, so
+ * the studio's own sandbox grants these at its start.
+ */
+export function openCodeSessionFolders(
+  env: Record<string, string | undefined> = process.env,
+  home: string = os.homedir(),
+): string[] {
+  const folders = openCodeFolders(env, home);
+  return [folders.XDG_DATA_HOME, folders.XDG_STATE_HOME, folders.XDG_CACHE_HOME].map((dir) =>
+    path.join(dir, "opencode"),
+  );
+}
+
 /** An XDG folder: the variable when it is absolute, else its default under the home folder. */
 function xdg(value: string | undefined, home: string, fallback: string): string {
   return value && path.isAbsolute(value) ? value : path.join(home, fallback);

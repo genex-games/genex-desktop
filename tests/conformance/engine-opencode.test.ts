@@ -19,6 +19,7 @@ import {
   openCodeEvents,
   openCodeSandbox,
   openCodeServerUrl,
+  openCodeSessionFolders,
   settledListing,
 } from "../../src/substrate/engines/opencode.ts";
 import {
@@ -797,6 +798,11 @@ describe("OpenCode's sandbox and config", () => {
       path.join(home, "AI Games", "space", "opencode.json"),
       path.join(home, "AI Games", "space", ".opencode"),
     ]);
+    assert.deepEqual(
+      openCodeSessionFolders({}, home),
+      [...options.ownHome, ...options.writableRoots.slice(-2)],
+      "the folders a Windows sandbox grants at its start are the ones each session writes",
+    );
     const relative = openCodeSandbox({
       runDir: "/r",
       gameDir: "/r",
