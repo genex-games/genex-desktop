@@ -988,7 +988,8 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     assert.equal(fake.listeners("onEvent"), 0, "stopping unsubscribes");
   });
 
-  it("opening a game loads its preview once and then re-reads the library", async () => {
+  it("opening a game starts nothing; opening the game Live holds on the stage again reloads it", async () => {
+    // Intentionally flipped: opening a game used to load its preview.
     const moss = thread("moss-chat", { kind: "game", project: "moss" });
     const { fake, app, storage } = started({ threadForGame: async () => moss });
     await tick();
@@ -997,49 +998,46 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     await tick();
     assert.equal(record?.id, "moss-chat");
     assert.equal(app.threads.getState().activeThreadId, "moss-chat");
-    assert.deepEqual(
-      fake.callsOf("loadPreview").slice(loads),
-      [["moss"]],
-      "one load, not one from the command and one from the follower",
-    );
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "the game waits for Play");
+    assert.equal(app.threads.getState().liveProject, null, "Live holds no game");
     assert.equal(storage.data.get("studio.activeThread"), "moss-chat");
     assert.ok(fake.callsOf("games").length >= 1);
     await app.enterProject("moss");
     await tick();
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "opening it again still starts nothing");
+    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "loading", error: null } });
+    assert.equal(app.threads.getState().liveProject, "moss", "a load holds Live from its start");
+    await app.enterProject("moss");
+    await tick();
     assert.deepEqual(
       fake.callsOf("loadPreview").slice(loads),
-      [["moss"], ["moss"]],
-      "opening the same game again reloads it, as the sidebar always did",
+      [["moss"]],
+      "opening the game Live holds on the stage again reloads it, as the sidebar always did",
     );
   });
 
-  it("coming back from home to the game Live still holds keeps its page; another game or a failed load loads", async () => {
-    const moss = thread("moss-chat", { kind: "game", project: "moss" });
-    const { fake, app } = started({ threadForGame: async () => moss });
+  it("switching games keeps the game Live holds as it was left and starts no other", async () => {
+    // Intentionally flipped: switching to another game used to load it, ending the one in Live.
+    const chats: Record<string, ConversationRecord> = { pond, rift };
+    const { fake, app } = started({ threadForGame: async (name: string) => chats[name] ?? pond });
+    await tick();
+    await app.enterProject("pond");
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "loaded", error: null } });
     await tick();
     const loads = fake.callsOf("loadPreview").length;
-    await app.enterProject("moss");
-    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "loaded", error: null } });
+    await app.enterProject("rift");
     await tick();
+    assert.equal(app.threads.getState().activeThreadId, "rift-chat");
+    assert.equal(app.threads.getState().liveProject, "pond", "Live keeps the game it holds, out of sight");
+    app.selectThread("pond-chat");
+    app.selectThread("rift-chat");
     app.goHome();
-    await app.enterProject("moss");
+    await app.enterProject("pond");
     await tick();
-    assert.equal(app.threads.getState().activeThreadId, "moss-chat");
-    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [["moss"]], "the paused game is shown as it was left");
-    app.goHome();
-    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "failed", error: "boom" } });
-    await app.enterProject("moss");
-    await tick();
-    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [["moss"], ["moss"]], "a failed load is tried again");
-    app.goHome();
-    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "loaded", error: null } });
-    await app.enterProject("moss");
-    await tick();
-    assert.deepEqual(
-      fake.callsOf("loadPreview").slice(loads),
-      [["moss"], ["moss"], ["moss"]],
-      "Live holding another game loads this one",
-    );
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "no switch loads a game");
+    assert.equal(app.threads.getState().liveProject, "pond", "the game comes back as it was left");
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "failed", error: "boom" } });
+    assert.equal(app.threads.getState().liveProject, null, "a failed load leaves Live holding no game");
   });
 
   it("a refused open is toasted in plain words", async () => {

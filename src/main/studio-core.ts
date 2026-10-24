@@ -2538,8 +2538,8 @@ export class StudioCore {
   }
 
   /** Reflect stage visibility (and whether the person watches a game in Live) while preserving active observations. */
-  previewStageVisible(visible: boolean, watching = visible): Promise<void> {
-    return this.#previews.setStageVisible(visible, watching);
+  previewStageVisible(visible: boolean, watching = visible, stageGame: string | null = null): Promise<void> {
+    return this.#previews.setStageVisible(visible, watching, stageGame);
   }
 
   /** The Live game's sound switch, as the user left it. */

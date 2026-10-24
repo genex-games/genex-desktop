@@ -2634,7 +2634,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     const booted = await startHarness(studio);
     if (!booted) return null;
     if (fixture) await activateChatFixture(studio, fixture);
-    if (fixture?.project) await openFixtureGame(win, fixture.project);
+    if (fixture?.project) await openFixtureGame(studio, win, fixture.project);
     announceReady(userData);
     showFixtureAgentsFailure(userData);
     const view = requirePreview();
@@ -2712,13 +2712,14 @@ async function seedFixtureModel(win: BrowserWindow, threadId: string): Promise<v
 }
 
 /**
- * A fixture session begins in its game: every launch opens home, so the fixture opens the game
- * from the sidebar as a person would, and waits until the window shows it (or the sandbox setup,
- * which has no games). A game that never opens fails the launch, as a broken fixture should.
+ * A fixture session begins in its game, running: every launch opens home, so the fixture opens the
+ * game from the sidebar as a person would, and waits until the window shows it (or the sandbox
+ * setup, which has no games); opening a game starts nothing, so it then loads the game into Live as
+ * Play would. A game that never opens fails the launch, as a broken fixture should.
  */
-async function openFixtureGame(win: BrowserWindow, project: string): Promise<void> {
+async function openFixtureGame(studio: StudioCore, win: BrowserWindow, project: string): Promise<void> {
   const row = `nav [data-project=${JSON.stringify(project)}]`;
-  await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+  const opened = await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
     const until = Date.now() + ${FIXTURE_OPEN_TIMEOUT_MS};
     let clicked = false;
     const tick = () => {
@@ -2736,6 +2737,7 @@ async function openFixtureGame(win: BrowserWindow, project: string): Promise<voi
     };
     tick();
   })`);
+  if (opened === true) void studio.loadPreview({ project }).catch(() => {});
 }
 
 /**

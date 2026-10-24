@@ -533,6 +533,8 @@ export class PreviewService {
   #stageVisible = true;
   /** The person watches a game in Live, whatever briefly covers it (the renderer's `watchingLive`). */
   #liveWatched = true;
+  /** The game open on the person's stage, which Live may not hold: opening a game starts nothing. */
+  #stageGame: string | null = null;
   /** Sessions looking through Live itself: only where this build opens no hidden windows. */
   #liveObservers = 0;
   /** What the Live game's sound depends on, bar the stage and the agents that `#applySound` reads. */
@@ -555,20 +557,23 @@ export class PreviewService {
     });
   }
 
-  /** Apply stage visibility without suspending an agent's observation. */
-  async setStageVisible(visible: boolean, watching = visible): Promise<void> {
+  /** Apply stage visibility, and the game open on the stage, without suspending an agent's observation. */
+  async setStageVisible(visible: boolean, watching = visible, stageGame: string | null = null): Promise<void> {
     this.#stageVisible = visible;
     this.#liveWatched = watching;
+    this.#stageGame = stageGame;
     this.#updateVisibility();
   }
 
   /**
-   * Whether a show or landing the person asked for may load Live itself: Live, holding this game
-   * (or none yet), is out of their sight. While they watch it, a dialog or a popover over it
+   * Whether a show or landing the person asked for may load Live itself: Live is out of their
+   * sight, and holds this game (or none yet), or another game while this one is open on their
+   * stage, where the ask is their Play. While they watch Live, a dialog or a popover over it
    * included, only Reload changes it (`live-gate.ts`).
    */
   liveOutOfSight(project: string): boolean {
-    return !this.#liveWatched && !this.liveHoldsAnother(project);
+    if (this.#liveWatched) return false;
+    return !this.liveHoldsAnother(project) || this.#stageGame === project;
   }
 
   /** Live holds a game other than this one: nothing of this one is shown or offered there. */

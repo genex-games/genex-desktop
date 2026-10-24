@@ -73,7 +73,7 @@ const OFFLINE_SOURCES: MentionSources = {
 const INTEGRATION_BUILD = "integration";
 /** A show while Live holds another game: nothing was shown, and nothing waits for its Reload. */
 const OTHER_GAME_IN_LIVE =
-  "Another game is open in Live, so it was left as it is and nothing was shown. Tell the user to open this game first, then ask again.";
+  "Another game is open in Live, so it was left as it is and nothing was shown. Opening a game does not start it: tell the user to open this game and press Play on its stage, then ask again.";
 
 /** The build `show_build` means by the game folder as it is. */
 const LIVE_BUILD = "live";
@@ -824,7 +824,8 @@ export class ConversationService {
   async #showBuild(call: CoordinatorCall): Promise<string> {
     const { build, project, commit } = await this.#namedBuild(call);
     const loads = this.#loadsLive(call, project);
-    const elsewhere = this.#x.previews.liveHoldsAnother(project);
+    // The person's ask from the game open on their stage may take Live from another game out of sight.
+    const elsewhere = !loads && this.#x.previews.liveHoldsAnother(project);
     if (build === LIVE_BUILD) {
       if (elsewhere) return OTHER_GAME_IN_LIVE;
       if (!loads) {
@@ -869,7 +870,7 @@ export class ConversationService {
     });
     const landing = `Landed ${commit.slice(0, SHORT_COMMIT)} in the game folder (${landed.how})`;
     if (this.#x.previews.liveHoldsAnother(project))
-      return `${landing}; another game is open in Live, so this one shows it when the user opens it.`;
+      return `${landing}; another game is open in Live, so this one shows it when the user opens it and presses Play.`;
     if (!loads)
       return `${landing}; Live was left as the person has it, and the Reload button on the stage now offers it.`;
     this.#core.emit(UiEvent.StageShow, { project, view: "live" });

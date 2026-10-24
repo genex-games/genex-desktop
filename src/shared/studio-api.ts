@@ -770,6 +770,11 @@ export interface StudioApi {
     width: number;
     height: number;
     watching: boolean;
+    /**
+     * The game open on the stage (absent under home, Play or Studio): a show the person asks for in
+     * its chat may load it even while Live holds another game out of sight.
+     */
+    project?: string | null;
     viewport?: { width: number; height: number };
   }): Promise<boolean>;
   /** The Live game's sound switch; main decides when Live is actually heard. */

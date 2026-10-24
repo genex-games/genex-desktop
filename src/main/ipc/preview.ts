@@ -61,7 +61,8 @@ export function registerPreviewIpc(
     // placed again when full screen ends.
     if (fullScreen?.active()) return true;
     // Anything but a plain `false` counts as watching: Live then only offers a chat's show.
-    await core.previewStageVisible(payload.width > 0 && payload.height > 0, payload.watching !== false);
+    const stageGame = typeof payload.project === "string" ? payload.project : null;
+    await core.previewStageVisible(payload.width > 0 && payload.height > 0, payload.watching !== false, stageGame);
     preview()?.setBounds(
       {
         x: Math.round(payload.x),

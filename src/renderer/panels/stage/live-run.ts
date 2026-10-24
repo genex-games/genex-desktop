@@ -1,7 +1,8 @@
 /**
  * The strip's Play/Stop: one button that stops the Live game (it then runs no scripts, frames or
  * sound, `stopPreview`) and plays it again (the same page, `playPreview`), with a spinner in its
- * place while either is under way. Whether the game is stopped is main's to say, on every probe.
+ * place while either is under way. Whether the game is stopped is main's to say, on every probe. A
+ * game that waits for Play (Live holds another game's page, or none) loads on Play (`loadPreview`).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type Notify, ToastTone } from "../../state/toasts.ts";
@@ -48,13 +49,13 @@ export function useLiveRun(
 ): { run: LiveRun; toggle: () => void } {
   const [stopping, setStopping] = useState(false);
   const [starting, setStarting] = useState(false);
-  const { stopped, setStopped, loadLive } = live;
+  const { stopped, setStopped, idle, loadLive } = live;
   const loading = Boolean(project && live.liveLoad?.project === project);
   // Starting lasts until the page Play asked for is on the stage.
   useEffect(() => {
     if (starting && !loading) setStarting(false);
   }, [starting, loading]);
-  const run = liveRun({ stopped, stopping, starting });
+  const run = liveRun({ stopped: stopped || idle, stopping, starting });
   const toggle = useCallback(() => {
     if (!project) return;
     if (run === LiveRun.Running) {
@@ -69,12 +70,13 @@ export function useLiveRun(
     if (run !== LiveRun.Stopped) return;
     setStarting(true);
     setStopped(false);
-    loadLive(project, () => window.studio.playPreview()).catch((err: unknown) => {
-      setStopped(true);
+    const start = idle ? () => window.studio.loadPreview(project) : () => window.studio.playPreview();
+    loadLive(project, start).catch((err: unknown) => {
+      if (!idle) setStopped(true);
       setStarting(false);
       onNotice(problemWords(err), ToastTone.Error);
     });
-  }, [project, run, setStopped, loadLive, onNotice]);
+  }, [project, run, idle, setStopped, loadLive, onNotice]);
   return { run, toggle };
 }
 

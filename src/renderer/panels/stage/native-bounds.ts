@@ -45,6 +45,9 @@ function holdStill(element: HTMLElement, still: string | null): void {
 
 type Viewport = { width: number; height: number };
 
+/** What main hears with every rectangle: whether a game in Live is watched, and the game open on the stage. */
+type StageReport = { watching: boolean; project: string | null };
+
 /**
  * Sends the slot's rectangle to main. When something comes to cover the game, the game is
  * photographed first and hidden after, so the dialog opens over the frame instead of a black slot.
@@ -72,11 +75,11 @@ async function decodedStill(still: string | null): Promise<string | null> {
   );
 }
 
-function boundsSender(element: HTMLElement, watching: boolean) {
+function boundsSender(element: HTMLElement, stage: StageReport) {
   let covering = false;
   let cover = 0;
   const send = (bounds: Bounds, viewport: Viewport): Promise<unknown> =>
-    window.studio.previewBounds({ ...bounds, watching, viewport }).catch(() => false);
+    window.studio.previewBounds({ ...bounds, ...stage, viewport }).catch(() => false);
   // Covering: the frame is decoded and painted under the view before the view leaves, so no
   // frame of the empty slot ever shows. Uncovering: the view comes back over the frame first,
   // and the frame goes two painted frames later. Either way the stage never blinks black.
@@ -196,14 +199,16 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
   useEffect(() => {
     const element = slot.current;
     if (!element) return;
+    // Main hears the game open on the stage, so a show asked in its chat may start it (`liveOutOfSight`).
+    const stage: StageReport = { watching, project: visible ? project : null };
     if (!showsGame(cover, windowShown)) {
       element.removeAttribute(NATIVE_VIEW_ATTRIBUTE);
       holdStill(element, null);
-      void window.studio.previewBounds({ ...HIDDEN_BOUNDS, watching });
+      void window.studio.previewBounds({ ...HIDDEN_BOUNDS, ...stage });
       return;
     }
     let lastBounds = "";
-    const sender = boundsSender(element, watching);
+    const sender = boundsSender(element, stage);
     const report = (): void => {
       const rect = element.getBoundingClientRect();
       const panels = [...document.querySelectorAll(FLOATING_PANELS)];

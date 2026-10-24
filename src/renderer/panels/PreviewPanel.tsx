@@ -343,13 +343,22 @@ function LiveStates({
   onPlay: (head: string) => Promise<void>;
   onResume: () => void;
 }): JSX.Element | null {
-  const { firstPlan, liveLoading, showEmpty, gameStopped, loader } = view;
+  const { firstPlan, liveLoading, showEmpty, gameStopped, gameIdle, loader } = view;
   if (firstPlan && (liveLoading || showEmpty)) return <PlanningBuild {...firstPlan} />;
   if (loader.shown) return <LiveLoading leaving={loader.leaving} />;
   // A load still inside its first moments shows the bare stage: most finish before a loader would.
   if (liveLoading) return null;
-  if (gameStopped)
-    return <StoppedGame graph={runGraph} project={project} onWatch={onWatch} onPlay={onPlay} onResume={onResume} />;
+  if (gameStopped || gameIdle)
+    return (
+      <StoppedGame
+        graph={runGraph}
+        project={project}
+        idle={gameIdle}
+        onWatch={onWatch}
+        onPlay={onPlay}
+        onResume={onResume}
+      />
+    );
   if (showEmpty) return <EmptyGame graph={runGraph} project={project} onWatch={onWatch} onPlay={onPlay} />;
   return null;
 }
@@ -361,6 +370,8 @@ interface StageContentsView {
   showEmpty: boolean;
   liveLoading: boolean;
   gameStopped: boolean;
+  /** The game was opened and waits for Play: Live holds another game's page, or none. */
+  gameIdle: boolean;
   /** The loader over a load: drawn, or fading out before the game is uncovered. */
   loader: { shown: boolean; leaving: boolean };
   /** The game's first plan is being written: the Planner writes it (from `since`) until there is a game. */
@@ -401,7 +412,7 @@ function StageContents({
   onNotice: Notify;
   /** Swap a build of this run into Live, as the user asked. */
   onPlayBuild: (head: string) => Promise<void>;
-  /** Play the stopped game again. */
+  /** Play the stopped game again, or start one that waits for Play. */
   onResume: () => void;
   onCloseBeside?: () => void;
 }): JSX.Element {
@@ -650,7 +661,8 @@ export function PreviewPanel({
   const loaded = useMemo(() => games.find((game) => game.name === project) ?? null, [games, project]);
   const { views, liveView, preview, chooseTab } = useLiveTabs(project, loaded, plugins, onView);
   const slot = useRef<HTMLDivElement>(null);
-  const live = useLiveLoad(project);
+  const holds = useThreads((s) => project !== null && s.liveProject === project);
+  const live = useLiveLoad(project, holds);
   const pending = useLoadOnceStarted({ project, pending: kindPendingGame(loaded), noPage: !preview }, live.loadLive);
   const { run, flags, pressedView } = useStageSurface({
     view,
@@ -662,18 +674,18 @@ export function PreviewPanel({
     live,
   });
   const { selectedRun, history, graph, runGraph, planning } = run;
-  const { stageView, showEmpty, liveLoading, gameStopped, previewOnStage } = flags;
+  const { stageView, showEmpty, liveLoading, previewOnStage } = flags;
   const [focusedAsset, setFocusedAsset] = useState<string | null>(null);
   /** A plugin's toolbar button has its panel up over the stage. */
   const [toolbarOpen, setToolbarOpen] = useState(false);
   // Only the web preview is a game to watch or a page to probe; beside any other view, what waits goes in.
+  // A game waiting for Play is no game watched: a chat's show asked of it may load it.
   const watch: StageWatch = { view: stageView, visible, showEmpty, preview };
-  const watching = watchingLive(watch);
   const firstPlan = useFirstPlan(project, status, runGraph);
   const shown = { onLive: previewOnStage && visible, loading: liveLoading, empty: showEmpty };
   const controls = useStageControls(project, live, { ...shown, firstPlan: Boolean(firstPlan) }, onNotice);
   const cover = { ...flags, liveLoading: controls.loader.covering, project, visible, sidebarOverlay, toolbarOpen };
-  useNativeViewBounds(slot, { ...cover, watching });
+  useNativeViewBounds(slot, { ...cover, watching: watchingLive(watch) && !live.idle });
   const trouble = useBuildProblem(project, live.loadLive, onNotice);
   useLiveProbe({ project: preview ? project : null, stageView, live, buildProblemRef: trouble.buildProblemRef });
   const { shownBuild, behind, showBuild, reload } = useLiveBehind({
@@ -682,7 +694,7 @@ export function PreviewPanel({
     graph: runGraph,
     selectedRun,
     ...watch,
-    stopped: live.stopped,
+    stopped: flags.stopped,
     loadLive: live.loadLive,
     onView,
     onNotice,
@@ -705,7 +717,7 @@ export function PreviewPanel({
         live={{ views, shown: liveView }}
         onTab={chooseTab}
         behind={behind}
-        onReload={reload}
+        onReload={live.idle ? controls.run.toggle : reload}
         run={controls.run}
         fullScreen={controls.fullScreen}
         sound={controls.sound}
@@ -725,7 +737,7 @@ export function PreviewPanel({
           threadId={threadId}
           graph={graph}
           runGraph={runGraph}
-          view={{ stageView, planning, showEmpty, liveLoading, gameStopped, loader: controls.loader, firstPlan }}
+          view={{ ...flags, planning, loader: controls.loader, firstPlan }}
           showSetup={!project && !engines.some(canBuildWith)}
           beside={beside}
           focusedAsset={focusedAsset}
