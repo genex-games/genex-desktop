@@ -347,9 +347,9 @@ loaded it), and the stage reads the whole state on mount (`studio:live.behind`).
 (`stage.ts`, `stage/live-behind.ts`) adds the run's newest healthy build Live does not show and
 a shown build found broken, applies what main holds when Live is not watched, and swaps only the
 empty scaffold's first healthy build by itself. Live preview candidates load in a staging preview
-first; a candidate and a session never borrow Live when the pool is full, and a session never
-takes Live or the stand-in by a harness-named handle: it gets an overflow lease, at most
-`OVERFLOW_WINDOWS_MAX` past the pool's ceiling, and waits for a window beyond that. The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in
+first, the person's reserved window past the pool's ceiling (`PreviewActor.Person`), never Live. A
+session never takes Live or the stand-in, even by a harness-named handle: it gets an overflow
+lease, at most `OVERFLOW_WINDOWS_MAX` past the ceiling, then waits. The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in
 the [feature map](feature-map.md).
 
 **Covers.** `GameAvatar` paints every cover with one WebGL context (`ui/cover-animation.ts`,
