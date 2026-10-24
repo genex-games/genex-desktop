@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cliInstallProblemWords, newerReport } from "../../src/renderer/cli-install.ts";
+import {
+  cliInstallProblemWords,
+  finishingInstall,
+  installRunning,
+  newerReport,
+} from "../../src/renderer/cli-install.ts";
 import { CliInstallPhase, CliInstallProblem, type CliInstallJob } from "../../src/shared/cli-install.ts";
 
 const started: CliInstallJob = {
@@ -42,4 +47,20 @@ test("only a failed install has words, one line per reason, naming the CLI", () 
     ),
     /Claude Code/,
   );
+});
+
+test("an install that just finished reads as installing until the engines are read again, so Install never flashes back", () => {
+  // The install's own news: the job finished here while the row still shows the old engines.
+  const waiting = finishingInstall({ job: finished });
+  assert.equal(installRunning(finished, waiting), true, "finished, but the engines still say the CLI is missing");
+  assert.equal(installRunning(finished, finishingInstall({ enginesRead: true })), false);
+  // A failed install has nothing to wait for.
+  const failed: CliInstallJob = { ...finished, phase: CliInstallPhase.Failed, problem: CliInstallProblem.Installer };
+  assert.equal(installRunning(failed, finishingInstall({ job: failed })), false);
+  // A finished install read at mount (not watched finishing) waits for nothing.
+  assert.equal(installRunning(finished, null), false);
+  assert.equal(installRunning(started, null), true);
+  // A new install's news replaces the old wait.
+  const again: CliInstallJob = { ...started, startedAt: "2026-09-28T12:05:00.000Z" };
+  assert.equal(installRunning(finished, finishingInstall({ job: again })), false);
 });

@@ -75,7 +75,8 @@ const MESSAGE = {
   status: (status: number) => `the installer download answered ${status}`,
   size: (bytes: number) => `the installer download was ${bytes} bytes`,
   exited: (code: number | null, output: string) => `the installer exited with ${code}: ${output}`,
-  timedOut: (output: string) => `the installer did not finish in time: ${output}`,
+  timedOut: (output: string, silentSeconds: number) =>
+    `the installer did not finish in time: ${output || "(it printed nothing)"} (silent for its last ${silentSeconds} s)`,
   noInstaller: (provider: string, platform: string) => `${provider} publishes no installer for ${platform}`,
 } as const;
 
@@ -107,16 +108,20 @@ export function installerCommand(
 /** Fetches an installer script: the global `fetch`, or Electron's `net.fetch`. */
 export type FetchInstaller = (url: string, init?: RequestInit) => Promise<Response>;
 
-/** How an installer run ended: its exit code, its last output, and whether it was stopped for time. */
+/**
+ * How an installer run ended: its exit code, its last output (each line stamped with the second of
+ * the run it came in), whether it was stopped for time, and how long it had then been silent.
+ */
 export interface InstallerExit {
   code: number | null;
   output: string;
   timedOut: boolean;
+  silentSeconds?: number;
 }
 /** Runs one installer to its end; injectable for tests. */
 export type InstallerRun = (
   command: { file: string; args: string[] },
-  options: { env: Record<string, string>; timeoutMs: number; platform: NodeJS.Platform },
+  options: { env: Record<string, string>; timeoutMs: number; platform: NodeJS.Platform; now: () => number },
 ) => Promise<InstallerExit>;
 
 export interface InstallOptions {
@@ -129,6 +134,8 @@ export interface InstallOptions {
   tmpRoot?: string;
   timeoutMs?: number;
   run?: InstallerRun;
+  /** The clock the output's stamps are read from. */
+  now?: () => number;
 }
 
 /** An install's end: done, or the problem and what the log should keep of it. */
@@ -157,8 +164,14 @@ export async function installCodingCli(
       env,
       timeoutMs: options.timeoutMs ?? INSTALL_TIMEOUT_MS,
       platform,
+      now: options.now ?? Date.now,
     });
-    if (exit.timedOut) return { ok: false, problem: CliInstallProblem.TimedOut, detail: MESSAGE.timedOut(exit.output) };
+    if (exit.timedOut)
+      return {
+        ok: false,
+        problem: CliInstallProblem.TimedOut,
+        detail: MESSAGE.timedOut(exit.output, exit.silentSeconds ?? 0),
+      };
     if (exit.code !== 0)
       return { ok: false, problem: CliInstallProblem.Installer, detail: MESSAGE.exited(exit.code, exit.output) };
     return { ok: true };
@@ -193,10 +206,21 @@ async function download(
 }
 
 /**
+ * `chunk` of an installer's output with every line that starts in it stamped with `seconds` into
+ * the run, so a slow install's log says which step took the time. `atLineStart` is whether the
+ * output so far ended a line.
+ */
+export function stampOutput(chunk: string, seconds: number, atLineStart: boolean): string {
+  const stamp = `[${seconds} s] `;
+  const lines = chunk.split(/(?<=\n)/);
+  return lines.map((line, index) => (index > 0 || atLineStart ? stamp + line : line)).join("");
+}
+
+/**
  * Run the installer with no input and keep the tail of what it says. It leads its own process
  * group (POSIX), so a stop for time ends the downloads it started too.
  */
-const runInstaller: InstallerRun = (command, { env, timeoutMs, platform }) =>
+const runInstaller: InstallerRun = (command, { env, timeoutMs, platform, now }) =>
   new Promise((resolve, reject) => {
     const child = spawn(command.file, command.args, {
       env,
@@ -204,13 +228,19 @@ const runInstaller: InstallerRun = (command, { env, timeoutMs, platform }) =>
       detached: !isWindows(platform),
       windowsHide: true,
     });
+    const started = now();
+    const secondsIn = () => Math.round((now() - started) / SECOND_MS);
     let output = "";
+    let atLineStart = true;
+    let lastOutput = 0;
+    let silentSeconds = 0;
     let timedOut = false;
     let exitCode: number | null = null;
     let settled = false;
     let grace: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
+      silentSeconds = secondsIn() - lastOutput;
       void killProcessTree(child.pid, { platform });
     }, timeoutMs);
     const finish = (): void => {
@@ -218,11 +248,14 @@ const runInstaller: InstallerRun = (command, { env, timeoutMs, platform }) =>
       settled = true;
       clearTimeout(timer);
       clearTimeout(grace);
-      resolve({ code: exitCode, output: output.trim(), timedOut });
+      resolve({ code: exitCode, output: output.trim(), timedOut, silentSeconds });
     };
     for (const stream of [child.stdout, child.stderr])
       stream?.on("data", (chunk: Buffer) => {
-        output = (output + chunk.toString("utf8")).slice(-OUTPUT_TAIL_CHARS);
+        const text = chunk.toString("utf8");
+        lastOutput = secondsIn();
+        output = (output + stampOutput(text, lastOutput, atLineStart)).slice(-OUTPUT_TAIL_CHARS);
+        atLineStart = text.endsWith("\n");
       });
     child.on("error", (err) => {
       if (settled) return;

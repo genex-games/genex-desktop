@@ -5,10 +5,15 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { CliInstallOperation, CliInstallPhase, CliInstallProblem, type CliInstallJob } from "../shared/cli-install.ts";
+import { SECOND_MS } from "../shared/duration.ts";
 import { t } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
+import { useEngines } from "./state/hooks.ts";
 import { problemWords } from "./words.ts";
+
+/** Longest an install that finished here may read as running while the engines are read again. */
+const ENGINES_REREAD_WAIT_MS = 30 * SECOND_MS;
 
 /** What each failed install says, by why it failed. */
 const PROBLEM: Record<CliInstallProblem, (name: string) => string> = {
@@ -36,10 +41,39 @@ export function newerReport(current: CliInstallJob | null, next: CliInstallJob):
   return alreadyFinished ? current : next;
 }
 
+/**
+ * The install that finished while this surface watched and still waits for the engines to be read
+ * again (its `startedAt`), or null: main reports the install done before the engines list says the
+ * CLI is there, and in between the row would offer Install again.
+ */
+export function finishingInstall(news: { job: CliInstallJob } | { enginesRead: true }): string | null {
+  if (!("job" in news)) return null;
+  return news.job.phase === CliInstallPhase.Installed ? news.job.startedAt : null;
+}
+
+/** Whether the row shows `job` as running: it runs, or it just finished and the engines are not read yet. */
+export function installRunning(job: CliInstallJob | null, waiting: string | null): boolean {
+  if (job?.phase === CliInstallPhase.Installing) return true;
+  return job?.phase === CliInstallPhase.Installed && waiting === job.startedAt;
+}
+
 /** `provider`'s in-app install: the latest job, whether it runs, what went wrong, and Install. */
 export function useCliInstall(provider: string) {
   const [job, setJob] = useState<CliInstallJob | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState<string | null>(null);
+  const engines = useEngines((state) => state.list);
+  // A new engines list is the read that shows the finished install's CLI.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for each new list, which it never reads
+  useEffect(() => {
+    setWaiting(finishingInstall({ enginesRead: true }));
+  }, [engines]);
+  // A read that never comes must not leave the row installing.
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setWaiting(null), ENGINES_REREAD_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [waiting]);
   useEffect(() => {
     let alive = true;
     setJob(null);
@@ -51,7 +85,10 @@ export function useCliInstall(provider: string) {
       })
       .catch(() => {});
     const unsubscribe = window.studio.onEvent((event) => {
-      if (event.type === UiEvent.CliInstall && event.payload.provider === provider) setJob(event.payload);
+      if (event.type !== UiEvent.CliInstall || event.payload.provider !== provider) return;
+      const job = event.payload;
+      setJob(job);
+      setWaiting(finishingInstall({ job }));
     });
     return () => {
       alive = false;
@@ -76,6 +113,6 @@ export function useCliInstall(provider: string) {
       setRefused(problemWords(err));
     }
   }, [provider]);
-  const installing = job?.phase === CliInstallPhase.Installing;
+  const installing = installRunning(job, waiting);
   return { job, installing, problem: refused ?? cliInstallProblemWords(job), install, update };
 }
