@@ -3781,12 +3781,14 @@ impl Renderer {
         // Rows' identities across frames only for a frame that writes motion vectors.
         // Far plain skinned draws skin in the vertex stage (AN-18): no job, output or row of theirs.
         // Past the class's compute cap the smallest skin in the vertex stage too (AN-23).
+        // Draws sharing a job stay on compute and the cap counts jobs (lane CP), so the levels
+        // (AN-25, picked for the LOD view `set_lod_view` sets below) are picked first, once.
         let compute_max = self.skinned_compute_max();
-        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws_within(scene, &self.library, self.skin_vertex.policy, compute_max.unwrap_or(u32::MAX));
-        self.skin_vertex.instances = crate::skin_vertex::SkinnedInstances::of(scene.skinned.len(), &vertex_skinned, compute_max);
-        // Skinned levels (AN-25) are picked for the LOD view `set_lod_view` sets below.
         let target = LodTarget { height: self.height, threshold_px: self.quality.lod.threshold_px };
-        let mut plan = FramePlan::build_with_skin_levels(scene, &self.library, aspect, &options, (temporal.motion, &vertex_skinned), target)?;
+        let picks = crate::scene::skinned_levels(scene, &self.library, target);
+        let vertex_skinned = crate::skin_vertex::vertex_skinned_draws_within(scene, &self.library, self.skin_vertex.policy, compute_max.unwrap_or(u32::MAX), &picks);
+        self.skin_vertex.instances = crate::skin_vertex::SkinnedInstances::of(scene.skinned.len(), &vertex_skinned, compute_max);
+        let mut plan = FramePlan::build_with_picks(scene, &self.library, aspect, &options, (temporal.motion, &vertex_skinned), &picks)?;
         self.prepare_skin_vertex_frame(scene, &plan, temporal.set, temporal.reset)?;
         // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
         // no instance to another level.

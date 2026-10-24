@@ -13,9 +13,12 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
+
+use genex_core::map::FastMap;
 
 use crate::caps::BUFFER_MAX_BYTES;
 use crate::cull::{CullLod, active_views, cascade_view, cpu_cull_view};
@@ -1876,6 +1879,14 @@ fn skinned_picks(scene: &Scene, library: &MeshLibrary, view: [f32; 4], band: f32
     scene.skinned.iter().map(pick).collect()
 }
 
+/// The level each skinned draw of `scene` skins on an output of `target` (game systems AN-25), as
+/// [`FramePlan::build_with_skin_levels`] picks them: the base whole for a skin without levels.
+pub fn skinned_levels(scene: &Scene, library: &MeshLibrary, target: LodTarget) -> Vec<SkinnedPick> {
+    let eye = scene.camera.eye;
+    let view = [eye[0], eye[1], eye[2], target.view_w(lod_per_height(&scene.camera))];
+    skinned_picks(scene, library, view, fade_band(scene.lod_band))
+}
+
 /// LOD's screen-size metric (game systems AN-17; STR-19 and the skinned paths read it too): the
 /// pixels the diameter of the world sphere `sphere` (centre xyz, radius) covers at the nominal
 /// output height ([`LOD_NOMINAL_HEIGHT`]) from `camera`, on the cull's own scale (the LOD view's w,
@@ -1933,6 +1944,31 @@ fn same_palette(a: &[[f32; 16]], b: &[[f32; 16]]) -> bool {
     bytemuck::cast_slice::<[f32; 16], u32>(a) == bytemuck::cast_slice::<[f32; 16], u32>(b)
 }
 
+/// Each skinned draw's pose owner (AN-16b): the first draw of `scene` keyed alike by `key_of`
+/// (its level, say) that poses the same skin with a bit-identical palette, itself for the first
+/// of its pose and for a draw `key_of` leaves out (None). A hash of the palette's bits finds the
+/// candidates, so a frame of N draws compares palettes about N times, not N^2 / 2.
+pub(crate) fn pose_owners<K: Hash + Eq>(scene: &Scene, key_of: impl Fn(usize) -> Option<K>) -> Vec<usize> {
+    let mut seen: FastMap<(SkinId, K, u64), Vec<usize>> = FastMap::with_capacity_and_hasher(scene.skinned.len(), Default::default());
+    let mut owner_of = |(at, draw): (usize, &SkinnedDraw)| {
+        let Some(key) = key_of(at) else { return at };
+        let owners = seen.entry((draw.skin, key, palette_hash(&draw.joints))).or_default();
+        if let Some(owner) = owners.iter().copied().find(|owner| same_palette(&scene.skinned[*owner].joints, &draw.joints)) {
+            return owner;
+        }
+        owners.push(at);
+        at
+    };
+    scene.skinned.iter().enumerate().map(&mut owner_of).collect()
+}
+
+/// A hash of a palette's bits (the same for bit-identical palettes).
+fn palette_hash(palette: &[[f32; 16]]) -> u64 {
+    let mut hasher = genex_core::map::FastHasher::default();
+    hasher.write(bytemuck::cast_slice::<[f32; 16], u8>(palette));
+    hasher.finish()
+}
+
 /// Refuse `mesh-invalid` a part list that does not describe `mesh` (AN-16a).
 fn check_skin_parts(mesh: &MeshData, parts: &[SkinPart]) -> Result<(), RenderError> {
     let refuse = |detail: String| Err(RenderError::refused(RenderCode::MeshInvalid, detail));
@@ -1967,6 +2003,8 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool], picks: &
     let pick_of = |at: usize| picks.get(at).copied().unwrap_or(SkinnedPick::BASE);
     let mut frame = SkinnedFrame { parts: Vec::with_capacity(scene.skinned.len()), joints: Vec::new(), uses: Vec::with_capacity(scene.skinned.len()) };
     let mut dst_base = 0u32;
+    // Each draw's job owner: the first draw on compute posing its skin and level with its palette.
+    let owners = pose_owners(scene, |at| (!skins_in_vertex(at)).then(|| pick_of(at)));
     for (at, draw) in scene.skinned.iter().enumerate() {
         let entry = mesh_entry(library, draw.skin.mesh)?;
         if draw.joints.len() != draw.skin.joints as usize {
@@ -1989,12 +2027,9 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool], picks: &
             continue;
         }
         let pick = pick_of(at);
-        let shared = scene.skinned[..at]
-            .iter()
-            .enumerate()
-            .position(|(k, earlier)| !skins_in_vertex(k) && earlier.skin == draw.skin && pick_of(k) == pick && same_palette(&earlier.joints, &draw.joints));
-        if let Some(earlier) = shared {
-            frame.uses.push(frame.uses[earlier].clone());
+        let owner = owners[at];
+        if owner != at {
+            frame.uses.push(frame.uses[owner].clone());
             continue;
         }
         // Every level's rows measure from the posed sphere of the base mesh (AN-25).
@@ -2083,13 +2118,19 @@ impl FramePlan {
     /// or in the fade band the two levels it crossfades, both skinned by compute (a marked draw in a
     /// band leaves the vertex path for that frame).
     pub fn build_with_skin_levels(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, (motion, vertex): (bool, &[bool]), target: LodTarget) -> Result<FramePlan, RenderError> {
+        let picks = skinned_levels(scene, library, target);
+        FramePlan::build_with_picks(scene, library, aspect, options, (motion, vertex), &picks)
+    }
+
+    /// [`FramePlan::build_with_skin_levels`] with the levels [`skinned_levels`] picked for its
+    /// target (the renderer picks them once for the skin paths and the plan).
+    pub(crate) fn build_with_picks(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, (motion, vertex): (bool, &[bool]), picks: &[SkinnedPick]) -> Result<FramePlan, RenderError> {
         let depth_reversed = options.depth_reversed;
         let band = fade_band(scene.lod_band);
         let lod_per_height = lod_per_height(&scene.camera);
         let eye = scene.camera.eye;
-        let picks = skinned_picks(scene, library, [eye[0], eye[1], eye[2], target.view_w(lod_per_height)], band);
         let vertex: Vec<bool> = vertex.iter().enumerate().map(|(at, marked)| *marked && !picks.get(at).is_some_and(|pick| pick.is_band())).collect();
-        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, &vertex, &picks)?;
+        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, &vertex, picks)?;
         let mut materials = Materials::default();
         let mut keys = DrawKeys { keys: motion.then(MotionKeys::default) };
         // Opaque draws by variant and mesh as indices into the scene's draws (and, with motion,
@@ -2179,7 +2220,7 @@ impl FramePlan {
         }
         skinned_rows.sort_by_key(|row| (row.variant, row.part));
         fade_skinned_rows.sort_by_key(|row| (row.variant, row.part));
-        let vertex_skinned = vertex_skinned_parts(scene, library, (&vertex, &picks), &mut materials);
+        let vertex_skinned = vertex_skinned_parts(scene, library, (&vertex, picks), &mut materials);
         rows.push_skinned_variant(scene, &parts, &skinned_rows, DrawVariant::PLAIN.index(), &mut materials);
         let plain_batches = rows.batches.len() as u32;
         let mut variants = Vec::new();

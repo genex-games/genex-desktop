@@ -137,14 +137,17 @@ frame.skeleton_debug(hero, at);
   stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
   skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the
   same picture as the compute pass, including the shadows and the motion vectors.
-- Each device class skins at most so many characters by compute in a frame: 128 on
-  `desktop-ultra`, 100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on
-  `mobile-high`, 12 on `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the
-  smallest on screen are skinned in the vertex stage too (masked, double-sided and transparent ones
-  stay on compute), so a crowd keeps its picture and holds no more skinned memory.
+- Characters of one GLB in the very same pose (a crowd drawn with a few shared animators) are
+  skinned once: the pose stays on the compute pass at any size, and every character showing it is
+  drawn from that one result, culled on the GPU for the view and each shadow cascade.
+- Each device class skins at most so many poses by compute in a frame: 128 on `desktop-ultra`,
+  100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on `mobile-high`, 12 on
+  `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the poses smallest on
+  screen are skinned in the vertex stage too (masked, double-sided and transparent ones stay on
+  compute), so a crowd keeps its picture and holds no more skinned memory.
   `state().volatile.render.characters` shows the last frame's `drawn`, `evaluated` and `held`
-  characters and its `computeSkinned` and `vertexSkinned` counts against `computeMax`; it is never
-  part of the checksum.
+  characters and how many are `computeSkinned` and `vertexSkinned`, with the class's `computeMax`
+  poses; it is never part of the checksum.
 - A character GLB with simplified levels (the Studio's import writes them on every primitive of a
   model of 512 or more triangles, skinned ones included) skins only the level its distance picks,
   with the screen-size metric and crossfades models use: the compute pass near, the vertex stage

@@ -85,6 +85,18 @@ fn crowd(skin: SkinId, places: &[[f32; 2]], angle: f32) -> Scene {
     scene
 }
 
+/// A scene drawing `skin` at each of `places` (x, z), the first `near` bent by `angle` (one shared
+/// pose), each other one bent a little more than the last (a pose of its own).
+fn apart(skin: SkinId, places: &[[f32; 2]], angle: f32, near: usize) -> Scene {
+    let mut scene = crowd(skin, &[], angle);
+    for (i, [x, z]) in places.iter().enumerate() {
+        let own = if i < near { angle } else { angle + 0.001 * (i + 1) as f32 };
+        scene.set_id(Some(DrawId::from_key(&format!("strip-{i}"))));
+        scene.draw_skinned(skin, translation(*x, 0.0, *z), bent(own), orange());
+    }
+    scene
+}
+
 /// 200 places: `near` of them within 4 m of the camera, the rest 80 to 120 m out.
 fn places(near: usize) -> Vec<[f32; 2]> {
     (0..200)
@@ -112,7 +124,7 @@ fn posed_crowd(skin: SkinId, frame: u64) -> Scene {
 fn far_plain_draws_take_the_vertex_path_and_no_job_output_or_row() {
     let mut library = MeshLibrary::new();
     let skin = library.add_skinned(&bending_strip(4, 8)).expect("skinned");
-    let scene = crowd(skin, &places(20), 0.4);
+    let scene = apart(skin, &places(20), 0.4, 20);
     let vertex = vertex_skinned_draws(&scene, &library, SkinVertexPolicy::Auto);
     assert_eq!(vertex.iter().filter(|far| **far).count(), 180, "the 180 far draws, under {SKIN_VERTEX_BELOW_PX} px");
     assert!(vertex[..20].iter().all(|far| !far), "the near ones stay on compute skinning");
@@ -132,8 +144,8 @@ fn far_plain_draws_take_the_vertex_path_and_no_job_output_or_row() {
 fn id_less_flags(library: &MeshLibrary, skin: SkinId, angle: f32, history: &mut SkinVertexHistory) -> Vec<u32> {
     let mut scene = crowd(skin, &[], angle);
     scene.set_id(None);
-    for [x, z] in &places(0)[..3] {
-        scene.draw_skinned(skin, translation(*x, 0.0, *z), bent(angle), orange());
+    for (k, [x, z]) in places(0)[..3].iter().enumerate() {
+        scene.draw_skinned(skin, translation(*x, 0.0, *z), bent(angle + 0.01 * k as f32), orange());
     }
     let vertex = vertex_skinned_draws(&scene, library, SkinVertexPolicy::Auto);
     let options = PlanOptions { shadows: None, depth_reversed: false, sun: None };
@@ -177,13 +189,57 @@ fn a_compute_draw_never_shares_the_pose_of_a_vertex_skinned_one() {
     let mut scene = Scene::new(camera(), [0, 0, 0, 255]);
     scene.draw_skinned(skin, translation(0.0, 0.0, -100.0), bent(0.2), orange());
     scene.draw_skinned(skin, translation(0.0, 0.0, -1.0), bent(0.2), orange());
-    let vertex = vertex_skinned_draws(&scene, &library, SkinVertexPolicy::Auto);
-    assert_eq!(vertex, [true, false]);
+    let vertex = [true, false];
     let options = PlanOptions { shadows: None, depth_reversed: false, sun: None };
     let plan = FramePlan::build_with_skin_paths(&scene, &library, 1.0, &options, false, &vertex).expect("plan");
     assert_eq!(plan.skin_jobs.len(), 1, "the near draw skins its own pose");
     let skinned = &plan.batches[plan.static_batches as usize..plan.plain_batches as usize];
     assert_eq!(skinned.iter().map(|batch| batch.instance_count).sum::<u32>(), 1, "and draws its row");
+}
+
+/// A crowd posed by a few shared animators (lane CP): far draws sharing a pose stay on compute,
+/// one job per pose, every sharer a row of that job's batch.
+#[test]
+fn far_draws_sharing_a_pose_stay_on_compute_one_job_per_pose() {
+    let mut library = MeshLibrary::new();
+    let skin = library.add_skinned(&bending_strip(4, 8)).expect("skinned");
+    let mut scene = crowd(skin, &[], 0.0);
+    for (i, [x, z]) in places(20).iter().enumerate() {
+        scene.set_id(Some(DrawId::from_key(&format!("strip-{i}"))));
+        scene.draw_skinned(skin, translation(*x, 0.0, *z), bent(0.2 + 0.1 * (i % 4) as f32), orange());
+    }
+    // One far draw with a pose of its own still takes the vertex path.
+    scene.draw_skinned(skin, translation(0.0, 0.0, -100.0), bent(1.1), orange());
+    let vertex = vertex_skinned_draws(&scene, &library, SkinVertexPolicy::Auto);
+    assert_eq!(vertex.iter().filter(|far| **far).count(), 1, "only the unshared far draw");
+    assert!(vertex[200], "the unshared far draw is on the vertex path");
+    let options = PlanOptions { shadows: None, depth_reversed: false, sun: None };
+    let plan = FramePlan::build_with_skin_paths(&scene, &library, 1.0, &options, true, &vertex).expect("plan");
+    assert_eq!(plan.skin_jobs.len(), 4, "one job per shared pose");
+    let skinned = &plan.batches[plan.static_batches as usize..plan.plain_batches as usize];
+    assert_eq!(skinned.len(), 4, "one instanced batch per job");
+    assert_eq!(skinned.iter().map(|batch| batch.instance_count).sum::<u32>(), 200, "every sharer is a row");
+}
+
+/// The compute cap counts jobs, not draws (lane CP): 200 draws of 4 poses stay under a cap of 4;
+/// under a cap of 2 the two jobs smallest on screen leave for the vertex stage, all their draws.
+#[test]
+fn the_compute_cap_counts_jobs_not_draws() {
+    let mut library = MeshLibrary::new();
+    let skin = library.add_skinned(&bending_strip(4, 8)).expect("skinned");
+    let mut scene = crowd(skin, &[], 0.0);
+    // Pose k's draws stand at 2 + 3k m: pose 0 the largest on screen, pose 3 the smallest.
+    for i in 0..200 {
+        let k = i % 4;
+        scene.set_id(Some(DrawId::from_key(&format!("strip-{i}"))));
+        scene.draw_skinned(skin, translation((i / 4) as f32 * 0.01, 0.0, -2.0 - 3.0 * k as f32), bent(0.2 + 0.1 * k as f32), orange());
+    }
+    let within = |max: u32| genex_render::skin_vertex::vertex_skinned_draws_within(&scene, &library, SkinVertexPolicy::Auto, max, &[]);
+    assert!(within(4).is_empty(), "4 jobs under a cap of 4: every draw stays on compute");
+    let held = within(2);
+    let moved: Vec<usize> = (0..4).filter(|k| (0..200).filter(|i| i % 4 == *k).all(|i| held[i])).collect();
+    assert_eq!(moved, [2, 3], "the two smallest jobs leave, whole");
+    assert_eq!(held.iter().filter(|flag| **flag).count(), 100);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -354,7 +410,7 @@ fn metal_two_hundred_far_instances_allocate_no_skinned_output() {
     let none = ["skinned vertices", "previous skinned vertices", "skinned slots"].map(|label| held(&renderer, label));
     for frame in 0..2u64 {
         renderer.set_frame_index(frame);
-        renderer.render(&gpu, &crowd(skin, &places(0), 0.3 + 0.1 * frame as f32), CullPath::Gpu).expect("frame");
+        renderer.render(&gpu, &apart(skin, &places(0), 0.3 + 0.1 * frame as f32, 0), CullPath::Gpu).expect("frame");
     }
     let far = ["skinned vertices", "previous skinned vertices", "skinned slots"].map(|label| held(&renderer, label));
     let table = held(&renderer, "vertex skin table");
