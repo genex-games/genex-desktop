@@ -109,6 +109,8 @@ pub mod presets;
 pub mod budget;
 /// Dynamic resolution: discrete scale steps driven by typed frame signals.
 pub mod drs;
+/// Upscaling modes (Native, Quality, Balanced, Performance) and the calibrated default.
+pub mod upscale;
 /// Frame timing: GPU timestamps, CPU time, sliding percentiles.
 pub mod timing;
 /// The frame graph: the ordered node table.

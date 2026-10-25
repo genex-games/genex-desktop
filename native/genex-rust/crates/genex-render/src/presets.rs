@@ -1090,10 +1090,15 @@ impl LodOverride {
 pub struct ClassOverride {
     /// The preset.
     pub preset: Option<QualityPreset>,
-    /// The nominal render scale (clamped to [`RENDER_SCALE_MIN`]..=1).
+    /// The nominal render scale (clamped to [`RENDER_SCALE_MIN`]..=1): of the output, or with an
+    /// upscaling mode in force ([`ClassOverride::upscale`]) of the mode's share.
     pub render_scale: Option<f32>,
-    /// The frame-rate target (30 or 60).
+    /// The frame-rate target dynamic resolution holds, one of [`crate::drs::FRAME_RATE_TARGETS`].
     pub fps: Option<u32>,
+    /// The upscaling mode (lane UQ): the share of the window a frame renders.
+    pub upscale: Option<crate::upscale::UpscaleMode>,
+    /// Whether dynamic resolution moves the scale (off: the nominal step, and no preset demotion).
+    pub dynamic_resolution: Option<bool>,
     /// Feature switches, applied in order after the preset.
     pub switches: Vec<(RenderFeature, bool)>,
     /// The sun's shadow choices (cascades, map size, filter, distance, blend band), applied after

@@ -46,6 +46,10 @@ use crate::device_class::DeviceClass;
 use crate::presets::{class_defaults, preset_quality};
 use crate::settings::{AoResolution, Quality, QualityPreset};
 
+/// The frame rates a game or a person may ask dynamic resolution to hold (lane UQ). Nothing above
+/// 60: the frame graph draws once per 60 Hz simulation tick ([`crate::pacing`]), so a faster
+/// display repeats frames and a shorter target would only cost resolution.
+pub const FRAME_RATE_TARGETS: [u32; 2] = [30, 60];
 /// Most discrete scale steps over a class's range.
 pub const MAX_SCALE_STEPS: usize = 6;
 /// Scales are whole multiples of this, so a step's target size is a stable pool key.
