@@ -129,6 +129,7 @@ import type { AssetLockEntry } from "../shared/asset-db.ts";
 import { RUST_ENGINE_FOLDER, RustFlavour, RustNetFeature } from "./rust-manifest.ts";
 import { type GameTrust, ownBuildScripts, UNTRUSTED } from "./rust-trust.ts";
 import { ExtensionRefusal } from "../shared/game-conformance.ts";
+import { PlayStage, type PlayTimingSink } from "../shared/play-timing.ts";
 import type { RustOutputAdmission } from "../substrate/native-cross-admission.ts";
 import type { BuildOutcome, GameBuildGame, GameBuildLane, GameBuildOptions } from "./game-build.ts";
 import {
@@ -197,6 +198,12 @@ const LOCK_TIMEOUT_MS = 2 * MINUTE_MS;
 const IDENTITY_TIMEOUT_MS = 30 * SECOND_MS;
 /** How long an export's `llvm-objcopy --strip-debug` may run. */
 const STRIP_TIMEOUT_MS = 2 * MINUTE_MS;
+/** The host's own parts of a build a Play's timing names besides the receipt's steps (`PlayStage.BuildStep`). */
+const LOCATE_STEP = "locate";
+const SWEEP_STEP = "sweep";
+const STAGE_STEP = "stage";
+const ASSETS_STEP = "assets";
+const ADMIT_STEP = "admit";
 /** How many cores one build gets before a second may run beside it. */
 const CORES_PER_BUILD = 4;
 /** How much of a build's output the sandbox keeps: a cold build prints a JSON line per crate. */
@@ -780,6 +787,8 @@ export class RustBuilds implements GameBuildLane {
   readonly #holds = new Map<string, Promise<void>>();
   /** The sweep a new build folder started, while it runs ({@link RustBuilds.sweep}). */
   #sweeping: Promise<number> | null = null;
+  /** The Plays timing each build folder's build (`GameBuildOptions.timing`), while they wait on it. */
+  readonly #timings = new Map<string, Set<PlayTimingSink>>();
 
   constructor(options: RustBuildsOptions) {
     this.options = options;
@@ -814,9 +823,44 @@ export class RustBuilds implements GameBuildLane {
       return this.#refused(asked, BuildProblemCode.ToolchainMissing, lines, null, RustBuildRefusal.TargetSettings);
     }
     const pending: Pending = { game, target, purpose, builder, source, bin, lock, sdk, settings };
+    return await this.#join(pending, options);
+  }
+
+  /** The build of `pending`'s folder under way (or a new one), waited for; a Play timing it hears its marks meanwhile. */
+  async #join(pending: Pending, options: GameBuildOptions): Promise<BuildOutcome> {
+    const { bin } = pending;
     const running = this.#inFlight.get(bin);
-    const flight = running && !running.controller.signal.aborted ? running : this.#start(pending, running ?? null);
-    return await this.#wait(flight, pending, options.signal);
+    const timing = options.timing;
+    if (timing) this.#timingsOf(bin).add(timing);
+    try {
+      const flight = running && !running.controller.signal.aborted ? running : this.#start(pending, running ?? null);
+      return await this.#wait(flight, pending, options.signal);
+    } finally {
+      if (timing) this.#timings.get(bin)?.delete(timing);
+    }
+  }
+
+  #timingsOf(bin: string): Set<PlayTimingSink> {
+    const known = this.#timings.get(bin);
+    if (known) return known;
+    const made = new Set<PlayTimingSink>();
+    this.#timings.set(bin, made);
+    return made;
+  }
+
+  /** Tells every Play waiting on `bin`'s build that a stage of it ended, `ms` long. */
+  #mark(bin: string, stage: PlayStage, ms: number, detail?: string): void {
+    for (const sink of this.#timings.get(bin) ?? []) sink(stage, ms, detail);
+  }
+
+  /** Runs `work`, then tells the Plays waiting on `bin` how long it took as `stage` (`detail`). */
+  async #timed<T>(bin: string, stage: PlayStage, detail: string | undefined, work: () => Promise<T>): Promise<T> {
+    const started = this.#now();
+    try {
+      return await work();
+    } finally {
+      this.#mark(bin, stage, this.#now() - started, detail);
+    }
   }
 
   /** Composer Stop and the app's stop: every build in flight or waiting aborts; nothing in flight is no error. */
@@ -973,9 +1017,11 @@ export class RustBuilds implements GameBuildLane {
 
   /** Locate, take a slot, open the build's sandbox, build, and let everything go. */
   async #build(pending: Pending, signal: AbortSignal): Promise<BuildOutcome> {
-    const located = await this.options
-      .locate(pending.lock, pending.target)
-      .catch((error: unknown): RustLocateResult => ({ ok: false, missing: [errorMessage(error)] }));
+    const located = await this.#timed(pending.bin, PlayStage.BuildStep, LOCATE_STEP, () =>
+      this.options
+        .locate(pending.lock, pending.target)
+        .catch((error: unknown): RustLocateResult => ({ ok: false, missing: [errorMessage(error)] })),
+    );
     const lastGood = await lastAdmitted(pending.bin);
     if (!located.ok) return this.#outcome(pending, toolchainRefusal(located), { lines: located.missing, lastGood });
     const grant = (await this.options.crateGrant?.(pending.game.project)) ?? NO_GRANT;
@@ -998,13 +1044,16 @@ export class RustBuilds implements GameBuildLane {
       });
     }
     // A new build folder is about to cost disk: the folders nothing builds again go first.
-    if (!(await lstat(pending.bin).catch(() => null))) await this.#sweepOnce();
+    if (!(await lstat(pending.bin).catch(() => null)))
+      await this.#timed(pending.bin, PlayStage.BuildStep, SWEEP_STEP, () => this.#sweepOnce());
+    const queued = this.#now();
     const target = await this.#targetOf(pending);
     // A copy cloning this folder's target finishes first; a shared target builds one copy at a time.
     await this.#lending.get(pending.bin);
     const held = target.shared ? await this.#hold(target.dir, signal) : () => {};
     if (!held) return this.#outcome(pending, BuildProblemCode.Cancelled, { lastGood });
     const release = await this.#slot(signal);
+    this.#mark(pending.bin, PlayStage.BuildQueue, this.#now() - queued);
     if (!release) {
       held();
       return this.#outcome(pending, BuildProblemCode.Cancelled, { lastGood });
@@ -1060,15 +1109,17 @@ export class RustBuilds implements GameBuildLane {
     const flavour = rustFlavourOf(plan.purpose, plan.target);
     // Staged from the real source root the build folder is keyed by, never the path as the game named it.
     const game = { project: plan.game.project, dir: plan.source };
-    const staged = await this.options.stage(
-      game,
-      stageDir(plan.bin),
-      plan.target,
-      flavour,
-      plan.lock,
-      plan.storeVendor,
-      plan.ejectedFrom,
-      plan.netFeature,
+    const staged = await this.#timed(plan.bin, PlayStage.BuildStep, STAGE_STEP, () =>
+      this.options.stage(
+        game,
+        stageDir(plan.bin),
+        plan.target,
+        flavour,
+        plan.lock,
+        plan.storeVendor,
+        plan.ejectedFrom,
+        plan.netFeature,
+      ),
     );
     if (!staged.ok) {
       const lines = [`${staged.code}: ${staged.detail}`];
@@ -1100,7 +1151,10 @@ export class RustBuilds implements GameBuildLane {
         rust: RustBuildRefusal.DependencyNotAllowed,
       });
     }
-    if (!(await this.#importAssets(plan, signal))) return this.#outcome(plan, BuildProblemCode.Cancelled, { lastGood });
+    const imported = await this.#timed(plan.bin, PlayStage.BuildStep, ASSETS_STEP, () =>
+      this.#importAssets(plan, signal),
+    );
+    if (!imported) return this.#outcome(plan, BuildProblemCode.Cancelled, { lastGood });
     const identity = await this.#step(plan, RustBuildStep.Identity, rustcCommand(plan), IDENTITY_TIMEOUT_MS, signal);
     if (!succeeded(identity)) return this.#failed(plan, identity, signal, lastGood);
     const compiler = parseRustcIdentity(identity.stdout);
@@ -1113,7 +1167,9 @@ export class RustBuilds implements GameBuildLane {
     if (!succeeded(clippy)) return this.#failed(plan, clippy, signal, lastGood);
     const build = await this.#step(plan, RustBuildStep.Build, buildCommand(plan, this.#jobs()), timeout, signal);
     if (!succeeded(build)) return this.#failed(plan, build, signal, lastGood);
-    return await this.#admit(plan, build, compiler, lastGood, signal);
+    return await this.#timed(plan.bin, PlayStage.BuildStep, ADMIT_STEP, () =>
+      this.#admit(plan, build, compiler, lastGood, signal),
+    );
   }
 
   /** The slug a networked export bakes in: the binding's, when it is one fit to bake; null for every other build. */
@@ -1199,7 +1255,9 @@ export class RustBuilds implements GameBuildLane {
       maxOutputBytes: OUTPUT_MAX_BYTES,
       label: `rust:${plan.game.project}:${plan.target}:${step}`,
     });
-    plan.steps.push({ step, ms: Math.max(0, this.#now() - started), code: result.code });
+    const ms = Math.max(0, this.#now() - started);
+    plan.steps.push({ step, ms, code: result.code });
+    this.#mark(plan.bin, PlayStage.BuildStep, ms, step);
     return result;
   }
 
@@ -1438,7 +1496,9 @@ export class RustBuilds implements GameBuildLane {
         return { code: result.code, stdout: result.stdout, stderr: result.stderr };
       },
     });
-    plan.steps.push({ step: RustBuildStep.WebPackage, ms: Math.max(0, this.#now() - started), code: null });
+    const ms = Math.max(0, this.#now() - started);
+    plan.steps.push({ step: RustBuildStep.WebPackage, ms, code: null });
+    this.#mark(plan.bin, PlayStage.BuildStep, ms, RustBuildStep.WebPackage);
     if (packaged.ok) return { ok: true, receipt: packaged.receipt };
     const lines = [MESSAGE.webRefused(packaged.refusal, packaged.detail)];
     return webRefused(lines, RustBuildRefusal.WebPackageRefused);
@@ -1609,7 +1669,9 @@ export class RustBuilds implements GameBuildLane {
     await mkdir(path.dirname(root), { recursive: true });
     for (const dir of [root, path.dirname(pending.bin), pending.bin]) await ownFolder(dir);
     await atomicWriteText(`${pending.bin}${SOURCE_SUFFIX}`, pending.source);
+    const seeding = this.#now();
     const seed = await this.#prepareTarget(pending, target);
+    this.#mark(pending.bin, PlayStage.BuildSeed, this.#now() - seeding, seed);
     await ownFolder(path.join(pending.bin, TMP_DIR));
     const stage = stageDir(pending.bin);
     await rm(stage, { recursive: true, force: true });

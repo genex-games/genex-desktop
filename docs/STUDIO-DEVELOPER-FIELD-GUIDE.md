@@ -42,6 +42,15 @@ app's Rust lane (`src/main/core/rust-lane.ts`) builds over that store for the Ma
 (the WebGPU page Live and browser exports use); the phones' builders build on a Mac (never run
 by an agent or a check), Windows and Linux are refused `target-unbuilt` until their cross components are pinned; Mac embedded and headless runs start from the admitted bytes, and only window runs and Mac exports are `lane-missing`. Real Rust rows read
 `GENEX_RUST_TOOLCHAIN_DIR` and the Rust dev store (`node scripts/toolchains/dev-store.ts --stack rust-wgpu`).
+Play is timed from the click to the first frame (`src/main/core/play-timings.ts`): each Play window,
+Live Native view and `showBuild` writes one `[play]` line to the profile's `core/logs/studio.log`
+with every stage (copy, window, the lane's queue, seed and steps, candidate boot, served, the web
+shell's boot stages, first frame). The `rust-game` fixture reproduces Play's waits: stub cargo takes
+`STUDIO_FIXTURE_RUST_WEB_MS` / `STUDIO_FIXTURE_RUST_MAC_MS` (`<clippy ms>,<build ms>`) per step,
+`STUDIO_FIXTURE_RUST_PLAY=<after ms>[,<plays>]` presses Play on a fresh commit (then Live's Native
+view on its copy), `STUDIO_FIXTURE_RUST_OFFER=1` offers that commit to Live's Update instead, and
+`STUDIO_FIXTURE_RUST_CONTEND=<n>[,<after ms>]` starts `n` agents' judged Mac looks at copies of the
+game (native leases and build slots), as a run's checks would.
 The stage, the promo over a stage, create dialog and Toolchain sheet have rendered review runners
 over the real components (`npm run test:ui -- stage-ui`, `promo-stage-ui`, `create-game-ui`,
 `toolchain-ui`; light and dark captures). A device

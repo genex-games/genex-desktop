@@ -40,7 +40,7 @@ import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
-import { buildFailureNote, servedAfterBuild, type BuildOutcome } from "../game-build.ts";
+import { buildFailureNote, servedAfterBuild, type BuildOutcome, type GameBuildOptions } from "../game-build.ts";
 import { CPP_ENTRY, CppBuildPurpose, refusalProblem } from "../cpp-build.ts";
 import { BuildProblemCode, type BuildProblem, type InstallResult } from "../../shared/build-problem.ts";
 import {
@@ -116,6 +116,8 @@ import {
   type LiveSound,
 } from "../game-sound.ts";
 import { liveMaxFps } from "../live-pace.ts";
+import { PlayStage } from "../../shared/play-timing.ts";
+import type { PlayClock } from "./play-timings.ts";
 
 /** The most cameras one capture photographs. */
 const MAX_CAPTURE_CAMERAS = 8;
@@ -489,6 +491,14 @@ interface ServeOptions {
   fallback?: boolean;
   /** Default: Live for a load that may fall back, Judging for one that may not. */
   purpose?: CppBuildPurpose;
+  /** The person's Play this load serves, timed (`play-timings.ts`); absent: nobody's. */
+  clock?: PlayClock;
+}
+
+/** What a load for the person's Play adds: the build's purpose and the Play's clock. */
+export interface PlayServe {
+  purpose?: CppBuildPurpose;
+  clock?: PlayClock;
 }
 
 /** A compiled game whose destinations leave the browser out: Live has no page of it to show. */
@@ -496,6 +506,65 @@ function notForTheBrowser(game: GameProject | undefined): boolean {
   if (!isCompiledStack(stackOf(game?.shape ?? TEMPLATE_SHAPE))) return false;
   return !destinationsOf(game ?? {}).targets.includes(BuildTarget.Web);
 }
+
+/** A Play's `built` mark when the lane served an admitted build without building (`PlayStage.Built`'s detail). */
+const BUILT_REUSED = "reused";
+/** How often a Play's page is asked where its boot is, and for how long at most. */
+const PAGE_BOOT_POLL_MS = 100;
+const PAGE_BOOT_WATCH_MS = 3 * MINUTE_MS;
+/** The web shell's boot, as `window.GenexShell` says it (`shell.html`): its state and its loading stage. */
+const PAGE_BOOT_PROBE =
+  "(() => { const s = window.GenexShell; return s ? { state: s.status?.state ?? null, stage: s.progress?.stage ?? null } : null; })()";
+/** The shell's states and the stage its loading screen leaves at (`shell.html`). Wire values. */
+const PageBoot = { Ready: "ready", Failed: "failed", Unsupported: "unsupported" } as const;
+
+/**
+ * A Play's page, watched until its first frame: each loading stage the web shell passes is a mark,
+ * the loading screen leaving ends the Play. A page with no shell ends it at once (its load is its
+ * first frame as far as Studio can tell); a page that fails ends it failed. Never throws.
+ */
+async function watchPageBoot(port: PreviewPort, clock: PlayClock): Promise<void> {
+  const until = Date.now() + PAGE_BOOT_WATCH_MS;
+  let stage: string | null = null;
+  while (Date.now() < until) {
+    const boot = pageBootOf(await port.evaluate(PAGE_BOOT_PROBE).catch(() => null));
+    if (!boot) return clock.end(PlayStage.FirstFrame, null);
+    if (boot.state === PageBoot.Failed || boot.state === PageBoot.Unsupported)
+      return clock.end(PlayStage.Failed, String(boot.state));
+    if (typeof boot.stage === "string" && boot.stage !== stage) {
+      if (boot.stage === PageBoot.Ready) return clock.end(PlayStage.FirstFrame, null);
+      stage = boot.stage;
+      clock.mark(PlayStage.PageStage, { detail: stage });
+    }
+    await sleep(PAGE_BOOT_POLL_MS);
+  }
+  clock.end(PlayStage.Failed, PAGE_BOOT_TIMED_OUT);
+}
+/** What a build for a Play is handed besides the game: the Play's clock, which the lane marks. */
+function playBuild(clock: PlayClock | undefined): GameBuildOptions {
+  return clock ? { timing: clock.sink } : {};
+}
+
+/** A Play's build answered: reused when the lane served an admitted build without building. */
+function markBuilt(clock: PlayClock | undefined, outcome: BuildOutcome | null): void {
+  const reused = outcome?.ran === false && outcome.ok;
+  clock?.mark(PlayStage.Built, { detail: reused ? BUILT_REUSED : null });
+}
+
+/** Live was given a Play's page: it is served, and its boot is watched to its first frame. */
+function watchPlay(port: PreviewPort, clock: PlayClock | undefined): void {
+  if (!clock) return;
+  clock.mark(PlayStage.Served);
+  void watchPageBoot(port, clock);
+}
+
+/** What {@link PAGE_BOOT_PROBE} answered, or null for a page with no shell. */
+function pageBootOf(value: unknown): { state: unknown; stage: unknown } | null {
+  if (typeof value !== "object" || value === null) return null;
+  return { state: Reflect.get(value, "state"), stage: Reflect.get(value, "stage") };
+}
+/** Why a watched page ended its Play: it never reached its first frame in {@link PAGE_BOOT_WATCH_MS}. */
+const PAGE_BOOT_TIMED_OUT = "page-boot-timed-out";
 
 /** The query the web shell reads for a game played with mouse look (`shell.html`'s `mouseLook`). */
 const MOUSE_LOOK_QUERY = "?mouseLook";
@@ -703,6 +772,8 @@ export class PreviewService {
   #liveWebBuild: WebBuildSeen | null = null;
   /** The person stopped Live's game (`stopLive`): nothing loads into it until Play or a load of theirs. */
   #liveStopped = false;
+  /** The person's Play each window is loading for, timed (`play-timings.ts`), while that load runs. */
+  readonly #playClocks = new Map<string, PlayClock>();
 
   constructor(core: StudioCore, x: CoreInternals) {
     this.#core = core;
@@ -1025,8 +1096,10 @@ export class PreviewService {
       },
       BuildTarget.Web,
       purpose,
+      playBuild(options.clock),
     );
     const { outcome } = receipt;
+    markBuilt(options.clock, outcome);
     if (!outcome) {
       port.note?.("error", MESSAGE.laneMissing(receipt.stack), BUILD_FAILED_NOTE);
       return null;
@@ -1203,12 +1276,14 @@ export class PreviewService {
     const webBuild = isLive && checkedRoot === null ? await this.#webBuildSeen(p.project) : null;
     if (isLive)
       this.#showIdentity({ project: p.project, head: null, state: PreviewIdentityState.Loading, error: null });
+    const clock = this.#playClocks.get(handle);
     try {
-      const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
+      const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive, clock });
       if (!served) return await this.#servedNothing(p, port, isLive ? { root: checkedRoot, print } : null);
       // A load starts the page again, whether or not it then arrives: Live's game is no longer stopped.
       if (isLive) this.#liveStopped = false;
       const url = await port.load(p.project, served.entry, served.root, servedLoadOptions(served));
+      watchPlay(port, clock);
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#liveCurrent(p.project, { print, root: checkedRoot }, webBuild);
       remembered.loaded = servedKey(served);
@@ -1766,8 +1841,9 @@ export class PreviewService {
     root: string | null,
     entry?: string,
     forceLoopback = false,
+    play: PlayServe = {},
   ): Promise<LoadedServed> {
-    const served = await this.servedEntry(project, root, entry, port);
+    const served = await this.servedEntry(project, root, entry, port, play);
     if (!served) return { problem: await this.#leaveNoPage(port), note: null, ready: null, build: null };
     const budgetMs = await this.bootMsFor(project);
     // `shim.readyMs` is the same number: one budget, so the page and the studio give up together.
@@ -1944,6 +2020,21 @@ export class PreviewService {
     this.#core.snapshots.register({ name: project, dir: projectDir });
     const resolved = (await git(projectDir, ["rev-parse", "--verify", `${commit}^{commit}`]).catch(() => "")).trim();
     if (!resolved) throw new Error(MESSAGE.notInHistory(commit, project));
+    const clock = this.#core.playTimings.start({ project, target: BuildTarget.Web, commit: resolved });
+    try {
+      return await this.#showBuild(project, projectDir, resolved, clock);
+    } catch (error) {
+      clock.end(PlayStage.Failed, errorMessage(error));
+      throw error;
+    }
+  }
+
+  async #showBuild(
+    project: string,
+    projectDir: string,
+    resolved: string,
+    clock: PlayClock,
+  ): Promise<{ dir: string; commit: string }> {
     // Prepare an independent revision. A failed build must never delete the currently served one.
     const showDir = path.join(
       this.#core.layout.scratch,
@@ -1952,6 +2043,7 @@ export class PreviewService {
     );
     await ensureDir(path.dirname(showDir));
     await this.#core.snapshots.worktreeAt(project, resolved, showDir, await this.nestedPolicy(projectDir));
+    clock.mark(PlayStage.Copy);
     const previous = this.#x.servedRoots.get(LIVE_HANDLE);
     // A preview candidate may never borrow the user's Live window. It is the person's own window
     // past the agents' share: every caller plays a build the person asked for (their Play, or the
@@ -1960,13 +2052,20 @@ export class PreviewService {
     let liveAttempted = false;
     try {
       const lease = await this.pool().acquire({ label: `preview-candidate:${project}`, by: PreviewActor.Person });
+      clock.mark(PlayStage.Window);
       candidateHandle = lease.handle;
       const port = this.pool().port(lease.handle);
-      const candidate = await this.loadServed(port, project, showDir);
+      const candidate = await this.loadServed(port, project, showDir, undefined, false, { clock });
+      clock.mark(PlayStage.Candidate);
       if (candidate.problem) throw new Error(candidate.problem);
       if (this.#x.servedRoots.get(LIVE_HANDLE) !== previous) throw new Error(MESSAGE.previewChanged());
       liveAttempted = true;
-      await this.loadPreview({ project, root: showDir });
+      this.#playClocks.set(LIVE_HANDLE, clock);
+      try {
+        await this.loadPreview({ project, root: showDir });
+      } finally {
+        this.#playClocks.delete(LIVE_HANDLE);
+      }
     } catch (error) {
       if (liveAttempted && previous)
         await this.loadPreview({ project: previous.project, root: previous.root, entry: previous.entry }).catch(

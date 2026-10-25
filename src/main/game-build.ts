@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ensureDir, pathExists } from "../substrate/fsx.ts";
+import type { PlayTimingSink } from "../shared/play-timing.ts";
 import { HOST_GIT_CONFIG } from "../substrate/snapshots.ts";
 import {
   GUARDED_ADD,
@@ -707,6 +708,8 @@ export interface GameBuildGame {
 /** What one caller hands a build besides the game: its own signal, which ends only its own wait. */
 export interface GameBuildOptions {
   signal?: AbortSignal;
+  /** A person's Play timing the build (`play-timings.ts`): the lane marks its wait and its steps; absent: nobody is. */
+  timing?: PlayTimingSink;
 }
 
 /** One compiled stack's build lane, as the seam drives it. */

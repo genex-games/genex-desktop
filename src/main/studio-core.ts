@@ -301,6 +301,8 @@ import { seedUpgradedPayload } from "./seed-upgrade-notice.ts";
 import { SeedUpgradeMode } from "../substrate/seed-upgrade.ts";
 import { crateCheckSandboxes } from "../substrate/toolchain-store/crate-check.ts";
 import { execXcode } from "../substrate/toolchain-store/locate.ts";
+import { PlayTimings } from "./core/play-timings.ts";
+import { setTimeout as sleep } from "node:timers/promises";
 
 export type { PreviewInputAction };
 export type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort };
@@ -592,6 +594,8 @@ export type { CoreInternals };
 
 export class StudioCore {
   readonly options: StudioCoreOptions;
+  /** The person's Plays, timed from the click to the first frame; each finished one is a `[play]` log line. */
+  readonly playTimings = new PlayTimings({ log: (line) => this.options.onLog?.(line, "stderr") });
   readonly layout: StudioLayout;
   readonly snapshots: SnapshotEngine;
   readonly snapshotIndex = new SnapshotIndex();
@@ -1475,6 +1479,7 @@ export class StudioCore {
       timers: this.#x.nativeTimers,
       ...(this.options.nativeSupervisor ? { supervisor: this.options.nativeSupervisor } : {}),
       frames: this.options.nativeFrames ?? null,
+      playTimings: this.playTimings,
       // A crashed run's record goes to its game's `.studio/crashes/` and is announced on the main thread (CRASH-5).
       crashes: createGameCrashStore({
         gameDir: async (project) => {
@@ -3285,6 +3290,42 @@ export class StudioCore {
     } finally {
       if (this.#showRequests.get(key) === request) this.#showRequests.delete(key);
     }
+  }
+
+  /**
+   * The development fixtures' stand-in for a run's checks (`fixture-rust.ts`, lane PW's contended
+   * Play): an agent's judged build of the copy `root` for `target`, in a window or native lease of
+   * its own as an agent's look takes one, held `holdMs` once loaded, then let go. Where this build
+   * opens no lease of that kind (a fixture's game box), the judged build alone. Never throws.
+   */
+  async fixtureAgentLook(project: string, root: string, target: BuildTarget, holdMs: number): Promise<void> {
+    const native = target !== BuildTarget.Web;
+    const session = this.#previews.sessionPortFor({
+      label: `fixture-agent:${project}`,
+      ...(native ? { target } : {}),
+    });
+    try {
+      const port = await session.get().catch(() => null);
+      const handle = session.handle();
+      if (port && !native) await this.#previews.loadServed(port, project, root);
+      else if (port && handle) await this.loadPreview({ project, root, handle });
+      else await this.#fixtureJudgedBuild(project, root, target);
+      await sleep(holdMs);
+    } catch {
+      // A fixture's stand-in: what it held is let go below, whatever came of its look.
+    } finally {
+      await session.release();
+    }
+  }
+
+  /** A judged build of `root` for `target` through the seam, as an agent's look makes one. */
+  async #fixtureJudgedBuild(project: string, root: string, target: BuildTarget): Promise<void> {
+    const game = (await this.games.list()).find((listed) => listed.name === project);
+    if (!game) return;
+    const stack = stackOf(game.shape);
+    const lock = isCompiledStack(stack) ? await this.toolchains.currentLock(stack, project) : null;
+    const asked = { project, dir: root, shape: game.shape, destinations: destinationsOf(game), lock };
+    await this.#gameBuilds.ensure(asked, target, CppBuildPurpose.Judging);
   }
 
   landBuild(...args: Parameters<PreviewService["landBuild"]>): ReturnType<PreviewService["landBuild"]> {

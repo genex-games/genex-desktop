@@ -216,7 +216,7 @@ async function build(deps: NativePrepareDeps, request: NativePrepareRequest, gam
     },
     request.target,
     BUILD_PURPOSE[request.mode],
-    { signal },
+    { signal, ...(request.timing ? { timing: request.timing } : {}) },
   );
   signal.throwIfAborted();
   // The seam's own code: no lane for this stack (`lane-missing`), never the closed gate's `stack-gated`.

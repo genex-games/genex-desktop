@@ -38,6 +38,7 @@ import {
 } from "../../src/main/rust-build.ts";
 import { RustBuildRefusal, RustDiagnosticTool } from "../../src/main/rust-build-diagnostics.ts";
 import { RustTargetSeed, RustTargetSharing } from "../../src/main/rust-build-cache.ts";
+import type { PlayStage, PlayTimingSink } from "../../src/shared/play-timing.ts";
 import { cloneTreeByFile, type TreeCloner } from "../../src/substrate/clone-tree.ts";
 import { RustNetFeature } from "../../src/main/rust-manifest.ts";
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
@@ -835,6 +836,37 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     );
     assert.ok(receipt.steps.every((step) => step.ms > 0));
     assert.equal(receipt.outputs.find((file) => file.path === "game")?.sha256, sha256(GAME_BYTES));
+  });
+
+  it("tells a Play timing the build where its wait went: the host's own parts, the queue, the seed and each step (PW)", async () => {
+    const parent = await realpath(await tmpDir("rust-play-timing-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const marks: Array<{ stage: PlayStage; detail: string | null; ms: number }> = [];
+    const timing: PlayTimingSink = (stage, ms, detail) => marks.push({ stage, ms, detail: detail ?? null });
+    const dir = await rustGame(parent);
+    const outcome = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging, { timing });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+    assert.deepEqual(
+      marks.map((mark) => (mark.detail ? `${mark.stage}:${mark.detail}` : mark.stage)),
+      [
+        "build-step:locate",
+        "build-step:sweep",
+        "build-queue",
+        `build-seed:${RustTargetSeed.Cold}`,
+        "build-step:stage",
+        "build-step:assets",
+        "build-step:identity",
+        "build-step:lock",
+        "build-step:clippy",
+        "build-step:build",
+        "build-step:admit",
+      ],
+    );
+    assert.ok(marks.every((mark) => Number.isFinite(mark.ms) && mark.ms >= 0));
+    marks.length = 0;
+    await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.deepEqual(marks, [], "a build nobody times tells nobody");
   });
 
   it("falls back to the last admitted output only while it is the very one admitted", async () => {

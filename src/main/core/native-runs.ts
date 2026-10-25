@@ -30,6 +30,8 @@
  * abnormal exit) names its record in its last status, and the record goes to the crash store
  * (`core/game-crashes.ts`) before the run dir is removed.
  */
+import { PlayStage, type PlayTimingSink } from "../../shared/play-timing.ts";
+import type { PlayClock, PlayTimings } from "./play-timings.ts";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants as FS } from "node:fs";
@@ -169,6 +171,8 @@ export interface NativeStartRequest {
    * the lane again (that build is the one waiting on this run).
    */
   prebuilt?: NativePrebuilt;
+  /** The person's Play timing this run's build (set by the registry for a Play window or Live's Native view). */
+  timing?: PlayTimingSink;
 }
 
 /** An admitted Rust build a run starts from without building: its `out/`, lock and admitted digests. */
@@ -254,6 +258,8 @@ export interface NativeRunsOptions {
   platform?: NodeJS.Platform;
   /** Where a crashed run's record is kept (`core/game-crashes.ts`); absent or null keeps none and names none. */
   crashes?: GameCrashStore | null;
+  /** The person's Plays, timed (`play-timings.ts`): a Play window's or Live's Native view's start is one; absent: none is. */
+  playTimings?: PlayTimings;
 }
 
 /** A live run: its status and its port. */
@@ -867,13 +873,20 @@ export class NativeRuns implements NativeRunsHost {
 
   async #run(entry: RunEntry): Promise<NativeRun> {
     const { runId } = entry.status;
+    const clock = this.#playClock(entry);
     try {
       await this.#sweep?.catch(() => 0);
       const prepared = await this.#options.prepare(
-        { ...entry.request, runId, onAdmitting: () => this.#set(entry, { state: NativeRunState.Admitting }) },
+        {
+          ...entry.request,
+          runId,
+          onAdmitting: () => this.#set(entry, { state: NativeRunState.Admitting }),
+          ...(clock ? { timing: clock.sink } : {}),
+        },
         entry.controller.signal,
       );
       entry.controller.signal.throwIfAborted();
+      clock?.mark(PlayStage.Built);
       entry.crashBuild = prepared.crashBuild ?? null;
       this.#set(entry, { state: NativeRunState.Starting });
       const nonce = randomBytes(NONCE_BYTES).toString("hex");
@@ -886,9 +899,12 @@ export class NativeRuns implements NativeRunsHost {
       await this.#adopt(entry, child);
       entry.controller.signal.throwIfAborted();
       const run = await this.#connect(entry, child, { nonce, stateDir: state, runId, build: prepared.build ?? null });
+      clock?.mark(PlayStage.Served);
       await this.#firstRing(entry, run.port);
+      clock?.end(PlayStage.FirstFrame);
       return run;
     } catch (error) {
+      clock?.end(PlayStage.Failed, errorMessage(error));
       // A game that was spawned ends through its exit, killed here if nothing else will end it;
       // one that never was ends here.
       if (!entry.child) this.#refuse(entry, error);
@@ -897,6 +913,13 @@ export class NativeRuns implements NativeRunsHost {
       if (entry.stopAsked) throw abortReason(entry.controller.signal);
       throw error;
     }
+  }
+
+  /** A person's run (a Play window, Live's Native view) is a Play, timed; an agent's run is not. */
+  #playClock(entry: RunEntry): PlayClock | null {
+    const { mode, project, target } = entry.request;
+    if (mode === NativeRunMode.Headless || !this.#options.playTimings) return null;
+    return this.#options.playTimings.start({ project, target, commit: null });
   }
 
   /** The spawned game is this run's: its exit ends the run, its pidfile and the supervisor know it. */
