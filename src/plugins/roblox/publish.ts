@@ -2,9 +2,10 @@
  * Publishing to Roblox: a place's first publish, and its updates. No Studio or plugin API publishes a
  * place, and Open Cloud's place publishing takes API keys Genex never asks for, so the person's own
  * computer control clicks File › Publish to Roblox in their Studio: Genex hands the game's chat that
- * task through `game.engine.assist`. The person approves every publish: the panel's press, or the
- * card the manifest declares on the agent's `first-publish` and `publish-update`, which the host
- * asks before the plugin runs.
+ * task through `game.engine.assist`. The person approves every publish: their press in the panel or
+ * on the strip's Publish card (no further card), or the card the manifest declares on the agent's
+ * `first-publish` and `publish-update`, which the host asks before the plugin runs. The card follows
+ * the publish through `publish-attempt.ts`.
  *
  * - **First publish** (`first-publish`): a place never published (its link has no `remote` ids)
  *   becomes a new game on Roblox under the name the person approved (the Genex game's title unless
@@ -12,7 +13,7 @@
  *   stops the turn at any age, ID, two-step, terms or payment question, which stay the person's.
  * - **Publish an update** (`publish-update`): a published place, updated.
  *
- * Where Genex can't click (Windows, no driver, the person said no), the answer gives Studio's click
+ * Where Genex can't click (no desktop driver, the person said no), the answer gives Studio's click
  * path. Afterwards Genex links the game to the published place by itself (`relink.ts`).
  */
 import type {
@@ -141,14 +142,39 @@ export function firstPublishTask(name: string): string {
   return `Publish to Roblox as a new game named "${gameName(name)}": ${PUBLISH_CLICK_PATH} in Studio, now, with the desktop tool (not first-publish). Keep Studio's privacy and settings, the description empty. Stop at any age, ID, two-step, terms or payment question.`;
 }
 
-/** Each asker's words for each answer. */
-const WORDS = {
-  [PublishAsker.Person]: MESSAGE.Publish,
-  [PublishAsker.Agent]: PUBLISH_PROMPTS,
-} as const;
+/** The words a publish's answers are read from, whoever asked. */
+interface PublishWords {
+  Started: string;
+  FirstStarted(name: string): string;
+  Unavailable: string;
+  Declined: string;
+  NoChat: string;
+  NotStarted: string;
+  FirstPublish(name: string): string;
+  AlreadyPublished: string;
+  NoPlace: string;
+}
 
-/** The words both askers' answers are read from. */
-type PublishWords = (typeof WORDS)[PublishAsker];
+/** The person's words for each answer, in Genex's language as it is now. */
+function personWords(): PublishWords {
+  const W = MESSAGE.Publish;
+  return {
+    Started: W.Started(),
+    FirstStarted: W.FirstStarted,
+    Unavailable: W.Unavailable(),
+    Declined: W.Declined(),
+    NoChat: W.NoChat(),
+    NotStarted: W.NotStarted(),
+    FirstPublish: W.FirstPublish,
+    AlreadyPublished: W.AlreadyPublished(),
+    NoPlace: W.NoPlace(),
+  };
+}
+
+/** Each asker's words for each answer: the person's, or the agent's (English). */
+const wordsOf = (asker: PublishAsker): PublishWords =>
+  asker === PublishAsker.Person ? personWords() : PUBLISH_PROMPTS;
+
 /** The answers that are the same line whoever asked. */
 type PlainWords = "Unavailable" | "Declined" | "NoChat" | "NotStarted";
 
@@ -186,7 +212,7 @@ export async function publishUpdate(
   deps: PublishDeps,
   asker: PublishAsker,
 ): Promise<PublishAnswer> {
-  const words = WORDS[asker];
+  const words = wordsOf(asker);
   if (!place.link) return { started: false, message: words.NoPlace, reason: PublishMiss.NoPlace };
   if (!place.link.remote)
     return { started: false, message: words.FirstPublish(firstPublishName(place)), reason: PublishMiss.FirstPublish };
@@ -205,7 +231,7 @@ export async function firstPublish(
   asker: PublishAsker,
   requested?: string,
 ): Promise<PublishAnswer> {
-  const words = WORDS[asker];
+  const words = wordsOf(asker);
   if (!place.link) return { started: false, message: words.NoPlace, reason: PublishMiss.NoPlace };
   if (place.link.remote) return { started: false, message: words.AlreadyPublished, reason: PublishMiss.Published };
   const name = firstPublishName(place, requested);
@@ -219,8 +245,9 @@ export async function firstPublish(
 /** The panel's card for a published place: its name and what publishing does; a first publish keeps the manifest's. */
 export function reviewPublish(place: PublishPlace): PluginReview {
   if (!place.link?.remote) return {};
-  const name = plainName(place.name) || plainName(place.link.name) || "this game's place";
-  return { message: MESSAGE.Publish.Confirm(name), detail: MESSAGE.Publish.Plan };
+  const name = plainName(place.name) || plainName(place.link.name);
+  const message = name ? MESSAGE.Publish.Confirm(name) : MESSAGE.Publish.ConfirmUnnamed();
+  return { message, detail: MESSAGE.Publish.Plan() };
 }
 
 /** The panel's card for a first publish: the name it gets on Roblox and what happens; a published place keeps the manifest's. */
@@ -228,6 +255,6 @@ export function reviewFirstPublish(place: PublishPlace, requested?: string): Plu
   if (!place.link || place.link.remote) return {};
   return {
     message: MESSAGE.Publish.ConfirmFirst(firstPublishName(place, requested)),
-    detail: MESSAGE.Publish.PlanFirst,
+    detail: MESSAGE.Publish.PlanFirst(),
   };
 }

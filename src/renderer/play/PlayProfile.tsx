@@ -1,13 +1,15 @@
 /**
  * A profile in Play, centred and at most 1080px wide: the person's live avatar, their name with
  * PRO, and beside it a pencil and Share on the account's own (the pencil opens Settings → Genex
- * account, Share its link) or the friend button on anyone else's; under it their @handle, their
- * games and players as chips, then when they joined. Then their friends as a row (people the viewer knows first), the account's own last 7
+ * account, Share its link) or the friend button on anyone else's; under it their @handle, the shelf
+ * of items they own (`ItemShelf.tsx`, none when they own none), their games and players as chips,
+ * then when they joined. Then their friends as a row (people the viewer knows first), the account's own last 7
  * days (only it ever sees them), and their games as the dashboard's cards. Offline it shows what
  * was read last, and reads again once the Mac is back online.
  */
 import type { JSX } from "react";
 import { useEffect } from "react";
+import { intlLocale } from "../../shared/i18n.ts";
 import {
   FriendStatus,
   type PlayMe,
@@ -31,6 +33,7 @@ import { ShareProfile } from "./ShareProfile.tsx";
 import { OfflineNotice } from "./PlayOffline.tsx";
 import { Grid, useCardRemix } from "./PlayRoom.tsx";
 import { formatCount } from "./play-model.ts";
+import { ItemShelf } from "./ItemShelf.tsx";
 import { joinedWhen } from "./ProfilePlate.tsx";
 import { StatsStrip } from "./StatsStrip.tsx";
 
@@ -40,7 +43,7 @@ const HEADER_AVATAR = 123;
 /** A friend's avatar on the profile's row, with room for gear. */
 const FRIEND_TILE_AVATAR = 66;
 /** "Mar 2026": when two people became friends, as a tile says it. */
-const SINCE_FORMAT = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
+const SINCE_FORMAT = new Intl.DateTimeFormat(intlLocale(), { month: "short", year: "numeric" });
 
 /** A number on a chip, then its noun. */
 function Chip({ value, noun, hook }: { value: number; noun: string; hook: string }): JSX.Element {
@@ -103,6 +106,7 @@ function ProfileHead({ profile, me }: { profile: Profile; me: PlayMe | null }): 
           @{person.handle}
         </span>
       )}
+      <ItemShelf userId={person.id} />
       <ProfileFacts profile={profile} />
     </header>
   );
@@ -123,6 +127,7 @@ function ProfileFriends({ friends, name }: { friends: PlayProfileFriend[]; name:
       title={WORDS.friends}
       note={String(friends.length)}
       label={name ? WORDS.friendsOf(name) : WORDS.friends}
+      arrows={WORDS.friendsArrows(name)}
       hook={{ "data-profile-friends": "" }}
     >
       {friends.map((friend) => {

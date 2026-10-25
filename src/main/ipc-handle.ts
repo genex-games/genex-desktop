@@ -13,6 +13,8 @@ import { errorMessage } from "../shared/errors.ts";
 /** Why an IPC call is refused before its handler runs. */
 const MESSAGE = {
   studioUiOnly: "This action is restricted to Studio UI",
+  playBarOnly: "This action is restricted to Studio UI and Play's bar",
+  playBarPageOnly: "This action is restricted to Play's bar",
 } as const;
 
 export type { IpcResult } from "../shared/ipc-channels.ts";
@@ -33,8 +35,9 @@ export type IpcHandler<C extends StudioInvokeChannel> = (
 
 // Plugin panels, connectors and terminals may run arbitrary local programs, and a chat's permission
 // mode and answers say what Claude may do on this Mac; a job's Stop ends a
-// process and Open Privacy settings opens System Settings. Only Studio's own main frame may reach
-// them, never a plugin page or a game's frame.
+// process and Open Privacy settings opens System Settings; Play's card menu unpublishes, deletes
+// and changes published games on the Genex account. Only Studio's own main frame may reach them,
+// never a plugin page or a game's frame.
 const STUDIO_UI_ONLY = [
   "studio:plugins.",
   "studio:mcp.",
@@ -42,7 +45,36 @@ const STUDIO_UI_ONLY = [
   "studio:permissions.",
   "studio:jobs.",
   "studio:app-look.",
+  // Save, Share and Add write into a game and publish to genex.games under the person's account.
+  "studio:assets.",
+  "studio:play.manage",
+  "studio:play.cover",
+  // The store buys with the account's coin and answers its purchase sheet; Create › Items puts the
+  // account's items on sale, shares them and adds other creators' items to its games.
+  "studio:store.",
+  "studio:items.",
+  // Moving Genex's data restarts Genex and moves every file it keeps.
+  "studio:data-folder.",
 ];
+
+// Writing and deleting comments as the Genex account: Studio's main frame or Play's bar layer only.
+const PLAY_BAR_WRITES: ReadonlySet<string> = new Set(["studio:play.comment", "studio:play.uncomment"]);
+// Paying for a game's purchase: the sheet lives only in Play's bar layer, so only its own page answers
+// it, never Studio's main frame, a game's page or a frame inside the bar.
+const PLAY_BAR_ONLY: ReadonlySet<string> = new Set(["studio:play.purchase"]);
+
+/** Why `event`'s sender may not call `channel`, or null when it may. */
+function senderRefusal(
+  channel: string,
+  event: IpcSender,
+  options: { isStudioUi(event: IpcSender): boolean; isPlayBar?(event: IpcSender): boolean },
+): string | null {
+  const studio = options.isStudioUi(event);
+  if (STUDIO_UI_ONLY.some((prefix) => channel.startsWith(prefix)) && !studio) return MESSAGE.studioUiOnly;
+  if (PLAY_BAR_WRITES.has(channel) && !studio && options.isPlayBar?.(event) !== true) return MESSAGE.playBarOnly;
+  if (PLAY_BAR_ONLY.has(channel) && options.isPlayBar?.(event) !== true) return MESSAGE.playBarPageOnly;
+  return null;
+}
 
 /**
  * The `handle(channel, fn)` main registers every IPC channel through. Each call is refused unless a
@@ -53,14 +85,23 @@ const STUDIO_UI_ONLY = [
  */
 export function createIpcHandle(
   ipc: IpcRegistrar,
-  options: { fixture: boolean; isStudioUi(event: IpcSender): boolean; performance?: PerformanceRecorder },
+  options: {
+    fixture: boolean;
+    isStudioUi(event: IpcSender): boolean;
+    /**
+     * Play's bar layer's own page (its main frame), which may also post and delete comments, and alone
+     * answers a game's purchase sheet.
+     */
+    isPlayBar?(event: IpcSender): boolean;
+    performance?: PerformanceRecorder;
+  },
 ) {
   return <C extends StudioInvokeChannel>(channel: C, fn: IpcHandler<C>): void => {
     ipc.handle(channel, async (event, payload) => {
       const started = options.performance?.now() ?? 0;
       try {
-        if (STUDIO_UI_ONLY.some((prefix) => channel.startsWith(prefix)) && !options.isStudioUi(event))
-          throw new Error(MESSAGE.studioUiOnly);
+        const refused = senderRefusal(channel, event, options);
+        if (refused) throw new Error(refused);
         assertNativeActionAllowed(options.fixture, channel);
         // The one place a payload is typed: whatever the preload sent on this channel. Handlers
         // still check the fields they act on, because the sender is a browser.

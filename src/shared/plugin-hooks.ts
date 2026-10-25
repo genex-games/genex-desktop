@@ -345,15 +345,30 @@ export function hookEventsOf(plugins: readonly HookedPlugin[], game: GameKind): 
 export interface PersonFirstAnswer {
   personActive: boolean;
   unsaved?: number;
+  /**
+   * The person is using it, but the plugin lets agents go ahead of them (`personActive: false`),
+   * and says so for the first time: the chat the call answers to tells them once.
+   */
+  wentAhead?: boolean;
+}
+
+/** What the chat is told when an agent went ahead of the person in what a plugin's lock guards (`agent_went_ahead`). */
+export interface AgentWentAheadPayload {
+  project: string;
+  /** The plugin whose lock let the agent go ahead: its settings are where the person turns it off. */
+  pluginId: string;
+  /** The lock's label: the app the person was using. */
+  label: string;
 }
 
 /** A probe's answer, or null when Genex can't tell (no boolean `personActive`, or an `unsaved` that is no count). */
 export function personFirstOf(answer: unknown): PersonFirstAnswer | null {
   if (!isRecord(answer) || typeof answer.personActive !== "boolean") return null;
   const { unsaved } = answer;
-  if (unsaved === undefined) return { personActive: answer.personActive };
+  const wentAhead = answer.personActive === false && answer.wentAhead === true ? { wentAhead: true } : {};
+  if (unsaved === undefined) return { personActive: answer.personActive, ...wentAhead };
   if (typeof unsaved !== "number" || !Number.isSafeInteger(unsaved) || unsaved < 0) return null;
-  return { personActive: answer.personActive, unsaved };
+  return { personActive: answer.personActive, unsaved, ...wentAhead };
 }
 
 /** Why a checkpoint asked only if something is unsaved was skipped. Written in records: never rename a value. */

@@ -7,10 +7,17 @@
  * raises exits 1, a write outside the allow-list is refused, a runaway is killed as a tree.
  */
 import assert from "node:assert/strict";
-import { access, constants, mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, constants, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { runNativeProcess } from "../../src/substrate/plugins/native-process.ts";
+import { promisify } from "node:util";
+import {
+  nativeSandboxProfile,
+  runNativeProcess,
+  runtimeRoot,
+  SYSTEM_READS,
+} from "../../src/substrate/plugins/native-process.ts";
 import {
   BLENDER_RENDER_SIZE,
   BLENDER_WRAPPER_PY,
@@ -20,6 +27,7 @@ import {
 import { decodePng, encodePng } from "../../scripts/evals/prober/png.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
+const exec = promisify(execFile);
 const BLENDER = process.env.STUDIO_TEST_BLENDER ?? "/Applications/Blender.app/Contents/MacOS/Blender";
 
 async function haveBlender(): Promise<boolean> {
@@ -75,7 +83,7 @@ async function runBlender(p: {
   timeoutMs: number;
 }) {
   const start = Date.now();
-  const bundle = p.binary.includes(".app/") ? p.binary.slice(0, p.binary.indexOf(".app/") + 4) : path.dirname(p.binary);
+  const bundle = runtimeRoot(p.binary);
   const result = await runNativeProcess({
     binary: p.binary,
     args: ["-b", "--factory-startup", "-noaudio", "--python-exit-code", "1", "--python", p.script, "--", ...p.args],
@@ -90,6 +98,56 @@ async function runBlender(p: {
     maxOutputBytes: 64000,
   });
   return { ...result, durationMs: Date.now() - start, timedOut: result.reason === "timeout" };
+}
+
+/** The macOS cache folder Metal keeps for the application `binary` is in: the user's cache, then its bundle id. */
+async function metalCache(binary: string): Promise<string> {
+  const plist = path.join(runtimeRoot(binary), "Contents/Info.plist");
+  const id = (await exec("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plist])).stdout.trim();
+  const base = (await exec("/usr/bin/getconf", ["DARWIN_USER_CACHE_DIR"])).stdout.trim();
+  return path.join(await realpath(base), id);
+}
+
+/** The extension class Metal's compiler needs for the cache; the job may issue no other. */
+const READ_WRITE = "com.apple.app-sandbox.read-write";
+/** The line {@link EXTENSIONS_PY} prints: whether the sandbox let it issue each extension it was asked for. */
+const EXTENSIONS_RESULT = "EXTENSIONS ";
+/** Asks the sandbox for each extension after `--` (a JSON list of class and path pairs), as Metal does for its cache. */
+const EXTENSIONS_PY = `
+import ctypes, json, sys
+issue = ctypes.CDLL("/usr/lib/libSystem.B.dylib").sandbox_extension_issue_file
+issue.restype = ctypes.c_void_p
+issue.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+asked = json.loads(sys.argv[sys.argv.index("--") + 1])
+print(${JSON.stringify(EXTENSIONS_RESULT)} + json.dumps([bool(issue(c.encode(), p.encode(), 0)) for c, p in asked]))
+`;
+/** One extension a sandboxed script asks for: what the row tests, the class and path, and whether it may be issued. */
+type ExtensionRow = [label: string, extension: [string, string], allowed: boolean];
+
+/** Asserts each row's extension was issued exactly when the row allows it, from the script's output. */
+function assertIssued(stdout: string, table: ExtensionRow[]): void {
+  const line = stdout.split("\n").find((l) => l.startsWith(EXTENSIONS_RESULT));
+  assert.ok(line, stdout);
+  const answers = JSON.parse(line.slice(EXTENSIONS_RESULT.length)) as boolean[];
+  for (const [index, [label, , allowed]] of table.entries()) assert.equal(answers[index], allowed, label);
+}
+
+/** The error a wrapper run reports when the script `long.py` (bpy imported, then `body`) fails. */
+async function errorOf(body: string): Promise<string> {
+  const { ws, assets, out, scratch, wrapper } = await setup();
+  const script = path.join(assets, "src", "long.py");
+  await writeFile(script, `import bpy\n${body}\n`);
+  const result = await runBlender({
+    binary: BLENDER,
+    script: wrapper,
+    args: [script, path.join(assets, "long.glb"), path.join(out, "long-1.png"), "long"],
+    cwd: ws,
+    allowWrite: [assets, out],
+    denyRead: [],
+    scratch,
+    timeoutMs: 60_000,
+  });
+  return String(resultLine(result.stdout)?.error);
 }
 
 const MODEL_PY = `
@@ -301,6 +359,43 @@ bpy.context.active_object.name = "Cable"
     assert.match(String(parsed.error), /no such primitive/);
   });
 
+  it("a long error leads with its own first line, notes left after it, then the traceback's last lines; a first line too long alone keeps its start", {
+    skip: SKIP,
+  }, async () => {
+    const steps = await errorOf(
+      `error = RuntimeError("\\n".join("step %d done" % i for i in range(400)))\nerror.add_note("a note")\nraise error`,
+    );
+    const lines = steps.split("\n");
+    assert.equal(lines[0], "RuntimeError: step 0 done", "the error's own first line names it, never its note");
+    assert.match(lines[1] ?? "", /^step \d+ done$/, "then whole lines");
+    assert.equal(lines.at(-1), "a note");
+    assert.ok(steps.length <= 1500, `${steps.length} characters`);
+    const fits = await errorOf(`raise RuntimeError("x" * (1500 - len("RuntimeError: ")))`);
+    assert.equal(
+      fits.split("\n").at(-1),
+      `RuntimeError: ${"x".repeat(1500 - "RuntimeError: ".length)}`,
+      "a line that fits is whole",
+    );
+    const long = await errorOf(`raise RuntimeError("PROBE " + "x" * 3000)`);
+    assert.match(long, /^RuntimeError: PROBE x+…$/, "the error's own start, cut at its end");
+    assert.ok(long.length <= 1500, `${long.length} characters`);
+  });
+
+  it("an error raised on a very long source line still names the script's file and line", { skip: SKIP }, async () => {
+    const error = await errorOf(`raise RuntimeError("bad vertex") if len([${"0.5, ".repeat(1500)}]) else None`);
+    const lines = error.split("\n");
+    assert.equal(lines.at(-1), "RuntimeError: bad vertex");
+    assert.ok(
+      lines.some((line) => /File ".*long\.py", line 2/.test(line)),
+      error,
+    );
+    assert.ok(
+      lines.some((line) => line.endsWith("…")),
+      "the long line is cut short",
+    );
+    assert.ok(error.length <= 1500, `${error.length} characters`);
+  });
+
   it("a script cannot write outside the allow-list, and cannot reach the network", { skip: SKIP }, async () => {
     const { root, ws, assets, out, scratch, wrapper } = await setup();
     const outside = path.join(root, "outside");
@@ -338,6 +433,87 @@ raise RuntimeError(" | ".join(errors))
     assert.match(String(parsed.error), /write: PermissionError/, "the write outside the allow-list is refused");
     assert.match(String(parsed.error), /net: /, "the socket is refused");
     await assert.rejects(readFile(path.join(outside, "x.txt")), "nothing escaped");
+  });
+
+  it("a GPU job may hand its own Metal cache to the system's shader compiler, and no other folder", {
+    skip: SKIP,
+  }, async () => {
+    // The compiler builds Metal's shader module in that cache through a read-write extension the
+    // job issues; refused, a cold cache fails every shader and Blender crashes on its first render.
+    const { ws, scratch } = await setup();
+    const cache = await metalCache(BLENDER);
+    const writable = await realpath(scratch);
+    const script = path.join(ws, "extensions.py");
+    await writeFile(script, EXTENSIONS_PY);
+    const table: ExtensionRow[] = [
+      ["its own Metal cache", [READ_WRITE, cache], true],
+      ["the cache, read only", ["com.apple.app-sandbox.read", cache], false],
+      ["the cache, another class", ["com.apple.quarantine", cache], false],
+      ["the user's whole cache", [READ_WRITE, path.dirname(cache)], false],
+      ["the whole cache, spelled through the app's", [READ_WRITE, `${cache}/..`], false],
+      ["a folder the job may write", [READ_WRITE, writable], false],
+    ];
+    const result = await runNativeProcess({
+      binary: BLENDER,
+      args: [
+        "-b",
+        "--factory-startup",
+        "-noaudio",
+        "--python",
+        script,
+        "--",
+        JSON.stringify(table.map((row) => row[1])),
+      ],
+      cwd: ws,
+      scratch,
+      reads: [runtimeRoot(BLENDER), ws],
+      writes: [],
+      denyRead: [],
+      gpu: true,
+      signal: new AbortController().signal,
+      timeoutMs: 60_000,
+      maxOutputBytes: 64000,
+    });
+    assertIssued(result.stdout + result.stderr, table);
+  });
+
+  it("a link inside the folder a job may hand out hands out nothing outside it", { skip: SKIP }, async () => {
+    const root = await realpath(await tmpDir("native-extension-"));
+    const folder = path.join(root, "folder");
+    const outside = path.join(root, "outside");
+    const scratch = path.join(root, "scratch");
+    for (const dir of [folder, outside, scratch]) await mkdir(dir);
+    const link = path.join(folder, "link");
+    await symlink(outside, link);
+    const script = path.join(scratch, "extensions.py");
+    await writeFile(script, EXTENSIONS_PY);
+    const bundle = runtimeRoot(BLENDER);
+    const profile = path.join(scratch, "job.sb");
+    await writeFile(
+      profile,
+      nativeSandboxProfile({
+        binaryRoot: bundle,
+        reads: [bundle, ...SYSTEM_READS],
+        writes: [scratch, folder],
+        extensions: [folder],
+        denied: [],
+        gpu: true,
+      }),
+    );
+    const table: ExtensionRow[] = [
+      ["the folder", [READ_WRITE, folder], true],
+      ["a path inside it", [READ_WRITE, path.join(folder, "inside")], true],
+      ["a link inside it to a folder outside", [READ_WRITE, link], false],
+      ["the same link as a folder", [READ_WRITE, `${link}/`], false],
+      ["a way out through its parent", [READ_WRITE, `${folder}/../outside`], false],
+    ];
+    const asked = JSON.stringify(table.map((row) => row[1]));
+    const { stdout } = await exec(
+      "/usr/bin/sandbox-exec",
+      ["-f", profile, BLENDER, "-b", "--factory-startup", "-noaudio", "--python", script, "--", asked],
+      { cwd: scratch, env: { HOME: scratch, TMPDIR: scratch, PATH: "/usr/bin:/bin" }, timeout: 60_000 },
+    );
+    assertIssued(stdout, table);
   });
 
   it("a runaway script is killed as a process tree at the timeout", { skip: SKIP }, async () => {

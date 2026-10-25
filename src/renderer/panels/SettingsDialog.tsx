@@ -1,10 +1,10 @@
-import { type JSX, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type JSX, type KeyboardEvent, lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { EngineDescriptor } from "../types.ts";
 import { SettingsSection } from "../settings-navigation.ts";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { AppearanceSection } from "./AppearanceSection.tsx";
-import { ModelProvidersSection, type ModelSettingsProps } from "./ModelsSection.tsx";
+import type { ModelSettingsProps } from "./ModelsSection.tsx";
 import { LocalModelsSection } from "./LocalModelsSection.tsx";
 import { HarnessSection } from "./HarnessSection.tsx";
 import { GamesSection } from "./GamesSection.tsx";
@@ -15,6 +15,15 @@ import { AboutSection } from "./AboutSection.tsx";
 import { AccountSection, AccountSignOut } from "./AccountSection.tsx";
 import { usePeople } from "../state/hooks.ts";
 import { ABOUT_WORDS, ACCOUNT_WORDS, PRIVACY_WORDS, STORAGE_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
+
+/**
+ * Model Providers, loaded when Settings first shows it: its rows (every provider's sign-in, install
+ * and account controls) are not part of what a window reads before it shows.
+ */
+const ModelProvidersSection = lazy(() =>
+  import("./ModelsSection.tsx").then((section) => ({ default: section.ModelProvidersSection })),
+);
 
 interface SectionTab {
   id: SettingsSection;
@@ -24,13 +33,13 @@ interface SectionTab {
 
 const SECTIONS: readonly SectionTab[] = [
   { id: SettingsSection.Account, label: ACCOUNT_WORDS.tab, icon: "character" },
-  { id: SettingsSection.Providers, label: "Model Providers", icon: "globe" },
-  { id: SettingsSection.Local, label: "Local Models", icon: "box" },
-  { id: SettingsSection.Appearance, label: "Appearance", icon: "palette" },
-  { id: SettingsSection.Games, label: "Games", icon: "folder" },
+  { id: SettingsSection.Providers, label: t("Model Providers"), icon: "globe" },
+  { id: SettingsSection.Local, label: t("Local Models"), icon: "box" },
+  { id: SettingsSection.Appearance, label: t("Appearance"), icon: "palette" },
+  { id: SettingsSection.Games, label: t("Games"), icon: "folder" },
   { id: SettingsSection.Storage, label: STORAGE_WORDS.tab, icon: "drive" },
   { id: SettingsSection.Harness, label: "Harness", icon: "harness" },
-  { id: SettingsSection.Permissions, label: "Permissions", icon: "shield" },
+  { id: SettingsSection.Permissions, label: t("Permissions"), icon: "shield" },
   { id: SettingsSection.Privacy, label: PRIVACY_WORDS.tab, icon: "eye" },
   { id: SettingsSection.About, label: ABOUT_WORDS.tab, icon: "info" },
 ];
@@ -72,7 +81,11 @@ function SectionBody({
   if (section === SettingsSection.Storage) return <StorageSection />;
   if (section === SettingsSection.Appearance) return <AppearanceSection />;
   if (section === SettingsSection.Providers)
-    return <ModelProvidersSection engines={engines} onEnginesRefresh={onEnginesRefresh} />;
+    return (
+      <Suspense fallback={null}>
+        <ModelProvidersSection engines={engines} onEnginesRefresh={onEnginesRefresh} />
+      </Suspense>
+    );
   if (section === SettingsSection.Harness) return <HarnessSection />;
   if (section === SettingsSection.Permissions) return <PermissionsSection />;
   if (section === SettingsSection.Privacy) return <PrivacySection />;
@@ -125,7 +138,7 @@ export function SettingsDialog({
   };
   return (
     <DialogSurface
-      title="Settings"
+      title={t("Settings")}
       size="2xl"
       testId="settings-dialog"
       headerHidden
@@ -136,13 +149,13 @@ export function SettingsDialog({
     >
       <div className="settings-layout flex min-h-0 min-w-0 max-sm:flex-col">
         <nav
-          aria-label="Settings sections"
+          aria-label={t("Settings sections")}
           className="flex shrink-0 gap-1 border-border/75 bg-(--sidebar) p-3 max-sm:overflow-x-auto max-sm:border-b max-sm:pr-14 sm:w-52 sm:flex-col sm:border-r sm:pb-6"
         >
-          <p className="px-3 pt-1 pb-2 font-mono text-micro text-muted-foreground max-sm:hidden">Settings</p>
+          <p className="px-3 pt-1 pb-2 font-mono text-micro text-muted-foreground max-sm:hidden">{t("Settings")}</p>
           <div
             role="tablist"
-            aria-label="Settings sections"
+            aria-label={t("Settings sections")}
             aria-orientation={horizontal ? "horizontal" : "vertical"}
             className="flex gap-1 sm:flex-col"
           >

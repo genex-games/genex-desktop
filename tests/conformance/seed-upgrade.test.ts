@@ -31,6 +31,8 @@ import {
 import { atomicWriteJson, pathExists } from "../../src/substrate/fsx.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { makeResources } from "../helpers/resources.ts";
+import { coreLite } from "../helpers/core-lite.ts";
+import { git, STUDIO_COMMITTER } from "../../src/substrate/snapshots.ts";
 import { cloneSeededWorkspace } from "../helpers/seed-upgrade-fixture.ts";
 import { closeBeforeCleanup, removeTree, tmpDir } from "../helpers/tmp.ts";
 import { readFileSync } from "node:fs";
@@ -42,7 +44,7 @@ import { SEED_GENERATED } from "../../scripts/gen-harness-types.ts";
 import { OPEN_LOOP_REFUSAL } from "../../src/harness-seed/loop/open-loop-prompts.ts";
 import { gameRepo, loopHost } from "../helpers/loop-host.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
-import { linkIsolated } from "../helpers/isolated-import.ts";
+import { callIsolated, linkIsolated } from "../helpers/isolated-import.ts";
 
 /** Where an upgrade keeps the agent's copy of `rel`: a renamed module's new path (seed-renames.ts). */
 const keptAt = (rel: string): string => RENAMED_SEED_FILES[rel] ?? rel;
@@ -259,6 +261,37 @@ describe("manifest reconcile after a harness restore", () => {
       updatesDir: path.join(path.dirname(ws), "still-no-updates"),
     });
     assert.deepEqual(reconciled, []);
+  });
+});
+
+describe("the first launch's harness repository", () => {
+  it("is written by git from the shipped seed, so no file the launch just wrote is read back", async () => {
+    // Windows scans a file the first time it is read after being written: committing the copied
+    // seed made git read back all of it, and a first start on Windows 11 waited minutes on that.
+    const { core, resources } = await coreLite();
+    const ws = core.layout.harnessWs;
+    const shipped = (
+      await readdir(path.join(resources, "harness-seed"), { recursive: true, withFileTypes: true })
+    ).filter((entry) => entry.isFile()).length;
+    const counts = Object.fromEntries(
+      (await git(ws, ["count-objects", "-v"]))
+        .trim()
+        .split("\n")
+        .map((line) => line.split(": ") as [string, string]),
+    );
+    assert.equal(Number(counts.count), 0, "no loose object: the commit went into one pack");
+    assert.ok(Number(counts["in-pack"]) > shipped, "every file, tree and the commit are packed");
+    assert.equal((await git(ws, ["ls-files"])).trim().split("\n").length, shipped);
+    assert.equal((await git(ws, ["status", "--porcelain"])).trim(), "");
+    assert.equal(
+      (await git(ws, ["log", "--format=%an <%ae>|%s"])).trim(),
+      `${STUDIO_COMMITTER.name} <${STUDIO_COMMITTER.email}>|substrate: initial`,
+    );
+    for (const rel of ["loop/main.ts", "package.json"])
+      assert.equal(
+        await readFile(path.join(ws, rel), "utf8"),
+        await readFile(path.join(resources, "harness-seed", rel), "utf8"),
+      );
   });
 });
 
@@ -1878,6 +1911,71 @@ describe("seed upgrade across steer", () => {
     // kept copies never exported would throw here, at link time.
     const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
     assert.equal(main.createStudio, "function");
+  });
+});
+
+/**
+ * Messages without a queue added switches, waits that end when the person writes, and workers that
+ * carry into a Loop, to modules that already shipped. A seed upgrade keeps any of them once the
+ * agent edited it, so every name the change needs comes from a module of its own.
+ */
+describe("seed upgrade across messages without a queue", () => {
+  const vintage = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-no-queue.json", import.meta.url)), "utf8"),
+  ) as { modules: Record<string, string[]> };
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+
+  it("an agent that edited its queue, chat turn, workers or lead before the change keeps them, and the harness still loads", async () => {
+    const root = await tmpDir("seed-no-queue-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    for (const rel of [
+      "loop/steer-switch.ts",
+      "loop/steer-switch-prompts.ts",
+      "loop/turn-switch.ts",
+      "loop/person-wrote.ts",
+      "loop/workers/carry.ts",
+    ])
+      assert.ok(await pathExists(path.join(ws, rel)), `${rel} is seeded`);
+    // The agent's copies of the older vintage: every name each exported then, and nothing newer.
+    for (const [rel, names] of Object.entries(vintage.modules)) {
+      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
+      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
+    }
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    for (const rel of Object.keys(vintage.modules))
+      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
+    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
+    assert.equal(main.createStudio, "function");
+  });
+
+  it("a lead goes on hearing the chat in its wrap-up only while the chat's queue and door both keep what it is told", async () => {
+    const root = await tmpDir("seed-no-queue-wrap-");
+    const wake = (ws: string) => path.join(ws, "loop", "director", "wake.ts");
+    const fresh = path.join(root, "fresh");
+    await applySeed({ seedDir: shipped, workspaceDir: fresh, manifestFile: path.join(root, "fresh.json") });
+    assert.equal(await callIsolated(wake(fresh), "wrapUpKeeps"), true);
+    for (const rel of ["loop/message-queue.ts", "loop/live-chat.ts"]) {
+      const ws = path.join(root, path.basename(rel, ".ts"));
+      const manifest = path.join(root, `${path.basename(rel, ".ts")}.json`);
+      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+      // The agent's copy from before the change: the names it exported then, and nothing newer.
+      const older = vintage.modules[rel].map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
+      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
+      await applySeed({
+        seedDir: shipped,
+        workspaceDir: ws,
+        manifestFile: manifest,
+        backupDir: path.join(ws, "..", "b"),
+      });
+      assert.equal(await callIsolated(wake(ws), "wrapUpKeeps"), false, `${rel} kept from before: the line shuts`);
+    }
   });
 });
 

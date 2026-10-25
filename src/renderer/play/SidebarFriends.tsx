@@ -3,10 +3,13 @@
  * its rail: the word Friends (which opens the Friends page; the requests waiting follow its ↗),
  * then each friend, their game on one green line while they play. A row opens the friend's
  * profile; a friend who is playing offers Join on hover. A friend who is not in a game is just a
- * name: there is no online or offline. Signed out there is no block; with nobody yet, the word alone.
+ * name: there is no online or offline. A Pro friend's row lights up with their nameplate under the
+ * pointer, the first one their account draws (a plate rolled on their Mac stays theirs). Signed out there is no block; with nobody yet, the word alone.
  */
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
+import { plateRecipe } from "../../shared/plate-recipe.ts";
+import { Nameplate } from "../nameplate/Nameplate.tsx";
 import type { PlayFriend } from "../../shared/play-people.ts";
 import { usePeople, usePlay } from "../state/hooks.ts";
 import { sidebarFriends, waitingRequests } from "../state/people.ts";
@@ -32,8 +35,12 @@ function FriendRow({
   onOpen: (id: string) => void;
 }): JSX.Element {
   const { playing } = friend;
-  return (
-    <div className="sidebar-game sidebar-friend" data-sidebar-friend={friend.id} data-avatar-host>
+  const plate = useMemo(
+    () => (friend.pro ? plateRecipe(friend.id, 0, friend.avatarVariant) : null),
+    [friend.id, friend.pro, friend.avatarVariant],
+  );
+  const row = (
+    <>
       <button
         type="button"
         className="sidebar-game-select sidebar-friend-open"
@@ -61,6 +68,17 @@ function FriendRow({
         >
           {WORDS.join}
         </button>
+      )}
+    </>
+  );
+  return (
+    <div className="sidebar-game sidebar-friend" data-sidebar-friend={friend.id} data-avatar-host>
+      {plate ? (
+        <Nameplate recipe={plate} className="nameplate-friend" sparkles={false} hover>
+          {row}
+        </Nameplate>
+      ) : (
+        row
       )}
     </div>
   );

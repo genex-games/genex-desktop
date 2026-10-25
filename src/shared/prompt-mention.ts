@@ -9,13 +9,17 @@
  * A handle is `[a-z0-9][a-z0-9-]*` (genex.games slugs already are; local game names are folded to
  * it), and the `@` must start a word, so `you@example.com` is never a tag.
  */
+import { isGenerationId, type LibraryKind } from "./asset-library.ts";
 
 /** What a tagged thing is, as the picker's chip names it. */
 export const MentionKind = { Game: "game", Tool: "tool", Asset: "asset", Plugin: "plugin" } as const;
 export type MentionKind = (typeof MentionKind)[keyof typeof MentionKind];
 
-/** Where a tagged thing comes from: a game folder on this Mac, or genex.games. */
-export const MentionOrigin = { Local: "local", Genex: "genex" } as const;
+/**
+ * Where a tagged thing comes from: a game folder on this Mac, genex.games, or the person's own asset
+ * library on genex.games (a generation, whose file is copied into the game).
+ */
+export const MentionOrigin = { Local: "local", Genex: "genex", Library: "library" } as const;
 export type MentionOrigin = (typeof MentionOrigin)[keyof typeof MentionOrigin];
 
 /** How many things one message may tag; genex.games allows the same. */
@@ -39,8 +43,16 @@ export interface MentionDoc {
   slug?: string;
   /** A plugin that is on: its id. */
   plugin?: string;
+  /** The library: the generation's id, which main copies into the game. */
+  generation?: string;
   /** genex.games: plays, which break ties in the ranking. */
   plays: number;
+  /** An asset's kind, when genex.games says it: the card's chip names it. */
+  assetKind?: LibraryKind;
+  /** A library asset the person saved: its card says so. */
+  saved?: boolean;
+  /** A library asset the person shares on Play: its card says so. */
+  shared?: boolean;
 }
 
 /** One tag as a message carries it to main: the identity, never a path. */
@@ -52,6 +64,8 @@ export interface MentionRef {
   game?: string;
   slug?: string;
   plugin?: string;
+  /** The library: the generation's id. */
+  generation?: string;
   /** A genex.games cover the chat shows beside the tag's result; display only. */
   coverUrl?: string;
 }
@@ -66,6 +80,7 @@ export function mentionRef(doc: MentionDoc): MentionRef {
     ...(doc.game === undefined ? {} : { game: doc.game }),
     ...(doc.slug === undefined ? {} : { slug: doc.slug }),
     ...(doc.plugin === undefined ? {} : { plugin: doc.plugin }),
+    ...(doc.generation === undefined ? {} : { generation: doc.generation }),
     ...(isCoverUrl(doc.coverUrl) ? { coverUrl: doc.coverUrl } : {}),
   };
 }
@@ -103,15 +118,15 @@ export function isHandle(text: string): boolean {
   return HANDLE_PATTERN.test(text);
 }
 
-/** A name folded to a handle: lower case, ASCII letters and digits, single hyphens. */
-export function handleOf(name: string): string {
+/** A name folded to a handle: lower case, ASCII letters and digits, single hyphens; `fallback` when none are left. */
+export function handleOf(name: string, fallback = "game"): string {
   const folded = name
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return folded || "game";
+  return folded || fallback;
 }
 
 /** The character before `index` lets an @ start a word there. */
@@ -283,6 +298,7 @@ export interface MentionOutcome {
   game?: string;
   slug?: string;
   plugin?: string;
+  generation?: string;
   coverUrl?: string;
   result: MentionResult;
   /** Where it landed, relative to the game (`src/assets/fireplace.ts`, `.studio/refs/neon-rush`). */
@@ -309,6 +325,7 @@ export function refOf(tag: MentionOutcome): MentionRef {
     ...(tag.game ? { game: tag.game } : {}),
     ...(tag.slug ? { slug: tag.slug } : {}),
     ...(tag.plugin ? { plugin: tag.plugin } : {}),
+    ...(tag.generation ? { generation: tag.generation } : {}),
     ...(tag.coverUrl ? { coverUrl: tag.coverUrl } : {}),
   };
 }
@@ -360,8 +377,8 @@ const tagText = (value: unknown): string | undefined =>
 function readMentionRef(item: unknown): MentionRef | null {
   if (typeof item !== "object" || item === null) return null;
   const read = (key: keyof MentionRef): unknown => Reflect.get(item, key);
-  const [handle, kind, origin, title, game, slug, plugin, coverUrl] = (
-    ["handle", "kind", "origin", "title", "game", "slug", "plugin", "coverUrl"] as const
+  const [handle, kind, origin, title, game, slug, plugin, generation, coverUrl] = (
+    ["handle", "kind", "origin", "title", "game", "slug", "plugin", "generation", "coverUrl"] as const
   ).map(read);
   const named = typeof handle === "string" && isHandle(handle) && typeof title === "string";
   if (!named || !isKind(kind) || !isOrigin(origin)) return null;
@@ -376,6 +393,7 @@ function readMentionRef(item: unknown): MentionRef | null {
     ...(gameName ? { game: gameName } : {}),
     ...(slugName ? { slug: slugName } : {}),
     ...(pluginId ? { plugin: pluginId } : {}),
+    ...(isGenerationId(generation) ? { generation } : {}),
     ...(isCoverUrl(coverUrl) ? { coverUrl } : {}),
   };
 }

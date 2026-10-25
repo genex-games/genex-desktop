@@ -86,6 +86,13 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
         await ctx.host('events.emit', { kind: 'toolbar', item: 'publish', badge: 'Draft', tone: 'info' });
         await ctx.host('observe', { project: 'g', root: '/games/g', files: ['index.html'] });
         const snapshot: { snapshotId: string } = await ctx.host('game.snapshot', { reason: 'Before an update' });
+        const started: { id: string } = await ctx.host('sandbox.run', {
+          program: 'C:/UE/Engine/Build/BatchFiles/RunUAT.bat', args: ['BuildPlugin'], reads: ['C:/UE'],
+          writes: ['C:/Games/g/Saved'], scratchEnv: ['uebp_LogFolder'], timeoutMs: 60000,
+        });
+        const ran = await ctx.host('sandbox.result', { id: started.id });
+        const ended: 'running' | 'exited' | 'timed-out' | 'stopped' | 'failed' | undefined = ran?.state;
+        const stopped: { stopped: boolean } = await ctx.host('sandbox.stop', { id: started.id });
         const shot = await ctx.host('observe', {
           project: 'g', root: '/games/g', files: [],
           still: { demo: 'hero-shot', width: 1920, height: 1080, maxBytes: 8388608 },
@@ -107,7 +114,7 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
           olderHost = true;
         }
         await ctx.host('observe', { project: 'g', root: '/games/g', files: [], still: { camera: 'eye:down', width: 1280, height: 720 } });
-        return { root, text, written, delivered, dir: exported.dir, files: exported.files, token, job, snapshot, still, problem, olderHost };
+        return { root, text, written, delivered, dir: exported.dir, files: exported.files, token, job, snapshot, still, problem, olderHost, ended, stopped };
       }
       import type { PluginStillProblemCode } from ${quote(sdk)};
     `,

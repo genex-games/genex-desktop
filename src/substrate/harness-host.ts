@@ -13,6 +13,7 @@
  *    restarts, appending `workspace_restored`.
  */
 import type { ChildProcess } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { atomicWriteJson, ensureDir, listJsonFiles, readJson } from "./fsx.ts";
 import { shortId } from "./ids.ts";
@@ -35,12 +36,18 @@ import {
 } from "../shared/protocol.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import { type ProcessSandbox, killChild, shellQuote } from "./spawn.ts";
-import { longPath } from "./windows-sandbox.ts";
+import { longPath, windowsAccessReport } from "./windows-sandbox.ts";
 import { HarnessInbox } from "./harness-inbox.ts";
 import { rpcDeadlineMs } from "./rpc-deadlines.ts";
 
 /** How long a freshly spawned harness has to send its ready message. */
 const READY_TIMEOUT_MS = 20 * SECOND_MS;
+/**
+ * The same for the first boot of a host: on a Windows first start the sandboxed harness reads
+ * every one of its modules for the first time while Defender scans them, and on a lived-in
+ * Windows 11 profile it missed the 20 s (the first chat message then found no harness).
+ */
+const FIRST_READY_TIMEOUT_MS = 60 * SECOND_MS;
 /** How long `stop()` waits for the harness to exit before it kills the process tree. */
 const STOP_GRACE_MS = 5 * SECOND_MS;
 /** How long the healthcheck round-trip may take before the new self counts as unhealthy. */
@@ -57,14 +64,16 @@ const SUSPENDED_TICK_FACTOR = 3;
 const DEFAULT_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 /** How much of a malformed protocol line the log keeps. */
 const MALFORMED_LINE_PREVIEW_CHARS = 200;
+/** The newest stderr lines a boot that exits carries in its error, so the failure says why. */
+const BOOT_STDERR_LINES = 8;
 
 const MESSAGE = {
   NotReady: "harness did not report ready within timeout",
   NotRunning: "harness is not running",
   Exited: "harness exited",
   DispatchFailed: "dispatch failed",
-  ExitedDuringBoot: (code: number | null, signal: NodeJS.Signals | null) =>
-    `harness exited during boot (code ${code}, signal ${signal})`,
+  ExitedDuringBoot: (code: number | null, signal: NodeJS.Signals | null, stderr: readonly string[]) =>
+    [`harness exited during boot (code ${code}, signal ${signal})`, ...stderr].join("\n"),
   DispatchTimedOut: (type: string) => `dispatch ${type} timed out`,
   UnknownMethod: (method: string) => `unknown substrate method: ${method}`,
   RpcDeadline: (method: string, deadlineMs: number) =>
@@ -129,6 +138,10 @@ export interface UpdateRecord {
   error?: string;
 }
 
+/** The parts of a harness boot the host marks, so a slow start's log says which one held it. */
+export const HarnessBootStep = { Spawned: "spawned", Ready: "ready" } as const;
+export type HarnessBootStep = (typeof HarnessBootStep)[keyof typeof HarnessBootStep];
+
 export interface HarnessHostOptions {
   /** Directory of the agent-editable harness workspace. */
   workspace: string;
@@ -141,6 +154,12 @@ export interface HarnessHostOptions {
   sandbox: ProcessSandbox;
   api: SubstrateApi;
   updatesDir: string;
+  /**
+   * Folder for Node's compile cache of the harness's modules, writable inside the sandbox. A boot
+   * then reuses the type-stripped, compiled seed instead of redoing it; entries are keyed by each
+   * file's content, so the agent's edits are compiled afresh.
+   */
+  compileCache?: string;
   env?: Record<string, string>;
   onNotify?: (type: string, payload: unknown) => void;
   onLog?: (line: string, stream: "stdout" | "stderr") => void;
@@ -163,8 +182,15 @@ export interface HarnessHostOptions {
   /** How long a call of `method` is serviced before the harness is answered `RpcDeadline`; null for no deadline (`rpc-deadlines.ts`). */
   rpcDeadlineMs?: (method: string) => number | null;
   now?: () => number;
+  /**
+   * How long a boot has to report ready: the host's first one, and every later one (default
+   * {@link FIRST_READY_TIMEOUT_MS} and {@link READY_TIMEOUT_MS}).
+   */
+  readyTimeoutMs?: { first: number; later: number };
   /** Test seam: the platform whose stop and launch rules apply (default: this one). */
   platform?: NodeJS.Platform;
+  /** Each part of a boot as it finishes. */
+  onBootStep?: (step: HarnessBootStep) => void;
 }
 
 export interface ExitInfo {
@@ -179,6 +205,8 @@ export { HarnessState };
 export class HarnessHost {
   readonly options: HarnessHostOptions;
   #child: ChildProcess | null = null;
+  /** The running self's newest stderr lines, for the error a boot that exits rejects with. */
+  #stderrTail: readonly string[] = [];
   #codec = new LineCodec();
   #state: HarnessState = HarnessState.Stopped;
   #nextDispatchId = 1;
@@ -209,6 +237,8 @@ export class HarnessHost {
   #callerRecovers = false;
   #heartbeatTimer: NodeJS.Timeout | null = null;
   #restarting: Promise<void> | null = null;
+  /** A boot of this host reported ready once: later boots find their modules read before. */
+  #bootedOnce = false;
 
   constructor(options: HarnessHostOptions) {
     this.options = options;
@@ -288,12 +318,16 @@ export class HarnessHost {
         // 8.3 spelling (C:\Users\RUNNER~1\…) failed the walk with EPERM.
         HARNESS_WS: longPath(this.options.workspace, this.#platform),
         NODE_OPTIONS: "",
+        ...(this.options.compileCache
+          ? { NODE_COMPILE_CACHE: longPath(this.options.compileCache, this.#platform) }
+          : {}),
         ...this.#inbox?.env(),
         ...this.options.env,
       },
     });
     this.#child = child;
     this.#generation++;
+    this.options.onBootStep?.(HarnessBootStep.Spawned);
     void this.#inbox?.connect(() => this.#child === child);
 
     child.stdout?.setEncoding("utf8");
@@ -306,8 +340,14 @@ export class HarnessHost {
       }
     });
     let stderr = "";
+    const tail: string[] = [];
+    this.#stderrTail = tail;
     const emitStderr = (line: string) => {
-      if (line.trim()) this.options.onLog?.(line.replace(/\r$/, ""), "stderr");
+      if (!line.trim()) return;
+      const text = line.replace(/\r$/, "");
+      this.options.onLog?.(text, "stderr");
+      tail.push(text);
+      if (tail.length > BOOT_STDERR_LINES) tail.shift();
     };
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => {
@@ -332,11 +372,19 @@ export class HarnessHost {
     this.#lastHeartbeat = this.#now();
     this.#startHeartbeatMonitor();
 
-    await this.#waitForReady();
+    await this.#waitForReady(this.#readyTimeoutMs());
+    this.#bootedOnce = true;
+    this.options.onBootStep?.(HarnessBootStep.Ready);
     if (notice) await this.dispatch(notice);
   }
 
-  async #waitForReady(timeoutMs = READY_TIMEOUT_MS): Promise<void> {
+  /** How long this boot has to report ready: a first boot reads every module cold. */
+  #readyTimeoutMs(): number {
+    const limits = this.options.readyTimeoutMs ?? { first: FIRST_READY_TIMEOUT_MS, later: READY_TIMEOUT_MS };
+    return this.#bootedOnce ? limits.later : limits.first;
+  }
+
+  async #waitForReady(timeoutMs: number): Promise<void> {
     if (this.#state === HarnessState.Ready) return;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -398,6 +446,18 @@ export class HarnessHost {
     this.#intentionalStop = true;
     this.#stopHeartbeatMonitor();
     killChild(child, this.#platform);
+  }
+
+  /**
+   * Windows, sandboxed: who may open each folder from the profile down to the harness's files, in
+   * the log after a boot that exited. Its sandbox user walks every one of them before it runs a line.
+   */
+  async #logBootAccess(): Promise<void> {
+    if (this.#platform !== StudioPlatform.Windows || !this.options.sandbox.enabled) return;
+    const long = (p: string) => longPath(p, this.#platform);
+    const paths = [path.dirname(long(this.options.bootstrap)), long(this.options.workspace)];
+    const lines = await windowsAccessReport(long(os.homedir()), paths).catch(() => []);
+    for (const line of lines) this.options.onLog?.(`[host] ${line}`, "stderr");
   }
 
   get #platform(): NodeJS.Platform {
@@ -611,7 +671,9 @@ export class HarnessHost {
     const info: ExitInfo = { at: this.#now(), code, signal, harnessVersion: this.#harnessVersion };
     const waiters = this.#readyWaiters;
     this.#readyWaiters = [];
-    for (const waiter of waiters) waiter.reject(new Error(MESSAGE.ExitedDuringBoot(code, signal)));
+    const said = this.#stderrTail;
+    for (const waiter of waiters) waiter.reject(new Error(MESSAGE.ExitedDuringBoot(code, signal, said)));
+    if (waiters.length > 0) void this.#logBootAccess();
     for (const [, pending] of this.#pendingDispatch) pending.reject(new Error(MESSAGE.Exited));
     this.#pendingDispatch.clear();
 

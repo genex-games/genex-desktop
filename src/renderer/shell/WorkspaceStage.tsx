@@ -1,5 +1,6 @@
 import type { ComponentProps, JSX } from "react";
 import { memo, useCallback } from "react";
+import { t } from "../../shared/i18n.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { ReviewPanel } from "../panels/ReviewPanel.tsx";
 import {
@@ -46,7 +47,9 @@ export const WorkspaceStage = memo(function WorkspaceStage({
         inert={!stageVisible}
         style={{ visibility: stageVisible ? "visible" : "hidden" }}
       >
-        <BootstrapGate failed={() => <div className="p-4 text-ink-3">Workspace unavailable until Studio loads.</div>}>
+        <BootstrapGate
+          failed={() => <div className="p-4 text-ink-3">{t("Workspace unavailable until Studio loads.")}</div>}
+        >
           <StagePreview
             status={activeStatus?.status ?? ""}
             threadId={room === Room.Build ? activeThreadId : threadsView.stageThreadId}

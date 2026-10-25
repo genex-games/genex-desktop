@@ -8,6 +8,7 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
+import { stopRuleWords } from "../finish-check-prompts.ts";
 import { hasText } from "../text.ts";
 import { minutes } from "../time.ts";
 import { agentStatus } from "./agents.ts";
@@ -166,8 +167,7 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   },
   {
     name: LeadTool.Finish,
-    description:
-      "Claim the game meets the request. A reviewer who did none of the work checks your proof: a yes closes the run, a no comes back with reasons, and three in a row stop the Loop.",
+    description: `Claim the game meets the request. A reviewer who did none of the work checks your proof: a yes closes the run, a no comes back with reasons, and ${stopRuleWords(null)}`,
     parameters: {
       type: "object",
       properties: {

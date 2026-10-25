@@ -14,7 +14,8 @@ import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type ChatFileLookup, type ChatFileRef, fileMentions } from "../../shared/chat-files.ts";
 import { answersOf, clickFileLink, useChatFileNames, useChatFiles } from "../chat-files.ts";
-import { markdownHtml } from "./markdown-html.ts";
+import { markdownBlocks, markdownHtml } from "./markdown-html.ts";
+import { parseBlock, type ShownBlock, showBlocks } from "./prose-blocks.ts";
 
 /** The name the text ends in while it is still arriving: it may be half written (`src/physics.j`). */
 function unfinishedName(text: string): string | null {
@@ -48,6 +49,21 @@ function useCommandSlots(root: RefObject<HTMLDivElement | null>, html: string, e
   return enabled ? slots : [];
 }
 
+/** Keeps `blocks` on screen in `root`, changing only the blocks that changed; null leaves it to React. */
+function useShownBlocks(root: RefObject<HTMLDivElement | null>, blocks: string[] | null): void {
+  const shown = useRef<ShownBlock[]>([]);
+  useLayoutEffect(() => {
+    const node = root.current;
+    if (!node || !blocks) {
+      shown.current = [];
+      return;
+    }
+    // Whatever React drew before (the whole HTML) goes first.
+    if (!shown.current.length) node.replaceChildren();
+    shown.current = showBlocks<ChildNode>(node, shown.current, blocks, parseBlock);
+  }, [root, blocks]);
+}
+
 /**
  * `streaming`: the text is still arriving, so a name at its very end may be half written; that
  * name is neither linked nor asked about yet.
@@ -71,27 +87,36 @@ export const Markdown = memo(function Markdown({
   // Only this text's own answers render it again (answersOf); the last parse's names say which.
   const shown = useRef<ChatFileRef[]>([]);
   const answered = answersOf(lookup, shown.current);
+  // A reply still arriving with no commands to draw is kept block by block (prose-blocks.ts).
+  const byBlock = streaming && !renderCommand;
   // One HTML object per render of this text: React 19 rewrites innerHTML whenever it changes,
   // which would detach the command slots the portals below draw into.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `lookup` is read through `answered`, which changes exactly when this text's answers do
-  const { html, names } = useMemo(() => {
+  const { html, blocks, names } = useMemo(() => {
     const found: ChatFileRef[] = [];
     const known: ChatFileLookup = (name, base) => (name === unfinished ? undefined : lookup(name, base));
     const files = threadId ? { lookup: known, names: found, ...(fileBase ? { base: fileBase } : {}) } : undefined;
-    const rendered = markdownHtml(text, { ...(files ? { files } : {}), streaming });
-    return { html: { __html: rendered }, names: unfinished ? found.filter((ref) => ref.name !== unfinished) : found };
-  }, [text, threadId, fileBase, unfinished, answered, streaming]);
+    const withFiles = files ? { files } : {};
+    const parts = byBlock ? markdownBlocks(text, withFiles) : null;
+    const rendered = parts ? null : { __html: markdownHtml(text, { ...withFiles, streaming }) };
+    return {
+      html: rendered,
+      blocks: parts,
+      names: unfinished ? found.filter((ref) => ref.name !== unfinished) : found,
+    };
+  }, [text, threadId, fileBase, unfinished, answered, streaming, byBlock]);
   shown.current = names;
   useChatFileNames(threadId, names);
   const root = useRef<HTMLDivElement>(null);
-  const slots = useCommandSlots(root, html.__html, Boolean(renderCommand));
+  useShownBlocks(root, blocks);
+  const slots = useCommandSlots(root, html?.__html ?? "", Boolean(renderCommand));
   return (
     <>
       <div
         ref={root}
         className={`prose ${className}`}
         onClick={(event) => clickFileLink(event, threadId)}
-        dangerouslySetInnerHTML={html}
+        {...(html ? { dangerouslySetInnerHTML: html } : {})}
       />
       {renderCommand && slots.map((slot) => createPortal(renderCommand(slot.command), slot.node, slot.key))}
     </>

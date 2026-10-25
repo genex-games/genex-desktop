@@ -16,6 +16,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { atomicWriteJson, isJsonObject, readRegularFile } from "../../substrate/fsx.ts";
 import { envValue } from "../../substrate/toolchain.ts";
 import {
@@ -136,11 +137,14 @@ function placePathOf(platform: NodeJS.Platform, file: string): boolean {
 export function openPlaceLaunch(platform: NodeJS.Platform, install: StudioInstall, target: PlaceTarget): Launch {
   if ("file" in target) {
     if (!placePathOf(platform, target.file))
-      throw new StudioLaunchError(LaunchRefusal.BadFile, `${target.file} isn't a full place path on this computer.`);
+      throw new StudioLaunchError(
+        LaunchRefusal.BadFile,
+        t("{file} isn't a full place path on this computer.", { file: target.file }),
+      );
     return { file: install.studio, args: ["--task", StudioTask.EditFile, "--localPlaceFile", target.file] };
   }
   if (!ROBLOX_ID.test(target.placeId) || !ROBLOX_ID.test(target.universeId))
-    throw new StudioLaunchError(LaunchRefusal.BadIds, "A published place's ids are whole numbers.");
+    throw new StudioLaunchError(LaunchRefusal.BadIds, t("A published place's ids are whole numbers."));
   const ids = ["--placeId", target.placeId, "--universeId", target.universeId];
   return { file: install.studio, args: ["--task", StudioTask.EditPlace, ...ids] };
 }

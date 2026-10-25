@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import type { ConnectionSnapshot } from "../../shared/connections.ts";
+import { t } from "../../shared/i18n.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
 import type { McpConnectorView } from "../../shared/mcp.ts";
 import { UiEvent, type UiEventType } from "../../shared/ui-events.ts";
@@ -29,9 +30,18 @@ import { ComposerTip, PickerLabel, PickerSeparator, PickerSwitch, pickerItem, pi
 import { Shortcut } from "./Shortcut.tsx";
 import { Icon } from "./icons.tsx";
 import { PluginIcon } from "./PluginIcon.tsx";
-import { PLAN_MODE_WORDS, SKILLS_WORDS } from "../words.ts";
+import { PLAN_MODE_WORDS, PLUGINS_WORDS, SKILLS_WORDS } from "../words.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
-import { type MentionDoc, pluginDoc } from "../../shared/prompt-mention.ts";
+import { type MentionDoc, MentionKind, pluginDoc } from "../../shared/prompt-mention.ts";
+import { AssetScope } from "../../shared/asset-library.ts";
+import {
+  filterMentions,
+  MENTION_FILTER_ALL,
+  mentionAdmits,
+  type MentionFilter,
+  MentionWhat,
+  shelfCaps,
+} from "../../shared/mention-corpus.ts";
 import { gridTarget } from "./mention-grid.ts";
 import { mentionCards, MentionPanel } from "./MentionPanel.tsx";
 import { useMentionDocs } from "./use-mention-docs.ts";
@@ -186,6 +196,42 @@ function useMentionKeys(ref: Ref<AddMenuHandle> | undefined, mention: MentionGri
   ]);
 }
 
+/**
+ * The @ list's outline: the highlighted option kept inside the list, the keys the text box hands
+ * over, and the option the text box points at (`aria-activedescendant`).
+ */
+function useMentionOutline(
+  ref: Ref<AddMenuHandle> | undefined,
+  input: {
+    mentioning: boolean;
+    matches: MentionOption[];
+    /** The words after the @ and the switchers: a change puts the outline back on the first option. */
+    query: string | null;
+    filter: MentionFilter;
+    onClose: (() => void) | undefined;
+    shape: { lead: number; cards: number; columns: number };
+    list: string;
+    onActiveOption: ((id: string | null) => void) | undefined;
+  },
+) {
+  const { mentioning, matches } = input;
+  const [highlight, setHighlight] = useState(0);
+  useEffect(() => setHighlight(0), [input.query, input.filter]);
+  const active = Math.min(highlight, Math.max(0, matches.length - 1));
+  useMentionKeys(ref, {
+    mentioning,
+    matches,
+    active,
+    setHighlight,
+    onClose: input.onClose,
+    ...input.shape,
+  });
+  const optionId = (index: number) => `${input.list}-${index}`;
+  const activeOption = mentioning && matches.length ? optionId(active) : null;
+  useEffect(() => input.onActiveOption?.(activeOption), [activeOption]);
+  return { active, optionId, setHighlight };
+}
+
 /** Cards go three across in a composer this wide (the home screen's), else two. */
 const THREE_COLUMNS_PX = 560;
 /** What the composer tells its @ picker about tagging. */
@@ -207,9 +253,21 @@ function pluginTag(entry: AddMenuEntry): MentionDoc {
 
 const NO_TAGGING: MentionTagging = { tagged: new Set(), atCap: false, onPick: () => {}, side: "top" };
 
+/** A plugin's card as the switchers judge it: never the person's own, so under All and Everyone alone. */
+const PLUGIN_CARD = { kind: MentionKind.Plugin, own: false } as const;
+
+/** The switchers show the library: All and Assets list assets. */
+const showsAssets = (filter: MentionFilter): boolean =>
+  filter.what === MentionWhat.All || filter.what === MentionWhat.Assets;
+
+/** The library is the heart of the view (Mine, or Assets): a skeleton stands in while it answers. */
+const libraryLeads = (filter: MentionFilter): boolean =>
+  filter.whose === AssetScope.Mine || filter.what === MentionWhat.Assets;
+
 /**
- * The @ picker's cards for what was typed, laid out for the composer's width, each as a pick the
- * text box's Enter can take. A card past the message's limit is listed but not taken.
+ * The @ picker's cards for what was typed and what the switchers let through, laid out for the
+ * composer's width, each as a pick the text box's Enter can take. A card past the message's limit
+ * is listed but not taken.
  */
 function useMentionPicker(input: {
   open: boolean;
@@ -220,10 +278,13 @@ function useMentionPicker(input: {
   /** Images and the plugins that are on, which the picker shows as a row and as cards. */
   rows: MentionOption[];
 }) {
-  const { docs, covers, state } = useMentionDocs(input.open, input.project);
+  // The switchers keep their place while the composer lives, so a second tag starts where the first did.
+  const [filter, setFilter] = useState<MentionFilter>(MENTION_FILTER_ALL);
+  const read = useMentionDocs(input.open, input.project, input.query, showsAssets(filter));
+  const { docs, covers, state } = read;
   const width = input.open ? (input.anchor.current?.offsetWidth ?? 0) : 0;
   const columns = width >= THREE_COLUMNS_PX ? 3 : 2;
-  const groups = input.open ? mentionCards(docs, input.query) : [];
+  const groups = input.open ? mentionCards(filterMentions(docs, filter), input.query, shelfCaps(filter)) : [];
   const cardPicks: MentionOption[] = groups
     .flatMap((group) => group.docs)
     .map((doc) => ({
@@ -233,17 +294,47 @@ function useMentionPicker(input: {
     }));
   // Images heads the list as a row; the cards follow, the plugins' cards last.
   const lead = input.rows.filter((row) => row.id === IMAGES_OPTION);
-  const pluginCards = input.rows.filter((row) => row.id !== IMAGES_OPTION);
+  const pluginCards = mentionAdmits(PLUGIN_CARD, filter) ? input.rows.filter((row) => row.id !== IMAGES_OPTION) : [];
   // A typed name reaches a plugin first: its tile leads the matches, as its shelf ends the panel.
   const matches = input.query.trim()
     ? [...lead, ...pluginCards, ...cardPicks]
     : [...lead, ...cardPicks, ...pluginCards];
   const shape = { lead: lead.length, cards: cardPicks.length + pluginCards.length, columns };
-  return { groups, matches, shape, columns, covers, state };
+  const libraryReading = read.libraryReading && libraryLeads(filter);
+  const shownRows = [...lead, ...pluginCards];
+  return { groups, matches, shape, columns, covers, state, rows: shownRows, libraryReading, filter, setFilter };
 }
 
+/** What a row says beside its picture: its name, then a status, else where its switch applies. */
+function EntryWords({ entry, id, scope }: { entry: AddMenuEntry; id: string; scope: string | undefined }) {
+  const action = entry.status?.action;
+  return (
+    <>
+      <PluginIcon name={entry.name} src={entry.icon} size="menu" />
+      {/* The status gives up its room first; the name ellipsizes only once that is gone. */}
+      <span className="min-w-0 shrink-[0.01] truncate">{entry.name}</span>
+      {entry.status?.text && (
+        <span id={`${id}-status`} className="picker-desc">
+          {action && <span className="picker-dot" aria-hidden />}
+          {entry.status.text}
+        </span>
+      )}
+      {scope && (
+        <span id={scope} className="picker-desc" data-plugin-scope={entry.scope}>
+          {SKILLS_WORDS.allGames}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** A row's name spans the space its controls leave, top to bottom, so all of it takes the click. */
+const ENTRY_NAME = "flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 self-stretch text-left";
+
 /**
- * A plugin or server row: its name, a status only when something needs doing, and its switch. Its
+ * A plugin or server row: its name, a status only when something needs doing, and its switch. A
+ * plugin's name opens its page, and Settings shows beside the switch while the row is hovered or
+ * holds focus (the pointer's way there; keys take the name); a server's name works its switch. Its
  * ids are by place, not by name: a server's id is the person's own.
  */
 function EntryRow({
@@ -261,29 +352,43 @@ function EntryRow({
   const action = entry.status?.action;
   // Where the switch applies, while no status needs the space: a plugin is on or off for every game.
   const scope = !entry.status && entry.scope === EntryScope.AllGames ? `${id}-scope` : undefined;
+  const words = <EntryWords entry={entry} id={id} scope={scope} />;
   return (
     <div className={`${pickerItem} hover:bg-control-hover`} data-plugin-row={entry.id}>
-      <label htmlFor={id} className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 self-stretch">
-        <PluginIcon name={entry.name} src={entry.icon} size="menu" />
-        <span className="shrink-0">{entry.name}</span>
-        {entry.status?.text && (
-          <span className="picker-desc">
-            {action && <span className="picker-dot" aria-hidden />}
-            {entry.status.text}
-          </span>
-        )}
-        {scope && (
-          <span id={scope} className="picker-desc" data-plugin-scope={entry.scope}>
-            {SKILLS_WORDS.allGames}
-          </span>
-        )}
-      </label>
+      {entry.open ? (
+        <button
+          type="button"
+          className={ENTRY_NAME}
+          data-plugin-open
+          aria-label={PLUGINS_WORDS.menuRow.openLabel(entry.name)}
+          aria-describedby={entry.status?.text ? `${id}-status` : undefined}
+          onClick={entry.open}
+        >
+          {words}
+        </button>
+      ) : (
+        <label htmlFor={id} className={ENTRY_NAME}>
+          {words}
+        </label>
+      )}
+      {entry.settings && (
+        <button
+          type="button"
+          className="picker-settings"
+          data-plugin-settings
+          tabIndex={-1}
+          aria-label={PLUGINS_WORDS.menuRow.settingsLabel(entry.name)}
+          onClick={entry.settings}
+        >
+          {PLUGINS_WORDS.menuRow.settings}
+        </button>
+      )}
       {action && (
         <button
           type="button"
           className="picker-action"
           disabled={pending}
-          aria-label={`${action.label} ${entry.name}`}
+          aria-label={t("{action} {name}", { action: action.label, name: entry.name })}
           onClick={action.run}
         >
           {action.label}
@@ -293,7 +398,7 @@ function EntryRow({
         id={id}
         checked={entry.on}
         disabled={pending || entry.locked}
-        label={`Use ${entry.name}`}
+        label={t("Use {name}", { name: entry.name })}
         describedBy={scope}
         onChange={entry.toggle}
       />
@@ -397,16 +502,16 @@ function FullMenu({
   );
   return (
     <>
-      <PickerLabel first>Add</PickerLabel>
+      <PickerLabel first>{t("Add")}</PickerLabel>
       <button type="button" className={pickerRow} onClick={onImages}>
         <Icon name="image" className="text-ink" />
-        <span className="shrink-0">Images</span>
-        <span className="picker-desc">Reference or mood board</span>
+        <span className="shrink-0">{t("Images")}</span>
+        <span className="picker-desc">{t("Reference or mood board")}</span>
       </button>
       {plan && <PlanModeItem plan={plan} onPicked={onPicked} />}
-      {pluginEntries.length > 0 && <PickerLabel>Plugins</PickerLabel>}
+      {pluginEntries.length > 0 && <PickerLabel>{t("Plugins")}</PickerLabel>}
       {pluginEntries.map(row)}
-      {serverEntries.length > 0 && <PickerLabel>MCP servers</PickerLabel>}
+      {serverEntries.length > 0 && <PickerLabel>{t("MCP servers")}</PickerLabel>}
       {serverEntries.map(row)}
       {error && (
         <p role="alert" className="px-2.5 py-1.5 text-[12px] leading-4 text-red">
@@ -416,7 +521,7 @@ function FullMenu({
       <PickerSeparator />
       <button type="button" onClick={onManage} className={pickerRow}>
         <Icon name="plugins" className="text-ink" />
-        Manage plugins
+        {t("Manage plugins")}
         <Icon name="chevron-right" className="ml-auto text-ink-3" />
       </button>
     </>
@@ -456,14 +561,14 @@ function AddTrigger({ open, disabled }: { open: boolean; disabled: boolean }) {
       align="start"
       content={
         <span className="flex items-center gap-2">
-          Add images and more <Shortcut>@</Shortcut>
+          {t("Add images and more")} <Shortcut>@</Shortcut>
         </span>
       }
     >
       <PopoverTrigger
         render={<button type="button" />}
         disabled={disabled}
-        aria-label="Add images and more"
+        aria-label={t("Add images and more")}
         className="composer-icon composer-add"
       >
         <Icon name="plus" />
@@ -504,6 +609,17 @@ function useEntryActions(
   return { pending, entries, manage };
 }
 
+/**
+ * The panel's frame: the @ picker keeps its header put and scrolls its own list under it, so it
+ * holds no padding or scroll of its own; the full menu scrolls whole.
+ */
+function panelClass(listMode: boolean): string {
+  const frame = "picker-panel composer-add-panel w-(--anchor-width)";
+  return listMode
+    ? `${frame} flex flex-col overflow-hidden p-0 max-h-[min(var(--available-height),480px)]`
+    : `${frame} overflow-y-auto p-1.5 max-h-(--available-height)`;
+}
+
 /** Add: images and Plan mode, then plugins and MCP servers with their switches. Typing @ in the
  * composer opens the same list to mention one by name. A status appears only when something needs
  * doing, with the action that fixes it beside it. */
@@ -517,6 +633,8 @@ export function ComposerAddMenu({
   listId,
   onMention,
   onMentionClose,
+  onMentionFocus,
+  onMentionClear,
   onActiveOption,
   tagging = NO_TAGGING,
   ref,
@@ -531,6 +649,10 @@ export function ComposerAddMenu({
   mention?: string | null;
   onMention?: (text: string | null) => void;
   onMentionClose?: () => void;
+  /** Put the caret back at the end of the text after the @ (the picker's search field was clicked). */
+  onMentionFocus?: () => void;
+  /** Empty the text after the @, keeping the @ and the focus (the search field's Clear). */
+  onMentionClear?: () => void;
   /** The @ list's id and its highlighted option, for the text box's aria-controls/activedescendant. */
   listId?: string;
   onActiveOption?: (id: string | null) => void;
@@ -539,7 +661,6 @@ export function ComposerAddMenu({
   ref?: Ref<AddMenuHandle>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
   const ownId = useId();
   const list = listId ?? ownId;
   const mentioning = mention !== null && !menuOpen;
@@ -551,7 +672,6 @@ export function ComposerAddMenu({
   else if (mentioning) viaMention.current = true;
   const listMode = viaMention.current;
   const data = useAddMenuData(open, project);
-  useEffect(() => setHighlight(0), [mention]);
   const { pending, entries, manage } = useEntryActions(data, project, () => {
     setMenuOpen(false);
     onMentionClose?.();
@@ -562,19 +682,16 @@ export function ComposerAddMenu({
   };
   const rows = mentionOptions(mention, entries, pickImages, (entry) => tagging.onPick(pluginTag(entry)));
   const picker = useMentionPicker({ open: mentioning, query: mention ?? "", project, anchor, tagging, rows });
-  const { matches } = picker;
-  const active = Math.min(highlight, Math.max(0, matches.length - 1));
-  useMentionKeys(ref, {
+  const { active, optionId, setHighlight } = useMentionOutline(ref, {
     mentioning,
-    matches,
-    active,
-    setHighlight,
+    matches: picker.matches,
+    query: mention,
+    filter: picker.filter,
     onClose: onMentionClose,
-    ...picker.shape,
+    shape: picker.shape,
+    list,
+    onActiveOption,
   });
-  const optionId = (index: number) => `${list}-${index}`;
-  const activeOption = mentioning && matches.length ? optionId(active) : null;
-  useEffect(() => onActiveOption?.(activeOption), [activeOption]);
   return (
     <Popover
       open={open}
@@ -591,17 +708,18 @@ export function ComposerAddMenu({
         sideOffset={8}
         initialFocus={!listMode}
         finalFocus={() => !viaMention.current}
-        className={`picker-panel composer-add-panel w-(--anchor-width) overflow-y-auto p-1.5 ${listMode ? "max-h-[min(var(--available-height),440px)]" : "max-h-(--available-height)"}`}
-        aria-label="Add"
+        className={panelClass(listMode)}
+        aria-label={t("Add")}
       >
         {listMode ? (
           <MentionPanel
             list={list}
             query={mention ?? ""}
             groups={picker.groups}
-            rows={rows}
+            rows={picker.rows}
             columns={picker.columns}
             catalog={picker.state}
+            libraryReading={picker.libraryReading}
             rowsRead={data.read}
             picked={tagging.tagged}
             atCap={tagging.atCap}
@@ -610,6 +728,10 @@ export function ComposerAddMenu({
             optionId={optionId}
             onHighlight={setHighlight}
             onPick={tagging.onPick}
+            filter={picker.filter}
+            onFilter={picker.setFilter}
+            onFocusQuery={() => onMentionFocus?.()}
+            onClearQuery={() => onMentionClear?.()}
           />
         ) : (
           <FullMenu

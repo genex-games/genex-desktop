@@ -1,5 +1,6 @@
 /** The card of the Optimization stage: each scenario measured before and after, and what was kept. */
 import type { JSX } from "react";
+import { t, tc } from "../../../shared/i18n.ts";
 import {
   OptimizationOutcome,
   type OptimizationResultV1,
@@ -8,7 +9,7 @@ import {
 } from "../../../shared/optimization.ts";
 import type { OptimizationNode } from "../../run-graph.ts";
 import type { Tone } from "../../run-steps.ts";
-import { type DetailRow, Details, Panel, Para, Row, Rows, Section } from "./chrome.tsx";
+import { type DetailRow, Details, Panel, PanelRow, Para, Row, Rows, Section } from "./chrome.tsx";
 import { GraphSelection } from "./selection.ts";
 import { Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
@@ -18,27 +19,27 @@ const NO_CHANGE = 0.005;
 
 /** The stage's status word, by outcome once it has one, else by the phase it is in. */
 const OPTIMIZATION_STATUS: Record<string, string> = {
-  [OptimizationOutcome.Improved]: "Kept",
-  [OptimizationOutcome.NoImprovement]: "No verified improvement",
-  [OptimizationOutcome.Skipped]: "Skipped",
-  [OptimizationOutcome.Failed]: "Failed",
-  [OptimizationOutcome.Interrupted]: "Interrupted",
-  pending: "Waiting",
-  verifying_baseline: "Verifying game",
-  profiling_baseline: "Measuring before",
-  building_candidate: "Optimizing",
-  validating_candidate: "Checking preservation",
-  profiling_candidate: "Comparing before and after",
-  final_quality: "Final verification",
-  adopting: "Keeping verified change",
+  [OptimizationOutcome.Improved]: t("Kept"),
+  [OptimizationOutcome.NoImprovement]: t("No verified improvement"),
+  [OptimizationOutcome.Skipped]: t("Skipped"),
+  [OptimizationOutcome.Failed]: t("Failed"),
+  [OptimizationOutcome.Interrupted]: t("Interrupted"),
+  pending: t("Waiting"),
+  verifying_baseline: t("Verifying game"),
+  profiling_baseline: t("Measuring before"),
+  building_candidate: t("Optimizing"),
+  validating_candidate: t("Checking preservation"),
+  profiling_candidate: t("Comparing before and after"),
+  final_quality: t("Final verification"),
+  adopting: t("Keeping verified change"),
 };
 
 /** The measurements the table shows, in order, with their labels. */
 const METRIC_LABEL: Record<string, string> = {
-  fps: "FPS",
-  frameMs: "Frame interval (ms)",
-  drawCalls: "World draw calls",
-  triangles: "World triangles",
+  fps: t("FPS"),
+  frameMs: t("Frame interval (ms)"),
+  drawCalls: t("World draw calls"),
+  triangles: t("World triangles"),
 };
 
 const OUTCOME_TONE: Partial<Record<string, Tone>> = {
@@ -48,7 +49,7 @@ const OUTCOME_TONE: Partial<Record<string, Tone>> = {
 
 /** The Optimization stage's status in a few words. */
 export function optimizationStatus(node: OptimizationNode): string {
-  return OPTIMIZATION_STATUS[node.result.outcome ?? node.result.phase] ?? "Working";
+  return OPTIMIZATION_STATUS[node.result.outcome ?? node.result.phase] ?? t("Working");
 }
 
 /** The median of one metric over the samples, or null when any sample lacks a finite value for it. */
@@ -62,7 +63,7 @@ function median(samples: ProfileSample[], key: string): number | null {
 
 /** The change from before to after as the table prints it: signed, two decimals, zero when too small to show. */
 function changeWords(before: number, after: number, comparable: boolean): string {
-  if (!comparable) return "Not comparable";
+  if (!comparable) return t("Not comparable");
   const change = after - before;
   if (Math.abs(change) < NO_CHANGE) return "0.00";
   return `${change > 0 ? "+" : ""}${change.toFixed(2)}`;
@@ -82,12 +83,12 @@ function MetricRow({
   const reason =
     scenario.before[0]?.metrics?.[metric]?.reason ??
     scenario.after[0]?.metrics?.[metric]?.reason ??
-    "insufficient samples";
+    t("insufficient samples");
   return (
     <tr>
       <td className="py-1">{label}</td>
       {a === null || b === null ? (
-        <td colSpan={3}>Not measured — {reason}</td>
+        <td colSpan={3}>{t("Not measured — {reason}", { reason })}</td>
       ) : (
         <>
           <td>{a.toFixed(2)}</td>
@@ -101,14 +102,16 @@ function MetricRow({
 
 function ScenarioTable({ scenario }: { scenario: ScenarioResult }): JSX.Element {
   return (
-    <Section label={scenario.workload?.demo ? `Demo: ${String(scenario.workload.demo)}` : "Default view"}>
+    <Section
+      label={scenario.workload?.demo ? t("Demo: {demo}", { demo: String(scenario.workload.demo) }) : t("Default view")}
+    >
       <table className="w-full text-left text-micro text-ink-2">
         <thead className="text-ink-3">
           <tr>
-            <th className="font-normal">Measurement</th>
-            <th className="font-normal">Before</th>
-            <th className="font-normal">After</th>
-            <th className="font-normal">Change</th>
+            <th className="font-normal">{t("Measurement")}</th>
+            <th className="font-normal">{t("Before")}</th>
+            <th className="font-normal">{t("After")}</th>
+            <th className="font-normal">{tc("column", "Change")}</th>
           </tr>
         </thead>
         <tbody>
@@ -124,17 +127,17 @@ function ScenarioTable({ scenario }: { scenario: ScenarioResult }): JSX.Element 
 
 /** The technical rows of the stage: its revisions, preservation, report, and each scenario's renderer. */
 const optimizationRows = (r: OptimizationResultV1): DetailRow[] => [
-  ["baseline version", r.baseline?.commit ?? null],
-  ["candidate version", r.candidate?.commit ?? null],
-  ["retained version", r.retainedRevision?.commit ?? null],
-  ["preservation", r.preservation.status],
-  ["changed files", r.changedFiles.join(", ") || null],
-  ["report", r.reportPath],
+  [t("baseline version"), r.baseline?.commit ?? null],
+  [t("candidate version"), r.candidate?.commit ?? null],
+  [t("retained version"), r.retainedRevision?.commit ?? null],
+  [t("preservation"), r.preservation.status],
+  [t("changed files"), r.changedFiles.join(", ") || null],
+  [t("report"), r.reportPath],
   ...r.scenarios.flatMap((s): DetailRow[] => [
-    ["backend", s.before[0]?.backend ?? null],
-    ["renderer", s.before[0]?.renderer ?? null],
-    ["Three version", s.before[0]?.version ?? null],
-    ["counter scope", s.before[0]?.scope ?? null],
+    [t("backend"), s.before[0]?.backend ?? null],
+    [t("renderer"), s.before[0]?.renderer ?? null],
+    [t("Three version"), s.before[0]?.version ?? null],
+    [t("counter scope"), s.before[0]?.scope ?? null],
   ]),
 ];
 
@@ -144,21 +147,23 @@ export function OptimizationPanel(props: InspectorProps & { node: OptimizationNo
   return (
     <Panel
       id={GraphSelection.Optimization}
-      label="Optimization"
-      title="Optimization"
+      label={t("Optimization")}
+      title={t("Optimization")}
       sub={r.summary}
       status={<Status tone={OUTCOME_TONE[r.outcome ?? ""] ?? "muted"}>{optimizationStatus(props.node)}</Status>}
       onPrev={props.onPrev}
       onNext={props.onNext}
       onClose={props.onClose}
     >
-      {r.candidate ? <Para>{r.candidateAdopted ? "Candidate kept." : "Candidate not kept."}</Para> : null}
+      {r.candidate ? <Para>{r.candidateAdopted ? t("Candidate kept.") : t("Candidate not kept.")}</Para> : null}
       {r.scenarios.map((s) => (
         <ScenarioTable key={s.id} scenario={s} />
       ))}
-      {!r.scenarios.length ? <Para quiet>Not measured — {r.reason ?? "Measurement has not completed"}</Para> : null}
+      {!r.scenarios.length ? (
+        <Para quiet>{t("Not measured — {reason}", { reason: r.reason ?? t("Measurement has not completed") })}</Para>
+      ) : null}
       <Rows>
-        <Row label="Technical details">
+        <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
           <Details rows={optimizationRows(r)} />
         </Row>
       </Rows>

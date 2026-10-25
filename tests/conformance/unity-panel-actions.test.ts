@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PluginToolbarStatus } from "../../src/plugin-sdk/index.d.ts";
 import { UnityAction } from "../../src/plugins/unity/backend.ts";
@@ -10,7 +10,14 @@ import type { UnityEditor } from "../../src/plugins/unity/editors.ts";
 import { PanelStep, type PanelStatus } from "../../src/plugins/unity/panel-status.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { backendOn, commandsSent, look, manifestOf, ok, ready, withProject } from "../helpers/unity-backend.ts";
-import { editorRow, json, type Reply, refusedConnection, STAND_IN } from "../helpers/unity-editor-stand-in.ts";
+import {
+  editorRow,
+  json,
+  type Reply,
+  refusedConnection,
+  STAND_IN,
+  UNITY_PREFERENCES,
+} from "../helpers/unity-editor-stand-in.ts";
 
 const UNITY_6 = "6000.3.10f1";
 const SET_UP = { "com.unity.pipeline": PIPELINE_VERSION };
@@ -116,6 +123,32 @@ describe("where a game's Unity stands, for the panel and the toolbar button", ()
       dot: true,
       title: "Unity is starting",
     });
+  });
+
+  it("says Unity waits for the person while its first start shows its Software Terms, not that it is starting", async () => {
+    // A fresh Unity shows its Software Terms in a window of its own before its server starts: the
+    // toolbar said Starting for over an hour while that window waited for the person.
+    for (const preferences of ["none", "no terms"]) {
+      const first = await setUpGame();
+      const file = path.join(first.env.home, ...UNITY_PREFERENCES);
+      if (preferences === "none") await rm(file);
+      else
+        await writeFile(
+          file,
+          Buffer.from("bplist00\u00d1\u0001\u0002_\u0010\u000fAutoRefreshMode\u0010\u0001", "latin1"),
+        );
+      first.table.start(editorRow(55, first.root));
+      assert.equal((await statusOf(first)).step, PanelStep.Terms, preferences);
+      assert.deepEqual(await wordOf(first), {
+        badge: "Waiting for you",
+        tone: "warn",
+        attention: true,
+        title: "Unity is waiting for you to accept its Software Terms in its window",
+      });
+    }
+    const accepted = await setUpGame();
+    accepted.table.start(editorRow(55, accepted.root));
+    assert.equal((await statusOf(accepted)).step, PanelStep.Opening, "a Unity used before is only starting");
   });
 
   it("says Unity is ready once its main thread answers, and whether it plays or compiles", async () => {

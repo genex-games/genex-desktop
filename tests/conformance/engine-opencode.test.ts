@@ -11,12 +11,15 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import {
   OpenCodeEngine,
   type OpenCodeExec,
   type OpenCodeInvocation,
+  openCodeEvents,
   openCodeSandbox,
   openCodeServerUrl,
+  openCodeSessionFolders,
   settledListing,
 } from "../../src/substrate/engines/opencode.ts";
 import {
@@ -28,6 +31,7 @@ import {
 } from "../../src/substrate/engines/opencode-cli.ts";
 import { translateOpenCodeEvent } from "../../src/substrate/engines/opencode-events.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
+import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "..", "fixtures", "transcripts");
@@ -194,6 +198,61 @@ describe("OpenCode's account", () => {
     assert.equal((await account(signedIn(await fixture("opencode-models-1.18.txt")))).source, "system");
   });
 
+  it("counts an OpenCode Go sign-in as a provider's, on 1.x and 2.x, a model its plan prices at nothing included", async () => {
+    const v1 = parseOpenCodeModels(await fixture("opencode-models-go-1.19.txt"));
+    const v2 = parseOpenCodeApiModels(await fixture("opencode-api-model-go-2.0.25.json"));
+    for (const listed of [v1, v2]) {
+      const go = listed.filter((model) => model.row.id.startsWith("opencode-go/"));
+      assert.deepEqual(go.map((model) => model.row.id).sort(), [
+        "opencode-go/kimi-k3",
+        "opencode-go/minimax-m3.1-flash-free",
+      ]);
+      assert.ok(
+        go.every((model) => !model.anonymous && !model.row.free),
+        "Go's models run only on its sign-in",
+      );
+      assert.ok(go.every((model) => model.hosts.includes("opencode.ai")));
+    }
+    const root = await tmpDir("opencode-account-");
+    const listing = await fixture("opencode-models-go-1.19.txt");
+    const engine = new OpenCodeEngine({ scratchRoot: root, resolveCli: ready, listModels: async () => listing });
+    assert.equal((await engine.account()).source, "system");
+  });
+
+  it("reads again after a sign-in that lands while a listing runs, so its models show and it reads connected", async () => {
+    const root = await tmpDir("opencode-account-");
+    const before = await fixture("opencode-models-1.18.txt");
+    const after = await fixture("opencode-models-go-1.19.txt");
+    let finishFirst = (_listing: string) => {};
+    let firstStarted = () => {};
+    const listing = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let reads = 0;
+    const engine = new OpenCodeEngine({
+      scratchRoot: root,
+      resolveCli: ready,
+      listModels: () => {
+        reads++;
+        if (reads > 1) return Promise.resolve(after);
+        firstStarted();
+        return new Promise<string>((resolve) => {
+          finishFirst = resolve;
+        });
+      },
+    });
+    // The window came forward and started a listing; the sign-in finishes before that listing does.
+    const running = engine.refreshModels();
+    await listing;
+    const afterSignIn = engine.refreshModels(true);
+    await setImmediate();
+    finishFirst(before);
+    await Promise.all([running, afterSignIn]);
+    assert.equal(reads, 2, "the sign-in's refresh reads again rather than taking the running listing");
+    assert.equal((await engine.account()).source, "system");
+    assert.ok((await engine.models()).some((model) => model.id === "opencode-go/kimi-k3"));
+  });
+
   it("lists a signed-in provider's models before its own free ones, so the picker starts with them", async () => {
     const root = await tmpDir("opencode-account-");
     const listing = signedIn(await fixture("opencode-models-1.18.txt"));
@@ -207,6 +266,68 @@ describe("OpenCode's account", () => {
 });
 
 describe("OpenCode sessions", () => {
+  it("hands the brief to the CLI on stdin, through the sandbox that starts it", async () => {
+    const root = await tmpDir("opencode-stdin-");
+    // A stand-in CLI: Node, printing the whole of its stdin as one event.
+    const cli = path.join(root, "cli.cjs");
+    await writeFile(
+      cli,
+      'process.stdout.write(JSON.stringify({ brief: require("node:fs").readFileSync(0, "utf8") }) + "\\n");\n',
+    );
+    const sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+    const brief = "Write hello to out.txt\nit's $(echo ran)";
+    const seen: Array<Record<string, unknown>> = [];
+    try {
+      const invocation = {
+        argv: [cli],
+        cwd: root,
+        prompt: brief,
+        env: {},
+        signal: new AbortController().signal,
+        domains: [],
+      };
+      for await (const event of openCodeEvents(sandbox, process.execPath, invocation)) seen.push(event);
+    } finally {
+      await sandbox.dispose();
+    }
+    assert.deepEqual(seen, [{ brief }]);
+  });
+
+  it("explains a silent failure with the CLI's stderr, its terminal colour codes taken out", async () => {
+    const root = await tmpDir("opencode-stderr-");
+    // A stand-in CLI: Node, saying OpenCode's own failure in colour on stderr and no event on stdout.
+    const cli = path.join(root, "cli.cjs");
+    const said =
+      "\\u001b[91m\\u001b[1mError: \\u001b[0mYou must provide a message or a command\\u001b]0;opencode\\u0007";
+    await writeFile(cli, `process.stderr.write("${said}\\n"); process.exitCode = 1;\n`);
+    const sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+    const invocation = {
+      argv: [cli],
+      cwd: root,
+      prompt: "",
+      env: {},
+      signal: new AbortController().signal,
+      domains: [],
+    };
+    try {
+      await assert.rejects(async () => {
+        for await (const _event of openCodeEvents(sandbox, process.execPath, invocation));
+      }, new Error("Error: You must provide a message or a command"));
+    } finally {
+      await sandbox.dispose();
+    }
+  });
+
   it("builds from the prompt on stdin, mirrors every event, and adds up the run's tokens and price", async () => {
     const { engine, seen } = await engineWith(async function* () {
       yield* replay(await events("opencode-run-1.18.jsonl"));
@@ -479,6 +600,35 @@ describe("OpenCode sessions", () => {
     assert.equal(unpicked.errorText, "Bad Request: not supported", "with no pick there is no model to blame");
   });
 
+  it("opens OpenCode Zen to a session that starts before the model list was read", async () => {
+    const { engine, seen } = await engineWith(() => replay([]));
+    await engine.delegate({ cwd: await game(), prompt: "go on", model: "opencode/big-pickle" });
+    assert.deepEqual(seen[0]?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+  });
+
+  it("opens OpenCode Zen when the listing names no address for its models", async () => {
+    const root = await tmpDir("opencode-zen-");
+    const listing = `opencode/free-one\n${JSON.stringify(
+      { id: "free-one", providerID: "opencode", capabilities: { toolcall: true }, cost: { input: 0, output: 0 } },
+      null,
+      2,
+    )}`;
+    const seen: OpenCodeInvocation[] = [];
+    const engine = new OpenCodeEngine({
+      scratchRoot: path.join(root, "scratch"),
+      protectedPaths: [path.join(root, "secrets")],
+      resolveCli: ready,
+      listModels: async () => listing,
+      execFn: (invocation) => {
+        seen.push(invocation);
+        return replay([]);
+      },
+    });
+    await engine.refreshModels(true);
+    await engine.delegate({ cwd: await game(), prompt: "go on", model: "opencode/free-one" });
+    assert.deepEqual(seen[0]?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+  });
+
   it("says the sandbox kept OpenCode from a provider whose address it does not know, never to sign in again", async () => {
     const root = await tmpDir("opencode-hosts-");
     const listing = `unheard-of/m\n${JSON.stringify(
@@ -648,6 +798,11 @@ describe("OpenCode's sandbox and config", () => {
       path.join(home, "AI Games", "space", "opencode.json"),
       path.join(home, "AI Games", "space", ".opencode"),
     ]);
+    assert.deepEqual(
+      openCodeSessionFolders({}, home),
+      [...options.ownHome, ...options.writableRoots.slice(-2)],
+      "the folders a Windows sandbox grants at its start are the ones each session writes",
+    );
     const relative = openCodeSandbox({
       runDir: "/r",
       gameDir: "/r",
@@ -846,7 +1001,30 @@ describe("OpenCode 2.x sessions", () => {
     assert.equal(config.permission, undefined, "never 1.18's shape");
     assert.equal(config.share, "disabled");
     assert.equal(config.update, "disable");
-    assert.deepEqual(invocation?.domains, ["opencode.ai", "models.dev", "models.opencode.ai"]);
+    assert.deepEqual(
+      invocation?.domains,
+      ["opencode.ai", "models.dev", "models.opencode.ai", "127.0.0.1", "localhost"],
+      // On Windows loopback goes through the sandbox's proxy, which refuses a host it was not given.
+      "and 2.x's own server, which its run command reaches over loopback",
+    );
+  });
+
+  it("points every session at the person's own OpenCode folders, which hold its sign-ins", async () => {
+    // On Windows a session runs as the sandbox's own user, whose home holds no sign-in: a signed-in
+    // provider's model (OpenCode Go) then answered "Model unavailable" before its first turn.
+    for (const make of [engineWith, engineV2]) {
+      const { engine, seen } = await make(() => replay([]));
+      await engine.refreshModels(true);
+      await engine.delegate({ cwd: await game(), prompt: "Write hello" });
+      const invocation = seen.at(-1);
+      const env = invocation?.env ?? {};
+      for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
+        assert.ok(path.isAbsolute(env[name] ?? ""), `${name} is set, whatever the sandbox's own home is`);
+      }
+      assert.deepEqual(invocation?.sandbox.ownHome, [path.join(env.XDG_DATA_HOME ?? "", "opencode")]);
+      assert.ok(invocation?.sandbox.writableRoots.includes(path.join(env.XDG_STATE_HOME ?? "", "opencode")));
+      assert.ok(invocation?.sandbox.writableRoots.includes(path.join(env.XDG_CACHE_HOME ?? "", "opencode")));
+    }
   });
 
   it("resumes by session id, and leaves the variant off a model with no such dial", async () => {

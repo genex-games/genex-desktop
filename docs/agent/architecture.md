@@ -123,7 +123,8 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
 ### Residual risks
 
 - **A Codex contractor can read the whole disk.** `codex exec` runs under Codex's own sandbox
-  (`workspace-write`, one writable root, no network), which restricts writes but not reads, and
+  (`workspace-write`, one writable root, no network; on Windows unelevated, plus the
+  bridge's `req/`), which restricts writes but not reads, and
   Studio does not wrap the CLI in `ProcessSandbox`. The studio's secrets, both CLIs' sign-in homes
   and sibling games are named off limits in the brief only; the Claude path enforces the same list
   as `Read()` deny rules, and `ProcessSandbox` enforces it for the harness and Bonsai. A
@@ -160,23 +161,23 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   [`src/main/ipc-handle.ts`](../../src/main/ipc-handle.ts). Plugin, MCP, terminal and permission
   channels accept only the main window's top-level frame. Follow the [IPC recipe](recipes.md#ipc-channel).
 - **Boot state.** The renderer first calls `bootState` (`studio:boot`, registered before any core;
-  contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform, which it sets as
-  `data-platform` on the root, and the phase. When `ProcessSandbox` raises
-  `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
-  unsupported platform, missing Linux tools found by a PATH lookup, Windows `not_provisioned` or
-  `wfp_fence_inactive` by code, Linux `isolation-blocked` from
-  [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
-  ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a core-less setup window
-  instead of exiting; `studio:boot.retry` recreates the core and, once started, replaces
-  that window with the studio. On Windows, `studio:boot.setup` (native) first installs the sandbox
-  with the unpacked srt-win
-  ([`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
-  UAC prompt) and retries; a dismissed prompt changes nothing. Other startup failures keep the error dialog and exit; smoke
-  and developer launches still fail (the `sandbox-setup` fixture shows the screen over a ready
-  core). The window's title bar comes from
+  contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform (`data-platform` on
+  the root) and the phase. When `ProcessSandbox` raises `SandboxUnavailableError`
+  ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
+  unsupported platform, missing Linux tools, Windows `not_provisioned` or `wfp_fence_inactive`,
+  Linux `isolation-blocked` from [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)),
+  main holds the boot gate ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) on a core-less
+  setup window; `studio:boot.retry` recreates the core, whose window replaces it. Windows runs
+  `studio:boot.setup` (native,
+  [`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
+  UAC prompt) by itself; failures offer `studio:boot.report` (native). Windows opens that window
+  before the core (phase `starting`, stepped by boot marks). A harness that would not start, a
+  core failing there, or a start past three minutes (Try again relaunches) holds the gate on
+  `failed`: Try again, the report, Quit (`studio:boot.quit`). Other failures show the error
+  dialog and exit; smoke and developer launches fail. The window's title bar comes from
   [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS
-  (lights on the headers' line), a themed 48 px `titleBarOverlay` on Windows and Linux
-  (`studio:window.controls`).
+  (lights centred on headers), a themed 48 px `titleBarOverlay` on Windows (see-through on
+  Home) and Linux (`studio:window.controls`).
 - [`src/main/studio-core.ts`](../../src/main/studio-core.ts) keeps the core's lifecycle, the event
   log's front door, settings and public methods. It assembles the EventStore, snapshots,
   `GameWorkspaces`, the engine registry, the preview pool and the `HarnessHost`.
@@ -370,6 +371,8 @@ holds the registered engines, builds the `EngineDescriptor` list the UI reads (`
 answers fallbacks: a rate limit falls back only to a direct engine; context overflow and auth fall
 back to nothing. `StudioCore.init` registers the engines and sets the preferred order: local first
 (it cannot be rate limited), then the subscriptions.
+[`main/engine-boot.ts`](../../src/main/engine-boot.ts) answers the bootstrap with the last
+launch's checked engines while this launch checks.
 
 **Provider table.** [`src/shared/providers.ts`](../../src/shared/providers.ts) `PROVIDERS` is the one
 table of provider identity: id, the label a person says, whether it is a subscription, its login
@@ -396,9 +399,9 @@ spawner for it, `claudeLaunchOptions`) and stops with its whole tree (`taskkill 
 [`src/substrate/process-tree.ts`](../../src/substrate/process-tree.ts)). Studio or game-local
 dependencies and packaged binaries are excluded. A persisted override that is not ready yields to a
 ready automatic installation, an explicit executable never. Diagnostics share a 15-second
-cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers until
-Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
-renderer or agent channel can write. Descriptors carry `account` (login source, variable, what
+cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers (kept
+across launches) until Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
+renderer or agent channel can write; a copy it cannot read (damaged, empty) saves no path, and a BOM is read past. Descriptors carry `account` (login source, variable, what
 signing out leaves, CLI state and version). Fixture and smoke sessions search no paths or standard
 locations (`configureCodingClis`), so status checks never run a machine-installed provider or report
 fixtures as account readiness.
@@ -414,8 +417,8 @@ login output removes auth URLs, credential patterns and terminal string controls
 
 **Embedded terminal.** [`src/main/terminal-service.ts`](../../src/main/terminal-service.ts) owns at
 most four sessions, each node-pty in its own utility process; xterm.js loads lazily. Project shells
-resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, else
-PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
+resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, installed or
+Genex's own, else PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
 normal permissions. Games, plugins and the harness get no terminal API. A command a game reply offers
 runs only when the user presses Run: `studio:terminal.run` takes one command line (`runnableCommand`)
 as a `command` session (`commandShell`: the shell's `-c`, or PowerShell's `-Command`) in the game
@@ -518,15 +521,16 @@ its harness half only when it differs from the last healthy one in files that ne
 (`RUNS_AS_CODE`); a "both" record keeps its game half healthy with `harness_healthy: false` until
 then. Snapshots around a seed upgrade or the migration follow the same rule.
 
-**Recovery.** `HarnessHost.start`/`restart` take `{callerRecovers}`: a death before `ready` goes only
-to the caller. `core.start` stops the host on a boot failure, runs `recover()` (rewind to the newest
-healthy harness snapshot) and throws only if the harness is still not ready; `main/index.ts` then
-offers **Reset harness to shipped version** or Quit. If a rewind target exists but restore or
-restart fails, `recover()` reseeds and restarts (`harness_reseeded`); `watchdog.failed` is emitted
-only if that fails too. A self-update pending during a rewind is recorded failed and never marked
-healthy. The wedge watchdog ignores time the Mac was asleep (a tick more than three intervals late
-resets the silence clock) and a host call in flight; page and record calls end at their deadline
-(`substrate/rpc-deadlines.ts`). Three exits in five minutes or ten silent minutes trigger recovery.
+**Recovery.** Before migration or boot, `core.start` awaits sandbox readiness. Initialization faults
+report their original error without rewinding or reseeding harness code; a later retry can
+initialize again. `HarnessHost.start`/`restart` accept `{callerRecovers}`: deaths before `ready`
+go only to their caller. Once sandboxed, a failed harness boot rewinds to the newest healthy
+snapshot. Failed restore/restart falls back to reseeding (`harness_reseeded`); failure there emits
+`watchdog.failed` and offers **Reset harness to shipped version** or Quit. A self-update pending
+during rewind fails and is never marked healthy. The wedge watchdog ignores sleep (a tick over
+three intervals resets its clock) and in-flight host calls; page/record calls retain
+`substrate/rpc-deadlines.ts` deadlines. Three exits in five minutes or ten silent minutes trigger
+recovery.
 
 **A harness child dying mid-run** is repaired without an app restart (`onUnexpectedExit`,
 [feature map](feature-map.md)): StudioCore aborts every delegation, `run.settled` per open run
@@ -641,10 +645,10 @@ rewinding ([conversation lifecycle](../conversation-coordinator.md#sending-and-r
 notes are `docs/notes/NOTES.<facet>.md`.
 `.studio/` is gitignored; on the long turn the studio copies `.studio/DIRECTOR.md` to run and thread
 artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Adoption writes a real `.gitignore` before
-`git init`. Snapshot commits land on the user's checked-out branch with hooks disabled and are
-refused during a merge, rebase, cherry-pick or revert. `SnapshotEngine.restore` runs every check
-before any reset and refuses (`branch-changed`, `history-changed`, `operation-in-progress`,
-`rescue-failed`) leaving the folder untouched; the mandatory rescue snapshot is named on
+`git init`. `checkOutNewRepo` fast-imports the installed seed as the first harness repository; `ensureRepo` finishes an interrupted first commit. Snapshots commit to the checked-out branch, hooks off, never during a merge,
+rebase, cherry-pick or revert. `SnapshotEngine.restore` checks everything before any reset and
+refuses (`branch-changed`, `history-changed`, `operation-in-progress`, `rescue-failed`), folder
+untouched; the mandatory rescue snapshot is named on
 `workspace_restored`. Every loop shell command is built in `loop/git.ts`; model text goes through
 `shellQuote` and a commit reaches a command line only when `isCommit`.
 
@@ -800,10 +804,11 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 
 **Worker windows and computer use.** Every building delegation and every looking read-only session
-gets one pooled preview window for the session
+gets one pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs; `computer` is the studio's own computer use: one tool, a session referee and
-swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen. Native input is sent and synthetic copies withheld
+photographs; `computer` is the studio's computer use: one tool, a session referee and
+swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones pause
+(`paint-while-used.ts`). Native input is sent and synthetic copies withheld
 per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
 real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
 (`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
@@ -962,9 +967,8 @@ the native steps `studio:plugins.host-cli` / `host-package`; consent cards show
 (`main/core/genex-cli.ts`, allow-list in `genex-cli-policy.ts`) runs the plugin payload's pinned
 CLI (`resources/plugins/genex/node_modules/@genex-ai/cli-demo`) in ProcessSandbox, in a fresh `<userData>/genex-cli/<id>` (its `HOME`,
 removed afterwards), never a game folder, where the CLI's skill sync and contract healing would
-write `.claude`, `AGENTS.md` and ancestor contracts. Only `api.genex.games` is reachable, the
-games root and every game are write-denied, the token goes on stdin, and project commands see
-only `{id, slug}`. `GenexPackageService` (`genex-package.ts`) checks the name against
+write `.claude`, `AGENTS.md` and ancestor contracts. Only `api.genex.games` (or a dev stand's, `GenexStand`) is reachable,
+games are write-denied, the token goes on stdin, and project commands see only `{id, slug}`. `GenexPackageService` (`genex-package.ts`) checks the name against
 `GENEX_GAME_PACKAGES` and the binding folder by realpath (the game, or a registered git worktree of
 it under scratch), then runs the toolchain's `add` through `GameBuilds.addPackages`.
 
@@ -1040,15 +1044,13 @@ managed local runtime; core has no Blender tool of its own.
   context reading independently of history. A missing, legacy or pre-rewind checkpoint is rebuilt
   from one log read without its rewound ranges, then extended in 256-event batches. Bootstrap carries the host thread-status map separately; a
   non-ready harness clears it.
-- **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) is a pure
-  reporting projection, never an execution gate; main rebuilds summaries from uncapped project
-  conversations ([`src/main/run-summary-reader.ts`](../../src/main/run-summary-reader.ts)) without
-  creating a chat. Unknown coverage stays unknown; while a summary is pending the UI shows no totals.
-  `onRunSummary` shares one feed per run (`run-summary-feed.ts`): one fetch at a time, 250 ms
-  apart, asking only for the memoized (`run-summary-cache.ts`) graph events from the held last one,
-  which comes again with its compaction tail.
-  The reader keeps the histories of at most four recently opened projects (LRU) plus the Studio
-  conversation.
+- **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) reports work;
+  it never gates execution. [`run-summary-reader.ts`](../../src/main/run-summary-reader.ts) reads
+  uncapped project conversations without creating chats. Unknown coverage stays unknown; pending
+  summaries show no totals. `onRunSummary` shares one feed per run (`run-summary-feed.ts`): serial
+  fetches 250 ms apart reuse the memoized graph (`run-summary-cache.ts`), including its compaction
+  tail. Concurrent cache reads with matching history and root share an evidence metadata scan;
+  later reads validate afresh. The reader keeps four recent project histories (LRU) plus Studio.
 - **Studio activity.** [`src/shared/studio-activity.ts`](../../src/shared/studio-activity.ts) projects
   the whole log; `StudioCore.activityEvents()` keeps per-thread cursors and only events
   `feedsActivity` says can change the projection.
@@ -1094,22 +1096,23 @@ managed local runtime; core has no Blender tool of its own.
   `OllamaEngine` pointed at a scripted host.
 - **Log and crash dumps.** Main keeps `<userData>/logs/studio.log`
   ([`src/main/logs.ts`](../../src/main/logs.ts)): rotated at 5 files of 5 MB, mode 0600, never
-  throws, and every line passes `scrubForLog` (`redactSecrets`, email addresses as `[email]`, the
-  home folder as `~` only as a whole path segment). It receives harness and core stderr, main errors
-  (`appendErrorDurably`, startup failures, uncaught errors), renderer console errors,
-  render-process-gone decisions and quit-step problems. `crashReporter` runs local-only
+  throws, and every line passes `scrubForLog` (`redactSecrets`, emails as `[email]`, the home
+  folder as `~`). It receives harness and core stderr, main errors
+  (`appendErrorDurably`, startup and uncaught), renderer console errors, render-process-gone
+  decisions and quit-step problems. `crashReporter` runs local-only
   (`uploadToServer: false`) with dumps in `<userData>/Crashpad`. Persisted writes stay immediate;
-  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters) and flush before
+  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters), flushed before
   other UI events or shutdown. Diagnostics read only a bounded log suffix.
 - **Lifecycle rules.** [`src/main/app-lifecycle.ts`](../../src/main/app-lifecycle.ts) holds the
-  Electron-free rules: process handlers log uncaught exceptions and rejections without exiting; the
-  reload policy reloads a crashed renderer at most twice in 60 s and never after a `clean-exit`;
+  Electron-free rules: process handlers log uncaught errors and rejections, never exiting; the
+  reload policy reloads a crashed renderer at most twice in 60 s, never after a `clean-exit`;
   `pageRecovery` notes each reload in the Studio chat and past the budget asks Reload/Quit (fixture
-  and smoke sessions leave the page dead). The Dock, a second launch or Keep running revive a dead
-  page; pushes skip it. `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`), logs
-  a failed or hung step and moves on.
+  and smoke sessions leave the page dead). The Dock, a relaunch or Keep running revive a dead
+  page; pushes skip it. Mid-run, close hides the window on a Mac and asks to quit
+  elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`),
+  logging and passing a failed or hung one.
   `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
-  agent job, and logs a plugin lease release that fails instead of skipping what follows it.
+  agent job, and logs a failed plugin lease release, skipping nothing after it.
 - **Diagnostics.** [`src/main/diagnostics.ts`](../../src/main/diagnostics.ts) builds the redacted
   Settings → Harness → Copy diagnostics text (versions, OS, data and log paths, provider and CLI
   status, the last 100 log lines) served on `studio:diagnostics` (fixture-safe). The renderer's
@@ -1122,13 +1125,14 @@ managed local runtime; core has no Blender tool of its own.
   none selects a license for Studio itself. Forge's `afterPrune` runs
   [`scripts/package-prune.cjs`](../../scripts/package-prune.cjs): `pruneUnreachable` removes
   `node_modules` packages reachable only through excluded dependencies (`@genex-ai/cli-demo`, which
-  the plugin payload vendors, and the Claude SDK and Codex native packages); `trimNodePty` keeps only
-  node-pty's `lib`, `build/Release` binaries (with Windows's `conpty/`) and the target prebuild,
-  without PDBs; Windows packages node-pty's N-API prebuild instead of rebuilding it; `trimSandboxVendor` keeps only
-  the target's sandbox-runtime helper (Linux `seccomp/<arch>`, Windows `srt-win/<arch>`, none on
-  macOS). A `prePackage` hook refuses a symlinked `node_modules`, which the packager would prune in
-  place. `package-prune.test.ts`, `package-linked-modules.test.ts` and checks in
-  `run-packaged-smoke` hold it.
+  the plugin payload vendors, and the Claude SDK and Codex native packages); `trimNodePty` keeps
+  node-pty's `lib`, `build/Release` binaries (with Windows's `conpty/`) and the target prebuild
+  (Windows packages it unrebuilt), without PDBs; `trimSandboxVendor` keeps the target's
+  sandbox-runtime helper (Linux `seccomp/<arch>`, Windows `srt-win/<arch>`); then
+  [`copyVcRuntime`](../../scripts/package-vc-runtime.cjs) puts the Visual C++ runtime DLLs Windows
+  executables import beside them ([why](../windows-sandbox.md#visual-c-runtime)). `prePackage`
+  refuses a symlinked `node_modules`, which the packager would prune in place;
+  `package-*.test.ts` and `run-packaged-smoke` hold it.
 - Release signing ([`scripts/package-signing.cjs`](../../scripts/package-signing.cjs)) is decided by
   the environment: no `MACOS_SIGN_IDENTITY` re-signs the bundle ad-hoc (`localSigningHook`); an
   identity signs with the hardened runtime and `build/entitlements.mac.plist` (`allow-jit` only, no

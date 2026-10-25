@@ -16,7 +16,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { type Browser, chromium, type Frame, type Page } from "@playwright/test";
 import type { PluginEngineAssistAnswer } from "../../src/plugin-sdk/index.d.ts";
-import { inlinePanelSdk } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
+import { inlinePanelSdk, panelWordsScripts } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
 import { createRobloxBackend } from "../../src/plugins/roblox/backend.ts";
 import { writeLiveData } from "../../src/plugins/roblox/live-data.ts";
 import { firstPublishTask, publishTask } from "../../src/plugins/roblox/publish.ts";
@@ -148,7 +148,9 @@ describe("The Roblox Studio panel", { skip }, () => {
   let server: http.Server;
   let url = "";
   before(async () => {
-    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", BRIDGE);
+    // The stand-in bridge, then the SDK's own words (in English: the stand-in names no language).
+    const words = await panelWordsScripts();
+    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", () => BRIDGE + words);
     server = http.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page),
     );

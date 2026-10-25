@@ -3,6 +3,7 @@
  * chrome by it) and whether startup is complete or waiting on the protected workspace, the
  * process sandbox every agent runs in. Browser-safe: main answers `StudioApi.bootState` with it.
  */
+import type { DataMoveProgress } from "./data-folder.ts";
 
 /** The operating systems Studio builds for, in Node's `process.platform` spelling. */
 export const StudioPlatform = {
@@ -18,8 +19,29 @@ export const BootPhase = {
   Ready: "ready",
   /** The sandbox cannot start: the window shows how to set it up, and Retry. */
   SandboxSetup: "sandbox-setup",
+  /** Windows: the core is starting, and the window says which step it is on. */
+  Starting: "starting",
+  /** The studio's harness would not start: the window says so, with Try again, a report and Quit. */
+  Failed: "failed",
+  /** Genex is moving its data to the folder chosen in Settings → Storage, then starts again. */
+  Moving: "moving",
+  /** The folder Genex keeps its data in is not there (its drive is unplugged): Try again or Quit. */
+  DataMissing: "data-missing",
 } as const;
 export type BootPhase = (typeof BootPhase)[keyof typeof BootPhase];
+
+/** What a starting core is doing, as the window's status line says it. */
+export const StartStep = {
+  /** Reading the settings and preparing the agents' own workspace (a first start commits it). */
+  Agents: "agents",
+  /** Reading the event log and the games. */
+  Games: "games",
+  /** Starting the protected workspace: on Windows the slow step, with its network check. */
+  Workspace: "workspace",
+  /** Plugins, jobs and the engines, then the window opens on the studio. */
+  Studio: "studio",
+} as const;
+export type StartStep = (typeof StartStep)[keyof typeof StartStep];
 
 /** Why the sandbox cannot start. */
 export const SandboxProblemCode = {
@@ -39,6 +61,18 @@ export const SandboxProblemCode = {
   IsolationBlocked: "isolation-blocked",
 } as const;
 export type SandboxProblemCode = (typeof SandboxProblemCode)[keyof typeof SandboxProblemCode];
+
+/** Windows, not provisioned: what Set up does about it. */
+export const WindowsSetupNeed = {
+  /** Install the `srt-sandbox` user, its credential and its network filters (srt-win's install). */
+  Sandbox: "sandbox",
+  /**
+   * Turn the Secondary Logon service (`seclogon`) back on: every sandboxed command starts as the
+   * sandbox user through it, so with it disabled Windows refuses each one.
+   */
+  LogonService: "logon-service",
+} as const;
+export type WindowsSetupNeed = (typeof WindowsSetupNeed)[keyof typeof WindowsSetupNeed];
 
 /** The programs the Linux sandbox needs, by the command it runs. */
 export const SandboxTool = {
@@ -86,6 +120,8 @@ export interface SandboxProblem {
   details: string[];
   /** Isolation blocked by AppArmor: the command that installs a profile allowing it for this app. */
   allowCommand?: string;
+  /** Windows, not provisioned: what Set up does; absent means the sandbox install alone. */
+  windowsNeeds?: WindowsSetupNeed[];
 }
 
 /** Main's answer to `bootState`: the platform, and the setup problem while the phase is SandboxSetup. */
@@ -93,6 +129,22 @@ export interface BootState {
   platform: string;
   phase: BootPhase;
   sandbox: SandboxProblem | null;
+  /**
+   * A Set up has already run this launch, so a window that loads again (after a renderer crash)
+   * does not raise Windows' approval prompt again unasked. Absent until then.
+   */
+  setupTried?: true;
+  /** What the core is doing while the phase is Starting. */
+  step?: StartStep;
+  /**
+   * Why the studio would not start, while the phase is Failed; why its agents would not, while it
+   * is Ready; why a move of Genex's data stopped, while the phase is Moving.
+   */
+  failure?: string;
+  /** How far the move is, while the phase is Moving. */
+  move?: DataMoveProgress;
+  /** The folder that is not there, while the phase is DataMissing. */
+  dataFolder?: string;
 }
 
 /** How Set up (Windows) ended when it did not fail. */

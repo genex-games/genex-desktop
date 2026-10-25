@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from "react";
 import { type PlanReview, PlanReviewState } from "../../shared/composer.ts";
+import { t } from "../../shared/i18n.ts";
 import { Markdown } from "../ui/Markdown.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { problemWords } from "../words.ts";
@@ -20,14 +21,14 @@ const AUTH_ERROR = /sign.?in|log.?in|auth|credential|unauthorized|401/i;
 
 const RECOVERY_WORDS: Record<Recovery, { title: string; next: string }> = {
   [Recovery.Auth]: {
-    title: "Reconnect your model",
-    next: "Open Model providers to reconnect, then try again.",
+    title: t("Reconnect your model"),
+    next: t("Open Model providers to reconnect, then try again."),
   },
   [Recovery.Limited]: {
-    title: "This model is unavailable",
-    next: "Choose another model or check your account in Model providers, then try again.",
+    title: t("This model is unavailable"),
+    next: t("Choose another model or check your account in Model providers, then try again."),
   },
-  [Recovery.Other]: { title: "Couldn’t prepare the plan", next: "Try again, or choose another model." },
+  [Recovery.Other]: { title: t("Couldn’t prepare the plan"), next: t("Try again, or choose another model.") },
 };
 
 /** A sign-in problem wins over a model limit; the error text is all the plan record carries. */
@@ -87,9 +88,15 @@ export function PlanQuestion(props: PlanQuestionProps) {
   const canApprove = !props.revising && review.state === PlanReviewState.Waiting && Boolean(review.plan);
   return (
     <section data-plan-review aria-labelledby={titleId} aria-busy={blocked} className="chat-plan">
-      <div data-plan-body tabIndex={0} role="region" aria-label="Plan" className="min-h-0 overflow-y-auto px-4 py-3">
+      <div
+        data-plan-body
+        tabIndex={0}
+        role="region"
+        aria-label={t("Plan")}
+        className="min-h-0 overflow-y-auto px-4 py-3"
+      >
         <h3 id={titleId} className="mb-3 text-chat font-medium">
-          Review plan
+          {t("Review plan")}
         </h3>
         {review.plan && <Markdown text={review.plan} />}
         {problem && (
@@ -106,7 +113,7 @@ export function PlanQuestion(props: PlanQuestionProps) {
           disabled={blocked || !canApprove}
           onClick={() => answer(true)}
         >
-          Approve
+          {t("Approve")}
         </button>
         <button
           type="button"
@@ -115,7 +122,7 @@ export function PlanQuestion(props: PlanQuestionProps) {
           disabled={blocked}
           onClick={props.onRevise}
         >
-          Make changes
+          {t("Make changes")}
         </button>
         <button
           type="button"
@@ -124,7 +131,7 @@ export function PlanQuestion(props: PlanQuestionProps) {
           disabled={blocked}
           onClick={() => answer(false)}
         >
-          Cancel
+          {t("Cancel")}
         </button>
       </div>
     </section>
@@ -157,7 +164,7 @@ function PlanRecovery({
         <p className="mt-2 text-chat-sub text-ink-2">{words.next}</p>
         {review.error && (
           <details className="mt-2 text-chat-sub text-ink-3">
-            <summary className="cursor-pointer">Details</summary>
+            <summary className="cursor-pointer">{t("Details")}</summary>
             <p className="mt-1 [overflow-wrap:anywhere]">
               <FileText text={review.error} />
             </p>
@@ -171,10 +178,10 @@ function PlanRecovery({
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-t border-line px-2 py-2">
         <button type="button" className="chat-question-submit" disabled={blocked} onClick={onChooseModel}>
-          Choose model
+          {t("Choose model")}
         </button>
         <button type="button" className="chat-plan-secondary" disabled={blocked} onClick={onSettings}>
-          Model providers
+          {t("Model providers")}
         </button>
         <button
           type="button"
@@ -184,10 +191,10 @@ function PlanRecovery({
             if (onRetry) await action.run(onRetry);
           }}
         >
-          Try again
+          {t("Try again")}
         </button>
         <button type="button" className="chat-plan-secondary" disabled={blocked} onClick={() => answer(false)}>
-          Dismiss
+          {t("Dismiss")}
         </button>
       </div>
     </section>

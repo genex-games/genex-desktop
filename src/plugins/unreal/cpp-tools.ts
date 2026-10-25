@@ -97,16 +97,16 @@ const MESSAGE = {
   CannotCompile: (xcode: string) =>
     `This computer can't build Unreal C++ (Xcode: ${xcode}); C++ is built on a Mac whose Xcode is ready.`,
   OtherEditor:
-    "Unreal is open, but this game's project isn't answering, so Genex didn't quit it to add C++. Quit Unreal, then try again.",
+    "Unreal is open, but this game's project isn't answering, so Genex can't save its work and didn't quit it to add C++. When it is this game's Unreal, call unreal__open-editor with restart: true (work not saved in it is lost), then try again; when it is another project's, ask the user to quit it.",
   NotSaved: (why: string) =>
     `Genex couldn't save your work in Unreal (${why}), so it left Unreal open and added no C++.`,
   NoSaveAnswer: "the Genex editor helper didn't answer",
   Unsaved: (names: string) => `Unreal didn't save ${names}, so Genex left it open and added no C++.`,
-  NotClosed: `Unreal didn't close within ${QUIT_WAIT_MS / SECOND_MS} s, so Genex added no C++. Close it from its own window, then try again.`,
+  NotClosed: `Unreal didn't close within ${QUIT_WAIT_MS / SECOND_MS} s, so Genex added no C++. Call unreal__quit-editor, then try again.`,
   NotBuilt: (why: string) => `The game's new C++ module didn't build, so Genex took it back out: ${why}`,
   NotBuiltNotRemoved: (module: string, why: string) =>
     `The game's new C++ module didn't build, and Genex couldn't take it all back out: remove Source/${module} and its entry in the project's Modules before opening Unreal. ${why}`,
-  NotAnswering: `Genex built the game's C++ module, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening it. Open the game from the Unreal button.`,
+  NotAnswering: `Genex built the game's C++ module, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening it. Call unreal__open-editor to open it again.`,
   ProjectUnreadable: "The game's project file couldn't be read, so Genex added no C++.",
   BadName: "The part's or the module's name isn't a plain identifier. Nothing was copied.",
   NoCopy: "The builder's copy of the game can't be read. Nothing was copied.",

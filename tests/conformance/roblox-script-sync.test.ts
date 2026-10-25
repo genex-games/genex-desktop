@@ -382,7 +382,7 @@ test("a file moved to another name for the same script keeps the script in Studi
 });
 
 test("a src folder that is a link is refused: nothing is asked of Studio and nothing written anywhere", async (t) => {
-  if (process.platform === "win32") t.skip("creating links needs a privilege the Windows runner may lack");
+  if (process.platform === "win32") return t.skip("creating links needs a privilege the Windows runner may lack");
   const { root, folder } = await gameFolder();
   const outside = path.join(root, "outside");
   await mkdir(outside);
@@ -399,7 +399,7 @@ test("a src folder that is a link is refused: nothing is asked of Studio and not
 });
 
 test("links inside src are never followed: a linked folder or file is neither read nor written", async (t) => {
-  if (process.platform === "win32") t.skip("creating links needs a privilege the Windows runner may lack");
+  if (process.platform === "win32") return t.skip("creating links needs a privilege the Windows runner may lack");
   const world = await setUp({ studio: [] });
   const outside = path.join(world.root, "outside");
   await mkdir(outside);
@@ -596,7 +596,7 @@ const UNTAKEN_FILES: Array<{ why: string; links?: boolean; make(folder: string, 
 
 for (const row of UNTAKEN_FILES) {
   test(`a script file that ${row.why} counts as present: Studio's copy and its record stay`, async (t) => {
-    if (row.links && process.platform === "win32") t.skip("links and folder modes differ on Windows");
+    if (row.links && process.platform === "win32") return t.skip("links and folder modes differ on Windows");
     const world = await setUp({
       files: { [MAIN_FILE]: "print(1)\n", [SHARED_FILE]: "return {}\n" },
       studio: [

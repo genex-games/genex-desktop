@@ -7,6 +7,8 @@ import type { FieldRow, RunSharingStatus } from "../../shared/run-sharing.ts";
 import { Button } from "../ui/Button.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { PRIVACY_WORDS, privacyDeleteWords, problemWords } from "../words.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** Where Privacy's links go, in the order the line shows them. */
 const POLICY_LINKS = [
@@ -193,9 +195,9 @@ export function PrivacySection(): JSX.Element {
     return (
       <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
         {alert || (
-          <p role="status" className="text-ink-3">
-            {PRIVACY_WORDS.loading}
-          </p>
+          <Pending label={PRIVACY_WORDS.loading}>
+            <SkeletonRows control={SkeletonControl.Button} />
+          </Pending>
         )}
         <PolicyLinks />
       </div>

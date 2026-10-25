@@ -7,8 +7,11 @@ import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import { FinishReviews } from "../../src/main/core/finish-review.ts";
 import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
+import { MINUTE_MS } from "../../src/shared/duration.ts";
 import {
+  clipReason,
   FINISH_REASON_CHARS,
+  FINISH_TIME_LEFT_MS,
   FinishCheckStep,
   type FinishRecord,
   MAX_FINISH_REASONS,
@@ -165,6 +168,81 @@ describe("the reviewer's verdict is the app's", () => {
     const last = (await checks(chat)).at(-1);
     assert.equal(last?.stopped, true);
     assert.equal(last?.rejections, MAX_FINISH_REJECTIONS);
+  });
+
+  it("a timed Loop with time left goes on past three no's in a row; with little left the next no stops it", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const chat = await workerChat();
+    reviewerSays(chat, [
+      reviewerAnswer("no", NO_REASONS),
+      reviewerAnswer("no", NO_REASONS),
+      reviewerAnswer("no", NO_REASONS),
+      reviewerAnswer("no", NO_REASONS),
+    ]);
+    const plenty = FINISH_TIME_LEFT_MS + MINUTE_MS;
+    const counts: Array<[unknown, unknown, unknown]> = [];
+    for (const [round, timeLeftMs] of [
+      [1, plenty],
+      [2, plenty],
+      [3, plenty],
+      [4, FINISH_TIME_LEFT_MS],
+    ] as const) {
+      await review(chat);
+      const settled = await settle(chat, { round, timeLeftMs });
+      counts.push([settled.rejections, settled.stopped, settled.timeLeft === true]);
+    }
+    assert.deepEqual(counts, [
+      [1, false, true],
+      [2, false, true],
+      [MAX_FINISH_REJECTIONS, false, true],
+      [MAX_FINISH_REJECTIONS + 1, true, false],
+    ]);
+    const ends = (await checks(chat)).filter((check) => check.step === FinishCheckStep.Rejected);
+    assert.deepEqual(
+      ends.map((check) => [check.stopped === true, check.timeLeft === true]),
+      [
+        [false, true],
+        [false, true],
+        [false, true],
+        [true, false],
+      ],
+      "each no records whether the Loop had time left",
+    );
+  });
+
+  it("a settle's time left is a count of milliseconds, or nothing", { timeout: CASE_TIMEOUT_MS }, async () => {
+    const chat = await workerChat();
+    reviewerSays(chat, [reviewerAnswer("no", NO_REASONS)]);
+    await review(chat);
+    const recorded = (await checks(chat)).length;
+    for (const [label, timeLeftMs] of [
+      ["negative", -1],
+      ["not whole", 1.5],
+      ["text", "an hour"],
+      ["a list", [MINUTE_MS]],
+    ] as const) {
+      await assert.rejects(settle(chat, { round: 1, timeLeftMs }), Error, `${label}: refused`);
+      assert.equal((await checks(chat)).length, recorded, `${label}: nothing recorded`);
+    }
+    const settled = await settle(chat, { round: 1, timeLeftMs: null });
+    assert.equal(settled.step, FinishCheckStep.Rejected);
+    assert.equal(settled.timeLeft, undefined, "no time named: the no's count as they always have");
+  });
+
+  it("what isn't done and what is are kept apart from the reviewer's reasons, in the answer and the record", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const chat = await workerChat();
+    const met = "The laps and the finish screen were already accepted and still hold.";
+    const done = ["Laps run", "Finish screen"];
+    reviewerSays(chat, [reviewerAnswer("no", [met], CLAUDE, NO_REASONS, done)]);
+    const answered = await review(chat);
+    assert.deepEqual([answered.reasons, answered.notDone, answered.done], [[met], NO_REASONS, done]);
+    const settled = await settle(chat, { round: 1 });
+    assert.deepEqual([settled.reasons, settled.notDone, settled.done], [[met], NO_REASONS, done]);
+    const last = (await checks(chat)).at(-1);
+    assert.deepEqual([last?.reasons, last?.notDone, last?.done], [[met], NO_REASONS, done]);
   });
 
   it("a resumed run goes on counting its no's; a finished run reopened for a new ask starts them over", {
@@ -384,32 +462,50 @@ describe("the app's reading of a reviewer's answer", () => {
       [
         "a fenced yes",
         `I looked.\n\`\`\`json\n${json({ verdict: "yes", reasons: ["ok"] })}\n\`\`\``,
-        ["accepted", ["ok"]],
+        ["accepted", ["ok"], []],
       ],
       [
         "a trailing no",
         `Done reading. ${json({ verdict: "No", reasons: [], notDone: ["no timer"] })}`,
-        ["rejected", ["no timer"]],
+        ["rejected", [], ["no timer"]],
       ],
-      ["a no naming nothing", json({ verdict: "no" }), ["rejected", ["the reviewer named nothing concrete"]]],
+      [
+        "a no that names what is met and what isn't",
+        json({ verdict: "no", reasons: ["the laps run"], notDone: ["no timer"] }),
+        ["rejected", ["the laps run"], ["no timer"]],
+      ],
+      ["a no naming nothing", json({ verdict: "no" }), ["rejected", ["the reviewer named nothing concrete"], []]],
       [
         "an echoed file fenced before the answer",
         `\`\`\`json\n${json({ name: "game" })}\n\`\`\`\n\`\`\`json\n${json({ verdict: "yes" })}\n\`\`\``,
-        ["accepted", []],
+        ["accepted", [], []],
       ],
-      ["a stray brace after the answer", `${json({ verdict: "yes", reasons: ["fine"] })}}`, ["accepted", ["fine"]]],
+      ["a stray brace after the answer", `${json({ verdict: "yes", reasons: ["fine"] })}}`, ["accepted", ["fine"], []]],
       ["a maybe", json({ verdict: "maybe", reasons: ["hm"] }), ["unanswered", "its answer said neither yes nor no"]],
       ["no JSON", "It looks done to me.", ["unanswered", "its answer said neither yes nor no"]],
       ["a verdict that is not text", json({ verdict: true }), ["unanswered", "its answer said neither yes nor no"]],
     ];
     for (const [label, reply, expected] of rows) {
       const read = reviewerVerdict(reply);
-      const got = [read.step, "reasons" in read ? read.reasons : read.why];
+      const got = "reasons" in read ? [read.step, read.reasons, read.notDone] : [read.step, read.why];
       assert.deepEqual(got, expected, label);
     }
-    const capped = reviewerVerdict(json({ verdict: "no", reasons: [long, ...many] }));
+    const capped = reviewerVerdict(json({ verdict: "no", reasons: [long, ...many], notDone: many }));
     assert.ok("reasons" in capped && capped.reasons.length === MAX_FINISH_REASONS, "at most the cap of reasons");
+    assert.ok("reasons" in capped && capped.notDone.length === MAX_FINISH_REASONS, "and of what isn't done");
     assert.ok("reasons" in capped && capped.reasons[0]?.length === FINISH_REASON_CHARS + 1, "each clipped and marked");
+  });
+
+  it("clips a long reason at a word, never inside one", () => {
+    const words = "The enemy in the game is still a thin stick skeleton with bare rod limbs ".repeat(8);
+    const clipped = clipReason(words);
+    assert.ok(clipped.endsWith("…"), "marked as cut");
+    assert.ok(clipped.length <= FINISH_REASON_CHARS + 1, "within the cap");
+    const kept = clipped.slice(0, -1);
+    assert.ok(words.startsWith(kept), "the start of the reason, as written");
+    assert.match(kept, /\S$/, "no trailing space before the mark");
+    assert.equal(words[kept.length], " ", "cut where a word ends");
+    assert.equal(clipReason("short enough"), "short enough", "a short one stays whole");
   });
 
   it("counts the no's in a row of one run: a yes clears it, no answer neither counts nor breaks it", () => {
@@ -419,8 +515,11 @@ describe("the app's reading of a reviewer's answer", () => {
       step,
       claim: null,
       reasons: [],
+      notDone: [],
+      done: [],
       why: null,
       stopped: false,
+      timeLeft: false,
       rejections: null,
     });
     const { Accepted, Checking, Rejected, Unanswered } = FinishCheckStep;

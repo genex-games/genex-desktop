@@ -2,6 +2,8 @@
  * Finding Godot on a Mac: the apps where people keep them (Applications, their own Applications,
  * Downloads), a `godot` on the PATH, each once by its real path, newest supported first; what Genex
  * builds with (4.3 or newer in the 4 line) and what the engine question says when there is none.
+ * On Windows: Genex's own install, Program Files (Steam's too) and the PATH, never a Godot elsewhere
+ * in the person's profile, which Genex's sandbox can't run.
  */
 import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
@@ -13,10 +15,13 @@ import {
   godotReadiness,
   isSupported,
   parseVersion,
+  programFilesOf,
   usableGodot,
   versionName,
 } from "../../src/plugins/godot/find-godot.ts";
-import { fakeMac, GODOT_461 } from "../helpers/godot-fake-engine.ts";
+import { fakeMac, fakeWindows, GODOT_461 } from "../helpers/godot-fake-engine.ts";
+
+const GODOT_472 = "4.7.2.stable.official.7c2a2f5a1";
 
 describe("Godot's version line", () => {
   const table: Array<[string, { name: string; mono: boolean; status: string; supported: boolean } | null]> = [
@@ -103,8 +108,87 @@ describe("finding Godot", () => {
     });
   });
 
-  it("looks nowhere but on a Mac, where Genex runs Godot", async () => {
+  it("looks nowhere off a Mac and Windows", async () => {
     const mac = await fakeMac();
-    assert.deepEqual(await findGodots({ ...mac.env, platform: "win32" }), []);
+    assert.deepEqual(await findGodots({ ...mac.env, platform: "linux" }), []);
+  });
+});
+
+describe("finding Godot on Windows", () => {
+  it("finds Genex's own install, Program Files' and Steam's, newest first, never a console wrapper", async () => {
+    const pc = await fakeWindows([
+      { where: "Program Files/Godot/Godot_v4.6.1-stable_win64.exe", version: GODOT_461 },
+      { where: "Program Files/Godot/Godot_v4.6.1-stable_win64_console.exe", version: GODOT_461 },
+      {
+        where: "Program Files (x86)/Steam/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe",
+        version: "4.3.stable.official.77dcf97d8",
+      },
+      { where: "Program Files/Godot Engine/Godot_v3.6-stable_win64.exe", version: "3.6.stable.official.de2f0f147" },
+      { where: "Program Files/Blender Foundation/blender.exe", version: "4.2.0" },
+    ]);
+    const own = await pc.place({
+      where: "Users/Ada/AppData/Roaming/Genex/native-runtimes/godot/godot/Godot_v4.7.2-stable_win64.exe",
+      version: GODOT_472,
+    });
+    const found = await findGodots(pc.env, [own]);
+    assert.deepEqual(
+      found.map((install) => [versionName(install.version), path.basename(install.binary), install.app]),
+      [
+        ["4.7.2", "Godot_v4.7.2-stable_win64.exe", null],
+        ["4.6.1", "Godot_v4.6.1-stable_win64.exe", null],
+        ["4.3", "godot.windows.opt.tools.64.exe", null],
+        ["3.6", "Godot_v3.6-stable_win64.exe", null],
+      ],
+    );
+    assert.equal(usableGodot(found)?.binary, own);
+  });
+
+  it("finds Steam's Godot in every library Steam lists, its own and one on another drive", async () => {
+    const pc = await fakeWindows([
+      {
+        where: "SteamLibrary/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe",
+        version: GODOT_461,
+      },
+    ]);
+    const library = path.join(pc.root, "SteamLibrary");
+    const vdf = path.join(pc.root, "Program Files (x86)", "Steam", "steamapps", "libraryfolders.vdf");
+    await mkdir(path.dirname(vdf), { recursive: true });
+    const escaped = library.replaceAll("\\", "\\\\");
+    await writeFile(vdf, `"libraryfolders"\n{\n\t"1"\n\t{\n\t\t"path"\t\t"${escaped}"\n\t}\n}\n`);
+    const found = await findGodots(pc.env);
+    assert.deepEqual(
+      found.map((install) => install.binary),
+      [path.join(library, "steamapps", "common", "Godot Engine", "godot.windows.opt.tools.64.exe")],
+    );
+  });
+
+  it("leaves out a Godot in the person's profile Genex didn't install: its sandbox can't read it", async () => {
+    const pc = await fakeWindows([
+      { where: "Users/Ada/Downloads/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64.exe", version: GODOT_472 },
+      { where: "Users/Ada/scoop/apps/godot/current/godot.exe", version: GODOT_472 },
+    ]);
+    const scoop = path.join(pc.home, "scoop", "apps", "godot", "current");
+    assert.deepEqual(await findGodots({ ...pc.env, pathDirs: [scoop] }), []);
+    assert.deepEqual(godotReadiness(await findGodots(pc.env)), { readiness: GodotReadiness.None, version: null });
+  });
+
+  it("finds a godot.exe on the PATH outside the profile, by its real path, once", async () => {
+    const pc = await fakeWindows([{ where: "ProgramData/chocolatey/bin/godot.exe", version: GODOT_461 }]);
+    const bin = path.join(pc.root, "ProgramData", "chocolatey", "bin");
+    const found = await findGodots({ ...pc.env, pathDirs: [bin, bin] });
+    assert.deepEqual(
+      found.map((install) => install.binary),
+      [path.join(bin, "godot.exe")],
+    );
+  });
+
+  it("reads Program Files from Windows's environment, each a whole path, once", () => {
+    const table: Array<[NodeJS.ProcessEnv, string[]]> = [
+      [{ ProgramFiles: "D:\\Apps", "ProgramFiles(x86)": "D:\\Apps (x86)" }, ["D:\\Apps", "D:\\Apps (x86)"]],
+      [{}, ["C:\\Program Files"]],
+      [{ ProgramFiles: "C:\\P", "ProgramFiles(x86)": "C:\\P" }, ["C:\\P"]],
+      [{ ProgramFiles: "relative", "ProgramFiles(x86)": "" }, []],
+    ];
+    for (const [env, expected] of table) assert.deepEqual(programFilesOf(env), expected, JSON.stringify(env));
   });
 });

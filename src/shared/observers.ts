@@ -34,6 +34,8 @@ export const PLUGIN_OBSERVER_LIVE: ReadonlySet<ObserverLive> = new Set([
 export const UNREAL_PLUGIN_ID = "unreal";
 /** The bundled Unity plugin's id. */
 export const UNITY_PLUGIN_ID = "unity";
+/** The bundled Roblox Studio plugin's id. */
+export const ROBLOX_PLUGIN_ID = "roblox";
 
 /** The bundled Unreal plugin's viewport observer (`<plugin>/<id>`): the Unreal card's shots, and Genex's own card's key. */
 export const UNREAL_VIEWPORT_OBSERVER = `${UNREAL_PLUGIN_ID}/viewport`;

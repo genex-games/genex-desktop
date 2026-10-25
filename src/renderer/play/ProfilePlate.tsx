@@ -1,14 +1,18 @@
 /**
  * The Genex account at the foot of the sidebar, in Play and in Create, always in the same place.
- * Signed in: its avatar, its name (and Pro), and beside it the credits, which open Credits (the
- * friends are listed under the games). The name opens a menu: Profile, Friends, Credits, Account
- * settings and Sign out. Offline it shows the account as last time, the Offline mark where the
- * credits were. Signed out it signs in in the browser; while that waits it says so,
- * with a way to cancel; and once genex.games ends a sign-in it shows the account dimmed, to sign in
- * again. The account is the app's: the Genex plugin being on or off changes nothing here.
+ * Signed in: its avatar, its name, and beside it the credits in Create, which open Credits, or the
+ * coin it may spend in Play, which opens Get Nex (the friends are listed under the games); a Pro's
+ * name has a PRO tag, and under the pointer their row lights up
+ * with their nameplate: the moving art behind the name and sparkles on the face (`nameplate/`).
+ * The name opens a menu: Profile, Friends, Credits, Coin, Nameplate (Pro), Account settings and
+ * Sign out. Offline it shows the account as last time, the Offline mark where the credits were. Signed
+ * out it signs in in the browser; while that waits it says so, with a way to cancel; and once
+ * genex.games ends a sign-in it shows the account dimmed, to sign in again. The account is the
+ * app's: the Genex plugin being on or off changes nothing here.
  */
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
+import { intlLocale } from "../../shared/i18n.ts";
 import type { PlayMe } from "../../shared/play-people.ts";
 import { GenexTab, openGenexPage } from "../panels/plugins/genex/genex-tab.ts";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
@@ -26,11 +30,13 @@ import {
 import { Icon } from "../ui/icons.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { useOnline } from "../ui/use-online.ts";
-import { PLAY_WORDS } from "../words.ts";
+import { ACCOUNT_WORDS, PLAY_WORDS } from "../words.ts";
+import { CoinMark } from "./CoinMark.tsx";
 import { CreditsShard, ScrambleNumber } from "./CreditsShard.tsx";
-import { formatCount, PlateState, plateState } from "./play-model.ts";
+import { formatCount, PlateEnd, plateEnd, PlateState, plateState } from "./play-model.ts";
 import { avatarRecipe } from "../../shared/avatar-recipe.ts";
 import { GeneratedAvatar } from "../avatars/GeneratedAvatar.tsx";
+import { Nameplate, useNameplate } from "../nameplate/Nameplate.tsx";
 import { PersonAvatar } from "./PersonAvatar.tsx";
 import { OfflineMark } from "./PlayOffline.tsx";
 import { SignOutDialog } from "./SignOutDialog.tsx";
@@ -44,7 +50,7 @@ const SIGNED_OUT_FACE = avatarRecipe("sign-in");
 
 /** "July 2026": when an account was made, as a profile says it. */
 export const joinedWhen = (iso: string | null): string | null =>
-  iso ? new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(new Date(iso)) : null;
+  iso ? new Intl.DateTimeFormat(intlLocale(), { month: "long", year: "numeric" }).format(new Date(iso)) : null;
 
 /** Settings › Genex account, where the account's avatar, name and balance are. */
 const openAccountSettings = (): void => openSettings(SettingsSection.Account);
@@ -63,6 +69,25 @@ function Credits(): JSX.Element {
       <CreditsShard size={16} />
       <span className="flex-1">{WORDS.credits}</span>
       {amount !== null && <span className="profile-menu-value">{amount}</span>}
+    </DropdownMenuItem>
+  );
+}
+
+/** Get Nex: genex.games' coin page in the browser; nothing to do when main cannot open it. */
+const getCoin = (): void =>
+  void studio()
+    .api.storeGetCoin()
+    .catch(() => undefined);
+
+/** The coin the account may spend, once read; it opens Get Nex. */
+function Coins(): JSX.Element | null {
+  const coins = usePeople((s) => s.coins);
+  if (coins === null) return null;
+  return (
+    <DropdownMenuItem data-profile-menu="coins" onSelect={getCoin}>
+      <CoinMark size={16} />
+      <span className="flex-1">{WORDS.coins}</span>
+      <span className="profile-menu-value">{formatCount(coins)}</span>
     </DropdownMenuItem>
   );
 }
@@ -102,6 +127,13 @@ function PlateMenu({
         {waiting > 0 && <span className="sidebar-badge">{waiting}</span>}
       </DropdownMenuItem>
       <Credits />
+      <Coins />
+      {me.pro && (
+        <DropdownMenuItem data-profile-menu="nameplate" onSelect={openAccountSettings}>
+          <Icon name="sparkle" />
+          {ACCOUNT_WORDS.nameplate}
+        </DropdownMenuItem>
+      )}
       <DropdownMenuSeparator />
       <DropdownMenuItem data-profile-menu="account" onSelect={openAccountSettings}>
         <Icon name="settings" />
@@ -138,6 +170,54 @@ function PlateCredits(): JSX.Element | null {
   );
 }
 
+/** The coin beside the name in Play, as last read; it opens Get Nex, as the menu's Coin does. */
+function PlateCoins({ coins }: { coins: number }): JSX.Element {
+  const amount = formatCount(coins);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="plate-end plate-credits"
+          data-profile-coins
+          aria-label={WORDS.coinsLabel(amount)}
+          onClick={getCoin}
+        >
+          <CoinMark size={12} />
+          <ScrambleNumber text={amount} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{WORDS.coins}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Beside the name: the Offline mark, the coin in Play or the credits in Create (`plateEnd`). */
+function PlateEndSlot({ offline, play }: { offline: boolean; play: boolean }): JSX.Element | null {
+  const coins = usePeople((s) => s.coins);
+  const end = plateEnd({ offline, play, coins });
+  if (end === PlateEnd.Offline) return <OfflineSlot />;
+  if (end === PlateEnd.Coins && coins !== null) return <PlateCoins coins={coins} />;
+  return <PlateCredits />;
+}
+
+/** The coin is read again as Play opens, as the purchase sheet closes and as the window comes back to Play. */
+function useCoinReads(accountId: string, play: boolean): void {
+  useEffect(() => {
+    if (!play) return;
+    const read = (): void => void studio().people.loadCoins();
+    read();
+    const stopSheet = studio().api.onStoreSheet((sheet) => {
+      if (sheet === null) read();
+    });
+    window.addEventListener("focus", read);
+    return () => {
+      stopSheet();
+      window.removeEventListener("focus", read);
+    };
+  }, [accountId, play]);
+}
+
 /** Offline, in the credits' place: the balance and friends' games are not current, so the Offline signal stands there. */
 function OfflineSlot(): JSX.Element {
   return (
@@ -162,33 +242,41 @@ function FaceSlot({ waiting = false }: { waiting?: boolean }): JSX.Element {
   );
 }
 
-/** Signed in (or offline, as last time): the account, its menu, and the friends or the Offline mark. */
+/** Signed in (or offline, as last time): the account, its menu, the coin or credits or the Offline mark; a Pro's on their plate. */
 function AccountPlate({
   me,
   offline,
+  play,
   onPlayMode,
 }: {
   me: PlayMe;
   offline: boolean;
+  play: boolean;
   onPlayMode: (play: boolean) => void;
 }): JSX.Element {
   const waiting = usePeople(waitingRequests);
   const [signingOut, setSigningOut] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   // The balance beside the name reads with the account, and again whenever the menu opens.
   // biome-ignore lint/correctness/useExhaustiveDependencies: another account reads its own balance
   useEffect(() => {
     void studio().people.loadCredits();
   }, [me.id]);
+  useCoinReads(me.id, play);
+  const plate = useNameplate(me.id, me.avatarVariant);
   const open = (page: typeof PlayPage.Profile | typeof PlayPage.Friends): void => {
     onPlayMode(true);
     if (page === PlayPage.Friends) studio().play.showFriends();
     else studio().play.showProfile(me.id);
   };
-  return (
+  const row = (
     <>
       <DropdownMenu
         onOpenChange={(opened) => {
-          if (opened) void studio().people.loadCredits();
+          setMenuOpen(opened);
+          if (!opened) return;
+          void studio().people.loadCredits();
+          void studio().people.loadCoins();
         }}
       >
         <DropdownMenuTrigger asChild>
@@ -196,14 +284,25 @@ function AccountPlate({
             <PersonAvatar person={me} size={PLATE_FACE} />
             <span className="profile-plate-name">
               <span className="profile-plate-name-text">{me.name}</span>
-              {me.pro && <span className="profile-plate-plan"> · {WORDS.pro}</span>}
+              {me.pro && <span className="people-pro profile-plate-pro">{WORDS.proTag}</span>}
             </span>
             <Icon name="chevrons" size={14} className="profile-plate-chevrons" />
           </button>
         </DropdownMenuTrigger>
         <PlateMenu me={me} waiting={waiting} onOpen={open} onSignOut={() => setSigningOut(true)} />
       </DropdownMenu>
-      {offline ? <OfflineSlot /> : <PlateCredits />}
+      <PlateEndSlot offline={offline} play={play} />
+    </>
+  );
+  return (
+    <>
+      {me.pro ? (
+        <Nameplate recipe={plate} hover dim={menuOpen}>
+          {row}
+        </Nameplate>
+      ) : (
+        row
+      )}
       {signingOut && <SignOutDialog onDismiss={() => setSigningOut(false)} />}
     </>
   );
@@ -288,7 +387,14 @@ function EndedPlate(): JSX.Element {
 }
 
 /** The plate for where the account stands; nothing until the account is known or remembered. */
-export function ProfilePlate({ onPlayMode }: { onPlayMode: (play: boolean) => void }): JSX.Element | null {
+export function ProfilePlate({
+  playOpen,
+  onPlayMode,
+}: {
+  /** Play is open: the plate shows the coin in place of the credits. */
+  playOpen: boolean;
+  onPlayMode: (play: boolean) => void;
+}): JSX.Element | null {
   const me = usePeople((s) => s.me);
   const account = usePeople((s) => s.account);
   const online = useOnline();
@@ -300,7 +406,7 @@ export function ProfilePlate({ onPlayMode }: { onPlayMode: (play: boolean) => vo
       {state === PlateState.SigningIn && <SigningInPlate />}
       {state === PlateState.Ended && <EndedPlate />}
       {me && (state === PlateState.SignedIn || state === PlateState.Offline) && (
-        <AccountPlate me={me} offline={state === PlateState.Offline} onPlayMode={onPlayMode} />
+        <AccountPlate me={me} offline={state === PlateState.Offline} play={playOpen} onPlayMode={onPlayMode} />
       )}
     </div>
   );

@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createBootGate } from "../../src/main/boot-gate.ts";
+import { type BootGate, createBootGate, startStepAfter } from "../../src/main/boot-gate.ts";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerBootIpc } from "../../src/main/ipc/boot.ts";
 import {
@@ -13,11 +13,13 @@ import {
   SandboxProblemCode,
   SandboxSetupOutcome,
   SandboxTool,
+  StartStep,
   StudioPlatform,
   linuxInstallCommands,
   type SandboxProblem,
 } from "../../src/shared/boot.ts";
-import type { WindowControlColors } from "../../src/shared/studio-api.ts";
+import { FEEDBACK_TEXT_MAX_CHARS, type FeedbackDraft, FeedbackScreen } from "../../src/shared/feedback.ts";
+import type { WindowControls } from "../../src/shared/studio-api.ts";
 import { SandboxUnavailableError } from "../../src/substrate/sandbox-unavailable.ts";
 
 const PROBLEM: SandboxProblem = {
@@ -119,6 +121,171 @@ describe("boot gate", () => {
   });
 });
 
+describe("starting and a studio that would not start", () => {
+  it("moves the starting window on at the core's seed, games and sandbox marks", () => {
+    assert.equal(startStepAfter("core:settings"), null);
+    assert.equal(startStepAfter("core:seed"), StartStep.Games);
+    assert.equal(startStepAfter("core:games"), StartStep.Workspace);
+    assert.equal(startStepAfter("core:sandbox"), StartStep.Studio);
+  });
+
+  it("says which step a starting core is on, and only while it is starting", () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.progress(StartStep.Workspace);
+    assert.equal(gate.state().phase, BootPhase.Ready, "a launch with no starting window stays ready");
+    gate.starting(StartStep.Games);
+    assert.deepEqual(gate.state(), {
+      platform: StudioPlatform.Windows,
+      phase: BootPhase.Starting,
+      sandbox: null,
+      step: StartStep.Games,
+    });
+    gate.progress(StartStep.Workspace);
+    assert.equal(gate.state().step, StartStep.Workspace);
+    gate.ready();
+    assert.deepEqual(gate.state(), { platform: StudioPlatform.Windows, phase: BootPhase.Ready, sandbox: null });
+    gate.progress(StartStep.Studio);
+    assert.equal(gate.state().phase, BootPhase.Ready);
+  });
+
+  it("holds on the failure with its words, and Try again that works opens the studio", async () => {
+    const gate = createBootGate(StudioPlatform.Mac);
+    let attempts = 0;
+    gate.fail("harness exited during boot", async () => {
+      attempts++;
+    });
+    assert.deepEqual(gate.state(), {
+      platform: StudioPlatform.Mac,
+      phase: BootPhase.Failed,
+      sandbox: null,
+      failure: "harness exited during boot",
+    });
+    assert.deepEqual(await gate.retry(), { platform: StudioPlatform.Mac, phase: BootPhase.Ready, sandbox: null });
+    assert.equal(attempts, 1);
+  });
+
+  it("a Try again that fails again shows the new failure instead of rejecting", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.fail("first", async () => {
+      throw new Error("EPERM: lstat AppData");
+    });
+    const after = await gate.retry();
+    assert.equal(after.phase, BootPhase.Failed);
+    assert.equal(after.failure, "EPERM: lstat AppData");
+  });
+
+  it("keeps the open studio when its agents would not start, and Try again that works clears the failure", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let attempts = 0;
+    gate.agentsFailed("srt-win acl stamp timed out after 60000ms", async () => {
+      attempts++;
+    });
+    assert.deepEqual(gate.state(), {
+      platform: StudioPlatform.Windows,
+      phase: BootPhase.Ready,
+      sandbox: null,
+      failure: "srt-win acl stamp timed out after 60000ms",
+    });
+    assert.deepEqual(await gate.retry(), { platform: StudioPlatform.Windows, phase: BootPhase.Ready, sandbox: null });
+    assert.equal(attempts, 1);
+  });
+
+  it("a Try again for the agents that fails again keeps the studio, with the new failure", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.agentsFailed("first", async () => {
+      throw new Error("EPERM: lstat AppData");
+    });
+    const after = await gate.retry();
+    assert.equal(after.phase, BootPhase.Ready);
+    assert.equal(after.failure, "EPERM: lstat AppData");
+  });
+
+  it("a start still running at its limit shows as failed, and Try again runs the restart it was given", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let restarts = 0;
+    const restart = async () => {
+      restarts++;
+    };
+    gate.starting(StartStep.Workspace);
+    assert.equal(gate.overdue("still starting after 3 minutes", restart), true);
+    assert.equal(gate.state().phase, BootPhase.Failed);
+    assert.equal(gate.state().failure, "still starting after 3 minutes");
+    await gate.retry();
+    assert.equal(restarts, 1);
+  });
+
+  it("a start that ended before its limit is left as it ended", () => {
+    const ended = [
+      (gate: BootGate) => gate.ready(),
+      (gate: BootGate) => gate.hold(NOT_PROVISIONED, async () => {}),
+      (gate: BootGate) => gate.fail("harness exited during boot", async () => {}),
+    ];
+    for (const end of ended) {
+      const gate = createBootGate(StudioPlatform.Windows);
+      gate.starting(StartStep.Games);
+      end(gate);
+      const before = gate.state();
+      assert.equal(
+        gate.overdue("still starting", async () => {}),
+        false,
+      );
+      assert.deepEqual(gate.state(), before);
+    }
+  });
+
+  it("a startup attempt that ends on a new hold keeps it, rather than opening the studio", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.hold(NOT_PROVISIONED, async () => {
+      gate.fail("harness exited during boot", async () => {});
+    });
+    const after = await gate.retry();
+    assert.equal(after.phase, BootPhase.Failed);
+    assert.equal(after.failure, "harness exited during boot");
+  });
+});
+
+describe("moving Genex's files, and a data folder that is not there", () => {
+  it("shows how far a move is", () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.moving({ to: "D:\\Genex", done: 0, total: 0 });
+    gate.moving({ to: "D:\\Genex", done: 10, total: 40 });
+    assert.deepEqual(gate.state(), {
+      platform: StudioPlatform.Windows,
+      phase: BootPhase.Moving,
+      sandbox: null,
+      move: { to: "D:\\Genex", done: 10, total: 40 },
+    });
+  });
+
+  it("a move that stopped part-way says why and offers Try again, which starts Genex again", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let restarts = 0;
+    gate.moveStopped("D:\\Genex", "A file was in use.", async () => {
+      restarts++;
+    });
+    assert.equal(gate.state().phase, BootPhase.Moving);
+    assert.equal(gate.state().failure, "A file was in use.");
+    assert.equal(gate.state().move?.to, "D:\\Genex");
+    await gate.retry();
+    assert.equal(restarts, 1);
+  });
+
+  it("names a missing folder, and a Try again while it is still missing keeps it with the new words", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let tries = 0;
+    gate.dataMissing("D:\\Genex", async () => {
+      tries++;
+      throw new Error("D:\\Genex is still not there.");
+    });
+    assert.equal(gate.state().phase, BootPhase.DataMissing);
+    assert.equal(gate.state().dataFolder, "D:\\Genex");
+    const after = await gate.retry();
+    assert.equal(tries, 1);
+    assert.equal(after.phase, BootPhase.DataMissing);
+    assert.equal(after.failure, "D:\\Genex is still not there.");
+  });
+});
+
 describe("Set up (Windows)", () => {
   it("installs the sandbox, then re-runs startup and opens the studio", async () => {
     const { gate, counts } = windowsGate(async () => ({ cancelled: false }));
@@ -145,6 +312,84 @@ describe("Set up (Windows)", () => {
     await assert.rejects(gate.setUp(), /WFP filter install failed/);
     assert.deepEqual(gate.state().sandbox, NOT_PROVISIONED);
     assert.equal(counts.attempts, 0);
+  });
+
+  it("tells the log why a Set up failed, the install or the startup after it, and nothing for a cancel", async () => {
+    const failures: string[] = [];
+    const setUpFailed = (error: unknown) => void failures.push(String(error));
+    let install = async () => ({ cancelled: true });
+    const gate = createBootGate(StudioPlatform.Windows, { installSandbox: () => install(), setUpFailed });
+    gate.hold(NOT_PROVISIONED, async () => {
+      throw new Error("WFP egress fence could not be verified");
+    });
+    await gate.setUp();
+    install = async () => {
+      throw new Error("srt-win install: WFP filter install failed");
+    };
+    await assert.rejects(gate.setUp());
+    install = async () => ({ cancelled: false });
+    await assert.rejects(gate.setUp());
+    assert.deepEqual(failures, [
+      "Error: srt-win install: WFP filter install failed",
+      "Error: WFP egress fence could not be verified",
+    ]);
+  });
+
+  it("after an install that went through, a Set up whose startup failed only starts again", async () => {
+    let attempts = 0;
+    const counts = { installs: 0 };
+    const gate = createBootGate(StudioPlatform.Windows, {
+      installSandbox: async () => {
+        counts.installs++;
+        return { cancelled: false };
+      },
+    });
+    gate.hold(NOT_PROVISIONED, async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("event store is corrupt");
+    });
+    await assert.rejects(gate.setUp(), /event store is corrupt/);
+    assert.deepEqual(await gate.setUp(), {
+      outcome: SandboxSetupOutcome.Installed,
+      state: { platform: StudioPlatform.Windows, phase: BootPhase.Ready, sandbox: null },
+    });
+    assert.deepEqual({ ...counts, attempts }, { installs: 1, attempts: 2 }, "one administrator prompt");
+  });
+
+  it("a sandbox still waiting on its install after one is installed again by the next Set up", async () => {
+    let installs = 0;
+    const gate = createBootGate(StudioPlatform.Windows, {
+      installSandbox: async () => {
+        installs++;
+        return { cancelled: false };
+      },
+    });
+    gate.hold(NOT_PROVISIONED, async () => {
+      throw new SandboxUnavailableError(NOT_PROVISIONED);
+    });
+    await gate.setUp();
+    await gate.setUp();
+    assert.equal(installs, 2);
+  });
+
+  it("hands the install the problem it is held on, so Set up does what that problem needs", async () => {
+    const handed: SandboxProblem[] = [];
+    const gate = createBootGate(StudioPlatform.Windows, {
+      installSandbox: async (problem) => {
+        handed.push(problem);
+        return { cancelled: true };
+      },
+    });
+    gate.hold(NOT_PROVISIONED, async () => {});
+    await gate.setUp();
+    assert.deepEqual(handed, [NOT_PROVISIONED]);
+  });
+
+  it("says a Set up has run this launch, so a window that loads again does not run it by itself", async () => {
+    const { gate } = windowsGate(async () => ({ cancelled: true }));
+    assert.equal(gate.state().setupTried, undefined);
+    await gate.setUp();
+    assert.equal(gate.state().setupTried, true);
   });
 
   it("presses of Set up while one install runs share it", async () => {
@@ -190,14 +435,21 @@ function bootIpc(fixture: boolean, platform: string = StudioPlatform.Linux) {
       return { cancelled: false };
     },
   });
-  const painted: WindowControlColors[] = [];
-  registerBootIpc(handle, { gate, setWindowControls: (colors) => void painted.push(colors) });
+  const painted: WindowControls[] = [];
+  const reports: FeedbackDraft[] = [];
+  const quits: string[] = [];
+  registerBootIpc(handle, {
+    gate,
+    report: async (draft) => void reports.push(draft),
+    setWindowControls: (colors) => void painted.push(colors),
+    quit: () => void quits.push("quit"),
+  });
   const invoke = (channel: string, payload?: unknown) => {
     const listener = listeners.get(channel);
     assert.ok(listener, `${channel} is not registered`);
     return listener({ sender: "studio", senderFrame: "main" }, payload);
   };
-  return { gate, painted, invoke, installs };
+  return { gate, painted, reports, invoke, installs, quits };
 }
 
 describe("boot IPC", () => {
@@ -229,16 +481,64 @@ describe("boot IPC", () => {
     assert.equal(fixture.gate.state().phase, BootPhase.SandboxSetup);
   });
 
-  it("paints the window controls with two hex colours", async () => {
-    const { painted, invoke } = bootIpc(true);
-    assert.deepEqual(await invoke("studio:window.controls", { color: "#1d1d1f", symbolColor: "#F5F5F7" }), {
+  it("sends a failed Set up's report with the app's log, and refuses it in a fixture profile", async () => {
+    const live = bootIpc(false, StudioPlatform.Windows);
+    assert.deepEqual(await live.invoke("studio:boot.report", { error: " Access is denied. (0x80070005) " }), {
       ok: true,
       value: undefined,
     });
-    assert.deepEqual(painted, [{ color: "#1d1d1f", symbolColor: "#F5F5F7" }]);
+    assert.deepEqual(live.reports, [
+      {
+        text: "Windows setup didn't finish (sent from the setup screen).\n\nAccess is denied. (0x80070005)",
+        screen: FeedbackScreen.Home,
+        appLogs: true,
+        chatId: null,
+      },
+    ]);
+    const fixture = bootIpc(true, StudioPlatform.Windows);
+    assert.equal((await fixture.invoke("studio:boot.report", { error: "Access is denied." })).ok, false);
+    assert.deepEqual(fixture.reports, []);
   });
 
-  it("refuses anything but two #rrggbb colours, and paints nothing", async () => {
+  it("clips a long error to what a report holds, and sends nothing without one", async () => {
+    const { reports, invoke } = bootIpc(false, StudioPlatform.Windows);
+    await invoke("studio:boot.report", { error: "x".repeat(FEEDBACK_TEXT_MAX_CHARS * 2) });
+    assert.equal(reports[0]?.text.length, FEEDBACK_TEXT_MAX_CHARS);
+    for (const payload of [undefined, null, "Access is denied.", {}, { error: "" }, { error: "   " }, { error: 5 }]) {
+      const result = await invoke("studio:boot.report", payload);
+      assert.equal(result.ok, false, JSON.stringify(payload));
+    }
+    assert.equal(reports.length, 1);
+  });
+
+  it("quits on Quit, which a start that failed offers", async () => {
+    const { invoke, quits } = bootIpc(true);
+    assert.deepEqual(await invoke("studio:boot.quit"), { ok: true, value: undefined });
+    assert.equal(quits.length, 1);
+  });
+
+  it("names a studio that would not start in its report, not a setup", async () => {
+    const { gate, invoke, reports } = bootIpc(false);
+    gate.fail("harness exited during boot", async () => {});
+    await invoke("studio:boot.report", { error: "harness exited during boot" });
+    assert.match(reports[0]?.text ?? "", /^Genex couldn't start/);
+  });
+
+  it("names agents that would not start in an open studio in its report", async () => {
+    const { gate, invoke, reports } = bootIpc(false);
+    gate.agentsFailed("srt-win acl stamp timed out", async () => {});
+    await invoke("studio:boot.report", { error: "srt-win acl stamp timed out" });
+    assert.match(reports[0]?.text ?? "", /^Genex's agents didn't start/);
+  });
+
+  it("paints the window controls with two hex colours, see-through or not", async () => {
+    const { painted, invoke } = bootIpc(true);
+    const controls = { color: "#1d1d1f", symbolColor: "#F5F5F7", seeThrough: true };
+    assert.deepEqual(await invoke("studio:window.controls", controls), { ok: true, value: undefined });
+    assert.deepEqual(painted, [controls]);
+  });
+
+  it("refuses anything but two #rrggbb colours and a see-through flag, and paints nothing", async () => {
     const { painted, invoke } = bootIpc(false);
     for (const payload of [
       undefined,
@@ -251,6 +551,10 @@ describe("boot IPC", () => {
       { color: "#fff", symbolColor: "#ffffff" },
       { color: "#000000; background: url(x)", symbolColor: "#ffffff" },
       { color: "#00000000", symbolColor: "#ffffff" },
+      { color: "#000000", symbolColor: "#ffffff" },
+      { color: "#000000", symbolColor: "#ffffff", seeThrough: "true" },
+      { color: "#000000", symbolColor: "#ffffff", seeThrough: 1 },
+      { color: "#00000000", symbolColor: "#ffffff", seeThrough: true },
     ]) {
       const result = await invoke("studio:window.controls", payload);
       assert.equal(result.ok, false, JSON.stringify(payload));

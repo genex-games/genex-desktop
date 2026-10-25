@@ -1,16 +1,22 @@
 /**
  * Test-owned production Publish dialog beside the production ChatPanel of the same game: with no
  * cover the dialog asks the plugin to take one, the banner's arrows make a recent frame the kept
- * one, Another cover sends its ask through that game's chat and the banner says a new one is
- * coming until it arrives, and a kept clip plays behind the Picture / Clip switch. The pictures
+ * one, Another cover sends its ask through that game's chat and closes the dialog there, the banner
+ * opened again says a new one is being made until the agent's own frame arrives (with the time
+ * left once one was timed; Studio's own take answers nothing), an ask the chat could not send
+ * (no model) leaves no wait, and a kept clip plays behind the Picture / Clip switch. The pictures
  * and the clip are drawn here, on a canvas: nothing comes from a real game.
  */
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { useEffect, useState } from "react";
 import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
+import { initializeAppearance, updateAppearance } from "../../src/renderer/appearance/store.ts";
+import { AppearanceMode } from "../../src/renderer/appearance/themes.ts";
 import { ChatPanel } from "../../src/renderer/panels/ChatPanel.tsx";
+import { readCoverAsks, writeCoverAsks } from "../../src/renderer/panels/plugins/genex/cover-asks.ts";
 import { GenexPublishDialog } from "../../src/renderer/panels/plugins/genex/GenexPublish.tsx";
+import { removeKey, storageKeyFor } from "../../src/renderer/storage.ts";
 import type { ChatPanelProps } from "../../src/renderer/chat/chat-panel-props.ts";
 import { ThreadKind } from "../../src/shared/event-log.ts";
 import { ProjectAssetScope, type ProjectAssetRead } from "../../src/shared/game-assets.ts";
@@ -21,6 +27,7 @@ import {
   type GenexCoverShot,
   type GenexPublishState,
 } from "../../src/shared/genex.ts";
+import type { EngineDescriptor } from "../../src/shared/engine-descriptor.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
 import { CaptureSource, StillMimeType } from "../../src/shared/preview-contract.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
@@ -104,6 +111,8 @@ async function recordClip(): Promise<string> {
   return btoa(text);
 }
 
+/** When each frame was taken, where it is not the fixture's fixed time. */
+const takenAt = new Map<string, string>();
 const shotOf = (sha: string): GenexCoverShot => ({
   sha256: sha.repeat(64),
   width: 1920,
@@ -112,7 +121,7 @@ const shotOf = (sha: string): GenexCoverShot => ({
   bytes: 1024,
   source: CaptureSource.Page,
   stats: { lumaMean: 0.4, lumaStdDev: 0.2, nearBlackFraction: 0.1, litFraction: 0.9 },
-  takenAt: AT,
+  takenAt: takenAt.get(sha) ?? AT,
 });
 const clipRecord: GenexCoverClip = {
   sha256: "d".repeat(64),
@@ -132,6 +141,10 @@ const plugin = {
   candidates: [] as string[],
   clip: false,
   owner: false,
+  /** Studio's take finds only a blank screen, so nothing is kept. */
+  blank: false,
+  /** When the agent itself last kept a shot (ISO), as the plugin's `agentTook` says. */
+  agentShot: null as string | null,
   actions: [] as Array<{ name: string; args: unknown }>,
 };
 function record(): GenexPublishState {
@@ -143,19 +156,26 @@ function record(): GenexPublishState {
       sending: false,
       candidates: plugin.candidates.map(shotOf),
       clip: plugin.clip ? clipRecord : null,
+      agentTook: plugin.agentShot ? { shot: plugin.agentShot } : {},
     },
   };
 }
 
 const pictures = new Map<string, string>();
+let finishTake = () => {};
 let clipData = "";
 const fake = fakeStudioApi();
 fake.stub("pluginAction", async (_id, name, args) => {
   plugin.actions.push({ name, args });
   if (name === GenexAction.CoverAuto) {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    plugin.kept = "a";
-    plugin.candidates = ["a"];
+    // Studio's take lasts until the check has seen it under way (`untilShot` lets it finish).
+    await new Promise<void>((resolve) => {
+      finishTake = resolve;
+    });
+    if (!plugin.blank) {
+      plugin.kept = "a";
+      plugin.candidates = ["a"];
+    }
   }
   if (name === GenexAction.CoverPick) plugin.kept = String((args as { sha256: string }).sha256)[0] ?? null;
   return name === GenexAction.PublishStatus || name.startsWith("cover") ? record() : {};
@@ -166,8 +186,23 @@ fake.stub("readProjectAsset", async (read: ProjectAssetRead) => {
   if (read.scope !== ProjectAssetScope.GenexCover || !plugin.kept) return null;
   return { mimeType: "image/jpeg", data: pictures.get(plugin.kept) ?? "" };
 });
+// A web game: no apps to list beside its web version.
+fake.stub("genexPublishPlatforms", async () => []);
 window.studio = fake.api;
+initializeAppearance();
 const genex = { manifest, source: "bundled", enabled: true, removed: false, state: "enabled" } as unknown as PluginInfo;
+
+/** A ready model for the chat to send with; without one, its words wait in the composer. */
+const claude: EngineDescriptor = {
+  id: "claude-code",
+  label: "Claude",
+  kind: "delegated",
+  supportsSessions: true,
+  status: { code: "ready", detail: "" },
+  defaultModel: "opus",
+  models: [{ id: "opus", label: "Opus", contextWindow: 200_000, supportsTools: true, supportsVision: true }],
+};
+const chat = { model: true };
 
 const sends: string[] = [];
 const props: ChatPanelProps = {
@@ -204,7 +239,7 @@ function Stage({ open }: { open: boolean }) {
   return (
     <div style={{ display: "flex", width: "100%", height: "100%" }}>
       <div style={{ display: "flex", width: 460, height: "100%" }}>
-        <ChatPanel {...props} />
+        <ChatPanel {...props} engines={chat.model ? [claude] : []} />
       </div>
       <div style={{ flex: 1, background: "var(--inset)" }} />
       {shown ? <GenexPublishDialog plugin={genex} project={GAME} onClose={() => setShown(false)} /> : null}
@@ -225,6 +260,7 @@ function sample() {
     dots: q(".genex-publish-pips")?.getAttribute("aria-label") ?? null,
     field: Boolean(q("[data-genex-cover-ask]")),
     hint: q(".genex-publish-hint")?.textContent?.trim() ?? null,
+    hints: [...document.querySelectorAll(".genex-publish-hint")].map((p) => p.textContent?.trim() ?? ""),
     show: q(".genex-publish-show")
       ? [...document.querySelectorAll(".genex-publish-show-option")].map((b) => b.getAttribute("aria-pressed"))
       : null,
@@ -242,12 +278,34 @@ async function until(check: () => boolean, frames = 200) {
   for (let i = 0; i < frames && !check(); i++) await frame();
 }
 
-/** Open the dialog with the fake plugin holding `kept` among `candidates`, and a clip or not. */
-async function open(state: { kept?: string | null; candidates?: string[]; clip?: boolean; owner?: boolean } = {}) {
+/** Open the dialog with the fake plugin holding `kept` among `candidates`, a clip or not, and a chat with a model or not. */
+async function open(
+  state: {
+    kept?: string | null;
+    candidates?: string[];
+    clip?: boolean;
+    owner?: boolean;
+    model?: boolean;
+    blank?: boolean;
+  } = {},
+) {
   if (!pictures.size) for (const look of LOOKS) pictures.set(look.sha, picture(look));
   if (state.clip && !clipData) clipData = await recordClip();
-  Object.assign(plugin, { kept: null, candidates: [], clip: false, owner: false, actions: [] }, state);
+  const { model = true, ...kept } = state;
+  chat.model = model;
+  Object.assign(
+    plugin,
+    { kept: null, candidates: [], clip: false, owner: false, blank: false, agentShot: null, actions: [] },
+    kept,
+  );
   sends.length = 0;
+  takenAt.clear();
+  removeKey(storageKeyFor.coverAsks(GAME));
+  return reopen();
+}
+
+/** Open the dialog again over what the fake plugin and this Mac already keep. */
+async function reopen() {
   flushSync(() => root.render(null));
   flushSync(() => root.render(<Stage open />));
   await until(() => Boolean(q("[data-genex-publish-status]")));
@@ -257,7 +315,16 @@ async function open(state: { kept?: string | null; candidates?: string[]; clip?:
 
 /** Wait for the banner to show a kept frame. */
 async function untilShot() {
+  finishTake();
   await until(() => Boolean(q(".genex-publish-banner[data-shot]")), 900);
+  await settle(10);
+  return sample();
+}
+
+/** Let Studio's take end and wait for its pill to go. */
+async function untilTaken() {
+  finishTake();
+  await until(() => !q("[data-genex-cover-busy]"), 900);
   await settle(10);
   return sample();
 }
@@ -281,12 +348,30 @@ async function make(want: string) {
   return press("[data-genex-cover-ask] button[type=submit]");
 }
 
-/** A new frame arrives, as the agent's shoot would leave it. */
-async function arrive(sha: string) {
+/** Studio's own take after a turn leaves a new kept frame, and the dialog opens again over it. */
+async function studioTake(sha: string) {
+  takenAt.set(sha, new Date().toISOString());
   plugin.kept = sha;
   plugin.candidates = [sha, ...plugin.candidates.filter((c) => c !== sha)];
-  // The dialog reads the record on its own cadence: the wait ends once it has.
-  await until(() => !q("[data-genex-cover-busy]"), 900);
+  return reopen();
+}
+
+/**
+ * The agent's own frame arrives now, as its shoot would leave it, `afterMs` after the waiting ask was
+ * made, and Publish is opened again over it (it closed into the chat when asked).
+ */
+async function arrive(sha: string, afterMs = 0) {
+  flushSync(() => root.render(null));
+  const now = Date.now();
+  const memory = readCoverAsks(GAME);
+  // The ask is dated back instead of the frame forward, so a later ask is still after this frame.
+  if (memory.ask) writeCoverAsks(GAME, { ...memory, ask: { ...memory.ask, at: now - afterMs } });
+  takenAt.set(sha, new Date(now).toISOString());
+  plugin.agentShot = new Date(now).toISOString();
+  plugin.kept = sha;
+  plugin.candidates = [sha, ...plugin.candidates.filter((c) => c !== sha)];
+  await reopen();
+  await until(() => !q("[data-genex-cover-busy]"), 200);
   await settle(10);
   return sample();
 }
@@ -294,4 +379,12 @@ async function arrive(sha: string) {
 /** Press the banner's next-cover arrow. */
 const next = () => press('[aria-label="Next cover"]');
 
-Object.assign(window, { publishCover: { open, untilShot, press, next, make, arrive, sample, settle } });
+/** Show everything in the dark or the light theme. */
+async function theme(name: "dark" | "light") {
+  const mode = name === "light" ? AppearanceMode.Light : AppearanceMode.Dark;
+  updateAppearance((appearance) => ({ ...appearance, mode }));
+  await settle(10);
+  return sample();
+}
+
+Object.assign(window, { publishCover: { open, reopen, untilShot, untilTaken, press, next, make, studioTake, arrive, theme, sample, settle } });

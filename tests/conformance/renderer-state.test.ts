@@ -12,13 +12,16 @@ import { describe, it } from "node:test";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import type { ConversationRecord, GameProject, ProjectAssets } from "../../src/shared/studio-api.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
+import { EngineId } from "../../src/shared/providers.ts";
+import { shownPermissionMode } from "../../src/renderer/chat/use-permission-mode.ts";
 import { createRefresher } from "../../src/renderer/state/refresher.ts";
-import {
-  computerControlOffered,
-  computerControlOn,
-  setComputerControl,
-} from "../../src/renderer/use-computer-control.ts";
+import { computerControlOn, setComputerControl } from "../../src/renderer/use-computer-control.ts";
+import { computerControlDetail } from "../../src/renderer/words.ts";
+import { computerControlOffered, desktopStopShortcut, stopShortcutWords } from "../../src/shared/computer-control.ts";
 import { StudioPlatform } from "../../src/shared/boot.ts";
+import { SetupReport } from "../../src/renderer/state/boot.ts";
+import { PlayViewerPhase } from "../../src/shared/play.ts";
 import { UpdateAction } from "../../src/shared/app-update.ts";
 import {
   createEventLogStore,
@@ -169,6 +172,25 @@ const gameProject = (name: string, extra: Partial<GameProject> = {}): GameProjec
 const studioThread = thread("studio", { kind: "studio" });
 const pond = thread("pond-chat", { kind: "game", project: "pond" }, "2026-09-03T00:00:00Z");
 const rift = thread("rift-chat", { kind: "game", project: "rift" }, "2026-09-02T00:00:00Z");
+
+function countedLibrary() {
+  const games = Array.from({ length: 64 }, (_, index) => gameProject(`game-${index}`));
+  const records = Array.from({ length: 512 }, (_, index) =>
+    thread(
+      `thread-${index}`,
+      { kind: "game", project: `game-${index % games.length}` },
+      new Date(Date.UTC(2026, 0, 1) + ((index * 23) % 512) * 60_000).toISOString(),
+    ),
+  );
+  let reads = 0;
+  const counted = new Proxy(records, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  return { games, records: counted, reads: () => reads };
+}
 
 describe("createRefresher: one read at a time, stale answers dropped, failures caught", () => {
   it("queues exactly one follow-up behind a read in flight, and applies both in order", async () => {
@@ -382,6 +404,53 @@ describe("the threads store: the open game is derived from the open chat", () =>
     assert.equal(returnTarget(state, [gameProject("pond")]), "pond-chat", "a removed game's chat is not returned to");
   });
 
+  it("indexes sidebar activity without rescanning every thread inside the sort", () => {
+    const { games, records, reads } = countedLibrary();
+    assert.equal(sidebarGames(games, records).length, games.length);
+    assert.ok(reads() <= records.length * 2, `sidebar visited ${reads()} thread slots for ${records.length} records`);
+  });
+
+  it("indexes the rail's live chats without rescanning every thread for every game", () => {
+    const { games, records, reads } = countedLibrary();
+    assert.equal(railThreadIds(records, games).length, games.length);
+    assert.ok(reads() <= records.length * 2, `rail visited ${reads()} thread slots for ${records.length} records`);
+  });
+
+  it("keeps sidebar date fallbacks and title ties, including archived activity", () => {
+    const games = [
+      gameProject("zebra", { createdAt: "invalid" }),
+      gameProject("amber", { createdAt: "invalid" }),
+      gameProject("old", { createdAt: "1960-01-01T00:00:00Z" }),
+      gameProject("archived"),
+    ];
+    const records = [
+      thread("old", { kind: "game", project: "old" }, "1961-01-01T00:00:00Z"),
+      thread("archived", { kind: "game", project: "archived", archived: true }, "2026-10-01T00:00:00Z"),
+    ];
+    assert.deepEqual(
+      sidebarGames(games, records).map((game) => game.name),
+      ["archived", "amber", "zebra", "old"],
+    );
+  });
+
+  it("keeps the rail's primary chat, freshest fallback and later-input timestamp ties", () => {
+    const records = [
+      studioThread,
+      thread("first", { kind: "game", project: "pond" }),
+      thread("later", { kind: "game", project: "pond" }),
+      thread("archived", { kind: "game", project: "pond", archived: true }, "2026-10-01T00:00:00Z"),
+      thread("other", { kind: "game", project: "rift" }),
+    ];
+    const games = [
+      gameProject("pond", { primaryThreadId: "first" }),
+      gameProject("pond"),
+      gameProject("pond", { primaryThreadId: "archived" }),
+      gameProject("rift", { primaryThreadId: "first" }),
+      gameProject("empty"),
+    ];
+    assert.deepEqual(railThreadIds(records, games), ["studio", "first", "later", "later", "other"]);
+  });
+
   it("reads thread metadata field by field", () => {
     assert.deepEqual(
       threadMeta(
@@ -401,6 +470,45 @@ describe("the threads store: the open game is derived from the open chat", () =>
       "an unknown kind or a wrong type is absent, as before (not a game)",
     );
     assert.deepEqual(threadMeta(null), {});
+  });
+
+  it("reads the permission mode a chat's record keeps, and only a known one", () => {
+    const bypass = thread("rift-chat", { kind: "game", project: "rift", permissionMode: "bypassPermissions" });
+    assert.equal(threadMeta(bypass).permissionMode, "bypassPermissions");
+    assert.equal(threadMeta(thread("x", { kind: "game", permissionMode: "yolo" })).permissionMode, undefined);
+  });
+
+  it("shows a chat opened again in the mode its record keeps, not the one new chats start in", () => {
+    const record = thread("rift-chat", { kind: "game", project: "rift", permissionMode: "bypassPermissions" });
+    const shown = (picked?: PermissionMode) =>
+      shownPermissionMode({
+        engine: EngineId.ClaudeCode,
+        picked,
+        recorded: threadMeta(record).permissionMode,
+        defaultMode: PermissionMode.Auto,
+      });
+    assert.equal(shown(), PermissionMode.Bypass, "the pick is gone after switching chats or a restart");
+    assert.equal(shown(PermissionMode.Manual), PermissionMode.Manual, "a pick on its way to the host shows at once");
+    assert.equal(
+      shownPermissionMode({
+        engine: EngineId.OpenCode,
+        picked: undefined,
+        recorded: PermissionMode.Bypass,
+        defaultMode: PermissionMode.Auto,
+      }),
+      PermissionMode.Auto,
+      "an engine that cannot honour the mode runs, and shows, Auto",
+    );
+    assert.equal(
+      shownPermissionMode({
+        engine: EngineId.ClaudeCode,
+        picked: undefined,
+        recorded: undefined,
+        defaultMode: PermissionMode.AcceptEdits,
+      }),
+      PermissionMode.AcceptEdits,
+      "a chat that never chose shows the mode new chats start in",
+    );
   });
 });
 
@@ -753,6 +861,22 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     assert.equal(app.layout.getState().stageView, "live");
   });
 
+  it("makes the copy of the game the bar's Remix closed the viewer on, as a card's Remix does", async () => {
+    const { fake, app } = started();
+    await tick();
+    await app.play.open({ slug: "pond", title: "Pond", coverUrl: null });
+    fake.emit({ type: "play.viewer", payload: { slug: "pond", openId: 1, phase: PlayViewerPhase.Playing } });
+    fake.emit({
+      type: "play.viewer",
+      payload: { slug: "pond", openId: 1, phase: PlayViewerPhase.Closed, remix: true },
+    });
+    assert.deepEqual(fake.callsOf("playRemix"), [["pond"]]);
+    assert.equal(app.play.getState().making?.slug, "pond", "Create shows the copy being made");
+    assert.equal(app.play.getState().viewer, null);
+    fake.emit({ type: "play.viewer", payload: { slug: "pond", openId: 1, phase: PlayViewerPhase.Closed } });
+    assert.equal(fake.callsOf("playRemix").length, 1, "a plain closing makes nothing");
+  });
+
   it("a downloaded update waits for a restart: read at the bootstrap, and announced while the studio runs", async () => {
     const before = started({ readyUpdate: async () => ({ version: "0.2.0", action: UpdateAction.Restart }) });
     await tick();
@@ -770,6 +894,36 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     await tick();
     assert.equal(unreadable.app.update.getState().ready, null);
     assert.equal(unreadable.app.session.getState().status, "ready", "the studio opens without it");
+  });
+
+  it("agents that would not start show in the open studio: read at the bootstrap, announced, and Try again or a start clears them", async () => {
+    const failed = { platform: "win32", phase: "ready", sandbox: null, failure: "srt-win acl stamp timed out" };
+    const before = started({ bootState: async () => failed as never });
+    await tick();
+    assert.equal(before.app.agentsStart.getState().failure, "srt-win acl stamp timed out", "before this window opened");
+    const retries: Array<() => Promise<unknown>> = [
+      async () => ({ ...failed, failure: "EPERM: lstat AppData" }),
+      async () => ({ platform: "win32", phase: "ready", sandbox: null }),
+    ];
+    const { fake, app } = started({ retrySandboxSetup: (() => retries.shift()?.()) as never });
+    await tick();
+    assert.equal(app.agentsStart.getState().failure, null);
+    fake.emit({ type: "harness.start-failed", payload: { failure: "srt-win acl stamp timed out" } });
+    assert.equal(app.agentsStart.getState().failure, "srt-win acl stamp timed out");
+    await app.agentsStart.report();
+    assert.deepEqual(fake.callsOf("reportSandboxSetup"), [["srt-win acl stamp timed out"]]);
+    assert.equal(app.agentsStart.getState().report, SetupReport.Sent);
+    const trying = app.agentsStart.retry();
+    assert.equal(app.agentsStart.getState().retrying, true);
+    await trying;
+    assert.equal(app.agentsStart.getState().failure, "EPERM: lstat AppData", "a Try again that fails says why");
+    assert.equal(app.agentsStart.getState().report, SetupReport.Idle, "a new failure gets a report of its own");
+    await app.agentsStart.retry();
+    assert.equal(app.agentsStart.getState().failure, null);
+    assert.equal(fake.callsOf("retrySandboxSetup").length, 2);
+    fake.emit({ type: "harness.start-failed", payload: { failure: "again" } });
+    fake.emit({ type: "studio.ready", payload: { userData: "/u" } });
+    assert.equal(app.agentsStart.getState().failure, null, "a studio that started has its agents");
   });
 
   it("a failed bootstrap says why, and a retry replaces it", async () => {
@@ -834,7 +988,8 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     assert.equal(fake.listeners("onEvent"), 0, "stopping unsubscribes");
   });
 
-  it("opening a game loads its preview once and then re-reads the library", async () => {
+  it("opening a game starts nothing; opening the game Live holds on the stage again reloads it", async () => {
+    // Intentionally flipped: opening a game used to load its preview.
     const moss = thread("moss-chat", { kind: "game", project: "moss" });
     const { fake, app, storage } = started({ threadForGame: async () => moss });
     await tick();
@@ -843,20 +998,46 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     await tick();
     assert.equal(record?.id, "moss-chat");
     assert.equal(app.threads.getState().activeThreadId, "moss-chat");
-    assert.deepEqual(
-      fake.callsOf("loadPreview").slice(loads),
-      [["moss"]],
-      "one load, not one from the command and one from the follower",
-    );
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "the game waits for Play");
+    assert.equal(app.threads.getState().liveProject, null, "Live holds no game");
     assert.equal(storage.data.get("studio.activeThread"), "moss-chat");
     assert.ok(fake.callsOf("games").length >= 1);
     await app.enterProject("moss");
     await tick();
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "opening it again still starts nothing");
+    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "loading", error: null } });
+    assert.equal(app.threads.getState().liveProject, "moss", "a load holds Live from its start");
+    await app.enterProject("moss");
+    await tick();
     assert.deepEqual(
       fake.callsOf("loadPreview").slice(loads),
-      [["moss"], ["moss"]],
-      "opening the same game again reloads it, as the sidebar always did",
+      [["moss"]],
+      "opening the game Live holds on the stage again reloads it, as the sidebar always did",
     );
+  });
+
+  it("switching games keeps the game Live holds as it was left and starts no other", async () => {
+    // Intentionally flipped: switching to another game used to load it, ending the one in Live.
+    const chats: Record<string, ConversationRecord> = { pond, rift };
+    const { fake, app } = started({ threadForGame: async (name: string) => chats[name] ?? pond });
+    await tick();
+    await app.enterProject("pond");
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "loaded", error: null } });
+    await tick();
+    const loads = fake.callsOf("loadPreview").length;
+    await app.enterProject("rift");
+    await tick();
+    assert.equal(app.threads.getState().activeThreadId, "rift-chat");
+    assert.equal(app.threads.getState().liveProject, "pond", "Live keeps the game it holds, out of sight");
+    app.selectThread("pond-chat");
+    app.selectThread("rift-chat");
+    app.goHome();
+    await app.enterProject("pond");
+    await tick();
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "no switch loads a game");
+    assert.equal(app.threads.getState().liveProject, "pond", "the game comes back as it was left");
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "failed", error: "boom" } });
+    assert.equal(app.threads.getState().liveProject, null, "a failed load leaves Live holding no game");
   });
 
   it("a refused open is toasted in plain words", async () => {
@@ -957,14 +1138,28 @@ function rendererFiles(): string[] {
 }
 
 describe("Settings → Permissions: Let agents control your computer", () => {
-  it("is off unless the host's settings say it is on, and offered only on macOS", () => {
+  it("is off unless the host's settings say it is on, and offered only on macOS and Windows", () => {
     assert.equal(computerControlOn(null), false, "before the settings load");
     assert.equal(computerControlOn({ learning: true, selfImproving: false }), false, "an older host's view");
     assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: false }), false);
     assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: true }), true);
     assert.equal(computerControlOffered(StudioPlatform.Mac), true);
-    for (const platform of [StudioPlatform.Windows, StudioPlatform.Linux, ""])
+    assert.equal(computerControlOffered(StudioPlatform.Windows), true, "the desktop driver ships on Windows too");
+    for (const platform of [StudioPlatform.Linux, ""])
       assert.equal(computerControlOffered(platform), false, platform || "before main answered");
+  });
+
+  it("stops by a shortcut each system can register: no Command key on Windows, and not Task Manager's", () => {
+    const mac = desktopStopShortcut(StudioPlatform.Mac);
+    const windows = desktopStopShortcut(StudioPlatform.Windows);
+    assert.equal(mac.accelerator, "Control+Alt+Command+Escape");
+    assert.equal(stopShortcutWords(mac), "Control-Option-Command-Escape (⌃⌥⌘Esc)");
+    assert.equal(windows.accelerator, "Control+Alt+Shift+Escape");
+    assert.doesNotMatch(windows.accelerator, /Command|Cmd|Super|Meta/);
+    assert.notEqual(windows.accelerator, "Control+Shift+Escape");
+    assert.equal(stopShortcutWords(windows), "Ctrl+Alt+Shift+Esc");
+    assert.match(computerControlDetail(StudioPlatform.Windows), /Ctrl\+Alt\+Shift\+Esc stops it/);
+    assert.match(computerControlDetail(StudioPlatform.Mac), /⌃⌥⌘Esc stops it/);
   });
 
   it("the switch sends only this setting and shows what the host saved", async () => {

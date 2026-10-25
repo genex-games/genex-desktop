@@ -1,6 +1,7 @@
 /** The plugins page's building blocks: its sections and pictures, a plugin's row, its on/off toggle and its account step. */
 import type { JSX, ReactNode } from "react";
 import { GENEX_PLUGIN_ID } from "../../../shared/genex.ts";
+import { intlLocale, t } from "../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import { installPluginUpdate } from "../../state/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -28,7 +29,7 @@ import { signInToGenex } from "../../play/use-genex-sign-in.ts";
 
 const ACCOUNT_WORDS = PLUGINS_WORDS.account;
 /** Credits read with the reader's own digit grouping. */
-const NUMBER = new Intl.NumberFormat();
+const NUMBER = new Intl.NumberFormat(intlLocale());
 
 /** A skill's square glyph, in the interface's icon colour. */
 export function Mark({ kind = "plugins", large = false }: { kind?: IconName; large?: boolean }): JSX.Element {
@@ -80,7 +81,7 @@ export function PluginToggle({ plugin, page }: { plugin: PluginInfo; page: Plugi
     <Toggle
       on={plugin.enabled}
       disabled={page.busy}
-      ariaLabel={`Use ${shownName(plugin)}`}
+      ariaLabel={t("Use {name}", { name: shownName(plugin) })}
       onChange={(on) =>
         void page.act(async () => {
           page.setSelected(null);
@@ -135,7 +136,7 @@ function ConnectButton({ plugin, page }: { plugin: PluginInfo; page: PluginsPage
         <Button
           variant={genex ? "default" : "secondary"}
           disabled={page.busy}
-          aria-label={genex ? ACCOUNT_WORDS.signInLabel : `Connect ${shownName(plugin)}`}
+          aria-label={genex ? ACCOUNT_WORDS.signInLabel : t("Connect {name}", { name: shownName(plugin) })}
           onClick={genex ? () => void signInToGenex() : () => void connectAccount(plugin, page)}
         >
           {genex ? ACCOUNT_WORDS.signIn : ACCOUNT_WORDS.connect}
@@ -170,7 +171,7 @@ export function AccountStep({
       return <ConnectButton plugin={plugin} page={page} />;
     case RowAccountStep.Reconnect:
       return (
-        <Button disabled={page.busy} aria-label={`Reconnect ${name}`} onClick={connect}>
+        <Button disabled={page.busy} aria-label={t("Reconnect {name}", { name })} onClick={connect}>
           {ACCOUNT_WORDS.reconnect}
         </Button>
       );
@@ -205,7 +206,7 @@ export function AccountStep({
 export function ReinstallButton({ plugin, page }: { plugin: PluginInfo; page: PluginsPage }): JSX.Element {
   return (
     <Button disabled={page.busy} onClick={() => void page.act(() => window.studio.pluginInstall(plugin.manifest.id))}>
-      {plugin.removed ? "Reinstall" : "Allow…"}
+      {plugin.removed ? t("Reinstall") : t("Allow…")}
     </Button>
   );
 }
@@ -240,7 +241,7 @@ function PluginRow({
       <button
         type="button"
         className="extension-open"
-        aria-label={`View ${name}`}
+        aria-label={t("View {name}", { name })}
         onClick={() => page.openPlugin(manifest.id)}
       >
         <PluginPicture plugin={plugin} />
@@ -251,7 +252,9 @@ function PluginRow({
           </span>
           {plugin.error && <span className="text-xs text-red">{plugin.error}</span>}
           {plugin.pendingVersion && (
-            <span className="text-xs text-orange">Update {plugin.pendingVersion} waits for active sessions.</span>
+            <span className="text-xs text-orange">
+              {t("Update {version} waits for active sessions.", { version: plugin.pendingVersion })}
+            </span>
           )}
         </span>
       </button>
@@ -259,10 +262,10 @@ function PluginRow({
       {update && (
         <Button
           disabled={page.busy}
-          aria-label={`Update ${name}`}
+          aria-label={t("Update {name}", { name })}
           onClick={() => void page.act(() => installPluginUpdate(window.studio, update))}
         >
-          Update to {update.version}
+          {t("Update to {version}", { version: update.version })}
         </Button>
       )}
       {isOffList(plugin) ? (

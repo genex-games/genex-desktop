@@ -4,11 +4,17 @@
  * per-file outcomes and a summary that names every failing file.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
+import { SECOND_MS } from "../../src/shared/duration.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 import reportOutcomes, { ERROR_CHARS } from "../../scripts/test-windows-reporter.mjs";
 import {
+  RUN_ALONE,
   readWindowsSuite,
+  requiredBatches,
+  runTests,
   SuiteProblem,
   suiteCandidates,
   suiteProblems,
@@ -25,6 +31,22 @@ test("the checked-in Windows suite names only real, sorted, non-rig test files",
   const suite = readWindowsSuite(repo);
   assert.ok(suite.length > 0);
   assert.ok(suite.includes("tests/conformance/sandbox-prepare.test.ts"));
+});
+
+test("a suite file that changes the whole machine runs alone, after every other file", () => {
+  const alone = RUN_ALONE[0];
+  const suite = ["tests/a.test.ts", alone, "tests/b.test.ts"];
+  const batches = requiredBatches(suite);
+  assert.deepEqual(
+    batches.map((batch: { files: string[] }) => batch.files),
+    [["tests/a.test.ts", "tests/b.test.ts"], [alone]],
+  );
+  assert.ok(batches[1].testArgs.includes("--test-concurrency=1"));
+  assert.deepEqual(
+    requiredBatches(["tests/a.test.ts"]).map((batch: { files: string[] }) => batch.files),
+    [["tests/a.test.ts"]],
+  );
+  for (const file of RUN_ALONE) assert.ok(readWindowsSuite(repo).includes(file), `${file} is in the suite`);
 });
 
 test("a curated suite entry that is not a runnable fast test is refused with its reason", () => {
@@ -105,4 +127,28 @@ test("the summary counts tests and lists failing and clean files once, repo-rela
 test("clean fast files outside the curated suite are the candidates to add", () => {
   const summary = { cleanFiles: ["tests/a.test.ts", "tests/b.test.ts", "tests/c.test.ts"] };
   assert.deepEqual(suiteCandidates(summary, ["tests/b.test.ts"]), ["tests/a.test.ts", "tests/c.test.ts"]);
+});
+
+test("a suite file that leaves a child running fails by name, and the run still ends", async () => {
+  // A failed test that never stopped what it started held its file's process open, and with it
+  // the whole required suite, until the job's own timeout.
+  const RUN_CAP_MS = 60 * SECOND_MS;
+  const root = await tmpDir("windows-suite-");
+  const file = path.join(root, "leaks.test.mjs");
+  await writeFile(
+    file,
+    [
+      'import { spawn } from "node:child_process";',
+      'import { test } from "node:test";',
+      'test("starts a child", () => {',
+      '  spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+      "});",
+      "",
+    ].join("\n"),
+  );
+  const report = runTests(root, [file], { name: "leak", timeoutMs: RUN_CAP_MS, quiet: true });
+  assert.equal(report.ended, "exit 1", "the run ended on its own, failing");
+  // node:test reports the check's failure at its hook in the helper; its words name the file.
+  const named = report.failures.some(({ error }) => /leaks\.test\.mjs left 1 child process/.test(String(error)));
+  assert.ok(named, JSON.stringify(report.failures));
 });

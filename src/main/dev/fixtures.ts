@@ -15,13 +15,14 @@ import { seedLargeBuildGraph } from "./fixture-large-graph.ts";
 import { seedLeadGraph } from "./fixture-lead-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
 import { seedChatWorkers, seedChatWorkersLoop } from "./fixture-chat-workers.ts";
-import { seedFinishCheck } from "./fixture-finish-check.ts";
+import { seedFinishCheck, seedLoopEnds } from "./fixture-finish-check.ts";
 import { seedPausedBuild } from "./fixture-paused-build.ts";
 import { seedBuildingCard } from "./fixture-building-card.ts";
 import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistory } from "./fixture-chat.ts";
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
   appendSuggestion,
+  FIXTURE_GAME,
   FIXTURE_MODEL,
   FIXTURE_VERSION,
   FixtureName,
@@ -32,7 +33,9 @@ import {
 import { NOTIFICATIONS_START_MS, notificationArrivals, seedNotificationGames } from "./fixture-notifications.ts";
 import { announceOpenLoopWait, seedOpenLoops, seedOpenProjects } from "./fixture-open-projects.ts";
 import { seedStillsGame } from "./fixture-stills.ts";
+import { seedAssetLibrary } from "./fixture-assets-tab.ts";
 import { seedRobloxGame } from "./fixture-roblox.ts";
+import { seedItemsStore } from "./fixture-items.ts";
 import { seedGenexTerms } from "./fixture-genex-terms.ts";
 import { seedUnrealGame } from "./fixture-unreal.ts";
 import { seedUnrealChat } from "./fixture-unreal-chat.ts";
@@ -48,7 +51,10 @@ export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
 export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
+  FIXTURE_GAME,
+  FIXTURE_AGENTS_FAILURE,
   FIXTURE_NAMES,
+  FIXTURE_DATA_FOLDER,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FIXTURE_VERSION,
@@ -99,8 +105,8 @@ export async function prepareFixture(core: StudioCore, id: string): Promise<Prep
   if (id === FixtureName.FirstLaunch)
     return { project: "", threadId: core.mainThread, fixture: id, version: FIXTURE_VERSION };
   // Reuse never resets a project's files or append-only history.
-  const found = (await core.games.list()).find((p) => p.name === "fixture-game");
-  const project = found ?? (await core.games.scaffold("fixture-game", { title: "Fixture Game" }));
+  const found = (await core.games.list()).find((p) => p.name === FIXTURE_GAME);
+  const project = found ?? (await core.games.scaffold(FIXTURE_GAME, { title: "Fixture Game" }));
   const game: FixtureGame = {
     core,
     id,
@@ -160,6 +166,8 @@ async function seedFreshFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.UnrealChat) return seedUnrealChat(core, game.project, threadId);
   if (id === FixtureName.RobloxGame) return seedRobloxGame(core, game.project, threadId);
   if (id === FixtureName.GenexTerms) return seedGenexTerms(core, game.project.name, threadId);
+  if (id === FixtureName.AssetLibrary) return seedAssetLibrary(game.project.dir);
+  if (id === FixtureName.ItemsStore) return seedItemsStore(core, game.project.name, threadId);
 }
 
 async function seedGraphOnce(game: FixtureGame): Promise<void> {
@@ -325,6 +333,7 @@ export async function activateChatFixture(
   }
   if (fixture.fixture === FixtureName.FinishCheck) {
     await seedFinishCheck(core, fixture.project, fixture.threadId);
+    await seedLoopEnds(core);
     return;
   }
   if (fixture.fixture === FixtureName.PausedBuild) {

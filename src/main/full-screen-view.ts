@@ -10,8 +10,13 @@ import type { PreviewBoundsRecord } from "./ipc/preview.ts";
 import type { GamePreview } from "./preview.ts";
 import type { StudioCore } from "./studio-core.ts";
 
-/** The exit button's page, loaded again each time it is shown so its words unfold again. */
-const EXIT_PAGE_URL = `data:text/html;charset=utf-8,${encodeURIComponent(exitButtonPage())}`;
+/**
+ * The exit button's page, made and loaded again each time it is shown, so its words unfold again
+ * and are in the language the app is in then.
+ */
+function exitPageUrl(): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(exitButtonPage())}`;
+}
 /** A fully transparent view background: only the pill is drawn. */
 const TRANSPARENT = "#00000000";
 
@@ -54,7 +59,7 @@ export function wireGameFullScreen({
         exitView.setBounds(bounds);
         if (shown) return;
         shown = true;
-        void exitView.webContents.loadURL(EXIT_PAGE_URL).catch(() => {});
+        void exitView.webContents.loadURL(exitPageUrl()).catch(() => {});
         exitView.setVisible(true);
       },
       hide: () => {

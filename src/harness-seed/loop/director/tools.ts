@@ -74,6 +74,8 @@ import { noteKeptJudged } from "./kept-judge.ts";
 import type { LastJudge, LoopRun, Worker } from "./loop-run.ts";
 import type { LastShip } from "./art-direction.ts";
 import type { CheckResult } from "../checks.ts";
+import { nextWords } from "../person-wrote.ts";
+import { WAIT_ENDED } from "../steer-switch-prompts.ts";
 import type { Evidence, Shot } from "../evidence.ts";
 import type { ShipReview } from "../ship-review.ts";
 import type { VisionAsk } from "../judge.ts";
@@ -488,6 +490,9 @@ async function blindVerdict(loopRun: LoopRun, pass: JudgePass, other: Evidence):
   const deadline = judgeDeadline(loopRun, pass);
   const both = cameras.length ? [] : camerasBothShow(evidence, other);
   const shown = cameras.length ? cameras : both;
+  // The lead's own ask stops waiting out a busy provider when the person writes: it reads them first.
+  // The close's judge never does: the build it makes live waits for its word.
+  const words = pass.final ? null : nextWords(loopRun.threadId);
   try {
     const verdict = await withProviderPatience(
       ctx,
@@ -501,7 +506,12 @@ async function blindVerdict(loopRun: LoopRun, pass: JudgePass, other: Evidence):
           cameras: shown.length ? shown : null,
           everyCamera: both.length > 0,
         }),
-      { deadline, delays: outageDelays(run), label: "the director's judge" },
+      {
+        deadline,
+        delays: outageDelays(run),
+        label: "the director's judge",
+        ...(words ? { endEarly: { when: words.ended, why: WAIT_ENDED.judge } } : {}),
+      },
     );
     out.verdict = {
       against: againstKey,
@@ -514,6 +524,8 @@ async function blindVerdict(loopRun: LoopRun, pass: JudgePass, other: Evidence):
     judgement.pick = out.verdict.pick ?? null;
   } catch (err: any) {
     out.verdict = { against: againstKey, error: String(err?.message ?? err) };
+  } finally {
+    words?.cancel();
   }
 }
 

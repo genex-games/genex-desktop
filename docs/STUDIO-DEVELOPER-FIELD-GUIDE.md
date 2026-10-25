@@ -2,7 +2,9 @@
 
 Run commands from the repository root with Node 24 (`nvm use` reads `.nvmrc`). First-time setup
 is in [CONTRIBUTING](../CONTRIBUTING.md#set-up). `package.json` and the lockfile own current
-dependencies; install them with `npm ci` once, not before every restart or check.
+dependencies; install them with `npm run deps` once, not before every restart or check. On macOS
+it gives each worktree a copy-on-write clone of one install per lockfile, kept in the main
+checkout's `.studio-dev/deps` (the newest two); elsewhere it runs `npm ci`.
 
 ## Run an owned development profile
 
@@ -61,8 +63,35 @@ Live profiles isolate Studio data, not all machine accounts, Keychain, quotas, l
 or compute. They do not copy credentials. Follow the [credential restriction](agent/verification.md#credentials)
 for account-connected checks. Preserve active user work; inspect ownership/status before a restart.
 
+A live profile can run against a local or test genex.games (a stand) instead of genex.games itself
+(`src/main/play/origins.ts`, `devStand`):
+
+```sh
+GENEX_DEV_PLAY_API_ORIGIN=http://localhost:3000 GENEX_DEV_PLAY_WEB_ORIGIN=http://localhost:5173 \
+GENEX_DEV_PLAY_GAMES_ORIGIN=https://localhost:8443 GENEX_DEV_PLAY_GAMES_CA=/abs/path/certs/ca.pem \
+  npm run studio:dev -- start --profile stand-review --providers live
+```
+
+Origins are bare (https, or http on this Mac); the CA is an absolute path to a PEM file. With the stand's
+API the account signs in on the stand's device sign-in, for the launch only; Play, the store,
+`genex__cli`/`genex__cli-paid` (the CLI's `--api-url` and token) and the Genex plugin's backend (Publish,
+its asset tools and its account page) use the stand and that account, never genex.games or the Genex
+plugin's saved account. With a games origin too, the Play viewer plays
+`https://<slug>.localhost:8443/`, trusts that CA for those game hosts only, and catches their purchases
+on the stand's website; the Genex plugin's Publish trusts the CA too (its backend and CLI runs, beside
+the system's), so it can push to a local stand's source host and test its draft on the stand's
+game host. `genex://` links stay on genex.games: a development launch never registers as
+the system's link handler. To tie a local game to a stand
+project, write the stand's `{ "id", "slug" }` to `.studio-dev/profiles/<name>/core/engine-homes/genex/publish/<game>/.genex/project.json`.
+The pinned CLI decides which `genex` commands exist (shop JSON drafts need 1.36.14, local item drafts
+and `shop sync` 1.36.15). A packaged app, a
+fixture launch, smoke and the normal profile ignore every one of these variables, and a malformed value
+leaves that side on genex.games.
+
 The controller builds immutable output under `.studio-dev/builds/<id>` and returns actual
 readiness and profile/build/source/runtime identity. Rebuilding does not update a running app.
+Each start removes the builds no profile's `launch.json` or `attempt.json` names, once they are an
+hour old.
 Use the controller to stop owned sessions; a PID alone is not authority to signal a process.
 `clean --profile <name>` removes only stopped recognized disposable state. Retained live
 profiles, evidence and normal games are not disposable fixture cleanup.
@@ -222,7 +251,8 @@ link and pruned in place, so the `prePackage` hook refuses it. On Windows, `node
 tests/e2e/run-squirrel-install.mjs` installs `Genex-Setup.exe` for the current user, checks its
 shortcuts and path lengths, then uninstalls it. CI: `package.yml` makes and smokes unsigned packages on
 PRs into `main` and pushes to `main` (with that install on Windows, and there a packaged fixture chat turn:
-`node tests/e2e/run-electron-e2e.mjs --packaged`), and a dispatch with `only` (`darwin`, `linux` or `win32`)
+`node tests/e2e/run-electron-e2e.mjs --packaged --claude-worker`, the last a Claude Code worker on a
+scripted Anthropic stand-in), and a dispatch with `only` (`darwin`, `linux` or `win32`)
 builds one platform; `release.yml` signs, notarizes, verifies and uploads to a draft release ([release operations](release-operations.md)).
 Optimization UI replay additionally needs prior AG-931 result data; it is conditional, not a
 clean-checkout gate. Seed-upgrade, interrupted, snapshots, sandbox, harness-host and
@@ -349,9 +379,10 @@ finish-check (four Loops written after the start, one per finish check look: Don
 the Builds history, Not yet after one no, and the newest Checking),
 paused-build (a Loop a usage limit paused and resumed, written after the start: one worker's try
 Paused, one Added after the resume, one Left out by the lead's stop),
-building-card (a Loop still going, written after the start, for the chat's Building card and its
-parts: two added, one working with its time left, one restarted on one row, one waiting;
-`[data-build-toggle]` opens `[data-build-checklist]`),
+building-card (a 4h Loop still going after five finished ones, written after the start, for the chat's
+Building card and its parts: two added, one working with its time left, one restarted on one row,
+one waiting; `[data-build-checklist]` open, `[data-build-toggle]` closes it; Builds holds its six
+builds in the picker `[data-build-picker]`),
 stills-game (Pine valley, a Blender scene with no web page, whose finished Loop kept the lead's two
 renders as proof: Live's run pictures, `[data-live-view="stills"]` `[data-live-still]`; and
 Mountain pass, a Blender game with no run, whose Live says where pictures come from),
@@ -370,7 +401,8 @@ installed, and sign-in, links and downloads are refused as in every fixture) and
 and delivered, failed and stopped builds arrive as news; macOS notifications are refused) and
 sandbox-setup (the window opens on "Set up the protected workspace" for a Linux machine missing
 bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]` opens the studio) and
-update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
+agents-start-failed (the open studio's sidebar says "Agents didn't start", `[data-agents-start]`, with
+a stand-in srt-win timeout under its details; Try again clears it) and update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
 itself is refused as native) and plugin-updates (Genex and Blender installed one version back: their
 rows and pages offer `Update to <version>` and the sidebar `[data-plugins-update]`, each refused as
 native) and unreal-game (the game linked to a stand-in Unreal project inside
@@ -381,7 +413,10 @@ connector rows in words, Worked in Unreal headings, failures, play views and a B
 and roblox-game (the game linked to a stand-in place, `FixtureGame.rbxlx`, at its top with the
 Roblox Studio plugin on: the toolbar's Roblox Studio button, the chat's link line with Undo and the
 steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|place]`), whose rows come from the real plugin on
-this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them).
+this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them)
+and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
+Genex, so Create › Items' Add to and New item reach its chat, which ends with Frost Axe's Listing draft
+card; [the item store](play.md#the-item-store)).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,
@@ -407,8 +442,10 @@ Send with `npm run studio:dev -- ui --profile ag-933 --request /tmp/request.json
 and `runs --profile P` are shortcuts. The [verify-ui-via-dev-control skill](../.agents/skills/verify-ui-via-dev-control/SKILL.md)
 walks the full loop.
 The request union/runtime validator is src/main/dev/protocol.ts. Operations are status,
-snapshot (desktop, scope/limit), click (selector/scope), type (plus text/replace), key
-(surface/key/code/modifiers), select (selector/scope/value), scroll (surface/deltas/target),
+snapshot (desktop or `play-bar`, scope/limit; its `play` part counts Play's cards, the covers on
+screen still blank and the clips playing), click (selector/scope, desktop or `play-bar`), type
+(plus text/replace, the same surfaces), key (surface/key/code/modifiers), move (surface/x/y: the pointer over a
+surface, as a mouse would), select (selector/scope/value), scroll (surface/deltas/target),
 game.input (existing bounded action union), game.state, window.resize, capture, logs, runs, cpu.start/stop,
 main.cpu.start/stop (a profile of the main process), heap,
 trace.start/stop and stop. `graph.drag` takes bounded duration/distance/steps and returns
@@ -416,7 +453,8 @@ commit counters through release; `window.resize` takes bounded width/height delt
 duration, resizes the studio window step by step with a game in Live, and returns how far the
 game view trailed its slot right after each change and before the next ([performance](performance.md));
 `fixture.graph` takes `other-project-frames` or `append-round`
-only in `large-build-graph`. Traces accept `toplevel` for renderer task durations.
+only in `large-build-graph`. `file.drag` (target, `stage` over/drop/leave, `file` picture/text)
+drags the control's own sample file onto it; it takes no path. Traces accept `toplevel` for renderer task durations.
 No arbitrary eval, PID, webContents ID or output path is accepted.
 Scoped DOM inspection resolves one visible enabled non-occluded target. A modal dialog or menu
 that has just opened takes pointer input one render later, so an input sent at once can be
@@ -436,7 +474,9 @@ providers, credential isolation and native-action restrictions remain unchanged.
 opt-in unset for automated acceptance.
 
 `capture --profile ag-933 --surface desktop --name after` writes an owned surface-labelled PNG;
-repeat for game. Renderer captures do not include the native game child. The capture records
+repeat for game. Renderer captures do not include the native game child. While Play's viewer has a
+game open, `play-bar` is its bar's layer (the bar and Comments) and `play-game` the game's own view
+below it. The capture records
 image dimensions, image-pixel/CSS-pixel scale, renderer zoom, visibility, focus and time. For diagnostics use a JSON request
 with `diagnostics --profile ag-933 --request FILE`. Start/stop a matching CPU profile ID; heap
 needs surface/name. Trace needs traceId, durationMs (100–30000) and supported categories from
@@ -478,7 +518,8 @@ in the UI; set it on start and restart.
 
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
-permissions. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
+permissions; on Windows the control is a named pipe with a fresh random name, which other accounts
+can open only read-only. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
 a time. A timeout is not success and does not authorize retrying a mutation blindly.
 
 ## Embedded terminal acceptance
@@ -536,13 +577,20 @@ and reduced motion. Evidence lives in `.studio-dev/evidence/results-ui/`. Pair w
 `run-chat-ui.mjs` and `run-chat-feedback-ui.mjs` for real host reads, history/streaming and Studio
 navigation; component fixtures do not prove account access or native game layering.
 
-Genex account regressions: `run-genex-account-ui.mjs` renders the Genex page's own account card
-and checks that a failed connect keeps its reason after the status is read again. It does not
+`node tests/e2e/run-builds-bar-ui.mjs` renders the production Builds bar with synthetic builds:
+tabs up to three, the picker past them or in a narrow bar (never flipped by Play's label), focus
+following the swap, the list's order, open row, rows, Escape, ten rows without scrolling, the fade
+and shadow past ten, and the open row shown on opening (focused when opened by keyboard). Evidence
+lives in `.studio-dev/evidence/builds-bar-ui/`.
+
+Genex account regressions: `run-genex-account-ui.mjs` renders the Genex page's account in its
+Connect band and checks that a failed connect keeps its reason after the status is read again. It does not
 establish real browser/Keychain authorization.
 `run-publish-cover-ui.mjs` renders the production Publish dialog beside the production
 ChatPanel of the same game with a fake `window.studio`: with no shot the dialog asks the plugin to
 take one, the arrows pick a recent frame, Another cover sends its request through that chat and
-the banner says one is coming until a new frame arrives, and a kept clip plays behind its switch
+closes the dialog, the banner opened again says one is being made until a new frame arrives (with
+the time left once one was timed, in dark and light), and a kept clip plays behind its switch
 (screenshots in `.studio-dev/evidence/`). A fixture
 profile cannot show this dialog's body, since its Genex account is never connected.
 `run-publish-test-link-ui.mjs` renders the same dialog for its test link: it shows under "Publish

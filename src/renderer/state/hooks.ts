@@ -16,13 +16,17 @@ import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
 import type { PeopleState } from "./people.ts";
+import type { ItemsState } from "./items.ts";
 import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
+import type { ProviderUsageState } from "./provider-usage.ts";
+import type { SharingState } from "./sharing.ts";
 import { type SessionState, SessionStatus } from "./session.ts";
 import { studio } from "./studio.ts";
 import { activeThread, isGameThread, roomOf, threadMeta, studioThreadOf, type ThreadsState } from "./threads.ts";
 import type { ToastsState } from "./toasts.ts";
 import type { UpdateState } from "./update.ts";
+import type { AgentsStartState } from "./agents-start.ts";
 
 export { useShallow } from "zustand/react/shallow";
 
@@ -36,6 +40,8 @@ export const useEngines = <T>(select: Selector<EnginesState, T>): T => useStore(
 export const usePlugins = <T>(select: Selector<PluginsState, T>): T => useStore(studio().plugins, select);
 export const usePlay = <T>(select: Selector<PlayState, T>): T => useStore(studio().play, select);
 export const usePeople = <T>(select: Selector<PeopleState, T>): T => useStore(studio().people, select);
+export const useItems = <T>(select: Selector<ItemsState, T>): T => useStore(studio().items, select);
+export const useSharing = <T>(select: Selector<SharingState, T>): T => useStore(studio().sharing, select);
 export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
   useStore(studio().agentScreens, select);
 export const useCommandRuns = <T>(select: Selector<CommandRunsState, T>): T => useStore(studio().commandRuns, select);
@@ -43,7 +49,10 @@ export const useToasts = <T>(select: Selector<ToastsState, T>): T => useStore(st
 export const useLayout = <T>(select: Selector<LayoutState, T>): T => useStore(studio().layout, select);
 export const useLaunch = <T>(select: Selector<LaunchState, T>): T => useStore(studio().launch, select);
 export const useUpdate = <T>(select: Selector<UpdateState, T>): T => useStore(studio().update, select);
+export const useAgentsStart = <T>(select: Selector<AgentsStartState, T>): T => useStore(studio().agentsStart, select);
 export const useModelPicker = <T>(select: Selector<ModelPickerState, T>): T => useStore(studio().modelPicker, select);
+export const useProviderUsage = <T>(select: Selector<ProviderUsageState, T>): T =>
+  useStore(studio().providerUsage, select);
 /** The boot store lives beside the studio, not in it: it decides whether the studio starts at all. */
 export const useBoot = <T>(store: BootStore, select: Selector<BootStoreState, T>): T => useStore(store, select);
 

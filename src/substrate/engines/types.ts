@@ -510,7 +510,10 @@ export class EngineError extends Error {
 
 export interface Engine {
   usageSnapshot?: () => ProviderUsage | null;
-  /** Subscription engines: the plan's limits, read from the provider without starting a turn. */
+  /**
+   * Subscription engines: the plan's limits, read from the provider without starting a turn. Null
+   * when the plan shares none; a throw when they could not be read.
+   */
   readUsage?(): Promise<ProviderUsage | null>;
   /** Subscription engines: login source and CLI summary for Settings. */
   account?(): Promise<EngineAccount>;

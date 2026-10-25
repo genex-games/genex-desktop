@@ -32,11 +32,13 @@ test("a worktree with shared dependencies keeps the pinned CLI inside its plugin
     await mkdir(checkout);
     await symlink(path.join(process.cwd(), "src"), path.join(checkout, "src"), "dir");
     await symlink(await realpath(path.join(process.cwd(), "node_modules")), path.join(checkout, "node_modules"), "dir");
+    // The Godot plugin's bridge licenses fall back to the notices for a package that ships no license file.
+    await symlink(path.join(process.cwd(), "THIRD-PARTY-NOTICES.md"), path.join(checkout, "THIRD-PARTY-NOTICES.md"));
     await buildPlugins(checkout, resources);
     const target = await realpath(path.join(resources, "plugins/genex"));
     const packaged = createRequire(path.join(target, "backend.mjs")).resolve("@genex-ai/cli-demo/package.json");
     assert.equal(packaged, path.join(target, "node_modules/@genex-ai/cli-demo/package.json"));
-    assert.equal(JSON.parse(await readFile(packaged, "utf8")).version, "1.36.9");
+    assert.equal(JSON.parse(await readFile(packaged, "utf8")).version, "1.36.15");
   } finally {
     await removeTree(temp);
   }

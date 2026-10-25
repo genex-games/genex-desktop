@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { memo, useCallback } from "react";
+import { t } from "../../shared/i18n.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { ChatPanel } from "../panels/ChatPanel.tsx";
 import { ChatResizeHandle } from "../panels/ChatResizeHandle.tsx";
@@ -33,7 +34,7 @@ export const Workspace = memo(function Workspace(props: WorkspaceProps): JSX.Ele
         <BootstrapGate
           failed={({ error, retry, retrying }) => (
             <LoadFailed
-              what="Studio"
+              message={t("Could not load Studio.")}
               error={error ?? undefined}
               onRetry={retry}
               retrying={retrying}

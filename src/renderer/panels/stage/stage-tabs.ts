@@ -94,6 +94,36 @@ export function stageTabs({
   return [...liveTabs(views, plugins), ...builds, { key: StageView.Assets, label: STAGE_WORDS.tabs.assets }, ...file];
 }
 
+/** The glyph of each kind of Live view, where the folded views name it; a plugin's pictures or card shows the plugin's own picture instead. */
+const LIVE_GLYPH = {
+  [ObserverLive.Preview]: "window",
+  [ObserverLive.UnrealCard]: "unreal",
+  [ObserverLive.Stills]: "image",
+  [ObserverLive.Card]: "computer",
+} as const satisfies Record<ObserverLive, IconName>;
+
+/** The Live view a tab shows: the view the press on it chooses, or none for a tab that isn't Live's. */
+function tabView(key: StageTabKey, views: readonly LiveView[]): LiveView | null {
+  const choice = tabChoice(key, views);
+  if (!choice || !("live" in choice)) return null;
+  return views.find((view) => view.observer === choice.live) ?? views[0] ?? null;
+}
+
+/** A tab's glyph where the folded views list it (`StageStrip`): a file's own, Builds' graph, Assets' tiles, a Live view's kind. */
+export function tabGlyph(tab: StageTab, views: readonly LiveView[]): IconName {
+  if (tab.icon) return tab.icon;
+  if (tab.key === StageView.Builds) return "graph";
+  if (tab.key === StageView.Assets) return "assets";
+  return LIVE_GLYPH[tabView(tab.key, views)?.live ?? ObserverLive.Preview];
+}
+
+/** The plugin whose observer a tab's Live view is (`<plugin>/<observer>`), for its picture; null for Genex's own preview. */
+export function tabPluginId(tab: StageTab, views: readonly LiveView[]): string | null {
+  const view = tabView(tab.key, views);
+  if (!view?.observer || view.live === ObserverLive.Preview) return null;
+  return view.observer.split("/")[0] || null;
+}
+
 /** The tab drawn as current: the chosen Live view's while Live is on the stage, else the stage view's. */
 export function activeStageTab(stageView: StageView, views: readonly LiveView[], chosen: LiveView): StageTabKey {
   if (stageView !== StageView.Live) return stageView;

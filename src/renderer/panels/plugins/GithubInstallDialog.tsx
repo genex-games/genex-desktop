@@ -30,6 +30,7 @@ import {
 } from "./github-install.ts";
 import { PLUGIN_GUIDE_URL } from "./labels.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
+import { SkeletonLines } from "../../ui/Skeleton.tsx";
 
 const WORDS = PLUGINS_WORDS.github;
 
@@ -124,7 +125,11 @@ function VersionRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
-          {!versions && !failed && <DropdownMenuItem disabled>{WORDS.versionsLoading}</DropdownMenuItem>}
+          {!versions && !failed && (
+            <DropdownMenuItem disabled aria-label={WORDS.versionsLoading} className="block py-2.5">
+              <SkeletonLines widths={["70%", "55%", "62%"]} />
+            </DropdownMenuItem>
+          )}
           {failed && <DropdownMenuItem disabled>{WORDS.versionsFailed}</DropdownMenuItem>}
           {versions?.map((version) => (
             <DropdownMenuItem key={`${version.kind}:${version.label}`} onSelect={() => onPick(version)}>

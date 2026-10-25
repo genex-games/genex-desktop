@@ -99,7 +99,7 @@ const FUNCTION_KEY = /^F(?:[1-9]|1[0-2])$/;
 
 const MESSAGE = {
   busy: "Unreal is playing a build for the Loop right now; try again once it has finished.",
-  noEditor: "This game's Unreal Editor is not open or does not answer; open it (the Unreal button) and try again.",
+  noEditor: "This game's Unreal Editor is not open or does not answer; call unreal__open-editor, then try again.",
   notPlaying: "No play is running in Unreal (it ended, or the person stopped it); look again to start one.",
   personPlaying: "The person is playing in Unreal; a fresh play waits until they stop.",
   unknownKey: (keys: string[]) => `Unreal has no key for ${keys.join(", ")}.`,

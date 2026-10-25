@@ -426,6 +426,36 @@ test("restart: a message handed over but unread runs on its own; one read by a c
   again.stop();
 });
 
+test("restart: a switch the cut-short turn read gets a turn of its own after its replay, with what was read after it; a command it read stays read", async () => {
+  const f = steerFixture();
+  const { append, receive } = writtenLog(f);
+  receive("a", "build a pond", { engine: "claude-code" });
+  append("coordinator_message_processing", { messageId: "a" });
+  receive("b", "and ducks", { engine: "claude-code" });
+  append("coordinator_message_delivered", { messageId: "b", into: "a", how: "native" });
+  receive("x", "/clear", { engine: "claude-code" });
+  append("coordinator_message_delivered", { messageId: "x", into: "a", how: "interrupt" });
+  receive("c", "make it in the loop", { engine: "claude-code", autopilot: { hours: null } });
+  append("coordinator_message_delivered", { messageId: "c", into: "a", how: "interrupt" });
+  receive("d", "with a boss", { engine: "claude-code", autopilot: { hours: null } });
+  append("coordinator_message_delivered", { messageId: "d", into: "a", how: "native" });
+  const turns: any[] = [];
+  const queue = new MessageQueue(f.host as never, async (a: any, steer: any) => {
+    turns.push({ text: a.text, loop: Boolean(a.autopilot), carried: steer.carried.map((m: any) => m.text) });
+  });
+  await queue.restore("chat", f.events);
+  await until(() => turns.length === 3);
+  assert.deepEqual(turns, [
+    { text: "build a pond", loop: false, carried: ["and ducks"] },
+    { text: "make it in the loop", loop: true, carried: [] },
+    { text: "with a boss", loop: true, carried: [] },
+  ]);
+  await until(() => f.state("d")?.state === "handled");
+  assert.equal(f.state("b")!.state, "delivered", "words ride with the replay, once");
+  assert.equal(f.state("x")!.state, "delivered", "a command it read is never run twice");
+  queue.stop();
+});
+
 test("restart: a turn cut off twice is not retried, and what it had read settles with it instead of being asked again", async () => {
   const f = steerFixture();
   const { append, receive } = writtenLog(f);
@@ -581,33 +611,234 @@ test("a message that joins as the turn ends still gets an answer: joining closes
   queue.stop();
 });
 
-test("an intake message with other commission settings waits for its own turn instead of joining", async () => {
+test("a message joins the running turn as words, as a switch of its settings, or not at all", async () => {
+  const { joinKindOf } = await import("../../src/harness-seed/loop/steer-switch.ts");
   const { steersInto } = await import("../../src/harness-seed/loop/message-queue.ts");
-  const turn = { engine: "claude-code", autopilot: { hours: 8 } };
-  assert.equal(
-    steersInto({ text: "more trees", engine: "claude-code", autopilot: { hours: 8, frames: [] } }, turn),
-    true,
+  const turn = { engine: "claude-code", model: "opus", effort: "high", autopilot: { hours: 8 } };
+  const same = { engine: "claude-code", model: "opus", effort: "high" };
+  const kind = (item: object, action: object = turn) => joinKindOf({ text: "x", ...item }, action);
+  assert.equal(kind({ ...same, autopilot: { hours: 8, frames: [] } }), "words", "the same settings: read as words");
+  assert.equal(kind({ ...same, autopilot: { hours: 2 } }), "switch", "other hours");
+  assert.equal(kind({ ...same, autopilot: { hours: 8, reviewPlan: true } }), "switch", "plan review");
+  assert.equal(kind({ ...same, autopilot: { hours: 8, roles: { planner: "sonnet" } } }), "switch", "roles");
+  assert.equal(kind(same), "switch", "the Loop switched off");
+  assert.equal(kind({ ...same, autopilot: { hours: 8 } }, same), "switch", "the Loop switched on");
+  assert.equal(kind({ ...same, effort: "low", autopilot: { hours: 8 } }), "switch", "another effort");
+  assert.equal(kind({ ...same, model: "sonnet", autopilot: { hours: 8 } }), "switch", "another model");
+  assert.equal(kind({ ...same, engine: "codex", autopilot: { hours: 8 } }), "switch", "another engine");
+  assert.equal(kind({ ...same, autopilot: { hours: 8, frames: [{ data: "x" }] } }), "switch", "a new mood board");
+  assert.equal(kind({ ...same, text: "/review", autopilot: { hours: 8 } }), "switch", "a slash command");
+  assert.equal(kind({ ...same, newRun: true, autopilot: { hours: 8 } }), "own", "a fresh build asked for");
+  assert.equal(kind(same, { ...same, studioThread: true }), "own", "Studio's own chat");
+  const keep = { ...same, autopilot: { hours: 8, keepBuilding: true } };
+  assert.equal(kind(keep), "own", "a Keep building tap, even with the turn's own hours: its mark needs its own turn");
+  assert.equal(steersInto({ text: "Keep building", ...keep }, turn), false, "never folded into the turn as words");
+  assert.equal(joinKindOf({ text: "x" }, null), "own", "no turn");
+  // `steersInto` keeps its meaning for older callers: joins as words.
+  assert.equal(steersInto({ text: "more trees", ...same, autopilot: { hours: 8 } }, turn), true);
+  assert.equal(steersInto({ text: "make it 2 hours", ...same, autopilot: { hours: 2 } }, turn), false);
+});
+
+/** A turn whose runner opens its session as a switch-taking runner would, holding it open until `release`. */
+function switchingTurn(
+  f: ReturnType<typeof steerFixture>,
+  release: Promise<void>,
+  options: { takes?: (item: any) => boolean; followed?: (steer: any) => void } = {},
+) {
+  const open = deferred(),
+    seen: string[] = [];
+  const run = async (a: any, steer: any) => {
+    seen.push(a.text);
+    if (a.text !== "build the level") return;
+    await steer.open({ switches: true, ...(options.takes ? { takes: options.takes } : {}) });
+    open.resolve();
+    options.followed?.(steer);
+    await release;
+    const taken = await steer.close({ steered: [] });
+    await steer.requeue(taken);
+  };
+  return { run, open: open.promise, seen };
+}
+
+test("a message that changes the Loop joins a turn whose runner takes switches: handed over to be cut at the session's next step, never queued", async () => {
+  const f = steerFixture((p) => ({ how: "interrupt", accepted: p.messages.map((m: any) => m.id) })),
+    release = deferred();
+  const turn = switchingTurn(f, release.promise);
+  const queue = new MessageQueue(f.host as never, turn.run);
+  await queue.enqueue({ ...f.send("build the level"), engine: "claude-code" } as never);
+  await turn.open;
+  await queue.enqueue({ ...f.send("make it in the loop"), engine: "claude-code", autopilot: { roles: {} } } as never);
+  // Recorded with its receipt as handed to the turn: the chat never shows it waiting.
+  assert.deepEqual(
+    f.events.slice(-3).map((e) => e.data.event_type ?? e.data.type),
+    ["messages", "coordinator_message_queued", "coordinator_message_steering"],
   );
-  assert.equal(
-    steersInto({ text: "make it 2 hours", engine: "claude-code", autopilot: { hours: 2 } }, turn),
-    false,
-    "the hours would be dropped",
+  await until(() => f.asked.length === 1);
+  assert.equal(f.asked[0].native, false, "a switch is never read as words mid-turn: the session is cut and goes on");
+  release.resolve();
+  await until(() => turn.seen.length === 2);
+  queue.stop();
+});
+
+test("a runner that takes no switches leaves such a message for a turn of its own, and words sent after it still join", async () => {
+  const f = steerFixture(),
+    open = deferred(),
+    release = deferred(),
+    seen: string[] = [];
+  const queue = new MessageQueue(f.host as never, async (a: any, steer: any) => {
+    seen.push(a.text);
+    if (a.text !== "build the level") return;
+    await steer.open();
+    open.resolve();
+    await release.promise;
+    for (const m of f.asked.flatMap((p) => p.messages)) f.read(m.id, steer.messageId);
+    await steer.close({ steered: f.asked.flatMap((p) => p.messages.map((m: any) => m.id)) });
+  });
+  await queue.enqueue({ ...f.send("build the level"), engine: "claude-code" } as never);
+  await open.promise;
+  await queue.enqueue({ ...f.send("make it in the loop"), engine: "claude-code", autopilot: {} } as never);
+  await queue.enqueue({ ...f.send("and add fog"), engine: "claude-code" } as never);
+  await until(() => f.asked.length === 1);
+  assert.deepEqual(
+    f.asked[0].messages.map((m: any) => m.text),
+    ["and add fog"],
+    "the words pass the switch this runner cannot take",
   );
-  assert.equal(
-    steersInto({ text: "review first", engine: "claude-code", autopilot: { hours: 8, reviewPlan: true } }, turn),
-    false,
+  assert.equal(f.state(f.idOf("make it in the loop"))!.state, "queued");
+  release.resolve();
+  await until(() => seen.length === 2);
+  assert.deepEqual(seen, ["build the level", "make it in the loop"]);
+  assert.equal(f.state(f.idOf("and add fog"))!.state, "delivered");
+  queue.stop();
+});
+
+test("a later session of the turn that takes no switches leaves such a message for a turn of its own", async () => {
+  const f = steerFixture(),
+    open = deferred(),
+    release = deferred(),
+    seen: string[] = [];
+  const queue = new MessageQueue(f.host as never, async (a: any, steer: any) => {
+    seen.push(a.text);
+    if (a.text !== "build the level") return;
+    // Its first session takes switches; the one it goes on in (a new kind's) takes none.
+    await steer.open({ switches: true, takes: () => true });
+    await steer.close({ steered: [] });
+    await steer.open();
+    open.resolve();
+    await release.promise;
+    await steer.close({ steered: [] });
+  });
+  await queue.enqueue({ ...f.send("build the level"), engine: "claude-code" } as never);
+  await open.promise;
+  await queue.enqueue({ ...f.send("make it in the loop"), engine: "claude-code", autopilot: {} } as never);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(f.asked.length, 0, "never handed to a session that cannot go on with it");
+  assert.equal(f.state(f.idOf("make it in the loop"))!.state, "queued");
+  release.resolve();
+  await until(() => seen.length === 2);
+  assert.deepEqual(seen, ["build the level", "make it in the loop"]);
+  queue.stop();
+});
+
+test("a switch the runner cannot go on with (another runner's engine) waits for a turn of its own", async () => {
+  const f = steerFixture(),
+    release = deferred();
+  const turn = switchingTurn(f, release.promise, { takes: (item) => item.engine !== "ollama" });
+  const queue = new MessageQueue(f.host as never, turn.run);
+  await queue.enqueue({ ...f.send("build the level"), engine: "claude-code" } as never);
+  await turn.open;
+  await queue.enqueue({ ...f.send("answer on the local model"), engine: "ollama" } as never);
+  assert.equal(f.asked.length, 0);
+  assert.equal(f.state(f.idOf("answer on the local model"))!.state, "queued");
+  release.resolve();
+  await until(() => turn.seen.length === 2);
+  queue.stop();
+});
+
+test("once the runner goes on with a switch, a message with those same settings joins as words", async () => {
+  const f = steerFixture(),
+    release = deferred();
+  let steerHandle: any = null;
+  const turn = switchingTurn(f, release.promise, { followed: (steer) => (steerHandle = steer) });
+  const queue = new MessageQueue(f.host as never, turn.run);
+  await queue.enqueue({ ...f.send("build the level"), engine: "claude-code" } as never);
+  await turn.open;
+  steerHandle.follows({ engine: "claude-code", autopilot: { hours: 2 } });
+  await queue.enqueue({ ...f.send("and a boss"), engine: "claude-code", autopilot: { hours: 2 } } as never);
+  await until(() => f.asked.length === 1);
+  assert.equal(f.asked[0].native, undefined, "read as words: no cut");
+  release.resolve();
+  // The session never read it: it waits again, and gets a turn of its own.
+  await until(() => turn.seen.length === 2);
+  queue.stop();
+});
+
+test("a follow-up with the Loop the person sent the turn's message with joins as words, though routing dropped that Loop", async () => {
+  const f = steerFixture(),
+    open = deferred(),
+    release = deferred();
+  const queue = new MessageQueue(f.host as never, async (a: any, steer: any) => {
+    if (a.text !== "keep building") return;
+    // The dispatch drops a Loop no build can go on with, on the very message the queue holds.
+    delete a.autopilot;
+    await steer.open();
+    open.resolve();
+    await release.promise;
+    await steer.close({ steered: [] });
+  });
+  await queue.enqueue({ ...f.send("keep building"), engine: "codex", autopilot: {} } as never);
+  await open.promise;
+  await queue.enqueue({ ...f.send("add a purple cube"), engine: "codex", autopilot: {} } as never);
+  await until(() => f.asked.length === 1);
+  assert.equal(f.asked[0].native, undefined, "words, read mid-turn: the person changed nothing");
+  release.resolve();
+  queue.stop();
+});
+
+test("handing a message to the running turn or to a run's lead ends the waits on that chat", async () => {
+  const { nextWords } = await import("../../src/harness-seed/loop/person-wrote.ts");
+  const f = steerFixture(),
+    open = deferred(),
+    release = deferred();
+  const queue = new MessageQueue(f.host as never, async (a: any, steer: any) => {
+    if (a.text !== "build the level") return;
+    await steer.open();
+    open.resolve();
+    await release.promise;
+    await steer.close({ steered: [] });
+  });
+  await queue.enqueue(f.send("build the level"));
+  await open.promise;
+  const waiting = nextWords("chat"),
+    other = nextWords("another chat");
+  let ended = false,
+    otherEnded = false;
+  void waiting.ended.then(() => (ended = true));
+  void other.ended.then(() => (otherEnded = true));
+  await queue.enqueue(f.send("and fog"));
+  await until(() => ended);
+  assert.equal(otherEnded, false, "another chat's waits go on");
+  other.cancel();
+  release.resolve();
+  queue.stop();
+
+  const g = fixture(),
+    handed: string[] = [];
+  const lead = leadDoor("run_1", handed);
+  const q2 = new MessageQueue(
+    g.host as never,
+    async () => {},
+    async () => {},
+    () => true,
+    () => lead,
   );
-  assert.equal(steersInto({ text: "hi", engine: "claude-code" }, turn), false, "not an intake message");
-  assert.equal(
-    steersInto({ text: "hi", engine: "claude-code", effort: "high" }, { engine: "claude-code" }),
-    true,
-    "effort matters only to a commission",
-  );
-  assert.equal(
-    steersInto({ text: "/compact now", engine: "claude-code" }, { engine: "claude-code" }),
-    false,
-    "slash text is a command, never words for the turn",
-  );
+  const leadWaits = nextWords("chat");
+  let leadEnded = false;
+  void leadWaits.ended.then(() => (leadEnded = true));
+  await q2.enqueue(g.send("more lava"));
+  await until(() => leadEnded);
+  assert.deepEqual(handed, ["more lava"]);
+  q2.stop();
 });
 
 /**

@@ -1141,6 +1141,8 @@ describe("The Unreal plugin's create action", () => {
       assert.ok(ignored.includes(line), `${line} is ignored`);
     for (const line of [
       "unreal/Binaries/",
+      "unreal/Builds/",
+      "unreal/Build/*/FileOpenOrder/",
       "unreal/Plugins/*/Intermediate/",
       "unreal/Plugins/*/Binaries/",
       "__pycache__/",

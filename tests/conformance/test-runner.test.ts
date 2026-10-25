@@ -225,3 +225,27 @@ test("a test process terminated by a signal never passes the wrapper", {
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.equal(result.error, undefined);
 });
+
+test("what a test leaves in the temp folder is gone when its batch ends, and nothing lands beside it", (t) => {
+  const f = fixture(t);
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), "studio-test-runner-tmp-"));
+  t.after(() => removeTree(outer));
+  f.write(
+    "tests/conformance/litter.test.ts",
+    `import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+test('litters', () => {
+  const left = fs.mkdtempSync(path.join(os.tmpdir(), 'left-behind-'));
+  fs.writeFileSync(path.join(left, 'file'), 'x');
+  fs.writeFileSync('litter.txt', left);
+});
+`,
+  );
+  const result = f.run(["tests/conformance/litter.test.ts"], { TMPDIR: outer, TMP: outer, TEMP: outer });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const left = fs.readFileSync(path.join(f.root, "litter.txt"), "utf8");
+  assert.equal(fs.existsSync(left), false, `${left} survived its batch`);
+  assert.deepEqual(fs.readdirSync(outer), []);
+});

@@ -3,12 +3,22 @@
  * renderer's origin), the renderer draws the dashboard, and a game plays full screen in a native
  * view main owns. These are the shapes and names both sides share.
  */
+import type { LibraryKind } from "./asset-library.ts";
 
-/** Where Play talks to genex.games: the API main calls and the website the app links to. */
+import type { PlayCuration } from "./play-manage.ts";
+import type { PlayBarNative, PlayNative } from "./play-native.ts";
+import type { PlayPurchaseSheet } from "./play-purchase.ts";
+
+/** Where Play talks to genex.games: the API main calls, the website the app links to, and where games are served. */
 export interface PlayOrigins {
   api: string;
   web: string;
+  /** The origin every published game is served under, each game on its own subdomain (`playGameUrl`). */
+  games: string;
 }
+
+/** The host every published game is served under: `https://<slug>.genex.technology/`. */
+export const PLAY_GAMES_DOMAIN = "genex.technology";
 
 /**
  * genex.games' own origins, which every release uses. A development profile may point Play
@@ -17,9 +27,8 @@ export interface PlayOrigins {
 export const PLAY_ORIGIN = {
   api: "https://api.genex.games",
   web: "https://genex.games",
+  games: `https://${PLAY_GAMES_DOMAIN}`,
 } as const satisfies PlayOrigins;
-/** The host every published game is served under: `https://<slug>.genex.technology/`. */
-export const PLAY_GAMES_DOMAIN = "genex.technology";
 
 /**
  * The website's three shelves, each with its own tabs: what Play's sidebar lists. Values are the
@@ -121,6 +130,24 @@ export interface PlayGame {
   author: { id: string | null; name: string; imageUrl: string | null };
   /** Anyone may make their own copy: its source is public. */
   remixable: boolean;
+  /** An asset's kind (3D, picture, sound, video); null for a game or a tool, or an asset genex.games does not kind. */
+  assetKind: LibraryKind | null;
+  /** What the card menu reads (mobile flag, tags, remixing); a search's card carries none, so it has no menu. */
+  curation?: PlayCuration;
+  /** Its native builds, once the API names any: absent for a web game, as every game was before. */
+  native?: PlayNative;
+}
+
+/** A game's own page (`studio:play.game`): its card with what its page adds. */
+export interface PlayGameDetail extends PlayGame {
+  likes: number;
+  /** The signed-in account likes it. */
+  liked: boolean;
+  comments: number;
+  /** Up to four screenshots, https images on Genex's hosts. */
+  shots: string[];
+  /** When it last changed, ISO 8601, or null when the API does not say. */
+  updatedAt: string | null;
 }
 
 /** One page of a tab. */
@@ -142,8 +169,11 @@ const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/;
 /** Whether a value is a slug the app will build an address from. */
 export const isPlaySlug = (value: unknown): value is string => typeof value === "string" && SLUG.test(value);
 
-/** The game itself, served on its own subdomain. */
-export const playGameUrl = (slug: string): string => `https://${slug}.${PLAY_GAMES_DOMAIN}/`;
+/** The game itself, served on its own subdomain of `games` (genex.games' own unless a development profile says). */
+export function playGameUrl(slug: string, games: string = PLAY_ORIGIN.games): string {
+  const served = new URL(games);
+  return `${served.protocol}//${slug}.${served.host}/`;
+}
 
 /** The game's page on the website at `web` (genex.games' unless a development profile says): what Share hands out. */
 export const playPageUrl = (web: string, slug: string): string => `${web}/${slug}`;
@@ -164,8 +194,14 @@ export const PlayViewerPhase = {
 } as const;
 export type PlayViewerPhase = (typeof PlayViewerPhase)[keyof typeof PlayViewerPhase];
 
-/** The viewer's header: the app's own bar across the window's top, the game's view under it. */
+/**
+ * The viewer's bar: the app's own 48px strip across the window's top, the game below it, never under
+ * it. It is drawn in a layer of its own above the game's native view.
+ */
 export const PLAY_BAR_HEIGHT = 48;
+
+/** The longest name of a game the viewer's bar is given to show. */
+export const PLAY_TITLE_MAX = 200;
 
 /** What the viewer's header asks main for (`studio:play.control`). Wire values: never rename one. */
 export const PlayControl = {
@@ -185,6 +221,17 @@ export const PlayControl = {
   Mic: "mic",
   /** The mic's menu: which microphone. */
   MicDevices: "mic-devices",
+  /** The maker's name: the viewer closes and the app shows their profile. */
+  Maker: "maker",
+  /** The game's native app: install it, or play it in its own window (the viewer gives way). */
+  NativeApp: "native-app",
+  /** Full screen: the game's page takes the whole window, as its own full screen does; Esc brings the bar back. */
+  FullScreen: "full-screen",
+  /**
+   * The game's Store, for a game that sells items: it opens in the game's place below the bar (the
+   * game hidden, never closed) and closes again on a second press, Back to game or Esc.
+   */
+  Store: "store",
 } as const;
 export type PlayControl = (typeof PlayControl)[keyof typeof PlayControl];
 
@@ -239,12 +286,16 @@ export function readPlayPoint(value: unknown): PlayPoint | undefined {
   return onWindow(x) && onWindow(y) ? { x: Math.round(x), y: Math.round(y) } : undefined;
 }
 
-/** What the viewer's header draws. */
+/** What the viewer's bar draws. */
 export interface PlayBarState {
+  /** The game's name, as the card that opened it showed it. */
+  title: string;
   liked: boolean;
   likes: number;
   /** The game may be remixed: the header shows Remix. */
   remixable: boolean;
+  /** The game is multiplayer: the bar offers Invite a friend. */
+  multiplayer: boolean;
   note: PlayNote | null;
   /** The header offers a signed-out guest the Genex plugin. */
   guestCard: boolean;
@@ -252,6 +303,24 @@ export interface PlayBarState {
   facts: PlayFacts | null;
   /** Null until the game asks for a microphone: then the header has a mic switch and its menu. */
   mic: PlayMicBar | null;
+  /** How many comments the game has; null until its page facts are read. */
+  comments: number | null;
+  /** A Genex account is unlocked: the comments end in a field to write one, else in Sign in. Null until known. */
+  signedIn: boolean | null;
+  /** A remix is being made: Remix waits for it. */
+  remixing: boolean;
+  /** The game's native app for this computer, beside Like; null when it has none. */
+  nativeApp: PlayBarNative | null;
+  /** The game asked to be paid: Studio's purchase sheet covers it. Null with none open. */
+  purchase: PlayPurchaseSheet | null;
+  /** The game sells items: the bar's Store door, and whether its Store is open. Null with no store. */
+  store: PlayBarStore | null;
+}
+
+/** The bar's Store door for a game that sells items. */
+export interface PlayBarStore {
+  /** The Store is open in the game's place, the game hidden under it. */
+  open: boolean;
 }
 
 /** A remix's name in the library, from the game it copies: what main adopts it as and Create shows while it is made. */
@@ -260,6 +329,16 @@ export const remixTitle = (title: string): string => `${title} remix`;
 /** A remix's steps, in order: its files, its models (Git LFS), its packages, its first build. */
 export const RemixStep = { Copy: "copy", Models: "models", Packages: "packages", Build: "build" } as const;
 export type RemixStep = (typeof RemixStep)[keyof typeof RemixStep];
+
+/** Why Remix made nothing, by code: the renderer says each in its own words. Wire values: never rename one. */
+export const PlayRemixRefusal = {
+  /** The game's source on Genex holds no game: its creator never shared its project. */
+  NoProject: "no-project",
+} as const;
+export type PlayRemixRefusal = (typeof PlayRemixRefusal)[keyof typeof PlayRemixRefusal];
+
+/** What a Remix press answers: the new game's library name, or why nothing was made. */
+export type PlayRemixAnswer = string | { refused: PlayRemixRefusal };
 
 /** How far a remix has come (`UiEvent.PlayRemix`): the step it is on, and its bytes when it has any. */
 export interface RemixProgress {
@@ -285,4 +364,8 @@ export interface PlayViewerEvent {
   focusBar?: boolean;
   /** The guest card's Install plugin closed the viewer: the app runs Play's Install plugin. */
   install?: boolean;
+  /** Remix closed the viewer: the app makes the copy of the game it showed. */
+  remix?: boolean;
+  /** The maker's name closed the viewer: the app shows this account's profile. */
+  profile?: string;
 }

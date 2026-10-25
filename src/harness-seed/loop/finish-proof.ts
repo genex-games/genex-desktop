@@ -225,6 +225,20 @@ export async function proofPathsIn(folder: string, names: readonly unknown[]): P
   return paths;
 }
 
+/**
+ * Whether a file the lead names as proof was written after `since` (its clock's time): placed inside
+ * its folder as a read is (by its shape, by the real path, a regular file within the cap); a name it
+ * refuses, or a link that leads out, is never fresh. At most `MAX_PROOF_FILES` names, as read.
+ */
+export async function freshProofIn(folder: string, names: readonly unknown[], since: number): Promise<boolean> {
+  for (const name of askedNames(names).slice(0, MAX_PROOF_FILES)) {
+    const where = await placed(folder, name);
+    const info = "real" in where ? await stat(where.real).catch(() => null) : null;
+    if (info && info.mtimeMs > since) return true;
+  }
+  return false;
+}
+
 /** The names the lead gave, trimmed: anything that is not text is no name. */
 const askedNames = (names: readonly unknown[]): string[] =>
   names.flatMap((name) => (typeof name === "string" && name.trim() ? [name.trim()] : []));

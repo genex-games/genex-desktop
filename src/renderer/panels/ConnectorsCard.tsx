@@ -15,6 +15,7 @@
 import type { JSX, Ref } from "react";
 import { useCallback, useEffect, useImperativeHandle, useState } from "react";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import type { McpConnectorView, McpToolSummary } from "../../shared/mcp.ts";
 import { type McpConnectorDraft, type McpDraft, parseMcpInput } from "../../shared/mcp-import.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -35,6 +36,7 @@ import {
 } from "./connectors/draft.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { PLUGINS_WORDS } from "../words.ts";
+import { SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** What the plugins page's Add menu can ask of the card. */
 export interface ConnectorActions {
@@ -92,16 +94,16 @@ function ImportChoices({
 }): JSX.Element | null {
   if (!imports.length) return null;
   return (
-    <div className="flex flex-col gap-2" aria-label="Imported connectors">
+    <div className="flex flex-col gap-2" aria-label={t("Imported connectors")}>
       <p className="text-sm text-ink-3">
-        Choose a connector to review and connect. Existing configurations stay unchanged.
+        {t("Choose a connector to review and connect. Existing configurations stay unchanged.")}
       </p>
       {imports.map((item) => (
         <Button key={item.connector.id} disabled={drafting} onClick={() => onChoose(item)}>
           {item.connector.name} · {item.connector.transport}
         </Button>
       ))}
-      <Button onClick={onDismiss}>Dismiss remaining imports</Button>
+      <Button onClick={onDismiss}>{t("Dismiss remaining imports")}</Button>
     </div>
   );
 }
@@ -131,11 +133,11 @@ function PluginServerRow({
         <PluginIcon name={title} src={view.icon} />
         <span className="extension-copy">
           <span className="extension-name">{view.title ?? title}</span>
-          <span className="extension-description">Part of {pluginName}</span>
+          <span className="extension-description">{t("Part of {plugin}", { plugin: pluginName })}</span>
         </span>
       </div>
       <Button variant="ghost" onClick={() => onOpenPlugin?.(source.plugin)}>
-        Open {pluginName}
+        {t("Open {plugin}", { plugin: pluginName })}
         <Icon name="chevron-right" size={14} />
       </Button>
     </div>
@@ -181,7 +183,7 @@ function ConnectorList({
           <PluginServerRow key={view.connector.id} view={view} pluginName={owner} onOpenPlugin={actions.onOpenPlugin} />
         );
       })}
-      {noMatch && <p className="extensions-empty">No MCP servers match your search.</p>}
+      {noMatch && <p className="extensions-empty">{t("No MCP servers match your search.")}</p>}
     </>
   );
 }
@@ -199,7 +201,11 @@ function CardNotices({
   const noServers = views !== null && !views.some((view) => !isPluginServer(view)) && !drafting;
   return (
     <>
-      {views === null && !error && <Pending label="Loading MCP servers…" className="extensions-empty" />}
+      {views === null && !error && (
+        <Pending label={t("Loading MCP servers…")} className="py-3">
+          <SkeletonRows count={2} icon />
+        </Pending>
+      )}
       {noServers && (
         <div className="extension-row extension-servers-empty">
           <span className="extension-icon extension-icon-row extension-icon-make" aria-hidden="true">
@@ -428,12 +434,12 @@ export function ConnectorsCard({
     <section data-testid="mcp-connectors" className="extensions-section">
       <div className="extensions-section-heading">
         <h2>
-          MCP servers
+          {t("MCP servers")}
           {ownCount > 0 && <span className="ml-2 text-ink-3">{ownCount}</span>}
         </h2>
-        <Button variant="ghost" aria-label="Add connector" onClick={addConnector}>
+        <Button variant="ghost" aria-label={t("Add connector")} onClick={addConnector}>
           <Icon name="plus" size={14} />
-          Add server
+          {t("Add server")}
         </Button>
       </div>
       <CardNotices views={views} error={error} drafting={Boolean(d.draft)} />

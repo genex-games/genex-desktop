@@ -10,6 +10,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { t } from "../../shared/i18n.ts";
 
 /** New places are XML place files. */
 export const PLACE_EXTENSION = ".rbxlx";
@@ -38,11 +39,14 @@ export const CreatePlaceRefusal = {
 } as const;
 export type CreatePlaceRefusal = (typeof CreatePlaceRefusal)[keyof typeof CreatePlaceRefusal];
 
+/** Each refusal in the person's words: New Roblox game is the panel's press. */
 const MESSAGE = {
-  [CreatePlaceRefusal.BadName]: (name: string) => `${JSON.stringify(name)} isn't a plain .rbxlx place name.`,
-  [CreatePlaceRefusal.Exists]: (name: string) => `${name} is already in this game's folder, so Genex leaves it.`,
-  [CreatePlaceRefusal.Linked]: (folder: string) => `${folder} is a link, so Genex writes no place there.`,
-  [CreatePlaceRefusal.NotFolder]: (folder: string) => `${folder} isn't a folder.`,
+  [CreatePlaceRefusal.BadName]: (name: string) =>
+    t("{name} isn't a plain .rbxlx place name.", { name: JSON.stringify(name) }),
+  [CreatePlaceRefusal.Exists]: (name: string) =>
+    t("{name} is already in this game's folder, so Genex leaves it.", { name }),
+  [CreatePlaceRefusal.Linked]: (folder: string) => t("{folder} is a link, so Genex writes no place there.", { folder }),
+  [CreatePlaceRefusal.NotFolder]: (folder: string) => t("{folder} isn't a folder.", { folder }),
 } as const;
 
 /** A place that wasn't written, and why. */

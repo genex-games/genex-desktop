@@ -23,6 +23,7 @@ import { holdInPlace, releaseInPlace } from "./in-place.ts";
 import { changedFiles, keptReport } from "./handback.ts";
 import { commitCopy, removeCopy } from "./pool-merge.ts";
 import { POOL_WORDS, workerBrief } from "./prompts.ts";
+import { noteSandboxRefusal, refusedStart, sandboxRefusalOn, sandboxRefused } from "./sandbox-refusal.ts";
 import {
   eventScope,
   gameGitWrite,
@@ -163,6 +164,9 @@ function copyRefusal(err: unknown): string {
 
 /** `worker_start`: the worker's id once it runs in the background, or why it did not start. */
 export async function startWorker(state: PoolState, args: AnyRecord): Promise<string> {
+  // An engine that refused a worker for a sandbox this computer cannot run refuses every one (sandbox-refusal.ts).
+  const unboxed = sandboxRefusalOn(state.scope.engine, state.scope.clock.now());
+  if (unboxed) return refusedStart(state.scope.ctx, unboxed);
   const ask = askOf(state, args);
   if ("refused" in ask) return ask.refused;
   const room = roomProblem(state);
@@ -318,9 +322,19 @@ async function runWorker(state: PoolState, record: WorkerRecord, ask: StartAsk, 
   if (!isWorking(record)) return ended(state, record, record.state, record.error, report);
   if (!result.ok) {
     const why = clip(result.errorText || result.summary || result.stopReason || "", CLIP_DETAIL);
-    return ended(state, record, WorkerState.Failed, why, report, WorkerStopCode.Error);
+    return ended(state, record, WorkerState.Failed, why, report, failedCode(state, result));
   }
   return ended(state, record, WorkerState.Done, null, report);
+}
+
+/**
+ * Why a worker's session that ended not ok stopped, in the app's code: its engine refused it for a
+ * sandbox this computer cannot run (kept, so no other worker is started on it), else an error.
+ */
+function failedCode(state: PoolState, result: DelegateResult): WorkerStopCode {
+  if (!sandboxRefused(result)) return WorkerStopCode.Error;
+  noteSandboxRefusal(state.scope.engine, result.errorText, state.scope.clock.now());
+  return WorkerStopCode.SandboxUnavailable;
 }
 
 /** What the lead steered into a running worker, all of it, for its next leg; null when nothing waits. */

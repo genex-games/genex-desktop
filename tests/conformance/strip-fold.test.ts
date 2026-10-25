@@ -1,28 +1,51 @@
 /**
- * The stage strip stays one row: its labelled buttons fold into icons together once the row would
- * overflow, and unfold only when the labelled row fits again (`nextFold`, which `useStripFold`
- * feeds with the strip's own widths).
+ * The stage strip makes room in steps instead of letting its first row run under the window's
+ * controls: the views fold into one button, then the plugin buttons move to a second row, then
+ * Sound and Full screen join them. `nextFold` takes the next step while the first row overflows;
+ * `useStripFold` starts again from one row whenever the strip grows, so the step depends only on
+ * the width (the narrowing and widening passes of `tests/e2e/run-stage-strip-fit.mjs`).
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nextFold, UNFOLDED } from "../../src/renderer/panels/stage/strip-fold.ts";
+import { nextFold, STRIP_STEPS, StripFoldStep } from "../../src/renderer/panels/stage/strip-fold.ts";
 
-test("a row that fits keeps its labels", () => {
-  assert.deepEqual(nextFold(UNFOLDED, { scroll: 600, client: 600 }), UNFOLDED);
-  assert.deepEqual(nextFold(UNFOLDED, { scroll: 320, client: 900 }), UNFOLDED);
+test("a first row that fits takes no step", () => {
+  assert.equal(nextFold(StripFoldStep.Full, { row: 600, room: 600 }), StripFoldStep.Full);
+  assert.equal(nextFold(StripFoldStep.Full, { row: 320, room: 900 }), StripFoldStep.Full);
+  assert.equal(nextFold(StripFoldStep.Views, { row: 480, room: 482 }), StripFoldStep.Views);
+  assert.equal(
+    nextFold(StripFoldStep.Full, { row: 600.6, room: 600 }),
+    StripFoldStep.Full,
+    "a fraction past the room is rounding",
+  );
 });
 
-test("a row that would overflow folds, remembering how wide its labels need it to be", () => {
-  assert.deepEqual(nextFold(UNFOLDED, { scroll: 721, client: 600 }), { folded: true, needed: 721 });
+test("an overflowing first row folds the views first, then moves the plugin buttons, then Sound and Full screen", () => {
+  assert.deepEqual(STRIP_STEPS, [StripFoldStep.Full, StripFoldStep.Views, StripFoldStep.Plugins, StripFoldStep.Game]);
+  assert.equal(nextFold(StripFoldStep.Full, { row: 586, room: 482 }), StripFoldStep.Views);
+  assert.equal(nextFold(StripFoldStep.Views, { row: 561, room: 482 }), StripFoldStep.Plugins);
+  assert.equal(nextFold(StripFoldStep.Plugins, { row: 258, room: 249 }), StripFoldStep.Game);
 });
 
-test("a folded row unfolds only once the strip is as wide as the labelled row needed", () => {
-  const folded = nextFold(UNFOLDED, { scroll: 720, client: 600 });
-  assert.deepEqual(nextFold(folded, { scroll: 480, client: 719 }), folded, "one pixel short stays folded");
-  assert.deepEqual(nextFold(folded, { scroll: 480, client: 720 }), UNFOLDED);
+test("the last step stays when even its first row overflows", () => {
+  assert.equal(nextFold(StripFoldStep.Game, { row: 220, room: 200 }), StripFoldStep.Game);
 });
 
-test("a folded row that still overflows stays folded and keeps what its labels needed", () => {
-  const folded = nextFold(UNFOLDED, { scroll: 720, client: 600 });
-  assert.deepEqual(nextFold(folded, { scroll: 520, client: 400 }), folded);
+test("from one row, the steps a width needs are the ones whose first row overflowed", () => {
+  // The first row's reach at each step for a game with two views, Play/Stop, Reload, Sound, Full
+  // screen, Make multiplayer and Publish, as measured in the app.
+  const reach = { full: 586, views: 561, plugins: 258, game: 178 } as const;
+  const settle = (room: number) => {
+    let step: StripFoldStep = StripFoldStep.Full;
+    for (const _ of STRIP_STEPS) {
+      const next = nextFold(step, { row: reach[step], room });
+      if (next === step) break;
+      step = next;
+    }
+    return step;
+  };
+  assert.equal(settle(609), StripFoldStep.Full);
+  assert.equal(settle(570), StripFoldStep.Views);
+  assert.equal(settle(489), StripFoldStep.Plugins);
+  assert.equal(settle(249), StripFoldStep.Game);
 });

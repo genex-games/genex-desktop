@@ -20,6 +20,7 @@ import {
   studioRunning,
   tasklistRunning,
 } from "../../src/plugins/roblox/studio-locate.ts";
+import { personEnv } from "../../src/plugins/roblox/studio-client.ts";
 
 /** One entry of the fake disk: a file, a folder, or a link to another path. */
 type Entry = { kind: "file" | "dir"; mtimeMs?: number } | { kind: "link"; to: string };
@@ -292,6 +293,17 @@ describe("Roblox Studio on Windows", () => {
   it("reads LOCALAPPDATA whatever its case", async () => {
     const found = await locateStudio(windows(WINDOWS_INSTALLED, { LocalAppData: LOCAL }).deps);
     assert.equal(found.installed, true);
+  });
+
+  it("finds Studio in the person's own profile when the host gave the bridge a profile of its own", async () => {
+    // The host points a plugin server's profile folders at the connection's own home, as it does HOME.
+    const own = "C:\\Users\\maker\\AppData\\Roaming\\Genex\\plugins\\roblox\\mcp\\demo\\home";
+    const hosted = { USERPROFILE: own, APPDATA: `${own}\\AppData\\Roaming`, LOCALAPPDATA: `${own}\\AppData\\Local` };
+    const missed = await locateStudio(windows(WINDOWS_INSTALLED, hosted).deps);
+    assert.deepEqual(missed, { installed: false, miss: StudioMiss.NotInstalled }, "the host's profile holds no Studio");
+    const found = await locateStudio(windows(WINDOWS_INSTALLED, personEnv(hosted, "win32", "C:\\Users\\maker")).deps);
+    assert.equal(found.installed, true);
+    assert.equal(found.installed && found.install.mcp, `${ROBLOX}\\mcp.bat`);
   });
 });
 

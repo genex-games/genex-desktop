@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import {
   CHARSET_BUDGET,
   HOOK_TAG,
@@ -15,6 +16,7 @@ import {
   cspNote,
   findMetaCsp,
   gameRequestAllowed,
+  packedBuildFile,
   previewNavigationAllowed,
   rewriteGameHtml,
   shimTag,
@@ -25,6 +27,7 @@ import {
   servedRelative,
   shouldRewrite,
   tooLargeNote,
+  unpackedResponse,
 } from "../../src/main/page-serve.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -526,5 +529,41 @@ describe("where a game page may navigate (SECUI-3)", () => {
       assert.equal(previewNavigationAllowed(url, ports, { mainFrame: false }), true, url);
       assert.equal(previewNavigationAllowed(url, ports, { mainFrame: true }), false, url);
     }
+  });
+});
+
+describe("a Unity WebGL build packed with Brotli or gzip", () => {
+  it("is served unpacked, as the file inside; any other packed file is served as it is", () => {
+    const rows: Array<[string, { packing: string; type: string } | null]> = [
+      ["web/Build/web.wasm.br", { packing: "br", type: "application/wasm" }],
+      ["web/Build/web.framework.js.br", { packing: "br", type: "text/javascript; charset=utf-8" }],
+      ["web/Build/web.data.gz", { packing: "gzip", type: "application/octet-stream" }],
+      ["web/Build/web.symbols.json.br", { packing: "br", type: "application/json" }],
+      ["Build/arena.wasm.gz", { packing: "gzip", type: "application/wasm" }],
+      ["web/Build/web.loader.js", null],
+      ["web/Build/web.wasm", null],
+      ["web/Build/web.data.unityweb", null],
+      ["web/Build/.wasm.br", null],
+      ["assets/level.json.gz", null],
+      ["web/levels/map.data.gz", null],
+      ["web/Build/notes.txt.br", null],
+    ];
+    for (const [relative, packed] of rows) assert.deepEqual(packedBuildFile(relative), packed, relative);
+  });
+
+  it("streams the file inside, never cached", async () => {
+    const dir = await tmpDir("packed-build-");
+    const wasm = Buffer.from("\0asm the arena's engine, as Unity wrote it");
+    const packedFile = path.join(dir, "web.wasm.br");
+    fs.writeFileSync(packedFile, zlib.brotliCompressSync(wasm));
+    const response = unpackedResponse(packedFile, { packing: "br", type: "application/wasm" });
+    assert.equal(response.headers.get("content-type"), "application/wasm");
+    assert.equal(response.headers.get("content-encoding"), null, "the page gets the file itself");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), wasm);
+    const gzipped = path.join(dir, "web.data.gz");
+    fs.writeFileSync(gzipped, zlib.gzipSync(Buffer.from("the arena's data")));
+    const data = unpackedResponse(gzipped, { packing: "gzip", type: "application/octet-stream" });
+    assert.equal(await data.text(), "the arena's data");
   });
 });

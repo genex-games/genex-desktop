@@ -23,6 +23,19 @@ export type FileLinkStyle = (typeof FileLinkStyle)[keyof typeof FileLinkStyle];
 /** The platform main answered, or none outside a window (tests): the macOS words then. */
 const platformHere = (): string => (typeof document === "undefined" ? "" : hostPlatform());
 
+/** A file's own name, from a path written out in full ("/Users/me/Downloads/notes.txt"); null for a short name. */
+export function fileNameOfPath(name: string): string | null {
+  const url = /^file:\/\//i.test(name);
+  if (!url && !/^(?:~|\/|[A-Za-z]:[\\/]|\\\\)/.test(name)) return null;
+  const last = name.split(/[\\/]/).filter(Boolean).pop() ?? null;
+  if (!last || !url) return last;
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
 /** The hover text of a file link: what a click does, then where the file is when the label hides it. */
 export function fileLinkTitle(link: ChatFileLink, label: string, platform: string = platformHere()): string {
   const words = chatFileWords(platform);

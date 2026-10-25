@@ -15,8 +15,11 @@
  * navigate to at all ({@link gameRequestAllowed}, {@link previewNavigationAllowed}).
  */
 
+import { createReadStream } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { createBrotliDecompress, createGunzip } from "node:zlib";
 import type { ShimOptions } from "../substrate/preview-port.ts";
 import { isPreviewCdnRead } from "../substrate/preview-network.ts";
 import { isInside } from "../substrate/paths.ts";
@@ -523,6 +526,52 @@ export function servedRelative(pathname: string): string | null {
     return null;
   }
   return decoded.replace(/^\/+/, "") || "index.html";
+}
+
+/** How a packed file of a Unity WebGL build was packed, by its ending. */
+const PACKINGS = { ".br": "br", ".gz": "gzip" } as const;
+type Packing = (typeof PACKINGS)[keyof typeof PACKINGS];
+
+/** The parts of a Unity WebGL build Unity packs, and the type each is served as once unpacked. */
+const UNITY_PACKED_PARTS: ReadonlyArray<readonly [string, string]> = [
+  [".framework.js", "text/javascript; charset=utf-8"],
+  [".symbols.json", "application/json"],
+  [".wasm", "application/wasm"],
+  [".data", "application/octet-stream"],
+];
+
+/** A packed build file: how it was packed, and the type of the file inside. */
+export interface PackedBuildFile {
+  packing: Packing;
+  type: string;
+}
+
+/**
+ * A file of a Unity WebGL build packed with Brotli or gzip (`Build/<name>.wasm.br`, Unity's default
+ * compression): Unity's loader reads it as a web server unpacks it (`Content-Encoding`), so the
+ * game's file server unpacks it and serves the file inside. Null for every other file, which is
+ * served as it is: a game that fetches its own `.gz` and unpacks it keeps doing so.
+ */
+export function packedBuildFile(relative: string): PackedBuildFile | null {
+  const parts = relative.split("/");
+  const name = parts.at(-1) ?? "";
+  if (parts.at(-2) !== "Build") return null;
+  const ending = Object.keys(PACKINGS).find((packed) => name.endsWith(packed)) as keyof typeof PACKINGS | undefined;
+  if (!ending) return null;
+  const unpacked = name.slice(0, -ending.length);
+  const part = UNITY_PACKED_PARTS.find(([suffix]) => unpacked.endsWith(suffix) && unpacked.length > suffix.length);
+  return part ? { packing: PACKINGS[ending], type: part[1] } : null;
+}
+
+/** The file inside a packed build file (`packedBuildFile`), streamed as the page reads it, never cached. */
+export function unpackedResponse(file: string, packed: PackedBuildFile): Response {
+  const unpack = packed.packing === PACKINGS[".br"] ? createBrotliDecompress() : createGunzip();
+  const source = createReadStream(file).on("error", (error) => unpack.destroy(error));
+  const body = Readable.toWeb(source.pipe(unpack)) as ReadableStream<Uint8Array>;
+  return new Response(body, {
+    status: HttpStatus.Ok,
+    headers: { "content-type": packed.type, "Cache-Control": "no-store" },
+  });
 }
 
 export type Served =

@@ -60,11 +60,15 @@ export interface CapturedImage extends CapturedFile {
 export type FinishCheckStep = 'checking' | 'accepted' | 'rejected' | 'unanswered';
 // ↑ src/shared/finish-check.ts
 
-/** A finish check's round as the host answers it: the reviewer's yes or no with reasons, or no answer and why. */
+/** A finish check's round as the host answers it: the reviewer's yes or no with reasons and what isn't done, or no answer and why. */
 export interface FinishRoundAnswer {
   round: number;
   step: FinishCheckStep;
   reasons?: string[];
+  /** What the reviewer found not done, when it named any. */
+  notDone?: string[];
+  /** What the reviewer found done, in a few words each, when it named any. */
+  done?: string[];
   why?: string;
 }
 // ↑ src/shared/harness-api.ts
@@ -206,6 +210,11 @@ export interface StudioToolSpec {
     properties: Record<string, { type: string; description?: string }>;
     required?: string[];
   };
+  /**
+   * Called only when the person asks for it in words (an Auto chat's Loop start): it doesn't make the
+   * session an interview, so messages still join it mid-turn, and no nudge names it.
+   */
+  onlyWhenAsked?: boolean;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -977,7 +986,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode" | "pi";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "pi";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -1006,7 +1015,8 @@ export interface EngineAccount {
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
  * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
+ * in the embedded terminal (which keeps every provider it signs in to), Grok Build and Cursor through
+ * their own sign-in command there (the person's account, in the browser), `none` for an engine with
  * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
@@ -1032,15 +1042,16 @@ export type Billing = "local" | "subscription" | "metered";
 
 /** What the sign-in card and the Models room say for a subscription. */
 export interface SignInCopy {
-  /** "your Claude subscription": the thing the user already pays for. */
-  readonly product: string;
   readonly card: string;
   readonly account: string;
   readonly install: string;
   /** The vendor's own install page for the CLI. */
   readonly installUrl: string;
   readonly get: string;
-  readonly who: string;
+  /** The flat sign-in card's line: the thing the user already pays for, put to work. */
+  readonly useLine: string;
+  /** The sign-in card's line while the subscription is not signed in: why, and who handles the password. */
+  readonly signInLine: string;
 }
 // ↑ src/shared/providers.ts
 
@@ -1055,6 +1066,8 @@ export interface ProviderInfo {
   readonly billing: Billing;
   /** Subscriptions only. */
   readonly signIn: SignInCopy | null;
+  /** Shipped before a live test proved it: Settings and the picker say Beta. */
+  readonly beta?: true;
 }
 // ↑ src/shared/providers.ts
 
@@ -1110,6 +1123,13 @@ export interface EngineDescriptor {
 }
 // ↑ src/shared/engine-descriptor.ts
 
+export type Locale = 'en' | 'ru' | 'es' | 'pt-BR' | 'de' | 'fr' | 'ja' | 'ko' | 'zh-Hans';
+// ↑ src/shared/locale.ts
+
+/** What Settings remembers: a language, or the computer's. */
+export type LanguageChoice = Locale | "system";
+// ↑ src/shared/locale.ts
+
 export interface StudioSettingsView {
   /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
   learning: boolean;
@@ -1123,8 +1143,10 @@ export interface StudioSettingsView {
   blender?: boolean;
   /** Resume builds automatically after an engine limit resets or the loop restarts; on by default. */
   autoResume?: boolean;
-  /** Let agents control your computer (Settings → Permissions, macOS); off by default. */
+  /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
   computerControl?: boolean;
+  /** The app's language for main's menus, dialogs and notifications; System by default. */
+  language?: LanguageChoice;
 }
 // ↑ src/shared/studio-api.ts
 
@@ -1168,6 +1190,10 @@ export interface StudioActivityItem {
   runId?: string;
   snapshotId?: string;
   undone?: boolean;
+  /** A learned change the person took back themselves (Undo), not one a later restore took back. */
+  undoneByUser?: true;
+  /** A restart of Studio that failed: the one recovery the person must act on. */
+  restartFailed?: true;
   outcome?: RunOutcomeKind;
   /** The run's own plain report, when it wrote one. */
   report?: string;
@@ -1254,6 +1280,12 @@ export interface DelegateResult {
   compacted?: boolean;
   /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
   trace?: ComputerTraceSummary;
+  /**
+   * Genex tool calls the session made after its turn ended (a background task woke it), which no
+   * answer could reach: by the name the agent called it by, without the server's prefix, and its
+   * arguments as JSON.
+   */
+  cutAfterTurn?: Array<{ tool: string; args: string }>;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -2191,6 +2223,11 @@ export interface HarnessHostApi {
       pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
+  /**
+   * The language Genex speaks (Settings, else the computer's): its tag and its own name. An agent
+   * answers Genex's own messages in it (a resume, a continue), and the person in theirs.
+   */
+  "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };
@@ -2240,19 +2277,23 @@ export interface HarnessHostApi {
    * End the held round of a run: the host records its outcome and counts the no's in a row from its
    * own records (`stopped` once they reach the cap). `unanswered` turns the held answer into no
    * answer, with why (a yes that lapsed, a turn that ended); nothing turns a no or no answer into a yes.
+   * `timeLeftMs`, a timed Loop's working time left: with more than `FINISH_TIME_LEFT_MS` no row of
+   * no's stops it (`timeLeft`); an ∞ Loop names none.
    */
   "finish.settle": {
-    params: { project: string; runId: string; round: number; unanswered?: string | null };
-    result: FinishRoundAnswer & { rejections: number; stopped: boolean };
+    params: { project: string; runId: string; round: number; unanswered?: string | null; timeLeftMs?: number | null };
+    result: FinishRoundAnswer & { rejections: number; stopped: boolean; timeLeft?: boolean };
   };
   /**
    * Steer: messages the person sent while the chat's turn works, into the session answering that
    * turn (`chatTurn` is `into`). `accepted` lists what the session took; `how` is how (`SteerDelivery`
-   * in `shared/message-queue.ts`), null when it took nothing. `interrupt: false` takes them only
-   * into a session that reads them mid-turn, and never cuts one short.
+   * in `shared/message-queue.ts`), null when it took nothing. A session is cut only between tool
+   * calls, never inside one. `interrupt: false` takes them only into a session that reads them
+   * mid-turn, and never cuts one short; `native: false` never hands them to it mid-turn: the session
+   * is cut at its next step (a message that changes how the turn runs, steer-switch.ts).
    */
   "engine.steer": {
-    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean };
+    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean; native?: boolean };
     result: { how: SteerDelivery | null; accepted: string[] };
   };
   "coordinator.tool": {
@@ -2564,6 +2605,11 @@ export interface AutopilotCommission {
   roles?: RunRoles;
   /** Request host-owned explicit approval before execution (default off). */
   reviewPlan?: boolean;
+  /**
+   * The person's Keep building tap after a Loop ended with something still to fix: the finished
+   * build reopens, or the next Loop starts, with no turn deciding whether it is a contained change.
+   */
+  keepBuilding?: boolean;
 }
 // ↑ src/shared/protocol.ts
 
@@ -2689,6 +2735,8 @@ export type DispatchAction =
       pickedImages?: number;
       /** Reference files this message saved in the game (relative paths); a rewind with files removes them. */
       references?: string[];
+      /** Every file its attached pictures are saved as in the game (relative), already there or not: a run's lead reads them. */
+      pictureFiles?: string[];
       /** Composer Loop: the chat may start an unattended build when the ask needs one. */
       loop?: LoopCommission;
       /** Composer Autopilot: the chat may launch a build that decomposes into facets and runs until satisfied. */

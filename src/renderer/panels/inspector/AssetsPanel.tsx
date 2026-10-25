@@ -1,5 +1,6 @@
 /** The panel of the run's assets: every job a plugin was asked for, grouped by where it got to, and the modeller's work. */
 import type { JSX } from "react";
+import { t, tc } from "../../../shared/i18n.ts";
 import type { AssetInfo, BlenderNode, RunGraph as RunGraphModel } from "../../run-graph.ts";
 import { runIdOf, truncate } from "../../run-graph.ts";
 import { AssetCardState } from "../../run-graph-assets.ts";
@@ -18,7 +19,7 @@ import {
   stoppedShort,
   trianglesWords,
 } from "./asset-jobs.ts";
-import { Details, Panel, Row, Rows, Section } from "./chrome.tsx";
+import { Details, Panel, PanelRow, Row, Rows, Section } from "./chrome.tsx";
 import { joinDots } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
@@ -38,7 +39,7 @@ function DeliveredPicture({ job, project }: { job: AssetInfo; project: string | 
   if (project && job.preview)
     return <AssetThumbnail project={project} asset={job.preview} companions={[]} fallback={null} quiet />;
   if (src) return <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />;
-  return <span className="absolute inset-0 grid place-items-center text-micro">{kindWord(job) ?? "File"}</span>;
+  return <span className="absolute inset-0 grid place-items-center text-micro">{kindWord(job) ?? t("File")}</span>;
 }
 
 function AssetPicture({
@@ -89,19 +90,25 @@ function JobProblem({ job }: { job: AssetInfo }): JSX.Element | null {
   if (!job.check || job.check.ok) return null;
   return (
     <span className="line-clamp-3 text-xs text-ink-3">
-      Last check couldn’t run: {job.check.error ?? "no reason given"}
+      {t("Last check couldn’t run: {reason}", { reason: job.check.error ?? t("no reason given") })}
     </span>
   );
 }
 
 type DerivedStep = NonNullable<AssetInfo["derived"]>[number];
 
+/** What a plugin did to an asset, and in which plugin when the log names it. */
+function derivedWork(step: DerivedStep): string {
+  const plugin = step.pluginName;
+  const measured = step.size || step.triangles !== null;
+  if (measured) return plugin === null ? t("Measured in a plugin") : t("Measured in {plugin}", { plugin });
+  return plugin === null ? t("Processed in a plugin") : t("Processed in {plugin}", { plugin });
+}
+
 /** A plugin's work on an asset in one line: measured or processed, its size and its triangles. */
 function derivedLine(step: DerivedStep): string {
-  const plugin = step.pluginName ?? "a plugin";
-  const measured = step.size || step.triangles !== null;
   return joinDots([
-    measured ? `Measured in ${plugin}` : `Processed in ${plugin}`,
+    derivedWork(step),
     step.size ? step.size.map((n) => Number(n.toFixed(2))).join(" × ") : null,
     step.triangles !== null ? trianglesWords(step.triangles) : null,
   ]);
@@ -159,14 +166,14 @@ function BlenderSection({
 }): JSX.Element | null {
   if (!blender) return null;
   const modelled = blender.assets;
+  const title = blender.version
+    ? t("Modelled in Blender {version}", { version: blender.version })
+    : t("Modelled in Blender");
   return (
-    <Section
-      label={`Modelled in Blender${blender.version ? ` ${blender.version}` : ""} · ${modelled.length}`}
-      gap="gap-2"
-    >
+    <Section label={`${title} · ${modelled.length}`} gap="gap-2">
       <span className="flex items-center gap-2 text-body-sm text-ink-3">
         <BlenderLogo height={12} />
-        Every part can reach for it when a shape needs real modelling.
+        {t("Every part can reach for it when a shape needs real modelling.")}
       </span>
       {modelled.map((asset) => (
         <div key={asset.name + asset.at} className="flex items-start gap-3">
@@ -191,13 +198,13 @@ function BlenderSection({
 function jobGroups(jobs: AssetInfo[]): Array<[string, AssetInfo[]]> {
   const made = jobs.filter((job) => job.state === AssetCardState.Delivered);
   return [
-    ["Failed", jobs.filter((job) => job.state === AssetCardState.Failed)],
-    ["Making", jobs.filter(isMaking)],
+    [t("Failed"), jobs.filter((job) => job.state === AssetCardState.Failed)],
+    [t("Making"), jobs.filter(isMaking)],
     ...stoppedGroups(jobs),
     [ASSET_JOB_WORDS.notFinishedGroup, jobs.filter((job) => job.state === AssetCardState.Unfinished)],
-    ["Not in your game yet", made.filter((job) => job.inGame === false)],
-    ["In your game", made.filter((job) => job.inGame)],
-    ["Delivered", made.filter((job) => job.inGame === undefined)],
+    [t("Not in your game yet"), made.filter((job) => job.inGame === false)],
+    [t("In your game"), made.filter((job) => job.inGame)],
+    [tc("asset group", "Delivered"), made.filter((job) => job.inGame === undefined)],
   ];
 }
 
@@ -206,7 +213,8 @@ function assetsSub(jobs: AssetInfo[], modelled: AssetInfo[]): string {
   const made =
     jobs.filter((job) => job.state === AssetCardState.Delivered).length + modelled.filter((item) => item.ok).length;
   const plugins = [...new Set(jobs.map((job) => job.pluginName ?? job.source))];
-  return [made ? `${made} made for this build` : "Nothing made yet", ...plugins].join(" · ");
+  const madeWords = made ? t("{count, plural, other {# made for this build}}", { count: made }) : t("Nothing made yet");
+  return [madeWords, ...plugins].join(" · ");
 }
 
 function AssetDetails({
@@ -223,12 +231,12 @@ function AssetDetails({
     ...modelled.map((asset) => asset.file ?? ""),
   ];
   return (
-    <Row label="Technical details">
+    <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
       <Details
         rows={[
-          ["run", runIdOf(graph)],
-          ["files", joinDots(files) || null],
-          ["jobs", joinDots(jobs.map((job) => job.jobId)) || null],
+          [t("run"), runIdOf(graph)],
+          [t("files"), joinDots(files) || null],
+          [t("jobs"), joinDots(jobs.map((job) => job.jobId)) || null],
         ]}
       />
     </Row>
@@ -247,7 +255,9 @@ function blenderViews(modelled: AssetInfo[]): Array<{ item: AssetInfo; path: str
 export function AssetsPanel(props: InspectorProps): JSX.Element {
   const { graph, blender, assets, project } = props;
   const partNumber = (facetId: string | null): string =>
-    facetId ? `Part ${graph.facets.findIndex((facet) => facet.facetId === facetId) + 1}` : "Chat";
+    facetId
+      ? t("Part {number}", { number: graph.facets.findIndex((facet) => facet.facetId === facetId) + 1 })
+      : t("Chat");
   const jobs = assets?.jobs ?? [];
   const modelled = blender?.assets ?? [];
   const openBlender = (asset: AssetInfo): void => {
@@ -256,7 +266,7 @@ export function AssetsPanel(props: InspectorProps): JSX.Element {
     const items = views.map(({ item, path }) => ({
       path,
       src: null,
-      title: `Modelled in Blender: ${item.name}`,
+      title: t("Modelled in Blender: {name}", { name: item.name }),
       caption: `${partNumber(item.facetId)}${item.triangles !== null ? ` · ${trianglesWords(item.triangles)}` : ""}`,
     }));
     props.onLight(
@@ -270,8 +280,8 @@ export function AssetsPanel(props: InspectorProps): JSX.Element {
   return (
     <Panel
       id={GraphSelection.Assets}
-      label="Assets"
-      title="Assets"
+      label={t("Assets")}
+      title={t("Assets")}
       sub={assetsSub(jobs, modelled)}
       onPrev={props.onPrev}
       onNext={props.onNext}

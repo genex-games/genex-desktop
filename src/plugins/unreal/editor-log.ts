@@ -56,7 +56,7 @@ const BIND_FAILED =
 
 const MESSAGE = {
   PortBlocked: (port: number) =>
-    `Unreal couldn't open Genex's connection on port ${port}, so it won't answer. Ask the user to quit Unreal and open the game again from the Unreal button.`,
+    `Unreal couldn't open Genex's connection on port ${port}, so it won't answer. Call unreal__open-editor: it ends that Unreal and opens the game again.`,
 } as const;
 
 /**

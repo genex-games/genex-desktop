@@ -18,6 +18,7 @@ export const CoreFact = {
   UnrealPlugin: "unreal-plugin",
   GodotProject: "godot-project",
   UnityProject: "unity-project",
+  RobloxProject: "roblox-project",
   BlenderAssets: "blender-assets",
 } as const;
 export type CoreFact = (typeof CoreFact)[keyof typeof CoreFact];

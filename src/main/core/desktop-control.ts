@@ -36,7 +36,7 @@ export interface DesktopControlOptions {
   connect: (binary: string) => Promise<DesktopDriver>;
   /** Whether an app is the studio itself: never driven, so no agent can answer its own consent card. */
   ownApp: (app: DesktopApp) => boolean;
-  /** Drive a VM's desktop rather than this Mac's (`GENEX_COMPUTER_VM`): every app inside it is the VM's. */
+  /** Drive a VM's desktop rather than this computer's (`GENEX_COMPUTER_VM`): every app inside it is the VM's. */
   vm?: boolean;
   /** Told how many sessions hold the computer, whenever it changes: the stop shortcut lives while any do. */
   onActive?: (count: number) => void;

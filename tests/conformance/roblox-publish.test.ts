@@ -24,7 +24,7 @@ import {
   reviewPublish,
 } from "../../src/plugins/roblox/publish.ts";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
-import { assistGrants } from "../../src/main/core/desktop-assist.ts";
+import { assistGrants, engineAppIds } from "../../src/main/core/desktop-assist.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { ConsentChoice, consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
 import {
@@ -242,7 +242,8 @@ describe("first-publish publishes a place never on Roblox, under the game's name
 });
 
 describe("the manifest's first publish", () => {
-  it("the panel's Publish to Roblox and the agent's first-publish both ask on a card, naming the game", async () => {
+  // Flipped: the person's own press is the go-ahead (Studio's Publish button hands it to the agent); only the agent's call asks.
+  it("the agent's first-publish asks on a card naming the game; the person's Publish to Roblox press asks nothing", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const action = manifest.actions?.find((entry) => entry.name === RobloxAction.FirstPublish);
     assert.ok(action);
@@ -253,17 +254,18 @@ describe("the manifest's first publish", () => {
     assert.deepEqual(tool.facts, ["roblox-project"]);
     assert.equal(tool.parameters.properties.name?.type, "string");
     assert.deepEqual(tool.confirmationInput, { parameter: "name", label: "Name on Roblox" });
-    for (const card of [action.confirmation ?? "", tool.confirmation ?? ""]) {
-      assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
-      assert.match(card, /your Roblox account/);
-      assert.match(card, /privacy/);
-      assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
-    }
+    assert.equal(action.confirmation, undefined);
+    const card = tool.confirmation ?? "";
+    assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
+    assert.match(card, /your Roblox account/);
+    assert.match(card, /privacy/);
+    assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
   });
 });
 
 describe("the manifest's Publish an update", () => {
-  it("the panel action and the agent tool both ask on a card; the action runs only in a real profile", async () => {
+  // Flipped: the person's press asks nothing; the agent's call still asks on a card.
+  it("the agent tool asks on a card, the person's press doesn't; the action runs only in a real profile", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const action = manifest.actions?.find((entry) => entry.name === RobloxAction.PublishUpdate);
     assert.ok(action);
@@ -273,11 +275,11 @@ describe("the manifest's Publish an update", () => {
     assert.ok(tool);
     assert.deepEqual(tool.facts, ["roblox-project"]);
     assert.equal(tool.needs, undefined, "the chat's next turn clicks it; the call itself waits on no one");
-    for (const card of [action.confirmation ?? "", tool.confirmation ?? ""]) {
-      assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
-      assert.match(card, /your Roblox account/);
-      assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
-    }
+    assert.equal(action.confirmation, undefined);
+    const card = tool.confirmation ?? "";
+    assert.ok(card.length > 0 && card.length <= 300, `${card.length} characters`);
+    assert.match(card, /your Roblox account/);
+    assert.ok(card.includes(PUBLISH_CLICK_PATH), card);
   });
 });
 
@@ -506,11 +508,14 @@ describe("the agent's card and the assist turn, through a real core with a fake 
     assert.equal(posted.length, 1);
     assert.equal(posted[0]?.text, `Roblox Studio asks: ${publishTask("obby")}`);
     assert.equal(posted[0]?.thread, threadId);
+    const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const grant = assistGrants(core).live(threadId);
-    assert.deepEqual(grant?.apps, new Set(["com.Roblox.RobloxStudio"]), "the turn may click Roblox Studio only");
+    // Studio as this system names it: its bundle id on a Mac, its executable on Windows.
+    const studio = engineAppIds(manifest.engine?.apps);
+    assert.deepEqual(grant?.apps, new Set(studio), "the turn may click Roblox Studio only");
+    assert.equal(studio.length, 1);
     assert.equal(grant?.messageId, posted[0]?.clientId);
 
-    const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
     const entries = toEntries(await core.store.listEvents(threadId)).filter(
       (entry) => (entry as { consentId?: string }).consentId,
     ) as Array<Parameters<typeof consentTitle>[0]>;

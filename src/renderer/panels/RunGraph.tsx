@@ -1,3 +1,4 @@
+import type { KeepBuildingTap } from "../keep-building.ts";
 import { gridTransform } from "../canvas-view.ts";
 import { PerformanceComponent, PerformanceMarkName } from "../../shared/performance.ts";
 import { markPerformance, PerformanceBoundary } from "../performance.tsx";
@@ -32,11 +33,16 @@ import {
   statusLine,
 } from "../run-steps.ts";
 import type { AgentScreenFrame } from "../../shared/agent-screen.ts";
+import { RunState } from "../../shared/run-state.ts";
+import { t } from "../../shared/i18n.ts";
+import type { HistoryEntry } from "../build-progress.ts";
 import { leadFrameOf } from "../state/agent-screens.ts";
 import { useAgentScreens } from "../state/hooks.ts";
 import { GraphSelection, isPartSelection, partOf, partSelection } from "./inspector/selection.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
-import { BuildStatus, type EarlierBuild, PlayButton, ZoomPill } from "./run-graph/chrome.tsx";
+import { keyTakenElsewhere } from "./keyboard.ts";
+import { barPlay } from "./run-graph/bar-shape.ts";
+import { BuildStatus, type BuildTabs, PlayButton, ZoomPill } from "./run-graph/chrome.tsx";
 import { GateButton, GateTip, gateWords } from "./run-graph/gates.tsx";
 import {
   AssetsTile,
@@ -48,12 +54,13 @@ import {
   StartNode,
   StepNode,
 } from "./run-graph/nodes.tsx";
-import { runProgress, useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
+import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
 import { type ReferenceFrame, useReferenceFrames } from "./run-stills.ts";
-import { StageLoading } from "./stage/LiveLoaderArt.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { Skeleton, SkeletonLines } from "../ui/Skeleton.tsx";
 
 export { gateWords } from "./run-graph/gates.tsx";
 export { assetsStatus } from "./inspector/asset-jobs.ts";
@@ -65,8 +72,10 @@ interface Props {
   onShowAsset?: (jobId: string) => void;
   /** Follow up in chat: the composer takes a chip naming the node; null when there is no chat to reply in. */
   onReply: ((reply: Reply) => void) | null;
-  /** Set while an earlier build is shown: its name, and the way back to the latest one. */
-  earlier?: EarlierBuild | null;
+  /** Keep building on what the run left, in the chat that owns it; null when there is no chat. */
+  onKeepBuilding?: KeepBuildingTap | null;
+  /** The chat's builds, as the bar's tabs, and the one on show. */
+  tabs?: BuildTabs | null;
   /** The stage's toast channel: this panel's own Play/Make it live refuse for ordinary reasons. */
   onNotice: Notify;
 }
@@ -95,12 +104,6 @@ const EDGE: Record<string, { stroke: string; strokeDasharray?: string; strokeLin
 function zoomLevel(k: number): "far" | "mid" | "near" {
   if (k < FAR) return "far";
   return k >= NEAR ? "near" : "mid";
-}
-
-/** Whether a key press landed in a field that owns its own keys. */
-function typingIn(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 }
 
 /**
@@ -168,7 +171,7 @@ function useGraphKeys(overlays: Overlays, fitAll: () => void, step: (dir: number
       step(dir);
     };
     const onKey = (event: KeyboardEvent): void => {
-      if (typingIn(event.target)) return;
+      if (keyTakenElsewhere(event)) return;
       if (event.key === "Escape") {
         // One press, one dismissal: what this panel closes must not also reach the chat behind it.
         if (closeTopmost()) event.stopPropagation();
@@ -259,15 +262,18 @@ function turnActions(graph: BuildsModel["graph"], onShowLive: Props["onShowLive"
   return { hasBuild, play: (): void => onShowLive?.(), openJob: (): void => {} };
 }
 
-/** Over the hidden canvas until the run's recorded outcome arrives: the stage's loader. */
+/** Over the hidden canvas until the run's recorded outcome arrives: the graph's shape, on its dots. */
 function OutcomePending(): JSX.Element {
   return (
-    <div
-      data-builds-loading
-      className="stage-loader-late absolute inset-0 grid place-items-center p-8"
-      style={{ visibility: "visible" }}
-    >
-      <StageLoading label="Loading builds" />
+    <div data-builds-loading className="absolute inset-0 bg-canvas" style={{ visibility: "visible" }}>
+      <Pending label={t("Loading builds")} className="skeleton-graph">
+        <SkeletonLines widths={[50, 110]} className="w-[110px]" />
+        <span className="skeleton-graph-column">
+          <Skeleton width={208} height={124} radius={14} />
+          <Skeleton width={208} height={124} radius={14} />
+        </span>
+        <Skeleton width={208} height={124} radius={14} />
+      </Pending>
     </div>
   );
 }
@@ -276,7 +282,8 @@ export const RunGraph = memo(function RunGraph({
   graph: suppliedGraph,
   project,
   onReply,
-  earlier = null,
+  onKeepBuilding = null,
+  tabs = null,
   onNotice,
   onShowLive,
   onShowAsset,
@@ -304,6 +311,7 @@ export const RunGraph = memo(function RunGraph({
   useGraphKeys(overlays, camera.fitAll, step);
   const actions = useCanvasActions(overlays, camera.moved);
   const { hasBuild, play, openJob } = useBuildActions(project, model, { onShowLive, onShowAsset, onNotice });
+  const playBar = barPlay(hasBuild, play, onShowLive);
 
   // Keep the viewport mounted for measurements/listeners while hiding non-authoritative fallback totals.
   return (
@@ -316,10 +324,10 @@ export const RunGraph = memo(function RunGraph({
         {!model.loaded && <OutcomePending />}
         <BuildStatusClock
           model={model}
-          earlier={earlier}
+          tabs={tabs}
           action={
-            hasBuild ? (
-              <PlayButton quiet={graph.active} label={graph.active ? "Play latest" : "Play"} onPlay={play} />
+            playBar ? (
+              <PlayButton quiet={graph.active} label={graph.active ? t("Play latest") : t("Play")} onPlay={playBar} />
             ) : null
           }
         />
@@ -360,6 +368,7 @@ export const RunGraph = memo(function RunGraph({
               onStep={step}
               onOpenJob={openJob}
               onReply={onReply}
+              onKeepBuilding={onKeepBuilding}
               onNotice={onNotice}
               onPlay={hasBuild ? play : null}
             />
@@ -384,6 +393,7 @@ function SelectedPanel({
   onStep,
   onOpenJob,
   onReply,
+  onKeepBuilding,
   onNotice,
   onPlay,
 }: {
@@ -397,6 +407,7 @@ function SelectedPanel({
   onStep: (dir: number) => void;
   onOpenJob: (job: AssetInfo) => void;
   onReply: Props["onReply"];
+  onKeepBuilding: KeepBuildingTap | null;
   onNotice: Props["onNotice"];
   onPlay: (() => Promise<void> | void) | null;
 }): JSX.Element {
@@ -426,6 +437,7 @@ function SelectedPanel({
       onLight={(items, index) => overlays.setLight({ items, index })}
       onOpenJob={onOpenJob}
       onReply={onReply}
+      onKeepBuilding={onKeepBuilding}
       onNotice={onNotice}
       onPlay={onPlay}
     />
@@ -711,22 +723,38 @@ const GraphNodes = memo(function GraphNodes({
   );
 });
 
-/** Only elapsed-time text ticks; the graph's nodes and camera stay untouched. */
+/** Opening the only build there is does nothing. */
+const STAY = (): void => {};
+
+/** The bar's tabs: the chat's builds, or, before its history names any, the graph on show as the one. */
+function barTabs(tabs: BuildTabs | null, graph: RunGraphModel, goal: string): BuildTabs {
+  if (tabs?.builds.length) return tabs;
+  const only: HistoryEntry = {
+    runId: graph.runId,
+    rounds: 0,
+    state: graph.active ? RunState.Running : RunState.Finished,
+    startedAt: null,
+    ask: goal,
+    since: null,
+  };
+  return { builds: [only], open: graph.runId, onOpen: tabs?.onOpen ?? STAY };
+}
+
+/** Only the status words and the tabs' clocks tick; the graph's nodes and camera stay untouched. */
 function BuildStatusClock({
   model,
-  earlier,
+  tabs,
   action,
 }: {
   model: BuildsModel;
-  earlier: EarlierBuild | null;
+  tabs: BuildTabs | null;
   action: ReactNode;
 }): JSX.Element {
   const now = useNow(model.graph.active);
   return (
     <BuildStatus
       status={statusLine(model.graph, model.outcome, model.rows, now)}
-      earlier={earlier}
-      progress={earlier ? null : runProgress(model, now)}
+      tabs={barTabs(tabs, model.graph, model.run.goal)}
       action={action}
     />
   );

@@ -299,6 +299,23 @@ export interface StillExposure {
   litFraction: number;
 }
 
+/**
+ * The exposure a still needs to be a picture rather than a blank or loading screen, on the same
+ * numbers as Genex's cover gate: a mean of at least 0.11 (a game's dark start menu measured 0.117),
+ * at most 85% near-black samples, and a spread of at least 0.04 (one flat colour has none).
+ */
+export const STILL_EXPOSURE_FLOOR = { MinMean: 0.11, MaxNearBlack: 0.85, MinSpread: 0.04 } as const;
+
+/** Whether a still is too dark to show anything ({@link STILL_EXPOSURE_FLOOR}). */
+export const isTooDarkStill = (stats: StillExposure): boolean =>
+  stats.lumaMean < STILL_EXPOSURE_FLOOR.MinMean || stats.nearBlackFraction > STILL_EXPOSURE_FLOOR.MaxNearBlack;
+
+/** Whether a still is one flat colour ({@link STILL_EXPOSURE_FLOOR}). */
+export const isFlatStill = (stats: StillExposure): boolean => stats.lumaStdDev < STILL_EXPOSURE_FLOOR.MinSpread;
+
+/** Whether a still is a blank or loading screen: too dark, or one flat colour. */
+export const isBlankStill = (stats: StillExposure): boolean => isTooDarkStill(stats) || isFlatStill(stats);
+
 /** Which signal answered: the studio's own page shim, the game's own contract, or nothing. Wire values. */
 export const ReadyVia = {
   Shim: "shim",

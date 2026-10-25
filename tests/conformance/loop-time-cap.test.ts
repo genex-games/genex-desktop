@@ -10,9 +10,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { directorBrief } from "../../src/harness-seed/loop/director/briefs.ts";
 import { MESSAGE as OPEN_END } from "../../src/harness-seed/loop/director/open/finish.ts";
 import { closeLeftOpen } from "../../src/harness-seed/loop/director.ts";
+import { StopWhy } from "../../src/harness-seed/loop/finish-contract.ts";
+import { stopRuleWords } from "../../src/harness-seed/loop/finish-check-prompts.ts";
 import { keepRunClock } from "../../src/harness-seed/loop/director/cap-lines.ts";
 import { holdFinish, releaseFinish } from "../../src/harness-seed/loop/director/close-latch.ts";
-import { DirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
+import { DIRECTOR_TOOLS, DirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
 import { turnEndsOf } from "../../src/harness-seed/loop/director/turn-ends.ts";
 import { runWakeLoop } from "../../src/harness-seed/loop/director/wake.ts";
 import { buildCard } from "../../src/harness-seed/loop/director/wake-prompts.ts";
@@ -110,7 +112,7 @@ describe("a Loop's clock under its cap", () => {
     assert.match(TIME_CAP_WORDS.headsUp(15), /^About 15 minutes left: don't start anything big\./);
     assert.match(TIME_CAP_WORDS.timesUp, /^Time's up: put the build together\. Bring in finished worker work/);
     assert.match(TIME_CAP_WORDS.noNewWorkers, /no new workers/);
-    assert.match(TIME_CAP_WORDS.notChecked, /^Not checked by a reviewer/);
+    assert.match(TIME_CAP_WORDS.notChecked, /^The time ran out before a final look/);
   });
 
   it("the time's up never tells a lead to claim a goal it hasn't reached", () => {
@@ -124,6 +126,25 @@ describe("a Loop's clock under its cap", () => {
       baseCommit: "abcdef1234567890",
     } as never);
     assert.doesNotMatch(brief, /save, and call finish\./, "the web brief");
+  });
+
+  it("the web lead hears when no's stop its build, by its kind, and that pictures outrank files", () => {
+    const briefOf = (budgets: Record<string, unknown>) =>
+      directorBrief({
+        run: { runId: "run_o", project: "level", goal: "a level", engine: "codex", budgets },
+        softDeadline: T0 + HOUR_MS,
+        finalDeadline: T0 + HOUR_MS + GRACE_MS,
+        integrationWorktree: "/runs/run_o/integration",
+        baseCommit: "abcdef1234567890",
+      } as never);
+    const timed = briefOf({ wallClockMs: HOUR_MS, completionPolicy: "duration" });
+    assert.ok(
+      timed.includes(stopRuleWords(false, "new commits")),
+      "a timed build goes on past its no's with time left",
+    );
+    assert.match(timed, /pictures outrank files/);
+    const finish = DIRECTOR_TOOLS.find((tool) => tool.name === DirectorTool.Finish);
+    assert.ok(JSON.stringify(finish).includes(stopRuleWords(null)), "finish's own description says it for every build");
   });
 });
 
@@ -227,8 +248,13 @@ describe("the open Loop under its cap", () => {
       assert.match(String(host.prompts()[1]), /^Time's up: put the build together\./, "the wrap-up opens with it");
       assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
       assert.deepEqual(report.notDone, [TIME_CAP_WORDS.notChecked]);
+      assert.deepEqual(
+        report.stillToFix,
+        { done: [], notDone: [], why: StopWhy.Time, hours: 0.5 },
+        "its card says its time ran out before a final look, with Keep building",
+      );
       assert.match(String(report.summary), /Door/);
-      assert.match(String(report.summary), /Not checked by a reviewer/);
+      assert.match(String(report.summary), /time ran out before a final look/);
       assert.deepEqual(
         (report.savePoints as Array<{ label: string }>).map((point) => point.label),
         ["Door"],
@@ -238,7 +264,61 @@ describe("the open Loop under its cap", () => {
   );
 });
 
+describe("a web Loop's close and its result card (director/integrate.ts)", () => {
+  it("a Stop that refused a closing finish's landing pauses the build; one after it landed ends nothing more; a close its time ended lists what is left", async () => {
+    const { endedAs } = await import("../../src/harness-seed/loop/director/integrate.ts");
+    const STOPPED = { ok: false, why: "stopped", reason: "stopped by the user" };
+    const LANDED = { ok: true, how: "judge-pick", line: "made live" };
+    const closing = (over: { cancelled: boolean; state: Record<string, unknown> }, landed: object = STOPPED) => {
+      const loopRun = {
+        ctx: { cancelled: over.cancelled },
+        journal: { phase: "running" },
+        report: {} as Record<string, unknown>,
+        run: { runId: "run_w", project: "plaza", budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "duration" } },
+        state: { integrationHead: "a".repeat(40), ...over.state },
+      };
+      endedAs(loopRun as never, landed);
+      return loopRun;
+    };
+    const finish = { summary: "done", land: true, victory: true, at: 0 };
+    const stopped = closing({ cancelled: true, state: { finish } });
+    assert.equal(stopped.report.executionStatus, "paused", "Resume picks it up");
+    assert.equal(stopped.report.stillToFix, undefined, "a pause keeps its own words, with no list");
+    const late = closing({ cancelled: true, state: { finish } }, LANDED);
+    assert.equal(late.report.executionStatus, "completed", "a Stop after the landing: the build is done, no Resume");
+    const tally = { round: 1, rejections: 1, checking: false, reasons: [], notDone: ["No door"] };
+    const timedOut = closing(
+      {
+        cancelled: false,
+        state: { finish: { ...finish, victory: false }, endedWhy: StopWhy.Time, finishTally: tally },
+      },
+      LANDED,
+    );
+    assert.equal(timedOut.report.executionStatus, "completed");
+    assert.deepEqual(timedOut.report.stillToFix, { done: [], notDone: ["No door"], why: StopWhy.Time, hours: 2 });
+  });
+});
+
 describe("the open Loop past its grace with a claim", () => {
+  it("a no and then the time running out ends on a card that says its time ran out", TEST_TIMEOUT, async () => {
+    const left = "The door doesn't open from the far side.";
+    const host = await godotHost(HALF_HOUR, [
+      async ({ host, tool }) => {
+        await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+        host.pass(31 * MINUTE_MS);
+        return undefined;
+      },
+      ({ host }) => {
+        host.pass(GRACE_MS);
+        return undefined;
+      },
+    ]);
+    host.reviews.push(reviewerAnswer("no", ["The level is built."], "claude-code", [left], ["The level"]));
+    const report = await host.start();
+    assert.equal(report.victory, false);
+    assert.deepEqual(report.stillToFix, { done: ["The level"], notDone: [left], why: StopWhy.Time, hours: 0.5 });
+  });
+
   it("a claim a reviewer gave no answer to is not reported as one that never came", TEST_TIMEOUT, async () => {
     const host = await godotHost(HALF_HOUR, [
       ({ host }) => {
@@ -550,12 +630,18 @@ describe("the web director under its cap", () => {
       };
       const idle = await closeOf(null);
       assert.deepEqual(idle.loopRun.report.notDone, [TIME_CAP_WORDS.notChecked]);
-      assert.match(String(idle.close.summary), /Not checked by a reviewer/, "and the summary the person reads says it");
+      assert.match(
+        String(idle.close.summary),
+        /time ran out before a final look/,
+        "and the summary the person reads says it",
+      );
 
       const unanswered = await closeOf({ round: 1, rejections: 0, checking: false, reasons: [], asked: true });
       assert.ok(!(unanswered.loopRun.report.notDone ?? []).includes(TIME_CAP_WORDS.notChecked));
       const because = String(unanswered.close.because?.({ ok: false, reason: "x" }));
       assert.match(because, /ran out of time before a reviewer said yes to its claim/);
+      const afterNo = await closeOf({ round: 1, rejections: 1, checking: false, reasons: [], notDone: ["No door"] });
+      assert.equal(afterNo.close.ended, StopWhy.Time, "its result card says its time ran out");
     },
   );
 

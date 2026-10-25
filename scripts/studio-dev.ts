@@ -15,6 +15,7 @@ import {
 } from "./studio-dev/ownership.mjs";
 import { writeJson, readVersion, safeChild } from "./studio-dev/files.mjs";
 import { request } from "./studio-dev/client.ts";
+import { pruneUnusedBuilds } from "./studio-dev/builds.ts";
 import { parseStudioDevArgs, parseOperation } from "./studio-dev/args.ts";
 import { freshMachineEnv, freshMachineShell, linkKeychains } from "./studio-dev/fresh-machine.ts";
 import { gamesRootWarnings, liveEnvStripped, liveLaunchEnv } from "./studio-dev/live-env.ts";
@@ -134,11 +135,15 @@ export function devBuildArgs(buildId: string, providers: string): string[] {
   return providers === "fixture" ? [...args, "--commit-counts"] : args;
 }
 
-/** Builds a dev build and starts the app on it, detached, with its output in a fresh log folder. */
+/**
+ * Builds a dev build and starts the app on it, detached, with its output in a fresh log folder;
+ * the builds no profile names any more go.
+ */
 async function launchApp(owner: any, id: string, providers: string) {
   const buildId = `b-${randomUUID()}`;
   await command(process.execPath, devBuildArgs(buildId, providers));
   writeJson(safeChild(owner.root, "launch.json"), { version: 1, profileId: id, ownerId: owner.ownerId, buildId });
+  pruneUnusedBuilds(devRoot(checkout));
   const logRoot = safeChild(devRoot(checkout), `evidence/launch-${buildId}`);
   fs.mkdirSync(logRoot, { mode: 0o700 });
   const out = fs.openSync(path.join(logRoot, "stdout.log"), "wx", 0o600);

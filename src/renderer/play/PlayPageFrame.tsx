@@ -3,7 +3,7 @@
  * bar holding the sidebar's toggle while the sidebar is hidden and, on a profile, Back.
  */
 import type { JSX, ReactNode } from "react";
-import { SIDEBAR_TOGGLE } from "../shell/use-shell-chrome.ts";
+import { SIDEBAR_TOGGLE, SidebarToggle } from "../shell/use-shell-chrome.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { PLAY_WORDS } from "../words.ts";
@@ -36,6 +36,7 @@ export function PlayPageFrame({
             <button
               type="button"
               className="no-drag sidebar-toggle"
+              data-sidebar-toggle={SidebarToggle.Show}
               aria-label={SIDEBAR_TOGGLE.Show}
               aria-controls="studio-sidebar"
               aria-expanded="false"

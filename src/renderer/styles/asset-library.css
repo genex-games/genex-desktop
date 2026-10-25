@@ -1,0 +1,375 @@
+/* ── Save, Share, select several and search on the Assets tab (`panels/assets/`) ──────────────
+ * A card's tag rides its picture in the same glass as its other chips; a share's one line sits under
+ * the card; picked cards wear the selection edge and a check; the search box and its results float
+ * over the dot grid. Every colour is a theme token, so dark and light read the same way. */
+
+/* Saved draws its bookmark filled. */
+.gi-filled path {
+  fill: currentColor;
+}
+
+/* Share in the viewer: Play's tint and edge on the viewer's own button. */
+.lightbox-button.play-tint {
+  background: var(--people-tint);
+  box-shadow: inset 0 0 0 1px var(--people-tint-edge);
+}
+.lightbox-button.play-tint:enabled:hover {
+  background: var(--people-tint-hover);
+}
+.lightbox-button.play-tint:disabled {
+  cursor: progress;
+}
+
+/* The canvas moves cards to make room for a line under a row; they glide there. */
+.asset-card {
+  transition: top var(--duration-medium) var(--ease-smooth-out);
+}
+
+.asset-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px 0 7px;
+  border-radius: 7px;
+  font-family: var(--font-family-content);
+  font-size: 11.5px;
+  line-height: 14px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The pick circle: glass with a ring while not picked, the accent with a white check once picked. */
+.asset-pick {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 55%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 70%, transparent);
+  color: #ffffff;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition:
+    background-color var(--duration-quick) ease-out,
+    box-shadow var(--duration-quick) ease-out;
+}
+.asset-pick[aria-pressed="true"] {
+  background: var(--accent-fill);
+  box-shadow: none;
+}
+
+/* A share's one line under its card: the steps, ✓ On Play, or orange with what to do. */
+.asset-line {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 2px;
+  right: -2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  font-family: var(--font-family-content);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  animation: fade-in var(--duration-fast) ease-out;
+}
+.asset-steps {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: color-mix(in oklab, var(--ink-3) 55%, transparent);
+}
+.asset-steps [data-mark="done"] {
+  color: var(--ink-3);
+}
+.asset-steps [data-mark="on"] {
+  color: var(--ink);
+}
+.asset-line-live {
+  color: var(--ink);
+  animation-name: asset-line-live;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+/* ✓ On Play holds, then fades out over the end of its time (its length is set where it is drawn). */
+@keyframes asset-line-live {
+  0% {
+    opacity: 0;
+  }
+  6%,
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* A miss: its words, and its action under them. */
+.asset-line-missed {
+  flex-direction: column;
+  align-items: flex-start;
+  height: auto;
+  gap: 6px;
+  color: var(--orange);
+}
+.asset-line-missed > span:first-child {
+  max-width: 100%;
+  line-height: 22px;
+}
+/* A compact action inside the line: the orange tint, never bare. */
+.asset-line-button {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--orange-tint);
+  color: var(--orange);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background-color var(--duration-quick) ease-out;
+}
+.asset-line-button:hover {
+  background: color-mix(in srgb, var(--orange) 22%, transparent);
+}
+.asset-line-button:disabled {
+  cursor: progress;
+}
+.asset-line-done {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-3);
+}
+
+/* Underlined text, the one action dress without a background; the quiet one inside a field. */
+.asset-underlined {
+  flex: none;
+  padding: 0 4px;
+  color: var(--ink-2);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.asset-underlined:hover {
+  color: var(--ink);
+}
+.asset-underlined-quiet {
+  padding: 0 2px;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-underline-offset: 2px;
+}
+
+/* The bar for several picked cards, pinned at the canvas's bottom centre. */
+.asset-selection-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 14px;
+  background: var(--popover);
+  border: 1px solid var(--menu-edge);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  white-space: nowrap;
+  animation: fade-in var(--duration-fast) ease-out;
+}
+.asset-selection-count {
+  margin-right: 2px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+/* The search box at the canvas's top left. */
+.asset-search {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(280px, calc(100% - 20px));
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--ink-3);
+  cursor: text;
+  transition: box-shadow var(--duration-quick);
+}
+.asset-search:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 22%, transparent);
+}
+.asset-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+.asset-search input::placeholder {
+  color: var(--ink-3);
+}
+
+/* The matches over the dot grid, scrolling under the box, softly faded at the bottom. */
+.asset-search-results {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 58px 24px 32px;
+  overflow-y: auto;
+}
+.asset-search-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.asset-search-count {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.asset-search-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.asset-search-tile {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--inset);
+}
+/* Add shows on hover (and on focus), in the glass of the card's other chips. */
+.asset-add {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: 8px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick) ease-out,
+    background-color var(--duration-quick) ease-out;
+}
+.asset-add:hover {
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+}
+.asset-search-tile:is(:hover, :focus-within) .asset-add,
+.asset-add:disabled {
+  opacity: 1;
+}
+.asset-add:disabled {
+  cursor: progress;
+}
+/* A tile on its way: its real size, swept by the soft light of current work. */
+.asset-skeleton {
+  flex: none;
+  border-radius: var(--radius-card);
+  background: linear-gradient(
+      100deg,
+      var(--inset) 35%,
+      color-mix(in oklab, var(--inset) 86%, var(--ink)) 50%,
+      var(--inset) 65%
+    )
+    var(--inset);
+  background-size: 300% 100%;
+  animation: shimmer-sweep 2.1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+/* The share window's pictures and name fields. */
+.asset-share-picture {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--inset);
+}
+.asset-share-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-height: min(48vh, 400px);
+  overflow-y: auto;
+}
+.asset-name-field {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  text-overflow: ellipsis;
+  transition: box-shadow var(--duration-quick);
+}
+.asset-name-field:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 26%, transparent);
+}
+.asset-name-field-compact {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.asset-share-everyone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-card,
+  .asset-pick,
+  .asset-add {
+    transition: none;
+  }
+  .asset-line,
+  .asset-selection-bar,
+  .asset-skeleton {
+    animation: none;
+  }
+  .asset-line-live {
+    animation-name: asset-line-live;
+  }
+}

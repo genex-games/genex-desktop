@@ -6,6 +6,9 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
+import { WebBuildLoad } from "../../../shared/live-behind.ts";
+import type { GameKind } from "../../../shared/project-facts.ts";
+import { webFolderOf } from "../../../shared/project-workspace.ts";
 import { gameStartedSince, type StageGameKind, StageView } from "../../stage.ts";
 
 /** While a page loads behind the loader the stage asks often; otherwise once a second is enough. */
@@ -17,27 +20,55 @@ const LIVE_QUIET_MS = 300;
 const LIVE_SETTLE_MAX_MS = 3 * SECOND_MS;
 /** Never keep the game hidden longer than this, whatever the page is doing. */
 const LIVE_LOAD_MAX_MS = 45 * SECOND_MS;
+/** How long the stage waits before asking again for a web build still being written, and how often it asks. */
+const WEB_BUILD_RETRY_MS = 2 * SECOND_MS;
+const WEB_BUILD_ASKS = 15;
 
 /** A load Live is waiting on: for which game, whether the stage is still starting it, and since when. */
 export type LiveLoad = { project: string; pending: boolean; since: number };
 
 type LivePage = Awaited<ReturnType<typeof window.studio.previewLive>>;
 
-/** What the game reports about itself, whether it is stopped, the load Live waits on, and a way to start one. */
-export function useLiveLoad(project: string | null) {
+/**
+ * Whether this game waits for the person's Play: Live holds another game's page, or none, and no load
+ * of this one is under way. Opening a game never starts it, so a game Live does not hold shows Play.
+ */
+export function waitsForPlay(at: { project: string | null; holds: boolean; liveLoad: LiveLoad | null }): boolean {
+  return Boolean(at.project) && !at.holds && at.liveLoad?.project !== at.project;
+}
+
+/** The load a game Live holds starts with: its page is waited for until it settles. A game it does not hold waits for Play. */
+const loadOnOpen = (project: string | null, holds: boolean): LiveLoad | null =>
+  project && holds ? { project, pending: false, since: Date.now() } : null;
+
+/** The load waited on once Live takes this game (`holds`) or lets it go: then only one still under way. */
+function loadOnHolds(current: LiveLoad | null, project: string | null, holds: boolean): LiveLoad | null {
+  if (holds) return current ?? loadOnOpen(project, holds);
+  return current?.pending ? current : null;
+}
+
+/**
+ * What the game reports about itself, whether it is stopped or waits for Play (`idle`), the load
+ * Live waits on, and a way to start one. `holds`: Live holds this game's page or is loading it.
+ */
+export function useLiveLoad(project: string | null, holds: boolean) {
   const [state, setState] = useState<Record<string, unknown> | null>(null);
   /** The person stopped the game (Stop on the strip): main says so on every probe. */
   const [stopped, setStopped] = useState(false);
-  const [liveLoad, setLiveLoad] = useState<LiveLoad | null>(() =>
-    project ? { project, pending: false, since: Date.now() } : null,
-  );
-  const [loadFor, setLoadFor] = useState(project);
-  if (loadFor !== project) {
-    setLoadFor(project);
+  const [liveLoad, setLiveLoad] = useState<LiveLoad | null>(() => loadOnOpen(project, holds));
+  const [loadFor, setLoadFor] = useState({ project, holds });
+  if (loadFor.project !== project) {
+    setLoadFor({ project, holds });
     setState(null);
     setStopped(false);
-    setLiveLoad(project ? { project, pending: false, since: Date.now() } : null);
+    setLiveLoad(loadOnOpen(project, holds));
+  } else if (loadFor.holds !== holds) {
+    // Main started a load of this game itself (a chat's show, the morning card): wait for its page.
+    // Live let go of it (a failed load): nothing is waited for but a load still under way.
+    setLoadFor({ project, holds });
+    setLiveLoad((current) => loadOnHolds(current, project, holds));
   }
+  const idle = waitsForPlay({ project, holds, liveLoad });
   const liveLoadRef = useRef(liveLoad);
   liveLoadRef.current = liveLoad;
   /** Hide the game while `load` runs, then wait for the page it produced to settle. */
@@ -56,7 +87,7 @@ export function useLiveLoad(project: string | null) {
       },
     );
   }, []);
-  return { state, setState, stopped, setStopped, liveLoad, setLiveLoad, liveLoadRef, loadLive };
+  return { state, setState, stopped, setStopped, idle, liveLoad, setLiveLoad, liveLoadRef, loadLive };
 }
 
 /**
@@ -78,6 +109,46 @@ export function useLoadOnceStarted(
     void loadLive(project, () => window.studio.loadPreview(project)).catch(() => {});
   }, [project, pending, noPage, loadLive]);
   return pending;
+}
+
+/**
+ * While the Web game tab is on screen, Live is asked to load the game's web build in a folder
+ * (`webFolderOf`: a Godot or Unity export in `web/`) whenever the game, the folder or the tab
+ * changes, and again while main answers that the build is still being written. Main decides
+ * (`loadWebBuild`): only a finished build Live lacks, never into a stopped game or a build the
+ * person chose to view. A load it made is awaited like the stage's own until the page settles; the
+ * loader is not shown while main only decides, which would hide a running game every time. A game
+ * waiting for Play is asked nothing: its build waits for the Play too.
+ */
+export function useWebGamePage(
+  stage: { project: string | null; game: GameKind | null; onWebGame: boolean },
+  live: Pick<ReturnType<typeof useLiveLoad>, "stopped" | "idle" | "setLiveLoad">,
+): void {
+  const { project, game, onWebGame } = stage;
+  const { setLiveLoad } = live;
+  const stopped = live.stopped || live.idle;
+  const folder = game ? webFolderOf(game) : null;
+  useEffect(() => {
+    if (!onWebGame || stopped || !project || !folder) return;
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const ask = (asksLeft: number): void => {
+      void window.studio
+        .loadWebBuild(project)
+        .then((answer) => {
+          if (cancelled) return;
+          if (answer === WebBuildLoad.Loaded) setLiveLoad({ project, pending: false, since: Date.now() });
+          if (answer === WebBuildLoad.Unfinished && asksLeft > 1)
+            retry = setTimeout(() => ask(asksLeft - 1), WEB_BUILD_RETRY_MS);
+        })
+        .catch(() => {});
+    };
+    ask(WEB_BUILD_ASKS);
+    return () => {
+      cancelled = true;
+      if (retry) clearTimeout(retry);
+    };
+  }, [project, folder, onWebGame, stopped, setLiveLoad]);
 }
 
 /** How one page load is settling, tracked across probes. */

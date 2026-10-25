@@ -14,7 +14,7 @@ import {
   readLoginPath,
   withEnvPath,
 } from "../toolchain.ts";
-import { commandLaunch } from "../command-launch.ts";
+import { commandLaunch, isCommandScript, npmShimScript } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
 import { childEnv } from "../child-env.ts";
 import { atomicWriteText } from "../fsx.ts";
@@ -24,6 +24,7 @@ import { CodingCliState } from "../../shared/coding-cli.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { OpenCodeDialect, OpenCodeVersionProblem, openCodeRelease } from "./opencode-cli.ts";
+import { GROK_MIN_VERSION, grokTooOld } from "./grok-cli.ts";
 export interface CliInstallation {
   status: CodingCliStatus;
   env: NodeJS.ProcessEnv;
@@ -40,12 +41,28 @@ export interface DiscoveryOptions {
   signal?: AbortSignal;
   /** The operating system whose file names and launchers apply; the host's by default. */
   platform?: NodeJS.Platform;
+  /** Each try's allowance for one `--version`/`--help` probe ({@link PROBE_TIMEOUTS_MS} by default). */
+  probeTimeoutsMs?: readonly number[];
 }
-/** The executable each coding CLI installs as. */
+/**
+ * The executable each coding CLI installs as. Cursor's installer links both `agent` and its older
+ * name `cursor-agent`; Grok Build installs an `agent` too, so only the unambiguous name is looked for.
+ */
 const CLI_BINARY = {
   [EngineId.Codex]: "codex",
   [EngineId.ClaudeCode]: "claude",
   [EngineId.OpenCode]: "opencode",
+  [EngineId.Pi]: "pi",
+  [EngineId.Grok]: "grok",
+  [EngineId.Cursor]: "cursor-agent",
+} as const satisfies Record<CodingProvider, string>;
+/** Whose variables each CLI's own process keeps (`childEnv`'s vendor). */
+const CLI_VENDOR = {
+  [EngineId.Codex]: "codex",
+  [EngineId.ClaudeCode]: "claude",
+  [EngineId.OpenCode]: "opencode",
+  [EngineId.Grok]: "grok",
+  [EngineId.Cursor]: "cursor",
   [EngineId.Pi]: "pi",
 } as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
@@ -54,6 +71,8 @@ const GUIDANCE_URL = {
   [EngineId.ClaudeCode]: "https://code.claude.com/docs/en/setup",
   [EngineId.OpenCode]: "https://opencode.ai/docs/",
   [EngineId.Pi]: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent",
+  [EngineId.Grok]: "https://docs.x.ai/build/overview",
+  [EngineId.Cursor]: "https://cursor.com/docs/cli/installation",
 } as const satisfies Record<CodingProvider, string>;
 /** The help each CLI is asked for, and the options it must list: every one Studio passes. */
 const HELP_ARGS: Record<CodingProvider, string[]> = {
@@ -61,6 +80,8 @@ const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.ClaudeCode]: ["--help"],
   [EngineId.OpenCode]: ["run", "--help"],
   [EngineId.Pi]: ["--help"],
+  [EngineId.Grok]: ["--help"],
+  [EngineId.Cursor]: ["--help"],
 };
 const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
@@ -75,6 +96,22 @@ const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, 
     "--disallowedTools",
   ],
   [EngineId.Pi]: ["--mode", "--session-id", "--model", "--list-models", "--thinking"],
+  // Its help lists these; `grok.ts` also passes `--no-wait-for-background`, which only its manual names.
+  [EngineId.Grok]: [
+    "--prompt-file",
+    "--output-format",
+    "--resume",
+    "--model",
+    "--reasoning-effort",
+    "--always-approve",
+    "--allow",
+    "--tools",
+    "--disallowed-tools",
+    "--disable-web-search",
+    "--sandbox",
+    "--cwd",
+  ],
+  [EngineId.Cursor]: ["--print", "--output-format", "--resume", "--model", "--force", "--trust", "--sandbox", "--mode"],
 };
 /**
  * `opencode run`'s options by the command line its version speaks: 1.18 lists every one (an older
@@ -84,9 +121,15 @@ const OPENCODE_FLAGS: Record<OpenCodeDialect, string[]> = {
   [OpenCodeDialect.V1]: ["--format", "--session", "--model", "--agent", "--file", "--variant", "--pure", "--dir"],
   [OpenCodeDialect.V2]: ["--format", "--session", "--model", "--file", "--standalone"],
 };
-/** How long reading the login shell's PATH, and each `--version`/`--help` probe, may take. */
+/** How long reading the login shell's PATH may take. */
 const LOGIN_PATH_TIMEOUT_MS = 8 * SECOND_MS;
-const PROBE_TIMEOUT_MS = 8 * SECOND_MS;
+/**
+ * Each try's allowance for a `--version`/`--help` probe. A probe that runs out of time is asked once
+ * more with the longer one: a CLI's first start just after it was installed or updated waits while
+ * Windows scans the new program, and on a slow PC (2 CPUs) that took more than 8 s, so a working
+ * CLI was called incompatible.
+ */
+const PROBE_TIMEOUTS_MS = [8 * SECOND_MS, 45 * SECOND_MS] as const;
 /** A probe keeps the last this-many characters of what the CLI printed. */
 const PROBE_OUTPUT_CHARS = 32_768;
 /** How long a discovery result serves UI and model-list reads. */
@@ -95,6 +138,12 @@ const DIAGNOSTIC_CACHE_MS = 15 * SECOND_MS;
 const LAUNCHER_BYTES = 4096;
 /** npm's `.cmd` shim runs the `node.exe` beside it, else the first `node` on PATH. */
 const CMD_SHIM_PATH_NODE = /_prog=node\b/i;
+/** A file inside an npm package, whose version tells an update apart: npm resets its files' times. */
+const IN_NODE_MODULES = /[\\/]node_modules[\\/]/;
+/** The file beside the overrides that keeps the CLIs' answers between launches. */
+const ANSWERS_FILE = "coding-cli-answers.json";
+/** What a Windows PowerShell 5 `Set-Content -Encoding utf8` puts before a file's text. */
+const BYTE_ORDER_MARK = /^\uFEFF/;
 
 /** What discovery tells the user about a CLI it could not use, and why a probe or setting fails. */
 const MESSAGE = {
@@ -107,7 +156,7 @@ const MESSAGE = {
   UnknownProvider: "Unknown coding provider",
   SettingsUninitialized: "Coding CLI settings are not initialized",
   Stopped: "Stopped",
-  ProbeTimedOut: `CLI diagnostic timed out after ${PROBE_TIMEOUT_MS / SECOND_MS} seconds`,
+  ProbeTimedOut: (ms: number) => `CLI diagnostic timed out after ${ms / SECOND_MS} seconds`,
   NoVersion: "CLI did not report a version",
   MissingOptions: (missing: string[]) => `Required CLI options are unavailable: ${missing.join(", ")}`,
   OpenCodeUnreadable: "Genex can't tell which OpenCode version this is. Install a released OpenCode, then check again.",
@@ -115,9 +164,20 @@ const MESSAGE = {
     "This OpenCode is too old for Genex. Update OpenCode (Genex runs 1.18, and 2.x from 2.0.20), then check again.",
   OpenCodeTooNew: (major: number | null) =>
     `Genex doesn't run OpenCode ${major ?? ""}.x yet. Install OpenCode 2.x or 1.18, then check again.`,
+  GrokTooOld: `This Grok Build is too old: xAI serves ${GROK_MIN_VERSION} or later. Update it, then check again.`,
 } as const;
 
 const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
+/** Unsigned UI readers can share discovery without sharing another caller's Stop signal. */
+const diagnosticReads = new Map<string, Promise<CliInstallation>>();
+/** Only the latest request for a selection may replace its cached diagnostic. */
+const diagnosticOwners = new Map<string, symbol>();
+const discoveryGenerations = new Map<CodingProvider, number>();
+let answersRevision = 0;
+
+function discoveryGeneration(provider: CodingProvider): number {
+  return discoveryGenerations.get(provider) ?? 0;
+}
 /**
  * The login shell's PATH, read once and shared by every discovery: a login shell takes seconds to
  * start (2.1–2.3 s on a developer's Mac), and every session start discovers its CLI.
@@ -126,15 +186,78 @@ const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
 let loginPathRead: Promise<string | null> | null = null;
 /**
  * A CLI's answers to `--version` and `--help`, by the exact file that gave them (its real path,
- * size, modification time and inode): an updated or replaced CLI is asked again, an unchanged one
- * is not asked before every session.
+ * size, modification time and inode, and its npm package's version): an updated or replaced CLI
+ * is asked again, an unchanged one is not asked before every session. Kept on disk beside the
+ * overrides, so a relaunch does not ask every CLI again either.
  */
-const answered = new Map<string, { version: string; help: string }>();
+const answered = new Map<string, CliAnswers>();
+/** What a CLI said when asked: its version line and its help. */
+interface CliAnswers {
+  version: string;
+  help: string;
+}
 /** Forget what discovery knows, for one provider or all; the login shell's PATH is read again either way. */
 export function invalidateCodingCli(provider?: CodingProvider): void {
-  for (const key of diagnostics.keys()) if (!provider || key.startsWith(`${provider}:`)) diagnostics.delete(key);
-  for (const key of answered.keys()) if (!provider || key.startsWith(`${provider}\0`)) answered.delete(key);
+  forget(provider);
+  void keepAnswers();
+}
+function forget(provider?: CodingProvider): void {
+  const providers = provider ? [provider] : (Object.keys(CLI_BINARY) as CodingProvider[]);
+  for (const id of providers) discoveryGenerations.set(id, discoveryGeneration(id) + 1);
+  forgetEntries(diagnostics, provider, ":");
+  forgetEntries(diagnosticReads, provider, ":");
+  forgetEntries(diagnosticOwners, provider, ":");
+  forgetEntries(answered, provider, "\0");
+  answersRevision++;
   loginPathRead = null;
+}
+
+/** Drop only the invalidated provider's entries, or the whole cache when settings are replaced. */
+function forgetEntries<T>(entries: Map<string, T>, provider: CodingProvider | undefined, delimiter: string): void {
+  for (const key of entries.keys()) if (!provider || key.startsWith(`${provider}${delimiter}`)) entries.delete(key);
+}
+/** Where the answers are kept, beside the overrides; none before the app configures discovery. */
+function answersFile(): string | undefined {
+  return settingsFile ? path.join(path.dirname(settingsFile), ANSWERS_FILE) : undefined;
+}
+function isAnswers(value: unknown): value is CliAnswers {
+  const answers = value as Partial<CliAnswers> | null;
+  return typeof answers?.version === "string" && typeof answers.help === "string";
+}
+let answersWrite: Promise<unknown> = Promise.resolve();
+/** Settles once the kept answers are read; every lookup waits for it. */
+let answersRead: Promise<void> = Promise.resolve();
+/** Read the answers a previous launch kept, after any write still on its way. */
+function loadAnswers(): void {
+  const file = answersFile();
+  const revision = answersRevision;
+  answersRead = file ? answersWrite.catch(() => {}).then(() => readKeptAnswers(file, revision)) : Promise.resolve();
+}
+/** The kept answers, beside any learned meanwhile; a missing or damaged file keeps none. */
+async function readKeptAnswers(file: string, revision: number): Promise<void> {
+  try {
+    const kept: unknown = JSON.parse(await readFile(file, "utf8"));
+    const staleOrInvalid = revision !== answersRevision || typeof kept !== "object" || kept === null;
+    if (staleOrInvalid) return;
+    for (const [identity, answers] of Object.entries(kept))
+      if (isAnswers(answers) && !answered.has(identity)) answered.set(identity, answers);
+  } catch {
+    // Nothing kept, or nothing readable: every CLI is asked again.
+  }
+}
+/** Keep the answers for the next launch, one write after another; settles when this one is on disk. */
+function keepAnswers(): Promise<unknown> {
+  const file = answersFile();
+  if (!file) return Promise.resolve();
+  const text = JSON.stringify(Object.fromEntries(answered));
+  answersWrite = answersWrite
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+      await atomicWriteText(file, text, { mode: 0o600 });
+    })
+    .catch(() => {});
+  return answersWrite;
 }
 let settingsFile: string | undefined;
 let discoveryDefaults: Pick<DiscoveryOptions, "loginPath" | "loginShell" | "home" | "env" | "standardDirs"> = {};
@@ -143,7 +266,8 @@ export function configureCodingClis(file: string, roots: string[], discovery: ty
   settingsFile = file;
   excludedRoots = roots;
   discoveryDefaults = { ...discovery };
-  invalidateCodingCli();
+  forget();
+  loadAnswers();
 }
 function providerId(value: string): asserts value is CodingProvider {
   if (!Object.hasOwn(CLI_BINARY, value)) throw new Error(MESSAGE.UnknownProvider);
@@ -156,13 +280,22 @@ export function codingCliBinary(provider: string): string {
   providerId(provider);
   return CLI_BINARY[provider];
 }
+/**
+ * The saved CLI paths. A file that cannot be read as them (a BOM is read past; a damaged, empty or
+ * unreadable file is not) saves none, so every CLI is still found automatically: a throw here failed
+ * every provider's discovery, and Settings called Claude Code and Codex uninstalled.
+ */
 async function overrides(): Promise<Partial<Record<CodingProvider, string>>> {
   if (!settingsFile) return {};
   try {
-    return JSON.parse(await readFile(settingsFile, "utf8"));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw e;
+    const saved: unknown = JSON.parse((await readFile(settingsFile, "utf8")).replace(BYTE_ORDER_MARK, ""));
+    if (typeof saved !== "object" || saved === null || Array.isArray(saved)) return {};
+    const paths = Object.entries(saved).filter(
+      (entry): entry is [CodingProvider, string] => Object.hasOwn(CLI_BINARY, entry[0]) && typeof entry[1] === "string",
+    );
+    return Object.fromEntries(paths);
+  } catch {
+    return {};
   }
 }
 let settingsWrite: Promise<unknown> = Promise.resolve();
@@ -178,7 +311,8 @@ export async function setCodingCliOverride(provider: CodingProvider, executable:
       else values[provider] = executable;
       await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       await atomicWriteText(file, JSON.stringify(values, null, 2), { mode: 0o600 });
-      invalidateCodingCli(provider);
+      forget(provider);
+      await keepAnswers();
     });
   settingsWrite = operation;
   await operation;
@@ -196,12 +330,34 @@ function within(file: string, root: string): boolean {
   const rel = path.relative(root, file);
   return !rel || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
 }
+/** A probe that ran out of its allowance, which a longer one may still answer. */
+class ProbeTimeout extends Error {}
+
+/** One probe, asked again with the next allowance each time it runs out of time; the last timeout throws. */
 async function probe(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  signal: AbortSignal | undefined,
-  platform: NodeJS.Platform,
+  context: Pick<CheckContext, "signal" | "platform" | "probeTimeoutsMs">,
+): Promise<string> {
+  const allowances = context.probeTimeoutsMs.length > 0 ? context.probeTimeoutsMs : PROBE_TIMEOUTS_MS;
+  for (const [i, timeoutMs] of allowances.entries()) {
+    try {
+      return await probeOnce(file, args, env, context, timeoutMs);
+    } catch (error) {
+      const last = i === allowances.length - 1;
+      if (last || !(error instanceof ProbeTimeout)) throw error;
+    }
+  }
+  throw new ProbeTimeout(MESSAGE.ProbeTimedOut(0));
+}
+
+async function probeOnce(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  { signal, platform }: Pick<CheckContext, "signal" | "platform">,
+  timeoutMs: number,
 ): Promise<string> {
   signal?.throwIfAborted();
   const launch = commandLaunch(file, args, platform);
@@ -227,8 +383,8 @@ async function probe(
     else signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => {
       stop();
-      reject(new Error(MESSAGE.ProbeTimedOut));
-    }, PROBE_TIMEOUT_MS);
+      reject(new ProbeTimeout(MESSAGE.ProbeTimedOut(timeoutMs)));
+    }, timeoutMs);
     for (const stream of [child.stdout, child.stderr])
       stream?.on("data", (chunk) => {
         output = (output + chunk).slice(-PROBE_OUTPUT_CHARS);
@@ -252,9 +408,9 @@ const macApplications = (home: string): string[] => ["/Applications", path.join(
  * Where installers put these CLIs when the login shell does not say (a slow or broken shell profile,
  * or an install whose PATH line was never added). Settings has no manual path picker, so this list
  * is the whole answer: native installers, Homebrew, npm prefixes, Volta, Bun, Claude Code's legacy
- * `~/.claude/local` install (reached only through a shell alias), pnpm, mise and asdf shims, the
- * Node versions of nvm and fnm, newest first, and last the copies the Claude and ChatGPT apps ship.
- * On Windows: Claude Code's and Codex's native installers, npm's global prefix,
+ * `~/.claude/local` install (reached only through a shell alias), Grok Build's `~/.grok/bin`, pnpm,
+ * mise and asdf shims, the Node versions of nvm and fnm, newest first, and last the copies the Claude
+ * and ChatGPT apps ship. On Windows: Claude Code's, Codex's and Grok Build's native installers, npm's global prefix,
  * the Node installer's folder, pnpm, Volta, Bun and Scoop.
  */
 export async function standardCliDirs(
@@ -279,6 +435,7 @@ export async function standardCliDirs(
     path.join(home, ".bun/bin"),
     path.join(home, ".codex/bin"),
     path.join(home, ".opencode/bin"),
+    path.join(home, ".grok/bin"),
     path.join(home, mac ? "Library/pnpm" : ".local/share/pnpm"),
     path.join(home, ".local/share/mise/shims"),
     path.join(home, ".asdf/shims"),
@@ -336,6 +493,10 @@ function windowsCliDirs(home: string, env: NodeJS.ProcessEnv): string[] {
     // Codex's own installer (install.ps1) puts its launcher here and adds it to the user's PATH,
     // which a Studio already running never sees.
     join(localAppData, "Programs", "OpenAI", "Codex", "bin"),
+    // Grok Build's own installer (install.ps1) copies `grok.exe` here.
+    join(home, ".grok", "bin"),
+    // Cursor's installer (install.ps1) puts its launchers here and adds the folder to the user's PATH.
+    join(localAppData, "cursor-agent"),
     join(appData, "npm"),
     join(variable("ProgramFiles", "C:\\Program Files"), "nodejs"),
     join(localAppData, "pnpm"),
@@ -372,6 +533,7 @@ export async function discoverCodingCli(
   options: DiscoveryOptions = {},
 ): Promise<CliInstallation> {
   providerId(provider);
+  const generation = discoveryGeneration(provider);
   const platform = options.platform ?? process.platform;
   const home = options.home ?? os.homedir();
   const parent = options.env ?? process.env;
@@ -400,7 +562,9 @@ export async function discoverCodingCli(
   let first: CodingCliStatus | undefined;
   for (const selected of found) {
     const checked: CodingCliStatus = { ...status, path: selected };
-    await checkSelectedCli(provider, selected, { dirs, env, signal: options.signal, platform }, checked);
+    const probeTimeoutsMs = options.probeTimeoutsMs ?? PROBE_TIMEOUTS_MS;
+    const context = { dirs, env, signal: options.signal, platform, generation, probeTimeoutsMs };
+    await checkSelectedCli(provider, selected, context, checked);
     if (checked.state === CodingCliState.Ready) return { status: checked, env };
     first ??= checked;
   }
@@ -459,14 +623,44 @@ function untilStopped<T>(promise: Promise<T>, signal: AbortSignal | undefined): 
 
 /** The exact file a launcher runs, as a cache key; null when it cannot be told (then nothing is reused). */
 async function cliIdentity(provider: CodingProvider, file: string, platform: NodeJS.Platform): Promise<string | null> {
-  // A Windows `.cmd` shim stays the same file when the package it starts is updated.
-  if (isWindows(platform)) return null;
   try {
-    const real = await realpath(file);
+    const launched = await launchedFile(file, platform);
+    if (launched === null) return null;
+    const real = await realpath(launched);
     const info = await stat(real, { bigint: true });
-    return [provider, real, info.size, info.mtimeNs, info.ino].join("\0");
+    return [provider, real, info.size, info.mtimeNs, info.ino, await packageRelease(real)].join("\0");
   } catch {
     return null;
+  }
+}
+
+/**
+ * The file a launcher runs. A Windows `.cmd` shim stays the same file when the package it starts
+ * is updated, so npm's shim stands for its script; another command script names nothing (null).
+ */
+async function launchedFile(file: string, platform: NodeJS.Platform): Promise<string | null> {
+  if (!isCommandScript(file, platform)) return file;
+  return npmShimScript(await launcherHead(file), file);
+}
+
+/** The npm package a CLI's file belongs to, as `name@version`; empty outside a package. */
+async function packageRelease(file: string): Promise<string> {
+  if (!IN_NODE_MODULES.test(file)) return "";
+  for (let dir = path.dirname(file); path.basename(dir) !== "node_modules"; dir = path.dirname(dir)) {
+    const manifest = await readFile(path.join(dir, "package.json"), "utf8").catch(() => null);
+    if (manifest !== null) return releaseOf(manifest);
+    if (path.dirname(dir) === dir) break;
+  }
+  return "";
+}
+
+/** A package manifest's `name@version`, or the manifest itself when it cannot be read as one. */
+function releaseOf(manifest: string): string {
+  try {
+    const { name, version } = JSON.parse(manifest) as { name?: unknown; version?: unknown };
+    return `${String(name)}@${String(version)}`;
+  } catch {
+    return manifest;
   }
 }
 
@@ -476,6 +670,8 @@ interface CheckContext {
   env: NodeJS.ProcessEnv;
   signal: AbortSignal | undefined;
   platform: NodeJS.Platform;
+  generation: number;
+  probeTimeoutsMs: readonly number[];
 }
 
 /** Whether the chosen CLI can run here and speaks what we need; the verdict lands in `status`. */
@@ -599,22 +795,31 @@ async function checkCliCapabilities(
   context: CheckContext,
   status: CodingCliStatus,
 ): Promise<void> {
-  const { signal, platform } = context;
+  const { platform } = context;
   // M6: a version and a help text need no credential; the CLI is asked with none.
-  const probeEnv = childEnv(context.env, { base: "contractor", vendor: CLI_BINARY[provider] });
+  const probeEnv = childEnv(context.env, { base: "contractor", vendor: CLI_VENDOR[provider] });
   const identity = await cliIdentity(provider, file, platform);
+  await answersRead;
   const known = identity ? answered.get(identity) : undefined;
-  status.version =
-    known?.version ?? (await probe(file, ["--version"], probeEnv, signal, platform)).split("\n")[0]?.trim();
+  status.version = known?.version ?? (await probe(file, ["--version"], probeEnv, context)).split("\n")[0]?.trim();
   if (!status.version) throw new Error(MESSAGE.NoVersion);
   const required = requiredFlags(provider, status.version);
-  const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, signal, platform));
+  const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, context));
   const missing = required.filter((flag) => !help.includes(flag));
   if (missing.length) throw new Error(MESSAGE.MissingOptions(missing));
-  if (identity && !known) answered.set(identity, { version: status.version, help });
+  const keepNewAnswer = identity && !known && context.generation === discoveryGeneration(provider);
+  if (keepNewAnswer) {
+    answered.set(identity, { version: status.version, help });
+    // A discovery ends with its answers on disk, never with a write still landing in the folder.
+    await keepAnswers();
+  }
 }
-/** The options a CLI must list: OpenCode's by the command line its version speaks; throws for a version it cannot run. */
+/**
+ * The options a CLI must list: OpenCode's by the command line its version speaks; throws for a
+ * version it cannot run, and for a Grok Build older than xAI serves.
+ */
 function requiredFlags(provider: CodingProvider, version: string): string[] {
+  if (provider === EngineId.Grok && grokTooOld(version)) throw new Error(MESSAGE.GrokTooOld);
   if (provider !== EngineId.OpenCode) return REQUIRED_FLAGS[provider];
   const release = openCodeRelease(version);
   if ("problem" in release) throw new Error(openCodeVersionMessage(release.problem, release.major));
@@ -635,11 +840,48 @@ export async function resolveCodingCli(
 ): Promise<CliInstallation> {
   providerId(provider);
   signal?.throwIfAborted();
+  const generation = discoveryGeneration(provider);
   const selected = override ?? (await overrides())[provider];
-  const key = `${provider}:${selected ?? "automatic"}`;
+  const key = `${provider}:${override === undefined ? "saved" : "explicit"}:${selected ?? "automatic"}`;
   const cached = diagnostics.get(key);
   const cacheFresh = cached !== undefined && Date.now() - cached.at < DIAGNOSTIC_CACHE_MS;
-  if (!refresh && cacheFresh) return { status: { ...cached.value.status }, env: { ...cached.value.env } };
+  const current = generation === discoveryGeneration(provider);
+  const useCache = !refresh && cacheFresh && current;
+  if (useCache) return copyInstallation(cached.value);
+  const shared = !refresh && signal === undefined && current;
+  const existing = shared ? diagnosticReads.get(key) : undefined;
+  if (existing) return copyInstallation(await existing);
+  const owner = Symbol();
+  if (current) {
+    diagnosticOwners.set(key, owner);
+    diagnosticReads.delete(key);
+  }
+  const read = resolveUncachedCli(provider, override, selected, signal).then((value) => {
+    const latest = diagnosticOwners.get(key) === owner && generation === discoveryGeneration(provider);
+    if (latest) diagnostics.set(key, { at: Date.now(), value });
+    return value;
+  });
+  if (shared) diagnosticReads.set(key, read);
+  try {
+    return copyInstallation(await read);
+  } finally {
+    if (diagnosticReads.get(key) === read) diagnosticReads.delete(key);
+    if (diagnosticOwners.get(key) === owner) diagnosticOwners.delete(key);
+  }
+}
+
+/** Keep cached and shared answers private from consumers that adjust their status or environment. */
+function copyInstallation(value: CliInstallation): CliInstallation {
+  return { status: { ...value.status }, env: { ...value.env } };
+}
+
+/** One uncached discovery, including fallback only for a broken persisted override. */
+async function resolveUncachedCli(
+  provider: CodingProvider,
+  override: string | undefined,
+  selected: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<CliInstallation> {
   let value = await discoverCodingCli(provider, { ...discoveryDefaults, override: selected, signal });
   // A persisted override that stopped working (moved, deleted, outdated) must not strand the user:
   // Settings has no path picker, so an automatic installation that works takes over.
@@ -650,8 +892,7 @@ export async function resolveCodingCli(
     if (automatic.status.state === CodingCliState.Ready || value.status.state === CodingCliState.InvalidPath)
       value = automatic;
   }
-  diagnostics.set(key, { at: Date.now(), value });
-  return { status: { ...value.status }, env: { ...value.env } };
+  return value;
 }
 export async function requireCodingCli(
   provider: CodingProvider,

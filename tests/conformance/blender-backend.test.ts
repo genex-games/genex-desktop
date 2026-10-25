@@ -368,22 +368,32 @@ describe("Local Blender model calls", () => {
   });
 });
 
-describe("Local Blender when this Mac's Blender can't run", () => {
+describe("Local Blender when this computer's Blender can't run", () => {
+  /** The pinned download `runtime.detect` names on a computer Genex has one for. */
+  const DOWNLOAD = { action: "install", url: "https://download.blender.org/blender.zip", bytes: 404851964 };
   const TOO_OLD = {
     state: "incompatible",
     path: "/Applications/Blender.app/Contents/MacOS/Blender",
     version: "4.1.1",
     detail: "Blender 4.1.1; requires 4.2.0 or newer.",
+    download: DOWNLOAD,
   };
 
   it("says in its status what the user is told and how it is fixed", async () => {
     const dir = await game();
-    for (const runtime of [TOO_OLD, { state: "missing", detail: "Blender is not installed." }]) {
+    for (const runtime of [TOO_OLD, { state: "missing", detail: "Blender is not installed.", download: DOWNLOAD }]) {
       const status = await (await callTool("status", dir, {}, { runtime })).run;
       assert.equal(status.runtime, runtime);
       assert.match(String(status.next), /tell the user/i, runtime.state);
       assert.match(String(status.next), /blender__install/, runtime.state);
     }
+    // A computer Genex has no download for (Linux, an Intel Mac): the user installs Blender themselves.
+    const none = await (
+      await callTool("status", dir, {}, { runtime: { state: "missing", detail: "Blender is not installed." } })
+    ).run;
+    assert.match(String(none.next), /tell the user/i);
+    assert.match(String(none.next), /install Blender 4\.2 or newer themselves/);
+    assert.doesNotMatch(String(none.next), /blender__install/);
     const ready = { state: "ready", path: "/Applications/Blender.app/Contents/MacOS/Blender", version: "5.2.1" };
     assert.equal((await (await callTool("status", dir, {}, { runtime: ready })).run).next, undefined);
   });

@@ -8,7 +8,7 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { GodotInstall } from "./find-godot.ts";
-import { type GodotRunner, referenceCall } from "./godot-run.ts";
+import { type GodotJobScope, type GodotRunner, referenceCall } from "./godot-run.ts";
 
 /** One class's API: what it inherits, and its members as Godot writes their signatures. */
 export type ClassApi = {
@@ -93,13 +93,13 @@ const versionFolder = (storage: string, install: GodotInstall) =>
  * The version's dump in storage, made now when it isn't there: written beside its place and moved
  * in once whole, so a dump cut short is never read as one.
  */
-async function ensureDump(storage: string, install: GodotInstall, run: GodotRunner, signal: AbortSignal) {
+async function ensureDump(storage: string, install: GodotInstall, run: GodotRunner, job: GodotJobScope) {
   const folder = versionFolder(storage, install);
   if (await readFile(path.join(folder, READY_MARK)).catch(() => null)) return folder;
   const making = `${folder}.making`;
   await rm(making, { recursive: true, force: true });
   await mkdir(making, { recursive: true });
-  await run(install.binary, referenceCall(making), signal);
+  await run(install.binary, referenceCall(making), job);
   if ((await xmlFiles(making)).length === 0) throw new Error(MESSAGE.NoDump(install.version.text));
   await writeFile(path.join(making, READY_MARK), install.version.text);
   await rm(folder, { recursive: true, force: true });
@@ -110,8 +110,8 @@ async function ensureDump(storage: string, install: GodotInstall, run: GodotRunn
 /** The class index of each version, made once per backend from its dump in the plugin's `storage`. */
 export function createReference(run: GodotRunner) {
   const indexes = new Map<string, Promise<ClassIndex>>();
-  const load = async (install: GodotInstall, storage: string, signal: AbortSignal): Promise<ClassIndex> => {
-    const folder = await ensureDump(storage, install, run, signal);
+  const load = async (install: GodotInstall, storage: string, job: GodotJobScope): Promise<ClassIndex> => {
+    const folder = await ensureDump(storage, install, run, job);
     const index: ClassIndex = new Map();
     for (const file of await xmlFiles(folder)) {
       const api = readClass(await readFile(file, "utf8"));
@@ -119,9 +119,9 @@ export function createReference(run: GodotRunner) {
     }
     return index;
   };
-  return async (install: GodotInstall, storage: string, signal: AbortSignal): Promise<ClassIndex> => {
+  return async (install: GodotInstall, storage: string, job: GodotJobScope): Promise<ClassIndex> => {
     const key = install.version.text;
-    const known = indexes.get(key) ?? load(install, storage, signal);
+    const known = indexes.get(key) ?? load(install, storage, job);
     indexes.set(key, known);
     return known.catch((error: unknown) => {
       indexes.delete(key);

@@ -12,6 +12,7 @@
  */
 import type { ScreenAct } from "../../shared/agent-screen.ts";
 import { ScreenRole } from "../../shared/agent-screen.ts";
+import { desktopStopShortcut } from "../../shared/computer-control.ts";
 import { ComputerPacing, type ComputerTraceSummary } from "../../shared/computer-target.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { DESKTOP_TOOL_NAME, computerToolDefinition } from "../../substrate/computer-tool.ts";
@@ -36,8 +37,7 @@ export type DesktopQuestion = (typeof DesktopQuestion)[keyof typeof DesktopQuest
 const MESSAGE = {
   declined: "the person did not allow computer control this session — ask them in words what to do instead",
   noDriver: (why: string) => `computer control is not available: ${why}`,
-  stopped:
-    "the person stopped computer control (Stop, or Control-Option-Command-Escape) — nothing more moved; ask before using it again",
+  stopped: `the person stopped computer control (Stop, or ${desktopStopShortcut(process.platform).words}) — nothing more moved; ask before using it again`,
   off: "computer control is off in Settings — nothing moved; the person can turn it on under Settings → Permissions",
 } as const;
 
@@ -46,7 +46,7 @@ export const DESKTOP_OFF_ANSWER = MESSAGE.off;
 
 /** What a desktop session is built from. */
 export interface DesktopToolsDeps {
-  /** Start the driver: cua-driver on this Mac, or the computer server inside a VM. Throws when it cannot. */
+  /** Start the driver: cua-driver on this computer, or the computer server inside a VM. Throws when it cannot. */
   connect: () => Promise<DesktopDriver>;
   /** Ask the person, in the chat, and wait for their answer. */
   ask: (question: DesktopQuestion, app?: DesktopApp) => Promise<boolean>;
@@ -61,7 +61,7 @@ export interface DesktopToolsDeps {
   downscale?: (
     shot: DesktopShot,
   ) => Promise<{ image: Buffer; mime: "image/png" | "image/jpeg"; width: number; height: number }>;
-  /** A VM's desktop rather than this Mac's: its apps are all the VM's, so the session's yes covers them. */
+  /** A VM's desktop rather than this computer's: its apps are all the VM's, so the session's yes covers them. */
   vm?: boolean;
   maxActions?: number;
   /** Whether computer control is on in Settings now; asked before every call (on when absent). */

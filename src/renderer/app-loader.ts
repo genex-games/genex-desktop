@@ -6,6 +6,7 @@
  * area's own (`ui/Pending.tsx`).
  */
 import { useEffect } from "react";
+import { t } from "../shared/i18n.ts";
 import { SessionStatus } from "./state/session.ts";
 
 /** The loader's element in index.html. */
@@ -29,6 +30,11 @@ export function firstScreenReady(screen: FirstScreen): boolean {
   if (screen.status === SessionStatus.Failed) return true;
   if (screen.status !== SessionStatus.Ready) return false;
   return screen.welcoming || !screen.chatPending;
+}
+
+/** Name the loader in the window's language: index.html can only say it in English. */
+export function labelAppLoader(page: Pick<Document, "getElementById"> = document): void {
+  page.getElementById(APP_LOADER_ID)?.setAttribute("aria-label", t("Opening Genex"));
 }
 
 /** Fade the loader out and remove it; a second call, or a page without it, does nothing. */

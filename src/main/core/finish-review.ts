@@ -5,9 +5,11 @@
  * that answer. The harness then settles the round (`finish.settle`): it may turn the held answer into
  * no answer (a yes that lapsed, a turn that ended), never into a yes. The host counts the no's in a
  * row from its own records (a finished run reopened for a new ask starts them over; a resumed one goes
- * on) and writes the outcome. A run's start, pause or close drops its held round: nothing more is
- * recorded for it, and the graph reads the round as one the Loop ended before. A round answered and
- * never settled gives way to the run's next claim, recorded as no answer.
+ * on) and writes the outcome: `MAX_FINISH_REJECTIONS` no's in a row stop the Loop, unless the settle
+ * names more than `FINISH_TIME_LEFT_MS` of a timed Loop's working time left (then it goes on). A
+ * run's start, pause or close drops its held round: nothing more is recorded for it, and the graph
+ * reads the round as one the Loop ended before. A round answered and never settled gives way to the
+ * run's next claim, recorded as no answer.
  *
  * Its ports keep it free of the core, so the seed's tests drive the same rules over their fake host.
  */
@@ -16,6 +18,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import type { EventEnvelope } from "../../shared/event-log.ts";
 import {
   clipReason,
+  FINISH_TIME_LEFT_MS,
   type FinishCheckPayload,
   FinishCheckStep,
   type FinishRecord,
@@ -31,14 +34,14 @@ import { executionStep, isExecutionEvent, type RunExecution } from "../../shared
 /** How long the lead's claim reads in its round's record. */
 const CLAIM_CHARS = 2_000;
 /** The fields a settle takes: any other (a step, a verdict) is refused. */
-const SETTLE_FIELDS: ReadonlySet<string> = new Set(["project", "runId", "round", "unanswered"]);
+const SETTLE_FIELDS: ReadonlySet<string> = new Set(["project", "runId", "round", "unanswered", "timeLeftMs"]);
 
 /** Why a review or a settle is refused, and why a review got no answer (persisted in `why`). */
 const MESSAGE = {
   notRunning: "That run is not a running run of this game",
   held: "A reviewer is already checking a claim of this run",
   notHeld: "That round of the run is not waiting to be settled",
-  badSettle: "A settle names its project, run, round and, at most, why the answer is none",
+  badSettle: "A settle names its project, run, round and, at most, why the answer is none and the time left",
   failed: (why: string) => `the reviewer's session failed: ${why}`,
   notSettled: "the harness never settled this round before the run's next claim",
   noAnswer: "no answer",
@@ -112,9 +115,15 @@ function verdictOfResult(result: unknown): ReviewerVerdict {
   return reviewerVerdict(String(record.summary ?? ""));
 }
 
-/** An answer's fields, as the harness and the record read them. */
+/** An answer's fields, as the harness and the record read them: what isn't done and what is only when the reviewer named some. */
 const answerFields = (verdict: ReviewerVerdict) =>
-  verdict.step === FinishCheckStep.Unanswered ? { why: verdict.why } : { reasons: verdict.reasons };
+  verdict.step === FinishCheckStep.Unanswered
+    ? { why: verdict.why }
+    : {
+        reasons: verdict.reasons,
+        ...(verdict.notDone.length ? { notDone: verdict.notDone } : {}),
+        ...(verdict.done.length ? { done: verdict.done } : {}),
+      };
 
 /** A run's own `finish_check` payloads as a reader places them. */
 function placed(payloads: ReadonlyArray<Record<string, unknown>>, runId: string): FinishRecord[] {
@@ -125,8 +134,15 @@ function placed(payloads: ReadonlyArray<Record<string, unknown>>, runId: string)
 function wellFormedSettle(p: SettleParams): boolean {
   const unanswered = p.unanswered;
   const why = unanswered === undefined || unanswered === null || (typeof unanswered === "string" && unanswered !== "");
-  return Object.keys(p).every((key) => SETTLE_FIELDS.has(key)) && why && Number.isSafeInteger(p.round);
+  const left = p.timeLeftMs === undefined || p.timeLeftMs === null || isTimeLeft(p.timeLeftMs);
+  return Object.keys(p).every((key) => SETTLE_FIELDS.has(key)) && why && left && Number.isSafeInteger(p.round);
 }
+
+/** A working time left: whole milliseconds, zero or more. */
+const isTimeLeft = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+
+/** Whether a settle names more of a timed Loop's working time left than the no's in a row may stop. */
+const goesOnFor = (timeLeftMs: unknown): boolean => isTimeLeft(timeLeftMs) && timeLeftMs > FINISH_TIME_LEFT_MS;
 
 /** The finish checks of every running Loop: one per core. */
 export class FinishReviews {
@@ -195,31 +211,46 @@ export class FinishReviews {
       typeof p.unanswered === "string"
         ? { step: FinishCheckStep.Unanswered, why: clipReason(p.unanswered) }
         : held.verdict;
-    const { rejections, stopped } = await this.#outcome(threadId, p.runId, held, verdict, notDropped);
-    return { round: held.round, step: verdict.step, ...answerFields(verdict), rejections, stopped };
+    const goesOn = goesOnFor(p.timeLeftMs);
+    const { rejections, stopped, timeLeft } = await this.#outcome(threadId, p.runId, held, verdict, notDropped, goesOn);
+    return {
+      round: held.round,
+      step: verdict.step,
+      ...answerFields(verdict),
+      rejections,
+      stopped,
+      ...(timeLeft ? { timeLeft } : {}),
+    };
   }
 
-  /** Record a held round's outcome and the row of no's it leaves; `stillOurs` throws once the run's round was dropped. */
+  /**
+   * Record a held round's outcome and the row of no's it leaves; `stillOurs` throws once the run's
+   * round was dropped. A no the Loop had time left at (`goesOn`) never stops it, and says so.
+   */
   async #outcome(
     threadId: string,
     runId: string,
     held: Held,
     verdict: ReviewerVerdict,
     stillOurs: () => void,
-  ): Promise<{ rejections: number; stopped: boolean }> {
+    goesOn = false,
+  ): Promise<{ rejections: number; stopped: boolean; timeLeft: boolean }> {
     const { sinceOpened } = await this.#ports.history(threadId, runId);
     stillOurs();
     const outcome = { runId, round: held.round, step: verdict.step, ...answerFields(verdict) };
     const rejections = rejectionsInRow(placed([...sinceOpened, outcome], runId), runId);
-    const stopped = verdict.step === FinishCheckStep.Rejected && rejections >= MAX_FINISH_REJECTIONS;
+    const rejected = verdict.step === FinishCheckStep.Rejected;
+    const timeLeft = rejected && goesOn;
+    const stopped = rejected && !timeLeft && rejections >= MAX_FINISH_REJECTIONS;
     await this.#record(threadId, {
       ...outcome,
       ...(stopped ? { stopped: true } : {}),
+      ...(timeLeft ? { timeLeft: true } : {}),
       rejections,
       observers: held.observers,
       reviewer: held.reviewer,
     });
-    return { rejections, stopped };
+    return { rejections, stopped, timeLeft };
   }
 
   /** A run started, paused or closed: its held round is dropped, and nothing more is recorded for it. */

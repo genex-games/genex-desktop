@@ -157,6 +157,25 @@ async function openBuildFromChat(i, runId) {
   }
   throw new Error(`timeout: Open in Builds for ${runId}`);
 }
+/** An app's core event log: its newest 200 entries. */
+const coreLog = async (i) => (await op(i, "logs", { surface: "core", limit: 200 })).entries;
+/** The ids of the turns a core log has started so far. */
+const startedTurns = (entries) => new Set(entries.filter((e) => e.data.type === "turn_started").map((e) => e.turn_id));
+/** Whether every turn a core log started has ended: nothing is being answered. */
+const noTurnOpen = (entries) => {
+  const open = startedTurns(entries);
+  for (const e of entries) if (e.data.type === "turn_ended") open.delete(e.turn_id);
+  return open.size === 0;
+};
+/** The first turn started after the ones in `before` whose engine is at work, or false. */
+function workingTurn(entries, before) {
+  const started = entries.findIndex((e) => e.data.type === "turn_started" && !before.has(e.turn_id));
+  if (started < 0) return false;
+  const working = entries
+    .slice(started)
+    .some((e) => e.data.event_type === "session_activity" && e.data.payload?.phase === "thinking");
+  return working ? entries[started].turn_id : false;
+}
 async function until(fn, label, timeout = 15000) {
   const end = Date.now() + timeout;
   let value;
@@ -385,8 +404,7 @@ try {
     "desktop",
     "engine AbortSignal rejection and durable turn end",
     async () => {
-      const coreLog = async () => (await op(a, "logs", { surface: "core", limit: 200 })).entries;
-      const before = new Set((await coreLog()).filter((e) => e.data.type === "turn_started").map((e) => e.turn_id));
+      const before = startedTurns(await coreLog(a));
       await op(a, "type", {
         selector: '[aria-label="Prompt"]',
         text: "fixture:pending cancellation proof",
@@ -396,15 +414,10 @@ try {
       await until(async () => (await snapshot(a)).controls.some((c) => c.label === "Stop"), "pending Stop");
       // This message's own turn, with its engine at work: a Stop before it begins ends it before any
       // engine runs, which is not the abort this check is about. An earlier turn is never taken for it.
-      const pending = await until(async () => {
-        const entries = await coreLog();
-        const started = entries.findIndex((e) => e.data.type === "turn_started" && !before.has(e.turn_id));
-        if (started < 0) return false;
-        const working = entries
-          .slice(started)
-          .some((e) => e.data.event_type === "session_activity" && e.data.payload?.phase === "thinking");
-        return working ? entries[started].turn_id : false;
-      }, "the controlled pending turn's engine to start");
+      const pending = await until(
+        async () => workingTurn(await coreLog(a), before),
+        "the controlled pending turn's engine to start",
+      );
       assert.ok(pending, "the controlled pending turn started");
       await op(a, "click", { selector: '[data-promptbar] button[aria-label="Stop"]' });
       const entries = await until(async () => {
@@ -554,16 +567,25 @@ try {
     },
   );
   // A third app continues actual pending work while the selected checkout restarts.
+  const sentinelBefore = startedTurns(await coreLog(sentinel));
   await op(sentinel, "type", {
     selector: '[aria-label="Prompt"]',
     text: "fixture:pending sentinel remains active",
     replace: true,
   });
   await op(sentinel, "click", { selector: 'button[aria-label="Send"]' });
-  await sleep(800);
-  const sentinelEvents = (await op(sentinel, "logs", { surface: "core", limit: 200 })).entries,
-    sentinelGame = hash(fs.readFileSync(path.join(sentinel.identity.roots.games, "fixture-game/index.html")));
-  const bHistory = (await op(b, "logs", { surface: "core", limit: 200 })).entries;
+  // What the restart must leave untouched is read once each app stands still: the sentinel's message
+  // has its turn, whose engine now waits for a Stop, and b answers nothing. A fixed pause raced a
+  // slow runner, where the sentinel was still starting that turn when its log was read.
+  const sentinelEvents = await until(async () => {
+    const entries = await coreLog(sentinel);
+    return workingTurn(entries, sentinelBefore) ? entries : false;
+  }, "the sentinel's pending turn at work");
+  const sentinelGame = hash(fs.readFileSync(path.join(sentinel.identity.roots.games, "fixture-game/index.html")));
+  const bHistory = await until(async () => {
+    const entries = await coreLog(b);
+    return noTurnOpen(entries) ? entries : false;
+  }, "b with no turn open");
   await check(
     "evolved profile stale-build rejection and restart noninterference",
     "lifecycle",

@@ -193,7 +193,7 @@ const switchText = (text: string, span: ObjectSpan) => {
  */
 export function switchOnText(text: string): { text: string; change: SwitchChange } | undefined {
   const settings = parseObject(text);
-  if (!settings) throw new RobloxSetupError(SetupRefusal.UnreadableSettings, MESSAGE.Setup.NotSettings);
+  if (!settings) throw new RobloxSetupError(SetupRefusal.UnreadableSettings, MESSAGE.Setup.NotSettings());
   const current = settings[MCP_SERVER_KEY];
   if (isPlainObject(current) && current[ENABLED_KEY] === true) return undefined;
   const span = objectAt(text, skipSpace(text, 0));
@@ -203,7 +203,7 @@ export function switchOnText(text: string): { text: string; change: SwitchChange
       ? withMember(text, objectAt(text, member.valueStart), ENABLED_KEY, "true")
       : withMember(text, span, MCP_SERVER_KEY, switchValue(text, span));
   const after = switchText(turned, objectAt(turned, skipSpace(turned, 0)));
-  if (after === null) throw new RobloxSetupError(SetupRefusal.UnreadableSettings, MESSAGE.Setup.NotSettings);
+  if (after === null) throw new RobloxSetupError(SetupRefusal.UnreadableSettings, MESSAGE.Setup.NotSettings());
   return { text: turned, change: { before: member ? text.slice(member.valueStart, member.valueEnd) : null, after } };
 }
 
@@ -268,6 +268,6 @@ export async function planSwitches(folder: string): Promise<SwitchPlan> {
 /** Writes a plan's files, each whole or not at all; refused when Studio has started meanwhile. */
 export async function turnOn(plan: SwitchPlan, running: () => Promise<boolean>): Promise<void> {
   if (plan.writes.length > 0 && (await running()))
-    throw new RobloxSetupError(SetupRefusal.StudioRunning, MESSAGE.Setup.StudioRunning);
+    throw new RobloxSetupError(SetupRefusal.StudioRunning, MESSAGE.Setup.StudioRunning());
   for (const write of plan.writes) await atomicWriteText(write.file, write.text, { mode: write.mode });
 }

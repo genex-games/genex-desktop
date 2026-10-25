@@ -3,6 +3,7 @@ import { compareIds } from "./compare-ids.ts";
 import { LoopProfile } from "./project-facts.ts";
 import { CustomEvent } from "./custom-events.ts";
 import { EventKind, type EventEnvelope } from "./event-log.ts";
+import { t } from "./i18n.ts";
 import { isWorkerEnd } from "./workers.ts";
 import {
   ExecutionStatus,
@@ -271,10 +272,15 @@ function addEvidence(run: Summarizing, item: RunEvidence): void {
   }
   run.evidence.set(key, {
     ...previous,
-    note: [previous.note, `Later recheck ${item.status}: ${item.note ?? "no conclusive answer"}`]
-      .filter(Boolean)
-      .join("\n"),
+    note: [previous.note, recheckNote(item)].filter(Boolean).join("\n"),
   });
+}
+
+/** What an unanswered recheck adds to the failure it could not resolve. */
+function recheckNote(item: RunEvidence): string {
+  const note = item.note ?? t("no conclusive answer");
+  if (item.status === "incomplete") return t("Later recheck incomplete: {note}", { note });
+  return t("Later recheck unknown: {note}", { note });
 }
 
 /** Has the run closed (paused or finished) as it stands? */
@@ -392,7 +398,7 @@ const readIntegrationHealth: RecordReader = (run, { event, event_type, payload }
     id: event.id,
     head: string(payload.head),
     category: "health",
-    label: "Build health",
+    label: t("Build health"),
     status: answerStatus(payload.ok),
     note: Array.isArray(payload.problems) ? payload.problems.join("; ") : null,
     source: event_type,
@@ -433,7 +439,7 @@ const readDirectorVerdict: RecordReader = (run, { event, event_type, payload }) 
       id: event.id,
       head,
       category: "comparison",
-      label: "Comparative judgement",
+      label: t("Comparative judgement"),
       status: preferredChallenger(seen.pick) ? "passed" : "failed",
       note: string(payload.because),
       source: event_type,
@@ -445,7 +451,7 @@ const readVisualEvidence: RecordReader = (run, { event, event_type, payload }) =
     id: event.id,
     head: string(payload.head),
     category: "visual",
-    label: string(payload.question) ?? "Visual question",
+    label: string(payload.question) ?? t("Visual question"),
     status: answerStatus(payload.answer),
     note: string(payload.note),
     source: event_type,
@@ -464,7 +470,7 @@ const readInteractionEvidence: RecordReader = (run, { event, event_type, payload
     id: event.id,
     head: string(payload.head),
     category: "interaction",
-    label: string(payload.label) ?? "Independent playtest",
+    label: string(payload.label) ?? t("Independent playtest"),
     status: INTERACTION_STATUSES.has(payload.status) ? payload.status : "unknown",
     note: string(payload.note),
     source: string(payload.source) ?? event_type,

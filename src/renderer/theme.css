@@ -2,12 +2,17 @@
 @import "@xterm/xterm/css/xterm.css";
 @import "tw-animate-css";
 @import "./styles/icons.css";
+@import "./styles/asset-library.css";
 @import "./styles/covers.css";
 @import "./styles/empty-states.css";
 @import "./styles/onboarding.css";
 @import "./styles/genex.css";
 @import "./styles/play.css";
+@import "./styles/play-assets.css";
 @import "./styles/people.css";
+@import "./styles/native-games.css";
+@import "./styles/store.css";
+@import "./styles/items.css";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @source "./";
@@ -20,13 +25,16 @@
   font-display: swap;
   src: url("./fonts/ZalandoSansSemiExpanded-variable.woff2") format("woff2");
 }
+/* Zalando Sans has Latin only. Cyrillic and Greek come from TikTok Sans at Zalando's width, with
+   its weights shifted to Zalando's stems and its capitals to Zalando's height. */
 @font-face {
-  font-family: "Geist Fallback";
+  font-family: "TikTok Sans Genex";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 275 792;
   font-display: swap;
-  src: url("./fonts/Geist-variable.woff2") format("woff2");
-  unicode-range: U+0301, U+0370-03FF, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+  size-adjust: 101.3%;
+  src: url("./fonts/TikTokSansGenex-variable.woff2") format("woff2");
+  unicode-range: U+0301, U+0370-03FF, U+0400-052F, U+1C80-1C88, U+1F00-1FFF, U+2116, U+2DE0-2DFF, U+A640-A69F;
 }
 @font-face {
   font-family: "Geist Mono";
@@ -35,12 +43,65 @@
   font-display: swap;
   src: url("./fonts/GeistMono-variable.woff2") format("woff2");
 }
+/* The app's language picks its script's face (--font-language below); LINE Seed JP has no middle
+   weights, so medium text is its Regular and bold its Bold. */
+@font-face {
+  font-family: "LINE Seed JP";
+  font-style: normal;
+  font-weight: 100 599;
+  font-display: swap;
+  src: url("./fonts/LINESeedJP-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "LINE Seed JP";
+  font-style: normal;
+  font-weight: 600 900;
+  font-display: swap;
+  src: url("./fonts/LINESeedJP-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Genex Hangul";
+  font-style: normal;
+  font-weight: 45 930;
+  font-display: swap;
+  src: url("./fonts/GenexHangul-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/NotoSansSC-GB2312-variable.woff2") format("woff2");
+}
+/* The face for the app language's own script, after Zalando and TikTok Sans in every stack; a
+   generic family where the language needs none, so the stacks stay valid. */
+:root {
+  --font-language: ui-sans-serif;
+}
+:root:lang(ja) {
+  --font-language: "LINE Seed JP";
+}
+:root:lang(ko) {
+  --font-language: "Genex Hangul";
+}
+:root:lang(zh-Hans) {
+  --font-language: "Noto Sans SC";
+}
+/* Chinese, Japanese and Korean read badly squeezed: the app's tight Latin tracking stays off for
+   them, and Japanese breaks lines between phrases rather than anywhere. */
+:root:is(:lang(ja), :lang(ko), :lang(zh-Hans)) * {
+  letter-spacing: 0 !important;
+}
+:root:lang(ja) {
+  word-break: auto-phrase;
+}
 
 /* Genex dark fallback. appearance/store.ts applies the selected semantic palette before mount. */
 :root {
   color-scheme: dark;
-  --font-family-sans: "Geist Fallback", "Zalando Sans SemiExpanded", ui-sans-serif, system-ui, sans-serif;
-  --font-family-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-family-sans:
+    "Zalando Sans SemiExpanded", "TikTok Sans Genex", var(--font-language), ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: "Geist Mono", var(--font-language), ui-monospace, "SF Mono", Menlo, monospace;
   --background: #0e0d0f;
   --foreground: #dee0e2;
   --card: #141416;
@@ -85,6 +146,7 @@
   --line: var(--border);
   --line-strong: #29292b;
   --line-soft: var(--line-strong);
+  --menu-edge: var(--line-strong);
   --field: #1b1c1d;
   --stripe: color-mix(in oklab, #dee0e2 4%, transparent);
   --stripe-bg: var(--background);
@@ -185,6 +247,7 @@
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-line-soft: var(--line-soft);
+  --color-menu-edge: var(--menu-edge);
   --color-field: var(--field);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
@@ -349,11 +412,13 @@
 :is(
   .chat-status-shimmer,
   .usage-skeleton,
+  .skeleton,
   .app-loader-shine,
   .home-backdrop-glint,
   .animate-ping,
   .animate-spin,
   .making-spinner,
+  .genex-connect-shine,
   .loader-grid > span,
   [style*="infinite"]
 ),
@@ -880,6 +945,98 @@
   .composer-panel:focus-within {
     border-color: var(--prompt-edge, color-mix(in oklab, var(--border) 85%, transparent));
   }
+  /* Files held over the chat: the prompt bar's edge turns dashed, its contents fade, one line says
+     what a drop does. Blue while pictures go in, orange when none can. */
+  .composer-drop-veil {
+    --drop-ink: color-mix(in oklab, var(--accent-ink) 78%, var(--ink));
+    position: absolute;
+    inset: -1px;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    padding: 0 16px;
+    border: 1.5px dashed var(--accent);
+    border-radius: inherit;
+    background: color-mix(in oklab, var(--composer) 88%, transparent);
+    color: var(--drop-ink);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    pointer-events: none;
+    animation: composer-drop-in var(--duration-quick) var(--ease-smooth-out);
+  }
+  .composer-drop-veil[data-tone="refuses"] {
+    --drop-ink: color-mix(in oklab, var(--orange) 72%, var(--ink));
+    border-color: var(--orange);
+  }
+  /* A file going with the next message as a link: its name on a chip as tall as a picture's tile. */
+  .composer-file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 180px;
+    height: 44px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--field);
+    color: var(--ink-2);
+    font-size: 12px;
+  }
+  /* What a drop left off the board, in orange, with its action. */
+  .composer-left-out {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 2px 6px;
+    padding: 6px 6px 6px 10px;
+    border-radius: 12px;
+    background: var(--orange-tint);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange) 50%, transparent);
+    color: color-mix(in oklab, var(--orange) 72%, var(--ink));
+    font-size: 12px;
+    line-height: 1.3;
+  }
+  .composer-left-out-action {
+    flex-shrink: 0;
+    height: 24px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orange) 34%, transparent);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .composer-left-out-action:hover {
+    background: color-mix(in srgb, var(--orange) 46%, transparent);
+  }
+  .composer-left-out-dismiss {
+    display: grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: 7px;
+    background: var(--field);
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .composer-left-out-dismiss:hover {
+    background: var(--control-hover, var(--hover));
+  }
+  @keyframes composer-drop-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .composer-drop-veil {
+      animation: none;
+    }
+  }
   .composer-control {
     min-height: 32px;
     border-radius: 999px;
@@ -1028,7 +1185,7 @@
 /* Native window controls, by the platform main reports (`data-platform` on the root). macOS draws its
  * traffic lights in the leading 72px of the headers, so the sidebar toggle sits at 80px whether or not
  * the sidebar is open. Windows and Linux draw minimise, maximise and close over the trailing edge
- * (Electron's titleBarOverlay); the header under them leaves that width free. */
+ * (Electron's titleBarOverlay); the header under them, Home's too, leaves that width free. */
 :root[data-platform="win32"],
 :root[data-platform="linux"] {
   --window-controls-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 144px)));
@@ -1036,6 +1193,62 @@
 :root[data-platform="win32"] .window-controls-end,
 :root[data-platform="linux"] .window-controls-end {
   padding-inline-end: calc(var(--window-controls-end) + 8px);
+}
+
+/* The stage strip (panels/stage/StageStrip.tsx): the views and the game's controls at its start, the
+ * plugin buttons at its end, on one row while they fit. Narrower, it makes room in steps
+ * (`strip-fold.ts`, `data-fold`): the views fold into one button, then the plugin buttons move to a
+ * second row, then Sound and Full screen join them there. Its last column keeps the first row clear
+ * of the window's own controls (Windows, Linux: `--window-controls-end`), so the second row, which
+ * spans it, runs to the strip's end; the line between the rows is the strip's own background. */
+.stage-strip {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto var(--window-controls-end, 0px);
+  grid-template-rows: 47px;
+  grid-template-areas: "start game . end .";
+  column-gap: 8px;
+  align-items: center;
+  overflow: hidden;
+  /* A control's name never wraps to make room: the strip folds instead. */
+  white-space: nowrap;
+}
+.stage-strip-start {
+  grid-area: start;
+  justify-self: start;
+}
+.stage-strip-game {
+  grid-area: game;
+}
+.stage-strip-end {
+  grid-area: end;
+  justify-self: end;
+}
+.stage-strip[data-fold="plugins"],
+.stage-strip[data-fold="game"] {
+  grid-template-rows: 47px 1px minmax(47px, auto);
+  background-image: linear-gradient(var(--line), var(--line));
+  background-size: 100% 1px;
+  background-position: 0 47px;
+  background-repeat: no-repeat;
+}
+.stage-strip[data-fold="plugins"] {
+  grid-template-areas: "start game . . ." ". . . . ." "end end end end end";
+}
+.stage-strip[data-fold="game"] {
+  grid-template-areas: "start start start start ." ". . . . ." "game . end end end";
+}
+/* On the second row (`data-row`) the plugin buttons may wrap, and end 8px from the strip's edge. */
+.stage-strip-end[data-row="second"] {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 8px;
+  padding-block: 7px;
+  padding-inline-end: 8px;
+}
+/* A game with no plugin buttons has nothing for a second row: the strip stays one row. */
+.stage-strip[data-fold="plugins"]:has(> .stage-strip-end:empty) {
+  grid-template-rows: 47px 0 0;
+  background-image: none;
 }
 
 /* Conversation-led shell. */
@@ -1996,7 +2209,7 @@ button.chat-header-title:hover {
 .profile-plate-main[data-state="open"] {
   background: var(--sidebar-selected);
 }
-/* The name gives way before its plan: "Rab Ne… · Pro" rather than "Rab Neba · …". */
+/* The name gives way before a Pro's PRO mark: "Rab Ne… PRO" rather than "Rab Neba …". */
 .profile-plate-name {
   display: flex;
   flex: 1;
@@ -2010,17 +2223,318 @@ button.chat-header-title:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.profile-plate-plan {
+/* A Pro's tag after the name, as the friends' rows show it. */
+.profile-plate-pro {
   flex: none;
-  white-space: pre;
+  align-self: center;
+  vertical-align: 0;
 }
-.profile-plate-plan,
 .profile-plate-chevrons {
   color: var(--ink-3);
 }
 .profile-plate-main:focus-visible {
   outline: 2px solid var(--focus-edge);
   outline-offset: -2px;
+}
+/* A Pro's nameplate (`nameplate/Nameplate.tsx`). At rest the row is the plain plate; lit (under the
+ * pointer but never while its menu is open, or always where a plate is shown off, as in Settings)
+ * it takes the art's own colour, the piece melts in from the right under a dark wash that keeps the
+ * name readable, the name glows in the avatar's colour and sparkles twinkle around the face. A light
+ * theme draws the piece on paper (below). */
+.nameplate {
+  /* Each plate sets its own colours inline (`Nameplate.tsx`); these hold until it does. */
+  --plate-tint: #0b0b0e;
+  --plate-glow: #ffffff;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 44px;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: background-color var(--duration-fast) var(--ease-smooth-out);
+}
+.nameplate > :not(.nameplate-art, .nameplate-wash, .nameplate-sparkles) {
+  position: relative;
+  z-index: 2;
+}
+/* A playing friend's Join keeps floating over the row's end, as on a plain row. */
+.nameplate > .sidebar-friend-join {
+  position: absolute;
+  z-index: 3;
+}
+/* The credits keep one box at rest and lit, so the name never re-truncates on hover; their focus
+ * ring is drawn inside, as the plate clips what reaches past its edge. */
+.nameplate .plate-credits {
+  height: 24px;
+  padding-inline: 6px;
+  margin-inline-end: 6px;
+  border-radius: 8px;
+}
+.nameplate .plate-end:focus-visible {
+  outline-offset: -2px;
+}
+.nameplate-art,
+.nameplate-wash,
+.nameplate-sparkles {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-smooth-out);
+}
+.nameplate-art {
+  position: absolute;
+  inset: 0 0 0 10%;
+  z-index: 0;
+  mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 0.55) 22%, rgb(0 0 0 / 0.92) 48%, #000 70%);
+  filter: brightness(0.88) saturate(1.1);
+}
+.nameplate-art > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.nameplate-wash {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(90deg, rgb(6 6 10 / 0.8) 0%, rgb(6 6 10 / 0.55) 34%, transparent 62%),
+    linear-gradient(270deg, rgb(0 0 0 / 0.45) 0%, transparent 24%);
+}
+/* A plate with something at its end (the credits, the Offline mark): the art fades out before it,
+ * so the end sits on the plate's own plain colour with nothing behind it. The mask clears the end a
+ * short balance needs; the end's own ground (below) clears as far as it reaches, "Unlimited" too. */
+.nameplate:has(> .plate-end) > .nameplate-art {
+  mask-image:
+    linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 0.55) 22%, rgb(0 0 0 / 0.92) 48%, #000 70%),
+    linear-gradient(270deg, transparent 58px, rgb(0 0 0 / 0.24) 80px, rgb(0 0 0 / 0.66) 106px, #000 136px);
+  mask-composite: intersect;
+}
+.nameplate:has(> .plate-end) > .nameplate-wash {
+  background: linear-gradient(90deg, rgb(6 6 10 / 0.8) 0%, rgb(6 6 10 / 0.55) 34%, transparent 62%);
+}
+.nameplate[data-lit] {
+  /* Rings around a face keep their gap in the plate's colour, not the page's. */
+  --page: var(--plate-tint);
+  background: var(--plate-tint);
+}
+.nameplate[data-lit] :is(.nameplate-art, .nameplate-wash, .nameplate-sparkles) {
+  opacity: 1;
+}
+.nameplate[data-lit] .profile-plate-main {
+  color: #f4f5f8;
+}
+/* On a nameplate the row itself is the hover: no extra box under the name, hovered or open. */
+.nameplate :is(.profile-plate-main, .sidebar-friend-open):is(:hover, [data-state="open"]) {
+  background: transparent;
+}
+.nameplate[data-lit] :is(.profile-plate-name-text, .people-name-text) {
+  color: var(--plate-glow);
+  font-weight: 500;
+  text-shadow:
+    0 0 12px color-mix(in srgb, var(--plate-glow) 45%, transparent),
+    0 1px 3px rgb(0 0 0 / 0.65);
+}
+.nameplate[data-lit] .people-pro {
+  color: var(--plate-glow);
+}
+.nameplate[data-lit] .profile-plate-chevrons {
+  color: rgb(244 245 248 / 0.62);
+}
+.nameplate[data-lit] :is(.cy-avatar, .person-avatar) {
+  box-shadow:
+    0 0 0 2px var(--page),
+    0 0 0 3.5px color-mix(in srgb, var(--plate-glow) 70%, transparent),
+    0 0 14px 2px color-mix(in srgb, var(--plate-glow) 40%, transparent);
+}
+.nameplate[data-lit] .sidebar-friend-playing {
+  color: #6ee39a;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+}
+/* The end's ground: the plate's own colour from the end's left edge to the plate's, fading in just
+ * before it, shown with the art. The pill under the pointer is drawn over it. */
+.nameplate {
+  --plate-ground: var(--plate-tint);
+}
+.nameplate > .plate-end::before,
+.nameplate > .plate-end::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+.nameplate > .plate-end::before {
+  inset: -10px -6px -10px -24px;
+  background: linear-gradient(90deg, transparent, var(--plate-ground) 24px);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-smooth-out);
+}
+.nameplate > .plate-end::after {
+  inset: 0;
+  border-radius: inherit;
+  transition: background-color var(--duration-quick);
+}
+.nameplate[data-lit] > .plate-end::before {
+  opacity: 1;
+}
+/* Lit, the credits are light on the plate's clear end, with nothing behind them, and a faint pill
+ * under the pointer or keyboard focus (the plate itself lights only on hover). */
+.nameplate[data-lit] .plate-credits {
+  color: rgb(255 255 255 / 0.88);
+  transition: color var(--duration-quick);
+}
+.nameplate[data-lit] .plate-credits:is(:hover, :focus-visible) {
+  color: #fff;
+}
+/* The end's own hover box would sit under its ground: lit, the pill over the ground shows instead. */
+.nameplate[data-lit] .plate-end:is(:hover, :focus-visible) {
+  background: transparent;
+}
+.nameplate[data-lit] .plate-end:is(:hover, :focus-visible)::after {
+  background: rgb(255 255 255 / 0.1);
+}
+.nameplate-sparkles {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 3;
+  width: 44px;
+  height: 44px;
+  transform: translateY(-50%);
+}
+.nameplate-sparkles > i {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  color: var(--plate-glow);
+  opacity: 0;
+}
+.nameplate[data-lit] .nameplate-sparkles > i {
+  animation: nameplate-twinkle 2.6s ease-in-out infinite;
+}
+.nameplate-sparkles > i:nth-child(1) {
+  top: 3px;
+  left: 3px;
+}
+.nameplate-sparkles > i:nth-child(2) {
+  top: 1px;
+  left: 31px;
+  width: 6px;
+  height: 6px;
+  animation-delay: 0.7s;
+}
+.nameplate-sparkles > i:nth-child(3) {
+  top: 30px;
+  left: 33px;
+  width: 7px;
+  height: 7px;
+  animation-delay: 1.4s;
+}
+.nameplate-sparkles > i:nth-child(4) {
+  top: 31px;
+  left: 1px;
+  width: 5px;
+  height: 5px;
+  animation-delay: 2s;
+}
+.nameplate-sparkles svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--plate-glow) 75%, transparent));
+}
+@keyframes nameplate-twinkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.3) rotate(0deg);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1) rotate(45deg);
+  }
+  60% {
+    opacity: 0.85;
+    transform: scale(0.9) rotate(60deg);
+  }
+}
+/* A Pro friend's row in the sidebar: the art starts further right so the game line stays readable. */
+.nameplate-friend {
+  height: auto;
+  min-height: 44px;
+}
+.nameplate-friend > .nameplate-art {
+  inset: 0 0 0 26%;
+}
+/* Light themes: the piece is drawn on paper (its lightness turned over in the shader), so the lit
+ * plate is pale with deep colour; the wash, the name, the credits and the sparkles turn over too. */
+:root[data-theme="light"] .nameplate {
+  --plate-paper: color-mix(in oklab, var(--plate-tint) 10%, #fbfbfc);
+  --plate-ground: var(--plate-paper);
+}
+:root[data-theme="light"] .nameplate[data-lit] {
+  --page: var(--plate-paper);
+  background: var(--plate-paper);
+}
+:root[data-theme="light"] .nameplate-wash {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--plate-paper) 85%, transparent) 0%,
+      color-mix(in oklab, var(--plate-paper) 55%, transparent) 34%,
+      transparent 62%
+    ),
+    linear-gradient(270deg, color-mix(in oklab, var(--plate-paper) 50%, transparent) 0%, transparent 24%);
+}
+:root[data-theme="light"] .nameplate:has(> .plate-end) > .nameplate-wash {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--plate-paper) 85%, transparent) 0%,
+    color-mix(in oklab, var(--plate-paper) 55%, transparent) 34%,
+    transparent 62%
+  );
+}
+:root[data-theme="light"] .nameplate[data-lit] .profile-plate-main {
+  color: var(--ink);
+}
+:root[data-theme="light"] .nameplate[data-lit] :is(.profile-plate-name-text, .people-name-text) {
+  color: color-mix(in oklab, var(--plate-glow) 55%, var(--ink));
+  text-shadow: 0 0 10px rgb(255 255 255 / 0.9);
+}
+:root[data-theme="light"] .nameplate[data-lit] .people-pro {
+  color: color-mix(in oklab, var(--plate-glow) 50%, var(--ink));
+}
+:root[data-theme="light"] .nameplate[data-lit] .profile-plate-chevrons {
+  color: var(--ink-3);
+}
+:root[data-theme="light"] .nameplate[data-lit] .plate-credits {
+  color: var(--ink-2);
+}
+:root[data-theme="light"] .nameplate[data-lit] .plate-credits:is(:hover, :focus-visible) {
+  color: var(--ink);
+}
+:root[data-theme="light"] .nameplate[data-lit] .plate-end:is(:hover, :focus-visible)::after {
+  background: rgb(0 0 0 / 0.06);
+}
+:root[data-theme="light"] .nameplate[data-lit] .sidebar-friend-playing {
+  color: var(--people-live-ink);
+  text-shadow: 0 0 8px rgb(255 255 255 / 0.9);
+}
+:root[data-theme="light"] .nameplate-sparkles > i {
+  color: color-mix(in oklab, var(--plate-glow) 70%, var(--ink));
+}
+:root[data-motion="rest"] .nameplate-sparkles > i {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nameplate[data-lit] .nameplate-sparkles > i {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 /* Where a face goes while there is no account to show: signed out, and while the browser signs in. */
 .plate-slot {
@@ -2210,6 +2724,89 @@ button.chat-header-title:hover {
 }
 .chat-genex-terms .genex-terms-line-label {
   padding-inline-end: 8px;
+}
+/* The open studio's agents did not start (`AgentsStartLine.tsx`): the terms line's shape, its words
+ * and button in the warning colour (no icon, so the words fit the sidebar's default width), its
+ * name opening why (the raw error, Send a report) under it. */
+.agents-start {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+.agents-start-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding-inline: 4px;
+}
+.agents-start-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding-inline: 5px 4px;
+  color: color-mix(in oklab, var(--orange) 62%, var(--ink));
+  text-align: start;
+  cursor: pointer;
+}
+.agents-start-retry,
+.agents-start-send {
+  flex: none;
+  height: 24px;
+  padding-inline: 9px;
+  border-radius: 7px;
+  background: var(--orange-tint);
+  color: color-mix(in oklab, var(--orange) 62%, var(--ink));
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.agents-start-retry:hover,
+.agents-start-send:hover {
+  background: color-mix(in oklab, var(--orange) 24%, transparent);
+}
+.agents-start-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 9px 9px;
+}
+.agents-start-error {
+  max-height: 72px;
+  width: 100%;
+  overflow: auto;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.agents-start-report {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.agents-start-note {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+.agents-start-sent {
+  padding-inline: 4px;
+  color: var(--ink);
 }
 /* Install what is ticked, on the line and in its list: the accent as a soft tint, its label a
  * lighter blue on dark and a deeper one on light. */
@@ -3623,14 +4220,141 @@ button.chat-header-title:hover {
   border-radius: 99px;
 }
 
-/* A page's content on its way (Pending `spinner`): the working mark centred over the shimmering label. */
-.pending-page {
+/* Content on its way (ui/Pending.tsx): unseen for the first 0.4 s, when most local reads have
+   already answered, then faded in. */
+.pending-late {
+  animation: stage-loader-late 200ms ease-out 400ms both;
+}
+/* Real work starting (Pending `working`): the chat's orb beside one small shimmering line. */
+.pending-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+/* The shape of what is coming (ui/Skeleton.tsx): soft blocks the size of the lines, pictures and
+   controls, breathing slowly together; still under reduced motion. */
+.skeleton {
+  display: block;
+  flex: none;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--hover);
+  animation: skeleton-breathe 2.4s ease-in-out infinite;
+}
+@keyframes skeleton-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+.skeleton-lines {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+.skeleton-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.skeleton-row {
+  display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 12px;
+}
+.skeleton-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* Builds on its way (RunGraph.tsx): what you asked, two parts and the build, on the graph's dots. */
+.skeleton-graph {
+  display: flex;
+  align-items: center;
+  justify-content: safe center;
+  gap: 48px;
+  height: 100%;
+  padding: 32px;
+  background-image: radial-gradient(var(--line-strong) 1px, transparent 1.25px);
+  background-size: 22px 22px;
+}
+.skeleton-graph-column {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+/* The Assets tab on its way (AssetsCanvas.tsx): a first screen of tiles, each with its name. */
+.skeleton-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 160px));
+  gap: 16px;
+  width: min(512px, 100%);
+}
+.skeleton-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* A picture on its way over the dark full-size backdrop (inspector/Lightbox.tsx). */
+.skeleton.skeleton-on-dark {
+  background: rgb(255 255 255 / 0.07);
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* A game's first message while it cannot go yet: the provider's mark, what it waits for, one action. */
+.held-send-card {
+  display: flex;
+  align-items: center;
   gap: 14px;
-  min-height: 200px;
+  padding: 14px 14px 14px 16px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.held-send-mark {
+  flex: none;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.35));
+}
+.held-send-title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.held-send-line {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-3);
+}
+.held-send-action {
+  flex: none;
+  height: 32px;
+  padding-inline: 14px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ink) 9%, var(--control-hover, var(--hover)));
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.held-send-action:is(:hover, :focus-visible) {
+  background: color-mix(in oklab, var(--ink) 15%, var(--control-hover, var(--hover)));
+}
+.held-send-action[data-primary] {
+  background: var(--accent-fill);
+  color: var(--accent-foreground);
+}
+.held-send-action[data-primary]:is(:hover, :focus-visible) {
+  background: var(--accent-hover);
 }
 
 /* Only current work animates. History and disclosures mount without entrance choreography. */
@@ -3935,6 +4659,26 @@ button.chat-header-title:hover {
   color: var(--ink);
   text-decoration-color: currentColor;
 }
+/* A file a person's message carries, written out in full: a chip with its own name. */
+.file-link.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 7px;
+  background: var(--surface);
+  text-decoration-line: none;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.file-link.file-chip:hover {
+  background: var(--control-hover, var(--hover));
+}
+.file-link.file-chip svg {
+  flex-shrink: 0;
+  color: var(--ink-3);
+}
 /* Studio has one reading size, one small size and a title; technical code keeps its family. */
 .studio-view {
   font-family: var(--font-family-content);
@@ -4032,6 +4776,11 @@ button.chat-header-title:hover {
   --presence-gap: 0.5rem;
   margin-block-start: -8px;
 }
+/* A running build's card is a box, not a line: it stands well clear of the reply above it (32px from
+   the reply's last line), so it never reads as part of the message. */
+.chat-work-build {
+  padding-block-start: 22px;
+}
 .chat-user-content[data-collapsed] {
   max-height: 154px;
   overflow: hidden;
@@ -4071,7 +4820,7 @@ button.chat-header-title:hover {
 .chat-user-toggle:hover {
   color: var(--ink);
 }
-/* Remove under a queued message: 24px like Rewind, under the icon button's usual control size
+/* Remove under a waiting message: 24px like Rewind, under the icon button's usual control size
    (a utility class loses to it; this rule is unlayered). */
 .chat-queued-remove {
   width: 24px;
@@ -4547,6 +5296,11 @@ a:focus-visible {
   max-width: 100%;
   height: 36px;
   font-size: 12px;
+}
+/* A language's own name can be long ("System (Português (Brasil))"): the language menu grows to it. */
+[data-language-setting] .appearance-choice {
+  width: auto;
+  min-width: 200px;
 }
 .appearance-menu {
   max-height: min(380px, var(--radix-dropdown-menu-content-available-height));
@@ -5326,23 +6080,27 @@ a:focus-visible {
   position: relative;
   z-index: 1;
 }
-/* Open in Builds, at the foot of the Building card's parts: a quiet link above the card's own toggle. */
+/* Open in Builds, at the foot of the Building card's parts: a small filled button (`pill-quiet`)
+ * above the card's own toggle. */
 .build-checklist-open {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-self: flex-start;
   align-items: center;
   gap: 4px;
-  padding: 2px 0;
+  margin-top: 4px;
+  padding: 3px 8px 3px 10px;
   border: 0;
-  border-radius: 4px;
-  background: none;
-  color: var(--ink-3);
-  font-family: inherit;
+  border-radius: var(--radius-control);
+  font-family: var(--font-family-content);
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.2px;
   cursor: pointer;
-  transition: color var(--duration-quick);
-}
-.build-checklist-open:is(:hover, :focus-visible) {
-  color: var(--ink);
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
 }
 .build-checklist-open:focus-visible {
   outline: 2px solid var(--accent);
@@ -5352,6 +6110,172 @@ a:focus-visible {
   .build-card,
   .build-card-open svg,
   .build-checklist-open {
+    transition: none;
+  }
+}
+
+/* The Builds bar's tabs (run-graph/chrome.tsx): the chat's builds on one quiet track, the open one
+ * raised on it with a soft edge, as the stage strip's switch holds its views. The row scrolls on its own, without a
+ * bar, once it outgrows the bar; the open tab is wider, so its name reads. */
+.build-tabs {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.build-tabs::-webkit-scrollbar {
+  display: none;
+}
+.build-tab {
+  display: inline-flex;
+  min-width: 72px;
+  max-width: 220px;
+  height: 26px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--color-control-text);
+  font-family: var(--font-family-content);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick),
+    box-shadow var(--duration-quick);
+}
+.build-tab:hover {
+  background: var(--control-hover, var(--hover));
+  color: var(--color-control-text-hover);
+}
+.build-tab[aria-selected="true"] {
+  max-width: 320px;
+  background: var(--surface);
+  color: var(--ink);
+  /* Halfway between the card's quiet edge and a control's: there, without standing out. */
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--line-strong) 50%, var(--line));
+}
+.build-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* A working build's clock: the chat's shimmer, a size under the name. */
+.build-tab-clock {
+  flex: none;
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.build-tab-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+/* Past three builds the track becomes one picker of the same height and edge: the open build's
+ * whole name, then ⌄ and the count. Its list is the shared dropdown with one-line rows. */
+.build-picker {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 520px;
+  height: 32px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  font-family: var(--font-family-content);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.build-picker:hover,
+.build-picker[data-state="open"] {
+  background: var(--control-hover, var(--hover));
+}
+.build-picker-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  margin-inline-start: 2px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.build-picker-menu {
+  width: 440px;
+  min-width: var(--radix-dropdown-menu-trigger-width);
+  max-width: calc(100vw - 24px);
+  /* Ten rows, the list's 4px padding and its edge: a tenth build does not scroll. */
+  max-height: min(calc(10 * 32px + 10px), var(--radix-dropdown-menu-content-available-height));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* While more rows lie below, the last one shown fades into the list's fill. Drawn over it rather
+ * than masked, so the menu keeps its shadow; it sticks past the list's 4px padding to its inner
+ * edge, so no row scrolls by under it unfaded. */
+.build-picker-fade {
+  display: none;
+}
+.build-picker-menu[data-more] > .build-picker-fade {
+  position: sticky;
+  bottom: -4px;
+  display: block;
+  height: 32px;
+  margin-top: -32px;
+  background: linear-gradient(to bottom, transparent, var(--popover));
+  pointer-events: none;
+}
+.build-row {
+  height: 32px;
+  /* A row scrolled into view clears the fade and the list's 4px padding, so the next-to-last ends it. */
+  scroll-margin-block-end: 36px;
+  gap: 8px;
+  padding-block: 0;
+  font-family: var(--font-family-content);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+/* The open build's row keeps the highlight's fill at rest, so the list shows which one is on show. */
+.build-row[data-state="checked"] {
+  background: var(--control-hover, var(--hover));
+  color: var(--ink);
+}
+.build-row-mark {
+  display: inline-flex;
+  width: 14px;
+  flex: none;
+  justify-content: center;
+  color: var(--ink-3);
+}
+.build-row-when {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .build-tab,
+  .build-picker {
     transition: none;
   }
 }
@@ -5370,11 +6294,8 @@ a:focus-visible {
   font-weight: 500;
   line-height: 20px;
 }
-/* A loader drawn by CSS alone (Builds' graph on its way) waits out the first moments, as the stage's
-   own loader does (`loader-presence.ts`): most loads finish before it would show. */
-.stage-loader-late {
-  animation: stage-loader-late 200ms ease-out 400ms both;
-}
+/* How content on its way fades in after the first moments (`.pending-late`), as the stage's own
+   loader does (`loader-presence.ts`): most loads finish before it would show. */
 @keyframes stage-loader-late {
   from {
     opacity: 0;
@@ -6169,9 +7090,8 @@ a:focus-visible {
   --picker-well: var(--well, color-mix(in oklab, var(--canvas) 75%, var(--popover)));
   /* A preset's own menu shadow replaces the popover's shadow-lg. */
   --tw-shadow: var(--panel-shadow, 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1));
-  /* The prompt bar's own edge, and only it: the popover's hairline ring would draw a second line. */
-  border: 1px solid var(--prompt-bar-edge);
-  --tw-ring-shadow: 0 0 #0000;
+  /* Every menu's one edge: the prompt bar's in light, the control edge in dark. */
+  border: 1px solid var(--menu-edge);
   border-radius: calc(var(--radius-control) + 6px);
   font-family: var(--font-family-sans);
   font-weight: 400;
@@ -6400,12 +7320,124 @@ a:focus-visible {
   cursor: default;
 }
 /* The @ picker: cover cards on shelves, as on genex.games. Words on a card are white on a dark
-   scrim in both themes, because they sit on a picture. */
+   scrim in both themes, because they sit on a picture. A header stays put over them (the words
+   after the @, What and Whose) with no line under it; only the list below scrolls, and its edges
+   fade where cards pass under the header or more lie below. */
 .mention-panel {
   display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.mention-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 6px 0;
+}
+.mention-search {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--picker-well);
+}
+/* The field shows the words typed in the prompt; a click puts the caret back there. */
+.mention-search-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding-inline: 10px;
+  border-radius: inherit;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: start;
+  cursor: text;
+}
+.mention-search-icon {
+  flex: none;
+}
+.mention-search-text,
+.mention-search-placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-search-text {
+  color: var(--ink);
+}
+/* Clear: small, quiet, underlined words, no fill. */
+.mention-search-clear {
+  flex: none;
+  margin-inline-end: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mention-search-clear:hover {
+  color: var(--ink);
+}
+.mention-switches {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+@property --mention-fade-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --mention-fade-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+.mention-scroll {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 12px;
-  padding-bottom: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  /* The right inset is the scrollbar's own room, kept when nothing scrolls, so the cards line up
+     with the header above them either way. */
+  padding: 12px 0 10px 6px;
+  scrollbar-gutter: stable;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--mention-fade-top),
+    #000 calc(100% - var(--mention-fade-bottom)),
+    transparent
+  );
+  transition:
+    --mention-fade-top var(--duration-quick),
+    --mention-fade-bottom var(--duration-quick);
+}
+.mention-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.mention-scroll::-webkit-scrollbar-thumb {
+  border-width: 1px;
+}
+.mention-scroll[data-scrolled] {
+  --mention-fade-top: 20px;
+}
+.mention-scroll[data-more] {
+  --mention-fade-bottom: 28px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mention-scroll {
+    transition: none;
+  }
 }
 /* The shelves genex.games will fill, standing in while it answers: quiet cards with a slow sweep. */
 .mention-skeleton-label,
@@ -6431,7 +7463,7 @@ a:focus-visible {
 .mention-skeleton-card {
   aspect-ratio: 16 / 9;
   border-radius: 12px;
-  border: 1px solid var(--control-quiet-edge);
+  border: 1px solid var(--line-soft);
 }
 @media (prefers-reduced-motion: reduce) {
   .mention-skeleton-label,
@@ -6484,13 +7516,13 @@ a:focus-visible {
   aspect-ratio: 16 / 9;
   overflow: hidden;
   border-radius: 12px;
-  border: 1px solid var(--control-quiet-edge);
+  border: 1px solid var(--line-soft);
   background: #1a1b1e;
   cursor: pointer;
   transition: border-color 0.12s;
 }
 .mention-card:hover {
-  border-color: color-mix(in oklab, var(--accent-primary) 50%, var(--control-quiet-edge));
+  border-color: color-mix(in oklab, var(--accent-primary) 50%, var(--line-soft));
 }
 .mention-card[data-highlighted] {
   border-color: var(--accent-primary);
@@ -6579,7 +7611,8 @@ a:focus-visible {
   white-space: nowrap;
 }
 .mention-cap {
-  margin: 4px -6px -6px;
+  flex: none;
+  margin: 0;
   padding: 8px 12px 10px;
   border-top: 1px solid var(--prompt-bar-edge);
   font-size: 12px;
@@ -6608,6 +7641,42 @@ a:focus-visible {
 }
 .picker-action:disabled {
   opacity: 0.5;
+}
+/* A plugin row's Settings: Connect's size in a grey a step above the hovered row, shown while the row
+   is hovered or holds focus. At rest it takes no room, so a row's status keeps the whole line; it
+   overhangs the row's 20px line by 2px each way, so showing it never makes the row taller. */
+.picker-settings {
+  display: none;
+  flex: none;
+  height: 24px;
+  margin-block: -2px;
+  padding-inline: 10px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--ink) 9%, var(--control-hover, var(--hover)));
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.picker-item:is(:hover, :focus-within) .picker-settings {
+  display: block;
+}
+.picker-panel .picker-settings:is(:hover, :focus-visible) {
+  background: color-mix(in oklab, var(--ink) 16%, var(--control-hover, var(--hover)));
+}
+/* A plugin's name under keyboard focus lights its whole rounded row with the fill and inset edge a
+   focused Images row has, not a square around the name alone. */
+.picker-item:has([data-plugin-open]:focus-visible) {
+  background: var(--control-hover, var(--hover));
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}
+:root .picker-item [data-plugin-open]:focus-visible {
+  outline: none;
+  background: none;
 }
 /* Pills are always filled; › drills in, ⌄ expands in place. */
 .picker-pill {
@@ -6969,8 +8038,9 @@ a:focus-visible {
   box-shadow: 0 1px 2px #00000040;
   transition: left 180ms var(--ease-smooth-out);
 }
-/* A free model's tag, right after its name in the model list. */
-.model-free-tag {
+/* A free model's tag, right after its name in the model list; a beta provider's, after its name. */
+.model-free-tag,
+.beta-tag {
   flex: none;
   padding: 1px 7px;
   border-radius: 999px;
@@ -7010,11 +8080,12 @@ a:focus-visible {
   font-weight: 500;
   color: var(--ink);
 }
-/* Each plan, and Genex, is its own outlined block: the panel reads as a stack of accounts. */
+/* Each plan, and Genex, is its own outlined block: the panel reads as a stack of accounts. A box
+   inside a menu, so its edge is the soft one. */
 .usage-plan {
   margin: 6px 4px 0;
   padding: 6px 12px 4px;
-  border: 1px solid var(--line-strong, var(--line));
+  border: 1px solid var(--line-soft);
   border-radius: 12px;
 }
 .usage-plan:last-child {
@@ -7131,6 +8202,40 @@ a:focus-visible {
 }
 p.usage-divider {
   padding-bottom: 6px;
+}
+/* A plan's one problem (signed out, couldn't check) in orange, with its one action beside it. */
+.usage-problem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 4px;
+  font-family: var(--font-family-content);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--orange);
+}
+.usage-problem-action {
+  flex: none;
+  height: 24px;
+  padding-inline: 10px;
+  border-radius: 8px;
+  /* Settings' grey a step above the panel: a filled button, quieter than the accent. */
+  background: color-mix(in oklab, var(--ink) 9%, var(--control-hover, var(--hover)));
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.usage-problem-action:is(:hover, :focus-visible) {
+  background: color-mix(in oklab, var(--ink) 15%, var(--control-hover, var(--hover)));
+}
+.usage-problem-action[data-primary] {
+  background: var(--accent-fill);
+  color: var(--accent-foreground);
+}
+.usage-problem-action[data-primary]:is(:hover, :focus-visible) {
+  background: var(--accent-hover);
 }
 /* A plan's usage while it is read: bars the size of the text they stand in for, swept by the same
    soft light as current work (`chat-status-shimmer`), still under reduced motion. */

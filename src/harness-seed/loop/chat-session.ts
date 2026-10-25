@@ -5,6 +5,7 @@
  * re-briefed from the last line alone, and a chat never guesses a different game folder.
  */
 import { launchRules, RESUME_LOOP_CHAT, type LaunchGrant } from "./launch-prompts.ts";
+import { autoLoopRule } from "./auto-loop-prompts.ts";
 import { UNTIL_DONE_WORDS } from "./until-done-prompts.ts";
 import { type EngineId, GameEngine } from "./game-engine.ts";
 import { handoverSection } from "./session-compact-prompts.ts";
@@ -33,6 +34,8 @@ import {
   unrealWithoutPlugin,
 } from "./project-prompts.ts";
 import { WORKERS_BRIEF_LINE } from "./workers/prompts.ts";
+import type { AppLanguage } from "./app-language.ts";
+import { languageRule } from "./language-prompts.ts";
 import { godotWorkHere, godotWorkspaceRule } from "./linked-project-prompts.ts";
 import { pluginWebBuilds, webBuildLine } from "./web-build.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
@@ -283,6 +286,9 @@ export function isResumeFailure(err: any): boolean {
 const TEMPLATE_RULE =
   "When you build, follow CLAUDE.md in the workspace root: keep window.__studio (seed/start/pause/step/state/debugCamera) working, keep gameplay deterministic (rng from reset(seed), never Math.random), assets come from procedural code, imports, or the currently enabled plugin tools. Follow the selected tool’s returned file paths and verification guidance.";
 
+/** The web starter's rule as a folder with no kind yet hears it: for its web answer only, never an engine's. */
+const PENDING_TEMPLATE_RULE = `For a game that plays in Genex (the web answer): ${TEMPLATE_RULE.charAt(0).toLowerCase()}${TEMPLATE_RULE.slice(1)}`;
+
 /**
  * …and the same rule for a game that came with its own shape: what it already is stays, the
  * contract is installed into its own entry, and its build is run before the turn ends. The
@@ -325,7 +331,7 @@ const USER_COMMAND_FENCE = "bash";
 
 /** Where a web game's work happens: this workspace, and no other copy or game. */
 const WORKSPACE_RULE =
-  "The game's work happens in this workspace: never in another copy of this game or in another game's folder, and a path the user named is a stills folder to look at, not a parent to walk. When the user asks about something elsewhere on their Mac (another folder, their Downloads, their disk), that is the ask: what you may reach is your session's permissions, not this brief.";
+  "The game's work happens in this workspace: never in another copy of this game or in another game's folder, and a path the user named is a stills folder to look at, not a parent to walk. When the user asks about something elsewhere on their computer (another folder, their Downloads, their disk), that is the ask: what you may reach is your session's permissions, not this brief.";
 
 /**
  * What a brief knows about the game: what its folder holds (`facts`; `[]`: none, and then `holds`
@@ -423,7 +429,7 @@ function factRules(
   { offered, asked }: { offered: readonly PluginKindOffer[]; asked: boolean },
 ): string[] {
   if (kindUnknown(game)) return unknownKindRules(engine, game.holds);
-  if (kindPending(game)) return [...pendingKindRule(engine, offered, null, game.holds, asked), TEMPLATE_RULE];
+  if (kindPending(game)) return [...pendingKindRule(engine, offered, null, game.holds, asked), PENDING_TEMPLATE_RULE];
   const several = game.facts.length > 1;
   // The kinds the plugins that are on make: their plugin is on already, nothing to look for.
   const made = new Set(offered.flatMap((kind) => (Array.isArray(kind.makes) ? kind.makes : [])));
@@ -437,10 +443,6 @@ function factRules(
   });
 }
 
-/**
- * The rules every chat build follows after the game's own, in the voice of the engine that reads
- * them: a tool is named once, spelled the way this session can actually call it (M4.8b).
- */
 /** Where the game's work happens: its Unreal project, its linked Godot project, or this workspace. */
 function workspaceRule(game: GameBuild): string {
   if (!servedAsWeb(game) && hasFact(game.facts, CoreFact.UnrealProject))
@@ -453,14 +455,21 @@ function workspaceRule(game: GameBuild): string {
 const linkedGodotProject = (game: GameBuild): string | null =>
   game.gameEngine === GameEngine.Godot ? game.engineProject : null;
 
-function contractorRules(engine: string | undefined, game: GameBuild): string[] {
+/**
+ * The rules every chat build follows after the game's own, in the voice of the engine that reads
+ * them: a tool is named once, spelled the way this session can actually call it (M4.8b). The first
+ * is the person's language, with Genex's own as the fallback (`language-prompts.ts`).
+ */
+function contractorRules(engine: string | undefined, game: GameBuild, app: AppLanguage | null): string[] {
   return [
+    languageRule(app),
     "Helper scripts of your own (an inspector, a syntax check, a probe) go under .studio/ (gitignored); source scripts for generated assets live under assets/src/.",
+    "Render a video's frames (a trailer, a flythrough) into your temporary folder (TMPDIR) or .studio/, never elsewhere in the game folder, and keep only the finished video in the game.",
     "Before you build or change how the game looks, if the folder has a references/ or ref/ directory with stills, look at those pictures — they are the visual bar, not files to load as textures.",
     workspaceRule(game),
     "When your shell is sandboxed, it rejects commands it cannot statically analyze — avoid $-expansions, escaped whitespace, heredocs and long && chains; run one simple command at a time, and put multi-step logic in a script file you then run with node.",
-    `When a sandbox blocks a step only the user's own Mac can do (an install or download that needs the network, such as brew or pip, a system tool, a sign-in), do not work around it: end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why. The chat shows it with a Run button; how it went comes back as the user's next message. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
-    "When the user named a tool, app or plugin to use (Blender, an engine, a package) and its status or a call says it can't run here, never carry on without it in silence: say so in your reply, in plain words, with the fix its answer names, before a long build starts. A plugin's own install tool (named like blender__install) asks the user on a card: call it when its status says to.",
+    `When a sandbox blocks a step only the user's own computer can do (an install or download that needs the network, such as brew, winget or pip, a system tool, a sign-in), do not work around it: end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why. The chat shows it with a Run button; how it went comes back as the user's next message. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
+    "When the user named a tool, app or plugin to use (Blender, an engine, a package) and its status or a call says it can't run here, never carry on without it in silence: say so in your reply, in plain words, with the fix its answer names, before a long build starts. A plugin's own install tool (its name ends in __install) asks the user on a card: call it when its status says to.",
     // The Reload a checkpoint lights is the web preview's: any other kind is seen in its own app.
     ...(servedAsWeb(game)
       ? [
@@ -542,6 +551,8 @@ export function buildContractorBrief({
   engineProject = null,
   /** Loop is on: this chat may also launch a build. */
   launch = null,
+  /** Loop is off: the launch tool this chat may call for a Loop the user asks for in words. */
+  autoLoop = null,
   /** The build this chat's session led is over: what it is told of it (after-loop-run-prompts.ts). */
   afterLoopRun = null,
   /** A new game while the Unreal plugin is on: the user picks the web or Unreal first (unreal-prompts.ts). */
@@ -560,6 +571,8 @@ export function buildContractorBrief({
   holds = null,
   /** This turn's session may start workers (workers/chat-workers.ts): its brief says so in one line. */
   workers = false,
+  /** The language Genex speaks (`studio.language`): the agent's fallback for Genex's own messages. */
+  appLanguage = null,
 }: {
   ask?: string;
   messages?: readonly BriefMessage[];
@@ -574,6 +587,7 @@ export function buildContractorBrief({
   gameEngine?: EngineId;
   engineProject?: string | null;
   launch?: LaunchGrant | null;
+  autoLoop?: string | null;
   afterLoopRun?: string | null;
   engineChoice?: boolean;
   /** Read no more, kept for a caller kept from before: each kind's readiness comes with the kinds (`ready`, `note`). */
@@ -585,16 +599,36 @@ export function buildContractorBrief({
   pluginsOff?: boolean;
   holds?: FolderHolds | null;
   workers?: boolean;
+  appLanguage?: AppLanguage | null;
 } = {}): string {
   const game = gameBuild(facts, { gameEngine, engineProject, pluginsOff, holds });
   const identity = appIdentity({ folderLabel, facts: game.facts, holds: game.holds });
   const workHere = workHereLine(game, folderLabel);
   const stills = stillsBlock(extraReads);
-  const launchBlock = launch?.toolName ? launchRules(engine, launch, ...loopOfGame(game)) : [];
+  const launchBlock = [
+    ...(launch?.toolName ? launchRules(engine, launch, ...loopOfGame(game)) : []),
+    ...(autoLoop ? [autoLoopRule(engine, autoLoop)] : []),
+  ];
   const workersLine = workers ? WORKERS_BRIEF_LINE : "";
 
+  // A folder with no kind yet hears how its request picks one on every message, a resumed session's
+  // too: a plugin turned on from the chat's card resumes the session that asked for it.
+  const kindRule = !game.legacy && kindPending(game) ? pendingKindRule(engine, kinds, null, game.holds, false) : [];
+  // A resumed session was told the rules in its first brief; the language comes again, since the
+  // resume's own words are Genex's, in English, and the app's language may have changed since.
   if (resume)
-    return [ask, "", identity, resumePickup(afterLoopRun, launch), ...launchBlock, workersLine, workHere, stills]
+    return [
+      ask,
+      "",
+      identity,
+      ...kindRule,
+      resumePickup(afterLoopRun, launch),
+      ...launchBlock,
+      workersLine,
+      workHere,
+      stills,
+      languageRule(appLanguage),
+    ]
       .filter(Boolean)
       .join("\n");
 
@@ -605,7 +639,7 @@ export function buildContractorBrief({
   const rules = [
     ...engineQuestion(engine, game, engineChoice, kinds),
     ...factRules(engine, game, { ownShape, shape, contractMissing }, choice),
-    ...contractorRules(engine, game),
+    ...contractorRules(engine, game, appLanguage),
   ];
   const { head, followUp } = briefHead(ask, messages, {
     compacted,

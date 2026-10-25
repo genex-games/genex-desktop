@@ -1,5 +1,6 @@
 import { type JSX, type RefObject, useEffect, useId, useRef, useState } from "react";
 import type { RewindFiles, RewindResult } from "../../shared/chat-rewind.ts";
+import { t } from "../../shared/i18n.ts";
 import { Button } from "../ui/Button.tsx";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Switch } from "../ui/switch.tsx";
@@ -135,8 +136,10 @@ export function RewindDialog({
       dismissible={!busy}
       initialFocus={cancel}
       returnFocus={returnFocus}
-      title="Rewind to before this message?"
-      description="This message and everything after it leave the chat. The message goes back in the composer so you can change it."
+      title={t("Rewind to before this message?")}
+      description={t(
+        "This message and everything after it leave the chat. The message goes back in the composer so you can change it.",
+      )}
       onDismiss={() => {
         if (!busy) onDismiss();
       }}
@@ -156,7 +159,7 @@ export function RewindDialog({
       )}
       <div className="flex justify-end gap-2">
         <Button ref={cancel} variant="ghost" disabled={busy} onClick={onDismiss}>
-          Cancel
+          {t("Cancel")}
         </Button>
         <Button
           data-rewind-confirm

@@ -2,19 +2,24 @@
  * One game on the dashboard, as genex.games draws it: the 16:9 cover (pressing it plays) with its
  * five-second clip running over it while hovered, or by itself in the Games feed's first row
  * (`CoverClip.tsx`), its players now and its plays over the cover's corner, the title, who made it,
- * and Remix when its source is public. A card still on its way is the same shape with nothing in it.
+ * and Remix when its source is public. The game's owner and Genex admins also get its ⋯ menu
+ * (`card-menu/`). A card still on its way is the same shape with nothing in it.
  */
-import type { CSSProperties, JSX } from "react";
+import type { CSSProperties, JSX, MouseEvent } from "react";
 import { memo, useEffect, useId, useRef, useState } from "react";
+import { playCardMenu } from "../../shared/play-manage.ts";
 import type { PlayGame } from "../../shared/play.ts";
-import { usePlay } from "../state/hooks.ts";
+import { usePeople, usePlay, useShallow } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { PLAY_WORDS } from "../words.ts";
+import { CardMenu } from "./card-menu/CardMenu.tsx";
 import { claimHoverClip, releaseHoverClip } from "./clip-playback.ts";
 import { CoverClip } from "./CoverClip.tsx";
-import { formatCount } from "./play-model.ts";
+import { CardBadge, cardBadge } from "./native-model.ts";
+import { CardNativeBadge } from "./NativeBadge.tsx";
+import { createShownCovers, formatCount } from "./play-model.ts";
 
 const WORDS = PLAY_WORDS;
 
@@ -22,9 +27,19 @@ const WORDS = PLAY_WORDS;
 const CoverState = { Loading: "loading", Shown: "shown", Failed: "failed" } as const;
 type CoverState = (typeof CoverState)[keyof typeof CoverState];
 
-/** The cover: the picture fades in once decoded; a missing or broken one leaves the plain tile. */
+/** The covers this window has shown: Play opened again draws them at once rather than fading them in. */
+const SHOWN_COVERS = createShownCovers();
+
+/** Whether `src` was shown before in this window. */
+const shownBefore = (src: string | null): boolean => src !== null && SHOWN_COVERS.has(src);
+
+/**
+ * The cover: the picture fades in once loaded, or shows at once when this window has shown it
+ * before; a missing or broken one leaves the plain tile. It loads as soon as its card is made, not
+ * when it nears the screen, so a page's covers are there before they are scrolled to.
+ */
 function Cover({ src, onShown }: { src: string | null; onShown: () => void }): JSX.Element | null {
-  const [state, setState] = useState<CoverState>(CoverState.Loading);
+  const [state, setState] = useState<CoverState>(() => (shownBefore(src) ? CoverState.Shown : CoverState.Loading));
   if (!src || state === CoverState.Failed) return null;
   return (
     <img
@@ -32,10 +47,10 @@ function Cover({ src, onShown }: { src: string | null; onShown: () => void }): J
       src={src}
       alt=""
       draggable={false}
-      loading="lazy"
       decoding="async"
       data-shown={state === CoverState.Shown || undefined}
       onLoad={() => {
+        SHOWN_COVERS.add(src);
         setState(CoverState.Shown);
         onShown();
       }}
@@ -78,7 +93,7 @@ function MarqueeTitle({ title }: { title: string }): JSX.Element {
     const text = element?.firstElementChild;
     if (!element || !(text instanceof HTMLElement)) return;
     const measure = () => setOverflow(Math.max(0, text.scrollWidth - element.clientWidth));
-    measure();
+    // The observer's first call measures once the title is laid out, never forcing a layout mid-commit.
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
@@ -110,7 +125,29 @@ function Author({ author }: { author: PlayGame["author"] }): JSX.Element {
   );
 }
 
+/** The card menu the signed-in account gets on `game`: its owner's items, an admin's, or none. */
+function useCardMenu(game: PlayGame) {
+  const accountId = usePeople((s) => s.me?.id ?? null);
+  const isAdmin = usePeople((s) => s.me?.isAdmin === true);
+  // A search's card carries no curation to read its menu from, so it gets none.
+  if (!game.curation || !accountId) return null;
+  return playCardMenu(game, { accountId, isAdmin });
+}
+
 /** One game on the dashboard; pressing its cover plays it. */
+/**
+ * Whether the card offers Remix: a remixable game whose source main says holds a game. A card asks
+ * once it shows; until main answers yes, it offers nothing (a game whose creator never shared its
+ * project has nothing to remix).
+ */
+function useRemixReady(game: PlayGame): boolean {
+  const ready = usePlay((s) => s.remixReady[game.slug] === true);
+  useEffect(() => {
+    if (game.remixable) studio().play.checkRemix(game.slug);
+  }, [game.remixable, game.slug]);
+  return game.remixable && ready;
+}
+
 export const PlayCard = memo(function PlayCard({
   game,
   onPlay,
@@ -134,7 +171,7 @@ export const PlayCard = memo(function PlayCard({
 }): JSX.Element {
   const clipKey = useId();
   const cover = useRef<HTMLButtonElement>(null);
-  const [coverShown, setCoverShown] = useState(false);
+  const [coverShown, setCoverShown] = useState(() => shownBefore(game.coverUrl));
   const clip = game.clipUrl;
   // The pointer or focus on the cover asks for its clip; the store decides when it loads.
   const hover = clip ? () => claimHoverClip(clipKey) : undefined;
@@ -142,26 +179,71 @@ export const PlayCard = memo(function PlayCard({
   // One remix at a time: this card's says so, and every Remix waits for it.
   const making = usePlay((s) => s.making?.slug ?? null);
   const remixing = making === game.slug;
+  const offersRemix = useRemixReady(game);
+  const menu = useCardMenu(game);
+  // Only this game's install and download: a card redraws when they change, not when another's do.
+  const native = usePlay(
+    useShallow((s) => ({
+      host: s.installs.host,
+      installed: s.installs.installed.find((one) => one.slug === game.slug) ?? null,
+      progress: s.installs.progress.find((one) => one.slug === game.slug) ?? null,
+    })),
+  );
+  const installed = native.installed;
+  const badge = cardBadge(game, {
+    host: native.host,
+    installed: installed ? [installed] : [],
+    progress: native.progress ? [native.progress] : [],
+  });
+  // An installed game's card gets the ⋯ for anyone: Show in Finder and Remove from this Mac.
+  const hasMenu = menu !== null || installed !== null;
+  const [menuOpen, setMenuOpen] = useState(false);
+  // A right-click anywhere on a card with a menu opens it, as the ⋯ does; one inside a dialog the
+  // menu opened (a portal, so its events still reach the card through React) is the dialog's own.
+  const contextMenu = hasMenu
+    ? (event: MouseEvent<HTMLElement>) => {
+        if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
+        event.preventDefault();
+        setMenuOpen(true);
+      }
+    : undefined;
   return (
-    <article className="play-card" data-play-game={game.slug}>
-      <button
-        type="button"
-        className="play-card-cover"
-        aria-label={WORDS.play(game.title)}
-        ref={cover}
-        onClick={() => onPlay(game)}
-        onPointerEnter={hover}
-        onPointerLeave={leave}
-        onFocus={hover}
-        onBlur={leave}
-      >
-        <Cover src={game.coverUrl} onShown={() => setCoverShown(true)} />
-        {clip && (
-          <CoverClip clipKey={clipKey} url={clip} ready={coverShown} autoplay={autoplay} index={index} anchor={cover} />
+    <article
+      className="play-card"
+      data-play-game={game.slug}
+      data-menu-open={menuOpen || undefined}
+      onContextMenu={contextMenu}
+    >
+      {/* The pointer anywhere on the cover, its ⋯ included, keeps the clip playing. */}
+      <div className="play-card-frame" onPointerEnter={hover} onPointerLeave={leave}>
+        <button
+          type="button"
+          className="play-card-cover"
+          aria-label={WORDS.play(game.title)}
+          ref={cover}
+          onClick={() => onPlay(game)}
+          onFocus={hover}
+          onBlur={leave}
+        >
+          <Cover src={game.coverUrl} onShown={() => setCoverShown(true)} />
+          {clip && (
+            <CoverClip
+              clipKey={clipKey}
+              url={clip}
+              ready={coverShown}
+              autoplay={autoplay}
+              index={index}
+              anchor={cover}
+            />
+          )}
+          <span className="play-card-shade" aria-hidden="true" />
+          {badge?.kind !== CardBadge.Downloading && <Stats game={game} />}
+          {badge && <CardNativeBadge badge={badge} />}
+        </button>
+        {hasMenu && (
+          <CardMenu game={game} menu={menu} installed={installed} open={menuOpen} onOpenChange={setMenuOpen} />
         )}
-        <span className="play-card-shade" aria-hidden="true" />
-        <Stats game={game} />
-      </button>
+      </div>
       <div className="play-card-meta">
         <div className="min-w-0 flex-1">
           {marquee ? (
@@ -173,7 +255,7 @@ export const PlayCard = memo(function PlayCard({
           )}
           {showAuthor && game.author.name && <Author author={game.author} />}
         </div>
-        {game.remixable && (
+        {offersRemix && (
           <Button
             variant="secondary"
             className="play-card-remix"

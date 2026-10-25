@@ -15,8 +15,16 @@ licenses and terms of included third-party software.
   `@modelcontextprotocol/sdk`, `@xterm/*`, `zod` and their dependencies) keep their license
   files in the packaged `node_modules`.
 - Electron supplies its own license and Chromium notices.
-- On macOS, cua-driver (MIT) keeps its license and cua's notices under `dist/resources/cua-driver`
-  ([Vendored Cua Driver](#vendored-cua-driver-cua-driver)).
+- On macOS and Windows, cua-driver (MIT) keeps its license and cua's notices under
+  `dist/resources/cua-driver` ([Vendored Cua Driver](#vendored-cua-driver-cua-driver)).
+- On Windows, Git for Windows (GPL-2.0 and its components' licenses) keeps its `LICENSE.txt` and
+  `usr/share/licenses` under `resources/git`
+  ([Bundled Git for Windows](#bundled-git-for-windows)).
+- On macOS, git (GPL-2.0, with parts under LGPL-2.1, BSD-3-Clause and MIT) keeps its `COPYING`, `LGPL-2.1`,
+  `licenses/` and a `SOURCE.txt` naming its source under `dist/resources/git`
+  ([Bundled git (macOS)](#bundled-git-macos)).
+- On Windows, Microsoft's Visual C++ runtime DLL ships beside sandbox-runtime's `srt-win.exe`
+  ([Visual C++ runtime](#visual-c-runtime-windows)).
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
@@ -38,9 +46,15 @@ licenses and terms of included third-party software.
   a ring to identify Unreal Engine, which the Unreal plugin runs. Unreal and Unreal Engine are
   trademarks or registered trademarks of Epic Games, Inc. in the United States and elsewhere.
   Genex is not affiliated with or endorsed by Epic Games.
-- The Unity plugin uses a generic icon and names Unity only to identify it. Unity is a trademark
-  or registered trademark of Unity Technologies or its affiliates in the U.S. and elsewhere.
-  Genex is not affiliated with or endorsed by Unity Technologies.
+- `src/plugins/unity/icon.svg`, the `unity` glyph in `src/renderer/ui/icons.tsx` and the project
+  tile in `src/plugins/unity/panel.html` show the Unity logo, unaltered (its path from Simple Icons
+  13.21.0, CC0-1.0), only to identify Unity, which the Unity plugin runs. Unity and the Unity logo
+  are trademarks or registered trademarks of Unity Technologies or its affiliates in the U.S. and
+  elsewhere. Genex is not affiliated with or endorsed by Unity Technologies.
+- The `linux` glyph in `src/renderer/ui/icons.tsx` draws Tux, Linux's penguin (its path from
+  Simple Icons 16.35.0, CC0-1.0, without the feet lines), only to show that a game has a
+  Linux version. Tux was drawn by Larry Ewing with The GIMP. Linux is a registered trademark of
+  Linus Torvalds.
 
 ## Routed tool marks
 
@@ -58,9 +72,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.36.9 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  `@genex-ai/cli-demo` 1.36.15 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.9), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.15), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -103,13 +117,48 @@ Basis Universal decoders to `dist/renderer/decoders`.
 
 ## Vendored Cua Driver (cua-driver)
 
-On macOS, computer control runs cua-driver 0.35.2 from [trycua/cua](https://github.com/trycua/cua)
-(MIT, Copyright (c) 2025 Cua AI, Inc.), bundled as `dist/resources/cua-driver/cua-driver`: the
-executable from cua's release, thinned to the app's architecture and signed with the app's identity
-(`scripts/vendor-cua-driver.ts`). Its license and cua's third-party notices for that release
+On macOS and Windows, computer control runs cua-driver 0.35.2 from
+[trycua/cua](https://github.com/trycua/cua) (MIT, Copyright (c) 2025 Cua AI, Inc.), bundled as
+`dist/resources/cua-driver/cua-driver` (`cua-driver.exe` on Windows): the executable from cua's
+release, on macOS thinned to the app's architecture and signed with the app's identity, on Windows
+as cua signed it (`scripts/vendor-cua-driver.ts`). Its license and cua's third-party notices for that release
 (code derived from trope-cua, Interface-Agent, yabai, QuickJS-ng, rquickjs and T3 Code, all MIT)
 ship beside it as `LICENSE.md` and `THIRD_PARTY_NOTICES.md`, copied from `build/cua-driver/`. The
 bundled copy runs with cua's telemetry and update check turned off.
+
+## Bundled Git for Windows
+
+The Windows app ships Git for Windows 2.56.0.windows.2, the portable edition from
+[git-for-windows/git](https://github.com/git-for-windows/git), as `resources/git` beside the app:
+Git (GPL-2.0) and the MSYS2 and MinGW-w64 programs and libraries it is built with, each under its
+own license. Its `LICENSE.txt` and the license files in `usr/share/licenses` ship unchanged with
+it. The copy is the release's own files with its documentation, graphical tools, Vim and Git
+Credential Manager left out (`scripts/vendor-git-for-windows.ts`); nothing in it is modified. The
+source of every part is published with that release on GitHub and in the MSYS2 and Git for Windows
+package repositories it names.
+
+## Bundled git (macOS)
+
+The macOS app ships git 2.56.0 as `dist/resources/git`, compiled by the release build from the
+unmodified source tarball <https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz>
+(SHA-256 `26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3`), with only the
+programs Genex reaches kept (`scripts/vendor-git-for-mac.ts`, [why](docs/mac-bundled-git.md)).
+Git is under the GNU General Public License version 2 (`COPYING`); parts are under the GNU Lesser
+General Public License 2.1 (`LGPL-2.1`), and its reftable library (BSD-3-Clause,
+`licenses/reftable/LICENSE`) and SHA-1 collision detection (MIT, `licenses/sha1dc/LICENSE.txt`)
+keep their own. All ship beside it unchanged, with `SOURCE.txt` naming the tarball and the build's
+settings; the source is the tarball above.
+
+## Visual C++ runtime (Windows)
+
+The Windows app ships Microsoft's Visual C++ 2015-2022 runtime library `vcruntime140.dll`
+(Copyright (c) Microsoft Corporation) beside sandbox-runtime's `srt-win.exe`, which imports it and
+would not start without it: Windows does not include it. Packaging copies it unchanged, for that
+executable's architecture, from the Visual C++ redistributable folder of the Visual Studio that
+builds the package (`VC\Redist\MSVC\<version>\<arch>\Microsoft.VC14x.CRT`,
+`scripts/package-vc-runtime.cjs`): app-local deployment, which the Distributable Code terms of the
+Visual Studio license allow. It remains under those terms. Any other Visual C++ runtime DLL a
+bundled program imports ships the same way, and the packaged smoke fails when one is missing.
 
 ## Vendored Genex embed SDK (@genex-ai/embed-sdk)
 
@@ -154,9 +203,13 @@ SOFTWARE.
 
 ## Fonts
 
-Zalando Sans SemiExpanded, Geist and Geist Mono are used as published under the SIL Open Font
-License 1.1 (Geist Mono as its Google Fonts Latin subset). Their OFL texts ship beside them in
-`dist/renderer/fonts`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
+Zalando Sans SemiExpanded, Geist Mono, LINE Seed JP, TikTok Sans, Pretendard and Noto Sans SC
+are licensed under the SIL Open Font License 1.1; their OFL texts ship beside them in
+`dist/renderer/fonts`. Zalando Sans SemiExpanded, Geist Mono and LINE Seed JP are as published.
+TikTok Sans is cut to its Cyrillic and Greek at one width as "TikTok Sans Genex"; Pretendard
+(Reserved Font Name "Pretendard") is cut to its Hangul as "Genex Hangul"; Noto Sans SC is cut to
+the characters of GB 2312 ([sources](src/renderer/ui/GENEX-SOURCES.md#font-licenses)). Geist, as
+published, renders design studies in `design/`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
 `design/play-publish-video/public/fonts` render the promo films.
 
 ## Promo films
@@ -186,8 +239,8 @@ generation for the film.
 These need an owner decision before public distribution; see
 [release readiness](docs/release-readiness.md#distribution-and-open-source).
 
-- Genex UI sources: components, theme tokens, the wordmark and the catalog-search engine were
-  adapted from the owner's `genex-cli-threejs` web app (`src/renderer/ui/GENEX-SOURCES.md`).
+- Genex UI sources: components, theme tokens, the wordmark, the coin mark and the catalog-search
+  engine were adapted from the owner's `genex-cli-threejs` web app (`src/renderer/ui/GENEX-SOURCES.md`).
   The owner's contributed adaptations are covered by the root MIT license. Genex's name and
   logo identify the product; the code license does not grant trademark rights.
 - The Genex guide https://genex.games/SKILL.md, vendored as `src/plugins/genex/skills/genex`:
@@ -310,10 +363,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.0
+### @genex-ai/multiplayer 0.17.1
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
-map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
+map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer
+Godot game's web export. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
 without a license file. The MIT terms:
 
 Copyright (c) 2026 Genex

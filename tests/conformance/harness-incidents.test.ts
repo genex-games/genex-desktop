@@ -78,6 +78,7 @@ import {
 } from "../../src/harness-seed/loop/replan.ts";
 import { isTransientProviderError, StopReason, withProviderPatience } from "../../src/harness-seed/loop/outage.ts";
 import { forgetProviderLosses, noteProviderLoss, providerLossFor } from "../../src/harness-seed/loop/provider-loss.ts";
+import { forgetSandboxRefusals, sandboxRefusalOn } from "../../src/harness-seed/loop/workers/sandbox-refusal.ts";
 import {
   HARNESS_CHECKS,
   loadCatalogue,
@@ -114,6 +115,9 @@ import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/mes
 import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
 import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
 import { steeredCall } from "../../src/harness-seed/loop/chat-steer.ts";
+import { nextWords, personWrote } from "../../src/harness-seed/loop/person-wrote.ts";
+import { switchedTurnPrompt, WAIT_ENDED } from "../../src/harness-seed/loop/steer-switch-prompts.ts";
+import { steeredTurnPrompt } from "../../src/harness-seed/loop/chat-steer-prompts.ts";
 import { leadLineOf, openLeadLine } from "../../src/harness-seed/loop/director/lead-line.ts";
 import { handleUserMessage } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
@@ -123,6 +127,14 @@ import { cancelThread } from "../../src/harness-seed/loop/main.ts";
 import type { Studio } from "../../src/harness-seed/loop/studio-state.ts";
 import type { Host } from "../../src/harness-seed/types/harness.d.ts";
 import { wakeTools } from "../../src/harness-seed/loop/director/wake-prompts.ts";
+import { folderLabelOf } from "../../src/harness-seed/loop/workers/identity.ts";
+
+it("WIN-FOLDER-LABEL: a Windows game folder is named by its last two parts, never the whole C:\\Users path", () => {
+  assert.equal(folderLabelOf("C:\\Users\\ana\\AI Games\\rift", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf("C:/Users/ana/AI Games/rift/", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf("/Users/ana/AI Games/rift", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf(null, "rift"), "rift");
+});
 
 it("AUDIT-WAKE-TOOL: shortened worker guidance still tells a waking lead to end its turn", () => {
   const tool = wakeTools(DIRECTOR_TOOLS, { lead: true }).find((tool) => tool.name === "worker_start");
@@ -3889,6 +3901,123 @@ describe("a Loop chat asked for research (corner-guy)", () => {
 });
 
 /**
+ * "Can you start a 3h Loop…" sent with Mode on Auto (Loop off) reached a contractor with no launch
+ * tool: it worked on in its own turn and said "The 3-hour loop starts now" while no run started and
+ * the Builds bar stayed empty. Asked in words, an Auto chat starts the Loop itself, for the hours named.
+ */
+describe("a Loop asked for in words with Mode on Auto (auto-loop)", () => {
+  /** A game chat on a delegated engine whose answer records `launch`; the run's own sessions end at once. */
+  async function autoChat(launch: Record<string, unknown>) {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const project = "seyda-neen";
+    await rig.core.games.scaffold(project);
+    const thread = await rig.core.createGameThread(project);
+    const chat: DelegateRequest[] = [];
+    rig.core.engines.register({
+      id: "vendor",
+      label: "Vendor",
+      kind: "delegated",
+      status: async () => ({ code: "ready", detail: "signed in" }),
+      models: async () => [],
+      defaultModel: async () => "vendor-model",
+      delegate: async (request: DelegateRequest) => {
+        const inTheGame = request.cwd?.endsWith(`/games/${project}`) === true;
+        const ran = { ok: true, engine: "vendor", turns: 1, usage: {} };
+        if (request.director || !inTheGame || chat.length > 0)
+          return { ...ran, sessionId: "run-session", summary: "Looked around." };
+        chat.push(request);
+        return {
+          ...ran,
+          sessionId: "auto-chat",
+          summary: "Starting the Loop.",
+          studioToolCalls: [{ name: "start_autopilot", args: launch }],
+        };
+      },
+    });
+    return { rig, thread, chat };
+  }
+  type Json = Record<string, any>;
+  const ask = { goal: "The Morrowind start scene", direction: "AAA swamp town at dawn" };
+  /** The thread's registered runs in `log`, by their payloads. */
+  const runsIn = (log: Parameters<typeof customEvents>[0], thread: string): Json[] =>
+    customEvents(
+      log.filter((e) => e.thread_id === thread),
+      "run_registered",
+    );
+  /** The run the chat registered, once it has. */
+  async function registered(rig: Rig, thread: string): Promise<Json | undefined> {
+    const events = await waitForLog(rig.core, (log) => runsIn(log, thread).length > 0, 30_000, "run_registered");
+    await rig.core.stopThread(thread);
+    return runsIn(events, thread)[0];
+  }
+
+  it('auto-loop. "start a 3h Loop" in Auto: the chat is handed the Loop\'s start and a 3-hour run starts', async () => {
+    const { rig, thread, chat } = await autoChat({ ...ask, hours: 3 });
+    await rig.core.sendUserMessage("Can you start a 3h Loop on my Morrowind scene?", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+
+    const launch = chat[0]?.interviewTools?.find((tool) => tool.name === "start_autopilot");
+    assert.ok(launch, "an Auto chat may start the Loop it is asked for");
+    assert.ok((launch?.parameters as Json)?.properties?.hours, "with the hours the user named");
+    assert.match(String(chat[0]?.prompt), /Never say a Loop started/);
+    assert.equal(run?.goal, ask.goal);
+    assert.equal(run?.budgets?.wallClockMs, 3 * HOUR_MS, "for the hours named");
+    assert.notEqual(run?.budgets?.untilSatisfied, true);
+  });
+
+  it('auto-loop. hours sent as text ("2h", as engines that bridge every field as text send them) still cap the run', async () => {
+    const { rig, thread, chat } = await autoChat({ ...ask, hours: "2h" });
+    await rig.core.sendUserMessage("Start a 2h Loop", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+    assert.equal(run?.budgets?.wallClockMs, 2 * HOUR_MS);
+    const launch = chat[0]?.interviewTools?.find((tool) => tool.name === "start_autopilot");
+    assert.equal(launch?.onlyWhenAsked, true, "called only when asked: messages still join the turn");
+  });
+
+  it("auto-loop. a direct engine's chat (its tool loop, Loop off) starts the Loop it is asked for, for the hours named; a run's own turn never does", async () => {
+    const { tools } = await import("../../src/harness-seed/tools/game-tools.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const startAutopilot = tools.find((tool) => tool.name === "start_autopilot");
+    assert.ok(startAutopilot);
+    const call = async (args: Record<string, unknown>, extra: Record<string, unknown>) =>
+      startAutopilot.execute({ goal: "g", direction: "d", ...args }, ctxRecorder({ extra }).ctx) as Promise<
+        Record<string, any>
+      >;
+    const rows = [
+      { label: "1h named", args: { hours: "1h" }, extra: { engine: "ollama" }, hours: 1 },
+      { label: "30m named", args: { hours: "30m" }, extra: { engine: "ollama" }, hours: 0.5 },
+      { label: "none named: until done", args: {}, extra: { engine: "ollama" }, hours: 24 },
+      { label: "a run's own turn", args: { hours: 1 }, extra: { engine: "ollama", runId: "run_x" }, hours: null },
+      { label: "a follow-up's turn", args: { hours: 1 }, extra: { engine: "ollama", followupOf: "m1" }, hours: null },
+    ];
+    const seen = [];
+    for (const { label, args, extra } of rows) {
+      const outcome = await call(args, extra);
+      seen.push({ label, hours: outcome.ok ? outcome.details?.run?.hours : null });
+    }
+    assert.deepEqual(
+      seen,
+      rows.map(({ label, hours }) => ({ label, hours })),
+    );
+  });
+
+  it('auto-loop. "30m" is half an hour, never 30 hours', async () => {
+    const { rig, thread } = await autoChat({ ...ask, hours: "30m" });
+    await rig.core.sendUserMessage("Start a 30 minute Loop", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+    assert.equal(run?.budgets?.wallClockMs, HOUR_MS / 2);
+  });
+
+  it('auto-loop. a Loop "until it\'s done" in Auto: no hours named, the run goes until what was asked is verified', async () => {
+    const { rig, thread } = await autoChat(ask);
+    await rig.core.sendUserMessage("Start a Loop and don't stop until it's really AAA", { thread, engine: "vendor" });
+    const run = await registered(rig, thread);
+    assert.equal(run?.budgets?.untilSatisfied, true);
+  });
+});
+
+/**
  * A resumed run read its inbox from the whole log as if it were new: a wrap-up the user asked
  * of the session before the Resume told it to skip every builder and integrate having built
  * nothing (the host only narrowed this by refusing a finish on a run that was not running), and
@@ -4824,6 +4953,30 @@ describe("a provider lost mid-run", () => {
     return { result, appended, turns };
   };
 
+  it("WIN-275. a build the engine refused because its sandbox cannot run here stops the facet on its first attempt: no judge, no strike, no outage wait, and no later worker starts on that engine", async () => {
+    const said =
+      "Claude Code cannot run its sandbox on this computer, so it refused the session before it began: sandbox required but unavailable: the Windows sandbox is not active on this session (feature gate off)";
+    try {
+      const { result, appended, turns } = await facetOnStub(() => ({
+        ok: false,
+        stopReason: "sandbox_unavailable",
+        errorText: said,
+        turns: 0,
+        usage: {},
+        engine: "codex",
+      }));
+      assert.equal(turns.length, 1, "a refused build is not tried a second time");
+      assert.equal(result.stopCode, "sandbox-unavailable");
+      assert.ok(result.stoppedBecause.includes("sandbox required but unavailable"), result.stoppedBecause);
+      assert.deepEqual(appended("facet_iteration"), [], "there is no build to judge");
+      assert.deepEqual(appended("facet_circuit_break"), []);
+      assert.deepEqual(appended("facet_provider_outage"), []);
+      assert.ok(sandboxRefusalOn("codex"), "the refusal holds the engine for the next worker start");
+    } finally {
+      forgetSandboxRefusals();
+    }
+  });
+
   it("D12. a worker's build turn that meets a disabled account is an outage, never a broken round: it waits, and the run's stop keeps its work", async () => {
     try {
       const { result, appended } = await facetOnStub(() => Object.assign(new Error(DISABLED), { kind: "auth" }));
@@ -5283,6 +5436,207 @@ describe("live chat during a build, reviewed", () => {
     assert.equal(chat.steers[0]?.interrupt, false, "a cut would leave nothing to resume");
     assert.deepEqual(userSaysIn(String(one.calls[1]?.prompt)), ["is it started?"]);
   });
+
+  it("LC15. a picture sent before (its file the game's already) reaches the lead: the chat names the file it is saved as", async () => {
+    const chat = liveChat();
+    chat.loopRun();
+    // Saved before, so this message added no file of its own: only `pictureFiles` names where it is.
+    const again = { ...picture, pickedImages: 1, references: [], pictureFiles: ["references/sky-1a2b3c4d.png"] };
+    await chat.say("this one again", again);
+    assert.deepEqual(standing(chat), { "this one again": `delivered ${chat.RUN}` });
+    const heard = chat.log.find((e) => e.data.event_type === "run_steering")?.data.payload.text;
+    assert.match(String(heard), /references\/sky-1a2b3c4d\.png/);
+  });
+
+  it("LC16. a picture the person's words name by its path (no picture attached) reaches the lead with the words", async () => {
+    const chat = liveChat();
+    chat.loopRun();
+    await chat.say("look at ~/Desktop/sky.png", { ...picture, pickedImages: 0 });
+    assert.deepEqual(standing(chat), { "look at ~/Desktop/sky.png": `delivered ${chat.RUN}` });
+  });
+
+  it("LC17. in the wrap-up the lead still hears the person, and the chat answers what they said once the build closes", async () => {
+    const chat = liveChat();
+    const one = chat.loopRun();
+    one.line.wrapUp();
+    await chat.say("also add rain");
+    // Told to the lead, with the wrap-up's words; never delivered to the run: the chat owes the answer.
+    assert.deepEqual(standing(chat), { "also add rain": "queued" });
+    const told = chat.log.filter((e) => e.data.event_type === "run_steering");
+    assert.equal(told.length, 1);
+    assert.match(String(told[0]?.data.payload.text), /^also add rain\n\n\(You are wrapping up this build/);
+    assert.equal(told[0]?.data.payload.kept, true, "marked as only told: the chat shows it where the lead heard it");
+    // Never handed again while it waits, however the queue looks.
+    await chat.say("and fog");
+    await settleOn(() => chat.log.filter((e) => e.data.event_type === "run_steering").length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(chat.log.filter((e) => e.data.event_type === "run_steering").length, 2, "each told once");
+    assert.deepEqual(chat.answered, [], "nothing answered while the build closes");
+    await one.line.release();
+    chat.closeBuild();
+    assert.ok(await settleOn(() => chat.answered.length === 2));
+    assert.deepEqual(chat.answered, ["also add rain", "and fog"], "the chat answers both, in order, once it closed");
+  });
+
+  it("LC18. a lead in its wrap-up turn hears what the person sends at its next step, told the chat takes up new work", async () => {
+    const chat = liveChat();
+    const one = chat.loopRun();
+    // Working time is over: the first turn is the wrap-up.
+    one.n.softDeadline = chat.at.now - 1;
+    await one.run(async (turn) => {
+      if (turn === 1) {
+        void chat.say("also add rain");
+        await settleOn(() => chat.steers.length > 0);
+      }
+      one.state.finished = true;
+      return worked;
+    });
+    assert.equal(chat.steers[0]?.interrupt, false, "the wrap-up is never cut short");
+    assert.match(String(chat.steers[0]?.messages[0]?.text), /also add rain[\s\S]*You are wrapping up this build/);
+    chat.closeBuild();
+    assert.ok(await settleOn(() => chat.answered.length === 1));
+    assert.deepEqual(chat.answered, ["also add rain"], "and the chat answers it once the build closed");
+  });
+});
+
+/**
+ * Messages without a queue: a message the person sent while the chat's answer ran 3 workers for 28
+ * minutes had switched the Loop on, so it never joined the answer and sat in Queued for 21 minutes;
+ * a Stop pressed to get it going handed over at once, and the next press stopped it. Now it reaches
+ * the answer at its next step, which goes on with its settings, and a wait ends when the person writes.
+ */
+describe("messages without a queue", () => {
+  const ok = (summary: string, sessionId: string) => ({
+    ok: true,
+    summary,
+    sessionId,
+    turns: 1,
+    usage: {},
+    engine: "x",
+  });
+  const cut = (sessionId: string) => ({
+    ok: false,
+    summary: "",
+    stopReason: "stopped",
+    sessionId,
+    turns: 2,
+    usage: {},
+    engine: "x",
+  });
+
+  it("NQ1. the Loop switched on while the chat's answer works reaches that answer at its next step, which goes on in the Loop", async () => {
+    const log: Array<{ id: string; data: Record<string, any> }> = [];
+    let onCut = () => {};
+    const host = {
+      call: async (method: string, p: Record<string, any>) => {
+        if (method === HostMethod.EventsAppend)
+          for (const data of p.batch) log.push({ id: String(log.length + 1).padStart(6, "0"), data });
+        if (method === HostMethod.EventsList) return log;
+        if (method === HostMethod.EngineSteer) {
+          onCut();
+          return { how: "interrupt", accepted: p.messages.map((m: { id: string }) => m.id) };
+        }
+        return null;
+      },
+      notify: () => {},
+    };
+    const legs: Array<{ prompt: string; resume: string | null; loop: boolean }> = [];
+    let running = () => {};
+    const working = new Promise<void>((resolve) => {
+      running = resolve;
+    });
+    const queue = new MessageQueue(host as never, async (action, steer) => {
+      if (action.text !== "build the boss fight") return;
+      await steeredCall({ cancelled: false }, steer, {
+        prompt: "BRIEF",
+        call: async (prompt, resume) => {
+          legs.push({ prompt, resume, loop: false });
+          const cutNow = new Promise<void>((resolve) => {
+            onCut = resolve;
+          });
+          running();
+          await cutNow;
+          return cut("s1") as never;
+        },
+        switches: {
+          changes: (item) => Boolean(item.autopilot),
+          takes: () => true,
+          apply: async () => ({
+            call: async (prompt, resume) => {
+              legs.push({ prompt, resume, loop: true });
+              return ok("Starting the Loop.", "s1") as never;
+            },
+            newSession: false,
+            notes: ["The Loop is on."],
+          }),
+        },
+      });
+    });
+    await queue.enqueue({
+      type: "user_message",
+      threadId: "chat",
+      text: "build the boss fight",
+      engine: "claude-code",
+    });
+    await working;
+    await queue.enqueue({
+      type: "user_message",
+      threadId: "chat",
+      text: "make it in the loop",
+      engine: "claude-code",
+      autopilot: {},
+    });
+    assert.ok(await settleOn(() => legs.length === 2));
+    const states = () => [...messageQueueState(log as never).messages.values()].map((m) => [m.action?.text, m.state]);
+    assert.deepEqual(legs[1], {
+      prompt: switchedTurnPrompt(["The Loop is on."], steeredTurnPrompt(["make it in the loop"])),
+      resume: "s1",
+      loop: true,
+    });
+    assert.ok(
+      await settleOn(
+        () =>
+          [...messageQueueState(log as never).messages.values()].find((m) => m.action?.text === "make it in the loop")
+            ?.state === "delivered",
+      ),
+      JSON.stringify(states()),
+    );
+    queue.stop();
+  });
+
+  it("NQ2. a lead's wait for a busy reviewer ends when the person writes, and says so", async () => {
+    let calls = 0;
+    const words = nextWords("chat_nq2");
+    const busy = Object.assign(new Error("overloaded_error: the provider is busy"), {});
+    const waiting = withProviderPatience(
+      { cancelled: false, setStatus: () => {} } as never,
+      async () => {
+        calls += 1;
+        throw busy;
+      },
+      { delays: [60_000, 60_000], endEarly: { when: words.ended, why: WAIT_ENDED.judge } },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    personWrote("chat_nq2");
+    await assert.rejects(waiting, (err: Error) => err.message === WAIT_ENDED.judge);
+    assert.equal(calls, 1, "it stopped waiting at once, without asking again");
+    words.cancel();
+    // A real failure after the person wrote is still the caller's: it is never said to be their words.
+    const after = nextWords("chat_nq2");
+    personWrote("chat_nq2");
+    const refused = Object.assign(new Error("invalid_request_error: the prompt is too long"), {});
+    await assert.rejects(
+      withProviderPatience(
+        { cancelled: false, setStatus: () => {} } as never,
+        async () => {
+          throw refused;
+        },
+        { delays: [60_000], endEarly: { when: after.ended, why: WAIT_ENDED.judge } },
+      ),
+      (err: Error) => err === refused,
+    );
+    after.cancel();
+  });
 });
 
 /**
@@ -5727,7 +6081,7 @@ describe("the Loop's time limit", () => {
     assert.doesNotMatch(unbounded, /Building until about/, "∞ has no end time to promise");
     assert.match(unbounded, /required outcomes are verified/);
     assert.ok(unbounded.includes(ceilingDay), `the ceiling is dated (${ceilingDay}): ${unbounded}`);
-    assert.match(unbounded, /keep the app open and the Mac awake/i);
+    assert.match(unbounded, /keep the app open and the computer awake/i);
     assert.match(unbounded, /resumes itself|tap on Resume/);
 
     const capped = launchPromise({ wallClockMs: 3_600_000 }, null, now);
@@ -8267,6 +8621,32 @@ describe("the chat's main agent asked to read the owner's Downloads", () => {
   });
 });
 
+describe("an engine's plugin turned on from the chat's card (mp-unity)", () => {
+  // A chat asked for a Unity game while the Unity plugin was off; its card turned the plugin on and
+  // the same session resumed with "Go on with what I asked". The resumed brief carried no kind rules,
+  // so the lead never heard "When the request names Unity, call unity__new-game" and launched a Loop:
+  // the Loop gave the kindless folder the web starter, and unity__new-game was refused under the run.
+  it("tells a resumed session of a folder with no kind yet which tool makes each kind on offer", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const { toolCall } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const engine = "claude-code";
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    const ask = "I turned on the Unity plugin from your card. Go on with what I asked.";
+    const launch = { toolName: "start_autopilot", hours: 0.5, frameCount: 0, project: "cube-arena" };
+    const resumed = buildContractorBrief({ ask, resume: true, engine, facts: [], kinds: [unity], launch });
+    assert.ok(resumed.includes(`When the request names Unity, call ${toolCall(engine, unity.tool)}`), resumed);
+    const made = buildContractorBrief({
+      ask,
+      resume: true,
+      engine,
+      facts: [{ id: "unity-project", path: "unity" }],
+      kinds: [unity],
+      launch,
+    });
+    assert.ok(!made.includes(toolCall(engine, unity.tool)), "a folder that has its kind is not told again");
+  });
+});
+
 describe("stuck ladders and small reviewers", () => {
   const rulesUrl = "../../src/harness-seed/loop/facet/rules.ts";
   const judgementUrl = "../../src/harness-seed/loop/facet/round-judgement.ts";
@@ -9629,7 +10009,7 @@ const ENGINE_QUESTION = "FIRST, THE ENGINE:";
  * New game makes the game before the chat's first ask, as an empty folder with no kind; with the
  * Unreal plugin on, the delegated turn finds a project that already exists. A folder with no kind
  * yet (the host's facts) is asked with the question card, exactly as a game the turn makes itself,
- * and not again in the session that asked: the answer comes back to it.
+ * and not again in the session that asked: the answer comes back to it, the card still at hand.
  */
 describe("a game New game made is asked its engine on its chat's first ask", () => {
   it("with the Unreal plugin on, a game New game made is empty, its chat's first build asks web or Unreal with the question card, and its next does not", async () => {
@@ -9676,11 +10056,15 @@ describe("a game New game made is asked its engine on its chat's first ask", () 
     assert.ok(asks(first.prompt), "the first build asks the engine first");
     assert.deepEqual(
       first.interviewTools?.map((tool) => tool.name),
-      ["ask_user"],
-      "with the question card bridged in",
+      ["start_autopilot", "ask_user"],
+      "with the question card bridged in beside Auto's Loop start (flipped: auto-loop)",
     );
     assert.ok(!asks(next.prompt), "a later message is never asked again");
-    assert.equal(next.interviewTools, undefined);
+    assert.deepEqual(
+      next.interviewTools?.map((tool) => tool.name),
+      ["start_autopilot", "ask_user"],
+      "the session that asked keeps its card while the game has no kind (flipped: resumed card)",
+    );
   });
 });
 
@@ -9780,7 +10164,8 @@ describe("the Unreal lead's saves, crashes, owner words and end", () => {
       throw new Error("Stopped.");
     });
     const report = await runLead(host, { minutes: 20 });
-    assert.equal(report.executionStatus, "cancelled");
+    // A Stop pauses every Loop for a Resume: it ends as the person's stop, never as the plugins' halt.
+    assert.deepEqual([report.executionStatus, report.endReason], ["paused", "stopped"]);
     assert.doesNotMatch(String(report.stoppedBecause), /couldn't ask the game's plugins/);
   });
 
@@ -14470,6 +14855,75 @@ describe("the user's ask to finish a running build (director/wrap-up.ts)", () =>
     assert.equal(loopRun.state.workers.size, 0, "no worker started");
   });
 
+  it('FA1b. "stop it and start a new one": wrap_up records the new Loop with the ask, and the studio starts it once the run closes, unless Stop came', async () => {
+    const STOP_AND_RESTART = "stop this loop and start a new 1h loop for the dragon attack";
+    const { host, loopRun } = await askedRun([STOP_AND_RESTART]);
+    const answer = String(
+      await loopRun.handler("wrap_up", {
+        user_asked: "stop this loop and start a new 1h loop",
+        next_goal: "A Skyrim-style dragon attack on the village",
+        next_hours: "1h",
+      }),
+    );
+    assert.match(answer, /new Loop starts by itself/, answer);
+    const [ask] = finishAsks(host);
+    assert.deepEqual(ask?.next, {
+      goal: "A Skyrim-style dragon attack on the village",
+      direction: "A Skyrim-style dragon attack on the village",
+      hours: 1,
+    });
+
+    const { nextLoopOf } = await import("../../src/harness-seed/loop/next-loop-record.ts");
+    const { startNextLoop } = await import("../../src/harness-seed/loop/next-loop.ts");
+    const custom = (eventType: string, payload: Record<string, unknown>) => ({
+      data: { type: "custom", event_type: eventType, payload },
+    });
+    const asked = custom(RunEvent.RunControl, ask as Record<string, unknown>);
+    const finished = custom(RunEvent.RunFinished, { runId: "run_j" });
+    const rows = [
+      { label: "finished after the ask", log: [asked, finished], hours: 1 },
+      { label: "not closed yet", log: [asked], hours: null },
+      {
+        label: "paused (a limit, a Stop): its resume goes on",
+        log: [asked, finished, custom(RunEvent.AutopilotPaused, { runId: "run_j" })],
+        hours: null,
+      },
+      {
+        label: "resumed or reopened since: the old ask is spent",
+        log: [asked, custom(RunEvent.RunRegistered, { runId: "run_j" }), finished],
+        hours: null,
+      },
+      {
+        label: "another run's ask",
+        log: [custom(RunEvent.RunControl, { ...ask, runId: "run_other" }), finished],
+        hours: null,
+      },
+      {
+        label: "a plain ask to finish",
+        log: [custom(RunEvent.RunControl, { ...ask, next: undefined }), finished],
+        hours: null,
+      },
+    ];
+    assert.deepEqual(
+      rows.map(({ label, log }) => ({ label, hours: nextLoopOf(log as never, "run_j")?.hours ?? null })),
+      rows.map(({ label, hours }) => ({ label, hours })),
+    );
+    const { nextLoopFrom } = await import("../../src/harness-seed/loop/next-loop-record.ts");
+    assert.equal(nextLoopFrom({ next_goal: "g", next_hours: "30m" })?.hours, 0.5, "30m is half an hour");
+    assert.equal(nextLoopFrom({ next_goal: "g", next_hours: "0" })?.hours, null, "0 is until done");
+    const log = [asked, finished];
+
+    // A Stop pressed since the ask wins: the log is not even read.
+    const calls: string[] = [];
+    const studio = {
+      cancels: new Set(["thread-1"]),
+      host: { call: async (method: string) => (calls.push(method), log) },
+      scoped: () => ({}),
+    };
+    await startNextLoop(studio as never, "thread-1", { runId: "run_j", project: "seyda-neen" } as never);
+    assert.deepEqual(calls, [], "nothing starts after Stop");
+  });
+
   it("FA2. a running worker ends the round it is in once the user asks to finish; only the lead's stop or the run's close ends it mid-round", async () => {
     const { workerStopAsk } = await import("../../src/harness-seed/loop/director/workers.ts");
     const { stopSignal, stopsThisRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
@@ -15321,5 +15775,213 @@ describe("a tool the user asked for that can't run here (claude-code-and-chatgpt
     const brief = buildContractorBrief({ ask: "Make a Unity fighting game. Use blender." });
     assert.match(brief, /never carry on without it in silence/);
     assert.match(brief, /__install/);
+  });
+});
+
+describe("the reviewer's no's in a Loop that still has time", () => {
+  const HOUR = 60 * 60 * 1000;
+  const MINUTE = 60 * 1000;
+  const MET = "The hands, the boss and the full run were already accepted and still hold.";
+  const NOT_DONE = "The enemy in the game shows none of the armour its model has.";
+  const CLAIM = { summary: "The enemy wears its armour in the game.", proof: "shots/enemy.png" };
+
+  /** A web game with a close picture the lead names as proof, made before the Loop. */
+  async function gameWithProof(prefix: string): Promise<string> {
+    const { gameRepo } = await import("../helpers/loop-host.ts");
+    const dir = await tmpDir(prefix);
+    await mkdir(path.join(dir, "shots"), { recursive: true });
+    await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
+    await writeFile(path.join(dir, "shots/enemy.png"), Buffer.from(ONE_PIXEL_PNG, "base64"));
+    await gameRepo(dir);
+    return dir;
+  }
+
+  it("FC1. a timed Loop with most of its time left closed on the reviewer's third no about one fixable point: it keeps working, and its next claim needs new work since that no", async () => {
+    const { utimes } = await import("node:fs/promises");
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const dir = await gameWithProof("nos-time-left-");
+    const answers: unknown[] = [];
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      run: { budgets: { wallClockMs: 5 * HOUR, completionPolicy: "duration" } },
+      turns: [
+        async ({ tool }) => {
+          for (let n = 0; n <= MAX_FINISH_REJECTIONS; n++) answers.push(await tool("finish", CLAIM));
+          // A fresh picture alone is no new work: it needs a save point too.
+          const now = new Date(host.now() + MINUTE);
+          await utimes(path.join(dir, "shots/enemy.png"), now, now);
+          answers.push(await tool("finish", CLAIM));
+          await writeFile(path.join(dir, "enemy.txt"), "armour plates on the limbs\n");
+          answers.push(await tool("save_point", { label: "Armour", summary: "the enemy wears its plates" }));
+          answers.push(await tool("finish", CLAIM));
+          return undefined;
+        },
+      ],
+    });
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
+      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
+    const report = await host.start();
+    assert.match(String(answers[MAX_FINISH_REJECTIONS - 1]), /time left, so it goes on/, "the third no keeps it going");
+    assert.match(
+      String(answers[MAX_FINISH_REJECTIONS]),
+      /new work since the last no/,
+      "the same proof again is turned back",
+    );
+    assert.match(
+      String(answers[MAX_FINISH_REJECTIONS + 1]),
+      /new work since the last no/,
+      "a touched file is not enough",
+    );
+    assert.equal(host.reviewed().length, MAX_FINISH_REJECTIONS + 1, "the stale claims asked no reviewer");
+    assert.equal(report.victory, true, "the claim after a save point and a fresh picture was checked and accepted");
+    const nos = host.appended("finish_check").filter((check) => check.step === "rejected");
+    assert.deepEqual(
+      nos.map((check) => [check.stopped === true, check.timeLeft === true]),
+      Array.from({ length: MAX_FINISH_REJECTIONS }, () => [false, true]),
+    );
+  });
+
+  it("FC2. a Loop the reviewer's no's stopped listed what the reviewer had accepted under not done: only what isn't done is", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const dir = await gameWithProof("nos-not-done-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ tool }) => {
+          for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await tool("finish", CLAIM);
+          return undefined;
+        },
+      ],
+    });
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
+      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
+    const report = await host.start();
+    assert.equal(report.victory, false);
+    assert.deepEqual(report.notDone, [NOT_DONE]);
+    assert.ok(String(report.summary).includes(NOT_DONE));
+    assert.ok(!String(report.summary).includes(MET), "what the reviewer accepted is not listed as not done");
+    const stopped = host.appended("finish_check").at(-1);
+    assert.equal(stopped?.stopped, true);
+    assert.deepEqual([stopped?.reasons, stopped?.notDone], [[MET], [NOT_DONE]]);
+  });
+
+  it("FC3. the chat rebuilt a stopped Loop's Almost there card from records a reopened page could lose: the close carries the list, why it stopped and its hours", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const { MAX_FINISH_REJECTIONS, StopWhy } = await import("../../src/harness-seed/loop/finish-contract.ts");
+    const dir = await gameWithProof("nos-card-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ tool }) => {
+          for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await tool("finish", CLAIM);
+          return undefined;
+        },
+      ],
+    });
+    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
+      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE], ["Laps run"]));
+    const report = await host.start();
+    assert.deepEqual(report.stillToFix, { done: ["Laps run"], notDone: [NOT_DONE], why: StopWhy.Stuck, hours: null });
+  });
+
+  it("FC4. a Loop the person stopped after a no paused, and its card offered Keep building beside Resume: a pause carries no list", async () => {
+    const { loopHost } = await import("../helpers/loop-host.ts");
+    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
+    const dir = await gameWithProof("stop-after-no-");
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      turns: [
+        async ({ host, tool }) => {
+          await tool("finish", CLAIM);
+          host.rec.cancel();
+          return undefined;
+        },
+      ],
+    });
+    host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
+    const report = await host.start();
+    assert.equal(report.executionStatus, "paused", "a Stop pauses the Loop for a Resume");
+    assert.equal(report.stillToFix, undefined);
+  });
+});
+
+/**
+ * A request that names an engine none of the engine question's options covers is never asked that
+ * question: it goes through `plugins_find`, as the question's own words say before they ask.
+ */
+describe("a request naming an engine the engine question doesn't offer", () => {
+  it("with only Unity on, a request for a Godot game is sent to plugins_find before the question is asked, never offered Web or Unity", async () => {
+    const { engineChoiceRule } = await import("../../src/harness-seed/loop/unreal-prompts.ts");
+    const { toolCall } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    for (const engine of ["claude-code", "codex", undefined]) {
+      const rule = engineChoiceRule(engine, null, [unity]);
+      const find = rule.indexOf(toolCall(engine, "plugins_find"));
+      const ask = rule.indexOf(toolCall(engine, "ask_user"));
+      assert.ok(find >= 0, `${engine}: another engine goes through plugins_find`);
+      assert.ok(find < ask, `${engine}: before the question is asked`);
+    }
+  });
+});
+
+/**
+ * A resumed chat session whose game still has no kind keeps the question card its first brief named:
+ * a session that remembers the engine question would otherwise call a tool it no longer has.
+ */
+describe("a resumed chat session on a game with no kind yet", () => {
+  it("a resumed session was told to ask with ask_user on its first turn and lost the card on the next: it keeps the card while the game has no kind", async () => {
+    const { runDelegatedTurn } = await import("../../src/harness-seed/loop/delegated-turn.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    const made = { name: "dodger", title: "Dodger", dir: "/games/dodger", shape: null, built: false, facts: [] };
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        "events.messages": () => [{ role: "user", content: "make a game in godot" }],
+        "game.contentStamp": () => ({ all: null, source: null }),
+        "game.list": () => [made],
+        "plugins.tools": () => ({ tools: [], guidance: "", revision: 1, kinds: [unity] }),
+        "engine.describe": () => [],
+        "preview.ready": () => ({ ready: false }),
+        "engine.delegate": () => ({
+          ok: true,
+          engine: "claude-code",
+          turns: 1,
+          usage: {},
+          sessionId: "s",
+          summary: "ok",
+        }),
+      },
+    });
+    const turn = { threadId: "t", turnId: "turn-2", text: "Godot is on now", engine: "claude-code", project: "dodger" };
+    await runDelegatedTurn(
+      recorder.ctx as never,
+      { ...turn, engineLabel: "Claude Code", resume: "session-1" } as never,
+    );
+    const [delegated] = recorder.paramsOf("engine.delegate");
+    const bridged = (delegated?.interviewTools as Array<{ name: string }> | undefined)?.map((tool) => tool.name) ?? [];
+    assert.ok(bridged.includes("ask_user"), "the card is still there to call");
+  });
+});
+
+describe("the language of Genex's own turns", () => {
+  it("AL1. a resume or continue is Genex's own English words, and the agent answered a Russian chat in English: the brief names the app's language as the fallback", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const russian = { tag: "ru", name: "Русский" };
+    for (const resume of [false, true])
+      assert.match(
+        buildContractorBrief({ ask: "Continue", resume, appLanguage: russian }),
+        /Genex's own rather than the user's[\s\S]*Русский \(ru\)/,
+        resume ? "a resumed session" : "a new session",
+      );
   });
 });

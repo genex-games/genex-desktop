@@ -3,8 +3,11 @@
  * work decides. Genex captures the game (its observers and its web preview), reads the proof the
  * lead names and the run's job results, and asks a reviewer (the Reviewers role, a read-only
  * session in a home of its own that reads the lead's folder and may look at app windows) for yes or
- * no with reasons. A yes ends the Loop; a no goes back to the lead; `MAX_FINISH_REJECTIONS` no's in a
- * row stop the Loop. A check that gets no answer neither counts nor breaks the row.
+ * no with reasons and what isn't done. A yes ends the Loop; a no goes back to the lead;
+ * `MAX_FINISH_REJECTIONS` no's in a row stop the Loop, unless a timed Loop has more than
+ * `FINISH_TIME_LEFT_MS` of its working time left: then its lead keeps working, and its next claim
+ * needs new work since the last no (a save point or a head that moved, and proof made since). A check
+ * that gets no answer neither counts nor breaks the row.
  *
  * The verdict is Genex's: the harness gathers, fits the brief and picks the seat, then asks the host
  * (`finish.review`), which records the round, runs the reviewer in the seat it gives reviewers, reads
@@ -36,8 +39,17 @@ import {
   MAX_FINISH_REJECTIONS,
   ObserverSource,
   PROOF_OBSERVER,
+  StopWhy,
 } from "./finish-contract.ts";
-import { jobLines, judgeLines, type Proof, pictureType, proofNamesOf, readProof } from "./finish-proof.ts";
+import {
+  freshProofIn,
+  jobLines,
+  judgeLines,
+  type Proof,
+  pictureType,
+  proofNamesOf,
+  readProof,
+} from "./finish-proof.ts";
 import { factsOfGame } from "./folder-facts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { isPlainRecord } from "./json.ts";
@@ -95,6 +107,7 @@ const MESSAGE = {
   turnEnded: "the lead's turn ended before the reviewer answered",
   noTimeLeft: "the lead's call had no time left for the reviewer",
   stopped: "the Loop was stopped",
+  staleProof: "no new work since the reviewer's last no",
   refused: (why: string) => `Genex did not start the reviewer: ${why}`,
   unread: (why: string) => `whether the reviewer's answer still stands could not be read: ${why}`,
   noTime:
@@ -113,8 +126,8 @@ const MESSAGE = {
 export const FINISH_REPORT = {
   /** The reviewer's no's stopped the Loop. */
   notAccepted: "the reviewer did not accept the finish",
-  /** What isn't done, for the report's summary, after the lead's own. */
-  summaryNotDone: (reasons: readonly string[]) => `Not done, by the reviewer: ${reasons.join(" ")}`,
+  /** What isn't done, for the report's summary the person reads, after the lead's own. */
+  summaryNotDone: (reasons: readonly string[]) => `Still to fix: ${reasons.join(" ")}`,
   noReviewer: "no engine here can hold a reviewer to check the finish",
   /** The lead claimed in its last turn with no time left for a review. */
   tooLate: "the time ran out before a reviewer could check the lead's claim",
@@ -122,9 +135,40 @@ export const FINISH_REPORT = {
   movedAfterYes: "the build moved after the reviewer's yes, so the build that landed is not the one it checked",
 } as const;
 
-/** What isn't done by the reviewer's last no, one line each, for a report's `notDone`; empty when no no stands. */
-export function notDoneOf(tally: FinishTally | null | undefined): string[] {
-  return [...(tally?.reasons ?? [])];
+/**
+ * What isn't done by the reviewer's last no (a tally) or a no itself, one line each, for a report's
+ * `notDone` and the next brief: what the reviewer named not done, else (an answer or a tally that
+ * names none) its reasons; empty when no no stands.
+ */
+export function notDoneOf(
+  no: { reasons?: readonly string[]; notDone?: readonly string[] } | null | undefined,
+): string[] {
+  return [...(no?.notDone?.length ? no.notDone : (no?.reasons ?? []))];
+}
+
+/**
+ * What a Loop that closes without its yes leaves for its result card (`run_finished.stillToFix`):
+ * the last no's lists, why it stopped, and its hours (`loopHoursOf`).
+ */
+export interface StillToFix {
+  done: string[];
+  notDone: string[];
+  why: StopWhy;
+  hours: number | null;
+}
+
+/**
+ * The result card's list for a close without a yes or a pause, from the reviewer's last no
+ * (`notDoneOf`). With no no that names anything, only a time-out has a card (its hours ran out
+ * before a final look, Keep building on); any other end says its own words.
+ */
+export function stillToFixOf(
+  tally: Pick<FinishTally, "reasons" | "notDone" | "done"> | null | undefined,
+  end: { why: StopWhy; hours: number | null },
+): StillToFix | null {
+  const notDone = notDoneOf(tally);
+  if (!notDone.length && end.why !== StopWhy.Time) return null;
+  return { done: notDone.length ? [...(tally?.done ?? [])] : [], notDone, why: end.why, hours: end.hours };
 }
 
 /** Where a Loop's finish checks stand: kept in the run's journal by the caller. */
@@ -132,15 +176,23 @@ export interface FinishTally {
   round: number;
   rejections: number;
   checking: boolean;
-  /** The reasons of the reviewer's last no, for the next round's brief and the run's report. */
+  /** The reasons of the reviewer's last no: what it checked and found. */
   reasons: string[];
+  /** What the reviewer's last no found not done, for the next round's brief and the run's report. */
+  notDone: string[];
+  /** What the reviewer's last no found done, a few words each (absent from an older journal's tally). */
+  done?: string[];
+  /** When the reviewer's last no was settled, on the check's clock: proof made after it is fresh. */
+  noAt?: number;
+  /** The lead's work mark (`FinishScope.workMark`) the reviewer's last no was given on. */
+  noMark?: string;
   /** A claim reached a reviewer since the run last opened (not kept in the journal). */
   asked?: boolean;
 }
 
 /** No check yet. */
 export function newTally(): FinishTally {
-  return { round: 0, rejections: 0, checking: false, reasons: [] };
+  return { round: 0, rejections: 0, checking: false, reasons: [], notDone: [] };
 }
 
 /** A whole number of zero or more. */
@@ -152,11 +204,26 @@ const isCount = (value: unknown): value is number => Number.isSafeInteger(value)
  */
 export function tallyOf(saved: unknown): FinishTally {
   if (!isPlainRecord(saved)) return newTally();
-  const { round, rejections, reasons } = saved;
-  const texts = Array.isArray(reasons) && reasons.every((reason) => typeof reason === "string");
-  if (!isCount(round) || !isCount(rejections) || !texts) return newTally();
-  return { round, rejections, checking: false, reasons: [...reasons] };
+  const { round, rejections, reasons, notDone, done, noAt, noMark } = saved;
+  if (!isCount(round) || !isCount(rejections) || !isTexts(reasons)) return newTally();
+  const when = {
+    ...(isTexts(done) && done.length ? { done: [...done] } : {}),
+    ...(isCount(noAt) ? { noAt } : {}),
+    ...(typeof noMark === "string" ? { noMark } : {}),
+  };
+  return {
+    round,
+    rejections,
+    checking: false,
+    reasons: [...reasons],
+    notDone: isTexts(notDone) ? [...notDone] : [],
+    ...when,
+  };
 }
+
+/** A list of texts. */
+const isTexts = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((one) => typeof one === "string");
 
 /** Everything a check reads besides the claim: the run, the game, the lead's folder, its tally and its call's clock. */
 export interface FinishScope {
@@ -188,6 +255,13 @@ export interface FinishScope {
   abandoned?: () => boolean;
   /** Why a yes no longer speaks for the claim (the build moved while the reviewer read), or null: such a yes counts as no answer. */
   lapsed?: () => Promise<string | null>;
+  /** A timed Loop's working time left now (`time-cap.ts` `timeLeftOf`); null or absent for an ∞ Loop. */
+  timeLeft?: () => number | null;
+  /**
+   * What marks the lead's work in its folder now (its newest save point, its head), or null when it
+   * can't say: after a row of no's the Loop went on past, a claim needs it to have moved.
+   */
+  workMark?: () => Promise<string | null>;
   /** Save the tally where the caller keeps it, as a round starts. */
   keep?: () => Promise<unknown>;
 }
@@ -206,13 +280,31 @@ export interface FinishClaim {
 
 /** A reviewer's yes. */
 type Accepted = { step: typeof FinishCheckStep.Accepted; reasons: string[] };
-/** A reviewer's no: the no's in a row now, and whether this one stops the Loop. */
-type Rejected = { step: typeof FinishCheckStep.Rejected; reasons: string[]; rejections: number; stop: boolean };
+/**
+ * A reviewer's no: its reasons, what isn't done, the no's in a row now, whether this one stops the
+ * Loop, and whether the Loop had time left (then no row of no's stops it).
+ */
+type Rejected = {
+  step: typeof FinishCheckStep.Rejected;
+  reasons: string[];
+  notDone: string[];
+  done: string[];
+  rejections: number;
+  stop: boolean;
+  timeLeft: boolean;
+};
 /**
  * A check that got no answer, and why; `seatless` when no engine here can hold a reviewer at all,
- * `lapsed` for a yes that no longer speaks for the claim.
+ * `lapsed` for a yes that no longer speaks for the claim, `staleProof` for a claim turned back before
+ * any check: after the row of no's a timed Loop went on past, it named no proof made since the last no.
  */
-type Unanswered = { step: typeof FinishCheckStep.Unanswered; why: string; seatless?: true; lapsed?: true };
+type Unanswered = {
+  step: typeof FinishCheckStep.Unanswered;
+  why: string;
+  seatless?: true;
+  lapsed?: true;
+  staleProof?: true;
+};
 /** No time for a check (nothing recorded); `turnEnds` when the lead's turn, not its call, left none. */
 export type NoTime = { noTime: true; turnEnds?: true };
 /** What a check came to; `noTime` when the claim had no time for one. */
@@ -389,7 +481,7 @@ function briefFor(
     captures: gathered.captures.map((capture, n) => captureLine(capture, told.attached[n])),
     facts: factsOfGame(scope.game),
     folder: scope.leadFolder,
-    earlier: scope.tally.reasons,
+    earlier: notDoneOf(scope.tally),
     looks: told.looks,
   });
 }
@@ -553,29 +645,48 @@ async function notStanding(scope: FinishScope, held: HostAnswer): Promise<{ why:
   return why ? { why, lapsed: true } : null;
 }
 
-/** The settled round as the lead's outcome, counted into the tally as the host counted it. */
+/** The settled round as the lead's outcome, counted into the tally as the host counted it (a no `at` a work `mark`). */
 function outcomeOf(
   tally: FinishTally,
-  settled: HostAnswer & { rejections: number; stopped: boolean },
+  settled: HostAnswer & { rejections: number; stopped: boolean; timeLeft?: boolean },
   lapsed: boolean,
+  no: { at: number; mark: string | null },
 ): Accepted | Rejected | Unanswered {
   tally.round = Math.max(tally.round, settled.round);
   tally.rejections = settled.rejections;
   const reasons = (settled.reasons ?? []).slice(0, MAX_FINISH_REASONS);
+  const notDone = (settled.notDone ?? []).slice(0, MAX_FINISH_REASONS);
+  const done = (settled.done ?? []).slice(0, MAX_FINISH_REASONS);
   if (settled.step === FinishCheckStep.Accepted) {
-    tally.reasons = [];
+    Object.assign(tally, { reasons: [], notDone: [] });
+    delete tally.done;
+    delete tally.noAt;
+    delete tally.noMark;
     return { step: FinishCheckStep.Accepted, reasons };
   }
   if (settled.step === FinishCheckStep.Rejected) {
-    tally.reasons = reasons;
-    return { step: FinishCheckStep.Rejected, reasons, rejections: settled.rejections, stop: settled.stopped };
+    Object.assign(tally, { reasons, notDone, noAt: no.at });
+    if (done.length) tally.done = done;
+    else delete tally.done;
+    if (no.mark === null) delete tally.noMark;
+    else tally.noMark = no.mark;
+    const { rejections, stopped: stop } = settled;
+    const timeLeft = settled.timeLeft === true;
+    return { step: FinishCheckStep.Rejected, reasons, notDone, done, rejections, stop, timeLeft };
   }
   const answer = unanswered(settled.why ?? MESSAGE.ended);
   return lapsed ? { ...answer, lapsed: true } : answer;
 }
 
-/** Settle the round Genex holds, as no answer when it no longer stands; the host's count comes back with it. */
-async function settleRound(scope: FinishScope, held: HostAnswer): Promise<Accepted | Rejected | Unanswered> {
+/**
+ * Settle the round Genex holds, as no answer when it no longer stands; the host's count comes back
+ * with it. `mark` is the lead's work mark the claim was made on.
+ */
+async function settleRound(
+  scope: FinishScope,
+  held: HostAnswer,
+  mark: string | null,
+): Promise<Accepted | Rejected | Unanswered> {
   const { ctx, run, tally } = scope;
   // Settled whatever happens once Genex holds an answer: one whose standing can't be read is no answer.
   const fallen: { why: string; lapsed?: true } | null = await notStanding(scope, held).catch((err: unknown) => ({
@@ -583,16 +694,46 @@ async function settleRound(scope: FinishScope, held: HostAnswer): Promise<Accept
   }));
   // A run that ended under the check is closed: Genex dropped its round, and nothing more is recorded.
   if (scope.ended?.()) return unanswered(MESSAGE.ended);
+  const left = timeLeftMsOf(scope);
   const settled = await ctx
     .call(HostMethod.FinishSettle, {
       project: run.project,
       runId: run.runId,
       round: held.round,
       ...(fallen ? { unanswered: clipMarked(fallen.why, FINISH_REASON_CHARS) } : {}),
+      ...(left === null ? {} : { timeLeftMs: left }),
     })
     .catch(() => null);
   if (!settled) return unanswered(MESSAGE.ended);
-  return outcomeOf(tally, settled, fallen?.lapsed === true);
+  return outcomeOf(tally, settled, fallen?.lapsed === true, { at: scope.now(), mark });
+}
+
+/** A timed Loop's working time left, in whole milliseconds for the host; null for an ∞ Loop or one that names none. */
+function timeLeftMsOf(scope: FinishScope): number | null {
+  const left = scope.timeLeft?.();
+  return typeof left === "number" && Number.isFinite(left) ? Math.max(0, Math.floor(left)) : null;
+}
+
+/** The lead's work mark now, or null when the caller names none or it can't be read. */
+async function workMarkOf(scope: Pick<FinishScope, "workMark">): Promise<string | null> {
+  return (await scope.workMark?.().catch(() => null)) ?? null;
+}
+
+/**
+ * Whether a claim must wait for new work: the row of no's has reached the cap and the Loop went on
+ * (it had time left), and since the last no the lead's work mark has not moved (`mark`; null when the
+ * caller can't say) or no proof file it names was written. A claim on the same work would only be
+ * turned down again, at a reviewer's cost. Callers ask before Genex's finish moment runs.
+ */
+export async function staleClaim(
+  tally: FinishTally,
+  folder: string,
+  proof: readonly unknown[],
+  mark: string | null,
+): Promise<boolean> {
+  if (tally.rejections < MAX_FINISH_REJECTIONS || tally.noAt === undefined) return false;
+  const moved = mark === null || tally.noMark === undefined || mark !== tally.noMark;
+  return !(moved && (await freshProofIn(folder, proof, tally.noAt)));
 }
 
 /**
@@ -608,6 +749,9 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
   if (scope.abandoned?.()) return unanswered(MESSAGE.turnEnded);
   const noTime = noTimeFor(scope);
   if (noTime) return noTime;
+  const mark = await workMarkOf(scope);
+  if (await staleClaim(tally, scope.leadFolder, claim.proof, mark))
+    return { ...unanswered(MESSAGE.staleProof), staleProof: true };
   tally.round += 1;
   tally.checking = true;
   try {
@@ -616,7 +760,7 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
     const answer = await runRound(scope, claim);
     if (!fromHost(answer)) return answer;
     tally.asked = true;
-    return await settleRound(scope, answer);
+    return await settleRound(scope, answer, mark);
   } finally {
     tally.checking = false;
   }
@@ -626,7 +770,11 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
 export function finishAnswer(outcome: FinishOutcome): string {
   if ("noTime" in outcome) return outcome.turnEnds ? MESSAGE.noTimeInTurn : MESSAGE.noTime;
   if (outcome.step === FinishCheckStep.Accepted) return FINISH_ANSWER.accepted(outcome.reasons);
+  if (outcome.step === FinishCheckStep.Unanswered && outcome.staleProof)
+    return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   if (outcome.step === FinishCheckStep.Unanswered) return FINISH_ANSWER.unanswered(outcome.why);
-  if (outcome.stop) return FINISH_ANSWER.stopped(MAX_FINISH_REJECTIONS, outcome.reasons);
-  return FINISH_ANSWER.rejected(outcome.rejections, MAX_FINISH_REJECTIONS, outcome.reasons);
+  const { reasons, notDone } = outcome;
+  if (outcome.stop) return FINISH_ANSWER.stopped(outcome.rejections, reasons, notDone);
+  if (outcome.timeLeft) return FINISH_ANSWER.goesOn(outcome.rejections, reasons, notDone);
+  return FINISH_ANSWER.rejected(outcome.rejections, MAX_FINISH_REJECTIONS, reasons, notDone);
 }

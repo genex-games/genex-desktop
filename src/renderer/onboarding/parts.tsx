@@ -14,6 +14,7 @@ import {
   type RefObject,
 } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { ArtCanvas, type Draw } from "./ArtCanvas.tsx";
@@ -70,7 +71,7 @@ export function TopBar({ onBack, onSkip }: { onBack: () => void; onSkip?: () => 
     <div className="onboarding-bar">
       <Button variant="ghost" onClick={onBack}>
         <Icon name="chevron-left" />
-        Back
+        {t("Back")}
       </Button>
       {onSkip && (
         <Button
@@ -79,7 +80,7 @@ export function TopBar({ onBack, onSkip }: { onBack: () => void; onSkip?: () => 
           data-onboarding-action={OnboardingAction.Skip}
           onClick={onSkip}
         >
-          Skip for now
+          {t("Skip for now")}
         </Button>
       )}
     </div>
@@ -107,7 +108,7 @@ export function StartBuilding({ anyOn, onStart }: { anyOn: boolean; onStart: () 
           data-onboarding-action={OnboardingAction.Start}
           onClick={onStart}
         >
-          Start building
+          {t("Start building")}
         </Button>
       )}
     </div>

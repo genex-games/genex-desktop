@@ -54,10 +54,11 @@ describe("commands the agent may not run", () => {
       /genex__cli-paid/,
     ],
     [
-      "shop add through the free tool",
+      "shop add through the paid tool, whose card would ask about a draft that spends nothing",
       { command: "shop add", args: "Key", options: { price: 100 } },
-      FREE,
-      GenexCliRefusalCode.PaidTool,
+      PAID,
+      GenexCliRefusalCode.FreeTool,
+      /genex__cli\b/,
     ],
     [
       "budget --assets through the free tool, an allowance no Studio run keeps",
@@ -161,13 +162,13 @@ describe("flags and values the agent may not pass", () => {
     [
       "a text value starting with a dash",
       { command: "shop add", args: "Key", options: { price: 100, icon: "--env" } },
-      PAID,
+      FREE,
       GenexCliRefusalCode.InvalidValue,
     ],
     [
       "a type outside its choices",
       { command: "shop add", args: "Key", options: { price: 100, type: "rig" } },
-      PAID,
+      FREE,
       GenexCliRefusalCode.InvalidValue,
     ],
     [
@@ -228,7 +229,7 @@ describe("the argv Studio runs", () => {
     assert.deepEqual(
       genexCliRequest(
         { command: "shop add", args: "Iron Key", options: { price: 100, type: "durable", resellable: true } },
-        PAID,
+        FREE,
       ).argv,
       ["shop", "add", "Iron Key", "--price", "100", "--type", "durable", "--resellable"],
     );
@@ -254,8 +255,8 @@ describe("what the consent card shows for a paid call", () => {
       /max-coins: 250000/,
     ],
     [
-      "a shop item whose long name comes first",
-      { command: "shop add", args: "k".repeat(3000), options: { icon: "i".repeat(400), price: 9000 } },
+      "a shop item change whose long id comes first",
+      { command: "shop set", args: "k".repeat(3000), options: { icon: "i".repeat(400), price: 9000 } },
       /price: 9000/,
     ],
     [
@@ -267,7 +268,7 @@ describe("what the consent card shows for a paid call", () => {
   for (const [name, args, spend] of rows) {
     it(`names what it spends first for ${name}`, () => {
       const text = card(args);
-      assert.match(text, /command: (llm bench|shop add|shop set)/);
+      assert.match(text, /command: (llm bench|shop set)/);
       assert.match(text, spend);
     });
   }
@@ -279,4 +280,176 @@ describe("what the consent card shows for a paid call", () => {
     assert.throws(() => genexCliConsentArgs({ command: "llm bench", args: "hi" }, PAID), GenexCliRefusal);
     assert.throws(() => genexCliConsentArgs({ command: "shop list" }, PAID), GenexCliRefusal);
   });
+  it("asks nobody about a new item's draft, which spends nothing and sells nothing until the person puts it on sale", () => {
+    const draft = { command: "shop add", args: "Ivory Coffin", options: { price: 300 } };
+    assert.throws(() => genexCliConsentArgs(draft, PAID), GenexCliRefusal);
+    assert.equal(genexCliRequest(draft, FREE).paid, false);
+  });
+});
+
+describe("a store item's fields (marketplace plan 8.1)", () => {
+  it("passes a description, repeated tags, sharing and a Free price to `shop add`", () => {
+    const request = genexCliRequest(
+      {
+        command: "shop add",
+        args: "Frost Axe",
+        options: {
+          price: 0,
+          type: "durable",
+          description: "Ice-blue head. Freezes an enemy for a second on hit.",
+          tag: ["axe", "ice"],
+          shared: true,
+        },
+      },
+      FREE,
+    );
+    assert.deepEqual(request.argv, [
+      "shop",
+      "add",
+      "Frost Axe",
+      "--price",
+      "0",
+      "--type",
+      "durable",
+      "--description",
+      "Ice-blue head. Freezes an enemy for a second on hit.",
+      "--tag",
+      "axe",
+      "--tag",
+      "ice",
+      "--shared",
+    ]);
+    assert.equal(request.gamePaths, undefined, "nothing to copy from the game");
+  });
+
+  it("changes them with `shop set`: sharing off, one tag, a cleared description, Free, the type", () => {
+    const request = genexCliRequest(
+      {
+        command: "shop set",
+        args: "sku_1",
+        options: { shared: false, tag: "wings", description: "", price: 0, type: "consumable" },
+      },
+      PAID,
+    );
+    assert.deepEqual(request.argv, [
+      "shop",
+      "set",
+      "sku_1",
+      "--no-shared",
+      "--tag",
+      "wings",
+      "--description",
+      "",
+      "--price",
+      "0",
+      "--type",
+      "consumable",
+    ]);
+  });
+
+  it("names the game's picture, model and package where the argv takes them, for Studio to copy in", () => {
+    const request = genexCliRequest(
+      {
+        command: "shop add",
+        args: "Frost Axe",
+        options: {
+          price: 1200,
+          image: ".genex/scratch/frost-axe.png",
+          model: "assets/frost-axe.glb",
+          package: "items/frost-axe",
+        },
+      },
+      FREE,
+    );
+    assert.deepEqual(request.argv.slice(3), [
+      "--price",
+      "1200",
+      "--image",
+      ".genex/scratch/frost-axe.png",
+      "--model",
+      "assets/frost-axe.glb",
+      "--package",
+      "items/frost-axe",
+    ]);
+    assert.deepEqual(request.gamePaths, [
+      { option: "image", path: ".genex/scratch/frost-axe.png", target: "file", index: 6 },
+      { option: "model", path: "assets/frost-axe.glb", target: "file", index: 8 },
+      { option: "package", path: "items/frost-axe", target: "folder", index: 10 },
+    ]);
+    for (const { index, path } of request.gamePaths ?? []) assert.equal(request.argv[index], path);
+  });
+
+  const refusals: Array<[string, Record<string, unknown>]> = [
+    ["a price below Free", { price: -1 }],
+    ["a description longer than genex.games keeps", { price: 100, description: "d".repeat(1001) }],
+    ["a description with a line break", { price: 100, description: "one\ntwo" }],
+    ["a description that reads as a flag", { price: 100, description: "--env" }],
+    ["eleven tags", { price: 100, tag: Array.from({ length: 11 }, (_, i) => `t${i}`) }],
+    ["a tag longer than 32 characters", { price: 100, tag: ["t".repeat(33)] }],
+    ["an empty tag", { price: 100, tag: [""] }],
+    ["a tag that reads as a flag", { price: 100, tag: ["--json"] }],
+    ["a tag that is not text", { price: 100, tag: [7] }],
+    ["sharing given as text", { price: 100, shared: "yes" }],
+    ["an absolute picture", { price: 100, image: "/etc/passwd" }],
+    ["a home-relative picture", { price: 100, image: "~/secret.png" }],
+    ["a drive-letter picture", { price: 100, image: "C:\\Users\\me\\secret.png" }],
+    ["a picture behind ../", { price: 100, image: "../other-game/axe.png" }],
+    ["a picture with ../ inside", { price: 100, image: "assets/../../secret.png" }],
+    ["a picture with a backslash ..", { price: 100, image: "assets\\..\\..\\secret.png" }],
+    ["a picture with a NUL", { price: 100, image: "axe\u0000.png" }],
+    ["a picture that reads as a flag", { price: 100, image: "--env" }],
+    ["the game itself as the package", { price: 100, package: "." }],
+    ["an empty model", { price: 100, model: "" }],
+    ["a picture that is not text", { price: 100, image: { path: "axe.png" } }],
+  ];
+  for (const [name, options] of refusals) {
+    it(`refuses ${name}`, () => {
+      assert.equal(
+        refusal({ command: "shop add", args: "Frost Axe", options }, FREE).code,
+        GenexCliRefusalCode.InvalidValue,
+      );
+    });
+  }
+});
+
+describe("other creators' shared items (`genex items`)", () => {
+  it("lists and searches the game's shared items through the free tool", () => {
+    assert.deepEqual(genexCliRequest({ command: "items list" }, FREE), {
+      command: GenexCliCommand.ItemsList,
+      argv: ["items", "list"],
+      project: true,
+      paid: false,
+    });
+    assert.deepEqual(
+      genexCliRequest({ command: "items search", args: "wings", options: { tag: ["fire"] } }, FREE).argv,
+      ["items", "search", "wings", "--tag", "fire"],
+    );
+  });
+
+  it("adds and removes one through the paid tool, which asks the person, and moves an added item into the game", () => {
+    const added = genexCliRequest({ command: "items add", args: "sku_phoenix" }, PAID);
+    assert.deepEqual(added.argv, ["items", "add", "sku_phoenix"]);
+    assert.equal(added.project, true);
+    assert.equal(added.delivers, "sku_phoenix");
+    const removed = genexCliRequest({ command: "items remove", args: "sku_phoenix" }, PAID);
+    assert.deepEqual(removed.argv, ["items", "remove", "sku_phoenix"]);
+    assert.equal(removed.delivers, undefined, "a removal writes nothing into the game");
+    assert.equal(refusal({ command: "items add", args: "sku_phoenix" }, FREE).code, GenexCliRefusalCode.PaidTool);
+    assert.equal(refusal({ command: "items list" }, PAID).code, GenexCliRefusalCode.FreeTool);
+  });
+
+  const ids: Array<[string, unknown]> = [
+    ["a path", "../sku"],
+    ["a folder name with a slash", "sku/../../x"],
+    ["two words", "sku_1 sku_2"],
+    ["a dot segment", ".."],
+    ["a flag", "--force"],
+    ["an id too long to be one", "s".repeat(65)],
+    ["no id", ""],
+  ];
+  for (const [name, id] of ids) {
+    it(`refuses an item id that is ${name}`, () => {
+      assert.equal(refusal({ command: "items add", args: id }, PAID).code, GenexCliRefusalCode.InvalidValue);
+    });
+  }
 });

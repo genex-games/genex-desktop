@@ -551,6 +551,19 @@ describe("a chat's own Claude session asks the person", () => {
     assert.ok(ruleDenies(fence, "Read", path.join(home, "history.jsonl")));
   });
 
+  it("keeps the home rules within their budget when the rules fill it to the last character", async () => {
+    // Equal rules, one length after another: some length divides the budget, so the rules
+    // fill it exactly, and the array's own brackets must still fit.
+    const root = await tmpDir("claude-home-budget-");
+    for (let pad = 1; pad <= 60; pad++) {
+      const home = path.join(root, `home-${pad}`);
+      for (let i = 0; i < 45; i++)
+        await mkdir(path.join(home, `${String(i).padStart(2, "0")}-${"x".repeat(pad)}`), { recursive: true });
+      const fence = await homeFence({ home, warn: () => {} });
+      assert.ok(JSON.stringify(fence).length <= 4_000, `pad ${pad}: ${JSON.stringify(fence).length} characters`);
+    }
+  });
+
   it("hands the host Claude Code's question, reason cleaned of terminal codes", async () => {
     const { canUseTool, asked } = await prompter({ decision: "allow" });
     const input = { command: "npm install", description: "Install dependencies" };

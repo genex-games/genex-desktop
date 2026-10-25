@@ -21,6 +21,7 @@ const FACT_NAMES = {
   [CoreFact.UnrealPlugin]: "Unreal Engine plugin",
   [CoreFact.GodotProject]: "Godot project",
   [CoreFact.UnityProject]: "Unity project",
+  [CoreFact.RobloxProject]: "Roblox place",
   [CoreFact.BlenderAssets]: "Blender files",
 } as const satisfies Record<CoreFact, string>;
 
@@ -31,6 +32,7 @@ export const FACT_WORDS = {
   [CoreFact.UnrealPlugin]: "an Unreal Engine plugin (a .uplugin), the engine's own kind of plugin, not a Genex plugin",
   [CoreFact.GodotProject]: "a Godot project",
   [CoreFact.UnityProject]: "a Unity project",
+  [CoreFact.RobloxProject]: "a Roblox place",
   [CoreFact.BlenderAssets]: "Blender files",
 } as const satisfies Record<CoreFact, string>;
 
@@ -81,7 +83,7 @@ function holdsWords(facts: readonly FactRef[], holds?: FolderHolds | null): stri
 }
 
 /**
- * Who runs the session, the first thing every brief says: Genex, the Mac app the chat runs in; the
+ * Who runs the session, the first thing every brief says: Genex, the desktop app the chat runs in; the
  * project's folder and what it holds (`holds`: what a folder with no facts holds); that Genex shows a
  * web game itself; and that a plugin here is a Genex plugin, never an engine's own plugins or add-ons.
  */
@@ -95,7 +97,7 @@ export function appIdentity({
   holds?: FolderHolds | null;
 }): string {
   const folder = folderLabel ? `the folder \`${folderLabel}\`` : "this game's folder";
-  return `You are working inside Genex, the Mac app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
+  return `You are working inside Genex, the desktop app this chat runs in. This project is ${folder}; it holds ${holdsWords(facts, holds)}. Genex shows a web game in its own Live view beside this chat: never start a server for the person to open. In Genex, a plugin means a Genex plugin (Plugins in the sidebar), which adds tools and know-how; an engine's own plugins and add-ons are files in the project, not Genex plugins.`;
 }
 
 /** How a session finds a plugin for what the request names, and never turns one on itself. */
@@ -129,8 +131,8 @@ export function pendingKindRule(
   asked = true,
 ): string[] {
   const offered = kinds ?? [];
-  if (asked && offered.length > 0)
-    return [engineChoiceRule(engine, unreal, offered), findRule(engine, "none of those options covers")];
+  // The engine question sends another engine to `plugins_find` itself, before it asks.
+  if (asked && offered.length > 0) return [engineChoiceRule(engine, unreal, offered)];
   const start = toolCall(engine, ProjectTool.StartWebGame);
   return [
     `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build on its starter.`,

@@ -51,6 +51,7 @@
         "docs/agent/feature-map.md",
         "docs/agent/architecture.md",
         "docs/agent/design.md",
+        "docs/agent/translation.md",
         "docs/local-models.md",
         "docs/connections-and-context.md",
         "docs/tool-permissions.md",
@@ -113,14 +114,17 @@
         "src/substrate/paths.ts",
         "tests/conformance/paths.test.ts",
         "tests/conformance/fsx.test.ts",
-        "src/substrate/windows-sandbox.ts"
+        "src/substrate/windows-sandbox.ts",
+        "src/substrate/git-policy.ts",
+        "scripts/vendor-git-for-mac.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/workspace.md",
         "docs/harness-runtime.md",
-        "docs/windows-sandbox.md"
+        "docs/windows-sandbox.md",
+        "docs/mac-bundled-git.md"
       ],
       "commands": ["check", "test:fast"]
     },
@@ -347,6 +351,9 @@
         "tests/conformance/third-party-notices.test.ts",
         "scripts/package-prune.cjs",
         "tests/conformance/package-prune.test.ts",
+        "scripts/package-vc-runtime.cjs",
+        "tests/conformance/package-vc-runtime.test.ts",
+        "tests/helpers/pe-image.ts",
         "scripts/appdmg-image-size/**",
         "tests/conformance/appdmg-image-size.test.ts",
         "scripts/package-signing.cjs",
@@ -437,6 +444,7 @@
         "docs/STUDIO-DEVELOPER-FIELD-GUIDE.md",
         "docs/release-readiness.md",
         "docs/agent/glossary.md",
+        "docs/agent/translation.md",
         "docs/agent/recipes.md",
         "src/AGENTS.md",
         "tests/AGENTS.md",

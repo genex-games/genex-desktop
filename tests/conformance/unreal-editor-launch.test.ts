@@ -22,8 +22,11 @@ import {
   portBlockedIn,
   readEditorLog,
 } from "../../src/plugins/unreal/editor-log.ts";
+import { SetupStorage } from "../../src/plugins/unreal/editor-port.ts";
 import { answersOrBlocked } from "../../src/plugins/unreal/editor-status.ts";
 import {
+  findLauncher,
+  getUnreal,
   getUnrealLaunch,
   type Launch,
   LaunchErrorCode,
@@ -780,18 +783,53 @@ describe("Get Unreal Engine", () => {
     assert.deepEqual(f.launched, [{ command: "/usr/bin/open", args: [DOWNLOAD], detached: false }]);
   });
 
-  it("on Windows it starts the launcher from Program Files (x86), else the download page", () => {
-    const programs = "C:\\Program Files (x86)";
-    const win64 = `${programs}\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe`;
-    const win32 = `${programs}\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe`;
-    assert.deepEqual(launcherPaths("win32", programs), [win64, win32]);
-    assert.deepEqual(launcherPaths("darwin", "/Applications"), ["/Applications/Epic Games Launcher.app"]);
+  it("on Windows it starts the launcher from Program Files, then Program Files (x86), else the download page", () => {
+    const at = (programs: string, folder: string) =>
+      `${programs}\\Epic Games\\Launcher\\Portal\\Binaries\\${folder}\\EpicGamesLauncher.exe`;
+    const [programs, x86] = ["C:\\Program Files", "C:\\Program Files (x86)"];
+    const win64 = at(x86, "Win64");
+    assert.deepEqual(
+      launcherPaths("win32", { applications: x86, programFiles: programs }),
+      [at(programs, "Win64"), at(programs, "Win32"), win64, at(x86, "Win32")],
+      "Epic's 64-bit launcher installs in Program Files; the older one went to Program Files (x86)",
+    );
+    assert.deepEqual(launcherPaths("win32", { applications: x86 }), [win64, at(x86, "Win32")]);
+    assert.deepEqual(launcherPaths("darwin", { applications: "/Applications" }), [
+      "/Applications/Epic Games Launcher.app",
+    ]);
     assert.deepEqual(getUnrealLaunch("win32", win64), { command: win64, args: [], detached: true });
     assert.deepEqual(getUnrealLaunch("win32", undefined, { SystemRoot: "D:\\Windows" }), {
       command: "D:\\Windows\\explorer.exe",
       args: [DOWNLOAD],
       detached: true,
     });
+  });
+
+  it("on Windows it finds and starts Epic's 64-bit launcher in Program Files", {
+    skip: process.platform !== "win32" && "Windows paths name a PC's own folders",
+  }, async () => {
+    const root = await realpath(await tmpDir("studio-unreal-launcher-"));
+    const [programs, x86] = [path.join(root, "Program Files"), path.join(root, "Program Files (x86)")];
+    const launcher = path.join(
+      programs,
+      "Epic Games",
+      "Launcher",
+      "Portal",
+      "Binaries",
+      "Win64",
+      "EpicGamesLauncher.exe",
+    );
+    await mkdir(path.dirname(launcher), { recursive: true });
+    await writeFile(launcher, "MZ");
+    await mkdir(x86, { recursive: true });
+    const launched: Launch[] = [];
+    const launch = { open: async (l: Launch) => void launched.push(l), now: () => START };
+    assert.equal(await findLauncher("win32", { applications: x86, programFiles: programs }), launcher);
+    assert.equal(await findLauncher("win32", { applications: x86 }), undefined, "Program Files (x86) alone misses it");
+    assert.deepEqual(await getUnreal({ platform: "win32" }, { ...launch, applications: x86, programFiles: programs }), {
+      opened: "launcher",
+    });
+    assert.deepEqual(launched, [{ command: launcher, args: [], detached: true }]);
   });
 });
 
@@ -2537,6 +2575,77 @@ describe("Open in Unreal brings an older Genex editor helper up to date", () => 
     assert.equal(state?.reopening.state, "done", state?.reopening.error);
     assert.deepEqual([f.snapshots, f.events], [[], ["launch"]]);
     assert.deepEqual(await tree(path.dirname(f.drift)), witness);
+  });
+});
+
+/** Epic's toolsets for games that setup adds to a project. */
+const TOOLSETS = [
+  "UMGToolSet",
+  "NiagaraToolsets",
+  "StateTreeToolset",
+  "AIModuleToolset",
+  "AnimationAssistantToolset",
+  "PCGToolset",
+  "PhysicsToolsets",
+  "GameplayTagsToolset",
+  "AutomationTestToolset",
+];
+const pluginNames = async (file: string): Promise<string[]> =>
+  JSON.parse(await readFile(file, "utf8")).Plugins.map((p: { Name: string }) => p.Name);
+
+/** Drift's .uproject with the plugins `keep` keeps. */
+async function keepPlugins(file: string, keep: (name: string) => boolean) {
+  const uproject = JSON.parse(await readFile(file, "utf8"));
+  uproject.Plugins = uproject.Plugins.filter((p: { Name: string }) => keep(p.Name));
+  await writeFile(file, `${JSON.stringify(uproject, null, "\t")}\n`);
+}
+
+describe("Open in Unreal adds Epic's toolsets to a project set up before them", () => {
+  /** Drift set up, its toolsets taken out of it and of its setup record, as a Genex from before them left it. */
+  async function setUpBefore() {
+    const f = await launchFixture();
+    await f.act("setup", { project: f.drift });
+    await keepPlugins(f.drift, (name) => !TOOLSETS.includes(name));
+    const [key] = await readdir(path.join(f.storage, SetupStorage.Folder));
+    const recordFile = path.join(f.storage, SetupStorage.Folder, key, SetupStorage.Record);
+    const record = JSON.parse(await readFile(recordFile, "utf8"));
+    record.uproject.added = record.uproject.added.filter((name: string) => !TOOLSETS.includes(name));
+    await writeFile(recordFile, JSON.stringify(record));
+    return f;
+  }
+
+  it("in its game: a game snapshot first, then the toolsets, then Unreal opens; the current helper stays", async () => {
+    const f = await setUpBefore();
+    await f.linkGame("valley", f.drift);
+    const helper = await tree(path.join(path.dirname(f.drift), "Plugins"));
+    await f.actIn("valley", "open-editor", { project: f.drift });
+    assert.deepEqual(f.events, ["snapshot", "launch"]);
+    assert.deepEqual(f.snapshots, [HelperState.Current]);
+    const names = await pluginNames(f.drift);
+    assert.deepEqual(names.slice(-TOOLSETS.length), TOOLSETS);
+    assert.deepEqual(await tree(path.join(path.dirname(f.drift), "Plugins")), helper, "the helper is as it was");
+  });
+
+  it("never outside its game or while an Unreal editor runs: the .uproject stays as it was", async () => {
+    const f = await setUpBefore();
+    const witness = await readFile(f.drift, "utf8");
+    await f.act("open-editor", { project: f.drift });
+    await f.linkGame("valley", f.drift);
+    f.live.running = true;
+    await f.actIn("valley", "open-editor", { project: f.drift });
+    assert.deepEqual(f.snapshots, []);
+    assert.equal(await readFile(f.drift, "utf8"), witness);
+  });
+
+  it("never one Genex added that the user took out again: no snapshot, and the .uproject stays as it was", async () => {
+    const f = await launchFixture();
+    await f.act("setup", { project: f.drift });
+    await keepPlugins(f.drift, (name) => name !== "NiagaraToolsets");
+    const witness = await readFile(f.drift, "utf8");
+    await f.linkGame("valley", f.drift);
+    await f.actIn("valley", "open-editor", { project: f.drift });
+    assert.deepEqual([f.snapshots, f.events], [[], ["launch"]]);
+    assert.equal(await readFile(f.drift, "utf8"), witness);
   });
 });
 

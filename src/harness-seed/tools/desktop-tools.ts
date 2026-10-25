@@ -19,7 +19,7 @@ const DESCRIPTION =
   "Your hands and eyes on the person's computer, with their consent — only the apps they allow. " +
   "Actions — screenshot: the whole screen now (the picture comes back). " +
   "left_click | right_click | double_click | triple_click coordinate=x,y. left_click_drag start_coordinate=x,y coordinate=x,y. mouse_move coordinate=x,y. " +
-  "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. type text=<literal text>. key text=<a key or +chord: Return, Escape, cmd+s>. " +
+  "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. type text=<literal text>. key text=<a key or +chord: Return, Escape, ctrl+s (cmd+s on a Mac)>. " +
   "wait duration=<seconds>. state: the accessibility tree of the app in front. Coordinates are pixels of the last screenshot. " +
   "Web pages — prefer these to pixels: web_open text=<https:// address> opens it in a separate, clean Chrome; web_read [text=<what you look for>] reads the page as text, every link, button and field with its [ref]; " +
   "web_click ref=<ref>; web_type ref=<ref> text=<text> [submit=true presses Enter]. Read again after a click: refs change with the page. " +

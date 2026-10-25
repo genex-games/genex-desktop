@@ -13,8 +13,8 @@
  * assets and settings.
  *
  * Ending is a clean exit through the editor itself when its main thread answers (no "save
- * changes?" prompt: the caller saved first), and a signal to that project's own processes when it
- * does not, as for an editor stalled behind a dialog. An editor ended that way, or one that
+ * changes?" prompt: the caller saved first, or asks the ending to save, its play stopped), and a
+ * signal to that project's own processes when it does not, as for an editor stalled behind a dialog. An editor ended that way, or one that
  * crashed, leaves its scene backups in the project, and the next Unity to open it asks whether to
  * recover them: they are moved into the plugin's storage before Genex opens the project again.
  */
@@ -25,9 +25,11 @@ import { isJsonObject } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import {
   editorStatus,
+  type EditorStatus,
   type PipelineAnswer,
   type PipelineDeps,
   PipelineProblem,
+  PLAY_STOPPED,
   readDescriptor,
   runCommand,
 } from "./pipeline.ts";
@@ -54,6 +56,7 @@ const Command = {
   SaveScene: "save_scene",
   CreateScene: "create_scene",
   SetAutotick: "set_autotick",
+  EditorStop: "editor_stop",
 } as const;
 
 /** The C# Genex itself runs in the editor; agents run none (`pipeline-gate.ts`). */
@@ -146,6 +149,13 @@ export async function saveWork(root: string, deps: EditorDeps, signal?: AbortSig
   return { saved, untitled, ...(assets.ok ? {} : { trouble: assets }) };
 }
 
+/** Whether a look at the editor finds it in Play mode (playing or paused). */
+export const isPlaying = (status: EditorStatus): boolean => status.playMode !== "" && status.playMode !== PLAY_STOPPED;
+
+/** Ends the editor's Play mode; what a scene had while it played is lost, as when the person stops it. */
+export const stopPlaying = (root: string, deps: EditorDeps, signal?: AbortSignal): Promise<PipelineAnswer> =>
+  editorCommand(root, deps, Command.EditorStop, {}, signal);
+
 /** Keeps the editor ticking while it is behind other windows, for as long as it runs; trouble is not the caller's. */
 export async function keepTicking(root: string, deps: EditorDeps, signal?: AbortSignal): Promise<void> {
   await editorCommand(root, deps, Command.SetAutotick, { enable: true }, signal).catch(() => undefined);
@@ -192,15 +202,21 @@ function signalAll(deps: EditorDeps, pids: readonly number[], signal: NodeJS.Sig
   }
 }
 
+/** How an ending treats the editor's work: saved first when it answers (`save`), on the call's stop. */
+export type EndOptions = { save?: boolean; signal?: AbortSignal };
+
 /**
- * Ends the editor that has the project at `root` open, saving nothing: a clean exit through the
- * editor when its main thread answers, else (or when that leaves it running) a signal to the
- * project's own processes. Answers whether none is left; a project no editor has open is ended.
+ * Ends the editor that has the project at `root` open: a clean exit through the editor when its
+ * main thread answers, else (or when that leaves it running) a signal to the project's own
+ * processes. It saves nothing unless asked to (`save`), and then only an editor that answers, its
+ * play stopped first; what it can't save is lost with it. Answers whether none is left; a project
+ * no editor has open is ended.
  */
-export async function endEditor(root: string, deps: EditorDeps): Promise<boolean> {
+export async function endEditor(root: string, deps: EditorDeps, options: EndOptions = {}): Promise<boolean> {
   if (!(await editorRuns(root, deps))) return true;
   const look = await editorStatus(root, deps.pipeline);
   if (look.ok) {
+    if (options.save) await saveBeforeEnd(root, deps, look.result, options.signal);
     // The editor is gone before it can answer, so no answer is the expected one.
     await runCommand(root, { command: Command.Eval, parameters: { code: Code.Exit } }, deps.pipeline, {
       waitMs: 0,
@@ -209,6 +225,12 @@ export async function endEditor(root: string, deps: EditorDeps): Promise<boolean
   }
   if (await endEditors(deps.processes, root)) return goneOrSignalled(root, deps);
   return false;
+}
+
+/** Saves what an answering editor can before it ends: its play stopped, then its work; trouble is the ending's loss. */
+async function saveBeforeEnd(root: string, deps: EditorDeps, status: EditorStatus, signal?: AbortSignal) {
+  if (isPlaying(status)) await stopPlaying(root, deps, signal).catch(() => undefined);
+  await saveWork(root, deps, signal).catch(() => undefined);
 }
 
 /** After the listed processes ended: ends the Unity editor only its descriptor names, as on Windows, whose list names no project. */

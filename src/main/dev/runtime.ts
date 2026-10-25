@@ -4,14 +4,14 @@ import { applyGraphFixture } from "./fixture-graph-control.ts";
 import { measureWindowResize } from "./window-resize.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 /**
- * The developer control's runtime inside a developer launch: a Unix socket that takes one
+ * The developer control's runtime inside a developer launch: a local socket (a named pipe on
+ * Windows, `control-endpoint.ts`) that takes one
  * request line per connection from `scripts/studio-dev`, checks its instance and capability,
  * performs the operation against the studio window or the game view, and answers one line.
  */
 import { app, type BrowserWindow, type WebContents, type WebContentsView } from "electron";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
 import net from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -25,6 +25,7 @@ import {
   writeJson,
 } from "../../../scripts/studio-dev/files.mjs";
 import { DesktopControl } from "./control.ts";
+import { type ControlEndpoint, controlEndpoint, listenControl, removeControlEndpoint } from "./control-endpoint.ts";
 import { listRuns } from "./runs.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import {
@@ -47,20 +48,14 @@ import type { LaunchContext } from "./launch-context.ts";
 import { DevProviders, FIXTURE_VERSION } from "./fixture-kit.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { GamePreview } from "../preview.ts";
+import { playViewsOf } from "../play/viewer-view.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { secretRedactor } from "../../shared/redact.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { HarnessState } from "../../shared/protocol.ts";
 
-/** Why the developer runtime cannot start. */
-const MESSAGE = {
-  socketPathTooLong: "temporary IPC path too long",
-} as const;
-
 /** The studio-dev record format (`ready.json`, `controller.json`, …); `readVersion` checks it. */
 const RECORD_VERSION = 1;
-/** A socket path longer than this does not fit macOS's `sockaddr_un`. */
-const MAX_SOCKET_PATH_BYTES = 102;
 /** `stop` tears down after this, so its own reply leaves first. */
 const STOP_REPLY_GRACE_MS = 100;
 /** An idle client connection is dropped after this. */
@@ -110,9 +105,8 @@ interface Runtime extends RuntimeParts {
   sanitize: (value: unknown) => unknown;
   /** This instance's evidence folder. */
   root: string;
-  /** The private folder the socket lives in. */
-  transport: string;
-  socket: string;
+  /** Where the CLI reaches it. */
+  endpoint: ControlEndpoint;
   capability: string;
   control: DesktopControl;
   diagnostics: Diagnostics;
@@ -137,11 +131,7 @@ export async function startRuntime(
   const rt = await openRuntime({ ctx, core, win, preview, logs, harnessLogs, authVisible, shutdown, performance });
   const server = net.createServer((client) => serveClient(rt, client));
   rt.server = server;
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(rt.socket, () => resolve());
-  });
-  await fsp.chmod(rt.socket, 0o600);
+  await listenControl(server, rt.endpoint);
   await publishIdentity(rt);
   return { status: () => status(rt), stop: () => stop(rt) };
 }
@@ -152,17 +142,13 @@ async function openRuntime(parts: RuntimeParts): Promise<Runtime> {
   const sanitize = sanitizer(secretRedactor(() => parts.core.knownSecretValues()));
   const root = safeChild(parts.ctx.checkout, `.studio-dev/evidence/${parts.ctx.instanceId}`);
   await fsp.mkdir(root, { mode: 0o700 });
-  const transport = await fsp.mkdtemp(path.join(os.tmpdir(), "ags-"));
-  await fsp.chmod(transport, 0o700);
-  const socket = path.join(transport, "s");
-  if (Buffer.byteLength(socket) > MAX_SOCKET_PATH_BYTES) throw new Error(MESSAGE.socketPathTooLong);
+  const endpoint = await controlEndpoint();
   const control = new DesktopControl();
   return {
     ...parts,
     sanitize,
     root,
-    transport,
-    socket,
+    endpoint,
     capability: randomBytes(32).toString("hex"),
     control,
     diagnostics: new Diagnostics(root, control),
@@ -186,16 +172,26 @@ async function publishIdentity(rt: Runtime): Promise<void> {
     ownerId: ctx.ownerId,
     pid: process.pid,
     startedAt: ctx.startedAt,
-    socket: rt.socket,
+    socket: rt.endpoint.socket,
     capability: rt.capability,
   });
 }
 
-/** The webContents a surface names: the studio window, or the game view once a game is loaded. */
+/**
+ * The webContents a surface names: the studio window, the game view once a game is loaded, or a Play
+ * game's bar layer or view while the viewer has one open.
+ */
 function surfaceContents(rt: Runtime, surface: DevSurface): WebContents {
   if (surface === DevSurface.Desktop) {
     if (rt.win.isDestroyed()) throw new DevError(DevErrorCode.UnsupportedSurface, "desktop window closed");
     return rt.win.webContents;
+  }
+  if (surface === DevSurface.PlayBar || surface === DevSurface.PlayGame) {
+    const views = playViewsOf(rt.win);
+    const view = surface === DevSurface.PlayBar ? views?.bar() : views?.game();
+    if (!view || view.webContents.isDestroyed())
+      throw new DevError(DevErrorCode.MissingPrerequisite, "open a game in Play first");
+    return view.webContents;
   }
   const view = loadedGameView(rt.preview);
   if (!view) throw new DevError(DevErrorCode.MissingPrerequisite, "load a game in Live first");
@@ -331,6 +327,8 @@ async function perform(rt: Runtime, op: Operation) {
       return resizeWindow(rt, op.params);
     case DevMethod.Capture:
       return captureSurface(rt, op.params);
+    case DevMethod.FileDrag:
+      return rt.control.fileDrag(surfaceContents(rt, DevSurface.Desktop), op.params, dragSampleDir());
     case DevMethod.Logs:
       return readLogs(rt, op.params);
     case DevMethod.CpuStart:
@@ -348,11 +346,14 @@ async function perform(rt: Runtime, op: Operation) {
     case DevMethod.TraceStop:
       return diagnostics.traceStop(op.params.traceId);
     default: {
-      const surface = "surface" in op.params ? op.params.surface : DevSurface.Desktop;
+      const surface = ("surface" in op.params && op.params.surface) || DevSurface.Desktop;
       return rt.control.action(surfaceContents(rt, surface), op);
     }
   }
 }
+
+/** The launch's own folder for the files `file.drag` drags, inside its app data. */
+const dragSampleDir = (): string => path.join(app.getPath("userData"), "dev-drag");
 
 /** Refuse to act on a harness that is not ready, under a sign-in sheet, or on a stale build. */
 function assertActionable(rt: Runtime, op: Operation): void {
@@ -423,6 +424,8 @@ function gameViewShown(preview: GamePreview): boolean {
 
 function surfaceWidth(rt: Runtime, surface: DevSurface): number {
   if (surface === DevSurface.Desktop) return rt.win.getContentBounds().width;
+  if (surface === DevSurface.PlayBar) return playViewsOf(rt.win)?.bar()?.getBounds().width ?? 0;
+  if (surface === DevSurface.PlayGame) return playViewsOf(rt.win)?.game()?.getBounds().width ?? 0;
   return rt.preview.view?.getBounds().width ?? 0;
 }
 
@@ -574,7 +577,7 @@ async function stop(rt: Runtime): Promise<void> {
   for (const client of rt.sockets) client.destroy();
   const server = rt.server;
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-  await fsp.rm(rt.transport, { recursive: true, force: true });
+  await removeControlEndpoint(rt.endpoint);
   // The CLI removes the lease only after observing actual process exit.
   app.exit(0);
 }

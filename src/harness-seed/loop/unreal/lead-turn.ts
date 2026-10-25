@@ -11,6 +11,7 @@
  * pauses the run.
  */
 import type { DelegateResult, HookReport } from "../../types/host-api.d.ts";
+import { durationCommission } from "../director/commission.ts";
 import { isResumeFailure } from "../chat-session.ts";
 import { MIN_DELEGATE_TIMEOUT_MS } from "../config.ts";
 import type { LeadLine } from "../director/lead-line.ts";
@@ -31,6 +32,7 @@ import { gameText, type Lead, type LeadTurn, requiredNow, saveLead, why } from "
 import { CARRIED, digestPrompt, HANDOVER_WHY, handoverWords, leadBrief, STEER } from "./lead-prompts.ts";
 import { LEAD_TOOLS, runStatusText } from "./lead-tools.ts";
 import type { TemplateKind } from "./template-kind.ts";
+import { folderLabelOf } from "../workers/identity.ts";
 
 /** One turn of the lead, at most. */
 export const TURN_MS = 45 * MINUTE_MS;
@@ -69,8 +71,9 @@ export type RunEnd = { status: ExecutionStatus; reason: LeadEndReason; why: stri
 
 /** The run's ends that come from outside its turns: the user's stop, the user's finish, Unreal gone for good. */
 export const RUN_ENDS = {
+  // The person's Stop pauses the run, as it does every Loop: Resume goes on from where it stopped.
   stopped: (): RunEnd => ({
-    status: ExecutionStatus.Cancelled,
+    status: ExecutionStatus.Paused,
     reason: LeadEndReason.Stopped,
     why: MESSAGE.StoppedByUser,
   }),
@@ -449,12 +452,13 @@ async function briefFor(lead: LeadRun): Promise<string> {
     template: lead.template,
     templateKind: lead.templateKind,
     minutes: minutes(Math.max(0, totalMs)),
+    untilFinish: !durationCommission(run),
     cpp: lead.cpp.available,
     offers: lead.offers,
     references: lead.references,
     handover,
     notes: await gameFile(lead, "NOTES.md", NOTES_CHARS),
-    folderLabel: lead.game.dir.split("/").slice(-2).join("/"),
+    folderLabel: folderLabelOf(lead.game.dir, null),
     facts: lead.game.facts,
   });
 }

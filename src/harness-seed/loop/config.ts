@@ -48,6 +48,16 @@ export function clampRunHours(hours: number): number {
   return Math.min(MAX_RUN_HOURS, Math.max(MIN_RUN_HOURS, hours));
 }
 
+/** A number of hours as a Loop's start is handed it, or minutes when it says so: 3, "3", "3h", "2.5 hours"; "30m" is half an hour. */
+const HOURS_TEXT = /^\s*(\d*\.?\d+)\s*(m\b|mins?\b|minutes?)?/i;
+
+/** The hours a Loop's start names, as a number; NaN when it names none. */
+export function hoursNamed(hours: unknown): number {
+  const match = HOURS_TEXT.exec(String(hours ?? ""));
+  if (!match) return Number.NaN;
+  return Number(match[1]) / (match[2] ? 60 : 1);
+}
+
 /** The most actions a play script may carry: a declared one is cut to it (kinds.ts), and so is a driven one. */
 export const MAX_PLAY_SCRIPT = 24;
 /** The longest a held key, a step or a wait of a play script may take. */

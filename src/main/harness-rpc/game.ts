@@ -27,7 +27,7 @@ import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { attachReport, noAttachment, str } from "../core/page-report.ts";
 import { startHeldInPlan } from "../core/project-tools.ts";
 import { withEditorPlay } from "../core/editor-play-session.ts";
-import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
+import { isBelow, samePath, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
 
 /** The largest image `game.read` hands back. */
 const MAX_IMAGE_READ_MB = 8;
@@ -73,6 +73,8 @@ const CONTRACT_COMPANION_FILES = [
 
 /** A run id an integration workspace is filed under: a plain slug, dots allowed. */
 const RUN_ID = /^[a-z0-9][a-z0-9-_.]*$/i;
+/** The field of a worktree listing that names a registered worktree's folder. */
+const WORKTREE_FIELD = "worktree ";
 
 const readText = (file: string): Promise<string | null> => readFile(file, "utf8").catch(() => null);
 
@@ -82,9 +84,23 @@ async function integrationWorkspace(core: StudioCore, project: string, runId: st
   await core.assertProjectAllowed(core.games.dirFor(project));
   const workspace = await realpath(path.join(core.layout.scratch, "autopilot", runId, "integration"));
   // Git's registration ties this host-derived worktree to the authorized game.
-  const listing = await git(core.games.dirFor(project), ["worktree", "list", "--porcelain"]);
-  if (!listing.split("\n").includes(`worktree ${workspace}`)) throw new Error(MESSAGE.foreignWorkspace);
+  const listing = await git(core.games.dirFor(project), ["worktree", "list", "--porcelain", "-z"]);
+  if (!(await registersWorktree(listing, workspace))) throw new Error(MESSAGE.foreignWorkspace);
   return workspace;
+}
+
+/**
+ * Does a `git worktree list --porcelain -z` listing register `workspace` (a real path)? Fields
+ * end in NUL, so a newline in a folder's name never reads as a line of its own; each registered
+ * folder is realpathed, so Git for Windows' `C:/…` and a link's spelling match the native path.
+ */
+async function registersWorktree(listing: string, workspace: string): Promise<boolean> {
+  for (const field of listing.split("\0")) {
+    if (!field.startsWith(WORKTREE_FIELD)) continue;
+    const registered = await realpath(field.slice(WORKTREE_FIELD.length)).catch(() => null);
+    if (registered !== null && samePath(registered, workspace)) return true;
+  }
+  return false;
 }
 
 /**

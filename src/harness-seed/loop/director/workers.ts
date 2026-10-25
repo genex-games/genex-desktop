@@ -82,6 +82,13 @@ import { briefOf, recordBuilderEnded, recordBuilderStarted } from "../workers/di
 import { finishAsked } from "./wrap-up.ts";
 import { wholeRoundsBudget } from "./whole-rounds.ts";
 import { refundProviderAttempt } from "./attempt-refund.ts";
+import {
+  noteSandboxRefusal,
+  sandboxRefusalOn,
+  sandboxRefused,
+  sandboxStopped,
+  tellSandboxRefusal,
+} from "../workers/sandbox-refusal.ts";
 import { FINISH_ASKED_NO_WORKERS } from "./wrap-up-prompts.ts";
 import type { LoopRun, LoopRunState, StartingWorker, Worker } from "./loop-run.ts";
 import type { RoundStop } from "../facet/rules.ts";
@@ -156,6 +163,16 @@ export function noteWorkerLimit(loopRun: LoopRun, worker: Worker, limit: AnyReco
     `worker ${worker.id}: the workers' engine (${state.workerLimit.engine}) hit its ${limitWords(limit.kind)}${resets}`,
     NoteKind.WorkerLimit,
   );
+}
+
+/**
+ * A builder its engine refused because the sandbox it runs in cannot run on this computer: its end
+ * says so, no other worker starts on that engine (`pooledAnswer`), and the person is told once.
+ */
+async function builderRefusedSandbox(loopRun: LoopRun, worker: Worker, said: unknown): Promise<void> {
+  const engine = roleEngine(loopRun.run, RoleKey.Builder);
+  worker.sandboxRefused = true;
+  await tellSandboxRefusal(loopRun, sandboxRefusalOn(engine) ?? noteSandboxRefusal(engine, said));
 }
 
 /**
@@ -1724,6 +1741,7 @@ async function runLoopWorker(loopRun: LoopRun, worker: Worker): Promise<void> {
     loopState: result.loopState ?? null,
   });
   if (result.limit) noteWorkerLimit(worker, result.limit);
+  if (sandboxStopped(result)) await builderRefusedSandbox(loopRun, worker, result.stoppedBecause);
   await refundProviderAttempt(loopRun, worker, result);
   worker.lastCommit = result.lastCommit ?? (await headOf(ctx, worker.worktree).catch(() => null));
   // A stopped round's work is committed on its worktree beyond what was accepted: the lead can still add it.
@@ -1938,6 +1956,7 @@ async function runSingleWorker(loopRun: LoopRun, worker: Worker): Promise<void> 
   worker.summary = String(delegation.summary ?? "").slice(0, SUMMARY_CHARS);
   if (delegation.limit) noteWorkerLimit(worker, delegation.limit);
   else if (delegation.ok) workersLimitOutlived(loopRun, worker);
+  if (sandboxRefused(delegation)) await builderRefusedSandbox(loopRun, worker, delegation.errorText);
   // A session the director aborted did not fail — it obeyed. Its reason is `stopWhy`.
   if (!delegation.ok && !worker.stopRequested)
     worker.error = delegation.errorText || delegation.stopReason || "the session did not finish";

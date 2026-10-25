@@ -253,9 +253,10 @@ it("follow-ups on hold leave with the message, its pictures come back, and the r
     1,
     "the picture was saved as a reference",
   );
-  // A follow-up sent meanwhile is put on hold, so it still waits when the answer ends. It asks
-  // another model, so it waits for a turn of its own instead of being steered into this one.
-  await rig.core.sendUserMessage("And add rain", { thread, engine: "claude-code", model: "another-model" });
+  // A follow-up sent meanwhile is put on hold, so it still waits when the answer ends. It asks for
+  // a model that keeps no session, which this turn cannot go on with, so it waits for a turn of its
+  // own instead of joining this one.
+  await rig.core.sendUserMessage("And add rain", { thread, engine: "ollama" });
   let events = await rig.core.store.listEvents(thread);
   await rig.core.changeQueuedMessage(thread, bubble(events, "And add rain").messageId, "hold");
   release.resolve();

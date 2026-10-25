@@ -6,6 +6,7 @@ import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plu
  * `StudioCore`; its state stays in the core.
  */
 import { PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
+import { shownCardTool } from "../../substrate/plugins/manifest-words.ts";
 import { PluginCallCutOff, PluginCallNotSent } from "../../substrate/plugins/process.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { finishedPayload, roleOf, startedPayload } from "../plugin-activity.ts";
@@ -63,6 +64,7 @@ import { shortId } from "../../substrate/ids.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -111,15 +113,19 @@ export const PLUGIN_MCP_PROJECT = /^[a-zA-Z0-9_-]{1,100}$/;
 /** The folder a plugin server with no project of its own works in, beside the per-project ones. */
 export const PLUGIN_MCP_SHARED = "_shared";
 
-/** Why a plugin's MCP server cannot start, as the connector panel and the agent read it. */
+/**
+ * The consent cards' questions and why a plugin's MCP server cannot start (the connector panel shows
+ * it), in the person's language; the agent's answers (a refused or cut-off call) stay English.
+ */
 const MESSAGE = {
-  exportConfirmation: "Review the files that will be uploaded. Approve only if this staged copy is ready to share.",
+  exportConfirmation: () =>
+    t("Review the files that will be uploaded. Approve only if this staged copy is ready to share."),
   connectorConversation: "Connector calls require a game conversation for consent",
-  connectorConfirmation: (name: string) => `Let the agent use ${name}?`,
+  connectorConfirmation: (name: string) => t("Let the agent use {name}?", { name }),
   localConnectorConfirmation: (plugin: string, tool: string) =>
-    `${plugin} was loaded from a folder on this Mac and runs with your access. Let it run ${tool}?`,
-  unlockFirst: "Unlock this plugin's account first.",
-  setSettingFirst: (key: string) => `Set "${key}" in this plugin's settings first.`,
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. Let it run {tool}?", { plugin, tool }),
+  unlockFirst: () => t("Unlock this plugin's account first."),
+  setSettingFirst: (key: string) => t('Set "{setting}" in this plugin\'s settings first.', { setting: key }),
   bundledOnly: "Only the bundled plugin may start a program Studio ships",
   inPlan:
     "The chat is in Plan mode, so this action did not run: plugin and connector actions wait until the plan is approved. Put it in your plan instead.",
@@ -235,6 +241,11 @@ export interface PluginCallContext {
    * its run, as the chat's own session's.
    */
   lead?: boolean;
+  /**
+   * Ends the call's wait for its locks, never its run, once the person writes in the chat its session
+   * answers (`engine.steer`, `PersonWrote`): it is answered `person_wrote`, to read the message first.
+   */
+  personWrote?: AbortSignal;
 }
 
 /** The name of a consent card the studio itself asks with, or null for a plugin's. */
@@ -263,6 +274,8 @@ export interface ConnectorCallOptions {
   holder?: string;
   /** The harness itself made the call (`mcp.invoke`): its end, planned or not, cuts the call off. */
   byHarness?: boolean;
+  /** Ends its wait for its locks once the person writes in its session's chat, as `PluginCallContext.personWrote`. */
+  personWrote?: AbortSignal;
 }
 
 /**
@@ -349,19 +362,20 @@ export class PluginToolService {
     const name = `${pluginId}__${tool.name}`;
     const declined = options.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
     if (declined) return declined;
+    const card = await this.#shownCard(pluginId, tool);
     const base = {
       consentId,
       pluginId,
-      pluginName: options.displayName ?? this.#pluginName(pluginId),
+      pluginName: options.displayName ?? this.#pluginName(pluginId, card.name),
       tool: name,
       args: consentArgsDigest(args),
       project: binding.project,
       ...consentThreads(binding.threadId, threadId, attribution),
-      prompt: tool.confirmation ?? "",
+      prompt: card.tool.confirmation ?? "",
       ...(exportReview ? { exportReview } : {}),
       ...(options.offerAlways ? { alwaysOffered: true } : {}),
     };
-    const field = cardField(tool, args);
+    const field = cardField(card.tool, args);
     const asked: PluginConsentEvent = {
       ...base,
       ...field,
@@ -453,10 +467,24 @@ export class PluginToolService {
     return consentAudience(this.#core, binding, runId);
   }
 
-  /** The name a consent card shows: the connector's or plugin's own, else its id. */
-  #pluginName(pluginId: string): string {
+  /**
+   * A card in the app's language: its plugin's name, and the tool's confirmation and field label
+   * where they are the manifest's own words (`shownCardTool`).
+   */
+  async #shownCard<T extends PluginTool & Pick<PluginManifestTool, "confirmationInput">>(
+    pluginId: string,
+    tool: T,
+  ): Promise<{ name?: string; tool: T }> {
+    const shown = await this.#core.plugins.displayManifest(pluginId);
+    const declared = this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest;
+    return { name: shown?.name, tool: shownCardTool(tool, declared, shown) };
+  }
+
+  /** The name a consent card shows: the connector's or plugin's own (`shown`, in the app's language), else its id. */
+  #pluginName(pluginId: string, shown?: string): string {
     return (
       this.#core.mcp.nameOf(pluginId) ??
+      shown ??
       this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest.name ??
       studioConsentName(pluginId) ??
       pluginId
@@ -471,8 +499,8 @@ export class PluginToolService {
   ): Promise<void> {
     const tool: PluginTool = {
       name: "export_review",
-      description: MESSAGE.exportConfirmation,
-      confirmation: MESSAGE.exportConfirmation,
+      description: MESSAGE.exportConfirmation(),
+      confirmation: MESSAGE.exportConfirmation(),
       parameters: { type: "object", properties: {} },
     };
     const review = { included: [...result.included].sort(), excluded: [...result.excluded].sort() };
@@ -624,7 +652,8 @@ export class PluginToolService {
       if (!bounded) return;
       if (left(until) <= CALL_FLOOR_MS) throw new NotRunInTime();
       const waitMs = this.#lockWaitMs(left(until) - this.#core.plugins.callCeilingOf(name));
-      release = await this.#holdNeeds(name, binding, signal, ctx.holder, callRun(ctx)?.runId, waitMs);
+      const runId = callRun(ctx)?.runId;
+      release = await this.#holdNeeds(name, binding, signal, ctx.holder, runId, waitMs, ctx.personWrote);
       if (left(until) <= CALL_FLOOR_MS) throw new NotRunInTime();
       ends = this.#x.locks.clock.timeout(left(until));
       ends.addEventListener("abort", cut, { once: true });
@@ -689,8 +718,9 @@ export class PluginToolService {
   /**
    * Hold, for one call, the locks the tool or connector `name` needs (`PluginRegistry.needsOf`):
    * in turn behind other holders, and while the person uses what one guards, until the agent's
-   * wait runs out (`LockRefused`). A wait on the person is told to the chat the call answers to.
-   * Answers the release; a call that needs nothing holds nothing.
+   * wait runs out or the person writes in its session's chat (`personWrote`), refused with
+   * `LockRefused`. A wait on the person is told to the chat the call answers to. Answers the
+   * release; a call that needs nothing holds nothing.
    */
   async #holdNeeds(
     name: string,
@@ -699,6 +729,7 @@ export class PluginToolService {
     holder: string | undefined,
     runId: string | undefined,
     waitMs: number,
+    personWrote?: AbortSignal,
   ): Promise<() => void> {
     const needs = this.#core.plugins.needsOf(name);
     if (!needs.length) return NO_RELEASE;
@@ -707,6 +738,7 @@ export class PluginToolService {
       binding,
       ...(threadId ? { threadId } : {}),
       ...(signal ? { signal } : {}),
+      ...(personWrote ? { personWrote } : {}),
       waitMs,
       holder: holder ?? shortId("call"),
     });
@@ -794,7 +826,7 @@ export class PluginToolService {
     name: string,
     binding: { project?: string | null; threadId?: string } | undefined,
     signal: AbortSignal,
-    { holder, runId }: ConnectorCallOptions,
+    { holder, runId, personWrote }: ConnectorCallOptions,
     deadline: number,
   ): Promise<() => void> {
     if (!binding?.project) return Promise.resolve(NO_RELEASE);
@@ -804,7 +836,7 @@ export class PluginToolService {
       ...(binding.threadId ? { threadId: binding.threadId } : {}),
     };
     const room = deadline - this.#x.locks.clock.now() - this.#core.mcp.callTimeoutOf(name);
-    return this.#holdNeeds(name, bound, signal, holder, runId, this.#lockWaitMs(room));
+    return this.#holdNeeds(name, bound, signal, holder, runId, this.#lockWaitMs(room), personWrote);
   }
 
   /**
@@ -1029,7 +1061,7 @@ export class PluginToolService {
     unlocked: boolean,
   ): Promise<McpPluginServer> {
     let unavailable: string | undefined;
-    if (server.requires?.credential && !unlocked) unavailable = MESSAGE.unlockFirst;
+    if (server.requires?.credential && !unlocked) unavailable = MESSAGE.unlockFirst();
     for (const key of server.requires?.settings ?? []) {
       const value = settings[key];
       if (value === undefined || value === "") unavailable ??= MESSAGE.setSettingFirst(key);
@@ -1039,7 +1071,7 @@ export class PluginToolService {
     // The manifest validator reserves `host-cli` for the id `genex`; an id is not a provenance, so
     // the code that actually starts it asks where the package came from as well.
     if (server.command !== "node" && source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.bundledOnly);
-    const args = await pluginMcpArgs(server, launch.packageDir);
+    const args = await pluginMcpArgs(server, launch.packageDir, launch.seed);
     return {
       id: server.id,
       name: `${pluginName} · ${server.id}`,
@@ -1410,27 +1442,37 @@ export const requireFromHere = createRequire(import.meta.url);
  * How a plugin MCP server starts: a `node` server runs the package's own script (resolved through
  * the containment check an install uses), `host-cli` runs Studio's Genex CLI behind its preload.
  */
-async function pluginMcpArgs(server: PluginMcpServer, packageDir: string): Promise<string[]> {
+async function pluginMcpArgs(server: PluginMcpServer, packageDir: string, seed?: string): Promise<string[]> {
   if (server.command === "node") {
     const [script = "", ...rest] = server.args;
     return [await containedReal(packageDir, script), ...rest];
   }
   // A file URL: on Windows Node reads a bare `C:\…` after --import as a URL with the scheme `c:`.
   const preload = pathToFileURL(await containedReal(packageDir, "preload.mjs")).href;
-  return ["--import", preload, genexCliPath(packageDir), ...server.args];
+  return ["--import", preload, genexCliPath(packageDir, seed), ...server.args];
 }
 
 /**
- * The Genex CLI, resolved the way the asset adapter resolves it: the plugin's own copy when the
- * package ships one, Studio's otherwise, and rewritten out of the asar either way — a packaged
- * app cannot spawn a file that only exists inside the archive.
+ * The Genex CLI, resolved the way the asset adapter resolves it: its bundled seed's in the app
+ * (`seed`: a first launch no longer copies it, and the app's pin outranks an older profile's
+ * copy), then the plugin's own copy, then Studio's, and rewritten out of the asar either way — a
+ * packaged app cannot spawn a file that only exists inside the archive.
  */
-export function genexCliPath(packageDir: string): string {
-  let pkg: string;
-  try {
-    pkg = createRequire(path.join(packageDir, "package.json")).resolve("@genex-ai/cli-demo/package.json");
-  } catch {
-    pkg = requireFromHere.resolve("@genex-ai/cli-demo/package.json");
-  }
+export function genexCliPath(packageDir: string, seed?: string): string {
+  const pkg =
+    (seed ? resolveCliPackage(createRequire(path.join(seed, "package.json"))) : undefined) ??
+    resolveCliPackage(createRequire(path.join(packageDir, "package.json"))) ??
+    requireFromHere.resolve(CLI_PACKAGE_JSON);
   return path.join(path.dirname(pkg), "dist/index.js").replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+}
+
+const CLI_PACKAGE_JSON = "@genex-ai/cli-demo/package.json";
+
+/** Where `require` finds the CLI's package.json, or undefined when it finds none. */
+function resolveCliPackage(require: NodeJS.Require): string | undefined {
+  try {
+    return require.resolve(CLI_PACKAGE_JSON);
+  } catch {
+    return undefined;
+  }
 }

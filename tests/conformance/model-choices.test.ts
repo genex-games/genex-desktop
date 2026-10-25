@@ -116,6 +116,31 @@ test("picker groups models by who makes them", () => {
     ["Local models", "Claude models", "ChatGPT models"],
   );
 });
+test("a provider that ships in beta marks its rows, so its group in the picker says Beta", () => {
+  const cursor: EngineDescriptor = {
+    id: "cursor",
+    label: "Cursor",
+    kind: "delegated",
+    status: { code: "ready", detail: "Fixture ready" },
+    supportsSessions: true,
+    defaultModel: null,
+    models: [{ ...model("auto", "Auto"), providerDefault: true }, model("composer-2.5", "Composer 2.5")],
+  };
+  const choices = toChoices([...engines, cursor]);
+  const cursorRows = choices.filter((choice) => choice.key.startsWith("cursor::"));
+  assert.ok(cursorRows.length > 0);
+  assert.ok(cursorRows.every((choice) => choice.beta === true));
+  assert.ok(
+    choices.filter((choice) => !choice.key.startsWith("cursor::")).every((choice) => choice.beta === undefined),
+    "every other provider's rows stay as they were",
+  );
+  const signedOut = toChoices([{ ...cursor, status: { code: "needs_login", detail: "Sign in" }, models: [] }]);
+  assert.ok(
+    signedOut.every((choice) => choice.beta === true),
+    "its sign-in row too",
+  );
+});
+
 test("one effort serves every role at the closest level each model accepts", () => {
   const choices = toChoices(engines),
     selected = resolveChoice(choices, "codex::gpt-6-astra");

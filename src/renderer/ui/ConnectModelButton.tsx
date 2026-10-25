@@ -6,6 +6,7 @@
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 
@@ -15,9 +16,9 @@ const NUDGE_MS = 2.8 * SECOND_MS;
 const NUDGE_BEATS = ["a", "b"] as const;
 
 const MESSAGE = {
-  label: "Connect AI model",
-  title: "Connect an AI model to send",
-  text: "Claude Code, Codex or a local model. Your prompt stays here.",
+  label: t("Connect AI model"),
+  title: t("Connect an AI model to send"),
+  text: t("Claude Code, Codex or a local model. Your prompt stays here."),
 } as const;
 
 /** A blocked send's nudge: `nudge()` lights the button for a moment; another send replays it. */

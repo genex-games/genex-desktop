@@ -112,6 +112,7 @@ const API_KEYS = [
   "snapshot.restore",
   "snapshot.worktree",
   "studio.context",
+  "studio.language",
   "thread.create",
   "thread.fork",
   "thread.list",

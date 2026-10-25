@@ -176,6 +176,15 @@ describe("whether the chat itself is working", () => {
       assert.equal(chatWorkState({ ...base, [field]: true }).chatWorking, true, field);
   });
 
+  it("keeps a running build's card on show while a message to it is on its way", () => {
+    for (const field of ["busy", "sending"] as const) {
+      const state = chatWorkState({ ...base, [field]: true, working: true, activeRunId: "run_a" });
+      assert.equal(state.chatWorking, false, field);
+      assert.equal(state.answering, true, `${field}: Rewind still waits for it`);
+    }
+    assert.equal(chatWorkState({ ...base, stopping: true, activeRunId: "run_a" }).chatWorking, true, "a stop");
+  });
+
   it("works on the harness's turn, but not a running build, a learning pass or a settled run's status", () => {
     assert.equal(chatWorkState({ ...base, working: true }).chatWorking, true);
     assert.equal(chatWorkState({ ...base, working: true, activeRunId: "run_a" }).chatWorking, false);

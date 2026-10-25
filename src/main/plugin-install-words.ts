@@ -19,74 +19,87 @@ import {
   pluginSkillChange,
 } from "../shared/plugins.ts";
 import { HookEvent } from "../shared/plugin-hooks.ts";
+import { t } from "../shared/i18n.ts";
 import { startsEnabled } from "../substrate/plugins/registry.ts";
 import { type PluginInstallReview, pluginOriginWords } from "./plugin-local-install.ts";
 
 /** How many scan findings the dialog names. */
 const SCAN_FINDINGS_NAMED = 6;
 
-const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
-
-/** The dialog's words; the names, versions and lists in them come from the package. */
+/** The dialog's words, in main's language; the names, versions and lists in them come from the package. */
 const MESSAGE = {
-  install: (name: string, version: string) => `Install ${name} ${version}?`,
-  update: (name: string, version: string) => `Update ${name} to ${version}?`,
-  replace: (old: string, name: string, version: string) => `Replace ${old} with ${name} ${version}?`,
-  installButton: "Install",
-  updateButton: "Update",
-  replaceButton: "Replace and erase data",
+  install: (name: string, version: string) => t("Install {name} {version}?", { name, version }),
+  update: (name: string, version: string) => t("Update {name} to {version}?", { name, version }),
+  replace: (old: string, name: string, version: string) =>
+    t("Replace {old} with {name} {version}?", { old, name, version }),
+  installButton: () => t("Install"),
+  updateButton: () => t("Update"),
+  replaceButton: () => t("Replace and erase data"),
   replaces: (name: string, publisher: string, origin: string) =>
-    `This replaces ${name} by ${publisher} (from ${origin}). Its saved account, settings and data will be erased.`,
-  source: (origin: string, publisher: string) => `From ${origin}\nPublisher: ${publisher}`,
-  unsandboxed: "Its code runs on your computer like an app you install. It isn't sandboxed.",
-  asks: "It asks to:",
-  servers: (count: number) => `Starts ${plural(count, "program")} for agents:`,
-  hostTools: (count: number) => `Genex runs ${plural(count, "tool")} for it:`,
-  skills: (count: number, named: string) => `Adds ${plural(count, "skill")} for agents: ${named}.`,
-  noSkills: "Adds no skills for agents.",
-  removedSkills: (named: string) => ` Removes: ${named}.`,
-  notScanned: "Not scanned.",
-  scan: (verdict: string, found: string) => `Scan: ${verdict}, ${found}.`,
-  noFindings: "no findings",
-  finding: (rule: string, file: string, line: number) => `${rule} in ${file}:${line}`,
-  genexCli: "the Genex CLI",
-  given: (program: string, env: string) => `${program}, given ${env}`,
-  withConsent: (does: string) => `${does}, asks you each time`,
-  new: "new",
-  changed: "changed",
-  folders: (count: number) => `Turning it on lets its programs write in ${plural(count, "folder")} outside your games:`,
-  localAccess: "It runs with your access: Genex doesn't sandbox its code.",
-  startsOff: "It starts off: turn it on in Plugins; each of its tools asks you before it runs.",
-  staysOn:
-    "It is on and stays on: its new code runs as soon as it loads, and each of its tools asks you again before it runs.",
-  steps: (when: string, steps: string) => `${when} at Genex's moments: ${steps}; those steps don't ask you first.`,
-  runs: "It runs",
-  runsOnceOn: "Once on, it runs",
+    t("This replaces {name} by {publisher} (from {origin}). Its saved account, settings and data will be erased.", {
+      name,
+      publisher,
+      origin,
+    }),
+  source: (origin: string, publisher: string) => t("From {origin}\nPublisher: {publisher}", { origin, publisher }),
+  unsandboxed: () => t("Its code runs on your computer like an app you install. It isn't sandboxed."),
+  asks: () => t("It asks to:"),
+  servers: (count: number) => t("Starts {count, plural, one {# program} other {# programs}} for agents:", { count }),
+  hostTools: (count: number) => t("Genex runs {count, plural, one {# tool} other {# tools}} for it:", { count }),
+  skills: (count: number, skills: string) =>
+    t("Adds {count, plural, one {# skill} other {# skills}} for agents: {skills}.", { count, skills }),
+  noSkills: () => t("Adds no skills for agents."),
+  removedSkills: (skills: string) => t("Removes: {skills}.", { skills }),
+  notScanned: () => t("Not scanned."),
+  scan: (verdict: string, found: string) => t("Scan: {verdict}, {found}.", { verdict, found }),
+  noFindings: () => t("no findings"),
+  findings: (count: number, findings: string) =>
+    t("{count, plural, one {# finding} other {# findings}}: {findings}", { count, findings }),
+  finding: (rule: string, file: string, line: number) => t("{rule} in {file}:{line}", { rule, file, line }),
+  genexCli: () => t("the Genex CLI"),
+  given: (program: string, env: string) => t("{program}, given {env}", { program, env }),
+  withConsent: (does: string) => t("{does}, asks you each time", { does }),
+  new: () => t("new"),
+  changed: () => t("changed"),
+  folders: (count: number) =>
+    t(
+      "Turning it on lets its programs write in {count, plural, one {# folder} other {# folders}} outside your games:",
+      { count },
+    ),
+  localAccess: () => t("It runs with your access: Genex doesn't sandbox its code."),
+  startsOff: () => t("It starts off: turn it on in Plugins; each of its tools asks you before it runs."),
+  staysOn: () =>
+    t(
+      "It is on and stays on: its new code runs as soon as it loads, and each of its tools asks you again before it runs.",
+    ),
+  stepsRun: (steps: string) => t("It runs at Genex's moments: {steps}; those steps don't ask you first.", { steps }),
+  stepsRunOnceOn: (steps: string) =>
+    t("Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.", { steps }),
 } as const;
 
 /** What each capability lets a plugin do, as a line under "It asks to:". */
-const CAPABILITY_WORDS: ReadonlyMap<string, string> = new Map(
+const CAPABILITY_WORDS: ReadonlyMap<string, () => string> = new Map(
   Object.entries({
-    [PluginCapability.Settings]: "keep its own settings",
-    [PluginCapability.ProjectRead]: "read files in your games",
-    [PluginCapability.ProjectWrite]: "change files in your games",
-    [PluginCapability.Jobs]: "run long jobs and report their progress",
-    [PluginCapability.Observe]: "load and capture your games as they run",
-    [PluginCapability.Credentials]: "save a sign-in for its own account",
-    [PluginCapability.ExternalAuth]: "open sign-in pages in your browser",
-    [PluginCapability.Network]: "reach the internet",
-    [PluginCapability.Export]: "export your games",
-    [PluginCapability.NativeRuntime]: "install and run the apps it names, such as Blender",
-    [PluginCapability.GameEngine]: "make games of its engine's kind and link them to its projects",
-  } satisfies Record<PluginCapability, string>),
+    [PluginCapability.Settings]: () => t("keep its own settings"),
+    [PluginCapability.ProjectRead]: () => t("read files in your games"),
+    [PluginCapability.ProjectWrite]: () => t("change files in your games"),
+    [PluginCapability.Jobs]: () => t("run long jobs and report their progress"),
+    [PluginCapability.Observe]: () => t("load and capture your games as they run"),
+    [PluginCapability.Credentials]: () => t("save a sign-in for its own account"),
+    [PluginCapability.ExternalAuth]: () => t("open sign-in pages in your browser"),
+    [PluginCapability.Network]: () => t("reach the internet"),
+    [PluginCapability.Export]: () => t("export your games"),
+    [PluginCapability.NativeRuntime]: () => t("install and run the apps it names, such as Blender"),
+    [PluginCapability.GameEngine]: () => t("make games of its engine's kind and link them to its projects"),
+  } satisfies Record<PluginCapability, () => string>),
 );
 
 /** What each tool Genex runs itself does, as the dialog names it. */
 const HOST_TOOL_WORDS = {
-  [PluginHostTool.GenexCli]: "runs the Genex CLI",
-  [PluginHostTool.GenexCliPaid]: "runs the Genex CLI",
-  [PluginHostTool.GenexPackage]: "installs Genex packages in the game",
-} as const satisfies Record<PluginHostTool, string>;
+  [PluginHostTool.GenexCli]: () => t("runs the Genex CLI"),
+  [PluginHostTool.GenexCliPaid]: () => t("runs the Genex CLI"),
+  [PluginHostTool.GenexPackage]: () => t("installs Genex packages in the game"),
+} as const satisfies Record<PluginHostTool, () => string>;
 
 const bulleted = (heading: string, lines: string[]): string =>
   [heading, ...lines.map((line) => `• ${line}`)].join("\n");
@@ -100,9 +113,9 @@ function capabilityBlock(manifest: PluginManifest, before: PluginManifest | unde
   if (!manifest.capabilities.length) return undefined;
   const had = before ? new Set(before.capabilities) : null;
   const lines = manifest.capabilities.map((c) =>
-    marked(CAPABILITY_WORDS.get(c) ?? c, had && !had.has(c) ? [MESSAGE.new] : []),
+    marked(CAPABILITY_WORDS.get(c)?.() ?? c, had && !had.has(c) ? [MESSAGE.new()] : []),
   );
-  return bulleted(MESSAGE.asks, lines);
+  return bulleted(MESSAGE.asks(), lines);
 }
 
 /**
@@ -127,13 +140,13 @@ function serverBlock(manifest: PluginManifest, previous: PluginManifest | undefi
 function serverChange(before: ReadonlyMap<string, string> | null, server: PluginMcpServer): string[] {
   if (!before) return [];
   const was = before.get(server.id);
-  if (was === undefined) return [MESSAGE.new];
-  return was !== JSON.stringify(server) ? [MESSAGE.changed] : [];
+  if (was === undefined) return [MESSAGE.new()];
+  return was !== JSON.stringify(server) ? [MESSAGE.changed()] : [];
 }
 
 /** What a server runs, then the names of the environment it is given. */
 function serverLaunch(server: PluginMcpServer): string {
-  const program = server.command === "host-cli" ? MESSAGE.genexCli : (server.args[0] ?? "node");
+  const program = server.command === "host-cli" ? MESSAGE.genexCli() : (server.args[0] ?? "node");
   const env = Object.keys(server.env ?? {});
   return env.length ? MESSAGE.given(program, env.join(", ")) : program;
 }
@@ -143,12 +156,14 @@ function hostToolBlock(manifest: PluginManifest, before: PluginManifest | undefi
   const tools = manifest.tools.filter((t) => t.host);
   if (!tools.length) return undefined;
   const had = before ? new Set(before.tools.filter((t) => t.host).map((t) => t.name)) : null;
-  const lines = tools.map((t) => `${marked(t.name, had && !had.has(t.name) ? [MESSAGE.new] : [])} — ${hostToolUse(t)}`);
+  const lines = tools.map(
+    (tool) => `${marked(tool.name, had && !had.has(tool.name) ? [MESSAGE.new()] : [])} — ${hostToolUse(tool)}`,
+  );
   return bulleted(MESSAGE.hostTools(tools.length), lines);
 }
 
 function hostToolUse(tool: PluginManifestTool): string {
-  const does = tool.host ? HOST_TOOL_WORDS[tool.host] : "";
+  const does = tool.host ? HOST_TOOL_WORDS[tool.host]() : "";
   return tool.confirmation ? MESSAGE.withConsent(does) : does;
 }
 
@@ -162,26 +177,26 @@ function skillBlock(facts: PluginInstallFacts): string | undefined {
   const change = before
     ? pluginSkillChange({ manifest: before, scan: facts.previousScan }, { manifest, scan: facts.scan })
     : undefined;
-  const removed = change?.removed.length ? MESSAGE.removedSkills(change.removed.join(", ")) : "";
-  if (!manifest.skills.length) return removed ? `${MESSAGE.noSkills}${removed}` : undefined;
+  const removed = change?.removed.length ? ` ${MESSAGE.removedSkills(change.removed.join(", "))}` : "";
+  if (!manifest.skills.length) return removed ? `${MESSAGE.noSkills()}${removed}` : undefined;
   const named = manifest.skills.map((s) => marked(s.name, skillMarks(s, change))).join(", ");
   return `${MESSAGE.skills(manifest.skills.length, named)}${removed}`;
 }
 
 function skillMarks(skill: PluginSkill, change: PluginSkillChange | undefined): string[] {
   return [
-    ...(change?.added.includes(skill.name) ? [MESSAGE.new] : []),
-    ...(change?.changed.includes(skill.name) ? [MESSAGE.changed] : []),
+    ...(change?.added.includes(skill.name) ? [MESSAGE.new()] : []),
+    ...(change?.changed.includes(skill.name) ? [MESSAGE.changed()] : []),
   ];
 }
 
 function scanBlock(scan: PluginScan | undefined): string {
-  if (!scan) return MESSAGE.notScanned;
+  if (!scan) return MESSAGE.notScanned();
   const named = scan.findings
     .slice(0, SCAN_FINDINGS_NAMED)
     .map((f) => MESSAGE.finding(f.rule, f.file, f.line))
     .join(", ");
-  const found = scan.findings.length ? `${plural(scan.findings.length, "finding")}: ${named}` : MESSAGE.noFindings;
+  const found = scan.findings.length ? MESSAGE.findings(scan.findings.length, named) : MESSAGE.noFindings();
   return MESSAGE.scan(scan.verdict, found);
 }
 
@@ -194,46 +209,46 @@ function folderBlock(manifest: PluginManifest, before: PluginManifest | undefine
   const folders = manifest.folders ?? [];
   if (!folders.length) return undefined;
   const had = before ? new Set((before.folders ?? []).map((f) => f.path)) : null;
-  const lines = folders.map((f) => `${marked(f.path, had && !had.has(f.path) ? [MESSAGE.new] : [])} — ${f.why}`);
+  const lines = folders.map((f) => `${marked(f.path, had && !had.has(f.path) ? [MESSAGE.new()] : [])} — ${f.why}`);
   return bulleted(MESSAGE.folders(folders.length), lines);
 }
 
 /** Each of Genex's moments as the trust dialog names it. */
-const MOMENT_WORDS: Record<HookEvent, string> = {
-  [HookEvent.RunPrepare]: "before a Loop starts",
-  [HookEvent.RunEnd]: "when a Loop ends",
-  [HookEvent.TurnStart]: "when a turn starts",
-  [HookEvent.TurnEnd]: "when a turn ends",
-  [HookEvent.CheckpointBefore]: "before a save point",
-  [HookEvent.CheckpointAfter]: "after a save point",
-  [HookEvent.RestoreBefore]: "before a restore",
-  [HookEvent.RestoreAfter]: "after a restore",
-  [HookEvent.WorkerStart]: "when a worker starts",
-  [HookEvent.WorkerEnd]: "when a worker ends",
-  [HookEvent.ToolBefore]: "before its tools run",
-  [HookEvent.ToolAfter]: "after its tools run",
-  [HookEvent.Health]: "on health checks",
-  [HookEvent.Crash]: "after a crash",
-  [HookEvent.Finish]: "when a Loop finishes",
+const MOMENT_WORDS: Record<HookEvent, () => string> = {
+  [HookEvent.RunPrepare]: () => t("before a Loop starts"),
+  [HookEvent.RunEnd]: () => t("when a Loop ends"),
+  [HookEvent.TurnStart]: () => t("when a turn starts"),
+  [HookEvent.TurnEnd]: () => t("when a turn ends"),
+  [HookEvent.CheckpointBefore]: () => t("before a save point"),
+  [HookEvent.CheckpointAfter]: () => t("after a save point"),
+  [HookEvent.RestoreBefore]: () => t("before a restore"),
+  [HookEvent.RestoreAfter]: () => t("after a restore"),
+  [HookEvent.WorkerStart]: () => t("when a worker starts"),
+  [HookEvent.WorkerEnd]: () => t("when a worker ends"),
+  [HookEvent.ToolBefore]: () => t("before its tools run"),
+  [HookEvent.ToolAfter]: () => t("after its tools run"),
+  [HookEvent.Health]: () => t("on health checks"),
+  [HookEvent.Crash]: () => t("after a crash"),
+  [HookEvent.Finish]: () => t("when a Loop finishes"),
 };
 
 /** The steps of a plugin Genex runs on its own besides its hooks, each named when the manifest declares it. */
 const OWN_STEP_WORDS = {
-  observers: "when a reviewer checks a finish",
-  personFirst: "while it holds a lock, to see whether you are using it",
-  ready: "before a project of its kind is made",
+  observers: () => t("when a reviewer checks a finish"),
+  personFirst: () => t("while it holds a lock, to see whether you are using it"),
+  ready: () => t("before a project of its kind is made"),
 } as const;
 
 /** Every step of the plugin Genex runs without a card: its hooks' moments, its observers, its person-first probes and its readiness checks. */
 function ownSteps(manifest: PluginManifest): string[] {
-  const moments = [...new Set((manifest.hooks ?? []).map((hook) => MOMENT_WORDS[hook.on]))];
+  const moments = [...new Set((manifest.hooks ?? []).map((hook) => MOMENT_WORDS[hook.on]()))];
   const declared = {
     observers: (manifest.observers ?? []).length > 0,
     personFirst: (manifest.locks ?? []).some((lock) => lock.personFirst !== undefined),
     ready: manifest.tools.some((tool) => tool.ready !== undefined),
   };
   const others = (Object.keys(OWN_STEP_WORDS) as Array<keyof typeof OWN_STEP_WORDS>).filter((step) => declared[step]);
-  return [...moments, ...others.map((step) => OWN_STEP_WORDS[step])];
+  return [...moments, ...others.map((step) => OWN_STEP_WORDS[step]())];
 }
 
 /**
@@ -250,9 +265,10 @@ function localAccessBlock(
 ): string | undefined {
   if (origin?.kind !== PluginSourceKind.Local) return undefined;
   const steps = ownSteps(manifest);
-  const state = `${MESSAGE.localAccess} ${staysOn ? MESSAGE.staysOn : MESSAGE.startsOff}`;
+  const state = `${MESSAGE.localAccess()} ${staysOn ? MESSAGE.staysOn() : MESSAGE.startsOff()}`;
   if (!steps.length) return state;
-  return `${state} ${MESSAGE.steps(staysOn ? MESSAGE.runs : MESSAGE.runsOnceOn, steps.join(", "))}`;
+  const named = steps.join(", ");
+  return `${state} ${staysOn ? MESSAGE.stepsRun(named) : MESSAGE.stepsRunOnceOn(named)}`;
 }
 
 /**
@@ -309,7 +325,7 @@ export function installDetail(facts: PluginInstallFacts): string {
   return [
     replacementBlock(replaces),
     MESSAGE.source(pluginOriginWords(origin), manifest.publisher),
-    MESSAGE.unsandboxed,
+    MESSAGE.unsandboxed(),
     localAccessBlock(manifest, origin, staysOn),
     capabilityBlock(manifest, before),
     serverBlock(manifest, before),
@@ -338,11 +354,11 @@ export function installPrompt(facts: PluginInstallFacts): InstallPrompt {
     return {
       message: MESSAGE.replace(replaces.name, manifest.name, manifest.version),
       detail,
-      confirm: MESSAGE.replaceButton,
+      confirm: MESSAGE.replaceButton(),
     };
   if (before && before.version !== manifest.version)
-    return { message: MESSAGE.update(manifest.name, manifest.version), detail, confirm: MESSAGE.updateButton };
-  return { message: MESSAGE.install(manifest.name, manifest.version), detail, confirm: MESSAGE.installButton };
+    return { message: MESSAGE.update(manifest.name, manifest.version), detail, confirm: MESSAGE.updateButton() };
+  return { message: MESSAGE.install(manifest.name, manifest.version), detail, confirm: MESSAGE.installButton() };
 }
 
 /** The arguments an approved action runs with, under its question; none, and nothing shows (never `{}`). */
@@ -350,10 +366,6 @@ export function actionApprovalDetail(args: unknown): string | undefined {
   const empty = args === undefined || args === null || (typeof args === "object" && Object.keys(args).length === 0);
   return empty ? undefined : JSON.stringify(args, null, 2);
 }
-
-/** The confirm button of an action no review described. */
-const APPROVE = "Approve";
-const CANCEL = "Cancel";
 
 /** What a confirmed action's native dialog shows; `buttons` is always Cancel, then the confirm button. */
 export interface ActionApprovalDialog {
@@ -378,9 +390,10 @@ export function actionApprovalDialog(input: {
   const title = `${plugin}: ${action.label}`;
   if (review.message) {
     const detail = review.detail ? { detail: review.detail } : {};
-    return { title, message: review.message, ...detail, buttons: [CANCEL, action.label] };
+    return { title, message: review.message, ...detail, buttons: [t("Cancel"), action.label] };
   }
   const detail = actionApprovalDetail(args);
   const message = action.confirmation ?? action.label;
-  return { title, message, ...(detail ? { detail } : {}), buttons: [CANCEL, APPROVE] };
+  // Approve: the confirm button of an action no review described.
+  return { title, message, ...(detail ? { detail } : {}), buttons: [t("Cancel"), t("Approve")] };
 }

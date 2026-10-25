@@ -6,6 +6,7 @@
  */
 import type { ClipboardEvent, FormEvent, JSX, KeyboardEvent } from "react";
 import { useState } from "react";
+import { t } from "../../../shared/i18n.ts";
 import type { McpToolSummary } from "../../../shared/mcp.ts";
 import { McpTransport } from "../../../shared/mcp.ts";
 import type { McpConnectorDraft, McpDraft } from "../../../shared/mcp-import.ts";
@@ -31,52 +32,64 @@ const ServerPlace = { Mac: "mac", Url: "url" } as const;
 type ServerPlace = (typeof ServerPlace)[keyof typeof ServerPlace];
 
 const MESSAGE = {
-  addTitle: "Add MCP server",
-  editTitle: (name: string) => `Edit ${name}`,
-  intro: "Its tools become available to the agents in your games.",
-  paste: "Paste the JSON, command or URL from the server's install page to fill this in.",
-  pasteLabel: "Paste a server configuration",
-  pasted: "Filled in from your paste",
-  clearPaste: "Clear",
-  choose: (count: number) => `This paste has ${count} servers. Pick one:`,
-  alsoPasted: "Also in this paste:",
-  place: "Where the server runs",
-  places: { [ServerPlace.Mac]: "On this Mac", [ServerPlace.Url]: "From a URL" },
-  name: "Name",
-  command: "Command",
-  commandHint: "The line you would type in Terminal.",
-  url: "URL",
-  urlHint: "If the server needs an account, you'll sign in in your browser.",
-  secrets: { env: "Environment variables", header: "Headers" },
-  addSecret: { env: "Add environment variable", header: "Add header" },
-  secretName: { env: "NAME", header: "Header" },
-  secretValue: "Value",
-  secretStored: "Stored · type to replace",
-  removeSecret: (name: string) => `Remove ${name || "this row"}`,
-  more: "More options",
-  onlyHere: "Only in this game",
-  onlyHereHint: "Otherwise every game can use it.",
-  seeFolder: "Let it see this game's folder",
-  startIn: "Start in folder",
-  startInHint: "A full path, such as /Users/you/server.",
-  toolPrefix: (id: string) => `Agents see its tools as ${id}__…`,
-  tools: "Tools the agents may call",
-  autoApprove: "Allow calls without asking, including changes this tool can make",
-  connect: "Connect",
-  save: "Save",
-  connecting: "Connecting…",
-  cancel: "Cancel",
-  unfinishedCommand: "A quote in the command is never closed.",
-  badSecretName: "Variable names use capital letters, digits and _; header names letters, digits and -.",
+  addTitle: t("Add MCP server"),
+  editTitle: (name: string) => t("Edit {name}", { name }),
+  intro: t("Its tools become available to the agents in your games."),
+  paste: t("Paste the JSON, command or URL from the server's install page to fill this in."),
+  pasteLabel: t("Paste a server configuration"),
+  pasted: t("Filled in from your paste"),
+  clearPaste: t("Clear"),
+  choose: (count: number) => t("This paste has {count, plural, other {# servers}}. Pick one:", { count }),
+  alsoPasted: t("Also in this paste:"),
+  place: t("Where the server runs"),
+  places: { [ServerPlace.Mac]: t("On this Mac"), [ServerPlace.Url]: t("From a URL") },
+  name: t("Name"),
+  command: t("Command"),
+  commandHint: t("The line you would type in Terminal."),
+  url: t("URL"),
+  urlHint: t("If the server needs an account, you'll sign in in your browser."),
+  secrets: { env: t("Environment variables"), header: t("Headers") },
+  /** A secret row's name field, for a screen reader. */
+  secretNameLabel: { env: t("Environment variables: name"), header: t("Headers: name") },
+  addSecret: { env: t("Add environment variable"), header: t("Add header") },
+  /** The name field's placeholder; a variable's stays NAME, the shape such names take. */
+  secretName: { env: "NAME", header: t("Header") },
+  secretValue: t("Value"),
+  secretStored: t("Stored · type to replace"),
+  /** The value field's name for a screen reader, by the row's name. */
+  valueFor: (name: string) => (name ? t("Value for {name}", { name }) : t("Value for this row")),
+  removeSecret: (name: string) => (name ? t("Remove {name}", { name }) : t("Remove this row")),
+  more: t("More options"),
+  onlyHere: t("Only in this game"),
+  onlyHereHint: t("Otherwise every game can use it."),
+  seeFolder: t("Let it see this game's folder"),
+  startIn: t("Start in folder"),
+  startInHint: t("A full path, such as /Users/you/server."),
+  toolPrefix: (id: string) => t("Agents see its tools as {id}__…", { id }),
+  tools: t("Tools the agents may call"),
+  autoApprove: t("Allow calls without asking, including changes this tool can make"),
+  /** A tool's Allow-without-asking box, for a screen reader. */
+  autoApproveLabel: (tool: string) => t("Allow {tool} without asking", { tool }),
+  cancelLabel: t("Cancel the connector form"),
+  connect: t("Connect"),
+  save: t("Save"),
+  connecting: t("Connecting…"),
+  cancel: t("Cancel"),
+  unfinishedCommand: t("A quote in the command is never closed."),
+  badSecretName: t("Variable names use capital letters, digits and _; header names letters, digits and -."),
 } as const;
 
 /** Why a typed secret value has nowhere to go, by the lock main reported. */
 const SECRETS_LOCKED = {
-  [SecretStorageIssue.OsCredentialsDisabled]: "Secrets cannot be stored in this profile: OS credential access is off.",
-  [SecretStorageIssue.EncryptionUnavailable]:
+  [SecretStorageIssue.OsCredentialsDisabled]: t(
+    "Secrets cannot be stored in this profile: OS credential access is off.",
+  ),
+  [SecretStorageIssue.EncryptionUnavailable]: t(
     "Secrets cannot be stored in this profile: Studio has no OS encryption here.",
-  [SecretStorageIssue.NoKeyring]:
+  ),
+  [SecretStorageIssue.NoKeyring]: t(
     "Secrets cannot be stored: no unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.",
+  ),
 } as const satisfies Record<SecretStorageIssue, string>;
 
 /** Change the form's state; the connector's own fields go through `patch`. */
@@ -277,7 +290,7 @@ function SecretRowFields({
   return (
     <div className="connector-secret">
       <input
-        aria-label={`${MESSAGE.secrets[kind]}: name`}
+        aria-label={MESSAGE.secretNameLabel[kind]}
         className="font-mono"
         spellCheck={false}
         autoComplete="off"
@@ -287,7 +300,7 @@ function SecretRowFields({
       />
       <input
         type="password"
-        aria-label={`Value for ${row.name || "this row"}`}
+        aria-label={MESSAGE.valueFor(row.name)}
         autoComplete="off"
         placeholder={stored ? MESSAGE.secretStored : MESSAGE.secretValue}
         disabled={!secretsAvailable}
@@ -453,7 +466,7 @@ function ToolChecklist({
           </label>
           <label className="flex items-center gap-2 pl-5 text-micro text-ink-3">
             <Checkbox
-              aria-label={`Allow ${tool.name} without asking`}
+              aria-label={MESSAGE.autoApproveLabel(tool.name)}
               disabled={!toolAllowed(draft.connector.toolPolicy, tool.name)}
               checked={draft.connector.toolPolicy.autoApprove?.includes(tool.name) === true}
               onChange={(event) => onToolAutoApproved(tool.name, event.target.checked)}
@@ -562,7 +575,7 @@ export function ConnectorDialog(dialog: ConnectorDialogProps): JSX.Element {
           </p>
         )}
         <div className="connector-actions">
-          <Button aria-label="Cancel the connector form" disabled={busy} onClick={dialog.onCancel}>
+          <Button aria-label={MESSAGE.cancelLabel} disabled={busy} onClick={dialog.onCancel}>
             {MESSAGE.cancel}
           </Button>
           <Button type="submit" variant="default" busy={busy} disabled={Boolean(problem)}>

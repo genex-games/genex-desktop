@@ -7,6 +7,7 @@
  * run was started in.
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
+import { adoptPool, takeCarriedPool } from "./carry.ts";
 import { openPool, type WorkerPool } from "./pool.ts";
 import { recordOf, runWorkersArtifact, type WorkerScope } from "./records.ts";
 
@@ -16,11 +17,19 @@ const pools = new Map<string, Promise<WorkerPool>>();
 /** What a run's pool is opened with: everything a pool's scope holds but its artifact, which is the run's. */
 export type RunPoolSeat = Omit<WorkerScope, "artifactId" | "runId" | "turn"> & { runId: string };
 
-/** The run's pool, opened on first use. */
+/**
+ * The run's pool, opened on first use. A Loop launched from a chat turn whose workers were still at
+ * work takes that turn's pool over when it works in the same folder (carry.ts): its workers go on as
+ * the run's. Any other carried pool closes, its workers stopped.
+ */
 export function runPool(seat: RunPoolSeat): Promise<WorkerPool> {
   const open = pools.get(seat.runId);
   if (open) return open;
-  const opening = openPool({ ...seat, artifactId: runWorkersArtifact(seat.runId) });
+  const scope = { ...seat, artifactId: runWorkersArtifact(seat.runId) };
+  const carried = takeCarriedPool(seat.threadId);
+  const sameFolder = carried?.pool.state.scope.gameDir === seat.gameDir;
+  if (carried && !sameFolder) void carried.pool.close().catch(() => {});
+  const opening = carried && sameFolder ? adoptPool(carried, scope) : openPool(scope);
   pools.set(seat.runId, opening);
   opening.catch(() => pools.delete(seat.runId));
   return opening;

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { setImmediate as nextTurn } from "node:timers/promises";
+import { setTimeout as delay, setImmediate as nextTurn } from "node:timers/promises";
 import { CustomEvent, customEventData } from "../../src/shared/custom-events.ts";
 import { type EventData, EventKind } from "../../src/shared/event-log.ts";
 import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
@@ -22,10 +22,16 @@ const MULTIPLAYER = "@genex-ai/multiplayer";
 let lite: CoreLite;
 /** The games the core told the game list changed, in order. */
 const changed: string[] = [];
+/** Who waits on what the game list is told: woken by each change it hears of. */
+const listening = new Set<() => void>();
+/** How long a test waits at most for the game list to be told, in real time. */
+const TOLD_WITHIN_MS = 10_000;
 before(async () => {
   lite = await coreLite({
     onUiEvent: (event) => {
-      if (event.type === UiEvent.GameChanged) changed.push(String((event.payload as { project?: unknown }).project));
+      if (event.type !== UiEvent.GameChanged) return;
+      changed.push(String((event.payload as { project?: unknown }).project));
+      for (const wake of [...listening]) wake();
     },
   });
 });
@@ -45,13 +51,32 @@ const answered = (messageId: string): EventData[] => [
   customEventData(CustomEvent.CoordinatorMessageHandled, { messageId }),
 ];
 
+/** Waits until `seen` holds, woken by what the game list is told, never by a count of ticks; at most `TOLD_WITHIN_MS`. */
+async function untilTold(seen: () => boolean | Promise<boolean>): Promise<boolean> {
+  const deadline = Date.now() + TOLD_WITHIN_MS;
+  for (;;) {
+    // A change told while `seen` was reading is not waited for again: it is looked at once more.
+    const told = changed.length;
+    if ((await seen()) || Date.now() >= deadline) break;
+    if (changed.length !== told) continue;
+    // Each wait's own timer goes once it is woken, so no timer outlives the test.
+    const woken = new AbortController();
+    let wake = (): void => {};
+    const next = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    listening.add(wake);
+    const late = delay(deadline - Date.now(), undefined, { signal: woken.signal }).catch(() => {});
+    await Promise.race([next, late]);
+    woken.abort();
+    listening.delete(wake);
+  }
+  return seen();
+}
+
 /** Waits for the game list to say `name`'s first build is in, or fails. */
 async function builtSoon(name: string): Promise<GameProject> {
-  for (let tries = 0; tries < 50; tries++) {
-    const game = await listed(name);
-    if (!game.awaitingFirstBuild) return game;
-    await nextTurn();
-  }
+  await untilTold(async () => !(await listed(name)).awaitingFirstBuild);
   return listed(name);
 }
 
@@ -132,8 +157,7 @@ describe("a game that is already multiplayer", () => {
     await writeFile(page, multiplayer);
     changed.length = 0;
     await lite.core.append(answered("together-made"), threadId);
-    for (let tries = 0; tries < 50 && !changed.includes(game.name); tries++) await nextTurn();
-    assert.ok(changed.includes(game.name), "the game list is told it is multiplayer now");
+    assert.ok(await untilTold(() => changed.includes(game.name)), "the game list is told it is multiplayer now");
     changed.length = 0;
     await lite.core.append(answered("together-again"), threadId);
     for (let tries = 0; tries < 20; tries++) await nextTurn();

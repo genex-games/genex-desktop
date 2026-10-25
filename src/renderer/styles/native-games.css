@@ -1,0 +1,383 @@
+/* Native games in Play (`play/GamePage.tsx`, `play/NativeBadge.tsx`): a card's badge over its cover and
+   a game's own page, in Play's blue and the app's surfaces (canvas boards "Main" and "GamePage"). */
+
+/* ── A card's badge: bottom-left of the cover, white like the stats, the download's line along its foot ── */
+.native-badge {
+  position: absolute;
+  inset-inline-start: 12px;
+  inset-block-end: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font: 500 13px / 20px var(--font-family-mono);
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+.native-badge .gi {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.35));
+}
+/* ── Not installed: the systems' marks on one small glass plate in the cover's top corner ── */
+.native-keys {
+  position: absolute;
+  inset-inline-start: 12px;
+  inset-block-start: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 26px;
+  padding-inline: 9px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.55);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+  color: #fff;
+  backdrop-filter: blur(4px);
+}
+.native-progress {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-end: 0;
+  height: 4px;
+  background: var(--people-primary-bottom);
+  transition: width var(--duration-quick) linear;
+  pointer-events: none;
+}
+.native-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* ── A game's own page: media and About on the left, a 360px column on the right ── */
+.game-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 28px;
+  align-items: start;
+  padding-block-end: 32px;
+}
+@media (max-width: 980px) {
+  .game-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.game-media {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.game-media-main {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--play-placeholder);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.game-media-main img,
+.game-shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.game-shots {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.game-shot {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--play-placeholder);
+  cursor: pointer;
+}
+.game-shot[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--people-primary-bottom);
+}
+.game-shot:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.game-about {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 640px;
+  margin-block-start: 10px;
+}
+.game-about h2 {
+  font-size: 16px;
+  font-weight: 500;
+}
+.game-about p {
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 22px;
+  white-space: pre-line;
+}
+.game-side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.game-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.game-title {
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 36px;
+  letter-spacing: -0.02em;
+  overflow-wrap: break-word;
+}
+.game-by {
+  font-size: 14px;
+}
+.game-by-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--ink) 30%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.game-stats {
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+  letter-spacing: -0.02em;
+}
+
+/* The primary block: one 44px action, and at most one line under it. */
+.game-primary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.game-primary {
+  height: 44px;
+  width: 100%;
+  border-radius: 11px;
+  font-size: 15px;
+}
+.game-primary-row {
+  display: flex;
+  gap: 8px;
+}
+.game-primary-row .game-primary {
+  width: auto;
+  padding-inline: 16px;
+}
+.game-primary-row .game-primary-wide {
+  flex: 1;
+}
+.game-primary-size {
+  opacity: 0.75;
+}
+.game-primary-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+  letter-spacing: -0.02em;
+}
+.game-check {
+  color: var(--green);
+}
+.game-live-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--green);
+}
+.game-primary-failed {
+  color: var(--orange);
+}
+.game-installing {
+  position: relative;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 11px;
+  background: var(--people-tint);
+  box-shadow: inset 0 0 0 1px var(--people-tint-edge);
+}
+.game-installing-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  background: color-mix(in srgb, var(--people-primary-bottom) 22%, transparent);
+  transition: width var(--duration-quick) linear;
+}
+.game-installing-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100%;
+  padding-inline: 16px 8px;
+  color: var(--ink);
+  font: 14px / 20px var(--font-family-mono);
+  letter-spacing: -0.02em;
+}
+.game-installing-cancel {
+  height: 30px;
+  padding-inline: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.game-installing-cancel:hover {
+  background: var(--hover);
+}
+.game-text-button {
+  align-self: center;
+  height: 28px;
+  padding-inline: 8px;
+  color: var(--ink-3);
+  font: 13px / 20px var(--font-family-mono);
+  letter-spacing: -0.02em;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--ink-3) 50%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.game-text-button:hover {
+  color: var(--ink);
+}
+.game-elsewhere {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 11px;
+  background: var(--hover);
+}
+.game-elsewhere-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+.game-elsewhere-line {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+/* Like, Comments and Share, as the viewer's bar draws them. */
+.game-pills {
+  display: flex;
+  gap: 6px;
+}
+.game-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 12px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+  letter-spacing: -0.02em;
+  cursor: pointer;
+}
+.game-pill:hover {
+  background: var(--hover);
+}
+.game-pill[aria-pressed="true"] .gi {
+  fill: currentColor;
+}
+.game-pill-icon {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+}
+.game-pill:focus-visible,
+.game-by-link:focus-visible,
+.game-text-button:focus-visible,
+.game-installing-cancel:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+/* The tiles: a mark and a line each; a long one ("Made with Unreal", "Mac · Apple silicon only")
+   takes a second line in the narrow column rather than being cut, and its row grows with it. */
+.game-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.game-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px 7px 7px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.game-tile-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding-inline: 8px;
+  border-radius: 9px;
+  background: var(--people-tint);
+  color: color-mix(in oklab, var(--people-tint-color) 55%, var(--ink));
+}
+.game-tile-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 18px;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* ── The viewer bar's native-app pill (canvas board "WebFirst"): an install's progress as a ring ── */
+.play-bar-ring {
+  display: block;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, currentColor 30%, transparent);
+  -webkit-mask: radial-gradient(circle, transparent 5px, #000 5.5px);
+  mask: radial-gradient(circle, transparent 5px, #000 5.5px);
+}
+.play-viewer-bar-native[aria-disabled="true"] {
+  cursor: default;
+}
+.play-bar-size {
+  opacity: 0.7;
+}
+
+/* ── Settings › Storage: an installed game's picture ── */
+.installed-game-thumb {
+  flex: none;
+  width: 48px;
+  height: 27px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--play-placeholder);
+}
+.installed-game-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

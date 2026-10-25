@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { makeTestTmp, sweepTestTmp, testTmpParents } from "./test-tmp.mjs";
 
 /** Local and affected fast groups use two file workers to leave room for their child processes. */
 export const FAST_TEST_CONCURRENCY = 2;
@@ -37,12 +39,36 @@ export function testEnv(env = process.env) {
 /** Fail a test file that leaves children running after its own cleanup instead of hanging the suite. */
 export const TEST_PRELOAD = ["--import", new URL("../tests/helpers/leftover-children.ts", import.meta.url).href];
 
+/**
+ * Points every temp-folder variable at a folder the batch owns, so what its tests leave in the
+ * temp folder goes when the batch ends instead of filling the disk until the OS purges it.
+ */
+function batchTmpEnv(env, dir) {
+  return { ...env, TMPDIR: dir, TMP: dir, TEMP: dir };
+}
+
 /** Run one explicit batch, preserving cleanup, environment isolation and failing exit or signal status. */
 export function runTestBatch(root, files, { flags = [], concurrency = 1, env = process.env, stdio = "inherit" } = {}) {
   if (!files.length) return 0;
   const args = [...TEST_PRELOAD, "--test", `--test-concurrency=${concurrency}`, ...flags, ...files];
-  const result = spawnSync(process.execPath, args, { cwd: root, stdio, env: testEnv(env) });
-  if (result.error) console.error(result.error.message);
-  if (result.signal) console.error(`Node tests terminated by ${result.signal}`);
-  return result.status ?? 1;
+  // A batch killed before its own cleanup left its folder: the next batch removes it.
+  sweepTestTmp(testTmpParents());
+  const tmp = makeTestTmp();
+  try {
+    const result = spawnSync(process.execPath, args, { cwd: root, stdio, env: batchTmpEnv(testEnv(env), tmp) });
+    if (result.error) console.error(result.error.message);
+    if (result.signal) console.error(`Node tests terminated by ${result.signal}`);
+    return result.status ?? 1;
+  } finally {
+    removeBatchTmp(tmp);
+  }
+}
+
+/** Removes a batch's temp folder; one a test left unremovable is named, never fatal to the run. */
+function removeBatchTmp(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  } catch (error) {
+    console.error(`Could not remove the test temp folder ${dir}: ${error.message}`);
+  }
 }

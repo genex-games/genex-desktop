@@ -36,6 +36,7 @@ import {
   isPluginSetup,
   PLUGIN_SETUP_STEP_CHARS,
   PLUGIN_SETUP_STEPS,
+  PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
   PluginToolAudience,
@@ -59,14 +60,19 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
  * whose CLI Studio already spawns for asset work, may ask for it.
  */
 const HOST_CLI_PLUGIN = "genex";
-/** Host tools that spend credits or change the game: each needs the user's consent every time. */
-const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid, PluginHostTool.GenexPackage]);
+/**
+ * Host tools that spend Nex or credits or change what a game sells: each needs the user's consent
+ * every time. Genex's own pinned packages spend nothing, so `genex-package` asks nobody.
+ */
+const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid]);
 const HOST_TOOLS: ReadonlySet<unknown> = new Set(Object.values(PluginHostTool));
 const TOOL_AUDIENCES: ReadonlySet<unknown> = new Set(Object.values(PluginToolAudience));
 const KIB = 1024;
 /** The Genex blender server's own per-call ceiling is 15 minutes; 30 is the outer bound. */
 const MAX_CALL_TIMEOUT_MS = 1_800_000;
 const MIN_CALL_TIMEOUT_MS = 1_000;
+/** The shortest deadline a tool may declare for one call. */
+const MIN_TOOL_TIMEOUT_MS = 1_000;
 /** How many folders a package inspection lists at once. */
 const PACKAGE_WALK_FOLDERS = 16;
 const hostname = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*$/i;
@@ -86,6 +92,10 @@ const SENSITIVE_ACTIONS = new Set([
 ]);
 const reservedLower = new Set([...RESERVED_TOOLBAR_LABELS].map((l) => l.toLowerCase()));
 const SUPPORTED_API_VERSIONS = [1, 2, 3];
+/** The longest label a toolbar button shows on the stage strip, in characters. */
+export const TOOLBAR_LABEL_CHARS = 24;
+/** The longest aria label a toolbar button has, in characters. */
+export const TOOLBAR_ARIA_CHARS = 60;
 /** Declared limits, each the largest a manifest field may be. */
 const LIMIT = {
   NameChars: 200,
@@ -106,8 +116,8 @@ const LIMIT = {
   /** The longest raw tool name a server's `reads` may name. */
   McpToolNameChars: 128,
   ToolbarItems: 4,
-  ToolbarLabelChars: 24,
-  ToolbarAriaChars: 60,
+  ToolbarLabelChars: TOOLBAR_LABEL_CHARS,
+  ToolbarAriaChars: TOOLBAR_ARIA_CHARS,
   ToolbarGlyphChars: 4,
   TargetArgs: 16,
   ToolInputChars: 100000,
@@ -180,10 +190,11 @@ const MESSAGE = {
   HostToolReserved:
     "tools[].host runs a program Studio ships and is reserved for the bundled Genex plugin on apiVersion 3",
   InvalidHostTool: `Invalid tools[].host (${[...HOST_TOOLS].join(", ")})`,
-  HostToolNeedsConfirmation: "A host tool that spends credits or installs packages needs a confirmation",
+  HostToolNeedsConfirmation: "A host tool that spends Nex or credits or changes what a game sells needs a confirmation",
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
+  InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
@@ -358,6 +369,19 @@ function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.audience !== undefined) validateAudience(t, m);
 }
 
+/** A tool's own call deadline (API 3): whole milliseconds, from a second to the most a tool may declare. */
+function toolTimeout(t: PluginManifestTool, m: PluginManifest): number {
+  const value = t.timeoutMs;
+  const valid =
+    m.apiVersion === 3 &&
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_TOOL_TIMEOUT_MS &&
+    value <= PLUGIN_TOOL_MAX_TIMEOUT_MS;
+  if (!valid) throw new Error(MESSAGE.InvalidToolTimeout);
+  return value as number;
+}
+
 /** One tool in canonical form; `names` holds the tool names already declared. */
 function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<string>): PluginManifestTool {
   assertName("tool", t?.name);
@@ -379,6 +403,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
   if (t.audience === PluginToolAudience.Harness) tool.audience = t.audience;

@@ -18,7 +18,6 @@ import {
   HelperState,
   helperVersionOf,
   inspectSetup,
-  planSetup,
   type SetupOptions,
   type SetupPaths,
   setUp,
@@ -403,21 +402,6 @@ describe("Set up on a closed Studio", () => {
     assert.deepEqual(done.switches, { files: 0, turnedOn: 0, alreadyOn: 0 });
     assert.deepEqual(await readdir(home.paths.settings), []);
     assert.equal(done.helper, HelperChange.Added);
-  });
-
-  it("plans in plain words, naming the Documents prompt on a Mac", () => {
-    const lines = planSetup({ platform: "darwin", paths: setupPaths("darwin", {}, "/Users/maker"), settings: 2 });
-    const text = lines.join("\n");
-    assert.match(text, /macOS may ask to let Genex use your Documents folder: Roblox keeps its plugins there\./);
-    assert.match(text, /2 Roblox account/);
-    assert.doesNotMatch(text, /overnight|night|morning|tonight/i);
-    const windows = planSetup({
-      platform: "win32",
-      paths: setupPaths("win32", { LOCALAPPDATA: "C:\\L" }, "C:\\U"),
-      settings: 0,
-    }).join("\n");
-    assert.doesNotMatch(windows, /macOS/);
-    assert.match(windows, /Assistant › ⋯ › Settings › MCP Servers/, "with no settings file the click path is named");
   });
 });
 

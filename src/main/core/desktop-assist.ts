@@ -16,15 +16,16 @@
  * - **Trust.** The task is posted verbatim as "<plugin> asks: <task>". A plugin that came with
  *   Genex asks nothing more; any other shows the task on a card first, every time.
  * - **Computer control off.** A card offers to turn it on, for every chat (it is one setting).
- * - **Apps.** The turn may drive only the Mac apps the plugin's `engine.apps` declares; a call
- *   cannot widen them. Only the turn that answers the task holds the grant (never another turn of
- *   the chat running beside it), until it ends and never past {@link ASSIST_GRANT_MAX_MS}.
- * - **Where it can't run.** Windows, or a Mac with no desktop driver: `unavailable`, and the
- *   plugin shows its click path instead.
+ * - **Apps.** The turn may drive only the apps the plugin's `engine.apps` declares for this system
+ *   (Mac bundle ids, Windows executables); a call cannot widen them. Only the turn that answers the
+ *   task holds the grant (never another turn of the chat running beside it), until it ends and
+ *   never past {@link ASSIST_GRANT_MAX_MS}.
+ * - **Where it can't run.** A computer with no desktop driver (Linux, or a development build
+ *   without one): `unavailable`, and the plugin shows its click path instead.
  */
 import { MINUTE_MS } from "../../shared/duration.ts";
 import {
-  COMPUTER_SETTING_QUESTION,
+  computerSettingQuestion,
   type EngineAssistAnswer,
   EngineAssistRefusal,
   type PluginBinding,
@@ -32,18 +33,25 @@ import {
   PluginSourceKind,
   StudioConsentSource,
 } from "../../shared/plugins.ts";
+import type { EngineApps } from "../../shared/game-engine.ts";
+import { t } from "../../shared/i18n.ts";
+import { windowsAppId } from "../../substrate/desktop-driver.ts";
 import { shortId } from "../../substrate/ids.ts";
 import type { StudioCore } from "../studio-core.ts";
 
 /** The longest an assist's grant lasts when the host cannot see its turn end (a resumed turn, the harness's own loop). */
 export const ASSIST_GRANT_MAX_MS = 20 * MINUTE_MS;
 
-/** What the person reads: the task's card, the setting's card, and the turn's message. */
+/**
+ * What the person reads: the task's card, the setting's card, and the turn's message. The cards'
+ * questions are in the person's language; the descriptions (never shown on a card) and the turn's
+ * message, which the chat's agent reads as the task, stay English.
+ */
 const MESSAGE = {
   task: (plugin: string, task: string) =>
-    `Let this chat's agent do this for you with computer control? ${plugin} asks: ${task}`,
+    t("Let this chat's agent do this for you with computer control? {plugin} asks: {task}", { plugin, task }),
   taskDescription: "a setup step done with computer control",
-  setting: COMPUTER_SETTING_QUESTION,
+  setting: computerSettingQuestion,
   settingDescription: "turning on computer control for every chat",
   asks: (plugin: string, task: string) => `${plugin} asks: ${task}`,
 } as const;
@@ -65,7 +73,7 @@ export type AssistCard =
 /** What one chat's setup assist may drive: the plugin's apps, for the turn that answers its message. */
 export interface AssistGrant {
   pluginId: string;
-  /** Mac bundle ids, from the plugin's `engine.apps.mac`. */
+  /** The plugin's `engine.apps` for this system ({@link engineAppIds}). */
   apps: ReadonlySet<string>;
   /** The queue id of the message that asks for the task. */
   messageId: string;
@@ -144,21 +152,36 @@ type EnginePlugin = Pick<PluginInfo, "enabled" | "removed"> & { manifest: Pick<P
 
 const livePlugins = (plugins: readonly EnginePlugin[]) => plugins.filter((plugin) => plugin.enabled && !plugin.removed);
 
-/** The Mac bundle ids of the editors every enabled engine plugin declares: the guard's refusals outside an assist. */
-export function declaredEngineApps(plugins: readonly EnginePlugin[]): ReadonlySet<string> {
-  return new Set(livePlugins(plugins).flatMap((plugin) => plugin.manifest.engine?.apps?.mac ?? []));
+/**
+ * The apps an engine declares for `platform`, as the desktop names them: Mac bundle ids, or Windows
+ * executables in lower case (`windowsAppId`).
+ */
+export function engineAppIds(apps: EngineApps | undefined, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform === "win32") return (apps?.windows ?? []).map(windowsAppId);
+  return [...(apps?.mac ?? [])];
 }
 
-/** The Mac bundle ids of the apps every enabled engine's games are played in: refused always, an assist included. */
-export function declaredPlayerApps(plugins: readonly EnginePlugin[]): ReadonlySet<string> {
-  return new Set(livePlugins(plugins).flatMap((plugin) => plugin.manifest.engine?.playerApps?.mac ?? []));
+/** The editors every enabled engine plugin declares for `platform`: the guard's refusals outside an assist. */
+export function declaredEngineApps(
+  plugins: readonly EnginePlugin[],
+  platform: NodeJS.Platform = process.platform,
+): ReadonlySet<string> {
+  return new Set(livePlugins(plugins).flatMap((plugin) => engineAppIds(plugin.manifest.engine?.apps, platform)));
+}
+
+/** The apps every enabled engine's games are played in on `platform`: refused always, an assist included. */
+export function declaredPlayerApps(
+  plugins: readonly EnginePlugin[],
+  platform: NodeJS.Platform = process.platform,
+): ReadonlySet<string> {
+  return new Set(livePlugins(plugins).flatMap((plugin) => engineAppIds(plugin.manifest.engine?.playerApps, platform)));
 }
 
 /** What an assist needs of the host. */
 export interface AssistHost {
-  /** The enabled plugin: its name, whether it came with Genex, and the Mac apps its engine declares. */
+  /** The enabled plugin: its name, whether it came with Genex, and the apps its engine declares for this system. */
   plugin(id: string): { name: string; bundled: boolean; apps: readonly string[] } | null;
-  /** Whether computer control can run here: a desktop and its driver (never on Windows). */
+  /** Whether computer control can run here: a desktop and its driver (a Mac's or a PC's). */
   desktopAvailable(): Promise<boolean>;
   computerControlOn(): boolean;
   /** Settings → Permissions → computer control, turned on. */
@@ -237,7 +260,7 @@ function consentOf(card: AssistCard) {
       tool: {
         name: "computer-control",
         description: MESSAGE.settingDescription,
-        confirmation: MESSAGE.setting,
+        confirmation: MESSAGE.setting(),
         parameters,
       },
       args: {},
@@ -260,7 +283,7 @@ export function coreAssistHost(core: StudioCore): AssistHost {
     plugin: (id) => {
       const found = core.plugins.list().find((p) => p.manifest.id === id && p.enabled && !p.removed);
       if (!found) return null;
-      const apps = found.manifest.engine?.apps?.mac ?? [];
+      const apps = engineAppIds(found.manifest.engine?.apps);
       return { name: found.manifest.name, bundled: found.source === PluginSourceKind.Bundled, apps };
     },
     desktopAvailable: async () => {

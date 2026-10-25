@@ -68,6 +68,7 @@ import {
 } from "../../shared/local-server.ts";
 import { ModelCatalogProblemCode, ModelCatalogSource } from "../../shared/model-catalog.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { t } from "../../shared/i18n.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { redactSecrets, redactValues } from "../../shared/redact.ts";
 
@@ -92,20 +93,32 @@ const CONTEXT_EXCEEDED = "exceed_context_size_error";
 /** The hosts that are this computer, so one spelling of the app's own Ollama matches another. */
 const THIS_COMPUTER: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-/** What this engine says to the person. */
+/**
+ * What this engine says: statuses, remedies and model-list problems for Settings in the person's
+ * language (functions, since main sets its language after it starts), and the errors a session's
+ * run reads in English, since the harness and the model read them too.
+ */
 const MESSAGE = {
-  NotSetUp: "No local server is connected.",
-  SetUpRemedy: "Connect your server in Settings › Model Providers.",
-  NotAnswering: (where: string) => `Nothing answers at ${where}.`,
-  StartRemedy: "Start your server, then check again.",
-  NeedsKey: (who: string) => `${who} asks for an API key.`,
-  KeyRemedy: "Add its API key in Settings › Model Providers.",
-  NotOpenAi: (where: string) => `Something answers at ${where}, but not as a model server.`,
-  AddressRemedy: "Check the address in Settings › Model Providers.",
-  NoModels: (who: string) => `${who} lists no models.`,
-  LoadRemedy: "Load a model in your server, then check again.",
-  Ready: (who: string, count: number) => `${who}, ${count} ${count === 1 ? "model" : "models"}`,
-  Locked: (detail: string) => `The OS secret store is locked, so the server's API key cannot be read. ${detail}`,
+  NotSetUp: () => t("No local server is connected."),
+  SetUpRemedy: () => t("Connect your server in Settings › Model Providers."),
+  NotSetUpError: "No local server is connected. Connect your server in Settings › Model Providers.",
+  NotAnswering: (address: string) => t("Nothing answers at {address}.", { address }),
+  StartRemedy: () => t("Start your server, then check again."),
+  StoppedError: (address: string) => `Nothing answers at ${address}. Start your server, then check again.`,
+  NeedsKey: (server: string) => t("{server} asks for an API key.", { server }),
+  KeyRemedy: () => t("Add its API key in Settings › Model Providers."),
+  NotOpenAi: (address: string) => t("Something answers at {address}, but not as a model server.", { address }),
+  AddressRemedy: () => t("Check the address in Settings › Model Providers."),
+  NoModels: (server: string) => t("{server} lists no models.", { server }),
+  LoadRemedy: () => t("Load a model in your server, then check again."),
+  Ready: (server: string, count: number) =>
+    t("{server}, {count, plural, one {# model} other {# models}}", { server, count }),
+  Locked: (detail: string) =>
+    t("The OS secret store is locked, so the server's API key cannot be read. {detail}", { detail }),
+  LockedError: (detail: string) => `The OS secret store is locked, so the server's API key cannot be read. ${detail}`,
+  /** The saved server as Settings names it: "TabbyAPI at 127.0.0.1:5000". */
+  Named: (software: string, host: string) => t("{software} at {host}", { software, host }),
+  Unnamed: (host: string) => t("The server at {host}", { host }),
   NoModel: "Pick a model from your local server for this chat.",
   UnknownModel: (model: string, who: string) => `${who} does not list ${model}. Load it there, or pick another model.`,
   NoTools: "this model cannot call tools",
@@ -116,7 +129,7 @@ const MESSAGE = {
     `The request needs about ${required} tokens including the reply; this model's context is ${window}.`,
   Threshold: (required: number, threshold: number, percent: number) =>
     `The request needs about ${required} tokens including the reply; the compaction threshold is ${threshold} (${percent}%).`,
-  ListFailed: (where: string) => `${where} did not list its models.`,
+  ListFailed: (server: string) => t("{server} did not list its models.", { server }),
 } as const;
 
 /** Failures that are a connection cut mid-reply: the engine asks whether the server is still there. */
@@ -125,10 +138,16 @@ const CUT_CONNECTIONS = new WeakSet<EngineError>();
 /** `127.0.0.1:5000`: the server as a person reads it. */
 const where = (url: string): string => new URL(url).host;
 
-/** "TabbyAPI at 127.0.0.1:5000", or the address alone for software the app does not know. */
+/** "TabbyAPI at 127.0.0.1:5000", or the address alone for unknown software; English, as errors say it. */
 function serverName(saved: SavedServer): string {
   const host = where(saved.url);
   return saved.kind ? `${LOCAL_SERVER_NAMES[saved.kind]} at ${host}` : `The server at ${host}`;
+}
+
+/** {@link serverName} in the person's language, for Settings' status lines. */
+function serverTitle(saved: SavedServer): string {
+  const host = where(saved.url);
+  return saved.kind ? MESSAGE.Named(LOCAL_SERVER_NAMES[saved.kind], host) : MESSAGE.Unnamed(host);
 }
 
 /** The key as pasted, trimmed; null for none, and `false` for something that cannot be a key. */
@@ -188,6 +207,8 @@ export class LocalServerEngine implements Engine {
   readonly label = "Local server";
   readonly kind = EngineKind.Direct;
   readonly supportsSessions = true;
+  /** Its sessions run Genex's own loop (`LocalSessions`), which reads the person's messages between rounds. */
+  readonly steersMidTurn = true;
   readonly sessions: LocalSessions;
   readonly #settings: ServerSettings;
   readonly #keys: ApiKeyStore;
@@ -314,7 +335,7 @@ export class LocalServerEngine implements Engine {
     try {
       return await this.#keys.read();
     } catch (err) {
-      throw new EngineError(EngineFailureKind.Auth, this.id, MESSAGE.Locked(errorMessage(err)));
+      throw new EngineError(EngineFailureKind.Auth, this.id, MESSAGE.LockedError(errorMessage(err)));
     }
   }
 
@@ -330,7 +351,8 @@ export class LocalServerEngine implements Engine {
 
   async #readStatus(): Promise<EngineStatus> {
     const saved = await this.#settings.read();
-    if (!saved) return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotSetUp, remedy: MESSAGE.SetUpRemedy };
+    if (!saved)
+      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotSetUp(), remedy: MESSAGE.SetUpRemedy() };
     let key: string | null;
     try {
       key = await this.#keys.read();
@@ -340,23 +362,23 @@ export class LocalServerEngine implements Engine {
       throw err;
     }
     const list = await readModelList({ url: saved.url, key }, STATUS_TIMEOUT_MS);
-    const who = serverName(saved);
+    const who = serverTitle(saved);
     if (list.answer === ListAnswer.NotAnswering)
       return {
         code: EngineStatusCode.NotRunning,
         detail: MESSAGE.NotAnswering(where(saved.url)),
-        remedy: MESSAGE.StartRemedy,
+        remedy: MESSAGE.StartRemedy(),
       };
     if (list.answer === ListAnswer.NeedsKey)
-      return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NeedsKey(who), remedy: MESSAGE.KeyRemedy };
+      return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NeedsKey(who), remedy: MESSAGE.KeyRemedy() };
     if (list.answer === ListAnswer.NotOpenAi)
       return {
         code: EngineStatusCode.Error,
         detail: MESSAGE.NotOpenAi(where(saved.url)),
-        remedy: MESSAGE.AddressRemedy,
+        remedy: MESSAGE.AddressRemedy(),
       };
     if (list.entries.length === 0)
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NoModels(who), remedy: MESSAGE.LoadRemedy };
+      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NoModels(who), remedy: MESSAGE.LoadRemedy() };
     return { code: EngineStatusCode.Ready, detail: MESSAGE.Ready(who, list.entries.length) };
   }
 
@@ -379,7 +401,7 @@ export class LocalServerEngine implements Engine {
     const access: ServerAccess = { url: saved.url, key: await this.#keys.read().catch(() => null) };
     const list = await readModelList(access);
     if (list.answer !== ListAnswer.Models)
-      throw new CatalogError(ModelCatalogProblemCode.Provider, MESSAGE.ListFailed(serverName(saved)));
+      throw new CatalogError(ModelCatalogProblemCode.Provider, MESSAGE.ListFailed(serverTitle(saved)));
     const kind = (await identifyServer(access, list)) ?? saved.kind;
     // The software can change behind one address (LM Studio stopped, llama.cpp started on its port).
     if (kind !== saved.kind) await this.#settings.write({ url: saved.url, kind });
@@ -407,8 +429,7 @@ export class LocalServerEngine implements Engine {
   /** The saved server, or a failure that says to connect one. */
   async #saved(): Promise<SavedServer> {
     const saved = await this.#settings.read();
-    if (!saved)
-      throw new EngineError(EngineFailureKind.Unavailable, this.id, `${MESSAGE.NotSetUp} ${MESSAGE.SetUpRemedy}`);
+    if (!saved) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NotSetUpError);
     return saved;
   }
 
@@ -609,10 +630,6 @@ export class LocalServerEngine implements Engine {
     if (!CUT_CONNECTIONS.has(failure)) return failure;
     const list = await readModelList({ url: saved.url, key }, STATUS_TIMEOUT_MS);
     if (list.answer !== ListAnswer.NotAnswering) return failure;
-    return new EngineError(
-      EngineFailureKind.Unavailable,
-      this.id,
-      `${MESSAGE.NotAnswering(where(saved.url))} ${MESSAGE.StartRemedy}`,
-    );
+    return new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.StoppedError(where(saved.url)));
   }
 }

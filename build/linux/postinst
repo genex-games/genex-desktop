@@ -4,6 +4,10 @@
 # for the app; the processes it starts, bubblewrap included, inherit it. The profile is the one
 # src/substrate/linux-isolation.ts writes. It is skipped where AppArmor is missing or too old to
 # read it (abi 4.0), and nothing here may fail the install.
+#
+# It also adds the Genex package repository (packages.genex.games), the way Chrome and VS Code do,
+# so apt and Software Updater bring every later version. The key comes from the package itself; a
+# line the person edited is kept, and `repo=off` in /etc/default/genex keeps the repository out.
 
 PROFILE_NAME=genex
 PROFILE="${DPKG_ROOT:-}/etc/apparmor.d/$PROFILE_NAME"
@@ -35,8 +39,50 @@ PROFILE_TEXT
     echo "genex: the AppArmor profile will load at the next restart" >&2
 }
 
+ROOT="${DPKG_ROOT:-}"
+SHIPPED_KEY="$ROOT/usr/lib/genex/resources/genex-archive-keyring.asc"
+APT_KEY_DIR="$ROOT/etc/apt/keyrings"
+APT_LIST="$ROOT/etc/apt/sources.list.d/genex.list"
+
+add_repository() {
+  [ -s "$SHIPPED_KEY" ] || return 0
+  [ -d "$ROOT/etc/apt/sources.list.d" ] || return 0
+  if grep -qs '^repo=off' "$ROOT/etc/default/genex"; then return 0; fi
+  # The key always refreshes, so a rotated key reaches every install with the next version.
+  mkdir -p "$APT_KEY_DIR" && cp "$SHIPPED_KEY" "$APT_KEY_DIR/genex.asc" && chmod 0644 "$APT_KEY_DIR/genex.asc" || return 0
+  [ -e "$APT_LIST" ] && return 0
+  echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/genex.asc] https://packages.genex.games stable main" > "$APT_LIST"
+}
+
+# Ubuntu 24.10 and later confine /usr/bin/bwrap itself (AppArmor's bwrap-userns-restrict): its
+# children run under unpriv_bwrap, which denies every capability, so the nested user namespace the
+# sandbox's seccomp step makes is refused and no agent process starts. A copy beside the app
+# attaches to no profile of its own and runs under genex's, as bubblewrap does on 24.04; the app
+# uses it when it is there (src/substrate/spawn.ts). Each install and upgrade copies it afresh. A
+# setuid bubblewrap is left alone: a copy would lose the bit it relies on.
+SYSTEM_BWRAP="$ROOT/usr/bin/bwrap"
+OWN_BWRAP="$ROOT/usr/lib/genex/bwrap"
+BWRAP_RESTRICTION="$ROOT/etc/apparmor.d/bwrap-userns-restrict"
+
+own_bubblewrap() {
+  if [ ! -e "$BWRAP_RESTRICTION" ] || [ ! -x "$SYSTEM_BWRAP" ] || [ -u "$SYSTEM_BWRAP" ]; then
+    rm -f "$OWN_BWRAP"
+    return 0
+  fi
+  mkdir -p "$(dirname "$OWN_BWRAP")" || return 0
+  if cp "$SYSTEM_BWRAP" "$OWN_BWRAP.new" && chmod 0755 "$OWN_BWRAP.new"; then
+    mv -f "$OWN_BWRAP.new" "$OWN_BWRAP"
+  else
+    rm -f "$OWN_BWRAP.new"
+  fi
+}
+
 case "$1" in
-  configure) install_profile ;;
+  configure)
+    install_profile
+    add_repository
+    own_bubblewrap
+    ;;
 esac
 
 exit 0

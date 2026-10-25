@@ -366,6 +366,18 @@ export async function handleRunStart(
     studio.startingRuns.delete(action.run.runId);
     settle();
   }
+  // Not awaited: whoever waits for this run to close (a resume, a test) waits for it alone.
+  void startAskedLoop(studio, action);
+}
+
+/**
+ * The new Loop the user asked for while this one ran, started now that it has closed (next-loop.ts).
+ * Loaded when needed: that module launches the way the chat does (chat-dispatch.ts), which starts
+ * runs here.
+ */
+async function startAskedLoop(studio: Studio, action: RunStart): Promise<void> {
+  const nextLoop = await import("./next-loop.ts").catch(() => null);
+  await nextLoop?.startNextLoop(studio, action.threadId, action.run as Run).catch(() => {});
 }
 
 /** The refusal of a second run where one already works, where the chat can see it. */

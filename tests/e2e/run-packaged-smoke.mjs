@@ -10,8 +10,10 @@ import { readdir, readFile } from "node:fs/promises";
  * the sandbox helpers the package carries, on macOS a signature that holds (an ad-hoc local build's
  * too: macOS's folder privacy refuses an app whose signature does not bind its Info.plist without
  * asking) and, with STUDIO_EXPECT_SIGNED=1, the Developer ID signature and Gatekeeper's verdict. On
- * macOS it also checks the bundled cua-driver: the pinned version, its license, and that it starts
- * embedded from inside the package (signed with the app's own identity when STUDIO_EXPECT_SIGNED=1).
+ * macOS and Windows it also checks the bundled cua-driver: the pinned version, its license, and that
+ * it starts embedded from inside the package (on a Mac signed with the app's own identity when
+ * STUDIO_EXPECT_SIGNED=1; on Windows carrying cua's own valid signature). On Windows every
+ * executable and DLL in the package must find the Visual C++ runtime DLLs it imports beside it.
  *
  *   npm run package && node tests/e2e/run-packaged-smoke.mjs
  *   STUDIO_PACKAGE_DIR=<out/Genex-<platform>-<arch>> overrides the package folder.
@@ -25,15 +27,27 @@ import { FuseState, FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { startFakeOllama } from "../helpers/fake-ollama.ts";
 import { packagedApp, posixEntries } from "./packaged-app.mjs";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
+import { rm } from "node:fs/promises";
+import net from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { CUA_DRIVER_RELEASE } from "../../scripts/vendor-cua-driver.ts";
-import { embeddedEnv, HOST_BUNDLE_ID } from "../../src/substrate/cua-embedded.ts";
+import { GIT_SOURCE_RELEASE, MAC_GIT_FILES } from "../../scripts/vendor-git-for-mac.ts";
+import { macOwnGitBin } from "../../src/substrate/git-policy.ts";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import vcRuntime from "../../scripts/package-vc-runtime.cjs";
+import { connectCuaDriver, driverEnv, GrantHolder } from "../../src/substrate/cua-driver-client.ts";
+import {
+  bundledCuaDriver,
+  daemonEndpoint,
+  embeddedCuaDriver,
+  embeddedEnv,
+  HOST_BUNDLE_ID,
+} from "../../src/substrate/cua-embedded.ts";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const target = `${process.platform}-${process.arch}`;
-const { appBundle, bin, resourcesDir } = packagedApp(root);
+const { appBundle, bin, packageDir, resourcesDir } = packagedApp(root);
 const expectSigned = process.platform === "darwin" && process.env.STUDIO_EXPECT_SIGNED === "1";
 /** The fuses forge.config.cjs flips, as the packaged binary must carry them. */
 const EXPECTED_FUSES = {
@@ -132,6 +146,12 @@ report.checks.push({
   detail: `${privateEntries.length} private development entries`,
 });
 if (privateEntries.length) report.failed++;
+const cacheEntries = entries.filter((entry) => /^\/node_modules\/\.cache(\/|$)/.test(entry));
+addCheck(
+  "packaged archive excludes the build's download cache (vendored Git, archives)",
+  cacheEntries.length === 0,
+  `${cacheEntries.length} cache entries`,
+);
 const forbidden = /(?:^|\/)node_modules\/(?:@openai\/codex(?:-[^/]+)?|@anthropic-ai\/claude-agent-sdk-[^/]+)(?:\/|$)/;
 const unpacked = posixEntries(await readdir(`${archive}.unpacked`, { recursive: true }));
 const codingBinaries = [...entries, ...unpacked].filter((entry) => forbidden.test(entry));
@@ -174,7 +194,9 @@ addCheck(
   wrongFuses.map(([name]) => `${name}=${String.fromCharCode(fuses[FuseV1Options[name]] ?? 63)}`).join(", "),
 );
 if (process.platform === "darwin") await signatureChecks();
-if (process.platform === "darwin") await cuaDriverChecks();
+if (process.platform === "darwin") await bundledGitChecks();
+if (process.platform === "darwin" || process.platform === "win32") await cuaDriverChecks();
+if (process.platform === "win32") await vcRuntimeCheck();
 // Keep the fallback in smoke mode if the gate regresses: this negative probe must
 // never initialize normal product data merely to prove a packaged flag is refused.
 const denied = spawn(bin, fixtureElectronArgs(["--studio-smoke", "--studio-dev-launch=/not-an-owned-launch.json"]), {
@@ -222,13 +244,98 @@ function addCheck(name, ok, detail) {
 }
 
 /**
- * The cua-driver every macOS build carries for computer control (scripts/vendor-cua-driver.ts): the
- * pinned version beside its license, and a daemon that starts embedded, as the app starts it, from
- * inside the package. A Developer ID build signs it with the app's own team.
+ * Windows: every executable, DLL and addon in the package has the Visual C++ runtime DLLs it
+ * imports beside it, for its architecture (scripts/package-vc-runtime.cjs). Windows does not
+ * include them, so without a copy a program such as srt-win.exe exits 0xC0000135 before it runs;
+ * a runner whose Visual Studio installed them in System32 would never show it.
+ */
+async function vcRuntimeCheck() {
+  const gaps = await vcRuntime.missingVcRuntime(packageDir);
+  const describe = ({ file, missing, error }) => `${path.relative(packageDir, file)}: ${error ?? missing.join(", ")}`;
+  addCheck(
+    "every executable and DLL in the package has the Visual C++ runtime it imports beside it",
+    gaps.length === 0,
+    gaps.slice(0, 5).map(describe).join("; "),
+  );
+}
+
+/** Whether something accepts connections on a socket or named pipe now. */
+function listening(socket) {
+  return new Promise((resolve) => {
+    const probe = net.connect(socket);
+    probe.once("connect", () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once("error", () => resolve(false));
+  });
+}
+
+/** Windows' verdict on a file's Authenticode signature (`Valid` when it holds), by PowerShell. */
+async function authenticodeStatus(file) {
+  const literal = `'${file.replaceAll("'", "''")}'`;
+  const command = `(Get-AuthenticodeSignature -LiteralPath ${literal}).Status`;
+  const { stdout } = await promisify(execFile)("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    command,
+  ]).catch((error) => ({ stdout: String(error) }));
+  return stdout.trim();
+}
+
+/** How many cua-driver.exe processes run on this PC. */
+async function driverProcessCount() {
+  const { stdout } = await promisify(execFile)("tasklist", [
+    "/FI",
+    "IMAGENAME eq cua-driver.exe",
+    "/FO",
+    "CSV",
+    "/NH",
+  ]).catch(() => ({ stdout: "" }));
+  return stdout.split("\n").filter((line) => line.toLowerCase().includes("cua-driver.exe")).length;
+}
+
+/**
+ * On Windows, the bundled driver as the app runs it: its own embedded daemon on a named pipe and
+ * the app's client (with its window probe) answer a real call, and stopping leaves no driver behind.
+ */
+async function windowsDriverCall(driver) {
+  const embedded = embeddedCuaDriver({ command: driver, args: [] }, { hostBundleId: HOST_BUNDLE_ID, env: driverEnv() });
+  let answered = "";
+  try {
+    const desktop = await connectCuaDriver(() => embedded.command(), { local: true, holder: GrantHolder.Host });
+    try {
+      const shot = await desktop.screenshot();
+      const focus = await desktop.focus();
+      answered = `screenshot ${shot.width}x${shot.height}; in front: ${focus.app?.bundleId ?? "no app"}`;
+    } finally {
+      await desktop.close();
+    }
+  } catch (error) {
+    answered = `failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  await embedded.stop();
+  addCheck(
+    "the bundled cua-driver answers a real call over its named pipe",
+    answered.startsWith("screenshot"),
+    answered,
+  );
+  await sleep(1000);
+  const left = await driverProcessCount();
+  addCheck("no cua-driver.exe runs once it stops", left === 0, `${left} running`);
+}
+
+/**
+ * The cua-driver every macOS and Windows build carries for computer control
+ * (scripts/vendor-cua-driver.ts): the pinned version beside its license, and a daemon that starts
+ * embedded, as the app starts it, from inside the package (on a socket, or a named pipe on Windows).
+ * A Developer ID build signs it with the app's own team; on Windows it carries cua's own signature.
  */
 async function cuaDriverChecks() {
-  const dir = path.join(resourcesDir, "app.asar.unpacked", "dist", "resources", "cua-driver");
-  const driver = path.join(dir, "cua-driver");
+  const resources = path.join(resourcesDir, "app.asar.unpacked", "dist", "resources");
+  const driver = bundledCuaDriver(resources);
+  const dir = path.dirname(driver);
   const version = await readFile(path.join(dir, "VERSION"), "utf8").catch(() => "");
   addCheck(
     "package carries the pinned cua-driver with its license and notices",
@@ -237,21 +344,27 @@ async function cuaDriverChecks() {
       existsSync(path.join(dir, "THIRD_PARTY_NOTICES.md")),
     `VERSION ${version.trim() || "missing"}`,
   );
-  const socketDir = await mkdtemp(path.join(os.tmpdir(), "genex-cua-smoke-"));
-  const socket = path.join(socketDir, "d.sock");
-  const daemon = spawn(driver, ["serve", "--embedded", "--socket", socket], {
-    env: { PATH: "/usr/bin:/bin", HOME: os.homedir(), ...embeddedEnv(HOST_BUNDLE_ID) },
+  const endpoint = await daemonEndpoint();
+  const daemon = spawn(driver, ["serve", "--embedded", "--socket", endpoint.socket], {
+    env: { ...driverEnv(), ...embeddedEnv(HOST_BUNDLE_ID) },
     stdio: "ignore",
+    windowsHide: true,
   });
   daemon.on("error", () => {});
-  let listening = false;
-  for (let tries = 0; tries < 100 && !listening; tries += 1) {
-    listening = existsSync(socket);
-    if (!listening) await sleep(100);
+  let up = false;
+  for (let tries = 0; tries < 100 && !up; tries += 1) {
+    up = await listening(endpoint.socket);
+    if (!up) await sleep(100);
   }
   daemon.kill("SIGKILL");
-  await rm(socketDir, { recursive: true, force: true });
-  addCheck("the bundled cua-driver starts embedded from inside the package", listening, driver);
+  if (endpoint.dir) await rm(endpoint.dir, { recursive: true, force: true });
+  addCheck("the bundled cua-driver starts embedded from inside the package", up, driver);
+  if (process.platform === "win32") {
+    const status = await authenticodeStatus(driver);
+    addCheck("the bundled cua-driver carries cua's valid signature", status === "Valid", status);
+    await windowsDriverCall(driver);
+    return;
+  }
   if (!expectSigned) return;
   const run = promisify(execFile);
   const teamOf = async (file) =>
@@ -263,6 +376,64 @@ async function cuaDriverChecks() {
     driverTeam === appTeam,
     `${driverTeam} vs ${appTeam}`,
   );
+}
+
+/**
+ * The git every macOS build carries for a Mac without Apple's developer tools
+ * (scripts/vendor-git-for-mac.ts): the pinned version, run from inside the package as on such a
+ * Mac (`DEVELOPER_DIR=/nonexistent` breaks /usr/bin's stand-ins, and no other git is on PATH),
+ * with a valid signature on each of its programs; a Developer ID build signs them with the app's team.
+ */
+async function bundledGitChecks() {
+  const run = promisify(execFile);
+  const bin = macOwnGitBin(path.join(resourcesDir, "app.asar.unpacked", "dist", "resources"));
+  const gitRoot = path.dirname(bin);
+  const env = {
+    PATH: `${bin}:/usr/bin:/bin`,
+    DEVELOPER_DIR: "/nonexistent",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    HOME: os.tmpdir(),
+  };
+  const said = await run(path.join(bin, "git"), ["--version"], { env }).then(
+    ({ stdout }) => stdout.trim(),
+    (error) => String(error.stderr ?? error.message).trim(),
+  );
+  addCheck(
+    "package carries the pinned git, which runs from inside it",
+    said === `git version ${GIT_SOURCE_RELEASE.version}`,
+    said,
+  );
+  const repo = await mkdtemp(path.join(os.tmpdir(), "packaged-git-"));
+  const steps = [
+    ["init", "-q", repo],
+    ["-C", repo, "commit", "-q", "--allow-empty", "-m", "packaged", "--author", "t <t@t>"],
+    ["clone", "-q", repo, `${repo}-clone`],
+  ];
+  let failed = "";
+  for (const args of steps) {
+    failed ||= await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { env }).then(
+      () => "",
+      (error) => `git ${args[0]}: ${String(error.stderr ?? error.message).trim()}`,
+    );
+  }
+  await rm(repo, { recursive: true, force: true });
+  await rm(`${repo}-clone`, { recursive: true, force: true });
+  addCheck("the bundled git makes a repository, commits and clones it with no developer tools", !failed, failed);
+  const programs = MAC_GIT_FILES.programs.map((entry) => path.join(gitRoot, entry));
+  const unsigned = [];
+  for (const program of programs)
+    await run("codesign", ["--verify", "--strict", program]).catch(() =>
+      unsigned.push(path.relative(gitRoot, program)),
+    );
+  addCheck("codesign --verify accepts each of the bundled git's programs", unsigned.length === 0, unsigned.join(", "));
+  if (!expectSigned) return;
+  const teamOf = async (file) =>
+    /^TeamIdentifier=(.+)$/m.exec((await run("codesign", ["-dv", file]).catch((error) => error)).stderr ?? "")?.[1] ??
+    "";
+  const appTeam = await teamOf(appBundle);
+  const others = [];
+  for (const program of programs) if ((await teamOf(program)) !== appTeam) others.push(path.relative(gitRoot, program));
+  addCheck("the bundled git's programs are signed with the app's own team", others.length === 0, others.join(", "));
 }
 
 /**

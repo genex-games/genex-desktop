@@ -10,20 +10,28 @@ import { devRoot, slug } from "./studio-dev/ownership.mjs";
 import { SEED_GENERATED } from "./gen-harness-types.ts";
 import { packageBin } from "./package-bin.ts";
 import { vendorCuaDriver } from "./vendor-cua-driver.ts";
+import { vendorGitForWindows } from "./vendor-git-for-windows.ts";
+import { vendorGitForMac } from "./vendor-git-for-mac.ts";
+import { MAC_GIT_DIR } from "../src/substrate/git-policy.ts";
+import { VENDORED_GIT } from "./package-git.cjs";
 import { vendorTsc } from "./vendor-tsc.ts";
 import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
 /**
  * Build — assembles `dist/` for Electron.
  *
- *   dist/main/main.mjs        substrate + app shell (ESM, Electron 43 supports ESM main)
+ *   dist/main/main.mjs        Electron's entry: turns on V8's compile cache, imports app.mjs
+ *   dist/main/app.mjs         substrate + app shell (ESM, Electron 43 supports ESM main)
  *   dist/preload/preload.cjs  renderer bridge (sandboxed preloads must be CommonJS)
  *   dist/preload/play-mic.cjs Play game view's microphone (the app's mic in a published game's page)
  *   dist/renderer/*           React UI
  *   dist/resources/*          read-only app resources: the harness seed, the bootstrap, the game
  *                             template, vendored three.js, and the TypeScript 7 compiler the
  *                             in-app type gate runs (dist/resources/tsc, scripts/vendor-tsc.ts);
- *                             on a macOS release, cua-driver for computer control
+ *                             on a macOS or Windows release, cua-driver for computer control
  *                             (dist/resources/cua-driver, scripts/vendor-cua-driver.ts)
+ *
+ * A Windows release also vendors Git for Windows, outside dist/ because it ships beside the
+ * archive rather than in it (scripts/vendor-git-for-windows.ts, scripts/package-git.cjs).
  *
  * esbuild only, deliberately: one tool, no plugin-compatibility surface, and the game workspaces
  * need no bundler at all (import maps + vendored three).
@@ -93,10 +101,17 @@ async function nodeContexts() {
       outfile: path.join(dist, "resources/terminal/host.cjs"),
       format: "cjs",
     }),
+    // Electron's entry: turns on the compile cache, then imports app.mjs (src/main/boot.ts).
+    await esbuild.context({
+      ...shared,
+      entryPoints: [path.join(root, "src/main/boot.ts")],
+      outfile: path.join(dist, "main/main.mjs"),
+      format: "esm",
+    }),
     await esbuild.context({
       ...shared,
       entryPoints: [path.join(root, "src/main/index.ts")],
-      outfile: path.join(dist, "main/main.mjs"),
+      outfile: path.join(dist, "main/app.mjs"),
       format: "esm",
       // ESM output in a CJS-ish host: give bundled deps their expected globals.
       banner: {
@@ -120,6 +135,12 @@ async function nodeContexts() {
       ...shared,
       entryPoints: [path.join(root, "src/preload/play-mic.ts")],
       outfile: path.join(dist, "preload/play-mic.cjs"),
+      format: "cjs",
+    }),
+    await esbuild.context({
+      ...shared,
+      entryPoints: [path.join(root, "src/preload/play-bar.ts")],
+      outfile: path.join(dist, "preload/play-bar.cjs"),
       format: "cjs",
     }),
   ];
@@ -146,6 +167,29 @@ async function rendererContexts() {
       outdir: path.join(dist, "renderer"),
       entryNames: "renderer",
       chunkNames: "chunks/[name]-[hash]",
+      splitting: true,
+      loader: { ".css": "css" },
+    }),
+    // Play's bar layer (`play-bar.html`): a page of its own over the game's view, with only the bar and Comments.
+    await esbuild.context({
+      ...rendererBuildOptions(rendererMode),
+      define: {
+        ...rendererBuildOptions(rendererMode).define,
+        __STUDIO_PERFORMANCE__: JSON.stringify(false),
+      },
+      bundle: true,
+      platform: "browser",
+      metafile: true,
+      target: "chrome130",
+      sourcemap: true,
+      logLevel: "info",
+      format: "esm",
+      jsx: "automatic",
+      entryPoints: [path.join(root, "src/renderer/play-bar.tsx")],
+      // The language loads first and the bar after it, each a chunk beside the studio's.
+      outdir: path.join(dist, "renderer"),
+      entryNames: "play-bar",
+      chunkNames: "chunks/bar-[name]-[hash]",
       splitting: true,
       loader: { ".css": "css" },
     }),
@@ -326,12 +370,31 @@ async function copyResources() {
       .map(([id, bytes]) => `${id} ${(bytes / 1024 / 1024).toFixed(1)} MB`)
       .join(", ")}`,
   );
-  // Computer control's driver ships with every macOS release, so it works once the app is installed
-  // (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
+  // Computer control's driver ships with every macOS and Windows release, so it works once the app is
+  // installed (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
   const vendorCua = release || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
-  if (process.platform === "darwin" && vendorCua) {
+  const driverShipsHere = process.platform === "darwin" || process.platform === "win32";
+  if (driverShipsHere && vendorCua) {
     const cua = await vendorCuaDriver(root, resources);
     console.log(`vendored cua-driver ${cua.version}: ${(cua.bytes / 1024 / 1024).toFixed(1)} MB`);
+  }
+  // Git for Windows ships with every Windows release, so the app starts on a PC without Git; Forge
+  // copies it beside the archive (scripts/package-git.cjs). A development build uses an installed Git.
+  const vendorGit = release || process.env.GENEX_VENDOR_GIT === "1";
+  // Every macOS release ships git built from its pinned source, run on a Mac without Apple's
+  // developer tools (scripts/vendor-git-for-mac.ts); it stays in the unpacked resources the
+  // packager signs. A development build takes it only when asked to.
+  if (process.platform === "darwin" && vendorGit) {
+    const cacheDir = path.join(root, "node_modules", ".cache", "genex", "git-macos");
+    const git = await vendorGitForMac(path.join(resources, MAC_GIT_DIR), { cacheDir });
+    console.log(`vendored git ${git.version}: ${git.files} files, ${(git.bytes / 1024 / 1024).toFixed(1)} MB`);
+  }
+  if (process.platform === "win32" && vendorGit) {
+    const cacheDir = path.join(root, "node_modules", ".cache", "genex", "git-for-windows-archive");
+    const git = await vendorGitForWindows(VENDORED_GIT, { cacheDir });
+    console.log(
+      `vendored Git for Windows ${git.version}: ${git.files} files, ${(git.bytes / 1024 / 1024).toFixed(1)} MB`,
+    );
   }
   await buildPlugins(root, resources);
   // The stable bootstrap — shipped, never edited by the agent.
@@ -385,6 +448,7 @@ async function copyResources() {
 
   // Renderer shell + vendored fonts (offline app; the CSP admits no font host).
   await cp(path.join(root, "src/renderer/index.html"), path.join(dist, "renderer/index.html"));
+  await cp(path.join(root, "src/renderer/play-bar.html"), path.join(dist, "renderer/play-bar.html"));
   await cp(path.join(root, "src/renderer/fonts"), path.join(dist, "renderer/fonts"), {
     recursive: true,
     filter: (source) => !source.endsWith("urls.txt"),

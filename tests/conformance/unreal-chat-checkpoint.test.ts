@@ -151,6 +151,7 @@ function standInOps(editor: StandInEditor): MomentOps {
       return { saved: saved?.saved !== false, dirty: Array.isArray(saved?.dirty) ? saved.dirty.map(String) : [] };
     },
     end: async () => ({ ended: 1 }),
+    setUp: async () => {},
     reopen: async () => ({ started: true }),
     state: async () => state,
     start: async () => null,
@@ -159,6 +160,7 @@ function standInOps(editor: StandInEditor): MomentOps {
     exported: async () => true,
     exportReference: async () => ({}),
     restoreClosed: { mark: () => {}, take: () => false },
+    mayEndPlay: async () => false,
   };
 }
 

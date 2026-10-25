@@ -302,7 +302,10 @@ export function laneSpec(
 
 /** The spec key each coding CLI is pinned under. */
 const EXECUTABLE_KEY = { [EngineId.ClaudeCode]: "claude", [EngineId.Codex]: "codex" } as const satisfies Record<
-  Exclude<CodingProvider, typeof EngineId.OpenCode | typeof EngineId.Pi>,
+  Exclude<
+    CodingProvider,
+    typeof EngineId.OpenCode | typeof EngineId.Grok | typeof EngineId.Cursor | typeof EngineId.Pi
+  >,
   keyof EvalExecutables
 >;
 

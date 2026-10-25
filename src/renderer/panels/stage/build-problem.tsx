@@ -6,6 +6,7 @@ import { sameSnapshot } from "../../state/snapshot-equality.ts";
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BuildProblem } from "../../../shared/build-problem.ts";
+import { t } from "../../../shared/i18n.ts";
 import { Button } from "../../ui/Button.tsx";
 import { ConfirmSheet } from "../../ui/Confirm.tsx";
 import { SETUP_SCRIPTS_WORDS, TOAST_WORDS } from "../../words.ts";
@@ -91,11 +92,11 @@ const offersScripts = (problem: BuildProblem): boolean => !problem.needsInstall 
 
 /** What the strip says about the build: packages missing, setup scripts skipped, the last working build on show, or an error to fix. */
 function troubleWords(problem: BuildProblem): string {
-  if (problem.needsInstall) return "Its packages aren’t installed yet.";
+  if (problem.needsInstall) return t("Its packages aren’t installed yet.");
   if (offersScripts(problem)) return SCRIPTS.trouble;
   return problem.showingLastBuild
-    ? "Showing the last working build. The newest changes aren’t included."
-    : "Fix the build error, then try again.";
+    ? t("Showing the last working build. The newest changes aren’t included.")
+    : t("Fix the build error, then try again.");
 }
 
 /**
@@ -124,16 +125,16 @@ export function BuildTrouble({
   return (
     <div data-build-problem className="flex shrink-0 flex-col gap-1.5 border-b border-line bg-surface px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-body-sm font-medium text-ink">The game didn’t build</span>
+        <span className="text-body-sm font-medium text-ink">{t("The game didn’t build")}</span>
         <span className="min-w-32 flex-1 text-xs leading-relaxed text-ink-3">{troubleWords(problem)}</span>
         {problem.needsInstall && problem.install ? (
           <Button
-            aria-label="Install packages"
-            title="Download the packages this game needs"
+            aria-label={t("Install packages")}
+            title={t("Download the packages this game needs")}
             disabled={installing}
             onClick={onInstall}
           >
-            {installing ? "Installing…" : "Install packages"}
+            {installing ? t("Installing…") : t("Install packages")}
           </Button>
         ) : (
           <>
@@ -148,8 +149,13 @@ export function BuildTrouble({
                 {installing ? SCRIPTS.running : SCRIPTS.button}
               </Button>
             )}
-            <Button variant="ghost" aria-label="Try the build again" title="Build the game again" onClick={onReload}>
-              Try again
+            <Button
+              variant="ghost"
+              aria-label={t("Try the build again")}
+              title={t("Build the game again")}
+              onClick={onReload}
+            >
+              {t("Try again")}
             </Button>
           </>
         )}
@@ -174,11 +180,13 @@ export function BuildTrouble({
         />
       )}
       <details className="text-xs text-ink-3">
-        <summary className="cursor-pointer select-none text-ink-3 hover:text-ink-2">Details</summary>
+        <summary className="cursor-pointer select-none text-ink-3 hover:text-ink-2">{t("Details")}</summary>
         <pre className="m-0 mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-micro leading-relaxed text-ink-2">
           {[
-            ...(installLines ? [`${problem.install ?? "install"} failed`, ...installLines, ""] : []),
-            `${problem.command} (exit ${problem.code ?? "stopped"})`,
+            ...(installLines
+              ? [t("{command} failed", { command: problem.install ?? "install" }), ...installLines, ""]
+              : []),
+            t("{command} (exit {code})", { command: problem.command, code: problem.code ?? t("stopped") }),
             ...problem.lines,
           ].join("\n")}
         </pre>

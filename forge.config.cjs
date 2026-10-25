@@ -12,7 +12,9 @@
  * (dist/resources/tsc) are **spawned** as child processes and the vendored three.js is **served**
  * to the preview, and none of that works from inside an asar archive.
  * Runtime resources (including the Genex plugin payload) are unpacked. Coding CLIs are external installations:
- * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only.
+ * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only. A Windows
+ * package also carries Git for Windows outside the archive (scripts/package-git.cjs), and the
+ * Visual C++ runtime DLLs its executables import beside them (scripts/package-vc-runtime.cjs).
  */
 const path = require("node:path");
 const { FusesPlugin } = require("@electron-forge/plugin-fuses");
@@ -24,10 +26,14 @@ const {
   trimSandboxVendor,
 } = require("./scripts/package-prune.cjs");
 const { APP_BUNDLE_ID, localSigningHook, macSigning, windowsSigning } = require("./scripts/package-signing.cjs");
+const { copyBundledGit } = require("./scripts/package-git.cjs");
+const { copyVcRuntime } = require("./scripts/package-vc-runtime.cjs");
 const { version } = require("./package.json");
 
 const PRODUCT_NAME = "Genex";
 const EXECUTABLE_NAME = "genex";
+/** The URL scheme the app answers: `GAME_LINK_SCHEME` in src/main/play/game-links.ts (forge-config.test.ts holds them equal). */
+const GAME_LINK_SCHEME = "genex";
 const HOMEPAGE = "https://github.com/genex-games/genex-desktop";
 const SUMMARY = "Self-improving AI game studio";
 /** The Linux desktop entry's generic name, beside the product name. */
@@ -56,6 +62,16 @@ const DEB_SCRIPTS = {
   postinst: path.join(__dirname, "build", "linux", "postinst"),
   postrm: path.join(__dirname, "build", "linux", "postrm"),
 };
+/**
+ * The rpm's scriptlets: add the Genex package repository on install, take it away on uninstall.
+ * Both packages read the repository's public key from the app's resources (`LINUX_REPOSITORY_KEY`).
+ */
+const RPM_SCRIPTS = {
+  post: path.join(__dirname, "build", "linux", "rpm-post"),
+  postun: path.join(__dirname, "build", "linux", "rpm-postun"),
+};
+/** The public key of packages.genex.games, shipped in resources/ only by Linux builds. */
+const LINUX_REPOSITORY_KEY = path.join(__dirname, "build", "linux", "genex-archive-keyring.asc");
 /** The Windows installer's file name, the same for every version so a download link can stay put. */
 const WINDOWS_SETUP_EXE = "Genex-Setup.exe";
 /** Only with a WINDOWS_SIGN_* certificate, parameters or hook; otherwise unsigned. */
@@ -72,6 +88,11 @@ module.exports = {
     appBundleId: APP_BUNDLE_ID,
     appCategoryType: "public.app-category.developer-tools",
     icon: ICON,
+    // The website's Open in Genex links (`genex://game/<slug>`, main/play/game-links.ts): macOS
+    // learns the scheme from the app's Info.plist; Windows and Linux from the app at its start.
+    protocols: [{ name: "Genex", schemes: [GAME_LINK_SCHEME] }],
+    // Each platform is made on its own runner, so only a Linux build carries the repository key.
+    ...(process.platform === "linux" ? { extraResource: [LINUX_REPOSITORY_KEY] } : {}),
     asar: {
       unpack:
         "{**/dist/resources/**,**/node_modules/node-pty/**,**/node_modules/@anthropic-ai/sandbox-runtime/vendor/**}",
@@ -81,6 +102,9 @@ module.exports = {
       /^\/node_modules\/@genex-ai\/cli-demo(?:\/|$)/,
       /\/node_modules\/@anthropic-ai\/claude-agent-sdk-[^/]+(?:\/|$)/,
       /\/node_modules\/@openai\/codex(?:-[^/]+)?(?:\/|$)/,
+      // The build's download cache (vendored Git and cua-driver, their archives). It is no module,
+      // so the packager's prune keeps it; what ships from it is copied where it belongs.
+      /^\/node_modules\/\.cache($|\/)/,
       /^\/(?!dist(?:\/|$)|node_modules(?:\/|$)|package\.json$|LICENSE(?:\..*)?$|THIRD-PARTY-NOTICES\.md$)/,
       /^\/archive($|\/)/,
       /^\/src($|\/)/,
@@ -96,13 +120,19 @@ module.exports = {
       /^\/tsconfig\.json$/,
       /\.map$/,
     ],
+    // Windows: the Git for Windows the build vendored, beside the app as resources\git, so agents
+    // have Git Bash and the snapshots have git on a PC without Git (scripts/package-git.cjs).
+    afterCopy: [async ({ buildPath, platform }) => copyBundledGit(buildPath, platform)],
     // Forge's prune keeps the trees of ignored dependencies and every platform's node-pty and
-    // sandbox-runtime helpers; drop what the target never loads (scripts/package-prune.cjs).
+    // sandbox-runtime helpers; drop what the target never loads (scripts/package-prune.cjs). Then
+    // Windows: the Visual C++ runtime DLLs what is left imports (srt-win.exe's vcruntime140.dll),
+    // beside each importer, since Windows does not include them (scripts/package-vc-runtime.cjs).
     afterPrune: [
       async ({ buildPath, platform, arch }) => {
         await pruneUnreachable(buildPath);
         await trimNodePty(buildPath, platform, arch);
         await trimSandboxVendor(buildPath, platform, arch);
+        await copyVcRuntime(buildPath, platform);
       },
     ],
     extendInfo: {
@@ -172,6 +202,9 @@ module.exports = {
         description: SUMMARY,
         setupExe: WINDOWS_SETUP_EXE,
         setupIcon: `${ICON}.ico`,
+        // Shown while Setup installs, and behind the first start's setup screen: a dithered ripple
+        // field that bends where it crosses the G.
+        loadingGif: path.join(__dirname, "src", "renderer", "media", "installing.gif"),
         noMsi: true,
         ...(windowsSign ? { windowsSign } : {}),
       },
@@ -197,6 +230,7 @@ module.exports = {
           icon: `${ICON}.png`,
           depends: LINUX_DEPENDS,
           scripts: DEB_SCRIPTS,
+          mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },
     },
@@ -217,6 +251,8 @@ module.exports = {
           icon: `${ICON}.png`,
           requires: LINUX_DEPENDS,
           license: "MIT",
+          scripts: RPM_SCRIPTS,
+          mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },
     },

@@ -49,6 +49,7 @@ import { git } from "../../substrate/snapshots.ts";
 import {
   DelegateEventType,
   EngineError,
+  type DelegatePermissions,
   type DelegateRequest,
   type DelegateResult,
   type LiveToolResult,
@@ -74,9 +75,15 @@ import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { chatTurnOf, openDoor, recordSteerDelivered, settleDoor, type SteerDoor } from "./chat-steer.ts";
 import type { LeadAnswers, LeadSession, PersonSession } from "./chat-permissions.ts";
 import type { ActiveDelegation } from "./internals.ts";
-import { PluginCapability, type PluginAppliedSet, type PluginInfo, type PluginTool } from "../../shared/plugins.ts";
+import {
+  CallCutOff,
+  PluginCapability,
+  type PluginAppliedSet,
+  type PluginInfo,
+  type PluginTool,
+} from "../../shared/plugins.ts";
 import type { PluginRegistry, PluginSnapshot } from "../../substrate/plugins/registry.ts";
-import { type CutOffCall, clearCutOffs, peekCutOffs } from "./cut-off-calls.ts";
+import { type CutOffCall, clearCutOffs, noteCutOff, peekCutOffs } from "./cut-off-calls.ts";
 import { clearUnsaved, peekUnsaved, type UnsavedFile } from "./unsaved-files.ts";
 import {
   addedNotice,
@@ -106,10 +113,13 @@ import { readEngineBinding } from "../../substrate/game-engine-binding.ts";
 import { FolderHolds, kindPending, type ProjectFact } from "../../shared/project-facts.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
 import type { ConnectorCallOptions } from "./plugin-tools.ts";
-import { workerHolder } from "./plugin-locks.ts";
+import { type PersonWrote, personWroteWatch, workerHolder } from "./plugin-locks.ts";
+import { noteAsking, noteEvent, type ToolsInFlight, toolsInFlight } from "./steer-cut.ts";
 import { type ToolOffered, toolAllowRule } from "../../substrate/plugins/tool-allow.ts";
 import { type RunCreditCap, runCreditCap } from "./run-credits.ts";
 import { checkpointWords } from "./plugin-hooks.ts";
+import { appEngineOf } from "./cover-reel.ts";
+import { appCoverGuidance } from "./cover-reel-prompts.ts";
 import { CHECKPOINT_TOOL } from "../../substrate/engines/studio-tool-prompts.ts";
 import { HookEvent } from "../../shared/plugin-hooks.ts";
 
@@ -334,24 +344,25 @@ interface DelegationSession {
    * A lead in its game's folder: the worktree it leads, as its seat checked it (`seat.leads`), or the
    * game folder itself for a lead in place. Its plugins act there (the binding's directory), as a
    * director's in its worktree, so what they deliver reaches the game when the run lands; and, the
-   * lead not being the chat's turn, another turn's end leaves its consent cards and connector calls
-   * going. Null otherwise.
+   * lead not being the chat's turn, neither another turn's end nor its own withdraws its plugin
+   * cards: only the person, the timeout or a Stop settles them. Its connector calls end with its own
+   * session (`ended`). Null otherwise.
    */
   leads: string | null;
   /** A Loop's lead in the game folder itself (`seat.leadsInPlace`): its plugins act where it sits. */
   leadsInPlace: boolean;
   abort: AbortController;
-  /**
-   * Aborted once the delegation returns. A lead's plugin and connector calls end with it besides
-   * `abort`: no turn of the chat's ending withdraws their consent cards or calls, so the end of its
-   * own session must, or a card approved later would run a tool for a session that is gone.
-   */
+  /** Aborted once the delegation returns: a lead's connector calls end with it besides `abort`. */
   ended: AbortController;
   mirror: DelegationMirror;
   /** Steer: the chat turn this session answers, when it is the chat's own or a lead's (`chat-steer.ts`). */
   chatTurn?: string;
   /** Its input mid-turn, when it answers a chat turn on an engine that reads messages as it works. */
   door?: SteerDoor;
+  /** A chat turn's session: its tool calls in flight, read from its events (`steer-cut.ts`), so a steer cuts it between them. */
+  tools?: ToolsInFlight;
+  /** A chat turn's session: the person's word that ends its plugin calls' waits for a lock (`engine.steer`). */
+  personWrote?: PersonWrote;
   /** The run's controls it keeps: the chat's own session after a run it led (`honouredRunControls`). */
   runControls?: RunControlGrant;
   /**
@@ -789,14 +800,11 @@ export class DelegationService {
     const shape = await readProjectShape(initialRoot).catch(() => null);
     if (shape?.runtime !== TargetRuntime.Bridge)
       return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
-    const tools = computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
+    // Started on the session's first move, never here: every chat turn is handed a computer, and a
+    // native game opens a window of its own. Until it runs, the tool offers what such a game may do.
+    return computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
       bridge: { sandbox: this.#core.sandbox, engine: (engine, root) => this.#core.startEngine(engine, root) },
     });
-    // A Play Protocol game says what it can do only once it runs: start it now, so the tool the
-    // session is handed offers only what this game can do. A game that fails to start is said on
-    // the first call.
-    await tools.prepare().catch(() => {});
-    return tools;
   }
 
   /**
@@ -2269,6 +2277,7 @@ export class DelegationService {
       ...(runControls ? { runControls } : {}),
       liveRun: liveRunOf(p, director, seat),
       ...(chatTurn && target.steersMidTurn ? { door: openDoor() } : {}),
+      ...(chatTurn ? { tools: toolsInFlight(target.engineId), personWrote: personWroteWatch() } : {}),
       threadId,
       hostTools: hostToolsEligible(p, target.candidate, seat),
       offered: toolAllowRule(p.toolAllow),
@@ -2583,7 +2592,7 @@ export class DelegationService {
       ...(p.compact ? { compact: true } : {}),
       ...(extraReads.length ? { extraReads } : {}),
       ...(denyReads.length ? { denyReads } : {}),
-      ...askFields(reach),
+      ...askFields(reach, session.tools),
       ...(p.interviewTools?.length ? { interviewTools: p.interviewTools } : {}),
       ...this.#coordinatorFields(p),
       ...(Array.isArray(p.images) && p.images.length
@@ -2658,7 +2667,11 @@ export class DelegationService {
    */
   #onEvent(session: DelegationSession): NonNullable<DelegateRequest["onEvent"]> {
     return (event) => {
-      if (event.type !== DelegateEventType.SteerDelivered) return session.mirror.onEvent(event);
+      if (event.type !== DelegateEventType.SteerDelivered) {
+        // Read before it is mirrored: a steer waiting to cut this session hears its tools ended.
+        if (session.tools) noteEvent(session.tools, event);
+        return session.mirror.onEvent(event);
+      }
       const { chatTurn } = session;
       const { id } = event.payload;
       const chatsOwn = chatTurn && !session.leadTurn;
@@ -2701,6 +2714,7 @@ export class DelegationService {
       toldWhereLeadToolsWork ? leadToolsNote() : "",
       this.#core.mcp.guidance(tools.mcp),
       tools.cover.length ? COVER_TOOL_GUIDANCE : "",
+      appCoverNote(p, session),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -2827,25 +2841,28 @@ export class DelegationService {
       return this.#x.setGameCover(p.project, args, p.threadId, signal);
     if (session.runControls && isGrantedRunControl(name, session.runControls))
       return this.#x.conversation.runControl(session.threadId, session.runControls, name, args, session.abort);
-    // A lead's plugins act on the build it leads, never the live game folder it sits in, and its
-    // calls outlive the chat's turns, ending with its own session instead.
+    // A lead's plugins act on the build it leads, never the live game folder it sits in. Its plugin
+    // calls outlive the chat's turns and its own: a Loop's lead ends its turn to wait for its workers,
+    // and a card it asked with (a package, a store item) stays the person's to answer. Stop ends them.
     const directory = session.leads ?? target.cwd;
     const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
     const lead = session.leads !== null;
-    const callSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
+    // A connector call waits on a service, not on the person: it ends with the lead's own session.
+    const connectorSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
-    const holder = holderField(session);
+    // A chat turn's call stops waiting for one once the person writes: its signal taken now, as the call starts.
+    const locking = { ...holderField(session), ...personWroteField(session) };
     // Connector first: its names are `<connector>__<tool>`, and the registry is the
     // only thing that can say whether one of them is really on this list. A call to one the
     // session was not handed (another game's kind, a narrowed session's) is refused before
     // anything is asked or run.
     if (this.#core.mcp.owns(name)) {
       if (!handed(session, tools, name)) throw new Error(MESSAGE.unknownTool(name));
-      return this.#x.pluginTools.invokeConnectorTool(name, args, binding, callSignal, {
+      return this.#x.pluginTools.invokeConnectorTool(name, args, binding, connectorSignal, {
         outlivesTurn: lead,
         ...this.#runConsentFor(name, p, session),
         ...callRunField(session),
-        ...holder,
+        ...locking,
       });
     }
     if (!tools.plugins.some((tool) => tool.name === name)) {
@@ -2853,14 +2870,14 @@ export class DelegationService {
       if (!handler) throw new Error(MESSAGE.unknownTool(name));
       return handler(name, args);
     }
-    const result = await this.#x.pluginTools.invokePluginTool(name, args, binding, callSignal, {
+    const result = await this.#x.pluginTools.invokePluginTool(name, args, binding, signal, {
       engine: target.engineId,
       selfCapture: grants.selfCapture,
       director: grants.director,
       attribution: session.attribution,
       credits: session.credits,
       lead,
-      ...holder,
+      ...locking,
     });
     return pluginAnswer(result);
   }
@@ -2972,6 +2989,10 @@ export class DelegationService {
       clearCutOffs(this.#x.cutOffCalls, p.threadId, tools.cutOffs);
       clearUnsaved(this.#x.unsavedFiles, p.threadId, tools.unsaved);
     }
+    // Calls it made once a background task woke it past its turn's end: the CLI refused them in the
+    // person's words, so the next session hears they were Genex's and are not done.
+    for (const call of result.cutAfterTurn ?? [])
+      noteCutOff(this.#x.cutOffCalls, p.threadId, { ...call, reason: CallCutOff.TurnEnded });
     const resumable = threadId && sessionId && (isChatsOwnSession(p) || session.chatLead);
     if (resumable) {
       await this.rememberContractor(threadId, {
@@ -3042,6 +3063,16 @@ async function withAccounts(
   );
 }
 
+/**
+ * The cover guidance for the session that owns the build of a game made as an app: the chat's own
+ * session or a Loop's lead, with host tools. Nothing for a web game, a worker or a reader.
+ */
+function appCoverNote(p: DelegateParams, session: DelegationSession): string {
+  const owner = session.hostTools && (isChatsOwnSession(p) || session.leads !== null);
+  const engine = owner ? appEngineOf({ facts: session.facts }) : null;
+  return engine ? appCoverGuidance(engine) : "";
+}
+
 /** A session's tools before they are prepared: the plugins of the snapshot it began with, and nothing else yet. */
 function sessionTools(
   plugins: Pick<PluginSnapshot, "tools" | "guidance" | "applied">,
@@ -3074,6 +3105,11 @@ function sessionTools(
     judgeCaller: null,
     judgeBrief: "",
   };
+}
+
+/** The signal a chat turn's call takes as it starts: the person writing in its chat ends its wait for a lock. */
+function personWroteField(session: Pick<DelegationSession, "personWrote">): { personWrote?: AbortSignal } {
+  return session.personWrote ? { personWrote: session.personWrote.current.signal } : {};
 }
 
 /**
@@ -3119,6 +3155,8 @@ function activeDelegation(
     settled: session.ended.signal,
     ...(session.chatTurn ? { chatTurn: session.chatTurn } : {}),
     ...(session.door ? { steer: session.door } : {}),
+    ...(session.tools ? { tools: session.tools } : {}),
+    ...(session.personWrote ? { personWrote: session.personWrote } : {}),
     ...(worker ? { worker: { id: worker.id, chatThreadId: worker.chatThreadId } } : {}),
     ...(session.reviewer ? { reviewer: session.reviewer } : {}),
     ...(session.leadsInPlace && session.liveRun ? { leadsInPlace: session.liveRun } : {}),
@@ -3244,12 +3282,24 @@ function callRunField(
 
 /**
  * How the session asks, if it does: the chat's own session's permissions, a lead's or coordinator's,
- * or a worker's seat in the chat's mode.
+ * or a worker's seat in the chat's mode. A chat turn's call waiting for the person's answer is not
+ * in flight for a cut (`noteAsking`): a message that switches the turn does not wait for the card.
  */
-function askFields({ person, lead, worker }: SessionReach): Partial<DelegateRequest> {
+function askFields({ person, lead, worker }: SessionReach, tools?: ToolsInFlight): Partial<DelegateRequest> {
   if (worker) return { worker };
-  if (person) return { permissions: person.request };
+  if (person) return { permissions: tools ? askingNoted(person.request, tools) : person.request };
   return lead ? { leadAsks: lead.request } : {};
+}
+
+/** The chat's permissions, each question noted as asking while its card waits for the person. */
+function askingNoted(permissions: DelegatePermissions, tools: ToolsInFlight): DelegatePermissions {
+  return {
+    ...permissions,
+    ask: (request, signal) => {
+      noteAsking(tools, request.toolUseId, true);
+      return permissions.ask(request, signal).finally(() => noteAsking(tools, request.toolUseId, false));
+    },
+  };
 }
 
 /** A chat turn's session on an engine that reads messages mid-turn: its engine says once whether it takes them. */

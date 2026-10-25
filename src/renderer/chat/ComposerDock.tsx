@@ -4,6 +4,7 @@
  * the plan to approve and the intake's question — and the composer itself (`children`) is last.
  */
 import { type ComponentProps, type JSX, type ReactNode, useId, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { CONFIRMATION_INPUT_MAX_CHARS } from "../../shared/plugins.ts";
 import type { PlanReviewRecord } from "../../shared/composer.ts";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
@@ -91,7 +92,7 @@ function ConsentCard({
     <ChatQuestion
       title={consentTitle(entry)}
       description={subtitle}
-      reopenLabel="Review permission request"
+      reopenLabel={t("Review permission request")}
       choices={consentChoices(entry)}
       onConfirm={(choice) =>
         onConsent(
@@ -106,7 +107,7 @@ function ConsentCard({
       {entry.consentExport && <ExportReview review={entry.consentExport} />}
       <details className="group/request mt-2">
         <summary className="chat-disclosure">
-          Request details
+          {t("Request details")}
           <Icon name="chevron-right" size={14} className="chat-chevron group-open/request:rotate-90" />
         </summary>
         <p className="mt-1 text-chat-sub text-ink-3 [overflow-wrap:anywhere]">{entry.text}</p>
@@ -199,7 +200,7 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
         <ChatQuestion
           title={entry.text}
           choices={entry.choices}
-          confirmLabel="Send answer"
+          confirmLabel={t("Send answer")}
           disabled={questionsDisabled}
           onAnswerText={onAnswerQuestion}
           onChatAbout={onChatAbout}
@@ -253,9 +254,9 @@ export function ComposerDock(props: ComposerDockProps): JSX.Element {
     <div data-chat-composer className="max-h-full min-w-0 shrink-0 overflow-y-auto px-3.5 pb-3.5">
       {connectModel && (
         <div className="mb-2 text-chat-sub text-ink-3">
-          Connect a model to chat with Studio.
+          {t("Connect a model to chat with Studio.")}
           <Button variant="ghost" onClick={() => openSettings(SettingsSection.Providers)}>
-            Model Providers
+            {t("Model Providers")}
           </Button>
         </div>
       )}

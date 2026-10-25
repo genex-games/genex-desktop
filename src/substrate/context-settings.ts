@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { atomicWriteJson, isJsonObject } from "./fsx.ts";
 import { validateContextPolicy, type ContextPolicy, type ContextSettings } from "../shared/context.ts";
+import { t } from "../shared/i18n.ts";
 import { EngineId } from "../shared/providers.ts";
 
 /**
@@ -21,13 +22,17 @@ const MAX_ENGINE_CHARS = 100;
 const MAX_MODEL_CHARS = 200;
 const MAX_THREAD_CHARS = 100;
 
+/** Refusals; a person reads the functions' words (main sets its language after this loads), the harness `ProviderOwned`. */
 const MESSAGE = {
   InvalidFile: "Invalid context settings",
-  Unreadable:
-    "Context settings could not be read. Repair or restore the host settings file before applying a custom threshold.",
+  Unreadable: () =>
+    t(
+      "Context settings could not be read. Repair or restore the host settings file before applying a custom threshold.",
+    ),
   InvalidSelection: "Invalid context selection",
   ProviderOwned: "The provider's CLI compacts its own sessions at its own point; the studio sets no threshold for it.",
-  ProviderCompacts: "The provider's CLI compacts its own sessions; a custom threshold applies only to local models.",
+  ProviderCompacts: () =>
+    t("The provider's CLI compacts its own sessions; a custom threshold applies only to local models."),
 } as const;
 
 export class ContextPreferences {
@@ -43,7 +48,7 @@ export class ContextPreferences {
       return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, validateContextPolicy(value)]));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-      throw new Error(MESSAGE.Unreadable);
+      throw new Error(MESSAGE.Unreadable());
     }
   }
   #key(engine: string, model: string, threadId?: string) {
@@ -69,7 +74,7 @@ export class ContextPreferences {
   async set(engine: string, model: string, policy: unknown, threadId?: string): Promise<ContextSettings> {
     const value = policy === null ? null : validateContextPolicy(policy);
     if (value?.mode === "custom" && !(await this.get(engine, model, threadId)).configurable)
-      throw new Error(MESSAGE.ProviderCompacts);
+      throw new Error(MESSAGE.ProviderCompacts());
     const operation = this.#tail.then(async () => {
       const values = await this.#read(),
         key = this.#key(engine, model, threadId);

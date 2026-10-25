@@ -243,8 +243,11 @@ conflict, base and facet builders, the Unreal lead's typed workers; `loop/worker
 classic Autopilot's builders keep their own brief. A folder with no
 kind yet is told to start web with `start_web_game` or find a plugin with `plugins_find` (a folder of
 notes is told to read them first); with an engine plugin's kind on offer (`plugins.tools`'s
-`kinds`) every fresh brief until it has a kind asks with the question card, and a brief without the
-card (a local turn's too) names each kind's tool for a request that names that engine. A folder of its own files of a kind no
+`kinds`) every fresh brief until it has a kind asks with the question card (a request naming an
+engine none of its options covers goes to `plugins_find` instead), a resumed session keeps the card
+while the folder has no kind, and a brief without the card (a local turn's too) names each kind's
+tool for a request that names that engine. The web starter's rules reach such a brief as the web
+answer's only. A folder of its own files of a kind no
 rule knows is told to look through them first. Each kind gets its own rules, named by folder when
 there are several. A kind no plugin that is on covers (Unity, Blender, an Unreal plugin, a Godot or
 Unreal project with its plugin off, an unknown one) calls `plugins_find` first, shows the card with
@@ -357,6 +360,10 @@ outlives its session's turn and a harness restart, and stops when its run settle
 `run.settled`), when its worker's chat turn returns, or when Genex quits. The harness neither starts
 one nor writes its `job_started` / `job_ended` records; a start follows the chat's mode at the call
 ([tool permissions](tool-permissions.md#jobs)).
+Job output pauses both pipes when the log writer is full, resumes when it drains, and keeps
+draining without retaining output after the size cap. A normal exit waits for buffered output
+before closing the log; the orphan-pipe deadline still ends an idle or already-capped pipe.
+A failed writer reports its error and releases its pipes rather than leaving a paused job behind.
 So is `app_look`, look-only and in every mode, which a seated reader worker gets as its one host
 tool ([looking at apps](tool-permissions.md#looking-at-apps)).
 
@@ -498,7 +505,9 @@ held, records the round's `checking` step, runs the reviewer as `engine.delegate
 harness may settle a held answer as no answer (a yes that lapsed, a turn that ended), never as a
 yes; the host counts the no's in a row from its own records (`rejectionsInRow`, since the run was
 last opened: a reopened run starts over, a resumed one goes on), writes the outcome and answers
-`stopped` at the cap. A run's start, pause or close drops its held round: a review or settle still
+`stopped` at the cap, unless the settle names more than `FINISH_TIME_LEFT_MS` (20 min) of a timed
+Loop's working time left (`timeLeftMs`, from `time-cap.ts` `timeLeftOf`; an ∞ Loop names none): then
+the no records `timeLeft` and the Loop goes on whatever the row. A run's start, pause or close drops its held round: a review or settle still
 waiting then records nothing more and starts no reviewer. `finish_check` is a
 host-only record: a harness batch carrying one is refused whole. The
 host seats the reviewer in a fresh home of its own (a folder no box writes), reading the lead's folder and the run's captures, with
@@ -520,9 +529,26 @@ a thing looks only from a close front or side picture.
 In a Loop in place, a claim that names what remains while more than `GAPS_FIRST_MIN_MS` (20 min) of
 working time is left reaches no reviewer: the lead is told to work on what remains first
 (`open/finish.ts` `gapsFirst`), and nothing is recorded.
-It answers `{"verdict":"yes"|"no","reasons":[…],"notDone":[…]}`: yes ends the Loop, no goes back to
-the lead with its reasons, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it; an answer that
-says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
+It answers `{"verdict":"yes"|"no","reasons":[…],"done":[…],"notDone":[…]}`: `reasons` say what it
+checked and found, met or not, `done` and `notDone` are short checklist items of what the proof shows
+and what it doesn't show yet; they stay apart in the record and the answer, and only `notDone` is
+what is still to fix on the "Almost there" card, in Builds' "Final look" and in the report
+(`notDoneOf`; a record that names none falls back to its reasons). The chat says nothing per round.
+Every Loop's close that is neither a yes nor a pause writes `run_finished.stillToFix` (`stillToFixOf`):
+the last no's `done` and `notDone`, why it stopped (`StopWhy`: its time, the no's, another end) and
+its hours (`loopHoursOf`); a time-out with no no lists nothing and still has the card. The chat's card
+reads only that, so a page that lost the run's start still shows it. A Stop pauses every Loop (a web
+finish whose landing it refused too; one after the landing ends nothing more), and a pause keeps its
+own reason and Resume. Keep building is offered on the
+chat's newest card until the person writes again, and on Builds' newest ended build, while nothing runs
+or waits paused. It sends through the composer's Loop (`loopOn`) marked `keepBuilding`, and goes once
+it went out. That mark reopens the finished build, or launches the next Loop as the launch tool would (an
+Autopilot run on the base goal plus what is left, its reference, ∞ under `MAX_RUN_HOURS`), with no
+turn deciding (chat-dispatch.ts `keepBuildingNow`); a tap always takes a turn of its own. Yes ends the Loop, no
+goes back to the lead with both, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it, a timed Loop
+only once little time is left; after a row it went on past, a claim whose proof names no file made
+since the last no is turned back before any review (`freshProofIn`), and nothing is recorded. An answer
+that says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
 `finish_check` record the host writes (`checking`, then `accepted`, `rejected` or `unanswered`, with
 the round, the reasons, the count and the reviewer); a claim no engine here can review, or one whose
 model can't hold the brief, asks nothing and records nothing. The whole check fits inside the lead's one call (`LEAD_CALL_MS`,
@@ -1231,6 +1257,14 @@ wrap-up invites no claim). `finish user_asked=` still stops everything at once. 
 `wrap_up` too, and starts no worker once anybody asked to finish; its wrap-up starts when the turn
 that recorded the ask ends.
 
+An ask to stop and start a new Loop is `wrap_up` with `next_goal` (and `next_hours` when named):
+the new Loop rides on the same `run_control` record (`next-loop-record.ts`), and once the run has
+closed `handleRunStart` starts it on the same game with the run's engine, model and roles, as a
+launch from the chat would (`next-loop.ts`); a Stop pressed since starts nothing. Outside a run, the
+chat's own turn always holds the Loop's start for one asked in words (`delegated-turn.ts`
+`autoLaunchFor`), with the Loop switch on or off and after a run it led, finished or paused: the
+hours named win, else the switch's, else until done.
+
 The art director is the one absolute judge (`loop/ship-review.ts`, rubric `judge/ship-review.md`):
 one build, every frame the evidence pass took of a registered camera, the player's eyes and each
 demo's end, then the first, middle and last motion frames and the reference (at most 14), captured
@@ -1380,6 +1414,31 @@ worker's clock stands still (`facet/paused-clock.ts`): its deadline moves on by 
 up to the run's working deadline, as the outage ladder's waits do. A worker the provider ended before
 any round of it was judged gives its goal attempt back (`attempt-refund.ts` `refundProviderAttempt`), so a
 restart is never refused for progress it never had the chance to make.
+
+### A workers' engine that cannot run its sandbox
+
+A worker always runs its commands in a sandbox, never without it: Claude Code's worker box keeps
+`failIfUnavailable: true`, because its sandboxed commands run unasked and the CLI itself is not inside
+ProcessSandbox. On Windows, where Claude Code's own sandbox cannot start, a worker (and an unattended
+builder) runs its commands in Genex's instead: the session gets no box of Claude Code's and none of
+its process-starting built-ins (`Bash`, `PowerShell`, `Monitor`, `REPL`: an allowlist), and runs each
+command through the studio's `run_command` in a `ProcessSandbox` made for the session on its first
+command (`engines/claude-code.ts` `studioShell`, `engines/session-commands.ts`). That box is the one
+Claude Code's would have been: the worker's roots (in Bypass the home folder too), the sign-in homes
+and the never-touch list denied, no network. The host reads the tool as `Bash` (its question card,
+the never-touch screen, the log). Its commands run under Git Bash, one at a time, nothing in the
+background, and a saved "always allow" rule for `Bash` does not cover them. A chat's session runs
+its commands in Bash on a turn the person answers and through `run_command` on an unattended one, so
+a resumed session is told which shell this turn has (`SHELL_THIS_TURN`). Where a CLI still refuses
+its box, it refuses the session before the model says anything, and the engine reports it
+as `StopReason.SandboxUnavailable` with the CLI's own words (`engines/claude-code.ts`
+`sandboxRefusal`); a session that already replied keeps its ordinary failure. The refusal holds that
+engine for an hour across every pool and Loop of the harness (`loop/workers/sandbox-refusal.ts`): a
+director's builder facet stops on its first build (`StopCode.SandboxUnavailable`: no judge, strike,
+outage wait or rollback, its goal attempt given back), a pool worker ends with
+`WorkerStopCode.SandboxUnavailable`, and every later `worker_start` on that engine starts nothing and
+tells the lead to do the work itself, naming the other workers' engine when the host reports it
+signed in. A Loop's person is told once on a decision card, with that engine offered for Workers.
 
 ### Automatic resume
 

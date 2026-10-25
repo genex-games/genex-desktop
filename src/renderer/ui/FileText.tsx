@@ -6,9 +6,20 @@
 import { type JSX, memo, type ReactNode, useMemo } from "react";
 import { type ChatFileLink, type ChatFileRef, fileMentions } from "../../shared/chat-files.ts";
 import { clickFileLink, useChatFileNames, useChatFiles } from "../chat-files.ts";
-import { fileLinkTitle } from "./file-links.ts";
+import { fileLinkTitle, fileNameOfPath } from "./file-links.ts";
+import { Icon } from "./icons.tsx";
 
-export const FileText = memo(function FileText({ text }: { text: string }): JSX.Element {
+/**
+ * The text with its file names as links. With `chips`, a path written out in full shows as a chip
+ * with the file's own name (the path on hover), as a person's message shows the files it carries.
+ */
+export const FileText = memo(function FileText({
+  text,
+  chips = false,
+}: {
+  text: string;
+  chips?: boolean;
+}): JSX.Element {
   const { threadId, lookup } = useChatFiles();
   const mentions = useMemo(() => (threadId ? fileMentions(text) : []), [threadId, text]);
   useChatFileNames(
@@ -20,13 +31,28 @@ export const FileText = memo(function FileText({ text }: { text: string }): JSX.
   for (const mention of mentions) {
     const link = lookup(mention.name);
     if (!link) continue;
+    const short = chips ? fileNameOfPath(mention.name) : null;
     parts.push(text.slice(at, mention.start));
-    parts.push(
-      <FileLink key={mention.start} threadId={threadId} fileRef={{ name: mention.name }} link={link}>
-        {text.slice(mention.start, mention.end)}
-      </FileLink>,
-    );
     at = mention.end;
+    parts.push(
+      short ? (
+        <FileLink
+          key={mention.start}
+          threadId={threadId}
+          fileRef={{ name: mention.name }}
+          link={link}
+          label={short}
+          className="file-chip"
+        >
+          <Icon name="file" size={13} />
+          <span className="truncate">{short}</span>
+        </FileLink>
+      ) : (
+        <FileLink key={mention.start} threadId={threadId} fileRef={{ name: mention.name }} link={link}>
+          {text.slice(mention.start, mention.end)}
+        </FileLink>
+      ),
+    );
   }
   if (!at) return <>{text}</>;
   parts.push(text.slice(at));

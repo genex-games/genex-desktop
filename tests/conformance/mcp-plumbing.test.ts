@@ -760,7 +760,7 @@ it("bundled Unreal Editor starts off, then finds the set-up project's editor fro
       "error" in answer ? errorMessage(answer.error) : JSON.stringify(answer.value),
     );
     assert.match(none, /set up/i, "with no project set up the agent learns what to do");
-    assert.match(none, /Unreal button/);
+    assert.match(none, /unreal__use-project/, "the agent sets a project up itself by linking it");
     assert.match(found, /21 toolsets/, "the bridge reached the set-up project's own port");
     assert.match(found, /Drift/, "and names the project that answered");
   } finally {

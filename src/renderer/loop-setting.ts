@@ -177,6 +177,7 @@ export function autopilotSendOptions(
     ...(autopilot.hours !== null ? { hours: autopilot.hours } : {}),
     ...(autopilot.frames.length ? { frames: autopilot.frames } : {}),
     ...(autopilot.reviewPlan ? { reviewPlan: true } : {}),
+    ...(autopilot.keepBuilding ? { keepBuilding: true } : {}),
     ...(roles ? { roles } : {}),
   };
 }

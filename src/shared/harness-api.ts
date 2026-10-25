@@ -121,11 +121,15 @@ export interface CapturedImage extends CapturedFile {
   data: string;
 }
 
-/** A finish check's round as the host answers it: the reviewer's yes or no with reasons, or no answer and why. */
+/** A finish check's round as the host answers it: the reviewer's yes or no with reasons and what isn't done, or no answer and why. */
 export interface FinishRoundAnswer {
   round: number;
   step: FinishCheckStep;
   reasons?: string[];
+  /** What the reviewer found not done, when it named any. */
+  notDone?: string[];
+  /** What the reviewer found done, in a few words each, when it named any. */
+  done?: string[];
   why?: string;
 }
 
@@ -512,6 +516,11 @@ export interface HarnessHostApi {
       pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
+  /**
+   * The language Genex speaks (Settings, else the computer's): its tag and its own name. An agent
+   * answers Genex's own messages in it (a resume, a continue), and the person in theirs.
+   */
+  "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };
@@ -561,19 +570,23 @@ export interface HarnessHostApi {
    * End the held round of a run: the host records its outcome and counts the no's in a row from its
    * own records (`stopped` once they reach the cap). `unanswered` turns the held answer into no
    * answer, with why (a yes that lapsed, a turn that ended); nothing turns a no or no answer into a yes.
+   * `timeLeftMs`, a timed Loop's working time left: with more than `FINISH_TIME_LEFT_MS` no row of
+   * no's stops it (`timeLeft`); an ∞ Loop names none.
    */
   "finish.settle": {
-    params: { project: string; runId: string; round: number; unanswered?: string | null };
-    result: FinishRoundAnswer & { rejections: number; stopped: boolean };
+    params: { project: string; runId: string; round: number; unanswered?: string | null; timeLeftMs?: number | null };
+    result: FinishRoundAnswer & { rejections: number; stopped: boolean; timeLeft?: boolean };
   };
   /**
    * Steer: messages the person sent while the chat's turn works, into the session answering that
    * turn (`chatTurn` is `into`). `accepted` lists what the session took; `how` is how (`SteerDelivery`
-   * in `shared/message-queue.ts`), null when it took nothing. `interrupt: false` takes them only
-   * into a session that reads them mid-turn, and never cuts one short.
+   * in `shared/message-queue.ts`), null when it took nothing. A session is cut only between tool
+   * calls, never inside one. `interrupt: false` takes them only into a session that reads them
+   * mid-turn, and never cuts one short; `native: false` never hands them to it mid-turn: the session
+   * is cut at its next step (a message that changes how the turn runs, steer-switch.ts).
    */
   "engine.steer": {
-    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean };
+    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean; native?: boolean };
     result: { how: SteerDelivery | null; accepted: string[] };
   };
   "coordinator.tool": {
@@ -910,6 +923,7 @@ export const HostMethod = {
   RunExec: "run.exec",
   EngineDescribe: "engine.describe",
   StudioContext: "studio.context",
+  StudioLanguage: "studio.language",
   ContextPolicy: "context.policy",
   LearningEnabled: "learning.enabled",
   EngineComplete: "engine.complete",
@@ -1091,7 +1105,7 @@ export const HARNESS_PARAM_SCHEMAS = {
     proof: z.array(z.string().max(REVIEWER_READS_CHARS)).max(FINISH_NAMES_MAX),
     observers: z.array(z.string().max(REVIEWER_READS_CHARS)).max(FINISH_NAMES_MAX),
   }),
-  // Settling names nothing but its round: a field it does not take (a step, a verdict) is refused.
+  // Settling names its round, why it has no answer and the time left: a field it does not take (a step, a verdict) is refused.
   "finish.settle": z.strictObject({
     project,
     runId: runIdSegment,
@@ -1102,6 +1116,7 @@ export const HARNESS_PARAM_SCHEMAS = {
       .min(1)
       .max(FINISH_REASON_CHARS + 1)
       .nullish(),
+    timeLeftMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish(),
   }),
   "preview.computer": z.object({ project, root: text, handle: text, runId: optionalText, facetId: optionalText }),
   "desktop.computer": z.object({ project }),

@@ -1,9 +1,11 @@
 import type { McpConnector } from "../../shared/mcp.ts";
 import { isCredentialName } from "../../shared/redact.ts";
 import { McpSecretsLocked, secretKey, type SecretPort } from "./store.ts";
+import { t } from "../../shared/i18n.ts";
 
+/** What the person's own Connect reads when a lock overtook its unlock. */
 const MESSAGE = {
-  Cancelled: "Connection cancelled",
+  Cancelled: () => t("Connection cancelled"),
 } as const;
 
 const keysOf = (connector: McpConnector): string[] => [
@@ -89,7 +91,7 @@ export class McpSessionSecrets implements SecretPort {
     const keys = keysOf(connector);
     const pending = (async () => {
       const found = await this.#readUnheld(keys);
-      if ((this.#epochs.get(id) ?? 0) !== epoch) throw new Error(MESSAGE.Cancelled);
+      if ((this.#epochs.get(id) ?? 0) !== epoch) throw new Error(MESSAGE.Cancelled());
       for (const [key, value] of found) this.#values.set(key, value);
       return found.size > 0;
     })().finally(() => {

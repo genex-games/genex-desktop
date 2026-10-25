@@ -179,7 +179,7 @@ let busySince: number | null = null;
 
 function render(): void {
   const panel = <ChatPanel {...props} events={events} stateEvents={events} status={status} busySince={busySince} />;
-  // Owned builds run development React under StrictMode (renderer/main.tsx); the fixture matches its build.
+  // Owned builds run development React under StrictMode (renderer/studio-entry.tsx); the fixture matches its build.
   root.render(process.env.NODE_ENV === "development" ? <StrictMode>{panel}</StrictMode> : panel);
 }
 const append = (...added: EventEnvelope[]): void => {

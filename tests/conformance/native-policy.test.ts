@@ -120,6 +120,43 @@ test("plugin, connector, terminal, job and Privacy settings channels answer only
   assert.deepEqual(await listeners.get("studio:games")!(other, {}), { ok: true, value: [] });
   assert.equal(ran, 6);
 });
+test("the store's and Create › Items' channels answer only Studio's main frame", async () => {
+  const { ipc, listeners } = recorder();
+  const handle = createIpcHandle(ipc, { fixture: false, isStudioUi });
+  // Each buys with the account's coin, answers its purchase sheet, publishes or shares its items, or
+  // adds an item to one of its games: never a plugin page or a game's frame.
+  const channels = [
+    "studio:store.items",
+    "studio:store.buy",
+    "studio:store.answer",
+    "studio:store.claim",
+    "studio:store.report",
+    "studio:items.selling",
+    "studio:items.put-on-sale",
+    "studio:items.take-off-sale",
+    "studio:items.shared",
+    "studio:items.add",
+    "studio:items.remove",
+  ] as const;
+  const ran: string[] = [];
+  for (const channel of channels)
+    handle(channel, () => {
+      ran.push(channel);
+      throw new Error("handled");
+    });
+  const subframe = { sender: studio.sender, senderFrame: "plugin-panel-frame" },
+    other = { sender: "game-webcontents", senderFrame: "game-frame" };
+  for (const channel of channels) {
+    for (const event of [subframe, other])
+      assert.deepEqual(
+        await listeners.get(channel)!(event, {}),
+        { ok: false, error: "This action is restricted to Studio UI" },
+        channel,
+      );
+    assert.deepEqual(await listeners.get(channel)!(studio, {}), { ok: false, error: "handled" }, channel);
+  }
+  assert.deepEqual(ran, [...channels]);
+});
 test("a channel is never both fixture-safe and native", () => {
   assert.deepEqual(
     [...FIXTURE_SAFE_CHANNELS].filter((channel) => FIXTURE_BLOCKED_CHANNELS.has(channel)),

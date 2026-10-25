@@ -48,7 +48,6 @@ async function hostWith() {
         release: async () => {
           released.push(built.length);
         },
-        prepare: async () => {},
       };
     },
   };

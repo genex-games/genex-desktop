@@ -17,9 +17,10 @@ const USE = agentTool(RobloxTool.UseProject);
 const NEW_GAME = agentTool(RobloxTool.NewGame);
 const SHOW_STEPS = agentTool(RobloxTool.ShowSteps);
 const ADD_LUAU = agentTool(RobloxTool.AddLuauChecks);
+const FINISH = agentTool(RobloxTool.FinishSetup);
 
 /** What Restart Studio does, as the agent passes it on. */
-const RESTART_DOES = `${RESTART} quits Studio (Studio asks the person to save, as it always does), turns its MCP server on while it is closed and opens it again; the person approves it on a card`;
+const RESTART_DOES = `${RESTART} quits Studio (Studio asks the person to save, as it always does), turns its MCP server on while it is closed and opens it again`;
 
 /** The one click left to the person where Genex can't click and Studio has no settings file to change. */
 const PERSONS_CLICK = `If it answers that Studio has no settings file yet, that one click is the person's: tell them ${MCP_SWITCH_CLICK_PATH}.`;
@@ -28,8 +29,11 @@ const PERSONS_CLICK = `If it answers that Studio has no settings file yet, that 
 const CLICKING_TURN =
   "If that message is already in front of you in this turn, you are that turn: click it now with the desktop tool. Otherwise end this turn now and don't click anything yourself.";
 
+/** Get Roblox Studio under way, as the agent passes it on. */
+const GETTING = `Genex is getting Roblox Studio from Roblox. When Studio opens, the person signs in to Roblox there (only they can); Genex then quits Studio normally, sets it up and opens it again, so don't call other setup tools meanwhile. ${SHOW_STEPS} shows them where it stands, and you are told once Studio answers.`;
+
 export const SETUP_PROMPTS = {
-  NotInstalled: `Roblox Studio isn't on this computer. Call ${GET_STUDIO}: it downloads Studio from Roblox (the person approves a card), installs and sets it up. Signing in to Roblox in the Studio that opens is the person's; Genex finishes the rest.`,
+  NotInstalled: `Roblox Studio isn't on this computer. Call ${GET_STUDIO}: it downloads Studio from Roblox, installs and sets it up. Signing in to Roblox in the Studio that opens is the person's; Genex finishes the rest.`,
   NotOpen: `Roblox Studio isn't open. Call ${OPEN}, which opens this game's place; once Studio has started, retry.`,
   NotSetUp: `The Genex helper isn't in Roblox Studio yet, and Genex adds it only while Studio is closed. Call ${RESTART}: it quits Studio (Studio asks the person to save), sets it up and opens it again.`,
   NotSetUpClosed: `The Genex helper isn't in Roblox Studio yet. Call ${SETUP} while Studio is closed.`,
@@ -54,13 +58,26 @@ export const SETUP_PROMPTS = {
   Quit: "Roblox Studio closed; it asked to save anything unsaved first.",
   QuitInUse: (title: string) => `A build of ${title} is using Roblox Studio, so Genex leaves it open.`,
   QuitNotRunning: "Roblox Studio isn't open.",
-  Getting: `Genex is getting Roblox Studio from Roblox. When Studio opens, the person signs in to Roblox there (only they can); Studio then closes by itself, and Genex sets it up and opens it again. ${SHOW_STEPS} shows them where it stands.`,
+  Getting: GETTING,
+  /** Getting Studio for a game that had no place: its new one is made and linked already. */
+  GettingPlace: (name: string) =>
+    `Genex made this game's new place, ${name}, and linked it; Studio opens with it once it is set up. ${GETTING}`,
   AlreadyInstalled: (version: string | undefined) =>
     `Roblox Studio ${version ? `${shortVersion(version)} ` : ""}is already on this computer.`,
   Words: (words: string) => words,
-  PlacesNote: `Link this game to one with ${USE} (a place open in Studio by its label, or a file by its full path); ask the person which when several could be theirs. ${NEW_GAME} makes a new one. Places in Documents that Studio didn't open lately aren't listed: macOS asks the person before Genex reads that folder.`,
+  PlacesNote: `${NEW_GAME} makes this game a new place, the default. Link one of these with ${USE} (a place open in Studio by its label, or a file by its full path) only when the person named it or asked to use one of theirs; ask them which when several could be. Places in Documents that Studio didn't open lately aren't listed: macOS asks the person before Genex reads that folder.`,
   LuauAdded: (words: string) => `${words} Run check-scripts again.`,
   ChecksNotAdded: `Luau checks aren't added yet, so nothing was checked. Call ${ADD_LUAU}: it downloads them (the person approves a card); meanwhile read your changes over against the luau skill.`,
+  /** The steps card's word once every step is done, so the chat goes on by itself. */
+  Ready:
+    "Roblox Studio is ready: it is set up, signed in and answering Genex, and this game builds in its place. Carry on with what the person asked for.",
+  /** The steps card's word when Get Roblox Studio stopped by itself. */
+  GetStudioStopped: (why: string) =>
+    `Getting Roblox Studio stopped: ${why} Call ${FINISH} to try again; if what stopped it is the person's to fix, tell them in one line.`,
+  /** Set it up for me with only signing in left. */
+  SignInLeft: `Genex has done every step it can: signing in to Roblox in Studio is the person's. Tell them in one line; you are told once Studio answers.`,
+  ForMeDone:
+    "Roblox Studio is set up and answering Genex, and this game builds in its place: nothing is left to set up.",
   /** The places tool's name, for other prompts. */
   Places: PLACES,
   AddLuau: ADD_LUAU,

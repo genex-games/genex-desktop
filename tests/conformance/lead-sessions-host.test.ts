@@ -1689,6 +1689,50 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
     );
   });
 
+  // A Loop's lead asks (installing a package, listing a store item) and ends its turn to wait for
+  // its workers: its card waited four minutes and was declined "by stop" as that turn returned, so
+  // nobody could approve it. The card is the person's to answer, whatever the lead's turn does.
+  it("keeps the card a lead's turn left open after that turn ends, until the person answers or a Stop", async () => {
+    const { core, threadId, delegate, leadBrief, whileRunning } = await leadChat();
+    const { answers } = standInHostTools(core);
+    answers.plugin = async (binding, signal) => {
+      const confirmed = { name: "deliver", description: "Deliver an asset", confirmation: "Deliver the asset?" };
+      const { approved, by } = await core.requestConsent("fixture", confirmed as never, {}, binding as never, signal);
+      return approved ? "delivered" : `declined by ${by}`;
+    };
+    let asked: Promise<unknown> = Promise.resolve();
+    // The lead asks and ends its turn without waiting for the answer.
+    whileRunning(async (request) => {
+      asked = request.onLiveTool!(PLUGIN_TOOL.name, {}).catch((err: Error) => err.message);
+    });
+    const consents = async (state: string) =>
+      (await core.store.listEvents(threadId)).flatMap((event) => {
+        const custom = customRecord(event.data);
+        const consent = custom?.payload as { consentId?: string; state?: string } | undefined;
+        return custom?.event_type === "plugin_consent" && consent?.state === state ? [consent.consentId!] : [];
+      });
+    const newCard = async (known: string[]) => {
+      let card: string | undefined;
+      for (let waited = 0; card === undefined && waited < 200; waited++) {
+        card = (await consents("pending")).find((id) => !known.includes(id));
+        if (card === undefined) await sleep(MIRROR_POLL_MS);
+      }
+      assert.ok(card, "the lead's card is in the chat");
+      return card;
+    };
+
+    await delegate(leadBrief());
+    const card = await newCard([]);
+    assert.deepEqual(await consents("declined"), [], "its turn's end declined nothing");
+    assert.equal(core.resolveConsent(card, true), true, "the card still waits for the person");
+    assert.equal(await asked, "delivered", "and the tool runs once they approve");
+
+    await delegate(leadBrief());
+    await newCard([card]);
+    await core.stopThread(threadId);
+    assert.equal(await asked, "declined by stop", "a Stop still withdraws a card a turn left open");
+  });
+
   // A connector action nobody saved "always allow" for asks the person first; a lead's card for it
   // outlives the chat's other turns as its call does, and ends with a Stop.
   it("keeps the card its connector action asks with through the chat's other turns", async () => {
@@ -1765,9 +1809,10 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
     assert.deepEqual(heard, ["declined by user", "delivered"]);
   });
 
-  // No turn of the chat's ending withdraws them, so the end of the lead's own session must: a card
-  // left waiting after it would run the tool for a session that is gone, once approved.
-  it("withdraws its card and ends its call when its own session ends first", async () => {
+  // Flipped: the end of the lead's own session withdrew its card too ("declined" by stop), so a
+  // Loop's lead, which ends its turn to wait for its workers, could never be answered. Its card now
+  // waits for the person; its connector call, waiting on a service rather than on them, still ends.
+  it("ends its connector call when its own session ends first, and leaves its card for the person", async () => {
     const { core, threadId, delegate, leadBrief, whileRunning } = await leadChat();
     const { calls, answers } = standInHostTools(core);
     answers.plugin = async (binding, signal) => {
@@ -1781,23 +1826,29 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
       });
     const left: Array<Promise<unknown>> = [];
     whileRunning(async (request) => {
-      // The session ends (its deadline, a crash) while the card and the call still wait.
+      // The session ends (its turn, its deadline, a crash) while the card and the call still wait.
       for (const name of [PLUGIN_TOOL.name, CONNECTOR_TOOL.name]) {
         left.push(request.onLiveTool!(name, {}).catch((err: Error) => err.message));
         for (let waited = 0; calls.length < left.length && waited < 200; waited++) await sleep(MIRROR_POLL_MS);
       }
     });
     await delegate(leadBrief());
-    const settled = await Promise.race([
-      Promise.all(left),
+    const [card, call] = left;
+    const connector = await Promise.race([
+      call,
       sleep(MIRROR_WAIT_MS).then(() => "still waiting after the session ended"),
     ]);
-    assert.deepEqual(settled, ["declined by stop", "aborted"]);
-    const states = (await core.store.listEvents(threadId)).flatMap((event) => {
-      const custom = customRecord(event.data);
-      return custom?.event_type === "plugin_consent" ? [(custom.payload as { state?: string }).state] : [];
-    });
-    assert.deepEqual(states, ["pending", "declined"], "the card says it was withdrawn");
+    assert.equal(connector, "aborted", "the connector call ended with the session");
+    const consents = async () =>
+      (await core.store.listEvents(threadId)).flatMap((event) => {
+        const custom = customRecord(event.data);
+        const consent = custom?.payload as { consentId?: string; state?: string } | undefined;
+        return custom?.event_type === "plugin_consent" ? [[consent?.state, consent?.consentId] as const] : [];
+      });
+    const pending = (await consents()).filter(([state]) => state === "pending");
+    assert.equal(pending.length, 1, "the card is still in the chat");
+    assert.equal(core.resolveConsent(pending[0]![1]!, true), true, "and still waits for the person");
+    assert.equal(await card, "delivered");
   });
 });
 

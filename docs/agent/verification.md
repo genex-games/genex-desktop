@@ -26,7 +26,7 @@ when its behavior is in scope.
 Use installed Node 24 (`nvm use`); `node scripts/check-node.mjs` checks it without installation.
 Use native `arm64` Node on Apple Silicon (`node -p process.arch`); record architecture in
 benchmarks and compare matched runtimes, separately from any Rosetta-to-native gain.
-Restoring missing or mismatched locked dependencies with `npm ci` is included in authorized
+Restoring missing or mismatched locked dependencies with `npm run deps` is included in authorized
 build/run/test work. Do not repeat it without need. Dependency upgrades and global installations
 are separate decisions; do not change machine-wide runtimes incidentally.
 

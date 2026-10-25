@@ -15,6 +15,7 @@ import { isCodexLoginActive, type CodexLoginState } from "../shared/codex-login.
 import { errorMessage } from "../shared/errors.ts";
 import { redactSecrets } from "../shared/redact.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 
 /** A sign-in nobody finishes is cancelled after this. */
 const DEFAULT_TIMEOUT_MS = 10 * MINUTE_MS;
@@ -31,15 +32,15 @@ const DEVICE_CODE = /\b[A-Z0-9]{4,6}-[A-Z0-9]{4,6}\b/;
 
 /** What the Codex sign-in sheet shows at each step and failure. */
 const MESSAGE = {
-  starting: "Starting Codex sign-in…",
-  notInstalled: "Install Codex, then check again.",
-  timedOut: "Sign-in timed out. Try again or use a device code.",
-  notFinished: "Codex could not finish signing in. Check the output and try again.",
-  apiKeyLogin: "This login uses an API key. Connect your ChatGPT subscription instead.",
-  notVerified: "Codex could not verify a ChatGPT login. Please try again.",
-  connected: "ChatGPT connected. You can start building.",
-  noLink: "No active sign-in link. Start sign-in again.",
-  longOutput: "[Long login output omitted]",
+  starting: () => t("Starting Codex sign-in…"),
+  notInstalled: () => t("Install Codex, then check again."),
+  timedOut: () => t("Sign-in timed out. Try again or use a device code."),
+  notFinished: () => t("Codex could not finish signing in. Check the output and try again."),
+  apiKeyLogin: () => t("This login uses an API key. Connect your ChatGPT subscription instead."),
+  notVerified: () => t("Codex could not verify a ChatGPT login. Please try again."),
+  connected: () => t("ChatGPT connected. You can start building."),
+  noLink: () => t("No active sign-in link. Start sign-in again."),
+  longOutput: () => t("[Long login output omitted]"),
 } as const;
 
 /** The two ways Codex signs in: a browser page, or a code typed on another device. */
@@ -116,7 +117,7 @@ export class CodexLoginController {
       visible: method === "device",
       phase: "starting",
       method,
-      lines: [MESSAGE.starting],
+      lines: [MESSAGE.starting()],
       hasBrowserUrl: false,
       deviceCode: undefined,
       error: undefined,
@@ -126,7 +127,7 @@ export class CodexLoginController {
       const binary = installation?.path ?? (await (this.#deps.findBinary ?? findCodexBinary)());
       attempt.env = installation?.env;
       if (attempt.cancelled) return this.snapshot();
-      if (!binary) throw new Error(MESSAGE.notInstalled);
+      if (!binary) throw new Error(MESSAGE.notInstalled());
       await prepareLoginHome(home);
       if (attempt.cancelled) return this.snapshot();
       this.#drive(attempt, binary, method);
@@ -181,7 +182,7 @@ export class CodexLoginController {
     });
     attempt.timer = setTimeout(() => {
       void this.cancel().then(() => {
-        if (this.#attempt === attempt) this.#fail(MESSAGE.timedOut);
+        if (this.#attempt === attempt) this.#fail(MESSAGE.timedOut());
       });
     }, this.#deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     attempt.timer.unref();
@@ -205,7 +206,7 @@ export class CodexLoginController {
 
   async #finish(attempt: LoginAttempt, binary: string, code: number | null): Promise<void> {
     if (code !== 0) {
-      this.#fail(MESSAGE.notFinished);
+      this.#fail(MESSAGE.notFinished());
       return;
     }
     this.#update({ phase: "verifying", hasBrowserUrl: false });
@@ -216,11 +217,11 @@ export class CodexLoginController {
       )(attempt.home, binary);
       if (this.#attempt !== attempt || attempt.cancelled) return;
       if (status.loggedIn !== true || status.method !== "chatgpt") {
-        throw new Error(status.method === "api_key" ? MESSAGE.apiKeyLogin : MESSAGE.notVerified);
+        throw new Error(status.method === "api_key" ? MESSAGE.apiKeyLogin() : MESSAGE.notVerified());
       }
       await this.#deps.onConnected(attempt.home);
       if (this.#attempt !== attempt || attempt.cancelled) return;
-      this.#line(MESSAGE.connected);
+      this.#line(MESSAGE.connected());
       this.#update({ phase: "connected", deviceCode: undefined });
     } catch (error) {
       if (this.#attempt === attempt && !attempt.cancelled) this.#fail(errorMessage(error));
@@ -240,7 +241,7 @@ export class CodexLoginController {
   }
 
   async openBrowser(): Promise<void> {
-    if (!this.#url || !isCodexLoginActive(this.#state)) throw new Error(MESSAGE.noLink);
+    if (!this.#url || !isCodexLoginActive(this.#state)) throw new Error(MESSAGE.noLink());
     await this.#deps.openExternal(this.#url);
   }
 
@@ -311,6 +312,6 @@ function takeLines(pending: PendingOutput, stream: keyof PendingOutput, chunk: s
   const lines = pending[stream].split(/[\r\n]/);
   pending[stream] = flush ? "" : (lines.pop() ?? "");
   // Bound unfinished lines as well as displayed history.
-  if (pending[stream].length > MAX_PENDING_CHARS) pending[stream] = MESSAGE.longOutput;
+  if (pending[stream].length > MAX_PENDING_CHARS) pending[stream] = MESSAGE.longOutput();
   return lines;
 }

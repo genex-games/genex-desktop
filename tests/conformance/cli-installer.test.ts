@@ -43,6 +43,8 @@ test("each CLI's installer is its vendor's own script: shell on macOS and Linux,
     codex: ["https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1"],
     // OpenCode publishes no PowerShell installer: Windows has none to fetch.
     opencode: ["https://opencode.ai/install", null],
+    grok: ["https://x.ai/cli/install.sh", "https://x.ai/cli/install.ps1"],
+    cursor: ["https://cursor.com/install", "https://cursor.com/install?win32=true"],
   };
   for (const [provider, [unix, windows]] of Object.entries(expected) as [CodingProvider, [string, string | null]][]) {
     for (const platform of ["darwin", "linux"] as const)
@@ -75,6 +77,10 @@ test("an installer runs from its saved file under the shell it was written for, 
     file: "/bin/sh",
     args: ["/tmp/i/install.sh"],
   });
+  assert.deepEqual(installerCommand("grok", "darwin", "/tmp/i/install.sh", {}), {
+    file: "/bin/bash",
+    args: ["/tmp/i/install.sh"],
+  });
   assert.deepEqual(installerCommand("codex", "win32", "C:\\T\\install.ps1", { SystemRoot: "D:\\Win" }), {
     file: "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\T\\install.ps1"],
@@ -83,6 +89,50 @@ test("an installer runs from its saved file under the shell it was written for, 
     installerCommand("claude-code", "win32", "C:\\T\\install.ps1", {}).file,
     "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   );
+});
+
+test("the Windows installer runs in a PowerShell that builds its own module path, not PowerShell 7's", async () => {
+  // R12: Genex started from a pwsh 7 terminal handed Windows PowerShell 5.1 pwsh's module path,
+  // and Claude Code's install.ps1 died on "The term 'Get-FileHash' is not recognized".
+  for (const provider of ["claude-code", "codex"] as const) {
+    const seen: Array<Record<string, string>> = [];
+    const outcome = await installCodingCli(provider, {
+      platform: "win32",
+      env: { ...PARENT, SystemRoot: "C:\\Windows", PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules" },
+      fetch: serving("Write-Output installed"),
+      tmpRoot: await tmpDir("cli-installer-"),
+      run: async (_command, { env }) => {
+        seen.push(env);
+        return { code: 0, output: "", timedOut: false };
+      },
+    });
+    assert.deepEqual(outcome, { ok: true }, provider);
+    const names = Object.keys(seen[0] ?? {}).map((name) => name.toUpperCase());
+    assert.ok(!names.includes("PSMODULEPATH"), `${provider}: no inherited module path`);
+    assert.equal(seen[0]?.SystemRoot, "C:\\Windows", `${provider}: the rest of the environment arrives`);
+  }
+});
+
+test("an installer is asked for as a program asks, never as a browser, which cursor.com sends its web page", async () => {
+  // Electron's own fetch speaks with Chrome's user agent; cursor.com answered it with the /cli page,
+  // and bash ran that HTML ("the installer exited with 2").
+  for (const provider of ["claude-code", "codex", "opencode", "cursor"] as const) {
+    const asked: Array<Headers> = [];
+    const outcome = await installCodingCli(provider, {
+      platform: "darwin",
+      env: PARENT,
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        asked.push(new Headers(init?.headers));
+        return serving("#!/bin/sh\necho installed\n")(input, init);
+      }) as typeof fetch,
+      tmpRoot: await tmpDir("cli-installer-"),
+      run: async () => ({ code: 0, output: "", timedOut: false }),
+    });
+    assert.deepEqual(outcome, { ok: true }, provider);
+    const agent = asked[0]?.get("user-agent") ?? "";
+    assert.match(agent, /^Genex\b/, `${provider}: names itself`);
+    assert.doesNotMatch(agent, /Mozilla|Chrome|Safari/, `${provider}: no browser's name`);
+  }
 });
 
 test("an installer that cannot be fetched whole over HTTPS is never run and leaves nothing behind", async () => {

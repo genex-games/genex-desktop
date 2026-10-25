@@ -15,8 +15,10 @@ import type { LiveBehindEvent } from "./live-behind.ts";
 import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
+import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
+import type { NativeInstalls, NativeSession } from "./play-native.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
@@ -87,6 +89,8 @@ export interface UiEventMap {
   "harness.status": { threadId?: string; status?: string; all?: ThreadStatusMap };
   "harness.log": { line: string; stream: "stdout" | "stderr" };
   "harness.boot": Partial<BootNotice>;
+  /** The open studio's harness would not start (main's own, never the harness's): why, for its line. */
+  "harness.start-failed": { failure: string };
   "seed.upgraded": { added: string[]; updated: string[]; kept: string[]; retired: string[] };
   "watchdog.triggered": { reason: string; snapshot: string | null };
   "watchdog.recovered": { reason: string; ok: boolean; reseeded?: boolean };
@@ -101,6 +105,8 @@ export interface UiEventMap {
   "engines.changed": { engine?: string };
   "engine.auth": { engine?: string; message?: string };
   "engine.fallback": { from?: string; to?: string; kind?: string; role?: string };
+  /** Every subscription's plan limits as they stand now, sent whenever one of them changes. */
+  "provider.usage": { reports: ProviderUsageReport[] };
   "model.install": ModelInstallJob;
   /** An in-app Claude Code or Codex install started, finished or failed. */
   "cli.install": CliInstallJob;
@@ -162,6 +168,24 @@ export interface UiEventMap {
   "play.viewer": PlayViewerEvent;
   /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
   "play.remix": RemixProgress;
+  /** Play's installed games or an install changed: every one, as `studio:play.installs` answers (`main/play/native-installs.ts`). */
+  "play.installs": NativeInstalls;
+  /** A native game started, came on screen, ended or failed to start: every session (`main/play/native-launch.ts`). */
+  "play.sessions": NativeSession[];
+  /** A `genex://game/<slug>` link waits for the page to take it (`studio:play.take-game-link`, `main/play/game-links.ts`). */
+  "play.game-link": Record<string, never>;
+
+  // — store —
+  /**
+   * A game's agent made or changed a store item and Studio drew its Listing draft card
+   * (`item_drafted`, `main/core/item-draft.ts`): Create › Items reads Selling again. Host only.
+   */
+  "item.drafted": { project: string; itemId: string; threadId?: string };
+  /**
+   * A game's local item drafts changed in Studio's app data (an approval, a draft the CLI printed, the
+   * settle after its publish): its Listing draft cards read them again (`studio:items.local`). Host only.
+   */
+  "items.local": { project: string };
 
   // — plugins and connectors —
   "plugins.changed": PluginChange;
@@ -240,6 +264,7 @@ export const UiEvent = {
   HarnessStatus: "harness.status",
   HarnessLog: "harness.log",
   HarnessBoot: "harness.boot",
+  HarnessStartFailed: "harness.start-failed",
   SeedUpgraded: "seed.upgraded",
   WatchdogTriggered: "watchdog.triggered",
   WatchdogRecovered: "watchdog.recovered",
@@ -250,6 +275,7 @@ export const UiEvent = {
   EnginesChanged: "engines.changed",
   EngineAuth: "engine.auth",
   EngineFallback: "engine.fallback",
+  ProviderUsage: "provider.usage",
   ModelInstall: "model.install",
   CliInstall: "cli.install",
   ModelPull: "model.pull",
@@ -288,6 +314,11 @@ export const UiEvent = {
   PreviewSoundToggle: "preview.sound.toggle",
   PlayViewer: "play.viewer",
   PlayRemix: "play.remix",
+  PlayInstalls: "play.installs",
+  PlaySessions: "play.sessions",
+  PlayGameLink: "play.game-link",
+  ItemDrafted: "item.drafted",
+  ItemsLocal: "items.local",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
@@ -357,9 +388,15 @@ export function uiEvent<K extends UiEventType>(type: K, payload: UiEventMap[K]):
 
 /**
  * Events only the host may send: what they say the renderer acts on (`live.behind` names the
- * build Live's Reload plays), so the harness's forwarded notifications never carry one.
+ * build Live's Reload plays; `item.drafted` stands for a real `genex shop add` result, `items.local`
+ * for Studio's own record of local drafts), so the
+ * harness's forwarded notifications never carry one.
  */
-const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([UiEvent.LiveBehind]);
+const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
+  UiEvent.LiveBehind,
+  UiEvent.ItemDrafted,
+  UiEvent.ItemsLocal,
+]);
 
 /** Whether a harness notification names an event only the host sends. */
 export const isHostOnlyUiEvent = (name: string): boolean => HOST_ONLY.has(name);

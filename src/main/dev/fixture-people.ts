@@ -5,8 +5,9 @@
  * with no socket and no Genex account. A launch is signed out unless it asks for a fixture account
  * (`STUDIO_FIXTURE_GENEX_ACCOUNT=1`, or `new`, `quiet` or `fresh` for a new account with no games and
  * nobody yet, with games nobody played this week, or with one game two days old, `nickname` for the
- * full account before it chose its nickname, `ended` for a sign-in genex.games no longer takes, or
- * `terms` for the full account with Genex's updated terms still to accept);
+ * full account before it chose its nickname, `ended` for a sign-in genex.games no longer takes,
+ * `terms` for the full account with Genex's updated terms still to accept, or `admin` for the full
+ * account as one genex.games names an admin);
  * then every call carries that account's token. A new account and the nickname account have not
  * chosen their nicknames, so the welcome asks. State lives for the launch: adding a friend,
  * renaming the account, choosing an avatar or a nickname shows at once and is gone at the next launch.
@@ -50,6 +51,8 @@ export const FixtureAccount = {
   Ended: "ended",
   /** The full account with Genex's updated terms still to accept: the sidebar offers Review. */
   Terms: "terms",
+  /** The full account, which genex.games names an admin: Play's cards offer mobile support and tags on every game. */
+  Admin: "admin",
 } as const;
 export type FixtureAccount = (typeof FixtureAccount)[keyof typeof FixtureAccount];
 
@@ -71,10 +74,12 @@ export const isFixtureAccount = (value: unknown): value is FixtureAccount =>
 
 /**
  * The fixture account a launch signs in as: the one `STUDIO_FIXTURE_GENEX_ACCOUNT` names, else the
- * genex-terms fixture's own, else none.
+ * genex-terms fixture's own, the full account for the asset-library fixture (its library is the
+ * account's), else none.
  */
 export function launchFixtureAccount(named: unknown, fixture: string | null | undefined): FixtureAccount | null {
   if (isFixtureAccount(named)) return named;
+  if (fixture === FixtureName.AssetLibrary) return FixtureAccount.Full;
   return fixture === FixtureName.GenexTerms ? FixtureAccount.Terms : null;
 }
 
@@ -453,7 +458,7 @@ function publicRead(pathname: string, account: FixtureAccount, catalog: FixtureC
 }
 
 /** The fixture account a token signs in as while genex.games still takes it: an ended one is none. */
-function takenAccount(token: string | undefined): FixtureAccount | null {
+export function takenAccount(token: string | undefined): FixtureAccount | null {
   const account = fixtureAccountOf(token);
   return account === FixtureAccount.Ended ? null : account;
 }
@@ -486,7 +491,7 @@ export function fixturePeopleAnswer(
         avatarVariant: state.avatarVariant,
         handleChosen: handleChosen(account),
       },
-      isAdmin: false,
+      isAdmin: account === FixtureAccount.Admin,
     });
   if (pathname === PeopleRoute.HandleCheck) return handleCheck(query);
   const write = accountWrite(method, pathname, init.body);
@@ -527,5 +532,9 @@ export const fixtureReferral = () => ({
 
 /** The fixture account's own id, for the fixture's creator numbers. */
 export const FIXTURE_ME_ID = ME.id;
+/** A fixture person by name, as the API names a commenter. */
+export const fixturePersonNamed = (name: string) => slim(person(name));
+/** The fixture account as the API names a commenter. */
+export const fixtureMeNamed = () => meSlim();
 /** Fixture people as the API names a person, for Top creators. */
 export const fixturePeople = () => PEOPLE.map(slim);

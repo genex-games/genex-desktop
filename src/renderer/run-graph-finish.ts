@@ -18,15 +18,21 @@ export const FinishCheckState = {
 } as const;
 export type FinishCheckState = (typeof FinishCheckState)[keyof typeof FinishCheckState];
 
-/** One round of a finish check: how far it got, the reviewer's reasons or why it had no answer, and the lead's claim. */
+/** One round of a finish check: how far it got, the reviewer's reasons and what isn't done or why it had no answer, and the lead's claim. */
 export interface FinishRound {
   round: number;
   step: FinishCheckStep;
   reasons: string[];
+  /** what the reviewer found not done (none named by an older record) */
+  notDone: string[];
+  /** what the reviewer found done, a few words each */
+  done: string[];
   why: string | null;
   claim: string | null;
   /** this no was the last one the Loop takes: it stopped */
   stopped: boolean;
+  /** a no the Loop had time left at: it went on whatever the count */
+  timeLeft: boolean;
 }
 
 /** What the finish check's node says, from its rounds. */
@@ -56,9 +62,12 @@ export function foldFinishRecord(ledger: FinishLedger, record: FinishRecord): vo
     round: record.round,
     step: record.step,
     reasons: record.reasons,
+    notDone: record.notDone,
+    done: record.done,
     why: record.why,
     claim: record.claim ?? prior?.claim ?? null,
     stopped: record.step === FinishCheckStep.Rejected && record.stopped,
+    timeLeft: record.step === FinishCheckStep.Rejected && record.timeLeft,
   });
 }
 

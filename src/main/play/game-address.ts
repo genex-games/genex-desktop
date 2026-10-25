@@ -3,7 +3,8 @@
  * guest marker) in the fragment, and which addresses the page may move to afterwards.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
-import { PLAY_GAMES_DOMAIN, PLAY_ORIGIN, playGameUrl } from "../../shared/play.ts";
+import { PLAY_ORIGIN, type PlayOrigins, playGameUrl } from "../../shared/play.ts";
+import { onWebsite } from "./origins.ts";
 
 /** At most one link a game asks for opens in the browser in this long. */
 export const EXTERNAL_LINK_GAP_MS = 3 * SECOND_MS;
@@ -15,33 +16,52 @@ export const EXTERNAL_LINK_GAP_MS = 3 * SECOND_MS;
  */
 const AUTHORIZE = { path: "/play/authorize", guest: { name: "guest", value: "ok" } } as const;
 
-/** The page address that plays `slug`: signed in with `ticket`, else as a guest. */
-export function playAddress(slug: string, ticket: string | undefined): string {
+/**
+ * The page address that plays `slug` from the game host `games` (genex.games' unless a development
+ * profile's stand serves its own): signed in with `ticket`, else as a guest.
+ */
+export function playAddress(slug: string, ticket: string | undefined, games: string = PLAY_ORIGIN.games): string {
   const fragment = ticket ? `genex_ticket=${encodeURIComponent(ticket)}` : "genex_guest=1";
-  return `${playGameUrl(slug)}?genex_r=1#${fragment}`;
+  return `${playGameUrl(slug, games)}?genex_r=1#${fragment}`;
+}
+
+/** Whether `url` is a game's own address under the game host `games`: its scheme and port, any subdomain. */
+function onGameHost(url: URL, games: string): boolean {
+  const host = new URL(games);
+  const sameServer = url.protocol === host.protocol && url.port === host.port && !url.username && !url.password;
+  return sameServer && url.hostname.endsWith(`.${host.hostname}`);
 }
 
 /**
- * Whether a game's page may go to `raw`: a Genex game's address, or Genex's guest sign-in hop. The
- * hop is genex.games' own even when a development profile points Play at another website: a game
- * is served from Genex's game hosts, and its page hops to the website those hosts belong to.
+ * The website a game's page hops to for its guest sign-in: the one its game host belongs to. That is
+ * genex.games' own even when a development profile points Play's links at another website, unless
+ * the profile's stand serves its games too.
  */
-export function playNavigationAllowed(raw: string, offline: boolean): boolean {
+const hopWebsite = (origins: Pick<PlayOrigins, "web" | "games">): string =>
+  origins.games === PLAY_ORIGIN.games ? PLAY_ORIGIN.web : origins.web;
+
+/** Whether `url` is the guest form of the sign-in hop on `web`. */
+function guestHop(url: URL, web: string): boolean {
+  const { guest } = AUTHORIZE;
+  return (
+    onWebsite(url.href, web) && url.pathname === AUTHORIZE.path && url.searchParams.get(guest.name) === guest.value
+  );
+}
+
+/**
+ * Whether a game's page may go to `raw`: a Genex game's address on the game host Play serves games
+ * from, or the guest sign-in hop on the website that host belongs to.
+ */
+export function playNavigationAllowed(
+  raw: string,
+  offline: boolean,
+  origins: Pick<PlayOrigins, "web" | "games"> = PLAY_ORIGIN,
+): boolean {
   if (offline) return raw.startsWith("data:text/html");
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "https:") return false;
-    // Any Genex game's own address: a renamed game answers from its new one.
-    if (url.hostname.endsWith(`.${PLAY_GAMES_DOMAIN}`)) return true;
-    const { guest } = AUTHORIZE;
-    return (
-      url.origin === PLAY_ORIGIN.web &&
-      url.pathname === AUTHORIZE.path &&
-      url.searchParams.get(guest.name) === guest.value
-    );
-  } catch {
-    return false;
-  }
+  if (!URL.canParse(raw)) return false;
+  const url = new URL(raw);
+  // Any Genex game's own address: a renamed game answers from its new one.
+  return onGameHost(url, origins.games) || guestHop(url, hopWebsite(origins));
 }
 
 /**

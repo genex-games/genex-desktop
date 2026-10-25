@@ -762,7 +762,11 @@ test("another delegation's end does not end the reply in progress", () => {
   assert.equal(chatActivity([replying, leadDone], true, "Building").phase, "responding");
   // The reply's own end still hands the line back to the work in progress.
   const replyDone = activity(3, { role: "planner", phase: "completed", delegationId: "chat" });
-  assert.deepEqual(chatActivity([replying, replyDone], true, "Building"), { phase: "working", label: "Building" });
+  assert.deepEqual(chatActivity([replying, replyDone], true, "Building"), {
+    phase: "working",
+    label: "Building",
+    named: true,
+  });
 });
 
 test("the live tail keeps the loaded array when nothing new arrived for this thread", () => {
@@ -1119,4 +1123,52 @@ test("a finished compaction stays in the chat as its own row, never folded into 
   assert.equal(compactedWords(42), "Compacted 42 messages");
   assert.equal(compactedWords(1), "Compacted 1 message");
   assert.equal(compactedWords(undefined), "Compacted the conversation");
+});
+
+test("a message a build's lead heard in its wrap-up reads where the lead heard it, and stays there once the chat answers it", async () => {
+  const { deliveryOrder, toldToLead } = await import("../../src/renderer/chat/delivery-order.ts");
+  const { messageQueueState } = await import("../../src/shared/message-queue.ts");
+  const user = (id: number, content: string) => event(id, { type: "messages", messages: [{ role: "user", content }] });
+  const lead = (id: number, text: string) => custom(id, "director_note", { runId: "run_1", text });
+  const told = [
+    lead(1, "Wrapping up: merging the boss fight."),
+    user(2, "also add rain"),
+    custom(3, "coordinator_message_queued", { messageId: "rain", action: { text: "also add rain" } }),
+    custom(4, "run_steering", {
+      runId: "run_1",
+      text: "also add rain",
+      sourceMessageId: "rain",
+      how: "lead",
+      kept: true,
+    }),
+    lead(5, "Noted: rain comes right after this build closes."),
+  ];
+  assert.deepEqual([...toldToLead(told, messageQueueState(told).messages)], ["rain"]);
+  assert.deepEqual(
+    deliveryOrder(told).map((e) => Number(e.id)),
+    [1, 3, 2, 4, 5],
+    "where the lead heard it, not below the work",
+  );
+  // The build closes and the chat answers it: the bubble stays where the lead heard it.
+  const answered = [
+    ...told,
+    custom(6, "run_finished", { runId: "run_1" }),
+    custom(7, "coordinator_message_processing", { messageId: "rain" }),
+    custom(8, "coordinator_message_handled", { messageId: "rain" }),
+  ];
+  assert.deepEqual(
+    deliveryOrder(answered).map((e) => Number(e.id)),
+    [1, 3, 2, 4, 5, 6, 7, 8],
+  );
+  // A message the lead took as usual is its delivery's, not a told one.
+  const delivered = [
+    user(1, "more lava"),
+    custom(2, "coordinator_message_queued", { messageId: "lava", action: { text: "more lava" } }),
+    custom(3, "coordinator_message_delivered", { messageId: "lava", into: "run_1", how: "lead" }),
+    custom(4, "run_steering", { runId: "run_1", text: "more lava", sourceMessageId: "lava", how: "lead" }),
+  ];
+  assert.deepEqual([...toldToLead(delivered, messageQueueState(delivered).messages)], []);
+  // Delivered to the lead, never heard, and given back as its run ended: it waits below like any other.
+  const givenBack = [...delivered, custom(5, "coordinator_message_requeued", { messageId: "lava" })];
+  assert.deepEqual([...toldToLead(givenBack, messageQueueState(givenBack).messages)], []);
 });

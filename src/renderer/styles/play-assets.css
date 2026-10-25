@@ -1,0 +1,326 @@
+/* ── Play's Assets shelf as square tiles (`play/PlayAssets.tsx`) ─────────────────────────── */
+/* The kind and whose switchers sit where a shelf's tabs do; a narrow window scrolls them sideways
+   rather than wrapping the bar, and a focused chip's ring stays inside the row. */
+.play-asset-switchers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px;
+  margin: -6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.play-asset-switchers > * {
+  flex: none;
+}
+/* Square tiles, five across in the usual window, 12px apart. */
+.play-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 12px;
+}
+.play-asset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  /* A long catalog lays out and paints only the tiles near the screen. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+/* The square: its picture filling it, edged in the theme's border, brighter while hovered. */
+.play-asset-cover {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--play-placeholder);
+}
+.play-asset-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: box-shadow var(--duration-fast) var(--ease-smooth-out);
+  pointer-events: none;
+}
+/* The tile under the pointer, or holding the keyboard, wears the accent's ring, as Use does. */
+.play-asset-cover:is(:hover, :focus-within, :has(.play-asset-use[data-open]))::after {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+/* The whole square opens the asset's page on Play, under its own controls. */
+.play-asset-open {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  cursor: pointer;
+}
+.play-asset-open:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+.play-asset-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 200ms ease-out,
+    scale var(--duration-fast) var(--ease-smooth-out);
+}
+.play-asset-image[data-shown] {
+  opacity: 1;
+}
+.play-asset-cover:hover .play-asset-image {
+  scale: 1.03;
+}
+.play-asset-glyph {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+/* Saved or Shared (the Assets tab's tag), over the cover's hover shade. */
+.play-asset-cover .asset-tag {
+  z-index: 2;
+}
+/* Use, across the tile's foot while it is hovered or holds the keyboard, and while its menu is open. */
+.play-asset-use {
+  position: absolute;
+  inset-inline: 8px;
+  bottom: 8px;
+  z-index: 2;
+  height: 28px;
+  gap: 5px;
+  font-size: 12px;
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick) ease-out,
+    background-color var(--duration-quick);
+}
+.play-asset-cover:is(:hover, :focus-within) .play-asset-use,
+.play-asset-use:is([data-open], [aria-busy]) {
+  opacity: 1;
+}
+/* A sound: its drawing across the middle, and its round play button at the foot. */
+.play-asset-wave {
+  position: absolute;
+  inset: 32% 14%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+.play-asset-wave > .audio-bar {
+  flex: 1;
+  border-radius: 999px;
+}
+.play-asset-sound {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.play-asset-sound:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.play-asset-sound-glyph path,
+.play-asset-sound-glyph rect {
+  fill: currentColor;
+}
+.play-asset[data-kind="sound"] .play-asset-use {
+  inset-inline-start: 44px;
+}
+.play-asset-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding-inline-start: 2px;
+}
+.play-asset-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19px;
+  letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.play-asset-author {
+  overflow: hidden;
+  color: var(--ink-3);
+  font: 11.5px / 16px var(--font-family-mono);
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A tile on its way: the same square and lines, shimmering; it appears only if the wait is not over at once. */
+.play-asset-placeholder {
+  animation: play-fade-in 200ms 120ms ease-out both;
+}
+.play-asset-placeholder .play-asset-meta {
+  gap: 6px;
+  padding-block-start: 2px;
+}
+.play-asset-placeholder :is(.play-asset-cover, .play-bar) {
+  position: relative;
+  overflow: hidden;
+  background: var(--play-placeholder);
+}
+.play-asset-placeholder .play-asset-cover::after {
+  content: none;
+}
+.play-asset-placeholder :is(.play-asset-cover, .play-bar)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--play-placeholder), transparent);
+  translate: -100% 0;
+  animation: play-shimmer 1.4s ease-in-out infinite;
+}
+/* Use's menu of games: each with its cover, a long list scrolling inside the menu. */
+/* As wide as the tile and flush under its square (`menuWidth`), so it reads as the tile's own menu. */
+.play-asset-menu {
+  max-width: 280px;
+  max-height: min(320px, var(--radix-dropdown-menu-content-available-height));
+  overflow-y: auto;
+}
+.play-asset-menu-cover {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+/* Mine while signed out: the line and Sign in side by side. */
+.play-asset-sign-in {
+  flex-direction: row;
+  justify-content: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .play-asset-image,
+  .play-asset-use {
+    transition: none;
+  }
+  .play-asset-cover:hover .play-asset-image {
+    scale: none;
+  }
+  .play-asset-placeholder,
+  .play-asset-placeholder :is(.play-asset-cover, .play-bar)::before {
+    animation: none;
+  }
+}
+
+/* ── Publish's row that shares the game's assets on Play (`panels/plugins/genex/PublishShare.tsx`) ── */
+/* One row on the field colour, as the dialog's link fields: the pictures, one line, the switch. */
+.publish-share {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: var(--radius-control);
+  background: var(--field);
+}
+.publish-share-thumbs {
+  display: flex;
+  flex: none;
+}
+.publish-share-thumbs:empty {
+  display: none;
+}
+/* Each picture overlaps the one before, ringed in the row's colour, with its own soft edge. */
+.publish-share-thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--play-placeholder);
+  box-shadow: 0 0 0 2px var(--field);
+  color: var(--ink-3);
+}
+.publish-share-thumb + .publish-share-thumb {
+  margin-inline-start: -6px;
+}
+.publish-share-thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 16%, transparent);
+  pointer-events: none;
+}
+.publish-share-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* The switch's off track would sink into the row's fill: it gets the ink's tint here. */
+.publish-share [data-slot="switch"][data-state="unchecked"] {
+  background: color-mix(in oklab, var(--ink) 20%, transparent);
+}
+.publish-share-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* After it went live: one line, the ink's bare ✓, or orange with a compact Try again. */
+.publish-share-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 20px;
+}
+.publish-share-line[data-publish-share-outcome="sharing"] {
+  color: var(--ink-3);
+}
+.publish-share-line[data-publish-share-outcome="missed"] {
+  color: var(--orange);
+}
+/* Share now: the compact size of Try again, in Play's tint (a notice, not an error). */
+.publish-share-now {
+  height: 26px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
+/* Try again in the line's own orange, on its tint. */
+.publish-share-retry {
+  height: 26px;
+  padding-inline: 10px;
+  background: var(--orange-tint);
+  color: var(--orange);
+  font-size: 12px;
+}
+.publish-share-retry:hover {
+  background: color-mix(in srgb, var(--orange) 22%, transparent);
+  color: var(--orange);
+}

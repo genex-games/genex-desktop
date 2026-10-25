@@ -30,6 +30,9 @@ import { TemplateKind } from "../../src/harness-seed/loop/unreal/template-kind.t
 import { engineChoiceRule, UNREAL_NEW_GAME_TOOL } from "../../src/harness-seed/loop/unreal-prompts.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
+/** What every Auto chat is handed (flipped from none): the Loop's start, for a Loop asked for in words. */
+const AUTO_LOOP = "start_autopilot";
+
 const CLAUDE = "claude-code";
 const ASK = "make a castle exploration game";
 const NAME = "keep";
@@ -111,7 +114,7 @@ describe("the first message on a project with no kind", () => {
     assert.ok(prompt.includes(START_WEB_GAME), "web starts with start_web_game");
     assert.ok(prompt.includes(PLUGINS_FIND), "anything else goes through plugins_find");
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, [], "no question card");
+    assert.deepEqual(bridged, [AUTO_LOOP], "no question card");
     assert.equal(capture, true, "served as a web game until it picks");
     assert.match(prompt, /folder is empty: there is nothing to inspect yet/);
   });
@@ -119,12 +122,21 @@ describe("the first message on a project with no kind", () => {
   it("with an engine plugin on, the first message on a project with no kind asks with the card, and web still starts with start_web_game", async () => {
     const { lines, prompt, bridged } = await firstMessage(game([]), UNREAL_ON);
     assert.ok(lines.includes(engineChoiceRule(CLAUDE, null, [UNREAL_KIND])), "the engine question, as its own line");
-    assert.deepEqual(bridged, ["ask_user"]);
+    assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"]);
     assert.ok(prompt.includes(START_WEB_GAME), "the web answer starts the web starter");
     const both = await firstMessage(game([]), { tools: [NEW_GAME_TOOL], kinds: [UNREAL_KIND, TOY_KIND] });
     assert.ok(both.prompt.includes('"Toy Engine"'), "every engine plugin on is an option");
     assert.ok(both.prompt.includes(toolCall(CLAUDE, TOY_KIND.tool)), "with its own kind tool");
-    assert.deepEqual(both.bridged, ["ask_user"]);
+    assert.deepEqual(both.bridged, [AUTO_LOOP, "ask_user"]);
+  });
+
+  it("a project with no kind hears the web starter's rules as the web answer's, never as every kind's", async () => {
+    for (const on of [NONE_ON, UNREAL_ON]) {
+      const { lines } = await firstMessage(game([]), on);
+      const web = lines.filter((line) => line.includes("window.__studio"));
+      assert.equal(web.length, 1, "said once");
+      assert.match(web[0] ?? "", /^For a game that plays in Genex \(the web answer\)/, "and only for the web answer");
+    }
   });
 
   it("a project still with no kind is offered the kinds on every message, not only the chat's first", async () => {
@@ -134,7 +146,7 @@ describe("the first message on a project with no kind", () => {
       { role: "user", content: "make it in Unreal Engine" },
     ];
     const { prompt, bridged } = await firstMessage(game([]), UNREAL_ON, later);
-    assert.deepEqual(bridged, ["ask_user"], "the card is still there after a greeting");
+    assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"], "the card is still there after a greeting");
     assert.ok(prompt.includes(toolCall(CLAUDE, UNREAL_NEW_GAME_TOOL)), "the Unreal kind tool is named");
     assert.doesNotMatch(prompt, /picked by this first message/, "the identity does not say this is the first message");
 
@@ -162,7 +174,7 @@ describe("the first message on a project with no kind", () => {
       assert.match(prompt, /files of its own of a kind Genex has no rules for/);
       assert.match(prompt, /look through them first/);
       assert.ok(prompt.includes(PLUGINS_FIND), "a plugin is looked for");
-      assert.deepEqual(bridged, [], "no question card: it has a kind, just not one Genex knows");
+      assert.deepEqual(bridged, [AUTO_LOOP], "no question card: it has a kind, just not one Genex knows");
     }
     const unreadable = await firstMessage(game([], { holds: "unreadable" }), NONE_ON);
     assert.ok(!unreadable.prompt.includes(START_WEB_GAME), "an unreadable folder takes no starter");
@@ -177,7 +189,7 @@ describe("the first message on a project with no kind", () => {
     };
     for (const [label, facts] of Object.entries(kinds)) {
       const { prompt, bridged } = await firstMessage(game(facts), UNREAL_ON);
-      assert.deepEqual(bridged, [], label);
+      assert.deepEqual(bridged, [AUTO_LOOP], label);
       assert.doesNotMatch(prompt, /FIRST, THE ENGINE/, label);
       assert.ok(!prompt.includes(START_WEB_GAME), `${label}: nothing to start`);
     }
@@ -191,7 +203,7 @@ describe("the rules each kind gets", () => {
     assert.match(prompt, /can't save inside the editor before a checkpoint/);
     assert.ok(prompt.includes(PLUGINS_FIND), "it may offer the plugin");
     assert.ok(!prompt.includes("unreal-editor__call_tool"), "no tool it was not handed");
-    assert.deepEqual(bridged, []);
+    assert.deepEqual(bridged, [AUTO_LOOP]);
     assert.equal(capture, false);
   });
 
@@ -311,7 +323,7 @@ describe("the rules each kind gets", () => {
       skills: Array<{ name: string; text?: string }>;
     };
     const skill = manifest.skills.find((s) => s.name === "unreal-editor")?.text ?? "";
-    assert.match(skill, /unreal__use-project links the project in this game's folder/);
+    assert.match(skill, /unreal__use-project links a project to this game[^\n]*setting it up for Genex first/);
     const linked = buildContractorBrief({
       ask: ASK,
       engine: CLAUDE,
@@ -471,6 +483,15 @@ describe("every worker's brief", () => {
       inputs: [],
     });
     assert.match(onUnreal, /The game engine's editor is the lead's alone: you have none of its tools/);
+    const onRoblox = workerBrief({
+      identity: { folderLabel: "AI Games/obby", facts: [fact(CoreFact.RobloxProject)] as never },
+      task: "write the checkpoint script",
+      isolation: WorkerIsolation.Copy,
+      research: false,
+      typeDescription: null,
+      inputs: [],
+    });
+    assert.match(onRoblox, /The game engine's editor is the lead's alone/, "Roblox Studio is the lead's too");
 
     const single = singleWorkerBrief({
       run: RUN,

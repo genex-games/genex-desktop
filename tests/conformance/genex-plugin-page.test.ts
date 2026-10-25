@@ -253,6 +253,20 @@ describe("Genex status cadence", () => {
     assert.equal(genexPollMs(null), GENEX_IDLE_POLL_MS, "no answer yet");
     assert.ok(GENEX_IDLE_POLL_MS > GENEX_ACTIVE_POLL_MS);
   });
+
+  it("reads nothing on a timer while the window is hidden: showing it again reads at once", () => {
+    const hidden = { hidden: true, focused: false };
+    assert.equal(genexPollMs(withJobs("generating"), hidden), null);
+    assert.equal(genexPollMs(withJobs(), hidden), null);
+  });
+
+  it("drops to the idle read while Genex is behind another app, except while a sign-in waits in the browser", () => {
+    const behind = { hidden: false, focused: false };
+    // Each status read spawns the Genex CLI for the allowance; the page reads again on focus.
+    assert.equal(genexPollMs(withJobs("generating"), behind), GENEX_IDLE_POLL_MS);
+    const signingIn = status({ authorization: { userCode: "ABCD", verifyUrl: "https://x", expiresAt: 1 } });
+    assert.equal(genexPollMs(signingIn, behind), GENEX_ACTIVE_POLL_MS, "the person is approving it in the browser");
+  });
 });
 
 describe("Genex account button", () => {

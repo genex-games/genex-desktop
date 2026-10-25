@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import {
   FIXTURE_ACCOUNT_TOKEN,
   FixtureAccount,
@@ -118,6 +119,7 @@ describe("the Genex account Play is signed in as", () => {
       photoUrl: null,
       avatarVariantKept: false,
       handleChosen: null,
+      isAdmin: false,
     });
     assert.ok(!JSON.stringify(me).includes("example.com"), "no email crosses");
     await people.me();
@@ -125,6 +127,22 @@ describe("the Genex account Play is signed in as", () => {
     advance(60_000);
     await people.me();
     assert.equal(calls.filter((c) => c.route === PeopleRoute.Me).length, 2, "read again later");
+  });
+
+  it("is an admin only when genex.games says so outright", async () => {
+    const answer = (isAdmin: unknown) => (call: Call) => {
+      const kept = accountApi(call);
+      return call.route === PeopleRoute.Me ? ok({ ...(kept.body as object), isAdmin }) : kept;
+    };
+    const cases: Array<[unknown, boolean]> = [
+      [true, true],
+      [false, false],
+      ["true", false],
+      [1, false],
+      [undefined, false],
+    ];
+    for (const [isAdmin, expected] of cases)
+      assert.equal((await rig(answer(isAdmin)).people.me())?.isAdmin, expected, JSON.stringify(isAdmin));
   });
 
   it("shows its photo only when it chose the photo, and keeps the photo it uploaded either way", async () => {
@@ -325,6 +343,33 @@ describe("profiles", () => {
     );
     assert.equal(profile.status, FriendStatus.Incoming);
     assert.equal((await people.profile("u1")).status, FriendStatus.Self);
+  });
+
+  it("keeps nothing of a profile read under way when a game on it changed", async () => {
+    const held: Array<() => void> = [];
+    let holding = true;
+    let reads = 0;
+    const people = playPeople({
+      request: async (route, init) => {
+        if (route === PeopleRoute.user("u2")) {
+          reads += 1;
+          if (holding) await new Promise<void>((resolve) => held.push(resolve));
+        }
+        return api({ route, method: init.method ?? "GET", ...init });
+      },
+      token: async () => TOKEN,
+      now: () => 0,
+      upload: async () => 200,
+      web: PLAY_ORIGIN.web,
+    });
+    const reading = people.profile("u2");
+    await setImmediate();
+    people.forgetProfiles();
+    holding = false;
+    for (const answer of held.splice(0)) answer();
+    await reading;
+    await people.profile("u2");
+    assert.equal(reads, 2, "read again: the one under way began before the change");
   });
 
   it("lists their friends, people the viewer knows first, each with their game, games and since when", async () => {

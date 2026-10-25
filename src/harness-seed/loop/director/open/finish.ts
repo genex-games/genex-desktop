@@ -22,14 +22,18 @@ import {
   type FinishOutcome,
   type FinishTally,
   finishAnswer,
+  notDoneOf,
+  staleClaim,
   tallyOf,
 } from "../../finish-check.ts";
-import { FinishCheckStep, LEAD_CALL_MS } from "../../finish-contract.ts";
+import { FINISH_ANSWER } from "../../finish-check-prompts.ts";
+import { FinishCheckStep, LEAD_CALL_MS, MAX_FINISH_REJECTIONS, StopWhy } from "../../finish-contract.ts";
 import { readFinishLog } from "../../finish-log.ts";
 import { GAPS_FIRST_MIN_MS, remainingOf } from "../../finish-remaining.ts";
 import { fireHooks, HookEvent, runScope } from "../../hooks.ts";
 import { HOOK_PROMPTS } from "../../hooks-prompts.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../../text.ts";
+import { timeLeftOf } from "../../time-cap.ts";
 import { minutes, SECOND_MS, sleep } from "../../time.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
 import { heldTurnEnding } from "../held-words.ts";
@@ -86,6 +90,10 @@ function tallyFor(loopRun: LoopRun, lastRound: number): FinishTally {
   return tally;
 }
 
+/** What marks the lead's work: its Loop's newest save point, its own or an autosave ("" before the first). */
+const workMarkOf = (loopRun: LoopRun): string | null =>
+  loopRun.open ? (loopRun.open.journal.savePoints.at(-1)?.snapshotId ?? "") : null;
+
 /** Whether the claim's own turn is over: its session returned, or another turn began. */
 const turnLost = (loopRun: LoopRun, claimed: TurnEnds | undefined): boolean => {
   const now = turnEndsOf(loopRun.state);
@@ -125,6 +133,8 @@ async function check(loopRun: LoopRun, claim: FinishClaim, started: number): Pro
       ended: () => closing(loopRun),
       abandoned: () => turnLost(loopRun, turn),
       lapsed: lapsedSince(loopRun),
+      timeLeft: () => timeLeftOf(run, loopRun.softDeadline, clock.now()),
+      workMark: async () => workMarkOf(loopRun),
       keep: () => loopRun.saveJournal(),
     },
     claim,
@@ -146,7 +156,7 @@ function endOf(loopRun: LoopRun, outcome: FinishOutcome): { end: OpenEnd; told: 
   if ("noTime" in outcome) {
     const last = turnEndsOf(loopRun.state)?.last === true;
     if (!outcome.turnEnds || !last) return null;
-    return { end: { victory: false, because: FINISH_REPORT.tooLate }, told: OPEN_WORDS.noTimeLeft };
+    return { end: { victory: false, because: FINISH_REPORT.tooLate, why: StopWhy.Time }, told: OPEN_WORDS.noTimeLeft };
   }
   if (outcome.step === FinishCheckStep.Accepted) {
     const end = { victory: true, because: MESSAGE.goalReached, checked: true };
@@ -155,7 +165,13 @@ function endOf(loopRun: LoopRun, outcome: FinishOutcome): { end: OpenEnd; told: 
   if (outcome.step === FinishCheckStep.Unanswered && outcome.seatless)
     return { end: { victory: false, because: FINISH_REPORT.noReviewer, checked: true }, told: OPEN_WORDS.noReviewer };
   if (outcome.step !== FinishCheckStep.Rejected || !outcome.stop) return null;
-  const end = { victory: false, because: FINISH_REPORT.notAccepted, notDone: outcome.reasons, checked: true };
+  const end = {
+    victory: false,
+    because: FINISH_REPORT.notAccepted,
+    notDone: notDoneOf(outcome),
+    checked: true,
+    why: StopWhy.Stuck,
+  };
   return { end, told: finishAnswer(outcome) };
 }
 
@@ -212,6 +228,9 @@ async function claimFinish(loopRun: LoopRun, args: AnyRecord, started: number): 
   }
   const refused = claimRefusal(loopRun, args);
   if (refused) return refused;
+  // Nothing new since the row of no's the Loop went on past: no plugin step and no reviewer for it.
+  if (await staleClaim(tallyFor(loopRun, 0), loopRun.projectDir, proofOf(args), workMarkOf(loopRun)))
+    return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   const held = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.Finish, runScope(loopRun));
   if (held.blocked) return HOOK_PROMPTS.finishHeld(held.blocked.reason);
   const claim: FinishClaim = {

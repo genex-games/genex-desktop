@@ -4,6 +4,7 @@ import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { InteractionSource, type RunSummary } from "../shared/run-summary.ts";
 import { isBelow } from "../substrate/paths.ts";
+import { t } from "../shared/i18n.ts";
 
 /** The longest report the supplement reads, in characters. */
 const REPORT_MAX_CHARS = 2_000_000;
@@ -103,7 +104,10 @@ async function supplementPlaytests(summary: RunSummary, dir: string, entries: re
         id: `${folder.name}:${check}`,
         head: null,
         category: "interaction",
-        label: `Independent playtest ${folder.name.slice(5)} — ${check} (question not recorded)`,
+        label: t("Independent playtest {number} — {check} (question not recorded)", {
+          number: folder.name.slice(5),
+          check,
+        }),
         status: playtestStatus(answer.pass),
         note: typeof answer.note === "string" ? answer.note : null,
         source: InteractionSource.IndependentPlaytester,

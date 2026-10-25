@@ -1,12 +1,14 @@
 /**
  * The shell a game's terminal opens. macOS and Linux: the account's login shell. Windows: Git
- * Bash when Git for Windows is installed (the harness and the snapshots already need Git, and its
- * shell reads like the one on a Mac), else Windows PowerShell. Every Windows shell is named by
- * its full path, so nothing on PATH or in the game folder can stand in for it.
+ * Bash (the harness and the snapshots already need Git, and its shell reads like the one on a
+ * Mac): an installed Git for Windows first, then Genex's own copy in a packaged app, else Windows
+ * PowerShell. Every Windows shell is named by its full path, so nothing on PATH or in the game
+ * folder can stand in for it.
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
+import { BUNDLED_GIT_ONLY_ENV, bundledGitRoot } from "../substrate/windows-sandbox.ts";
 
 /** The program a terminal session runs, and its arguments. */
 export interface TerminalShell {
@@ -20,6 +22,8 @@ export interface TerminalShellContext {
   userShell?: string | null;
   /** Where ProgramFiles, LOCALAPPDATA and SystemRoot are read on Windows. */
   env?: NodeJS.ProcessEnv;
+  /** The packaged app's resources folder, holding Genex's own Git (default: `process.resourcesPath`). */
+  resources?: string;
   exists?: (file: string) => boolean;
 }
 
@@ -29,13 +33,18 @@ const DEFAULT_SHELL: Partial<Record<NodeJS.Platform, string>> = {
   [StudioPlatform.Linux]: "/bin/bash",
 };
 
-/** Git for Windows' `bash.exe`: the machine-wide install first, then a per-user one. */
-function gitBashCandidates(env: NodeJS.ProcessEnv): string[] {
+/**
+ * Git for Windows' `bash.exe`: the machine-wide install first, then a per-user one, then Genex's
+ * own Git, as the agents' sandbox finds it; only Genex's own when the environment says so.
+ */
+function gitBashCandidates(env: NodeJS.ProcessEnv, resources: string | undefined): string[] {
   const join = path.win32.join;
   const programFiles = env.ProgramFiles || "C:\\Program Files";
-  const candidates = [join(programFiles, "Git", "bin", "bash.exe")];
-  if (env.LOCALAPPDATA) candidates.push(join(env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"));
-  return candidates;
+  const installed = [join(programFiles, "Git", "bin", "bash.exe")];
+  if (env.LOCALAPPDATA) installed.push(join(env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"));
+  const bundled = bundledGitRoot(resources);
+  const own = bundled ? [join(bundled, "bin", "bash.exe")] : [];
+  return env[BUNDLED_GIT_ONLY_ENV] === "1" ? own : [...installed, ...own];
 }
 
 /** A shell as chosen: its interactive arguments, and those it takes before one command line to run. */
@@ -47,7 +56,7 @@ function chooseShell(platform: NodeJS.Platform, context: TerminalShellContext): 
   if (platform === StudioPlatform.Windows) {
     const env = context.env ?? process.env;
     const exists = context.exists ?? existsSync;
-    const bash = gitBashCandidates(env).find((file) => exists(file));
+    const bash = gitBashCandidates(env, context.resources).find((file) => exists(file));
     if (bash) return { file: bash, args: ["--login", "-i"], once: ["--login", "-c"] };
     const systemRoot = env.SystemRoot || "C:\\Windows";
     const powershell = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");

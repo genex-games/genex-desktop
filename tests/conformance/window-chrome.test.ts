@@ -2,11 +2,35 @@
  * The studio window's title bar by platform. macOS keeps its inset traffic lights, in line with the
  * headers; Windows and
  * Linux get a hidden title bar with the system's minimise, maximise and close drawn as an overlay
- * the height of the app's headers, so a frameless window never loses its controls.
+ * the height of the app's headers, so a frameless window never loses its controls. On Windows the
+ * overlay paints no box of its own while Home's background lies under it.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TITLEBAR_HEIGHT, windowChrome } from "../../src/main/window-chrome.ts";
+import {
+  type OverlayWindow,
+  TITLEBAR_HEIGHT,
+  type TitleBarOverlay,
+  windowChrome,
+  windowControlsPainter,
+} from "../../src/main/window-chrome.ts";
+
+const LIGHT = { color: "#fafafa", symbolColor: "#111111" };
+const ON_HOME = { ...LIGHT, seeThrough: true };
+const ELSEWHERE = { ...LIGHT, seeThrough: false };
+const FILLED: TitleBarOverlay = { color: "#fafafa", symbolColor: "#111111", height: TITLEBAR_HEIGHT };
+const SEE_THROUGH: TitleBarOverlay = { color: "rgba(0, 0, 0, 0)", symbolColor: "#111111", height: TITLEBAR_HEIGHT };
+
+/** A studio window that records each repaint of its controls. */
+function stubWindow(): OverlayWindow & { painted: TitleBarOverlay[]; destroyed: boolean } {
+  const stub = {
+    painted: [] as TitleBarOverlay[],
+    destroyed: false,
+    isDestroyed: () => stub.destroyed,
+    setTitleBarOverlay: (options: TitleBarOverlay) => void stub.painted.push(options),
+  };
+  return stub;
+}
 
 describe("window chrome", () => {
   it("macOS keeps the inset traffic lights, centred on the headers' line, and no overlay", () => {
@@ -20,7 +44,7 @@ describe("window chrome", () => {
   });
 
   for (const platform of ["win32", "linux"]) {
-    it(`${platform} draws the window controls over a hidden title bar, as tall as the headers`, () => {
+    it(`${platform} opens with the window controls filled over a hidden title bar, as tall as the headers`, () => {
       const chrome = windowChrome(platform);
       assert.equal(chrome.titleBarStyle, "hidden");
       assert.ok(typeof chrome.titleBarOverlay === "object", "an overlay, not a bare flag");
@@ -30,10 +54,36 @@ describe("window chrome", () => {
     });
   }
 
-  it("the overlay takes the colours it is given", () => {
-    assert.deepEqual(windowChrome("linux", { color: "#fafafa", symbolColor: "#111111" }), {
-      titleBarStyle: "hidden",
-      titleBarOverlay: { color: "#fafafa", symbolColor: "#111111", height: TITLEBAR_HEIGHT },
-    });
+  it("on Windows the controls' box is see-through only while Home's background lies under it", () => {
+    const painter = windowControlsPainter("win32");
+    const window = stubWindow();
+    painter.paint(window, ON_HOME);
+    painter.paint(window, ELSEWHERE);
+    painter.paint(window, ON_HOME);
+    assert.deepEqual(window.painted, [SEE_THROUGH, FILLED, SEE_THROUGH]);
+  });
+
+  it("Linux keeps the box filled with the theme's canvas, on Home too", () => {
+    const painter = windowControlsPainter("linux");
+    const window = stubWindow();
+    painter.paint(window, ON_HOME);
+    painter.paint(window, ELSEWHERE);
+    assert.deepEqual(window.painted, [FILLED, FILLED]);
+  });
+
+  it("macOS draws its own lights: nothing is repainted", () => {
+    const window = stubWindow();
+    windowControlsPainter("darwin").paint(window, ON_HOME);
+    assert.deepEqual(window.painted, []);
+  });
+
+  it("a window opened later takes the controls last sent; a closed one is left alone", () => {
+    const painter = windowControlsPainter("win32");
+    const closed = stubWindow();
+    closed.destroyed = true;
+    painter.paint(closed, ON_HOME);
+    painter.paint(null, ON_HOME);
+    assert.deepEqual(closed.painted, []);
+    assert.deepEqual(painter.chrome(), { titleBarStyle: "hidden", titleBarOverlay: SEE_THROUGH });
   });
 });

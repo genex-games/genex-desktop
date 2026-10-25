@@ -14,6 +14,7 @@ import { isRunning } from "../outcomes.ts";
 import { KIND_NAMES } from "../kinds.ts";
 import { minutes } from "../time.ts";
 import { CLAIM_BEFORE_END_MINUTES } from "../finish-check.ts";
+import { stopRuleWords } from "../finish-check-prompts.ts";
 import { LEAD_BRIEF, LEAD_RESUMED_MEMORY } from "./lead-session-prompts.ts";
 import { MAX_DIRECTOR_MEMORY } from "./memory.ts";
 import { DIRECTOR_TOOLS } from "./tool-specs.ts";
@@ -28,6 +29,7 @@ import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
 // Type-only: erased at runtime, so this module still imports no part of the run.
 import type { Worker } from "./loop-run.ts";
+import { folderLabelOf as folderLabelOfDir } from "../workers/identity.ts";
 
 /**
  * This part serves a lead that is its chat's own session (one session): it builds in the integration
@@ -133,8 +135,7 @@ const WEB_AT_ROOT: readonly FactRef[] = [{ id: CoreFact.WebGame, path: "." }];
 
 /** The folder a brief names: the last two parts of the game's folder (or the lead's), else the run's project. */
 function folderLabelOf(run: Run, lead: { gameFolder: string } | null, gameFolder: string | null): string {
-  const folder = gameFolder || lead?.gameFolder;
-  return folder ? folder.split("/").slice(-2).join("/") : String(run.project ?? "");
+  return folderLabelOfDir(gameFolder || lead?.gameFolder, run.project);
 }
 
 /**
@@ -248,7 +249,7 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
     `- First playable: prioritize a small complete playable loop and integrate its healthy revision before broad atmosphere or asset polish. Continue judging normally; a preview is not acceptance or landing.`,
     `- Asset truth: run_status.assets lists generated originals and current workspace copies. Read it before answering asset questions. Preserve delivered local files; integrate checkpoints them through the host. Never move them to /tmp or swap in remote URLs: assets live in the game folder. State generated-but-unused assets and procedural fallbacks explicitly in completion reports.`,
     `- Completion reporting: distinguish delivered changes from passed, failed and unverified checks. The Studio outcome card counts integrations separately from evaluated attempts; never call all requested features verified merely because the structural board passed.`,
-    `- Evidence, not reports: judge, playtest or look at a single session's "done" before you integrate (kept loop rounds were judged); look at the integrated build before you finish.`,
+    `- Evidence, not reports: judge, playtest or look at a session's "done" before you integrate (kept loop rounds were judged) and at the build before you finish; pictures outrank files.`,
     userSaysWords(loop),
     leads
       ? ""
@@ -266,7 +267,7 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
  */
 function completionWords(run: Run): string {
   if (durationCommission(run))
-    return "The hours are a cap: call finish with victory=yes as soon as the goal is reached, and a reviewer's yes ends the build; a finish that claims nothing waits for the wrap-up, unless the user asks.";
+    return `The hours are a cap: call finish with victory=yes once the goal is reached (a reviewer's yes ends the build); a finish that claims nothing waits for the wrap-up, unless the user asks. On a no, ${stopRuleWords(false, "new commits")}`;
   const words =
     "Finish once required outcomes are verified; time is a ceiling. Report blockers instead of optional polish.";
   return goalCommission(run) ? `${words} ${SHIP_DEFECTS_NOT_POLISH}` : words;

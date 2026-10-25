@@ -5,6 +5,7 @@
  */
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { useAppearance } from "../appearance/store.ts";
 import { dayAt, drawArea, drawSpark } from "./stats-chart.ts";
 
@@ -46,6 +47,9 @@ export function AreaChart({
   const canvas = useRef<HTMLCanvasElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   useRedraw(canvas, (element) => drawArea(element, { data, labels, hovered, valueLine, axisValue }));
+  const readings = data
+    .map((count, day) => t("{day} {value}", { day: labels[day] ?? "", value: valueLine(count) }))
+    .join(", ");
   return (
     <figure className="stats-area" data-stats-chart>
       <canvas
@@ -58,9 +62,7 @@ export function AreaChart({
         }}
         onPointerLeave={() => setHovered(null)}
       />
-      <figcaption className="sr-only">
-        {label}: {data.map((count, day) => `${labels[day] ?? ""} ${valueLine(count)}`).join(", ")}
-      </figcaption>
+      <figcaption className="sr-only">{t("{chart}: {readings}", { chart: label, readings })}</figcaption>
     </figure>
   );
 }

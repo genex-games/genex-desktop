@@ -7,6 +7,7 @@
  * stands. The editor and the helper update are stand-ins; the logs, projects and helpers are real
  * files.
  */
+import { setAgentsSetting } from "../../src/substrate/engine-agents.ts";
 import assert from "node:assert/strict";
 import { appendFile, cp, mkdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -665,6 +666,8 @@ describe("editor-activity", () => {
     const w = await liveWorld({
       activity: () => ({ camera: [0, 0, 0], selection: [], dirty: ["/Game/Maps/Hall", "/Game/Kit/SM_Rib"], pie: true }),
     });
+    // The person chose to have agents wait while they play.
+    await setAgentsSetting(w.storage, false);
     assert.deepEqual(await w.call(LeadLoopToolName.EditorActivity), {
       personActive: true,
       unsaved: 2,
@@ -832,10 +835,12 @@ async function saveAtRunCheckpoint() {
   assert.equal(savedTool(saved), 1, "the editor saved its work");
 
   const playing = await liveWorld();
+  // The person chose to have agents wait while they play: their play is theirs to stop.
+  await setAgentsSetting(playing.storage, false);
   playing.editor.editor.state.pie = true;
   const refused = (await playing.call(LiveLoopToolName.SaveAll, {}, before)) as { block?: string };
   assert.match(refused.block ?? "", /playing in the editor: stop the play session first/);
-  assert.equal(savedTool(playing), 0, "a play session is never ended to save");
+  assert.equal(savedTool(playing), 0, "the person's play session is never ended to save");
 
   const closed = await liveWorld({ answering: false });
   assert.deepEqual(await closed.call(LiveLoopToolName.SaveAll, {}, before), {
@@ -1296,6 +1301,7 @@ describe("a restore's wait for a busy editor keeps to its window (editor-moments
         now += PS_TIMEOUT_MS;
         return true;
       },
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, looks, now: () => now };
   }
@@ -1313,6 +1319,37 @@ describe("a restore's wait for a busy editor keeps to its window (editor-moments
   });
 });
 
+describe("a checkpoint's save during a play session (editor-moments.ts)", () => {
+  /** An Unreal in a play session, whose save (which ends the play first) is recorded. */
+  function playingUnreal(mayEnd: boolean) {
+    const saves: string[] = [];
+    const ops = {
+      now: () => 0,
+      sleep: async () => {},
+      signal: new AbortController().signal,
+      answers: async () => true,
+      activity: async () => ({ pie: true, dirty: 2 }),
+      mayEndPlay: async () => mayEnd,
+      save: async () => {
+        saves.push("save");
+        return { saved: true, dirty: [] };
+      },
+      setUp: async () => {},
+    } as unknown as MomentOps;
+    return { ops, saves };
+  }
+
+  it("a save point ends a play it may end (the agent's, or the person's while agents may use Unreal as they play), then saves", async () => {
+    const may = playingUnreal(true);
+    assert.deepEqual(await saveAtMoment(may.ops, { on: HookEvent.CheckpointBefore, ...IN_RUN }), {});
+    assert.deepEqual(may.saves, ["save"]);
+    const mayNot = playingUnreal(false);
+    const held = await saveAtMoment(mayNot.ops, { on: HookEvent.CheckpointBefore, ...IN_RUN });
+    assert.ok(held.block, "the person's play holds the save point");
+    assert.deepEqual(mayNot.saves, []);
+  });
+});
+
 describe("open-for-run's own wait for a reopened Unreal (editor-moments.ts)", () => {
   /** A gone Unreal whose reopen goes as `reopening` says, on a clock its own waits move. */
   function goneUnreal(reopen: () => Promise<unknown>, reopening: () => { state: ReopenState; error?: string }) {
@@ -1327,6 +1364,7 @@ describe("open-for-run's own wait for a reopened Unreal (editor-moments.ts)", ()
       running: async () => false,
       reopen,
       state: async () => ({ answering: false, running: false, reopening: reopening(), helper: HelperState.Current }),
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, now: () => now };
   }
@@ -1414,6 +1452,7 @@ describe("open-for-run's own wait for a reopened Unreal (editor-moments.ts)", ()
         reopening: { state: ReopenState.Idle },
         helper: HelperState.Outdated,
       }),
+      setUp: async () => {},
     } as unknown as MomentOps;
     return { ops, did };
   }

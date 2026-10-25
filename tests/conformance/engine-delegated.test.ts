@@ -18,6 +18,8 @@ import { STEER_STALL_MS, steerFeed, steerSession, userFrame } from "../../src/su
 import { credentialHomes } from "../../src/substrate/credential-homes.ts";
 import { absoluteRule } from "../../src/substrate/engines/claude-permissions.ts";
 import { EngineError, type Engine } from "../../src/substrate/engines/types.ts";
+import { StopReason } from "../../src/shared/engine-requests.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { registeredSchema, scriptedClaude, wokenSession } from "../helpers/scripted-claude.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -105,7 +107,7 @@ type Send =
     }) => boolean)
   | null;
 
-async function engineWithLogin(queryFn: never): Promise<ClaudeCodeEngine> {
+async function engineWithLogin(queryFn: never, platform?: NodeJS.Platform): Promise<ClaudeCodeEngine> {
   const root = await tmpDir("studio-engine-");
   const home = path.join(root, "claude-home");
   await mkdir(home, { recursive: true });
@@ -115,6 +117,7 @@ async function engineWithLogin(queryFn: never): Promise<ClaudeCodeEngine> {
     engineHome: home,
     systemHome: path.join(root, "no-system-login"),
     queryFn,
+    ...(platform ? { platform } : {}),
   });
 }
 
@@ -137,7 +140,122 @@ const successRun = [
   },
 ];
 
+/** The CLI's own words when the sandbox a session asks for cannot run on this computer. */
+const SANDBOX_REFUSAL =
+  "sandbox required but unavailable: sandbox is enabled but the Windows sandbox is not active on this session (feature gate off). set sandbox.failIfUnavailable=false to run without it";
+/** A refused session's result: an error before any turn. */
+const sandboxRefusedResult = {
+  type: "result",
+  subtype: "error_during_execution",
+  is_error: true,
+  errors: [SANDBOX_REFUSAL],
+  num_turns: 0,
+};
+
+/**
+ * How a refused session's stream ends: on the result alone, the CLI's refusal thrown (after init
+ * when the CLI sent one: the SDK yields it first), or the result followed by the SDK's own throw.
+ */
+function refusalThrow(ending: string, initialized: boolean): { throwOn?: Error; throwAfter?: Error } {
+  if (ending === "result") return {};
+  if (ending === "result-then-throw") return { throwAfter: new Error("Claude Code process exited with code 1") };
+  return initialized ? { throwAfter: new Error(SANDBOX_REFUSAL) } : { throwOn: new Error(SANDBOX_REFUSAL) };
+}
+
+/** A worker's delegation in a disposable folder: its session asks for Claude Code's sandbox. */
+async function workerRequest() {
+  const cwd = await tmpDir("claude-worker-start-");
+  return {
+    cwd,
+    prompt: "Build the fixture",
+    worker: {
+      id: "fixture-worker",
+      title: "Fixture worker",
+      mode: PermissionMode.Manual,
+      writeRoots: [cwd],
+      neverTouch: { roots: [], open: [] },
+      research: false,
+    },
+  };
+}
+
 describe("claude code delegated engine", () => {
+  it("WIN-275: a worker whose sandbox the CLI cannot run here ends as sandbox_unavailable, its box still required off Windows", async () => {
+    const init = { type: "system", subtype: "init", model: "claude-sonnet-5", session_id: "refused", tools: [] };
+    for (const platform of ["win32", "darwin"] as const)
+      for (const initialized of [false, true])
+        for (const ending of ["throw", "result", "result-then-throw"]) {
+          const label = `${platform}/${initialized ? "after init" : "before init"}/${ending}`;
+          const messages = [...(initialized ? [init] : []), ...(ending === "throw" ? [] : [sandboxRefusedResult])];
+          const sdk = fakeQuery(messages, refusalThrow(ending, initialized));
+          const result = await (await engineWithLogin(sdk.fn, platform)).delegate(await workerRequest());
+          assert.equal(result.ok, false, label);
+          assert.equal(result.stopReason, StopReason.SandboxUnavailable, label);
+          assert.ok(result.errorText?.includes(SANDBOX_REFUSAL), `${label}: the CLI's own reason is kept`);
+          const sandbox = sdk.seen[0]?.sandbox as Record<string, unknown>;
+          // Windows: Claude Code's sandbox cannot start there, so Genex's runs the worker's
+          // commands (claude-windows-commands.test.ts) and the CLI has no box of its own to refuse.
+          if (platform === "win32") {
+            assert.equal(sandbox.enabled, false, `${label}: Genex's sandbox holds the commands`);
+            continue;
+          }
+          assert.equal(sandbox.enabled, true, label);
+          assert.equal(sandbox.failIfUnavailable, true, `${label}: never run without the box`);
+        }
+  });
+
+  it("WIN-275: a session that already replied, or failed some other way, keeps its own ending", async () => {
+    const replied = { type: "assistant", message: { content: [{ type: "text", text: "Building." }] } };
+    const afterReply = fakeQuery([replied, sandboxRefusedResult]);
+    const result = await (await engineWithLogin(afterReply.fn)).delegate(await workerRequest());
+    assert.equal(result.stopReason, "error_during_execution", "a session that worked is a failed build, judged as one");
+    const other = fakeQuery([], { throwOn: new Error("fixture startup refused") });
+    await assert.rejects((await engineWithLogin(other.fn)).delegate(await workerRequest()), { kind: "other" });
+    const signedOut = fakeQuery([], { throwOn: new Error("not logged in") });
+    await assert.rejects((await engineWithLogin(signedOut.fn)).delegate(await workerRequest()), { kind: "auth" });
+  });
+
+  it("preserves a result's auth failure when the SDK only throws its exit code", async () => {
+    for (const platform of ["win32", "darwin"] as const) {
+      const sdk = fakeQuery(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["not logged in"],
+            num_turns: 0,
+          },
+        ],
+        { throwAfter: new Error("Claude Code process exited with code 1") },
+      );
+      await assert.rejects((await engineWithLogin(sdk.fn, platform)).delegate(await workerRequest()), { kind: "auth" });
+    }
+  });
+
+  it("keeps a typed SDK failure ahead of an earlier result's auth text", async () => {
+    for (const kind of ["auth", "rate_limit", "usage_limit", "unavailable", "timeout", "aborted"] as const) {
+      const failure = new EngineError(kind, "claude-code", `fixture ${kind}`);
+      const sdk = fakeQuery(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["not logged in"],
+            num_turns: 0,
+          },
+        ],
+        { throwAfter: failure },
+      );
+      await assert.rejects(
+        (await engineWithLogin(sdk.fn)).delegate(await workerRequest()),
+        (error) => error === failure,
+        kind,
+      );
+    }
+  });
+
   it("streams only reply text, preserves long completed replies, and retains tool results", async () => {
     const text = "The bridge and lights are ready. ".repeat(200);
     const { fn, seen } = fakeQuery([
@@ -808,6 +926,9 @@ describe("claude code delegated engine", () => {
       systemHome: path.join(root, "no-system-login"),
       protectedPaths: [path.join(root, "secrets"), path.join(root, "engine-homes")],
       queryFn: fn,
+      // Claude Code's own sandbox runs the shell here; on Windows Genex's does
+      // (claude-windows-commands.test.ts), so the platform is pinned, not the host's.
+      platform: "darwin",
     });
     let result;
     try {
@@ -1394,6 +1515,38 @@ describe("steering a running Claude Code turn", () => {
     assert.deepEqual(result.steered, []);
   });
 
+  it("an Auto chat handed only its Loop start still takes input mid-turn: that tool makes no interview", {
+    timeout,
+  }, async () => {
+    const { fn } = steerableQuery(async function* ({ read }) {
+      await read();
+      yield steerInit();
+      yield said("Done.");
+      yield { type: "result", subtype: "success", is_error: false, result: "Done.", num_turns: 1, usage: {} };
+    });
+    const engine = await engineWithLogin(fn);
+    const readies: Array<unknown> = [];
+    await engine.delegate({
+      prompt: "auto brief",
+      cwd: "/tmp/x",
+      interviewTools: [
+        {
+          name: "start_autopilot",
+          description: "Start a Loop, only when asked.",
+          parameters: { type: "object", properties: { goal: { type: "string" } }, required: ["goal"] },
+          onlyWhenAsked: true,
+        },
+      ],
+      steer: {
+        ready: (s) => {
+          readies.push(s);
+        },
+      },
+    });
+    assert.equal(readies.length, 1);
+    assert.equal(typeof readies[0], "function", "told it takes input mid-turn");
+  });
+
   it("a message the CLI discards is not delivered, and the input still ends", { timeout }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
       await read();
@@ -1654,7 +1807,8 @@ describe("engine registry & fallback policy", () => {
 describe("the modeller on claude code (AG-930)", () => {
   it("exposes mcp__studio__blender__model only when the studio granted it, inside the one studio server", async () => {
     const plain = fakeQuery(successRun);
-    const engine = await engineWithLogin(plain.fn);
+    // The pinned list names Claude Code's own Bash: off Windows (claude-windows-commands.test.ts).
+    const engine = await engineWithLogin(plain.fn, "darwin");
     await engine.delegate({ prompt: "build", cwd: "/tmp/game-workspace" });
     assert.deepEqual(
       (plain.seen[0] as Record<string, unknown>).allowedTools,
@@ -1664,7 +1818,7 @@ describe("the modeller on claude code (AG-930)", () => {
     );
 
     const granted = fakeQuery(successRun);
-    const withTool = await engineWithLogin(granted.fn);
+    const withTool = await engineWithLogin(granted.fn, "darwin");
 
     await withTool.delegate({
       prompt: "build",
@@ -1881,6 +2035,25 @@ describe("Claude CLI model discovery", () => {
     assert.equal(turns, 0);
     assert.equal(closed, true);
     assert.equal(aborted, true);
+  });
+
+  it("asks without the CLI's own sandbox on Windows only, where it outran the deadline", async () => {
+    const sandboxes: Record<string, unknown> = {};
+    for (const platform of ["win32", "darwin", "linux"] as const) {
+      const engine = await engineWithLogin(
+        ((request: { options: { sandbox: unknown } }) => {
+          sandboxes[platform] = request.options.sandbox;
+          return { supportedModels: async () => [], close() {}, async *[Symbol.asyncIterator]() {} };
+        }) as never,
+        platform,
+      );
+      await engine.refreshModels();
+    }
+    assert.deepEqual(sandboxes, {
+      win32: { enabled: false },
+      darwin: { enabled: true },
+      linux: { enabled: true },
+    });
   });
 
   it("marks the model the CLI's default resolves to, the first one listed", async () => {

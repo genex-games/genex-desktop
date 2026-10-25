@@ -566,8 +566,16 @@ function shownGraph(events: EventEnvelope[], picked: string | null = null): RunG
 test("a chat turn that started workers is in the history after the run before it, named plainly", () => {
   const history = buildHistory([...yesterdaysLoop, ...twoWorkers], "parent");
   assert.deepEqual(history, [
-    { runId: "run_x", rounds: 0, state: RunState.Finished, startedAt: YESTERDAY },
-    { runId: turnGraphKey(TURN), rounds: 0, state: RunState.Finished, startedAt: TODAY, chat: true },
+    { runId: "run_x", rounds: 0, state: RunState.Finished, startedAt: YESTERDAY, ask: "", since: null },
+    {
+      runId: turnGraphKey(TURN),
+      rounds: 0,
+      state: RunState.Finished,
+      startedAt: TODAY,
+      ask: "The car drifts left on straight roads.",
+      since: null,
+      chat: true,
+    },
   ]);
   const [loop, turn] = history;
   const working = buildHistory([...yesterdaysLoop, ...twoWorkers.slice(0, 3)], "parent")[1];
@@ -596,6 +604,29 @@ test("a chat turn that started workers is in the history after the run before it
   const older = historyLabel({ ...loop, startedAt: longAgo.toISOString() }, { newest: false, now: NOW });
   assert.equal(older, `Loop from ${longAgo.toLocaleDateString([], { day: "numeric", month: "short" })}`);
   for (const label of [...labels, older]) assert.doesNotMatch(label, /Build|\d+ (rounds?|workers?)/);
+});
+
+test("each build in the history names what was asked for it, and a working one when its clock began", () => {
+  const minutes = (n: number) => new Date(new Date(TODAY).getTime() + n * 60_000).toISOString();
+  const loop = [
+    at("r1", minutes(0), CustomEvent.RunStarted, { runId: "run_x", engine: "codex", goal: "  A night street race  " }),
+    at("r2", minutes(10), CustomEvent.RunFinished, { runId: "run_x", executionStatus: "paused" }),
+    at("r3", minutes(30), CustomEvent.RunRegistered, { runId: "run_x", resumed: true }),
+  ];
+  const [running] = buildHistory(loop, "parent");
+  assert.equal(running?.ask, "A night street race", "a Loop is named by its goal");
+  assert.equal(running?.state, RunState.Running);
+  assert.equal(running?.since, Date.parse(minutes(20)), "its clock counts the 10 minutes it worked, not the pause");
+  const [paused] = buildHistory(loop.slice(0, 2), "parent");
+  assert.equal(paused?.since, null, "a paused build has no clock");
+
+  const queued = at("q0", TODAY, CustomEvent.CoordinatorMessageQueued, { messageId: TURN, action: { text: "Fix it" } });
+  const unnamed = at("t1", TODAY, CustomEvent.WorkerStarted, { turn: TURN, workerId: "pool.w1", title: "Check" });
+  const [turn] = buildHistory([queued, unnamed], "parent");
+  assert.equal(turn?.ask, "Fix it", "a chat turn whose workers name no ask is named by the message it answers");
+  assert.equal(turn?.since, Date.parse(TODAY), "a working chat turn's clock begins with its first worker");
+  const [named] = buildHistory([queued, ...twoWorkers.slice(0, 1)], "parent");
+  assert.equal(named?.ask, "The car drifts left on straight roads.", "its first worker's ask comes first");
 });
 
 test("Builds shows the newest: the chat turn's after a run, and either one when picked", () => {

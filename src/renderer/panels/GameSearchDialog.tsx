@@ -7,6 +7,7 @@ import { DialogSurface } from "../ui/dialog.tsx";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Shortcut } from "../ui/Shortcut.tsx";
+import { t } from "../../shared/i18n.ts";
 
 /** How long typing pauses before the results follow it. */
 const SEARCH_DEBOUNCE_MS = 120;
@@ -64,10 +65,10 @@ function SearchResults({
       className="game-search-results"
       role="listbox"
       id="game-search-results"
-      aria-label="Games"
+      aria-label={t("Games")}
       aria-busy={query !== debounced}
     >
-      {!searched && items.length > 0 && <div className="px-3 py-2 text-xs text-ink-3">Recent games</div>}
+      {!searched && items.length > 0 && <div className="px-3 py-2 text-xs text-ink-3">{t("Recent games")}</div>}
       {items.map((item, index) => (
         <button
           key={item.id}
@@ -89,7 +90,7 @@ function SearchResults({
       ))}
       {items.length === 0 && (
         <p className="px-4 py-8 text-center text-body-sm text-ink-3">
-          {searched ? `No games for “${searched}”.` : "Your games will appear here."}
+          {searched ? t("No games for “{query}”.", { query: searched }) : t("Your games will appear here.")}
         </p>
       )}
     </div>
@@ -147,7 +148,7 @@ export function GameSearchDialog({
   };
   return (
     <DialogSurface
-      title="Search games"
+      title={t("Search games")}
       size="xl"
       testId="game-search-dialog"
       initialFocus={input}
@@ -161,8 +162,8 @@ export function GameSearchDialog({
           ref={input}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search anything…"
-          aria-label="Search games"
+          placeholder={t("Search anything…")}
+          aria-label={t("Search games")}
           role="combobox"
           aria-expanded="true"
           aria-controls="game-search-results"
@@ -170,7 +171,7 @@ export function GameSearchDialog({
           aria-activedescendant={items[selected] ? `game-search-${selected}` : undefined}
           onKeyDown={onKey}
         />
-        <button type="button" aria-label="Close search" onClick={onDismiss}>
+        <button type="button" aria-label={t("Close search")} onClick={onDismiss}>
           <Shortcut>esc</Shortcut>
         </button>
       </div>
@@ -185,13 +186,13 @@ export function GameSearchDialog({
       />
       <div className="game-search-footer">
         <span>
-          <Shortcut>↑↓</Shortcut> navigate
+          <Shortcut>↑↓</Shortcut> {t("navigate")}
         </span>
         <span>
-          <Shortcut>↵</Shortcut> open
+          <Shortcut>↵</Shortcut> {t("open")}
         </span>
         <span>
-          <Shortcut>esc</Shortcut> close
+          <Shortcut>esc</Shortcut> {t("close")}
         </span>
       </div>
     </DialogSurface>

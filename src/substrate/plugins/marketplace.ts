@@ -31,6 +31,7 @@ import { scanPackage } from "./scan.ts";
 import { isPackagePath, MAX_ARTIFACT_BYTES } from "./pack.ts";
 import { errorMessage, UserCancelledError } from "../../shared/errors.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 
 /**
  * Curated index + sha-pinned GitHub installs. Cataloged is not audited: the index says where the code
@@ -69,14 +70,19 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
 
-/** What a person reads when the marketplace, a pinned commit or a download is refused. */
+/**
+ * What a person reads when the marketplace, a pinned commit or a download is refused. The words
+ * that are functions are the person's, in their language. The plain strings stay English: they
+ * describe a broken catalog index or package to the curator or publisher who has to fix it, in
+ * the words of its fields, beside the manifest's own refusals.
+ */
 const MESSAGE = {
   LinksInPackage: "Plugin packages may not contain symlinks or submodules",
   FileMode: (mode: string | undefined, file: string) => `Unsupported file mode ${mode} in ${file}`,
   FileTooLarge: (relative: string) => `${relative} exceeds ${FILE_MAX_BYTES} bytes`,
-  InvalidSpec: "Invalid plugin spec; use owner/repo[/subdir]@<40-character commit sha>",
-  SpecNeedsSha: "Plugin spec needs a 40-character commit sha: owner/repo[/subdir]@<sha>",
-  SpecNeedsRepo: "Plugin spec needs owner/repo before the sha",
+  InvalidSpec: () => t("Invalid plugin spec; use owner/repo[/subdir]@<40-character commit sha>"),
+  SpecNeedsSha: () => t("Plugin spec needs a 40-character commit sha: owner/repo[/subdir]@<sha>"),
+  SpecNeedsRepo: () => t("Plugin spec needs owner/repo before the sha"),
   InvalidEntry: (id: string) => `Invalid marketplace entry ${id}`,
   InvalidCategory: (id: string) => `Invalid marketplace category for ${id}`,
   InvalidTier: (id: string) => `Invalid marketplace tier for ${id}`,
@@ -92,36 +98,87 @@ const MESSAGE = {
   InvalidEntryId: "Invalid marketplace entry id",
   DuplicateEntry: (id: string) => `Duplicate marketplace entry ${id}`,
   InsecureIndexUrl: "marketplace.json indexUrl must be https",
-  DownloadFailed: (what: string, status: number) => `${what} failed (${status})`,
-  DownloadTooLarge: (what: string, cap: number) => `${what} exceeds ${cap} bytes`,
-  NeedsNewerStudio: (name: string, minimum: string) => `${name} needs Studio ${minimum} or newer`,
-  InvalidRepository: "Invalid repository",
-  TreeTruncated: "Repository tree is truncated; point the spec at a smaller subdirectory",
-  TreeUnreadable: "Repository tree is unreadable",
-  PackageTooLarge: `Plugin package exceeds ${TREE_MAX_BYTES} bytes`,
+  NeedsNewerStudio: (name: string, minimum: string) =>
+    t("{name} needs Studio {version} or newer", { name, version: minimum }),
+  InvalidRepository: () => t("Invalid repository"),
+  TreeTruncated: () => t("Repository tree is truncated; point the spec at a smaller subdirectory"),
+  TreeUnreadable: () => t("Repository tree is unreadable"),
+  PackageTooLarge: () =>
+    t("{max, plural, one {Plugin package exceeds # byte} other {Plugin package exceeds # bytes}}", {
+      max: TREE_MAX_BYTES,
+    }),
   MissingObjectId: (relative: string) => `Missing object id for ${relative}`,
-  TooManyFiles: `Plugin package exceeds ${TREE_MAX_FILES} files`,
-  NoManifest: "No plugin.json at that path in the pinned commit",
+  TooManyFiles: () =>
+    t("{max, plural, one {Plugin package exceeds # file} other {Plugin package exceeds # files}}", {
+      max: TREE_MAX_FILES,
+    }),
+  NoManifest: () => t("No plugin.json at that path in the pinned commit"),
   IntegrityFailed: (relative: string) =>
-    `Integrity check failed for ${relative}: the file does not match the pinned commit`,
-  OriginUnknown: "Studio does not know where this plugin came from; load it again",
-  EntryMismatch: (mismatch: string) => `Marketplace entry does not match the plugin at that commit (${mismatch})`,
-  NotInIndex: "Plugin is not in the marketplace index",
-  DigestMismatch: "Plugin artifact digest mismatch",
+    t("Integrity check failed for {file}: the file does not match the pinned commit", { file: relative }),
+  OriginUnknown: () => t("Studio does not know where this plugin came from; load it again"),
+  EntryMismatch: (mismatch: string) =>
+    t("Marketplace entry does not match the plugin at that commit ({field})", { field: mismatch }),
+  NotInIndex: () => t("Plugin is not in the marketplace index"),
+  DigestMismatch: () => t("Plugin artifact digest mismatch"),
   Unscanned: "Plugin artifact was installed without a scan",
-  Offline: "Studio is offline in this profile",
-  LookupDownload: "GitHub lookup",
-  ReleaseUnreadable: "GitHub answered with a release Studio can’t read",
-  CommitUnreadable: "GitHub answered with a commit Studio can’t read",
-  RepositoryUnreadable: "GitHub answered with a repository Studio can’t read",
+  Offline: () => t("Studio is offline in this profile"),
+  ReleaseUnreadable: () => t("GitHub answered with a release Studio can’t read"),
+  CommitUnreadable: () => t("GitHub answered with a commit Studio can’t read"),
+  RepositoryUnreadable: () => t("GitHub answered with a repository Studio can’t read"),
   ManifestNotJson: "plugin.json is not valid JSON",
-  IndexDownload: "Marketplace index download",
-  TreeDownload: "Repository tree download",
-  FileDownload: (relative: string) => `${relative} download`,
-  PluginDownload: "Plugin download",
+  IgnoredEntries: (count: number) =>
+    t("{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}", {
+      count,
+    }),
   MovedPin: (short: string) =>
-    `The marketplace now pins ${short}; this reinstalls the commit you approved. Use "Update to ${short}" to move to it.`,
+    t(
+      'The marketplace now pins {commit}; this reinstalls the commit you approved. Use "Update to {commit}" to move to it.',
+      { commit: short },
+    ),
 } as const;
+
+/** What a capped download says when it fails or runs past its cap. */
+interface DownloadWords {
+  failed: (status: number) => string;
+  tooLarge: (cap: number) => string;
+}
+
+/** Each download's two refusals, a whole sentence apiece, in the person's language. */
+const DOWNLOAD = {
+  Lookup: {
+    failed: (status) => t("GitHub lookup failed ({status})", { status }),
+    tooLarge: (cap) =>
+      t("{cap, plural, one {GitHub lookup exceeds # byte} other {GitHub lookup exceeds # bytes}}", { cap }),
+  },
+  Index: {
+    failed: (status) => t("Marketplace index download failed ({status})", { status }),
+    tooLarge: (cap) =>
+      t(
+        "{cap, plural, one {Marketplace index download exceeds # byte} other {Marketplace index download exceeds # bytes}}",
+        { cap },
+      ),
+  },
+  Tree: {
+    failed: (status) => t("Repository tree download failed ({status})", { status }),
+    tooLarge: (cap) =>
+      t(
+        "{cap, plural, one {Repository tree download exceeds # byte} other {Repository tree download exceeds # bytes}}",
+        { cap },
+      ),
+  },
+  Plugin: {
+    failed: (status) => t("Plugin download failed ({status})", { status }),
+    tooLarge: (cap) =>
+      t("{cap, plural, one {Plugin download exceeds # byte} other {Plugin download exceeds # bytes}}", { cap }),
+  },
+} as const satisfies Record<string, DownloadWords>;
+
+/** One package file's download refusals, naming the file. */
+const fileDownload = (file: string): DownloadWords => ({
+  failed: (status) => t("{file} download failed ({status})", { file, status }),
+  tooLarge: (cap) =>
+    t("{cap, plural, one {{file} download exceeds # byte} other {{file} download exceeds # bytes}}", { file, cap }),
+});
 
 export interface GithubSpec {
   repo: string;
@@ -310,7 +367,7 @@ function packageBlob(node: TreeNode, prefix: string): GithubBlob | undefined {
 }
 
 export function parseGithubSpec(spec: unknown): GithubSpec {
-  if (typeof spec !== "string") throw new Error(MESSAGE.InvalidSpec);
+  if (typeof spec !== "string") throw new Error(MESSAGE.InvalidSpec());
   const at = spec.lastIndexOf("@");
   const location = at < 0 ? "" : spec.slice(0, at).trim(),
     sha =
@@ -320,12 +377,12 @@ export function parseGithubSpec(spec: unknown): GithubSpec {
             .slice(at + 1)
             .trim()
             .toLowerCase();
-  if (!SHA.test(sha)) throw new Error(MESSAGE.SpecNeedsSha);
+  if (!SHA.test(sha)) throw new Error(MESSAGE.SpecNeedsSha());
   const parts = location.split("/");
   const owner = parts[0] ?? "",
     name = parts[1] ?? "",
     subdir = parts.slice(2).join("/");
-  if (!REPO.test(`${owner}/${name}`)) throw new Error(MESSAGE.SpecNeedsRepo);
+  if (!REPO.test(`${owner}/${name}`)) throw new Error(MESSAGE.SpecNeedsRepo());
   if (subdir) assertRelativePath(subdir);
   const parsed: GithubSpec = { repo: `${owner}/${name}`, owner, name, sha };
   if (subdir) parsed.subdir = subdir;
@@ -513,7 +570,7 @@ export class PluginMarketplace {
    * the network by no path at all, not just by skipping the index fetch.
    */
   #request(input: string, init: RequestInit): Promise<Response> {
-    if (this.offline) return Promise.reject(new Error(MESSAGE.Offline));
+    if (this.offline) return Promise.reject(new Error(MESSAGE.Offline()));
     return this.#fetch(input, init);
   }
   /** Host-owned override, outside any plugin's storage; https only so an index can never be served over plain http. */
@@ -536,8 +593,8 @@ export class PluginMarketplace {
       return null;
     }
   }
-  async #read(response: Response, cap: number, what: string): Promise<Buffer> {
-    if (!response.ok) throw new Error(MESSAGE.DownloadFailed(what, response.status));
+  async #read(response: Response, cap: number, what: DownloadWords): Promise<Buffer> {
+    if (!response.ok) throw new Error(what.failed(response.status));
     const body = response.body;
     if (!body) return Buffer.from(await response.arrayBuffer());
     const reader = body.getReader(),
@@ -549,7 +606,7 @@ export class PluginMarketplace {
       size += value.length;
       if (size > cap) {
         await reader.cancel();
-        throw new Error(MESSAGE.DownloadTooLarge(what, cap));
+        throw new Error(what.tooLarge(cap));
       }
       chunks.push(value);
     }
@@ -567,7 +624,7 @@ export class PluginMarketplace {
     const cache = await this.#cache();
     const usable = cache && cache.url === url ? cache : null;
     if (error) return this.#view(url, usable, true, error, installed);
-    if (this.offline) return this.#view(url, usable, true, MESSAGE.Offline, installed);
+    if (this.offline) return this.#view(url, usable, true, MESSAGE.Offline(), installed);
     if (usable && !refresh && Date.now() - usable.fetchedAt < INDEX_TTL_MS)
       return this.#view(url, usable, false, undefined, installed);
     try {
@@ -577,7 +634,7 @@ export class PluginMarketplace {
         headers: { Accept: "application/json" },
       });
       const { index, rejected } = readableIndex(
-        JSON.parse((await this.#read(response, INDEX_MAX_BYTES, MESSAGE.IndexDownload)).toString("utf8")),
+        JSON.parse((await this.#read(response, INDEX_MAX_BYTES, DOWNLOAD.Index)).toString("utf8")),
       );
       const fresh: CachedIndex = { url, fetchedAt: Date.now(), index, rejected };
       await mkdir(path.dirname(this.#cacheFile()), { recursive: true, mode: 0o700 });
@@ -606,8 +663,7 @@ export class PluginMarketplace {
       updates: this.updates(installed),
     };
     if (error) view.error = error;
-    else if (cache?.rejected)
-      view.error = `Ignored ${cache.rejected} invalid catalog ${cache.rejected === 1 ? "entry" : "entries"}.`;
+    else if (cache?.rejected) view.error = MESSAGE.IgnoredEntries(cache.rejected);
     return view;
   }
   /** Updates are reported, never applied: an update can widen capabilities and must be re-approved. */
@@ -640,7 +696,7 @@ export class PluginMarketplace {
     if (entry.minStudioVersion && !versionGte(this.studioVersion, entry.minStudioVersion))
       throw new Error(MESSAGE.NeedsNewerStudio(entry.name, entry.minStudioVersion));
   }
-  async #json(url: string, cap: number, what: string): Promise<unknown> {
+  async #json(url: string, cap: number, what: DownloadWords): Promise<unknown> {
     const response = await this.#request(url, {
       signal: AbortSignal.timeout(INDEX_TIMEOUT_MS),
       redirect: "error",
@@ -650,15 +706,15 @@ export class PluginMarketplace {
   }
   /** The pinned commit's own tree: no branch, no tag, no archive, no link or submodule may enter a package. */
   async fetchGithubTree(repo: string, sha: string, subdir?: string): Promise<GithubBlob[]> {
-    if (!REPO.test(repo)) throw new Error(MESSAGE.InvalidRepository);
-    if (!SHA.test(sha)) throw new Error(MESSAGE.SpecNeedsSha);
+    if (!REPO.test(repo)) throw new Error(MESSAGE.InvalidRepository());
+    if (!SHA.test(sha)) throw new Error(MESSAGE.SpecNeedsSha());
     const tree = (await this.#json(
       `https://api.github.com/repos/${repo}/git/trees/${sha}?recursive=1`,
       INDEX_MAX_BYTES * 8,
-      MESSAGE.TreeDownload,
+      DOWNLOAD.Tree,
     )) as { truncated?: boolean; tree?: TreeNode[] };
-    if (tree?.truncated) throw new Error(MESSAGE.TreeTruncated);
-    if (!Array.isArray(tree?.tree)) throw new Error(MESSAGE.TreeUnreadable);
+    if (tree?.truncated) throw new Error(MESSAGE.TreeTruncated());
+    if (!Array.isArray(tree?.tree)) throw new Error(MESSAGE.TreeUnreadable());
     const prefix = subdir ? `${subdir}/` : "";
     const blobs: GithubBlob[] = [];
     let total = 0;
@@ -666,12 +722,12 @@ export class PluginMarketplace {
       const blob = packageBlob(node, prefix);
       if (!blob) continue;
       total += blob.size;
-      if (total > TREE_MAX_BYTES) throw new Error(MESSAGE.PackageTooLarge);
+      if (total > TREE_MAX_BYTES) throw new Error(MESSAGE.PackageTooLarge());
       if (!SHA.test(blob.sha)) throw new Error(MESSAGE.MissingObjectId(blob.relative));
       blobs.push(blob);
-      if (blobs.length > TREE_MAX_FILES) throw new Error(MESSAGE.TooManyFiles);
+      if (blobs.length > TREE_MAX_FILES) throw new Error(MESSAGE.TooManyFiles());
     }
-    if (!blobs.some((b) => b.relative === "plugin.json")) throw new Error(MESSAGE.NoManifest);
+    if (!blobs.some((b) => b.relative === "plugin.json")) throw new Error(MESSAGE.NoManifest());
     return blobs;
   }
   /** Writes the pinned files into a staging folder and reports what the code appears to do; the caller installs and removes the stage. */
@@ -692,7 +748,7 @@ export class PluginMarketplace {
           `https://raw.githubusercontent.com/${parsed.repo}/${parsed.sha}/${location}`,
           { signal: AbortSignal.timeout(INDEX_TIMEOUT_MS), redirect: "error" },
         );
-        const bytes = await this.#read(response, FILE_MAX_BYTES, MESSAGE.FileDownload(blob.relative));
+        const bytes = await this.#read(response, FILE_MAX_BYTES, fileDownload(blob.relative));
         const objectId = createHash("sha1")
           .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]))
           .digest("hex");
@@ -721,7 +777,7 @@ export class PluginMarketplace {
     const problem = lookupStop(response);
     if (problem) return { problem };
     return {
-      value: JSON.parse((await this.#read(response, INDEX_MAX_BYTES, MESSAGE.LookupDownload)).toString("utf8")),
+      value: JSON.parse((await this.#read(response, INDEX_MAX_BYTES, DOWNLOAD.Lookup)).toString("utf8")),
     };
   }
   /** The commit a branch, tag or release points at now. */
@@ -730,7 +786,7 @@ export class PluginMarketplace {
     if ("problem" in answer) return answer;
     const commit = answer.value as { sha?: unknown; commit?: { committer?: { date?: unknown } } };
     const sha = typeof commit?.sha === "string" ? commit.sha.toLowerCase() : "";
-    if (!SHA.test(sha)) throw new Error(MESSAGE.CommitUnreadable);
+    if (!SHA.test(sha)) throw new Error(MESSAGE.CommitUnreadable());
     const date = commit.commit?.committer?.date;
     return { sha, version: { kind, label: ref, ...(typeof date === "string" ? { date } : {}) } };
   }
@@ -742,7 +798,7 @@ export class PluginMarketplace {
         tag_name?: unknown;
         published_at?: unknown;
       };
-      if (typeof tag !== "string" || !tag) throw new Error(MESSAGE.ReleaseUnreadable);
+      if (typeof tag !== "string" || !tag) throw new Error(MESSAGE.ReleaseUnreadable());
       const pinned = await this.#commitAt(repo, tag, GithubVersionKind.Release);
       if ("problem" in pinned) return pinned;
       return {
@@ -755,7 +811,7 @@ export class PluginMarketplace {
     const repository = await this.#githubApi(`https://api.github.com/repos/${repo}`);
     if ("problem" in repository) return repository;
     const branch = (repository.value as { default_branch?: unknown } | null)?.default_branch;
-    if (typeof branch !== "string" || !branch) throw new Error(MESSAGE.RepositoryUnreadable);
+    if (typeof branch !== "string" || !branch) throw new Error(MESSAGE.RepositoryUnreadable());
     return this.#commitAt(repo, branch, GithubVersionKind.Branch);
   }
   /** The exact commit a link names: a version picked from its list, its commit, its ref, or the latest version. */
@@ -778,7 +834,7 @@ export class PluginMarketplace {
       signal: AbortSignal.timeout(INDEX_TIMEOUT_MS),
       redirect: "error",
     });
-    const bytes = await this.#read(response, FILE_MAX_BYTES, MESSAGE.FileDownload(file));
+    const bytes = await this.#read(response, FILE_MAX_BYTES, fileDownload(file));
     const objectId = createHash("sha1")
       .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]))
       .digest("hex");
@@ -816,14 +872,14 @@ export class PluginMarketplace {
     const tree = (await this.#json(
       `https://api.github.com/repos/${link.repo}/git/trees/${pin.sha}?recursive=1`,
       INDEX_MAX_BYTES * 8,
-      MESSAGE.TreeDownload,
+      DOWNLOAD.Tree,
     )) as { truncated?: boolean; tree?: TreeNode[] };
-    if (!Array.isArray(tree?.tree)) throw new Error(MESSAGE.TreeUnreadable);
+    if (!Array.isArray(tree?.tree)) throw new Error(MESSAGE.TreeUnreadable());
     const nodes = manifestNodes(tree.tree, link.subdir);
     if (!nodes.length)
       return lookupProblem(
         tree.truncated ? GithubLookupProblem.NotFound : GithubLookupProblem.NoPlugin,
-        tree.truncated ? MESSAGE.TreeTruncated : undefined,
+        tree.truncated ? MESSAGE.TreeTruncated() : undefined,
       );
     const summaries: Summary[] = [];
     for (const node of nodes) summaries.push(await this.#summary(link.repo, pin, node));
@@ -839,7 +895,7 @@ export class PluginMarketplace {
   /** A repository's recent releases (newest first, drafts left out) and its default branch, to pick another version from. */
   async githubVersions(repo: string): Promise<GithubVersion[]> {
     if (!REPO.test(repo) || repo.split("/").some((part) => part === "." || part === ".."))
-      throw new Error(MESSAGE.InvalidRepository);
+      throw new Error(MESSAGE.InvalidRepository());
     const [releases, repository] = await Promise.all([
       this.#githubApi(`https://api.github.com/repos/${repo}/releases?per_page=${VERSIONS_LISTED}`),
       this.#githubApi(`https://api.github.com/repos/${repo}`),
@@ -867,7 +923,7 @@ export class PluginMarketplace {
     confirm?: (manifest: PluginManifest, scan: PluginScan, origin: PluginSource, note?: string) => Promise<boolean>,
   ): Promise<void> {
     const origin = info.origin;
-    if (!origin || !isCatalogedOrigin(origin)) throw new Error(MESSAGE.OriginUnknown);
+    if (!origin || !isCatalogedOrigin(origin)) throw new Error(MESSAGE.OriginUnknown());
     const capabilities = info.manifest.capabilities;
     if (origin.repo && origin.sha && !origin.url) {
       const note = await this.#movedPinNote(info, origin, origin.sha);
@@ -916,7 +972,7 @@ export class PluginMarketplace {
     confirm?: (manifest: PluginManifest, scan: PluginScan, origin: PluginSource) => Promise<boolean>,
   ): Promise<InstalledPackage> {
     const entry = this.entry(id);
-    if (!entry) throw new Error(MESSAGE.NotInIndex);
+    if (!entry) throw new Error(MESSAGE.NotInIndex());
     this.#requireStudio(entry);
     const origin: PluginSource = { kind: PluginSourceKind.Index, repo: entry.repo, sha: entry.sha };
     if (entry.subdir) origin.subdir = entry.subdir;
@@ -947,8 +1003,8 @@ export class PluginMarketplace {
       signal: AbortSignal.timeout(ARTIFACT_TIMEOUT_MS),
       redirect: "error",
     });
-    const bytes = await this.#read(response, MAX_ARTIFACT_BYTES, MESSAGE.PluginDownload);
-    if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) throw new Error(MESSAGE.DigestMismatch);
+    const bytes = await this.#read(response, MAX_ARTIFACT_BYTES, DOWNLOAD.Plugin);
+    if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) throw new Error(MESSAGE.DigestMismatch());
     let scanned: PluginScan | undefined;
     const manifest = await target.installEnvelope(
       bytes,

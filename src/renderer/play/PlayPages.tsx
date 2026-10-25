@@ -1,10 +1,11 @@
 /**
  * What Play shows in place of the workspace: the chosen shelf's dashboard, the Friends page,
- * someone's profile, or the account's stats (`PlayState.view`).
+ * someone's profile, the account's stats or a native game's own page (`PlayState.view`).
  */
 import type { JSX } from "react";
 import { usePlay } from "../state/hooks.ts";
 import { PlayPage } from "../state/play.ts";
+import { GamePage } from "./GamePage.tsx";
 import { PlayFriends } from "./PlayFriends.tsx";
 import { PlayProfile } from "./PlayProfile.tsx";
 import { PlayRoom } from "./PlayRoom.tsx";
@@ -24,6 +25,10 @@ export function PlayPages({
   const view = usePlay((s) => s.view);
   if (view.page === PlayPage.Friends)
     return <PlayFriends sidebarHidden={sidebarHidden} onToggleSidebar={onToggleSidebar} />;
+  if (view.page === PlayPage.Game)
+    return (
+      <GamePage key={view.slug} slug={view.slug} sidebarHidden={sidebarHidden} onToggleSidebar={onToggleSidebar} />
+    );
   if (view.page === PlayPage.Stats)
     return <PlayStats sidebarHidden={sidebarHidden} onToggleSidebar={onToggleSidebar} onNewGame={onNewGame} />;
   if (view.page === PlayPage.Profile)

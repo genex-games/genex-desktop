@@ -71,6 +71,7 @@ const card = (slug: string, plays: number, online: number | null = null): PlayGa
   online,
   author: { id: "me", name: "Rab", imageUrl: null },
   remixable: true,
+  assetKind: null,
 });
 
 const entry = (stats: PlayStats | null, fields: Partial<StatsEntry> = {}): StatsEntry => ({
@@ -237,6 +238,7 @@ describe("the people store's numbers", () => {
         return (answers.creators ?? (async () => null))();
       },
       playCredits: async () => assert.fail("not read"),
+      storeCoins: async () => assert.fail("not read"),
       playSetHandle: async () => assert.fail("no nickname saved"),
       genexAccount: async () => ({ status: GenexAccountStatus.SignedIn }),
       genexSignIn: async () => assert.fail("not signed in"),

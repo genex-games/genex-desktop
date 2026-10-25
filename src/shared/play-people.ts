@@ -50,6 +50,11 @@ export interface PlayMe extends PlayPerson {
    * welcome is then the avatar alone, as before.
    */
   handleChosen: boolean | null;
+  /**
+   * genex.games names the account one of its admins: Play's cards then offer mobile support and
+   * tags. Absent reads as not. The server checks every admin call again, so this only decides what shows.
+   */
+  isAdmin?: boolean;
 }
 
 /** The viewer's relationship with someone. Wire values, as the API names them: never rename one. */

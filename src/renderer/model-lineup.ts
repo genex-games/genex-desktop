@@ -35,6 +35,7 @@ const FIRST_FEW: Partial<Record<string, number>> = {
   [EngineId.OpenRouter]: 3,
   [EngineId.OpenCode]: 3,
   [EngineId.Pi]: 3,
+  [EngineId.Cursor]: 3,
 };
 
 /** `claude-opus-5-5`, `claude-opus-5`, `claude-haiku-4-5-20251001`. */

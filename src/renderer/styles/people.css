@@ -1271,6 +1271,22 @@
   color: var(--ink-3);
   font: 12px / 16px var(--font-family-mono);
 }
+/* A Pro's nameplate in Settings: the sidebar's plate, its width, without the menu or the credits. */
+.account-nameplate {
+  display: flex;
+  width: 248px;
+  max-width: 100%;
+}
+.account-nameplate-row {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 6px;
+}
 .account-name-line {
   display: flex;
   gap: 8px;
@@ -1675,9 +1691,45 @@
   color: var(--ink-3);
   font: 12px / 1 var(--font-family-mono);
 }
-.avatar-welcome-continue {
+/* Regenerate beside Continue, which takes the rest of the row. */
+.avatar-welcome-actions {
+  display: flex;
+  gap: 8px;
   width: 100%;
+}
+.avatar-welcome-continue {
+  flex: 1;
   height: 38px;
+}
+.avatar-welcome-regenerate {
+  height: 38px;
+}
+.avatar-welcome-regenerate[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+/* A refused Regenerate, in the note's place: orange, with Try again. */
+.avatar-welcome-error {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--orange);
+  font: 11px / 1.4 var(--font-family-mono);
+}
+.avatar-welcome-retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+:root[data-theme="light"] .avatar-welcome-error {
+  color: color-mix(in oklab, var(--orange) 60%, var(--ink));
 }
 .avatar-welcome-note {
   color: var(--ink-3);
@@ -1726,9 +1778,8 @@
   width: 88px;
   height: 8px;
 }
-/* The shard before a balance wherever one is shown: the Plugins row, the usage panel, the account card. */
-.extension-credits,
-.genex-stat dd {
+/* The shard before a balance on a Plugins row. */
+.extension-credits {
   display: inline-flex;
   align-items: center;
   gap: 6px;

@@ -32,7 +32,7 @@ import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { servedKey } from "../../src/main/core/page-report.ts";
 import { ensureRepo, git } from "../../src/substrate/snapshots.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
-import { ENGINE_EXPORT_REFUSAL, openOptions, openedWords, suggestedOption } from "../../src/shared/shape-words.ts";
+import { engineExportRefusal, openOptions, openedWords, suggestedOption } from "../../src/shared/shape-words.ts";
 import { loopRunRefusal } from "../../src/harness-seed/loop/main.ts";
 import { servedAfterBuild } from "../../src/main/game-build.ts";
 import { allowedFile as hookAllowedFile } from "../../src/substrate/ownership.ts";
@@ -1698,7 +1698,7 @@ describe("the Open Game sheet", () => {
     const exported = openOptions(await games.inspect(godot));
     assert.equal(exported[0]!.engineExport, true, "the sheet says a compiled export cannot be built on");
     assert.equal(exported[0]!.button, "Open this game", "it still opens, to play and to photograph");
-    assert.match(ENGINE_EXPORT_REFUSAL, /play it and take screenshots/);
+    assert.match(engineExportRefusal(), /play it and take screenshots/);
   });
 
   it("never starts a run on a compiled export, whoever asked for it", async () => {
@@ -1782,7 +1782,7 @@ describe("the Open Game sheet", () => {
     assert.ok(!/window\.studio/.test(sheet), "the sheet asks the question; App is what answers it");
     assert.match(
       sheet,
-      /chosen\.engineExport \?\s*\(\s*<div[^>]*data-testid="engine-export-card"[^>]*>\s*\{ENGINE_EXPORT_REFUSAL\}\s*<\/div>/,
+      /chosen\.engineExport \?\s*\(\s*<div[^>]*data-testid="engine-export-card"[^>]*>\s*\{engineExportRefusal\(\)\}\s*<\/div>/,
       "the refusal a run would give is shown before the run",
     );
   });

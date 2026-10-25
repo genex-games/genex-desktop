@@ -69,6 +69,7 @@ import { McpSessionSecrets } from "./session-secrets.ts";
 import { resetToolchain } from "../toolchain.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { type FactRef, type FolderHolds, type GameKind, scopeReaches } from "../../shared/project-facts.ts";
 
 /** The harness reads connector tools over `mcp.tools`, so their shape lives in `shared/mcp.ts`. */
@@ -154,28 +155,33 @@ const GUIDANCE = {
   ],
 } as const;
 
-/** What a person reads when the registry refuses a connector, a secret or a tool call. */
+/**
+ * What a person reads when the registry refuses a connector, a secret or a tool call. The words
+ * that are functions are the person's, in their language. The plain strings stay English: a tool
+ * call or a connection the agent opened refuses with them too, and the model reads that refusal;
+ * a plugin's own id and server id are its publisher's to fix; an unknown id is a caller's bug.
+ */
 const MESSAGE = {
   PluginIdTooLong: "A plugin id that owns a connector must fit a connector id",
   InvalidServerId: "Invalid plugin server id",
   ConnectorIdTooLong: (id: string) => `Connector id ${id} is too long`,
-  OwnedByPlugin: "This connector belongs to a plugin; change it there",
-  PluginConnectorByHand: "A plugin connector cannot be saved by hand",
+  OwnedByPlugin: () => t("This connector belongs to a plugin; change it there"),
+  PluginConnectorByHand: () => t("A plugin connector cannot be saved by hand"),
   Untrusted: (name: string) => `${name} has not been trusted to start on this Mac`,
   UnknownConnector: "Unknown connector",
-  NoSecretStorage: "This profile cannot store secrets: Studio has no OS encryption here.",
+  NoSecretStorage: () => t("This profile cannot store secrets: Studio has no OS encryption here."),
   UnknownSecretField: (field: string) => `Unknown secret field: ${field}`,
-  UndeclaredSecret: (name: string) => `${name} is not declared on this connector`,
-  RemoveThePlugin: "This connector belongs to a plugin; remove the plugin instead",
+  UndeclaredSecret: (name: string) => t("{name} is not declared on this connector", { name }),
+  RemoveThePlugin: () => t("This connector belongs to a plugin; remove the plugin instead"),
   IdTaken: "A connector with that id already exists",
   SwitchedOffOrChanged: (name: string) => `${name} is switched off or its configuration changed`,
   UnknownTool: "Unknown connector tool",
   NotEnabledForProject: (name: string) => `${name} is not enabled for this project`,
   ToolNotAllowed: (tool: string, name: string) => `${tool} is not allowed on ${name}`,
   ToolNoLongerAllowed: (tool: string, name: string) => `${tool} is no longer allowed on ${name}`,
-  NoBrowserSignIn: "This connector has no browser sign-in",
-  NotEnabledForSelectedProject: "This connector is not enabled for the selected project",
-  TestUntrusted: "This connector has not been trusted to start on this Mac.",
+  NoBrowserSignIn: () => t("This connector has no browser sign-in"),
+  NotEnabledForSelectedProject: () => t("This connector is not enabled for the selected project"),
+  TestUntrusted: () => t("This connector has not been trusted to start on this Mac."),
 } as const;
 
 interface Entry {
@@ -295,8 +301,8 @@ function withAutoApproved(connector: McpConnector, raw: string): McpConnector {
 function validatedUserConnector(input: unknown, previous: McpConnector | undefined): McpConnector {
   const draft = { ...(input as McpConnector) } as McpConnector;
   if (!draft.createdAt) draft.createdAt = previous?.createdAt ?? new Date().toISOString();
-  if (isPluginSource(previous?.source)) throw new Error(MESSAGE.OwnedByPlugin);
-  if (isPluginSource(draft.source)) throw new Error(MESSAGE.PluginConnectorByHand);
+  if (isPluginSource(previous?.source)) throw new Error(MESSAGE.OwnedByPlugin());
+  if (isPluginSource(draft.source)) throw new Error(MESSAGE.PluginConnectorByHand());
   return validateConnector(draft);
 }
 
@@ -748,7 +754,7 @@ export class McpRegistry {
     const entries = Object.entries(secrets ?? {});
     if (!entries.length) return;
     const lease = this.#sessionSecrets;
-    if (!this.#secrets || !lease) throw new Error(MESSAGE.NoSecretStorage);
+    if (!this.#secrets || !lease) throw new Error(MESSAGE.NoSecretStorage());
     for (const [field, value] of entries) {
       const match = /^(env|header)\.(.+)$/.exec(field);
       if (!match) throw new Error(MESSAGE.UnknownSecretField(field));
@@ -797,7 +803,7 @@ export class McpRegistry {
     return this.#serial(async () => {
       const entry = this.#entries.get(id);
       if (!entry) throw new Error(MESSAGE.UnknownConnector);
-      if (entry.plugin) throw new Error(MESSAGE.RemoveThePlugin);
+      if (entry.plugin) throw new Error(MESSAGE.RemoveThePlugin());
       // Revoked at the server where it offers that, even if never connected this session.
       await this.#account(entry)?.disconnect();
       this.#oauth.delete(id);
@@ -1279,7 +1285,7 @@ export class McpRegistry {
       return {
         ok: false,
         tools: [],
-        error: MESSAGE.TestUntrusted,
+        error: MESSAGE.TestUntrusted(),
         durationMs: Date.now() - started,
       };
     }
@@ -1331,7 +1337,7 @@ export class McpRegistry {
     if (entry.connector.authentication !== "oauth") return;
     this.#oauthProject.set(id, project ?? null);
     const account = this.#account(entry, project);
-    if (!account) throw new Error(MESSAGE.NoBrowserSignIn);
+    if (!account) throw new Error(MESSAGE.NoBrowserSignIn());
     await account.begin(openBrowser);
     await this.#drop(id);
   }
@@ -1360,7 +1366,7 @@ export class McpRegistry {
     try {
       if (!entry) throw new Error(MESSAGE.UnknownConnector);
       this.#assertCurrent(id, entry);
-      if (!mcpScopeCovers(entry.connector.scope, project)) throw new Error(MESSAGE.NotEnabledForSelectedProject);
+      if (!mcpScopeCovers(entry.connector.scope, project)) throw new Error(MESSAGE.NotEnabledForSelectedProject());
       if (openBrowser) await this.#unlockForConnect(id, entry, project, openBrowser);
       else this.#assertUnlocked(entry);
       const tools = await (await this.#connection(id, project)).listTools();

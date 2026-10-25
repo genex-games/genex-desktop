@@ -3,10 +3,8 @@ import assert from "node:assert/strict";
 import {
   canAskCover,
   clock,
-  COVER_MAKING_MS,
   coverCardPublish,
   coverChoices,
-  coverMaking,
   flipCover,
   GenexSetup,
   genexSetup,
@@ -433,6 +431,39 @@ test("Studio takes a cover as the dialog opens only while the game has none and 
   }
 });
 
+test("the dialog says plainly when the game goes out without a cover", () => {
+  const live = { slug: "g", status: "published", lastPublishAt: "2026-10-09T10:05:00Z" } as const;
+  const blank = { ...shot, stats: { lumaMean: 0.02, lumaStdDev: 0.01, nearBlackFraction: 0.99, litFraction: 0 } };
+  const rows: Array<[string, GenexPublishState, boolean]> = [
+    ["no shot, and Genex has none", state({ cover: cover() }), true],
+    ["a kept shot that is only a black screen", state({ cover: cover({ shot: blank }) }), true],
+    [
+      "a published game whose last publish sent nothing",
+      state({ ...live, cover: cover({ last: last(GenexCoverOutcome.None) }) }),
+      true,
+    ],
+    ["a real picture kept to send", state({ cover: cover({ shot }) }), false],
+    ["a cover Genex already shows", state({ ...live, cover: cover({ last: last(GenexCoverOutcome.Applied) }) }), false],
+    [
+      "the same frame Genex already shows",
+      state({
+        ...live,
+        cover: cover({ last: { ...last(GenexCoverOutcome.Unchanged), settled: GenexCoverOutcome.Applied } }),
+      }),
+      false,
+    ],
+    [
+      "the owner's own pick on genex.games",
+      state({ ...live, cover: cover({ last: last(GenexCoverOutcome.KeptOwner) }) }),
+      false,
+    ],
+    ["a cover being sent now", state({ cover: cover({ sending: true }) }), false],
+    ["a publish running", state({ cover: cover(), job: job() }), false],
+    ["a plugin older than covers", state(), false],
+  ];
+  for (const [label, record, says] of rows) assert.equal(publishView(record).withoutCover, says, label);
+});
+
 test("Another cover is offered while nothing runs and the owner chose no cover", () => {
   const rows: Array<[string, GenexPublishState, boolean]> = [
     ["a kept shot", state({ cover: cover({ shot }) }), true],
@@ -461,17 +492,6 @@ test("the banner's arrows flip through the recent frames, wrapping round", () =>
   assert.equal(flipCover(coverChoices(cover({ shot: a })), 1), null, "a plugin older than candidates");
   assert.deepEqual(coverChoices(cover({ shot: a, candidates: [c, b] })).index, -1, "a kept shot no longer listed");
   assert.equal(flipCover(coverChoices(cover({ shot: a, candidates: [c, b] })), 1), b.sha256);
-});
-
-test("the banner says a new cover is on its way until a new frame arrives, and not forever", () => {
-  const at = 1_000_000;
-  const ask = { from: "a".repeat(64), at };
-  assert.equal(coverMaking(null, ask.from, at), false, "nothing asked");
-  assert.equal(coverMaking(ask, ask.from, at + 1000), true, "asked, the same frame still kept");
-  assert.equal(coverMaking(ask, "b".repeat(64), at + 1000), false, "a new frame arrived");
-  assert.equal(coverMaking(ask, ask.from, at + COVER_MAKING_MS), false, "given up after a while");
-  assert.equal(coverMaking({ from: null, at }, null, at), true, "asked with no frame yet");
-  assert.equal(coverMaking({ from: null, at }, "c".repeat(64), at), false, "the first frame arrived");
 });
 
 test("the chat's cover card leaves Publish out once Genex has answered for the kept frame", () => {

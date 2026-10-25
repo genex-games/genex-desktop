@@ -172,6 +172,11 @@ const UNREAL_EDITOR_TOOLS = [
   "unreal__add-cpp-module",
   "unreal__motion-status",
   "unreal__add-motion-matching",
+  "unreal__package-game",
+  "unreal__package-status",
+  "unreal__open-editor",
+  "unreal__quit-editor",
+  "unreal__editor-status",
 ];
 const UNREAL_SKILL = "unreal/unreal-editor";
 /** The Unreal plugin's tools and skill for a game that holds an Unreal plugin only. */
@@ -217,6 +222,7 @@ const ROBLOX_ONLY_TOOLS = [
   "roblox__import-model",
   "roblox__publish-update",
   "roblox__first-publish",
+  "roblox__publish-result",
   "roblox__places",
   "roblox__add-luau-checks",
 ];
@@ -400,4 +406,27 @@ test("a Roblox game's chat lists the Roblox skills and a web game's does not", a
   };
   assert.deepEqual(await robloxSkills(obby.name), ROBLOX_SKILLS);
   assert.deepEqual(await robloxSkills(web.name), []);
+});
+
+test("a Godot or Unity game's web export in web/ is its engine's build: no web-only skill reaches the game for it", async () => {
+  const resources = await makeResources({ tsc: false });
+  const registry = await bundledRegistry(path.join(resources, "plugins"));
+  try {
+    const rows: Array<[string, FactRef[]]> = [
+      [CoreFact.GodotProject, [{ id: CoreFact.GodotProject, path: "godot" }]],
+      [CoreFact.UnityProject, [{ id: CoreFact.UnityProject, path: "unity" }]],
+    ];
+    for (const [kind, project] of rows) {
+      const exported = registry.snapshot([...project, { id: CoreFact.WebGame, path: "web" }]);
+      for (const skill of WEB_ONLY) assert.ok(!exported.applied.skills.includes(skill), `${kind}: ${skill}`);
+      assert.ok(exported.applied.skills.includes("genex/publishing-apps"), `${kind}: its apps' publishing stays`);
+    }
+    const web = registry.snapshot([at(CoreFact.WebGame)]);
+    for (const skill of WEB_ONLY) assert.ok(web.applied.skills.includes(skill), `a web game keeps ${skill}`);
+    const beside = registry.snapshot([at(CoreFact.WebGame), { id: CoreFact.GodotProject, path: "godot" }]);
+    for (const skill of WEB_ONLY)
+      assert.ok(beside.applied.skills.includes(skill), `a web game at the root keeps ${skill}`);
+  } finally {
+    registry.cancel();
+  }
 });

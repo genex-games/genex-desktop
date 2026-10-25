@@ -32,6 +32,7 @@ import * as seedQueue from "../../src/harness-seed/loop/message-queue.ts";
 import * as seedRoles from "../../src/harness-seed/loop/model-roles.ts";
 import * as seedEffort from "../../src/harness-seed/loop/effort-cap.ts";
 import * as seedOutage from "../../src/harness-seed/loop/outage.ts";
+import * as seedSandboxRefusal from "../../src/harness-seed/loop/workers/sandbox-refusal.ts";
 import * as seedOutcomes from "../../src/harness-seed/loop/outcomes.ts";
 import {
   PreviewConsoleSource as seedPreviewConsoleSource,
@@ -130,7 +131,7 @@ import { judgePlayToolWithJudges } from "../../src/main/core/judge-play-tool-pro
 import { LOCAL_ROLES_CAPABILITY } from "../../src/harness-seed/loop/local-roles-served.ts";
 import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
 import * as seedLoopSwitch from "../../src/harness-seed/loop/loop-switch.ts";
-import { EngineKind } from "../../src/shared/engine-descriptor.ts";
+import { EngineKind, EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import { savedByLead } from "../../src/renderer/words.ts";
 
 let clock = 0;
@@ -562,6 +563,10 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("has the same engine ids", () => {
     assert.deepEqual(seedRoles.EngineId, EngineId);
+  });
+
+  it("reads an engine the host reports signed in the way the host says it", () => {
+    assert.equal(seedSandboxRefusal.ENGINE_READY, EngineStatusCode.Ready);
   });
 
   it("has the same engine failure kinds", () => {
@@ -1051,6 +1056,8 @@ describe("a game's observers and a lead's claim (shared/observers.ts ↔ loop/fi
     assert.equal(seed.MAX_FINISH_REJECTIONS, check.MAX_FINISH_REJECTIONS);
     assert.equal(seed.MAX_FINISH_REASONS, check.MAX_FINISH_REASONS);
     assert.equal(seed.FINISH_REASON_CHARS, check.FINISH_REASON_CHARS);
+    assert.equal(seed.FINISH_TIME_LEFT_MS, check.FINISH_TIME_LEFT_MS);
+    assert.deepEqual({ ...seed.StopWhy }, { ...check.StopWhy });
     assert.equal(seed.FINISH_CHECK_EVENT, CustomEvent.FinishCheck);
     assert.deepEqual({ ...seed.ObserverSource }, { ...app.ObserverSource });
     assert.equal(seed.PREVIEW_OBSERVER, app.PREVIEW_OBSERVER);

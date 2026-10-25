@@ -25,7 +25,13 @@ const PLUGIN = "unreal";
 const NOW = () => new Date("2026-10-04T12:00:00.000Z");
 const LATER = () => new Date("2026-10-04T12:05:00.000Z");
 
-async function world(now = NOW, { failAppend = false } = {}) {
+/** How a test's host takes back a link's set-up: records the call, or refuses as the plugin would. */
+type UndoSetUp = (pluginId: string, game: string, project: string) => Promise<void>;
+
+async function world(
+  now = NOW,
+  { failAppend = false, undoSetUp }: { failAppend?: boolean; undoSetUp?: UndoSetUp } = {},
+) {
   const root = await realpath(await tmpDir("studio-engine-links-"));
   const games = path.join(root, "games");
   const storage = path.join(root, "plugins", PLUGIN);
@@ -58,6 +64,7 @@ async function world(now = NOW, { failAppend = false } = {}) {
     gameThread: async (project) => `thread-of-${project}`,
     now: () => clock(),
     catalog: () => ENGINES,
+    ...(undoSetUp ? { undoSetUp } : {}),
   });
   const binding = (project: string, threadId?: string): PluginBinding => ({
     project,
@@ -226,6 +233,128 @@ test("a stale Undo, for a link that already changed, is refused and changes noth
   await assert.rejects(w.links.undo(PLUGIN, "other", a.linkedAt, "t1"), EngineLinkStale);
   await assert.rejects(w.links.undo(PLUGIN, "../valley", a.linkedAt, "t1"));
   assert.deepEqual(await snapshot(w.root), before);
+});
+
+test("a link that also set its project up says so, and its Undo takes the set-up back before the link", async () => {
+  const asked: Array<{ call: [string, string, string]; linkedThen: string | undefined }> = [];
+  const games: { dir?: string } = {};
+  const w = await world(NOW, {
+    undoSetUp: async (...call) => {
+      asked.push({ call, linkedThen: (await readEngineBinding(games.dir ?? "", ENGINES))?.project });
+    },
+  });
+  games.dir = await w.makeGame("valley");
+  const project = await w.makeProject("Valley");
+  const linked = await w.links.link(PLUGIN, w.binding("valley", "t1"), { project, setUp: true });
+  assert.equal(customEvent(envelope(w.appended[0].record), CustomEvent.EngineLinked)?.setUp, true);
+
+  await w.links.undo(PLUGIN, "valley", linked.linkedAt, "t1");
+  assert.deepEqual(asked, [{ call: [PLUGIN, "valley", project], linkedThen: project }], "set-up first, link still on");
+  assert.equal(await readEngineBinding(games.dir, ENGINES), undefined);
+  const undone = customEvent(envelope(w.appended[1].record), CustomEvent.EngineLinkUndone);
+  assert.equal(undone?.setUpUndone, "Valley");
+});
+
+test("Undo of a set-up link whose set-up is refused keeps the link, changes nothing and says why", async () => {
+  const w = await world(NOW, {
+    undoSetUp: async () => {
+      throw new Error("Quit Unreal Editor first. It rewrites the project's settings when it closes.");
+    },
+  });
+  const game = await w.makeGame("valley");
+  const project = await w.makeProject("Valley");
+  const linked = await w.links.link(PLUGIN, w.binding("valley", "t1"), { project, setUp: true });
+  const before = await snapshot(w.root);
+  await assert.rejects(w.links.undo(PLUGIN, "valley", linked.linkedAt, "t1"), /Quit Unreal Editor first/);
+  assert.deepEqual(await snapshot(w.root), before);
+  assert.equal((await readEngineBinding(game, ENGINES))?.project, project);
+  assert.equal(w.appended.length, 1, "no undone line");
+});
+
+test("a link without set-up never asks for one back; one that set up the project a game uses is a new link", async () => {
+  const asked: string[] = [];
+  const w = await world(NOW, { undoSetUp: async (_id, _game, project) => void asked.push(project) });
+  const game = await w.makeGame("valley");
+  const project = await w.makeProject("Valley");
+  const plain = await w.links.link(PLUGIN, w.binding("valley", "t1"), { project });
+  w.tick(LATER);
+  const setUp = await w.links.link(PLUGIN, w.binding("valley", "t1"), { project, setUp: true });
+  assert.notEqual(setUp.linkedAt, plain.linkedAt, "the set-up gets its own line and Undo");
+  await w.links.undo(PLUGIN, "valley", setUp.linkedAt, "t1");
+  assert.deepEqual(asked, [project]);
+  assert.equal((await readEngineBinding(game, ENGINES))?.project, project, "the game keeps the project it used");
+  const restored = await w.links.read(PLUGIN, w.binding("valley"));
+  assert.ok(restored);
+  await w.links.undo(PLUGIN, "valley", restored.linkedAt, "t1");
+  assert.deepEqual(asked, [project], "the earlier link set nothing up");
+});
+
+test("Undo of a set-up link keeps the set-up while another game's link names the project, and says only the link went", async () => {
+  const asked: string[] = [];
+  const w = await world(NOW, { undoSetUp: async (_id, _game, project) => void asked.push(project) });
+  const valley = await w.makeGame("valley");
+  const lantern = await w.makeGame("lantern");
+  const project = await w.makeProject("Valley");
+  const setUp = await w.links.link(PLUGIN, w.binding("valley", "t1"), { project, setUp: true });
+  await w.links.link(PLUGIN, w.binding("lantern", "t2"), { project });
+  await w.links.undo(PLUGIN, "valley", setUp.linkedAt, "t1");
+  assert.deepEqual(asked, [], "the other game still builds in it");
+  assert.equal(await readEngineBinding(valley, ENGINES), undefined, "the link itself is undone");
+  assert.equal((await readEngineBinding(lantern, ENGINES))?.project, project);
+  const undone = customEvent(envelope(w.appended[2].record), CustomEvent.EngineLinkUndone);
+  assert.equal(undone?.setUpUndone, undefined, "the line never says the set-up went");
+  assert.equal(undone?.setUpKept, "Valley", "it says the set-up stays");
+});
+
+test("Undo of a set-up link takes the set-up back once no other game's current link names the project", async () => {
+  const asked: string[] = [];
+  const w = await world(NOW, { undoSetUp: async (_id, _game, project) => void asked.push(project) });
+  await w.makeGame("valley");
+  await w.makeGame("lantern");
+  const project = await w.makeProject("Valley");
+  const setUp = await w.links.link(PLUGIN, w.binding("valley", "t1"), { project, setUp: true });
+  await w.links.link(PLUGIN, w.binding("lantern", "t2"), { project });
+  w.tick(LATER);
+  await w.links.link(PLUGIN, w.binding("lantern", "t2"), { project: await w.makeProject("Mist") });
+  await w.links.undo(PLUGIN, "valley", setUp.linkedAt, "t1");
+  assert.deepEqual(asked, [project], "a link another game replaced is no longer its");
+});
+
+test("the studio's Undo of a set-up link runs the plugin's undo-setup first, with no question", async () => {
+  const lite = await coreLite();
+  try {
+    const { core } = lite;
+    const made = (await core.pluginServices.call(PLUGIN, "game.create", { title: "Seyda Neen" })) as {
+      project: string;
+      directory: string;
+    };
+    const file = path.join(made.directory, "unreal", "SeydaNeen.uproject");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, '{"FileVersion":3}\n');
+    const asked: unknown[][] = [];
+    const refusal: { message?: string } = { message: "Quit Unreal Editor first." };
+    core.plugins.action = async (...call: unknown[]) => {
+      asked.push(call.slice(0, 3));
+      if (refusal.message) throw new Error(refusal.message);
+      return null;
+    };
+    const link = (await core.pluginServices.call(PLUGIN, "game.engine.link", {
+      project: file,
+      game: made.project,
+      setUp: true,
+    })) as { linkedAt: string };
+    const request = { project: made.project, pluginId: PLUGIN, linkedAt: link.linkedAt };
+    await assert.rejects(core.undoEngineLink(request), /Quit Unreal Editor first/);
+    const real = await realpath(file);
+    assert.equal((await readEngineBinding(made.directory, ENGINES))?.project, real, "the link stays");
+    delete refusal.message;
+    await core.undoEngineLink(request);
+    const undoSetUp = [PLUGIN, "undo-setup", { project: real, ifSetUp: true }];
+    assert.deepEqual(asked, [undoSetUp, undoSetUp]);
+    assert.equal(await readEngineBinding(made.directory, ENGINES), undefined);
+  } finally {
+    await lite.close();
+  }
 });
 
 test("a link stops holding when its project file is swapped for a link", async () => {
@@ -592,6 +721,225 @@ test("a game linked by an engine plugin that is turned off still builds in that 
     assert.deepEqual(game?.linkedEngine, { label, projectFiles, projectInFolder });
     const web = await core.games.scaffold("pond");
     assert.equal((await core.games.list()).find((g) => g.name === web.name)?.linkedEngine, undefined, "a web game");
+  } finally {
+    lite.core.plugins.cancel();
+    await lite.close();
+  }
+});
+
+// ── a game that brought its link from another Genex ─────────────────────────────────────────────
+
+const MOVED_AT = "2026-09-30T08:00:00.000Z";
+
+/** A game whose studio.json mirrors a link another Genex made: `engine` as that Genex wrote it. */
+async function mirrorOf(dir: string, engine: Record<string, unknown>): Promise<void> {
+  const file = path.join(dir, "studio.json");
+  const meta = JSON.parse(await readFile(file, "utf8"));
+  await writeFile(file, `${JSON.stringify({ ...meta, engine }, null, 2)}\n`);
+}
+
+/** An Unreal project inside the game's own folder (`<game>/unreal/<name>.uproject`), as Create makes one. */
+async function projectInGame(dir: string, name: string): Promise<string> {
+  await mkdir(path.join(dir, "unreal"), { recursive: true });
+  const file = path.join(dir, "unreal", `${name}.uproject`);
+  await writeFile(file, '{"FileVersion":3}\n');
+  return file;
+}
+
+const linkRecordOf = (storage: string, game: string) => path.join(storage, ENGINE_LINKS_FOLDER, `${game}.json`);
+
+test("a game whose studio.json names a project in its own folder brings its link: the host adopts it, unsaid", async () => {
+  const w = await world();
+  const game = await w.makeGame("seyda");
+  const project = await projectInGame(game, "SeydaNeen");
+  await mirrorOf(game, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+  await w.links.adopt("seyda");
+  const record = JSON.parse(await readFile(linkRecordOf(w.storage, "seyda"), "utf8"));
+  assert.deepEqual(record, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT }, "no setUp: not set up here");
+  assert.deepEqual(await w.links.read(PLUGIN, w.binding("seyda")), {
+    kind: GameEngine.Unreal,
+    project,
+    linkedAt: MOVED_AT,
+    name: "SeydaNeen",
+  });
+  assert.deepEqual(w.appended, [], "an adoption has nothing to undo, so the chat hears nothing");
+  assert.deepEqual(w.changed, ["seyda"]);
+  assert.equal((await readEngineBinding(game, ENGINES))?.linkedAt, MOVED_AT, "studio.json is left as it was");
+  await w.links.adopt("seyda");
+  assert.deepEqual(w.changed, ["seyda"], "adopted once");
+});
+
+test("the plugin's own read adopts the link too, for that plugin's engine only", async () => {
+  const w = await world();
+  const game = await w.makeGame("seyda");
+  const project = await projectInGame(game, "SeydaNeen");
+  await mirrorOf(game, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+  assert.equal(await w.links.read(TOY, w.binding("seyda")), null, "another engine's plugin adopts nothing");
+  assert.equal((await w.links.read(PLUGIN, w.binding("seyda")))?.project, project);
+  assert.equal(JSON.parse(await readFile(linkRecordOf(w.storage, "seyda"), "utf8")).project, project);
+});
+
+/** A game that brought a mirror the host must not adopt, and what its storage held before. */
+type Unadoptable = { name: string; arrange: (w: Awaited<ReturnType<typeof world>>, dir: string) => Promise<void> };
+
+const UNADOPTABLE: Unadoptable[] = [
+  {
+    name: "a project file swapped for a link to a project outside the game",
+    arrange: async (w, dir) => {
+      const outside = await w.makeProject("Outside");
+      await mkdir(path.join(dir, "unreal"), { recursive: true });
+      const file = path.join(dir, "unreal", "SeydaNeen.uproject");
+      await symlink(outside, file);
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project: file, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a project folder swapped for a link to a folder outside the game",
+    arrange: async (w, dir) => {
+      const outside = await w.makeProject("Outside");
+      await symlink(path.dirname(outside), path.join(dir, "unreal"));
+      const through = path.join(dir, "unreal", "Outside.uproject");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project: through, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "the real path of a project the link swapped into the game's folder",
+    arrange: async (w, dir) => {
+      const outside = await w.makeProject("Outside");
+      await symlink(path.dirname(outside), path.join(dir, "unreal"));
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project: outside, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a project outside the game's folder",
+    arrange: async (w, dir) => {
+      const outside = await w.makeProject("Outside");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project: outside, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "another game's project",
+    arrange: async (w, dir) => {
+      const other = await projectInGame(await w.makeGame("balmora"), "Balmora");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project: other, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a path that climbs out with ..",
+    arrange: async (w, dir) => {
+      await projectInGame(await w.makeGame("balmora"), "Balmora");
+      const project = `${dir}/../balmora/unreal/Balmora.uproject`;
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a path that climbs back in with ..",
+    arrange: async (_w, dir) => {
+      await projectInGame(dir, "SeydaNeen");
+      const project = `${dir}/unreal/../unreal/SeydaNeen.uproject`;
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "an engine no installed plugin declares",
+    arrange: async (_w, dir) => {
+      const project = await projectInGame(dir, "SeydaNeen");
+      await mirrorOf(dir, { kind: "frostbite", project, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a project of another engine's kind under Unreal's name",
+    arrange: async (_w, dir) => {
+      await mkdir(path.join(dir, "toy"), { recursive: true });
+      const project = path.join(dir, "toy", "Seyda.toyproj");
+      await writeFile(project, "toy\n");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a project file that is gone",
+    arrange: async (_w, dir) => {
+      const project = path.join(dir, "unreal", "SeydaNeen.uproject");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a project that is a folder, not a file",
+    arrange: async (_w, dir) => {
+      const project = path.join(dir, "unreal", "SeydaNeen.uproject");
+      await mkdir(project, { recursive: true });
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+    },
+  },
+  {
+    name: "a link this Genex undid (unlinkedAt wins over the mirror)",
+    arrange: async (w, dir) => {
+      const project = await projectInGame(dir, "SeydaNeen");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+      await mkdir(path.join(w.storage, ENGINE_LINKS_FOLDER), { recursive: true });
+      await writeFile(linkRecordOf(w.storage, "seyda"), `${JSON.stringify({ unlinkedAt: MOVED_AT })}\n`);
+    },
+  },
+  {
+    name: "a link this Genex keeps to another project",
+    arrange: async (w, dir) => {
+      const project = await projectInGame(dir, "SeydaNeen");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+      const other = await w.makeProject("Valley");
+      await mkdir(path.join(w.storage, ENGINE_LINKS_FOLDER), { recursive: true });
+      const record = { kind: GameEngine.Unreal, project: other, linkedAt: NOW().toISOString() };
+      await writeFile(linkRecordOf(w.storage, "seyda"), `${JSON.stringify(record)}\n`);
+    },
+  },
+  {
+    name: "a link record this Genex can't read",
+    arrange: async (w, dir) => {
+      const project = await projectInGame(dir, "SeydaNeen");
+      await mirrorOf(dir, { kind: GameEngine.Unreal, project, linkedAt: MOVED_AT });
+      await mkdir(path.join(w.storage, ENGINE_LINKS_FOLDER), { recursive: true });
+      await writeFile(linkRecordOf(w.storage, "seyda"), "{not json");
+    },
+  },
+];
+
+for (const { name, arrange } of UNADOPTABLE) {
+  test(`a game that brought ${name} is not adopted: nothing is written`, async () => {
+    const w = await world();
+    const dir = await w.makeGame("seyda");
+    await arrange(w, dir);
+    const before = await snapshot(w.root);
+    const read = await w.links.read(PLUGIN, w.binding("seyda"));
+    await w.links.adopt("seyda");
+    await w.links.read(TOY, w.binding("seyda"));
+    assert.deepEqual(await snapshot(w.root), before, "no link record written, studio.json untouched");
+    assert.notEqual(read?.project?.startsWith(dir), true, "the game's own project was not adopted");
+    assert.deepEqual(w.appended, []);
+    assert.deepEqual(w.changed, []);
+  });
+}
+
+test("adoption refuses a game id that is a path", async () => {
+  const w = await world();
+  const before = await snapshot(w.root);
+  await w.links.adopt("../seyda");
+  await w.links.adopt("");
+  assert.deepEqual(await snapshot(w.root), before);
+});
+
+test("a game opened from its folder in another Genex brings its link: the host's plugin binding adopts it", async () => {
+  const lite = await coreLite();
+  try {
+    const { core } = lite;
+    await core.plugins.installLocal(TOY_PLUGIN, PluginSourceKind.Local, []);
+    const made = await core.games.scaffold("garden");
+    await mkdir(path.join(made.dir, "toy"), { recursive: true });
+    const project = path.join(await realpath(made.dir), "toy", "Garden.toyproj");
+    await writeFile(project, "toy\n");
+    await mirrorOf(made.dir, { kind: TOY, project, linkedAt: MOVED_AT });
+    const file = linkRecordOf(core.pluginServices.root(TOY), made.name);
+    await assert.rejects(readFile(file, "utf8"), "this Genex never linked it");
+    await core.pluginBinding(made.name);
+    assert.equal(JSON.parse(await readFile(file, "utf8")).project, project);
   } finally {
     lite.core.plugins.cancel();
     await lite.close();

@@ -3,7 +3,8 @@
  *
  * - **New Roblox game** writes `<name>.rbxlx` from the shipped Baseplate into the open game's
  *   folder (or into a Genex game made for it when none is open), keeps Studio's lock files out of
- *   save points, links the game to it and opens it in Studio with `--task EditFile`.
+ *   save points, links the game to it and opens it in Studio with `--task EditFile`. Setting Studio
+ *   up writes and links one the same way for a game with no place, for Studio to open later.
  * - **Open in Studio** opens the game's own place (a local file with EditFile, a published place
  *   with EditPlace) or, when a Studio has it open already, brings Studio forward instead of opening
  *   it twice. With no game or no place, it opens Studio alone.
@@ -125,19 +126,17 @@ export interface CreateOptions {
   title?: string;
 }
 
-/**
- * New Roblox game: the place written, linked and opened. In an open game that already builds in a
- * place, nothing is written: the person chooses another place in the panel.
- */
-export async function createGame(
-  deps: PlaceActionDeps,
-  context: PluginContext,
-  options: CreateOptions,
-): Promise<CreateAnswer> {
-  const location = await locateStudio(deps);
-  if (!location.installed) return { created: false, message: MESSAGE.Open.NotInstalled };
-  if (context.project && (await context.host(PluginService.GameEngineRead).catch(() => null)))
-    return { created: false, message: MESSAGE.Create.Exists };
+/** A place written and linked, not yet opened: its file and name, the game it is for, and the plugin's storage. */
+interface WrittenPlace {
+  file: string;
+  name: string;
+  storage: string;
+  /** The Genex game made for it, when none was open. */
+  made?: string;
+}
+
+/** A new place from Genex's Baseplate, written into its game's folder (snapshotted first when asked) and linked. */
+async function writeNewPlace(deps: PlaceActionDeps, context: PluginContext, options: CreateOptions) {
   const storage = await context.host(PluginService.StorageRoot);
   const home = await placeHome(context, options.title?.trim() || MESSAGE.Create.DefaultTitle);
   const name = await suggestName(home.folder, home.title);
@@ -150,15 +149,62 @@ export async function createGame(
   await writePlaceRecord(storage, home.game, { folder: home.folder, project: file });
   if (home.made) await deps.gameSeen?.(storage, home.game, home.folder);
   await context.host(PluginService.GameEngineLink, { project: file, ...(home.made ? { game: home.game } : {}) });
+  const written: WrittenPlace = { file, name, storage, ...(home.made ? { made: home.game } : {}) };
+  return written;
+}
+
+/** Whether the game this call is bound to builds in a place already. */
+const hasPlace = async (context: PluginContext) =>
+  Boolean(context.project && (await context.host(PluginService.GameEngineRead).catch(() => null)));
+
+/**
+ * New Roblox game: the place written, linked and opened. In an open game that already builds in a
+ * place, nothing is written: the person chooses another place in the panel.
+ */
+export async function createGame(
+  deps: PlaceActionDeps,
+  context: PluginContext,
+  options: CreateOptions,
+): Promise<CreateAnswer> {
+  const location = await locateStudio(deps);
+  if (!location.installed) return { created: false, message: MESSAGE.Open.NotInstalled() };
+  if (await hasPlace(context)) return { created: false, message: MESSAGE.Create.Exists() };
+  const { file, name, storage, made } = await writeNewPlace(deps, context, options);
   const why = await openPlace(deps, location.install, storage, { file });
   const answer: CreateAnswer = {
     created: true,
     file,
     opened: why === undefined,
     message: why === undefined ? MESSAGE.Create.Created(name) : MESSAGE.Create.CreatedNotOpened(name, why),
-    ...(home.made ? { game: { project: home.game } } : {}),
+    ...(made ? { game: { project: made } } : {}),
   };
   return answer;
+}
+
+/** The place Studio opens for a game once it is set up, and the file of one written for it just now. */
+export interface GamePlace {
+  target?: PlaceTarget;
+  written?: string;
+}
+
+/**
+ * The open game's place for Studio to open once it is set up: the one it builds in, or, for a game
+ * with none, a new one written and linked now, which is the default. Nothing outside a game, and
+ * nothing to open for a linked place with no file nor ids. Studio need not be here yet.
+ */
+export async function gamePlace(
+  deps: PlaceActionDeps,
+  context: PluginContext,
+  options: CreateOptions,
+): Promise<GamePlace> {
+  if (!context.project || !context.directory) return {};
+  const link = await context.host(PluginService.GameEngineRead).catch(() => null);
+  if (link) {
+    const target = targetOf(link);
+    return target ? { target } : {};
+  }
+  const { file } = await writeNewPlace(deps, context, options);
+  return { target: { file }, written: file };
 }
 
 /** The agent's `new-game`: New Roblox game in its open game, answered in words. */
@@ -194,15 +240,15 @@ async function bringForward(deps: PlaceActionDeps, install: StudioInstall, name:
 
 /** Opens Studio alone, unless it is already open. */
 async function openStudioAlone(deps: PlaceActionDeps, install: StudioInstall): Promise<OpenAnswer> {
-  if (await studioRunning(deps)) return { opened: false, message: MESSAGE.Open.AlreadyOpen };
+  if (await studioRunning(deps)) return { opened: false, message: MESSAGE.Open.AlreadyOpen() };
   await deps.open(openLaunch(deps.platform, install));
-  return { opened: true, message: MESSAGE.Open.Opening };
+  return { opened: true, message: MESSAGE.Open.Opening() };
 }
 
 /** Open in Studio: the game's own place, brought forward when a Studio has it open; else Studio alone. */
 export async function openStudio(deps: PlaceActionDeps, context: PluginContext): Promise<OpenAnswer> {
   const location = await locateStudio(deps);
-  if (!location.installed) return { opened: false, message: MESSAGE.Open.NotInstalled };
+  if (!location.installed) return { opened: false, message: MESSAGE.Open.NotInstalled() };
   const link = context.project ? await context.host(PluginService.GameEngineRead).catch(() => null) : null;
   if (!context.project || !link) return openStudioAlone(deps, location.install);
   const storage = await context.host(PluginService.StorageRoot);
@@ -229,9 +275,9 @@ export async function quitStudioAction(deps: PlaceActionDeps, context: PluginCon
   const busy = Array.isArray(runs) ? runs.find(isRun) : undefined;
   if (busy) return { quit: false, message: MESSAGE.Quit.InUse(busy.title), reason: QuitMiss.InUse, inUse: busy.title };
   if (!(await studioRunning(deps)))
-    return { quit: false, message: MESSAGE.Quit.NotRunning, reason: QuitMiss.NotRunning };
-  if (await quitStudio(deps)) return { quit: true, message: MESSAGE.Quit.Quitting };
-  return { quit: false, message: MESSAGE.Quit.StillOpen, reason: QuitMiss.StillOpen };
+    return { quit: false, message: MESSAGE.Quit.NotRunning(), reason: QuitMiss.NotRunning };
+  if (await quitStudio(deps)) return { quit: true, message: MESSAGE.Quit.Quitting() };
+  return { quit: false, message: MESSAGE.Quit.StillOpen(), reason: QuitMiss.StillOpen };
 }
 
 /** The agent's `show-steps`: the setup card in its chat while a step is open. */

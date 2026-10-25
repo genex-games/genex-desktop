@@ -1,5 +1,6 @@
 import { validateCoverSurface } from "./cover-shader.ts";
 import { coverKeySeed, coverRecipeFromSeed, validateCoverRecipe, type CoverRecipe } from "./cover-recipe.ts";
+import { t } from "./i18n.ts";
 /** Host-owned presentation metadata. Folder identity and game files never change on rename. */
 export type CoverStyle = "world" | "relic" | "city";
 export type LegacyShaderCover = {
@@ -61,7 +62,7 @@ export function coverFromBrief(brief: string, style: CoverStyle = "world"): Extr
 
 export function validateGameTitle(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 80 || /[\x00-\x1f]/.test(value)) {
-    throw new Error("Enter a game name between 1 and 80 characters.");
+    throw new Error(t("Enter a game name between 1 and 80 characters."));
   }
   return value.trim();
 }
@@ -109,7 +110,7 @@ export function validateGameCover(cover: GameCover): void {
     return;
   }
   if (isProceduralCover(cover) || isImageCover(cover)) return;
-  throw new Error("Choose a PNG, JPEG or WebP image, or a valid cover recipe.");
+  throw new Error(t("Choose a PNG, JPEG or WebP image, or a valid cover recipe."));
 }
 
 const UNKEYED_COVER: CoverRecipe = { kind: "recipe", family: "clouds", palette: "genex", seed: 23, placeholder: true };

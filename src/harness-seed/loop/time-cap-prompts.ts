@@ -15,6 +15,6 @@ export const TIME_CAP_WORDS = {
   /** A worker asked for once the time is up. */
   noNewWorkers:
     "worker_start refused: time's up, so no new workers start. Bring in finished worker work, make sure the project runs, save, and call finish, claiming the goal only if it is reached.",
-  /** The close at the end of the grace, when no reviewer read a claim. */
-  notChecked: "Not checked by a reviewer: the time ran out before a claim.",
+  /** The close at the end of the grace, when no reviewer read a claim: the person reads it on the card. */
+  notChecked: "The time ran out before a final look at your game.",
 } as const;

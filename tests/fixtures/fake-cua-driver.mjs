@@ -12,7 +12,8 @@
  * listens on that socket, appends one line to `--serve-log <file>` (its pid, arguments and what it
  * saw of the environment), and reads its grants once, when it starts, from whether `--grants <file>`
  * exists, as macOS caches a process's grants; `--serve-fail` exits the way a daemon that cannot
- * start does. `mcp --embedded --socket <path>` is the proxy: it asks the daemon on that socket for
+ * start does. Given the lifetime pipe (`CUA_DRIVER_PARENT_LIVENESS_STDIN=1`), it exits when its stdin
+ * closes. `mcp --embedded --socket <path>` is the proxy: it asks the daemon on that socket for
  * its grants and answers the MCP tools with them.
  */
 import { appendFileSync, existsSync } from "node:fs";
@@ -144,7 +145,14 @@ function serve() {
   }
   const grantsFile = flag("--grants");
   const granted = grantsFile ? existsSync(grantsFile) : true;
-  const seen = ["CUA_DRIVER_EMBEDDED", "CUA_DRIVER_HOST_BUNDLE_ID", "DO_NOT_TRACK", "CUA_DRIVER_RS_UPDATE_CHECK", "GENEX_SECRET"];
+  const seen = [
+    "CUA_DRIVER_EMBEDDED",
+    "CUA_DRIVER_HOST_BUNDLE_ID",
+    "DO_NOT_TRACK",
+    "CUA_DRIVER_RS_UPDATE_CHECK",
+    "CUA_DRIVER_PARENT_LIVENESS_STDIN",
+    "GENEX_SECRET",
+  ];
   const env = Object.fromEntries(seen.filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name]]));
   const serveLog = flag("--serve-log");
   if (serveLog) appendFileSync(serveLog, `${JSON.stringify({ pid: process.pid, argv, env })}\n`);
@@ -155,6 +163,11 @@ function serve() {
   });
   server.listen(socket);
   process.on("SIGTERM", () => server.close(() => process.exit(0)));
+  // As the real daemon does with its lifetime pipe: the host's end closing ends it.
+  if (process.env.CUA_DRIVER_PARENT_LIVENESS_STDIN === "1") {
+    process.stdin.resume();
+    process.stdin.on("end", () => process.exit(0));
+  }
 }
 
 if (argv.includes("serve")) serve();

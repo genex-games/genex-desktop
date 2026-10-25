@@ -12,6 +12,10 @@
  * local endpoints, in a session of its own, so an editor restarted between calls just answers the
  * next one and no call is ever sent twice. Epic's toolsets return pictures as base64 inside their
  * JSON text, which Studio would truncate as text; the bridge hands them to the agent as images.
+ * The Genex editor helper's build and play tools answer a refusal or a failure as `{error}` inside
+ * a call Epic counts as done; the bridge hands such an answer to the agent as a failed call.
+ * A toolset's description too long for one answer comes back as its tools by name, and the
+ * bridge's own `tool_name` reads one tool's (`editor-describe.ts`).
  * An editor behind Genex plays at 3 frames per second while Unreal's "Use Less CPU when in
  * Background" is on, so the bridge turns it off for the editor's current run while a play test
  * runs and gives it back afterwards; Unreal saves nothing, so the user's preference survives.
@@ -33,7 +37,7 @@ import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } fr
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { type AgentPlayMarker, NO_AGENT_PLAY } from "./agent-play.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { CONNECTOR_OUTCOME_META } from "../../shared/mcp.ts";
+import { CONNECTOR_OUTCOME_META, ToolsetGatewayArg } from "../../shared/mcp.ts";
 import {
   type CrashWatch,
   type EditorCrash,
@@ -51,7 +55,8 @@ import {
   PROJECT_FILE_TOOL,
   sameProject,
 } from "./editor-port.ts";
-import { type CaptureClock, captureTool, helperAnswer, liftCapture } from "./editor-captures.ts";
+import { BUILD_TOOLSET, type CaptureClock, captureTool, helperAnswer, liftCapture } from "./editor-captures.ts";
+import { fitDescription } from "./editor-describe.ts";
 import { LOOP_TOOLSET } from "./editor-queue.ts";
 import {
   OBJECT_TOOLSET,
@@ -140,20 +145,20 @@ const MESSAGE = {
   UnknownTool: (name: string) =>
     `Unknown Unreal Editor tool ${JSON.stringify(name)}. Use ${Object.values(EditorTool).join(", ")}.`,
   NoProject:
-    "No Unreal project is set up for Genex yet. Ask the user to set one up from the Unreal button, then retry.",
+    "No Unreal project is set up for Genex yet. Call unreal__use-project with the project's .uproject path: it sets the project up and links it to this game. Then retry.",
   NotAnswering: (name: string, endpoint: URL, reason: string) =>
-    `${name}'s Unreal MCP server isn't answering on ${endpoint.host} (${reason}). Ask the user to open ${name} in Unreal from the Unreal button, then retry.`,
+    `${name}'s Unreal MCP server isn't answering on ${endpoint.host} (${reason}). Call unreal__open-editor to open it, then retry once it answers.`,
   OtherOpen: (name: string, other: string) =>
-    `${name}'s Unreal MCP server isn't answering. ${other} is open in Unreal instead. Ask the user to choose ${other} from the Unreal button, or to open ${name}, then retry.`,
-  NotSetUp: (name: string) =>
-    `${name} isn't set up for Genex. Ask the user to set it up from the Unreal button, then retry.`,
+    `${name}'s Unreal MCP server isn't answering. ${other} is open in Unreal instead. Call unreal__open-editor to open ${name} (${other} stays open), then retry once it answers.`,
+  NotSetUp: (name: string, file: string) =>
+    `${name} isn't set up for Genex. Call unreal__use-project with ${file}: it sets the project up and links it to this game. Then retry.`,
   StillStarting: (name: string) => `Unreal is still starting ${name}. Call again in a minute.`,
   Answered: (name: string) => `[Unreal project: ${name}]`,
   CallFailed: (reason: string) =>
     `Unreal Editor did not complete the call (${reason}), so whether it took effect is unknown. Look before you repeat it.`,
   NotCompleted: (reason: string) => `Unreal Editor did not complete the call: ${reason}`,
   Crashed: (detail: string | undefined) =>
-    `Unreal crashed while this call ran${detail ? ` (${detail})` : ""}, so whether it took effect is unknown. Ask the user to reopen it from the Unreal button; once it answers, look before you repeat the call.`,
+    `Unreal crashed while this call ran${detail ? ` (${detail})` : ""}, so whether it took effect is unknown. Call unreal__open-editor to reopen it; once it answers, look before you repeat the call.`,
   ImageAttached: (n: number) => `[image ${n} attached]`,
   ImageOmitted: `[image omitted: at most ${MAX_IMAGES} per answer]`,
   LoopToolset: `${LOOP_TOOLSET} is Genex's own Unreal Loop toolset, which agents can't call. Build with genex_build.tools.GenexBuildTools and play with genex_play.tools.GenexPlayTools.`,
@@ -169,10 +174,14 @@ const TOOLS = [
   },
   {
     name: EditorTool.DescribeToolset,
-    description: "Describe one Unreal Editor toolset: its tools, what each does and its input schema.",
+    description:
+      "Describe one Unreal Editor toolset: its tools, what each does and its input schema. A toolset too long for one answer lists its tools by name; then describe one tool with tool_name.",
     inputSchema: {
       type: "object" as const,
-      properties: { toolset_name: { type: "string", description: "A name from list_toolsets." } },
+      properties: {
+        toolset_name: { type: "string", description: "A name from list_toolsets." },
+        tool_name: { type: "string", description: "Optional: one of the toolset's tools, to read only its schema." },
+      },
       required: ["toolset_name"],
     },
   },
@@ -497,7 +506,7 @@ async function reachEditor(
   const { chosen, setUp } = found;
   const { fetchImpl } = bridge;
   if (chosen?.port !== undefined) return reachChosen({ ...chosen, port: chosen.port }, setUp, bridge, signal);
-  if (chosen) return { error: MESSAGE.NotSetUp(chosen.name) };
+  if (chosen) return { error: MESSAGE.NotSetUp(chosen.name, chosen.project) };
   const [first, ...others] = setUp;
   if (!first) return { error: MESSAGE.NoProject };
   const tried = await trySession(first, fetchImpl, signal);
@@ -595,6 +604,25 @@ function playStep(params: CallParams): PlayStep | undefined {
   return Object.values(PlayStep).find((step) => namesStep(tool, toolset, step));
 }
 
+/** The Genex editor helper's toolsets an agent calls: each answers its refusals and failures as `{error}`. */
+const HELPER_AGENT_TOOLSETS = [BUILD_TOOLSET, HELPER_TOOLSET].map((name) => name.toLowerCase());
+
+/** Whether a forwarded call reaches one of the helper's agent toolsets, named short or qualified. */
+function callsHelper(params: CallParams): boolean {
+  if (params.name !== EditorTool.CallTool) return false;
+  const tool = String(params.arguments?.tool_name ?? "").toLowerCase();
+  const toolset = String(params.arguments?.toolset_name ?? "").toLowerCase();
+  return HELPER_AGENT_TOOLSETS.some((name) => toolset === name || tool.startsWith(`${name}.`));
+}
+
+/**
+ * Whether the editor's answer is the helper saying its tool failed: Epic delivers the helper's
+ * `{error}` as a call that succeeded, so the agent and the chat would read a refusal as done.
+ */
+function helperFailed(params: CallParams, content: Part[]): boolean {
+  return callsHelper(params) && typeof helperAnswer(content)?.error === "string";
+}
+
 /**
  * Keeps a play test at full speed while the editor is behind Genex: a play start turns the user's
  * background throttling off, and stopping play, a refused start or the bridge closing gives it back.
@@ -658,10 +686,37 @@ type Forwarding = {
   timeoutMs: number;
 };
 
-/** Marks the agent's own play once the editor took its start, and clears the mark once it took its stop. */
-async function markPlay(marker: AgentPlayMarker, step: PlayStep | undefined, failed: boolean): Promise<void> {
-  if (failed || step === undefined) return;
-  await (step === PlayStep.Start ? marker.started() : marker.stopped());
+/**
+ * Marks the agent's own play before the editor gets its start: the editor lock may ask whose play it
+ * is before Unreal begins it. The answer gives back the mark there was, for a start that didn't take.
+ */
+async function markStart(marker: AgentPlayMarker, step: PlayStep | undefined): Promise<() => Promise<void>> {
+  return step === PlayStep.Start ? marker.started() : async () => {};
+}
+
+/** Clears the mark once the editor took the agent's stop, and gives back the one before a start it refused. */
+async function settlePlay(
+  marker: AgentPlayMarker,
+  step: PlayStep | undefined,
+  failed: boolean,
+  giveBack: () => Promise<void>,
+): Promise<void> {
+  if (step === PlayStep.Start && failed) await giveBack();
+  if (step === PlayStep.Stop && !failed) await marker.stopped();
+}
+
+/** What the editor is asked: a description's `tool_name` is the bridge's own, so Epic gets only the toolset. */
+function editorParams(params: CallParams): CallParams {
+  if (params.name !== EditorTool.DescribeToolset) return params;
+  const args = Object.entries(params.arguments ?? {}).filter(([key]) => key !== ToolsetGatewayArg.Tool);
+  return { ...params, arguments: Object.fromEntries(args) };
+}
+
+/** The editor's answer as the agent reads it: a toolset's description fitted to one answer (editor-describe.ts). */
+function fitAnswer(params: CallParams, content: Part[], isError: boolean): { parts: Part[]; failed: boolean } {
+  if (params.name !== EditorTool.DescribeToolset || isError) return { parts: content, failed: false };
+  const tool = params.arguments?.[ToolsetGatewayArg.Tool];
+  return fitDescription(content, typeof tool === "string" ? tool : undefined);
 }
 
 /** The pictures a capture tool's answer promised (see editor-captures.ts); nothing for any other call. */
@@ -688,21 +743,27 @@ async function forward(session: EditorSession, params: CallParams, how: Forwardi
   } catch (error) {
     return errorResult(MESSAGE.NotCompleted(errorMessage(error)));
   }
+  const giveBack = await markStart(how.agentPlay, step);
   let result: CallResult;
   try {
-    result = await session.call(params, how.timeoutMs);
+    result = await session.call(editorParams(params), how.timeoutMs);
   } catch (error) {
     // A JSON-RPC error is the editor's own answer: it is still there, and the call did not complete.
-    if (editorAnswered(error)) return errorResult(MESSAGE.NotCompleted(errorMessage(error)));
+    if (editorAnswered(error)) {
+      await settlePlay(how.agentPlay, step, true, giveBack);
+      return errorResult(MESSAGE.NotCompleted(errorMessage(error)));
+    }
     return errorResult(MESSAGE.CallFailed(errorMessage(error)), editorWentAway(error, signal));
   }
   try {
     await how.keeper.after(session, step, Boolean(result.isError));
-    await markPlay(how.agentPlay, step, Boolean(result.isError));
+    await settlePlay(how.agentPlay, step, Boolean(result.isError), giveBack);
     const content = Array.isArray(result.content) ? (result.content as Part[]) : [];
+    const fit = fitAnswer(params, content, Boolean(result.isError));
     const captured = result.isError ? [] : await capturedParts(params, content, how.project, how.clock, signal);
-    const named = [...liftImages(content), ...captured, { type: "text", text: MESSAGE.Answered(how.project.name) }];
-    return { content: named, ...(result.isError ? { isError: true } : {}) };
+    const named = [...liftImages(fit.parts), ...captured, { type: "text", text: MESSAGE.Answered(how.project.name) }];
+    const failed = Boolean(result.isError) || fit.failed || helperFailed(params, content);
+    return { content: named, ...(failed ? { isError: true } : {}) };
   } catch (error) {
     // The editor answered: what failed after is Genex's own, and the editor is still there.
     return errorResult(MESSAGE.NotCompleted(errorMessage(error)));

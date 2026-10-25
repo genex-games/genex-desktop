@@ -105,3 +105,26 @@ export async function vendorGenexMultiplayer(root: string, vendorDir: string): P
   const bytes = Object.values(result.metafile.outputs).reduce((sum, output) => sum + output.bytes, 0);
   return { inputs, bytes };
 }
+
+/**
+ * The licenses of everything Genex's multiplayer bridge bundles (`dist/bridge.global.js`: the SDK,
+ * its embed SDK and their dependencies), which a multiplayer Godot game's web export carries beside
+ * the bridge. The bridge ships no license text of its own, so its inputs are found by bundling its
+ * ESM entry, built from the same sources, and nothing is written.
+ */
+export async function bridgeLicenses(root: string): Promise<string> {
+  await installedPin(root, MULTIPLAYER);
+  const result = await esbuild.build({
+    absWorkingDir: root,
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    metafile: true,
+    write: false,
+    logLevel: "warning",
+    entryPoints: [`${MULTIPLAYER}/bridge`],
+    outdir: "bridge",
+  });
+  return licenses(root, Object.keys(result.metafile.inputs));
+}

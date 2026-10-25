@@ -103,8 +103,9 @@ export const MOMENT_WORDS = {
   NotReady: (project: string | null) =>
     `Unreal didn't finish opening ${project ?? "this game's project"}. Open it from the Unreal button above the game, then send a message to go on.`,
   // A run's start.
+  NotSetUp: (why: string) => `Genex couldn't set this game's Unreal project up for the Loop: ${why}`,
   NoHelper:
-    "This game's Unreal project has no Genex editor helper, so the Loop can't save or capture it. Set the project up from the Unreal panel.",
+    "This game's Unreal project has no Genex editor helper, so the Loop can't save or capture it. Link it again with unreal__use-project, which sets it up.",
   HelperUpdated: (to: string) => `Updated this game's Genex editor helper to ${to} before the Loop.`,
   HelperNotUpdated: (reason: string) =>
     `The Genex editor helper couldn't be updated (${reason}); the Loop goes on with it.`,
@@ -253,18 +254,19 @@ export function probeAnswer(activity: EditorActivity | null, agentPlay: boolean,
 /** Where this computer's Unreal stands for making a new game, as `engine-status` reads it. */
 export type Readiness = { engine: EngineReadiness; version: string | null };
 
-/** The tools that make a new Unreal game and bring the Unreal button out, as the host serves them to agents. */
+/** The tools that make a new Unreal game, bring the Unreal button out and install Unreal, as the host serves them to agents. */
 const NEW_GAME = "unreal__new-game";
 const SHOW_STEPS = "unreal__show-steps";
+const INSTALL = "unreal__install-unreal";
 const OPTION = `"Unreal Engine: plays in the Unreal editor on this computer"`;
 
 /**
  * What to do when the user picks Unreal before Genex can make its project: never new-game, but
  * show-steps, which shows the install card in the chat and brings the Unreal button out above this
- * game (it shows only on Unreal games).
+ * game (it shows only on Unreal games), then install-unreal, which starts installing it for them.
  */
 const toUnrealButton = (how: string) =>
-  `If the user picks it, don't call ${NEW_GAME}, which would refuse: call ${SHOW_STEPS}, which puts the Unreal setup card in the chat (it shows how to ${how}) and brings the Unreal button out above the game, then say so in one line and end your reply. The chat tells you when Unreal is installed.`;
+  `If the user picks it, don't call ${NEW_GAME}, which would refuse: call ${SHOW_STEPS}, which puts the Unreal setup card in the chat (it shows how to ${how}) and brings the Unreal button out above the game, then ${INSTALL}, which starts installing it for them (only signing in to Epic is theirs); say so in one line and end your reply. The chat tells you when Unreal is installed.`;
 
 /** How the engine question offers Unreal beside an Unreal that makes no new games here. */
 const beside = (version: string) =>

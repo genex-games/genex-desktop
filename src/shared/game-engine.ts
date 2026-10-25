@@ -222,7 +222,8 @@ export function projectName(project: string, entries: readonly string[] = [UPROJ
  * The chat's record that a game now builds in an engine project ("Lantern now builds in Unreal ·
  * Lantern", with Undo): the plugin that linked it, the game, the engine and its label, the project
  * file and its name, when, and the project it replaced. `auto` marks a link the plugin made by itself rather
- * than at the person's word (older hosts linked a game at its first call; none does now).
+ * than at the person's word (older hosts linked a game at its first call; none does now). `setUp`
+ * marks a link that also set its project up for Genex: its one Undo takes the set-up back first.
  */
 export type EngineLinkedPayload = {
   pluginId?: string;
@@ -238,10 +239,37 @@ export type EngineLinkedPayload = {
   linkedAt?: string;
   previous?: string;
   auto?: boolean;
+  /** The plugin set the project up for Genex to make this link (`game.engine.link {setUp}`). */
+  setUp?: boolean;
 };
 
-/** The chat's record that Undo took a link back: the link it undid, and the project it restored (none: a web game again). */
-export type EngineLinkUndonePayload = { pluginId?: string; project?: string; linkedAt?: string; restored?: string };
+/**
+ * The chat's record that Undo took a link back: the link it undid, the project it restored (none:
+ * a web game again), and the project whose set-up it also took back, by name.
+ */
+export type EngineLinkUndonePayload = {
+  pluginId?: string;
+  project?: string;
+  linkedAt?: string;
+  restored?: string;
+  setUpUndone?: string;
+  /** The project whose set-up Undo left in place, by name: another game's link still uses it. */
+  setUpKept?: string;
+};
+
+/**
+ * The actions the host itself runs on a `game-engine` plugin. Undo of a link that set its project
+ * up (`setUp`) runs `UndoSetUp` with {@link EngineUndoSetUpArgs} before it takes the link back,
+ * with no question: the chat's Undo is the person's word.
+ */
+export const EngineHostAction = { UndoSetUp: "undo-setup" } as const;
+export type EngineHostAction = (typeof EngineHostAction)[keyof typeof EngineHostAction];
+
+/**
+ * What the host hands `EngineHostAction.UndoSetUp`: the linked project file by its real path, and
+ * `ifSetUp`, which asks for nothing (not a refusal) when the project is no longer set up.
+ */
+export type EngineUndoSetUpArgs = { project: string; ifSetUp: true };
 
 /** The chat line's Undo: which plugin's link of which game, made when, asked from which chat. */
 export type EngineLinkUndo = { project: string; pluginId: string; linkedAt: string; threadId?: string };

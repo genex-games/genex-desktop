@@ -6,6 +6,7 @@ import {
   MENTION_CONTEXT_HEADING,
   MentionKind,
   MentionMiss,
+  MentionOrigin,
   type MentionOutcome,
   MentionResult,
 } from "../../shared/prompt-mention.ts";
@@ -34,6 +35,8 @@ export function mentionLine(tag: MentionOutcome, extra: { folder?: string; usage
     return `- ${name}: the person's own game, read-only at ${extra.folder ?? "its folder"}. Read what helps; never edit it.`;
   if (tag.result === MentionResult.Copied)
     return `- ${name} from genex.games: a read-only copy at ${tag.path}/. Read it and adapt what helps into this game's own code; never import from it, edit it or ship it.`;
+  if (tag.result === MentionResult.Added && tag.origin === MentionOrigin.Library)
+    return `- ${name}: an asset from the person's own Genex library, now this game's file ${tag.path}. Load it from there; never edit the file in place.`;
   if (tag.result === MentionResult.Added) {
     const usage = extra.usage ? ` ${extra.usage}` : "";
     return `- ${name}: its module is now this game's file ${tag.path}, free to use and edit (MIT).${usage}`;

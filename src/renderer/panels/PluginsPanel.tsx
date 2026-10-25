@@ -7,6 +7,7 @@
 import type { JSX, RefObject } from "react";
 import { usePeople } from "../state/hooks.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { LOCAL_BLENDER_PLUGIN_ID } from "../../shared/local-blender.ts";
 import type { PluginIndexEntry, PluginIndexView, PluginInfo } from "../../shared/plugins.ts";
 import { pluginUpdates } from "../state/plugins.ts";
@@ -47,6 +48,8 @@ import type { ShownSkill } from "./plugins/skills-sections.ts";
 import { useAsyncEffect } from "../use-async-effect.ts";
 import { PLUGINS_WORDS, SKILLS_WORDS } from "../words.ts";
 import { GithubInstallDialog } from "./plugins/GithubInstallDialog.tsx";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 
 interface Props {
   project?: string | null;
@@ -180,15 +183,23 @@ function SkillView({ skill, onViewPlugin }: { skill: ShownSkill; onViewPlugin: (
           {SKILLS_WORDS.onDemand}
         </p>
       )}
-      <Section title={skill.provider ? "Skill details" : "Instructions"}>
+      <Section title={skill.provider ? t("Skill details") : t("Instructions")}>
         {error && (
           <p role="alert" className="extensions-error">
             {error}
           </p>
         )}
-        <pre className="skill-instructions">{text ?? SKILLS_WORDS.loadingFile}</pre>
+        {text !== undefined ? (
+          <pre className="skill-instructions">{text}</pre>
+        ) : (
+          !error && (
+            <Pending label={SKILLS_WORDS.loadingFile}>
+              <SkeletonLines widths={["100%", "94%", "98%", "72%", "88%", "40%"]} />
+            </Pending>
+          )
+        )}
       </Section>
-      {skill.plugin && <Button onClick={() => onViewPlugin(skill.plugin)}>View plugin</Button>}
+      {skill.plugin && <Button onClick={() => onViewPlugin(skill.plugin)}>{t("View plugin")}</Button>}
     </>
   );
 }
@@ -206,7 +217,7 @@ function SearchField({ nav }: { nav: Navigation }): JSX.Element {
         value={nav.query}
         onChange={(e) => nav.setQuery(e.target.value)}
       />
-      {nav.query && <IconButton icon="close" label="Clear search" onClick={() => nav.setQuery("")} />}
+      {nav.query && <IconButton icon="close" label={t("Clear search")} onClick={() => nav.setQuery("")} />}
     </label>
   );
 }
@@ -311,7 +322,7 @@ export function PluginsPanel({
   // exist. The reference's unsupported actions must not become inert controls.
   // Skill discovery is read-only; activation stays with each provider.
   return (
-    <section data-plugins-page aria-label="Studio plugins" className="extensions-page">
+    <section data-plugins-page aria-label={t("Studio plugins")} className="extensions-page">
       <PluginsToolbar
         tab={nav.tab}
         sidebarHidden={sidebarHidden}

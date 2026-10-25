@@ -1,6 +1,7 @@
 /** MCP connectors, and the native trust dialog in front of a connector that starts a program. */
 import { dialog, shell } from "electron";
 import { UserCancelledError } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { type McpConnector, McpTransport } from "../../shared/mcp.ts";
 import { launchDigest, validateConnector } from "../../substrate/mcp/store.ts";
 import { resolveExecutable } from "../../substrate/mcp/client.ts";
@@ -9,10 +10,11 @@ import { assertNativeActionAllowed } from "../dev/native-policy.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
 
-/** Why a connector cannot be added under the id it asks for. */
+/** Why a connector cannot be added under the id it asks for; Settings shows it to the person. */
 const MESSAGE = {
-  pluginOwnsId: "A plugin is already installed under that id — give this connector a different one",
-  pluginServerOwnsId: "An installed plugin declares an MCP server under that id — give this connector a different one",
+  pluginOwnsId: () => t("A plugin is already installed under that id — give this connector a different one"),
+  pluginServerOwnsId: () =>
+    t("An installed plugin declares an MCP server under that id — give this connector a different one"),
 } as const;
 
 export interface McpIpcDeps {
@@ -74,13 +76,13 @@ function listScope(project: unknown): string | null | undefined {
  */
 function assertIdFreeOfPlugins(core: StudioCore, id: string): void {
   const installed = core.plugins.list();
-  if (installed.some((x) => x.manifest.id === id)) throw new Error(MESSAGE.pluginOwnsId);
+  if (installed.some((x) => x.manifest.id === id)) throw new Error(MESSAGE.pluginOwnsId());
   // A plugin's own server is published as `<pluginId>-<serverId>`. A user connector under that
   // name answers for it whenever the plugin is switched off and is overwritten when it is on.
   const declaresServer = installed.some((x) =>
     (x.manifest.mcpServers ?? []).some((s) => `${x.manifest.id}-${s.id}` === id),
   );
-  if (declaresServer) throw new Error(MESSAGE.pluginServerOwnsId);
+  if (declaresServer) throw new Error(MESSAGE.pluginServerOwnsId());
 }
 
 /** The native trust dialog in front of a connector that starts a program; true when trusted. */
@@ -89,10 +91,18 @@ async function confirmTrust(connector: McpConnector): Promise<boolean> {
   const program = await resolveExecutable(connector.command ?? "", (await toolchain()).path);
   const choice = await dialog.showMessageBox({
     type: "warning",
-    title: "Trust connector",
-    message: `Run ${connector.command} for ${connector.name}?`,
-    detail: `Studio starts this program on your Mac as trusted native code with the environment variables you named. A separate process is crash isolation, not a security sandbox.\nProgram: ${program ?? "not found on your login PATH yet"}\nArguments: ${connector.args?.join(" ") || "none"}\nWorking directory: ${connector.cwd ?? "the studio's own"}\nEnvironment variables: ${connector.env?.join(", ") || "none"}`,
-    buttons: ["Cancel", "Trust"],
+    title: t("Trust connector"),
+    message: t("Run {command} for {connector}?", { command: String(connector.command), connector: connector.name }),
+    detail: t(
+      "Studio starts this program on your Mac as trusted native code with the environment variables you named. A separate process is crash isolation, not a security sandbox.\nProgram: {program}\nArguments: {args}\nWorking directory: {folder}\nEnvironment variables: {variables}",
+      {
+        program: program ?? t("not found on your login PATH yet"),
+        args: connector.args?.join(" ") || t("none"),
+        folder: connector.cwd ?? t("the studio's own"),
+        variables: connector.env?.join(", ") || t("none"),
+      },
+    ),
+    buttons: [t("Cancel"), t("Trust")],
     defaultId: 0,
     cancelId: 0,
   });

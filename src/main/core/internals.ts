@@ -33,13 +33,14 @@ import type { StudioSettings } from "./settings.ts";
 import type { ObserverService } from "./observers.ts";
 import type { FinishReviews } from "./finish-review.ts";
 import type { HookService } from "./plugin-hooks.ts";
-import type { LockService } from "./plugin-locks.ts";
+import type { LockService, PersonWrote } from "./plugin-locks.ts";
 import type { PluginToolService } from "./plugin-tools.ts";
 import type { PreviewService } from "./previews.ts";
 import type { RecoveryService } from "./recovery.ts";
 import type { ChatRewindService } from "./rewind.ts";
 import type { SelfEditGateService } from "./self-edit-gate.ts";
 import type { SelfImprovementService } from "./self-improvement.ts";
+import type { ToolsInFlight } from "./steer-cut.ts";
 
 /** One brief in flight: the lock on its folder, and the contractor working there once it starts. */
 export interface ActiveDelegation {
@@ -57,8 +58,17 @@ export interface ActiveDelegation {
   chatTurn?: string;
   /** Its input mid-turn, when its engine reads messages as it works (`Engine.steersMidTurn`). */
   steer?: SteerDoor;
-  /** Interrupted to take steered messages: its caller resumes it with them rather than reading a Stop. */
+  /**
+   * Interrupted to take steered messages, or to be at its next step: its caller resumes it with them
+   * rather than reading a Stop.
+   */
   steered?: boolean;
+  /** A chat turn's session: its tool calls in flight, as its events say. A cut for a steer waits for them (`steer-cut.ts`). */
+  tools?: ToolsInFlight;
+  /** A cut for a steer waits for its tools in flight to end (`cutAtNextStep`). */
+  cutPending?: boolean;
+  /** A chat turn's session: the person's word that ends its plugin calls' waits for a lock (`engine.steer`). */
+  personWrote?: PersonWrote;
   /** Its engine call has returned: nothing more is handed in. */
   ended?: boolean;
   /** A Loop's reviewer the host seated: the run it checks (`engine.abort` reaches it by that run alone). */

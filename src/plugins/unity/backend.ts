@@ -11,10 +11,13 @@
  *   gives it a saved first scene (`editor-life.ts`).
  * - `setup` and `undo-setup`: add Unity's Pipeline package to an existing project's manifest, or
  *   take it back out (`setup.ts`); the person confirms each.
- * - `open-editor` and `restart-editor`: open the game's project in the Unity it was saved with
- *   (`editor-open.ts`), or end a stalled editor first; the person confirms a restart.
- * - `save-all`, `end-editor`, `reopen-editor`, `editor-state`, `open-for-run`, `scene-shots` and
- *   `editor-activity`: the steps at Genex's moments and the editor lock's probe (`editor-moments.ts`).
+ * - `open-editor`, `quit-editor` and `restart-editor`: open the game's project in the Unity it was
+ *   saved with (`editor-open.ts`), save its editor's work and quit it (`editor-quit.ts`), or end a
+ *   stalled editor first, saving what an answering one can; the person confirms a restart.
+ * - `save-all`, `end-editor`, `reopen-editor`, `editor-state`, `open-for-run`, `after-run`,
+ *   `scene-shots` and `editor-activity`: the steps at Genex's moments and the editor lock's probe
+ *   (`editor-moments.ts`). Once a run ended, the backend looks every half minute for an editor Genex
+ *   opened for a run that nobody uses any more, and closes it (`editor-idle.ts`).
  *
  * The person reaches the same project through the plugin's panel and its toolbar button, whose
  * actions answer in codes the panel words itself: `status` and `toolbar-status` only look
@@ -28,14 +31,20 @@
  */
 import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { MINUTE_MS } from "../../shared/duration.ts";
+import { matchmakingArg, slugArg, writeMatchmaking } from "../../substrate/genex-game-settings.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { ENGINE_PLAY_TOOLS, type EnginePlayTool } from "../../shared/engine-play.ts";
 import type { Activate, PluginActivation, PluginContext } from "../../plugin-sdk/index.d.ts";
 import { getUnityLaunch, systemOpener, UnitySource } from "./editor-launch.ts";
 import { createComputerPlay } from "./computer-play.ts";
 import { endEditor, firstSetup } from "./editor-life.ts";
+import { quitEditor } from "./editor-quit.ts";
+import { CLOSE_IDLE_SETTING, closeIdleEditors, IDLE_LOOK_MS } from "./editor-idle.ts";
 import {
+  afterRun,
   editorActivity,
   editorState,
   endForRestore,
@@ -53,19 +62,31 @@ import { type PanelStatus, panelStatus, toolbarStatusOf } from "./panel-status.t
 import { systemPipelineDeps } from "./pipeline.ts";
 import { systemIdleMs, systemProcesses } from "./processes.ts";
 import {
+  installUnityMultiplayer,
+  MULTIPLAYER_PACKAGE,
+  SETTINGS_FILE,
+  type UnityMultiplayerState,
+  unityMultiplayerState,
+} from "./multiplayer.ts";
+import {
   findUnityProject,
   folderInGame,
   GAME_PROJECT_FOLDER,
   rememberProject,
   type UnityProject,
 } from "./project-folder.ts";
+import { agentsSetting, setAgentsSetting } from "../../substrate/engine-agents.ts";
 import { newestUnity6, readinessOf } from "./readiness.ts";
 import { pipelineVersionOf, SetupError, SetupRefusal, setUpProject, undoSetup } from "./setup.ts";
 import { readFacts, SetupAction, setupCard, skippedCard } from "./setup-steps.ts";
 import { createInstaller, type InstallDeps, type Installer, systemInstallDeps } from "./unity-install.ts";
 
 /** The host services this backend calls, by their public SDK names. */
-const HostService = { StorageRoot: "storage.root", EngineSteps: "game.engine.steps" } as const;
+const HostService = {
+  StorageRoot: "storage.root",
+  EngineSteps: "game.engine.steps",
+  SettingsRead: "settings.read",
+} as const;
 
 /** The plugin's tools, by the names its manifest declares. Wire values: never rename one. */
 export const UnityTool = {
@@ -76,14 +97,17 @@ export const UnityTool = {
   UndoSetup: "undo-setup",
   OpenEditor: "open-editor",
   RestartEditor: "restart-editor",
+  QuitEditor: "quit-editor",
   SaveAll: "save-all",
   EndEditor: "end-editor",
   ReopenEditor: "reopen-editor",
   EditorState: "editor-state",
   OpenForRun: "open-for-run",
+  AfterRun: "after-run",
   SceneShots: "scene-shots",
   EditorActivity: "editor-activity",
   ShowSteps: "show-steps",
+  Multiplayer: "multiplayer",
 } as const;
 export type UnityTool = (typeof UnityTool)[keyof typeof UnityTool];
 
@@ -98,6 +122,9 @@ export const UnityAction = {
   UndoSetup: "undo-setup",
   RestartEditor: "restart-editor",
   GetUnity: "get-unity",
+  Agents: "agents",
+  AgentsGoAhead: "agents-go-ahead",
+  AgentsWait: "agents-wait",
   Steps: SetupAction.Steps,
   Stop: SetupAction.Stop,
   Skip: SetupAction.Skip,
@@ -115,7 +142,53 @@ const isUnityAction = (name: string): name is UnityAction => (Object.values(Unit
  * editor's network and the computer's processes, and what installing Unity for the person reaches
  * (this computer's own unless a test stands in).
  */
-export type UnityBackendDeps = MomentDeps & { install?: InstallDeps };
+export type UnityBackendDeps = MomentDeps & {
+  install?: InstallDeps;
+  /** Genex's Unity multiplayer package as the plugin ships it (`multiplayer/com.genex.multiplayer`). */
+  multiplayerPackage?: string;
+  /** Runs `look` every `ms` until the backend ends; this computer's timer unless a test stands in. */
+  every?: (look: () => void, ms: number) => void;
+};
+
+/** The shipped multiplayer package, beside the built backend. */
+const SHIPPED_MULTIPLAYER_PACKAGE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "multiplayer",
+  MULTIPLAYER_PACKAGE,
+);
+
+/** This computer's timer, which never by itself keeps the backend running. */
+const systemEvery = (look: () => void, ms: number): void => {
+  setInterval(look, ms).unref();
+};
+
+/** Whether the person left closing an idle editor on: it is on unless the setting reads false. */
+async function closeIdleOn(context: PluginContext): Promise<boolean> {
+  const settings = await context.host(HostService.SettingsRead).catch(() => ({}) as Record<string, unknown>);
+  return settings[CLOSE_IDLE_SETTING] !== false;
+}
+
+/**
+ * The looks at idle editors, started at the first run's end and kept going while the backend runs;
+ * one look at a time, so a slow editor never has two.
+ */
+function idleWatch(deps: UnityBackendDeps): (storage: string) => void {
+  let watching = false;
+  let looking = false;
+  return (storage) => {
+    if (watching) return;
+    watching = true;
+    (deps.every ?? systemEvery)(() => {
+      if (looking) return;
+      looking = true;
+      void closeIdleEditors(storage, deps)
+        .catch(() => undefined)
+        .finally(() => {
+          looking = false;
+        });
+    }, IDLE_LOOK_MS);
+  };
+}
 
 const HUB = "Unity Hub (Add, then Add project from disk)";
 /**
@@ -129,6 +202,17 @@ const SKIPPED_FOLDER = path.join("unity-setup", "skipped");
 
 const MESSAGE = {
   UnknownTool: (name: string) => `Unknown Unity tool ${name}`,
+  Multiplayer: (state: UnityMultiplayerState, kept: readonly string[], manifestChanged: boolean) =>
+    [
+      `Genex multiplayer is in this game's Unity project: Packages/${MULTIPLAYER_PACKAGE} (Genex's package) and the Colyseus Unity SDK it runs on in Packages/manifest.json${manifestChanged ? ", which Unity fetches from Colyseus's repository when its editor next comes forward (it needs git on this Mac)" : ""}.`,
+      state.slug
+        ? `Its Genex project is ${state.slug} (${SETTINGS_FILE}).`
+        : `It has no Genex project yet, and builds don't need one: GenexGame.Slug (Assets/Genex/GenexGame.cs) takes it from Genex's Play and from the published web page, so the copies a publish sends join their rooms with no second build. To test online in the editor or in a build you start yourself, publish first, then call unity__multiplayer again with slug (genex__publish-status names it).`,
+      kept.length ? `Kept your changed ${kept.join(", ")} beside the new ones as .mine~.` : "",
+      "Write the game's online play now, as the unity-multiplayer skill says (unity__skill): GenexMultiplayer.Connect or GenexMatchmaker with GameId = GenexGame.Slug (never a slug read from GenexSettings.json alone), WebGL identity from the page and native identity through GenexNativeIdentity(GenexGame.ApiUrl, slug); then check it compiles in the editor.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
   UnknownAction: (name: string) => `Unknown Unity action ${name}`,
   NotKept: (reason: string) =>
     `Genex could not keep this game's Unity project for the editor connector (${reason}), so its calls to Unity will say no project was found.`,
@@ -141,9 +225,9 @@ const MESSAGE = {
   [SetupRefusal.NeedsUnity6]: (version: string) =>
     `This project was saved with Unity ${version}, and Unity's Pipeline package needs Unity 6 or later: ask the user to upgrade the project in Unity Hub first.`,
   [SetupRefusal.NoManifest]:
-    "This project has no Packages/manifest.json yet: ask the user to open it in Unity once, then call again.",
+    "This project has no Packages/manifest.json yet: Unity writes one the first time it opens the project.",
   [SetupRefusal.Unreadable]:
-    "This project's Packages/manifest.json can't be read as Unity writes it (it is no plain file of the project, or no JSON object): ask the user to fix it, then call again.",
+    "This project's Packages/manifest.json can't be read as Unity writes it (it is no plain file of the project, or no JSON object): fix the file so it is one JSON object with a dependencies object, then call again. Only a manifest that is a link out of the project is the user's to fix.",
   [SetupRefusal.InvalidGame]: "Invalid game",
   Made: (version: string) =>
     `Made this game's Unity project in ${GAME_PROJECT_FOLDER}/ for Unity ${version}, empty but for Unity's Pipeline package, the standard built-in modules and the UI package`,
@@ -162,6 +246,8 @@ const MESSAGE = {
     "Unity has this project open: bring Unity to the front so it loads the package (ask the user to), then call unity-editor__list_commands.",
   NotEnded:
     "Unity could not be ended, so it was not opened again: ask the user to quit Unity, then call unity__open-editor.",
+  OpenedForManifest: (version: string) =>
+    `This project had no Packages/manifest.json yet, so Genex opened it in Unity ${version}, which writes one as it loads the project. Call unity__setup again in a minute or two, once Unity has opened it.`,
   StepsShown:
     "The Unity setup card is in the chat: Genex can install Unity Hub and Unity 6 for the user, who only signs in. Tell them in one line, then end your reply; the chat tells you when Unity is ready.",
   StepsDone: "Unity 6 is installed and signed in here; there is no setup card to show. Call unity__new-game.",
@@ -180,18 +266,36 @@ interface RefusalWords {
   [SetupRefusal.InvalidGame]: string;
 }
 
-/** The refusals of the panel's actions, in words for the person at it. */
+/**
+ * The refusals of the panel's actions, in words for the person at it: getters, so each is said in
+ * the language of the moment it is read.
+ */
 const PANEL_MESSAGE = {
-  NoGame: "Open a game first: Unity works on the open game's project.",
-  NoProject: "This game has no Unity project.",
-  NotSetUp: "Set this project up first.",
+  get NoGame() {
+    return t("Open a game first: Unity works on the open game's project.");
+  },
+  get NoProject() {
+    return t("This game has no Unity project.");
+  },
+  get NotSetUp() {
+    return t("Set this project up first.");
+  },
   [SetupRefusal.NeedsUnity6]: (version: string) =>
-    `This project was saved with Unity ${version}, and Genex works with Unity 6 or later. Upgrade it in Unity Hub first.`,
-  [SetupRefusal.NoManifest]:
-    "This project has no Packages/manifest.json yet. Open it in Unity once, then set it up again.",
-  [SetupRefusal.Unreadable]:
-    "This project's Packages/manifest.json can't be read as Unity writes it. Fix the file, then set it up again.",
-  [SetupRefusal.InvalidGame]: "Invalid game",
+    t(
+      "This project was saved with Unity {version}, and Genex works with Unity 6 or later. Upgrade it in Unity Hub first.",
+      { version },
+    ),
+  get [SetupRefusal.NoManifest]() {
+    return t("This project has no Packages/manifest.json yet. Open it in Unity once, then set it up again.");
+  },
+  get [SetupRefusal.Unreadable]() {
+    return t(
+      "This project's Packages/manifest.json can't be read as Unity writes it. Fix the file, then set it up again.",
+    );
+  },
+  get [SetupRefusal.InvalidGame]() {
+    return t("Invalid game");
+  },
 } as const satisfies RefusalWords & { NotSetUp: string };
 
 /** The words for where an opening ended. */
@@ -236,6 +340,22 @@ async function gameOf(context: PluginContext, words: RefusalWords = MESSAGE): Pr
   const folder = directory ? await realpath(directory).catch(() => undefined) : undefined;
   if (!id || !folder) throw new Error(words.NoGame);
   return { id, folder };
+}
+
+/**
+ * The agent's `multiplayer`: Genex multiplayer into the game's Unity project (the package, Colyseus,
+ * the game's Genex project) and the game's matchmaking in its genex.json. Arguments are checked
+ * before anything is written.
+ */
+async function setUpMultiplayer(deps: UnityBackendDeps, context: PluginContext, args: Record<string, unknown>) {
+  const { folder } = await gameOf(context);
+  const { project } = await projectOf(deps, context);
+  const slug = slugArg(args.slug);
+  const matchmaking = matchmakingArg(args.matchmaking);
+  const source = deps.multiplayerPackage ?? SHIPPED_MULTIPLAYER_PACKAGE;
+  const { kept, manifestChanged } = await installUnityMultiplayer(project.root, source, slug ? { slug } : {});
+  if (matchmaking) await writeMatchmaking(folder, matchmaking);
+  return MESSAGE.Multiplayer(await unityMultiplayerState(project.root, source), kept, manifestChanged);
 }
 
 /** The bound game's existing Unity project, kept for the connector; refused when the game holds none. */
@@ -298,8 +418,8 @@ async function newGame(deps: UnityBackendDeps, context: PluginContext): Promise<
 function setupRefused(error: unknown, project: UnityProject, words: RefusalWords): Error {
   if (!(error instanceof SetupError)) return error instanceof Error ? error : new Error(errorMessage(error));
   if (error.code === SetupRefusal.NeedsUnity6)
-    return new Error(words[SetupRefusal.NeedsUnity6](project.editorVersion ?? UNKNOWN_VERSION));
-  return new Error(words[error.code]);
+    return new Error(words[SetupRefusal.NeedsUnity6](project.editorVersion ?? UNKNOWN_VERSION), { cause: error });
+  return new Error(words[error.code], { cause: error });
 }
 
 /** How an opening is asked for a call: its stop, and where scene backups a killed editor left are kept. */
@@ -339,10 +459,34 @@ async function setUpAndOpen(deps: UnityBackendDeps, context: PluginContext, word
   return { changed, version, opening: await openProject(deps, project, await openingOf(deps, context, id)) };
 }
 
-/** The agent's `setup`: what it came to, in words. */
+/**
+ * Opens a project Unity never opened, so that Unity writes its manifest, without waiting: a project
+ * with no Pipeline package never answers Genex.
+ */
+async function openForManifest(deps: UnityBackendDeps, context: PluginContext): Promise<string> {
+  const { id, project } = await projectOf(deps, context);
+  const opening = await openProject(deps, project, { ...(await openingOf(deps, context, id)), waitMs: 0 });
+  const refused = opening.opened === Opened.NoEditor || opening.opened === Opened.Failed;
+  if (refused) return `${MESSAGE[SetupRefusal.NoManifest]} ${OPENING[opening.opened](opening)}`;
+  return `${MESSAGE.OpenedForManifest(opening.version)}${setAsideWords(opening)}`;
+}
+
+/** Whether a setup was refused because Unity never wrote the project's manifest. */
+const noManifest = (error: unknown): boolean =>
+  error instanceof Error && error.cause instanceof SetupError && error.cause.code === SetupRefusal.NoManifest;
+
+/**
+ * The agent's `setup`: what it came to, in words. A project Unity never opened has no manifest to
+ * add the package to: Genex opens it (setup's confirmation covers opening it), and Unity writes one.
+ */
 async function setup(deps: UnityBackendDeps, context: PluginContext): Promise<string> {
-  const { changed, version, opening } = await setUpAndOpen(deps, context, MESSAGE);
-  return afterChange(changed ? MESSAGE.SetUp(version) : MESSAGE.AlreadySetUp(version), opening, changed);
+  try {
+    const { changed, version, opening } = await setUpAndOpen(deps, context, MESSAGE);
+    return afterChange(changed ? MESSAGE.SetUp(version) : MESSAGE.AlreadySetUp(version), opening, changed);
+  } catch (error) {
+    if (!noManifest(error)) throw error;
+    return openForManifest(deps, context);
+  }
 }
 
 /** An undo of setup, once the person confirmed: exactly the line setup added, taken back. */
@@ -383,13 +527,13 @@ async function openEditor(deps: UnityBackendDeps, context: PluginContext): Promi
 type Restarted = { ended: boolean; opening?: Opening };
 
 /**
- * A restart, once the person confirmed: the game's editor ended, a stalled one included (unsaved
- * editor work is lost), and its project opened again. An editor that would not end gets no second
- * one beside it.
+ * A restart, once the person confirmed: the game's editor ended, its work saved first when it
+ * answers (its play stopped), a stalled one included (its unsaved work is lost), and its project
+ * opened again. An editor that would not end gets no second one beside it.
  */
 async function endAndOpen(deps: UnityBackendDeps, context: PluginContext, words: RefusalWords): Promise<Restarted> {
   const { id, project } = await projectOf(deps, context, words);
-  if (!(await endEditor(project.root, deps))) return { ended: false };
+  if (!(await endEditor(project.root, deps, { save: true, signal: context.signal }))) return { ended: false };
   const options = { ...(await openingOf(deps, context, id)), waitMs: RESTART_OPEN_WAIT_MS };
   return { ended: true, opening: await openProject(deps, project, options) };
 }
@@ -477,11 +621,12 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     installing ??= createInstaller(deps.install ?? systemInstallDeps(deps.editors, deps.open), async () => storage);
     return installing;
   };
+  const watchIdle = idleWatch(deps);
   const atMoment =
     <T>(handler: (moment: Moment, momentDeps: MomentDeps) => Promise<T>) =>
     async (context: PluginContext) =>
       handler(await momentOf(context), deps);
-  const tools: Record<UnityTool, (context: PluginContext) => Promise<unknown>> = {
+  const tools: Record<UnityTool, (context: PluginContext, args: Record<string, unknown>) => Promise<unknown>> = {
     [UnityTool.FindProject]: (context) => findProject(deps, context),
     [UnityTool.EngineStatus]: async () => readinessOf(await findEditors(deps.editors)),
     [UnityTool.NewGame]: (context) => newGame(deps, context),
@@ -489,14 +634,22 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     [UnityTool.UndoSetup]: (context) => undo(deps, context),
     [UnityTool.OpenEditor]: (context) => openEditor(deps, context),
     [UnityTool.RestartEditor]: (context) => restartEditor(deps, context),
+    [UnityTool.QuitEditor]: atMoment(quitEditor),
     [UnityTool.SaveAll]: atMoment(saveAll),
     [UnityTool.EndEditor]: atMoment(endForRestore),
     [UnityTool.ReopenEditor]: atMoment(reopenEditor),
     [UnityTool.EditorState]: atMoment(editorState),
     [UnityTool.OpenForRun]: atMoment(openForRun),
+    [UnityTool.AfterRun]: async (context) => {
+      const moment = await momentOf(context);
+      const answer = await afterRun(moment, deps, await closeIdleOn(context));
+      watchIdle(moment.storage);
+      return answer;
+    },
     [UnityTool.SceneShots]: atMoment(sceneShots),
     [UnityTool.EditorActivity]: atMoment(editorActivity),
     [UnityTool.ShowSteps]: async (context) => showSteps(deps, await installerOf(context), context),
+    [UnityTool.Multiplayer]: (context, args) => setUpMultiplayer(deps, context, args),
   };
   // An action takes nothing from its arguments: the open game's own project is all it acts on.
   const actions: Record<UnityAction, (context: PluginContext) => Promise<unknown>> = {
@@ -507,6 +660,9 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     [UnityAction.UndoSetup]: (context) => undoSetUp(deps, context, PANEL_MESSAGE),
     [UnityAction.RestartEditor]: (context) => endAndOpen(deps, context, PANEL_MESSAGE),
     [UnityAction.GetUnity]: () => getUnity(deps),
+    [UnityAction.Agents]: async (context) => agentsSetting(await storageOf(context)),
+    [UnityAction.AgentsGoAhead]: async (context) => setAgentsSetting(await storageOf(context), true),
+    [UnityAction.AgentsWait]: async (context) => setAgentsSetting(await storageOf(context), false),
     ...setupActions(deps, installerOf),
   };
   return {
@@ -514,7 +670,7 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
       if ((ENGINE_PLAY_TOOLS as readonly string[]).includes(name))
         return play(name as EnginePlayTool, args, context, await storageOf(context));
       if (!isUnityTool(name)) throw new Error(MESSAGE.UnknownTool(name));
-      return tools[name](context);
+      return tools[name](context, args);
     },
     async action(name, _args, context) {
       if (!isUnityAction(name)) throw new Error(MESSAGE.UnknownAction(name));

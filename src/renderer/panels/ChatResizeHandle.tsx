@@ -4,6 +4,7 @@
  */
 import type { JSX } from "react";
 import { useRef } from "react";
+import { t } from "../../shared/i18n.ts";
 import { useLayout } from "../state/hooks.ts";
 import {
   CHAT_MAX,
@@ -27,7 +28,7 @@ export function ChatResizeHandle(): JSX.Element {
     <div
       role="separator"
       tabIndex={0}
-      aria-label="Chat width"
+      aria-label={t("Chat width")}
       aria-valuemin={CHAT_MIN}
       aria-valuemax={CHAT_MAX}
       aria-valuenow={width}
@@ -37,7 +38,7 @@ export function ChatResizeHandle(): JSX.Element {
         layout.setState((state) => chatWidthStepped(state, event.key === "ArrowRight" ? 1 : -1), true);
       }}
       aria-orientation="vertical"
-      title="Drag to resize chat"
+      title={t("Drag to resize chat")}
       className="absolute top-0 right-0 z-20 h-full w-1.5 cursor-col-resize hover:bg-line-strong"
       onPointerDown={(event) => {
         event.preventDefault();

@@ -3,26 +3,37 @@
 You are building inside AI Game Studio. Below the upstream marker is Genex's monetization card,
 unchanged. Where it disagrees with this preface, this preface wins.
 
-- Sell with the card's dynamic payment requests (`requestPayment`, `getPayment`, `getPayments`).
-  They need no CLI call, no `genex shop add` and no item catalog.
+- Genex's currency is Nex; the card below calls it coin. Anything with a fixed price in Nex (a
+  class or level unlock, a skin, an item), or anything the person wants to sell for real money
+  without naming a currency, is a Genex store item: follow the `genex-items` skill
+  (`genex__skill {"name":"genex-items"}`) and list it with `shop add` by default, so its card shows
+  in the chat. That is the default in Studio, whatever the card below says about catalogs. A price
+  in coins, gold or gems is the game's own currency, unless the person says it is for real money:
+  then ask once whether they mean Nex.
+- The card's dynamic payment requests (`requestPayment`, `getPayment`, `getPayments`) are only for
+  an amount decided while playing, such as a player-approved action. They need no CLI call.
 - Studio's `@genex-ai/embed-sdk` already exports them. Add the package with
   `genex__package {"package":"@genex-ai/embed-sdk"}` if the game does not have it yet; never run
-  the card's `npm install @genex-ai/embed-sdk@latest`. In a game made from Studio's template,
-  import them from `"@genex-ai/embed-sdk"` and never call `initEmbed()`: Studio's connect module
-  does, as the `genex-threejs-embed-auth` skill describes.
+  `npm install` for it. In a game made from Studio's template, import them from
+  `"@genex-ai/embed-sdk"` and never call `initEmbed()`: Studio's connect module does, as the
+  `genex-threejs-embed-auth` skill describes.
 - Studio's preview runs in local test mode, which has no wallet: a payment there never opens the
   platform sheet. Check the buttons, layout and delivery code with the game's own test fixtures.
   A real payment needs a build published on Genex (`genex__publish`), a signed-in player and that
   player's confirmation: tell the user where to try it rather than claiming it works.
-- Only a game that already sells catalog items keeps the card's "Existing catalog items" commands:
-  `npx genex shop list` is `genex__cli {"command":"shop list"}`, and
-  `npx genex shop add|set|remove|test` is `genex__cli-paid` with the item name or sku in `args` and
-  the flags by name in `options`. The user approves each paid call, because it changes what the
-  game sells.
+- Store items (a picture, a description, a draft the person puts on sale, items other games can
+  use, another creator's item) follow the `genex-items` skill, which says how Studio runs
+  `genex shop add … --json` and `genex items add`.
+- The card's "Existing catalog items" commands are how every store item is listed in Studio:
+  `npx genex shop list` is `genex__cli {"command":"shop list"}`, `npx genex shop add` is
+  `genex__cli` with the item name in `args` and the flags by name in `options` (a draft, which asks
+  nobody), and `npx genex shop set|remove|test` is `genex__cli-paid` with the sku in `args`. The
+  user approves each paid call, because it changes what the game sells. `genex shop publish` is not
+  available: the person puts an item on sale.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.9 sha256 24b4b798c597ce452af4bfa394cd4ca655710750d9f6e749c2b4ed8dd540e844 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.15 sha256 8fadc7b7500c8e68b8e766c526e9dd33e76e64a0d4d972cc57d5278eabdf6abd -->
 ---
 name: genex-monetization
 description: Add dynamic coin payments for game goods or actions — platform consent, recoverable receipts, and idempotent delivery without a required product catalog. Use when the player asks to sell things, add a shop, monetize, or make the game earn. Carries the hard rules: no paid randomness, no gambling in coin, no donation mechanics, and a real-money price beside every coin price.
@@ -281,7 +292,16 @@ npx genex shop test <sku-id>  # owner-only free entitlement; no coin moves
 the grid printed by `genex shop list`. Render `name`, `iconUrl`, `priceCoins`
 and `priceDisplayUsdCents`; use an image of the actual item for its icon.
 `genex shop set` edits a listing and `genex shop remove` retires it without
-removing a buyer's ownership.
+removing a buyer's ownership. When the Genex store is on, `genex shop add`
+makes a draft: `getShop()` leaves it out of the live game and `buy()` cannot
+sell it until the person puts it on sale. Add `--json` so the Genex app shows
+its **Put on sale** card, and never put it on sale yourself. Before the game
+is published, items can be made all the same: they wait as local drafts and go
+up as drafts with `genex publish`; still, only the person puts one on sale.
+
+Items for the Genex store — a picture, a description, a draft the person puts
+on sale, items other games can use, and adding another creator's item — are
+`$genex-items`. Its rules add to these; they never replace them.
 
 Re-list `getEntitlements({ excludeConsumed: true })` on boot. Branch on
 `skuType` (`consumable`/`durable`), never `type` (purchase/gift/test/free).

@@ -1,0 +1,686 @@
+/* The game-item store in Play (marketplace screens 01–06): a game page's Store section
+   (`play/GameStore.tsx`), an item's render on its soft gradient (`play/ItemRender.tsx`), the item's
+   purchase sheet over the dimmed page (`play/ItemSheet.tsx`) and the profile's item shelf
+   (`play/ItemShelf.tsx`). Money here is coin, with the coin mark (play.css). */
+
+:root {
+  /* An item's soft gradient, lit at the centre and deep at the edge: the theme sets the lightness and
+     the colour's strength, the item its own hue (`--item-hue`, set on its render). */
+  --item-glow-lightness: 0.44;
+  --item-glow-chroma: 0.1;
+  --item-deep-lightness: 0.22;
+  --item-deep-chroma: 0.045;
+  --item-edge: oklch(1 0 0 / 0.08);
+}
+:root[data-theme="light"] {
+  --item-glow-lightness: 0.93;
+  --item-glow-chroma: 0.05;
+  --item-deep-lightness: 0.8;
+  --item-deep-chroma: 0.07;
+  --item-edge: oklch(0 0 0 / 0.08);
+}
+
+/* ── An item's render ───────────────────────────────────────────────────────────────────── */
+.item-render {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.item-render[data-backdrop] {
+  background: radial-gradient(
+    90% 85% at 50% 42%,
+    oklch(var(--item-glow-lightness) var(--item-glow-chroma) var(--item-hue)),
+    oklch(var(--item-deep-lightness) var(--item-deep-chroma) var(--item-hue))
+  );
+}
+.item-render-picture {
+  width: 68%;
+  height: 68%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.item-render-picture[data-hidden] {
+  visibility: hidden;
+}
+.item-render-box {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+}
+/* Owned but not in this game: the whole render steps back, gradient and all. */
+.item-render[data-dimmed] {
+  opacity: 0.45;
+  filter: saturate(0.3);
+}
+.item-render-model {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+.item-render-model[data-ready] {
+  opacity: 1;
+  cursor: grab;
+}
+.item-render-model[data-ready]:active {
+  cursor: grabbing;
+}
+.item-render-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: color-mix(in oklab, var(--ink) 80%, transparent);
+  font-size: 12px;
+  line-height: 16px;
+  pointer-events: none;
+}
+
+/* ── A game's Store section ─────────────────────────────────────────────────────────────── */
+.game-store {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-block-end: 40px;
+  container-type: inline-size;
+}
+.game-store-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.game-store-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+}
+/* Store / My items: the Play / Create switch's track, the selected half in Play's selected look. */
+.store-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--play-switch-track, var(--play-track));
+  box-shadow: inset 0 0 0 1px var(--play-switch-edge, var(--play-track-edge));
+}
+.store-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 28px;
+  padding-inline: 11px;
+  border-radius: 8px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 28px;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.store-tab:hover {
+  color: var(--play-selected-text, var(--ink));
+}
+.store-tab:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 1px;
+}
+.store-tab-count {
+  color: var(--ink-3);
+  font: 11px / 1 var(--font-family-mono);
+}
+/* Six cards a row, fewer as the page narrows. */
+.store-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 20px 14px;
+}
+@container (max-width: 900px) {
+  .store-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@container (max-width: 600px) {
+  .store-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.store-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-align: start;
+  cursor: pointer;
+}
+.store-card:focus-visible {
+  outline: none;
+}
+.store-card-render {
+  aspect-ratio: 1;
+  margin-block-end: 10px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--item-edge);
+  transition: filter var(--duration-quick);
+}
+.store-card:hover .store-card-render {
+  filter: brightness(1.08);
+}
+.store-card:focus-visible .store-card-render {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.store-card-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding-inline: 7px;
+  border-radius: 7px;
+  background: rgb(0 0 0 / 0.45);
+  color: rgb(255 255 255 / 0.9);
+  font-size: 12px;
+  line-height: 22px;
+}
+.store-card-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 22px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+}
+.store-card-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.store-card-line[data-store-line="price"] {
+  color: var(--ink-2);
+  font-family: var(--font-family-mono);
+}
+.store-card-line:is([data-store-line="owned"], [data-store-line="works-here"]) {
+  color: var(--purchase-paid-ink);
+}
+.store-card[data-dimmed] .store-card-name {
+  color: var(--ink-3);
+}
+
+/* ── An item's purchase sheet ───────────────────────────────────────────────────────────── */
+/* A 420px card over the dimmed page: the render on its gradient at the top with ⋯ and ✕ in its
+   corner, the item's words, the price over a line with the balance under it, and one full-width
+   button. On a window too short for it all, the card scrolls. */
+/* Above the Play viewer (`.play-viewer`, 250) too: a game's Store opens there from the bar's door. */
+.item-sheet-scrim {
+  z-index: 260;
+}
+.item-sheet {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 261;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 10px 10px 18px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--popover);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+  translate: -50% -50%;
+  outline: none;
+  animation: play-comments-in 200ms var(--ease-smooth-out) both;
+}
+.item-sheet :is(button, a):focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.item-sheet-stage {
+  position: relative;
+  flex: none;
+}
+.item-sheet-render {
+  aspect-ratio: 8 / 5;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--item-edge);
+}
+.item-sheet-render .item-render-picture {
+  width: 60%;
+  height: 60%;
+}
+.item-sheet-corner {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+}
+.item-sheet-corner-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.4);
+  color: rgb(255 255 255 / 0.85);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.item-sheet-corner-button:enabled:hover {
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+}
+.item-sheet-corner-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.item-sheet-yours {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--green);
+  color: var(--popover);
+}
+.item-sheet-words {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-inline: 8px;
+}
+.item-sheet-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+.item-sheet-news-title {
+  margin: 0;
+  font-weight: 500;
+}
+.item-sheet-text {
+  max-height: 120px;
+  margin: 0;
+  overflow-y: auto;
+  color: var(--ink-3);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+.item-sheet-works {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-block-start: 4px;
+}
+.item-sheet-works-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.item-sheet-works-row:disabled {
+  cursor: default;
+}
+.item-sheet-works-row[aria-expanded="true"] .item-sheet-works-chevron {
+  rotate: 90deg;
+}
+.item-sheet-works-chevron {
+  color: var(--ink-3);
+  transition: rotate var(--duration-quick);
+}
+.item-sheet-covers {
+  display: flex;
+}
+.item-sheet-covers > :is(img, span) {
+  width: 26px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+  outline: 1px solid var(--item-edge);
+  box-shadow: 0 0 0 1.5px var(--popover);
+}
+.item-sheet-covers > :is(img, span) + :is(img, span) {
+  margin-inline-start: -5px;
+}
+.item-sheet-cover-blank {
+  background: var(--play-placeholder);
+}
+.item-sheet-games {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  list-style: none;
+}
+/* The price over a line, with the balance under it; or the status that stands for it. */
+.item-sheet-price,
+.item-sheet-status {
+  margin: 0;
+  margin-inline: 8px;
+  padding-block-start: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.item-sheet-price {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.item-sheet-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.item-sheet-row > :is(dt, dd) {
+  margin: 0;
+}
+.item-sheet-row > dt {
+  color: var(--ink-3);
+}
+.item-sheet-amount {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.item-sheet-coins {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 20px / 26px var(--font-family-mono);
+  white-space: nowrap;
+}
+.item-sheet-usd {
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+.item-sheet-free {
+  font-weight: 500;
+}
+.item-sheet-balance {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.item-sheet-balance[data-short] {
+  color: var(--purchase-short-ink);
+}
+/* Under a short balance: the earned coin still on hold, and when it is ready. */
+.item-sheet-held {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: end;
+}
+.item-sheet-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.item-sheet-status-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+}
+.item-sheet-status[data-tone="done"] .item-sheet-status-text {
+  color: var(--purchase-paid-ink);
+}
+.item-sheet-action {
+  flex: none;
+  height: 44px;
+  margin-inline: 8px;
+  border-radius: 11px;
+  font-size: 15px;
+}
+.item-sheet-note {
+  margin: -4px 8px 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+.item-sheet-menu {
+  z-index: 262;
+}
+/* The report: why, an optional message, then Back and Send report. */
+.item-sheet-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 10px 0;
+}
+.item-sheet-report-item {
+  margin: -8px 0 0;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+.item-sheet-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.item-sheet-reason {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding-inline: 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.item-sheet-reason:hover,
+.item-sheet-reason:has(:checked) {
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+}
+.item-sheet-reason input {
+  accent-color: var(--play-blue);
+  cursor: pointer;
+}
+.item-sheet-reason:has(:focus-visible) {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+.item-sheet-report-message {
+  min-height: 72px;
+}
+.item-sheet-report-error {
+  margin: 0;
+  color: var(--purchase-short-ink);
+  font-size: 13px;
+}
+.item-sheet-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── The profile's item shelf ───────────────────────────────────────────────────────────── */
+/* Up to five renders with no backgrounds; each shows a small card under it while hovered, focused
+   or pressed open. */
+.item-shelf {
+  display: flex;
+  gap: 4px;
+  margin: 2px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+.item-shelf-entry {
+  position: relative;
+}
+.item-shelf-item {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: translate var(--duration-quick);
+}
+.item-shelf-item:hover,
+.item-shelf-entry[data-open] .item-shelf-item {
+  translate: 0 -2px;
+}
+.item-shelf-item:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.item-shelf-render {
+  width: 44px;
+  height: 44px;
+}
+.item-shelf-render .item-render-picture {
+  width: 100%;
+  height: 100%;
+}
+.item-shelf-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--popover);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  text-align: start;
+  translate: -50% 0;
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick),
+    visibility var(--duration-quick);
+}
+.item-shelf-entry:is(:hover, :focus-within, [data-open]) .item-shelf-card {
+  visibility: visible;
+  opacity: 1;
+}
+.item-shelf-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+.item-shelf-tag {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+.item-shelf-get {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding-inline: 10px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.item-shelf-cover {
+  width: 32px;
+  height: 18px;
+  margin-inline-end: 8px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+}
+.item-shelf-get:hover {
+  background: color-mix(in oklab, var(--ink) 11%, transparent);
+}
+.item-shelf-get:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+/* Reduce Motion: things change in place. */
+@media (prefers-reduced-motion: reduce) {
+  .item-sheet,
+  .store-tab,
+  .store-card-render,
+  .item-sheet-works-chevron,
+  .item-shelf-item,
+  .item-shelf-card {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* The game's Store opened from the viewer's bar (`PlayViewerLayer.tsx`): the app's page in the game's
+   place below the bar, the game hidden under it until Back to game. */
+.play-viewer-store {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--page);
+  color: var(--ink);
+  outline: none;
+  animation: play-fade-in 160ms ease-out both;
+}
+.play-viewer-store-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1280px;
+  margin-inline: auto;
+  padding: 20px 32px 0;
+}
+.play-viewer-store-back {
+  align-self: flex-start;
+}
+@media (max-width: 720px) {
+  .play-viewer-store-page {
+    padding-inline: 16px;
+  }
+}

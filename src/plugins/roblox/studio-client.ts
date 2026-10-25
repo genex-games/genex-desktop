@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { windowsHomeEnv } from "../../substrate/child-env.ts";
 import { commandLaunch } from "../../substrate/command-launch.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
 import { envValue } from "../../substrate/toolchain.ts";
@@ -229,12 +230,14 @@ interface Session {
 }
 
 function settle(session: Session, line: string): void {
-  let answer: JsonRpcAnswer;
+  let value: unknown;
   try {
-    answer = JSON.parse(line) as JsonRpcAnswer;
+    value = JSON.parse(line);
   } catch {
     return;
   }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const answer = value as JsonRpcAnswer;
   if (typeof answer.id !== "number") return;
   const pending = session.pending.get(answer.id);
   if (!pending) return;
@@ -297,6 +300,7 @@ function request(
   params: unknown,
   options: CallOptions,
 ): Promise<unknown> {
+  if (options.signal?.aborted) return Promise.reject(fail(StudioClientFailure.Closed, MESSAGE.Closed));
   if (session.ended) return Promise.reject(fail(StudioClientFailure.Crashed, MESSAGE.Crashed));
   const id = ++session.nextId;
   const timer = new AbortController();
@@ -397,6 +401,7 @@ export function createStudioClient(deps: StudioClientDeps): StudioClient {
   }
 
   async function call(method: string, params: unknown, options: CallOptions = {}): Promise<unknown> {
+    if (options.signal?.aborted) throw fail(StudioClientFailure.Closed, MESSAGE.Closed);
     return request(deps, await current(), method, params, options);
   }
 
@@ -454,13 +459,26 @@ const systemSleep = (ms: number, signal?: AbortSignal) =>
   delay(ms, undefined, { signal, ref: false }).catch(() => undefined);
 
 /**
+ * `env` with the person's own profile folders on Windows. The host points a plugin server's profile
+ * folders at the connection's own home, as it does HOME (`windowsHomeEnv`), but `mcp.bat` and
+ * StudioMCP's token are in the real ones. They are rebuilt under `home`, the system's user record,
+ * at Windows' default layout, the one `windowsHomeEnv` assumes too; a relocated AppData isn't found.
+ */
+export function personEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): NodeJS.ProcessEnv {
+  return platform === "win32" ? { ...env, ...windowsHomeEnv(home, platform) } : env;
+}
+
+/**
  * This computer: StudioMCP from `mcp` (the locator's answer), with the person's real home from the
  * system's user record, never from HOME, which the host points at the connection's own folder.
  */
-export function systemStudioClientDeps(mcp: () => Promise<string | undefined>): StudioClientDeps {
+export function systemStudioClientDeps(
+  mcp: () => Promise<string | undefined>,
+  env: NodeJS.ProcessEnv = process.env,
+): StudioClientDeps {
   return {
     platform: process.platform,
-    env: process.env,
+    env,
     home: os.userInfo().homedir,
     mcp,
     fs: systemLocateFs,

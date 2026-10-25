@@ -462,7 +462,7 @@ interface FindOptions {
 async function chosenStudio(deps: PlaceDeps, folder: string, studioId: unknown, options: FindOptions): Promise<Chosen> {
   const studios = await listedStudios(deps);
   const entry = studios.find((listed) => listed.id === studioId);
-  if (!entry) throw new PlaceError(PlaceRefusal.NotListed, MESSAGE.Places.NotListed);
+  if (!entry) throw new PlaceError(PlaceRefusal.NotListed, MESSAGE.Places.NotListed());
   return chosenFromEntry(deps, folder, entry, studios, options);
 }
 
@@ -495,8 +495,8 @@ async function readyProjectFile(
   context: PluginContext,
 ): Promise<void> {
   const info = await lstat(chosen.project).catch(() => undefined);
-  if (info?.isSymbolicLink()) throw new PlaceError(PlaceRefusal.Linked, MESSAGE.Places.ProjectInTheWay);
-  if (info && !info.isFile()) throw new PlaceError(PlaceRefusal.NotPlace, MESSAGE.Places.ProjectInTheWay);
+  if (info?.isSymbolicLink()) throw new PlaceError(PlaceRefusal.Linked, MESSAGE.Places.ProjectInTheWay(ROJO_PROJECT));
+  if (info && !info.isFile()) throw new PlaceError(PlaceRefusal.NotPlace, MESSAGE.Places.ProjectInTheWay(ROJO_PROJECT));
   // The person's own Rojo project stays as they wrote it; it is linked as it is.
   if (info && !(await writtenByGenex(target.folder, ROJO_PROJECT))) return;
   await context.host(PluginService.GameSnapshot, { reason: MESSAGE.Places.SnapshotReason });
@@ -521,7 +521,7 @@ function refusedAnswer(error: unknown): UsePlaceAnswer {
 
 /** The bound game's folder by its real path; a call from no game is refused. */
 async function boundGame(context: PluginContext): Promise<{ game: string; folder: string }> {
-  if (!context.project || !context.directory) throw new PlaceError(PlaceRefusal.NoGame, MESSAGE.Places.NoGame);
+  if (!context.project || !context.directory) throw new PlaceError(PlaceRefusal.NoGame, MESSAGE.Places.NoGame());
   return { game: context.project, folder: await realpath(context.directory) };
 }
 

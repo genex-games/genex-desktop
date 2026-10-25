@@ -20,7 +20,7 @@
 import path from "node:path";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { isInside } from "../paths.ts";
-import { STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
+import { STUDIO_SHELL_TOOL, STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
 import type { ScreenedCall } from "./types.ts";
 
 /** What a never-touch root holds, as the refusal names it. */
@@ -89,6 +89,11 @@ const PATH_PATTERN_TOOL = "Glob";
 const GREP_GLOB_FIELD = "glob";
 /** The shell tool, screened by its command line; a job's command is screened as one of its calls. */
 export const SHELL_TOOL = "Bash";
+
+/** Whether a call runs a command line: Bash, or the studio's shell that stands in for it (Windows). */
+function isShellCall(tool: string): boolean {
+  return tool === SHELL_TOOL || tool === STUDIO_SHELL_TOOL;
+}
 /** The macOS keychain's command line tool: any call of it is a sign-in reached. */
 const KEYCHAIN_COMMAND = "security";
 /** The word that ends a command's options (`cd -- dir`). */
@@ -569,8 +574,9 @@ export function screenedPaths(
   home: string,
   platform: NodeJS.Platform = process.platform,
 ): ScreenedPath[] {
-  if (call.tool.startsWith(STUDIO_TOOL_PREFIX)) return [];
-  if (call.tool !== SHELL_TOOL) return filePaths(call, cwd, home, platform);
+  const shell = isShellCall(call.tool);
+  if (!shell && call.tool.startsWith(STUDIO_TOOL_PREFIX)) return [];
+  if (!shell) return filePaths(call, cwd, home, platform);
   const command = call.input.command;
   if (typeof command !== "string") throw new TypeError("Bash.command is not a command line");
   return commandPaths(command, cwd, home, platform);
@@ -905,7 +911,7 @@ export function neverTouchVerdict(
   home: string,
   platform: NodeJS.Platform = process.platform,
 ): NeverTouchHit | null {
-  const command = call.tool === SHELL_TOOL ? call.input.command : undefined;
+  const command = isShellCall(call.tool) ? call.input.command : undefined;
   if (typeof command === "string" && callsKeychain(command, platform))
     return { kind: NeverTouchKind.Login, path: KEYCHAIN_COMMAND };
   for (const screened of screenedPaths(call, cwd, home, platform)) {

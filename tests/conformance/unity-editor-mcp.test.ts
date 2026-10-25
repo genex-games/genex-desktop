@@ -7,6 +7,7 @@ import { type AgentPlayMarker, NO_AGENT_PLAY } from "../../src/plugins/unity/age
 import { createEditorMcp, EditorTool } from "../../src/plugins/unity/editor-mcp.ts";
 import type { GatePlace } from "../../src/plugins/unity/pipeline-gate.ts";
 import type { PipelineDeps } from "../../src/plugins/unity/pipeline.ts";
+import { ENGINE_PLAY_VIEW } from "../../src/shared/engine-play.ts";
 import { CONNECTOR_OUTCOME_META } from "../../src/shared/mcp.ts";
 import {
   droppedConnection,
@@ -392,6 +393,73 @@ describe("the Unity editor connector", () => {
     await close();
   });
 
+  it("sizes a capture that names no size as Genex's own looks at the game, keeping a size the agent names", async () => {
+    const sizedCatalogue = (...sizes: string[]) =>
+      json(200, {
+        commands: [
+          {
+            name: "batch",
+            description: "Run several",
+            tags: ["batch"],
+            parameters: [parameter("operations", "List`1", true)],
+          },
+          {
+            name: "capture_game_view",
+            description: "Capture",
+            tags: ["capture"],
+            parameters: [parameter("source", "String"), ...sizes.map((size) => parameter(size, "Int32"))],
+          },
+        ],
+      });
+    const done = () => json(200, { success: true, result: {} });
+    const { call, seen, close } = await openEditor([
+      sizedCatalogue("width", "height"),
+      look(),
+      done(),
+      sizedCatalogue("width", "height"),
+      look(),
+      done(),
+      sizedCatalogue("width", "height"),
+      look(),
+      done(),
+      sizedCatalogue("width"),
+      look(),
+      done(),
+      sizedCatalogue(),
+      look(),
+      done(),
+    ]);
+    const capture = (parameters?: Record<string, unknown>) =>
+      call(EditorTool.RunCommand, { command: "capture_game_view", ...(parameters ? { parameters } : {}) });
+    await capture({ source: "camera:Main Camera" });
+    await capture({ width: 640 });
+    await call(EditorTool.RunCommand, {
+      command: "batch",
+      parameters: {
+        operations: [{ command: "capture_game_view" }, { command: "capture_game_view", params: { height: 90 } }],
+      },
+    });
+    await capture();
+    await capture();
+    const exec = seen.filter((request) => request.url.endsWith("/api/exec")).map((request) => request.body);
+    assert.deepEqual(exec, [
+      { command: "capture_game_view", parameters: { ...ENGINE_PLAY_VIEW, source: "camera:Main Camera" } },
+      { command: "capture_game_view", parameters: { width: 640 } },
+      {
+        command: "batch",
+        parameters: {
+          operations: [
+            { command: "capture_game_view", params: { ...ENGINE_PLAY_VIEW } },
+            { command: "capture_game_view", params: { height: 90 } },
+          ],
+        },
+      },
+      { command: "capture_game_view", parameters: { width: ENGINE_PLAY_VIEW.width } },
+      { command: "capture_game_view", parameters: {} },
+    ]);
+    await close();
+  });
+
   it("marks the agent's own play while it runs, so the editor lock can tell it from the person's", async () => {
     const root = await openProject();
     const marks: string[] = [];
@@ -417,6 +485,49 @@ describe("the Unity editor connector", () => {
     assert.deepEqual(marks, ["started"], "a stop that failed ends nothing");
     await call(EditorTool.RunCommand, { command: "editor_stop" });
     assert.deepEqual(marks, ["started", "stopped"]);
+    await close();
+  });
+
+  it("marks the agent's play before Unity gets the command, alone or in a batch: the lock may ask while Play starts", async () => {
+    const root = await openProject();
+    const stand = editor([
+      savingCatalogue(),
+      look(),
+      json(200, { success: true, result: "Entered play mode" }),
+      savingCatalogue(),
+      look(),
+      json(200, { success: true, result: { results: [] } }),
+    ]);
+    const marks: string[] = [];
+    const marker: AgentPlayMarker = {
+      started: async () => void marks.push(`started, ${commandsSent(stand.seen).length} commands sent`),
+      stopped: async () => void marks.push("stopped"),
+    };
+    const { call, close } = await connect(async () => ({ root, game: root }), stand.deps, marker);
+    await call(EditorTool.RunCommand, { command: "editor_play" });
+    await call(EditorTool.RunCommand, {
+      command: "batch",
+      parameters: { operations: [{ command: "editor_play", params: {} }] },
+    });
+    assert.deepEqual(marks, ["started, 0 commands sent", "started, 1 commands sent"]);
+    assert.deepEqual(commandsSent(stand.seen), ["editor_play", "batch"]);
+    await close();
+  });
+
+  it("forgets the agent's play when a batch stops it", async () => {
+    const root = await openProject();
+    const marks: string[] = [];
+    const marker: AgentPlayMarker = {
+      started: async () => void marks.push("started"),
+      stopped: async () => void marks.push("stopped"),
+    };
+    const stand = editor([savingCatalogue(), look(), json(200, { success: true, result: { results: [] } })]);
+    const { call, close } = await connect(async () => ({ root, game: root }), stand.deps, marker);
+    await call(EditorTool.RunCommand, {
+      command: "batch",
+      parameters: { operations: [{ command: "editor_stop", params: {} }] },
+    });
+    assert.deepEqual(marks, ["stopped"]);
     await close();
   });
 

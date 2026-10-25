@@ -1,8 +1,9 @@
 /**
  * The studio's own embedded cua-driver daemon (`substrate/cua-embedded.ts`), driven against a
- * stand-in driver process: started as the studio's direct child on a private socket, with the
- * embedded, no-telemetry and no-update-check environment and nothing else of the studio's, reached
- * through the driver's MCP proxy, restarted so a new grant is seen, and stopped without a trace.
+ * stand-in driver process: started as the studio's direct child on a private endpoint (a socket in a
+ * private folder, a fresh named pipe on Windows), with the embedded, no-telemetry and no-update-check
+ * environment and nothing else of the studio's, reached through the driver's MCP proxy, restarted so
+ * a new grant is seen, and stopped without a trace.
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -12,7 +13,12 @@ import { after, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { connectCuaDriver, driverEnv, GrantHolder } from "../../src/substrate/cua-driver-client.ts";
-import { bundledCuaDriver, type EmbeddedCuaDriver, embeddedCuaDriver } from "../../src/substrate/cua-embedded.ts";
+import {
+  bundledCuaDriver,
+  daemonEndpoint,
+  type EmbeddedCuaDriver,
+  embeddedCuaDriver,
+} from "../../src/substrate/cua-embedded.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -20,6 +26,10 @@ import { tmpDir } from "../helpers/tmp.ts";
 const DIED_WITHIN_MS = 10_000;
 const FAKE = fileURLToPath(new URL("../fixtures/fake-cua-driver.mjs", import.meta.url));
 const HOST = "games.genex.desktop";
+const WINDOWS = process.platform === "win32";
+/** A named pipe is no file: nothing of it is seen on disk, and it has no folder of its own. */
+const POSIX_SOCKET = { skip: WINDOWS && "the daemon listens on a named pipe on Windows" };
+const WINDOWS_PIPE = { skip: !WINDOWS && "named pipes are Windows'" };
 const started: EmbeddedCuaDriver[] = [];
 after(async () => {
   await Promise.all(started.map((driver) => driver.stop()));
@@ -56,37 +66,43 @@ async function standIn(flags: string[] = []) {
 const valueOf = (argv: readonly string[], name: string): string | undefined => argv[argv.indexOf(name) + 1];
 
 describe("the studio's embedded cua-driver", () => {
-  it("is the app's own child, embedded on a private socket, without telemetry, update checks or the studio's secrets", async () => {
-    process.env.GENEX_SECRET = "an api key";
-    try {
-      const { driver, served, grants } = await standIn();
-      await writeFile(grants, "");
-      const proxy = await driver.command();
-      const [daemon] = await served();
-      assert.ok(daemon, "a daemon was started");
-      assert.deepEqual(daemon.argv.slice(-4), ["serve", "--embedded", "--socket", valueOf(daemon.argv, "--socket")]);
-      assert.deepEqual(daemon.env, {
-        CUA_DRIVER_EMBEDDED: "1",
-        CUA_DRIVER_HOST_BUNDLE_ID: HOST,
-        DO_NOT_TRACK: "1",
-        CUA_DRIVER_RS_UPDATE_CHECK: "0",
-      });
-      const socket = valueOf(daemon.argv, "--socket")!;
-      assert.equal((await stat(path.dirname(socket))).mode & 0o777, 0o700, "no other user reaches the socket");
-      assert.ok(Buffer.byteLength(socket) < 104, "a Unix socket path fits macOS's limit");
-      assert.deepEqual(proxy.args.slice(-4), ["mcp", "--embedded", "--socket", socket]);
-      assert.equal(proxy.env?.CUA_DRIVER_EMBEDDED, "1", "the proxy is embedded too");
-      // The studio drives it through the proxy as it drives any driver.
-      const desktop = await connectCuaDriver(() => driver.command(), { local: false, holder: GrantHolder.Host });
+  it(
+    "is the app's own child, embedded on a private socket, without telemetry, update checks or the studio's secrets",
+    POSIX_SOCKET,
+    async () => {
+      process.env.GENEX_SECRET = "an api key";
       try {
-        assert.deepEqual([(await desktop.screenshot()).width], [1366]);
+        const { driver, served, grants } = await standIn();
+        await writeFile(grants, "");
+        const proxy = await driver.command();
+        const [daemon] = await served();
+        assert.ok(daemon, "a daemon was started");
+        assert.deepEqual(daemon.argv.slice(-4), ["serve", "--embedded", "--socket", valueOf(daemon.argv, "--socket")]);
+        assert.deepEqual(daemon.env, {
+          CUA_DRIVER_EMBEDDED: "1",
+          CUA_DRIVER_HOST_BUNDLE_ID: HOST,
+          DO_NOT_TRACK: "1",
+          CUA_DRIVER_RS_UPDATE_CHECK: "0",
+          // Its stdin is the app's lifetime pipe: an app that crashes takes its daemon with it.
+          CUA_DRIVER_PARENT_LIVENESS_STDIN: "1",
+        });
+        const socket = valueOf(daemon.argv, "--socket")!;
+        assert.equal((await stat(path.dirname(socket))).mode & 0o777, 0o700, "no other user reaches the socket");
+        assert.ok(Buffer.byteLength(socket) < 104, "a Unix socket path fits macOS's limit");
+        assert.deepEqual(proxy.args.slice(-4), ["mcp", "--embedded", "--socket", socket]);
+        assert.equal(proxy.env?.CUA_DRIVER_EMBEDDED, "1", "the proxy is embedded too");
+        // The studio drives it through the proxy as it drives any driver.
+        const desktop = await connectCuaDriver(() => driver.command(), { local: false, holder: GrantHolder.Host });
+        try {
+          assert.deepEqual([(await desktop.screenshot()).width], [1366]);
+        } finally {
+          await desktop.close();
+        }
       } finally {
-        await desktop.close();
+        delete process.env.GENEX_SECRET;
       }
-    } finally {
-      delete process.env.GENEX_SECRET;
-    }
-  });
+    },
+  );
 
   it("starts one daemon for calls that come together, and keeps it for the next", async () => {
     const { driver, served } = await standIn();
@@ -96,25 +112,29 @@ describe("the studio's embedded cua-driver", () => {
     assert.equal((await served()).length, 1);
   });
 
-  it("restarts on a new socket, leaving no process and no folder behind, and starts again after a daemon dies", async () => {
-    const { driver, served } = await standIn();
-    const first = valueOf((await driver.command()).args, "--socket")!;
-    await driver.restart();
-    const [old] = await served();
-    assert.equal(running(old!.pid), false, "the old daemon is gone");
-    assert.equal(existsSync(path.dirname(first)), false, "and its folder");
-    const second = valueOf((await driver.command()).args, "--socket")!;
-    assert.notEqual(second, first);
-    const latest = (await served()).at(-1)!;
-    process.kill(latest.pid, "SIGKILL");
-    // A daemon that died is started again on the next call, not reported as running. The death
-    // reaches the studio as the child's exit event, whenever the machine gets to it: wait for that.
-    const until = Date.now() + DIED_WITHIN_MS;
-    while (Date.now() < until && valueOf((await driver.command()).args, "--socket") === second) await sleep(20);
-    assert.equal((await served()).length, 3);
-    await driver.stop();
-    assert.equal(running((await served()).at(-1)!.pid), false);
-  });
+  it(
+    "restarts on a new socket, leaving no process and no folder behind, and starts again after a daemon dies",
+    POSIX_SOCKET,
+    async () => {
+      const { driver, served } = await standIn();
+      const first = valueOf((await driver.command()).args, "--socket")!;
+      await driver.restart();
+      const [old] = await served();
+      assert.equal(running(old!.pid), false, "the old daemon is gone");
+      assert.equal(existsSync(path.dirname(first)), false, "and its folder");
+      const second = valueOf((await driver.command()).args, "--socket")!;
+      assert.notEqual(second, first);
+      const latest = (await served()).at(-1)!;
+      process.kill(latest.pid, "SIGKILL");
+      // A daemon that died is started again on the next call, not reported as running. The death
+      // reaches the studio as the child's exit event, whenever the machine gets to it: wait for that.
+      const until = Date.now() + DIED_WITHIN_MS;
+      while (Date.now() < until && valueOf((await driver.command()).args, "--socket") === second) await sleep(20);
+      assert.equal((await served()).length, 3);
+      await driver.stop();
+      assert.equal(running((await served()).at(-1)!.pid), false);
+    },
+  );
 
   it("says at once why a driver that cannot be run did not start", async () => {
     const missing = embeddedCuaDriver(
@@ -163,10 +183,47 @@ describe("the studio's embedded cua-driver", () => {
     assert.equal((await served()).length, 4, "one restart, not a loop");
   });
 
-  it("lives in the app's resources", () => {
-    assert.equal(
-      bundledCuaDriver("/Applications/Genex.app/Contents/Resources/r"),
-      "/Applications/Genex.app/Contents/Resources/r/cua-driver/cua-driver",
-    );
+  it("lives in the app's resources, as cua-driver.exe on Windows", () => {
+    const resources = "/Applications/Genex.app/Contents/Resources/r";
+    assert.equal(bundledCuaDriver(resources, "darwin"), path.join(resources, "cua-driver", "cua-driver"));
+    assert.equal(bundledCuaDriver(resources, "win32"), path.join(resources, "cua-driver", "cua-driver.exe"));
   });
+
+  it("gives each daemon an endpoint of its own: a fresh named pipe on Windows, a private folder's socket elsewhere", async () => {
+    const [a, b] = [await daemonEndpoint("win32"), await daemonEndpoint("win32")];
+    for (const pipe of [a, b]) {
+      assert.match(pipe.socket, /^\\\\\.\\pipe\\genex-cua-[0-9a-f-]{36}$/);
+      assert.equal(pipe.dir, null, "no folder to remove");
+    }
+    assert.notEqual(a.socket, b.socket, "the embedded daemon refuses an endpoint that exists");
+    const socket = await daemonEndpoint("darwin");
+    try {
+      assert.equal(path.dirname(socket.socket), socket.dir);
+    } finally {
+      await rm(socket.dir!, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    "on Windows, listens on a named pipe, is reached through it, and restarts on a new one",
+    WINDOWS_PIPE,
+    async () => {
+      const { driver, served, grants } = await standIn();
+      await writeFile(grants, "");
+      const proxy = await driver.command();
+      const first = valueOf(proxy.args, "--socket")!;
+      assert.match(first, /^\\\\\.\\pipe\\genex-cua-/);
+      const desktop = await connectCuaDriver(() => driver.command(), { local: false, holder: GrantHolder.Host });
+      try {
+        assert.deepEqual([(await desktop.screenshot()).width], [1366]);
+      } finally {
+        await desktop.close();
+      }
+      await driver.restart();
+      assert.equal(running((await served())[0]!.pid), false, "the old daemon is gone");
+      assert.notEqual(valueOf((await driver.command()).args, "--socket"), first);
+      await driver.stop();
+      assert.equal(running((await served()).at(-1)!.pid), false);
+    },
+  );
 });

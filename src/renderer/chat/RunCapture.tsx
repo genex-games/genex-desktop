@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { ResultButton } from "../ui/ResultButton.tsx";
 import { useAsyncEffect } from "../use-async-effect.ts";
 
@@ -26,8 +27,8 @@ function CaptureUnavailable({ onRetry }: { onRetry: () => void }) {
       role="status"
       className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-chat-sub text-ink-3"
     >
-      <span>Capture unavailable</span>
-      <ResultButton onClick={onRetry}>Retry</ResultButton>
+      <span>{t("Capture unavailable")}</span>
+      <ResultButton onClick={onRetry}>{t("Retry")}</ResultButton>
     </div>
   );
 }
@@ -90,7 +91,7 @@ export function RunCapture({ path, compact = false }: { path: string; compact?: 
       {src && (
         <img
           src={src}
-          alt="Recorded build capture"
+          alt={t("Recorded build capture")}
           className={`absolute inset-0 h-full w-full ${fit} ${fresh ? "asset-thumbnail" : ""}`}
           onError={() => {
             captures.delete(path);

@@ -76,8 +76,17 @@ describe("the status clock shows whole seconds, from the first", () => {
 
   it("counts seconds, then minutes and seconds, then hours and minutes", () => {
     assert.equal(clockWords(SECOND_MS), "1s");
-    assert.equal(clockWords(65 * SECOND_MS), "1m 5s");
-    assert.equal(clockWords(2 * HOUR_MS + 10 * MINUTE_MS), "2h 10m");
+    assert.equal(clockWords(65 * SECOND_MS), "1m\u00a05s");
+    assert.equal(clockWords(2 * HOUR_MS + 10 * MINUTE_MS), "2h\u00a010m");
+  });
+
+  // The clock's figures are tabular, and the house font's tabular set widens a plain space to a
+  // figure's width ("2m   23s"); a no-break space keeps a word space's width and the clock on one line.
+  it("joins its two parts with a no-break space, never a plain one", () => {
+    for (const ms of [143 * SECOND_MS, 59 * MINUTE_MS, 3 * HOUR_MS + 5 * MINUTE_MS]) {
+      assert.doesNotMatch(clockWords(ms), / /);
+      assert.match(clockWords(ms), /^\d+[hm]\u00a0\d+[ms]$/);
+    }
   });
 });
 

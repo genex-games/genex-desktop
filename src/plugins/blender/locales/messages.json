@@ -1,0 +1,17 @@
+[
+  "Blender",
+  "Cancel download",
+  "Checking runtime…",
+  "Download Blender 5.2.1",
+  "Download Blender 5.2.1 (350 to 400 MB) into Genex's Local Blender storage, so agents can model with it. Genex verifies its digest, and your own Blender stays as it is.",
+  "Download pinned Blender",
+  "Download the pinned Blender 5.2.1 runtime (350 to 400 MB) into this plugin’s storage. Studio verifies its digest. Existing external Blender installations stay unchanged.",
+  "Download: {phase} · {done} / {total} MiB",
+  "Download: {phase} · {done} / {total} MiB · {error}",
+  "Local Blender",
+  "Model 3D assets with Blender on this computer. No account or credits.",
+  "Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.",
+  "Recheck",
+  "Runtime and jobs",
+  "The Blender program to use (blender.exe on Windows), when Genex doesn't find yours"
+]

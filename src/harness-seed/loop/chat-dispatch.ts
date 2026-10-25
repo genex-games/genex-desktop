@@ -59,9 +59,10 @@ import { type ActiveRun, type RunReopen, StatusLane, type Studio } from "./studi
 import { clampRunHours, MAX_RUN_HOURS } from "./config.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
 import { createScope, userWordsInLog } from "./scope.ts";
+import { closeCarriedPool } from "./workers/carry.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
 import type { ModelPreferences, RunSpec } from "../types/host-api.d.ts";
-import type { QueueAction, SteerHandle } from "./message-queue.ts";
+import { messageQueueState, type QueueAction, type SteerHandle } from "./message-queue.ts";
 
 /** The run an interview commissions when it names no length, in hours. */
 const DEFAULT_RUN_HOURS = 8;
@@ -88,10 +89,10 @@ const MESSAGE = {
   // stay awake, and that a paused run is not a lost one. "until satisfied" alone
   // answered none of those — the first real run ended on the plan's five-hour window at 105
   // of 180 minutes and nobody had been told that could happen.
-  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
+  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the computer awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
-    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the Mac awake. `,
+    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   planWindow:
     "Your Claude plan's window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
   connectionFirst:
@@ -156,6 +157,9 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   // of showing as Queued until the session starts. Known by the engine's name at once; any
   // other session engine is found by its description below, once the turn's engine is known.
   if (steering && hasSessionRoles(action.engine)) await steering.expect();
+  // Its settings as the person sent them, before routing may drop its Loop: what a message sent
+  // while it works is weighed against (turn-switch.ts), as the queue weighs it.
+  const asked: QueueAction = { ...action };
   const existing = await routeMessage(studio, action);
   const loopRuns = await loopRunsFor(studio.host, action, existing);
   const { after } = loopRuns;
@@ -173,7 +177,7 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   try {
     // Stopped before its turn began: nothing answers it, and the chat is told.
     if (ctx.cancelled) await stoppedBeforeTurn(studio.host, ctx, turn.turnId);
-    else await answerMessage(studio, ctx, action, { turnId: turn.turnId, existing, ...loopRuns }, steering);
+    else await answerMessage(studio, ctx, action, { turnId: turn.turnId, existing, asked, ...loopRuns }, steering);
   } catch (err: any) {
     await failChatTurn(studio.host, ctx, turn.turnId, err);
   } finally {
@@ -413,6 +417,8 @@ async function answerStudioThreadBuild(host: Host, ctx: HarnessCtx, action: Queu
 interface AnswerTurn extends RoutedLoopRuns {
   turnId: string;
   existing: RunRecord | null;
+  /** The message's settings as the person sent them. */
+  asked: QueueAction;
 }
 
 /**
@@ -427,6 +433,7 @@ async function answerMessage(
   steer: SteerHandle | undefined,
 ): Promise<void> {
   const { turnId, existing, after, coordinated } = turn;
+  if (keepsBuilding(action) && (await keepBuildingNow(studio, ctx, action, turn))) return;
   // The Loop that came with it cannot continue this finished build: said once, not on every message.
   if (turn.loopUnused && firstLoopUnused(studio, String(existing?.runId)))
     await sayInTurn(ctx, turnId, REOPEN_MESSAGE.loopUnused);
@@ -434,7 +441,7 @@ async function answerMessage(
   const outcome =
     existing && !after
       ? await coordinatorAnswer(studio.host, ctx, turnCtx, { action, turnId, existing, steer, coordinated })
-      : await runTurn(turnCtx, chatTurnOptions(action, turnId, steer, after));
+      : await runTurn(turnCtx, chatTurnOptions(action, turnId, steer, after, turn.asked));
   if (ctx.cancelled) {
     // A Stop the engine answered with a stopped result reads as one it threw (`failChatTurn`).
     await endInterrupted(studio.host, turnId);
@@ -449,6 +456,92 @@ async function answerMessage(
     ...(stopped ? { outcome: stopped } : {}),
   });
   await afterTheReply(studio, ctx, action, outcome, turn);
+}
+
+/** The person's Keep building tap (`AutopilotCommission.keepBuilding`), never a message the chat wrote itself. */
+function keepsBuilding(action: QueueAction): boolean {
+  return action.autopilot?.keepBuilding === true && !chatWrote(action);
+}
+
+/**
+ * Keep building, done without a turn deciding it: a finished build the chat may reopen goes on with
+ * the tap's words as its ask; with no build to go on from (the next Loop of a project worked in its
+ * own folder), the next Loop starts from that same goal. The turn ends at once. False when neither
+ * can, so the message is answered as any other.
+ */
+async function keepBuildingNow(
+  studio: Studio,
+  ctx: HarnessCtx,
+  action: QueueAction,
+  turn: AnswerTurn,
+): Promise<boolean> {
+  const commission = action.autopilot ?? action.loop;
+  const loopRun = turn.after ?? turn.coordinated;
+  const text = String(action.text ?? "");
+  const hours = commissionHours(commission);
+  if (loopRun && reopens(loopRun, commission)) {
+    await studio.host.call(HostMethod.TurnEnd, { turnId: turn.turnId, status: TurnStatus.Ok });
+    const models = sessionModels(action, turn.after, { hours });
+    await reopenOrSayWhy(studio, ctx, action, loopRun, { hours, text, models });
+    return true;
+  }
+  if (turn.existing) return false;
+  await studio.host.call(HostMethod.TurnEnd, { turnId: turn.turnId, status: TurnStatus.Ok });
+  await launchOrSayWhy(studio, ctx, action, await nextLoopSpec(studio.host, action, hours));
+  return true;
+}
+
+/**
+ * The next Loop Keep building starts, as the launch tool would commission it: an Autopilot run on the
+ * last Loop's goal (the one it was built on, so taps never pile up) with what is left, its reference,
+ * the message's hours (∞ with the launch tool's ceiling) and models.
+ */
+async function nextLoopSpec(host: Host, action: QueueAction, hours: number | null): Promise<AnyRecord> {
+  const events: HarnessEvent[] = await host.call(HostMethod.EventsList, { threadId: action.threadId }).catch(() => []);
+  const last = latestRun(events);
+  const base = baseGoalOf(last);
+  const text = String(action.text ?? "").trim();
+  const roles = action.autopilot?.roles;
+  const reference = referenceOf(events, last?.runId);
+  return {
+    goal: base ? `${base}\n\n${text}` : text,
+    ...(base ? { keepBuildingFrom: base } : {}),
+    mode: RunMode.Autopilot,
+    ...(reference ? { reference } : {}),
+    hours: hours ?? MAX_RUN_HOURS,
+    ...(hours === null ? { untilSatisfied: true } : {}),
+    ...(action.engine ? { engine: action.engine } : {}),
+    ...(action.model ? { model: action.model } : {}),
+    ...(roles ? { roles } : {}),
+  };
+}
+
+/** The goal a run was built on: a Keep building run's own base goal, else its goal. */
+function baseGoalOf(run: AnyRecord | null): string {
+  const base = typeof run?.keepBuildingFrom === "string" ? run.keepBuildingFrom : run?.goal;
+  return typeof base === "string" ? base.trim() : "";
+}
+
+/**
+ * A run's reference as a launch takes it again, from the newest of its start records (its close
+ * keeps only a name): its name, kind and notes, its stills staying with that run.
+ */
+function referenceOf(events: readonly HarnessEvent[], runId: unknown): AnyRecord | null {
+  const opened = events.filter((event) => {
+    const data = event?.data;
+    const opens = data?.event_type === RunEvent.RunStarted || data?.event_type === RunEvent.RunRegistered;
+    return data?.type === EventKind.Custom && opens && data.payload?.runId === runId;
+  });
+  const reference = opened
+    .map((event) => event.data.payload?.reference)
+    .findLast((ref) => typeof ref?.name === "string");
+  if (!reference?.name.trim()) return null;
+  return {
+    name: reference.name,
+    shots: [],
+    ...(typeof reference.kind === "string" ? { kind: reference.kind } : {}),
+    ...(typeof reference.notes === "string" ? { notes: reference.notes } : {}),
+  };
 }
 
 /**
@@ -516,10 +609,12 @@ function reopenOutcome(hours: number | null, text: string): TurnOutcome {
 async function afterTheReply(
   studio: Studio,
   ctx: HarnessCtx,
-  action: QueueAction,
+  asked: QueueAction,
   outcome: TurnOutcome | undefined,
   { after, coordinated }: RoutedLoopRuns,
 ): Promise<void> {
+  // A message sent while the turn worked may have changed its settings: what it asked for follows them.
+  const action = followedSettings(asked, outcome);
   const resume = after ? outcome?.details?.resumeRun : null;
   if (after && resume) return resumeAfterReply(studio, ctx, after, resume);
   const loopRun = after ?? coordinated;
@@ -530,6 +625,21 @@ async function afterTheReply(
   const spec = outcome?.stopped === TurnStop.LaunchRun ? outcome.details?.run : null;
   if (spec) await launchOrSayWhy(studio, ctx, action, spec);
 }
+
+/** The settings a message switched the turn to (turn-switch.ts), on the message it answers; it as it was when none did. */
+function followedSettings(action: QueueAction, outcome: TurnOutcome | undefined): QueueAction {
+  const followed = outcome?.details?.followed;
+  if (!followed || typeof followed !== "object") return action;
+  const settled: QueueAction = { ...action };
+  for (const field of FOLLOWED_FIELDS) {
+    if (followed[field] === undefined) delete settled[field];
+    else settled[field] = followed[field];
+  }
+  return settled;
+}
+
+/** The settings a switch carries onto the message a turn answers: engine, model, effort and Loop. */
+const FOLLOWED_FIELDS = ["engine", "model", "effort", "preferences", "autopilot", "loop"] as const;
 
 /**
  * What the reopened build's lead, workers and judges run on after the chat's own session's reopen:
@@ -587,6 +697,7 @@ function chatTurnOptions(
   turnId: string,
   steer: SteerHandle | undefined,
   after: AfterLoopRun | null,
+  asked: QueueAction = action,
 ): TurnOptions {
   return {
     text: action.text,
@@ -607,6 +718,8 @@ function chatTurnOptions(
     ...(action.autopilot ? { autopilot: action.autopilot } : {}),
     ...(steer ? { steer } : {}),
     ...(after ? afterLoopRunOptions(after) : {}),
+    // The message whose settings the turn follows, as it was sent: one sent meanwhile may change them (turn-switch.ts).
+    asked,
   };
 }
 
@@ -712,6 +825,8 @@ function lastReviewedPlan(events: readonly HarnessEvent[]): unknown {
 async function launchOrSayWhy(studio: Studio, ctx: HarnessCtx, action: QueueAction, spec: AnyRecord): Promise<void> {
   const { host } = studio;
   await launchFromIntake(studio, ctx, action, spec).catch(async (err: any) => {
+    // The workers the turn left for this build to take over stop: no build takes them.
+    await closeCarriedPool(action.threadId);
     const failure = err?.message ?? String(err);
     // A launch that dies before run_started needs no run_finished — but it still owes the
     // chat a durable word, not just a push that vanishes with the window.
@@ -822,7 +937,10 @@ export async function launchFromIntake(
   // reservation keeps later queued messages behind the build until it saves and settles.
   // A Stop since this message is for this build: the start keeps it (`keepStop`).
   void handleRunStart(studio, { type: "run_start", threadId: action.threadId, run }, { keepStop: true }).catch(
-    (err: unknown) => host.notify("run.failed", { error: String(err) }),
+    (err: unknown) => {
+      void closeCarriedPool(action.threadId);
+      host.notify("run.failed", { error: String(err) });
+    },
   );
 }
 
@@ -894,8 +1012,48 @@ async function userWordsSoFar(host: Host, action: QueueAction): Promise<string[]
     .call(HostMethod.EventsList, { threadId: action.threadId })
     .then((listed) => (Array.isArray(listed) ? listed : []))
     .catch(() => []);
-  const said = userWordsInLog(events, { through: action.messageId, sinceLastRun: true });
+  const said = launchWords(events, action.messageId);
   return said.length ? said : [String(action.text ?? "")];
+}
+
+/**
+ * The user's words a launched build is for: since the thread's previous run, through the launching
+ * message, then each message its session read mid-turn (delivered into it, and not handed back since).
+ * Those read after the launch was recorded reach the build no other way: the session can't launch
+ * twice. A message sent meanwhile that never joined keeps its own turn, so it isn't counted here.
+ */
+export function launchWords(events: readonly HarnessEvent[], messageId: string | undefined): string[] {
+  const asked = userWordsInLog(events, { through: messageId, sinceLastRun: true });
+  return messageId ? [...asked, ...joinedWords(events, messageId)] : asked;
+}
+
+/** The words of the messages read into `messageId`'s turn and still part of it, in the order sent. */
+function joinedWords(events: readonly HarnessEvent[], messageId: string): string[] {
+  const read = readInto(events, messageId);
+  const words: string[] = [];
+  for (const message of messageQueueState(events).messages.values()) {
+    const text = message.action?.text;
+    // A message the chat queued itself (a command's result) is never the person's words.
+    const fromThePerson = message.action?.origin === undefined || message.action?.origin === null;
+    if (read.has(message.messageId) && fromThePerson && typeof text === "string" && text.trim()) words.push(text);
+  }
+  return words;
+}
+
+/** The messages whose latest steer record says `messageId`'s turn read them: a later hand-back or re-steer undoes it. */
+function readInto(events: readonly HarnessEvent[], messageId: string): Set<string> {
+  const read = new Set<string>();
+  for (const event of events) {
+    if (event.data?.type !== EventKind.Custom) continue;
+    const payload = event.data.payload ?? {};
+    const id = payload.messageId;
+    if (typeof id !== "string") continue;
+    const type = event.data.event_type;
+    if (type === RunEvent.CoordinatorMessageDelivered && payload.into === messageId) read.add(id);
+    else if (type === RunEvent.CoordinatorMessageRequeued || type === RunEvent.CoordinatorMessageSteering)
+      read.delete(id);
+  }
+  return read;
 }
 
 /**
@@ -934,6 +1092,7 @@ function intakeRun(
       : {}),
     ...(spec.reviewPlan ? { reviewPlan: true } : {}),
     ...(spec.mode ? { mode: spec.mode } : {}),
+    ...(typeof spec.keepBuildingFrom === "string" ? { keepBuildingFrom: spec.keepBuildingFrom } : {}),
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.roles ? { roles: spec.roles } : {}),

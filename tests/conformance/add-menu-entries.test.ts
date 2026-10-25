@@ -145,6 +145,43 @@ describe("the Add menu's rows", () => {
     const waiting = server("genex-blender", { health: "idle" }, { name: "Genex Tools · Blender", source });
     assert.equal(addMenuEntries([plugin("genex")], [waiting], null, actions)[0]?.status, null);
   });
+
+  it("opens a plugin's page from its row, on or off, and leaves a server's row to its switch", () => {
+    const { calls, actions } = recorder();
+    const [on, off, serverRow] = addMenuEntries(
+      [plugin("genex"), plugin("godot", { enabled: false })],
+      [server("github")],
+      null,
+      actions,
+    );
+    on?.open?.();
+    off?.open?.();
+    assert.deepEqual(calls, ["manage:genex", "manage:godot"]);
+    assert.equal(serverRow?.open, undefined);
+  });
+
+  it("offers Settings beside a plugin's switch unless its action already opens the same page", () => {
+    const { calls, actions } = recorder();
+    const source = { plugin: "genex", server: "blender" };
+    const failing = server("genex-blender", { health: "failed" }, { name: "Genex Tools · Blender", source });
+    const settings = (plugins: PluginInfo[], views: McpConnectorView[] = []) =>
+      addMenuEntries(plugins, views, null, actions)[0]?.settings;
+    settings([plugin("godot")])?.();
+    assert.deepEqual(calls, ["manage:godot"]);
+    assert.equal(settings([plugin("genex")], [failing]), undefined, "Retry opens its page");
+    assert.equal(settings([plugin("godot", { health: "failed" })]), undefined, "Manage opens its page");
+    const locked = {
+      revision: 1,
+      appliedRevision: null,
+      active: false,
+      sources: [
+        { id: "genex", name: "Genex", kind: "plugin", enabled: true, health: "ready", tools: 0, account: "locked" },
+      ],
+    } as never;
+    const account = plugin("genex", {}, { account: { connect: "login" } });
+    assert.equal(addMenuEntries([account], [], locked, actions)[0]?.status?.action?.label, "Connect");
+    assert.equal(typeof addMenuEntries([account], [], locked, actions)[0]?.settings, "function", "Connect signs in");
+  });
 });
 
 describe("which servers the menu offers", () => {

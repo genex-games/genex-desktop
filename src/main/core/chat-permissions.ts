@@ -32,6 +32,7 @@ import path from "node:path";
 import { CustomEvent, customEventData, customRecord, type AnyCustomPayload } from "../../shared/custom-events.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { EventKind, ThreadKind } from "../../shared/event-log.ts";
+import { t } from "../../shared/i18n.ts";
 import { SteerDelivery } from "../../shared/message-queue.ts";
 import {
   engineMode,
@@ -39,7 +40,7 @@ import {
   isPermissionMode,
   isSteadyPermissionMode,
   ModeSwitchFailure,
-  PERMISSION_MODE_WORDS,
+  permissionModeWords,
   PermissionDecision,
   PermissionGranted,
   type PermissionGrant,
@@ -104,7 +105,11 @@ const MESSAGE_STARTS: ReadonlySet<unknown> = new Set([
   CustomEvent.CoordinatorMessageDelivered,
 ]);
 
-/** What the chat, Claude and the log read. */
+/**
+ * What the chat, Claude and the log read. The person's words (a card's reason, question and
+ * folder, and the picker's failure) are functions in their language; the rest stays English:
+ * Claude reads it, it goes to the log, or it answers only a malformed request.
+ */
 const MESSAGE = {
   /** What Claude reads when the work ended around its request: a deny, never an error. */
   withdrawnStop: "The user stopped this work before answering.",
@@ -116,19 +121,21 @@ const MESSAGE = {
   inPlan:
     "The chat is in Plan mode, so this was not allowed: a build is already approved work. Do not retry it; ask the person in your reply to switch the mode.",
   /** Why a lead started in Auto or Accept edits asks, once its chat has left that mode. */
-  leftMode: (from: string, to: string) => `The chat switched from ${from} to ${to}.`,
+  leftMode: (from: string, to: string) => t("The chat switched from {from} to {to}.", { from, to }),
   unknownMode: "Unknown permission mode.",
-  notGameChat: "Permission modes are set for a game chat.",
+  notGameChat: () => t("Permission modes are set for a game chat."),
   invalidAnswer: "Invalid permission answer",
   invalidRule: "Invalid permission rule",
-  notSwitched: (label: string) => `The running reply could not switch to ${label}. Your next message will use it.`,
+  notSwitched: (mode: string) =>
+    t("The running reply could not switch to {mode}. Your next message will use it.", { mode }),
   grantNotSaved: (error: unknown) => `Could not save a permission grant: ${String(error)}`,
   /** A job card's question, in plain words: who wants to run what in the background. */
-  jobTitle: (who: string, title: string) => `${who} wants to run ${title} in the background`,
+  workerJob: (worker: string, job: string) => t("{worker} wants to run {job} in the background", { worker, job }),
+  unnamedWorkerJob: (job: string) => t("A worker wants to run {job} in the background", { job }),
+  leadJob: (job: string) => t("The lead wants to run {job} in the background", { job }),
+  chatJob: (job: string) => t("Claude wants to run {job} in the background", { job }),
   /** Where a job would run, in plain words. */
-  jobFolder: (folder: string) => (folder === "." ? "In the game's folder" : `In ${folder}`),
-  /** Who asks on a job card that names no worker. */
-  jobAsker: { lead: "The lead", chat: "Claude", worker: "A worker" },
+  jobFolder: (folder: string) => (folder === "." ? t("In the game's folder") : t("In {folder}", { folder })),
 } as const;
 
 /** A chat's running session, as the host follows it: its engine and model, and whether the host moved its mode. */
@@ -291,10 +298,13 @@ export interface JobAskRequest {
   runId?: string | null;
 }
 
-/** Who a job card says asks: the worker by its title, the lead, or Claude for the chat's own session. */
-function jobAsker(job: JobAskRequest): string {
-  if (job.worker) return job.worker.title.trim() || MESSAGE.jobAsker.worker;
-  return job.asker === JobRole.Lead ? MESSAGE.jobAsker.lead : MESSAGE.jobAsker.chat;
+/** A job card's question, naming who asks: the worker by its title, the lead, or Claude for the chat's own session. */
+function jobTitle(job: JobAskRequest): string {
+  if (job.worker) {
+    const worker = job.worker.title.trim();
+    return worker ? MESSAGE.workerJob(worker, job.title) : MESSAGE.unnamedWorkerJob(job.title);
+  }
+  return job.asker === JobRole.Lead ? MESSAGE.leadJob(job.title) : MESSAGE.chatJob(job.title);
 }
 
 /** A build's lead's or the run's coordinator's session: what its engine is handed, and its end. */
@@ -658,7 +668,7 @@ export class ChatPermissionService {
       for (const oldest of [...lead.askedFirst].slice(0, Math.max(0, lead.askedFirst.size - ASKED_FIRST_KEPT)))
         lead.askedFirst.delete(oldest);
     }
-    const [from, to] = [PERMISSION_MODE_WORDS[running].label, PERMISSION_MODE_WORDS[mode].label];
+    const [from, to] = [permissionModeWords()[running].label, permissionModeWords()[mode].label];
     return { askFirst: true, reason: MESSAGE.leftMode(from, to) };
   }
 
@@ -761,7 +771,7 @@ export class ChatPermissionService {
       tool: JOB_PERMISSION_TOOL,
       input: { title: job.title, command: job.command, folder: job.folder },
       toolUseId: shortId("job"),
-      title: MESSAGE.jobTitle(jobAsker(job), job.title),
+      title: jobTitle(job),
       description: MESSAGE.jobFolder(job.folder),
       always: [],
     };
@@ -1069,7 +1079,7 @@ export class ChatPermissionService {
   async setMode(threadId: string | null, mode: unknown): Promise<PermissionSettingsView> {
     if (!isPermissionMode(mode)) throw new Error(MESSAGE.unknownMode);
     if (threadId !== null) {
-      if ((await this.#threadMeta(threadId))?.kind !== ThreadKind.Game) throw new Error(MESSAGE.notGameChat);
+      if ((await this.#threadMeta(threadId))?.kind !== ThreadKind.Game) throw new Error(MESSAGE.notGameChat());
       await this.#core.store.updateThread(threadId, { metadata: { permissionMode: mode } });
     }
     if (isSteadyPermissionMode(mode)) await this.store.setDefaultMode(mode);
@@ -1096,7 +1106,7 @@ export class ChatPermissionService {
       return null;
     } catch (error) {
       if (this.#autoRefused(session, error)) return null;
-      return new Error(MESSAGE.notSwitched(PERMISSION_MODE_WORDS[mode].label));
+      return new Error(MESSAGE.notSwitched(permissionModeWords()[mode].label));
     }
   }
 

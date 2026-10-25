@@ -14,24 +14,26 @@ const fromHome = (app: Studio) => (select: () => void) => {
 };
 
 /**
- * Moving between conversations and games: each closes Plugins, Play and the drawer on the way, and
- * sets a Play remix being made aside (its sidebar row brings it back).
+ * Moving between conversations and games: each closes Plugins, Create › Items, Play and the drawer on
+ * the way, and sets a Play remix being made aside (its sidebar row brings it back).
  */
 export function useNavigation(app: Studio, chrome: ShellChrome, handoff: ComposerHandoff) {
-  const { setPluginsOpen, setPlayOpen, setDrawerOpen, closeOverlays } = chrome;
-  /** Leave Plugins and Play for the workspace, and a remix being made for where the person is going. */
+  const { setPluginsOpen, setItemsOpen, setPlayOpen, setDrawerOpen, closeOverlays } = chrome;
+  /** Leave Plugins, Items and Play for the workspace, and a remix being made for where the person is going. */
   const leaveRooms = useCallback(() => {
     setPluginsOpen(false);
+    setItemsOpen(false);
     setPlayOpen(false);
     app.play.setState(remixSetAside, true);
-  }, [app, setPluginsOpen, setPlayOpen]);
+  }, [app, setPluginsOpen, setItemsOpen, setPlayOpen]);
   /** Back to the Play remix being made, over Create. */
   const showRemix = useCallback(() => {
     setPluginsOpen(false);
+    setItemsOpen(false);
     setPlayOpen(false);
     app.play.setState(remixReturnedTo, true);
     setDrawerOpen(false);
-  }, [app, setPluginsOpen, setPlayOpen, setDrawerOpen]);
+  }, [app, setPluginsOpen, setItemsOpen, setPlayOpen, setDrawerOpen]);
   const studioThread = useThreads(studioThreadOf);
   const selectThread = useCallback(
     (threadId: string) => {

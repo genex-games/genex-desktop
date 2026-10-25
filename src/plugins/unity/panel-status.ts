@@ -6,6 +6,7 @@
  * as its toolbar does.
  */
 import type { PluginToolbarStatus } from "../../plugin-sdk/index.d.ts";
+import { t, tc } from "../../shared/i18n.ts";
 import { editorRuns } from "./editor-life.ts";
 import { type OpenDeps, UNKNOWN_VERSION } from "./editor-open.ts";
 import { findEditors, isUnity6 } from "./editors.ts";
@@ -13,6 +14,7 @@ import { editorStatus, PipelineProblem, PLAY_STOPPED } from "./pipeline.ts";
 import { folderInGame, type UnityProject } from "./project-folder.ts";
 import { newestUnity6 } from "./readiness.ts";
 import { pipelineVersionOf } from "./setup.ts";
+import { termsAccepted } from "./software-terms.ts";
 
 /** Where a game's Unity stands, one step at a time. Wire values the panel reads: never rename one. */
 export const PanelStep = {
@@ -33,6 +35,8 @@ export const PanelStep = {
   Ready: "ready",
   /** The editor's server is there and its main thread runs nothing, as behind a dialog. */
   Stalled: "stalled",
+  /** An editor has the project open, does not answer, and this Mac's Unity never had its Software Terms accepted. */
+  Terms: "terms",
 } as const;
 export type PanelStep = (typeof PanelStep)[keyof typeof PanelStep];
 
@@ -59,10 +63,16 @@ export interface PanelGame {
 
 type Step = Pick<PanelStatus, "step" | "playing" | "compiling">;
 
-/** What an open editor's main thread says: ready with what it is doing, stalled, or not answering yet. */
+/**
+ * What an open editor's main thread says: ready with what it is doing, stalled, or not answering
+ * yet. One that does not answer while the terms were never accepted waits behind their window.
+ */
 async function openStep(root: string, deps: OpenDeps, signal?: AbortSignal): Promise<Step> {
   const look = await editorStatus(root, deps.pipeline, { signal });
-  if (!look.ok) return { step: look.problem === PipelineProblem.Stalled ? PanelStep.Stalled : PanelStep.Opening };
+  if (!look.ok) {
+    if (look.problem === PipelineProblem.Stalled) return { step: PanelStep.Stalled };
+    return { step: (await termsAccepted(deps.editors)) === false ? PanelStep.Terms : PanelStep.Opening };
+  }
   const { playMode, compiling, reloading } = look.result;
   return {
     step: PanelStep.Ready,
@@ -108,45 +118,52 @@ const MUTED = "info" as const satisfies PluginToolbarStatus["tone"];
 
 /**
  * The toolbar button's word and tooltip at each step, drawn as a dot (green once Ready, amber while
- * Starting) whose word only screen readers hear; Stalled stays a word, as it asks for the person.
+ * Starting) whose word only screen readers hear; Stalled and Waiting for you stay words, as they ask
+ * for the person.
  * The button shows only on a game with a Unity project, so the steps before one never reach it;
  * the plugin page's Editor row reads the same word.
  */
 const WORD: Record<PanelStep, (version: string) => PluginToolbarStatus> = {
   [PanelStep.GetUnity]: () => ({
-    badge: "Not installed",
+    badge: t("Not installed"),
     tone: MUTED,
     dot: true,
-    title: "Unity 6 isn't installed: see how to get it",
+    title: t("Unity 6 isn't installed: see how to get it"),
   }),
-  [PanelStep.NoGame]: () => ({ tone: MUTED, title: "Open a game to use Unity" }),
-  [PanelStep.NoProject]: () => ({ tone: MUTED, title: "This game has no Unity project" }),
+  [PanelStep.NoGame]: () => ({ tone: MUTED, title: t("Open a game to use Unity") }),
+  [PanelStep.NoProject]: () => ({ tone: MUTED, title: t("This game has no Unity project") }),
   [PanelStep.OldProject]: (version) => ({
-    badge: "Not set up",
+    badge: t("Not set up"),
     tone: MUTED,
     dot: true,
-    title: `This project was saved with Unity ${version}: Genex works with Unity 6 or later`,
+    title: t("This project was saved with Unity {version}: Genex works with Unity 6 or later", { version }),
   }),
   [PanelStep.NotSetUp]: () => ({
-    badge: "Not set up",
+    badge: t("Not set up"),
     tone: MUTED,
     dot: true,
-    title: "Set up this game's Unity project",
+    title: t("Set up this game's Unity project"),
   }),
   [PanelStep.NoEditor]: (version) => ({
-    badge: "Not open",
+    badge: t("Not open"),
     tone: MUTED,
     dot: true,
-    title: `Unity ${version} isn't installed: this project was saved with it`,
+    title: t("Unity {version} isn't installed: this project was saved with it", { version }),
   }),
-  [PanelStep.NotOpen]: () => ({ badge: "Not open", tone: MUTED, dot: true, title: "Unity isn't open" }),
-  [PanelStep.Opening]: () => ({ badge: "Starting", tone: "warn", dot: true, title: "Unity is starting" }),
-  [PanelStep.Ready]: () => ({ badge: "Ready", tone: "ok", dot: true, title: "Unity is open and answers" }),
+  [PanelStep.NotOpen]: () => ({ badge: t("Not open"), tone: MUTED, dot: true, title: t("Unity isn't open") }),
+  [PanelStep.Opening]: () => ({ badge: t("Starting"), tone: "warn", dot: true, title: t("Unity is starting") }),
+  [PanelStep.Ready]: () => ({ badge: t("Ready"), tone: "ok", dot: true, title: t("Unity is open and answers") }),
   [PanelStep.Stalled]: () => ({
-    badge: "Stalled",
+    badge: t("Stalled"),
     tone: "warn",
     attention: true,
-    title: "Unity isn't answering: a dialog may be waiting in it",
+    title: t("Unity isn't answering: a dialog may be waiting in it"),
+  }),
+  [PanelStep.Terms]: () => ({
+    badge: tc("editor", "Waiting for you"),
+    tone: "warn",
+    attention: true,
+    title: t("Unity is waiting for you to accept its Software Terms in its window"),
   }),
 };
 

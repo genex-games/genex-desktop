@@ -23,10 +23,11 @@ import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { SessionPort } from "./session-port.ts";
 import {
   leased,
-  openGame,
   runDemo,
+  servedGame,
   sizedWindow,
   untilAbandoned,
+  type ViewOpener,
   type ViewPreviews,
   type ViewStillOptions,
   type WindowNeed,
@@ -91,7 +92,7 @@ async function record(port: ClipPort, order: PluginClipOrder): Promise<PluginCli
  * clip its budget gave up on (`abandoned`) stops where it is, exactly as a still does.
  */
 async function film(
-  previews: ViewPreviews,
+  open: ViewOpener,
   pool: PreviewPool,
   session: SessionPort,
   { binding, order, abandoned }: { binding: PluginBinding; order: PluginClipOrder; abandoned: AbortSignal },
@@ -99,7 +100,7 @@ async function film(
   const window = await sizedWindow(pool, session, order, CLIP_NEED);
   if ("refused" in window) return { clipProblem: window.refused };
   const port = untilAbandoned(window.port, abandoned);
-  const unopened = await openGame(previews, port, binding, abandoned);
+  const unopened = await open(port, binding, abandoned);
   if (unopened) return { clipProblem: unopened };
   const staged = await runDemo(port, order.demo);
   abandoned.throwIfAborted();
@@ -126,11 +127,12 @@ export async function viewClip(
   options: ViewClipOptions = {},
 ): Promise<PluginClipAnswer> {
   const timeoutMs = options.timeoutMs ?? clipBudgetMs(order);
+  const open = options.open ?? servedGame(previews);
   return leased(previews, {
     label: `clip:${binding.project}`,
     timeoutMs,
     ...(options.wait ? { wait: options.wait } : {}),
-    run: (pool, session, abandoned) => film(previews, pool, session, { binding, order, abandoned }),
+    run: (pool, session, abandoned) => film(open, pool, session, { binding, order, abandoned }),
     unavailable: () => problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noHiddenWindow }),
     late: () => problem(PluginStillProblemCode.Timeout, { reason: MESSAGE.timedOut(timeoutMs) }),
   });

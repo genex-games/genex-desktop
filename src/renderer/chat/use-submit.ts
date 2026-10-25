@@ -15,6 +15,9 @@ import type { ReplyingAbout } from "./use-reply-about.ts";
 /** The composer's send: the text, what it carries, and whether the draft stays in the box. */
 export type Send = (text: string, extras?: ComposerExtras, preserveDraft?: boolean) => Promise<void>;
 
+/** The same send, answering true once the message went to the chat (false: a sign-in first, a note, nothing to send with). */
+export type SendAnswered = (text: string, extras?: ComposerExtras, preserveDraft?: boolean) => Promise<boolean>;
+
 /**
  * Send from the composer: a note to the build it replies about, else a sign-in first when one is
  * needed, else to the held plan or the chat. A message to the chat shows at once.
@@ -26,7 +29,7 @@ export function useSubmit(
   work: ChatWorkView,
   follow: FollowScroll,
   reply: ReplyingAbout,
-): Send {
+): SendAnswered {
   const { threadId, activeRunId, run, transcript } = chat;
   const { drafts, model, gate } = composer;
   const startSend = (key: string | null, preserveDraft: boolean): void => {
@@ -62,19 +65,26 @@ export function useSubmit(
     await props.onSend(text, { ...composerSendOptions(model, key, options), ...(clientId ? { clientId } : {}) });
     if (clientId) sends.settle(clientId);
   };
+  // Keep building is the person asking the build to go on: never a note to the build in reply.
+  const asNote = (text: string, extras: ComposerExtras | undefined): Promise<boolean> =>
+    extras?.autopilot?.keepBuilding === true
+      ? Promise.resolve(false)
+      : sentAsNote(reply, threadId, text, props.onNotice, follow);
   return async (text, extras, preserveDraft = false) => {
-    if (await sentAsNote(reply, threadId, text, props.onNotice, follow)) return;
+    if (await asNote(text, extras)) return false;
     if (gate.needsSignIn) {
       await gate.signIn();
-      return;
+      return false;
     }
     const key = sendKey(model, extras);
-    if (!key && !extras?.autopilot) return;
-    const heldRun = heldPlanRun();
+    if (!key && !extras?.autopilot) return false;
+    // The held plan's inbox takes words only: pictures alone go to the chat.
+    const heldRun = text.trim() ? heldPlanRun() : null;
     const clientId = showSend({ chat, work }, text, extras, heldRun);
     startSend(key, preserveDraft);
     try {
       await deliver(text, key, extras, { heldRun, clientId });
+      return true;
     } catch (error) {
       // The composer gets the text back (PromptBar) and the chat says why (main): no bubble stays.
       if (clientId) sends.drop(clientId);

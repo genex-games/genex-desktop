@@ -62,6 +62,24 @@ describe("a game's engine link in its chat", () => {
     assert.equal(back.outcome, "Undone. Fog Valley builds in Mist again.");
   });
 
+  it("says when the link also set the project up, with the same one Undo, and that Undo took the set-up back", () => {
+    const [line] = links(toEntries([linked(1, { setUp: true })]));
+    assert.ok(line?.kind === EntryKind.Action);
+    assert.equal(line.text, "Set up Valley for Genex · Fog Valley now builds in Unreal");
+    assert.deepEqual(line.engineLink, { project: "valley", pluginId: "unreal", linkedAt: "2026-10-04T12:00:01.000Z" });
+    const at = "2026-10-04T12:00:01.000Z";
+    const [back] = links(toEntries([linked(1, { setUp: true }), undone(2, { linkedAt: at, setUpUndone: "Valley" })]));
+    assert.ok(back?.kind === EntryKind.Action);
+    assert.equal(back.engineLink, undefined);
+    assert.equal(back.outcome, "Undone. Fog Valley is a web game again, and Valley is no longer set up for Genex.");
+    const [kept] = links(toEntries([linked(1, { setUp: true }), undone(2, { linkedAt: at, setUpKept: "Valley" })]));
+    assert.ok(kept?.kind === EntryKind.Action);
+    assert.equal(
+      kept.outcome,
+      "Undone. Fog Valley is a web game again. Valley stays set up for Genex: another game uses it.",
+    );
+  });
+
   it("keeps Undo on the newest link only", () => {
     const [first, second] = links(toEntries([linked(1, {}), linked(2, { name: "Mist", previous: "Valley" })]));
     assert.ok(first?.kind === EntryKind.Action && second?.kind === EntryKind.Action);

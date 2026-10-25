@@ -124,6 +124,30 @@ it("validates module dependencies, ignores commented examples and keeps only rea
   }
 });
 
+it("reads a page's script address as a file beside the page, as a Godot web export writes it", async () => {
+  // Godot's shell loads `<script src="index.js">` and Genex's multiplayer bridge the same way: an
+  // address in the page is a URL, never a bare module name for the import map.
+  const temp = await mkdtemp(path.join(os.tmpdir(), "studio-export-scripts-"));
+  const game = path.join(temp, "game");
+  try {
+    await mkdir(game);
+    const page = (scripts: string[]) => scripts.map((src) => `<script src="${src}"></script>`).join("");
+    await writeFile(path.join(game, "index.html"), page(["genex-multiplayer-bridge.js", "index.js"]));
+    await writeFile(path.join(game, "genex-multiplayer-bridge.js"), '"use strict";(()=>{window.bridge=1})();');
+    await writeFile(path.join(game, "index.js"), "var Engine=1;");
+    const files = ["index.html", "genex-multiplayer-bridge.js", "index.js"];
+    const result = await exportPublicGame(game, path.join(temp, "public"), files);
+    assert.deepEqual([...result.included].sort(), [...files].sort());
+    await writeFile(path.join(game, "index.html"), page(["index.js", "gone.js"]));
+    await assert.rejects(
+      exportPublicGame(game, path.join(temp, "public"), files),
+      /missing a referenced public file: gone\.js in index\.html/,
+    );
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 it("refuses to export a file that holds a credential Studio knows, and leaves the last export in place (SEC-6)", async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "studio-export-secrets-"));
   const source = path.join(temp, "game"),

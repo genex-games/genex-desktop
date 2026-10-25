@@ -1,8 +1,11 @@
 name: Release
 # Build-only candidates use no signing credentials. Draft distribution requires main ancestry,
 # a matching version, passing regression and macOS/Linux package checks and a signed macOS build.
-# Windows is built and tested every release but cannot hold the draft back; it is distributed only
-# once it is signed and its job passed (scripts/release-policy.mjs).
+# The packages build while the sharded regression runs; only the draft upload waits for both.
+# An urgent fix may skip the regression: the repository variable RELEASE_REGRESSION=skip; a
+# build-only dispatch on main runs it after publication, and the variable is unset again.
+# Windows is built and tested every release but cannot hold the draft back; it is distributed once
+# its job passed, unsigned as a preview until a certificate signs it (scripts/release-policy.mjs).
 on:
   push:
     tags: ["v*"]
@@ -20,7 +23,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     outputs:
       publish: ${{ steps.intent.outputs.publish }}
     steps:
@@ -37,15 +40,9 @@ jobs:
         env:
           RELEASE_PUBLISH: ${{ inputs.publish || false }}
         run: node scripts/check-release.mjs
-      - name: Linux process sandbox prerequisites
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
-      - run: npm ci --ignore-scripts
-      # --ignore-scripts skips postinstall, which patches sandbox-runtime's executable lookup.
-      - name: Patch the sandbox runtime as postinstall does
-        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
-      - run: npm run check:static
-      - run: npm run lint
-      - run: npm run test:fast
+      - name: Say when the regression is skipped
+        if: vars.RELEASE_REGRESSION == 'skip'
+        run: echo "::warning::RELEASE_REGRESSION=skip; this release runs without the regression. Dispatch a build-only run on main afterwards and unset the variable."
       - name: Lockfile dependency inventory
         run: npm sbom --sbom-format cyclonedx --package-lock-only > SBOM.cyclonedx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -53,10 +50,23 @@ jobs:
           name: release-inventory
           path: SBOM.cyclonedx.json
           if-no-files-found: error
-  regression:
+  # The complete `npm test` inventory (fast, rig and the harness gate) in disjoint shards, so the
+  # regression runs on parallel runners and a failed shard re-runs alone. It is its own job so the
+  # macOS build and the e2e, which need only validate, take the first macOS runners. The serial rig
+  # shards balance by the file times the newest earlier release left (by source bytes without one).
+  plan:
     needs: validate
-    runs-on: macos-26
-    timeout-minutes: 120
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
+      seed_matrix: ${{ steps.plan.outputs.seed_matrix }}
+      harness_matrix: ${{ steps.plan.outputs.harness_matrix }}
+      fast_matrix: ${{ steps.plan.outputs.fast_matrix }}
+      rig_matrix: ${{ steps.plan.outputs.rig_matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -66,34 +76,105 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run rebuild:terminal
-      # `npm run verify` without its build smoke, which runs below without blocking the draft:
-      # 12 of its 198 checks broke while it ran only here (0.1.0: launches now open at home, and the
-      # runner is too small for Bonsai); restore `npm run verify` once it is green.
-      - run: >-
-          node scripts/check-node.mjs && npm run verify:context && npm run verify:architecture &&
-          npm run typecheck && npm test && npm run build && node tests/e2e/run-electron-e2e.mjs &&
-          npm run test:agentic-readiness
-      - name: Build smoke (non-blocking until fixed)
-        continue-on-error: true
-        run: node tests/e2e/run-build-smoke.mjs
-      # Its menu-levels fixture scored 55 and 56 on one seed on the runner (0.1.0 rehearsal).
-      - name: Game shapes e2e (non-blocking until fixed)
-        continue-on-error: true
-        run: node tests/e2e/run-shapes-e2e.mjs
-      - run: npm run test:terminal
-      - name: Design-system UI (non-blocking until it has run green once)
-        continue-on-error: true
-        run: npm run test:design-ui
+      - name: Read the rig file times an earlier release left
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-durations.mjs fetch .studio-dev/ci/durations.json
+      - run: npm ci --ignore-scripts
+      - name: Partition the complete test inventory
+        id: plan
+        run: |
+          times=()
+          if [ -f .studio-dev/ci/durations.json ]; then times=(--durations .studio-dev/ci/durations.json); fi
+          node scripts/ci-test-plan.mjs plan --full "${times[@]}" --output .studio-dev/ci/plan.json --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
         with:
-          name: release-regression-evidence
-          path: .studio-dev/evidence
-          if-no-files-found: ignore
+          name: regression-test-plan
+          path: .studio-dev/ci/plan.json
+          include-hidden-files: true
+          if-no-files-found: error
+  # Linux static checks and the Linux fast inventory (`npm run test:fast`) gate the draft whether
+  # or not the regression runs; the packages build beside them.
+  linux-static:
+    needs: validate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check:static
+      - run: npm run lint
+  linux-unit:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.unit_matrix) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Linux process sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - run: npm ci --ignore-scripts
+      # --ignore-scripts skips postinstall, which patches sandbox-runtime's executable lookup.
+      - name: Patch the sandbox runtime as postinstall does
+        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      - name: Linux fast inventory shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group unit --shard "$SHARD"
+  linux-seed:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.seed_matrix) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Linux process sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - run: npm ci --ignore-scripts
+      # --ignore-scripts skips postinstall, which patches sandbox-runtime's executable lookup.
+      - name: Patch the sandbox runtime as postinstall does
+        run: node --input-type=module -e "await (await import('./scripts/patch-sandbox-runtime.mjs')).patchSandboxRuntime()"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      - name: Seed upgrade contracts shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group seed --shard "$SHARD"
+  # The macOS build and the e2e are listed before the shards so they queue first: only a few macOS
+  # jobs run at a time (a dry run queued these two for 18-20 min behind the shards).
   macos:
-    needs: [validate, regression]
+    needs: validate
     runs-on: macos-26
     environment: ${{ needs.validate.outputs.publish == 'true' && 'release' || 'candidate' }}
     timeout-minutes: 60
@@ -195,8 +276,223 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/release.keychain-db" ]; then security delete-keychain "$RUNNER_TEMP/release.keychain-db"; fi
           rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12"
+  regression-e2e:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run rebuild:terminal
+      # `npm run verify` without `npm test` (the shards above) and its build smoke, which runs below
+      # without blocking the draft: 12 of its 198 checks broke while it ran only here (0.1.0:
+      # launches now open at home, and the runner is too small for Bonsai); restore it once green.
+      - run: npm run build && node tests/e2e/run-electron-e2e.mjs && npm run test:agentic-readiness
+      - name: Build smoke (non-blocking until fixed)
+        continue-on-error: true
+        run: node tests/e2e/run-build-smoke.mjs
+      # Its menu-levels fixture scored 55 and 56 on one seed on the runner (0.1.0 rehearsal).
+      - name: Game shapes e2e (non-blocking until fixed)
+        continue-on-error: true
+        run: node tests/e2e/run-shapes-e2e.mjs
+      - run: npm run test:terminal
+      - name: Design-system UI (non-blocking until it has run green once)
+        continue-on-error: true
+        run: npm run test:design-ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: release-regression-evidence
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  # Check's `fast` job runs every fast test on macOS for each push to main. When its run on this
+  # commit passed, the release reuses it instead of queueing six more macOS shards behind the
+  # account's few macOS runners; otherwise (or when it fails) regression-fast runs them here.
+  fast-evidence:
+    needs: validate
+    if: vars.RELEASE_REGRESSION != 'skip'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      reuse: ${{ steps.evidence.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Look for Check's passed macOS fast job on this commit
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-fast-evidence.mjs
+  # The macOS regression is `npm test` in disjoint shards (rig runners serial, as `npm test` runs
+  # them), the static gates once, and the end-to-end suites. Each shard reports on its own, so a
+  # failure names its shard and "Re-run failed jobs" repeats only that one.
+  regression-rig:
+    needs: plan
+    if: vars.RELEASE_REGRESSION != 'skip'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.rig_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      - name: Regression rig shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group rig --shard "$SHARD" --durations ".studio-dev/ci/durations/rig-$SHARD.json"
+      # Its files' times, so the next release can balance the rig shards by time.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: rig-durations-${{ matrix.shard }}
+          path: .studio-dev/ci/durations
+          include-hidden-files: true
+          if-no-files-found: ignore
+          overwrite: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: regression-evidence-rig-${{ matrix.shard }}
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  # The harness shards are short (1-4 min) and the rig shards long (6-11 min). Released together,
+  # the macOS queue took them in mixed order and long rig shards started last, ending the
+  # regression ~3 min after the queue drained (v0.1.16-17). Waiting on linux-static, which the
+  # draft needs anyway, queues the rig shards first so the harness shards fill the tail.
+  regression-harness:
+    needs: [plan, linux-static]
+    if: vars.RELEASE_REGRESSION != 'skip'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.harness_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      - name: Regression harness shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group harness --shard "$SHARD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: regression-evidence-harness-${{ matrix.shard }}
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  regression-fast:
+    needs: [plan, fast-evidence]
+    if: vars.RELEASE_REGRESSION != 'skip' && needs.fast-evidence.outputs.reuse == 'false'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci
+      # The macOS static gates, once, beside the first fast shard.
+      - if: matrix.shard == 1
+        run: node scripts/check-node.mjs && npm run verify:context && npm run verify:architecture && npm run typecheck
+      - name: Regression fast shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group fast --shard "$SHARD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: regression-evidence-fast-${{ matrix.shard }}
+          path: .studio-dev/evidence
+          if-no-files-found: ignore
+  # One stable result for the whole regression: success only when every shard and the e2e passed
+  # (the fast shards either here or in Check on this commit), skipped under RELEASE_REGRESSION=skip.
+  regression:
+    needs: [validate, plan, fast-evidence, regression-rig, regression-harness, regression-fast, regression-e2e]
+    if: ${{ !cancelled() && vars.RELEASE_REGRESSION != 'skip' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      # The rig shards' file times, kept for the next release's plan; they never decide this result.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          pattern: rig-durations-*
+          path: .studio-dev/ci/rig-durations
+          merge-multiple: true
+      - name: Merge the rig file times
+        continue-on-error: true
+        run: node scripts/release-durations.mjs merge .studio-dev/ci/rig-durations .studio-dev/ci/durations/durations.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        with:
+          name: regression-durations
+          path: .studio-dev/ci/durations/durations.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
+      - name: Require every regression shard
+        env:
+          STUDIO_CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci-check-result.mjs regression
   linux:
-    needs: [validate, regression]
+    needs: validate
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -216,6 +512,11 @@ jobs:
       - run: npm run rebuild:terminal
       - name: Check the Linux runtime after rebuilding the terminal
         run: npm run runtime:check
+      # Every deb and rpm from here on adds packages.genex.games on install (build/linux/postinst,
+      # rpm-post); shipping one while that repository is down would break `apt update` for its users.
+      - name: The package repository the packages add is up
+        if: needs.validate.outputs.publish == 'true'
+        run: curl -fsS --retry 3 -o /dev/null https://packages.genex.games/dists/stable/InRelease
       - name: Make (deb, rpm, zip)
         run: npm run make -- --platform linux --arch x64
       - name: Packaged smoke
@@ -239,7 +540,7 @@ jobs:
             out/make/PROVENANCE-*.json
           if-no-files-found: error
   windows:
-    needs: [validate, regression]
+    needs: validate
     runs-on: windows-latest
     environment: ${{ needs.validate.outputs.publish == 'true' && 'release' || 'candidate' }}
     timeout-minutes: 60
@@ -262,18 +563,20 @@ jobs:
           cache: npm
       - run: npm ci
       # A publishing run with the SIGNPATH_API_TOKEN secret (SignPath's CI user) has SignPath sign
-      # the app and Genex-Setup.exe with the release-signing policy (.github/actions/windows-signpath);
-      # candidates and runs without the token stay unsigned. A failed signing request fails this
-      # job, which leaves Windows out of the draft.
+      # the app and Genex-Setup.exe with the release-signing policy (.github/actions/windows-signpath),
+      # but only once the repository variable WINDOWS_SIGNING is `on`: SignPath refuses the policy until
+      # the production certificate is imported, and that refusal used to drop Windows from the release.
+      # Candidates, runs without the token and runs with signing off stay unsigned. A failed signing
+      # request fails this job, which leaves Windows out of the draft.
       - name: Windows signing (SignPath, publishing runs only)
         id: winsign
         env:
-          SIGNPATH_API_TOKEN: ${{ needs.validate.outputs.publish == 'true' && secrets.SIGNPATH_API_TOKEN || '' }}
+          SIGNPATH_API_TOKEN: ${{ needs.validate.outputs.publish == 'true' && vars.WINDOWS_SIGNING == 'on' && secrets.SIGNPATH_API_TOKEN || '' }}
           RELEASE_PUBLISH: ${{ needs.validate.outputs.publish }}
         run: |
           if [ -z "$SIGNPATH_API_TOKEN" ]; then
-            if [ "$RELEASE_PUBLISH" = true ]; then echo "::notice::No SignPath token: Windows is built and tested but left out of the draft."; fi
-            echo "No SignPath token: building unsigned."
+            if [ "$RELEASE_PUBLISH" = true ]; then echo "::notice::Windows signing is off or has no SignPath token: Windows ships unsigned, as a preview."; fi
+            echo "No SignPath signing: building unsigned."
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -316,11 +619,14 @@ jobs:
             out/make/PROVENANCE-*.json
           if-no-files-found: error
   publish:
-    needs: [validate, regression, macos, linux, windows]
-    # Waits for Windows (whose signed flag it reads) but publishes without it while it is unsigned.
+    needs: [validate, linux-static, linux-unit, linux-seed, regression, macos, linux, windows]
+    # Waits for Windows (whose result and signed flag it reads) but publishes without it if it failed.
     if: >-
       ${{ !cancelled() && needs.validate.outputs.publish == 'true' &&
-      needs.validate.result == 'success' && needs.regression.result == 'success' &&
+      needs.validate.result == 'success' &&
+      needs.linux-static.result == 'success' && needs.linux-unit.result == 'success' &&
+      needs.linux-seed.result == 'success' &&
+      (needs.regression.result == 'success' || needs.regression.result == 'skipped') &&
       needs.macos.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -342,12 +648,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_MACOS_SIGNED: ${{ needs.macos.outputs.signed }}
-          RELEASE_WINDOWS_SIGNED: ${{ needs.windows.result == 'success' && needs.windows.outputs.signed || 'false' }}
+          RELEASE_WINDOWS_PASSED: ${{ needs.windows.result == 'success' }}
+          RELEASE_WINDOWS_SIGNED: ${{ needs.windows.outputs.signed || 'false' }}
         run: |
           mkdir -p upload
-          # Unsigned Windows packages stay Actions artifacts; upload-release.mjs refuses any it finds here.
+          # Windows joins when windowsShips allows it; otherwise upload-release.mjs refuses any Windows package here.
           platforms="assets/release-macos assets/release-linux assets/release-inventory"
-          if [ "$RELEASE_WINDOWS_SIGNED" = true ]; then platforms="$platforms assets/release-windows"; fi
+          ships=$(node --input-type=module -e "const { windowsShips } = await import('./scripts/release-policy.mjs'); console.log(windowsShips({ passed: process.env.RELEASE_WINDOWS_PASSED === 'true', signed: process.env.RELEASE_WINDOWS_SIGNED === 'true' }))")
+          if [ "$ships" = true ]; then platforms="$platforms assets/release-windows"; fi
           find $platforms -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' \
             -o -name '*.exe' -o -name '*.nupkg' -o -name RELEASES -o -name SBOM.cyclonedx.json -o -name 'PROVENANCE-*.json' \) -print0 | while IFS= read -r -d '' file; do
               name=$(basename "$file")

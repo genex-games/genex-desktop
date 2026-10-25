@@ -14,7 +14,8 @@
  * here: the notifications App draws on its own root read it.
  */
 import type { JSX } from "react";
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
+import { t } from "../shared/i18n.ts";
 import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
 import { Onboarding } from "./onboarding/Onboarding.tsx";
 import { AppDialogs } from "./panels/AppDialogs.tsx";
@@ -34,16 +35,57 @@ import { Workspace } from "./shell/Workspace.tsx";
 import { useEngines, usePlay, useUpdate } from "./state/hooks.ts";
 import { CodexLoginPanel } from "./ui/CodexLoginPanel.tsx";
 
+/** Create › Items, a room over the workspace: loaded the first time it opens, as most sessions never do. */
+const ItemsPage = lazy(() => import("./panels/items/ItemsPage.tsx").then((room) => ({ default: room.ItemsPage })));
+
 /** `data-room` while Plugins covers the workspace. */
 const PLUGINS_ROOM = "plugins";
+/** `data-room` while Create › Items covers it. */
+const ITEMS_ROOM = "items";
 /** `data-room` while Play's dashboard covers it. */
 const PLAY_ROOM = "play";
 
-/** The room `data-room` names: Plugins or Play over the workspace, else the open conversation's. */
-const roomName = (chrome: { pluginsOpen: boolean; playOpen: boolean }, room: string): string => {
+/** The room `data-room` names: Plugins, Items or Play over the workspace, else the open conversation's. */
+const roomName = (chrome: { pluginsOpen: boolean; itemsOpen: boolean; playOpen: boolean }, room: string): string => {
   if (chrome.pluginsOpen) return PLUGINS_ROOM;
+  if (chrome.itemsOpen) return ITEMS_ROOM;
   return chrome.playOpen ? PLAY_ROOM : room;
 };
+
+/** What covers the workspace when it is up: Plugins, Create › Items or Play. */
+function Rooms({
+  app,
+  chrome,
+  navigation,
+  project,
+}: Pick<ReturnType<typeof useShell>, "app" | "chrome" | "navigation"> & { project: string | null }): JSX.Element {
+  return (
+    <>
+      {chrome.pluginsOpen && (
+        <PluginsRoom
+          setupPlugin={chrome.setupPlugin}
+          project={project}
+          onPluginsRefresh={app.plugins.refresh}
+          onIndexRefresh={app.plugins.refreshIndex}
+          onBack={() => chrome.setPluginsOpen(false)}
+          sidebarHidden={chrome.sidebarHidden}
+          onToggleSidebar={chrome.toggleSidebar}
+        />
+      )}
+      {chrome.itemsOpen && (
+        <Suspense fallback={null}>
+          <ItemsPage
+            sidebarHidden={chrome.sidebarHidden}
+            onToggleSidebar={chrome.toggleSidebar}
+            onOpenGame={navigation.enterProject}
+            onNewGame={navigation.newGame}
+          />
+        </Suspense>
+      )}
+      {chrome.playOpen && !chrome.pluginsOpen && <PlayPages chrome={chrome} onNewGame={navigation.newGame} />}
+    </>
+  );
+}
 
 export function App(): JSX.Element {
   const shell = useRef<HTMLDivElement>(null);
@@ -93,7 +135,7 @@ export function App(): JSX.Element {
         <button
           type="button"
           className="studio-sidebar-backdrop"
-          aria-label="Close sidebar"
+          aria-label={t("Close sidebar")}
           onClick={chrome.toggleSidebar}
         />
       )}
@@ -107,18 +149,7 @@ export function App(): JSX.Element {
           chat={chat}
           handoff={handoff}
         />
-        {chrome.pluginsOpen && (
-          <PluginsRoom
-            setupPlugin={chrome.setupPlugin}
-            project={project}
-            onPluginsRefresh={app.plugins.refresh}
-            onIndexRefresh={app.plugins.refreshIndex}
-            onBack={() => chrome.setPluginsOpen(false)}
-            sidebarHidden={chrome.sidebarHidden}
-            onToggleSidebar={chrome.toggleSidebar}
-          />
-        )}
-        {chrome.playOpen && !chrome.pluginsOpen && <PlayPages chrome={chrome} onNewGame={navigation.newGame} />}
+        <Rooms app={app} chrome={chrome} navigation={navigation} project={project} />
       </main>
       <AppDialogs
         dialogs={dialogs}

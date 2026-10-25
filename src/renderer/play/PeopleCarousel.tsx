@@ -37,7 +37,7 @@ function useEnds(rail: { current: HTMLDivElement | null }): [Ends, () => void] {
   useEffect(() => {
     const element = rail.current;
     if (!element) return;
-    measure();
+    // The observer's first call measures once the row is laid out, never forcing a layout mid-commit.
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
@@ -51,6 +51,7 @@ export function PeopleCarousel({
   note,
   quiet = false,
   label,
+  arrows,
   hook,
   children,
 }: {
@@ -59,8 +60,10 @@ export function PeopleCarousel({
   note?: string;
   /** The title set small and mono like a note: a row that labels itself rather than heads the page. */
   quiet?: boolean;
-  /** The row's accessible name, and what its arrows scroll. */
+  /** The row's accessible name. */
   label: string;
+  /** The arrows' names: what each scrolls to. */
+  arrows: { previous: string; next: string };
   /** The section's `data-*` hook. */
   hook: Record<`data-${string}`, string>;
   children: ReactNode;
@@ -85,7 +88,7 @@ export function PeopleCarousel({
             <button
               type="button"
               className="people-arrow"
-              aria-label={WORDS.previousOf(label)}
+              aria-label={arrows.previous}
               disabled={!ends.back}
               onClick={() => page(-1)}
             >
@@ -94,7 +97,7 @@ export function PeopleCarousel({
             <button
               type="button"
               className="people-arrow"
-              aria-label={WORDS.nextOf(label)}
+              aria-label={arrows.next}
               disabled={!ends.forward}
               onClick={() => page(1)}
             >

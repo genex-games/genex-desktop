@@ -10,6 +10,7 @@ import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { EventKind } from "../../shared/event-log.ts";
 import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { DispatchActionType, type DispatchAction } from "../../shared/protocol.ts";
 import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
 
@@ -83,7 +84,7 @@ export function registerRunsIpc(
   handle("studio:run.start", async (payload) => {
     const frames = (payload.reference.frames ?? []).filter((frame) => frame?.data).slice(0, MAX_REFERENCE_FRAMES);
     if (payload.reference.kind === "reference" && frames.length < MIN_REFERENCE_FRAMES) {
-      throw new Error('A "beat a real game" run needs at least two screenshots of the reference.');
+      throw new Error(t('A "beat a real game" run needs at least two screenshots of the reference.'));
     }
     const runId = core.newRunId();
     const shots = [...(payload.reference.shots ?? []), ...(await saveReferenceFrames(core, runId, frames))];

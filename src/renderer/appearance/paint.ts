@@ -14,9 +14,11 @@ import {
   themeVariables,
 } from "./themes.ts";
 
-const studioFont = '"Geist Fallback", "Zalando Sans SemiExpanded", ui-sans-serif, system-ui, sans-serif';
+// The same stacks as theme.css: Zalando, TikTok Sans for Cyrillic and Greek, then the language's face.
+const studioFont =
+  '"Zalando Sans SemiExpanded", "TikTok Sans Genex", var(--font-language), ui-sans-serif, system-ui, sans-serif';
 const systemFont = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const codeFont = '"Geist Mono", ui-monospace, "SF Mono", Menlo, monospace';
+const codeFont = '"Geist Mono", var(--font-language), ui-monospace, "SF Mono", Menlo, monospace';
 /** The font stack each content-font choice stands for. */
 const CONTENT_FONT: Record<Appearance["contentFont"], string> = {
   inherit: "var(--font-family-sans)",

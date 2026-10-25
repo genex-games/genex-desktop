@@ -21,6 +21,9 @@
  * The renders draw each material in colour: Workbench shows a material's viewport colour, which
  * stays grey when a script sets only its shader's Base Color, so the wrapper copies that colour
  * across (or draws the image feeding it) after the export, leaving the file as the script made it.
+ * Workbench needs an OpenGL 4.3 driver: on Windows (a PC with no such GPU, or a cloud machine
+ * crashes Blender at the first draw) a child Blender first draws an 8x8 frame, and when it can't the
+ * renders fall back to Cycles on the CPU; the result's `renderer` says which drew them.
  *
  * Two renders per call: a three-quarter view (`<out>.png`) and a front view
  * (`<out>-front.png`). Framing is exact — every corner of the framed box is fitted inside the
@@ -53,10 +56,40 @@ MODEL_LABEL = "model" # the compose job's label for a transform's source
 NEW_MATERIAL_COLOUR = (0.8, 0.8, 0.8, 1.0)  # a new material's viewport colour, before anyone sets it
 TEXTURE_LINKS = 4     # links followed up from a Base Color to find the image feeding it
 UNIT_TOLERANCE = 1e-4 # an armature scale this close to 1 is left as it is
+ERROR_CHARS = 1500    # the most of a script's traceback the result line carries
+LINE_CHARS = 300      # the most of one other traceback line it keeps (a long literal in a script's source)
 
 def result(payload):
     print("STUDIO_BLENDER_RESULT " + json.dumps(payload))
     sys.stdout.flush()
+
+def cut(line, chars):
+    # The line as it is when it fits in chars, else its start and an ellipsis.
+    return line if len(line) <= chars else line[:chars - 1] + "…"
+
+def error_headline(error):
+    # The error's own first line, its type and message: the last of what format_exception_only lists
+    # before the notes add_note() attached, one entry each.
+    listed = traceback.format_exception_only(error)
+    notes = getattr(error, "__notes__", None)
+    count = len(notes) if isinstance(notes, (list, tuple)) else 0
+    return listed[max(0, len(listed) - 1 - count)].split("\n")[0]
+
+def error_text(error):
+    # The error's own first line, then the traceback's last lines that fit with it in ERROR_CHARS,
+    # each other line cut to LINE_CHARS; a first line longer than ERROR_CHARS alone keeps its start.
+    headline = error_headline(error)
+    if len(headline) > ERROR_CHARS:
+        return cut(headline, ERROR_CHARS)
+    traced = "".join(traceback.format_exception(error)).rstrip("\n").split("\n")
+    lines = [line if line == headline else cut(line, LINE_CHARS) for line in traced]
+    kept = []
+    for line in reversed(lines):
+        shown = [line] + kept
+        if len("\n".join(shown if headline in shown else [headline] + shown)) > ERROR_CHARS:
+            break
+        kept = shown
+    return "\n".join(kept if headline in kept else [headline] + kept)
 
 def flags(rest):
     # The flags after the four positional arguments, each with one value; --slot repeats.
@@ -96,8 +129,8 @@ scene = bpy.context.scene
 src = open(script, encoding="utf-8").read()
 try:
     exec(compile(src, script, "exec"), {"__name__": "__main__", "bpy": bpy, "math": math, "ASSET_NAME": name, "ASSET_INPUTS": asset_inputs(given)})
-except Exception:
-    result({"ok": False, "error": traceback.format_exc()[-1500:]})
+except Exception as error:
+    result({"ok": False, "error": error_text(error)})
     sys.exit(1)
 
 meshes = [o for o in scene.objects if o.type == "MESH"]
@@ -294,10 +327,59 @@ def show_colours():
             material.diffuse_color = tuple(socket.default_value)
     return "TEXTURE" if textured else "MATERIAL"
 
+# Workbench draws on the GPU through OpenGL. A Windows PC without an OpenGL 4.3 driver (a virtual
+# machine, a remote session) crashes Blender at its first render, after the export: there a
+# throwaway Blender renders a few pixels first, and the thumbnails come from Cycles on the CPU.
+GPU_CHECK = (
+    "import bpy, sys; s = bpy.context.scene; s.render.engine = 'BLENDER_WORKBENCH'; "
+    "s.render.resolution_x = s.render.resolution_y = 8; s.render.filepath = sys.argv[-1]; "
+    "bpy.ops.render.render(write_still=True)"
+)
+GPU_CHECK_SECONDS = 60
+CPU_SAMPLES = 16
+NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW: the check opens no console of its own.
+
+def gpu_draws():
+    if sys.platform != "win32":
+        return True
+    import subprocess
+    target = os.path.join(tempfile.mkdtemp(prefix="gpu-check-"), "check.png")
+    try:
+        done = subprocess.run(
+            [bpy.app.binary_path, "-b", "--factory-startup", "-noaudio", "--python-exit-code", "1",
+             "--python-expr", GPU_CHECK, "--", target],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=GPU_CHECK_SECONDS,
+            creationflags=NO_WINDOW,
+        )
+    except Exception:
+        return False
+    return done.returncode == 0 and os.path.exists(target)
+
+def use_cpu_render():
+    # Cycles on the CPU, lit evenly by a white world and a key light, so materials show their colour.
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = CPU_SAMPLES
+    scene.cycles.use_denoising = False
+    world = scene.world or bpy.data.worlds.new("studio-world")
+    scene.world = world
+    world.use_nodes = True
+    background = next((n for n in world.node_tree.nodes if n.type == "BACKGROUND"), None)
+    if background is not None:
+        background.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        background.inputs["Strength"].default_value = 0.8
+    sun = bpy.data.objects.new("studio-sun", bpy.data.lights.new("studio-sun", "SUN"))
+    sun.data.energy = 3.0
+    sun.rotation_euler = (math.radians(50), math.radians(10), math.radians(30))
+    scene.collection.objects.link(sun)
+
 # "What did I make" thumbnails: Workbench, studio light, the camera fitted to the framed box.
+gpu_render = gpu_draws()
 scene.render.engine = "BLENDER_WORKBENCH"
 scene.display.shading.light = "STUDIO"
 scene.display.shading.color_type = show_colours()
+if not gpu_render:
+    use_cpu_render()
 scene.render.resolution_x, scene.render.resolution_y = 512, 384
 scene.render.resolution_percentage = 100
 scene.render.image_settings.file_format = "PNG"
@@ -347,6 +429,7 @@ result({
     "rig": rig,
     "glbBytes": os.path.getsize(out_glb),
     "renders": [out_png, out_front],
+    "renderer": "workbench" if gpu_render else "cycles-cpu",
     "seconds": round(time.time() - t0, 2),
 })
 `;

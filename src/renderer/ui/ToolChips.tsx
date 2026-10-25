@@ -2,6 +2,7 @@
 import { memo, useState, type JSX } from "react";
 import { type ChatFileLink, wholeFileName } from "../../shared/chat-files.ts";
 import type { GenexBlocked } from "../../shared/genex.ts";
+import { t } from "../../shared/i18n.ts";
 import { useChatFileNames, useChatFiles } from "../chat-files.ts";
 import { RowShots } from "../chat/ConnectorShots.tsx";
 import { TOOL_ACTIVITY_WORDS, type ToolIcon } from "../words.ts";
@@ -47,11 +48,11 @@ const icons: Record<ToolIcon, IconName> = {
   game: "box",
 };
 const labels: Record<ToolState, string> = {
-  [ToolState.Running]: "Running",
-  [ToolState.Succeeded]: "Completed",
-  [ToolState.Failed]: "Failed",
-  [ToolState.Stopped]: "Stopped",
-  [ToolState.Unknown]: "Outcome not recorded",
+  [ToolState.Running]: t("Running"),
+  [ToolState.Succeeded]: t("Completed"),
+  [ToolState.Failed]: t("Failed"),
+  [ToolState.Stopped]: t("Stopped"),
+  [ToolState.Unknown]: t("Outcome not recorded"),
 };
 
 export const ToolChips = memo(function ToolChips({
@@ -71,7 +72,9 @@ export const ToolChips = memo(function ToolChips({
         <span className="min-w-0 truncate tabular-nums">
           {running ? (running.activeLabel ?? TOOL_ACTIVITY_WORDS.run) : header}
         </span>
-        {failures > 0 && <span className="shrink-0 text-orange">{failures} failed</span>}
+        {failures > 0 && (
+          <span className="shrink-0 text-orange">{t("{count, plural, other {# failed}}", { count: failures })}</span>
+        )}
         <Icon name={open ? "chevron-down" : "chevron-right"} size={14} />
       </button>
       {open && (
@@ -85,7 +88,7 @@ export const ToolChips = memo(function ToolChips({
               onClick={() => setLimit((value) => value + 30)}
               className="w-fit rounded-control px-1.5 py-1 text-chat-sub text-ink-3 hover:bg-control-hover"
             >
-              Show {Math.min(30, rows.length - limit)} earlier tools
+              {t("Show {count, plural, other {# earlier tools}}", { count: Math.min(30, rows.length - limit) })}
             </button>
           )}
         </div>
@@ -151,7 +154,7 @@ function ToolDetail({ row, input }: { row: ToolChipRow; input: string | undefine
 
 /** What a row that neither succeeded nor runs says after its title. */
 function settledLabel(state: ToolState): string {
-  return state === ToolState.Unknown ? "Unknown" : labels[state];
+  return state === ToolState.Unknown ? t("Unknown") : labels[state];
 }
 
 /** A path gives up its folders first: the file's own name stays readable. */
@@ -220,7 +223,7 @@ export const ToolRow = memo(function ToolRow({
           type="button"
           data-tool-toggle
           title={title}
-          aria-label={`${label}: ${labels[state]}`}
+          aria-label={t("{tool}: {state}", { tool: label, state: labels[state] })}
           disabled={!details}
           aria-expanded={details ? open : undefined}
           onClick={() => setOpen((value) => !value)}

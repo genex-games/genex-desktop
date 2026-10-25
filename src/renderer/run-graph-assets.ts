@@ -5,6 +5,7 @@
 import { GENEX_LOOKUPS, genexEndedUnmade, genexRefused, isGenexSource } from "../shared/asset-making.ts";
 import { digestOperation } from "../shared/game-assets.ts";
 import { GenexOperation } from "../shared/genex.ts";
+import { t } from "../shared/i18n.ts";
 import type { AssetInfo, AssetState } from "./run-graph.ts";
 import {
   digestField,
@@ -178,7 +179,7 @@ export function blenderAsset(payload: Payload, place: AssetPlace): AssetInfo {
   const file = strOrNull(payload.file);
   const ok = payload.ok === true;
   const identity: CardIdentity = {
-    name: str(payload.name, "asset"),
+    name: str(payload.name, t("asset")),
     at: strOrNull(payload.at) ?? place.at,
     source: BLENDER_SOURCE,
     pluginName: "Blender",
@@ -244,7 +245,7 @@ export function assetRequested(ledger: AssetLedger, payload: Payload, place: Ass
     return;
   }
   const identity: CardIdentity = {
-    name: prompt ?? digestField(args, "name") ?? operation ?? tool ?? "asset",
+    name: prompt ?? digestField(args, "name") ?? operation ?? tool ?? t("asset"),
     at: strOrNull(payload.at) ?? place.at,
     source: str(payload.pluginId, "plugin"),
     pluginName: strOrNull(payload.pluginName),

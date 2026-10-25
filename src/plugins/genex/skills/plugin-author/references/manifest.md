@@ -34,7 +34,7 @@ manifest requires may be empty). `plugin_check` names the first thing Genex refu
 - `toolbar`: buttons on the game's strip, `{id, label, ariaLabel, icon, facts, target, status}`,
   `target` `{kind: "panel", id}` and `status` an action answering `{badge, tone, dot}`. An engine's
   button names the engine's `facts`, so it shows only on that engine's games, never on every game,
-  and an `icon`, as a narrow strip folds its buttons to icons; its status is a dot (`"dot": true`),
+  and an `icon`, drawn before its label; its status is a dot (`"dot": true`),
   green (`"tone": "ok"`) once the editor answers. Its panel: one outlined block per subject (this
   game's project first, then this computer), a quiet label above each, a rule between rows, the
   state in the button's words, and the block's actions in its foot.

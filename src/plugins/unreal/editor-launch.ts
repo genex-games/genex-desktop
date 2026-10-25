@@ -18,6 +18,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { atomicWriteJson, isJsonObject, readRegularFile } from "../../substrate/fsx.ts";
 import { hotLibraryLoaded, projectModule } from "./cpp-module.ts";
 import { inProjectBlock, portFree, rememberChoice, SetupStorage } from "./editor-port.ts";
@@ -25,6 +26,7 @@ import { pollUntil } from "./editor-queue.ts";
 import { buildErrors } from "./editor-restart.ts";
 import { isProjectPath } from "./project-file.ts";
 import {
+  addToolsetPlugins,
   type Engine,
   EngineMatch,
   engineMatch,
@@ -84,6 +86,8 @@ export type LaunchEnv = {
   open: Opener;
   /** `/Applications` on a Mac, Program Files (x86) on Windows. */
   applications: string;
+  /** Windows' own Program Files, where Epic's 64-bit launcher installs itself; none on a Mac. */
+  programFiles?: string;
   now: () => number;
   portWait?: PortWait;
   /** Builds a project's editor target before it opens; UnrealBuildTool's own unless a test stands in. */
@@ -124,22 +128,40 @@ export type LaunchErrorCode = (typeof LaunchErrorCode)[keyof typeof LaunchErrorC
 export const UnrealSource = { Launcher: "launcher", Download: "download" } as const;
 export type UnrealSource = (typeof UnrealSource)[keyof typeof UnrealSource];
 
+/** Open's and Quit's refusals, in the person's words: the panel shows them as they are. */
 const MESSAGE = {
-  [LaunchErrorCode.NoEngine]: installEngineText(),
+  [LaunchErrorCode.NoEngine]: installEngineText,
   [LaunchErrorCode.EngineMissing]: (version: string) =>
-    `This project needs Unreal ${version}, which isn't installed. Install it from the Epic Games Launcher, or open the project in Unreal to pick another version.`,
-  [LaunchErrorCode.CustomEngine]:
-    "This project uses an Unreal Engine built from source, so Genex can't tell which editor opens it. Open it from that engine.",
+    t(
+      "This project needs Unreal {version}, which isn't installed. Install it from the Epic Games Launcher, or open the project in Unreal to pick another version.",
+      { version },
+    ),
+  [LaunchErrorCode.CustomEngine]: () =>
+    t(
+      "This project uses an Unreal Engine built from source, so Genex can't tell which editor opens it. Open it from that engine.",
+    ),
   [LaunchErrorCode.EditorMissing]: (version: string) =>
-    `Unreal ${version}'s editor isn't where Epic's launcher says. Verify the install in the Epic Games Launcher.`,
-  [LaunchErrorCode.SeveralEditors]: "Two Unreal editors are open. Quit the one you want from its own window.",
-  [LaunchErrorCode.NotQuit]: "Unreal didn't close. Quit it from its own window.",
+    t("Unreal {version}'s editor isn't where Epic's launcher says. Verify the install in the Epic Games Launcher.", {
+      version,
+    }),
+  [LaunchErrorCode.SeveralEditors]: () => t("Two Unreal editors are open. Quit the one you want from its own window."),
+  [LaunchErrorCode.NotQuit]: () => t("Unreal didn't close. Quit it from its own window."),
   [LaunchErrorCode.NeedsSetup]: (made: string, target: string) =>
-    `This project was made with Unreal ${made}. Set it up first; that switches it to Unreal ${target}.`,
+    t("This project was made with Unreal {made}. Set it up first; that switches it to Unreal {target}.", {
+      made,
+      target,
+    }),
+  /** `why` is the build's own summary and first errors, or {@link MESSAGE.CannotBuild}. */
   [LaunchErrorCode.NotBuilt]: (why: string) =>
-    `This game's C++ was last hot-reloaded in Unreal, so Genex builds it before opening Unreal, and the build failed: ${why}`,
+    t(
+      "This game's C++ was last hot-reloaded in Unreal, so Genex builds it before opening Unreal, and the build failed: {why}",
+      { why },
+    ),
   CannotBuild: (xcode: string) =>
-    `This game's C++ was last hot-reloaded in Unreal, so Genex builds it before opening Unreal, but this Mac can't build C++ (Xcode: ${xcode}). Finish Xcode's setup, or open the project from Unreal.`,
+    t(
+      "This game's C++ was last hot-reloaded in Unreal, so Genex builds it before opening Unreal, but this Mac can't build C++ (Xcode: {xcode}). Finish Xcode's setup, or open the project from Unreal.",
+      { xcode },
+    ),
 } as const;
 /** taskkill's exit code when no editor was there to close: already gone, not a failure. */
 const TASKKILL_NOT_FOUND = 128;
@@ -199,11 +221,20 @@ export function quitEditorLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessE
   return { command: MAC_OSASCRIPT, args: script.flatMap((line) => ["-e", line]), detached: false };
 }
 
-/** Where Epic's launcher is installed, in the order Genex looks. */
-export function launcherPaths(platform: NodeJS.Platform, applications: string): string[] {
-  if (platform !== "win32") return [path.posix.join(applications, LAUNCHER_APP)];
-  const binaries = path.win32.join(applications, "Epic Games", "Launcher", "Portal", "Binaries");
-  return LAUNCHER_FOLDERS.map((folder) => path.win32.join(binaries, folder, "EpicGamesLauncher.exe"));
+/** The folders Epic's launcher may be installed in, as the launch environment names them. */
+export type LauncherFolders = Pick<LaunchEnv, "applications" | "programFiles">;
+
+/**
+ * Where Epic's launcher is installed, in the order Genex looks: on Windows, Program Files first,
+ * where the 64-bit launcher installs itself, then Program Files (x86), where the older one went.
+ */
+export function launcherPaths(platform: NodeJS.Platform, folders: LauncherFolders): string[] {
+  if (platform !== "win32") return [path.posix.join(folders.applications, LAUNCHER_APP)];
+  const roots = [folders.programFiles, folders.applications].filter((root) => root !== undefined);
+  return roots.flatMap((root) => {
+    const binaries = path.win32.join(root, "Epic Games", "Launcher", "Portal", "Binaries");
+    return LAUNCHER_FOLDERS.map((folder) => path.win32.join(binaries, folder, "EpicGamesLauncher.exe"));
+  });
 }
 
 /** Opens Epic's launcher when it was found, else Epic's download page in the user's browser. */
@@ -239,8 +270,8 @@ async function isInstalledApp(target: string, platform: NodeJS.Platform): Promis
 }
 
 /** Epic's launcher where it is installed, or undefined. */
-export async function findLauncher(platform: NodeJS.Platform, applications: string): Promise<string | undefined> {
-  for (const candidate of launcherPaths(platform, applications))
+export async function findLauncher(platform: NodeJS.Platform, folders: LauncherFolders): Promise<string | undefined> {
+  for (const candidate of launcherPaths(platform, folders))
     if (await isInstalledApp(candidate, platform)) return candidate;
   return undefined;
 }
@@ -251,13 +282,13 @@ export async function findLauncher(platform: NodeJS.Platform, applications: stri
  */
 export async function engineFor(association: string, engines: Engine[], platform: NodeJS.Platform): Promise<Engine> {
   const newest = engines.find((e) => e.supported);
-  if (!newest) throw new LaunchError(LaunchErrorCode.NoEngine, MESSAGE[LaunchErrorCode.NoEngine]);
+  if (!newest) throw new LaunchError(LaunchErrorCode.NoEngine, MESSAGE[LaunchErrorCode.NoEngine]());
   const match = engineMatch(association, engines);
   // Unreal opens a project named on its command line in place, without asking to convert it; only setup switches it.
   if (match === EngineMatch.TooOld)
     throw new LaunchError(LaunchErrorCode.NeedsSetup, MESSAGE[LaunchErrorCode.NeedsSetup](association, newest.version));
   if (match === EngineMatch.Custom)
-    throw new LaunchError(LaunchErrorCode.CustomEngine, MESSAGE[LaunchErrorCode.CustomEngine]);
+    throw new LaunchError(LaunchErrorCode.CustomEngine, MESSAGE[LaunchErrorCode.CustomEngine]());
   if (match === EngineMatch.Missing)
     throw new LaunchError(LaunchErrorCode.EngineMissing, MESSAGE[LaunchErrorCode.EngineMissing](association));
   const named = engines.find((e) => e.version === association && e.supported);
@@ -312,11 +343,12 @@ export function systemLaunchEnv(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): LaunchEnv {
-  const applications =
-    platform === "win32" ? windowsFolder(env, "ProgramFiles(x86)", "Program Files (x86)") : "/Applications";
+  const windows = platform === "win32";
+  const applications = windows ? windowsFolder(env, "ProgramFiles(x86)", "Program Files (x86)") : "/Applications";
   return {
     open: (launch) => systemOpener(launch),
     applications,
+    ...(windows ? { programFiles: windowsFolder(env, "ProgramFiles", "Program Files") } : {}),
     now: () => Date.now(),
     portWait: { free: (port) => portFree(port, platform), sleep: (ms) => sleep(ms) },
   };
@@ -415,25 +447,29 @@ async function heldPort(port: number | null, launch: LaunchEnv): Promise<number 
 }
 
 /**
- * Brings a set-up project's older (or missing) Genex editor helper up to date before a user's Open,
- * only while no Unreal editor runs: the game snapshot first, then the update. A snapshot that
- * fails means no update, and an update setup refuses writes nothing; the project opens either way.
+ * Brings a set-up project up to date before a user's Open, only while no Unreal editor runs: its
+ * older (or missing) Genex editor helper, and Epic's toolsets for games when it was set up before
+ * them. The game snapshot comes first; a snapshot that fails means no update, and an update setup
+ * refuses writes nothing; the project opens either way. Answers the helper's update, if any.
  */
 async function updateBeforeOpen(
   state: ProjectState,
   options: LaunchOptions,
   update: HelperUpdateOnOpen | undefined,
 ): Promise<HelperUpdate | undefined> {
-  // Only a project Genex set up (it has a record) gets its helper updated; a newer helper stays.
-  const behind = state.undoable && helperNeedsInstall(state.helper);
+  // Only a project Genex set up (it has a record) is brought up to date; a newer helper stays.
+  const helperBehind = helperNeedsInstall(state.helper);
+  const behind = state.undoable && (helperBehind || !state.toolsets);
   if (!update || !behind) return undefined;
   if ((await editorCount(options.env)) > 0) return undefined;
+  const file = realProjectFile(state);
   try {
     await update.snapshot();
-    return await updateHelper(realProjectFile(state), options);
   } catch {
     return undefined;
   }
+  if (!state.toolsets) await addToolsetPlugins(file, options).catch(() => undefined);
+  return helperBehind ? updateHelper(file, options).catch(() => undefined) : undefined;
 }
 
 /**
@@ -496,14 +532,14 @@ const exitCode = (error: unknown) => (error instanceof Error && "code" in error 
 export async function quitEditor(project: string, options: LaunchOptions): Promise<{ quitting: boolean }> {
   const { env, launch } = options;
   const editors = await editorCount(env);
-  if (editors > 1) throw new LaunchError(LaunchErrorCode.SeveralEditors, MESSAGE[LaunchErrorCode.SeveralEditors]);
+  if (editors > 1) throw new LaunchError(LaunchErrorCode.SeveralEditors, MESSAGE[LaunchErrorCode.SeveralEditors]());
   if (editors === 0) return { quitting: false };
   try {
     await launch.open(quitEditorLaunch(env.platform));
     return { quitting: true };
   } catch (error) {
     if (exitCode(error) === TASKKILL_NOT_FOUND) return { quitting: false };
-    throw new LaunchError(LaunchErrorCode.NotQuit, MESSAGE[LaunchErrorCode.NotQuit]);
+    throw new LaunchError(LaunchErrorCode.NotQuit, MESSAGE[LaunchErrorCode.NotQuit]());
   } finally {
     await forgetStartingOf(project, options);
   }
@@ -518,7 +554,7 @@ async function forgetStartingOf(project: string, options: LaunchOptions): Promis
 
 /** Opens Epic's launcher, else Epic's download page; nothing the panel sends changes which. */
 export async function getUnreal(env: Pick<SetupEnv, "platform">, launch: LaunchEnv): Promise<{ opened: UnrealSource }> {
-  const launcher = await findLauncher(env.platform, launch.applications);
+  const launcher = await findLauncher(env.platform, launch);
   await launch.open(getUnrealLaunch(env.platform, launcher));
   return { opened: launcher ? UnrealSource.Launcher : UnrealSource.Download };
 }

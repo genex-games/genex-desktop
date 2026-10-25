@@ -24,6 +24,7 @@ import {
   logCrashWatcher,
   type StartWait,
 } from "../../src/plugins/unreal/editor-mcp.ts";
+import { fitDescription } from "../../src/plugins/unreal/editor-describe.ts";
 import { editorEndpoint } from "../../src/plugins/unreal/editor-port.ts";
 import { EditorStart, editorStart } from "../../src/plugins/unreal/editor-status.ts";
 import { decodePng, encodePng } from "../../src/plugins/unreal/tone.ts";
@@ -322,7 +323,7 @@ for (const tool of [SET_LABEL, LIST_TOOLSETS])
       assert.equal(toolCalls(beta).length, 0, "the open project gets nothing");
       assert.match(textOf(result), /Alpha/, "names the chosen project");
       assert.match(textOf(result), /Beta is open/, "names the project that is open instead");
-      assert.match(textOf(result), /Unreal button/);
+      assert.match(textOf(result), /Call unreal__open-editor to open Alpha/, "the agent opens it itself");
     } finally {
       await close();
     }
@@ -344,7 +345,11 @@ test("a chosen project that isn't set up gets the set-up message, and no editor 
         assert.equal(result.isError, true, betaMode);
         assert.match(textOf(result), /Mine/);
         assert.match(textOf(result), /set up/i);
-        assert.match(textOf(result), /Unreal button/);
+        assert.match(
+          textOf(result),
+          /unreal__use-project with \S*Mine\.uproject/,
+          "the agent links it, which sets it up",
+        );
         assert.doesNotMatch(textOf(result), /Alpha/);
       }
       assert.deepEqual([toolCalls(alpha).length, toolCalls(beta).length], [0, 0], betaMode);
@@ -364,7 +369,7 @@ test("another project's editor on the chosen project's port gets no call", async
       const result: any = await client.callTool(tool);
       assert.equal(result.isError, true);
       assert.match(textOf(result), /Alpha/);
-      assert.match(textOf(result), /Unreal button/);
+      assert.match(textOf(result), /Call unreal__open-editor/);
     }
     assert.equal(toolCalls(impostor).length, 0, "only the check of which project is open reached it");
   } finally {
@@ -383,7 +388,7 @@ test("another app on a project's port is never taken for Unreal", async () => {
       const result: any = await client.callTool({ name: EditorTool.ListToolsets, arguments: {} });
       assert.equal(result.isError, true, mode);
       assert.match(textOf(result), /Alpha/, "the message names the chosen project");
-      assert.match(textOf(result), /Unreal button/, "and where the user opens it");
+      assert.match(textOf(result), /Call unreal__open-editor/, "and the tool that opens it");
       assert.deepEqual([toolCalls(alpha).length, toolCalls(beta).length], [0, 0], mode);
     } finally {
       await close();
@@ -391,14 +396,14 @@ test("another app on a project's port is never taken for Unreal", async () => {
   }
 });
 
-test("with no project set up, the bridge says so and names the Unreal button, asking nothing", async () => {
+test("with no project set up, the bridge says so and names unreal__use-project, asking nothing", async () => {
   const unreal = editor();
   const { client, close } = await connected(unreal.fetchImpl, []);
   try {
     const result: any = await client.callTool({ name: EditorTool.ListToolsets, arguments: {} });
     assert.equal(result.isError, true);
     assert.match(textOf(result), /set up/i);
-    assert.match(textOf(result), /Unreal button/);
+    assert.match(textOf(result), /unreal__use-project/);
     assert.deepEqual(unreal.seen, []);
   } finally {
     await close();
@@ -617,7 +622,7 @@ const CRASH = [
   "",
 ].join("\n");
 const CRASHED =
-  "Unreal crashed while this call ran (Assertion failed: GameViewport.IsUnique()), so whether it took effect is unknown. Ask the user to reopen it from the Unreal button; once it answers, look before you repeat the call.";
+  "Unreal crashed while this call ran (Assertion failed: GameViewport.IsUnique()), so whether it took effect is unknown. Call unreal__open-editor to reopen it; once it answers, look before you repeat the call.";
 
 /** `project`'s editor log (none when `text` is null) in a home of its own, and a watch of it. */
 async function projectLog(project: Project = DRIFT, text: string | null = unrealLog(project.project)) {
@@ -909,7 +914,7 @@ for (const after of ["closed", "held"] as const)
       const next: any = await client.callTool(SET_LABEL);
       assert.equal(next.isError, true);
       assert.match(textOf(next), /open Alpha/, "the chosen project is the one to reopen");
-      assert.match(textOf(next), /Unreal button/);
+      assert.match(textOf(next), /Call unreal__open-editor/);
       assert.equal(toolCalls(beta).length, 0, "the open project gets nothing");
       assert.equal(toolCalls(alpha).length, 1, "nothing was sent twice");
     } finally {
@@ -1025,7 +1030,7 @@ test("a call whose editor nothing is starting fails at once with how to open it"
   try {
     const result: any = await client.callTool(LIST_TOOLSETS);
     assert.equal(result.isError, true);
-    assert.match(textOf(result), /Ask the user to open Drift in Unreal from the Unreal button/);
+    assert.match(textOf(result), /Call unreal__open-editor to open it/);
     assert.equal(start.seen.polls, 0, "no wait");
   } finally {
     await close();
@@ -1040,7 +1045,7 @@ test("an editor that stops starting without answering gets a few seconds more, t
   try {
     const result: any = await client.callTool(LIST_TOOLSETS);
     assert.equal(result.isError, true);
-    assert.match(textOf(result), /Ask the user to open Drift in Unreal from the Unreal button/);
+    assert.match(textOf(result), /Call unreal__open-editor to open it/);
     assert.ok(start.elapsed() > START_POLL, "Epic's server answers about a second after the editor says it loaded");
     assert.ok(start.elapsed() <= 15 * SECOND, `not the whole wait (${start.elapsed()} ms)`);
   } finally {
@@ -1378,6 +1383,188 @@ test("the helper's build and play toolsets, and Genex's own queue calls to the L
   const queue = editor(() => ({ returnValue: { saved: true, dirty: [], ms: 9 } }));
   const call = { toolset: LOOP_TOOLSET, tool: "save_all", args: {} };
   assert.deepEqual(await callProjectTool(DRIFT, call, queue.fetchImpl), { saved: true, dirty: [], ms: 9 });
+});
+
+test("a helper tool that answers {error} reaches the agent as a failed call; any other answer stays as Epic sent it", async () => {
+  // Epic answers the helper's str tools as their returnValue: the helper's own JSON as text.
+  const refused = { returnValue: JSON.stringify({ error: "Stop play first.", where: "build/hall.py:3" }) };
+  const rows: Array<[string, Record<string, unknown>, unknown, boolean]> = [
+    [
+      "a build tool's refusal",
+      { toolset_name: "genex_build.tools.GenexBuildTools", tool_name: "run_script" },
+      refused,
+      true,
+    ],
+    ["a play tool's failure", { toolset_name: "genex_play.tools.GenexPlayTools", tool_name: "hold" }, refused, true],
+    ["a qualified name in capitals", { tool_name: "GENEX_BUILD.tools.GenexBuildTools.set_route" }, refused, true],
+    [
+      "a helper answer with no error",
+      { toolset_name: "genex_play.tools.GenexPlayTools", tool_name: "hold" },
+      { returnValue: JSON.stringify({ held: "W", seconds: 2 }) },
+      false,
+    ],
+    [
+      "an error that is not text",
+      { toolset_name: "genex_build.tools.GenexBuildTools", tool_name: "audit" },
+      { returnValue: JSON.stringify({ error: null, actors: 3 }) },
+      false,
+    ],
+    [
+      "Epic's own tool answering an error field",
+      { ...SET_LABEL.arguments },
+      { returnValue: { error: "a log line" } },
+      false,
+    ],
+  ];
+  for (const [label, args, answer, failed] of rows) {
+    const unreal = editor(() => answer);
+    const { client, close } = await connected(unreal.fetchImpl);
+    try {
+      const result = await client.callTool({ name: EditorTool.CallTool, arguments: { arguments: {}, ...args } });
+      assert.equal(result.isError, failed ? true : undefined, label);
+      assert.equal(toolCalls(unreal).length, 1, `${label}: sent once`);
+      if (failed) assert.match(textOf(result), /Stop play first\./, `${label}: the helper's own words reach the agent`);
+      assert.match(
+        JSON.stringify(result.content),
+        /\[Unreal project: Drift\]/,
+        `${label}: the answer names the project`,
+      );
+    } finally {
+      await close();
+    }
+  }
+});
+
+/* ---- Descriptions: a toolset described in more than one answer holds reaches the agent by its tools' names ---- */
+
+/** The longest description the bridge hands over whole, in characters. */
+const DESCRIPTION_LIMIT = 60_000;
+const NIAGARA = "NiagaraToolset_System";
+/** A toolset described as Niagara's system toolset is: dozens of tools, each with a long schema. */
+const longDescription = {
+  name: NIAGARA,
+  description: "Make and edit Niagara systems.",
+  tools: Array.from({ length: 40 }, (_, i) => ({
+    name: `${NIAGARA}.tool_${i}`,
+    description: `Does step ${i} of a system.\n${"Details. ".repeat(40)}`,
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "x".repeat(2500) } } },
+  })),
+};
+const describe = (args: Record<string, unknown>) => ({ name: EditorTool.DescribeToolset, arguments: args });
+const sentArgs = (unreal: ReturnType<typeof editor>) => toolCalls(unreal).map((s) => s.body.params.arguments);
+
+test("a toolset description too long for one answer reaches the agent as its tools by name, and tool_name reads one", async () => {
+  assert.ok(JSON.stringify(longDescription).length > DESCRIPTION_LIMIT, "the fixture is over the limit");
+  const unreal = editor(() => longDescription);
+  const { client, close } = await connected(unreal.fetchImpl);
+  try {
+    const listed = await client.callTool(describe({ toolset_name: NIAGARA }));
+    assert.equal(listed.isError, undefined);
+    const text = textOf(listed);
+    assert.ok(text.length <= DESCRIPTION_LIMIT, String(text.length));
+    const shortened = JSON.parse(text);
+    assert.equal(shortened.description, longDescription.description, "the toolset's own fields stay");
+    assert.deepEqual(shortened.tools[3], { name: `${NIAGARA}.tool_3`, description: "Does step 3 of a system." });
+    assert.equal(shortened.tools.length, longDescription.tools.length);
+    assert.match(JSON.stringify(listed.content), /too long for one answer[^"]*tool_name/);
+
+    for (const tool of ["tool_7", `${NIAGARA}.TOOL_7`]) {
+      const one = await client.callTool(describe({ toolset_name: NIAGARA, tool_name: tool }));
+      assert.equal(one.isError, undefined, tool);
+      assert.deepEqual(JSON.parse(textOf(one)).tools, [longDescription.tools[7]], `${tool}: the tool's whole entry`);
+    }
+    const missing = await client.callTool(describe({ toolset_name: NIAGARA, tool_name: "make_coffee" }));
+    assert.equal(missing.isError, true);
+    assert.match(textOf(missing), /no tool "make_coffee"\. Its tools: NiagaraToolset_System\.tool_0, /);
+    assert.deepEqual(sentArgs(unreal), Array(4).fill({ toolset_name: NIAGARA }), "Epic is asked for the toolset alone");
+  } finally {
+    await close();
+  }
+});
+
+test("a short description, an error and other tools' answers reach the agent as Epic sent them; a long one the bridge can't read is cut", async () => {
+  const short = { name: "EditorToolset.ActorTools", tools: [{ name: "set_label", description: "Label an actor." }] };
+  const rows: Array<[string, { name: string; arguments: Record<string, unknown> }, unknown]> = [
+    ["a short description", describe({ toolset_name: "EditorToolset.ActorTools" }), short],
+    ["Epic's refusal", describe({ toolset_name: "Nope" }), new Refusal("Unknown toolset Nope")],
+    ["a long answer to another tool", SET_LABEL, { returnValue: "y".repeat(DESCRIPTION_LIMIT * 2) }],
+  ];
+  for (const [label, call, answer] of rows) {
+    const unreal = editor(() => answer);
+    const { client, close } = await connected(unreal.fetchImpl);
+    try {
+      const result = await client.callTool(call);
+      assert.deepEqual(
+        result.content,
+        [...toolResult(answer).content, { type: "text", text: "[Unreal project: Drift]" }],
+        label,
+      );
+    } finally {
+      await close();
+    }
+  }
+  const prose = `${"Tool make_system: makes a system. ".repeat(3000)}`;
+  const unreal = editor(() => prose);
+  const { client, close } = await connected(unreal.fetchImpl);
+  try {
+    const result = await client.callTool(describe({ toolset_name: NIAGARA }));
+    const text = textOf(result);
+    assert.ok(text.startsWith(JSON.stringify(prose).slice(0, 1000)), "the start as Epic sent it");
+    assert.equal(text.length, DESCRIPTION_LIMIT);
+    assert.match(JSON.stringify(result.content), /Cut after the first 60 KB of 103 KB: too long for one tool answer/);
+  } finally {
+    await close();
+  }
+});
+
+/** A description's text parts as the fitter gives them back: the first, and every one joined. */
+function fitted(text: string, tool?: string) {
+  const fit = fitDescription([{ type: "text", text }], tool);
+  const texts = fit.parts.map((part) => String(part.text));
+  return { first: texts[0] ?? "", all: texts.join("\n"), failed: fit.failed, count: texts.length };
+}
+const toolsOf = (count: number, description: string) =>
+  Array.from({ length: count }, (_, i) => ({ name: `${NIAGARA}.tool_${i}`, description }));
+
+test("a description still too long once shortened is listed by name alone, and cut only when even that is too long", () => {
+  const manyLines = fitted(JSON.stringify({ name: NIAGARA, tools: toolsOf(600, "w".repeat(300)) }));
+  assert.deepEqual(JSON.parse(manyLines.first).tools[5], { name: `${NIAGARA}.tool_5` }, "names alone");
+  assert.match(manyLines.all, /each tool is listed by name\. Call describe_toolset/);
+  for (const [label, description] of [
+    ["4,000 tools", JSON.stringify({ name: NIAGARA, tools: toolsOf(4000, "Does it.") })],
+    [
+      "a huge field beside the tools",
+      JSON.stringify({ name: NIAGARA, notes: "n".repeat(70_000), tools: toolsOf(3, "x") }),
+    ],
+    ["a nested shape", JSON.stringify({ toolset: { name: NIAGARA, tools: toolsOf(40, "z".repeat(2000)) } })],
+  ]) {
+    const fit = fitted(description);
+    assert.equal(fit.first.length, DESCRIPTION_LIMIT, label);
+    assert.match(fit.all, /Cut after the first 60 KB of \d+ KB/, label);
+  }
+  const huge = { name: NIAGARA, tools: [{ name: `${NIAGARA}.Big`, inputSchema: { doc: "s".repeat(90_000) } }] };
+  const one = fitted(JSON.stringify(huge), "Big");
+  assert.deepEqual([one.first.length, one.failed], [DESCRIPTION_LIMIT, false], "one tool too long for an answer");
+  assert.match(one.all, /Cut after the first 60 KB of 91 KB/);
+});
+
+test("a short, empty or toolless description comes back whole; tool_name only applies to a list of tools", () => {
+  const short = JSON.stringify({ name: "ActorTools", tools: toolsOf(3, "Label an actor.") });
+  assert.deepEqual(fitted(short), { first: short, all: short, failed: false, count: 1 });
+  assert.deepEqual(fitted(short, "   "), { first: short, all: short, failed: false, count: 1 }, "a blank tool_name");
+  assert.deepEqual(JSON.parse(fitted(short, "tool_1").first).tools, [toolsOf(3, "Label an actor.")[1]]);
+  const prose = fitted("Tools: set_label, get_label.", "set_label");
+  assert.deepEqual([prose.first, prose.failed, prose.count], ["Tools: set_label, get_label.", false, 2]);
+  assert.match(prose.all, /tool_name "set_label" didn't apply/);
+  assert.deepEqual(fitDescription([], "x"), { parts: [], failed: false });
+  assert.deepEqual(fitted(""), { first: "", all: "", failed: false, count: 1 });
+  assert.deepEqual(fitted(JSON.stringify({ name: "Empty", tools: [] })).count, 1, "no tools to list");
+});
+
+test("a cut never splits a character in two", () => {
+  const fit = fitted(`a${"😀".repeat(40_000)}`);
+  assert.equal(fit.first.length, DESCRIPTION_LIMIT - 1);
+  assert.ok(fit.first.endsWith("😀"), "the last emoji is whole");
 });
 
 /* ---- Captures: the build tools' frames reach the agent as images with their tone numbers ---- */

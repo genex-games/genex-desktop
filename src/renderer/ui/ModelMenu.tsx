@@ -9,6 +9,7 @@ import {
   type Ref,
   type RefObject,
 } from "react";
+import { t, tc } from "../../shared/i18n.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { PickerLabel, PickerSeparator, pickerRow } from "./PickerPanel.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
@@ -18,6 +19,7 @@ import { MODEL_PICKER_WORDS } from "../words.ts";
 import { autoChoice, findChoice, roleChoices, withoutFreeWord } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
+import { BetaTag } from "./beta-tag.tsx";
 import type { RunRoles } from "../../shared/protocol.ts";
 import type { ModelCapabilities } from "../../shared/model-preferences.ts";
 
@@ -52,28 +54,27 @@ export interface ModelChoice extends ModelCapabilities {
   resolvedModel?: string;
   /** Runs at no cost and with no account: the studio may pick it when there is nothing else. */
   free?: boolean;
+  /** Its provider ships in beta: its group in the list says Beta. */
+  beta?: boolean;
 }
 /** The composer's way to open the menu (a plan that failed on its model offers "Choose model"). */
 export interface ModelMenuHandle {
   open(): void;
 }
+/** Each effort level's name, as the effort control shows it. */
+const EFFORT_LABELS: Readonly<Record<string, string>> = {
+  none: tc("effort", "None"),
+  minimal: tc("effort", "Minimal"),
+  low: tc("effort", "Low"),
+  medium: tc("effort", "Medium"),
+  high: tc("effort", "High"),
+  xhigh: tc("effort", "xHigh"),
+  max: tc("effort", "Max"),
+  ultra: tc("effort", "Ultra"),
+};
+
 export function effortLabel(effort: string | null): string {
-  return (
-    (
-      {
-        none: "None",
-        minimal: "Minimal",
-        low: "Low",
-        medium: "Medium",
-        high: "High",
-        xhigh: "xHigh",
-        max: "Max",
-        ultra: "Ultra",
-      } as Record<string, string>
-    )[effort ?? ""] ??
-    effort ??
-    "Auto"
-  );
+  return EFFORT_LABELS[effort ?? ""] ?? effort ?? tc("effort", "Auto");
 }
 export function shortModelName(name: string): string {
   return name.replace(/-mlx$/i, "").replace(/:latest$/i, "");
@@ -81,11 +82,28 @@ export function shortModelName(name: string): string {
 export const contextLabel = (tokens: number) =>
   tokens >= 1_000_000 ? `${+(tokens / 1_000_000).toFixed(2)}M` : `${Math.round(tokens / 1000)}k`;
 
-const ROLE_NAMES: Record<RoleKey, string> = { planner: "Main agent", builder: "Workers", judge: "Reviewers" };
-const ROLE_INFO: Partial<Record<RoleKey, string>> = {
-  builder: "Workers build the parts of the plan, several at once.",
-  judge: "Reviewers test every result and decide when the game is done.",
+const ROLE_NAMES: Record<RoleKey, string> = {
+  planner: t("Main agent"),
+  builder: t("Workers"),
+  judge: t("Reviewers"),
 };
+/** A job's row as a screen reader names it: the job and the model it runs on. */
+const ROLE_ROW_LABEL: Record<RoleKey, (model: string) => string> = {
+  planner: (model) => t("Main agent: {model}", { model }),
+  builder: (model) => t("Workers: {model}", { model }),
+  judge: (model) => t("Reviewers: {model}", { model }),
+};
+/** A job's model list as a screen reader names it. */
+const ROLE_LIST_LABEL: Record<RoleKey, string> = {
+  planner: t("Main agent model"),
+  builder: t("Workers model"),
+  judge: t("Reviewers model"),
+};
+const ROLE_INFO: Partial<Record<RoleKey, string>> = {
+  builder: t("Workers build the parts of the plan, several at once."),
+  judge: t("Reviewers test every result and decide when the game is done."),
+};
+const CHOOSE_MODEL = t("Choose model");
 
 /** Up/Down/Home/End move focus between the rows of one panel, like a menu. */
 function moveFocus(event: KeyboardEvent<HTMLElement>, selector: string): boolean {
@@ -101,8 +119,8 @@ function moveFocus(event: KeyboardEvent<HTMLElement>, selector: string): boolean
 }
 
 /** The label local models are grouped under; they list after the subscriptions' makers. */
-const LOCAL_GROUP = "Local models";
-const groupOf = (choice: ModelChoice): string => choice.group ?? "Models";
+const LOCAL_GROUP = MODEL_PICKER_WORDS.localModels;
+const groupOf = (choice: ModelChoice): string => choice.group ?? t("Models");
 
 /**
  * What each job runs on: the orchestrator is the chat's own pick, workers and judge their saved
@@ -143,7 +161,7 @@ function useRolePicks({
   return {
     selected,
     roleChoice,
-    roleName: (role: RoleKey) => shortModelName(roleChoice(role)?.name ?? "Choose model"),
+    roleName: (role: RoleKey) => shortModelName(roleChoice(role)?.name ?? CHOOSE_MODEL),
     modelsFor: (role: RoleKey) => roleChoices(choices, role, selected),
     choose,
   };
@@ -181,7 +199,16 @@ function ModelList({
     >
       {groups.map((group, index) => (
         <div key={group} role="group" aria-label={group}>
-          <PickerLabel first={index === 0}>{group}</PickerLabel>
+          <PickerLabel first={index === 0}>
+            {models.some((choice) => groupOf(choice) === group && choice.beta) ? (
+              <span className="inline-flex items-center gap-1.5">
+                {group}
+                <BetaTag />
+              </span>
+            ) : (
+              group
+            )}
+          </PickerLabel>
           {models
             .filter((c) => groupOf(c) === group)
             .map((choice) => (
@@ -221,7 +248,7 @@ function ModelList({
       <PickerSeparator />
       <button type="button" data-list-row className={`${pickerRow} text-ink-2`} onClick={onAddModels}>
         <Icon name="plus" />
-        Add more models
+        {t("Add more models")}
       </button>
     </div>
   );
@@ -254,7 +281,7 @@ function JobRow({
       data-quiet={role !== "planner" || undefined}
       aria-haspopup="dialog"
       aria-expanded={expanded}
-      aria-label={`${ROLE_NAMES[role]}: ${name}`}
+      aria-label={ROLE_ROW_LABEL[role](name)}
       {...(info ? { "aria-description": info } : {})}
       onClick={onToggle}
       onKeyDown={(event) => {
@@ -353,7 +380,7 @@ function JobList({
         sideOffset={8}
         collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "start" }}
         className="picker-panel w-[240px] max-w-(--available-width) max-h-(--available-height) overflow-y-auto p-1.5"
-        aria-label={role ? `${ROLE_NAMES[role]} model` : "Models"}
+        aria-label={role ? ROLE_LIST_LABEL[role] : t("Models")}
         initialFocus={listFocus}
         finalFocus={false}
         onKeyDown={(event) => {
@@ -483,12 +510,12 @@ export function ModelMenu({
           ref={trigger}
           render={<button type="button" />}
           disabled={disabled}
-          aria-label="Model settings"
-          title={selected?.name ?? "Choose model"}
+          aria-label={t("Model settings")}
+          title={selected?.name ?? CHOOSE_MODEL}
           className="composer-model composer-text-button min-w-0"
         >
           <span data-fit className="truncate">
-            {shortModelName(selected?.name ?? "Choose model")}
+            {shortModelName(selected?.name ?? CHOOSE_MODEL)}
           </span>
         </PopoverTrigger>
         <PopoverContent
@@ -497,7 +524,7 @@ export function ModelMenu({
           align="end"
           sideOffset={8}
           className={`picker-panel ${withRoles ? "w-[300px]" : "w-[260px]"} max-w-(--available-width) max-h-(--available-height) overflow-y-auto p-1.5`}
-          aria-label="Model options"
+          aria-label={t("Model options")}
           initialFocus={() =>
             panel?.querySelector<HTMLElement>(withRoles ? '[data-role="planner"]' : '[aria-pressed="true"]') ?? true
           }

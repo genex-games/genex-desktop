@@ -5,7 +5,7 @@
  * Every send is saved as queued first. One sent to an idle chat keeps its place at the end of
  * the conversation for that moment, instead of dropping below the status and jumping back. Only
  * for a moment: a message that really waits (behind a build the chat has not heard of yet)
- * moves below the work as Queued, with Remove.
+ * moves below the work, reading Sending… until that work reads it.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { QueueView } from "../../shared/message-queue.ts";

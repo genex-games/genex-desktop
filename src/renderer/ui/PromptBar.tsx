@@ -1,11 +1,21 @@
 import { markPerformance } from "../performance.tsx";
 import { PerformanceMarkName } from "../../shared/performance.ts";
-import type { ClipboardEvent, DragEvent, JSX, KeyboardEvent, Ref, RefObject } from "react";
+import { t } from "../../shared/i18n.ts";
+import type { ClipboardEvent, JSX, KeyboardEvent, Ref, RefObject } from "react";
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons.tsx";
 import { Shortcut } from "./Shortcut.tsx";
 import { ComposerTip } from "./PickerPanel.tsx";
-import { filesToFramesDetailed, MAX_REFERENCE_FRAMES, type PickedFrame } from "../reference-frames.ts";
+import { MAX_REFERENCE_FRAMES, type PickedFrame } from "../reference-frames.ts";
+import {
+  addAttachedFiles,
+  addToBoard,
+  type AttachedFile,
+  type LeftOut,
+  leftOutLine,
+  messageWithFiles,
+} from "./composer-drop.ts";
+import { DropVeil, FileChip, LeftOutNote, readDroppedFiles, useFileDrop } from "./ComposerDrop.tsx";
 import {
   ModelMenu,
   shortModelName,
@@ -62,6 +72,8 @@ export { shortModelName };
 export type { ModelChoice, RoleGroup, RoleRecord, RoleRow };
 export interface AutopilotSend {
   reviewPlan?: boolean;
+  /** Keep building's own send: the build goes on, whatever the message reads like (`AutopilotCommission.keepBuilding`). */
+  keepBuilding?: boolean;
   roles?: RoleRecord;
   hours: number | null;
   frames: PickedFrame[];
@@ -92,6 +104,11 @@ export interface PromptBarHandle {
   openModelMenu(): void;
   /** Put words in the prompt when it has none yet (the first-launch idea), cursor after them. */
   compose(text: string): void;
+  /**
+   * Keep building: switch this chat's Loop on as Mode would, with its kept hours, and answer what a
+   * send now carries: the Loop's commission where Mode could start one, else none (`composerExtras`).
+   */
+  loopOn(): ComposerExtras;
 }
 
 /**
@@ -134,7 +151,7 @@ const MIN_INPUT_HEIGHT = 38;
 const MAX_INPUT_HEIGHT = 138;
 /** The send control morphs into Stop on the same click; this long after a send, Stop ignores it (ms). */
 const STOP_PAD_MS = 600;
-const DEFAULT_PLACEHOLDER = "Write a message…";
+const DEFAULT_PLACEHOLDER = t("Write a message…");
 
 /**
  * The composer's mode: the chat's own Loop (`loop-setting.ts`), what Mode shows and allows given
@@ -204,6 +221,18 @@ function useMention(
     setMention(null);
     placeCaret(mention.start + insert.length);
   };
+  /** The caret goes back to the end of the words after the @, so typing goes on there. */
+  const focusQuery = (): void => {
+    if (mention) placeCaret(mention.end);
+  };
+  /** The words after the @ are emptied; the @ stays and the picker with it. */
+  const clearQuery = (): void => {
+    if (!mention) return;
+    const end = mention.start + 1;
+    setDraft(draft.slice(0, end) + draft.slice(mention.end));
+    setMention({ query: "", start: mention.start, end });
+    placeCaret(end);
+  };
   /** The draft becomes this tag alone, ready for the words after it (a pick from the / list). */
   const startWith = (doc: MentionDoc): void => {
     const value = `@${doc.handle} `;
@@ -235,6 +264,8 @@ function useMention(
     mentionListId,
     findMention,
     insertMention,
+    focusQuery,
+    clearQuery,
     insertDoc,
     startWith,
     tagged,
@@ -312,10 +343,19 @@ function withFrames(current: PickedFrame[], added: PickedFrame[]): PickedFrame[]
   return [...current, ...added.filter((f) => !seen.has(f.data))].slice(0, MAX_REFERENCE_FRAMES);
 }
 
-/** The pictures on the mood board, and the files that could not be read as pictures. */
+/** What goes with the next message besides its words: pictures, and links to other files. */
+interface Attachments {
+  frames: PickedFrame[];
+  files: AttachedFile[];
+}
+
+/** The pictures on the mood board, the files going as links, and what the last drop left out. */
 function useBoardFrames(conversationKey: string | undefined) {
   const [frames, setFrames] = useState<PickedFrame[]>([]);
-  const [skippedFiles, setSkippedFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<AttachedFile[]>([]);
+  const [leftOut, setLeftOut] = useState<LeftOut | null>(null);
+  const now = useRef<Attachments>({ frames, files });
+  now.current = { frames, files };
   // A rewound message comes back with its pictures, beside any already attached.
   useEffect(() => {
     const compose = (event: Event): void => {
@@ -327,20 +367,39 @@ function useBoardFrames(conversationKey: string | undefined) {
     window.addEventListener(COMPOSE_FRAMES_EVENT, compose);
     return () => window.removeEventListener(COMPOSE_FRAMES_EVENT, compose);
   }, [conversationKey]);
-  const addFiles = (files: FileList | File[]): void => {
-    void filesToFramesDetailed(files).then(({ frames: picked, skipped }) => {
-      // A still the browser cannot decode is said so, never silently dropped.
-      setSkippedFiles(skipped);
-      if (!picked.length) return;
-      setFrames((current) => withFrames(current, picked));
+  const addFiles = (list: FileList | File[]): void => {
+    void readDroppedFiles([...list]).then((read) => {
+      const board = addToBoard(now.current.frames, read.frames);
+      const attached = addAttachedFiles(now.current.files, read.files);
+      const left = {
+        overPictures: board.overLimit + read.unreadPictures,
+        overFiles: attached.overLimit,
+        unlinked: read.unlinked,
+      };
+      setLeftOut(leftOutLine(left) ? left : null);
+      now.current = { frames: board.frames, files: attached.files };
+      setFrames(board.frames);
+      setFiles(attached.files);
     });
   };
-  /** A send that failed puts its pictures back in front of what was added since. */
-  const restore = (sent: PickedFrame[]): void =>
+  /** Everything attached, taken off the board as the message goes (a chip that lingers reads as "not sent"). */
+  const take = (): Attachments => {
+    const taken = now.current;
+    if (taken.frames.length) setFrames([]);
+    if (taken.files.length) setFiles([]);
+    return taken;
+  };
+  /** A send that failed puts its attachments back in front of what was added since. */
+  const restore = (sent: Attachments): void => {
     setFrames((current) =>
-      [...sent, ...current.filter((f) => !sent.some((frame) => frame.data === f.data))].slice(0, MAX_REFERENCE_FRAMES),
+      [...sent.frames, ...current.filter((f) => !sent.frames.some((frame) => frame.data === f.data))].slice(
+        0,
+        MAX_REFERENCE_FRAMES,
+      ),
     );
-  return { frames, setFrames, skippedFiles, setSkippedFiles, addFiles, restore };
+    setFiles((current) => addAttachedFiles(sent.files, current).files);
+  };
+  return { frames, setFrames, files, setFiles, leftOut, setLeftOut, addFiles, take, restore };
 }
 
 /** Which roles each subscription serves right now, for the plan limits beside the context. */
@@ -387,51 +446,36 @@ function pasteIsOnlyNames(clipboard: DataTransfer, files: File[]): boolean {
   return !text || text.split(/\r?\n/).every((line) => names.has(line.trim().split("/").pop() ?? ""));
 }
 
-/** Files a drop or paste could not read as pictures: said so, with a way to dismiss it. */
-function SkippedFiles({ files, onDismiss }: { files: string[]; onDismiss: () => void }): JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5" role="alert">
-      <span
-        className="rounded-[6px] border border-red/40 bg-red-tint px-1.5 py-0.5 text-micro text-red"
-        title={files.join(", ")}
-      >
-        could not decode {files.length === 1 ? files[0] : `${files.length} files`} — not added to the board
-      </span>
-      <button
-        type="button"
-        className="text-micro text-ink-3 hover:text-control-text-hover"
-        onClick={onDismiss}
-        aria-label="Dismiss"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-/** The pictures going with the next message, each with its own remove button. */
+/** The pictures and files going with the next message, each with its own remove button. */
 function FrameBoard({
   frames,
+  files,
   gameMode,
   onRemove,
+  onRemoveFile,
 }: {
   frames: PickedFrame[];
+  files: AttachedFile[];
   gameMode: boolean;
   onRemove: (index: number) => void;
+  onRemoveFile: (path: string) => void;
 }): JSX.Element {
   return (
-    <div className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5" aria-label={gameMode ? "Mood board" : "Attached images"}>
+    <div
+      className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5"
+      aria-label={gameMode ? t("Mood board") : t("Attached images")}
+    >
       {frames.map((frame, index) => (
         <div key={`${frame.label}-${index}`} className="group relative">
           <img
             src={`data:${frame.mimeType};base64,${frame.data}`}
             alt={frame.label}
             title={frame.label}
-            className="h-11 w-14 rounded-[6px] border border-line object-cover"
+            className="h-11 w-14 rounded-[8px] border border-line object-cover"
           />
           <button
             type="button"
-            aria-label={`Remove ${frame.label}`}
+            aria-label={t("Remove {name}", { name: frame.label })}
             onClick={() => onRemove(index)}
             className="absolute -top-1 -right-1 flex size-5 items-center justify-center rounded-full bg-ink text-micro text-surface group-hover:flex"
             style={{ background: "var(--ink)", color: "var(--surface)" }}
@@ -439,6 +483,9 @@ function FrameBoard({
             ×
           </button>
         </div>
+      ))}
+      {files.map((file) => (
+        <FileChip key={file.path} file={file} onRemove={() => onRemoveFile(file.path)} />
       ))}
     </div>
   );
@@ -451,13 +498,13 @@ function ReplyAboutTag({ about }: { about: ReplyAboutChip }): JSX.Element {
       <span
         data-reply-about
         className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-[9px] bg-inset pr-1 pl-2 text-body-sm text-ink-2"
-        title={`Your next message goes to the build as a note about ${about.label}`}
+        title={t("Your next message goes to the build as a note about {about}", { about: about.label })}
       >
         <Icon name="chat" size={13} />
         <span className="truncate">{about.label}</span>
         <button
           type="button"
-          aria-label={`Stop replying about ${about.label}`}
+          aria-label={t("Stop replying about {about}", { about: about.label })}
           onClick={about.onClear}
           className="grid size-5 shrink-0 cursor-pointer place-items-center rounded-[6px] text-ink-3 hover:bg-control-hover hover:text-control-text-hover"
         >
@@ -489,17 +536,17 @@ function SendControl({
       hidden={quiet}
       content={
         stopping ? (
-          "Stop"
+          t("Stop")
         ) : (
           <span className="flex items-center gap-2">
-            Send <Shortcut>↵</Shortcut>
+            {t("Send")} <Shortcut>↵</Shortcut>
           </span>
         )
       }
     >
       <button
         type="button"
-        aria-label={stopping ? "Stop" : "Send"}
+        aria-label={stopping ? t("Stop") : t("Send")}
         data-state={action}
         disabled={action === SendAction.Idle}
         onClick={(event) => {
@@ -609,7 +656,9 @@ function useComposerSend(
   // lights that up instead of going anywhere.
   const noModel = (props.gameMode ?? true) && props.model.choices.length === 0;
   const modelNudge = useModelNudge();
-  const writable = !props.disabled && !props.busy && draft.trim().length > 0;
+  // A picture or a file is a message on its own: words are optional when one is attached.
+  const hasMessage = draft.trim().length > 0 || board.frames.length > 0 || board.files.length > 0;
+  const writable = !props.disabled && !props.busy && hasMessage;
   const canSend = writable && !noModel;
   const send = (): void => {
     if (writable && noModel) {
@@ -624,13 +673,12 @@ function useComposerSend(
     // The send control morphs into Stop on the same click; without this pad that click
     // cancels the turn it just started ("keep going" → cancelled).
     ignoreStopUntil.current = Date.now() + STOP_PAD_MS;
-    const text = draft.trim();
-    const sentFrames = board.frames;
+    const words = draft.trim();
+    // The harness keeps the board attached for the rest of the interview on its side.
+    const sent = board.take();
+    const text = messageWithFiles(words, sent.files);
     setDraft("");
     composer.mentions.setMention(null);
-    // The board goes with the message — a chip that lingers after send reads as "not sent".
-    // The harness keeps the board attached for the rest of the interview on its side.
-    if (sentFrames.length) board.setFrames([]);
     // A failed send is already durable in the thread (main appends the error); catching here
     // only stops the same failure from surfacing twice as console noise.
     const tags = composer.mentions.refs();
@@ -639,15 +687,15 @@ function useComposerSend(
         gameMode: props.gameMode ?? true,
         view: loop.view,
         reviewPlan: loop.reviewPlan,
-        frames: sentFrames,
+        frames: sent.frames,
       }),
       ...(tags.length ? { mentions: tags } : {}),
     };
     loop.setReviewPlan(false);
     void Promise.resolve(props.onSend(text, Object.keys(extras).length ? extras : undefined)).catch(() => {
       if (extras.reviewPlan) loop.setReviewPlan(true);
-      if (!inputRef.current?.value) setDraft(text);
-      board.restore(sentFrames);
+      if (!inputRef.current?.value) setDraft(words);
+      board.restore(sent);
     });
   };
   const blocked = writable && noModel;
@@ -787,7 +835,7 @@ function PromptTextarea({
         }
       }}
       placeholder={placeholder}
-      aria-label="Prompt"
+      aria-label={t("Prompt")}
       onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
       {...(list
         ? {
@@ -881,7 +929,7 @@ function listAria(
   return null;
 }
 
-/** The hidden file picker behind Add → References and the attach button. */
+/** The hidden file picker behind Add → References and the attach button: pictures or any file. */
 function ImagePicker({
   fileRef,
   onFiles,
@@ -893,7 +941,6 @@ function ImagePicker({
     <input
       ref={fileRef}
       type="file"
-      accept="image/*"
       multiple
       className="hidden"
       onChange={(event) => {
@@ -915,7 +962,7 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
   const addMenuRef = useRef<AddMenuHandle>(null);
   const commandMenuRef = useRef<AddMenuHandle>(null);
   const modelMenuRef = useRef<ModelMenuHandle>(null);
-  usePromptHandle(props.ref, { inputRef, modelMenuRef, draft, setDraft });
+  usePromptHandle(props.ref, { inputRef, modelMenuRef, draft, setDraft, loop, gameMode });
   const mentions = useMention(gameMode, draft, setDraft, inputRef);
   const commands = useComposerCommands(draft, setDraft);
   // A reply about the build is a note to it, delivered at once, not a message waiting in line.
@@ -924,13 +971,14 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
   const placeholderNow = props.about?.placeholder ?? composerPlaceholder(coordinating, contextual, props.leadListens);
   useAutosize(inputRef, draft, placeholderNow);
   const composer = useComposerSend(props, { draft, setDraft, loop, board, inputRef, mentions });
+  const held = useFileDrop(panelRef, disabled, board.addFiles);
 
   return (
     <div
       data-promptbar
       data-studio-composer={!gameMode || undefined}
       className="composer relative min-w-0"
-      {...fileDropHandlers(disabled, board.addFiles)}
+      {...pasteHandlers(disabled, board.addFiles)}
     >
       {/* ── composer ───────────────────────────────────── */}
       <div
@@ -938,13 +986,18 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
         className={`composer-panel relative flex min-w-0 flex-col gap-0.5
           transition-colors duration-150 ${disabled ? "opacity-55" : ""}`}
       >
-        {board.skippedFiles.length > 0 ? (
-          <SkippedFiles files={board.skippedFiles} onDismiss={() => board.setSkippedFiles([])} />
-        ) : null}
+        <DropVeil held={held} board={{ pictures: board.frames.length, files: board.files.length }} />
+        <LeftOutNote
+          left={board.leftOut}
+          onChoose={() => fileRef.current?.click()}
+          onDismiss={() => board.setLeftOut(null)}
+        />
         {props.about ? <ReplyAboutTag about={props.about} /> : null}
-        {board.frames.length > 0 ? (
+        {board.frames.length > 0 || board.files.length > 0 ? (
           <FrameBoard
             frames={board.frames}
+            files={board.files}
+            onRemoveFile={(path) => board.setFiles((current) => current.filter((file) => file.path !== path))}
             gameMode={gameMode}
             onRemove={(index) => board.setFrames((current) => current.filter((_, i) => i !== index))}
           />
@@ -1013,10 +1066,14 @@ function usePromptHandle(
     modelMenuRef: RefObject<ModelMenuHandle | null>;
     draft: string;
     setDraft: (text: string) => void;
+    loop: ReturnType<typeof useLoopSettings>;
+    gameMode: boolean;
   },
 ): void {
   const composeNow = useRef({ draft: input.draft, setDraft: input.setDraft });
   composeNow.current = { draft: input.draft, setDraft: input.setDraft };
+  const loopNow = useRef({ loop: input.loop, gameMode: input.gameMode });
+  loopNow.current = { loop: input.loop, gameMode: input.gameMode };
   const { inputRef, modelMenuRef } = input;
   useImperativeHandle(
     ref,
@@ -1031,26 +1088,22 @@ function usePromptHandle(
           element?.setSelectionRange(element.value.length, element.value.length);
         });
       },
+      loopOn: () => {
+        const { loop, gameMode } = loopNow.current;
+        const on = { on: true, hours: loop.setting.hours };
+        const turnsOn = gameMode && loop.view.editable && !loop.view.loopUnavailable;
+        if (turnsOn) loop.chooseLoop(on);
+        const view = turnsOn ? { ...loop.view, shown: on } : loop.view;
+        return composerExtras({ gameMode, view, reviewPlan: false, frames: [] });
+      },
     }),
     [],
   );
 }
 
-/** Pictures dropped or pasted on the composer join the board; a paste of only their names adds no text. */
-function fileDropHandlers(disabled: boolean, addFiles: (files: FileList | File[]) => void) {
+/** Pictures pasted on the composer join the board; a paste of only their names adds no text. */
+function pasteHandlers(disabled: boolean, addFiles: (files: FileList | File[]) => void) {
   return {
-    onDragOver: (event: DragEvent<HTMLDivElement>) => {
-      if (disabled) return;
-      if ([...event.dataTransfer.items].some((item) => item.kind === "file")) event.preventDefault();
-    },
-    onDrop: (event: DragEvent<HTMLDivElement>) => {
-      if (disabled) return;
-      const files = event.dataTransfer.files;
-      if (files?.length) {
-        event.preventDefault();
-        addFiles(files);
-      }
-    },
     onPaste: (event: ClipboardEvent<HTMLDivElement>) => {
       if (disabled) return;
       const files = pastedFiles(event.clipboardData);
@@ -1154,16 +1207,18 @@ function AttachControl({
         listId={mentions.mentionListId}
         onMention={mentions.insertMention}
         onMentionClose={() => mentions.setMention(null)}
+        onMentionFocus={mentions.focusQuery}
+        onMentionClear={mentions.clearQuery}
         onActiveOption={mentions.setMentionOption}
         tagging={{ tagged: mentions.taggedNow, atCap: mentions.atCap, onPick: mentions.insertDoc, side: mentionSide }}
       />
     );
   }
   return (
-    <ComposerTip align="start" content="Attach images">
+    <ComposerTip align="start" content={t("Attach images")}>
       <button
         type="button"
-        aria-label="Attach images"
+        aria-label={t("Attach images")}
         disabled={disabled}
         onClick={onPickImages}
         className="composer-icon composer-add"

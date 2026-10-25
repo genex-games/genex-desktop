@@ -15,6 +15,7 @@ import { MCP_ENV_NAME, MCP_HEADER_NAME, MCP_ID, type McpConnector, type McpTrans
 import { errorMessage } from "./errors.ts";
 import { CommandLineProblem, splitCommandLine } from "./command-line.ts";
 import { EngineId } from "./providers.ts";
+import { t } from "./i18n.ts";
 
 /** A connector the user has not saved yet: no `createdAt`, no trust digest, no owner. */
 export type McpConnectorDraft = Omit<McpConnector, "createdAt" | "trustedLaunch" | "source">;
@@ -93,7 +94,9 @@ function splitSecrets(
   for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
     if (!shape.test(name)) {
       warnings.push(
-        `${server}: skipped ${kind} name "${name}" — not a valid ${kind === "env" ? "environment variable" : "header"} name`,
+        kind === "env"
+          ? t('{server}: skipped env name "{name}" — not a valid environment variable name', { server, name })
+          : t('{server}: skipped header name "{name}" — not a valid header name', { server, name }),
       );
       continue;
     }
@@ -104,7 +107,10 @@ function splitSecrets(
     if (placeholder) {
       needsValue.push(field);
       warnings.push(
-        `${server}: ${name} refers to ${placeholder[0]}, a variable Studio does not read. Paste the real value into the connector before connecting.`,
+        t(
+          "{server}: {name} refers to {variable}, a variable Studio does not read. Paste the real value into the connector before connecting.",
+          { server, name, variable: placeholder[0] },
+        ),
       );
       continue;
     }
@@ -140,7 +146,9 @@ function readLaunch(
   if (connector.transport !== "stdio") {
     const url = typeof entry.url === "string" ? entry.url.trim() : "";
     if (!url) {
-      warnings.push(`Skipped "${name}": an ${connector.transport} server needs a url.`);
+      warnings.push(
+        t('Skipped "{name}": an {transport} server needs a url.', { name, transport: connector.transport }),
+      );
       return false;
     }
     connector.url = url;
@@ -148,14 +156,16 @@ function readLaunch(
   }
   const command = typeof entry.command === "string" ? entry.command.trim() : "";
   if (!command) {
-    warnings.push(`Skipped "${name}": a stdio server needs a command.`);
+    warnings.push(t('Skipped "{name}": a stdio server needs a command.', { name }));
     return false;
   }
   connector.command = command;
   const argsAreStrings =
     entry.args === undefined || (Array.isArray(entry.args) && entry.args.every((a) => typeof a === "string"));
   if (!argsAreStrings) {
-    warnings.push(`Skipped "${name}": args must be an array of strings; no arguments were silently dropped.`);
+    warnings.push(
+      t('Skipped "{name}": args must be an array of strings; no arguments were silently dropped.', { name }),
+    );
     return false;
   }
   connector.args = stringList(entry.args);
@@ -170,7 +180,10 @@ function headerNamesOf(names: string[], entry: Record<string, unknown>, name: st
   if (typeof bearer !== "string" || !bearer) return headerNames;
   if (!headerNames.includes("Authorization")) headerNames.push("Authorization");
   warnings.push(
-    `${name}: Codex reads the bearer token from the environment variable ${bearer}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".`,
+    t(
+      '{name}: Codex reads the bearer token from the environment variable {variable}. Studio stores it itself — paste the token into the Authorization field as "Bearer <token>".',
+      { name, variable: bearer },
+    ),
   );
   return headerNames;
 }
@@ -178,12 +191,12 @@ function headerNamesOf(names: string[], entry: Record<string, unknown>, name: st
 function draftFrom(name: string, entry: Record<string, unknown>, warnings: string[]): McpDraft | null {
   const id = draftId(name);
   if (!id) {
-    warnings.push(`Skipped "${name}": Studio connector ids are lowercase letters, digits and dashes.`);
+    warnings.push(t('Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.', { name }));
     return null;
   }
   const transport = transportOf(entry);
   if (!transport) {
-    warnings.push(`Skipped "${name}": it names neither a command nor a url.`);
+    warnings.push(t('Skipped "{name}": it names neither a command nor a url.', { name }));
     return null;
   }
   const env = splitSecrets(entry.env, "env", name, warnings);
@@ -199,7 +212,8 @@ function draftFrom(name: string, entry: Record<string, unknown>, warnings: strin
     toolPolicy: {},
   };
   for (const key of Object.keys(entry))
-    if (!SUPPORTED_KEYS.has(key)) warnings.push(`${name}: ${key} is not imported. Review the connector before saving.`);
+    if (!SUPPORTED_KEYS.has(key))
+      warnings.push(t("{name}: {key} is not imported. Review the connector before saving.", { name, key }));
   if (Array.isArray(entry.enabled_tools)) connector.toolPolicy.allow = stringList(entry.enabled_tools);
   if (Array.isArray(entry.disabled_tools)) connector.toolPolicy.deny = stringList(entry.disabled_tools);
   if (!readLaunch(connector, entry, name, warnings)) return null;
@@ -208,7 +222,10 @@ function draftFrom(name: string, entry: Record<string, unknown>, warnings: strin
   if (headerNames.length) connector.headers = headerNames;
   if (Object.keys(secrets).length)
     warnings.push(
-      `${name}: ${Object.keys(secrets).length} value(s) came with the snippet and will be stored encrypted. The source configuration is unchanged.`,
+      t(
+        "{name}: {count, plural, other {# value(s)}} came with the snippet and will be stored encrypted. The source configuration is unchanged.",
+        { name, count: Object.keys(secrets).length },
+      ),
     );
   return { connector, secrets, ...(needsValue.length ? { needsValue } : {}) };
 }
@@ -221,25 +238,25 @@ function fromJson(text: string, warnings: string[]): McpDraft[] | null {
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    warnings.push("That JSON is not an object with servers in it.");
+    warnings.push(t("That JSON is not an object with servers in it."));
     return [];
   }
   const record = parsed as Record<string, unknown>;
   const servers = record.mcpServers ?? record.mcp_servers ?? record.servers ?? record;
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
-    warnings.push('No "mcpServers" section in that JSON.');
+    warnings.push(t('No "mcpServers" section in that JSON.'));
     return [];
   }
   const drafts: McpDraft[] = [];
   for (const [name, entry] of Object.entries(servers as Record<string, unknown>)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      warnings.push(`Skipped "${name}": expected an object.`);
+      warnings.push(t('Skipped "{name}": expected an object.', { name }));
       continue;
     }
     const draft = draftFrom(name, entry as Record<string, unknown>, warnings);
     if (draft) drafts.push(draft);
   }
-  if (!drafts.length && !warnings.length) warnings.push("No servers found in that snippet.");
+  if (!drafts.length && !warnings.length) warnings.push(t("No servers found in that snippet."));
   return drafts;
 }
 
@@ -282,7 +299,7 @@ function splitQuoted(text: string, separator: string): string[] {
       start = i + 1;
     }
   }
-  if (state.quote) throw new Error("Unclosed TOML string");
+  if (state.quote) throw new Error(t("Unclosed TOML string"));
   result.push(text.slice(start));
   return result;
 }
@@ -300,7 +317,7 @@ function tomlArray(inner: string): string[] {
   for (const piece of splitQuoted(inner, ",")) {
     if (!piece.trim()) continue;
     const value = tomlValue(piece);
-    if (typeof value !== "string") throw new Error("Connector TOML arrays must contain quoted strings");
+    if (typeof value !== "string") throw new Error(t("Connector TOML arrays must contain quoted strings"));
     items.push(value);
   }
   return items;
@@ -321,7 +338,7 @@ function tomlValue(raw: string): unknown {
   if (text === "true") return true;
   if (text === "false") return false;
   if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
-  throw new Error("Unsupported TOML value. Use quoted strings, booleans or arrays of strings.");
+  throw new Error(t("Unsupported TOML value. Use quoted strings, booleans or arrays of strings."));
 }
 
 type TomlServer = Record<string, unknown>;
@@ -385,7 +402,7 @@ function joinArrayLines(lines: string[], first: number, start: string): { text: 
     text += ` ${stripComment(lines[last] ?? "").trim()}`;
     if (text.endsWith("]")) break;
   }
-  if (!text.endsWith("]")) throw new Error("Unclosed TOML array");
+  if (!text.endsWith("]")) throw new Error(t("Unclosed TOML array"));
   return { text, last };
 }
 
@@ -400,7 +417,7 @@ function fromToml(text: string, warnings: string[]): McpDraft[] {
     const draft = draftFrom(name, entry, warnings);
     if (draft) drafts.push(draft);
   }
-  if (!drafts.length && !warnings.length) warnings.push("No [mcp_servers.<name>] sections found in that snippet.");
+  if (!drafts.length && !warnings.length) warnings.push(t("No [mcp_servers.<name>] sections found in that snippet."));
   return drafts;
 }
 
@@ -437,8 +454,8 @@ function tomlServers(text: string, warnings: string[]): Map<string, TomlServer> 
 export function parseMcpSnippet(text: unknown): McpImport {
   const warnings: string[] = [];
   if (typeof text !== "string" || !text.trim())
-    return { drafts: [], warnings: ["Paste a configuration snippet first."] };
-  if (text.length > MAX_SNIPPET) return { drafts: [], warnings: ["That snippet is too large to read."] };
+    return { drafts: [], warnings: [t("Paste a configuration snippet first.")] };
+  if (text.length > MAX_SNIPPET) return { drafts: [], warnings: [INPUT_MESSAGE.TooLarge()] };
   try {
     // JSON first: `fromJson` returns null only when the text is not JSON at all, which is the
     // one case where reading it as Codex TOML is the right guess.
@@ -446,7 +463,7 @@ export function parseMcpSnippet(text: unknown): McpImport {
     if (json) return { drafts: json, warnings };
     return { drafts: fromToml(text, warnings), warnings };
   } catch (error) {
-    return { drafts: [], warnings: [`Studio could not read that snippet: ${errorMessage(error)}`] };
+    return { drafts: [], warnings: [t("Studio could not read that snippet: {error}", { error: errorMessage(error) })] };
   }
 }
 
@@ -498,13 +515,14 @@ const INTERPRETERS: ReadonlyMap<string, string | null> = new Map([
 /** The agents' own `mcp add` commands, which name a server rather than run one; Codex's program is named as its engine. */
 const MCP_ADD_PROGRAMS: ReadonlySet<string> = new Set(["claude", EngineId.Codex]);
 
+/** What a pasted line that cannot become a draft says; functions, as main may load this module before its language. */
 const INPUT_MESSAGE = {
-  [CommandLineProblem.UnclosedQuote]: "That command has a quote that is never closed.",
-  [CommandLineProblem.TrailingBackslash]: "That command ends with a backslash.",
-  OnlyVariables: "That line sets variables but names no command to run.",
-  AddWithoutServer: "That mcp add line names no server to add.",
-  TooLarge: "That snippet is too large to read.",
-  NotImported: (option: string) => `mcp add: ${option} is not imported. Review the server before saving.`,
+  [CommandLineProblem.UnclosedQuote]: () => t("That command has a quote that is never closed."),
+  [CommandLineProblem.TrailingBackslash]: () => t("That command ends with a backslash."),
+  OnlyVariables: () => t("That line sets variables but names no command to run."),
+  AddWithoutServer: () => t("That mcp add line names no server to add."),
+  TooLarge: () => t("That snippet is too large to read."),
+  NotImported: (option: string) => t("mcp add: {option} is not imported. Review the server before saving.", { option }),
 } as const;
 
 /** "context7-mcp" → "Context7", "notes_mcp" → "Notes": the naming part, words capitalised. */
@@ -662,17 +680,17 @@ function launchDraft(
 /** A pasted command line: a server this Mac runs, or one an agent's `mcp add` line describes. */
 function fromCommandLine(text: string): McpImport {
   const split = splitCommandLine(text);
-  if (!split.ok) return { drafts: [], warnings: [INPUT_MESSAGE[split.problem]] };
+  if (!split.ok) return { drafts: [], warnings: [INPUT_MESSAGE[split.problem]()] };
   const warnings: string[] = [];
   const { env, rest } = leadingVariables(split.words);
-  if (!rest.length) return { drafts: [], warnings: [INPUT_MESSAGE.OnlyVariables] };
+  if (!rest.length) return { drafts: [], warnings: [INPUT_MESSAGE.OnlyVariables()] };
   const isAdd = MCP_ADD_PROGRAMS.has(rest[0] ?? "") && rest[1] === "mcp" && rest[2] === "add";
   if (!isAdd) {
     const draft = launchDraft(nameFromCommand(rest), rest, { env }, warnings);
     return { drafts: draft ? [draft] : [], warnings };
   }
   const line = readMcpAdd(rest.slice(3), warnings);
-  if (!line.name || !line.target.length) return { drafts: [], warnings: [INPUT_MESSAGE.AddWithoutServer] };
+  if (!line.name || !line.target.length) return { drafts: [], warnings: [INPUT_MESSAGE.AddWithoutServer()] };
   const draft = launchDraft(line.name, line.target, { ...line, env: { ...env, ...line.env } }, warnings);
   return { drafts: draft ? [draft] : [], warnings };
 }
@@ -684,7 +702,7 @@ function fromCommandLine(text: string): McpImport {
 export function parseMcpInput(text: string): McpImport {
   const trimmed = text.trim();
   if (!trimmed) return { drafts: [], warnings: [] };
-  if (text.length > MAX_SNIPPET) return { drafts: [], warnings: [INPUT_MESSAGE.TooLarge] };
+  if (text.length > MAX_SNIPPET) return { drafts: [], warnings: [INPUT_MESSAGE.TooLarge()] };
   if (trimmed.startsWith("{") || /^\s*\[mcp_servers/m.test(text)) return parseMcpSnippet(text);
   if (REMOTE_URL.test(trimmed)) {
     const warnings: string[] = [];

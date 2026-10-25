@@ -15,7 +15,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { type Browser, chromium, type Page } from "@playwright/test";
 import type { PluginEngineLink } from "../../src/plugin-sdk/index.d.ts";
-import { inlinePanelSdk } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
+import { inlinePanelSdk, panelWordsScripts } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import type { Launch } from "../../src/plugins/unreal/editor-launch.ts";
 import type { EditorLog } from "../../src/plugins/unreal/editor-log.ts";
@@ -266,7 +266,9 @@ describe("The Set up Unreal panel", { skip }, () => {
   let server: http.Server;
   let url = "";
   before(async () => {
-    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", BRIDGE);
+    // The stand-in bridge, then the SDK's own words (in English: the stand-in names no language).
+    const words = await panelWordsScripts();
+    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", () => BRIDGE + words);
     server = http.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page),
     );
@@ -286,8 +288,10 @@ describe("The Set up Unreal panel", { skip }, () => {
     const tab = await browser.newPage({ viewport: { width: 360, height: 720 } });
     const backend = async (method: string, name: string, args: Record<string, unknown>, wait: number | null) => {
       if (method !== "action") return { error: `unexpected ${method}` };
-      if (name !== "status") c.sent.push([name, args]);
-      if (name !== "status") c.waits.push([name, wait]);
+      // Looks the panel takes on every refresh are not what a press sends.
+      const look = name === "status" || name === "agents";
+      if (!look) c.sent.push([name, args]);
+      if (!look) c.waits.push([name, wait]);
       try {
         return { value: await c.act(name, args) };
       } catch (error) {
@@ -759,6 +763,26 @@ describe("The Set up Unreal panel", { skip }, () => {
     }
   });
 
+  it("beside a project, shows whether agents may use Unreal while the person plays, on unless turned off, and keeps the choice", async () => {
+    const c = await computer();
+    const file = await STEPS[PanelStep.Connected].arrange(c);
+    await c.act("status", { project: file });
+    const tab = await open(c);
+    try {
+      const box = tab.locator("#while-playing");
+      await tab.waitForFunction(() => !document.getElementById("agents")?.hidden);
+      assert.match(await tab.locator("#agents").innerText(), /Agents may use Unreal while you play/);
+      assert.equal(await box.isChecked(), true, "on unless the person turned it off");
+      await tab.getByText("Agents may use Unreal while you play").click();
+      await tab.waitForFunction(() => !(document.getElementById("while-playing") as HTMLInputElement).disabled);
+      assert.equal(await box.isChecked(), false);
+      assert.deepEqual(c.sent.at(-1), ["agents-wait", {}]);
+      assert.deepEqual(await c.act("agents", {}), { whilePlaying: false }, "kept for every game");
+    } finally {
+      await tab.close();
+    }
+  });
+
   it("past six projects a filter narrows the list by name and says when nothing matches; six need none", async () => {
     const names = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"];
     const seven = await computer();
@@ -830,7 +854,7 @@ window.addEventListener("message", async (event) => {
   const f = document.getElementById("f");
   const m = event.data;
   if (event.source !== f.contentWindow || m?.type !== "studio-plugin-request") return;
-  if (m.method === "action" && m.name !== "status") window.__requests.push([m.name, m.args]);
+  if (m.method === "action" && m.name !== "status" && m.name !== "agents") window.__requests.push([m.name, m.args]);
   if (m.method === "chooseFile") window.__requests.push(["chooseFile", m.args]);
   const reply = (body) => f.contentWindow.postMessage({ type: "studio-plugin-result", id: m.id, ...body }, "*");
   try { reply({ result: await answer(m) }); } catch (e) { reply({ error: String(e) }); }

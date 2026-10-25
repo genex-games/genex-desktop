@@ -3,6 +3,7 @@ import path from "node:path";
 import { mkdir, mkdtemp, readdir, readFile, writeFile, lstat, realpath, copyFile, rename, rm } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { ExportResult } from "../shared/game-project.ts";
+import { t } from "../shared/i18n.ts";
 import { isBelow, isInside, toPosixRelative } from "./paths.ts";
 import { MIN_SECRET_LENGTH } from "../shared/redact.ts";
 
@@ -41,21 +42,27 @@ const VENDOR_DIR = "vendor";
 const BASIS_DIR = "vendor/three/examples/jsm/libs/basis/";
 const BASIS_FILES = ["basis_transcoder.js", "basis_transcoder.wasm"];
 
+/** Why an export stopped, as the person reads it; functions, as main sets its language after this loads. */
 const MESSAGE = {
-  InsideGame: "Export destination must be outside the game",
-  ResolvesInsideGame: "Export destination must resolve outside the game",
-  NotADirectory: "Export target must be an ordinary directory",
-  NotAnExport: "Export target is not an app-managed export; choose an empty directory",
-  InvalidPublicPath: (rel: string) => `Invalid public path: ${rel}`,
-  MissingPublicPath: (rel: string) => `Selected public path is missing or unreadable: ${rel}`,
-  Symlink: (rel: string) => `Export refuses symlink: ${rel}`,
-  NotAFile: (rel: string) => `Not a public file: ${rel}`,
+  InsideGame: () => t("Export destination must be outside the game"),
+  ResolvesInsideGame: () => t("Export destination must resolve outside the game"),
+  NotADirectory: () => t("Export target must be an ordinary directory"),
+  NotAnExport: () => t("Export target is not an app-managed export; choose an empty directory"),
+  InvalidPublicPath: (rel: string) => t("Invalid public path: {path}", { path: rel }),
+  MissingPublicPath: (rel: string) => t("Selected public path is missing or unreadable: {path}", { path: rel }),
+  Symlink: (rel: string) => t("Export refuses symlink: {path}", { path: rel }),
+  NotAFile: (rel: string) => t("Not a public file: {path}", { path: rel }),
   SecretLeaked: (rel: string) =>
-    `Export stopped: ${rel} contains a credential Studio holds (an API key or sign-in token). Remove it from the game and export again.`,
-  NoEntry: "Export needs index.html in the public selection/build output",
-  ScopedImportMap: "Export validation does not yet support scoped import maps; build this project before export",
-  UnresolvedModule: (ref: string) => `Export has an unresolved module: ${ref}`,
-  MissingReference: (ref: string, from: string) => `Export is missing a referenced public file: ${ref} in ${from}`,
+    t(
+      "Export stopped: {file} contains a credential Studio holds (an API key or sign-in token). Remove it from the game and export again.",
+      { file: rel },
+    ),
+  NoEntry: () => t("Export needs index.html in the public selection/build output"),
+  ScopedImportMap: () =>
+    t("Export validation does not yet support scoped import maps; build this project before export"),
+  UnresolvedModule: (ref: string) => t("Export has an unresolved module: {module}", { module: ref }),
+  MissingReference: (ref: string, from: string) =>
+    t("Export is missing a referenced public file: {file} in {from}", { file: ref, from }),
 } as const;
 
 /** The first staged file that contains a held credential, byte for byte (text or binary). */
@@ -93,15 +100,15 @@ async function resolveExportTarget(
   requested: string,
 ): Promise<{ target: string; parent: string; existing: Stats | null }> {
   const lexical = path.resolve(requested);
-  if (overlaps(source, lexical)) throw new Error(MESSAGE.InsideGame);
+  if (overlaps(source, lexical)) throw new Error(MESSAGE.InsideGame());
   await mkdir(path.dirname(lexical), { recursive: true });
   const parent = await realpath(path.dirname(lexical));
   const target = path.join(parent, path.basename(lexical));
-  if (overlaps(source, target)) throw new Error(MESSAGE.ResolvesInsideGame);
+  if (overlaps(source, target)) throw new Error(MESSAGE.ResolvesInsideGame());
   const existing = await lstat(target).catch(() => null);
   const plainDirectory = existing?.isDirectory() && !existing.isSymbolicLink();
-  if (existing && !plainDirectory) throw new Error(MESSAGE.NotADirectory);
-  if (existing && !(await isReplaceableExport(target))) throw new Error(MESSAGE.NotAnExport);
+  if (existing && !plainDirectory) throw new Error(MESSAGE.NotADirectory());
+  if (existing && !(await isReplaceableExport(target))) throw new Error(MESSAGE.NotAnExport());
   return { target, parent, existing };
 }
 
@@ -155,7 +162,7 @@ function isVendorFile(rel: string, vendor: string | undefined): boolean {
 async function rewriteEntry(staging: string): Promise<{ entry: string; html: string }> {
   const entry = path.join(staging, "index.html");
   const original = await readFile(entry, "utf8").catch(() => null);
-  if (original === null) throw new Error(MESSAGE.NoEntry);
+  if (original === null) throw new Error(MESSAGE.NoEntry());
   const html = original.replaceAll('"/vendor/', '"./vendor/').replaceAll('"/src/', '"./src/');
   await writeFile(entry, html);
   return { entry, html };
@@ -167,12 +174,19 @@ function importMapOf(html: string): Record<string, string> {
   for (const [, body = ""] of html.matchAll(/<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     const map = JSON.parse(body);
     for (const [key, value] of Object.entries(map.imports ?? {})) if (typeof value === "string") imports[key] = value;
-    if (map.scopes && Object.keys(map.scopes).length) throw new Error(MESSAGE.ScopedImportMap);
+    if (map.scopes && Object.keys(map.scopes).length) throw new Error(MESSAGE.ScopedImportMap());
   }
   return imports;
 }
 
 /** What the reference check walks with: the staged page, its import map, and the modules still to read. */
+/**
+ * How a file names another: an address in a page or an import map is a URL (`File`, or `Script` to
+ * follow), and only a module's own import specifier (`Import`) may be a bare name for the import map.
+ */
+const ReferenceKind = { File: "file", Script: "script", Import: "import" } as const;
+type ReferenceKind = (typeof ReferenceKind)[keyof typeof ReferenceKind];
+
 interface ReferenceCheck {
   staging: string;
   entry: string;
@@ -194,20 +208,20 @@ function mapBareSpecifier(imports: Record<string, string>, ref: string): string 
 }
 
 /**
- * One reference from a staged file: it must name a regular file inside the export. A module
- * reference is followed (queued); a vendored file it reaches is kept. Remote URLs, fragments and
- * a bare specifier the map sends off-machine are not the export's to check.
+ * One reference from a staged file: it must name a regular file inside the export. A script or
+ * import is followed (queued); a vendored file it reaches is kept. Remote URLs, fragments and a
+ * bare specifier the map sends off-machine are not the export's to check.
  */
 async function checkReference(
   check: ReferenceCheck,
   reference: string,
   referrer: string,
-  module = false,
+  kind: ReferenceKind = ReferenceKind.File,
 ): Promise<void> {
   if (/^(?:[a-z]+:|\/\/|#)/i.test(reference)) return;
   let ref = reference;
   let from = referrer;
-  const bareSpecifier = module && !ref.startsWith(".") && !ref.startsWith("/");
+  const bareSpecifier = kind === ReferenceKind.Import && !ref.startsWith(".") && !ref.startsWith("/");
   if (bareSpecifier) {
     ref = mapBareSpecifier(check.imports, ref);
     from = check.entry;
@@ -224,18 +238,18 @@ async function checkReference(
   if (!publicFile) throw new Error(MESSAGE.MissingReference(ref, toPosixRelative(path.relative(staging, from))));
   if (isBelow(path.join(staging, VENDOR_DIR), file))
     check.neededVendor.add(toPosixRelative(path.relative(staging, file)));
-  if (module && /\.m?js$/i.test(file)) check.queue.push(file);
+  if (kind !== ReferenceKind.File && /\.m?js$/i.test(file)) check.queue.push(file);
 }
 
 async function scanModule(check: ReferenceCheck, text: string, file: string): Promise<void> {
   const [specifiers] = parse(text);
   for (const specifier of specifiers)
-    if (specifier.n !== undefined) await checkReference(check, specifier.n, file, true);
+    if (specifier.n !== undefined) await checkReference(check, specifier.n, file, ReferenceKind.Import);
 }
 
 async function scanHtml(check: ReferenceCheck, text: string, file: string): Promise<void> {
   for (const [, ref = ""] of text.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/g))
-    await checkReference(check, ref, file, /\.m?js(?:[?#]|$)/i.test(ref));
+    await checkReference(check, ref, file, /\.m?js(?:[?#]|$)/i.test(ref) ? ReferenceKind.Script : ReferenceKind.File);
   for (const [, body = ""] of text.matchAll(/<script\b[^>]*type=["']module["'][^>]*>([\s\S]*?)<\/script>/gi))
     await scanModule(check, body, file);
 }
@@ -273,7 +287,7 @@ async function checkReferences(
     neededVendor: new Set(),
   };
   for (const ref of Object.values(check.imports))
-    if (!ref.endsWith("/")) await checkReference(check, ref, page.entry, true);
+    if (!ref.endsWith("/")) await checkReference(check, ref, page.entry, ReferenceKind.Script);
   for (const rel of included) {
     if (isVendorFile(rel, vendor)) continue;
     await scanStagedFile(check, rel);

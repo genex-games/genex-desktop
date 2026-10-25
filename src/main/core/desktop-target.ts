@@ -73,6 +73,48 @@ export const NEVER_DRIVEN_BUNDLES: ReadonlySet<string> = new Set([
   "com.keepassxc.keepassxc",
 ]);
 
+/**
+ * The same apps on Windows, by executable (`windowsAppId`). Every packaged app's window is a
+ * frame of `ApplicationFrameHost.exe` (Settings and Windows Security among them), and the studio
+ * cannot tell which app a frame holds, so it drives none; `rundll32.exe` hosts the old dialogs,
+ * saved passwords among them. The shell is never driven either: Explorer (the desktop, the
+ * taskbar, File Explorer's address bar, Run and Control Panel), Start and Search can each start any
+ * program as the person, outside the sandbox. Nor is the driver's own cursor overlay, so a point
+ * that reaches it is refused rather than charged to it.
+ */
+export const NEVER_DRIVEN_WINDOWS_APPS: ReadonlySet<string> = new Set([
+  "applicationframehost.exe",
+  "explorer.exe",
+  "startmenuexperiencehost.exe",
+  "searchhost.exe",
+  "searchapp.exe",
+  "shellexperiencehost.exe",
+  "cua-driver.exe",
+  "systemsettings.exe",
+  "sechealthui.exe",
+  "consent.exe",
+  "credentialuibroker.exe",
+  "logonui.exe",
+  "lockapp.exe",
+  "rundll32.exe",
+  "1password.exe",
+  "bitwarden.exe",
+  "keepass.exe",
+  "keepassxc.exe",
+  "lastpass.exe",
+  "dashlane.exe",
+  "nordpass.exe",
+  "enpass.exe",
+  "keeperpasswordmanager.exe",
+  "proton pass.exe",
+  "roboform.exe",
+]);
+
+/** Whether an app's identifier names one the studio never drives, on either system. */
+function neverDrivenId(id: string | null): boolean {
+  return id !== null && (NEVER_DRIVEN_BUNDLES.has(id) || NEVER_DRIVEN_WINDOWS_APPS.has(id));
+}
+
 /** What the model reads when the studio refuses an action, and why. */
 const MESSAGE = {
   neverDriven: (app: string) => `${app} is never driven by an agent (the studio, password managers, system settings)`,
@@ -89,11 +131,11 @@ const MESSAGE = {
 
 /** What the engine-app guard reads: the editors engines declare, and the chat's live assist grant. */
 export interface EngineAppRule {
-  /** Bundle ids of the editor apps every enabled engine plugin declares (`engine.apps.mac`). */
+  /** The editor apps every enabled engine plugin declares for this system (`engine.apps`, `engineAppIds`). */
   declared: ReadonlySet<string>;
   /** The apps the chat's live setup assist was granted; null outside an assist. */
   granted: ReadonlySet<string> | null;
-  /** Bundle ids of the apps every enabled engine's games are played in (`engine.playerApps.mac`): never driven. */
+  /** The apps every enabled engine's games are played in (`engine.playerApps`): never driven. */
   players?: ReadonlySet<string>;
 }
 
@@ -119,14 +161,14 @@ interface Refusal {
 /** How a desktop target is set up. */
 export interface DesktopTargetOptions {
   driver: DesktopDriver;
-  /** The desktop on this Mac, or a VM's. */
+  /** The desktop on this computer, or a VM's. */
   vm?: boolean;
   /**
    * Whether the agent may use this app: answers at once for an app already allowed, else asks the
    * person and waits. Inside a VM every app is the VM's own, so the VM's grant covers them all.
    */
   allowApp: (app: DesktopApp) => Promise<boolean>;
-  /** Whether this app is one the studio never drives (beyond {@link NEVER_DRIVEN_BUNDLES}): the studio itself. */
+  /** Whether this app is one the studio never drives (beyond {@link NEVER_DRIVEN_BUNDLES} and {@link NEVER_DRIVEN_WINDOWS_APPS}): the studio itself. */
   ownApp?: (app: DesktopApp) => boolean;
   /** The engine-app guard ({@link engineAppRefusal}): why this app is refused now, or null. */
   engineApps?: (app: DesktopApp) => string | null;
@@ -369,8 +411,7 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
     state.refused.push({ op, code: TargetRefusal.Unsupported, message });
     return false;
   };
-  const neverDriven = (app: DesktopApp) =>
-    (app.bundleId !== null && NEVER_DRIVEN_BUNDLES.has(app.bundleId)) || options.ownApp?.(app) === true;
+  const neverDriven = (app: DesktopApp) => neverDrivenId(app.bundleId) || options.ownApp?.(app) === true;
   /**
    * The app an aim lands in, what to say when there is none, and whether it would type into a
    * password field: a point is checked against the app whose window is under it where the driver

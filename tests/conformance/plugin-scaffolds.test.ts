@@ -257,6 +257,9 @@ describe("a plugin's scaffolds", () => {
     const detected = ownKindRules("claude-code", fact(pluginFactSource("toys"))).join("\n");
     assert.doesNotMatch(detected, /plugins_find/, "one its plugin's detect found has that plugin on");
     assert.match(ownKindRules("claude-code", { id: CoreFact.GodotProject, path: "." }).join("\n"), /plugins_find/);
+    const roblox = ownKindRules("claude-code", { id: CoreFact.RobloxProject, path: ".", source: FactSource.Core });
+    assert.match(roblox.join("\n"), /plugins_find/, "a Roblox place with Roblox Studio off looks for it first");
+    assert.match(roblox.join("\n"), /holds a Roblox place/, "and names it in words");
     const brief = buildContractorBrief({ ask: "go on", engine: "claude-code", facts: [fact(FactSource.Scaffold)] });
     assert.match(brief, /plugins_find/, "the chat's brief keeps the fact's source");
   });
@@ -283,6 +286,18 @@ describe("a plugin's scaffolds", () => {
           },
         ),
         "Unreal plugin",
+      ],
+      [
+        "a scaffold fact the app has a word for: the app's word, in the app's language, not the stored label",
+        game([fact("unreal-plugin", FactSource.Scaffold, "unreal/Plugins/X")], {
+          scaffold: { ...scaffold, label: "Host plugin" },
+        }),
+        "Unreal plugin",
+      ],
+      [
+        "a scaffold fact no word names keeps the scaffold's label",
+        game([fact("toy-project", FactSource.Scaffold, "toy")], { scaffold: { ...scaffold, label: "Toy addon" } }),
+        "Toy addon",
       ],
       [
         "a record whose rules no longer find anything",

@@ -20,6 +20,7 @@ const NATIVE_CHANNELS = [
   "studio:plugins.choose-file",
   // Publish from Studio's dialog uploads the game to Genex with the user's real account.
   "studio:plugins.genex-publish",
+  "studio:plugins.genex-publish-apps",
   "studio:subscription.signin",
   "studio:subscription.forget-studio-login",
   // A subscription's accounts: listing asks each account's CLI for its email; choosing one changes
@@ -30,6 +31,12 @@ const NATIVE_CHANNELS = [
   "studio:opencode.signin",
   // Pi's sign-in runs its TUI in a terminal so the person can `/login`.
   "studio:pi.signin",
+  // Grok Build's sign-in runs its CLI in a terminal and signs in to the person's Grok account.
+  "studio:grok.signin",
+  // Cursor's sign-in runs its CLI in a terminal and opens Cursor in the browser; signing out has
+  // the CLI forget the account it keeps.
+  "studio:cursor.signin",
+  "studio:cursor.signout",
   // Opens the sign-in page a terminal printed in the person's browser.
   "studio:terminal.open-link",
   // Saving checks the key with OpenRouter and writes it to the OS secret store; forgetting it
@@ -83,6 +90,8 @@ const NATIVE_CHANNELS = [
   // Set up (Windows) creates a local user account and network filters behind an administrator
   // prompt; a fixture profile never provisions anything on the machine.
   "studio:boot.setup",
+  // A failed Set up's report posts to genex.games, as Send feedback does.
+  "studio:boot.report",
   // Relaunch to update quits the app and installs a downloaded release over it.
   "studio:update.restart",
   // Download opens the waiting release's page in the person's real browser.
@@ -90,6 +99,8 @@ const NATIVE_CHANNELS = [
   // Open Privacy settings opens macOS System Settings.
   "studio:app-look.open-settings",
   // Share… pops the Mac's share menu (Messages, Mail, AirDrop), which hands the link to other apps.
+  // Finder shows an installed game's app: an external app.
+  "studio:play.reveal-install",
   "studio:play.share",
 ] as const satisfies readonly StudioInvokeChannel[];
 /**
@@ -135,6 +146,8 @@ const FIXTURE_SAFE = [
   // Boot reads main's state; Retry re-runs core startup, which a fixture profile may do.
   "studio:boot",
   "studio:boot.retry",
+  // Quit, from the screen of a studio that would not start, closes only this app.
+  "studio:boot.quit",
   // Recolours this window's own title-bar controls; nothing outside the window changes.
   "studio:window.controls",
   // Reads which update main holds; a fixture profile never downloads one (update-ready seeds a stand-in).
@@ -179,6 +192,13 @@ const FIXTURE_SAFE = [
   // What freeing space deletes, and deleting it: git in the games' folders, Genex's own copies.
   "studio:storage",
   "studio:storage.free",
+  // Where Genex keeps its files, and moving them. Only the person's own launch on Windows opens the
+  // picker or moves anything: a developer or test launch answers with its own folder, says it
+  // cannot move it, and reads nothing of the normal profile's (the data-folder fixture answers with
+  // stand-ins and moves nothing).
+  "studio:data-folder",
+  "studio:data-folder.choose",
+  "studio:data-folder.move",
   "studio:game.engine.undo",
   // Stops a process this profile's own agent started; nothing outside the profile changes.
   "studio:jobs.stop",
@@ -205,6 +225,8 @@ const FIXTURE_SAFE = [
   // The count on Studio's own Dock icon; it reaches nothing outside this app.
   "studio:badge",
   "studio:preview.load",
+  // Loads a game's own web build into its own Live, as opening the game does: nothing outside the app.
+  "studio:preview.web-build",
   "studio:preview.screens",
   "studio:preview.bounds",
   // A picture of the app's own game view for its own stage: nothing outside the app is reached.
@@ -273,6 +295,8 @@ const FIXTURE_SAFE = [
   "studio:plugins.action",
   // Publish's file list: the same export Export makes, into the profile's scratch, then removed.
   "studio:plugins.genex-publish-review",
+  // Publish's platform rows: what the game folder holds, read only.
+  "studio:plugins.genex-publish-platforms",
   "studio:plugins.index",
   "studio:plugins.watch",
   // A local plugin's grants live in the profile's install record; no dialog, no socket.
@@ -286,11 +310,39 @@ const FIXTURE_SAFE = [
   // A remix writes a new game into the profile's own games folder; a fixture launch's copy is a
   // local stand-in (`play/remix.ts` `fixtureClone`), so no socket opens.
   "studio:play.remix",
+  // Whether a game's source holds a game: a fixture launch answers yes from memory, so no socket opens.
+  "studio:play.remix-ready",
   "studio:play.online",
   "studio:play.open",
   "studio:play.close",
+  // The game a genex:// link named, held in main's memory: nothing is reached to answer it.
+  "studio:play.take-game-link",
+  // A game's own page reads the catalog like a card does; a fixture launch answers it (`dev/fixture-play.ts`).
+  "studio:play.game",
+  // A native game's install writes into the profile's own installed-games folder; a fixture launch
+  // downloads its made-up games from its own files (`dev/fixture-native.ts`), so no socket opens.
+  "studio:play.install",
+  "studio:play.install-cancel",
+  "studio:play.installs",
+  "studio:play.uninstall",
+  // An installed game plays from the profile's own installed-games folder, in the game sandbox: in a
+  // fixture launch that is the fixture's stand-in app (`dev/fixture-native-app.ts`), never another app.
+  "studio:play.launch",
+  "studio:play.session",
+  "studio:play.sessions",
+  // A like from a game's page: a fixture launch's likes answer signed out (`dev/fixture-play.ts`).
+  "studio:play.like",
   // The viewer header's controls: a fixture launch's likes, tickets and invites answer signed out, even with its account.
   "studio:play.control",
+  // The bar's layer says what holds it up; no socket.
+  "studio:play.bar",
+  // A game's comments: a fixture launch answers from its own comments (`dev/fixture-play.ts`).
+  "studio:play.comments",
+  "studio:play.comment",
+  "studio:play.uncomment",
+  // A game's purchase sheet, answered from Play's bar: a fixture launch's coin calls go to its own
+  // fixture coin (`dev/fixture-coin.ts`), so no socket opens.
+  "studio:play.purchase",
   // Play's people: a fixture launch answers from its own people (`dev/fixture-play.ts`), signed out
   // unless the launch asks for its fixture account, and an avatar "upload" stays in memory.
   "studio:play.me",
@@ -308,10 +360,56 @@ const FIXTURE_SAFE = [
   "studio:play.stats",
   "studio:play.creators",
   "studio:play.credits",
+  // The asset library and Save, Share and Add: a fixture launch answers from its own made-up
+  // library (`dev/fixture-asset-library.ts`), signed out unless it asks for its fixture account;
+  // a share or a save lasts the launch, and Add writes only into the fixture's own game.
+  "studio:assets.library",
+  "studio:assets.states",
+  "studio:assets.save",
+  "studio:assets.share",
+  "studio:assets.unshare",
+  "studio:assets.add",
+  // A tile's picture file: a fixture launch reads the fixture library's own made-up file, so no
+  // socket opens.
+  "studio:assets.file",
   // The nickname: a fixture launch answers a check and a save from its own people (a few names
   // taken or kept), signed out unless it asks for its fixture account; the save lasts the launch.
   "studio:play.handle-check",
   "studio:play.handle",
+  // A game's card menu: a fixture launch answers every change and a new cover from its own data
+  // (`dev/fixture-manage.ts`), kept for the launch, and a cover "upload" stays in memory, so no
+  // socket opens.
+  "studio:play.manage",
+  "studio:play.cover",
+  // The store and Create › Items: a fixture launch answers every store and creator route, a page
+  // purchase and its coin from its own data (`dev/fixture-store.ts` over `dev/fixture-play.ts`),
+  // signed out unless it asks for its fixture account; a purchase, a claim, an allowance or Put on
+  // sale lasts the launch, and Get Nex opens no page, so no socket opens.
+  "studio:store.items",
+  "studio:store.my-items",
+  "studio:store.item-games",
+  "studio:store.buy",
+  "studio:store.answer",
+  "studio:store.claim",
+  "studio:store.shelf",
+  "studio:store.coins",
+  "studio:store.get-coin",
+  "studio:store.report",
+  "studio:items.browse",
+  "studio:items.detail",
+  "studio:items.add",
+  "studio:items.remove",
+  "studio:items.selling",
+  "studio:items.put-on-sale",
+  "studio:items.take-off-sale",
+  "studio:items.shared",
+  // A game's local item drafts: approvals live in the profile's own app data, and a fixture launch
+  // settles and shares them from its own store (`dev/fixture-items.ts`), so no CLI runs and no socket opens.
+  "studio:items.local",
+  "studio:items.local-approve",
+  "studio:items.local-withdraw",
+  "studio:items.local-share",
+  "studio:items.local-settle",
   // The app's Genex account: a fixture launch's is its own (`dev/fixture-genex-account.ts`), signed
   // in as the fixture account it asked for; its sign-in opens no page and its sign-out lasts the launch.
   "studio:genex-account.read",

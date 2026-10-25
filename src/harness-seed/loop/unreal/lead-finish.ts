@@ -18,14 +18,17 @@ import {
   type FinishTally,
   finishAnswer,
   newTally,
+  staleClaim,
 } from "../finish-check.ts";
-import { FinishCheckStep } from "../finish-contract.ts";
+import { FINISH_ANSWER } from "../finish-check-prompts.ts";
+import { FinishCheckStep, MAX_FINISH_REJECTIONS } from "../finish-contract.ts";
 import { fireHooks, HookEvent, runScope } from "../hooks.ts";
 import { HOOK_PROMPTS } from "../hooks-prompts.ts";
 import { HostMethod } from "../host-methods.ts";
 import { readFinishLog } from "../finish-log.ts";
 import { ExecutionStatus } from "../run-events.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../text.ts";
+import { timeLeftOf } from "../time-cap.ts";
 import { LeadEndReason } from "./lead-contract.ts";
 import { type Lead, type LeadTurn, saveLead } from "./lead-journal.ts";
 import { LEAD_FINISH } from "./lead-finish-prompts.ts";
@@ -58,6 +61,9 @@ function tallyOf(lead: FinishingLead): FinishTally {
   lead.journal.finishTally ??= newTally();
   return lead.journal.finishTally;
 }
+
+/** What marks the lead's work: its newest save point ("" before its first). */
+const workMarkOf = (lead: FinishingLead): string => lead.journal.savePoints.at(-1)?.snapshotId ?? "";
 
 /** The files the lead names as proof: a comma-separated list. */
 const proofOf = (args: AnyRecord): string[] =>
@@ -123,6 +129,8 @@ async function check(
       relayed: log.relayed,
       ended: () => Boolean(lead.end),
       abandoned: () => turnOver(lead, call.turn),
+      timeLeft: () => timeLeftOf(lead.run, lead.softDeadline, lead.clock.now()),
+      workMark: async () => workMarkOf(lead),
       keep: () => saveLead(lead),
     },
     claim,
@@ -140,6 +148,9 @@ export async function leadFinish(lead: FinishingLead, args: AnyRecord): Promise<
   if (lead.end) return LEAD_FINISH.Ending;
   if (await personFinishes(lead)) return LEAD_FINISH.PersonFinished;
   if (!hasText(args.summary)) return LEAD_FINISH.NeedsSummary;
+  // Nothing new since the row of no's the run went on past: no plugin step and no reviewer for it.
+  if (await staleClaim(tallyOf(lead), lead.game.dir, proofOf(args), workMarkOf(lead)))
+    return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   const held = await fireHooks(lead.ctx, lead.game, HookEvent.Finish, runScope(lead));
   if (held.blocked) return HOOK_PROMPTS.finishHeld(held.blocked.reason);
   const claim: FinishClaim = {

@@ -104,6 +104,23 @@ test("the metered catalogs start with their first three models", () => {
   assert.equal(shownModels(EngineId.OpenRouter, listed, { "vendor/m0": false }).has("vendor/m0"), false);
 });
 
+test("Cursor's long list starts with its default and the first three it names, the rest under Older models", () => {
+  // As `cursor-agent models` orders them; `auto` is marked default (fixtures/transcripts/cursor-models-written-*).
+  const listed = [
+    row("auto", "Auto", undefined, true),
+    row("composer-2.5", "Composer 2.5"),
+    row("composer-2.5-fast", "Composer 2.5 (Fast)"),
+    row("grok-4.7", "Grok 4.7"),
+    row("grok-4.7-fast", "Grok 4.7 (Fast)"),
+    row("claude-opus-5-5", "Claude Opus 5.5"),
+  ];
+  assert.deepEqual([...latestModels(EngineId.Cursor, listed)], ["auto", "composer-2.5", "composer-2.5-fast"]);
+  assert.deepEqual(
+    [...shownModels(EngineId.Cursor, listed, { "claude-opus-5-5": true })],
+    ["auto", "composer-2.5", "composer-2.5-fast", "claude-opus-5-5"],
+  );
+});
+
 test("a metered catalog starts with the newest GPT and Claude, a vendor at a time, before the rest", () => {
   const listed = [
     row("openai/gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),

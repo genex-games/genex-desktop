@@ -5,6 +5,7 @@
  */
 import type { IconName } from "./ui/icons.tsx";
 import { type IterationNode, IterationStatus, type RunGraph } from "./run-graph.ts";
+import { t } from "../shared/i18n.ts";
 import { WorkerStopCode } from "../shared/workers.ts";
 import { stoppedWords } from "./words.ts";
 
@@ -20,16 +21,16 @@ export const TRY_GLYPH: Record<IterationNode["status"], { icon: IconName | null;
 
 /** What a try's button says it is, after "Try n:". */
 export const TRY_WORD: Record<IterationNode["status"], string> = {
-  accepted: "kept",
-  rolled: "undone",
-  stopped: "stopped by the lead",
-  unjudged: "no verdict recorded",
-  abandoned: "not reviewed",
-  building: "in hand",
+  accepted: t("kept"),
+  rolled: t("undone"),
+  stopped: t("stopped by the lead"),
+  unjudged: t("no verdict recorded"),
+  abandoned: t("not reviewed"),
+  building: t("in hand"),
 };
 
 /** A try stopped by the run's own close (its pause or end), as its button says it: nobody's decision. */
-const STOPPED_BY_RUN_CLOSE = "stopped when the build paused or ended";
+const STOPPED_BY_RUN_CLOSE = t("stopped when the build paused or ended");
 
 /** What a try's button says it is, after "Try n:": a stop by the run's close is not the lead's. */
 export function tryWord(node: Pick<IterationNode, "status" | "stopCode">): string {
@@ -44,5 +45,5 @@ export function tryWord(node: Pick<IterationNode, "status" | "stopCode">): strin
  */
 export function endedWords(graph: Pick<RunGraph, "active" | "summary">): string | null {
   if (graph.active || !graph.summary?.reason) return null;
-  return `Ended because ${stoppedWords(graph.summary.reason)}.`;
+  return t("Ended because {reason}.", { reason: stoppedWords(graph.summary.reason) });
 }

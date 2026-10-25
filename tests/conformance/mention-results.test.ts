@@ -43,6 +43,13 @@ const other: MentionRef = {
   title: "Other game",
   game: "other-game",
 };
+const tree: MentionRef = {
+  handle: "giant-mushroom-tree",
+  kind: MentionKind.Asset,
+  origin: MentionOrigin.Library,
+  title: "Giant mushroom tree",
+  generation: "gen-mushroom-01",
+};
 
 describe("sending and retrying @ tags", () => {
   let lite: CoreLite;
@@ -50,6 +57,8 @@ describe("sending and retrying @ tags", () => {
   let threadId: string;
   const sent: DispatchAction[] = [];
   let cloneWorks = false;
+  let libraryWorks = false;
+  const libraryCalls: string[][] = [];
 
   before(async () => {
     const sources: MentionSources = {
@@ -66,6 +75,11 @@ describe("sending and retrying @ tags", () => {
         await writeFile(path.join(dest, "main.ts"), "// neon\n");
       },
       assetManifest: () => Promise.reject(new Error("offline")),
+      addFromLibrary: async (project, generationId) => {
+        libraryCalls.push([project, generationId]);
+        if (!libraryWorks) throw new Error("offline");
+        return [`assets/library/job-1/${generationId}.glb`];
+      },
     };
     lite = await coreLite({ executionPolicy: { runBackgroundImprovement: false }, mentionSources: sources });
     core = lite.core;
@@ -127,6 +141,27 @@ describe("sending and retrying @ tags", () => {
 
   it("a retry outside a game's chat is refused", async () => {
     await assert.rejects(core.retryMention(core.mainThread, "q-1", neon, MentionRetry.Again));
+  });
+
+  it("a library tag is added to the game through the library, and Try again carries its generation", async () => {
+    await core.sendUserMessage("put @giant-mushroom-tree by the lake", {
+      thread: threadId,
+      clientId: "q-2",
+      mentions: [tree],
+    });
+    const failed = (await tagged()).at(-1)?.[0];
+    assert.equal(failed?.result, MentionResult.Unavailable);
+    assert.equal(failed?.miss, MentionMiss.NotDownloaded);
+    assert.ok(failed && retriable(failed));
+    libraryWorks = true;
+    await core.retryMention(threadId, "q-2", refOf(failed), MentionRetry.Again);
+    const added = (await tagged()).at(-1)?.[0];
+    assert.equal(added?.result, MentionResult.Added);
+    assert.equal(added?.path, "assets/library/job-1/gen-mushroom-01.glb");
+    assert.deepEqual(libraryCalls, [
+      ["racer", "gen-mushroom-01"],
+      ["racer", "gen-mushroom-01"],
+    ]);
   });
 });
 

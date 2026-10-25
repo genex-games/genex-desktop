@@ -25,6 +25,7 @@ import {
 import { NotificationsMenu } from "./NotificationsMenu.tsx";
 import { SidebarPluginUpdates } from "./SidebarPluginUpdates.tsx";
 import { GenexTermsLine } from "./plugins/genex/GenexTermsLine.tsx";
+import { AgentsStartLine } from "./AgentsStartLine.tsx";
 import type { PluginUpdate } from "../state/plugins.ts";
 import type { Notice } from "../notifications.ts";
 import type { LaunchInSidebar } from "../state/launch.ts";
@@ -37,12 +38,14 @@ import { usePeopleSync } from "../play/use-people-sync.ts";
 import { PlayRecent } from "../play/PlayRecent.tsx";
 import { PlaySwitch } from "../play/PlaySwitch.tsx";
 import { SidebarFriends } from "../play/SidebarFriends.tsx";
-import { usePeople, usePlay, useShallow } from "../state/hooks.ts";
+import { useAgentsStart, usePeople, usePlay, useShallow } from "../state/hooks.ts";
 import { PlayPage } from "../state/play.ts";
 import { besideRemix, remixCovers, remixShare } from "../play/remix-model.ts";
 import { remixTitle } from "../../shared/play.ts";
 import { studio as studioApp } from "../state/studio.ts";
 import { PLAY_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
+import { SidebarToggle } from "../shell/use-shell-chrome.ts";
 
 interface Props {
   threads: ConversationRecord[];
@@ -68,6 +71,9 @@ interface Props {
   onSettings: () => void;
   pluginsOpen: boolean;
   onPlugins: () => void;
+  /** Create › Items is up (marketplace plan 10.3): its row is the selected one. */
+  itemsOpen: boolean;
+  onItems: () => void;
   /** Play is up: the rooms fold away and the list is the games played last. */
   playOpen: boolean;
   /** Play or Create, from the switch under the wordmark. */
@@ -172,7 +178,7 @@ export function Sidebar(props: Props): JSX.Element {
       ref={nav}
       data-pane="rail"
       id="studio-sidebar"
-      aria-label="Main navigation"
+      aria-label={t("Main navigation")}
       className="game-sidebar"
       data-scrolled={scrolled}
       data-play={playOpen}
@@ -212,7 +218,7 @@ export function Sidebar(props: Props): JSX.Element {
       </div>
       {/* Shown once, until the first sign-in: the account plate stays under it. */}
       {playOpen && <PlayPromo />}
-      <ProfilePlate onPlayMode={props.onPlayMode} />
+      <ProfilePlate playOpen={playOpen} onPlayMode={props.onPlayMode} />
     </nav>
   );
 }
@@ -258,8 +264,8 @@ function LaunchRow({ title }: { title: string | null }): JSX.Element {
     <div className="sidebar-game" data-launching data-active="true" data-busy="true">
       <div className="sidebar-game-select" aria-current="page">
         <span className="game-avatar game-avatar-pending" aria-hidden="true" />
-        <span className={`min-w-0 flex-1 truncate ${title ? "" : "text-ink-3"}`}>{title ?? "Naming…"}</span>
-        <span className="sr-only">Working</span>
+        <span className={`min-w-0 flex-1 truncate ${title ? "" : "text-ink-3"}`}>{title ?? t("Naming…")}</span>
+        <span className="sr-only">{t("Working")}</span>
       </div>
       <GameRowEnd busy pinned={false} />
     </div>
@@ -267,8 +273,8 @@ function LaunchRow({ title }: { title: string | null }): JSX.Element {
 }
 
 /**
- * What waits for the person, over the foot of the game list: Genex's updated terms to review, the
- * plugin updates line, then the app's own Relaunch to update or Download.
+ * What waits for the person, over the foot of the game list: agents that didn't start, Genex's
+ * updated terms to review, the plugin updates line, then the app's own Relaunch to update or Download.
  */
 function SidebarFooter({
   update,
@@ -282,9 +288,12 @@ function SidebarFooter({
 }: Props): JSX.Element | null {
   const pluginsWait = pluginUpdates.length > 0 || updatingPlugins;
   const genexTerms = usePeople((s) => s.genexTermsPending);
-  if (!update && !pluginsWait && !genexTerms) return null;
+  const agentsFailed = useAgentsStart((s) => s.failure !== null);
+  const waiting = Boolean(update) || pluginsWait || genexTerms || agentsFailed;
+  if (!waiting) return null;
   return (
     <div className="sidebar-footer">
+      <AgentsStartLine />
       <GenexTermsLine />
       {pluginsWait && (
         <SidebarPluginUpdates
@@ -397,6 +406,8 @@ function SidebarTop({
   onSettings,
   pluginsOpen,
   onPlugins,
+  itemsOpen,
+  onItems,
   stagedCount,
   onNewGame,
   onSelectThread,
@@ -411,11 +422,12 @@ function SidebarTop({
   return (
     <div className="sidebar-fixed">
       <div className="titlebar-drag sidebar-titlebar">
-        <Hint label="Hide sidebar" shortcut="⌘B">
+        <Hint label={t("Hide sidebar")} shortcut="⌘B">
           <button
             type="button"
             className="no-drag sidebar-toggle"
-            aria-label="Hide sidebar"
+            data-sidebar-toggle={SidebarToggle.Hide}
+            aria-label={t("Hide sidebar")}
             aria-controls="studio-sidebar"
             aria-expanded="true"
             onClick={onToggle}
@@ -426,8 +438,8 @@ function SidebarTop({
         <div className="no-drag sidebar-brand-actions">
           <IconButton
             icon="search"
-            label="Search games"
-            title="Search games · ⌘K"
+            label={t("Search games")}
+            title={t("Search games · {shortcut}", { shortcut: "⌘K" })}
             className="sidebar-icon"
             onClick={onSearch}
           />
@@ -457,7 +469,7 @@ function SidebarTop({
         <button
           type="button"
           className="sidebar-home"
-          aria-label="Home"
+          aria-label={t("Home")}
           aria-current={atHome && !playOpen ? "page" : undefined}
           onClick={onHome}
         >
@@ -470,13 +482,17 @@ function SidebarTop({
       </div>
       <div className="sidebar-fold" data-folded={playOpen} inert={playOpen}>
         <div className="sidebar-nav">
-          <Hint label="New game" shortcut="⌘N">
+          <Hint label={t("New game")} shortcut="⌘N">
             <NavRow icon="new-game" aria-keyshortcuts="Meta+N Control+N" onClick={onNewGame}>
-              New game
+              {t("New game")}
             </NavRow>
           </Hint>
-          <NavRow icon="plugins" aria-label="Plugins" current={pluginsOpen} onClick={onPlugins}>
-            Plugins
+          <NavRow icon="plugins" aria-label={t("Plugins")} current={pluginsOpen} onClick={onPlugins}>
+            {t("Plugins")}
+          </NavRow>
+          {/* Create › Items: Browse other creators' items, and Selling your own (P9: Play has none). */}
+          <NavRow icon="layers" aria-label={t("Items")} data-sidebar-room="items" current={itemsOpen} onClick={onItems}>
+            {t("Items")}
           </NavRow>
           {studio && (
             <Hint label="Harness" shortcut="⌘2">
@@ -489,7 +505,13 @@ function SidebarTop({
               >
                 <span className="min-w-0 flex-1 truncate">Harness</span>
                 {stagedCount > 0 && (
-                  <span className="sidebar-badge" aria-label={`${stagedCount} skill improvements to review`}>
+                  <span
+                    className="sidebar-badge"
+                    aria-label={t(
+                      "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}",
+                      { count: stagedCount },
+                    )}
+                  >
                     {stagedCount}
                   </span>
                 )}
@@ -501,8 +523,8 @@ function SidebarTop({
       </div>
       {/* Settings is in both Create and Play: under whichever rows are up. */}
       <div className="sidebar-nav sidebar-nav-shared">
-        <NavRow icon="settings" aria-label="Settings" aria-haspopup="dialog" onClick={onSettings}>
-          Settings
+        <NavRow icon="settings" aria-label={t("Settings")} aria-haspopup="dialog" onClick={onSettings}>
+          {t("Settings")}
         </NavRow>
       </div>
       {playOpen ? (
@@ -514,11 +536,11 @@ function SidebarTop({
         )
       ) : (
         <div className="sidebar-games-heading" key="games">
-          <span>Games</span>
+          <span>{t("Games")}</span>
           <IconButton
             icon="plus"
-            label="Create game"
-            title="Create game · ⌘N"
+            label={t("Create game")}
+            title={`${t("Create game")} · ⌘N`}
             className="sidebar-icon"
             onClick={onNewGame}
           />
@@ -598,7 +620,7 @@ function GameRowEnd({ busy, pinned }: { busy: boolean; pinned: boolean | undefin
   }
   if (!pinned) return null;
   return (
-    <span className="sidebar-pin" aria-label="Pinned">
+    <span className="sidebar-pin" aria-label={t("Pinned")}>
       <Icon name="pin" size={13} />
     </span>
   );
@@ -645,37 +667,41 @@ function GameRow({
             row narrower than that shortens the label too. */}
         <span className="min-w-8 flex-1 truncate">{game.title}</span>
         {kind && <span className="ms-1.5 min-w-0 truncate text-ink-3">{kind}</span>}
-        {busy && <span className="sr-only">Working</span>}
+        {busy && <span className="sr-only">{t("Working")}</span>}
       </button>
       <GameRowEnd busy={busy} pinned={game.pinned} />
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
-              <button type="button" className="sidebar-game-menu" aria-label={`Actions for ${game.title}`}>
+              <button
+                type="button"
+                className="sidebar-game-menu"
+                aria-label={t("Actions for {game}", { game: game.title })}
+              >
                 <Icon name="more" />
               </button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right">Game actions</TooltipContent>
+          <TooltipContent side="right">{t("Game actions")}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start" side="right" className="w-48">
           <DropdownMenuItem data-game-action="rename" onSelect={onRename}>
             <Icon name="rename" />
-            Rename
+            {t("Rename")}
           </DropdownMenuItem>
           <DropdownMenuItem data-game-action="pin" onSelect={onPin}>
             <Icon name="pin" />
-            {game.pinned ? "Unpin" : "Pin"}
+            {game.pinned ? t("Unpin") : t("Pin")}
           </DropdownMenuItem>
           <DropdownMenuItem data-game-action="cover" onSelect={onCover}>
             <Icon name="image" />
-            Change image…
+            {t("Change image…")}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem data-game-action="delete" disabled={busy} onSelect={onDelete} className="text-red">
             <Icon name="trash" />
-            Delete…
+            {t("Delete…")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

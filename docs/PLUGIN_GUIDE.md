@@ -118,7 +118,7 @@ undeclared method is a compile error.
 | `assets.deliver` | `project.write` | Copies your output into a unique asset directory in the game; delivered files reach the host ledger |
 | `jobs.read` / `jobs.write` | `jobs` | Durable provider references. Not a credit ledger |
 | `events.emit` | `jobs` | Sanitized progress, attributed to the bound project/thread. `{kind:'toolbar', …}` updates a toolbar badge |
-| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each. API 3: with `clip: { demo, width, height, seconds? (2–10, 5), fps? (15–30, 30), maxBytes? (256 KiB–8 MiB, 8 MiB) }` and `files: []`, the demo stages a moment and returns, the host starts the clock and records that many seconds as MP4 or WebM with a JPEG `poster` and a 0–1 `motion` (about 0 when frozen), or a `clipProblem` with a still's codes (`PluginClipIgnored` from an older host) |
+| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; a picture that is still a blank or loading screen is taken again up to three times, two seconds of play apart, and the last one is answered; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each. API 3: with `clip: { demo, width, height, seconds? (2–10, 5), fps? (15–30, 30), maxBytes? (256 KiB–8 MiB, 8 MiB) }` and `files: []`, the demo stages a moment and returns, the host starts the clock and records that many seconds as MP4 or WebM with a JPEG `poster` and a 0–1 `motion` (about 0 when frozen), or a `clipProblem` with a still's codes (`PluginClipIgnored` from an older host) |
 | `export.stage` | `export` | Studio writes the public export of the bound game under `storage.root/publish/<project>/dist` and returns the result |
 | `credentials.session` | `credentials`, API 3 | Reuse an explicitly unlocked host-memory lease; never opens the OS store |
 | `runtime.detect` / `runtime.installation` | `native-runtime`, API 3 | Read declared native runtime readiness and durable installation progress |
@@ -315,12 +315,13 @@ A panel is served into an opaque-origin sandboxed frame with
 - Inline your JavaScript and CSS. `<script src="…">` **will not load**. Put
   `<!-- STUDIO_PANEL_SDK -->` where the bridge goes and run
   `node src/plugin-sdk/inline-panel-sdk.mjs panel.html` (the scaffold already did): it pastes the
-  current `panel.js` and `ui.js` in, so the bridge matches `index.d.ts`.
+  current `panel.js`, `ui.js` and `words.js` in, with the translations from `locales/` beside the
+  panel, so the bridge matches `index.d.ts`.
 - No `fetch`, no forms, no external images, no external fonts. Images and fonts must be `data:` URLs
   (`inlinePanelFonts` in the same script pastes Genex's own type in at `<!-- STUDIO_PANEL_FONTS -->`), and
   `project.read` is utf8-only, so a panel cannot display a PNG read from the game folder.
 - The whole bridge is `window.studioPlugin`: `call(method, name?, args?)` with
-  `call('context')` → `{project, apiVersion, theme, surface}` (`theme` carries `background`, `foreground`,
+  `call('context')` → `{project, apiVersion, theme, surface, locale}` (`theme` carries `background`, `foreground`,
   `accent` and the readable button colours `accentFill`, `accentForeground`, `accentHover`),
   `call('settings')` → your standard settings
   and `call('action', name, args)` → a declared action, plus
@@ -334,6 +335,28 @@ A panel is served into an opaque-origin sandboxed frame with
   hides both (the dialog draws them, and its arrow presses your Back), marks the document
   `data-surface="card"` so you can drop your own padding, and sizes the frame to your content, so
   the dialog scrolls once. A page without a marked heading keeps the manifest's panel title.
+- A panel speaks Genex's language (`context.locale`: `en`, `ru`, `es`, `pt-BR`, `de`, `fr`, `ja`,
+  `ko`, `zh-Hans`). Write each word once, in English, as `studioPlugin.t("Set up {name}", { name })`
+  in the ICU message syntax the app uses (`{count, plural, one {# file} other {# files}}`,
+  `{choice, select, …}`, `'{'` for a brace); `studioPlugin.formatList(items)` writes "a, b and c",
+  and `studioPlugin.locale` is the language the panel speaks, for `Intl`. Mark static words in the
+  page `data-t` (its text) or `data-t="title aria-label"` (those attributes). The SDK speaks once
+  the host has named the language, so make your script a module that starts with
+  `await studioPlugin.ready;` (`<script type="module">`); `ready` settles in English after two
+  seconds without an answer. Translations live in your package's `locales/<lang>.json`, keyed by
+  the English (`{"Set up {name}": "Настроить {name}"}`); `node src/plugin-sdk/panel-words.mjs
+  panel.html` writes `locales/messages.json`, the list of every English message the panel asks
+  for, and an empty catalog per language. A missing or broken translation shows the English. The
+  bundled panels (`src/plugins/unity/panel.html` and the others) do all of this.
+- Your manifest speaks it too. Genex looks up the plugin.json texts a person reads (`name`,
+  `description`, `setup`, panel titles, setting and action labels, `confirmation`s and a card
+  field's `label`, toolbar `label` and `ariaLabel`, `folders[].why`, Live tab and runtime labels) by
+  their English in the same `locales/<lang>.json` of the installed package, as plain text.
+  `panel-words.mjs` adds them to `messages.json` (`node src/plugin-sdk/panel-words.mjs plugin.json`
+  for a plugin without a panel). Ids, names, values and what agents read (tool descriptions,
+  skills) stay as written. The English shows for a missing translation, a catalog that isn't a JSON
+  object of strings or is over 512 KiB, and a translation that adds a line break or a control
+  character, grows past three times its English, or names a strip button Studio's own.
 - Buttons follow Genex's rule: a padded button has a background. An action for the whole panel
   that you want quiet is a link (underlined words, no padding), never a padded button without a fill.
 
@@ -350,6 +373,8 @@ Two different things, both asked by the host and never by the plugin or the agen
   request must not be repeated. API 3: `confirmationInput: {parameter, label}` names one of the
   tool's string parameters the person may edit on the card before Allow (a game's name, say); the
   call runs with their edit.
+- **`tools[].timeoutMs`** (API 3) — whole milliseconds, 1,000 to 540,000: how long one call may
+  run when that is longer than the host's 190-second ceiling, such as an engine's import or export.
 - **`actions[].confirmation`** — a user-invoked action behind a Studio-owned review and a native
   dialog. Your optional `review` returns `{message, detail, images:[{label, dataUrl}]}`: `message`
   (at most 2,000 characters) is the dialog's question instead of the manifest's `confirmation`, and
@@ -601,9 +626,10 @@ recipe, not Studio internals. Keep credentials, process launch parameters and pe
 out of agent tool schemas. Tools receive relative input references and return delivered relative
 file paths plus durable job IDs. Installation belongs to a separate confirmed action.
 
-For a custom panel, inline the distributed `plugin-sdk/panel.js`. Studio's bundled plugin build
-replaces `<!-- STUDIO_PANEL_SDK -->` with that script; external authors must do equivalent inlining
-in their own build. Referencing an external script URL or assuming `window.studioPlugin` exists
+For a custom panel, inline the distributed `plugin-sdk/panel.js` (and `ui.js` and `words.js` after
+it). Studio's bundled plugin build replaces `<!-- STUDIO_PANEL_SDK -->` with those scripts and the
+plugin's `locales/` translations (`inlinePanelSdk(html, sdkDir, localesDir)`); external authors must
+do equivalent inlining in their own build. Referencing an external script URL or assuming `window.studioPlugin` exists
 without the bootstrap produces a nonfunctional panel.
 
 A long install can call `studioPlugin.call('action', 'install', {}, {timeoutMs: 1800000})`. Query

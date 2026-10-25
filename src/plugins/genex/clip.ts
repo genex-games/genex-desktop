@@ -22,12 +22,16 @@ import { stripAnsi } from "./cli.ts";
 
 /** The demo a game stages its clip's first moment in (`config.demos`). */
 export const CLIP_VIEW = "genex-clip";
-/** What the host is asked for: Genex's stored clip size and length, within its upload limit. */
+/**
+ * What the host is asked for: Genex's stored clip size, within its upload limit, and half a second
+ * past the five seconds Genex keeps. Genex trims up to 300 ms of the start (its encoder's cold
+ * start), so a clip of exactly five seconds loses its last frame and is refused as too short.
+ */
 export const COVER_CLIP = {
   demo: CLIP_VIEW,
   width: 960,
   height: 540,
-  seconds: 5,
+  seconds: 5.5,
   fps: 30,
   maxBytes: 8 * 1024 * 1024,
 } as const;

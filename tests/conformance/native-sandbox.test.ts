@@ -62,6 +62,7 @@ describe("native job sandbox profile", { skip: !darwin && "Seatbelt is macOS-onl
     const rules = profile.split("\n");
     for (const broad of ["(allow process*)", "(allow signal)", "(allow mach-lookup)"])
       assert.ok(!rules.includes(broad), `${broad} is not granted`);
+    assert.ok(!profile.includes("file-issue-extension"), "a job with no folder to hand out issues no extension");
     assert.ok(
       rules.includes('(allow process-exec (subpath "/Applications/Tool.app"))'),
       "exec is limited to the runtime's folder",

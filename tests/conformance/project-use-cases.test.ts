@@ -987,7 +987,7 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
     const game = await lite.core.createGame("Kite Racer");
     const { prompt, bridged, capture } = await chatTurn(game.name, "make a kite racing game", { tools: [] });
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, [], "no question card");
+    assert.deepEqual(bridged, ["start_autopilot"], "no question card, only Auto's Loop start");
     assert.equal(capture, true, "the builder captures the web preview");
   });
 
@@ -1193,7 +1193,7 @@ describe("Unreal asked for with the plugin off: find the plugin, or go on with g
     const game = await lite.core.createGame("Plain Start");
     const { prompt, bridged, capture } = await chatTurn(game.name, "make a game", { tools: [] });
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, [], "no question card");
+    assert.deepEqual(bridged, ["start_autopilot"], "no question card, only Auto's Loop start");
     assert.equal(capture, true, "a web build");
   });
 

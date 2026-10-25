@@ -1,7 +1,13 @@
 {
   "about": "Explicit edges for scripts/affected-tests.mjs, for inputs no test imports or names by a literal path. Keys use knowledge-map glob semantics (dir/** also owns hidden files); values are test files. Tier follows the test: rig tests land in L3. Changes under src/harness-seed/** and src/game-template/** already select the harness gate; do not repeat that here.",
   "map": {
+    "scripts/patch-sandbox-runtime.mjs": [
+      "tests/conformance/windows-acl-cleanup.test.ts",
+      "tests/conformance/windows-sandbox.test.ts",
+      "tests/conformance/sandbox-windows-start.test.ts"
+    ],
     ".github/workflows/check.yml": ["tests/conformance/ci-test-plan.test.ts"],
+    "scripts/canary/**": ["tests/conformance/release-canary.test.ts"],
     "src/main/preview.ts": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "src/page/**": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "docs/**": ["tests/conformance/agent-context.test.ts", "tests/conformance/agent-instructions.test.ts"],

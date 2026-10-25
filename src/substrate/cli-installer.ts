@@ -19,7 +19,7 @@ import { CliInstallProblem } from "../shared/cli-install.ts";
 import type { CodingProvider, InstallableCodingProvider } from "../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineId } from "../shared/providers.ts";
-import { childEnv } from "./child-env.ts";
+import { childEnv, windowsPowerShellEnv } from "./child-env.ts";
 import { killProcessTree } from "./process-tree.ts";
 import { envValue, isWindows } from "./toolchain.ts";
 
@@ -27,6 +27,11 @@ import { envValue, isWindows } from "./toolchain.ts";
 const INSTALL_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The largest installer script accepted; the vendors' are tens of kilobytes. */
 const SCRIPT_MAX_BYTES = 1024 * 1024;
+/**
+ * The user agent the installer is fetched with: a program's, never a browser's. Electron's own fetch
+ * speaks with Chrome's, and cursor.com answers a browser with its web page, not the script.
+ */
+const INSTALLER_USER_AGENT = "Genex (coding CLI installer)";
 /** How much of the installer's output is kept for the log when it fails. */
 const OUTPUT_TAIL_CHARS = 4000;
 /** How long an exited installer's output may take to close before it is read as it stands. */
@@ -39,7 +44,7 @@ interface Installer {
   windows: string | null;
   shell: string;
   set: Record<string, string>;
-  vendor: "claude" | "codex" | "opencode";
+  vendor: "claude" | "codex" | "opencode" | "grok" | "cursor";
 }
 
 /** Each coding CLI's official installers, from its vendor's install instructions. */
@@ -65,6 +70,21 @@ const INSTALLERS = {
     shell: "/bin/bash",
     set: {},
     vendor: "opencode",
+  },
+  // Installs into `~/.grok/bin` (`%USERPROFILE%\.grok\bin`), where discovery looks; it asks nothing.
+  [EngineId.Grok]: {
+    unix: "https://x.ai/cli/install.sh",
+    windows: "https://x.ai/cli/install.ps1",
+    shell: "/bin/bash",
+    set: {},
+    vendor: "grok",
+  },
+  [EngineId.Cursor]: {
+    unix: "https://cursor.com/install",
+    windows: "https://cursor.com/install?win32=true",
+    shell: "/bin/bash",
+    set: {},
+    vendor: "cursor",
   },
 } as const satisfies Record<InstallableCodingProvider, Installer>;
 
@@ -151,7 +171,8 @@ export async function installCodingCli(
     const file = path.join(folder, `install${source.extension}`);
     await writeFile(file, script.text, { mode: 0o700 });
     const installer = installerOf(provider);
-    const env = childEnv(parent, { base: "contractor", vendor: installer.vendor, set: installer.set });
+    const contractor = childEnv(parent, { base: "contractor", vendor: installer.vendor, set: installer.set });
+    const env = isWindows(platform) ? windowsPowerShellEnv(contractor) : contractor;
     const exit = await (options.run ?? runInstaller)(installerCommand(provider, platform, file, parent), {
       env,
       timeoutMs: options.timeoutMs ?? INSTALL_TIMEOUT_MS,
@@ -178,7 +199,7 @@ async function download(
 ): Promise<{ ok: true; text: string } | { ok: false; detail: string }> {
   let response: Response;
   try {
-    response = await fetchFn(url, { redirect: "follow" });
+    response = await fetchFn(url, { redirect: "follow", headers: { "user-agent": INSTALLER_USER_AGENT } });
   } catch (err) {
     return { ok: false, detail: String(err) };
   }

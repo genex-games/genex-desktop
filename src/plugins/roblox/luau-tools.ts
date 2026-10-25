@@ -306,7 +306,7 @@ export type LuauAddRefusal = (typeof LuauAddRefusal)[keyof typeof LuauAddRefusal
 export class LuauAddError extends Error {
   readonly code: LuauAddRefusal;
   constructor(code: LuauAddRefusal) {
-    super(MESSAGE.Luau.Refused[code]);
+    super(MESSAGE.Luau.Refused[code]());
     this.name = "LuauAddError";
     this.code = code;
   }

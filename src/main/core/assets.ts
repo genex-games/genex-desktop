@@ -32,18 +32,24 @@ import type { ReferenceFrame } from "../../shared/protocol.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { EventKind } from "../../shared/event-log.ts";
+import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 
-/** Errors the user (or the renderer on their behalf) reads when an asset request is refused. */
+/**
+ * Errors the user (or the renderer on their behalf) reads when an asset request is refused. The
+ * asset preview shows `recordedAssetUnavailable` and a note's toast `feedbackEmpty` in the
+ * person's language; the rest answer a malformed request or a refused file read no screen shows,
+ * and stay English.
+ */
 const MESSAGE = {
-  feedbackEmpty: "feedback text is empty",
+  feedbackEmpty: () => t("feedback text is empty"),
   feedbackNeedsThread: "feedback needs the run's thread",
   invalidRetainedRef: "Invalid retained asset reference",
   notThisGamesAsset: "Asset does not belong to this game",
   notContained: "Asset is not a contained regular file",
   assetRequired: "Project and asset are required.",
-  recordedAssetUnavailable: "Recorded asset is unavailable.",
+  recordedAssetUnavailable: () => t("Recorded asset is unavailable."),
   filesRequired: "Project and files are required.",
 } as const;
 
@@ -203,7 +209,7 @@ export class AssetService {
   }): Promise<{ ok: true }> {
     const text = String(p.text ?? "").trim();
     const label = typeof p.label === "string" ? p.label.trim().slice(0, FEEDBACK_LABEL_CHARS) : "";
-    if (!text) throw new Error(MESSAGE.feedbackEmpty);
+    if (!text) throw new Error(MESSAGE.feedbackEmpty());
     if (!p.threadId) throw new Error(MESSAGE.feedbackNeedsThread);
     const target = feedbackTarget(p);
     const content = `[USER FEEDBACK${target ? ` on ${target}` : ""}] ${text}`;
@@ -328,8 +334,8 @@ export class AssetService {
     if (isGenexRef(p.file)) {
       const ref = parseGenexRef(p.file);
       const dir = ref && genexJobDir(this.#core.layout.engineHomes, p.project, ref.jobId);
-      if (!ref || !dir || !ref.path.length) throw new Error(MESSAGE.recordedAssetUnavailable);
-      if (!(await this.#ownsGenexJob(p.project, ref.jobId))) throw new Error(MESSAGE.recordedAssetUnavailable);
+      if (!ref || !dir || !ref.path.length) throw new Error(MESSAGE.recordedAssetUnavailable());
+      if (!(await this.#ownsGenexJob(p.project, ref.jobId))) throw new Error(MESSAGE.recordedAssetUnavailable());
       return readAssetPreview(path.join(dir, "output"), ref.path.join("/"), [], p.maxBytes);
     }
     assertAssetPath(p.file, await this.assetFolders(p.project));

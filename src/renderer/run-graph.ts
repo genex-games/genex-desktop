@@ -21,6 +21,7 @@ import { graphKeyOf, type RunGraphEvent, turnOfGraphKey, workerKeyOf } from "../
 import { CustomEvent } from "../shared/custom-events.ts";
 import { finishRecordOf } from "../shared/finish-check.ts";
 import { HOUR_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 import { type EventEnvelope, EventKind } from "../shared/event-log.ts";
 import type { MakingPhase } from "../shared/asset-making.ts";
 import type { ProjectAsset, ProjectAssets } from "../shared/game-assets.ts";
@@ -1393,7 +1394,7 @@ function settleTurn(graph: GraphDraft, events: EventEnvelope[]): void {
 }
 
 /** The words of the message a chat turn answers, as the queue's record of it names them; "" for none. */
-function queuedAsk(events: EventEnvelope[], queue: QueueView, turn: string): string {
+export function queuedAsk(events: EventEnvelope[], queue: QueueView, turn: string): string {
   const queued = queue.messages.get(turn);
   const said = queued?.eventId ? events.find((event) => event.id === queued.eventId) : undefined;
   const asked = said?.data.type === EventKind.Messages ? said.data.messages.find((m) => m.role === "user") : undefined;
@@ -1968,7 +1969,7 @@ export function runStillPath(runDir: string, stage: RunStillStage, camera = "def
 
 // ── plain words ───────────────────────────────────────────────────────────────────────────
 
-/** What a round is for, in the words the Builds tab uses. */
+/** What a round is for, as a code; `roundStep` says it in the Builds tab's words. */
 export const RoundKind = {
   FirstBuild: "first build",
   NextStep: "next step",
@@ -2011,14 +2012,23 @@ export function roundWhy(node: IterationNode): string {
   if (node.fix) return node.fix.what;
   if (node.move) return node.move.what;
   return node.iteration === 1
-    ? "The first build of this part — everything the plan asks for, in one pass."
-    : "Small fixes across the part, no named step.";
+    ? t("The first build of this part — everything the plan asks for, in one pass.")
+    : t("Small fixes across the part, no named step.");
 }
+
+/** A round of each kind as a step, its task after its kind's words. */
+const ROUND_STEP_WORDS: Record<RoundKind, (task: string) => string> = {
+  [RoundKind.FirstBuild]: (task) => t("First build: {task}", { task }),
+  [RoundKind.NextStep]: (task) => t("Next step: {task}", { task }),
+  [RoundKind.MustFix]: (task) => t("Must fix: {task}", { task }),
+  [RoundKind.WhatsMissing]: (task) => t("What's missing: {task}", { task }),
+  [RoundKind.Fixes]: (task) => t("Fixes: {task}", { task }),
+  [RoundKind.Polish]: (task) => t("Polish: {task}", { task }),
+};
 
 /** One round as a step: "Next step: Chapel tower with a bell". The judges' sheet and the outcome card both read this. */
 export function roundStep(node: IterationNode): string {
-  const kind = roundKind(node);
-  return `${kind.charAt(0).toUpperCase()}${kind.slice(1)}: ${roundWhy(node)}`;
+  return ROUND_STEP_WORDS[roundKind(node)](roundWhy(node));
 }
 
 /**
@@ -2032,7 +2042,7 @@ export function nextStep(graph: RunGraph): string | null {
     (node): node is IterationNode => node.kind === GraphNodeKind.Iteration && node.status === IterationStatus.Building,
   );
   const node = underway.at(-1);
-  return node ? `${node.facetTitle} — ${roundStep(node)}` : null;
+  return node ? t("{part} — {step}", { part: node.facetTitle, step: roundStep(node) }) : null;
 }
 
 /** Strip the `[check-id] ` prefix the judge puts on defects and gaps. */

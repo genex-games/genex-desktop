@@ -37,6 +37,11 @@ export const PERSON_FIRST_FRESH_MS = 3 * SECOND_MS;
  * as its wait ran out. Also the longest a read of what is unsaved asks.
  */
 export const PERSON_FIRST_ASK_MS = PERSON_FIRST_POLL_MS;
+/**
+ * How long a refusal for the person stands for the next calls on the same lock: an agent's calls
+ * sent together each ask once, briefly, instead of each waiting the whole wait again behind it.
+ */
+export const PERSON_REFUSAL_STANDS_MS = 30 * SECOND_MS;
 
 /** The owner Genex's own locks are kept under: no plugin id can be spelled with `@`. */
 const GENEX_OWNER = "@genex";
@@ -49,16 +54,27 @@ export const IN_PLACE_LOCK: LockRef = {
 
 /**
  * Why a lock was not given: the person kept using what it guards, Genex couldn't tell whether they
- * did, or another holder kept it. Answered to agents: never rename a value.
+ * did, another holder kept it, or the person wrote in the chat of the session that waited
+ * (`LockHoldOptions.personWrote`). Answered to agents: never rename a value.
  */
-export const LockRefusal = { PersonFirst: "person_first", CantTell: "cant_tell", Busy: "busy" } as const;
+export const LockRefusal = {
+  PersonFirst: "person_first",
+  CantTell: "cant_tell",
+  Busy: "busy",
+  PersonWrote: "person_wrote",
+} as const;
 export type LockRefusal = (typeof LockRefusal)[keyof typeof LockRefusal];
 
-/** Genex's hold (`HookHold`, the harness's own copy of it) for each lock refusal: what the person's words are chosen by. */
+/**
+ * Genex's hold (`HookHold`, the harness's own copy of it) for each lock refusal: what the person's
+ * words are chosen by. The person writing is the person first too; it ends only an agent's wait,
+ * never a moment's, so no surface words it for the person.
+ */
 export const HOLD_OF_REFUSAL = {
   [LockRefusal.PersonFirst]: HookHold.PersonFirst,
   [LockRefusal.CantTell]: HookHold.CantTell,
   [LockRefusal.Busy]: HookHold.Busy,
+  [LockRefusal.PersonWrote]: HookHold.PersonFirst,
 } as const satisfies Record<LockRefusal, HookHold>;
 
 /** Words an agent (or a lead) reads when a lock was not given, each naming the lock's label. */
@@ -69,6 +85,8 @@ const MESSAGE = {
     `Genex could not tell whether the person is using ${label}, so this waited for them, and still could not tell. Try again later.`,
   busy: (label: string, title: string | null) =>
     `${title ? `"${title}"` : "Another call"} is working in ${label} now, and only one at a time works there.`,
+  personWrote: (label: string) =>
+    `The person just wrote in the chat, so this stopped waiting for ${label} and did not run. Read their message first; then call this tool again if you still need it.`,
 } as const;
 
 /** A lock and the plugin that declares it (Genex's own under `@genex`). */
@@ -92,12 +110,46 @@ export class LockRefused extends Error {
 /** Whether an error is a lock not given. */
 export const isLockRefused = (error: unknown): error is LockRefused => error instanceof LockRefused;
 
+/**
+ * A session's word that the person wrote in its chat (`engine.steer`): its signal ends the waits for
+ * a lock of the calls that took it (`LockHoldOptions.personWrote`), never a lock given or a call's run.
+ */
+export interface PersonWrote {
+  /** The signal a call takes as it starts; replaced once it ended the waits begun before. */
+  current: AbortController;
+}
+
+/** A session's word, before the person wrote anything. */
+export function personWroteWatch(): PersonWrote {
+  return { current: new AbortController() };
+}
+
+/** The person wrote: the waits begun before end now, and a call made after waits as usual. */
+export function personWrote(watch: PersonWrote): void {
+  const before = watch.current;
+  watch.current = new AbortController();
+  before.abort();
+}
+
+/** The person wrote and the session is cut at its next step: every wait ends now, and any later one at once. */
+export function personWroteBeforeCut(watch: PersonWrote): void {
+  watch.current.abort();
+}
+
 /** What the chat hears while a call waits for the person (`UiEvent.PersonFirst`). */
 export interface PersonFirstNotice {
   project: string;
   threadId?: string;
   label: string;
   waiting: boolean;
+}
+
+/** What the chat hears once when an agent went ahead of the person (`CustomEvent.AgentWentAhead`). */
+export interface WentAheadNotice {
+  project: string;
+  threadId?: string;
+  label: string;
+  plugin: string;
 }
 
 /** What a lock service is built with: the probe, the clock and its wait, and who hears of a wait on the person. */
@@ -111,6 +163,8 @@ export interface LockServiceOptions {
   /** How long an agent's call waits (`AGENT_LOCK_WAIT_MS`). */
   agentWaitMs?: number;
   onPersonFirst?: (notice: PersonFirstNotice) => void;
+  /** Hears a probe that let an agent go ahead of the person for the first time (`PersonFirstAnswer.wentAhead`). */
+  onWentAhead?: (notice: WentAheadNotice) => void;
 }
 
 /** How a call asks for its locks. */
@@ -121,6 +175,11 @@ export interface LockHoldOptions {
   threadId?: string;
   /** Ends a wait; never a held lock, which the caller releases. */
   signal?: AbortSignal;
+  /**
+   * Ends a wait, never a lock given, when the person writes in the chat of the session that called
+   * (`PersonWrote`): refused `person_wrote`, so the agent reads the message before it calls again.
+   */
+  personWrote?: AbortSignal;
   /** The person's own action: it never waits for the person. */
   forPerson?: boolean;
   /** Whether this hold gives way to the person (default: unless `forPerson`); an in-place writer's life does not, its calls do. */
@@ -255,6 +314,8 @@ export class LockService {
   readonly #slots = new Map<string, Slot>();
   /** Until when, per lock, a probe's "the person is not using it" stands. */
   readonly #fresh = new Map<string, number>();
+  /** Until when, per lock, a refusal for the person stands: the next calls ask once, briefly. */
+  readonly #refusedForPerson = new Map<string, number>();
   /** The holders the harness asked locks for, which its end lets go. */
   readonly #harnessHolders = new Set<string>();
   readonly #probe: LockServiceOptions["probe"];
@@ -262,6 +323,7 @@ export class LockService {
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly #timeout: (ms: number) => AbortSignal;
   readonly #onPersonFirst: LockServiceOptions["onPersonFirst"];
+  readonly #onWentAhead: LockServiceOptions["onWentAhead"];
   /** How many calls wait on the person now, by game, chat and app (`#notify`). */
   readonly #personWaits = new Map<string, number>();
   /** How long an agent's call waits for its locks. */
@@ -275,6 +337,7 @@ export class LockService {
     this.#sleep = options.sleep ?? ((ms, signal) => sleepFor(ms, undefined, { signal }));
     this.#timeout = options.timeout ?? ((ms) => AbortSignal.timeout(ms));
     this.#onPersonFirst = options.onPersonFirst;
+    this.#onWentAhead = options.onWentAhead;
     this.agentWaitMs = options.agentWaitMs ?? AGENT_LOCK_WAIT_MS;
     this.clock = { now: this.#now, timeout: this.#timeout };
   }
@@ -394,6 +457,7 @@ export class LockService {
   async #waitTurn(key: string, slot: Slot, options: LockHoldOptions, deadline: number): Promise<Owner> {
     const left = deadline - this.#now();
     if (left <= 0) throw refusalBehind(slot);
+    if (options.personWrote?.aborted) throw personWroteRefusal(slot.label);
     let settle: (outcome: true | Error) => void = () => {};
     const told = new Promise<true | Error>((resolve) => {
       settle = resolve;
@@ -412,7 +476,7 @@ export class LockService {
     };
     slot.queue.push(waiter);
     const timer = new AbortController();
-    const signal = options.signal ? AbortSignal.any([options.signal, timer.signal]) : timer.signal;
+    const signal = AbortSignal.any([...waitSignals(options), timer.signal]);
     const timedOut = this.#sleep(left, signal).then(
       () => null,
       () => null,
@@ -423,6 +487,7 @@ export class LockService {
     if (outcome instanceof Error) throw outcome;
     this.#leave(key, slot, waiter);
     options.signal?.throwIfAborted();
+    if (options.personWrote?.aborted) throw personWroteRefusal(slot.label);
     throw refusalBehind(slot);
   }
 
@@ -470,16 +535,31 @@ export class LockService {
     const slot = this.#slots.get(key);
     const told = { waiting: false };
     try {
-      await this.#untilFree(key, ref, options, wait, (answer) => {
+      await this.#untilFree(key, ref, options, this.#waitAfterRefusal(key, wait), (answer) => {
         if (slot) slot.person = answer;
         if (told.waiting || answer?.personActive !== true) return;
         this.#notify(ref, options, true);
         told.waiting = true;
       });
+      this.#refusedForPerson.delete(key);
+    } catch (error) {
+      if (error instanceof LockRefused && error.code === LockRefusal.PersonFirst)
+        this.#refusedForPerson.set(key, this.#now() + PERSON_REFUSAL_STANDS_MS);
+      throw error;
     } finally {
       if (slot) delete slot.person;
       if (told.waiting) this.#notify(ref, options, false);
     }
+  }
+
+  /**
+   * A hold's wait on the person: its own, or one short ask while a refusal for the person on this
+   * lock still stands (`PERSON_REFUSAL_STANDS_MS`).
+   */
+  #waitAfterRefusal(key: string, wait: HoldWait): HoldWait {
+    const now = this.#now();
+    if ((this.#refusedForPerson.get(key) ?? 0) <= now) return wait;
+    return { deadline: Math.min(wait.deadline, now + PERSON_FIRST_ASK_MS), lateAskEnds: wait.lateAskEnds };
   }
 
   /**
@@ -498,14 +578,30 @@ export class LockService {
     for (;;) {
       if (answer?.personActive === false) {
         this.#fresh.set(key, this.#now() + PERSON_FIRST_FRESH_MS);
+        if (answer.wentAhead) this.#toldWentAhead(ref, options);
         return;
       }
       if (deadline - this.#now() <= 0) throw personRefusal(ref.lock.label, answer);
       seen(answer);
-      await this.#sleep(Math.min(PERSON_FIRST_POLL_MS, deadline - this.#now()), options.signal);
+      await this.#pause(Math.min(PERSON_FIRST_POLL_MS, deadline - this.#now()), options, ref.lock.label);
       const remaining = deadline - this.#now();
       if (remaining <= 0) throw personRefusal(ref.lock.label, answer);
       answer = await this.#probed(key, ref, options, remaining);
+    }
+  }
+
+  /**
+   * A pause in a wait on the person, ended by the call's stop (with its reason) or by the person
+   * writing in the chat of its session (refused `person_wrote`, naming the lock it waited for).
+   */
+  async #pause(ms: number, options: LockHoldOptions, label: string): Promise<void> {
+    if (options.personWrote?.aborted) throw personWroteRefusal(label);
+    const signals = waitSignals(options);
+    try {
+      await this.#sleep(ms, signals.length ? AbortSignal.any(signals) : undefined);
+    } catch (error) {
+      if (options.personWrote?.aborted && !options.signal?.aborted) throw personWroteRefusal(label);
+      throw error;
     }
   }
 
@@ -558,6 +654,17 @@ export class LockService {
     } catch {
       return null;
     }
+  }
+
+  /** The chat the call answers to hears that an agent went ahead of the person in what the lock guards. */
+  #toldWentAhead(ref: LockRef, options: LockHoldOptions): void {
+    const threadId = options.threadId ?? options.binding.threadId;
+    this.#onWentAhead?.({
+      project: options.binding.project,
+      ...(threadId ? { threadId } : {}),
+      label: ref.lock.label,
+      plugin: ref.plugin,
+    });
   }
 
   /**
@@ -627,6 +734,16 @@ function refusalBehind(slot: Slot): LockRefused {
   if (slot.person !== undefined) return personRefusal(slot.label, slot.person);
   const title = slot.owner ? (firstHold(slot.owner)?.[1].title ?? null) : null;
   return new LockRefused(LockRefusal.Busy, slot.label, MESSAGE.busy(slot.label, title));
+}
+
+/** What ends a hold's waits: its call's stop, and the person writing in the chat of its session. */
+function waitSignals(options: Pick<LockHoldOptions, "signal" | "personWrote">): AbortSignal[] {
+  return [options.signal, options.personWrote].filter((signal): signal is AbortSignal => signal !== undefined);
+}
+
+/** The refusal of a wait the person's message in the chat ended. */
+function personWroteRefusal(label: string): LockRefused {
+  return new LockRefused(LockRefusal.PersonWrote, label, MESSAGE.personWrote(label));
 }
 
 /** The refusal of a wait on the person: they kept using it, or Genex couldn't tell. */

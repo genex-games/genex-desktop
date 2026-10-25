@@ -38,9 +38,26 @@ const MOVING_JOBS: ReadonlySet<string> = new Set([
 const underWay = (status: GenexStatus | null): boolean =>
   Boolean(status?.authorization) || (status?.jobs ?? []).some((job) => MOVING_JOBS.has(job.status));
 
-/** How long the page waits before reading Genex's status again. */
-export const genexPollMs = (status: GenexStatus | null): number =>
-  underWay(status) ? GENEX_ACTIVE_POLL_MS : GENEX_IDLE_POLL_MS;
+/** Whether the page can be seen, and whether Genex is the app in front. */
+export interface PageAttention {
+  hidden: boolean;
+  focused: boolean;
+}
+
+const IN_FRONT: PageAttention = { hidden: false, focused: true };
+
+/**
+ * How long the page waits before reading Genex's status again; null reads nothing on a timer.
+ * Every read spawns the Genex CLI for the allowance, so a hidden window reads only when shown
+ * again, and one behind another app at the idle pace (it reads at once on focus), except while a
+ * sign-in waits: the person approves it in the browser, and the read is what saves the token.
+ */
+export function genexPollMs(status: GenexStatus | null, attention: PageAttention = IN_FRONT): number | null {
+  if (attention.hidden) return null;
+  if (status?.authorization) return GENEX_ACTIVE_POLL_MS;
+  if (!attention.focused) return GENEX_IDLE_POLL_MS;
+  return underWay(status) ? GENEX_ACTIVE_POLL_MS : GENEX_IDLE_POLL_MS;
+}
 
 /** Which of the account card's shapes the status calls for. */
 export const GenexAccountKind = {

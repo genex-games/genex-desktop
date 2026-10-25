@@ -24,6 +24,28 @@ export const MAX_FINISH_REASONS = 6;
 /** How long one reason (or why a check got no answer) reads, in characters. */
 export const FINISH_REASON_CHARS = 300;
 
+/**
+ * With more of a timed Loop's working time left than this, no row of the reviewer's no's stops it:
+ * its lead keeps working on what isn't done. An ∞ Loop names no time left, and its no's stop it.
+ */
+export const FINISH_TIME_LEFT_MS = 20 * MINUTE_MS;
+
+/**
+ * Why a Loop that closed with something still to fix stopped (`run_finished.stillToFix.why`), as its
+ * result card tells the person. Persisted: never rename a value.
+ */
+export const StopWhy = {
+  /** Its hours ran out. */
+  Time: "time",
+  /** The reviewer's no's in a row stopped it. */
+  Stuck: "stuck",
+  /** The person stopped it. */
+  Person: "person",
+  /** It ended some other way. */
+  Ended: "ended",
+} as const;
+export type StopWhy = (typeof StopWhy)[keyof typeof StopWhy];
+
 /** The record of one step of a finish check: written by Genex alone, read by the harness. */
 export const FINISH_CHECK_EVENT = "finish_check";
 

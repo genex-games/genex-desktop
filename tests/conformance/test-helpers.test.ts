@@ -1,17 +1,19 @@
 /**
  * The shared fakes and probes other suites build on: a renderer `window.studio`, a harness `ctx`,
  * whether a process still runs, the check every test file runs for the child processes it
- * leaves, and the removal of a test's temporary folder. Their own contract, so a consumer's failure is about the code under test and not about
+ * leaves, the removal of a test's temporary folder, and the sweep of run folders a killed run left. Their own contract, so a consumer's failure is about the code under test and not about
  * the helper.
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import { TEST_PRELOAD, testEnv } from "../../scripts/affected-tests.mjs";
+import { isTestTmp, makeTestTmp, STALE_TEST_TMP_MS, sweepTestTmp } from "../../scripts/test-tmp.mjs";
 import { SECOND_MS } from "../../src/shared/duration.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { fakeStudioApi, installFakeStudio, STUDIO_METHODS } from "../helpers/fake-studio-api.ts";
@@ -127,20 +129,40 @@ describe("leftover children", { skip: process.platform === "win32" && "reads pro
   /** A cap on the nested run, so a check that stopped working fails here instead of hanging. */
   const RUN_CAP_MS = 60 * SECOND_MS;
 
+  /** A cap for a file whose leak the check should name at once, so a missed one fails quickly. */
+  const LEAK_CAP_MS = 15 * SECOND_MS;
+  /** The start of a file whose tests come before and after a top-level await. */
+  const LATE_FILE = [
+    'import assert from "node:assert/strict";',
+    'import { spawn } from "node:child_process";',
+    'import { once } from "node:events";',
+    'import { test } from "node:test";',
+    'const child = (code) => spawn(process.execPath, ["-e", code], { stdio: "ignore" });',
+    'test("registered first", () => {});',
+    "// native-launch awaits its Xcode check here, after its first tests.",
+    'await once(child("setTimeout(() => {}, 300)"), "exit");',
+  ];
+
   /** Run one test file the way the runners do, with the check preloaded. */
-  async function runFile(name: string, body: string, env: NodeJS.ProcessEnv = {}) {
+  async function runSource(name: string, source: string, env: NodeJS.ProcessEnv = {}, cap = RUN_CAP_MS) {
     const dir = await tmpDir("leftover-children-");
     const file = path.join(dir, name);
-    await writeFile(
-      file,
-      `import { spawn } from "node:child_process";\nimport { test } from "node:test";\ntest("starts a child", () => {\n${body}\n});\n`,
-    );
+    await writeFile(file, source);
     return spawnSync(process.execPath, [...TEST_PRELOAD, "--test", "--test-reporter=spec", file], {
       cwd: dir,
       env: { ...testEnv(), ...env },
       encoding: "utf8",
-      timeout: RUN_CAP_MS,
+      timeout: cap,
     });
+  }
+
+  /** Run a file of one test whose body is `body`. */
+  function runFile(name: string, body: string, env: NodeJS.ProcessEnv = {}) {
+    return runSource(
+      name,
+      `import { spawn } from "node:child_process";\nimport { test } from "node:test";\ntest("starts a child", () => {\n${body}\n});\n`,
+      env,
+    );
   }
 
   it("fails a file that leaves a child running, names both, and kills the child so the file exits", async () => {
@@ -164,6 +186,41 @@ describe("leftover children", { skip: process.platform === "win32" && "reads pro
     );
     assert.equal(exiting.error, undefined);
     assert.equal(exiting.status, 0, exiting.stdout);
+  });
+
+  it("waits for the tests a file registers after a top-level await, and leaves their children running", async () => {
+    const late = await runSource(
+      "late.test.mjs",
+      [
+        ...LATE_FILE,
+        'test("registered after the await", async () => {',
+        '  const ended = await once(child("setTimeout(() => {}, 1000)"), "exit");',
+        '  assert.deepEqual(ended, [0, null], "its child ended by itself");',
+        "});",
+      ].join("\n"),
+      { [EXIT_GRACE_ENV]: "0" },
+    );
+    assert.equal(late.error, undefined, "the file exited on its own");
+    assert.equal(late.status, 0, late.stdout);
+  });
+
+  it("still fails a file whose test registered after a top-level await leaves a child running", async () => {
+    const leaks = await runSource(
+      "late-leaks.test.mjs",
+      [
+        ...LATE_FILE,
+        'test("registered after the await", () => {',
+        '  child("setInterval(() => {}, 1000)");',
+        "});",
+      ].join("\n"),
+      { [EXIT_GRACE_ENV]: "0" },
+      LEAK_CAP_MS,
+    );
+    assert.equal(leaks.error, undefined, "the file exited on its own");
+    assert.equal(leaks.status, 1, leaks.stdout);
+    const pid = Number(/pid (\d+): .*setInterval/.exec(leaks.stdout)?.[1]);
+    assert.ok(pid > 0, leaks.stdout);
+    assert.equal(running(pid), false, "the child it named is gone");
   });
 });
 
@@ -259,5 +316,95 @@ describe("removeTree", () => {
       },
     });
     assert.equal(existsSync(dir), false);
+  });
+});
+
+describe("test temp folders", () => {
+  const DAY_MS = STALE_TEST_TMP_MS;
+  const NOW = Date.parse("2026-10-21T12:00:00Z");
+  const LIVE_PID = 4242;
+  /** A parent folder holding `entries`, each a folder unless a link or file is named; `ageMs` back-dates each. */
+  async function parentWith(entries: Array<{ name: string; kind?: "dir" | "file" | "link"; ageMs?: number }>) {
+    const parent = await tmpDir("sweep-");
+    const outside = await tmpDir("sweep-outside-");
+    await writeFile(path.join(outside, "keep.txt"), "x");
+    for (const entry of entries) {
+      const at = path.join(parent, entry.name);
+      if (entry.kind === "link") await symlink(outside, at);
+      else if (entry.kind === "file") await writeFile(at, "x");
+      else {
+        await mkdir(at);
+        await writeFile(path.join(at, "inside.txt"), "x");
+      }
+      const when = new Date(NOW - (entry.ageMs ?? 0));
+      if (entry.kind !== "link") await utimes(at, when, when);
+    }
+    return { parent, outside };
+  }
+  const sweep = (parent: string) =>
+    sweepTestTmp([parent], { now: NOW, alive: (pid: number) => pid === LIVE_PID }).map((dir) => path.basename(dir));
+
+  const table: Array<{ name: string; kind?: "dir" | "file" | "link"; ageMs?: number; removed: boolean; why: string }> =
+    [
+      { name: "gt-999999-abc123", removed: true, why: "its owner is gone" },
+      { name: `gt-${LIVE_PID}-abc123`, removed: false, why: "its owner runs" },
+      { name: `gt-${LIVE_PID}-old123`, ageMs: DAY_MS, removed: true, why: "a day unchanged: the id was reused" },
+      { name: "gt-abc123", removed: false, why: "no owner named, and fresh: an older run may still work in it" },
+      { name: "gt-old123", ageMs: DAY_MS, removed: true, why: "no owner named, a day unchanged" },
+      { name: "gt-999998-link", kind: "link", removed: false, why: "a link is never followed or removed" },
+      { name: "gt-999997-file", kind: "file", removed: false, why: "a file is not a run's folder" },
+      { name: "studio-test-999996", ageMs: DAY_MS, removed: false, why: "not a test run's folder" },
+      { name: "gt-", ageMs: DAY_MS, removed: false, why: "no name after the prefix" },
+    ];
+
+  it("removes only the abandoned run folders, never through a link or outside the prefix", async () => {
+    const { parent, outside } = await parentWith(table);
+    const removed = sweep(parent);
+    for (const row of table) assert.equal(removed.includes(row.name), row.removed, `${row.name}: ${row.why}`);
+    for (const row of table) assert.equal(existsSync(path.join(parent, row.name)), !row.removed, row.name);
+    assert.equal(await readFile(path.join(outside, "keep.txt"), "utf8"), "x", "the link's target is untouched");
+  });
+
+  it("passes over a parent that can't be read", () => {
+    assert.deepEqual(sweepTestTmp([path.join("/nonexistent", "parent")]), []);
+  });
+
+  it("names its owner, so the next run can tell when it is gone", () => {
+    const made = makeTestTmp({ pid: LIVE_PID });
+    try {
+      assert.match(path.basename(made), new RegExp(`^gt-${LIVE_PID}-`));
+      assert.equal(isTestTmp(made), true);
+    } finally {
+      rmSync(made, { recursive: true, force: true });
+    }
+  });
+
+  it("a test file run directly and killed leaves one owned folder the next run removes", {
+    skip: process.platform === "win32" && "SIGKILL and a writable /tmp",
+  }, async () => {
+    // Outside a run's folder, as an agent's own `node --test` with a time limit runs a file.
+    const plain = await tmpDir("plain-");
+    const helper = pathToFileURL(path.resolve("tests/helpers/tmp.ts")).href;
+    const code = `const { tmpDir } = await import(${JSON.stringify(helper)});
+process.stdout.write(await tmpDir("native-launch-"));
+setInterval(() => {}, 1000);`;
+    const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
+      env: { ...testEnv(process.env), TMPDIR: plain, TMP: plain, TEMP: plain },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const [made] = (await once(child.stdout, "data")) as [Buffer];
+    const dir = made.toString();
+    const runFolder = path.dirname(dir);
+    try {
+      child.kill("SIGKILL");
+      await once(child, "exit");
+      assert.ok(path.basename(runFolder).startsWith(`gt-${child.pid}-`), "its temp dir is in a folder it owns");
+      assert.equal(existsSync(dir), true, "a killed file never cleans up");
+      assert.deepEqual(readdirSync(plain), [], "nothing is left loose in the inherited temp folder");
+      assert.ok(sweepTestTmp([path.dirname(runFolder)]).includes(runFolder), "the next run removes it");
+      assert.equal(existsSync(runFolder), false);
+    } finally {
+      rmSync(runFolder, { recursive: true, force: true });
+    }
   });
 });

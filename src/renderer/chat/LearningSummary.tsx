@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { t } from "../../shared/i18n.ts";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { learningParts } from "./learning-parts.ts";
 import { Icon } from "../ui/icons.tsx";
@@ -8,7 +9,7 @@ export function LearningSummary({ text, onOpenStudio }: { text: string; onOpenSt
   const parts = learningParts(text);
   if (!parts.length) return null;
   return (
-    <ChatDisclosure label="What was learned">
+    <ChatDisclosure label={t("What was learned")}>
       <p className="px-3 py-2 text-step text-ink-3 whitespace-pre-wrap">
         {parts.map((part, index) => (
           <Fragment key={index}>
@@ -17,7 +18,7 @@ export function LearningSummary({ text, onOpenStudio }: { text: string; onOpenSt
               <button
                 type="button"
                 onClick={onOpenStudio}
-                title="Open Studio Activity"
+                title={t("Open Studio Activity")}
                 className="rounded-sm underline underline-offset-4 hover:text-control-text-hover"
               >
                 {part.text}

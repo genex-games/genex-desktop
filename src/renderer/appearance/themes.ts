@@ -1,4 +1,5 @@
 /** Profile-local appearance data. No CSS, scripts, extensions or file includes are evaluated. */
+import { t } from "../../shared/i18n.ts";
 import { channels, fromOklch, oklch, rgbHex } from "../../shared/oklch.ts";
 /** A colour scheme: every theme has a light side and a dark side. */
 export const Scheme = {
@@ -526,14 +527,14 @@ export const THEME_FILE_MAX_BYTES = 128 * 1024;
 /** What a theme import that cannot be read tells the person, and the one build defect it can hit. */
 const MESSAGE = {
   presetMissing: (scheme: Scheme) => `The ${scheme} Genex preset is missing.`,
-  unclosedComment: "Close the unfinished JSON comment.",
-  newerFormat: "This theme uses a newer format. Choose a version 1 theme.",
-  notOpaqueToken: (role: string) => `Use an opaque sRGB color token for ${role}.`,
-  includesFile: "This theme includes another file. Export its resolved colors from VS Code first.",
-  notHex: (key: string) => `Use a hex color for ${key}.`,
-  tooLarge: "Choose a theme smaller than 128 KB.",
-  notJson: "Use a valid JSON or JSONC theme file.",
-  noColors: "No supported UI colors found. Choose a Genex token file or a VS Code color theme.",
+  unclosedComment: t("Close the unfinished JSON comment."),
+  newerFormat: t("This theme uses a newer format. Choose a version 1 theme."),
+  notOpaqueToken: (role: string) => t("Use an opaque sRGB color token for {role}.", { role }),
+  includesFile: t("This theme includes another file. Export its resolved colors from VS Code first."),
+  notHex: (key: string) => t("Use a hex color for {key}.", { key }),
+  tooLarge: t("Choose a theme smaller than 128 KB."),
+  notJson: t("Use a valid JSON or JSONC theme file."),
+  noColors: t("No supported UI colors found. Choose a Genex token file or a VS Code color theme."),
 } as const;
 /** The contrast a theme starts at: its palette as designed. */
 export const DEFAULT_CONTRAST = 50;
@@ -660,7 +661,7 @@ function savedPreset(value: unknown, kept: ThemePreset[]): ThemePreset | null {
   if (!scheme || !complete) return null;
   if (kept.some((p) => p.id === id)) return null;
   const name =
-    typeof item.name === "string" ? item.name.trim().slice(0, PRESET_NAME_MAX) || "Custom theme" : "Custom theme";
+    typeof item.name === "string" ? item.name.trim().slice(0, PRESET_NAME_MAX) || t("Custom theme") : t("Custom theme");
   return { id, name, scheme, colors: palette as Palette, contrast: contrastOf(item.contrast) };
 }
 
@@ -883,6 +884,9 @@ export function themeVariables(p: Palette, contrast = DEFAULT_CONTRAST): Record<
     // A box inside a card (a setup step): as quiet as the card's own edge where light, which a
     // dark card would swallow, so there it takes the control edge.
     "--line-soft": luminance(p.background) > LIGHT_BACKGROUND ? edge : controlBorder,
+    // Every floating menu's one edge (dropdowns, popovers, the composer's menus): the prompt bar's
+    // where light; a dark menu's fill swallows that, so there it takes the control edge.
+    "--menu-edge": luminance(p.background) > LIGHT_BACKGROUND ? "var(--prompt-bar-edge)" : controlBorder,
     "--accent-primary": p.accent,
     "--accent-primary-dark": p.accent,
     "--accent-ink": accentInk,
@@ -1135,11 +1139,11 @@ export function importTheme(
   const result = tokens ? tokenColors(metadata, data) : vscodeColors(raw, data, base);
   if (!Object.keys(result).length) throw new Error(MESSAGE.noColors);
   const shadows = shadowsOf(metadata.shadows);
-  const name = String(metadata.name ?? raw.name ?? "Imported theme")
+  const name = String(metadata.name ?? raw.name ?? t("Imported theme"))
     .trim()
     .slice(0, PRESET_NAME_MAX);
   return {
-    name: name || "Imported theme",
+    name: name || t("Imported theme"),
     scheme,
     colors: shadows ? { ...base, ...result, shadows } : { ...base, ...result },
     contrast: contrastOf(metadata.contrast),

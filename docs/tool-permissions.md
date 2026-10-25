@@ -211,7 +211,9 @@ Loop runner's saves, shots, play checks, editor end and reopen, module and helpe
 `PluginToolService`, `ChatPermissionService.planning`), so the runner's save points and autosaves
 save nothing and take no snapshot while the chat plans. The lead is not the chat's turn: another
 turn ending leaves its consent cards and connector calls going (`outlivesTurn` in `PluginConsent`
-and `activeConnectorCalls`), and its own session's end, a Stop, the answer or the timeout end them. A director's turn writes no Connecting activity, so the build card reads as
+and `activeConnectorCalls`). Its own session's end ends its connector calls, but not its plugin cards:
+a Loop's lead ends its turn to wait for its workers, so its card for a paid Genex command waits
+for the person; the answer, the timeout or a Stop end it. A director's turn writes no Connecting activity, so the build card reads as
 planning between parts.
 
 ## Workers
@@ -397,7 +399,10 @@ sits only in the row's `input` (`{title, command, folder}`), folded under Detail
 
 A job ends by itself, by `job_stop`, at its time limit (`hours`, 2 by default, at most 24), when
 its run settles (the harness's own `run.settled`: its lead's and its workers' jobs), when the chat
-turn that started its worker returns, and when Genex quits. A harness crash or restart ends none.
+turn that started its worker returns, and when Genex quits. A harness crash or restart ends none. When Genex itself died, its next start marks
+each job still recorded as running interrupted and ends its process group (Windows: its tree,
+through `taskkill`) when that process's start time still matches the one recorded, so a reused id
+is never hit.
 The chat's own session's jobs outlive its turns, and its next turn is told which ended
 (`jobNotice`); a run's lead hears its run's ends through `jobs.list`, the harness's one read of the
 registry ([harness runtime](harness-runtime.md)). Each start and end is a host record in its chat
@@ -492,7 +497,7 @@ grant, no run controls, no chat turn, no folder of its own, no plugin tools, con
 reads are the lead's folder and the run's captures folder (refused when that is a link). On Claude
 Code and local sessions those are its only read roots beside its home, and the unattended fence
 denies the other games and the rest of Genex's data (the other runs' folders and captures, the jobs,
-the chats' coordinator homes, the exports). A Codex or OpenCode reviewer's box reads the whole disk,
+the chats' coordinator homes, the exports). A Codex, OpenCode or Grok Build reviewer's box reads the whole disk,
 so it is only told those, and Genex's secrets and engine homes, are off limits, and its brief names
 the folder it reads, not its home. Its
 seat (`ProjectToolSeat.Reviewer`) is offered `app_look` alone, whose access line goes to the run's
@@ -512,6 +517,8 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | Codex | Auto, Plan, Bypass | `codex exec` cannot ask mid-turn; the mode picks its sandbox |
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
 | Pi | Auto, Plan | `pi --mode json` cannot ask mid-turn and always runs in the studio's sandbox |
+| Grok Build | Auto, Plan | `grok -p` cannot ask mid-turn and always runs in the studio's sandbox; Plan reads from a folder of its own |
+| Cursor | Auto, Plan | `cursor-agent --print` cannot ask mid-turn and always runs in the studio's sandbox |
 | Ollama, a new engine | Auto | its harness tool loop keeps its sandbox |
 
 The chat's own session on any engine is handed `permissions` (`#personSession`, no
@@ -533,7 +540,10 @@ reads of it at its next round.
 Codex runs Auto as before (`workspace-write` in the game folder, no network, never asks), Bypass
 with `--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
 as a read-only session) where only the studio's bridge is writable, told it plans
-(`planModeNote`). A pick applies to its next turn. Every Codex launch runs with Codex's own
+(`planModeNote`). A pick applies to its next turn. On Windows every launch also turns on Codex's own
+restricted-token sandbox (`windows.sandbox="unelevated"`, `windowsSandboxArgs`): Genex runs Codex
+without the person's config, and without that sandbox Codex refuses every command it does not know
+to be safe under `approval_policy=never` ("blocked by policy"). Every Codex launch runs with Codex's own
 sub-agents (`multi_agent`, `multi_agent_v2`) and its screen and browser hands (`computer_use`,
 `in_app_browser`, `browser_use`, `browser_use_external`) disabled, those its `codex features list`
 knows (`CODEX_SUBAGENT_FEATURES`, `CODEX_SCREEN_FEATURES`): the studio's `computer` tool is the
@@ -541,7 +551,8 @@ only hands an agent has ([computer use](computer-use.md)).
 
 A judge that plays (`role: "judge"`) is blind as well as read-only (`DelegateRequest.blind`) where
 the engine can enforce it: Claude Code is offered no built-in but tool search and disallows every file, shell, edit and question tool, OpenCode
-denies every file tool, and a local session gets no file tool. Codex reads the whole disk, so a Codex
+denies every file tool, Grok Build keeps only its shell, approved for the studio bridge alone, and a local session
+gets no file tool. Codex reads the whole disk, so a Codex
 judge is only told to judge by playing. Every engine starts in the empty `scratch/blind-judge`
 folder and is not told the build's path. Writing nothing and reading no file, it takes a folder
 lock of its own (`judgeLockKey`), so the chat's `judge_play` judge plays the game folder its own

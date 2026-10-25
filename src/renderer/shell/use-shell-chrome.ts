@@ -1,9 +1,10 @@
 /**
- * The shell's chrome: the compact drawer, Plugins over the workspace, the sidebar toggle and the
- * chat's width as a CSS variable.
+ * The shell's chrome: the compact drawer, Plugins or Create › Items over the workspace, the sidebar
+ * toggle and the chat's width as a CSS variable.
  */
 import type { RefObject } from "react";
 import { useCallback, useEffect, useMemo, useLayoutEffect, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { chatWidthOf, sidebarToggled } from "../state/layout.ts";
 import type { Studio } from "../state/studio.ts";
@@ -11,12 +12,17 @@ import { OPEN_PLAY_EVENT } from "../play/open-play.ts";
 import { OPEN_PLUGINS_EVENT } from "../ui/ComposerAddMenu.tsx";
 
 const COMPACT = "(max-width: 900px)";
-/** The sidebar toggles' labels. Smoke runners and focus moves find the toggles by them. */
-export const SIDEBAR_TOGGLE = { Show: "Show sidebar", Hide: "Hide sidebar" } as const;
+/** The sidebar toggles' labels. */
+export const SIDEBAR_TOGGLE = { Show: t("Show sidebar"), Hide: t("Hide sidebar") } as const;
+/** What a sidebar toggle does, as its `data-sidebar-toggle`: focus moves find the toggles by it. */
+export const SidebarToggle = { Show: "show", Hide: "hide" } as const;
+export type SidebarToggle = (typeof SidebarToggle)[keyof typeof SidebarToggle];
 
-/** Focus the sidebar toggle with this label, once the toggle it replaced is gone. */
-function focusSidebarToggle(label: string): void {
-  requestAnimationFrame(() => (document.querySelector(`[aria-label="${label}"]`) as HTMLElement | null)?.focus());
+/** Focus the sidebar toggle that does `toggle`, once the toggle it replaced is gone. */
+function focusSidebarToggle(toggle: SidebarToggle): void {
+  requestAnimationFrame(() =>
+    (document.querySelector(`[data-sidebar-toggle="${toggle}"]`) as HTMLElement | null)?.focus(),
+  );
 }
 
 /** Whether the window is narrow (the sidebar is a drawer), and whether that drawer is open. */
@@ -48,27 +54,30 @@ export function useChatWidthVariable(shell: RefObject<HTMLDivElement | null>, ap
   }, [app, shell]);
 }
 
-/** Plugins opens over the workspace, from the sidebar or from a window event naming a plugin. */
-function usePluginsRoom(dialogs: Dialogs, setDrawerOpen: (open: boolean) => void, leavePlay: () => void) {
+/**
+ * Plugins opens over the workspace, from the sidebar or from a window event naming a plugin;
+ * `leaveOthers` closes Play and Create › Items on the way.
+ */
+function usePluginsRoom(dialogs: Dialogs, setDrawerOpen: (open: boolean) => void, leaveOthers: () => void) {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [setupPlugin, setSetupPlugin] = useState<string | undefined>();
   useEffect(() => {
     const open = (event: Event) => {
       setSetupPlugin((event as CustomEvent<{ plugin?: string }>).detail?.plugin);
       dialogs.dispatch({ type: "close-settings" });
-      leavePlay();
+      leaveOthers();
       setPluginsOpen(true);
       setDrawerOpen(false);
     };
     window.addEventListener(OPEN_PLUGINS_EVENT, open);
     return () => window.removeEventListener(OPEN_PLUGINS_EVENT, open);
-  }, [dialogs.dispatch, setDrawerOpen, leavePlay]);
+  }, [dialogs.dispatch, setDrawerOpen, leaveOthers]);
   const openPlugins = useCallback(() => {
     setSetupPlugin(undefined);
-    leavePlay();
+    leaveOthers();
     setPluginsOpen(true);
     setDrawerOpen(false);
-  }, [setDrawerOpen, leavePlay]);
+  }, [setDrawerOpen, leaveOthers]);
   return { pluginsOpen, setPluginsOpen, setupPlugin, openPlugins };
 }
 
@@ -80,19 +89,39 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
   const { compactWindow, drawerOpen, setDrawerOpen } = useCompactWindow();
   // Play is the sidebar's other side: launch opens Create (home), and any way into Create leaves it.
   const [playOpen, setPlayOpen] = useState(false);
-  const leavePlay = useCallback(() => setPlayOpen(false), []);
-  const plugins = usePluginsRoom(dialogs, setDrawerOpen, leavePlay);
+  // Create › Items is a room like Plugins: either one, never both (marketplace plan 10.3).
+  const [itemsOpen, setItemsOpen] = useState(false);
+  const leaveForPlugins = useCallback(() => {
+    setItemsOpen(false);
+    setPlayOpen(false);
+  }, []);
+  const plugins = usePluginsRoom(dialogs, setDrawerOpen, leaveForPlugins);
   const { setPluginsOpen } = plugins;
   const sidebarVisible = compactWindow ? drawerOpen : sidebarOpen;
   const closeOverlays = useCallback(() => {
     setPluginsOpen(false);
+    setItemsOpen(false);
     setPlayOpen(false);
     setDrawerOpen(false);
   }, [setPluginsOpen, setDrawerOpen]);
-  /** Play or Create, from the sidebar's switch. Play closes Plugins; the drawer stays. */
+  /**
+   * Create › Items, from its sidebar row: over the workspace, in Plugins' place. Pressed again while it
+   * is open, the tab on show is read again (once its last read is old); opening it reads it anyway.
+   */
+  const openItems = useCallback(() => {
+    if (itemsOpen) void app.items.refresh();
+    setPluginsOpen(false);
+    setPlayOpen(false);
+    setItemsOpen(true);
+    setDrawerOpen(false);
+  }, [app, itemsOpen, setPluginsOpen, setDrawerOpen]);
+  /** Play or Create, from the sidebar's switch. Play closes Plugins and Items; the drawer stays. */
   const choosePlay = useCallback(
     (play: boolean) => {
-      if (play) setPluginsOpen(false);
+      if (play) {
+        setPluginsOpen(false);
+        setItemsOpen(false);
+      }
       setPlayOpen(play);
     },
     [setPluginsOpen],
@@ -106,13 +135,13 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
   const toggleSidebar = useCallback(() => {
     if (compactWindow) setDrawerOpen((open) => !open);
     else app.layout.setState((s) => sidebarToggled(s), true);
-    focusSidebarToggle(sidebarVisible ? SIDEBAR_TOGGLE.Show : SIDEBAR_TOGGLE.Hide);
+    focusSidebarToggle(sidebarVisible ? SidebarToggle.Show : SidebarToggle.Hide);
   }, [app, compactWindow, sidebarVisible, setDrawerOpen]);
   /** Escape in a compact window: close the drawer; false when it was not open. */
   const closeDrawer = useCallback((): boolean => {
     if (!compactWindow || !drawerOpen) return false;
     setDrawerOpen(false);
-    focusSidebarToggle(SIDEBAR_TOGGLE.Show);
+    focusSidebarToggle(SidebarToggle.Show);
     return true;
   }, [compactWindow, drawerOpen, setDrawerOpen]);
   const { pluginsOpen, setupPlugin, openPlugins } = plugins;
@@ -122,11 +151,15 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       setPluginsOpen,
       setupPlugin,
       openPlugins,
+      /** Create › Items is up in place of the workspace. */
+      itemsOpen,
+      setItemsOpen,
+      openItems,
       /** Play's dashboard is up in place of the workspace. */
       playOpen,
       setPlayOpen: choosePlay,
-      /** Something covers the workspace (Plugins or Play): it is hidden and inert. */
-      workspaceCovered: pluginsOpen || playOpen,
+      /** Something covers the workspace (Plugins, Items or Play): it is hidden and inert. */
+      workspaceCovered: pluginsOpen || itemsOpen || playOpen,
       compactWindow,
       setDrawerOpen,
       sidebarVisible,
@@ -143,6 +176,8 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       setPluginsOpen,
       setupPlugin,
       openPlugins,
+      itemsOpen,
+      openItems,
       playOpen,
       choosePlay,
       compactWindow,

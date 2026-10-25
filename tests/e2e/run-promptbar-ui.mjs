@@ -128,6 +128,8 @@ app.whenReady().then(async()=>{
  await click('[aria-label="Add images and more"]');
  check('Add offers images and the built-in Blender plugin',await js('document.querySelector("[aria-label=Add][data-slot=popover-content]").textContent.includes("Reference or mood board")')&&await element('[aria-label="Use Local Blender"]','e.getAttribute("aria-checked")==="false"'));
  check('a locked account offers one Connect button, with no "Account locked" words',await element('[aria-label="Connect Genex fixture"]','e.textContent==="Connect"')&&!(await js('document.querySelector("[aria-label=Add][data-slot=popover-content]").textContent.includes("Account locked")')));
+ {const p=await element('[data-plugin-row="plugin:fixture"] [data-plugin-open]','({x:e.getBoundingClientRect().x+24,y:e.getBoundingClientRect().y+e.getBoundingClientRect().height/2})');await mouse({type:'mouseMove',...p});await wait(250);}
+ check('a hovered row that needs Connect shows Settings left of it',await element('[data-plugin-row="plugin:fixture"]','(()=>{const s=e.querySelector("[data-plugin-settings]")?.getBoundingClientRect(),a=e.querySelector(".picker-action").getBoundingClientRect();return Boolean(s?.width)&&s.right<=a.left})()'));
  await capture('add-account-locked');await click('[aria-label="Connect Genex fixture"]');
  check('connecting updates the open menu without another chat',await js('!document.querySelector("[aria-label=\\\"Connect Genex fixture\\\"]")'));
  check('an enabled plugin shows its disconnected server with a filled action',await js('(()=>{const row=document.querySelector("[data-plugin-row=\\"plugin:fixture\\"]");const b=row?.querySelector(".picker-action");return row.textContent.includes("Assets needs setup")&&b?.textContent==="Set up"&&getComputedStyle(b).backgroundColor!=="rgba(0, 0, 0, 0)"})()'));
@@ -143,13 +145,36 @@ app.whenReady().then(async()=>{
  await click('[aria-label="Use Genex fixture"]');await js('window.addEventListener("studio:open-plugins",()=>document.body.dataset.managed="true",{once:true})');await click('[aria-label="Set up Genex fixture"]');
  check('plugin setup routes to plugin management',await js('document.body.dataset.managed==="true"'));await close();
 
+ // A plugin row lights up under the pointer, shows Settings left of its switch (and of its own action), and opens the plugin's page.
+ const ADD_OPEN='[data-slot=popover-content][aria-label="Add"][data-open]',rowOf=id=>ADD_OPEN+' [data-plugin-row="plugin:'+id+'"]';
+ const hoverRow=async id=>{const p=await element(rowOf(id)+' [data-plugin-open]','({x:e.getBoundingClientRect().x+24,y:e.getBoundingClientRect().y+e.getBoundingClientRect().height/2})');await mouse({type:'mouseMove',...p});await wait(250);};
+ const watchOpen=()=>js('(delete document.body.dataset.openedPlugin,window.addEventListener("studio:open-plugins",e=>{document.body.dataset.openedPlugin=e.detail?.plugin??""},{once:true}),true)');
+ const openedPlugin=()=>js('document.body.dataset.openedPlugin??null');
+ await click('[aria-label="Add images and more"]');await mouse({type:'mouseMove',x:0,y:0});await wait(200);
+ check('a plugin row keeps its Settings out of sight, and out of its line, until hovered',await element(rowOf('blender')+' [data-plugin-settings]','getComputedStyle(e).display==="none"'));
+ const restingRows=await js('[...document.querySelectorAll('+JSON.stringify(ADD_OPEN+' .picker-item')+')].map(e=>e.getBoundingClientRect().height).join()');
+ await hoverRow('blender');
+ check('showing Settings moves no row: every row keeps its height',(await js('[...document.querySelectorAll('+JSON.stringify(ADD_OPEN+' .picker-item')+')].map(e=>e.getBoundingClientRect().height).join()'))===restingRows,restingRows);
+ check('a hovered plugin row is filled and shows a filled Settings left of its switch',await element(rowOf('blender'),'(()=>{const s=e.querySelector("[data-plugin-settings]"),w=e.querySelector("[role=switch]"),row=getComputedStyle(e).backgroundColor,fill=getComputedStyle(s).backgroundColor;return row!=="rgba(0, 0, 0, 0)"&&s.getBoundingClientRect().width>0&&fill!=="rgba(0, 0, 0, 0)"&&fill!==row&&s.textContent==="Settings"&&getComputedStyle(s).cursor==="pointer"&&s.getBoundingClientRect().right<=w.getBoundingClientRect().left})()'));
+ await capture('add-hover');
+ await hoverRow('fixture');
+ check('a row whose Set up already opens its page shows no second Settings',await element(rowOf('fixture'),'e.querySelector(".picker-action")?.textContent==="Set up"&&!e.querySelector("[data-plugin-settings]")'));
+ check('the name says it opens the plugin\'s settings, and Settings leaves keys to it',await element(rowOf('blender'),'e.querySelector("[data-plugin-open]").getAttribute("aria-label")==="Open Local Blender settings"&&e.querySelector("[data-plugin-settings]").tabIndex===-1'));
+ await watchOpen();await click(rowOf('blender')+' [data-plugin-open]');
+ check('clicking a plugin\'s name opens its page and closes the menu',(await openedPlugin())==='blender'&&!(await js('Boolean(document.querySelector('+JSON.stringify(ADD_OPEN)+'))')));
+ await click('[aria-label="Add images and more"]');
+ check('clicking a plugin\'s name leaves its switch as it was',await element(ADD_OPEN+' [aria-label="Use Local Blender"]','e.getAttribute("aria-checked")==="false"'));
+ await hoverRow('blender');await watchOpen();await click(rowOf('blender')+' [data-plugin-settings]');
+ check('Settings opens the plugin\'s page',(await openedPlugin())==='blender');await close();
+
  await click('[data-promptbar] [aria-label="Context and usage"]');
  const usagePanel='[data-slot="popover-content"][aria-label="Context and usage"]';
  check('context comes first with its window and automatic compaction',await element(usagePanel,'e.textContent.startsWith("Context window") && !e.textContent.includes("Not measured yet") && e.textContent.includes("Compacts automatically") && e.querySelector("[aria-label=\\"Context used\\"]").getAttribute("aria-valuetext")==="Not measured yet"'));
  await wait(300);
- check('each signed-in subscription shows its plan limits',await element(usagePanel,'e.querySelectorAll("[role=progressbar]").length===5 && e.textContent.includes("Claude Max plan") && e.textContent.includes("ChatGPT Pro plan") && e.textContent.includes("Weekly · Fable") && e.textContent.includes("Resets in 3 h 54 m")'));
+ check('each signed-in subscription shows its plan limits',await element(usagePanel,'e.querySelectorAll("[role=progressbar]").length===4 && e.textContent.includes("Claude Max plan") && e.textContent.includes("ChatGPT Pro plan") && e.textContent.includes("Resets in 3 h 54 m")'));
+ check('per-model weekly limits stay off the panel',await element(usagePanel,'!e.textContent.includes("Weekly · Fable")'));
  check('split roles name who draws on each plan, orchestrator\'s plan first',await js('[...document.querySelectorAll("[data-usage-engine]")].map(e=>e.dataset.usageEngine+":"+e.querySelector(".usage-plan-roles").textContent).join("|")==="codex:Main agent · Reviewers|claude-code:Workers"'));
- check('an exhausted limit is red and a high one amber',await element('[data-usage-engine="claude-code"] [aria-label="Weekly · Fable"] i','e.dataset.level==="full"')&&await element('[data-usage-engine="codex"] [aria-label="Weekly limit"] i','e.dataset.level==="high"'));
+ check('a nearly spent limit is red and a high one amber',await element('[data-usage-engine="claude-code"] [aria-label="Weekly · all models"] i','e.dataset.level==="full"')&&await element('[data-usage-engine="codex"] [aria-label="Weekly limit"] i','e.dataset.level==="high"'));
  check('the context ring is 16px with a 2px stroke',await js('(()=>{const s=document.querySelector("[data-promptbar] [aria-label=\\"Context and usage\\"] svg");return s.getBoundingClientRect().width===16&&getComputedStyle(s.querySelector("circle")).strokeWidth==="2px"})()'));
  check('Codex compacts on its own, so its panel offers no compaction point',!(await js('Boolean(document.querySelector("[aria-label=\\"Auto-compact\\"]"))')));
  await capture('limits');
@@ -288,6 +313,40 @@ app.whenReady().then(async()=>{
  await key('Enter');await wait(200);
  check('Enter runs /compact and clears the message',await compacts()===1&&await element(PROMPT,'e.value===""'),String(await compacts()));
  check('the cleared message leaves no / list open',!(await open('Commands')));
+ // Files held over the chat: a dashed veil on the prompt bar says what a drop does.
+ await element(SPECIMEN+' [data-promptbar]','(e.scrollIntoView({block:"center"}),true)');
+ await js('window.dragFiles=async(type,files)=>{const dt=new DataTransfer();for(const f of files){let blob;if(f.mime.startsWith("image/")){const c=Object.assign(document.createElement("canvas"),{width:32,height:32});const g=c.getContext("2d");g.fillStyle="#3b82f6";g.fillRect(0,0,32,32);blob=await new Promise(r=>c.toBlob(r,"image/png"));}else blob=new Blob(["notes"],{type:f.mime});dt.items.add(new File([blob],f.name,{type:f.mime}));}document.querySelector('+JSON.stringify(PROMPT)+').dispatchEvent(new DragEvent(type,{dataTransfer:dt,bubbles:true,cancelable:true}));return true};true');
+ const VEIL=SPECIMEN+' [data-drop-veil]',LEFT_OUT=SPECIMEN+' [data-left-out]',filled='getComputedStyle(e).backgroundColor!=="rgba(0, 0, 0, 0)"';
+ await js('dragFiles("dragenter",[{name:"sketch.png",mime:"image/png"}])');await wait(200);
+ check('a picture held over the chat veils the prompt bar in blue with one line',await element(VEIL,'e.dataset.tone==="takes"&&e.textContent==="Drop to add 1 picture"&&getComputedStyle(e).borderTopStyle==="dashed"'),await element(VEIL,'e.outerHTML'));
+ await capture('drop-veil');
+ await js('dragFiles("dragleave",[{name:"sketch.png",mime:"image/png"}])');await wait(200);
+ check('the veil goes when the drag leaves',!(await element(VEIL,'true')));
+ const notes=n=>Array.from({length:n},(_,i)=>({name:"notes-"+i+".txt",mime:"text/plain"}));
+ await js('dragFiles("dragenter",[{name:"notes.txt",mime:"text/plain"}])');await wait(200);
+ check('a file that is not a picture goes in too: the veil stays blue and counts files',await element(VEIL,'e.dataset.tone==="takes"&&e.textContent==="Drop to add 1 file"'),await element(VEIL,'e.outerHTML'));
+ await js('dragFiles("dragleave",[{name:"notes.txt",mime:"text/plain"}])');await js('dragFiles("dragenter",'+JSON.stringify(notes(13))+')');await wait(200);
+ check('past the limit the veil turns orange and says how many stay out',await element(VEIL,'e.dataset.tone==="refuses"&&e.textContent==="Room for 12 files, 1 will stay out"'),await element(VEIL,'e.outerHTML'));
+ await capture('drop-veil-refuses');
+ await js('dragFiles("drop",'+JSON.stringify(notes(13))+')');await wait(500);
+ check('a drop past the limit leaves an orange note whose buttons have a fill',!(await element(VEIL,'true'))&&await element(SPECIMEN+' [data-promptbar]','e.querySelectorAll("[data-attached-file]").length===12')&&await element(LEFT_OUT,'e.textContent.includes("1 file left out, 12 at most")&&e.textContent.includes("Choose files")')&&await element(LEFT_OUT+' .composer-left-out-action',filled)&&await element(LEFT_OUT+' [aria-label="Dismiss"]',filled),await element(LEFT_OUT,'e.outerHTML'));
+ await capture('drop-left-out');
+ await click(LEFT_OUT+' [aria-label="Dismiss"]');
+ check('Dismiss puts the note away',!(await element(LEFT_OUT,'true')));
+ for(let i=0;i<12;i++)await click(SPECIMEN+' [aria-label="Remove notes-'+i+'.txt"]');
+ check('each file chip removes itself',!(await element(SPECIMEN+' [data-attached-file]','true')));
+ // A picture is a message on its own: dropped with no words, it sends.
+ await js('dragFiles("drop",[{name:"sketch.png",mime:"image/png"}])');
+ await wait(500);
+ check('a picture with no words enables Send',await element(PROMPT,'e.value===""')&&await element(SPECIMEN+' [data-promptbar] [aria-label="Mood board"]','e.querySelectorAll("img").length===1')&&await element(SPECIMEN+' [data-promptbar] [aria-label="Send"]','!e.disabled && e.dataset.state==="ready"'),await element(SPECIMEN+' [data-promptbar] [aria-label="Send"]','({pictures:e.closest("[data-promptbar]").querySelectorAll("[aria-label=\\"Mood board\\"] img").length,disabled:e.disabled,state:e.dataset.state})'));
+ await click(SPECIMEN+' [data-promptbar] [aria-label="Send"]');
+ check('a picture with no words sends as a message of its own',await element('#composer-settings','(()=>{const v=JSON.parse(e.textContent);return v.text==="" && v.extras?.frames?.length===1})()'),await element('#composer-settings','e.textContent'));
+ // Any other file goes as a link to where it is: alone, it is a message too.
+ await js('dragFiles("drop",[{name:"level plan.pdf",mime:"application/pdf"}])');await wait(500);
+ check('a dropped document shows as a chip with its name',await element(SPECIMEN+' [data-attached-file]','e.textContent.includes("level plan.pdf")'));
+ await capture('drop-file-chip');
+ await click(SPECIMEN+' [data-promptbar] [aria-label="Send"]');
+ check('a document with no words sends as its link',await element('#composer-settings','JSON.parse(e.textContent).text==="file:///Users/you/Downloads/level%20plan.pdf"'),await element('#composer-settings','e.textContent'));
  // No AI model yet: the model's place holds Connect AI model; Enter and Send point at it instead of sending.
  await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
  const NO_MODEL='[data-composer-specimen-nomodel]';

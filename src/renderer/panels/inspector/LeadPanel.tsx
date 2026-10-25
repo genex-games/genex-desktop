@@ -3,6 +3,7 @@
  * tried), or in a tree for the whole run, saying what it is doing.
  */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { STATE_TONE, StepState, Tone } from "../../run-steps.ts";
 import { LeadFace, leadAbout, leadFace } from "../../run-tree.ts";
 import { LEAD_WORDS } from "../../words.ts";
@@ -38,10 +39,10 @@ export function LeadPanel(props: InspectorProps): JSX.Element {
       onPrev={props.onPrev}
       onNext={props.onNext}
       onClose={props.onClose}
-      reply={{ label: LEAD_WORDS.name, placeholder: "Anything the lead should do next?" }}
+      reply={{ label: LEAD_WORDS.name, placeholder: t("Anything the lead should do next?") }}
       onReply={props.onReply}
       media={
-        frame ? <LiveScreen frame={frame} trail={trail} label="The lead's view of the game" onOpen={open} /> : null
+        frame ? <LiveScreen frame={frame} trail={trail} label={t("The lead's view of the game")} onOpen={open} /> : null
       }
     >
       <Para>{leadAbout(face, graph.tree)}</Para>

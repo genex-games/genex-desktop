@@ -12,6 +12,7 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import type { PluginToolbarStatus } from "../../plugin-sdk/index.d.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { justLaunched, readStarting, retireStarting, type Starting, stillStarting } from "./editor-launch.ts";
 import { PortBlockedError } from "./editor-log.ts";
 import { chosenProject, linkedProject, listSetUpProjects, type SetUpProject, wantsUnreal } from "./editor-port.ts";
@@ -76,17 +77,20 @@ const LOG_FRESH_MS = 3 * MINUTE_MS;
 
 const SECONDS_PER_MINUTE = 60;
 
+/** The toolbar button's tooltip, in the person's words. */
 const MESSAGE = {
-  SetUpAny: "Set up an Unreal project for Genex.",
-  SetUp: (name: string) => `Set up ${name} for Genex.`,
-  NotOpen: (name: string) => `${name} isn't open in Unreal.`,
-  NotAnswering: (name: string) => `Unreal is open, but ${name} isn't answering.`,
+  SetUpAny: () => t("Set up an Unreal project for Genex."),
+  SetUp: (name: string) => t("Set up {name} for Genex.", { name }),
+  NotOpen: (name: string) => t("{name} isn't open in Unreal.", { name }),
+  NotAnswering: (name: string) => t("Unreal is open, but {name} isn't answering.", { name }),
   PortBlocked: (name: string) =>
-    `Unreal couldn't use the port Genex gave ${name}. Quit Unreal and open it again from the Unreal button.`,
-  Starting: (name: string, elapsed: string) => `Opening ${name} in Unreal… ${elapsed}`,
-  Ready: (name: string) => `Connected to ${name}.`,
-  AddToGame: "Make this game in Unreal",
-  GetUnreal: (version: string) => `Get Unreal Engine ${version} to make games in Unreal.`,
+    t("Unreal couldn't use the port Genex gave {name}. Quit Unreal and open it again from the Unreal button.", {
+      name,
+    }),
+  Starting: (name: string, elapsed: string) => t("Opening {name} in Unreal… {elapsed}", { name, elapsed }),
+  Ready: (name: string) => t("Connected to {name}.", { name }),
+  AddToGame: () => t("Make this game in Unreal"),
+  GetUnreal: (version: string) => t("Get Unreal Engine {version} to make games in Unreal.", { version }),
 } as const;
 
 /** The Unreal button's grey: the toolbar draws `info` in the muted ink. */
@@ -98,22 +102,28 @@ const MUTED = "info" as const satisfies PluginToolbarStatus["tone"];
  * first line.
  */
 const BADGE = {
-  [Connection.SetUp]: { badge: "Not set up", tone: MUTED, dot: true },
-  [Connection.NotOpen]: { badge: "Not open", tone: MUTED, dot: true },
-  [Connection.Starting]: { badge: "Starting", tone: "warn", dot: true },
-  [Connection.Ready]: { badge: "Ready", tone: "ok", dot: true },
-} as const satisfies Record<Connection, PluginToolbarStatus>;
+  [Connection.SetUp]: { badge: () => t("Not set up"), tone: MUTED },
+  [Connection.NotOpen]: { badge: () => t("Not open"), tone: MUTED },
+  [Connection.Starting]: { badge: () => t("Starting"), tone: "warn" },
+  [Connection.Ready]: { badge: () => t("Ready"), tone: "ok" },
+} as const satisfies Record<Connection, { badge: () => string; tone: PluginToolbarStatus["tone"] }>;
+
+/** A connection's badge as the toolbar draws it: its word and tone, with a dot. */
+function badgeOf(connection: Connection): PluginToolbarStatus {
+  const { badge, tone } = BADGE[connection];
+  return { badge: badge(), tone, dot: true };
+}
 
 /** What an open game with no Unreal project says: no dot on every web game, only that the button can start one. */
-const ADD = { tone: MUTED, title: MESSAGE.AddToGame } as const satisfies PluginToolbarStatus;
+const addStatus = (): PluginToolbarStatus => ({ tone: MUTED, title: MESSAGE.AddToGame() });
 
 /** What the button says while no Unreal Genex works with is installed: the panel shows how to get it. */
-const GET: PluginToolbarStatus = {
-  badge: "Not installed",
+const getStatus = (): PluginToolbarStatus => ({
+  badge: t("Not installed"),
   tone: MUTED,
   dot: true,
   title: MESSAGE.GetUnreal(installEngineVersion()),
-};
+});
 
 /**
  * Where a project stands, from what is known about it. An answer on its port counts only while an
@@ -238,7 +248,7 @@ async function gameProject(storage: string, game: string): Promise<string | unde
 }
 
 /** The status of a project that isn't set up, in words that name it. */
-const needsSetUp = (title: string): PluginToolbarStatus => ({ ...BADGE[Connection.SetUp], title });
+const needsSetUp = (title: string): PluginToolbarStatus => ({ ...badgeOf(Connection.SetUp), title });
 
 /** With no game open: the project chosen in the panel (else the first set-up one). */
 async function panelSubject(storage: string): Promise<Subject> {
@@ -246,13 +256,13 @@ async function panelSubject(storage: string): Promise<Subject> {
   const setUp = await listSetUpProjects(storage);
   const project = chosen ? setUp.find((p) => p.project === chosen) : setUp[0];
   if (project) return { project };
-  return { status: needsSetUp(chosen ? MESSAGE.SetUp(projectName(chosen)) : MESSAGE.SetUpAny) };
+  return { status: needsSetUp(chosen ? MESSAGE.SetUp(projectName(chosen)) : MESSAGE.SetUpAny()) };
 }
 
 /** With a game open: its own project, whatever another game or the panel chose; Add without one. */
 async function gameSubject(storage: string, game: string): Promise<Subject> {
   const linked = await gameProject(storage, game);
-  if (!linked) return { status: { ...ADD } };
+  if (!linked) return { status: addStatus() };
   const project = (await listSetUpProjects(storage)).find((p) => p.project === linked);
   return project ? { project } : { status: needsSetUp(MESSAGE.SetUp(projectName(linked))) };
 }
@@ -278,7 +288,7 @@ export async function toolbarStatus(
 /** The button's status before the strip's `shown`: see {@link toolbarStatus}. */
 async function gameStatus(env: SetupEnv, storage: string, now: number, game?: string): Promise<PluginToolbarStatus> {
   // Epic's list of installed engines is one small file: cheap enough for every toolbar ask.
-  if (!(await findEngines(env)).some((engine) => engine.supported)) return { ...GET };
+  if (!(await findEngines(env)).some((engine) => engine.supported)) return getStatus();
   const subject = game ? await gameSubject(storage, game) : await panelSubject(storage);
   if ("status" in subject) return subject.status;
   const { project } = subject;
@@ -291,7 +301,7 @@ async function gameStatus(env: SetupEnv, storage: string, now: number, game?: st
   const log = running && !answering ? await loadingOf(env, ownLog(project), now) : undefined;
   const facts = { setUp: true, answering, running, starting: startingOf(starting, project.project), ...log, now };
   const connection = connectionOf(facts);
-  return { ...BADGE[connection], title: titleOf(connection, project, facts) };
+  return { ...badgeOf(connection), title: titleOf(connection, project, facts) };
 }
 
 /** The Starting record when it is this project's. */

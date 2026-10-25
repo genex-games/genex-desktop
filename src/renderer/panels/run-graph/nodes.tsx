@@ -1,6 +1,7 @@
 import { memo, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { PerformanceBoundary } from "../../performance.tsx";
 import { PerformanceComponent } from "../../../shared/performance.ts";
+import { t } from "../../../shared/i18n.ts";
 /**
  * The Builds graph's nodes: what you asked, the assets tile, every step, the optimization tile,
  * your build and the lead — in a tree for the whole run, with its background tile and the finish
@@ -118,6 +119,10 @@ function NodeFrame({
     width: rect.w,
     height: rect.h,
     boxShadow: frameRing(variant, selected, edge),
+    // A large build has thousands of nodes and few on screen: the browser lays out and paints only
+    // those near the viewport, so opening Builds no longer lays out the whole graph at once.
+    contentVisibility: "auto",
+    containIntrinsicSize: `${rect.w}px ${rect.h}px`,
   };
   return (
     <button
@@ -330,7 +335,13 @@ function stepVariant(working: boolean, ghost: boolean): Variant {
 /** The chip on a step that folds several tries: which try is in hand, or how many it took. */
 function triesChip(tries: number, working: boolean): string | null {
   if (tries <= 1) return null;
-  return working ? `Try ${tries}` : `${tries} tries`;
+  return working ? t("Try {count}", { count: tries }) : t("{count, plural, other {# tries}}", { count: tries });
+}
+
+/** A step's name for a screen reader: its state, and how many tries it took when it took more than one. */
+function stepLabel(name: string, word: string, tries: number): string {
+  if (tries > 1) return t("{name}: {status}, {count, plural, other {# tries}}", { name, status: word, count: tries });
+  return t("{name}: {status}", { name, status: word });
 }
 
 /** One step of a part: its shown try's picture (its agent's screen while it works), its state, and how many tries it took. */
@@ -364,7 +375,7 @@ export const StepNode = memo(function StepNode({
         rect={rect}
         variant={stepVariant(working, ghost)}
         selected={selected}
-        label={`${step.name}: ${[word, tries > 1 ? `${tries} tries` : null].filter(Boolean).join(", ")}`}
+        label={stepLabel(step.name, word, tries)}
         screen={frame?.handle ?? null}
         onSelect={() => onSelect(step.id)}
       >
@@ -402,12 +413,12 @@ const checkingWord = (step: Step, word: string): string | null => (step.state ==
 
 /** The start node's words. */
 const START_WORDS = {
-  label: "You asked",
-  noPrompt: "No prompt recorded",
-  starting: "Starting point…",
-  failed: "Start failed",
-  showAll: "Show all",
-  showLess: "Show less",
+  label: t("You asked"),
+  noPrompt: t("No prompt recorded"),
+  starting: t("Starting point…"),
+  failed: t("Start failed"),
+  showAll: t("Show all"),
+  showLess: t("Show less"),
 } as const;
 /** The start's request folded: to five lines in its own place, to three under its pictures (a class, so a far zoom still hides it). */
 const START_FOLD = { Alone: "line-clamp-5", UnderPictures: "line-clamp-3" } as const;
@@ -570,7 +581,7 @@ export function StartNode({
       <button
         type="button"
         data-graph-node={GraphSelection.Start}
-        aria-label={`${START_WORDS.label}: ${goal}`}
+        aria-label={t("You asked: {request}", { request: goal })}
         aria-pressed={selected}
         className="group/start relative flex cursor-pointer flex-col gap-2.5 rounded-[14px] p-0 text-left focus-visible:outline-2 focus-visible:outline-offset-[10px] focus-visible:outline-accent"
         onClick={(event) => {
@@ -612,8 +623,8 @@ const ASSETS_GLYPH: Partial<Record<Tone, StepState>> = {
 
 /** The assets tile's status when no plugin was asked: what the modeller made, or nothing yet. */
 function modelledStatus(modelled: number, active: boolean): { text: string; tone: Tone } {
-  if (modelled) return { text: `${modelled} modelled`, tone: Tone.Muted };
-  return { text: active ? "None yet" : "None made", tone: Tone.Muted };
+  if (modelled) return { text: t("{count, plural, other {# modelled}}", { count: modelled }), tone: Tone.Muted };
+  return { text: active ? t("None yet") : t("None made"), tone: Tone.Muted };
 }
 
 function AssetTile({ item, project }: { item: AssetInfo; project: string | null }): JSX.Element {
@@ -665,7 +676,7 @@ export function AssetsTile({
       id={GraphSelection.Assets}
       rect={rect}
       selected={selected}
-      label={`Assets: ${status.text}`}
+      label={t("Assets: {status}", { status: status.text })}
       onSelect={onSelect}
     >
       <span className="absolute inset-0 flex flex-col gap-2 p-2">
@@ -679,7 +690,7 @@ export function AssetsTile({
           )}
         </span>
         <TileText
-          name={all.length > ASSETS_SHOWN ? `Assets · ${all.length}` : "Assets"}
+          name={all.length > ASSETS_SHOWN ? t("Assets · {count}", { count: all.length }) : t("Assets")}
           word={status.text}
           glyph={glyphState ? <StateGlyph state={glyphState} /> : null}
           color={TONE[status.tone]}
@@ -706,13 +717,13 @@ export function OptimizationTile({
       id={GraphSelection.Optimization}
       rect={rect}
       selected={selected}
-      label="Optimization stage details"
+      label={t("Optimization stage details")}
       onSelect={onSelect}
     >
       <NodeFace
         src={null}
         fill={Fill.Flat}
-        name="Optimization"
+        name={t("Optimization")}
         word={optimizationStatus(node)}
         tone={Tone.Muted}
         glyph={null}
@@ -743,7 +754,7 @@ export function ResultNode({
   onSelect: () => void;
 }): JSX.Element | null {
   if (!rect) return null;
-  const name = active ? "Latest build" : "Your build";
+  const name = active ? t("Latest build") : t("Your build");
   const checking = status.state === StepState.Judging;
   return (
     <NodeFrame
@@ -751,7 +762,7 @@ export function ResultNode({
       rect={rect}
       variant={checking ? Variant.Working : Variant.Result}
       selected={selected}
-      label={`${name}: ${status.word}`}
+      label={t("{name}: {status}", { name, status: status.word })}
       onSelect={onSelect}
     >
       <NodeFace
@@ -775,8 +786,6 @@ const LEAD_LOOK: Record<LeadFace, { variant: Variant; fill: Fill; glyph: StepSta
   [LeadFace.Stopped]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.NotInBuild },
   [LeadFace.Done]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.InBuild },
 };
-
-const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
 
 /** The lead's faces that wear the run's last save point: its work is where that save point left it. */
 const SHOWS_LAST_SAVE: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused]);
@@ -816,7 +825,7 @@ export function LeadNode({
       rect={rect}
       variant={look.variant}
       selected={selected}
-      label={`${LEAD_WORDS.name}: ${lowerFirst(word)}`}
+      label={LEAD_WORDS.heard[face]}
       screen={shown?.handle ?? null}
       onSelect={onSelect}
     >
@@ -856,7 +865,7 @@ export function JobsTile({
       id={GraphSelection.Jobs}
       rect={rect}
       selected={selected}
-      label={`${JOBS_EYEBROW}: ${status.title}, ${status.status}`}
+      label={t("{kind}: {name}, {status}", { kind: JOBS_EYEBROW, name: status.title, status: status.status })}
       onSelect={onSelect}
     >
       <span className="absolute inset-0 flex flex-col justify-end p-2">
@@ -906,7 +915,7 @@ export function FinishCheckNode({
       variant={look.variant}
       edge={colours.edge}
       selected={selected}
-      label={`${FINISH_CHECK_WORDS.name}: ${face.name} · ${face.word}`}
+      label={t("{check}: {name} · {status}", { check: FINISH_CHECK_WORDS.name, name: face.name, status: face.word })}
       onSelect={onSelect}
     >
       <NodeFace

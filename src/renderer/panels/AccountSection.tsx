@@ -1,21 +1,24 @@
 /**
  * Settings → Genex account. Signed in: the account's avatar, Generated (made from its id, every
- * account has one, and Regenerate gives it another) or Photo (one it uploaded), its name, its
- * nickname (once genex.games knows nicknames; Edit opens the welcome's field) and its credits with
- * what they pay for. Each change applies everywhere at once, in the app and on
- * genex.games; offline, changes wait for the connection. Sign out sits beside the title
+ * account has one, and Regenerate gives it another) or Photo (one it uploaded), a Pro's nameplate
+ * (New one rolls another, kept on this Mac), its name, its nickname (once genex.games knows
+ * nicknames; Edit opens the welcome's field) and its credits with what they pay for. Each account
+ * change applies everywhere at once, in the app and on genex.games; offline, changes wait for the
+ * connection. Sign out sits beside the title
  * (`AccountSignOut`). Signed out: the account card drawn as Assets draws what is being made, one
  * line and Sign in in browser. The account is the app's: the Genex plugin being off changes nothing.
  */
 import type { JSX } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { avatarRecipe } from "../../shared/avatar-recipe.ts";
+import { intlLocale } from "../../shared/i18n.ts";
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
 import { creditsPlansUrl } from "../../shared/play-credits.ts";
 import { handleBaseFromName } from "../../shared/handle.ts";
 import { AvatarStyle, PLAY_NAME_LENGTH, type PlayMe, playName } from "../../shared/play-people.ts";
 import { AvatarMotion, GeneratedAvatar } from "../avatars/GeneratedAvatar.tsx";
 import { MakingDrawing } from "../making-art.ts";
+import { richText } from "../rich-text.tsx";
 import { GenexTab, openGenexPage } from "./plugins/genex/genex-tab.ts";
 import { avatarWebp } from "../play/avatar-image.ts";
 import { CreditsShard } from "../play/CreditsShard.tsx";
@@ -31,10 +34,15 @@ import { Icon } from "../ui/icons.tsx";
 import { useOnline } from "../ui/use-online.ts";
 import { ACCOUNT_WORDS, NICKNAME_WORDS, PLAY_WORDS } from "../words.ts";
 import { MakingArt } from "./MakingArt.tsx";
+import { Nameplate, useNameplate } from "../nameplate/Nameplate.tsx";
+import { rollPlateVariant } from "../nameplate/plate-variant.ts";
+import { PersonAvatar } from "../play/PersonAvatar.tsx";
 
 const WORDS = ACCOUNT_WORDS;
 /** The two choices' pictures. */
 const CHOICE_AVATAR = 72;
+/** The face on the nameplate's preview: the sidebar plate's own size. */
+const PLATE_FACE = 28;
 
 /** The style the account shows: the one it chose, else the generated one. */
 const shownStyle = (me: PlayMe): AvatarStyle => me.avatarStyle ?? AvatarStyle.Generated;
@@ -206,6 +214,35 @@ function AvatarRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Element
   );
 }
 
+/** A Pro's nameplate: how it shows behind their name, and New one, which rolls another at once. */
+function NameplateRow({ me }: { me: PlayMe }): JSX.Element {
+  const plate = useNameplate(me.id, me.avatarVariant);
+  return (
+    <div className="account-row" data-account-nameplate>
+      <span className="account-row-label">{WORDS.nameplate}</span>
+      <div className="account-row-body">
+        <div className="account-nameplate">
+          <Nameplate recipe={plate}>
+            <span className="account-nameplate-row" data-avatar-host>
+              <PersonAvatar person={me} size={PLATE_FACE} />
+              <span className="profile-plate-name">
+                <span className="profile-plate-name-text">{me.name}</span>
+              </span>
+            </span>
+          </Nameplate>
+        </div>
+        <div className="account-actions">
+          <Button className="account-upload" data-nameplate-new onClick={() => rollPlateVariant(me.id)}>
+            <Icon name="dice" />
+            {WORDS.newPlate}
+          </Button>
+        </div>
+        <span className="account-note">{WORDS.nameplateNote}</span>
+      </div>
+    </div>
+  );
+}
+
 /** The name row: the field, Save when it changed (and the Mac is online). */
 function NameRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Element {
   const [draft, setDraft] = useState(me.name);
@@ -362,7 +399,9 @@ function NicknameRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Eleme
 /** "1,700 credits": the balance as last read, or nothing before it was. */
 function creditsWords(credits: { balance: number | null; unlimited: boolean } | null): string | null {
   if (credits?.unlimited) return WORDS.creditsUnlimited;
-  return credits?.balance == null ? null : WORDS.creditsCount(new Intl.NumberFormat().format(credits.balance));
+  return credits?.balance == null
+    ? null
+    : WORDS.creditsCount(new Intl.NumberFormat(intlLocale()).format(credits.balance));
 }
 
 /**
@@ -380,7 +419,6 @@ function CreditsRow(): JSX.Element {
       .api.openUrl(creditsPlansUrl(web))
       .catch(() => undefined);
   };
-  const note = WORDS.creditsNote;
   return (
     <div className="account-row" data-account-credits>
       <span className="account-row-label">{WORDS.credits}</span>
@@ -394,16 +432,18 @@ function CreditsRow(): JSX.Element {
           </button>
         </div>
         <span className="account-note">
-          {note.before}
-          <button
-            type="button"
-            className="account-note-link"
-            aria-label={WORDS.creditsPluginLabel}
-            onClick={() => openGenexPage(GenexTab.Tools)}
-          >
-            {note.plugin}
-          </button>
-          {note.after}
+          {richText(WORDS.creditsNote, {
+            plugin: (name) => (
+              <button
+                type="button"
+                className="account-note-link"
+                aria-label={WORDS.creditsPluginLabel}
+                onClick={() => openGenexPage(GenexTab.Tools)}
+              >
+                {name}
+              </button>
+            ),
+          })}
         </span>
       </div>
     </div>
@@ -485,6 +525,7 @@ export function AccountSection(): JSX.Element {
   return (
     <div className="account-section" data-account-section>
       <AvatarRow me={me} online={online} />
+      {me.pro && <NameplateRow me={me} />}
       <NameRow me={me} online={online} />
       {me.handleChosen !== null && <NicknameRow me={me} online={online} />}
       <CreditsRow />

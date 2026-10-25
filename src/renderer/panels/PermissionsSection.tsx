@@ -5,8 +5,9 @@
  * each chat still picks its own mode in the composer.
  */
 import { type JSX, useEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import {
-  PERMISSION_MODE_WORDS,
+  permissionModeWords,
   PERMISSION_MODES,
   type PermissionMode,
   type PermissionSettingsView,
@@ -27,27 +28,35 @@ import { Icon } from "../ui/icons.tsx";
 import { Pending } from "../ui/Pending.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { hostPlatform } from "../platform.ts";
-import { computerControlOffered, useComputerControl } from "../use-computer-control.ts";
+import { computerControlOffered } from "../../shared/computer-control.ts";
+import { useComputerControl } from "../use-computer-control.ts";
 import { usePermissionSettings } from "../use-permission-settings.ts";
-import { COMPUTER_CONTROL_SETTING_WORDS, permissionRuleWords, problemWords } from "../words.ts";
-import { plural } from "../../shared/skill-words.ts";
+import { COMPUTER_CONTROL_SETTING_WORDS, computerControlDetail, permissionRuleWords, problemWords } from "../words.ts";
+import { SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** The section's own words. */
 const WORDS = {
-  loading: "Loading…",
-  everyGame: "In every game",
-  startsIn: "New chats start in",
-  allowed: "Always allowed",
-  about: "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.",
-  none: "Nothing yet. Choosing Always allow in a chat adds an action here.",
-  count: (actions: number, games: number) => `${plural(actions, "action")} · ${plural(games, "game")}`,
+  loading: t("Loading…"),
+  everyGame: t("In every game"),
+  startsIn: t("New chats start in"),
+  allowed: t("Always allowed"),
+  about: t("What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game."),
+  none: t("Nothing yet. Choosing Always allow in a chat adds an action here."),
+  count: (actions: number, games: number) =>
+    t("{actions, plural, one {# action} other {# actions}} · {games, plural, one {# game} other {# games}}", {
+      actions,
+      games,
+    }),
   where: (action: AllowedAction) =>
-    action.games.length === 1 ? (action.games[0]?.title ?? "") : plural(action.games.length, "game"),
-  stop: (action: AllowedAction, words: string) =>
     action.games.length === 1
-      ? `Stop allowing: ${words}`
-      : `Stop allowing in all ${action.games.length} games: ${words}`,
-  stopIn: (title: string) => `Stop allowing in ${title}`,
+      ? (action.games[0]?.title ?? "")
+      : t("{count, plural, one {# game} other {# games}}", { count: action.games.length }),
+  stop: (action: AllowedAction, words: string) =>
+    t("{count, plural, =1 {Stop allowing: {action}} other {Stop allowing in all # games: {action}}}", {
+      count: action.games.length,
+      action: words,
+    }),
+  stopIn: (title: string) => t("Stop allowing in {game}", { game: title }),
 } as const;
 
 /** The modes a new chat may start in, in the composer's order. */
@@ -71,7 +80,7 @@ function StartingMode({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button data-default-mode disabled={busy} className="h-9 gap-2 ps-3.5 pe-3 text-sm">
-              {PERMISSION_MODE_WORDS[mode].label}
+              {permissionModeWords()[mode].label}
               <Icon name="chevron-down" size={14} />
             </Button>
           </DropdownMenuTrigger>
@@ -80,8 +89,8 @@ function StartingMode({
               {STARTING_MODES.map((option) => (
                 <DropdownMenuRadioItem key={option} value={option} onSelect={() => onPick(option)}>
                   <span className="flex min-w-0 flex-col">
-                    <span>{PERMISSION_MODE_WORDS[option].label}</span>
-                    <span className="text-xs text-muted-foreground">{PERMISSION_MODE_WORDS[option].description}</span>
+                    <span>{permissionModeWords()[option].label}</span>
+                    <span className="text-xs text-muted-foreground">{permissionModeWords()[option].description}</span>
                   </span>
                 </DropdownMenuRadioItem>
               ))}
@@ -93,17 +102,18 @@ function StartingMode({
   );
 }
 
-/** "Let agents control your computer": off by default, and offered only where a desktop driver runs (macOS). */
+/** "Let agents control your computer": off by default, and offered only where a desktop driver runs (macOS, Windows). */
 function ComputerControl(): JSX.Element | null {
   const { on, busy, error, change } = useComputerControl();
   if (on === null && !error) return null;
-  const offered = computerControlOffered(hostPlatform());
+  const platform = hostPlatform();
+  const offered = computerControlOffered(platform);
   return (
     <section aria-label={COMPUTER_CONTROL_SETTING_WORDS.section} data-computer-control className="settings-card">
       <div className="flex items-center justify-between gap-3">
         <label htmlFor="permissions-computer-control" className="flex min-w-0 flex-col gap-0.5">
           <span className="settings-card-title">{COMPUTER_CONTROL_SETTING_WORDS.label}</span>
-          <span className="max-w-[460px] text-ink-3">{COMPUTER_CONTROL_SETTING_WORDS.detail}</span>
+          <span className="max-w-[460px] text-ink-3">{computerControlDetail(platform)}</span>
         </label>
         <Switch
           id="permissions-computer-control"
@@ -287,7 +297,9 @@ export function PermissionsSection(): JSX.Element {
             {error}
           </p>
         ) : (
-          <Pending label={WORDS.loading} />
+          <Pending label={WORDS.loading}>
+            <SkeletonRows />
+          </Pending>
         )}
       </div>
     );

@@ -11,27 +11,43 @@ import { Worker } from "node:worker_threads";
 export type IsolatedImport = { exports: Record<string, string>; error?: undefined } | { error: string };
 
 /**
- * The worker's whole program: import the module it is handed and post its exports' types or the
- * error. A CommonJS script (`eval`), so its dynamic import resolves the absolute URL it is given.
+ * The worker's whole program: import the module it is handed and post its exports' types (or what
+ * the export it is asked to call returns), or the error. A CommonJS script (`eval`), so its dynamic import resolves the absolute URL it is given.
  */
 const WORKER_SOURCE = `
 const { parentPort, workerData } = require("node:worker_threads");
 import(workerData.url).then(
-  (module) => parentPort.postMessage({ exports: Object.fromEntries(Object.entries(module).map(([name, value]) => [name, typeof value])) }),
+  async (module) => parentPort.postMessage(
+    workerData.call
+      ? { returned: await module[workerData.call]() }
+      : { exports: Object.fromEntries(Object.entries(module).map(([name, value]) => [name, typeof value])) },
+  ),
   (err) => parentPort.postMessage({ error: err instanceof Error ? err.message : String(err) }),
 );
 `;
 
 /** Import `file` in a worker that ends once it has answered; what it linked is freed with it. */
-export async function importIsolated(file: string): Promise<IsolatedImport> {
+export function importIsolated(file: string): Promise<IsolatedImport> {
+  return inWorker<IsolatedImport>(file);
+}
+
+/** Import `file` in its own worker and answer what its export `name` returns, called with nothing. */
+export async function callIsolated(file: string, name: string): Promise<unknown> {
+  const answer = await inWorker<{ returned: unknown; error?: undefined } | { error: string }>(file, name);
+  if (answer.error !== undefined) throw new Error(answer.error);
+  return answer.returned;
+}
+
+/** Run the worker's program on `file` (calling its export `call`, if named) and answer what it posts. */
+async function inWorker<T>(file: string, call?: string): Promise<T> {
   // No preloads: the test runner's own (`TEST_PRELOAD`) would register test hooks inside the worker.
   const worker = new Worker(WORKER_SOURCE, {
     eval: true,
     execArgv: [],
-    workerData: { url: pathToFileURL(file).href },
+    workerData: { url: pathToFileURL(file).href, ...(call ? { call } : {}) },
   });
   try {
-    return await new Promise<IsolatedImport>((resolve, reject) => {
+    return await new Promise<T>((resolve, reject) => {
       worker.once("message", resolve);
       worker.once("error", reject);
       worker.once("exit", (code) => reject(new Error(`the import's worker exited with ${code} before answering`)));

@@ -1,9 +1,13 @@
 /**
  * cua-driver (trycua/cua, MIT) as the studio's desktop driver. The driver speaks MCP over stdio
- * (`cua-driver mcp`). On this Mac the studio runs its own embedded daemon (`cua-embedded.ts`), so
- * the Accessibility and Screen Recording grants are the studio's. A VM is reached over SSH into the
- * guest (`ssh -T lume@<ip> cua-driver mcp`), where the guest's CuaDriver.app holds them; one client
- * drives both.
+ * (`cua-driver mcp`). On this computer the studio runs its own embedded daemon (`cua-embedded.ts`):
+ * on a Mac the Accessibility and Screen Recording grants are the studio's, and Windows asks for none.
+ * A VM is reached over SSH into the guest (`ssh -T lume@<ip> cua-driver mcp`), where the guest's
+ * CuaDriver.app holds them; one client drives all three.
+ *
+ * On Windows the studio asks Windows itself (`windows-window-probe.ts`) which app is in front, which
+ * app a click reaches and whether the focused field is a password field: cua's window list holds
+ * windows a click passes through. An app is named by its executable (`windowsAppId`).
  *
  * Every action targets the whole display (`{kind: "desktop"}`) in the foreground: the real pointer
  * and keyboard, the way a person would, because background clicks into a canvas are rerouted and
@@ -21,9 +25,22 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
-import type { DesktopApp, DesktopDriver, DesktopFocus, DesktopShot } from "./desktop-driver.ts";
+import {
+  type DesktopApp,
+  type DesktopDriver,
+  type DesktopFocus,
+  type DesktopShot,
+  windowsAppId,
+} from "./desktop-driver.ts";
 import { type MacApps, macApps } from "./mac-apps.ts";
 import { cuaWeb, refusalError } from "./cua-web.ts";
+import {
+  type ProbedApp,
+  probeCommand,
+  type ScreenSize,
+  type WindowsProbe,
+  windowsProbe,
+} from "./windows-window-probe.ts";
 import { randomUUID } from "node:crypto";
 
 /** The longest side of a desktop picture the model is shown: the driver's own default on macOS. */
@@ -44,20 +61,90 @@ const APPS_TTL_MS = 1_500;
 /** How many accessibility elements a state read brings back. */
 const MAX_ELEMENTS = 250;
 /**
- * A password field in an accessibility tree row: cua prints a field's role, not its secure
- * subrole, so a text field labelled as a password is taken for one.
+ * A password field in an accessibility tree row or element: cua prints a field's role, not its
+ * secure subrole (macOS) or its password flag (Windows UI Automation, whose text field is an `Edit`
+ * row starting the line), so a text field labelled as a password is taken for one.
  */
-const PASSWORD_FIELD = /AX(?:Secure)?TextField[^\n]*(?:password|passcode|passwort|mot de passe|contraseña|пароль)/i;
-/** Where the driver's installer puts its command, and where a package manager might: a development build's driver. */
-const DRIVER_PLACES = [".local/bin/cua-driver", "/opt/homebrew/bin/cua-driver", "/usr/local/bin/cua-driver"] as const;
+const PASSWORD_FIELDS = [
+  /AX(?:Secure)?TextField[^\n]*(?:password|passcode|passwort|mot de passe|contraseña|пароль)/i,
+  /^\s*(?:-\s*)?(?:\[\d+\]\s*)?Edit\b[^\n]*(?:password|passcode|passwort|mot de passe|contraseña|пароль)/i,
+] as const;
+/**
+ * Where the driver's installer puts its command, and where a package manager might: a development
+ * build's driver, by system (cua's `install.ps1` on Windows, its `install.sh` and Homebrew elsewhere).
+ */
+const DRIVER_PLACES = {
+  posix: [".local/bin/cua-driver", "/opt/homebrew/bin/cua-driver", "/usr/local/bin/cua-driver"],
+  win32: ["AppData/Local/Programs/Cua/cua-driver/bin/cua-driver.exe"],
+} as const;
 /** A VM's SSH address: a user and a host, nothing a shell or ssh could read as an option. */
 const VM_ADDRESS = /^[a-z_][a-z0-9_-]{0,31}@[A-Za-z0-9.-]{1,253}$/;
 /** Where the guest image keeps the driver. */
 const VM_DRIVER_PATH = "/Users/lume/.local/bin/cua-driver";
 
-/** The driver's own app: its agent-cursor overlay is a full-screen window above every other. */
+/**
+ * The driver's own app: its agent-cursor overlay is a full-screen window above every other. On
+ * Windows the overlay is the daemon's own window, listed under its executable.
+ */
 const DRIVER_BUNDLE = "com.trycua.driver";
 const DRIVER_APP_NAME = "Cua Driver";
+const DRIVER_EXE = "cua-driver.exe";
+
+/**
+ * Key names cua spells differently on Windows: forward delete is `delete` there (macOS's `delete`
+ * is Backspace, so the studio says `forward_delete`).
+ */
+const WINDOWS_KEYS: Readonly<Record<string, string>> = { forward_delete: "delete" };
+/**
+ * The named keys cua's Windows driver knows (its `key_name_to_vk`); it presses a name it does not
+ * know as the name's first letter (so `volumeup` with Ctrl would paste), so any other name is refused.
+ */
+const WINDOWS_NAMED_KEYS: ReadonlySet<string> = new Set([
+  "enter",
+  "return",
+  "tab",
+  "escape",
+  "esc",
+  "space",
+  "backspace",
+  "delete",
+  "del",
+  "insert",
+  "ins",
+  "home",
+  "end",
+  "pageup",
+  "pgup",
+  "pagedown",
+  "pgdn",
+  "up",
+  "down",
+  "left",
+  "right",
+  "f1",
+  "f2",
+  "f3",
+  "f4",
+  "f5",
+  "f6",
+  "f7",
+  "f8",
+  "f9",
+  "f10",
+  "f11",
+  "f12",
+  "ctrl",
+  "control",
+  "shift",
+  "alt",
+  "capslock",
+  "numlock",
+]);
+/**
+ * The Windows key, as cua names it. It belongs to the shell (Start, Run, Search can start any program),
+ * not to the app in front that the studio checked, so it is never pressed on Windows.
+ */
+const WINDOWS_SHELL_KEYS: ReadonlySet<string> = new Set(["cmd", "command", "win", "windows", "meta", "super"]);
 
 /** The whole primary display, the target of every action. */
 const DESKTOP = { kind: "desktop", display_id: "primary" } as const;
@@ -70,6 +157,9 @@ const MESSAGE = {
       "cua-driver needs Accessibility and Screen Recording: allow CuaDriver in System Settings → Privacy & Security, then try again",
   },
   noPicture: "cua-driver answered without a picture of the screen",
+  windowsKey:
+    "the Windows key opens the shell (Start, Run, Search), which can start any program: computer control never presses it — use Ctrl shortcuts or click in the app",
+  unknownKey: (key: string) => `"${key}" is not a key cua-driver can press on Windows`,
   failed: (tool: string, why: string) => `cua-driver ${tool} failed: ${why}`,
 } as const;
 
@@ -115,9 +205,12 @@ export function vmDriverCommand(address: string): CuaCommand | null {
  * The driver to run: the one bundled with the app, else an installed one (the installer's wrapper,
  * or one on a usual path); null when there is none.
  */
-export async function findCuaDriver(options: { bundled?: string; home?: string } = {}): Promise<string | null> {
+export async function findCuaDriver(
+  options: { bundled?: string; home?: string; platform?: NodeJS.Platform } = {},
+): Promise<string | null> {
   const home = options.home ?? os.homedir();
-  const places = [...(options.bundled ? [options.bundled] : []), ...DRIVER_PLACES];
+  const installed = (options.platform ?? process.platform) === "win32" ? DRIVER_PLACES.win32 : DRIVER_PLACES.posix;
+  const places = [...(options.bundled ? [options.bundled] : []), ...installed];
   for (const place of places) {
     const full = path.isAbsolute(place) ? place : path.join(home, place);
     const runnable = await access(full, constants.X_OK).then(
@@ -152,18 +245,21 @@ function treeText(answer: CuaAnswer): string {
   return typeof markdown === "string" ? markdown : textOf(answer);
 }
 
+/** Whether one tree row, or one element's role and label, is a password field. */
+function isPasswordField(row: string): boolean {
+  return PASSWORD_FIELDS.some((field) => field.test(row));
+}
+
 /** A password field in a window state: an element's role and label, else one Markdown row. */
 function hasPasswordField(answer: CuaAnswer): boolean {
   const elements = structured(answer).elements;
   if (Array.isArray(elements)) {
     return elements.some((element) => {
       const row = element && typeof element === "object" ? (element as Record<string, unknown>) : {};
-      return PASSWORD_FIELD.test(`${String(row.role ?? "")} ${String(row.label ?? "")}`);
+      return isPasswordField(`${String(row.role ?? "")} ${String(row.label ?? "")}`);
     });
   }
-  return treeText(answer)
-    .split("\n")
-    .some((line) => PASSWORD_FIELD.test(line));
+  return treeText(answer).split("\n").some(isPasswordField);
 }
 
 /** The answer's text, joined. */
@@ -219,6 +315,11 @@ function windowOf(row: Record<string, unknown>, index: number): CuaWindow {
   return { pid: num(row.pid), windowId: num(row.window_id), appName, z: num(row.z_index) ?? -index, bounds };
 }
 
+/** Whether a listed window is the driver's own cursor overlay, by its app's name (macOS) or executable (Windows). */
+function isDriverWindow(window: CuaWindow): boolean {
+  return window.appName === DRIVER_APP_NAME || window.appName.toLowerCase() === DRIVER_EXE;
+}
+
 /** Whether a window holds a point. */
 function holds(window: CuaWindow, x: number, y: number): boolean {
   const b = window.bounds;
@@ -237,15 +338,19 @@ function scrollOf(dx: number, dy: number): { direction: string; amount: number }
 /** A tool call that throws the driver's own words when it answers with an error. */
 type CuaCall = (tool: string, args: Record<string, unknown>) => Promise<CuaAnswer>;
 
-/**
- * What the driver says about the desktop: the apps, the on-screen windows front first — never the
- * driver's own cursor overlay, which no click is meant for — and the front window's accessibility
- * tree. On this Mac, apps come from Launch Services (`mac-apps.ts`, milliseconds); the driver's own
- * listing, which walks every installed app, is the fallback (one listing serves one action's calls).
- */
-function desktopReads(call: CuaCall, mac: MacApps | undefined) {
+/** What the studio reads of the desktop: its apps, the app a click at a screen point reaches, the keyboard's app and field, and the front window's tree. */
+interface DesktopReads {
+  appOfPid(pid: number): Promise<DesktopApp | null>;
+  appAt(x: number, y: number): Promise<DesktopApp | null>;
+  frontApp(): Promise<DesktopApp | null>;
+  focus(): Promise<DesktopFocus>;
+  frontTree(app: DesktopApp | null): Promise<CuaAnswer | null>;
+}
+
+/** The driver's app listing, kept for one action's calls ({@link APPS_TTL_MS}), never a stale front app later. */
+function cachedAppRows(call: CuaCall): () => Promise<Record<string, unknown>[]> {
   let apps: { at: number; rows: Promise<Record<string, unknown>[]> } | null = null;
-  const appRows = (): Promise<Record<string, unknown>[]> => {
+  return () => {
     if (!apps || Date.now() - apps.at > APPS_TTL_MS) {
       const rows = call("list_apps", {}).then((answer) => listOf(answer, "apps"));
       apps = { at: Date.now(), rows };
@@ -255,52 +360,148 @@ function desktopReads(call: CuaCall, mac: MacApps | undefined) {
     }
     return apps.rows;
   };
+}
+
+/** The on-screen windows, front first: one app's when `pid` names it. */
+async function listedWindows(call: CuaCall, pid?: number): Promise<CuaWindow[]> {
+  const rows = listOf(await call("list_windows", { on_screen_only: true, ...(pid ? { pid } : {}) }), "windows");
+  return rows.map(windowOf).sort((a, b) => b.z - a.z);
+}
+
+/** The accessibility tree of an app's front window, or null when it has none on screen. */
+async function frontTreeOf(
+  call: CuaCall,
+  windows: (pid: number) => Promise<CuaWindow[]>,
+  app: DesktopApp | null,
+): Promise<CuaAnswer | null> {
+  if (!app?.pid) return null;
+  const [front] = await windows(app.pid);
+  if (!front?.windowId) return null;
+  return call("get_window_state", {
+    pid: app.pid,
+    window_id: front.windowId,
+    include_screenshot: false,
+    include_accessibility_tree: true,
+    max_elements: MAX_ELEMENTS,
+  });
+}
+
+/**
+ * What the driver says about a Mac's desktop, or a VM's — never the driver's own cursor overlay,
+ * which no click is meant for. On this Mac, apps come from Launch Services (`mac-apps.ts`,
+ * milliseconds) and macOS's own secure input says a password field has the keyboard; the driver's
+ * own listing, which walks every installed app, is the fallback (one listing serves one action's
+ * calls), and elsewhere (a VM) a field labelled as a password in the front window's tree stands in
+ * for secure input.
+ */
+function desktopReads(call: CuaCall, options: { mac?: MacApps; secureInput?: () => Promise<boolean> }): DesktopReads {
+  const { mac } = options;
+  const appRows = cachedAppRows(call);
   const appOfPid = async (pid: number): Promise<DesktopApp | null> => {
     if (mac) return mac.byPid(pid);
     const row = (await appRows()).find((app) => num(app.pid) === pid);
     return row ? appOf(row) : null;
   };
   const windows = async (pid?: number): Promise<CuaWindow[]> => {
-    const rows = listOf(await call("list_windows", { on_screen_only: true, ...(pid ? { pid } : {}) }), "windows");
-    const listed = rows.map(windowOf).sort((a, b) => b.z - a.z);
     const kept: CuaWindow[] = [];
-    for (const window of listed) {
-      const named = window.appName === DRIVER_APP_NAME;
+    for (const window of await listedWindows(call, pid)) {
+      const named = isDriverWindow(window);
       const owner = !named && window.pid !== null && mac ? await mac.byPid(window.pid) : null;
       if (!named && owner?.bundleId !== DRIVER_BUNDLE) kept.push(window);
     }
     return kept;
   };
+  const frontApp = async (): Promise<DesktopApp | null> => {
+    if (mac) return mac.front();
+    const front = (await appRows()).find((row) => row.active === true);
+    return front ? appOf(front) : null;
+  };
+  const frontTree = (app: DesktopApp | null) => frontTreeOf(call, windows, app);
   return {
     appOfPid,
-    windows,
-    frontApp: async (): Promise<DesktopApp | null> => {
-      if (mac) return mac.front();
-      const front = (await appRows()).find((row) => row.active === true);
-      return front ? appOf(front) : null;
+    appAt: async (x, y) => {
+      const under = (await windows()).find((window) => holds(window, x, y));
+      if (!under?.pid) return null;
+      return (await appOfPid(under.pid)) ?? { name: under.appName, bundleId: null, pid: under.pid };
     },
-    frontTree: async (app: DesktopApp | null): Promise<CuaAnswer | null> => {
-      if (!app?.pid) return null;
-      const [front] = await windows(app.pid);
-      if (!front?.windowId) return null;
-      return call("get_window_state", {
-        pid: app.pid,
-        window_id: front.windowId,
-        include_screenshot: false,
-        include_accessibility_tree: true,
-        max_elements: MAX_ELEMENTS,
-      });
+    frontApp,
+    focus: async () => {
+      const app = await frontApp();
+      if (options.secureInput) return { app, secure: await options.secureInput().catch(() => false) };
+      const tree = await frontTree(app).catch(() => null);
+      return { app, secure: tree !== null && hasPasswordField(tree) };
     },
+    frontTree,
+  };
+}
+
+/** A key as cua's Windows driver spells it; throws for the Windows key and a name it cannot press. */
+function windowsKey(key: string): string {
+  if ([...key].length === 1) return key;
+  const name = (WINDOWS_KEYS[key] ?? key).toLowerCase();
+  if (WINDOWS_SHELL_KEYS.has(name)) throw new Error(MESSAGE.windowsKey);
+  if (WINDOWS_NAMED_KEYS.has(name)) return name;
+  throw new Error(MESSAGE.unknownKey(key));
+}
+
+/** A probed Windows app as the studio names it: by its executable, shown by its file description. */
+function probedApp(probed: ProbedApp | null): DesktopApp | null {
+  if (!probed) return null;
+  return { name: probed.name || probed.exe, bundleId: windowsAppId(probed.exe), pid: probed.pid };
+}
+
+/**
+ * What Windows says about its desktop, through the window probe: the app in front and its focused
+ * field, the app a click at a point reaches, a process's app. An app the probe cannot read (no
+ * process, no executable) is no app, which the target refuses. Only the front window's tree comes
+ * from cua; it stands in for UI Automation's password flag when that could not be read.
+ */
+function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSize): DesktopReads {
+  const windows = async (pid?: number): Promise<CuaWindow[]> =>
+    (await listedWindows(call, pid)).filter((window) => !isDriverWindow(window));
+  // The front window as the probe last named it: its tree is read by its handle, without cua's
+  // window list (a second or more on Windows).
+  let front: ProbedApp | null = null;
+  const frontTree = (app: DesktopApp | null): Promise<CuaAnswer | null> => {
+    const known = front !== null && app?.pid === front.pid ? front.window : null;
+    if (known === null) return frontTreeOf(call, windows, app);
+    return call("get_window_state", {
+      pid: front?.pid,
+      window_id: known,
+      include_screenshot: false,
+      include_accessibility_tree: true,
+      max_elements: MAX_ELEMENTS,
+    });
+  };
+  const probeFront = async (): Promise<ProbedApp | null> => {
+    front = await probe.front();
+    return front;
+  };
+  return {
+    appOfPid: async (pid) => probedApp(await probe.process(pid)),
+    appAt: async (x, y) => probedApp(await probe.at(x, y, screen())),
+    frontApp: async () => probedApp(await probeFront()),
+    focus: async () => {
+      const probed = await probeFront();
+      const app = probedApp(probed);
+      if (probed?.secure !== null && probed?.secure !== undefined) return { app, secure: probed.secure };
+      const tree = await frontTree(app).catch(() => null);
+      return { app, secure: tree !== null && hasPasswordField(tree) };
+    },
+    frontTree,
   };
 }
 
 /**
  * The driver over one connection: each studio call as the driver's tools. `screenshot` remembers
- * the picture's size and the screen's, so `appAt` can find the window under a picture's point.
+ * the picture's size and the screen's, so `appAt` can find the app under a picture's point.
+ * `windows` reads a Windows desktop through its window probe (and speaks Windows' key names), which
+ * the driver closes with the connection; `mac` and `secureInput` read this Mac's; with neither, the
+ * driver's own listing serves (a VM).
  */
 export function cuaDriver(
   connection: CuaConnection,
-  options: { secureInput?: () => Promise<boolean>; mac?: MacApps } = {},
+  options: { secureInput?: () => Promise<boolean>; mac?: MacApps; windows?: WindowsProbe } = {},
 ): DesktopDriver {
   let picture = { width: 1, height: 1 };
   let screen = { width: 1, height: 1 };
@@ -316,7 +517,8 @@ export function cuaDriver(
   };
   const act = (tool: string, args: Record<string, unknown>) =>
     call(tool, { target: DESKTOP, delivery_mode: "foreground", ...args }).then(() => undefined);
-  const { appOfPid, windows, frontApp, frontTree } = desktopReads(call, options.mac);
+  const keyName = (key: string): string => (options.windows ? windowsKey(key) : key);
+  const reads = options.windows ? windowsReads(call, options.windows, () => screen) : desktopReads(call, options);
   return {
     screenshot: async (): Promise<DesktopShot> => {
       const answer = await call("get_desktop_state", { max_image_dimension: MAX_IMAGE_DIMENSION });
@@ -338,29 +540,17 @@ export function cuaDriver(
         screen: { ...picture },
       };
     },
-    // On this Mac, macOS's own secure input says a password field has the keyboard, in milliseconds;
-    // elsewhere (a VM) a field labelled as a password in the front window's tree stands in for it.
-    focus: async (): Promise<DesktopFocus> => {
-      const app = await frontApp();
-      if (options.secureInput) return { app, secure: await options.secureInput().catch(() => false) };
-      const tree = await frontTree(app).catch(() => null);
-      return { app, secure: tree !== null && hasPasswordField(tree) };
-    },
-    appAt: async (x, y) => {
-      const point = { x: (x * screen.width) / picture.width, y: (y * screen.height) / picture.height };
-      const under = (await windows()).find((window) => holds(window, point.x, point.y));
-      if (!under?.pid) return null;
-      return (await appOfPid(under.pid)) ?? { name: under.appName, bundleId: null, pid: under.pid };
-    },
+    focus: () => reads.focus(),
+    appAt: (x, y) => reads.appAt((x * screen.width) / picture.width, (y * screen.height) / picture.height),
     // move_cursor takes no delivery mode, and a desktop target is its own scope.
     move: (x, y) => call("move_cursor", { target: DESKTOP, x, y }).then(() => undefined),
-    click: (x, y, o) =>
+    click: async (x, y, o) =>
       act("click", {
         x,
         y,
         button: o.button,
         count: o.count,
-        ...(o.modifiers.length ? { modifier: o.modifiers } : {}),
+        ...(o.modifiers.length ? { modifier: o.modifiers.map(keyName) } : {}),
       }),
     mouse: () =>
       Promise.reject(
@@ -369,10 +559,13 @@ export function cuaDriver(
     drag: (from, to, button) => act("drag", { from_x: from.x, from_y: from.y, to_x: to.x, to_y: to.y, button }),
     scroll: (x, y, dx, dy) => act("scroll", { x, y, ...scrollOf(dx, dy) }),
     type: (text) => act("type_text", { text }),
-    press: (keys) => {
+    press: async (keys) => {
       const key = keys.at(-1);
-      if (!key) return Promise.resolve();
-      return act("press_key", { key, ...(keys.length > 1 ? { modifiers: keys.slice(0, -1) } : {}) });
+      if (!key) return;
+      return act("press_key", {
+        key: keyName(key),
+        ...(keys.length > 1 ? { modifiers: keys.slice(0, -1).map(keyName) } : {}),
+      });
     },
     // Targets, tabs and refs belong to one session label, ended for good when this connection
     // closes: each connection names its own.
@@ -381,14 +574,17 @@ export function cuaDriver(
         const answer = await call(tool, args);
         return { body: structured(answer), image: imageOf(answer) };
       },
-      { session: `genex-${randomUUID().slice(0, 12)}`, appOf: appOfPid },
+      { session: `genex-${randomUUID().slice(0, 12)}`, appOf: (pid) => reads.appOfPid(pid) },
     ),
     accessibility: async () => {
-      const app = await frontApp();
-      const tree = await frontTree(app);
+      const app = await reads.frontApp();
+      const tree = await reads.frontTree(app);
       return tree ? treeText(tree) : null;
     },
-    close: () => connection.close(),
+    close: async () => {
+      await options.windows?.close();
+      await connection.close();
+    },
   };
 }
 
@@ -426,14 +622,48 @@ function pngHeight(bytes: Buffer): number | null {
   return bytes.length > 24 && bytes.readUInt32BE(12) === 0x49484452 ? bytes.readUInt32BE(20) : null;
 }
 
+/**
+ * What a driver may see of the studio's environment, by system: enough to run. On Windows that is
+ * Windows' own folders and the person's profile, which sockets, COM and UI Automation need to start.
+ */
+const DRIVER_ENV_NAMES = {
+  posix: ["PATH", "HOME", "TMPDIR", "LANG", "USER", "LOGNAME"],
+  win32: [
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "ComSpec",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "CommonProgramFiles",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+  ],
+} as const;
+
 /** The driver's environment: enough to run, nothing of the studio's own (no API key reaches it). */
-export function driverEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "USER", "LOGNAME"]) {
-    const value = process.env[name];
-    if (value) env[name] = value;
+export function driverEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const name of platform === "win32" ? DRIVER_ENV_NAMES.win32 : DRIVER_ENV_NAMES.posix) {
+    const value = env[name];
+    if (value) kept[name] = value;
   }
-  return env;
+  return kept;
 }
 
 /** An MCP connection to a driver command, over the SDK's stdio transport. */
@@ -514,23 +744,49 @@ export async function secureInputActive(): Promise<boolean> {
   return stdout.includes("kCGSSessionSecureInputPID");
 }
 
+/** A window probe that has been asked to start: `ready` settles once it answers. */
+type StartedProbe = WindowsProbe & { ready(): Promise<void> };
+
+/**
+ * A PC's driver: Windows has no grants to give (and its driver's check takes no `prompt`), so none
+ * is checked, and the window probe must answer before anything moves.
+ */
+async function connectWindows(command: () => Promise<CuaCommand>, probe: StartedProbe): Promise<DesktopDriver> {
+  const connection = await openConnection(await command());
+  try {
+    await probe.ready();
+  } catch (error) {
+    await Promise.all([connection.close(), probe.close()]);
+    throw error;
+  }
+  return cuaDriver(connection, { windows: probe });
+}
+
 /**
  * Connect to a driver and check it can see and move. `command` is read again after a restart, since
  * a restarted embedded daemon listens on a new socket. A driver that started before the grants were
  * given keeps macOS's old answer, so one without them is restarted once; still without them,
  * `askForGrants` asks macOS for them (the studio's own prompt or System Settings) and the sentence
  * the person reads is the error. On this Mac, a focused password field is also read from macOS.
+ * A driver on a PC (`platform`, this computer's by default) is read through the window probe
+ * (`probe`, Windows PowerShell's by default) instead ({@link connectWindows}).
  */
 export async function connectCuaDriver(
   command: CuaCommand | (() => Promise<CuaCommand>),
   options: {
     local: boolean;
+    platform?: NodeJS.Platform;
+    probe?: () => StartedProbe;
     holder?: GrantHolder;
     restart?: () => Promise<void>;
     askForGrants?: () => Promise<void>;
   },
 ): Promise<DesktopDriver> {
   const commandNow = typeof command === "function" ? command : async () => command;
+  if (options.local && (options.platform ?? process.platform) === "win32") {
+    const probe = options.probe ?? (() => windowsProbe(probeCommand(driverEnv())));
+    return connectWindows(commandNow, probe());
+  }
   const attempt = async (): Promise<{ connection: CuaConnection; grants: Grants }> => {
     const connection = await openConnection(await commandNow());
     const grants = await permitted(connection).catch(async (error: unknown) => {

@@ -120,6 +120,7 @@ function fakeApi(handlers: Partial<PeopleApi> = {}) {
     playStats: record("playStats", async () => null),
     playCreators: record("playCreators", async () => null),
     playCredits: record("playCredits", async () => credits(1700)),
+    storeCoins: record("storeCoins", async () => 1240),
     playSetHandle: record(
       "playSetHandle",
       async (handle: string): Promise<HandleSave> => ({
@@ -383,6 +384,41 @@ describe("regenerating the account's avatar", () => {
     await two;
     assert.equal(store.getState().me?.avatarVariant, 2);
   });
+
+  it("says a regenerated avatar is being saved until every press's save ends, kept or refused", async () => {
+    const first = deferred<PlayMe | null>();
+    const second = deferred<PlayMe | null>();
+    const answers = [first.promise, second.promise];
+    const { api } = fakeApi({ playAvatarVariant: () => answers.shift() ?? Promise.reject(new Error("extra")) });
+    const store = createPeopleStore(api);
+    await store.loadMe();
+    assert.equal(store.getState().avatarSaving, false, "nothing pressed");
+    const one = store.setAvatarVariant(1);
+    const two = store.setAvatarVariant(2);
+    assert.equal(store.getState().avatarSaving, true, "at the press");
+    first.resolve({ ...me(), avatarVariant: 1 });
+    await one;
+    assert.equal(store.getState().avatarSaving, true, "the second press still saves");
+    second.reject(new Error("refused"));
+    await assert.rejects(two, /refused/);
+    assert.equal(store.getState().avatarSaving, false, "every save ended");
+  });
+
+  it("does not report an older press's refusal once a newer press is kept", async () => {
+    const first = deferred<PlayMe | null>();
+    const second = deferred<PlayMe | null>();
+    const answers = [first.promise, second.promise];
+    const { api } = fakeApi({ playAvatarVariant: () => answers.shift() ?? Promise.reject(new Error("extra")) });
+    const store = createPeopleStore(api);
+    await store.loadMe();
+    const one = store.setAvatarVariant(1);
+    const two = store.setAvatarVariant(2);
+    first.reject(new Error("refused"));
+    await one;
+    second.resolve({ ...me(), avatarVariant: 2 });
+    await two;
+    assert.equal(store.getState().me?.avatarVariant, 2);
+  });
 });
 
 describe("the account across sign-in, offline and a sign-in that ended", () => {
@@ -464,6 +500,37 @@ describe("the account across sign-in, offline and a sign-in that ended", () => {
     assert.ok(calls.some(([name]) => name === "genexSignIn"));
   });
 
+  it("reads the account again when the sign-in finishes between its two reads", async () => {
+    // A development stand's sign-in finishes inside main's read of where the account stands: the
+    // read of who it is, just before, still found no token.
+    let token: string | null = null;
+    const { api, calls } = fakeApi({
+      playMe: async () => (token ? me("u3") : null),
+      genexAccount: async () => {
+        token = "minted";
+        return { status: GenexAccountStatus.SignedIn };
+      },
+    });
+    const store = createPeopleStore(api, memoryStorage());
+    await store.loadMe();
+    assert.equal(store.getState().account, GenexAccountStatus.SignedIn);
+    assert.equal(store.getState().me?.id, "u3", "the plate fills in without another event");
+    assert.deepEqual(
+      calls.map(([name]) => name),
+      ["playMe", "genexAccount", "playMe"],
+    );
+  });
+
+  it("reads who it is once when the account is signed in from the start", async () => {
+    const { api, calls } = fakeApi();
+    const store = createPeopleStore(api, memoryStorage());
+    await store.loadMe();
+    assert.deepEqual(
+      calls.map(([name]) => name),
+      ["playMe", "genexAccount"],
+    );
+  });
+
   it("cancels a sign-in and signs out through main, signed out after", async () => {
     const { api, calls } = fakeApi();
     const store = createPeopleStore(api, memoryStorage());
@@ -492,6 +559,42 @@ describe("the account across sign-in, offline and a sign-in that ended", () => {
     assert.equal(store.getState().credits?.balance, 1700);
     await store.signOut();
     assert.equal(store.getState().credits, null);
+  });
+});
+
+describe("the account's coin", () => {
+  it("reads the coin Play shows, keeps the last one when a read fails, and forgets it on sign-out", async () => {
+    let answer: () => Promise<number | null> = async () => 1240;
+    const { api } = fakeApi({ storeCoins: () => answer() });
+    const store = createPeopleStore(api, memoryStorage());
+    assert.equal(store.getState().coins, null, "nothing before a read");
+    await store.loadMe();
+    await store.loadCoins();
+    assert.equal(store.getState().coins, 1240);
+    answer = async () => {
+      throw new Error("offline");
+    };
+    await store.loadCoins();
+    assert.equal(store.getState().coins, 1240, "a failed read keeps the last balance");
+    answer = async () => null;
+    await store.loadCoins();
+    assert.equal(store.getState().coins, null, "coin off or signed out on genex.games shows none");
+    answer = async () => 900;
+    await store.loadCoins();
+    await store.signOut();
+    assert.equal(store.getState().coins, null);
+  });
+
+  it("lets a balance read for another account land nowhere", async () => {
+    const slow = deferred<number | null>();
+    const { api } = fakeApi({ storeCoins: () => slow.promise });
+    const store = createPeopleStore(api, memoryStorage());
+    await store.loadMe();
+    const read = store.loadCoins();
+    await store.signOut();
+    slow.resolve(1240);
+    await read;
+    assert.equal(store.getState().coins, null);
   });
 });
 

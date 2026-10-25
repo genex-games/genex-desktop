@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { requiresSignature } from "./release-policy.mjs";
 
 const ARTIFACT = /\.(dmg|zip|deb|rpm|exe|nupkg)$|^RELEASES$/;
 
@@ -62,7 +63,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 function verifyPlatformManifest(manifest, expected, artifacts, seen) {
   const validIdentity = Object.entries(expected).every(([key, value]) => manifest[key] === value);
   if (!validIdentity) throw new Error("Release provenance does not match the candidate");
-  if (expected.platform !== "linux" && manifest.signed !== true) throw new Error("Release signing is incomplete");
+  if (requiresSignature(expected.platform) && manifest.signed !== true)
+    throw new Error("Release signing is incomplete");
   if (!Array.isArray(manifest.artifacts) || !manifest.artifacts.length) throw new Error("Empty release provenance");
   for (const artifact of manifest.artifacts) {
     const file = path.posix.basename(artifact.file);

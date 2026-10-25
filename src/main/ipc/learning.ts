@@ -5,11 +5,12 @@ import { fixtureImprovementPass } from "../dev/fixtures.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { DispatchActionType } from "../../shared/protocol.ts";
 
 /** Why a self-improvement request from the renderer is refused. */
 const MESSAGE = {
-  learningOff: "Self-improvement is off. Turn it on at the top of Studio to look for improvements.",
+  learningOff: () => t("Self-improvement is off. Turn it on at the top of Studio to look for improvements."),
 } as const;
 
 export interface LearningIpcDeps {
@@ -24,7 +25,7 @@ export function registerLearningIpc(
   { core, scriptedImprovementPass, pushUiEvent }: LearningIpcDeps,
 ): void {
   handle("studio:skillopt.start", async () => {
-    if (!core.settings.learning) throw new Error(MESSAGE.learningOff);
+    if (!core.settings.learning) throw new Error(MESSAGE.learningOff());
     if (scriptedImprovementPass) {
       void fixtureImprovementPass(core)
         .then(() => pushUiEvent({ type: UiEvent.SkilloptFinished, payload: {} }))

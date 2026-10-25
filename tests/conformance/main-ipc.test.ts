@@ -6,16 +6,21 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { setImmediate as tick } from "node:timers/promises";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { KEEP_AWAKE_FALLBACK_MS, KeepAwake, type FallbackTimers } from "../../src/main/keep-awake.ts";
 import { registerRunsIpc, extFromMime, safeLabel, type RunsIpcDeps } from "../../src/main/ipc/runs.ts";
 import { registerLoginIpc, type LoginIpcDeps } from "../../src/main/ipc/login.ts";
 import { badgeText, registerNotificationsIpc } from "../../src/main/ipc/notifications.ts";
 import { registerModelsIpc, type ModelsIpcDeps } from "../../src/main/ipc/models.ts";
+import { createProviderUsage } from "../../src/main/core/provider-usage.ts";
+import { type ProviderUsageReport, UsageState } from "../../src/shared/provider-usage.ts";
 import { registerUpdateIpc } from "../../src/main/ipc/update.ts";
 import { registerStorageIpc } from "../../src/main/ipc/storage.ts";
 import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
+import { gameLinks } from "../../src/main/play/game-links.ts";
 import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -280,7 +285,7 @@ const codexIdle: CodexLoginState = {
 function loginFixture(
   logins: Record<string, Awaited<ReturnType<SubscriptionEngine["resolveLogin"]>>>,
   busy = false,
-  accountsFor: { signedIn?: string[]; emails?: Record<string, string> } = {},
+  accountsFor: { signedIn?: string[]; emails?: Record<string, string>; noCursor?: boolean } = {},
 ) {
   const started: string[] = [];
   const accountsRoot = mkdtempSync(path.join(os.tmpdir(), "studio-ipc-accounts-"));
@@ -325,6 +330,27 @@ function loginFixture(
         return { started: true };
       },
     },
+    grokLogin: {
+      start: async () => {
+        started.push("grok");
+        return { started: true };
+      },
+    },
+    cursorLogin: {
+      start: async () => {
+        started.push("cursor");
+        return { started: true };
+      },
+    },
+    cursor: () =>
+      accountsFor.noCursor
+        ? null
+        : {
+            signOut: async () => {
+              started.push("cursor sign-out");
+            },
+            status: async () => ({ code: EngineStatusCode.NeedsLogin, detail: "Not signed in to Cursor." }),
+          },
     claudeLogin: {
       start: async (home: string | null) => {
         started.push(`claude ${home}`);
@@ -540,6 +566,64 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(started, ["pi"]);
   });
 
+  it("Cursor signs in through its own CLI in its row's terminal, whatever else is running, and signs out through its engine", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:cursor.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(await invoke("studio:cursor.signout"), {
+      ok: true,
+      value: { code: EngineStatusCode.NeedsLogin, detail: "Not signed in to Cursor." },
+    });
+    assert.deepEqual(started, ["cursor", "cursor sign-out"]);
+    const none = loginFixture({}, false, { noCursor: true });
+    assert.equal((await none.invoke("studio:cursor.signout")).ok, false, "no Cursor engine, nothing to sign out");
+  });
+
+  it("the Cursor sign-in runs `cursor-agent login` keeping its sign-in in its file, and rechecks when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { cursorLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t1", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onCursorSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", OPENCODE_CONFIG: "/oc.json", CURSOR_API_KEY: "key_not_for_genex" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await cursorLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/cursor");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "cursor-login");
+    assert.equal(opened[0]?.env.AGENT_CLI_CREDENTIAL_STORE, "file", "the sign-in every sandboxed session can read");
+    assert.equal(opened[0]?.env.OPENCODE_CONFIG, undefined, "no other vendor's variables reach the sign-in");
+    assert.equal(opened[0]?.env.CURSOR_API_KEY, undefined, "nor a key: the person signs in with their account");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
+  });
+
   it("the OpenCode sign-in runs `opencode auth login` in the terminal, and rechecks its models when it ends", async () => {
     const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
     let exit: ((code: number) => void) | undefined;
@@ -606,6 +690,58 @@ describe("both sign-in paths go through the controllers", () => {
       },
     });
     assert.deepEqual(await missing.openCodeLogin.start(), { started: false, missingCli: true });
+  });
+
+  it("Grok Build signs in through its own CLI in the terminal, whatever else is running", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:grok.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(started, ["grok"]);
+  });
+
+  it("the Grok Build sign-in runs `grok login` in the terminal, on its own home, and rechecks it when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { grokLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t3", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onGrokSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", ANTHROPIC_API_KEY: "sk-ant-not-for-grok", XAI_API_KEY: "xai-not-for-grok" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await grokLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/grok");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "grok-login");
+    assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
+    assert.equal(opened[0]?.env.XAI_API_KEY, undefined, "an xAI key never stands in for the Grok sign-in");
+    assert.ok(opened[0]?.env.GROK_HOME, "the home its sessions read the sign-in from");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
   });
 
   it("on OpenCode 2.x the sign-in runs on a server of its own, never the shared background one", async () => {
@@ -744,35 +880,42 @@ describe("both sign-in paths go through the controllers", () => {
 });
 
 describe("the composer's plan limits", () => {
-  it("come from every ready subscription and never from a signed-out, missing or failing one", async () => {
+  it("answer with the limits as they stand at once, and push each subscription's fresh read", async () => {
     const usage = {
       measuredAt: "2026-09-24T00:00:00.000Z",
       windows: [{ id: "five_hour", label: "5-hour limit", percent: 12 }],
     };
-    const engines: Record<string, { status(): Promise<{ code: string }>; readUsage?(): Promise<unknown> }> = {
-      "claude-code": { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-      codex: {
-        status: async () => ({ code: "needs_login" }),
-        readUsage: async () => {
-          throw new Error("must not be asked");
-        },
-      },
-      ollama: { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-    };
-    const core = {
-      engines: { has: (id: string) => id in engines, get: (id: string) => engines[id] },
-    } as unknown as ModelsIpcDeps["core"];
+    const pushed: ProviderUsageReport[][] = [];
+    let answer: (value: typeof usage) => void = () => {};
+    const service = createProviderUsage({
+      engines: ["claude-code"],
+      source: () => ({
+        status: async () => ({ code: "ready" }),
+        account: async () => "terminal",
+        readUsage: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      }),
+      push: (reports) => pushed.push(reports),
+    });
+    const core = { engines: { has: () => false, get: () => null } } as unknown as ModelsIpcDeps["core"];
     const { handle, invoke } = registrar();
-    registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "claude-code", usage }] });
-    engines.codex = {
-      status: async () => ({ code: "ready" }),
-      readUsage: async () => {
-        throw new Error("offline");
-      },
-    };
-    delete engines["claude-code"];
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "codex", usage: null }] });
+    registerModelsIpc(handle, {
+      core,
+      subscription: () => null,
+      pushUiEvent: () => {},
+      openRouterLogin: noSignIn,
+      usage: service,
+    });
+    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [] }, "the panel never waits on a read");
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Checking)) await tick();
+    answer(usage);
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Ready)) await tick();
+    assert.deepEqual(await invoke("studio:provider-usage"), {
+      ok: true,
+      value: [{ engine: "claude-code", state: UsageState.Ready, account: "terminal", usage }],
+    });
   });
 });
 
@@ -882,7 +1025,13 @@ it("model refresh validates provider identities before invoking discovery", asyn
   // Only the registrar's engine registry is needed; no profile or credentials are opened.
   const core = { engines };
   const { handle, invoke } = registrar();
-  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
+  registerModelsIpc(handle, {
+    core,
+    subscription: () => null,
+    pushUiEvent: () => {},
+    openRouterLogin: noSignIn,
+    usage: noUsage,
+  });
   for (const provider of [undefined, null, 7, {}, "../codex", "ollama", ""]) {
     assert.equal((await invoke("studio:models.refresh", { provider })).ok, false);
     assert.equal(calls, 0);
@@ -980,6 +1129,7 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
   registerModelsIpc(handle, {
     core: { engines },
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -990,6 +1140,9 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
 });
 
 /** A browser sign-in that is never started: the registrars under test do not reach it. */
+/** No subscription's limits: the tests that use it never ask for them. */
+const noUsage: ModelsIpcDeps["usage"] = { snapshot: () => [], refresh: async () => {} };
+
 const noSignIn: ModelsIpcDeps["openRouterLogin"] = {
   start: async () => {
     throw new Error("no browser sign-in in this test");
@@ -1017,6 +1170,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: noSignIn,
     });
@@ -1082,6 +1236,7 @@ it("the browser sign-in hands its key to the engine, and only how it ended comes
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: {
         start: (saveKey) => login.start(saveKey),
@@ -1123,6 +1278,7 @@ it("deleting a model asks the local engine that owns it and announces the change
   registerModelsIpc(handle, {
     core,
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -1219,23 +1375,48 @@ describe("the in-window update prompt", () => {
 });
 
 describe("Play's share menu", () => {
-  /** Play's channels with only Share… live: every menu it pops is kept. */
-  function shareRig(web: string) {
+  /** Play's channels with only Share… and game links live: every menu it pops is kept. */
+  function shareRig(web: string, links = gameLinks(), here: NativeHost | null = null) {
     const { handle, invoke } = registrar();
     const shared: Array<[string, unknown]> = [];
     const unused = {} as unknown;
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
+      gameLinks: links,
       remix: async () => "",
+      remixReady: async () => ({}),
       viewer: () => null,
+      installs: () => null,
+      here: () => here,
+      sessions: () => null,
+      reveal: () => {},
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
       credits: unused as PlayIpcDeps["credits"],
+      manage: unused as PlayIpcDeps["manage"],
       web,
       share: (url, at) => shared.push([url, at]),
     });
     return { invoke, shared };
   }
+
+  it("hands the page the game a genex:// link asked for, once", async () => {
+    const links = gameLinks();
+    const { invoke } = shareRig("https://genex.games", links);
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+    links.arrive("genex://game/iron-tide");
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: "iron-tide" });
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+  });
+
+  it("names this computer even where Genex installs no native game, so a page can say why", async () => {
+    const windows: NativeHost = { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.26100" };
+    const { invoke } = shareRig("https://genex.games", gameLinks(), windows);
+    assert.deepEqual(await invoke("studio:play.installs"), {
+      ok: true,
+      value: { installed: [], progress: [], host: windows },
+    });
+  });
 
   it("pops for a page of the website Play links to, by the button that asked", async () => {
     const { invoke, shared } = shareRig("https://genex.games");

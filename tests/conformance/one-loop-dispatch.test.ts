@@ -11,13 +11,14 @@ import { setImmediate } from "node:timers/promises";
 import * as builtinHookParts from "../../src/harness-seed/loop/builtin-hooks.ts";
 import { afterLeadLoopRun, afterLoopRunGrant } from "../../src/harness-seed/loop/after-loop-run.ts";
 import { afterLoopRunNote } from "../../src/harness-seed/loop/after-loop-run-prompts.ts";
-import { launchFromIntake, startsNextOpenLoop } from "../../src/harness-seed/loop/chat-dispatch.ts";
+import { handleUserMessage, launchFromIntake, startsNextOpenLoop } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import * as directorParts from "../../src/harness-seed/loop/director.ts";
 import * as openContractParts from "../../src/harness-seed/loop/director/open/contract.ts";
 import { servesOpenLoop } from "../../src/harness-seed/loop/director/open/contract.ts";
 import * as setupParts from "../../src/harness-seed/loop/director/setup.ts";
 import * as wakeParts from "../../src/harness-seed/loop/director/wake.ts";
 import * as wakeScheduleParts from "../../src/harness-seed/loop/director/wake-schedule.ts";
+import { MAX_RUN_HOURS } from "../../src/harness-seed/loop/config.ts";
 import { LoopProfile } from "../../src/harness-seed/loop/folder-facts.ts";
 import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { launchRules } from "../../src/harness-seed/loop/launch-prompts.ts";
@@ -57,7 +58,7 @@ const DIRECT_WITH_SESSIONS = { id: "bonsai", label: "Bonsai", kind: "direct", su
 const GODOT_FOUND = "godot-project at the folder's root";
 /** The words a refused Loop on a direct engine closes with (flipped: they name what Genex found). */
 const NEEDS_SESSION =
-  "A Loop on this project (Genex finds godot-project at the folder's root) needs an engine that works as an agent in the project's folder (Claude Code, Codex or OpenCode); Ollama doesn't, so nothing was built.";
+  "A Loop on this project (Genex finds godot-project at the folder's root) needs an engine that works as an agent in the project's folder (Claude Code, Codex, OpenCode or Grok Build); Ollama doesn't, so nothing was built.";
 const WEB_ONLY = "This kind of run works on web games only; a Loop on this project is led by the chat's own session.";
 const CANNOT_RESUME =
   "This Loop was paused by an earlier version and can't be picked up. Start a new Loop: it goes on from the project as it is now, with every save point kept.";
@@ -696,6 +697,72 @@ describe("after a Loop in place", () => {
       rows.map(([label, , , next]) => [label, next]),
     );
   });
+
+  it(
+    "Keep building after a finished Loop in place really launches the next Loop, on Godot and on Unreal: on its base goal and what is left, never refused",
+    TEST_TIMEOUT,
+    async () => {
+      for (const [project, facts] of [
+        [Project.GodotGame, GODOT],
+        [Project.UnrealGame, UNREAL],
+      ] as const) {
+        const host = await hostOn(project, { facts, turns: [finishes] });
+        await host.start();
+        const leadsBefore = host.leadCalls().length;
+        // The chat's turn for each tap: begun and ended, with nothing asked of a session in it.
+        host.rec.handle("turn.begin", () => ({ turnId: "turn-keep" }));
+        host.rec.handle("turn.end", () => null);
+        const tap = async (n: number, left: string, hours: number | null = 3) => {
+          host.turns.push(finishes);
+          const keep = {
+            type: "user_message",
+            threadId: host.threadId,
+            project: host.game.name,
+            text: `Keep building: fix what’s left.\n- ${left}`,
+            engine: "claude-code",
+            messageId: `m-keep-${n}`,
+            autopilot: { ...(hours === null ? {} : { hours }), keepBuilding: true },
+          };
+          await handleUserMessage(studioOf(host) as never, keep as never);
+          assert.ok(await host.until(() => host.appended("run_finished").length > n), `${project}: tap ${n} closed`);
+          return { started: host.appended("run_started").at(-1), closed: host.appended("run_finished").at(-1) };
+        };
+        const first = await tap(1, "The door sticks.");
+        assert.equal(first.started?.mode, "director", `${project}: the one Loop's lead started it`);
+        assert.notEqual(first.closed?.stoppedBecause, OPEN_LOOP_REFUSAL.webOnly, `${project}: not refused`);
+        assert.ok(host.leadCalls().length > leadsBefore, `${project}: its lead built`);
+        assert.match(String(first.started?.goal), /The door sticks/, "what is left is its goal");
+        assert.match(
+          String(first.started?.goal),
+          new RegExp(String(host.run.goal).slice(0, 20)),
+          "beside the base goal",
+        );
+        const second = await tap(2, "The lamp flickers.");
+        assert.doesNotMatch(
+          String(second.started?.goal),
+          /The door sticks/,
+          `${project}: an earlier tap's words don't pile up`,
+        );
+        assert.match(
+          String(second.started?.goal),
+          new RegExp(String(host.run.goal).slice(0, 20)),
+          "the base goal stays",
+        );
+        assert.equal(
+          (second.started?.reference as { name?: string } | undefined)?.name,
+          "Level",
+          "its reference is kept",
+        );
+        const forever = await tap(3, "The roof leaks.", null);
+        const budgets = forever.started?.budgets as { wallClockMs?: number; untilSatisfied?: boolean } | undefined;
+        assert.deepEqual(
+          [budgets?.wallClockMs, budgets?.untilSatisfied],
+          [MAX_RUN_HOURS * 60 * MINUTE, true],
+          `${project}: ∞ runs until done under the launch's own ceiling`,
+        );
+      }
+    },
+  );
 
   it("a Loop message after it starts the next Loop, even when the game list can't be read", TEST_TIMEOUT, async () => {
     const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });

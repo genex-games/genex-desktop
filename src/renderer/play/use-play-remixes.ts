@@ -26,6 +26,7 @@ export function usePlayRemixes(
   const pressed = usePlay((s) => s.making?.slug ?? null);
   const remixed = usePlay((s) => s.remixed);
   const remixFailed = usePlay((s) => s.remixFailed);
+  const remixRefusal = usePlay((s) => s.remixRefusal);
   // In the press's own commit, so the view transition around it shows Play turning into Create.
   useLayoutEffect(() => {
     if (pressed) setPlayOpen(false);
@@ -50,7 +51,7 @@ export function usePlayRemixes(
     const app = studio();
     const back = stillWithRemix(app.play.getState().making, workspaceCovered);
     app.play.setState(remixFailureTold, true);
-    app.notify(PLAY_WORDS.remixFailed, ToastTone.Error);
+    app.notify(remixRefusal ? PLAY_WORDS.remixRefused[remixRefusal] : PLAY_WORDS.remixFailed, ToastTone.Error);
     if (back) setPlayOpen(true);
-  }, [remixFailed, setPlayOpen, workspaceCovered]);
+  }, [remixFailed, remixRefusal, setPlayOpen, workspaceCovered]);
 }

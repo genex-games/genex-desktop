@@ -25,6 +25,8 @@ import { commitCopy, keepWork, markWorker, removeCopy } from "./pool-merge.ts";
 import { releaseInPlace } from "./in-place.ts";
 import { ended, scopeEnd, startWorker } from "./pool-start.ts";
 import { POOL_WORDS } from "./prompts.ts";
+import { nextWords } from "../person-wrote.ts";
+import { WAIT_ENDED } from "../steer-switch-prompts.ts";
 import { questionOf, questionText } from "./questions.ts";
 import {
   cwdOf,
@@ -202,8 +204,9 @@ function standing(records: readonly WorkerRecord[]): string {
 }
 
 /**
- * `worker_wait`: until the worker named (or any worker) ends or waits on the person, or the seconds
- * pass; answers where they stand then, with the report of each that ended.
+ * `worker_wait`: until the worker named (or any worker) ends or waits on the person, the person
+ * writes in the chat (their words reach the lead's session at its next step, which this wait is),
+ * or the seconds pass; answers where they stand then, with the report of each that ended.
  */
 async function waitWorkers(state: PoolState, args: AnyRecord): Promise<string> {
   const id = [args.id, args.worker].find(hasText) ?? null;
@@ -212,16 +215,29 @@ async function waitWorkers(state: PoolState, args: AnyRecord): Promise<string> {
   const { clock } = state.scope;
   const deadline = clock.now() + waitSeconds(args.seconds) * SECOND_MS;
   const watched = () => (id ? state.records.filter((record) => record.id === id) : runningRecords(state));
-  // A question asked since the lead last looked wakes the wait at once.
-  const before = standing(watched());
-  await readQuestions(state);
-  while (standing(watched()) === before && clock.now() < deadline && watched().some(isWorking)) {
-    const runs = watched().flatMap((record) => state.runs.get(record.id) ?? []);
-    await Promise.race([...runs, clock.sleep(Math.min(QUESTION_POLL_MS, deadline - clock.now()))]);
+  const words = nextWords(state.scope.threadId);
+  let wrote = false;
+  void words.ended.then(() => {
+    wrote = true;
+  });
+  try {
+    // A question asked since the lead last looked wakes the wait at once.
+    const before = standing(watched());
     await readQuestions(state);
+    while (!wrote && standing(watched()) === before && clock.now() < deadline && watched().some(isWorking)) {
+      const runs = watched().flatMap((record) => state.runs.get(record.id) ?? []);
+      await Promise.race([...runs, words.ended, clock.sleep(Math.min(QUESTION_POLL_MS, deadline - clock.now()))]);
+      await readQuestions(state);
+    }
+  } finally {
+    words.cancel();
   }
-  if (id) return statusOf(state, id);
-  // A wait on any worker answers every line, and in full what each one that ended meanwhile handed back.
+  const status = id ? await statusOf(state, id) : await everyLine(state, endedBefore);
+  return wrote ? `${WAIT_ENDED.workers}\n\n${status}` : status;
+}
+
+/** Every worker's line, and in full what each one that ended since `endedBefore` handed back. */
+async function everyLine(state: PoolState, endedBefore: ReadonlySet<string>): Promise<string> {
   const endedNow = state.records.filter((record) => !isWorking(record) && !endedBefore.has(record.id));
   return [await statusOf(state, null), ...endedNow.map(handedBack)].join("\n\n");
 }

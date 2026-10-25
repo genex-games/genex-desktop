@@ -25,6 +25,8 @@ export const STORAGE_KEYS = {
   /** The Live game's sound switch (`panels/stage/game-sound.ts` owns the values). */
   gameSound: "studio.gameSound",
   appearance: "studio.appearance.v1",
+  /** The app's language: a locale or "system" (`renderer/language.ts` owns the values). */
+  language: "studio.language",
   /** Home's background picture and effect (`home-backdrop/settings.ts` owns the format). */
   homeBackdrop: "studio.homeBackdrop.v1",
   /** Live backgrounds a model made for home (`home-backdrop/made-shaders.ts` owns the format). */
@@ -71,12 +73,16 @@ export const storageKeyFor = {
   threadEffort: (threadId: string): string => `studio.threadEffort.${threadId}`,
   /** The engine steps offer a game's Not now hid, by its record id (`chat/EngineStepsCard.tsx`). */
   engineStepsDismissed: (project: string): string => `studio.engineSteps.dismissed.${project}`,
+  /** A game's asks for another Genex cover or clip and how long the last took (`genex/cover-asks.ts` owns the format). */
+  coverAsks: (project: string): string => `studio.genex.coverAsks.${project}`,
   /** The Live view last chosen for a game whose folder has more than one, as its observer key (`live-views.ts`). */
   liveView: (project: string): string => `studio.liveView.${project}`,
   /** Set ("1") once a Genex account has met its generated avatar (`play/AvatarWelcome.tsx`). */
   avatarWelcomed: (accountId: string): string => `studio.genex.avatarWelcomed.${accountId}`,
   /** The welcome asked this account for its nickname on this Mac (saved or closed): it never asks again here. */
   nicknameWelcomed: (accountId: string): string => `studio.genex.nicknameWelcomed.${accountId}`,
+  /** The nameplate variant a Pro account rolled on this Mac (`nameplate/plate-variant.ts` owns the format). */
+  plateVariant: (accountId: string): string => `studio.genex.plateVariant.${accountId}`,
 } as const;
 
 /** The IndexedDB database of cover sphere stills (`ui/cover-stills.ts` owns the format). */

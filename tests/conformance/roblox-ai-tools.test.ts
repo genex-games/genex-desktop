@@ -534,11 +534,16 @@ describe("through the backend", () => {
     async () => {
       const mac = await robloxMac();
       const game = await makeGame(mac, "sky-race", "Sky race");
-      const { studio, calls } = standIn((call) =>
-        call.name === "search_asset"
-          ? text(JSON.stringify({ results: [{ assetId: "580221169", isFree: true, priceCents: 0, name: "Tree" }] }))
-          : text("{}"),
-      );
+      const { studio, calls } = standIn((call) => {
+        if (call.name === "search_asset")
+          return text(
+            JSON.stringify({ results: [{ assetId: "580221169", isFree: true, priceCents: 0, name: "Tree" }] }),
+          );
+        // The insert's two inventory reads must answer the protocol, not a generic success object.
+        if (call.name === "execute_luau")
+          return text(JSON.stringify({ ids: ["old-child"], added: ["Workspace.Tree"], scripts: [] }));
+        return text("{}");
+      });
       mac.deps.studio = studio as StudioClient;
       const seen: string[] = [];
       mac.deps.gameSeen = async (_storage, id) => {

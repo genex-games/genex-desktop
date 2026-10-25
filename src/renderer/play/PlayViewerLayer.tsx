@@ -1,9 +1,11 @@
 /**
- * Play's game viewer in the app: the header across the window's top (`PlayViewerBar.tsx`), and under
- * it, while the game's page loads, its cover developing as an ordered dither (`dither.ts`) under its
- * title and a thin dot rail; when it cannot load, what went wrong (offline, or the page itself)
- * with Try again and Back to Play.
- * The game itself is a native view main lays under the header once it has loaded.
+ * Play's game viewer in the app: in the game's place below the bar, while the game's page loads, its
+ * cover developing as an ordered dither (`dither.ts`) under its title and a thin dot rail; when it
+ * cannot load, what went wrong (offline, or the page itself) with Try again and Back to Play.
+ * The game itself is a native view main lays over that place once it has loaded, and the bar is a
+ * strip above it in a layer of its own (`PlayBarPage.tsx`). The bar's Store door opens the game's
+ * Store here (`GameStore.tsx`, the game page's own), in the game's place: main hides the game's view,
+ * never closing it, until Back to game, the door again or Esc.
  */
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -11,13 +13,14 @@ import { PlayControl, PlayViewerPhase } from "../../shared/play.ts";
 import { usePlay } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
+import { Icon } from "../ui/icons.tsx";
 import { prefersReducedMotion } from "../ui/media-queries.ts";
 import { useBackOnline, useOnline } from "../ui/use-online.ts";
 import { PLAY_WORDS } from "../words.ts";
 import { DEVELOP_DONE_MS, DITHER_CELL, type DitherSource, ditherSource, drawDevelop } from "./dither.ts";
-import { escapeLeaves } from "./play-model.ts";
+import { GameStore } from "./GameStore.tsx";
+import { storeOverGame, ViewerEscape, type ViewerShown, viewerEscape } from "./play-model.ts";
 import { OfflineMark } from "./PlayOffline.tsx";
-import { PlayViewerBar, sendPlayControl } from "./PlayViewerBar.tsx";
 
 const WORDS = PLAY_WORDS.viewer;
 
@@ -142,7 +145,67 @@ function Failed({ title }: { title: string }): JSX.Element {
   );
 }
 
-/** The cover under the game's view while it loads, or why it could not load; nothing while no game is open. */
+/** Ask main for one of the bar's controls from the app's page; the viewer may have closed under the press. */
+const control = (value: PlayControl): void =>
+  void studio()
+    .api.playControl(value)
+    .catch(() => undefined);
+
+/**
+ * The game's Store in its place while main keeps the game hidden under it, with Back to game; it takes
+ * the keyboard as it opens.
+ */
+function ViewerStore({ slug }: { slug: string }): JSX.Element {
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => panel.current?.focus({ preventScroll: true }), []);
+  return (
+    <div ref={panel} tabIndex={-1} className="play-viewer-store" data-play-viewer-store={slug}>
+      <div className="play-viewer-store-page">
+        <Button
+          variant="secondary"
+          className="play-viewer-store-back"
+          data-play-viewer-store-back
+          onClick={() => control(PlayControl.Store)}
+        >
+          <Icon name="chevron-left" size={14} />
+          {WORDS.backToGame}
+        </Button>
+        <GameStore slug={slug} />
+      </div>
+    </div>
+  );
+}
+
+/** What a fresh Esc in the app's page does while a game is open (`viewerEscape`). */
+function useViewerEscape(viewer: ViewerShown | null): void {
+  // Read when a key comes, so the listener below stays put while the viewer moves on.
+  const shown = useRef(viewer);
+  shown.current = viewer;
+  const slug = viewer?.slug ?? null;
+  // Focus goes back where it was (the card or the Recent row that opened the game) once the viewer closes.
+  useEffect(() => {
+    if (!slug) return;
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const pressed = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // A held key repeats, and an item's sheet over the Store takes its own Esc.
+      const action = viewerEscape(shown.current, { repeat: event.repeat, handled: event.defaultPrevented });
+      if (action === ViewerEscape.Leave) void studio().play.close();
+      if (action === ViewerEscape.Resume) control(PlayControl.Resume);
+      if (action === ViewerEscape.CloseStore) control(PlayControl.Store);
+    };
+    window.addEventListener("keydown", pressed);
+    return () => {
+      window.removeEventListener("keydown", pressed);
+      if (before?.isConnected) before.focus({ preventScroll: true });
+    };
+  }, [slug]);
+}
+
+/**
+ * The cover under the game's view while it loads, or why it could not load, or the game's Store in its
+ * place; nothing while no game is open.
+ */
 export function PlayViewerLayer(): JSX.Element | null {
   const viewer = usePlay((s) => s.viewer);
   const layer = useRef<HTMLDivElement>(null);
@@ -150,28 +213,11 @@ export function PlayViewerLayer(): JSX.Element | null {
   // Once the game is on screen over it, the cover says nothing more.
   const playing = viewer?.phase === PlayViewerPhase.Playing;
   const slug = viewer?.slug ?? null;
-  // Read when a key comes, so the listener below stays put while the phase moves on.
-  const leaves = useRef(false);
-  leaves.current = escapeLeaves(viewer);
-  const onScreen = useRef(false);
-  onScreen.current = playing;
   // While the game is not on screen Esc is the app's: it leaves. Once it plays, an Esc in the app
-  // (the header has the keyboard) gives the keyboard back to the game. Focus goes back where it was
-  // (the card or the Recent row that opened the game) once the viewer closes.
+  // gives the keyboard back to the game; with its Store open, it closes the Store.
+  useViewerEscape(viewer);
   useEffect(() => {
-    if (!slug) return;
-    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    layer.current?.focus();
-    const leave = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (leaves.current) void studio().play.close();
-      else if (onScreen.current) sendPlayControl(PlayControl.Resume);
-    };
-    window.addEventListener("keydown", leave);
-    return () => {
-      window.removeEventListener("keydown", leave);
-      if (before?.isConnected) before.focus({ preventScroll: true });
-    };
+    if (slug) layer.current?.focus();
   }, [slug]);
   if (!viewer) return null;
   return (
@@ -184,15 +230,18 @@ export function PlayViewerLayer(): JSX.Element | null {
       className="play-viewer"
       data-play-viewer={viewer.phase}
     >
-      <PlayViewerBar viewer={viewer} />
-      <div className="play-viewer-stage">
-        {/* Once the game plays over it, nothing here draws: every frame goes to the game. Another
-            game starts the develop over. */}
-        {!playing && <DitherCover key={viewer.slug} src={viewer.coverUrl} />}
-        <div className="play-viewer-status">
-          {failed ? <Failed title={viewer.title} /> : !playing && <Loading title={viewer.title} />}
+      {storeOverGame(viewer) ? (
+        <ViewerStore key={viewer.slug} slug={viewer.slug} />
+      ) : (
+        <div className="play-viewer-stage">
+          {/* Once the game plays over it, nothing here draws: every frame goes to the game. Another
+              game starts the develop over. */}
+          {!playing && <DitherCover key={viewer.slug} src={viewer.coverUrl} />}
+          <div className="play-viewer-status">
+            {failed ? <Failed title={viewer.title} /> : !playing && <Loading title={viewer.title} />}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

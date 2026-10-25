@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { customEvents, startRig, waitForLog } from "../helpers/studio-rig.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { createToolRegistry } from "../../src/harness-seed/tools/index.ts";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -134,7 +134,8 @@ it("returns host inspection images through all provider tool paths without creat
   }
 });
 
-it("removed Genex leaves coding, existing assets and public export independent", async () => {
+// Genex holds the app's account, so it can only be turned off (03ea9277), never removed.
+it("turned-off Genex leaves coding, existing assets and public export independent", async () => {
   const rig = await startRig({ replies: [] });
   try {
     const project = "without-genex";
@@ -142,7 +143,7 @@ it("removed Genex leaves coding, existing assets and public export independent",
     const root = rig.core.games.dirFor(project);
     await mkdir(path.join(root, "assets"), { recursive: true });
     await writeFile(path.join(root, "assets/saved.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
-    await rig.core.plugins.remove("genex");
+    await rig.core.plugins.setEnabled("genex", false);
     const api = rig.core.api() as unknown as Record<string, (input: any) => Promise<any>>;
     const local = await createToolRegistry({
       workspace: rig.core.layout.harnessWs,
@@ -333,6 +334,8 @@ it("agent publish requests wait for Studio consent on every engine path", async 
   try {
     const project = "publish-consent";
     await rig.core.games.scaffold(project);
+    // A game with code of its own: Publish refuses the untouched empty starter before it asks anyone.
+    await appendFile(path.join(rig.core.games.dirFor(project), "src", "main.js"), "\nconsole.log('a game');\n");
     const threadId = await rig.core.createGameThread(project);
     const api = rig.core.api() as unknown as Record<string, (input: any) => Promise<any>>;
     // Only the Studio UI answers a card: the agent-facing RPC table carries no way to.

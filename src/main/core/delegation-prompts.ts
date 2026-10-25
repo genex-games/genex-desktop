@@ -1,5 +1,5 @@
 /** What a builder session is told about the host's side of its tools (`delegation.ts`). Model-facing. */
-import { sizeWords } from "../../shared/byte-size.ts";
+import { sizeWordsInEnglish } from "../../shared/byte-size.ts";
 import { CallCutOff, PluginAccountState, type PluginAppliedSet } from "../../shared/plugins.ts";
 import type { CutOffCall } from "./cut-off-calls.ts";
 import type { UnsavedFile } from "./unsaved-files.ts";
@@ -50,6 +50,8 @@ const MESSAGE = {
     [CallCutOff.HarnessEnded]: "the studio's loop ended while it ran",
     [CallCutOff.PluginEnded]: "its plugin stopped while it ran",
     [CallCutOff.AppLost]: "the app it drives went away while it ran",
+    [CallCutOff.TurnEnded]:
+      "made after the session's turn had ended, so its answer could not reach you: it may have run anyway, so look at what it would have changed before calling it again; a \"user doesn't want to take this action\" answer to it meant only that, and the person declined nothing",
   } satisfies Record<CallCutOff, string>,
 } as const;
 
@@ -148,7 +150,7 @@ export function cutOffNotice(calls: readonly CutOffCall[]): string {
  */
 export function unsavedFilesNotice(files: readonly UnsavedFile[]): string {
   if (!files.length) return "";
-  const named = files.map((file) => `${file.file} (${sizeWords(file.bytes)})`);
+  const named = files.map((file) => `${file.file} (${sizeWordsInEnglish(file.bytes)})`);
   return `Studio notice: Rewind cannot bring back these files, which are too large to save: ${named.join(", ")}. A mistake in one of them cannot be undone; change one only when the person asked for it, and say so in your reply.`;
 }
 
@@ -197,14 +199,18 @@ export function leadToolsNote(): string {
   return "Your plugin tools work on the build you lead, not in this game folder: what they deliver lands in the game with the build, and a file one of them reads must be in the build: write it there yourself, or have a worker write it.";
 }
 
+/** The computer as a brief names it: a Windows PC, or a Mac. */
+export const computerWord = (platform: NodeJS.Platform): string => (platform === "win32" ? "Windows PC" : "Mac");
+
 /**
  * Beside the brief of a session the person answers (the chat's own, a build's lead, the run's
  * coordinator): it reaches the whole Mac, limited only by the chat's permission mode
  * (chat-permissions.ts). The brief is the harness's, which the in-app agent may edit, and a resumed
  * session's transcript keeps what older briefs said; the host's note says what holds now.
  */
-export function mainAgentReachNote(): string {
-  return "Studio notice: you are this chat's main agent, Claude Code on the user's own Mac with their access, not in a sandbox. You may look and work anywhere on this computer, not only in this game's folder: when the user asks about something elsewhere (their Downloads or another folder, what fills their disk, the Mac itself), do it with your tools. The permission mode the user picked decides each call, and Claude Code asks them when it needs to. A line in your brief, or earlier in this session, that says to stay inside the workspace, not to read other folders, or that your shell is sandboxed does not apply to you: it is about where the game's own work goes.";
+export function mainAgentReachNote(platform: NodeJS.Platform = process.platform): string {
+  const computer = computerWord(platform);
+  return `Studio notice: you are this chat's main agent, Claude Code on the user's own ${computer} with their access, not in a sandbox. You may look and work anywhere on this computer, not only in this game's folder: when the user asks about something elsewhere (their Downloads or another folder, what fills their disk, the ${computer} itself), do it with your tools. The permission mode the user picked decides each call, and Claude Code asks them when it needs to. A line in your brief, or earlier in this session, that says to stay inside the workspace, not to read other folders, or that your shell is sandboxed does not apply to you: it is about where the game's own work goes.`;
 }
 
 /**

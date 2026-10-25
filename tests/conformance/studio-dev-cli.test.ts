@@ -16,8 +16,8 @@ import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  // Flipped from 27: genex-terms joined the list (from 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
-  assert.equal(FIXTURE_NAMES.length, 28);
+  // Flipped from 33: items-store joined the list (from 31: data-folder and data-missing, 30: native-games, 29: agents-start-failed, 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
+  assert.equal(FIXTURE_NAMES.length, 34);
   for (const added of [
     "first-launch",
     "notifications",
@@ -34,6 +34,12 @@ test("fixtures lists the one exported fixture list without a profile or app", as
     "building-card",
     "roblox-game",
     "genex-terms",
+    "asset-library",
+    "agents-start-failed",
+    "native-games",
+    "data-folder",
+    "data-missing",
+    "items-store",
   ])
     assert.ok((FIXTURE_NAMES as readonly string[]).includes(added), added);
   assert.deepEqual(await main(["fixtures"]), { fixtures: [...FIXTURE_NAMES] });
@@ -169,6 +175,32 @@ test("snapshot, logs and capture shortcuts build the protocol operations with it
   assert.throws(() => parseStudioDevArgs(["logs", "--profile", "p", "--limit", "9999"]));
   assert.throws(() => parseStudioDevArgs(["logs", "--profile", "p", "--surface", "keychain"]));
   assert.throws(() => parseStudioDevArgs(["capture", "--profile", "p", "--name", "../private"]));
+});
+
+test("Play's bar layer and game view are surfaces of their own, and the pointer moves only to a point on one", () => {
+  assert.deepEqual(parseStudioDevArgs(["snapshot", "--profile", "p", "--surface", "play-bar"]).operation, {
+    method: "snapshot",
+    params: { surface: "play-bar", limit: 150 },
+  });
+  assert.deepEqual(
+    parseOperation('{"method":"click","params":{"surface":"play-bar","selector":"[data-play-comments]"}}'),
+    {
+      method: "click",
+      params: { surface: "play-bar", selector: "[data-play-comments]" },
+    },
+  );
+  assert.deepEqual(parseOperation('{"method":"move","params":{"surface":"play-game","x":12,"y":2}}'), {
+    method: "move",
+    params: { surface: "play-game", x: 12, y: 2 },
+  });
+  const refused = [
+    '{"method":"snapshot","params":{"surface":"play-game"}}',
+    '{"method":"click","params":{"surface":"game","selector":"button"}}',
+    '{"method":"move","params":{"surface":"play-game","x":-1,"y":2}}',
+    '{"method":"move","params":{"surface":"play-game","x":1,"y":2,"script":"x()"}}',
+    '{"method":"move","params":{"surface":"keychain","x":1,"y":2}}',
+  ];
+  for (const request of refused) assert.throws(() => parseOperation(request), request);
 });
 
 test("the CLI prints the fixture list as JSON and reports errors as JSON with exit 1", () => {

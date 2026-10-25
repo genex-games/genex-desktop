@@ -1,5 +1,6 @@
 /** One plugin's page: its setup card, actions, settings form, open panel, connections, skills and what it is. */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { LOCAL_BLENDER_PLUGIN_ID } from "../../../shared/local-blender.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -67,7 +68,7 @@ function InstalledActions({
           disabled={page.busy}
           onClick={() => void page.act(async () => onSettings(await window.studio.pluginSettings(manifest.id)))}
         >
-          Settings
+          {t("Settings")}
         </Button>
       )}
     </>
@@ -120,7 +121,7 @@ function GenericDetail({
         )}
       </div>
       {detail.enabled && settings && (
-        <Section title="Settings">
+        <Section title={t("Settings")}>
           <SettingsFields
             detail={detail}
             page={page}

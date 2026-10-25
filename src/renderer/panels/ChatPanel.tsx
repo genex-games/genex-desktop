@@ -13,6 +13,7 @@
 import type { JSX, RefObject } from "react";
 import { MessageOrigin } from "../../shared/protocol.ts";
 import { RunState } from "../../shared/run-state.ts";
+import { t } from "../../shared/i18n.ts";
 import { EntryKind } from "../chat-entries.ts";
 import { ChatFilesScope, useChatFilesRecheck } from "../chat-files.ts";
 import type { ChatPanelProps } from "../chat/chat-panel-props.ts";
@@ -24,10 +25,16 @@ import { stepsOffer } from "../chat/engine-steps.ts";
 import { EngineStepsCard } from "../chat/EngineStepsCard.tsx";
 import { RewindDialog } from "../chat/RewindDialog.tsx";
 import { type ChatParts, useChatPanel } from "../chat/use-chat-panel.ts";
+import { HeldState } from "../chat/use-launch-handover.ts";
 import { chatPlaceholder } from "../composer-placeholder.ts";
 import { loopAvailableFor } from "../loop-setting.ts";
 import { notifyProblem } from "../state/toasts.ts";
-import { Pending } from "../ui/Pending.tsx";
+import { useItems } from "../state/hooks.ts";
+import { askedForItem } from "../state/items.ts";
+import { isLocalDraft } from "../../shared/item-draft.ts";
+import { useLocalItemsSettle } from "../chat/use-local-items.ts";
+import { studio } from "../state/studio.ts";
+import { ChatSkeleton } from "../chat/ChatSkeleton.tsx";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import { PromptBar, type PromptBarHandle } from "../ui/PromptBar.tsx";
 import { engineLoopGate, engineRewindNote } from "../engine-game.ts";
@@ -42,6 +49,7 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
     <ChatFilesScope.Provider value={chat.threadId ?? null}>
       <div
         data-studio-chat={chat.isStudioThread || undefined}
+        data-file-drop-zone
         className={`${chat.isStudioThread ? "studio-view" : ""} column flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-line bg-page`}
       >
         <ChatPanelHeader {...parts} chatExport={chatExport} />
@@ -57,9 +65,13 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
           {loading && (
             <div className="absolute inset-0 bg-page">
               {props.loadError ? (
-                <LoadFailed what="this chat" error={props.loadError} onRetry={props.onRetryLoad} />
+                <LoadFailed
+                  message={t("Could not load this chat.")}
+                  error={props.loadError}
+                  onRetry={props.onRetryLoad}
+                />
               ) : (
-                <Pending label="Loading conversation…" className="p-4 text-sm" />
+                <ChatSkeleton />
               )}
             </div>
           )}
@@ -79,6 +91,14 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
   );
 }
 
+/**
+ * A new game's held first message already asks for the sign-in, with its own button: the composer's
+ * card shows only once that sign-in is under way, for its steps.
+ */
+function heldAsksSignIn({ handover, composer }: ChatParts): boolean {
+  return handover.held?.state === HeldState.SignedOut && !composer.gate.card?.waiting;
+}
+
 /** The composer and the cards docked above it: sign-in, questions, the plan and consents. */
 function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandle | null> }): JSX.Element {
   const { chat, composer, work, submit, composerRef, focusComposer, reply } = parts;
@@ -87,6 +107,20 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
   const { plan } = work;
   const busy = drafts.busy;
   const { about } = reply;
+  // New item opened this chat, or a Listing draft card is the last thing in it: the box asks for an item.
+  const project = chat.meta.project ?? null;
+  const askedForAnItem = useItems((s) => project !== null && s.askingIn === project);
+  const underListing = transcript.readingEntries.at(-1)?.kind === EntryKind.ListingDraft;
+  // A local draft waits for the game's publish: while this chat shows its card, or the game holds
+  // one, Studio settles them when the chat opens, the window comes back and the publish finishes.
+  const showsLocalDraft = transcript.readingEntries.some(
+    (entry) => entry.kind === EntryKind.ListingDraft && isLocalDraft(entry.draft),
+  );
+  useLocalItemsSettle(project, showsLocalDraft);
+  const send: typeof submit = (...args) => {
+    if (askedForAnItem) studio().items.setState((state) => askedForItem(state, null), true);
+    return submit(...args);
+  };
   // A summary written mid-turn or mid-build would miss what is happening.
   const compactWaits = busy || working || chat.answering || run?.state === RunState.Running;
   return (
@@ -94,7 +128,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
       {...(threadId ? { conversationKey: threadId } : {})}
       loading={parts.props.loading}
       connectModel={chat.isStudioThread && !gate.needsSignIn && composer.noModel}
-      signIn={gate.card}
+      signIn={heldAsksSignIn(parts) ? null : gate.card}
       questions={transcript.interviewQuestions.filter((entry) => entry.kind === EntryKind.Question)}
       questionsDisabled={busy || working}
       onAnswerQuestion={(answer) => submit(answer, undefined, true)}
@@ -145,6 +179,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
           studio: chat.isStudioThread,
           // A game still waiting for its idea asks for one, as home does.
           draft: chat.isDraft || chat.folder?.provisional === true,
+          item: askedForAnItem || underListing,
         })}
         value={drafts.draft}
         onChange={drafts.setDraft}
@@ -153,7 +188,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
         busy={busy}
         // A game chat with no model keeps its prompt: Connect AI model takes the model's place.
         disabled={composer.noModel && chat.isStudioThread}
-        onSend={submit}
+        onSend={send}
         stoppable={work.stoppable && Boolean(parts.props.activeThread)}
         onStop={work.stop.requestStop}
         blockSend={gate.needsSignIn}

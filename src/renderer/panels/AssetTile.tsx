@@ -3,6 +3,7 @@ import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { Icon } from "../ui/icons.tsx";
 import { ASSET_WORDS, animationCountWords } from "../words.ts";
 import { AssetThumbnail } from "./AssetThumbnail.tsx";
+import { t } from "../../shared/i18n.ts";
 
 /**
  * One file as a card, in the conversation and on the Assets canvas: the picture is the card and
@@ -35,7 +36,7 @@ export function AssetTile({
     >
       <button
         type="button"
-        aria-label={`Preview ${name}`}
+        aria-label={t("Preview {name}", { name })}
         title={name}
         onClick={onOpen}
         className="absolute inset-0 block w-full cursor-pointer rounded-card text-ink-3"

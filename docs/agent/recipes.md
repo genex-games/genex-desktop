@@ -100,7 +100,8 @@ Durable history the UI or the harness reads later.
    Read the payload with `customEvent(event, name)` / `customPayload(data, name)` (a name or a
    list of names; `null` for any other event, `{}` for a missing payload), `delegatedPayload`
    for the `delegated.<engine>` trace, or `customRecord` for any custom event; never
-   `data.payload as`. Put user-facing words in `src/renderer/words.ts`.
+   `data.payload as`. Put user-facing words in `src/renderer/words.ts`, inside `t()`
+   ([translation](translation.md)).
 5. Live updates reach the renderer through the `studio:event` push channel of the IPC map
    (`STUDIO_PUSH_CHANNELS` in `src/shared/ipc-channels.ts`, delivered by `onEvent`); no new
    channel is needed. A new transient UI event (`area.verb`) is a key of `UiEventMap` in

@@ -4,6 +4,7 @@
  * word an author wrote is drawn as text; links open in the browser.
  */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import type { PluginIndexEntry, PluginIndexView, PluginManifest } from "../../../shared/plugins.ts";
 import { GithubMark } from "../../ui/brand.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -53,9 +54,9 @@ export function CatalogInstall({
   index: PluginIndexView;
   page: PluginsPage;
 }): JSX.Element {
-  const blocked =
-    entry.minStudioVersion !== undefined && !meetsMinimumVersion(index.studioVersion, entry.minStudioVersion);
-  if (blocked) return <span className="text-xs text-ink-3">Needs Studio ≥ {entry.minStudioVersion}</span>;
+  const minimum = entry.minStudioVersion;
+  const blocked = minimum !== undefined && !meetsMinimumVersion(index.studioVersion, minimum);
+  if (blocked) return <span className="text-xs text-ink-3">{t("Needs Studio ≥ {version}", { version: minimum })}</span>;
   return (
     <Button
       variant="default"

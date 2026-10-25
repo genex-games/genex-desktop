@@ -1,16 +1,26 @@
 /**
  * The Publish banner's cover: Studio takes one as the dialog opens when the game has none, the
  * arrows make one of the recent frames the kept one, and Another cover asks the game's chat for a
- * new one, the banner saying so until it arrives. The dialog never closes for any of them.
+ * new one. Once the chat sent that ask it is kept on this Mac (`cover-asks.ts`), so the banner
+ * opened again still says it is being made, until the agent's own frame arrives.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SECOND_MS } from "../../../../shared/duration.ts";
-import { GenexAction, type GenexPublishState } from "../../../../shared/genex.ts";
+import { GenexAction, type GenexCoverRecord, type GenexPublishState } from "../../../../shared/genex.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { composeInChat } from "../../../compose-in-chat.ts";
 import { runPluginAction } from "../../../plugin-actions.ts";
 import { GENEX_WORDS } from "../../../words.ts";
-import { type CoverAskRecord, coverChoices, coverMaking, flipCover, needsCover } from "./genex-publish-view.ts";
+import {
+  type CoverAsk,
+  type CoverAskMemory,
+  CoverKind,
+  readCoverAsks,
+  rememberCoverAsk,
+  settleCoverAsk,
+  writeCoverAsks,
+} from "./cover-asks.ts";
+import { coverChoices, flipCover, needsCover } from "./genex-publish-view.ts";
 
 const WORDS = GENEX_WORDS.publish;
 
@@ -26,16 +36,39 @@ export function useElapsed(startedAt: string | null): number | null {
   return Math.max(0, Math.floor((now - Date.parse(startedAt)) / SECOND_MS));
 }
 
-/** What Another asks the game's chat for: a new cover picture, or a new clip. */
-export const CoverKind = { Picture: "picture", Clip: "clip" } as const;
-export type CoverKind = (typeof CoverKind)[keyof typeof CoverKind];
+/**
+ * The game's kept asks as the cover record last read settles them (the wait shown is that one),
+ * and a way to keep an ask the chat sent. The stored asks are read once per game.
+ */
+function useCoverAsks(
+  project: string,
+  record: GenexCoverRecord | undefined,
+): [CoverAskMemory, (ask: CoverAsk) => void] {
+  const stored = useMemo(() => readCoverAsks(project), [project]);
+  const [kept, setKept] = useState<{ project: string; memory: CoverAskMemory } | null>(null);
+  const memory = kept?.project === project ? kept.memory : stored;
+  const settled = record ? settleCoverAsk(memory, record, Date.now()) : memory;
+  useEffect(() => {
+    if (settled === memory) return;
+    writeCoverAsks(project, settled);
+    setKept({ project, memory: settled });
+  }, [project, memory, settled]);
+  const remember = useCallback(
+    (ask: CoverAsk) => setKept({ project, memory: rememberCoverAsk(project, ask) }),
+    [project],
+  );
+  return [settled, remember];
+}
 
 /** What the banner's cover controls read and do. */
 export interface PublishCover {
   /** Studio is taking the game's first cover right now. */
   taking: boolean;
-  /** Another picture or clip was asked for and none has arrived yet: which, and since when (ISO). */
-  making: { kind: CoverKind; since: string } | null;
+  /**
+   * Another picture or clip was asked for and none has arrived yet: which, since when (ISO), and how
+   * long this game's last one of that kind took (ms; undefined before one was timed).
+   */
+  making: { kind: CoverKind; since: string; took: number | undefined } | null;
   /** The recent frames and which is kept. */
   choices: { shas: string[]; index: number };
   /** Make the frame an arrow lands on the kept one. */
@@ -57,7 +90,7 @@ export function usePublishCover({
   refresh: () => Promise<void>;
 }): PublishCover {
   const [taking, setTaking] = useState(false);
-  const [asked, setAsked] = useState<(CoverAskRecord & { kind: CoverKind }) | null>(null);
+  const [asks, rememberAsk] = useCoverAsks(project, state?.cover);
   const tried = useRef(false);
   const kept = state?.cover?.shot?.sha256 ?? null;
   const clip = state?.cover?.clip?.sha256 ?? null;
@@ -74,7 +107,7 @@ export function usePublishCover({
         void refresh();
       });
   }, [wanted, plugin, project, refresh]);
-  const making = coverMaking(asked, asked?.kind === CoverKind.Clip ? clip : kept, Date.now());
+  const asked = asks.ask;
   const choices = coverChoices(state?.cover);
   const flip = useCallback(
     (step: 1 | -1) => {
@@ -89,12 +122,14 @@ export function usePublishCover({
   const ask = (kind: CoverKind, want: string): void => {
     const text =
       kind === CoverKind.Clip ? WORDS.coverAnotherClipPrompt(want.trim()) : WORDS.coverAnotherPrompt(want.trim());
-    composeInChat({ project, text, send: true });
-    setAsked({ kind, from: kind === CoverKind.Clip ? clip : kept, at: Date.now() });
+    const pending: CoverAsk = { kind, from: kind === CoverKind.Clip ? clip : kept, at: Date.now() };
+    // Kept only once the chat really sent it: words left in its composer (no model, a sign-in
+    // first) start nothing, so the banner says nothing is being made.
+    composeInChat({ project, text, send: true, sent: () => rememberAsk(pending) });
   };
   return {
     taking,
-    making: making && asked ? { kind: asked.kind, since: new Date(asked.at).toISOString() } : null,
+    making: asked ? { kind: asked.kind, since: new Date(asked.at).toISOString(), took: asks.took[asked.kind] } : null,
     choices,
     flip,
     // A cover is the Genex plugin's to make: with it off, nobody in the chat can.

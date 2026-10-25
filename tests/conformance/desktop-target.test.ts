@@ -139,6 +139,38 @@ describe("desktop target", () => {
       why: /never driven/,
     },
     {
+      name: "typing into a password manager on Windows",
+      focus: { app: { name: "1Password", bundleId: "1password.exe", pid: 6 }, secure: false },
+      actions: [{ type: "type", text: "x" }],
+      why: /never driven/,
+    },
+    {
+      // Settings and Windows Security are packaged apps: a frame of ApplicationFrameHost.exe.
+      name: "a click in a Windows packaged app's frame, which may hold Settings",
+      under: { name: "ApplicationFrameHost.exe", bundleId: "applicationframehost.exe", pid: 7 },
+      actions: [{ type: "click", x: 10, y: 10, px: true }],
+      why: /never driven/,
+    },
+    {
+      // Explorer is the desktop, the taskbar, Run and File Explorer's address bar: it starts programs.
+      name: "a click in Windows Explorer, the shell",
+      under: { name: "Windows Explorer", bundleId: "explorer.exe", pid: 9 },
+      actions: [{ type: "click", x: 10, y: 10, px: true }],
+      why: /never driven/,
+    },
+    {
+      name: "a click that reaches the driver's own cursor overlay",
+      under: { name: "Cua Driver", bundleId: "cua-driver.exe", pid: 10 },
+      actions: [{ type: "click", x: 10, y: 10, px: true }],
+      why: /never driven/,
+    },
+    {
+      name: "keys into a Windows credential prompt",
+      focus: { app: { name: "Windows Security", bundleId: "credentialuibroker.exe", pid: 8 }, secure: false },
+      actions: [{ type: "press", combo: "Return" }],
+      why: /never driven/,
+    },
+    {
       name: "a password typed into a secure field of an allowed app",
       focus: { app: EDITOR, secure: true },
       actions: [{ type: "type", text: "hunter2" }],

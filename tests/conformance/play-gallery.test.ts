@@ -4,6 +4,7 @@
  * hostile input: a card is drawn only from an item that names a game, and an image or a git address
  * outside Genex's own hosts is never handed on.
  */
+import { LibraryKind } from "../../src/shared/asset-library.ts";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -13,12 +14,15 @@ import {
   PlayRoute,
   playGallery,
   SignInNeeded,
+  TicketDelivery,
   TicketStatus,
   toFeedPage,
   toPlayGame,
+  toSearchGame,
   visibleShelves,
 } from "../../src/main/play/gallery.ts";
 import { PlayCategory, PlayShelf } from "../../src/shared/play.ts";
+import { FIXTURE_BUILD_HOST, NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 
 const TOKEN = "genex-cli-token";
 
@@ -57,7 +61,7 @@ interface Call {
 /** A gallery over a scripted API: each route answers what `answers` says, and every call is kept. */
 function rig(
   answers: (call: Call) => GalleryAnswer | Promise<GalleryAnswer>,
-  options: { token?: string | undefined; now?: number } = {},
+  options: { token?: string | undefined; now?: number; host?: NativeHost; local?: boolean } = {},
 ) {
   const token = "token" in options ? options.token : TOKEN;
   const calls: Call[] = [];
@@ -67,7 +71,14 @@ function rig(
     calls.push(call);
     return answers(call);
   };
-  const gallery = playGallery({ request, token: async () => token, now: () => clock });
+  const host = options.host ? { host: options.host } : {};
+  const gallery = playGallery({
+    request,
+    token: async () => token,
+    now: () => clock,
+    localImages: options.local === true,
+    ...host,
+  });
   return { gallery, calls, advance: (ms: number) => (clock += ms) };
 }
 
@@ -91,7 +102,56 @@ describe("Play gallery items", () => {
         imageUrl: "https://api.genex.games/api/character-assets/avatars/u1/1.webp",
       },
       remixable: true,
+      assetKind: null,
+      curation: { mobileSupport: null, mobileAuto: null, categories: [], remixOff: false },
     });
+  });
+
+  it("reads an asset's kind, a character as a 3D model, and nothing it does not know", () => {
+    const kind = (assetKind: unknown) => toPlayGame(item({ assetKind }))?.assetKind;
+    assert.equal(kind("3d"), LibraryKind.Model);
+    assert.equal(kind("character"), LibraryKind.Model);
+    assert.equal(kind("sound"), LibraryKind.Sound);
+    assert.equal(kind("hologram"), null);
+    assert.equal(kind(undefined), null);
+  });
+
+  it("carries what the card menu reads: mobile flags, tags and whether its owner turned remixing off", () => {
+    const curation = (overrides: Record<string, unknown>) => toPlayGame(item(overrides))?.curation;
+    assert.deepEqual(
+      curation({
+        mobileSupport: "desktop_only",
+        mobileAutoStatus: "desktop_only",
+        categories: ["tools", "physics"],
+        private: true,
+      }),
+      { mobileSupport: "desktop_only", mobileAuto: "desktop_only", categories: ["tools", "physics"], remixOff: true },
+    );
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [{ mobileSupport: "supported" }, { mobileSupport: "supported" }],
+      [{ mobileSupport: "mobile_only" }, { mobileSupport: null }],
+      [{ mobileAutoStatus: "supported" }, { mobileAuto: null }],
+      [{ categories: "arcade" }, { categories: [] }],
+      [{ categories: ["arcade", 7, null, "x".repeat(41), "sports"] }, { categories: ["arcade", "sports"] }],
+      [
+        { categories: Array.from({ length: 40 }, (_, i) => `tag-${i}`) },
+        { categories: Array.from({ length: 16 }, (_, i) => `tag-${i}`) },
+      ],
+      [{ private: "true" }, { remixOff: false }],
+    ];
+    for (const [overrides, expected] of cases) {
+      const shown = curation(overrides);
+      assert.ok(shown, JSON.stringify(overrides));
+      for (const [key, value] of Object.entries(expected))
+        assert.deepEqual(shown[key as keyof typeof shown], value, JSON.stringify(overrides));
+    }
+  });
+
+  it("leaves a search's card without curation: not remixable is not the same as turned off by its owner", () => {
+    const searched = toSearchGame({ ...item(), author: "Simeon M", remixable: false, mobileSupport: "supported" });
+    assert.ok(searched);
+    assert.equal(searched.remixable, false);
+    assert.equal("curation" in searched, false);
   });
 
   it("hands on the maker's picture only when they chose it as their avatar", () => {
@@ -356,6 +416,21 @@ describe("Play gallery calls", () => {
     assert.equal(calls.length, 1, "a slug that is not a game is never sent");
   });
 
+  it("mints a desktop ticket for a game Play starts on this computer, and a refusal plays as a guest", async () => {
+    // The desktop delivery signs the player in without a per-game question; a refusal of any
+    // kind, the phone app's consent answer included, is a guest this once.
+    const { gallery, calls } = rig(() => ok({ ticket: "N1" }));
+    assert.deepEqual(await gallery.ticket("lost-cathedral", TicketDelivery.Desktop), {
+      status: TicketStatus.Minted,
+      ticket: "N1",
+    });
+    assert.deepEqual(calls[0]?.body, { slug: "lost-cathedral", delivery: "desktop", channel: "production" });
+    const refused = rig(() => ({ status: 403, body: { error: "consent_required", projectId: "cm1" } }));
+    assert.deepEqual(await refused.gallery.ticket("lost-cathedral", TicketDelivery.Desktop), {
+      status: TicketStatus.NotMinted,
+    });
+  });
+
   it("reads the search catalog once however many searches wait on it", async () => {
     let answer: (value: GalleryAnswer) => void = () => {};
     const { gallery, calls } = rig(() => new Promise<GalleryAnswer>((resolve) => (answer = resolve)));
@@ -373,6 +448,22 @@ describe("Play gallery calls", () => {
     );
   });
 
+  it("lists the whole catalog with each item's shelf, asset kind and maker's name", async () => {
+    const items = [
+      { ...item({ id: "a1", slug: "crowd-cheer", title: "Crowd Cheer", categories: ["assets"] }), assetKind: "sound" },
+      item({ id: "g1", slug: "ocean-racer", title: "Ocean Racer" }),
+    ].map((entry) => ({ ...entry, author: "Simeon M" }));
+    const { gallery } = rig(() => ok({ items }));
+    const listed = await gallery.mentionItems();
+    assert.deepEqual(
+      listed.map(({ slug, shelf, assetKind, authorName }) => ({ slug, shelf, assetKind, authorName })),
+      [
+        { slug: "crowd-cheer", shelf: PlayShelf.Assets, assetKind: LibraryKind.Sound, authorName: "Simeon M" },
+        { slug: "ocean-racer", shelf: PlayShelf.Games, assetKind: null, authorName: "Simeon M" },
+      ],
+    );
+  });
+
   it("searches the shelf it is asked about, games when it names none it knows", async () => {
     const items = [
       item({ id: "g1", slug: "ocean-racer", title: "Ocean Racer" }),
@@ -387,8 +478,10 @@ describe("Play gallery calls", () => {
     assert.deepEqual(await found("x" as PlayShelf), ["ocean-racer"]);
   });
 
-  it("reads a game's likes, whether it may be remixed and the facts its header shows", async () => {
-    const { gallery, calls } = rig(() => ok({ item: { ...item(), likesCount: 42, likedByMe: true } }));
+  it("reads a game's likes, comments, whether it may be remixed and the facts its bar shows", async () => {
+    const { gallery, calls } = rig(() =>
+      ok({ item: { ...item(), likesCount: 42, likedByMe: true, commentsCount: 7 } }),
+    );
     assert.deepEqual(await gallery.world("lost-cathedral"), {
       id: "cm1",
       slug: "lost-cathedral",
@@ -402,7 +495,15 @@ describe("Play gallery calls", () => {
       authorId: "u1",
       plays: 2682,
       online: null,
+      comments: 7,
+      coverUrl: "https://cdn.genex.technology/covers/cm1.webp?v=1",
     });
+    const uncounted = rig(() => ok({ item: { ...item(), commentsCount: "many" } }));
+    assert.equal(
+      (await uncounted.gallery.world("lost-cathedral")).comments,
+      0,
+      "a count that is not one reads as none",
+    );
     assert.equal(calls[0]?.token, TOKEN);
     await assert.rejects(gallery.world("../../api"), /Not a game address/);
   });
@@ -414,6 +515,142 @@ describe("Play gallery calls", () => {
     assert.equal(calls.length, 1);
     assert.equal(await rig(() => ok({ code: "a b&c" })).gallery.inviteCode(), undefined);
     assert.equal(await rig(() => ok({ code: "x" }), { token: undefined }).gallery.inviteCode(), undefined);
+  });
+});
+
+/** A build row as the API serves it, on the fixture launch's made-up build host. */
+function buildRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    platform: "mac",
+    arch: "universal",
+    version: "1.3.0",
+    sizeBytes: 1_200_000_000,
+    installedBytes: 1_400_000_000,
+    sha256: "b".repeat(64),
+    url: `https://${FIXTURE_BUILD_HOST}/dust-runners/1.3.0/mac.zip`,
+    entry: "Dust Runners.app",
+    minOs: "13.0",
+    publishedAt: "2026-10-17T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const THIS_MAC: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.Arm64, osVersion: "15.1" };
+
+describe("Play's native games", () => {
+  const nativeItem = (overrides: Record<string, unknown> = {}) =>
+    item({ id: "n1", slug: "dust-runners", title: "Dust Runners", builds: [buildRow()], web: false, ...overrides });
+
+  it("gives a card a native side only when the item names builds, from a host the app trusts", () => {
+    assert.equal("native" in (toPlayGame(item()) ?? {}), false, "a web game is unchanged");
+    const real = toPlayGame(nativeItem());
+    assert.deepEqual(real?.native, { web: false, engine: null, builds: [] }, "genex.games names no build host yet");
+    const fixture = toPlayGame(nativeItem({ engine: "unity" }), true);
+    assert.equal(fixture?.native?.engine, "unity");
+    assert.deepEqual(
+      fixture?.native?.builds.map((build) => build.entry),
+      ["Dust Runners.app"],
+    );
+  });
+
+  it("leaves a game this computer cannot play out of the tabs, and keeps web games and ones it can", async () => {
+    const windowsOnly = item({
+      id: "w1",
+      slug: "harbor-lights",
+      title: "Harbor Lights",
+      web: false,
+      builds: [buildRow({ platform: "windows", arch: "x64", entry: "Harbor/Harbor.exe" })],
+    });
+    const items = [
+      item(),
+      nativeItem(),
+      windowsOnly,
+      item({
+        id: "s1",
+        slug: "skate",
+        title: "SKATE",
+        builds: [buildRow({ platform: "windows", arch: "x64", entry: "Skate.exe" })],
+      }),
+    ];
+    const listed = async (host?: NativeHost) =>
+      (
+        await rig(() => ok({ items }), { local: true, ...(host ? { host } : {}) }).gallery.feed({
+          category: PlayCategory.Featured,
+        })
+      ).games.map((game) => game.slug);
+    assert.deepEqual(await listed(THIS_MAC), ["lost-cathedral", "dust-runners", "skate"]);
+    assert.deepEqual(
+      await listed(),
+      ["lost-cathedral", "dust-runners", "harbor-lights", "skate"],
+      "unknown computer: all",
+    );
+    const intel: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.X64, osVersion: "12.0" };
+    assert.deepEqual(
+      await listed(intel),
+      ["lost-cathedral", "skate"],
+      "the Mac app asks for a newer macOS than this one",
+    );
+  });
+
+  it("leaves a game this computer cannot play out of search", async () => {
+    const items = [
+      item({ id: "g1", slug: "ocean-racer", title: "Ocean Racer" }),
+      item({
+        id: "g2",
+        slug: "ocean-port",
+        title: "Ocean Port",
+        web: false,
+        builds: [buildRow({ platform: "windows", arch: "x64", entry: "Port.exe" })],
+      }),
+    ];
+    const { gallery } = rig(() => ok({ items }), { local: true, host: THIS_MAC });
+    assert.deepEqual(
+      (await gallery.search("ocean")).map((game) => game.slug),
+      ["ocean-racer"],
+    );
+  });
+
+  it("reads a game's own page: its card, whole description, screenshots on Genex's hosts and when it changed", async () => {
+    const description = "Race three rivals across the dunes. ".repeat(20).trim();
+    const shots = [
+      "https://cdn.genex.technology/shots/1.webp",
+      "https://evil.example/2.webp",
+      "https://cdn.genex.technology/shots/3.webp",
+      "https://cdn.genex.technology/shots/4.webp",
+      "https://cdn.genex.technology/shots/5.webp",
+      "https://cdn.genex.technology/shots/6.webp",
+    ];
+    const { gallery, calls } = rig(
+      () =>
+        ok({
+          item: {
+            ...nativeItem({ engine: "unity", description, shots }),
+            likesCount: 12,
+            likedByMe: true,
+            commentsCount: 4,
+          },
+        }),
+      { local: true },
+    );
+    const page = await gallery.game("dust-runners");
+    assert.equal(page.slug, "dust-runners");
+    assert.equal(page.description, description, "the page keeps more than a card's description");
+    assert.deepEqual(page.shots, [
+      "https://cdn.genex.technology/shots/1.webp",
+      "https://cdn.genex.technology/shots/3.webp",
+      "https://cdn.genex.technology/shots/4.webp",
+      "https://cdn.genex.technology/shots/5.webp",
+    ]);
+    assert.deepEqual([page.likes, page.liked, page.comments], [12, true, 4]);
+    assert.equal(page.updatedAt, "2026-10-17T10:00:00.000Z", "no date of its own: the newest build's");
+    assert.equal(page.native?.engine, "unity");
+    assert.equal(calls[0]?.route, PlayRoute.world("dust-runners"));
+    assert.equal(calls[0]?.token, TOKEN);
+    const dated = rig(() => ok({ item: { ...item(), updatedAt: "2026-10-01T00:00:00Z" } }));
+    assert.equal((await dated.gallery.game("lost-cathedral")).updatedAt, "2026-10-01T00:00:00.000Z");
+    const undated = rig(() => ok({ item: item() }));
+    assert.equal((await undated.gallery.game("lost-cathedral")).updatedAt, null);
+    await assert.rejects(gallery.game("../../api"), /Not a game address/);
   });
 });
 

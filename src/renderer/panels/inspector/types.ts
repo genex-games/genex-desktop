@@ -1,4 +1,5 @@
 /** The props every inspector panel shares, and the lightbox's picture. */
+import type { KeepBuildingTap } from "../../keep-building.ts";
 import type { AgentScreenFrame } from "../../../shared/agent-screen.ts";
 import type { RunSummary } from "../../../shared/run-summary.ts";
 import type {
@@ -64,6 +65,8 @@ export interface InspectorProps {
   onOpenJob: (job: AssetInfo) => void;
   /** Put a chip naming this node in the chat's composer; null when there is no chat to reply in. */
   onReply: ((reply: Reply) => void) | null;
+  /** Keep building on what the run left, in the chat that owns it; null when there is no chat. */
+  onKeepBuilding: KeepBuildingTap | null;
   onNotice: Notify;
   onPlay: (() => Promise<void> | void) | null;
 }

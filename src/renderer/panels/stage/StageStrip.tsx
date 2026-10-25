@@ -1,10 +1,11 @@
 /**
- * The stage strip: one addressable row, so a check can prove every control in it stays uniquely
+ * The stage strip: one addressable strip, so a check can prove every control in it stays uniquely
  * labelled — `control.ts` refuses an ambiguous selector at run time. The game's name and folder
  * live in the chat header; the rest of this strip drags the window.
  */
-import { type JSX, useRef } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 import { SOUND_SHORTCUT } from "../../../shared/game-sound.ts";
+import { t } from "../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import type { FactRef } from "../../../shared/project-facts.ts";
 import type { LiveView } from "../../live-views.ts";
@@ -12,7 +13,15 @@ import type { BesideTarget } from "../../open-beside.ts";
 import type { LiveBehind, StageView } from "../../stage.ts";
 import type { GameProject } from "../../types.ts";
 import { cn } from "../../ui/cn.ts";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../ui/dropdown-menu.tsx";
 import { Icon } from "../../ui/icons.tsx";
+import { PluginIcon } from "../../ui/PluginIcon.tsx";
 import { Shortcut } from "../../ui/Shortcut.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip.tsx";
 import { ViewSwitcher } from "../../ui/view-switcher.tsx";
@@ -20,8 +29,8 @@ import { liveBehindLabel, liveBehindWords, STAGE_WORDS } from "../../words.ts";
 import type { Notify } from "../../state/toasts.ts";
 import { PluginToolbar } from "../PluginToolbar.tsx";
 import { LiveRun } from "./live-run.ts";
-import { activeStageTab, type StageTab, type StageTabKey, stageTabs } from "./stage-tabs.ts";
-import { useStripFold } from "./strip-fold.ts";
+import { activeStageTab, type StageTab, type StageTabKey, stageTabs, tabGlyph, tabPluginId } from "./stage-tabs.ts";
+import { StripFoldStep, useStripFold } from "./strip-fold.ts";
 
 /** The facts of a game whose descriptor isn't loaded yet: none, served as a web game. */
 const NO_FACTS: readonly FactRef[] = [];
@@ -36,7 +45,7 @@ const switcherItems = (tabs: readonly StageTab[]) =>
  * reason breathes the ring once (`key`), except under reduced motion (theme.css).
  */
 function ReloadButton({ behind, onReload }: { behind: LiveBehind | null; onReload: () => void }): JSX.Element {
-  const label = behind ? liveBehindLabel(behind.reason, behind.note) : "Reload game";
+  const label = behind ? liveBehindLabel(behind.reason, behind.note) : t("Reload game");
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -59,7 +68,7 @@ function ReloadButton({ behind, onReload }: { behind: LiveBehind | null; onReloa
       </TooltipTrigger>
       {/* Beside, not below: a tooltip under the strip would sit behind the native game view. */}
       <TooltipContent side="right" sideOffset={6} data-stage-reload-tip="">
-        {behind ? liveBehindWords(behind.reason) : "Reload game"}
+        {behind ? liveBehindWords(behind.reason) : t("Reload game")}
         {behind?.note ? <span className="block max-w-72 opacity-75">{behind.note}</span> : null}
       </TooltipContent>
     </Tooltip>
@@ -158,7 +167,7 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label="Game sound"
+          aria-label={t("Game sound")}
           aria-pressed={on}
           data-stage-sound={on ? "on" : "off"}
           onClick={onToggle}
@@ -170,7 +179,7 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
       {/* Beside, not below: a tooltip under the strip would sit behind the native game view. */}
       <TooltipContent side="left" sideOffset={6}>
         <span className="flex items-center gap-2">
-          {on ? "Mute game" : "Unmute game"}
+          {on ? t("Mute game") : t("Unmute game")}
           <Shortcut>{SOUND_SHORTCUT}</Shortcut>
         </span>
       </TooltipContent>
@@ -178,9 +187,89 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
   );
 }
 
+/** A view's mark where the folded views name it: a plugin view's own picture, else the view's glyph. */
+function ViewMark({
+  tab,
+  views,
+  plugins,
+}: {
+  tab: StageTab;
+  views: readonly LiveView[];
+  plugins: readonly PluginInfo[];
+}): JSX.Element {
+  const pluginId = tabPluginId(tab, views);
+  const plugin = pluginId ? plugins.find((candidate) => candidate.manifest.id === pluginId) : undefined;
+  if (plugin) return <PluginIcon name={plugin.manifest.name} src={plugin.iconUrl} size="menu" />;
+  return <Icon name={tabGlyph(tab, views)} size={14} />;
+}
+
 /**
- * The strip over the stage: what the folder is, the view switcher, Play/Stop and Reload, then at
- * its end the game's sound, full screen and plugin buttons. An earlier build opens from its result
+ * The views folded into one button (`strip-fold.ts`): the current one in the switcher's accent and a
+ * chevron, opening a menu of every view with the current one ticked. The button lists the views'
+ * keys (`data-stage-views`) and names the current one (`data-stage-current`); each row keeps its
+ * tab's `data-stage-action`, so a check finds and presses the same view either way.
+ */
+function ViewMenu({
+  tabs,
+  active,
+  views,
+  plugins,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  tabs: readonly StageTab[];
+  active: StageTabKey;
+  views: readonly LiveView[];
+  plugins: readonly PluginInfo[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (key: StageTabKey) => void;
+}): JSX.Element | null {
+  const current = tabs.find((tab) => tab.key === active) ?? tabs[0];
+  if (!current) return null;
+  const choose = (key: string) => {
+    const tab = tabs.find((candidate) => candidate.key === key);
+    if (tab) onSelect(tab.key);
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={STAGE_WORDS.viewsButton(current.label)}
+          data-stage-views={tabs.map((tab) => tab.key).join(" ")}
+          data-stage-current={current.key}
+          className="no-drag surface-glass flex shrink-0 cursor-pointer items-center gap-1 rounded-lg p-0.5 pe-1.5 text-control-text transition-colors duration-(--duration-quick) hover:text-control-text-hover"
+        >
+          <span className="flex h-7 items-center gap-1.5 rounded-md bg-[var(--switch-fill,var(--accent-fill))] px-2.5 font-mono text-body-sm text-accent-foreground">
+            <ViewMark tab={current} views={views} plugins={plugins} />
+            {current.label}
+          </span>
+          <Icon name="chevron-down" size={14} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-44">
+        <DropdownMenuRadioGroup value={current.key} onValueChange={choose}>
+          {tabs.map((tab) => (
+            <DropdownMenuRadioItem key={tab.key} value={tab.key} data-stage-action={tab.key}>
+              <span className="flex items-center gap-2">
+                <ViewMark tab={tab} views={views} plugins={plugins} />
+                {tab.label}
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * The strip over the stage: the views, Play/Stop, Reload, the game's sound and full screen, then at
+ * its end the plugin buttons. As it narrows it makes room in steps (`strip-fold.ts`): the views fold
+ * into one button, then the plugin buttons move to a second row, then Sound and Full screen join
+ * them; nothing ever runs under the window's own controls. An earlier build opens from its result
  * card in the chat, not from here. An Unreal game plays in Unreal, not in a web page here, so it
  * has none of the web game's controls and no Publish: there is no web build to put online.
  */
@@ -235,39 +324,64 @@ export function StageStrip({
 }): JSX.Element {
   const strip = useRef<HTMLDivElement>(null);
   const start = useRef<HTMLDivElement>(null);
+  const game = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
-  // One row, always: once the labelled buttons would overflow it, they fold into icons together.
-  const folded = useStripFold(strip, [start, end]);
+  const step = useStripFold(strip, [start, game, end]);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  // The folded views' menu goes with the fold: a strip wide enough again closes it.
+  useEffect(() => {
+    if (step === StripFoldStep.Full) setViewsOpen(false);
+  }, [step]);
+  // Either menu lies over the stage, so the native game view gives way while one is open.
+  useEffect(() => {
+    onToolbarOpen(pluginsOpen || viewsOpen);
+    return () => onToolbarOpen(false);
+  }, [pluginsOpen, viewsOpen, onToolbarOpen]);
+  const secondRow = step === StripFoldStep.Plugins || step === StripFoldStep.Game;
+  const tabs = stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, beside });
+  const active = activeStageTab(stageView, live.views, live.shown);
   return (
     <div
       ref={strip}
       data-stage-strip=""
-      data-folded={folded ? "" : undefined}
-      className="titlebar-drag window-controls-end flex h-12 shrink-0 flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden border-b border-line bg-canvas ps-3 pe-2 [scrollbar-width:none]"
+      data-fold={step}
+      className="stage-strip titlebar-drag shrink-0 border-b border-line bg-canvas ps-3"
     >
-      {/* Two groups the fold measures, neither of them no-drag: every gap between the strip's
-          controls still drags the window. */}
-      <div ref={start} className="flex shrink-0 items-center gap-2">
-        {/* One segmented group for every loaded game; Builds joins it once there is a build to
-          draw, and Assets is always there — a game with no build still has files. Plugin buttons
-          follow it as siblings, so they are there for a game with no build either. */}
-        {project ? (
+      {/* Three groups the fold measures and lays out (theme.css `.stage-strip`), none of them
+          no-drag: every gap between the strip's controls still drags the window. */}
+      <div ref={start} className="stage-strip-start flex shrink-0 items-center gap-2">
+        {/* Every loaded game's views; Builds joins them once there is a build to draw, and Assets is
+            always there — a game with no build still has files. */}
+        {project && step === StripFoldStep.Full ? (
           <ViewSwitcher
             className="no-drag shrink-0"
-            label="Game view"
+            label={STAGE_WORDS.views}
             dataAttribute="data-stage-action"
-            items={switcherItems(stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, beside }))}
-            active={activeStageTab(stageView, live.views, live.shown)}
+            items={switcherItems(tabs)}
+            active={active}
+            onSelect={onTab}
+          />
+        ) : null}
+        {project && step !== StripFoldStep.Full ? (
+          <ViewMenu
+            tabs={tabs}
+            active={active}
+            views={live.views}
+            plugins={plugins}
+            open={viewsOpen}
+            onOpenChange={setViewsOpen}
             onSelect={onTab}
           />
         ) : null}
         {livePreview && gameControls ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
         {livePreview ? <ReloadButton behind={behind} onReload={onReload} /> : null}
       </div>
-      <span className="min-w-0 flex-1 self-stretch" />
-      <div ref={end} className="flex shrink-0 items-center gap-2">
+      <div ref={game} className="stage-strip-game flex shrink-0 items-center gap-2">
         {livePreview && gameControls ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
         {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
+      </div>
+      <div ref={end} data-row={secondRow ? "second" : undefined} className="stage-strip-end flex items-center gap-2">
         <PluginToolbar
           plugins={plugins}
           project={project}
@@ -276,8 +390,7 @@ export function StageStrip({
           emptyGame={emptyGame}
           game={{ builtOnce: !loaded?.awaitingFirstBuild, multiplayer: loaded?.multiplayer === true }}
           onNotice={onNotice}
-          onOpenChange={onToolbarOpen}
-          folded={folded}
+          onOpenChange={setPluginsOpen}
         />
       </div>
     </div>

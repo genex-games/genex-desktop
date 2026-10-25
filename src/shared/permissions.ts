@@ -16,6 +16,7 @@
  * which from what it recorded itself, and keeps the mode and every saved grant; the harness can
  * neither read nor set them, and no agent's message ever counts as the person's answer.
  */
+import { tc, t } from "./i18n.ts";
 import { EngineId } from "./providers.ts";
 
 /** Claude Code's permission modes, in their SDK spelling. */
@@ -82,10 +83,10 @@ interface EnginePermissions {
  * has no Bypass. Codex (`codex exec`) cannot ask mid-turn: Auto keeps its sandbox, Plan only reads,
  * Bypass drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
  * loop, as Bonsai's do.
- * OpenCode (`opencode run`) and Pi (`pi --mode json`) cannot ask mid-turn and always run in the
- * studio's sandbox: Auto, or Plan (read only). Any other engine (Ollama, whose tools run in the
- * harness, or one added later) keeps its
- * own sandboxed contract, which is Auto.
+ * OpenCode (`opencode run`), Pi (`pi --mode json`), Grok Build (`grok -p`) and Cursor
+ * (`cursor-agent --print`) cannot ask mid-turn and always run in the studio's sandbox: Auto, or
+ * Plan (read only). Any other engine (Ollama, whose tools run in the harness, or one added later)
+ * keeps its own sandboxed contract, which is Auto.
  */
 const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
   [EngineId.ClaudeCode]: { modes: PERMISSION_MODES, withheld: UnavailableModeReason.CannotAsk, plansMidTurn: true },
@@ -110,6 +111,14 @@ const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
     withheld: UnavailableModeReason.CannotAsk,
   },
   [EngineId.Pi]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Grok]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Cursor]: {
     modes: [PermissionMode.Auto, PermissionMode.Plan],
     withheld: UnavailableModeReason.CannotAsk,
   },
@@ -164,14 +173,28 @@ export function isSteadyPermissionMode(value: unknown): value is SteadyPermissio
   return isPermissionMode(value) && STEADY_PERMISSION_MODES.has(value);
 }
 
-/** The menu's words: Claude Code's mode names, each described in one line of the menu. */
-export const PERMISSION_MODE_WORDS: Record<PermissionMode, { label: string; description: string }> = {
-  [PermissionMode.Auto]: { label: "Auto", description: "Stops only for risky actions" },
-  [PermissionMode.Manual]: { label: "Manual", description: "Asks before every change" },
-  [PermissionMode.AcceptEdits]: { label: "Accept edits", description: "Edits files without asking" },
-  [PermissionMode.Plan]: { label: "Plan", description: "Plans first, asks to proceed" },
-  [PermissionMode.Bypass]: { label: "Bypass permissions", description: "Never asks, works anywhere" },
+/** Claude Code's mode names in English, as a session reads them in a notice. */
+export const PERMISSION_MODE_NAMES: Record<PermissionMode, string> = {
+  [PermissionMode.Auto]: "Auto",
+  [PermissionMode.Manual]: "Manual",
+  [PermissionMode.AcceptEdits]: "Accept edits",
+  [PermissionMode.Plan]: "Plan",
+  [PermissionMode.Bypass]: "Bypass permissions",
 };
+
+/**
+ * The menu's words: Claude Code's mode names, each described in one line of the menu, in the
+ * app's language. A function, as main reads it too and sets its language after loading.
+ */
+export function permissionModeWords(): Record<PermissionMode, { label: string; description: string }> {
+  return {
+    [PermissionMode.Auto]: { label: tc("permission mode", "Auto"), description: t("Stops only for risky actions") },
+    [PermissionMode.Manual]: { label: tc("permission mode", "Manual"), description: t("Asks before every change") },
+    [PermissionMode.AcceptEdits]: { label: t("Accept edits"), description: t("Edits files without asking") },
+    [PermissionMode.Plan]: { label: tc("permission mode", "Plan"), description: t("Plans first, asks to proceed") },
+    [PermissionMode.Bypass]: { label: t("Bypass permissions"), description: t("Never asks, works anywhere") },
+  };
+}
 
 /** The tool whose question is a plan waiting for approval. */
 export const PLAN_TOOL = "ExitPlanMode";

@@ -5,8 +5,10 @@ import { assetPreviewMode } from "../../shared/asset-preview.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { previewBytes } from "../asset-bytes.ts";
+import { type SnapshotRead, viewerSnapshot } from "../asset-snapshot.ts";
 import { assetTitle } from "../asset-names.ts";
 import { Icon } from "../ui/icons.tsx";
+import { t } from "../../shared/i18n.ts";
 
 /** A thumbnail's size in pixels, and the largest side of an image read for one. */
 const THUMB_WIDTH = 360;
@@ -19,12 +21,13 @@ const CACHE_MAX = 96;
 
 /** What a card shows in place of a thumbnail it could not draw. */
 const MESSAGE = {
-  cancelled: "Preview cancelled",
-  unavailable: "Preview unavailable",
-  videoUnavailable: "Video preview unavailable",
-  videoCodec: "Video codec unavailable",
-  openPreview: "Open preview to inspect this file",
-} as const;
+  cancelled: t("Preview cancelled"),
+  unavailable: t("Preview unavailable"),
+  videoUnavailable: t("Video preview unavailable"),
+  videoCodec: t("Video codec unavailable"),
+  openPreview: t("Open preview to inspect this file"),
+  loading: t("Loading preview…"),
+};
 
 /** The modes the card can draw a thumbnail for. A sound draws its own waveform (`AudioTile`). */
 const THUMBNAIL_MODES = new Set(["image", "model", "texture", "video"]);
@@ -37,52 +40,10 @@ type PreviewBytes = ReturnType<typeof previewBytes>;
 
 const dataUrl = (still: { mimeType: string; data: string }): string => `data:${still.mimeType};base64,${still.data}`;
 
-/** A model or texture rendered once off screen, snapshotted, and its viewer thrown away. */
-async function viewerSnapshot(
-  project: string,
-  file: string,
-  companions: string[],
-  signal: AbortSignal,
-): Promise<string> {
-  const { createAssetViewer } = await import("../asset-model-viewer.js");
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const host = document.createElement("div");
-    host.style.cssText = `position:fixed;left:-10000px;top:0;width:${THUMB_WIDTH}px;height:${THUMB_HEIGHT}px;pointer-events:none`;
-    document.body.append(host);
-    let viewer: ReturnType<typeof createAssetViewer> | undefined;
-    let settled = false;
-    const finish = (outcome: { value: string } | { error: unknown }) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      viewer?.dispose();
-      host.remove();
-      if ("error" in outcome) reject(outcome.error);
-      else resolve(outcome.value);
-    };
-    const abort = () => finish({ error: new Error(MESSAGE.cancelled) });
-    signal.addEventListener("abort", abort, { once: true });
-    try {
-      viewer = createAssetViewer(host, {
-        file,
-        companions,
-        read: (file: string) => window.studio.previewProjectAsset({ project, file }),
-        onTime: () => {},
-        onError: (error: unknown) => finish({ error }),
-        onReady: () => {
-          try {
-            if (!viewer) throw new Error(MESSAGE.unavailable);
-            finish({ value: viewer.snapshot() });
-          } catch (error) {
-            finish({ error });
-          }
-        },
-      });
-    } catch (error) {
-      finish({ error });
-    }
-  });
+/** A model or texture drawn once off screen at the thumbnail's size, read from the game's own files. */
+function viewerThumbnail(project: string, file: string, companions: string[], signal: AbortSignal): Promise<string> {
+  const read: SnapshotRead = (name) => window.studio.previewProjectAsset({ project, file: name });
+  return viewerSnapshot({ file, companions, read, width: THUMB_WIDTH, height: THUMB_HEIGHT }, signal);
 }
 
 /** A clip's first frame, drawn onto the thumbnail's canvas. */
@@ -157,7 +118,7 @@ async function thumbnail(
     if (!image) throw new Error(MESSAGE.unavailable);
     return dataUrl(image);
   }
-  if (mode === "model" || mode === "texture") return viewerSnapshot(project, file, companions, signal);
+  if (mode === "model" || mode === "texture") return viewerThumbnail(project, file, companions, signal);
   return clipThumbnail(project, file, mode, signal);
 }
 
@@ -227,13 +188,13 @@ function thumbnailState(src: string | null, error: boolean, supported: boolean):
   return supported ? "loading" : "unsupported";
 }
 
-/** What the thumbnail picture shows, for its alt text. */
-const ALT_KIND: Partial<Record<ProjectAsset["kind"], string>> = { model: "3D model" };
+/** The thumbnail picture's alt text, by what it shows. */
+const ALT_WORDS: Partial<Record<ProjectAsset["kind"], string>> = { model: t("3D model preview") };
 
 /** What stands in for a thumbnail: why there is none, that it is loading, or the file's name. */
 function placeholderWords(error: boolean, supported: boolean, file: string): string | undefined {
   if (error) return MESSAGE.unavailable;
-  return supported ? "Loading preview…" : file.split("/").at(-1);
+  return supported ? MESSAGE.loading : file.split("/").at(-1);
 }
 
 /** An animation file draws nothing of its own: a figure and its name stand in. */
@@ -277,7 +238,7 @@ export function AssetThumbnail({
       {src ? (
         <img
           src={src}
-          alt={`${ALT_KIND[asset.kind] ?? "Asset"} preview`}
+          alt={ALT_WORDS[asset.kind] ?? t("Asset preview")}
           className={`h-full w-full object-contain ${fresh ? "asset-thumbnail" : ""}`}
           draggable={false}
         />

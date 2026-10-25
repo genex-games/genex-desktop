@@ -46,6 +46,8 @@ const SHORTCUT_ARGS = {
 export interface SquirrelStep {
   updateExe: string;
   args: string[];
+  /** An uninstall: the sandbox's entries Genex keeps between launches go too (`takeBackSandboxEntries`). */
+  takeBackSandbox: boolean;
 }
 
 /** Squirrel's Update.exe for the app at `execPath`. */
@@ -58,13 +60,36 @@ export function squirrelStartup(platform: string, argv: readonly string[], execP
   if (platform !== StudioPlatform.Windows) return null;
   const event = argv.find((arg): arg is SquirrelEvent => SQUIRREL_EVENTS.has(arg));
   if (!event) return null;
-  return { updateExe: squirrelUpdateExe(execPath), args: SHORTCUT_ARGS[event](path.win32.basename(execPath)) };
+  return {
+    updateExe: squirrelUpdateExe(execPath),
+    args: SHORTCUT_ARGS[event](path.win32.basename(execPath)),
+    takeBackSandbox: event === SquirrelEvent.Uninstall,
+  };
 }
 
 /** The app user model id main sets, or null where there is none to set (another OS, a Squirrel install). */
 export function appUserModelId(platform: string, execPath: string, exists: (file: string) => boolean): string | null {
   if (platform !== StudioPlatform.Windows) return null;
   return exists(squirrelUpdateExe(execPath)) ? null : APP_USER_MODEL_ID;
+}
+
+/**
+ * The folder Genex is installed in, for keeping its data out of it: Squirrel's root, one folder
+ * above the versioned `app-<version>` folder (Setup empties it when it runs again).
+ */
+export function installRoot(execPath: string): string {
+  return path.win32.dirname(path.win32.dirname(execPath));
+}
+
+/**
+ * The folder a packaged Windows app works from: its own install folder, or null to keep the launch's.
+ * The sandbox starts srt-win as its own user from the app's working folder, which Windows opens as
+ * that user; a shortcut or Explorer can start Genex anywhere in the profile, where that user may
+ * open nothing, while the install folder is one the session lets it read.
+ */
+export function installedWorkingDir(platform: string, execPath: string, packaged: boolean): string | null {
+  if (platform !== StudioPlatform.Windows || !packaged) return null;
+  return path.win32.dirname(execPath);
 }
 
 /** The part of a spawned child a Squirrel step waits on. */
@@ -79,7 +104,11 @@ type SpawnStep = (file: string, args: readonly string[]) => StepChild;
  * Run a Squirrel step's Update.exe and settle when it exits, fails to start or runs past
  * `timeoutMs`: the launch exits after it either way, and an install must never hang on a shortcut.
  */
-export function runSquirrelStep(step: SquirrelStep, spawn: SpawnStep, timeoutMs = SQUIRREL_STEP_TIMEOUT_MS) {
+export function runSquirrelStep(
+  step: Pick<SquirrelStep, "updateExe" | "args">,
+  spawn: SpawnStep,
+  timeoutMs = SQUIRREL_STEP_TIMEOUT_MS,
+) {
   if (step.args.length === 0) return Promise.resolve();
   return new Promise<void>((resolve) => {
     const child = spawn(step.updateExe, step.args);

@@ -11,11 +11,21 @@ without building the affected graph. Bare `npm test` runs all non-rig files with
 then all rig files serially, including after non-rig failures. `conformance/` holds behavior suites, `property/`
 holds fast-check suites with fixed seeds, `e2e/` holds Electron runners.
 
-`scripts/test.mjs` and `scripts/affected-tests.mjs` preload `helpers/leftover-children.ts` into
-every test file's process: a file that still has a child process running after its own `after`
-hooks fails by name, instead of never exiting and holding a runner slot. Stop what a test starts:
+`scripts/test.mjs`, `scripts/affected-tests.mjs` and the Windows suite (`scripts/test-windows.mjs`)
+preload `helpers/leftover-children.ts` into every test file's process: a file that still has a
+child process running after its own `after` hooks fails by name, instead of never exiting and
+holding a runner slot. Stop what a test starts:
 a core's `stop()` (or core-lite's `close()`), a `ProcessSandbox`'s `dispose()`. On Linux,
-sandbox-runtime's socat bridges run until the last sandbox is disposed.
+sandbox-runtime's socat bridges run until the last sandbox is disposed. Node runs a file's root
+`after` hooks once the tests registered so far have ended, so the check also waits for tests a
+file registers after a top-level await (it follows `node:test`'s `node.test` trace).
+
+Each batch also runs with `TMPDIR`, `TMP` and `TEMP` set to a folder of its own (`/tmp/gt-<pid>-…`
+off Windows, or in the inherited temp folder where `/tmp` is not writable), removed when the batch
+ends, so what a test leaves in the temp folder does not pile up. A file run directly with
+`node --test` puts its `tmpDir`s in a `gt-<pid>-…` folder of its own the same way. A run killed
+before its cleanup leaves its folder: each batch first removes every `gt-` folder whose owner
+process is gone, or that sat unchanged for a day (`scripts/test-tmp.mjs`).
 
 CI partitions literal test groups with direct callbacks. Ordinary groups stay whole; the large
 `harness incidents` suite is split into direct test subtrees, with each test's runtime descendants
@@ -43,6 +53,11 @@ through the JS API imports `@typescript/typescript6`.
 - `fake-studio-api.ts`: a renderer-side `StudioApi` fake. `conformance/renderer-state.test.ts`
   drives the Zustand stores through `createStudio` with it, with no DOM.
 - `fake-ollama.ts`, `scripted-claude.ts`, `scripted-codex.ts`: scripted engines, no network.
+  `fake-anthropic.ts`: enough of Anthropic's Messages API for the real Claude Code CLI to run one
+  scripted worker command (`ANTHROPIC_BASE_URL`, a dummy OAuth token, nothing billed).
+  `fake-openai-responses.ts`: the same for the real Codex CLI over OpenAI's Responses API (a custom
+  model provider, no sign-in). `fake-xai-responses.ts`: the same for the real Grok Build CLI over
+  xAI's (Grok's session service stood in for, signed in with a made-up token in a test's own home).
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-lead-host.ts`: a fake host for the Unreal runner's lead (its scripted turns calling the
   run tools, the editor's answers, the clock), whose moments run on `unreal-moment-bus.ts`, a fake
@@ -53,7 +68,8 @@ through the JS API imports `@typescript/typescript6`.
   a game link kept as the host keeps it, and stand-in programs for a plugin's build, tests and package.
 - `godot-fake-engine.ts`: a fake Mac with Godot apps where the test puts them, a runner that
   records each Godot job and answers with Godot's recorded words (`fixtures/godot-cli/`), and the
-  Godot plugin's backend on both in an open game, its host calls recorded.
+  Godot plugin's backend on both in an open game, its host calls recorded; and a fake Windows PC
+  (`fakeWindows`, `godotWindowsFixture`) whose host plays the sandbox jobs and the pinned Godot.
 - `unity-editor-stand-in.ts`: a Unity project folder, the descriptor Unity's Pipeline package
   keeps in it while an editor has it open, and a stand-in for that editor's HTTP server (scripted
   answers, every request recorded, a clock only `sleep` moves) as the Unity plugin's `PipelineDeps`;
@@ -71,6 +87,9 @@ through the JS API imports `@typescript/typescript6`.
   (Live and the pooled windows, each logging what it was asked, over a page the test scripts), a
   real core over them (`observeHost`) and budgets on a clock the test holds (`heldClock`).
 - `director-run.ts`: a director's run without a rig (`fakeLoopRun`, `fakeClock`, `lead`).
+- `play-viewer-rig.ts`: Play's viewer over recording fakes (the game's view, the bar's layer, the
+  gallery, comments, the coin client, the sign-in, the browser) on a clock the test moves, every call
+  in `log`; `sheet()` is the purchase sheet as last drawn.
 - `project-fixtures.ts`: the synthetic project folders in `fixtures/projects/` (`copyProject`
   copies one into a test's folder and adds the files its engine writes while it runs), reads of a
   listed game's facts, a fake harness `ctx` whose `game.*` calls reach a `coreLite`, and a plugin
@@ -111,6 +130,8 @@ through the JS API imports `@typescript/typescript6`.
 - `claude-rules.ts`: whether Claude Code would deny a path by an absolute rule, matched as CLI
   2.1.281 does (node-ignore, case-blind) for the shapes `claude-permissions.ts` writes.
 - `leftover-children.ts`: the runners' per-file check for child processes left running (above).
+- `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
+  tables, a machine type), for the package's Visual C++ runtime checks.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.
@@ -148,7 +169,9 @@ run them only with explicit permission. Evidence goes to `.studio-dev/evidence/`
 `tests/windows-suite.json` is the Windows CI's required suite
 ([verification](../docs/agent/verification.md#test-layers)). When a test file is meaningful on
 Windows and passes there, add it, sorted; `windows-suite.test.ts` refuses missing, duplicate,
-unsorted and rig entries. A POSIX-only case skips on `win32` with its reason; don't drop the
+unsorted and rig entries. A file that changes the whole machine (a reservation of the sandbox's
+proxy ports) is listed in `RUN_ALONE` in `scripts/test-windows.mjs`, which runs it after the rest,
+one at a time. A POSIX-only case skips on `win32` with its reason; don't drop the
 file from the list for it. The informational fast-group report (a Windows dispatch with
 `backlog`) lists the files still to fix and the clean ones ready to add.
 
@@ -156,7 +179,13 @@ file from the list for it. The informational fast-group report (a Windows dispat
 
 Tests that read local projects or open the network are skipped unless opted in:
 `STUDIO_LOCAL_FIXTURES=1` for local projects, `STUDIO_NETWORK_TESTS=1` for real network and
-local Ollama probes, `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
-(`godot-live.test.ts`). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
+local Ollama probes (on Windows also Local Blender's and Godot's real downloads and sandboxed
+jobs, `blender-windows-live.test.ts` and `godot-windows-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
+(`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
+`fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`),
+`STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`
+(`codex-sandbox-cli.test.ts`), `STUDIO_GROK_CLI_TESTS=1` for the real Grok Build CLI in the real
+sandbox against `fake-xai-responses.ts` (`grok-cli-live.test.ts`; `STUDIO_GROK_BIN` names one, which
+must sit outside `~/.grok`: the test's sandbox denies the person's own Grok home). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
 runs rigs without the process sandbox, for a container where it cannot start (no user
 namespaces); containment cases prove nothing there, and CI keeps the sandbox.

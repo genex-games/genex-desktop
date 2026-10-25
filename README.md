@@ -23,8 +23,8 @@
 | Platform | Download |
 | --- | --- |
 | macOS (Apple Silicon) | [`Genex.dmg`](https://github.com/genex-games/genex-desktop/releases/latest/download/Genex.dmg) |
-| Linux (x64) | `.deb`, `.rpm` or `.zip` from the [latest release](https://github.com/genex-games/genex-desktop/releases/latest) |
-| Windows | Soon |
+| Linux (x64) | `.deb`, `.rpm` or `.zip` from the [latest release](https://github.com/genex-games/genex-desktop/releases/latest). The `.deb` and `.rpm` add the Genex package repository, so your system's updates (Software Updater, `apt`, `dnf`) bring every later version |
+| Windows (x64), preview | [`Genex-Setup.exe`](https://github.com/genex-games/genex-desktop/releases/latest/download/Genex-Setup.exe). Not signed yet: if Windows warns, choose More info, then Run anyway |
 
 Genex is early: expect rough edges, and tell us about them in
 [issues](https://github.com/genex-games/genex-desktop/issues).
@@ -93,6 +93,8 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 Windows builds are signed only when GitHub Actions builds them from this repository's source,
 and a maintainer approves each release before it is signed.
+Until that signing is in place, Windows builds ship unsigned as a preview; every release lists
+each file's SHA-256 in `SHA256SUMS`.
 
 - Committers and reviewers: [members of genex-games](https://github.com/orgs/genex-games/people)
 - Approvers: [owners of genex-games](https://github.com/orgs/genex-games/people?query=role%3Aowner)

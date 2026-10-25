@@ -7,6 +7,7 @@ import {
   assertStableDownloads,
   assertUpdateFeedAssets,
   distributionPlatforms,
+  windowsShips,
 } from "./release-policy.mjs";
 import { createHash } from "node:crypto";
 import { verifyReleaseArtifacts } from "./release-manifest.mjs";
@@ -61,7 +62,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const lockfile = await readFile(new URL("../package-lock.json", import.meta.url));
   const signing = {
     macos: process.env.RELEASE_MACOS_SIGNED === "true",
-    windows: process.env.RELEASE_WINDOWS_SIGNED === "true",
+    windows: windowsShips({
+      passed: process.env.RELEASE_WINDOWS_PASSED === "true",
+      signed: process.env.RELEASE_WINDOWS_SIGNED === "true",
+    }),
   };
   await verifyReleaseArtifacts(
     "upload",

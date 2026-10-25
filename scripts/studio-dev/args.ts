@@ -73,7 +73,11 @@ const INLINE_OPERATIONS: Partial<Record<StudioDevCommand, (flags: Flags, now: nu
   snapshot: (flags) =>
     operationSchema.parse({
       method: "snapshot",
-      params: { surface: "desktop", ...given("scope", flags.get("scope")), ...given("limit", flags.int("limit")) },
+      params: {
+        surface: flags.get("surface") ?? "desktop",
+        ...given("scope", flags.get("scope")),
+        ...given("limit", flags.int("limit")),
+      },
     }),
   runs: () => operationSchema.parse({ method: DevMethod.Runs, params: {} }),
   logs: (flags) =>

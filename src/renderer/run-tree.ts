@@ -8,7 +8,7 @@
  * Pure: no DOM, no window. `panels/run-graph/use-builds-model.ts` and the tests share it.
  */
 import { MINUTE_MS } from "../shared/duration.ts";
-import { FinishCheckStep, MAX_FINISH_REJECTIONS } from "../shared/finish-check.ts";
+import { FinishCheckStep } from "../shared/finish-check.ts";
 import { JobState } from "../shared/jobs.ts";
 import { ExecutionStatus } from "../shared/run-state.ts";
 import type { RunSummary } from "../shared/run-summary.ts";
@@ -207,22 +207,23 @@ export interface FinishCheckFace {
 }
 
 /** The newest round of the run's current ask, or undefined before its first claim. */
-const currentRound = (node: FinishCheckNode): FinishRound | undefined =>
+export const currentRound = (node: FinishCheckNode): FinishRound | undefined =>
   node.rounds.find((round) => round.round === node.round);
 
+/** What a no left to fix: what the reviewer named not done, else (an older record) its reasons. */
+export const leftOf = (round: FinishRound): string[] => (round.notDone.length ? round.notDone : round.reasons);
+
 /**
- * The line under the finish check's state: the reviewer at work, a no's reasons and count, no
- * answer, a yes, a stop. It reads the run's current ask only (`node.round`, null before its first
- * claim): a reopened run's earlier rounds are listed, never its line.
+ * The line under the final look's state: looking, how many things a no left, no answer, all done.
+ * It reads the run's current ask only (`node.round`, null before its first claim).
  */
 function finishCheckLine(node: FinishCheckNode): string {
   if (node.state === FinishCheckState.Checking) return FINISH_CHECK_WORDS.checking;
   if (node.state === FinishCheckState.Done) return FINISH_CHECK_WORDS.doneWord;
-  if (node.state === FinishCheckState.Stopped) return FINISH_CHECK_WORDS.stoppedWord;
   const newest = currentRound(node);
   if (!newest) return FINISH_CHECK_WORDS.placeholder;
   if (newest.step === FinishCheckStep.Unanswered) return FINISH_CHECK_WORDS.unanswered;
-  return FINISH_CHECK_WORDS.roundWord(node.reasons.length, node.rejections);
+  return FINISH_CHECK_WORDS.leftWord(leftOf(newest).length);
 }
 
 /** What the finish check's node says, in the owner's four states (Not yet, Checking, Done, Stopped). */
@@ -280,12 +281,8 @@ export const finishCheckLook = (node: FinishCheckNode): FinishCheckLook => FINIS
 /** The tone of the finish check card's status: the node's ink. */
 export const finishPanelTone = (node: FinishCheckNode): Tone => FINISH_LOOKS[lookOf(node)].tone;
 
-/** The ink of a round's reason numbers on the card: amber for why not yet, red for what isn't done, green for why yes. */
-export function reasonTone(round: FinishRound): Tone {
-  if (round.step === FinishCheckStep.Accepted) return Tone.Green;
-  if (round.step !== FinishCheckStep.Rejected) return Tone.Muted;
-  return round.stopped ? Tone.Red : Tone.Orange;
-}
+/** Whether the Loop is over for a no: the no's stopped it, or it ended some other way since. */
+export const endedOnNo = (round: FinishRound, node: FinishCheckNode): boolean => round.stopped || node.over;
 
 /** The line under one round on the finish check's card, and whether it reads quietly. */
 export interface RoundNote {
@@ -294,19 +291,12 @@ export interface RoundNote {
 }
 
 /**
- * The line under a round's reasons on the card: why a round had no answer, a yes with no reasons,
- * a stop's pointer to the report, or, for the current ask's newest no, what follows (more no's stop
- * the Loop while it runs; once it is over, that it ended before another check). Null for none.
+ * The line under what a no left, for the current ask's newest no while its Loop has not stopped on
+ * it: the Loop keeps working on it, or, once it is over, it ended before another look. A stop shows
+ * Keep building instead. Null for anything else.
  */
 export function roundNoteOf(round: FinishRound, node: FinishCheckNode): RoundNote | null {
-  if (round.step === FinishCheckStep.Unanswered) return round.why ? { text: round.why, quiet: false } : null;
-  if (round.step === FinishCheckStep.Accepted)
-    return round.reasons.length === 0 ? { text: FINISH_CHECK_WORDS.saidYes, quiet: false } : null;
-  if (round.step !== FinishCheckStep.Rejected) return null;
-  if (round.stopped) return { text: FINISH_CHECK_WORDS.reportInChat, quiet: true };
-  if (round.round !== node.round) return null;
+  if (round.step !== FinishCheckStep.Rejected || round.stopped || round.round !== node.round) return null;
   if (node.over) return { text: FINISH_CHECK_WORDS.endedAfterNo, quiet: true };
-  return node.rejections < MAX_FINISH_REJECTIONS
-    ? { text: FINISH_CHECK_WORDS.moreNos(node.rejections), quiet: true }
-    : null;
+  return { text: FINISH_CHECK_WORDS.keepsWorking, quiet: true };
 }

@@ -5,6 +5,7 @@ import type { SmokeReadGates } from "../smoke/read-gates.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import type { EngineBoot } from "../engine-boot.ts";
 
 /** Why a thread read (or a tag's retry) from the renderer is refused. */
 const MESSAGE = {
@@ -16,6 +17,8 @@ const MESSAGE = {
 
 export interface ThreadsIpcDeps {
   core: StudioCore;
+  /** The engines a bootstrap shows: the remembered ones while the launch's checks run (`engine-boot.ts`). */
+  engines: Pick<EngineBoot, "bootstrap">;
   /** `~/AI Games`, as a human reads it — the renderer never sees absolute paths. */
   gamesRootLabel(root: string): string;
   /** The harness's last reported status per thread, for a renderer that loads mid-run. */
@@ -48,6 +51,7 @@ export function registerThreadsIpc(
   handle: IpcHandle,
   {
     core,
+    engines: engineList,
     gamesRootLabel,
     threadStatus,
     pushUiEvent,
@@ -66,12 +70,13 @@ export function registerThreadsIpc(
       }
     }
     // The renderer's poll continues from `eventsCursor`, never from the tail's last id. The reads
-    // are independent; the loader waits for the slowest (the engines' CLI checks), not their sum.
+    // are independent; the engines come remembered while their checks run, so the loader no
+    // longer waits seconds for every CLI.
     const [feed, threads, games, engines] = await Promise.all([
       core.store.listAllSince(undefined, 600),
       core.store.listThreads(),
       core.games.list(),
-      core.engines.describe(),
+      engineList.bootstrap(),
     ]);
     return {
       threadId: core.mainThread,

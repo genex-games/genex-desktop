@@ -6,6 +6,8 @@
  */
 import path from "node:path";
 import { type AgentScreen, ScreenRole } from "../../shared/agent-screen.ts";
+import { desktopStopShortcut, stopShortcutWords } from "../../shared/computer-control.ts";
+import { t } from "../../shared/i18n.ts";
 import { type PluginBinding, StudioConsentSource } from "../../shared/plugins.ts";
 import { DESKTOP_TOOL_NAME } from "../../substrate/computer-tool.ts";
 import type { DesktopApp } from "../../substrate/desktop-driver.ts";
@@ -18,10 +20,14 @@ import { DesktopQuestion, type DesktopTools } from "./desktop-tools.ts";
 
 /** What the person reads on the consent card and the agent screen. */
 const MESSAGE = {
-  label: "your computer",
-  session:
-    "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or Control-Option-Command-Escape (⌃⌥⌘Esc).",
-  app: (app: string) => `Let this chat's agent use ${app}? It can click, type and read what ${app} shows.`,
+  label: () => t("your computer"),
+  session: () =>
+    t(
+      "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or {shortcut}.",
+      { shortcut: stopShortcutWords(desktopStopShortcut(process.platform)) },
+    ),
+  app: (app: string) => t("Let this chat's agent use {app}? It can click, type and read what {app} shows.", { app }),
+  unnamedApp: () => t("Let this chat's agent use this app? It can click, type and read what this app shows."),
 } as const;
 
 /** Who asks for computer control on the consent card: the studio itself, never a plugin. */
@@ -36,8 +42,9 @@ const DESKTOP_CONSENT_TOOL = {
 
 /** What the person is asked: computer control for the session, or one app. */
 function consentPrompt(question: DesktopQuestion, app: DesktopApp | undefined): string {
-  if (question === DesktopQuestion.App && app) return MESSAGE.app(app.name || app.bundleId || "this app");
-  return MESSAGE.session;
+  if (question !== DesktopQuestion.App || !app) return MESSAGE.session();
+  const name = app.name || app.bundleId;
+  return name ? MESSAGE.app(name) : MESSAGE.unnamedApp();
 }
 
 /** Where a chat's computer control is asked about, and what stops a question waiting. */
@@ -71,7 +78,7 @@ export async function desktopSessionTools(
   if (!(await desktop.available())) return null;
   const screen: AgentScreen = {
     handle: `${DESKTOP_TOOL_NAME}:${place.threadId}`,
-    label: MESSAGE.label,
+    label: MESSAGE.label(),
     project: place.binding.project,
     runId: null,
     facetId: null,

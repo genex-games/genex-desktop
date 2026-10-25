@@ -53,6 +53,7 @@ export const HostMethod = {
   RunExec: "run.exec",
   EngineDescribe: "engine.describe",
   StudioContext: "studio.context",
+  StudioLanguage: "studio.language",
   ContextPolicy: "context.policy",
   LearningEnabled: "learning.enabled",
   EngineComplete: "engine.complete",

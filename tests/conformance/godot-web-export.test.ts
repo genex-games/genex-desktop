@@ -13,7 +13,13 @@ import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { parseVersion } from "../../src/plugins/godot/find-godot.ts";
 import { type GodotCall, GodotJob } from "../../src/plugins/godot/godot-run.ts";
 import { templateVersion, WEB_PRESET, withWebPreset } from "../../src/plugins/godot/web-export.ts";
-import { GODOT_461, godotBackendFixture, type JobAnswers } from "../helpers/godot-fake-engine.ts";
+import {
+  GODOT_461,
+  godotBackendFixture,
+  type JobAnswers,
+  offlineInstall,
+  templatesArchive,
+} from "../helpers/godot-fake-engine.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const TEMPLATES = "Library/Application Support/Godot/export_templates/4.6.1.stable";
@@ -27,8 +33,20 @@ async function exported(call: GodotCall): Promise<string> {
 }
 
 /** A game with a 2D project New Godot game made, the Web template installed or not, and Godot's export answered by `answers`. */
-async function gameToExport(options: { template?: boolean; answers?: JobAnswers } = {}) {
-  const fixture = await godotBackendFixture({ answers: { [GodotJob.Export]: exported, ...options.answers } });
+async function gameToExport(
+  options: {
+    template?: boolean;
+    answers?: JobAnswers;
+    network?: ReturnType<typeof templatesArchive>;
+    now?: () => number;
+  } = {},
+) {
+  const network = options.network ? { install: { ...offlineInstall("/none"), fetch: options.network.fetch } } : {};
+  const fixture = await godotBackendFixture({
+    answers: { [GodotJob.Export]: exported, ...options.answers },
+    ...network,
+    ...(options.now ? { now: options.now } : {}),
+  });
   await fixture.backend.tool?.(GodotTool.NewGame, { template: "2d", name: "Moon" }, fixture.context());
   fixture.jobs.length = 0;
   if (options.template !== false) {
@@ -100,11 +118,84 @@ describe("a Godot game's web export", () => {
     ]);
   });
 
-  it("is refused before Godot runs without the Web template, and says how to get it", async () => {
+  it("is refused before Godot runs when the Web template is missing and can't be fetched, and says how to get it", async () => {
     const game = await gameToExport({ template: false });
-    await assert.rejects(game.exportGame(), /Web export template isn't installed[\s\S]*Manage Export Templates/);
+    await assert.rejects(
+      game.exportGame(),
+      /Web export template isn't on this computer and Genex couldn't fetch it: [\s\S]*offline[\s\S]*Manage Export Templates/,
+    );
     assert.deepEqual(game.jobs, []);
     assert.equal(await lstat(game.web).catch(() => null), null, "no web folder made");
+  });
+
+  it("fetches the missing Web template from Godot's own templates archive by ranges, then exports", async () => {
+    const network = templatesArchive({
+      "templates/version.txt": "4.6.1.stable",
+      "templates/web_nothreads_release.zip": "the web template",
+      "templates/macos.zip": "x".repeat(100_000),
+    });
+    const game = await gameToExport({ template: false, network });
+    assert.match(String(await game.exportGame()), /Exported the game for the web/);
+    assert.equal(
+      await readFile(path.join(game.home, TEMPLATES, "web_nothreads_release.zip"), "utf8"),
+      "the web template",
+    );
+    assert.equal(await readFile(path.join(game.home, TEMPLATES, "version.txt"), "utf8"), "4.6.1.stable");
+    assert.equal(
+      await lstat(path.join(game.home, TEMPLATES, "macos.zip")).catch(() => null),
+      null,
+      "only what was asked",
+    );
+    assert.equal(
+      network.urls[0],
+      "https://github.com/godotengine/godot/releases/download/4.6.1-stable/Godot_v4.6.1-stable_export_templates.tpz",
+    );
+    assert.equal(network.asked.includes("all"), false, "never the whole archive");
+    network.asked.length = 0;
+    await game.exportGame();
+    assert.deepEqual(network.asked, [], "a template already there is kept");
+  });
+
+  it("fits a template's fetch and Godot's export into the one call, never starting an export it can't finish", async () => {
+    const MINUTE = 60_000;
+    /** A network whose first request takes `minutes` on the call's clock. */
+    const slow = (minutes: number) => {
+      const clock = { at: 0 };
+      const network = templatesArchive({
+        "templates/version.txt": "4.6.1.stable",
+        "templates/web_nothreads_release.zip": "the web template",
+      });
+      const served = network.fetch;
+      let first = true;
+      const fetch = (async (...args: Parameters<typeof served>) => {
+        if (first) clock.at += minutes * MINUTE;
+        first = false;
+        return served(...args);
+      }) as typeof served;
+      return { network: { ...network, fetch }, now: () => clock.at };
+    };
+    const quick = slow(0);
+    const fresh = await gameToExport({ template: false, network: quick.network, now: quick.now });
+    await fresh.exportGame();
+    assert.equal(fresh.jobs[0]?.call.timeoutMs, 8 * MINUTE, "a quick fetch leaves Godot its whole export time");
+    const long = slow(7.5);
+    const late = await gameToExport({ template: false, network: long.network, now: long.now });
+    await late.exportGame();
+    const timeout = late.jobs[0]?.call.timeoutMs ?? 0;
+    assert.ok(timeout <= 9 * MINUTE - 7.5 * MINUTE, `the export gets what the fetch left: ${timeout} ms`);
+    const longer = slow(8);
+    const none = await gameToExport({ template: false, network: longer.network, now: longer.now });
+    await assert.rejects(none.exportGame(), /took most of this call's time[\s\S]*export again/);
+    assert.deepEqual(none.jobs, [], "no export started that the call would cut");
+  });
+
+  it("refuses a template that arrives damaged, keeping nothing of it", async () => {
+    const network = templatesArchive({ "templates/web_nothreads_release.zip": "the web template" });
+    const crc = network.archive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02])) + 16;
+    network.archive.writeUInt32LE(network.archive.readUInt32LE(crc) ^ 1, crc);
+    const game = await gameToExport({ template: false, network });
+    await assert.rejects(game.exportGame(), /arrived damaged/);
+    assert.deepEqual(await readdir(path.join(game.home, TEMPLATES)).catch(() => []), []);
   });
 
   it("names what Godot said when it wrote no export", async () => {
@@ -131,7 +222,7 @@ describe("a Godot game's web export", () => {
     assert.equal(game.jobs.filter((j) => j.call.job === GodotJob.Export).length, 2, "a changed project: again");
   });
 
-  it("keeps no web build without the Web template, and a failed one is a note, never a block", async () => {
+  it("keeps no web build without the Web template, never fetching it, and a failed one is a note, never a block", async () => {
     const none = await gameToExport({ template: false });
     const at = async (fixture: typeof none) =>
       (await fixture.backend.tool?.(
@@ -141,6 +232,13 @@ describe("a Godot game's web export", () => {
       )) as Record<string, unknown>;
     assert.deepEqual(await at(none), {});
     assert.deepEqual(none.jobs, []);
+    // Nor does a turn's end fetch the template, on any turn: Do it for me and web-export do.
+    const network = templatesArchive({ "templates/web_nothreads_release.zip": "the web template" });
+    const reachable = await gameToExport({ template: false, network });
+    for (const on of [HookEvent.TurnEnd, HookEvent.RestoreAfter, HookEvent.TurnEnd])
+      await reachable.backend.tool?.(GodotTool.KeepWebBuild, {}, reachable.context({ hook: { on } }));
+    assert.deepEqual(network.asked, [], "nothing asked of the network");
+    assert.deepEqual(reachable.jobs, []);
     const failing = await gameToExport({ answers: { [GodotJob.Export]: "ERROR: Cannot export project.\n" } });
     assert.match(String((await at(failing)).note), /web build in web\/ wasn't refreshed/);
   });

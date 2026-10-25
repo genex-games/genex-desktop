@@ -4,6 +4,7 @@
  * `director_tool` dispatch forwards a call through to the live session's handler (tools.ts).
  */
 import { FACET_POLICY } from "../facet-loop.ts";
+import { stopRuleWords } from "../finish-check-prompts.ts";
 import { KIND_NAMES } from "../kinds.ts";
 import { CHECK_KINDS, MAX_DONE, MAX_MILESTONES, renderCheckGrammar } from "../spec.ts";
 import { WorkerIsolation, WorkerTool, WorkerVerdict } from "../workers/contract.ts";
@@ -439,6 +440,11 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
       type: "object",
       properties: {
         user_asked: { type: "string", description: "Their words asking to finish, quoted exactly." },
+        next_goal: {
+          type: "string",
+          description: "Asked to start a new Loop after: what it builds (it starts once this run closes).",
+        },
+        next_hours: { type: "string", description: "Its hours, if named." },
       },
       required: ["user_asked"],
     },
@@ -446,23 +452,22 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Finish,
     description:
-      "Close the run: stop workers, land the integration branch in the live game folder when it is healthy (land=no keeps it unlanded), write the report. Call it before your deadline; an unfinished run lands nothing.",
+      "Close the run: stop workers, land the integration branch in the live game folder when healthy (land=no: not landed), write the report. Call it before your deadline.",
     parameters: {
       type: "object",
       properties: {
         summary: {
           type: "string",
-          description: "What was built, what was verified, what remains — the user's report.",
+          description: "What was built, verified and remains: the user's report.",
         },
         land: { type: "string", description: "yes (default) or no." },
         victory: {
           type: "string",
-          description:
-            "yes claims the goal is reached: a reviewer who did none of the work checks your proof first (default no).",
+          description: `yes claims the goal is reached; a reviewer who did none of the work checks your proof (default no). ${stopRuleWords(null)}`,
         },
         proof: {
           type: "string",
-          description: "Comma-separated files in the integration worktree that prove it: reports, logs, pictures.",
+          description: "Comma-separated worktree files that prove it: reports, logs, pictures.",
         },
         user_asked: {
           type: "string",

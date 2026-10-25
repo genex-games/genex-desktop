@@ -20,13 +20,15 @@ export interface RegenerateAvatar {
   regenerate(): void;
 }
 
+/** Save another generated avatar for `me`; rejects when Genex refused, once the kept one is back. */
+export const regenerateAvatar = (me: PlayMe, random: () => number = Math.random): Promise<void> =>
+  studio().people.setAvatarVariant(nextAvatarVariant(me.avatarVariant, random()));
+
 /** Regenerate `me`'s avatar; a toast says so when Genex refused, and the kept one comes back. */
 export function useRegenerateAvatar(me: PlayMe | null, random: () => number = Math.random): RegenerateAvatar {
   const regenerate = (): void => {
     if (!me?.avatarVariantKept) return;
-    studio()
-      .people.setAvatarVariant(nextAvatarVariant(me.avatarVariant, random()))
-      .catch(() => studio().notify(WORDS.regenerateFailed, ToastTone.Error));
+    regenerateAvatar(me, random).catch(() => studio().notify(WORDS.regenerateFailed, ToastTone.Error));
   };
   return { available: me?.avatarVariantKept === true, regenerate };
 }

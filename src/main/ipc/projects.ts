@@ -6,15 +6,19 @@ import { browserMayOpen } from "../play/origins.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { ChatFileOpen } from "../../shared/chat-files.ts";
 import { isGenexRef } from "../../shared/genex-ref.ts";
+import { t } from "../../shared/i18n.ts";
 import { gameLocationPickerOptions, projectPickerOptions } from "../project-picker.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
 
-/** Why a project request from the renderer is refused. */
+/**
+ * Why a project request from the renderer is refused. A person reads `unknownProject`; the plain
+ * strings answer only a call our own renderer never makes (a link it does not offer, a closed window).
+ */
 const MESSAGE = {
   httpsOnly: "only https urls, or the pages of the website Play links to",
   noWindow: "the window is not open",
-  unknownProject: (name: string) => `unknown project ${name}`,
+  unknownProject: (name: string) => t("unknown project {name}", { name }),
 } as const;
 
 export interface ProjectsIpcDeps {
@@ -103,10 +107,10 @@ export function registerProjectsIpc(
     const window = currentWindow();
     if (!window) throw new Error(MESSAGE.noWindow);
     const result = await dialog.showOpenDialog(window, {
-      title: "Folder for new games",
+      title: t("Folder for new games"),
       defaultPath: path.dirname(core.layout.gamesRoot),
-      buttonLabel: "Use this folder",
-      message: "Choose an empty folder, or create one. Games you already have stay where they are.",
+      buttonLabel: t("Use this folder"),
+      message: t("Choose an empty folder, or create one. Games you already have stay where they are."),
       properties: ["openDirectory", "createDirectory"],
     });
     const dir = result.filePaths[0];

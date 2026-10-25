@@ -5,6 +5,7 @@
  */
 import type { JSX, RefObject } from "react";
 import { GENEX_PLUGIN_ID } from "../../../shared/genex.ts";
+import { t, tc } from "../../../shared/i18n.ts";
 import type { PluginIndexEntry, PluginIndexView, PluginInfo } from "../../../shared/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/icons.tsx";
@@ -35,11 +36,13 @@ function Installed({ installed, page, query }: { installed: PluginInfo[]; page: 
   const nothingShown = installed.filter((p) => pluginMatches(page, p)).length === 0;
   const credits = useGenexCredits(installed, pluginAccount(page.connections, GENEX_PLUGIN_ID), page.connections);
   return (
-    <Section title="Installed" count={installed.length}>
+    <Section title={tc("heading", "Installed")} count={installed.length}>
       <PluginRows list={installed} page={page} credits={credits} />
       {nothingShown && (
         <p className="extensions-empty">
-          {query ? "No installed plugins match your search." : "No plugins installed yet. Add one from the Add menu."}
+          {query
+            ? t("No installed plugins match your search.")
+            : t("No plugins installed yet. Add one from the Add menu.")}
         </p>
       )}
     </Section>
@@ -58,14 +61,16 @@ function EntryAction({
   page: PluginsPage;
   removed: Set<string>;
 }): JSX.Element {
-  const blocked =
-    entry.minStudioVersion !== undefined && !meetsMinimumVersion(index.studioVersion, entry.minStudioVersion);
-  if (blocked) return <span className="text-xs text-ink-3">Needs Studio ≥ {entry.minStudioVersion}</span>;
+  const minimum = entry.minStudioVersion;
+  const blocked = minimum !== undefined && !meetsMinimumVersion(index.studioVersion, minimum);
+  if (blocked) return <span className="text-xs text-ink-3">{t("Needs Studio ≥ {version}", { version: minimum })}</span>;
   return (
     <IconButton
       icon="plus"
       disabled={page.busy}
-      label={`${removed.has(entry.id) ? "Reinstall" : "Install"} ${entry.name}`}
+      label={
+        removed.has(entry.id) ? t("Reinstall {name}", { name: entry.name }) : t("Install {name}", { name: entry.name })
+      }
       onClick={() => void page.act(() => window.studio.pluginInstall(entry.id))}
     />
   );
@@ -186,7 +191,7 @@ function OurPlugins({
           <IconButton
             icon="plus"
             disabled={page.busy}
-            label={`Install ${p.name}`}
+            label={t("Install {name}", { name: p.name })}
             onClick={() => void page.act(() => window.studio.pluginInstall(p.id))}
           />
         </CatalogEntry>
@@ -307,13 +312,13 @@ export function PluginsBrowse({
         }}
       />
       {removed.length > 0 && (
-        <Section title="Removed" count={removed.length}>
+        <Section title={t("Removed")} count={removed.length}>
           <PluginRows list={removed} page={page} />
         </Section>
       )}
       {unlisted.length > 0 && (
-        <Section title="Not enabled" count={unlisted.length}>
-          <p className="mb-3 text-sm text-ink-3">Found locally. These plugins only run after you allow them.</p>
+        <Section title={t("Not enabled")} count={unlisted.length}>
+          <p className="mb-3 text-sm text-ink-3">{t("Found locally. These plugins only run after you allow them.")}</p>
           <PluginRows list={unlisted} page={page} />
         </Section>
       )}

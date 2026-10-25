@@ -410,4 +410,23 @@ describe("a worker whose session goes on after its turn ended", () => {
     assert.match(String(answer.errorText), /after its turn ended/);
     assert.match(String(answer.summary), /^The generation is still running/, "not what it said once woken");
   });
+
+  it("a lead or chat woken the same way keeps its result, and hands back the Genex calls it made that no answer could reach", async () => {
+    const f = await fixture();
+    const messages = wokenSession();
+    const engine = new ClaudeCodeEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: f.engineHome,
+      systemHome: path.join(f.root, "no-system-login"),
+      queryFn: (() => ({
+        async *[Symbol.asyncIterator]() {
+          for (const message of messages) yield message;
+        },
+      })) as never,
+      protectedPaths: [path.dirname(f.engineHome)],
+    });
+    const answer = await engine.delegate({ prompt: "Lead the Loop.", cwd: f.copy } as never);
+    assert.equal(answer.ok, true);
+    assert.deepEqual(answer.cutAfterTurn, [{ tool: "genex__asset", args: '{"command":"sleep 180"}' }]);
+  });
 });

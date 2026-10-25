@@ -1,5 +1,6 @@
 /** The judges' gates on the Builds graph: an eye on the edge into every node they looked at, and its tooltip. */
 import { memo, type JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { sameGateButton, type GateButtonProps } from "./step-props.ts";
 import {
   finalNodeOf,
@@ -28,10 +29,10 @@ const GATE_INK: Record<Gate, string> = {
 };
 
 const GATE_LABEL: Record<Gate, string> = {
-  [Gate.Kept]: "Reviewers kept it",
-  [Gate.Undone]: "Reviewers undid it",
-  [Gate.Looking]: "Reviewers looking now",
-  [Gate.Waiting]: "No reviewer compared it",
+  [Gate.Kept]: t("Reviewers kept it"),
+  [Gate.Undone]: t("Reviewers undid it"),
+  [Gate.Looking]: t("Reviewers looking now"),
+  [Gate.Waiting]: t("No reviewer compared it"),
 };
 
 /** A gate's eye: pressing it opens what the judges said, hovering or focusing it shows the tooltip. */
@@ -41,7 +42,7 @@ export const GateButton = memo(function GateButton({ gate, notesId, onOpen, onTi
     <button
       type="button"
       data-graph-gate={gate.gate}
-      aria-label={`${GATE_LABEL[gate.gate]} — show what they said`}
+      aria-label={t("{verdict} — show what they said", { verdict: GATE_LABEL[gate.gate] })}
       className="absolute z-[1] grid size-5 cursor-pointer place-items-center rounded-full bg-canvas p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       style={{
         left: gate.x - GATE_RADIUS,
@@ -71,10 +72,10 @@ function resultGateWords(gate: GatePoint, graph: RunGraphModel): { title: string
   if (gate.gate === Gate.Waiting)
     return {
       title: GATE_LABEL[Gate.Waiting],
-      line: line || "It runs, but no reviewer compared it with the game you had.",
+      line: line || t("It runs, but no reviewer compared it with the game you had."),
     };
   return {
-    title: gate.gate === Gate.Kept ? "Reviewers preferred it" : "Reviewers preferred the game you had",
+    title: gate.gate === Gate.Kept ? t("Reviewers preferred it") : t("Reviewers preferred the game you had"),
     line: line || "",
   };
 }
@@ -84,22 +85,23 @@ function stepGateWords(gate: GatePoint, tries: Step["tries"]): { title: string; 
   const keptAt = tries.findIndex((node) => node.status === IterationStatus.Accepted);
   const undone = tries.filter((node) => node.status === IterationStatus.Rolled).length;
   if (gate.gate === Gate.Looking)
-    return { title: GATE_LABEL[Gate.Looking], line: `Try ${tries.length} · the worker is done` };
+    return { title: GATE_LABEL[Gate.Looking], line: t("Try {count} · the worker is done", { count: tries.length }) };
   const kept = gate.gate === Gate.Kept ? tries[keptAt] : undefined;
   if (kept) {
     const said = judgesOn(kept);
     const facts = [
-      undone ? `Undid ${undone} ${undone === 1 ? "try" : "tries"} before it` : "",
+      undone ? t("Undid {count, plural, one {# try} other {# tries}} before it", { count: undone }) : "",
       said ? truncate(said, KEPT_WORDS_CHARS) : "",
     ].filter(Boolean);
     return {
-      title: tries.length > 1 ? `Reviewers kept try ${keptAt + 1}` : GATE_LABEL[Gate.Kept],
+      title: tries.length > 1 ? t("Reviewers kept try {number}", { number: keptAt + 1 }) : GATE_LABEL[Gate.Kept],
       line: facts.join(" · "),
     };
   }
   const last = [...tries].reverse().find((node) => node.status === IterationStatus.Rolled);
   return {
-    title: undone > 1 ? `Reviewers undid ${undone} tries` : GATE_LABEL[Gate.Undone],
+    title:
+      undone > 1 ? t("Reviewers undid {count, plural, other {# tries}}", { count: undone }) : GATE_LABEL[Gate.Undone],
     line: last ? truncate(judgesOn(last), UNDONE_WORDS_CHARS) : "",
   };
 }
