@@ -9,7 +9,13 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { BuildTarget } from "../../../shared/game-project.ts";
-import { LiveBehindReason, LivePrepare, type LivePrepareTarget } from "../../../shared/live-behind.ts";
+import {
+  LiveBehindReason,
+  LivePrepare,
+  type LivePrepareTarget,
+  LiveUpdateKind,
+  type LiveUpdating,
+} from "../../../shared/live-behind.ts";
 import { CLOCK_TICK_MS, elapsedWords } from "../../asset-making.ts";
 import type { LiveBehind } from "../../stage.ts";
 import { LIVE_FRESH_WORDS } from "../../words.ts";
@@ -69,13 +75,46 @@ function readyFresh(behind: LiveBehind): LiveFresh {
   };
 }
 
+/** How long a Play's build may take before the line says it is on its way: one ready at once never flashes it. */
+export const UPDATING_SHOWN_AFTER_MS = 500;
+
+/**
+ * What the line says while a newer build is made ready for Live (PW): the person's Play, as soon as
+ * it is more than a moment; Play's background build, only of the build Reload would play. Live keeps
+ * the earlier version meanwhile, and says so when it shows this game. Null for nothing to say.
+ */
+function updatingFresh(
+  updating: LiveUpdating | null | undefined,
+  input: { behind: LiveBehind | null; now: number; showsGame: boolean },
+): LiveFresh | null {
+  if (!updating) return null;
+  const waited = input.now - updating.since;
+  const play = updating.kind === LiveUpdateKind.Play;
+  const offered = input.behind?.head ? updating.commit.startsWith(input.behind.head) : false;
+  if (play ? waited < UPDATING_SHOWN_AFTER_MS : !offered) return null;
+  const clock = elapsedWords(updating.since, input.now) ?? "";
+  const words = play ? LIVE_FRESH_WORDS.opening : LIVE_FRESH_WORDS.prebuilding;
+  return {
+    state: LiveFreshState.Building,
+    title: words(clock),
+    note: input.showsGame ? LIVE_FRESH_WORDS.earlier : null,
+    action: null,
+  };
+}
+
 /** The status line for a view: null while it shows the newest version. */
 export function liveFreshness(input: {
   behind: LiveBehind | null;
   prepare: LivePrepareRun | null;
   now: number;
+  /** A newer build being made ready for Live (`live.behind`'s `updating`). */
+  updating?: LiveUpdating | null;
+  /** Live shows a page of this game now. */
+  showsGame?: boolean;
 }): LiveFresh | null {
   const { behind, prepare, now } = input;
+  const updating = updatingFresh(input.updating, { behind, now, showsGame: input.showsGame === true });
+  if (updating) return updating;
   if (!behind) return null;
   const earlier = LIVE_FRESH_WORDS.earlier;
   if (prepare?.outcome === null) {
@@ -126,8 +165,10 @@ export function useLiveFresh(input: {
   behind: LiveBehind | null;
   compiled: boolean;
   native: boolean;
+  updating?: LiveUpdating | null;
+  showsGame?: boolean;
 }): LiveFresh | null {
-  const { project, behind, compiled, native } = input;
+  const { project, behind, compiled, native, updating, showsGame } = input;
   const target = prepareTargetFor(behind, { compiled, native });
   const key = project && behind && target ? prepareKey(project, behind, target) : null;
   const [run, setRun] = useState<(LivePrepareRun & { key: string }) | null>(null);
@@ -144,6 +185,9 @@ export function useLiveFresh(input: {
     };
   }, [key, project, target]);
   const prepare = run && run.key === key ? run : null;
-  const now = useTicking(prepare?.outcome === null);
-  return useMemo(() => liveFreshness({ behind, prepare, now }), [behind, prepare, now]);
+  const now = useTicking(prepare?.outcome === null || Boolean(updating));
+  return useMemo(
+    () => liveFreshness({ behind, prepare, now, updating: updating ?? null, showsGame: showsGame === true }),
+    [behind, prepare, now, updating, showsGame],
+  );
 }

@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { LiveBehindReason, type LiveBehindEvent } from "../../shared/live-behind.ts";
+import { LiveBehindReason, type LiveBehindEvent, type LiveUpdating } from "../../shared/live-behind.ts";
 import { CoreFact } from "../../shared/project-facts.ts";
 import { gitOrNull } from "../../substrate/snapshots.ts";
 
@@ -193,6 +193,8 @@ async function sameFolder(a: string, b: string): Promise<boolean> {
 export class LiveGate {
   readonly #deps: LiveGateDeps;
   #waiting: LiveWaiting | null = null;
+  /** The newer build of each game being made ready for Live, while it is. */
+  readonly #updating = new Map<string, LiveUpdating>();
   /** The game folder's print when Live last loaded it. */
   #loadedFolder: { project: string; print: string | null } | null = null;
   /** The game Live last loaded, and the build it shows by commit (null: its folder, or not known). */
@@ -216,7 +218,21 @@ export class LiveGate {
       commit: waiting?.commit ?? null,
       note: waiting?.note ?? null,
       shows: this.#showsOf(project),
+      updating: this.#updating.get(project) ?? null,
     };
+  }
+
+  /**
+   * A newer build of `project` is being made ready for Live (`updating`), or no longer is (null):
+   * the stage says so over the build Live still shows (PW). Clearing names the commit it clears, so
+   * a later Play's mark is never cleared by an earlier one's end.
+   */
+  updating(project: string, updating: LiveUpdating | null, clears?: string): void {
+    const now = this.#updating.get(project);
+    if (updating) this.#updating.set(project, updating);
+    else if (!now || (clears !== undefined && now.commit !== clears)) return;
+    else this.#updating.delete(project);
+    this.#emit(project);
   }
 
   /** The print to record for a live load, taken before it starts: a change during the load stays a change. */

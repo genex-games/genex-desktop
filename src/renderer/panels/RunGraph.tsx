@@ -241,12 +241,11 @@ function useBuildActions(
   const hasBuild = Boolean(outcome?.head && outcome.head !== outcome.base);
   const play = (): Promise<void> | void => {
     if (!project || !outcome?.head) return;
+    // Live opens at once with what it shows, and says this build is on its way until it is in.
+    onShowLive?.();
     return window.studio
       .showBuild(project, outcome.head)
-      .then(() => {
-        webBuildShown(project);
-        onShowLive?.();
-      })
+      .then(() => webBuildShown(project))
       .catch(notifyProblem(onNotice));
   };
   const openJob = (job: AssetInfo): void => {

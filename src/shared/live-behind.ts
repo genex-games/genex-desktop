@@ -26,6 +26,22 @@ export const WebBuildLoad = {
 } as const;
 export type WebBuildLoad = (typeof WebBuildLoad)[keyof typeof WebBuildLoad];
 
+/** What makes a newer build ready for Live while it keeps the one it shows (lane PW). Wire values: never rename one. */
+export const LiveUpdateKind = {
+  /** The person pressed Play on it: Live takes it as soon as it is ready. */
+  Play: "play",
+  /** Play's background build of a run's newest build: Update plays it once it is ready. */
+  Prebuild: "prebuild",
+} as const;
+export type LiveUpdateKind = (typeof LiveUpdateKind)[keyof typeof LiveUpdateKind];
+
+/** A newer build being made ready for Live: why, which commit, and since when (epoch ms). */
+export interface LiveUpdating {
+  kind: LiveUpdateKind;
+  commit: string;
+  since: number;
+}
+
 /**
  * The `live.behind` UI event, and what the stage reads on mount (`liveBehind`): what main is holding
  * for Live's Reload (`reason: null` once Live is current), and the build Live shows. Main sends it
@@ -40,6 +56,8 @@ export interface LiveBehindEvent {
   note: string | null;
   /** The build Live shows now, by commit: null for the game folder (or a build whose commit is not known). */
   shows: string | null;
+  /** A newer build being made ready for Live (Play's, or its background build); absent or null when none is. */
+  updating?: LiveUpdating | null;
 }
 
 /**

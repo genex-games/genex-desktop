@@ -1506,6 +1506,8 @@ export const MESSAGES = [
   "Getting Roblox Studio",
   "Getting Roblox Studio. Studio asks you to sign in when it opens.",
   "Getting started",
+  "Getting the newest build ready… {clock}",
+  "Getting this build ready… {clock}",
   "Getting this ready for your game’s builds…",
   "Getting your games and the protected workspace ready.",
   "Getting your models ready…",

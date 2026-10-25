@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveAssetsOutcome } from "../../../shared/live-assets.ts";
-import type { LiveBehindEvent } from "../../../shared/live-behind.ts";
+import type { LiveBehindEvent, LiveUpdating } from "../../../shared/live-behind.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
 import { type RunGraph as RunGraphModel, runBuilding } from "../../run-graph.ts";
 import {
@@ -82,6 +82,8 @@ function useLiveState(project: string | null): LiveBehindEvent | null {
 export function useLiveBehind(input: LiveBehindInput): {
   shownBuild: ShownBuild | null;
   behind: LiveBehind | null;
+  /** A newer build being made ready for Live (Play's, or its background build), as main says it. */
+  updating: LiveUpdating | null;
   showBuild: (head: string) => Promise<void>;
   reload: () => Promise<void>;
 } {
@@ -121,8 +123,10 @@ export function useLiveBehind(input: LiveBehindInput): {
   const failed = useCallback((err: unknown) => onNotice(problemWords(err), ToastTone.Error), [onNotice]);
 
   const showMergedBuild = useCallback(
-    (head: string, asked: boolean): Promise<void> =>
-      intoLive(
+    (head: string, asked: boolean): Promise<void> => {
+      // The person's Play opens Live at once: it keeps the build it shows, and says the asked one is on its way.
+      if (asked && project) onView(StageView.Live);
+      return intoLive(
         () => window.studio.showBuild(project ?? "", head),
         () => {
           if (!asked || !project) return;
@@ -133,7 +137,8 @@ export function useLiveBehind(input: LiveBehindInput): {
           failedHead.current = head;
           failed(err);
         },
-      ),
+      );
+    },
     [project, intoLive, onView, failed],
   );
 
@@ -184,7 +189,7 @@ export function useLiveBehind(input: LiveBehindInput): {
   useFirstBuild(firstBuildShows(offer, stage) ? (offer?.head ?? null) : null, failedHead, showMergedBuild);
 
   const showBuild = useCallback((head: string): Promise<void> => showMergedBuild(head, true), [showMergedBuild]);
-  return { shownBuild, behind, showBuild, reload };
+  return { shownBuild, behind, updating: live?.updating ?? null, showBuild, reload };
 }
 
 /**

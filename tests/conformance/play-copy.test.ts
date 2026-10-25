@@ -9,6 +9,8 @@ import assert from "node:assert/strict";
 import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { LiveUpdateKind } from "../../src/shared/live-behind.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -96,4 +98,33 @@ describe("Play latest's build copy", () => {
       );
     });
   }
+});
+
+describe("Live while Play makes its build ready", () => {
+  it("says it is opening that build while Play runs, and nothing once Live has it", async (t) => {
+    const { lite, live, head } = await stage();
+    t.after(() => lite.close());
+    let open = () => {};
+    live.hold = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const playing = lite.core.showBuild("pond", head);
+    await sleep(300);
+    const during = lite.core.liveState("pond").updating;
+    assert.equal(during?.kind, LiveUpdateKind.Play);
+    assert.equal(during?.commit, head);
+    assert.ok(typeof during?.since === "number");
+    live.hold = null;
+    open();
+    await playing;
+    assert.equal(lite.core.liveState("pond").updating ?? null, null);
+  });
+
+  it("says nothing more once a Play failed", async (t) => {
+    const { lite, live, head } = await stage();
+    t.after(() => lite.close());
+    live.fail = true;
+    await assert.rejects(lite.core.showBuild("pond", head));
+    assert.equal(lite.core.liveState("pond").updating ?? null, null);
+  });
 });

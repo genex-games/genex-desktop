@@ -1912,6 +1912,10 @@ export const LIVE_FRESH_WORDS = {
     [BuildTarget.Web]: (clock: string) => t("Building the browser version of your changes… {clock}", { clock }),
     [BuildTarget.Mac]: (clock: string) => t("Building the Mac version of your changes… {clock}", { clock }),
   },
+  /** The build the person pressed Play on is being made ready, for how long so far ("0:12"); Live takes it once it is. */
+  opening: (clock: string) => t("Getting this build ready… {clock}", { clock }),
+  /** The run's newest build is being made in the background, for how long so far; Update plays it once it is. */
+  prebuilding: (clock: string) => t("Getting the newest build ready… {clock}", { clock }),
   built: t("Your changes are built."),
   failed: t("Your changes didn’t build."),
   ready: {

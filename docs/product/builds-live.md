@@ -15,17 +15,15 @@ An active run opens Builds once; a chat-shown build, or empty Builds, opens Live
 
 ## The two views
 
-**Live** plays the browser game in a native view; previews pause unwatched or hidden. The strip
-holds Live/Builds/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
-game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until
-Play/Reload. An empty scaffold shows “Ready for your first idea”, or
-“Building your game” with Watch progress, then Play latest; the first healthy build shows itself.
-Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
-hidden) or a finished Unity/Godot `web/` build. A newer healthy build, a changed folder
-(checkpoint, landing, rewind), a chat's show or a broken shown build lights Reload and a line
-above the game with Update (a compiled game's changed folder builds first, timed, for the view
-shown); hidden and not stopped, all but a new build go in at once; Rust `assets/`-only changes swap in mid-play. The
-preview reaches only public library CDNs; Open Game names other hosts. Other folders:
+**Live** plays the browser game in a native view, paused unwatched. The strip holds
+Live/Builds/Assets, Reload, Play/Stop, Sound (⌥⌘M), Full screen (hold Esc), plugin actions,
+Multiplayer, Publish. An empty scaffold shows “Ready for your first idea” or “Building your game”;
+the first healthy build shows itself. Otherwise only the user changes Live (opening a game, Reload,
+Play, Make live, a chat request while hidden) or a finished Unity/Godot `web/` build. A newer
+healthy build, a changed folder, a chat's show or a broken shown build lights Reload and a line
+with Update (built first, timed); hidden, all but a new build go in at once; Rust `assets/`-only
+changes swap in mid-play. Play opens Live at once, saying the asked build is on its way over the
+earlier one; builds are reused by content, and the person's never wait for agents'. The preview reaches only public CDNs. Other folders:
 [projects](projects-engines.md#lives-views).
 
 **Compiled games** (C++ · raylib; Rust · wgpu, needing WebGPU, on Apple-silicon Macs or Linux
@@ -36,26 +34,23 @@ Rust a profile strip and `[net]` room; in either view `game.mouseLook` locks the
 in the starter).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
-works. Tries at one step fold into one node: what reached the build forms the line, the rest
-hangs below, and tries a pause cut off show Paused until added. An eye opens reviewers' notes. A
+works. Tries at one step fold into one node (what reached the build forms the line; paused
+tries show Paused). An eye opens reviewers' notes. A
 new build is “Checking it starts…” until it runs. A working node shows its agent's screen and
 action; a selected one opens as a card; **Follow up in chat** notes the next message to its build.
-Tabs (one per build; past three, a picker) and chat cards open earlier builds. A Loop, workers,
+Tabs and chat cards open earlier builds. A Loop, workers,
 jobs or a claim make a tree: the lead (jobs below), then the finish check (Checking, Not yet with
-reasons, Done, Stopped). In place, save points form one line, workers solid under the one taking
-their work, else ghosts.
+reasons, Done, Stopped). In place, save points form one line.
 
 Agents test in hidden windows, never Live; blind judges play when screenshots can't decide;
 chat frames never certify a build. A finished worker, passing checks, integration and Live's
-revision are distinct facts; Builds and Studio report what is missing, coverage, revisions and
-studio-verified plays.
+revision are distinct facts, each reported.
 
 ## Continuation and interruption
 
-After a chat-led build, its session takes follow-ups: edits, resuming a paused run
-with its time left, starting over only when asked. With Loop on, small changes go direct;
-more work reopens the build until checked (other projects start anew); a chat that cannot
-(Ollama's) answers as with Loop off, saying so once. **Stop** interrupts at once, keeping finished
+A chat-led build's session takes follow-ups: edits, resuming a paused run with its time left,
+starting over only when asked. With Loop on, small changes go direct; more work reopens the
+build until checked; a chat that cannot (Ollama's) answers as with Loop off. **Stop** interrupts at once, keeping finished
 work: a stopped Loop shows one Stopped line with Resume, and Builds or chat makes it live. Limit, outage and crash pauses resume twice unless stopped (Settings → Harness); sign-in
 pauses wait. A crash or restart settles abandoned activity from saved state.
 

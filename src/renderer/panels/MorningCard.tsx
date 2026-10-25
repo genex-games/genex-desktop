@@ -252,14 +252,13 @@ export function MorningCard({
             capturePath={after}
             summary={summary}
             onPlay={() => {
-              if (project && summary.head)
-                return window.studio
-                  .showBuild(project, summary.head)
-                  .then(() => {
-                    webBuildShown(project);
-                    onShowLive?.();
-                  })
-                  .catch((error) => onNotice?.(String(error), ToastTone.Error));
+              if (!project || !summary.head) return;
+              // Live opens at once with what it shows, and says this build is on its way until it is in.
+              onShowLive?.();
+              return window.studio
+                .showBuild(project, summary.head)
+                .then(() => webBuildShown(project))
+                .catch((error) => onNotice?.(String(error), ToastTone.Error));
             }}
           />
         ))}

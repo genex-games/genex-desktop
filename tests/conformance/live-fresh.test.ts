@@ -16,7 +16,7 @@ import {
 import type { LiveBehind } from "../../src/renderer/stage.ts";
 import { LIVE_FRESH_WORDS } from "../../src/renderer/words.ts";
 import { BuildTarget } from "../../src/shared/game-project.ts";
-import { LiveBehindReason, LivePrepare } from "../../src/shared/live-behind.ts";
+import { LiveBehindReason, LivePrepare, LiveUpdateKind } from "../../src/shared/live-behind.ts";
 
 const CHANGED: LiveBehind = { reason: LiveBehindReason.Changed, note: null, head: null, held: true };
 const NEW_BUILD: LiveBehind = { reason: LiveBehindReason.Build, note: null, head: "abc123", held: false };
@@ -109,5 +109,65 @@ describe("what the line says", () => {
   it("the line clears once the newer version shows: nothing waits any more", () => {
     const prepare = { target: BuildTarget.Web, since: AT, outcome: LivePrepare.Built };
     assert.equal(liveFreshness({ behind: null, prepare, now: AT }), null);
+  });
+});
+
+describe("while a newer build is made ready for Live (PW)", () => {
+  const COMMIT = "abc123def4567890abc123def4567890abc123de";
+  const playing = (since: number) => ({ kind: LiveUpdateKind.Play, commit: COMMIT, since });
+
+  it("a Play under way says it is opening the build, for how long, and that Live still shows the earlier one", () => {
+    const fresh = liveFreshness({
+      behind: null,
+      prepare: null,
+      now: AT,
+      updating: playing(AT - 3_000),
+      showsGame: true,
+    });
+    assert.equal(fresh?.state, LiveFreshState.Building);
+    assert.equal(fresh?.title, LIVE_FRESH_WORDS.opening("0:03"));
+    assert.equal(fresh?.note, LIVE_FRESH_WORDS.earlier);
+    assert.equal(fresh?.action, null, "nothing to press: Live takes it once it is ready");
+  });
+
+  it("says nothing of an earlier version when Live shows none of this game", () => {
+    const fresh = liveFreshness({
+      behind: null,
+      prepare: null,
+      now: AT,
+      updating: playing(AT - 3_000),
+      showsGame: false,
+    });
+    assert.equal(fresh?.note, null);
+  });
+
+  it("a Play that is ready at once never flashes the line", () => {
+    const fresh = liveFreshness({ behind: null, prepare: null, now: AT, updating: playing(AT - 100), showsGame: true });
+    assert.equal(fresh, null);
+  });
+
+  it("the newest build made in the background says so until it is ready, then Update", () => {
+    const behind = { ...NEW_BUILD, head: COMMIT };
+    const prebuild = { kind: LiveUpdateKind.Prebuild, commit: COMMIT, since: AT - 41_000 };
+    const building = liveFreshness({ behind, prepare: null, now: AT, updating: prebuild, showsGame: true });
+    assert.equal(building?.state, LiveFreshState.Building);
+    assert.equal(building?.title, LIVE_FRESH_WORDS.prebuilding("0:41"));
+    assert.equal(building?.note, LIVE_FRESH_WORDS.earlier);
+    const ready = liveFreshness({ behind, prepare: null, now: AT, updating: null, showsGame: true });
+    assert.equal(ready?.state, LiveFreshState.Ready);
+    assert.equal(ready?.action, LIVE_FRESH_WORDS.update);
+  });
+
+  it("a background build of a commit Reload would not play says nothing of it", () => {
+    const prebuild = { kind: LiveUpdateKind.Prebuild, commit: COMMIT, since: AT - 41_000 };
+    assert.equal(liveFreshness({ behind: null, prepare: null, now: AT, updating: prebuild, showsGame: true }), null);
+    const other = liveFreshness({
+      behind: { ...NEW_BUILD, head: "fff000" },
+      prepare: null,
+      now: AT,
+      updating: prebuild,
+      showsGame: true,
+    });
+    assert.equal(other?.state, LiveFreshState.Ready);
   });
 });

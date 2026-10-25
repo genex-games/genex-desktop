@@ -106,7 +106,13 @@ import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { type LiveAssetsPage, servedOutputOf } from "../asset-watch.ts";
 import { buildFinished, LiveGate, type LiveLoad, type LiveOffer, readBuild } from "./live-gate.ts";
-import { type LiveBehindEvent, LivePrepare, type LivePrepareTarget, WebBuildLoad } from "../../shared/live-behind.ts";
+import {
+  type LiveBehindEvent,
+  LivePrepare,
+  type LivePrepareTarget,
+  LiveUpdateKind,
+  WebBuildLoad,
+} from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
 import {
   type GameWindowFocus,
@@ -2091,11 +2097,15 @@ export class PreviewService {
     const resolved = (await git(projectDir, ["rev-parse", "--verify", `${commit}^{commit}`]).catch(() => "")).trim();
     if (!resolved) throw new Error(MESSAGE.notInHistory(commit, project));
     const clock = this.#core.playTimings.start({ project, target: BuildTarget.Web, commit: resolved });
+    // Live keeps what it shows meanwhile, and the stage says the build Play asked for is on its way.
+    this.#live.updating(project, { kind: LiveUpdateKind.Play, commit: resolved, since: Date.now() });
     try {
       return await this.#showBuild(project, projectDir, resolved, clock);
     } catch (error) {
       clock.end(PlayStage.Failed, errorMessage(error));
       throw error;
+    } finally {
+      this.#live.updating(project, null, resolved);
     }
   }
 

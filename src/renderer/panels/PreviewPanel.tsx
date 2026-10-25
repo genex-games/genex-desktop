@@ -1109,7 +1109,15 @@ function usePreviewStage(input: {
   const stageNative = useStageNative(loaded, liveStage.host, { cover: liveStage.cover, copy });
   const compiled = loaded !== null && isCompiledStack(stackOf(loaded.shape));
   const native = liveStage.nativeView.native;
-  const line = useLiveFresh({ project, behind: liveBehind.behind, compiled, native });
+  const showsGame = loaded !== null && loaded.name === project;
+  const line = useLiveFresh({
+    project,
+    behind: liveBehind.behind,
+    compiled,
+    native,
+    updating: liveBehind.updating,
+    showsGame,
+  });
   const fresh = { line, onUpdate: stageReload };
   return { ...surface, firstPlan, liveStage, liveBehind, stageReload, stageNative, fresh };
 }
