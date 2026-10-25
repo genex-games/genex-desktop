@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::drs::{
-    DEMOTE_AFTER, DROP_AFTER_FRAMES, DrsController, FrameSignal, MAX_SCALE_STEPS, PROMOTE_AFTER, RISE_AFTER_FRAMES,
+    DEMOTE_ABOVE_FRACTION, DEMOTE_AFTER, DROP_AFTER_FRAMES, DrsController, FrameSignal, MAX_SCALE_STEPS, PROMOTE_AFTER, RISE_AFTER_FRAMES,
     RISE_PREDICTED_FRACTION, SCALE_QUANTUM, ScaleSteps, THERMAL_RECOVER_AFTER, demote_quality, frame_signal,
 };
 use genex_render::presets::class_defaults;
@@ -470,4 +470,36 @@ fn measurement_noise_does_not_set_the_learned_cost_model_flapping() {
     assert!(changes <= 6, "{changes} step changes in a minute of noisy frames: {:?}", sim.changes());
     let settled = sim.drs.scale();
     assert!(settled > BUDGET_STEPS[0] && cost(settled) <= target, "settled at {settled}");
+}
+
+/// Lane FQ (10,000 ghouls at full quality): at its lowest step the controller shed the preset's
+/// features once the GPU time sat over its scale target (85% of the frame interval) for 5 s,
+/// although every frame still fitted the display interval (UP: GPU 15.3 ms of 16.7, shedding spot
+/// shadows, bloom and AO). The scale's target keeps its margin; shedding a feature waits for frames
+/// that no longer fit the interval: over [`DEMOTE_ABOVE_FRACTION`] of it for [`DEMOTE_AFTER`].
+#[test]
+fn the_lowest_step_keeps_its_features_while_its_frames_fit_the_interval() {
+    let mut drs = budget_controller();
+    let interval_ms = 1000.0 / 60.0;
+    let at = |frame: u32| Duration::from_micros(16_667) * frame;
+    // Over the scale's target, under the interval: the lowest step, every feature kept.
+    let tight = interval_ms * 0.92;
+    assert!(tight > drs.gpu_target_ms(), "premise: over the scale's target");
+    for frame in 0..60 * 30 {
+        drs.observe(FrameSignal::GpuMs(tight), at(frame));
+    }
+    assert_eq!(drs.step(), 0, "the scale is at its lowest step");
+    assert_eq!(drs.demotion(), 0, "frames that fit the interval keep the preset's features");
+    // Frames over the interval at the lowest step: the features step down after DEMOTE_AFTER.
+    let over = interval_ms * (DEMOTE_ABOVE_FRACTION + 0.03);
+    let start = 60 * 30;
+    let mut demoted_at = None;
+    for frame in start..start + 60 * 10 {
+        drs.observe(FrameSignal::GpuMs(over), at(frame));
+        if drs.demotion() > 0 && demoted_at.is_none() {
+            demoted_at = Some(at(frame) - at(start));
+        }
+    }
+    let demoted_at = demoted_at.expect("frames over the interval demote");
+    assert!(demoted_at >= DEMOTE_AFTER && demoted_at <= DEMOTE_AFTER + Duration::from_millis(100), "demoted after {demoted_at:?}");
 }

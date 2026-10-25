@@ -21,7 +21,9 @@
 //!   interval, [`MISSES_TO_DROP`] in the last [`MISS_WINDOW_FRAMES`]) and climbs back toward the
 //!   nominal step, never above it, by timed probes whose wait doubles after a failed probe.
 //! - After [`DEMOTE_AFTER`] at the minimum step over target the preset's resource knobs step down
-//!   one preset ([`DrsController::demotion`], applied with [`demote_quality`]); after
+//!   one preset ([`DrsController::demotion`], applied with [`demote_quality`]); with timestamps
+//!   "over" is over [`DEMOTE_ABOVE_FRACTION`] of the interval (a frame the lowest step cannot fit,
+//!   lane FQ), not the scale's target; after
 //!   [`PROMOTE_AFTER`] of headroom they step back up. A demotion never changes the sample count
 //!   or the pipeline key set.
 //! - A frame's fixed cost ([`DrsController::with_fixed_ms`]: the FSR1 passes run at output size)
@@ -81,6 +83,11 @@ pub const PROBE_BACKOFF_MAX: Duration = Duration::from_secs(32);
 pub const PROBE_WINDOW_FRAMES: u32 = 30;
 /// Time at the minimum step over target that demotes the preset one step.
 pub const DEMOTE_AFTER: Duration = Duration::from_secs(5);
+/// With timestamps, the share of the frame interval a frame at the minimum step must pass to count
+/// towards a demotion (lane FQ): a frame within a twentieth of missing the display interval. The
+/// scale's own target ([`GPU_TARGET_FRACTION`]) keeps its margin for the steps; a preset's
+/// features step down only for frames the lowest step cannot fit.
+pub const DEMOTE_ABOVE_FRACTION: f32 = 0.95;
 /// Time of headroom that re-promotes it one step.
 pub const PROMOTE_AFTER: Duration = Duration::from_secs(20);
 /// Headroom with timestamps: GPU time under this fraction of the target.
@@ -545,7 +552,8 @@ impl DrsController {
 
     fn observe_gpu(&mut self, ms: f32, now: Duration) {
         let target = self.gpu_target_ms();
-        if self.track_demotion(ms > target, ms < target * PROMOTE_BELOW_FRACTION, now) {
+        let unfit = ms > self.interval_ms() * DEMOTE_ABOVE_FRACTION;
+        if self.track_demotion(unfit, ms < target * PROMOTE_BELOW_FRACTION, now) {
             return;
         }
         if let Some(frames) = self.since_rise.as_mut() {
