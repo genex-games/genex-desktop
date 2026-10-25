@@ -4,14 +4,16 @@
 //!
 //! ```json
 //! { "seed": 7, "demo": "genex-clip", "camera": "horde", "fullscreen": "native",
-//!   "renderScaleLock": 1.0, "nativeOutput": true, "features": { "shadows": true },
+//!   "renderScaleLock": 1.0, "nativeOutput": true, "upscale": "quality", "features": { "shadows": true },
 //!   "nodes": true, "seconds": 60, "out": "/path/to/bench.json" }
 //! ```
 //!
 //! Once the loading screen is done the run is seeded (`seed`), the demo runs (`demo`), live play
 //! starts and every frame draws the named camera (`camera`, else the game's own). `renderScaleLock`
 //! holds the render scale (the `renderSettings` verb's lock; absent: dynamic resolution moves it),
-//! `deviceClass` runs as that class (the verb's emulated class; absent: the probed one),
+//! `deviceClass` runs as that class (the verb's emulated class; absent: the probed one), `upscale`
+//! holds an upscaling mode by its spelling (the game's hold, `genex::render::lock_upscale`; absent:
+//! the person's, the game's or the calibration's),
 //! `features` switches render features as the verb does, and `nativeOutput` lifts Live's cap at the
 //! class's reference resolution, so the frame draws the window's own pixels. `nodes` keeps per-node
 //! GPU timing armed (the profile reports then carry each frame-graph node's GPU time; the brackets
@@ -52,6 +54,8 @@ pub(crate) struct BenchPlan {
     pub(crate) device_class: Option<String>,
     pub(crate) scale_lock: Option<f64>,
     pub(crate) native_output: bool,
+    /// An upscaling mode the run holds (lane UQ), else the one the settings resolve.
+    pub(crate) upscale: Option<crate::render::UpscaleMode>,
     pub(crate) features: Vec<(String, bool)>,
     /// Whether per-node GPU timing stays armed through the run.
     pub(crate) nodes: bool,
@@ -71,7 +75,7 @@ impl BenchPlan {
     pub(crate) fn parse(text: &str) -> Result<BenchPlan, BenchRefusal> {
         let refuse = |what: &str| Err(BenchRefusal(what.to_owned()));
         let Ok(Value::Object(plan)) = serde_json::from_str::<Value>(text) else { return refuse("not a JSON object") };
-        const KEYS: [&str; 12] = ["seed", "demo", "camera", "fullscreen", "deviceClass", "renderScaleLock", "nativeOutput", "features", "nodes", "audio", "seconds", "out"];
+        const KEYS: [&str; 13] = ["seed", "demo", "camera", "fullscreen", "deviceClass", "renderScaleLock", "nativeOutput", "upscale", "features", "nodes", "audio", "seconds", "out"];
         if let Some(key) = plan.keys().find(|key| !KEYS.contains(&key.as_str())) {
             return refuse(&format!("unknown key {key}"));
         }
@@ -84,6 +88,10 @@ impl BenchPlan {
         let scale_lock = match plan.get("renderScaleLock") {
             None | Some(Value::Null) => None,
             Some(value) => Some(value.as_f64().filter(|scale| *scale > 0.0 && *scale <= 1.0).ok_or(BenchRefusal("renderScaleLock is not in (0, 1]".into()))?),
+        };
+        let upscale = match plan.get("upscale") {
+            None => None,
+            Some(value) => Some(value.as_str().and_then(crate::render::UpscaleMode::from_wire).ok_or(BenchRefusal("upscale is not a mode's spelling".into()))?),
         };
         let features = match plan.get("features") {
             None => Vec::new(),
@@ -102,6 +110,7 @@ impl BenchPlan {
             device_class: text_of("deviceClass")?,
             scale_lock,
             native_output: flag("nativeOutput")?,
+            upscale,
             features,
             nodes: flag("nodes")?,
             audio: flag("audio")?,
@@ -227,7 +236,7 @@ impl Bench {
         let record = json!({
             "plan": {
                 "seed": self.plan.seed, "demo": self.plan.demo, "camera": self.plan.camera, "fullscreen": format!("{:?}", self.plan.fullscreen),
-                "deviceClass": self.plan.device_class, "renderScaleLock": self.plan.scale_lock, "nativeOutput": self.plan.native_output, "nodes": self.plan.nodes, "seconds": self.plan.seconds,
+                "deviceClass": self.plan.device_class, "renderScaleLock": self.plan.scale_lock, "nativeOutput": self.plan.native_output, "upscale": self.plan.upscale.map(crate::render::UpscaleMode::wire), "nodes": self.plan.nodes, "seconds": self.plan.seconds,
             },
             "surface": self.surface,
             "scaleFactor": self.scale_factor,
@@ -295,6 +304,18 @@ mod tests {
             r#"{"seconds":1,"out":"/tmp/b.json","window":"big"}"#,
         ];
         for row in rows {
+            assert!(BenchPlan::parse(row).is_err(), "{row}");
+        }
+    }
+
+    /// Lane UQ: a plan may hold an upscaling mode by its wire spelling (the measured rows of each
+    /// mode); a spelling outside the vocabulary is refused whole.
+    #[test]
+    fn a_plan_holds_an_upscaling_mode_by_its_spelling() {
+        let plan = BenchPlan::parse(r#"{"upscale":"balanced","seconds":1,"out":"/tmp/b.json"}"#).expect("a mode");
+        assert_eq!(plan.upscale, Some(crate::render::UpscaleMode::Balanced));
+        assert_eq!(BenchPlan::parse(r#"{"seconds":1,"out":"/tmp/b.json"}"#).expect("none").upscale, None, "left out: the calibration's");
+        for row in [r#"{"upscale":"ultra-performance","seconds":1,"out":"/tmp/b.json"}"#, r#"{"upscale":1,"seconds":1,"out":"/tmp/b.json"}"#] {
             assert!(BenchPlan::parse(row).is_err(), "{row}");
         }
     }

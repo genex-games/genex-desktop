@@ -185,6 +185,61 @@ fn metal_a_full_screen_window_is_drawn_at_its_own_pixels_and_its_hud_stays_crisp
     }
 }
 
+/// The panel shot's HUD rectangle (100, 20 to 140, 40 points) lands on single window columns: the
+/// HUD is painted at the window's own pixels, whatever the world was rendered at.
+fn assert_panel_hud_crisp(shot: &DesktopShot, what: &str) {
+    let pixel = |points: f32| (points * PANEL_SCALE).round() as u32;
+    let (left, right) = (pixel(100.0), pixel(140.0));
+    let (top, bottom) = (PANEL_BAR + pixel(20.0), PANEL_BAR + pixel(40.0));
+    for y in [top + 2, (top + bottom) / 2, bottom - 3] {
+        let row: Vec<[u8; 3]> = (left - 2..left + 3).map(|x| rgb(shot, x, y)).collect();
+        assert_ne!(rgb(shot, left - 1, y), WHITE, "{what}, row {y}: the HUD starts at column {left}, not before: {row:?}");
+        assert_eq!(rgb(shot, left, y), WHITE, "{what}, row {y}: the HUD's left edge is one column: {row:?}");
+        assert_eq!(rgb(shot, right - 1, y), WHITE, "{what}, row {y}: the HUD's right edge");
+        assert_ne!(rgb(shot, right, y), WHITE, "{what}, row {y}: the HUD ends before column {right}");
+    }
+}
+
+/// Lane UQ: in every upscaling mode the full-screen panel's world is rendered at the mode's share
+/// of its pixels and upscaled to them, and the HUD and its text stay at the window's own pixels.
+#[test]
+fn metal_every_upscaling_mode_renders_its_share_and_keeps_the_hud_at_the_window_s_pixels() {
+    use genex::render::{RenderConfig, UpscaleMode};
+    for mode in UpscaleMode::ALL {
+        let shoot = move || {
+            let mut game = panel_game();
+            game.render_settings(RenderConfig::new().upscale_locked(mode));
+            shot_of(game, PANEL)
+        };
+        let Some(shot) = on_shell_stack(shoot) else { return };
+        assert_eq!(shot.output, PANEL_LETTERBOX, "{mode:?}: the output is the letterbox's own pixels");
+        let expected = ((PANEL_LETTERBOX[0] as f32 * mode.scale()) as u32, (PANEL_LETTERBOX[1] as f32 * mode.scale()) as u32);
+        assert_eq!((shot.render[0], shot.render[1]), expected, "{mode:?} renders its share of the letterbox");
+        assert_panel_hud_crisp(&shot, &format!("{mode:?}"));
+    }
+}
+
+/// Lane UQ: the game switching the upscaling mode on every frame (`lock_upscale` from `on_ui`)
+/// draws every frame, each at the mode it asked for, and keeps the HUD at the window's pixels: a
+/// switch is a resize of the next frame, never a rebuild.
+#[test]
+fn metal_switching_the_upscaling_mode_every_frame_draws_every_frame() {
+    use genex::render::UpscaleMode;
+    const SWITCHED_FRAMES: u64 = 13;
+    let shoot = || {
+        let mut game = panel_game();
+        game.on_ui(|_, _, ctx| genex::render::lock_upscale(Some(UpscaleMode::ALL[(ctx.tick % 4) as usize])));
+        desktop_shot(game, &[], SWITCHED_FRAMES, PANEL).ok()
+    };
+    let Some(shot) = on_shell_stack(shoot) else { return };
+    assert_eq!(shot.drawn, shot.frames, "every frame drew");
+    let last = UpscaleMode::ALL[((shot.frames - 1) % 4) as usize];
+    let held = ((PANEL_LETTERBOX[0] as f32 * last.scale()) as u32, (PANEL_LETTERBOX[1] as f32 * last.scale()) as u32);
+    eprintln!("after {} switched frames: render {:?} (last mode {last:?})", shot.frames, shot.render);
+    assert!(UpscaleMode::ALL.iter().any(|mode| shot.render == [(PANEL_LETTERBOX[0] as f32 * mode.scale()) as u32, (PANEL_LETTERBOX[1] as f32 * mode.scale()) as u32]), "a mode's share: {:?} (last asked {held:?})", shot.render);
+    assert_panel_hud_crisp(&shot, "after switching");
+}
+
 /// Write the shot as a binary PPM under `GENEX_WINDOW_EVIDENCE_DIR` when it names an absolute folder.
 fn write_evidence(shot: &DesktopShot, name: &str) {
     let Some(dir) = std::env::var_os(EVIDENCE_ENV).map(PathBuf::from) else { return };

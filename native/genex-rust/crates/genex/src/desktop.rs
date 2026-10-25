@@ -322,6 +322,9 @@ impl<W: Default + 'static> DesktopGame<W> {
             }
             Err(refusal) => eprintln!("genex: the bench's render settings were refused: {}", refusal.wire()),
         }
+        if plan.upscale.is_some() {
+            self.runtime.render().borrow_mut().lock_upscale(plan.upscale);
+        }
         self.presenter.set_output_capped(!plan.native_output);
         if plan.nodes {
             self.runtime.profiling().arm(true);
@@ -358,6 +361,7 @@ impl<W: Default + 'static> DesktopGame<W> {
             "deviceClass": status.device_class.wire(),
             "preset": status.preset.wire(),
             "scale": status.scale,
+            "upscale": self.runtime.render().borrow().upscale().map(|(mode, source)| serde_json::json!({ "mode": mode.wire(), "source": format!("{source:?}") })),
             "output": self.presenter.last_output().map(|(w, h)| [w, h]),
             "renderSize": [renderer.render_size().0, renderer.render_size().1],
             "gpuMs": status.gpu_ms,
@@ -583,6 +587,9 @@ pub struct DesktopShot {
     /// The size the last frame was rendered at: the window's letterbox in its own pixels, capped
     /// by the class (renderer pass 2, P2-0.9 step B), not the world size.
     pub output: [u32; 2],
+    /// The size the last frame's world was rendered at before its upscale to `output` (its render
+    /// scale's share of it, lane UQ).
+    pub render: [u32; 2],
     /// The window's pixels, BGRA, rows top to bottom, the world letterboxed with black bars.
     pub bgra: Vec<u8>,
     /// Frames the shell ran.
@@ -635,8 +642,9 @@ pub fn desktop_shot<W: Default + 'static>(
     let (mut game, exit) = shell.map_err(DesktopShotError::Shell)?;
     let capture = game.present_offscreen(window).map_err(DesktopShotError::Readback)?;
     let bgra = capture.bgra().to_vec();
-    let (width, height) = game.presenter.resilient.renderer().renderer().size();
-    Ok(DesktopShot { state: game.runtime.state(), window, output: [width, height], bgra, frames: exit.frames, drawn: game.drawn })
+    let renderer = game.presenter.resilient.renderer().renderer();
+    let ((width, height), (render_w, render_h)) = (renderer.size(), renderer.render_size());
+    Ok(DesktopShot { state: game.runtime.state(), window, output: [width, height], render: [render_w, render_h], bgra, frames: exit.frames, drawn: game.drawn })
 }
 
 /// GPU rows: the shell's headless mode on the host GPU (Metal on the Mac). Run with
