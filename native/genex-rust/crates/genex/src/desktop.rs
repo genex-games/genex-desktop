@@ -48,10 +48,34 @@ const PREFERRED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 /// Bytes per pixel of [`PREFERRED_FORMAT`].
 const BYTES_PER_PIXEL: u32 = 4;
 
+/// A window's swapchain as the shell uses it: `wgpu::Surface`, or a test's recording stand-in.
+trait WindowSurface {
+    /// Configure the swapchain with `config`.
+    fn configure(&self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration);
+    /// The next frame's texture, or why there is none.
+    fn current_texture(&self) -> wgpu::CurrentSurfaceTexture;
+}
+
+impl WindowSurface for wgpu::Surface<'static> {
+    fn configure(&self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+        wgpu::Surface::configure(self, device, config);
+    }
+
+    fn current_texture(&self) -> wgpu::CurrentSurfaceTexture {
+        self.get_current_texture()
+    }
+}
+
 /// A configured window surface.
 struct Window {
-    surface: wgpu::Surface<'static>,
+    surface: Box<dyn WindowSurface>,
+    /// The configuration the swapchain holds now.
     config: wgpu::SurfaceConfiguration,
+    /// The configuration it waits for while a warm-up thread may submit
+    /// ([`Presenter::warm_in_flight`]): applied at the first frame after it.
+    pending: Option<wgpu::SurfaceConfiguration>,
+    /// Whether the swapchain was configured at all (an unconfigured one gives no texture).
+    configured: bool,
 }
 
 /// The runtime behind the desktop shell.
@@ -130,22 +154,50 @@ impl<W: Default + 'static> DesktopGame<W> {
             view_formats: Vec::new(),
             color_space: wgpu::SurfaceColorSpace::default(),
         };
-        surface.configure(&gpu.device, &config);
-        self.presenter.set_window_size((config.width, config.height));
-        self.window = Some(Window { surface, config });
+        self.window = Some(Window { surface: Box::new(surface), config: config.clone(), pending: None, configured: false });
+        self.configure_window(config);
+    }
+
+    /// Configure the window's swapchain with `config` now, or once no warm-up thread may submit
+    /// ([`Presenter::warm_in_flight`]; then at the first frame after it, with the last `config`
+    /// given). The presenter learns the window's size when the swapchain takes it.
+    fn configure_window(&mut self, config: wgpu::SurfaceConfiguration) {
+        let warming = self.presenter.warm_in_flight();
+        let Some(window) = self.window.as_mut() else { return };
+        if warming {
+            window.pending = Some(config);
+            return;
+        }
+        window.surface.configure(&self.presenter.gpu().device, &config);
+        window.config = config;
+        window.pending = None;
+        window.configured = true;
+        self.presenter.set_window_size((window.config.width, window.config.height));
+    }
+
+    /// The window's next texture, after a configuration that waited for a warm-up (the swapchain
+    /// keeps its last one meanwhile); None (the frame is skipped) when there is none, a lost or
+    /// outdated swapchain being configured again.
+    fn window_texture(&mut self) -> Option<wgpu::SurfaceTexture> {
+        if let Some(pending) = self.window.as_mut().and_then(|window| window.pending.take()) {
+            self.configure_window(pending);
+        }
+        let window = self.window.as_ref().filter(|window| window.configured)?;
+        match window.surface.current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Some(texture),
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                let config = window.pending.clone().unwrap_or_else(|| window.config.clone());
+                self.configure_window(config);
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Letterbox the world target onto the window; a lost or outdated surface is configured again.
     fn present(&mut self) {
-        let Some(window) = self.window.as_mut() else { return };
-        let texture = match window.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                window.surface.configure(&self.presenter.gpu().device, &window.config);
-                return;
-            }
-            _ => return,
-        };
+        let Some(texture) = self.window_texture() else { return };
+        let Some(window) = self.window.as_ref() else { return };
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (format, size) = (window.config.format, [window.config.width, window.config.height]);
         self.present_into(&view, format, size);
@@ -205,15 +257,8 @@ impl<W: Default + 'static> DesktopGame<W> {
 
     /// One frame of the loading screen on the window.
     fn present_loading(&mut self, frame_ms: f64) {
-        let Some(window) = self.window.as_mut() else { return };
-        let texture = match window.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                window.surface.configure(&self.presenter.gpu().device, &window.config);
-                return;
-            }
-            _ => return,
-        };
+        let Some(texture) = self.window_texture() else { return };
+        let Some(window) = self.window.as_ref() else { return };
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (format, size) = (window.config.format, [window.config.width, window.config.height]);
         self.paint_loading(&view, format, size, frame_ms);
@@ -365,13 +410,11 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
     }
 
     fn surface_resized(&mut self, size: [u32; 2], _scale: f64) {
-        let device = self.presenter.gpu().device.clone();
-        let Some(window) = self.window.as_mut() else { return };
-        window.config.width = size[0].max(1);
-        window.config.height = size[1].max(1);
-        window.surface.configure(&device, &window.config);
-        let size = (window.config.width, window.config.height);
-        self.presenter.set_window_size(size);
+        let Some(window) = self.window.as_ref() else { return };
+        let mut config = window.pending.clone().unwrap_or_else(|| window.config.clone());
+        config.width = size[0].max(1);
+        config.height = size[1].max(1);
+        self.configure_window(config);
     }
 
     fn surface_lost(&mut self) {
@@ -701,6 +744,66 @@ mod tests {
         game.frame(shell_frame(true));
         assert!(game.loading.is_none(), "the loading screen left");
         assert_eq!(game.drawn, 1, "the game's first frame drew");
+    }
+
+    /// A window surface that records each configure's size and has no texture to give: outdated
+    /// until it is first configured (as a resized swapchain is), then timing out.
+    #[derive(Clone, Default)]
+    struct RecordingSurface {
+        configured: std::rc::Rc<std::cell::RefCell<Vec<(u32, u32)>>>,
+    }
+
+    impl WindowSurface for RecordingSurface {
+        fn configure(&self, _device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+            self.configured.borrow_mut().push((config.width, config.height));
+        }
+
+        fn current_texture(&self) -> wgpu::CurrentSurfaceTexture {
+            if self.configured.borrow().is_empty() { wgpu::CurrentSurfaceTexture::Outdated } else { wgpu::CurrentSurfaceTexture::Timeout }
+        }
+    }
+
+    impl RecordingSurface {
+        fn configured(&self) -> Vec<(u32, u32)> {
+            self.configured.borrow().clone()
+        }
+    }
+
+    /// Lane UP (HZ's one-off crash, again on a fullscreen switch during the boot's warm-up): wgpu's
+    /// `Surface::configure` waits for the queue to go idle and refuses, as an uncaptured validation
+    /// error ("Failed to wait for GPU to come idle before reconfiguring the Surface"), when another
+    /// thread submits meanwhile. The warm-up thread renders and submits, so a window resized (or
+    /// outdated) while it runs is configured only after it is done, at the size it was last given.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_a_window_resized_while_a_warm_up_renders_is_configured_after_it() {
+        let Some(mut game) = desktop_game() else { return };
+        let hold = genex_render::compile::hold();
+        game.begin_loading();
+        assert!(game.presenter.boot_warming(), "the boot's warm-up runs on its thread");
+        let surface = RecordingSurface::default();
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: PREFERRED_FORMAT,
+            width: 96,
+            height: 64,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: Vec::new(),
+            color_space: wgpu::SurfaceColorSpace::default(),
+        };
+        game.window = Some(Window { surface: Box::new(surface.clone()), config, pending: None, configured: true });
+        game.surface_resized([200, 100], 2.0);
+        game.surface_resized([240, 120], 2.0);
+        game.frame(shell_frame(true));
+        assert_eq!(surface.configured(), Vec::new(), "no configure while the warm-up may submit");
+        drop(hold);
+        while game.presenter.boot_warming() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        game.frame(shell_frame(true));
+        assert_eq!(surface.configured(), vec![(240, 120)], "configured once the warm-up is done, at the last size");
     }
 
     #[test]

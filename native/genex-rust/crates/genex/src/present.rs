@@ -1736,6 +1736,18 @@ impl Presenter {
         1 + spare + warming
     }
 
+    /// Whether a warm-up thread is running, so it may submit GPU work at any moment (the boot's or a
+    /// settings change's). A shell configures no window surface meanwhile: wgpu's
+    /// `Surface::configure` waits for the queue to go idle and refuses, as an uncaptured validation
+    /// error, when another thread submits during that wait ("Failed to wait for GPU to come idle
+    /// before reconfiguring the Surface"). Never on the web, which warms nothing off its one thread.
+    pub fn warm_in_flight(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.warming.as_ref().is_some_and(|warming| !warming.is_finished());
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// Whether the boot's warm-up ([`Presenter::warm_boot`]) is still compiling the first Live
     /// frame's pipelines, or a pipeline it handed over is still compiling: a shell shows its
     /// loading screen meanwhile instead of waiting on that frame (owner decision D11). The warm
