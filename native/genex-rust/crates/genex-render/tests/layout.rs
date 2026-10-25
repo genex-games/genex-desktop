@@ -92,8 +92,9 @@ const GOLDEN: [(&str, usize); 35] = [
     // measured from, its bias, its far rule and two spare words.
     ("LodRow", 32),
     ("PassView", 16),
-    // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`).
-    ("CullViews", 912),
+    // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`);
+    // lane FQ flipped 912 -> 928: each sun cascade's caster error (`GpuCullViews::shadow_lod`).
+    ("CullViews", 928),
     ("DrawIndexedArgs", 20),
     ("MeshVertex", 48),
     ("SkinVertex", 32),
@@ -1321,8 +1322,9 @@ fn the_cull_views_reserve_every_view_and_the_cull_shader_reads_them() {
     let naga::TypeInner::Array { size, stride, .. } = member_type(&module, "CullViews", "planes") else { panic!("CullViews.planes") };
     assert_eq!(*size, naga::ArraySize::Constant(std::num::NonZeroU32::new(MAX_VIEWS as u32).expect("views")));
     assert_eq!(*stride as usize, 6 * 16, "six planes per view");
-    // Pass 2 A6.9 flipped MAX_VIEWS * 96 + 16 -> + 48: the LOD view and its flags after `params`.
-    assert_eq!(size_of::<GpuCullViews>(), MAX_VIEWS * 96 + 48);
+    // Pass 2 A6.9 flipped MAX_VIEWS * 96 + 16 -> + 48: the LOD view and its flags after `params`;
+    // lane FQ -> + 64: each sun cascade's caster error (`shadow_lod`).
+    assert_eq!(size_of::<GpuCullViews>(), MAX_VIEWS * 96 + 64);
     assert!(size_of::<GpuCullViews>() as u64 <= wgpu::Limits::defaults().max_uniform_buffer_binding_size, "a core uniform");
 }
 

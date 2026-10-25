@@ -62,6 +62,8 @@ const HARDWARE_REACH_TEXELS: f32 = 1.0;
 const PCF3_REACH_TEXELS: f32 = 2.0;
 const PCF5_REACH_TEXELS: f32 = 3.0;
 const PCSS_REACH_TEXELS: f32 = 17.0;
+/// PCSS's narrowest kernel radius in texels (`GX_PCSS_MIN_TEXELS`, sun.wgsl).
+const PCSS_MIN_TEXELS: f32 = 3.0;
 /// Texels a cascade's map moves by as it snaps to whole texels, at most (half), rounded up.
 const SNAP_TEXELS: f32 = 1.0;
 /// The largest share of a map's side its edges may take ([`edge_texels`] on a tiny map).
@@ -162,6 +164,21 @@ pub(crate) fn caster_pipeline(device: &Device, spec: &CasterSpec<'_>) -> Compile
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The error, in a cascade's texels, a caster's level may show in that cascade under `filter` (lane
+/// FQ): the narrowest kernel the receivers read the map through, past which a silhouette's error
+/// blurs into the filter's own. PCSS's narrowest radius (`GX_PCSS_MIN_TEXELS`, sun.wgsl) and its
+/// bilinear neighbour; the PCF kernels' and the hardware tap's own reach. The cull casts each
+/// instance at the coarsest level within it, never finer than the camera's (`shaders/cull.wgsl`
+/// `gx_cull_caster_level`, [`crate::mesh::lod_row_keep_view`]).
+pub fn caster_error_texels(filter: ShadowFilter) -> f32 {
+    match filter {
+        ShadowFilter::Hardware2x2 => HARDWARE_REACH_TEXELS,
+        ShadowFilter::Pcf3x3 => PCF3_REACH_TEXELS,
+        ShadowFilter::Pcf5x5 => PCF5_REACH_TEXELS,
+        ShadowFilter::PcssLite | ShadowFilter::Pcss => PCSS_MIN_TEXELS + 1.0,
+    }
 }
 
 /// The texels each side of a tight cascade's map beyond its slice sphere for `filter` (renderer

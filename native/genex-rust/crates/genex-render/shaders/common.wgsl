@@ -213,6 +213,9 @@ struct CullViews {
     lod: vec4<f32>,
     // x: 1 when a batch draws a level.
     lod_params: vec4<u32>,
+    // The world error each sun cascade's casters may show (layout.rs `GpuCullViews::shadow_lod`):
+    // cascade c's in lane c, 0 the camera's level.
+    shadow_lod: vec4<f32>,
 }
 
 struct DrawIndexedArgs {

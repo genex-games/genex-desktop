@@ -2264,9 +2264,12 @@ impl FramePlan {
         cull_views.lod_params[1] = band.to_bits();
         cull_views.lod_params[2] = far_rules.len() as u32;
         cull_views.planes[0] = camera_planes;
-        if let Some(set) = &shadows {
+        if let (Some(set), Some(settings)) = (&shadows, &settings) {
+            let texels = crate::shadow::caster_error_texels(settings.filter);
             for (c, planes) in set.planes.iter().enumerate().take(drawn_cascades(set)) {
                 cull_views.planes[cascade_view(c) as usize] = *planes;
+                // The error its map cannot show (lane FQ): its casters' coarsest level within it.
+                cull_views.shadow_lod[c] = set.texel_world[c] * texels;
             }
         }
         let skinned_vertices = parts.iter().map(|p| p.job.count).sum();
@@ -2354,7 +2357,7 @@ impl FramePlan {
             return Vec::new();
         }
         let batches: Vec<GpuBatch> = self.impostor_batches.iter().map(|impostor| self.batches[impostor.batch as usize]).collect();
-        let cull = cpu_cull_view(&self.cull_views.planes[0], &self.cull_lod(), &batches, &self.instances, self.visible_slots as usize, false);
+        let cull = cpu_cull_view(&self.cull_views.planes[0], &self.cull_lod(), &batches, &self.instances, self.visible_slots as usize, (false, 0.0));
         let mut out = Vec::new();
         for ((impostor, batch), count) in self.impostor_batches.iter().zip(&batches).zip(&cull.counts) {
             let fade_batch = batch.lod[0] & crate::mesh::LOD_FADE_TAG != 0;
@@ -2370,7 +2373,8 @@ impl FramePlan {
     /// The reference cull of view `view` (0 the camera, 1 + c shadow cascade c); every view but
     /// the camera casts a chain's last mesh level in its impostor's place (game systems LOD-15).
     pub fn cpu_cull_view(&self, view: usize) -> CpuCull {
-        cpu_cull_view(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize, view != 0)
+        let caster_error = view.checked_sub(1).and_then(|lane| self.cull_views.shadow_lod.get(lane)).copied().unwrap_or(0.0);
+        cpu_cull_view(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize, (view != 0, caster_error))
     }
 
     /// What the cull reads to choose levels: the LOD view, the fade band and the LOD rows.

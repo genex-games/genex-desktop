@@ -16,6 +16,7 @@
 
 use genex_render::mesh::{GlbModel, LOD_MAX_LEVELS, LOD_SELECT_WGSL, LodFault, MeshData, select_lod};
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, Scene, translation};
+use genex_render::shadow::caster_error_texels;
 use genex_render::{Gpu, Renderer};
 use serde_json::{Value, json};
 
@@ -289,10 +290,13 @@ fn a_part_with_levels_draws_each_instance_once_at_the_level_its_distance_picks()
         let wanted = select_lod(&errors, distance, ppu, 1.0);
         assert!((*level as i64 - wanted as i64).abs() <= 1, "instance {draw}: drawn at {level}, the exact select gives {wanted}");
     }
-    // Every shadow cascade draws an instance at the camera's level, never twice.
+    // Every shadow cascade draws an instance once, at the camera's level or the coarser level its
+    // map cannot tell apart (lane FQ, `a_sun_cascade_casts_the_coarsest_level_its_filter_hides`).
     for view in 1..plan.views as usize {
+        let floor = cascade_floor(&plan, &library, mesh, view);
         for (draw, level) in drawn_levels(&plan, view, count).into_iter().enumerate() {
-            assert!(level.is_none_or(|level| level == camera[draw]), "view {view}, instance {draw}: {level:?} against the camera's {}", camera[draw]);
+            let wanted = camera[draw].max(floor[draw]);
+            assert!(level.is_none_or(|level| level == wanted), "view {view}, instance {draw}: {level:?}, want {wanted} (the camera's {})", camera[draw]);
         }
     }
     // An orthographic camera turns the levels off: every instance draws the mesh itself.
@@ -300,6 +304,45 @@ fn a_part_with_levels_draws_each_instance_once_at_the_level_its_distance_picks()
     flat.camera.ortho_height = Some(20.0);
     let flat_plan = FramePlan::build(&flat, &library, LOD_WIDTH as f32 / LOD_HEIGHT as f32).expect("plan");
     assert!(drawn_levels(&flat_plan, 0, count).into_iter().flatten().all(|level| level == 0));
+}
+
+/// The coarsest level of `mesh` each instance of `plan` may cast in sun cascade view `view`: the
+/// last whose world error is within the cascade's texels times its filter's
+/// [`caster_error_texels`] (0: the mesh itself).
+fn cascade_floor(plan: &FramePlan, library: &MeshLibrary, mesh: MeshId, view: usize) -> Vec<usize> {
+    let (set, settings) = (plan.cascades.as_ref().expect("cascades"), plan.shadows.as_ref().expect("shadows"));
+    let allowed = set.texel_world[view - 1] * caster_error_texels(settings.filter);
+    let (entry, lods) = (library.entry(mesh).expect("base"), library.lods(mesh).expect("levels"));
+    let rows = plan.batches[0].first_row as usize..(plan.batches[0].first_row + plan.batches[0].instance_count) as usize;
+    plan.instances[rows].iter().map(|row| lods.errors.iter().take_while(|error| *error / entry.radius * row.bounds[3] <= allowed).count()).collect()
+}
+
+/// Lane FQ (10,000 ghouls): a sun cascade's casters were drawn at the camera's level, which keeps a
+/// crowd's full mesh to 180 m, so a far cascade drew every ghoul's every triangle (the cascades'
+/// cost is their casters' triangles). A cascade now casts each instance at the coarsest level whose
+/// error its map cannot show through its filter's narrowest kernel (`caster_error_texels` of its
+/// texels), and never finer than the camera's: the near cascades, whose texels are small, keep
+/// the camera's level.
+#[test]
+fn a_sun_cascade_casts_the_coarsest_level_its_filter_hides() {
+    let part = sphere_part();
+    let mut library = MeshLibrary::new();
+    let mesh = library.add_part(part).expect("added");
+    let count = 24;
+    let scene = receding_spheres(mesh, count, true);
+    let mut plan = FramePlan::build(&scene, &library, LOD_WIDTH as f32 / LOD_HEIGHT as f32).expect("plan");
+    plan.set_lod_height(LOD_HEIGHT);
+    let camera: Vec<usize> = drawn_levels(&plan, 0, count).into_iter().flatten().collect();
+    let mut coarser = 0;
+    for view in 1..plan.views as usize {
+        let floor = cascade_floor(&plan, &library, mesh, view);
+        for (draw, level) in drawn_levels(&plan, view, count).into_iter().enumerate() {
+            let Some(level) = level else { continue };
+            assert_eq!(level, camera[draw].max(floor[draw]), "view {view}, instance {draw} (the camera draws {})", camera[draw]);
+            coarser += usize::from(level > camera[draw]);
+        }
+    }
+    assert!(coarser > 0, "a cascade casts some sphere coarser than the camera draws it");
 }
 
 #[test]

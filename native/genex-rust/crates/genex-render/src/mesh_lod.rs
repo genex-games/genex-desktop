@@ -55,6 +55,10 @@ pub const LOD_FADE_TAG: u32 = 1 << 30;
 /// of a compound then switches to it together), and a shadow view casts the last mesh level in
 /// its place ([`lod_row_keep_view`] with `caster`).
 pub const LOD_IMPOSTOR_TAG: u32 = 1 << 29;
+/// The bit of a batch's LOD tag marking a chain whose levels the CPU planned for the draw (a
+/// skinned character's band, AN-24): only those levels are skinned, so a sun cascade casts the
+/// camera's band and never a coarser level ([`caster_level`], lane FQ).
+pub const LOD_PLANNED_TAG: u32 = 1 << 28;
 /// The mesh levels past the mesh itself a chain keeps when an impostor ends it (game systems
 /// LOD-15): [`LOD_MAX_LEVELS`] is three mesh levels plus the impostor.
 pub const LOD_IMPOSTOR_MESH_LEVELS: usize = 3;
@@ -340,18 +344,42 @@ fn instance_chain(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32;
 /// An instance's band from the camera; levels off (`view.w` not positive) or a radius that is
 /// not positive draw the mesh itself whole. In a shadow view (`caster`, game systems LOD-15
 /// option A) a band at an impostor level reads as the last mesh level whole: the casters keep
-/// the mesh's shape where the camera draws the impostor or crossfades to it.
-fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: bool) -> LodBand {
+/// the mesh's shape where the camera draws the impostor or crossfades to it. A sun cascade
+/// (`caster_error` positive, lane FQ) casts the coarsest mesh level within that world error whole
+/// where it is coarser than that band ([`caster_level`]).
+fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), (caster, caster_error): (bool, f32)) -> LodBand {
     if !positive(view[3]) || !positive(bounds[3]) {
         return LodBand::MESH;
     }
     let (errors, levels, distance) = instance_chain(lod, bounds, origin, view);
     let band = lod_band(&errors[..levels], distance, view[3], 1.0, bias, beta);
-    let casts_mesh = caster && lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0 && band.level as usize >= levels;
-    if casts_mesh {
-        return LodBand { level: levels as u32 - 1, share: WHOLE };
+    let impostor = lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0;
+    let band = if caster && impostor && band.level as usize >= levels { LodBand { level: levels as u32 - 1, share: WHOLE } } else { band };
+    let mesh_levels = if impostor { levels - 1 } else { levels };
+    let planned = lod[0] & LOD_PLANNED_TAG != 0;
+    let floor = if planned { 0 } else { caster_level(&errors, mesh_levels, caster_error) };
+    if floor > band.level {
+        return LodBand { level: floor, share: WHOLE };
     }
     band
+}
+
+/// The coarsest of the first `mesh_levels` levels whose world error (`errors`) is within
+/// `allowed`, 0 (the mesh itself) when none is or nothing is allowed: what a sun cascade may cast
+/// (lane FQ, [`crate::shadow::caster_error_texels`]). `gx_cull_caster_level` in
+/// `shaders/cull.wgsl` is its twin.
+pub fn caster_level(errors: &[f32; 4], mesh_levels: usize, allowed: f32) -> u32 {
+    // A NaN allows nothing, as 0 does.
+    if allowed.is_nan() || allowed <= 0.0 {
+        return 0;
+    }
+    let mut level = 0;
+    for (k, error) in errors.iter().enumerate().take(mesh_levels.min(LOD_MAX_LEVELS as usize)) {
+        if *error <= allowed {
+            level = k as u32 + 1;
+        }
+    }
+    level
 }
 
 /// [`lod_keeps`] under a fade band of `beta` with the row's `bias`: whether the cull keeps an
@@ -371,12 +399,12 @@ pub fn lod_band_keep(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32,
 /// scaled by its own `bounds`' radius. The cull's keep rule (`gx_cull_lod_fade` in
 /// `shaders/cull.wgsl`, expression for expression; game systems LOD-03).
 pub fn lod_row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> Option<f32> {
-    row_keep(lod, bounds, origin, view, (bias, beta), false)
+    row_keep(lod, bounds, origin, view, (bias, beta), (false, 0.0))
 }
 
 /// [`lod_row_keep`] in a camera view, or in a shadow view (`caster`): there a band at an
 /// impostor level reads as the last mesh level whole (game systems LOD-15 option A).
-fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: bool) -> Option<f32> {
+fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: (bool, f32)) -> Option<f32> {
     if lod[0] & LOD_TAG == 0 {
         return Some(WHOLE);
     }
@@ -402,15 +430,17 @@ fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (
 /// fade, or its two crossfading levels with their fades times the far share; a share of 0 drops
 /// it everywhere. The cull's twin is `gx_cull_lod_fade` in `shaders/cull.wgsl`.
 pub fn lod_row_keep_far(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], band: (f32, f32), far: crate::lod_rows::FarField) -> Option<[f32; 2]> {
-    lod_row_keep_view(lod, bounds, origin, view, band, far, false)
+    lod_row_keep_view(lod, bounds, origin, view, band, far, (false, 0.0))
 }
 
 /// [`lod_row_keep_far`] in the camera view (`caster` false) or a shadow view (game systems
 /// LOD-15 option A): in a shadow view a chain ended by an impostor ([`LOD_IMPOSTOR_TAG`]) never
 /// keeps its impostor level, and an instance the camera draws as the impostor, or crossfades to
-/// it, casts its last mesh level whole. The cull's twin is `gx_cull_lod_fade` in
-/// `shaders/cull.wgsl` (its `caster` argument: every view but the camera).
-pub fn lod_row_keep_view(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField, caster: bool) -> Option<[f32; 2]> {
+/// it, casts its last mesh level whole. `caster` is that flag and the world error the view's
+/// casters may show (a sun cascade's, lane FQ; 0 the camera's level). The cull's twin is
+/// `gx_cull_lod_fade` in `shaders/cull.wgsl` (its `caster` argument: every view but the camera;
+/// its `caster_error`: `gx_cull_caster_error`).
+pub fn lod_row_keep_view(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField, caster: (bool, f32)) -> Option<[f32; 2]> {
     if !far.thinned {
         return row_keep(lod, bounds, origin, view, (bias, beta), caster).map(|fade| [fade, WHOLE]);
     }

@@ -311,6 +311,11 @@ pub struct GpuCullViews {
     /// switch); z: the frame's far rules (game systems LOD-18; 0: none, no LOD row read for
     /// them); w: 0.
     pub lod_params: [u32; 4],
+    /// The world error each sun cascade's casters may show (lane FQ, cascade `c` in lane `c`): a
+    /// cascade casts an instance at the coarsest level within it, never finer than the camera's
+    /// (`crate::shadow::caster_error_texels` of its texels; 0: the camera's level, as for the
+    /// camera and the shadowed spots).
+    pub shadow_lod: [f32; 4],
 }
 
 /// `draw_indexed_indirect` arguments as the cull pass writes them (`DrawIndexedArgs`), tightly

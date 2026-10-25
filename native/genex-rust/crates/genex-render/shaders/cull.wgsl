@@ -380,6 +380,9 @@ fn gx_cull_batch_of(row: u32) -> u32 {
 const GX_LOD_TAG: u32 = 0x80000000u;
 // A fade batch's bit (mesh_lod.rs LOD_FADE_TAG): without a band it keeps nothing.
 const GX_LOD_FADE_TAG: u32 = 0x40000000u;
+// A chain whose levels the CPU planned for the draw (mesh_lod.rs LOD_PLANNED_TAG: a skinned band,
+// only its levels skinned), which no shadow view casts coarser (lane FQ).
+const GX_LOD_PLANNED_TAG: u32 = 0x10000000u;
 // A chain ended by an impostor (mesh_lod.rs LOD_IMPOSTOR_TAG, game systems LOD-15).
 const GX_LOD_IMPOSTOR_TAG: u32 = 0x20000000u;
 
@@ -402,11 +405,13 @@ fn gx_cull_half(bits: u32) -> f32 {
 // (`lod.w` not positive) or a radius that is not positive draw the mesh itself whole. With far
 // rules (`views.lod_params.z`, game systems LOD-18) a copy past its rule's start is thinned:
 // every whole batch drops it and its fade batches keep it, the fade times the far share and the
-// grow the far field's (`gx_far_field`). In a shadow view (`caster`, every view but the camera)
+// grow the far field's (`gx_far_field`). A sun cascade (`caster_error` positive, lane FQ) casts
+// the coarsest mesh level within that world error whole where it is coarser than the camera's
+// band (`gx_cull_caster_level`). In a shadow view (`caster`, every view but the camera)
 // a chain ended by an impostor casts its last mesh level whole where the camera's band is at the
 // impostor (game systems LOD-15 option A). mesh_lod.rs `lod_row_keep_view` is its CPU twin,
 // expression for expression.
-fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool) -> vec3<f32> {
+fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool, caster_error: f32) -> vec3<f32> {
     var far = vec3<f32>(0.0, 1.0, 1.0);
     if views.lod_params.z != 0u {
         far = gx_far_field(lod_rows[row]);
@@ -435,6 +440,13 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool) -> 
         if caster && impostor && u32(band.x) >= levels {
             band = vec2<f32>(f32(levels - 1u), 1.0);
         }
+        // A sun cascade casts the coarsest mesh level its map cannot tell apart (lane FQ), whole,
+        // when that is coarser than the camera's.
+        let planned = (batch.lod & GX_LOD_PLANNED_TAG) != 0u;
+        let floor = gx_cull_caster_level(errors, select(levels, levels - 1u, impostor), select(caster_error, 0.0, planned));
+        if floor > u32(band.x) {
+            band = vec2<f32>(f32(floor), 1.0);
+        }
     }
     let picked = u32(band.x);
     if far.x > 0.0 {
@@ -456,6 +468,30 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool) -> 
         return vec3<f32>(1.0, -band.y, 1.0);
     }
     return vec3<f32>(select(0.0, 1.0, level + 1u == picked), 1.0 - band.y, 1.0);
+}
+
+// The world error view `view`'s casters may show (lane FQ, `views.shadow_lod`): a sun cascade's,
+// 0 for the camera and the shadowed spots (their lanes are 0).
+fn gx_cull_caster_error(view: u32) -> f32 {
+    if view == 0u || view > 4u {
+        return 0.0;
+    }
+    return views.shadow_lod[view - 1u];
+}
+
+// The coarsest of the first `mesh_levels` levels whose world error (`errors`) is within
+// `allowed` (0: none, the mesh itself). mesh_lod.rs `caster_level` is its CPU twin.
+fn gx_cull_caster_level(errors: vec4<f32>, mesh_levels: u32, allowed: f32) -> u32 {
+    var level = 0u;
+    if !(allowed > 0.0) {
+        return level;
+    }
+    for (var k = 0u; k < min(mesh_levels, 4u); k++) {
+        if errors[k] <= allowed {
+            level = k + 1u;
+        }
+    }
+    return level;
 }
 
 // Inclusive Hillis-Steele scan of `scan` over the workgroup.
@@ -492,7 +528,7 @@ fn cull_mark(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_
         if views.lod_params.x != 0u {
             let batch = batches[gx_cull_batch_of(slot)];
             row = batch.first_row + slot - batch.first_instance;
-            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row, view != 0u);
+            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row, view != 0u, gx_cull_caster_error(view));
             lod_keeps = kept.x > 0.0;
             grow = kept.z;
         }
@@ -590,7 +626,7 @@ fn cull_scatter(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocati
         visible[view * views.params.x + slot] = row;
         // A fade batch's survivor gets its fade (LOD-03) and its far field's grow (LOD-18).
         if (batch.lod & GX_LOD_FADE_TAG) != 0u {
-            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row, view != 0u);
+            let kept = gx_cull_lod_fade(batch, instances[row].bounds, row, view != 0u, gx_cull_caster_error(view));
             fades[view * views.params.x + slot] = kept.yz;
         }
     }

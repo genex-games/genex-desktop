@@ -181,13 +181,14 @@ pub fn in_frustum(planes: &[[f32; 4]; 6], bounds: [f32; 4]) -> bool {
 /// it, with their fades ([`crate::mesh::lod_row_keep`]; renderer pass 2 A6.9, game systems LOD-03).
 /// The camera's cull: [`cpu_cull_view`] with `caster` false.
 pub fn cpu_cull(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize) -> CpuCull {
-    cpu_cull_view(planes, lod, batches, instances, slots, false)
+    cpu_cull_view(planes, lod, batches, instances, slots, (false, 0.0))
 }
 
 /// [`cpu_cull`] of the camera (`caster` false) or of a shadow view (game systems LOD-15 option A:
 /// a chain ended by an impostor casts its last mesh level where the camera draws the impostor,
-/// [`crate::mesh::lod_row_keep_view`]); the compute pass's `caster` is every view but the camera.
-pub fn cpu_cull_view(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize, caster: bool) -> CpuCull {
+/// [`crate::mesh::lod_row_keep_view`]); the compute pass's `caster` is every view but the camera,
+/// with the world error a sun cascade's casters may show (lane FQ, `GpuCullViews::shadow_lod`).
+pub fn cpu_cull_view(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize, caster: (bool, f32)) -> CpuCull {
     let mut visible = vec![0; slots];
     let mut fades = vec![[INSTANCE_FADE_WHOLE; 2]; slots];
     let mut counts = Vec::with_capacity(batches.len());

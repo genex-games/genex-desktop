@@ -80,9 +80,15 @@ impl SkinnedPick {
 
     /// The LOD row (`GpuBatch::lod`) of the batch drawing `level` of this pick, over a chain of
     /// `errors` on a base mesh of bounding radius `radius`: `[0; 3]` (kept whole, the CPU chose)
-    /// outside the band, the level's fade batch inside it (the cull computes each row's share).
+    /// outside the band, the level's fade batch inside it (the cull computes each row's share),
+    /// tagged as planned ([`crate::mesh::LOD_PLANNED_TAG`]: no shadow view casts a level the
+    /// band did not skin).
     pub fn batch_lod(self, level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
-        if self.is_band() { fade_batch_lod(level, errors, radius) } else { [0; 3] }
+        if !self.is_band() {
+            return [0; 3];
+        }
+        let [tag, low, high] = fade_batch_lod(level, errors, radius);
+        [tag | crate::mesh::LOD_PLANNED_TAG, low, high]
     }
 }
 
