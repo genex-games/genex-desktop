@@ -711,25 +711,31 @@ capped at the Live class's reference resolution's pixels, or, where Live upscale
 the window, at four times its render budget (below); captures and goldens draw at the world size,
 or at the size a capture asks for (`capture --size`).
 
-The render budget (lane UP, the owner's AAA call): a native desktop drawing TAA with TAAU on the
-HDR scene (`presets::upscales_to_native`: `high` and `ultra`) renders at most
-`presets::render_pixel_budget` pixels (its class's reference resolution's, 2560x1440 on desktop
-high and ultra) and reaches the window's own by TAA upscaling. The facade multiplies every Live
-scale (the class's DRS steps, the nominal scale, the budget fit) by `presets::budget_scale`, the
-square root of budget over output in 1/32 steps (0.6875 for the Mac's 3456x2169 full screen, so
-it renders 2376x1491 and DRS moves down to 0.53; `drs` learns how the frame's cost follows the
-pixels from its step changes and climbs back when the next step fits, lane FQ, and sheds a
-preset's features only for frames the lowest step cannot fit in the interval); an output within
-the budget keeps scale 1, and
-the floor is `RENDER_SCALE_MIN`, which is why the output stops at four times the budget
-(`presets::native_output_cap_px`). Screen effects hold their own pixel budget
+Upscaling modes (`upscale`, lane UQ; owner's calls: on by default, Native only when the person or
+the game asks). A Live frame renders its `UpscaleMode`'s share of the window a side: Native 1
+(every pixel through TAA), Quality 0.6875 (22/32: the image rows dip at 21/32), Balanced 0.59375,
+Performance 0.5. On a native desktop
+the default is `upscale::calibrated_mode`: the best of Quality, Balanced and Performance whose
+render pixels fit `calibrated_pixel_budget` (the class's reference pixels at its nominal scale,
+2560x1440 on desktop high and ultra; Studio's measured score moves the class), never Native, held
+to that budget past 5K (lane UP's render budget). Phones and browsers keep their class's own scale
+until a mode is chosen. The facade multiplies every Live scale (the class's DRS steps, the nominal
+scale, the budget fit) by the mode's share of the output (`upscale::output_scale`: the window's on
+a TAAU desktop, more of a capped output elsewhere), so DRS moves below the mode (Quality at the
+Mac's 3456x2169 full screen renders 2376x1491, its steps down to 0.53; `drs` learns how the frame's
+cost follows the pixels from its step changes and climbs back when the next step fits, lane FQ,
+and sheds a preset's features only for frames the lowest step cannot fit in the interval). With
+dynamic resolution off the nominal step is the only one and nothing is shed. Where Live upscales
+temporally to the window (`presets::upscales_to_native`: `high` and `ultra`) its output is the
+window's own pixels up to four times `presets::render_pixel_budget`
+(`presets::native_output_cap_px`; the floor is `RENDER_SCALE_MIN`). Screen effects hold their own pixel budget
 (`presets::effect_budgeted`, `screen_effect_budget_px`: 1080p on a desktop, where ultra's AO
 budget was measured): full-resolution AO runs at half resolution with the joint-bilateral upsample
 past it, decided at the nominal step. SSR already traces at half the render size and bloom's chain
 starts at most 540 rows; the shadow maps and cascades keep the preset's row, sized for the
 reference render the budget holds. The web (its memory budget), phones and presets without TAAU
-keep the reference cap, so their frames are unchanged. `tests/upscale_quality.rs` holds the
-budget's frames to native ones (SSIM, shimmer, ghosting). Every shell (a window, the web
+keep the reference cap. `tests/upscale_quality.rs` holds each mode's frames to native ones (SSIM,
+shimmer, ghosting). Every shell (a window, the web
 canvas, a phone, Studio's Live ring) shows the world target through `Resilient::present`, which
 letterboxes it with `letterbox::present`: a texel-for-texel copy at its own size, FSR1 EASU + RCAS
 into a larger letterbox (a window past the cap), a Catmull-Rom filter widened to the ratio into a

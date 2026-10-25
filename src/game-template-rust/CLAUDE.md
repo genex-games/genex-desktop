@@ -87,8 +87,9 @@ The game runs on devices from a high-end desktop to an older phone and a browser
 renderer picks each device's quality itself (`docs/api/rendering.md`): you state the look,
 never the quality.
 
-- **Presets, not numbers.** Never hard-code `ultra`, a resolution or a render scale, and never
-  read render settings in `on_update` or a probe. State the look in `genex.toml` `[render]`
+- **Presets, not numbers.** Never hard-code `ultra`, a resolution, a render scale or an upscaling
+  mode (a photo mode alone holds Native: `genex::render::lock_upscale`), and never read render
+  settings in `on_update` or a probe. State the look in `genex.toml` `[render]`
   (`preset = "auto"`, `[render.look]`) and a per-device wish only in `[render.class.<class>]`.
   Offer `genex::render::settings_panel(ui)` in an options menu: the person's choice is saved per
   device, outside the simulation. Make content cheap at `low` and let presets add to it.
@@ -103,8 +104,8 @@ never the quality.
   glowing lamp or window (emission lights the picture, not other surfaces: pair it with a light),
   `frame.environment(Environment::sky())` outdoors (a white sun; the time of day is its elevation)
   or `Environment::hdri(path)` for a `.hdr` map in `assets/`. Keep `frame.ambient` and
-  `frame.clear` sensible for devices that draw no sky, and retune `ev_compensation` against a
-  capture after adding an environment.
+  `frame.clear` sensible where no sky draws; retune `ev_compensation` against a capture after
+  adding an environment.
 - **Prefer built-ins to custom passes.** A custom material or pass is for what they cannot draw,
   written at `api = 2` (linear, pre-exposed colour; a grade of your own goes at `PostHdr`). A
   Level-3 pass is not fogged or lit by point or spot lights yet (it shadows itself from

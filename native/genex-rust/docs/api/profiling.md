@@ -92,14 +92,16 @@ display. Start the built game from a shell with `GENEX_BENCH` set to a JSON plan
 
 ```sh
 GENEX_BENCH='{"seed":7,"demo":"genex-clip","camera":"horde","fullscreen":"native",
-  "renderScaleLock":1.0,"nativeOutput":true,"nodes":false,"seconds":60,"out":"/tmp/bench.json"}' ./game
+  "upscale":"quality","nativeOutput":true,"nodes":false,"seconds":60,"out":"/tmp/bench.json"}' ./game
 ```
 
 After the loading screen the run seeds, runs the demo, starts live play on the named camera and
 measures for `seconds`, then writes `out` and exits. `fullscreen` is `true` (borderless at the
 desktop's resolution) or `"native"` (exclusive at the display's own pixels). `renderScaleLock`
 holds the render scale (of the output: 1.0 renders every window pixel); leave it out to let
-dynamic resolution move it within the class's pixel budget. `nativeOutput` lifts the output cap,
+dynamic resolution move it within the upscaling mode. `upscale` holds a mode (`"native"`,
+`"quality"`, `"balanced"` or `"performance"`; left out, the person's, the game's or the
+calibration's), and the record names the mode drawn. `nativeOutput` lifts the output cap,
 so even a class that keeps its reference resolution draws the window's own pixels. `deviceClass`
 and `features` set what the `renderSettings` verb would, `nodes` keeps per-node GPU timing armed
 (the reports then time each frame-graph node; on Apple GPUs passes overlap, so trust the totals),

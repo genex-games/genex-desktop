@@ -372,6 +372,24 @@ fn the_grading_and_lens_calls_are_the_fixtures_and_each_is_a_call_of_the_facade(
         .motion_blur(MotionBlur::shutter(0.5));
 }
 
+/// Lane UQ: the upscaling knob's calls are the fixture's and real calls of the facade, and its mode
+/// spellings and frame-rate targets are the renderer's.
+#[test]
+fn the_upscaling_calls_modes_and_frame_rates_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::render::{RenderConfig, UpscaleMode};
+    let pinned = fixture();
+    assert_eq!(pinned_calls(&pinned, "upscaling"), [".upscale", ".upscale_locked", "genex::render::lock_upscale"]);
+    assert_eq!(names(&pinned["upscaling"]["modes"]), UpscaleMode::ALL.map(UpscaleMode::wire));
+    let rates: Vec<u64> = pinned["upscaling"]["frameRates"].as_array().expect("frame rates").iter().filter_map(serde_json::Value::as_u64).collect();
+    assert_eq!(rates, genex_render::drs::FRAME_RATE_TARGETS.map(u64::from));
+    let default = RenderConfig::from_build().upscale(UpscaleMode::Balanced);
+    assert_eq!((default.upscale.mode, default.upscale.locked), (Some(UpscaleMode::Balanced), false));
+    let locked = RenderConfig::new().upscale_locked(UpscaleMode::Native);
+    assert_eq!((locked.upscale.mode, locked.upscale.locked), (Some(UpscaleMode::Native), true));
+    // Outside a UI hook the hold does nothing.
+    genex::render::lock_upscale(Some(UpscaleMode::Native));
+}
+
 #[test]
 fn the_cloud_calls_are_the_fixture_s_and_each_is_a_call_of_the_facade() {
     use genex::render::{Clouds, Environment, SkyParams};
