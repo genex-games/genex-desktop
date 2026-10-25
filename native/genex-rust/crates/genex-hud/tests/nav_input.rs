@@ -202,6 +202,9 @@ fn panel(presets: &[String]) -> SettingsPanel<'_> {
     SettingsPanel {
         presets,
         preset: 0,
+        upscale: None,
+        frame_rate: None,
+        dynamic_resolution: None,
         render_scale: 1.0,
         scale_range: (0.5, 1.0),
         features: &[("Shadows", true)],
@@ -221,6 +224,9 @@ fn the_settings_panel_words_come_from_the_caller_and_english_stays_byte_identica
     let german = PanelWords {
         heading: "Grafik",
         quality: "Qualität",
+        upscale: "Hochskalierung",
+        frame_rate: "Bildrate",
+        dynamic_resolution: "Dynamische Auflösung",
         render_scale: "Renderskalierung",
         detail: "Detailentfernung",
         features: "Funktionen",
