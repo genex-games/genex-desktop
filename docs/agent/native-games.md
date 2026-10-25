@@ -64,7 +64,11 @@ whose clone succeeds (`copy`; a target holding a link, as cargo's dSYM link afte
 passed over), else the store's prewarm (`prewarm`), else empty (`cold`), and copies build in
 parallel; the donor's next build waits for the clone. The admitted executable in `<bin>.out` is a
 clone of cargo's too (`TreeCloner.cloneFile`: Node's `COPYFILE_FICLONE` copies every byte on APFS). Where it cannot (Windows, NTFS, ext4, HFS+) the game's
-copies build one at a time in one target, `shared/<game>-targets/<target>-<lock12>`. Every command
+copies build one at a time in one target, `shared/<game>-targets/<target>-<lock12>`. Turns go by
+`BuildPriority` (`game-build.ts`; default from the purpose): the person's builds (Live, Play, Native,
+exports) take a free slot of `rustBuildsMax(cores)`, else one of their own past it, and the shared
+target next; agents' (judging) take slots in the order asked; background prebuilds only a slot nobody
+else waits for, under `nice -n 10`. A person joining a waiting build raises it. Every command
 starts with `RUSTC_BOOTSTRAP` set empty as the prewarm's `rustEnv` does, or proc-macro2's build
 script reruns and every derive-using unit with it. The sweep (`gameBuilds.sweep()`: at start, after
 a worktree goes and after freeing a game's space; the lane's own before it makes a new build

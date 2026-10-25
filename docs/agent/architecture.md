@@ -809,7 +809,9 @@ pause (`paint-while-used.ts`). Once a trusted event of a type is seen, native in
 synthetic copies withheld, except a mousemove's (real delta; `game-template/src/studio.js`
 de-duplicates). Two pool windows are never a worker's (`workerWindows(max)` = max − 2, ≥ 1). A
 harness lease carries its boot as `owner` and is freed when that harness dies
-(`PreviewPool.releaseOwnedBy`). Without a free window, judge and playtest answer *no window free*;
+(`PreviewPool.releaseOwnedBy`). The person's Play has a hidden window (`PERSON_WINDOWS_MAX`) and a
+native lease (`PERSON_NATIVE_LEASES_MAX`) of its own past the agents' ceilings, so it never waits for
+a run's leases. Without a free window, judge and playtest answer *no window free*;
 unskippable passes use the stand-in, never Live. `preview.capacity` reports free windows and
 memory. Concurrent first `state` and `console` requests share one navigation. Each action emits
 `preview.frame` and `preview.screen`.

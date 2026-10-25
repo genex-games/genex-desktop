@@ -47,7 +47,7 @@ import type { CppBuildInput, CppBuilds } from "./cpp-build.ts";
 import type { RustLaneReport } from "./rust-build-diagnostics.ts";
 import { type RunConfinement, type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
 import { type NativeAdmissionFacts, NativeRefusal } from "../shared/native-contract.ts";
-import type { BuildProblem, CppBuildPurpose, InstallResult, SetupScripts } from "../shared/build-problem.ts";
+import { type BuildProblem, CppBuildPurpose, type InstallResult, type SetupScripts } from "../shared/build-problem.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { GENEX_GAME_PACKAGES, isGenexGamePackage } from "../shared/genex.ts";
 import { t } from "../shared/i18n.ts";
@@ -705,9 +705,26 @@ export interface GameBuildGame {
   recordLock?: boolean;
 }
 
+/**
+ * Whose build it is, which decides its turn (lane PW): the person's (their Play, Live's Native view,
+ * an export) never waits behind agents' builds; an agent's (a judged look) takes the lane's slots in
+ * the order asked; a background one (Play's prebuild) runs only when no one else waits, at a lower CPU
+ * priority. Wire values: the Studio log names them.
+ */
+export const BuildPriority = { Person: "person", Agent: "agent", Background: "background" } as const;
+export type BuildPriority = (typeof BuildPriority)[keyof typeof BuildPriority];
+
+/** The priority a build has when its caller names none: the person's for Live and exports, an agent's for judging. */
+export function priorityOf(purpose: CppBuildPurpose, asked?: BuildPriority): BuildPriority {
+  if (asked) return asked;
+  return purpose === CppBuildPurpose.Judging ? BuildPriority.Agent : BuildPriority.Person;
+}
+
 /** What one caller hands a build besides the game: its own signal, which ends only its own wait. */
 export interface GameBuildOptions {
   signal?: AbortSignal;
+  /** Whose build this is (default {@link priorityOf} its purpose). */
+  priority?: BuildPriority;
   /** A person's Play timing the build (`play-timings.ts`): the lane marks its wait and its steps; absent: nobody is. */
   timing?: PlayTimingSink;
 }

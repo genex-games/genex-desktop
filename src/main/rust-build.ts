@@ -131,7 +131,14 @@ import { type GameTrust, ownBuildScripts, UNTRUSTED } from "./rust-trust.ts";
 import { ExtensionRefusal } from "../shared/game-conformance.ts";
 import { PlayStage, type PlayTimingSink } from "../shared/play-timing.ts";
 import type { RustOutputAdmission } from "../substrate/native-cross-admission.ts";
-import type { BuildOutcome, GameBuildGame, GameBuildLane, GameBuildOptions } from "./game-build.ts";
+import {
+  type BuildOutcome,
+  BuildPriority,
+  type GameBuildGame,
+  type GameBuildLane,
+  type GameBuildOptions,
+  priorityOf,
+} from "./game-build.ts";
 import {
   type CargoMessages,
   diagnosticLines,
@@ -204,6 +211,18 @@ const SWEEP_STEP = "sweep";
 const STAGE_STEP = "stage";
 const ASSETS_STEP = "assets";
 const ADMIT_STEP = "admit";
+/** The person's builds that may run past the lane's ceiling at once, so a Play never waits for agents' slots. */
+const PERSON_BUILD_SLOTS = 1;
+/** Which turn goes first: the person's, then agents', then background prebuilds. */
+const PRIORITY_RANK = {
+  [BuildPriority.Person]: 0,
+  [BuildPriority.Agent]: 1,
+  [BuildPriority.Background]: 2,
+} as const satisfies Record<BuildPriority, number>;
+/** How much lower a background build's processes run (`nice`): agents' builds and the person's go first. */
+const BACKGROUND_NICENESS = 10;
+/** The program a background build's commands start through to run at that lower priority. */
+const NICE = "/usr/bin/nice";
 /** How many cores one build gets before a second may run beside it. */
 const CORES_PER_BUILD = 4;
 /** How much of a build's output the sandbox keeps: a cold build prints a JSON line per crate. */
@@ -700,6 +719,25 @@ interface Pending {
   sdk: string | null;
   /** The destination's own settings over the lane's (a phone's); null for none. */
   settings: Extract<RustTargetSettings, { ok: true }> | null;
+  /** Whose build it is: a person's joining a background build raises it (`#join`). */
+  turn: BuildTurn;
+}
+
+/** A build's place in the lane's queues, shared by everyone waiting on it. */
+interface BuildTurn {
+  priority: BuildPriority;
+}
+
+/** One build waiting for a slot or a shared target: its turn, and how it is let in. */
+interface Waiting {
+  turn: BuildTurn;
+  go: () => void;
+}
+
+/** A shared target: whether a build holds it, and the builds waiting for it. */
+interface SharedHold {
+  held: boolean;
+  queue: Waiting[];
 }
 
 /** A pending build with its toolchain and sandbox. */
@@ -763,6 +801,7 @@ interface ExportDebug {
 interface InFlight {
   /** The game it builds (its folder or a copy of it). */
   project: string;
+  turn: BuildTurn;
   controller: AbortController;
   done: Promise<BuildOutcome>;
   waiters: number;
@@ -775,16 +814,20 @@ type StepRun = RunResult | null;
 export class RustBuilds implements GameBuildLane {
   readonly options: RustBuildsOptions;
   readonly #inFlight = new Map<string, InFlight>();
-  readonly #waiting: Array<() => void> = [];
+  /** Builds waiting for a slot, let in by turn ({@link PRIORITY_RANK}), then in the order they asked. */
+  readonly #waiting: Waiting[] = [];
+  /** Builds holding a slot, the person's past the ceiling among them. */
   #active = 0;
+  /** The person's builds running past the ceiling ({@link PERSON_BUILD_SLOTS}). */
+  #personPast = 0;
   /** The lock digest last recorded per project, so the library is written once per change. */
   readonly #recorded = new Map<string, string>();
   /** Whether this host's root clones copy-on-write, probed once. */
   #sharing: Promise<RustTargetSharing> | null = null;
   /** Build folders whose target a new copy is cloning now: their own next build waits for it. */
   readonly #lending = new Map<string, Promise<void>>();
-  /** Shared targets a build holds or waits for: the last holder's turn, which the next waits on. */
-  readonly #holds = new Map<string, Promise<void>>();
+  /** Shared targets a build holds or waits for, each with the builds waiting in turn order. */
+  readonly #holds = new Map<string, SharedHold>();
   /** The sweep a new build folder started, while it runs ({@link RustBuilds.sweep}). */
   #sweeping: Promise<number> | null = null;
   /** The Plays timing each build folder's build (`GameBuildOptions.timing`), while they wait on it. */
@@ -822,7 +865,8 @@ export class RustBuilds implements GameBuildLane {
       const lines = [MESSAGE.settingsRefused(settings.code, settings.detail)];
       return this.#refused(asked, BuildProblemCode.ToolchainMissing, lines, null, RustBuildRefusal.TargetSettings);
     }
-    const pending: Pending = { game, target, purpose, builder, source, bin, lock, sdk, settings };
+    const turn = { priority: priorityOf(purpose, options.priority) };
+    const pending: Pending = { game, target, purpose, builder, source, bin, lock, sdk, settings, turn };
     return await this.#join(pending, options);
   }
 
@@ -833,11 +877,21 @@ export class RustBuilds implements GameBuildLane {
     const timing = options.timing;
     if (timing) this.#timingsOf(bin).add(timing);
     try {
-      const flight = running && !running.controller.signal.aborted ? running : this.#start(pending, running ?? null);
+      const joined = running && !running.controller.signal.aborted ? running : null;
+      if (joined) this.#raise(joined.turn, pending.turn.priority);
+      const flight = joined ?? this.#start(pending, running ?? null);
       return await this.#wait(flight, pending, options.signal);
     } finally {
       if (timing) this.#timings.get(bin)?.delete(timing);
     }
+  }
+
+  /** A build someone more urgent joined takes their turn: a person's Play joining a background build is the person's. */
+  #raise(turn: BuildTurn, priority: BuildPriority): void {
+    if (PRIORITY_RANK[priority] >= PRIORITY_RANK[turn.priority]) return;
+    turn.priority = priority;
+    this.#admitWaiting();
+    for (const hold of this.#holds.values()) this.#passOn(hold);
   }
 
   #timingsOf(bin: string): Set<PlayTimingSink> {
@@ -973,7 +1027,7 @@ export class RustBuilds implements GameBuildLane {
     const controller = new AbortController();
     const start = () => this.#build(pending, controller.signal);
     const done = cancelled ? cancelled.done.then(start, start) : start();
-    const flight: InFlight = { project: pending.game.project, controller, done, waiters: 0 };
+    const flight: InFlight = { project: pending.game.project, turn: pending.turn, controller, done, waiters: 0 };
     this.#inFlight.set(pending.bin, flight);
     const forget = () => {
       if (this.#inFlight.get(pending.bin) === flight) this.#inFlight.delete(pending.bin);
@@ -1050,9 +1104,9 @@ export class RustBuilds implements GameBuildLane {
     const target = await this.#targetOf(pending);
     // A copy cloning this folder's target finishes first; a shared target builds one copy at a time.
     await this.#lending.get(pending.bin);
-    const held = target.shared ? await this.#hold(target.dir, signal) : () => {};
+    const held = target.shared ? await this.#hold(target.dir, pending.turn, signal) : () => {};
     if (!held) return this.#outcome(pending, BuildProblemCode.Cancelled, { lastGood });
-    const release = await this.#slot(signal);
+    const release = await this.#slot(pending.turn, signal);
     this.#mark(pending.bin, PlayStage.BuildQueue, this.#now() - queued);
     if (!release) {
       held();
@@ -1557,27 +1611,45 @@ export class RustBuilds implements GameBuildLane {
   }
 
   /**
-   * Waits for the shared target `dir` and holds it: the release, or null when Stop came first.
-   * Each holder's turn is a promise the next waits on, so a game's copies build in the order asked.
+   * Waits for the shared target `dir` and holds it: the release, or null when Stop came first. One
+   * build holds it at a time; the next is the most urgent waiting ({@link PRIORITY_RANK}: the
+   * person's Play goes before agents' copies), then the first to ask.
    */
-  async #hold(dir: string, signal: AbortSignal): Promise<(() => void) | null> {
-    const before = this.#holds.get(dir) ?? Promise.resolve();
-    let release = () => {};
-    const mine = new Promise<void>((resolve) => {
-      release = resolve;
+  async #hold(dir: string, turn: BuildTurn, signal: AbortSignal): Promise<(() => void) | null> {
+    const hold = this.#holds.get(dir) ?? { held: false, queue: [] };
+    this.#holds.set(dir, hold);
+    const release = (): void => {
+      hold.held = false;
+      this.#passOn(hold);
+      if (!hold.held && hold.queue.length === 0 && this.#holds.get(dir) === hold) this.#holds.delete(dir);
+    };
+    if (!hold.held) {
+      hold.held = true;
+      return release;
+    }
+    const waiting: Waiting = { turn, go: () => {} };
+    const ready = new Promise<boolean>((resolve) => {
+      waiting.go = () => resolve(true);
     });
-    const turn = before.then(() => mine);
-    this.#holds.set(dir, turn);
-    void turn.then(() => {
-      if (this.#holds.get(dir) === turn) this.#holds.delete(dir);
-    });
-    const ready = await untilAborted(
-      before.then(() => true),
-      signal,
-    );
-    if (ready) return release;
-    release();
+    hold.queue.push(waiting);
+    const got = await untilAborted(ready, signal);
+    if (got) return release;
+    const at = hold.queue.indexOf(waiting);
+    if (at >= 0) hold.queue.splice(at, 1);
+    // Let in just as Stop came: the hold is ours, and goes on to the next.
+    else release();
+    if (!hold.held && hold.queue.length === 0 && this.#holds.get(dir) === hold) this.#holds.delete(dir);
     return null;
+  }
+
+  /** A shared target nobody holds goes to the most urgent build waiting for it. */
+  #passOn(hold: SharedHold): void {
+    if (hold.held) return;
+    const next = nextInTurn(hold.queue);
+    if (!next) return;
+    hold.queue.splice(hold.queue.indexOf(next), 1);
+    hold.held = true;
+    next.go();
   }
 
   /**
@@ -1769,31 +1841,66 @@ export class RustBuilds implements GameBuildLane {
     return this.#outcome(asked, reason, { lines, lastGood, ...(rust ? { rust } : {}) });
   }
 
-  /** One slot of `rustBuildsMax(cores)`, or null when the build was cancelled while it waited. */
-  async #slot(signal: AbortSignal): Promise<(() => void) | null> {
+  /**
+   * One slot of `rustBuildsMax(cores)`, or null when the build was cancelled while it waited. A
+   * person's build never waits behind agents': it takes a free slot, else one of its own past the
+   * ceiling ({@link PERSON_BUILD_SLOTS}), else the first place in the queue. An agent's takes a free
+   * slot no person waits for; a background build only a slot nobody else waits for.
+   */
+  async #slot(turn: BuildTurn, signal: AbortSignal): Promise<(() => void) | null> {
     if (signal.aborted) return null;
-    const release = () => {
-      this.#active--;
-      this.#waiting.shift()?.();
-    };
-    if (this.#active < rustBuildsMax(this.options.cores)) {
-      this.#active++;
-      return release;
-    }
-    return await new Promise((resolve) => {
-      const take = () => {
-        signal.removeEventListener("abort", leave);
-        this.#active++;
-        resolve(release);
+    const taken = this.#take(turn);
+    if (taken) return taken;
+    const granted: { release: (() => void) | null } = { release: null };
+    const waiting: Waiting = { turn, go: () => {} };
+    const ready = new Promise<boolean>((resolve) => {
+      waiting.go = () => {
+        granted.release = this.#take(turn, true);
+        resolve(true);
       };
-      const leave = () => {
-        const at = this.#waiting.indexOf(take);
-        if (at >= 0) this.#waiting.splice(at, 1);
-        resolve(null);
-      };
-      this.#waiting.push(take);
-      signal.addEventListener("abort", leave, { once: true });
     });
+    this.#waiting.push(waiting);
+    const got = await untilAborted(ready, signal);
+    if (got && granted.release) return granted.release;
+    const at = this.#waiting.indexOf(waiting);
+    if (at >= 0) this.#waiting.splice(at, 1);
+    // Let in just as Stop came: the slot goes on to the next.
+    granted.release?.();
+    return null;
+  }
+
+  /** A slot for `turn` now, or null when it must wait; `called` when the queue let it in. */
+  #take(turn: BuildTurn, called = false): (() => void) | null {
+    const max = rustBuildsMax(this.options.cores);
+    const ahead = called ? false : this.#waiting.some((other) => outranks(other.turn, turn));
+    const person = turn.priority === BuildPriority.Person;
+    const free = this.#active - this.#personPast < max && !ahead;
+    const past = person && !free && this.#personPast < PERSON_BUILD_SLOTS;
+    if (!free && !past && !called) return null;
+    this.#active++;
+    if (past) this.#personPast++;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      this.#active--;
+      if (past) this.#personPast--;
+      this.#admitWaiting();
+    };
+  }
+
+  /** Lets in the most urgent waiting builds while slots are free (a person's past the ceiling too). */
+  #admitWaiting(): void {
+    const max = rustBuildsMax(this.options.cores);
+    for (;;) {
+      const next = nextInTurn(this.#waiting);
+      if (!next) return;
+      const person = next.turn.priority === BuildPriority.Person;
+      const free = this.#active - this.#personPast < max;
+      if (!free && !(person && this.#personPast < PERSON_BUILD_SLOTS)) return;
+      this.#waiting.splice(this.#waiting.indexOf(next), 1);
+      next.go();
+    }
   }
 
   /** The lock is recorded once per project and digest; a record that cannot be written does not undo a build. */
@@ -2054,10 +2161,23 @@ function configArgs(plan: Plan, jobs: number): string[] {
   return settings.flatMap((setting) => ["--config", setting]);
 }
 
-/** `env -i <env>`, quoted: what every command of a build starts through. */
+/** `env -i <env>`, quoted: what every command of a build starts through; a background build's under `nice`. */
 function envPrefix(plan: Plan): string {
   const env = Object.entries(buildEnv(plan)).map(([name, value]) => `${name}=${value}`);
-  return [ENV, "-i", ...env].map(shellQuote).join(" ");
+  const niced = plan.turn.priority === BuildPriority.Background ? [NICE, "-n", String(BACKGROUND_NICENESS)] : [];
+  return [...niced, ENV, "-i", ...env].map(shellQuote).join(" ");
+}
+
+/** Whether `turn` goes before `other`. */
+function outranks(turn: BuildTurn, other: BuildTurn): boolean {
+  return PRIORITY_RANK[turn.priority] < PRIORITY_RANK[other.priority];
+}
+
+/** The waiting build whose turn is next: the most urgent, then the first to ask. */
+function nextInTurn(queue: readonly Waiting[]): Waiting | undefined {
+  let next: Waiting | undefined;
+  for (const waiting of queue) if (!next || outranks(waiting.turn, next.turn)) next = waiting;
+  return next;
 }
 
 /** `exec env -i <env> <program> <args>`: every word the host's, every one quoted. */

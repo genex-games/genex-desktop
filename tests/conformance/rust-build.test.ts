@@ -24,7 +24,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { coreGameBuilds } from "../../src/main/core/internals.ts";
-import type { GameBuildGame } from "../../src/main/game-build.ts";
+import { BuildPriority, type GameBuildGame } from "../../src/main/game-build.ts";
 import {
   RUST_CRATE_ALLOWLIST,
   RUST_TARGET_BUILDERS,
@@ -1422,5 +1422,115 @@ describe("copies of a game reuse its compiled engine instead of rebuilding it (B
     assert.equal(built.ok, true, JSON.stringify(built.problem));
     const bin = (built.output ?? "").slice(0, -".out".length);
     assert.equal(await readFile(path.join(bin, "tmp", "bootstrap"), "utf8"), "cleared\n");
+  });
+});
+
+describe("the person's Play never queues behind agents' builds (PW incident)", { skip: SKIP_ON_WINDOWS }, () => {
+  /**
+   * A lane with one build slot (4 cores) whose stub cargo holds every build of a game named
+   * `agent-*` until `gate` exists: a run's judged builds hold the slot while the person presses Play.
+   */
+  async function heldLane(parent: string, cloner: TreeCloner | null | undefined = undefined) {
+    const gate = path.join(parent, "gate");
+    const onBuild = `case "$manifest" in *${path.sep}agent-*) while [ ! -f ${shellWord(gate)} ]; do sleep 0.05; done ;; esac`;
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox, {
+      stub: { onBuild },
+      cores: 4,
+      ...(cloner === undefined ? {} : { cloner }),
+    });
+    return { builds, open, release: () => writeFile(gate, "go") };
+  }
+
+  /** Whether `promise` has settled after the event loop has had `ms` to run. */
+  async function settledWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+    let settled = false;
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await sleep(ms);
+    return settled;
+  }
+
+  it("a person's Live build starts while agents' judged builds hold every slot and wait for more (the Opening… wait)", async () => {
+    const parent = await realpath(await tmpDir("rust-person-slot-"));
+    const { builds, release } = await heldLane(parent);
+    const first = builds.ensure(gameOf(await rustGame(parent, "agent-a")), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const second = builds.ensure(gameOf(await rustGame(parent, "agent-b")), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const person = builds.ensure(gameOf(await rustGame(parent, "played")), BuildTarget.Mac, CppBuildPurpose.Live);
+    try {
+      assert.equal(await settledWithin(person, 3_000), true, "the person's build waited behind the agents'");
+      assert.equal((await person).ok, true, JSON.stringify((await person).problem));
+      assert.equal(await settledWithin(first, 0), false, "the agents' builds are still held");
+    } finally {
+      await release();
+    }
+    assert.equal((await first).ok, true);
+    assert.equal((await second).ok, true);
+  });
+
+  it("a background Play build runs after the agents' queued builds, at a lower CPU priority, and never in the person's slot", async () => {
+    const parent = await realpath(await tmpDir("rust-background-slot-"));
+    const { builds, open, release } = await heldLane(parent);
+    const order: string[] = [];
+    const track = (name: string, building: Promise<{ ok: boolean }>) =>
+      building.then((outcome) => {
+        order.push(name);
+        return outcome;
+      });
+    const held = track(
+      "agent-a",
+      builds.ensure(gameOf(await rustGame(parent, "agent-a")), BuildTarget.Mac, CppBuildPurpose.Judging),
+    );
+    await sleep(200);
+    const background = track(
+      "background",
+      builds.ensure(gameOf(await rustGame(parent, "prebuilt")), BuildTarget.Mac, CppBuildPurpose.Live, {
+        priority: BuildPriority.Background,
+      }),
+    );
+    const queued = track(
+      "agent-b",
+      builds.ensure(gameOf(await rustGame(parent, "agent-b")), BuildTarget.Mac, CppBuildPurpose.Judging),
+    );
+    assert.equal(
+      await settledWithin(background, 1_000),
+      false,
+      "the background build took no slot while agents hold it",
+    );
+    await release();
+    await Promise.all([held, background, queued]);
+    assert.deepEqual(order, ["agent-a", "agent-b", "background"]);
+    const niced = open.requests.filter((request) => request.label?.startsWith("rust:prebuilt:"));
+    assert.ok(niced.length > 0);
+    for (const request of niced) assert.match(request.command, /^exec '\/usr\/bin\/nice' '-n' '10' '\/usr\/bin\/env' /, request.command);
+    const agents = open.requests.filter((request) => request.label?.startsWith("rust:agent-"));
+    for (const request of agents) assert.doesNotMatch(request.command, /\/usr\/bin\/nice/);
+  });
+
+  it("on a host that cannot clone, the person's build of a copy goes before the agents' copies waiting for the game's shared target", async () => {
+    const parent = await realpath(await tmpDir("rust-person-shared-"));
+    const { builds, release } = await heldLane(parent, null);
+    const order: string[] = [];
+    const copy = async (name: string, purpose: CppBuildPurpose) => {
+      const dir = await rustGame(path.join(parent, name), "agent-game");
+      const outcome = await builds.ensure(gameOf(dir), BuildTarget.Mac, purpose);
+      order.push(name);
+      return outcome;
+    };
+    const first = copy("one", CppBuildPurpose.Judging);
+    await sleep(300);
+    const second = copy("two", CppBuildPurpose.Judging);
+    await sleep(100);
+    const person = copy("played", CppBuildPurpose.Live);
+    await sleep(300);
+    await release();
+    await Promise.all([first, second, person]);
+    assert.deepEqual(order, ["one", "played", "two"], "the shared target goes to the person's build next");
   });
 });
