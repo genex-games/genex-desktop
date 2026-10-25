@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::drs::{
-    DEMOTE_AFTER, DrsController, FrameSignal, MAX_SCALE_STEPS, PROMOTE_AFTER, RISE_AFTER_FRAMES, SCALE_QUANTUM, ScaleSteps,
-    THERMAL_RECOVER_AFTER, demote_quality, frame_signal,
+    DEMOTE_AFTER, DROP_AFTER_FRAMES, DrsController, FrameSignal, MAX_SCALE_STEPS, PROMOTE_AFTER, RISE_AFTER_FRAMES,
+    RISE_PREDICTED_FRACTION, SCALE_QUANTUM, ScaleSteps, THERMAL_RECOVER_AFTER, demote_quality, frame_signal,
 };
 use genex_render::presets::class_defaults;
 use genex_render::settings::{AntiAliasing, AoResolution, Quality, ShadowFilter, Upscaler};
@@ -367,4 +367,107 @@ fn thermal_load_holds_mobile_mid_at_30_fps_and_its_own_rate_returns_only_after_a
     let mut desktop = DrsController::for_class(DESKTOP_MID);
     assert!(!desktop.set_thermal(true, Duration::ZERO), "a class without a sustained rate keeps its own");
     assert_eq!(desktop.frame_interval(), Duration::from_secs(1) / 60);
+}
+
+/// Lane FQ: desktop ultra's steps at a budgeted native output on the M4 Max (lane UP: the class's
+/// scales times the budget scale 0.6875), lowest first.
+const BUDGET_STEPS: [f32; 4] = [0.53125, 0.59375, 0.65625, 0.6875];
+
+/// A 60 Hz controller over [`BUDGET_STEPS`] starting at the top.
+fn budget_controller() -> DrsController {
+    DrsController::new(ScaleSteps::table(&BUDGET_STEPS, 0.6875), 0.6875, Duration::from_secs(1) / 60)
+}
+
+/// A frame whose GPU time is `fixed` milliseconds no step changes (the passes at output size, a
+/// crowd's shadow casters) plus `pixels` milliseconds at the lowest step, following the render
+/// pixels.
+fn split_cost(fixed: f32, pixels: f32) -> impl Fn(f32) -> f32 {
+    move |scale: f32| fixed + pixels * (scale / BUDGET_STEPS[0]) * (scale / BUDGET_STEPS[0])
+}
+
+impl Sim {
+    /// One frame of `cost` at the current scale, plus `extra` milliseconds (a hitch).
+    fn cost_frame(&mut self, cost: &dyn Fn(f32) -> f32, extra: f32) -> f32 {
+        let ms = cost(self.drs.scale()) + extra;
+        self.signal(FrameSignal::GpuMs(ms));
+        ms
+    }
+}
+
+/// Lane FQ: the controller learned nothing from its frames: it predicted every step's cost as
+/// proportional to its pixels, and rose only under 75% of the target, so a frame whose cost is
+/// mostly fixed sat at the lowest step after one hitch (UP: 1,000 ghouls at 0.53 with GPU 11.8
+/// ms of a 14.2 ms target, where 0.59 fitted). The measured costs of the steps it ran now predict
+/// the next one, and it rises when that fits with margin.
+#[test]
+fn a_frame_with_a_fixed_cost_climbs_back_after_a_hitch_to_the_highest_step_that_fits() {
+    let cost = split_cost(8.0, 3.6);
+    let mut sim = Sim::new(budget_controller());
+    let (target, interval) = (sim.drs.gpu_target_ms(), 1000.0 / 60.0);
+    for _ in 0..120 {
+        sim.cost_frame(&cost, 0.0);
+    }
+    for _ in 0..DROP_AFTER_FRAMES {
+        sim.cost_frame(&cost, 12.0);
+    }
+    assert_eq!(sim.drs.step(), 0, "a hitch drops to the lowest step: {:?}", sim.trace);
+    let hitch_at = sim.trace.len();
+    for frame in 0..60 * 60 {
+        let ms = sim.cost_frame(&cost, 0.0);
+        assert!(ms <= interval, "frame {frame}: {ms} ms misses the {interval} ms frame at scale {}", sim.drs.scale());
+    }
+    let settled = sim.drs.step();
+    let steps = sim.drs.steps().steps().to_vec();
+    assert!(settled > 0, "the controller left the lowest step: {:?}", &sim.trace[hitch_at..hitch_at + 10]);
+    assert!(cost(steps[settled]) <= target, "it settled on a step over the target: {}", steps[settled]);
+    if let Some(next) = steps.get(settled + 1) {
+        assert!(cost(*next) > target * RISE_PREDICTED_FRACTION, "the step above ({next}) fitted with margin and it stayed at {}", steps[settled]);
+    }
+    let changes = sim.changes().into_iter().filter(|frame| *frame > hitch_at).count();
+    assert!(changes <= 4, "{changes} step changes after the hitch: {:?}", sim.changes());
+}
+
+/// Lane FQ: the steps the controller dropped through measured how the cost follows the pixels, so
+/// it does not rise again into a step that was over the target (no oscillation), and no frame
+/// misses the display interval.
+#[test]
+fn a_step_measured_over_the_target_is_not_risen_into_again() {
+    let cost = split_cost(6.0, 6.8);
+    let mut sim = Sim::new(budget_controller());
+    let interval = 1000.0 / 60.0;
+    // The nominal top step is over the interval: the controller drops from it at once.
+    for _ in 0..60 {
+        sim.cost_frame(&cost, 0.0);
+    }
+    for frame in 0..60 * 60 {
+        let ms = sim.cost_frame(&cost, 0.0);
+        assert!(ms <= interval, "frame {frame}: {ms} ms at scale {}", sim.drs.scale());
+    }
+    assert_eq!(sim.drs.step(), 0, "the lowest step is the only one under the target");
+    let rises = sim.trace.windows(2).filter(|pair| pair[1] > pair[0]).count();
+    assert!(rises <= 1, "{rises} rises into a step measured over the target: {:?}", sim.changes());
+}
+
+/// Lane FQ: the same climb with the frame-to-frame noise of real GPU timings (a deterministic
+/// ±0.6 ms): what a noisy change teaches never sets the controller flapping.
+#[test]
+fn measurement_noise_does_not_set_the_learned_cost_model_flapping() {
+    let cost = split_cost(7.5, 3.6);
+    let mut sim = Sim::new(budget_controller());
+    let noise = |frame: u32| ((frame.wrapping_mul(2_654_435_761) >> 24) as f32 / 255.0 - 0.5) * 1.2;
+    let target = sim.drs.gpu_target_ms();
+    for frame in 0..120 {
+        sim.cost_frame(&cost, noise(frame));
+    }
+    for _ in 0..DROP_AFTER_FRAMES {
+        sim.cost_frame(&cost, 12.0);
+    }
+    let hitch_at = sim.trace.len();
+    for frame in 0..60 * 60 {
+        sim.cost_frame(&cost, noise(frame));
+    }
+    let changes = sim.changes().into_iter().filter(|frame| *frame > hitch_at).count();
+    assert!(changes <= 6, "{changes} step changes in a minute of noisy frames: {:?}", sim.changes());
+    let settled = sim.drs.scale();
+    assert!(settled > BUDGET_STEPS[0] && cost(settled) <= target, "settled at {settled}");
 }

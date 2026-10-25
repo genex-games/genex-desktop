@@ -4,10 +4,18 @@
 //!
 //! - With [`FrameSignal::GpuMs`] (timestamp queries) the GPU target is [`GPU_TARGET_FRACTION`] of
 //!   the class's frame interval. [`DROP_AFTER_FRAMES`] frames over target drop the scale to the
-//!   highest step whose pixel-proportional cost fits; [`RISE_AFTER_FRAMES`] frames under
-//!   [`CALM_FRACTION`] of the target raise it one step, and only when the next step is predicted
-//!   to fit. A rise that is undone within [`RISE_AFTER_FRAMES`] doubles the calm needed for the
+//!   highest step whose predicted cost fits; [`RISE_AFTER_FRAMES`] calm frames raise it one step,
+//!   and only when the next step is predicted to fit under [`RISE_PREDICTED_FRACTION`] of the
+//!   target. A rise that is undone within [`RISE_AFTER_FRAMES`] doubles the calm needed for the
 //!   next one, so a slow oscillation cannot flap.
+//! - **The cost model** (lane FQ): a step's cost is predicted from the current one as
+//!   pixels^exponent past the fixed part, the exponent learned from the frames measured on each
+//!   side of a step change ([`LEARN_FRAMES`] each; a sample outside 0..=1 saw the load change,
+//!   not the pixels, and is dropped). Until a change has taught it, the exponent is 1 (every
+//!   millisecond follows the pixels, which never under-predicts a rise) and a calm frame is one
+//!   under [`CALM_FRACTION`] of the target; once learned, a frame is calm when the next step is
+//!   predicted to fit, so a frame whose cost is mostly fixed (passes at output size, a crowd's
+//!   shadow casters) climbs to the highest step that fits.
 //! - With [`FrameSignal::IntervalOnly`] (Safari, or no timestamps) there is no GPU target: the
 //!   scale drops only on missed vsyncs (an interval over [`MISSED_INTERVAL_FACTOR`] × the class
 //!   interval, [`MISSES_TO_DROP`] in the last [`MISS_WINDOW_FRAMES`]) and climbs back toward the
@@ -52,6 +60,11 @@ pub const RISE_BACKOFF_MAX_FRAMES: u32 = 240;
 pub const CALM_FRACTION: f32 = 0.75;
 /// A rise needs the next step's predicted cost under this fraction of the GPU target.
 pub const RISE_PREDICTED_FRACTION: f32 = 0.9;
+/// Measured frames on each side of a step change that teach the cost model how a frame's cost
+/// follows its pixels (and the most a side keeps).
+pub const LEARN_FRAMES: usize = 8;
+/// The weight a new exponent sample gets over the one learned before it.
+const LEARN_WEIGHT: f32 = 0.5;
 /// Measurements ignored after a change: they were rendered before it.
 pub const SETTLE_FRAMES: u32 = 2;
 /// An interval over this multiple of the class interval missed a vsync.
@@ -204,6 +217,39 @@ struct Measurements {
     overload_since: Option<Duration>,
     /// With headroom since.
     headroom_since: Option<Duration>,
+    /// The last measured frames under the target at this step (the cost model's "before" side).
+    steady: Recent,
+}
+
+/// The mean of the last [`LEARN_FRAMES`] costs pushed.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Recent {
+    ms: [f32; LEARN_FRAMES],
+    len: usize,
+    next: usize,
+}
+
+impl Recent {
+    fn push(&mut self, ms: f32) {
+        self.ms[self.next] = ms;
+        self.next = (self.next + 1) % LEARN_FRAMES;
+        self.len = (self.len + 1).min(LEARN_FRAMES);
+    }
+
+    fn mean(&self) -> Option<f32> {
+        (self.len > 0).then(|| self.ms[..self.len].iter().sum::<f32>() / self.len as f32)
+    }
+}
+
+/// A step change the cost model is measuring: the scale it left, the costs measured there (the
+/// steady frames, and the frames over target that dropped it), and the frames after it so far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Learning {
+    from: f32,
+    to: f32,
+    over: Option<f32>,
+    steady: Option<f32>,
+    after: Recent,
 }
 
 /// The controller.
@@ -233,6 +279,11 @@ pub struct DrsController {
     /// Milliseconds of a frame at scale 1 that do not follow the render step (no upscale runs
     /// there; RCAS alone under TAA's sharpen does).
     fixed_at_one_ms: f32,
+    /// How the cost past the fixed part follows the pixels: cost ∝ pixels^exponent (None until a
+    /// step change taught it: 1, every millisecond follows them).
+    exponent: Option<f32>,
+    /// The step change being measured.
+    learning: Option<Learning>,
 }
 
 impl DrsController {
@@ -257,6 +308,8 @@ impl DrsController {
             thermal: None,
             fixed_ms: 0.0,
             fixed_at_one_ms: 0.0,
+            exponent: None,
+            learning: None,
         }
     }
 
@@ -375,6 +428,15 @@ impl DrsController {
         self.measured = Measurements { settle: SETTLE_FRAMES, ..Measurements::default() };
         self.since_rise = None;
         self.probe = None;
+        // What the frames taught may not hold for the frames after a pipeline or size change.
+        self.exponent = None;
+        self.learning = None;
+    }
+
+    /// The exponent the cost model predicts with: how a frame's cost past its fixed part follows
+    /// the render pixels (1 until a step change taught it).
+    pub fn cost_exponent(&self) -> f32 {
+        self.exponent.unwrap_or(1.0)
     }
 
     /// The current step's index.
@@ -429,14 +491,56 @@ impl DrsController {
         self.frame_interval().as_secs_f32() * 1000.0
     }
 
-    /// The cost of `ms` at the current step, predicted at `step`: proportional to pixels, except
+    /// The cost of `ms` at the current step, predicted at `step`: the pixels' ratio to the learned
+    /// exponent ([`DrsController::cost_exponent`]; 1, proportional to pixels, until learned), except
     /// the fixed part ([`DrsController::with_upscale_ms`]), which is the current scale's in `ms`
     /// and the predicted step's after it (the upscale starts below 1 and stops at 1).
     fn predicted_ms(&self, ms: f32, step: usize) -> f32 {
         let next = self.steps.steps()[step];
         let ratio = next / self.scale();
         let fixed = self.fixed_at(self.scale()).min(ms);
-        self.fixed_at(next) + (ms - fixed) * ratio * ratio
+        self.fixed_at(next) + (ms - fixed) * libm::powf(ratio * ratio, self.cost_exponent())
+    }
+
+    /// The exponent `before` ms at `from` and `after` ms at `to` imply past the fixed parts, if
+    /// it is one the pixels can explain (0..=1: a cost that fell as the pixels grew, or grew faster
+    /// than them, saw the load change).
+    fn exponent_sample(&self, (from, before): (f32, f32), (to, after): (f32, f32)) -> Option<f32> {
+        let (before, after) = (before - self.fixed_at(from).min(before), after - self.fixed_at(to).min(after));
+        let pixels = libm::logf((to / from) * (to / from));
+        let sample = libm::logf(after / before) / pixels;
+        (sample.is_finite() && (0.0..=1.0).contains(&sample)).then_some(sample)
+    }
+
+    /// Take a measured frame after a step change; with [`LEARN_FRAMES`] of them (or when another
+    /// change comes first, `finish`) the change's sample refines the exponent.
+    fn learn_after(&mut self, ms: Option<f32>, finish: bool) {
+        let Some(mut learning) = self.learning.take() else { return };
+        if let Some(ms) = ms {
+            learning.after.push(ms);
+        }
+        if !finish && learning.after.len < LEARN_FRAMES {
+            self.learning = Some(learning);
+            return;
+        }
+        let Some(after) = learning.after.mean() else { return };
+        // A drop's frames over target are its load, unless they were a hitch: the steady frames
+        // before it then explain the step.
+        let sample = [learning.over, learning.steady].into_iter().flatten().find_map(|before| self.exponent_sample((learning.from, before), (learning.to, after)));
+        if let Some(sample) = sample {
+            self.exponent = Some(self.exponent.map_or(sample, |learned| learned + (sample - learned) * LEARN_WEIGHT));
+        }
+    }
+
+    /// Change to `step` from a GPU-timed frame, measuring the change (`over`: the mean of the
+    /// frames over target that dropped it).
+    fn change_measured(&mut self, step: usize, over: Option<f32>) {
+        self.learn_after(None, true);
+        let from = self.scale();
+        let steady = self.measured.steady.mean();
+        self.change_step(step);
+        let to = self.scale();
+        self.learning = (from != to).then_some(Learning { from, to, over, steady, after: Recent::default() });
     }
 
     fn observe_gpu(&mut self, ms: f32, now: Duration) {
@@ -451,6 +555,7 @@ impl DrsController {
                 self.calm_needed = RISE_AFTER_FRAMES;
             }
         }
+        self.learn_after(Some(ms), false);
         if ms > target {
             self.measured.calm_frames = 0;
             self.measured.over_frames += 1;
@@ -462,11 +567,19 @@ impl DrsController {
         }
         self.measured.over_frames = 0;
         self.measured.over_ms = 0.0;
-        self.measured.calm_frames = if ms < target * CALM_FRACTION { self.measured.calm_frames + 1 } else { 0 };
+        self.measured.steady.push(ms);
         let next = self.current + 1;
-        let fits = next < self.steps.steps().len() && self.predicted_ms(ms, next) <= target * RISE_PREDICTED_FRACTION;
+        // Learned, the rise is predicted from the lower of this frame and the last steady frames'
+        // mean: one noisy frame does not stop a rise, and a lighter load starts one at once (the
+        // margin under the target is wider than a frame's noise).
+        let measured = if self.exponent.is_some() { self.measured.steady.mean().map_or(ms, |mean| mean.min(ms)) } else { ms };
+        let fits = next < self.steps.steps().len() && self.predicted_ms(measured, next) <= target * RISE_PREDICTED_FRACTION;
+        // Learned, the prediction is the measurement's; unlearned, it assumes every millisecond
+        // follows the pixels and waits for a calmer frame too.
+        let calm = if self.exponent.is_some() { fits } else { ms < target * CALM_FRACTION };
+        self.measured.calm_frames = if calm { self.measured.calm_frames + 1 } else { 0 };
         if self.measured.calm_frames >= self.calm_needed && fits {
-            self.change_step(next);
+            self.change_measured(next, None);
             self.since_rise = Some(0);
         }
     }
@@ -483,7 +596,7 @@ impl DrsController {
             self.calm_needed = (self.calm_needed * 2).min(RISE_BACKOFF_MAX_FRAMES);
         }
         let step = (0..self.current).rev().find(|step| self.predicted_ms(ms, *step) <= target).unwrap_or(0);
-        self.change_step(step);
+        self.change_measured(step, Some(ms));
     }
 
     fn observe_interval(&mut self, ms: f32, now: Duration) {
