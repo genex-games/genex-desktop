@@ -343,6 +343,9 @@ describe("exportMacApp: the app's layout", { skip: POSIX }, () => {
     assert.equal(value("LSMinimumSystemVersion"), "<string>13.0</string>");
     assert.equal(value("NSHighResolutionCapable"), "<true/>");
     assert.equal(value("LSApplicationCategoryType"), "<string>public.app-category.games</string>");
+    // Lane FR: macOS 26 reads LSSupportsGameMode, macOS 14 and 15 GCSupportsGameMode.
+    assert.equal(value("LSSupportsGameMode"), "<true/>");
+    assert.equal(value("GCSupportsGameMode"), "<true/>");
     assert.equal(plist.includes("LSUIElement"), false, "a player's app has a Dock icon");
   });
 

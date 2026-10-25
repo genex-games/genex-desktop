@@ -19,8 +19,10 @@ its own frames service. The windowed one keeps `com.apple.view-bridge` denied; t
 `admitMacBundle` ([`native-bundle.ts`](../../src/substrate/native-bundle.ts)) reads the Mach-O
 itself: thin arm64, link-time imports only from the system and the store's ANGLE (Metal still maps
 OpenGL.framework at run time), one rpath, no Mach-O or hard-linked asset. `assembleRunDir` copies
-the pinned ANGLE and each re-checked asset into a per-run `.app` no agent reads, signed ad hoc; the
-game speaks on fd 3. Game reports are never host facts: capture digests are recomputed, captures
+the pinned ANGLE and each re-checked asset into a per-run `.app` no agent reads, signed ad hoc; a
+window run's Info.plist, like a Mac export's, declares the game category and Game Mode support
+(`gameModeEntries`: `LSApplicationCategoryType`, `LSSupportsGameMode`, `GCSupportsGameMode`), a
+background run's none. The game speaks on fd 3. Game reports are never host facts: capture digests are recomputed, captures
 read only from a real `state/captures`. An overlay `allowWrite` never lifts a base `denyWrite`
 (`mergeOverlay`). Frames reach Live through the frames addon
 (`dist/resources/native/genex-frames.node`, `process.dlopen` in `native-frames.ts` only): it
