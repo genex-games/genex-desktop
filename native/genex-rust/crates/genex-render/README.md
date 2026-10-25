@@ -366,7 +366,11 @@ every target is pooled under its own ledger row.
   texel (`prepass normal roughness`), which the screen-space reflections' surface pass writes.
 - Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) holds the screen
   reflections (rgb, a confidence): the stage's 16th sampled texture of 16 (owner decision D1), a
-  zero texel on frames that trace none.
+  zero texel on frames that trace none. A frame nothing in can reflect (`ssr::frame_can_reflect`,
+  lane FQ: no instance whose material's roughness factor is under the cutoff or that has a
+  metallic-roughness texture, no binned decal that sets a roughness under it) traces none: the
+  trace would have resolved every texel to zero, so node 10b opens no pass and the pyramid is still
+  built for the next frame.
 - `shaders/screen/normal_roughness_unpack.wgsl` is the readers' half of the packing (the code range
   and `gx_unpack_normal`, `gx_unpack_roughness`), which B.9's passes include alone.
 
@@ -620,15 +624,34 @@ forward binding (`renderer/lens.rs` holds their targets).
 shadow a receiver reading it, after `shadow::fit` places the cascade: a receiver reads cascade `c`
 from any view depth up to `c`'s end (its own cascade, the blend band, PCSS's coarser cascade for a
 wide penumbra), so its receivers lie in the camera frustum from the near plane to `c`'s end. A
-caster outside that frustum's light-space box, widened by the widest lookup across the map
+caster outside that frustum's light-space polygon, widened by the widest lookup across the map
 (PCSS's 16 texels and the bilinear one, or the filter's reach) and along the light by that reach
 times the receiver-plane bias's slope cap (16), cannot shadow any of them and is culled; the near
-plane stays open (pancaking). The box snaps outward to 16-texel steps, so a camera moving inside a
-step keeps the cull view (and the static shadow cache's key). The maps and matrices are the fit's:
+plane stays open (pancaking). Seen along the light the frustum is a convex polygon of up to six
+sides; `cascade_hull::sides` (lane FQ) fills the cull view's five side slots (the box's four and
+the open near plane's) greedily from its edges and the box's sides, so a camera looking across the
+light no longer draws the casters in the box's empty corners (the posts row with the sun beside the
+camera: 1,266 casters where the box drew 1,961). The sides snap outward to 16-texel steps, so a
+camera moving inside a step keeps the cull view (and the static shadow cache's key). The maps and
+matrices are the fit's:
 the pictures are bit for bit the same (`tests/shadow_cascades.rs`), exact for every receiver in
 the frustum whose slope to the light is under the cap. It stands down under a far cadence (a held
 map outlives its camera) and on frames with a Level-3 pass (`ExtensionDemand::level3`: it may read
 the maps anywhere); `Renderer::set_shadow_receiver_cull(false)` turns it off.
+
+A cascade's cost is its casters' triangles (lane FQ, Metal System Trace of 10,000 ghouls: the map's
+size changes nothing, every caster at its coarsest level halves the four cascades). A sun cascade
+casts each instance with levels at the coarsest mesh level whose world error is within
+`shadow::caster_error_texels` of its own texels (PCSS: its narrowest kernel, 3 texels, and the
+bilinear neighbour; the PCF kernels and the hardware tap their reach), never finer than the
+camera's level (`GpuCullViews::shadow_lod`, `gx_cull_caster_level` and its CPU twin
+`mesh::caster_level`). A silhouette's error inside the narrowest kernel the receivers read the
+map through blurs into the filter's own; the near cascades' texels are too small for any level,
+so contact shadows near the camera keep the camera's level, and the level is per cascade, not per
+distance, so a moving camera never switches it. A skinned band's levels are skinned for the camera
+alone (`mesh::LOD_PLANNED_TAG`): its casters keep the camera's band. At the 10k horde's peak the
+far cascade's casters take level 1 (3.3 to 2.45 ms busy) and the picture holds (SSIM 0.9999 against
+the camera-level casters, no pixel over 24 levels).
 
 ## Sun-shadow mask
 
@@ -686,7 +709,10 @@ HDR scene (`presets::upscales_to_native`: `high` and `ultra`) renders at most
 high and ultra) and reaches the window's own by TAA upscaling. The facade multiplies every Live
 scale (the class's DRS steps, the nominal scale, the budget fit) by `presets::budget_scale`, the
 square root of budget over output in 1/32 steps (0.6875 for the Mac's 3456x2169 full screen, so
-it renders 2376x1491 and DRS moves down to 0.53); an output within the budget keeps scale 1, and
+it renders 2376x1491 and DRS moves down to 0.53; `drs` learns how the frame's cost follows the
+pixels from its step changes and climbs back when the next step fits, lane FQ, and sheds a
+preset's features only for frames the lowest step cannot fit in the interval); an output within
+the budget keeps scale 1, and
 the floor is `RENDER_SCALE_MIN`, which is why the output stops at four times the budget
 (`presets::native_output_cap_px`). Screen effects hold their own pixel budget
 (`presets::effect_budgeted`, `screen_effect_budget_px`: 1080p on a desktop, where ultra's AO

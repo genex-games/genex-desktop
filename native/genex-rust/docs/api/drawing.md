@@ -87,7 +87,8 @@ twice the preset's.
 Many copies cost what can be seen of them. Each sun cascade draws only the casters that can
 shadow something the camera may see through it: a caster beside the view's light-space footprint,
 or farther from the sun than every surface that reads the cascade (behind the camera under a sun
-ahead of it), is left out, so a crowd or a forest behind the camera costs no shadow time. A
+ahead of it), is left out, so a crowd or a forest behind the camera costs no shadow time, and a
+far cascade casts a copy at the coarser level of its mesh its map cannot show. A
 frame of at least 1,024 opaque copies also tests each copy against a depth pyramid of what the
 prepass (the camera) or a cascade (the sun) drew first, and leaves out what that hides, where it
 measures that this pays (a walled street, a forest behind a hill). The pictures are the same;
@@ -95,9 +96,9 @@ there is nothing to set. For a crowd, draw plain models under a stable `frame.id
 poses past a skinned band of the nearest, under the class's skinned cap) and leave their levels to
 the import. Measured on an M4 Max at `ultra` on its 3456x2169 full screen (which renders a
 2560x1440 budget and upscales it by TAA), 1,000 and 5,000 such copies hold 60 fps with every
-feature on; 10,000 hold 60 fps only once dynamic resolution's floor drops bloom, AO and spot
-shadows (each sun cascade the crowd stands in costs about 1.2 ms). With the scale held at 1 they
-draw 30 to 40 fps: never hold it.
+feature on; 10,000 draw 54 to 60 fps at dynamic resolution's floor with every feature on (their
+four sun cascades cost most of a frame). With the scale held at 1 they draw 30 to 40 fps: never
+hold it.
 
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`
