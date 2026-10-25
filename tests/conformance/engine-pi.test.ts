@@ -8,11 +8,13 @@
 import assert from "node:assert/strict";
 import { realpath } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { PiEngine, type PiExec, type PiInvocation, piSandbox } from "../../src/substrate/engines/pi.ts";
+import { PiEngine, type PiExec, type PiInvocation, piSandbox, stderrFailure } from "../../src/substrate/engines/pi.ts";
 import { hostsFromPiModelsJson, parsePiModels } from "../../src/substrate/engines/pi-cli.ts";
 import { translatePiEvent } from "../../src/substrate/engines/pi-events.ts";
+import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -188,7 +190,7 @@ describe("Pi's sessions", () => {
     assert.equal(first.argv[first.argv.indexOf("--thinking") + 1], "high");
     assert.equal(first.cwd, await realpath(cwd));
     assert.match(first.prompt, /Build a hut/);
-    assert.ok(first.sandbox.ownHome?.some((home) => home.includes(".pi")));
+    assert.ok(first.sandbox.readableHome?.some((home) => home.includes(".pi")));
 
     const resumed = await engine.delegate({
       cwd,
@@ -251,7 +253,8 @@ describe("Pi's sandbox", () => {
       sandbox.writableRoots.includes(path.join("/Users/dev", ".pi", "agent", "auth.json.lock")),
       "Pi creates a lock folder even to read auth.json",
     );
-    assert.ok(sandbox.ownHome?.some((home) => home.endsWith(".pi") || home.includes(`${path.sep}.pi`)));
+    assert.equal(sandbox.ownHome, undefined, "`~/.pi` is not a write grant: a session must not rewrite it");
+    assert.deepEqual(sandbox.readableHome, [path.join("/Users/dev", ".pi")], "the CLI still reads its sign-ins");
     assert.ok(sandbox.secretPaths.includes("/secrets"));
     const denied = sandbox.denyWrite ?? [];
     for (const leaf of [
@@ -262,6 +265,9 @@ describe("Pi's sandbox", () => {
       "extensions",
       "skills",
       "npm",
+      "bin",
+      "tools",
+      "prompts",
     ])
       assert.ok(
         denied.some((p) => p.endsWith(`${path.sep}${leaf}`)),
@@ -271,6 +277,24 @@ describe("Pi's sandbox", () => {
       denied.some((p) => p === path.join("/game", ".pi")),
       "a game's own .pi folder is not the session's to plant",
     );
+  });
+
+  it("leaves Pi's home readable and writable only where a session must write", async () => {
+    const home = os.homedir();
+    const piHome = path.join(home, ".pi");
+    const agent = path.join(piHome, "agent");
+    const box = await ProcessSandbox.create({
+      ...piSandbox({ runDir: "/game", gameDir: "/game", gitDirs: [], scratchDir: "/tmp/pi-scratch", secretPaths: [] }),
+      enabled: false,
+    });
+    const writes = (dir: string) => box.policy.allowWrite.some((root) => dir === root || dir.startsWith(`${root}/`));
+    assert.ok(writes(path.join(agent, "sessions")), "a session writes its transcripts");
+    assert.ok(writes(path.join(agent, "auth.json.lock")), "Pi makes a lock folder even to read auth.json");
+    for (const planted of ["bin", "tools", "prompts", "extensions", "skills", "npm", "agents"])
+      assert.ok(!writes(path.join(agent, planted)), `a session cannot plant agent/${planted}, which runs outside it`);
+    assert.ok(!writes(path.join(home, ".pi", "AGENTS.md")), "nor the instructions its sign-in reads");
+    assert.ok(!box.policy.denyRead.includes(piHome), "the CLI reads its own sign-ins");
+    assert.ok(!box.policy.denyWrite.includes(piHome), "a deny on the whole store would cut those two write grants");
   });
 });
 
@@ -341,6 +365,7 @@ describe("Pi's JSON stream", () => {
   it("Pi dying because auth.json cannot be written says to sign in again", async () => {
     const cwd = await game();
     const { engine } = await engineWith(async function* () {
+      yield { type: "session", id: "sess-eperm" };
       throw new Error(
         "Credential store modify failed for openai: EPERM: operation not permitted, open '/Users/dev/.pi/agent/auth.json'",
       );
@@ -349,6 +374,64 @@ describe("Pi's JSON stream", () => {
       engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} }),
       (err: unknown) => err instanceof EngineError && err.kind === "auth" && /sign in to Pi again/i.test(err.message),
     );
+  });
+
+  it("reads a provider status only where Pi puts it, at the head of the error", () => {
+    const failure = (errorMessage: string) =>
+      translatePiEvent({
+        type: "message_end",
+        message: { role: "assistant", content: [], stopReason: "error", errorMessage },
+      }).pendingFailure;
+    assert.equal(failure('401: {"error":{"message":"invalid key"}}')?.status, 401);
+    assert.equal(failure("429 rate limited")?.status, 429, "Pi's retry errors carry the status first");
+    assert.equal(
+      failure('500: {"error":{"message":"upstream said 429"}}')?.status,
+      500,
+      "a number in the body is text",
+    );
+    assert.equal(failure("Bad Request: model not found")?.status, null, "no status, no guess");
+  });
+
+  it("a failure that only reads like a sign-in problem is not one", async () => {
+    const cwd = await game();
+    const { engine } = await engineWith(async function* () {
+      yield { type: "session", id: "sess-prose" };
+      yield {
+        type: "message_end",
+        message: { role: "assistant", content: [], stopReason: "error", errorMessage: "not signed in, said the proxy" },
+      };
+      yield { type: "agent_end", willRetry: false };
+    });
+    const result = await engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} });
+    assert.equal(result.stopReason, "error");
+    assert.match(result.errorText ?? "", /said the proxy/);
+  });
+
+  it("a permission failure on a file that is not the credential store is not a sign-in problem", async () => {
+    const cwd = await game();
+    const { engine } = await engineWith(async function* () {
+      yield { type: "session", id: "sess-eperm-other" };
+      yield {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "EPERM: operation not permitted, open '/game/out.js'",
+        },
+      };
+      yield { type: "agent_end", willRetry: false };
+    });
+    const result = await engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} });
+    assert.equal(result.stopReason, "error");
+    assert.match(result.errorText ?? "", /out\.js/);
+  });
+
+  it("keeps a credential out of the error a failed Pi process leaves in the chat", () => {
+    const failed = stderrFailure("Error: provider rejected Bearer sk-live-abc123def456", 1);
+    assert.doesNotMatch(failed.message, /sk-live-abc123def456/);
+    assert.match(failed.message, /\[redacted\]/);
+    assert.match(stderrFailure("\n", 2).message, /exited with 2/);
   });
 
   it("a refused model ends as an error, not an empty answer", async () => {

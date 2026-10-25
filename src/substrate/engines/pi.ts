@@ -52,11 +52,17 @@ import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { ModelCatalogSource } from "../../shared/model-catalog.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { redactSecrets } from "../../shared/redact.ts";
 import type { ChildProcess } from "node:child_process";
 
 const MODELS_TIMEOUT_MS = 30 * SECOND_MS;
 const KILL_GRACE_MS = 3 * SECOND_MS;
 const STDERR_TAIL_CHARS = 4_000;
+/**
+ * Pi's credential store refusing a refresh: the errno code and the file it names, never a
+ * sentence — a sandboxed session can fail on any other file too.
+ */
+const CREDENTIAL_STORE_DENIED = /\bEPERM\b[^\n]*[/\\]auth\.json/;
 /** Plan/read-only: look, and keep `bash` so the studio tools bridge can run. */
 const PLAN_TOOLS = "read,grep,find,ls,bash";
 /** The provider statuses that refuse the request itself: pick another model. */
@@ -112,7 +118,7 @@ interface PiRun {
   pendingFailure: { message: string; status: number | null } | undefined;
 }
 
-/** The sandbox a session runs in: the folder it works in, Pi's own home, and nothing it must not read. */
+/** The sandbox a session runs in: the folder it works in, and Pi's home read-only but for its own records. */
 export function piSandbox(input: {
   runDir: string;
   gameDir: string;
@@ -129,9 +135,9 @@ export function piSandbox(input: {
     writableRoots: [input.runDir, ...input.gitDirs, path.join(agent, "sessions"), path.join(agent, "auth.json.lock")],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
-    ownHome: [piHome],
-    // The CLI must read its sign-ins; everything else under ~/.pi stays read-only so a session
-    // cannot plant settings, packages or !command keys that later run unsandboxed.
+    readableHome: [piHome],
+    // Name what later runs unsandboxed anyway: a second lock on the files above, should this
+    // sandbox ever grant `~/.pi` again.
     denyWrite: [
       path.join(agent, "auth.json"),
       path.join(agent, "settings.json"),
@@ -142,6 +148,10 @@ export function piSandbox(input: {
       path.join(agent, "skills"),
       path.join(agent, "npm"),
       path.join(agent, "agents"),
+      path.join(agent, "bin"),
+      path.join(agent, "tools"),
+      path.join(agent, "prompts"),
+      path.join(piHome, "AGENTS.md"),
       path.join(piHome, "context-mode"),
       path.join(input.gameDir, ".pi"),
     ],
@@ -511,9 +521,7 @@ function refusedModelText(
 
 function needsPiSignIn(failure: { message: string; status: number | null }): boolean {
   if (failure.status === 401) return true;
-  return /token expired|unauthori[sz]ed|not signed in|credential store modify|EPERM:.*auth\.json/i.test(
-    failure.message,
-  );
+  return CREDENTIAL_STORE_DENIED.test(failure.message);
 }
 
 function failureError(engine: string, failure: { message: string; status: number | null }): EngineError {
@@ -712,5 +720,10 @@ async function* childEvents(child: ChildProcess, invocation: PiInvocation): Asyn
     invocation.signal.removeEventListener("abort", onAbort);
   }
   const code = await exit;
-  if (code !== 0 && !invocation.signal.aborted) throw new Error(stderr.trim() || MESSAGE.Stopped(code));
+  if (code !== 0 && !invocation.signal.aborted) throw stderrFailure(stderr, code);
+}
+
+/** A failed Pi process as the chat's error: its stderr, redacted, or the exit status alone. */
+export function stderrFailure(stderr: string, code: number | null): Error {
+  return new Error(redactSecrets(stderr.trim()) || MESSAGE.Stopped(code));
 }

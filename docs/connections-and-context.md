@@ -205,9 +205,13 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`, resume
 `--session-id`), not the `pi-ai` HTTP client. Sign in and `--list-models` run with
 `--no-extensions --offline`; studio never reads `~/.pi`. Ready once `--list-models` lists a model.
-Sessions run in `ProcessSandbox` (`ownHome`: `~/.pi`) with `--no-extensions`. `~/.pi` stays
-read-only except `agent/sessions` and `agent/auth.json.lock`. An expired sign-in, or a refresh that
-cannot rewrite `auth.json`, says to sign in again. An unknown provider reaches only its `models.json` host. No in-app installer; Account can
+Sessions run in `ProcessSandbox` (`readableHome`: `~/.pi`) with `--no-extensions`. Pi's home
+is a read exemption, not a write grant: `~/.pi` stays read-only except `agent/sessions` and
+`agent/auth.json.lock`, so `agent/bin`, `agent/tools`, `agent/prompts` and `AGENTS.md` — which a
+sign-in runs outside the sandbox — are never a session's to write. A provider status is read at the
+head of Pi's error (`401: {...}`), never a number inside the body it quotes, and an expired sign-in
+or a refresh the credential store cannot write (a 401, or `EPERM` naming `auth.json`) says to sign
+in again. An unknown provider reaches only its `models.json` host. No in-app installer; Account can
 run `pi update`. Streams: `tests/fixtures/transcripts/pi-*`.
 
 ## Your own model server

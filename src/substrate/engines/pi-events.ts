@@ -70,9 +70,12 @@ const textOf = (value: unknown): string => {
   return value.map((part) => (typeof part === "string" ? part : String(record(part).text ?? ""))).join("");
 };
 
-/** HTTP status named in an error string, when Pi did not send one of its own. */
+/**
+ * HTTP status named at the head of a provider failure, where Pi writes it (`401: {...}`,
+ * `429 rate limited`). Never a number found inside the body it quotes.
+ */
 function statusIn(text: string): number | null {
-  const match = /\b(429|401|403|402|503|502|500|400|404)\b/.exec(text);
+  const match = /^(\d{3})(?=:|\s|$)/.exec(text.trim());
   return match ? Number(match[1]) : null;
 }
 

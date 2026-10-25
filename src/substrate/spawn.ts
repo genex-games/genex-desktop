@@ -166,6 +166,13 @@ export interface SandboxOptions {
    * denies it and a secret path or another CLI's home named here stays denied.
    */
   ownHome?: readonly string[];
+  /**
+   * The sign-in home of the one CLI that runs inside this sandbox but only reads it (Pi, whose
+   * `auth.json` a session needs and must never rewrite): out of the credential read and write
+   * denies, and never a write grant — what a session writes there it must name in
+   * `writableRoots`.
+   */
+  readableHome?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
   /** Extra always-readable roots (vendored toolchain, app resources). */
@@ -477,15 +484,17 @@ export class ProcessSandbox {
     // Windows: the long path, since srt-win and Git Credential Manager trip over 8.3 short names.
     const scratchDir = longPath(options.scratchDir, platform);
     const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
-    const notOwn = (dir: string) => !own.includes(dir);
+    const readable = ownCredentialHomes(options.readableHome ?? [], options.secretPaths);
+    const exempt = [...own, ...readable];
+    const notExempt = (dir: string) => !exempt.includes(dir);
     const policy: SandboxPolicy = {
       allowedDomains: [],
       allowLocalBinding: true,
       allowWrite: [...options.writableRoots, scratchDir, ...own],
       allowRead: options.readableRoots ?? [],
-      denyRead: [...baseDenyRead(os.homedir(), platform).filter(notOwn), ...options.secretPaths],
+      denyRead: [...baseDenyRead(os.homedir(), platform).filter(notExempt), ...options.secretPaths],
       denyWrite: [
-        ...baseDenyWrite(os.homedir(), platform).filter(notOwn),
+        ...baseDenyWrite(os.homedir(), platform).filter(notExempt),
         ...options.secretPaths,
         ...(options.denyWrite ?? []),
       ],
