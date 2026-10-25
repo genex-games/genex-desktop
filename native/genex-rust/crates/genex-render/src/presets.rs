@@ -223,6 +223,72 @@ pub fn drs_step_sizes(class: DeviceClass, output: (u32, u32)) -> Vec<(u32, u32)>
     class_defaults(class).drs_steps.iter().map(|scale| step_size(output, *scale)).collect()
 }
 
+/// The most pixels a Live frame of `class` renders when it upscales temporally to a larger output
+/// (lane UP, the owner's AAA call: render at a budget, TAAU-upscale to the window's own pixels):
+/// its reference resolution's, the size its ledger, work model and frame budgets were set at.
+pub fn render_pixel_budget(class: DeviceClass) -> u64 {
+    let (width, height) = reference_resolution(class);
+    u64::from(width) * u64::from(height)
+}
+
+/// The most output pixels a Live frame of `class` upscaled to the window draws: four times its
+/// render budget, where the budget's scale reaches [`RENDER_SCALE_MIN`] (a 5K panel for a
+/// 2560x1440 budget). A larger window is drawn at this many pixels and the window present upscales
+/// the rest.
+pub fn native_output_cap_px(class: DeviceClass) -> u64 {
+    let floor = f64::from(RENDER_SCALE_MIN);
+    (render_pixel_budget(class) as f64 / (floor * floor)) as u64
+}
+
+/// Whether Live frames of `quality` on `class` under `os` draw at the window's own pixels (up to
+/// [`native_output_cap_px`]) and reach them by TAA upscaling from at most
+/// [`render_pixel_budget`] rendered pixels: a native desktop (macOS, Windows, Linux) whose quality
+/// draws TAA with `taau` on the HDR scene. Elsewhere (the web's memory budget, phones, presets
+/// without TAAU) Live draws at the class's reference pixels and the window present upscales.
+pub fn upscales_to_native(quality: &Quality, class: DeviceClass, os: TargetOs) -> bool {
+    let native_desktop = matches!(os, TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux) && class.form == FormFactor::Desktop;
+    let temporal = quality.hdr && quality.taau && quality.anti_aliasing == AntiAliasing::Taa;
+    native_desktop && temporal
+}
+
+/// The render scale at which `output` renders at most `budget_px` pixels: the square root of their
+/// ratio, a whole number of 1/32 steps at or below it, at most 1 and at least
+/// [`RENDER_SCALE_MIN`].
+pub fn budget_scale(output: (u32, u32), budget_px: u64) -> f32 {
+    let pixels = u64::from(output.0.max(1)) * u64::from(output.1.max(1));
+    if pixels <= budget_px {
+        return 1.0;
+    }
+    let side = (budget_px as f64 / pixels as f64).sqrt() as f32;
+    let quantum = crate::drs::SCALE_QUANTUM;
+    ((side / quantum).floor() * quantum).clamp(RENDER_SCALE_MIN, 1.0)
+}
+
+/// The most render pixels a screen effect of `class` computes at its full resolution (lane UP):
+/// past them it runs at half resolution with its upsample, so its cost stops growing with the
+/// screen. A laptop panel's (1080p) on a desktop, where ultra's AO budget (1.5 ms) was measured;
+/// a phone's own reference (its presets run half-resolution AO already).
+pub fn screen_effect_budget_px(class: DeviceClass) -> u64 {
+    let (width, height) = match class.form {
+        FormFactor::Desktop => LAPTOP_REFERENCE,
+        FormFactor::Mobile => reference_resolution(class),
+    };
+    u64::from(width) * u64::from(height)
+}
+
+/// `quality` with its screen effects held to `class`'s [`screen_effect_budget_px`] at a frame of
+/// `render` pixels: full-resolution AO runs at half resolution past the budget (the joint-bilateral
+/// upsample, guided by depth and normals, brings it to the render size). Everything else is as
+/// asked: SSR traces at half the render size and bloom's chain starts at most 540 rows already.
+pub fn effect_budgeted(quality: &Quality, class: DeviceClass, render: (u32, u32)) -> Quality {
+    let mut budgeted = *quality;
+    let pixels = u64::from(render.0) * u64::from(render.1);
+    if quality.ao.resolution == AoResolution::Full && pixels > screen_effect_budget_px(class) {
+        budgeted.ao.resolution = AoResolution::Half;
+    }
+    budgeted
+}
+
 /// The scene format of `class` on an adapter that can (or cannot) render `rg11b10ufloat`: chosen
 /// once per class, never per preset.
 pub fn scene_format(class: DeviceClass, rg11b10_renderable: bool) -> SceneFormat {

@@ -64,7 +64,9 @@ use genex_render::device_class::{CalibrationKey, classify, classify_calibrated};
 use genex_render::budget::ledger;
 use genex_render::drs::{DrsController, FrameSignal, ScaleSteps, demoted_quality};
 use genex_render::graph::{feature_drawn, feature_landed, not_landed};
-use genex_render::presets::{class_defaults, default_preset, profile, with_world_samples};
+use genex_render::presets::{
+    budget_scale, class_defaults, default_preset, effect_budgeted, native_output_cap_px, profile, render_pixel_budget, step_size, upscales_to_native, with_world_samples,
+};
 use genex_render::post::tonemap::MsaaResolve;
 use genex_render::timing::{GpuSource, TimingWindow};
 use serde_json::{Map as JsonMap, Value, json};
@@ -1064,6 +1066,10 @@ pub struct RenderControl {
     verb: VerbLayer,
     live: Resolved,
     drs: DrsController,
+    /// Live's render-budget scale (lane UP): below 1 when Live draws the window's own pixels by TAA
+    /// upscaling and they are more than the class renders ([`genex_render::presets::budget_scale`]).
+    /// Dynamic resolution's steps, the nominal scale and the budget fit are multiplied by it.
+    budget_scale: f32,
     timing: TimingWindow,
     /// The newest GPU time that landed.
     last_gpu_ms: Option<f32>,
@@ -1110,14 +1116,20 @@ fn push_switch(switches: &mut Vec<(RenderFeature, bool)>, switch: (RenderFeature
 /// than `ceiling`, at `fps` (with the class's sustained rate under thermal load), demoting at most
 /// to `low`.
 fn controller(class: DeviceClass, preset: QualityPreset, nominal: f32, ceiling: f32, fps: u32) -> DrsController {
-    budgeted_controller(class, preset, (nominal, ceiling), fps, None)
+    budgeted_controller(class, preset, (nominal, ceiling, 1.0), fps, None)
 }
 
-/// [`controller`], holding `budget_ms` per frame instead of `fps`'s frame time when the verb asks.
-fn budgeted_controller(class: DeviceClass, preset: QualityPreset, scales: (f32, f32), fps: u32, budget_ms: Option<f32>) -> DrsController {
-    let (nominal, ceiling) = scales;
+/// [`controller`], holding `budget_ms` per frame instead of `fps`'s frame time when the verb asks;
+/// `scales` are the nominal scale, the ceiling and the render-budget scale every step is multiplied
+/// by (lane UP; never below [`genex_render::settings::RENDER_SCALE_MIN`]).
+fn budgeted_controller(class: DeviceClass, preset: QualityPreset, scales: (f32, f32, f32), fps: u32, budget_ms: Option<f32>) -> DrsController {
+    let (relative, ceiling, budget) = scales;
+    let floor = genex_render::settings::RENDER_SCALE_MIN;
+    let held = |scale: f32| (scale * budget).max(floor);
     let defaults = class_defaults(class);
-    let steps = ScaleSteps::table(defaults.drs_steps, nominal).up_to(ceiling.max(quantized(nominal)));
+    let table: Vec<f32> = defaults.drs_steps.iter().map(|step| held(*step)).collect();
+    let nominal = held(relative);
+    let steps = ScaleSteps::table(&table, nominal).up_to(held(ceiling).max(quantized(nominal)));
     let levels = QualityPreset::ALL.iter().position(|known| *known == preset).unwrap_or(0);
     let sustained = defaults.sustained_fps.filter(|sustained| *sustained < fps);
     let frame = budget_ms.map_or_else(|| Duration::from_secs(1) / fps.max(1), |ms| Duration::from_secs_f32(ms / 1000.0));
@@ -1177,10 +1189,13 @@ fn texture_arrays(class: DeviceClass, textures: TextureQuality) -> Vec<MaterialC
 
 /// The surface a budget is fitted for: the output drawn and the window present's letterbox (Live
 /// only, renderer pass 2, P2-0.9 step B).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct BudgetSurface {
     output: (u32, u32),
     window: Option<(u32, u32)>,
+    /// The render-budget scale every scale is multiplied by (Live upscaled to the window; 1
+    /// elsewhere and for captures).
+    budget_scale: f32,
 }
 
 /// What the budget is fitted at for `profile` on `facts`: the class's scene format, whether its
@@ -1205,6 +1220,7 @@ impl RenderControl {
         let live = Resolved { profile: profile(&facts, class, &config.quality, None), quality: Quality::off(), budget_rungs: Vec::new() };
         let mut control = RenderControl {
             drs: controller(class, live.profile.preset, 1.0, 1.0, live.profile.target_fps),
+            budget_scale: 1.0,
             config,
             world,
             output: world,
@@ -1292,6 +1308,34 @@ impl RenderControl {
         self.output
     }
 
+    /// The most pixels a Live frame's output may hold (lane UP): where Live upscales to the window
+    /// temporally ([`genex_render::presets::upscales_to_native`]), four times the class's render
+    /// budget, so it draws the window's own pixels and renders at most the budget; elsewhere the
+    /// class's reference resolution's, which the window present upscales.
+    pub fn live_output_cap_px(&self) -> u64 {
+        let class = self.live_class();
+        if self.upscales_live(&self.live.quality, class) {
+            return native_output_cap_px(class);
+        }
+        render_pixel_budget(class)
+    }
+
+    /// Live's render-budget scale (lane UP): every Live scale is this times the class's own (1 when
+    /// Live does not upscale to the window, or its output is within the render budget).
+    pub fn budget_scale(&self) -> f32 {
+        self.budget_scale
+    }
+
+    /// Whether Live frames of `quality` on `class` upscale to the window temporally, as the world
+    /// pass draws them ([`with_world_samples`]: an MSAA-built pass draws no TAA).
+    fn upscales_live(&self, quality: &Quality, class: DeviceClass) -> bool {
+        let drawn = match self.world_samples {
+            Some(samples) => with_world_samples(quality, samples, class),
+            None => *quality,
+        };
+        upscales_to_native(&drawn, class, self.facts.os)
+    }
+
     /// Captures draw at `size` from now on (`capture --size`, the 4K/1440p plan), or at the world
     /// size again (None): the pinned profile is fitted to the class budget at that size.
     pub fn set_capture_size(&mut self, size: Option<(u32, u32)>) {
@@ -1305,12 +1349,12 @@ impl RenderControl {
 
     /// What Live frames are fitted at.
     fn live_surface(&self) -> BudgetSurface {
-        BudgetSurface { output: self.output, window: self.window }
+        BudgetSurface { output: self.output, window: self.window, budget_scale: self.budget_scale }
     }
 
     /// What captures are fitted at: their own size, no window.
     fn capture_surface(&self) -> BudgetSurface {
-        BudgetSurface { output: self.capture_output(), window: None }
+        BudgetSurface { output: self.capture_output(), window: None, budget_scale: 1.0 }
     }
 
     /// The reference class the host recorded for this adapter (captures; None:
@@ -1390,7 +1434,7 @@ impl RenderControl {
         // Captures never count the spot atlas: it appears with the first frame that asks for a
         // shadowed spot, and a capture's settings must not depend on what was drawn before it.
         let held = if own { self.buffers.clone() } else { genex_render::budget::BudgetLedger::new() };
-        let input = budget_input(surface.output, scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
+        let input = budget_input(surface.output, scale * surface.budget_scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
         let (class, textures) = self.textures;
         if own && profile.class == class {
             return (input.with_fixed_materials(texture_arrays(class, textures)), Vec::new());
@@ -1451,13 +1495,15 @@ impl RenderControl {
         self.textures = self.session_textures();
         let class = self.live_class();
         let top = self.verb_layer(&self.person, class);
-        let live = self.fitted(profile(&self.facts, class, &self.config.quality, Some(&top)), &self.facts, self.live_is_own(), self.live_surface());
+        let asked = profile(&self.facts, class, &self.config.quality, Some(&top));
+        self.budget_scale = if self.upscales_live(&asked.quality, class) { budget_scale(self.output, render_pixel_budget(class)) } else { 1.0 };
+        let live = self.fitted(asked, &self.facts, self.live_is_own(), self.live_surface());
         let ceiling = self.budget_ceiling(class, &live);
         let thermal = self.drs.sustained();
         // FSR1's passes run at the output size below scale 1 (RCAS alone at 1 under TAA's
         // sharpen): costs no step changes, in the class's model (RQ5 review).
         let (below_one, at_one) = genex_render::post::fsr::upscale_costs_ms(&live.quality, class, self.output);
-        let scales = (live.quality.render_scale, ceiling);
+        let scales = (live.quality.render_scale, ceiling, self.budget_scale);
         let drs = budgeted_controller(class, live.profile.preset, scales, live.profile.target_fps, self.verb.frame_budget_ms);
         self.drs = drs.with_upscale_ms(below_one, at_one);
         if thermal {
@@ -1501,7 +1547,11 @@ impl RenderControl {
     /// ([`RenderControl::pipeline_generation`]).
     pub fn live_asked(&self) -> FrameChoice {
         let class = self.live_class();
-        let quality = demoted_quality(&self.live.quality, self.live.profile.preset, class, self.drs.demotion());
+        let demoted = demoted_quality(&self.live.quality, self.live.profile.preset, class, self.drs.demotion());
+        // The screen effects' pixel budgets (lane UP) at the nominal step's render size, so a
+        // dynamic-resolution step never switches an effect's resolution.
+        let nominal = self.drs.steps().steps()[self.drs.nominal_step()];
+        let quality = effect_budgeted(&demoted, class, step_size(self.output, nominal));
         FrameChoice { quality, scale: self.scale, scene_format: self.live.profile.scene_format, look: self.config.look, meshlets: self.config.meshlets }
     }
 
@@ -2511,6 +2561,58 @@ mod tests {
             ..RenderChange::default()
         });
         control
+    }
+
+    /// Lane UP: desktop-ultra on a Mac's 3456x2169 full screen draws Live at the window's own
+    /// pixels and renders at most the class's 2560x1440 of them: dynamic resolution's every step is
+    /// the class's step times the budget scale (0.6875), never above it nor below the class floor,
+    /// half-resolution AO past 1080p of render pixels, and a capture keeps its pinned scale. A 1080p
+    /// window within the budget renders natively, as before.
+    #[test]
+    fn an_ultra_full_screen_renders_its_pixel_budget_and_upscales_to_the_window() {
+        let mut mac = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        let budget = genex_render::presets::render_pixel_budget(mac.live_class());
+        assert_eq!(mac.live_output_cap_px(), 4 * budget, "the output may hold the window's own pixels");
+        let full_screen = (3456, 2169);
+        mac.set_live_output(full_screen, Some(full_screen));
+        assert_eq!(mac.budget_scale(), 0.6875);
+        let steps = mac.scale_steps().to_vec();
+        assert_eq!(steps.last(), Some(&0.6875), "the top step is the budget: {steps:?}");
+        assert!(steps.iter().all(|scale| *scale >= genex_render::settings::RENDER_SCALE_MIN), "{steps:?}");
+        let frame = mac.live_asked();
+        let (w, h) = step_size(full_screen, frame.scale);
+        assert!(u64::from(w) * u64::from(h) <= budget, "renders {w}x{h}, within the budget");
+        assert_eq!(frame.quality.ao.resolution, genex_render::settings::AoResolution::Half, "AO past its 1080p budget");
+        assert_eq!(mac.capture_frame().1.scale, 1.0, "captures keep their pinned scale");
+        let laptop = (1920, 1080);
+        mac.set_live_output(laptop, Some(laptop));
+        assert_eq!(mac.budget_scale(), 1.0);
+        assert_eq!(mac.scale_steps().last(), Some(&1.0), "a 1080p window renders natively");
+        assert_eq!(mac.live_asked().quality.ao.resolution, genex_render::settings::AoResolution::Full);
+    }
+
+    /// Lane UP: where Live does not upscale temporally to the window (medium has no TAAU, a browser
+    /// keeps its memory budget, a phone its panel), the output stays capped at the class's
+    /// reference pixels and every scale is the class's own: those frames are unchanged.
+    #[test]
+    fn without_taa_upscaling_live_keeps_the_reference_cap_and_its_own_scales() {
+        let mut medium = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Medium);
+        let (rw, rh) = genex_render::presets::reference_resolution(medium.live_class());
+        assert_eq!(medium.live_output_cap_px(), u64::from(rw) * u64::from(rh));
+        medium.set_live_output((2560, 1440), Some((3456, 2169)));
+        assert_eq!((medium.budget_scale(), medium.scale_steps().last().copied()), (1.0, Some(1.0)));
+        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
+        let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other).with_web(web_hints_from_json(&hints).expect("hints"));
+        let mut browser = RenderControl::new(RenderConfig::new(), (960, 540));
+        browser.probe(web, None);
+        browser.apply(&RenderChange { preset: Some(Some(PresetChoice::Preset(QualityPreset::Ultra))), ..RenderChange::default() });
+        let (bw, bh) = genex_render::presets::reference_resolution(browser.live_class());
+        assert_eq!(browser.live_output_cap_px(), u64::from(bw) * u64::from(bh), "the web keeps its cap at ultra");
+        let mut phone = controlled(RenderConfig::new(), "mobile-high", QualityPreset::High);
+        let (pw, ph) = genex_render::presets::reference_resolution(phone.live_class());
+        assert_eq!(phone.live_output_cap_px(), u64::from(pw) * u64::from(ph), "a phone keeps its cap");
+        phone.set_live_output((786, 1704), Some((1179, 2556)));
+        assert_eq!(phone.budget_scale(), 1.0);
     }
 
     /// Pass-1 gate finding 02: a capture "as a phone" keeps the MSAA a phone draws. Phones are tile

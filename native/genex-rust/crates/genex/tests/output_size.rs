@@ -17,7 +17,7 @@ use genex::prelude::*;
 use genex::present::Presenter;
 use genex::Runtime;
 use genex_render::capture::Capture;
-use genex_render::presets::reference_resolution;
+use genex_render::presets::{native_output_cap_px, reference_resolution, render_pixel_budget};
 
 #[path = "../../../../../src/game-template-rust/src/game.rs"]
 #[allow(dead_code, reason = "the template's starter: this file uses its hooks only")]
@@ -157,11 +157,15 @@ fn metal_live_renders_at_the_window_s_pixels_not_at_the_world_size() {
     assert_eq!(presenter.resilient.renderer().renderer().logical_size(), (WORLD[0], WORLD[1]), "the world stays the logical size");
 }
 
-/// The cap: a window with more pixels than the Live class's reference resolution renders at the
-/// reference's pixels with the world's aspect, and the window present upscales the rest.
+/// The cap, lane UP: a native desktop drawing TAA upscaling (high and ultra) draws Live at a 5K
+/// window's own pixels (at most four times the class's render budget, and the world target's
+/// 4096-texel side) and renders at most the budget of them, which TAA upscales to the window.
+/// Without it (medium) a window with more pixels than the Live class's reference resolution
+/// renders at the reference's pixels with the world's aspect, and the window present upscales the
+/// rest, as before. (Flipped from a cap at the reference for every preset.)
 #[test]
 #[ignore = "needs the host GPU: run with --ignored metal"]
-fn metal_live_output_is_capped_at_the_class_reference_pixels() {
+fn metal_live_output_is_the_window_s_pixels_under_taa_upscaling_and_capped_without_it() {
     let _gpu = gpu_rows();
     let Some(mut presenter) = presenter() else { return };
     let mut runtime = ticked();
@@ -171,9 +175,21 @@ fn metal_live_output_is_capped_at_the_class_reference_pixels() {
     }
     let class = runtime.render().borrow().live_class();
     let (rw, rh) = reference_resolution(class);
+    let reference = u64::from(rw) * u64::from(rh);
     let (w, h) = output(&presenter);
-    eprintln!("5K window as {}: output {w}x{h} (reference {rw}x{rh})", class.wire());
-    assert!(u64::from(w) * u64::from(h) <= u64::from(rw) * u64::from(rh), "{w}x{h} over the {rw}x{rh} reference");
+    let (sw, sh) = presenter.resilient.renderer().renderer().render_size();
+    eprintln!("5K window as {}: output {w}x{h}, rendered {sw}x{sh} (reference {rw}x{rh})", class.wire());
+    assert_eq!((w, h), (4096, 2304), "the window's aspect at the world target's widest side");
+    assert!(u64::from(w) * u64::from(h) <= native_output_cap_px(class), "{w}x{h} within the upscaled cap");
+    assert!(u64::from(sw) * u64::from(sh) <= render_pixel_budget(class), "rendered {sw}x{sh}, within the budget");
+    let person = genex::render::ClassOverride { preset: Some(genex::render::QualityPreset::Medium), ..genex::render::ClassOverride::default() };
+    runtime.render().borrow_mut().set_person(person);
+    for _ in 0..LIVE_FRAMES {
+        live(&mut presenter, &mut runtime);
+    }
+    let (w, h) = output(&presenter);
+    eprintln!("5K window at medium: output {w}x{h}");
+    assert!(u64::from(w) * u64::from(h) <= reference, "{w}x{h} over the {rw}x{rh} reference");
     assert!(w > WORLD[0] && h > WORLD[1], "more pixels than the world");
     assert!((f64::from(w) / f64::from(h) - 16.0 / 9.0).abs() < 0.01, "the world's aspect: {w}x{h}");
 }

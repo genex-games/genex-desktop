@@ -13,13 +13,14 @@ use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, Performan
 use genex_render::presets::{
     ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, LodOverride, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
     SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, MOBILE_HIGH_SHADOW_DISTANCE_M, MOBILE_MAX_SHADOW_DISTANCE_M, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
+    budget_scale, effect_budgeted, native_output_cap_px, render_pixel_budget, screen_effect_budget_px, step_size, upscales_to_native,
     on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits, STREAM_POOL_DESKTOP_BYTES, STREAM_POOL_PHONE_BYTES,
     STREAM_POOL_PRESSURE_PERCENT, stream_pool_bytes,
 };
 use genex_gpu_memory::{MemoryFacts, TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_RUNNING_MODERATE};
 use genex_render::graph::{feature_landed, not_landed};
 use genex_render::settings::{
-    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, LOD_FADE_BAND_SWITCHED_ON, LodQuality, PresetChoice, Quality, QualityKnob, QualityPreset,
+    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, RENDER_SCALE_MIN, KnobKind, LOD_FADE_BAND_SWITCHED_ON, LodQuality, PresetChoice, Quality, QualityKnob, QualityPreset,
     RenderFeature, RenderSettings, SceneFormat, ShadowFilter, ShadowFormat, Upscaler,
 };
 use wgpu::{Backend, DeviceType, Features};
@@ -79,6 +80,82 @@ fn every_class_has_at_most_six_scale_steps_spanning_its_range_through_the_nomina
     }
     assert_eq!(drs_step_sizes(class("desktop-high"), (2560, 1440)).last(), Some(&(2560, 1440)));
     assert_eq!(drs_step_sizes(class("mobile-mid"), (1179, 2556))[2], (789, 1712), "0.67 of an iPhone 15 panel");
+}
+
+/// Lane UP: a native desktop drawing TAA upscaling renders at most its class's reference pixels
+/// (`render_pixel_budget`) whatever the window, and upscales them to the window's own: a frame at
+/// a larger output steps its scale down to the budget (the Mac's 3456x2169 full screen at 0.6875
+/// of each side for desktop-ultra's 2560x1440), never below the class floor, and an output within
+/// the budget keeps scale 1.
+#[test]
+fn a_temporally_upscaled_frame_renders_at_most_its_class_budget_of_pixels() {
+    for class in DeviceClass::ALL {
+        let (w, h) = reference_resolution(class);
+        assert_eq!(render_pixel_budget(class), u64::from(w) * u64::from(h), "{}: the budget is the reference's pixels", class.wire());
+    }
+    let ultra = class("desktop-ultra");
+    let budget = render_pixel_budget(ultra);
+    let mac = (3456, 2169);
+    let scale = budget_scale(mac, budget);
+    assert_eq!(scale, 0.6875, "the Mac's full screen renders 0.6875 of each side");
+    let (rw, rh) = step_size(mac, scale);
+    assert!(u64::from(rw) * u64::from(rh) <= budget, "{rw}x{rh} within the budget");
+    assert_eq!(budget_scale((1920, 1080), budget), 1.0, "a 1080p window renders natively");
+    assert_eq!(budget_scale((2560, 1440), budget), 1.0, "the reference itself renders natively");
+    assert_eq!(budget_scale((7680, 4320), budget), RENDER_SCALE_MIN, "never below the class floor");
+    let cap = native_output_cap_px(ultra);
+    assert_eq!(cap, 4 * budget, "an output renders at the floor scale at most");
+    assert_eq!(budget_scale((5120, 2880), budget), RENDER_SCALE_MIN, "5K is the cap: half of each side");
+}
+
+/// Lane UP: only a native desktop drawing TAA upscaling (TAAU, on the HDR scene) draws Live at the
+/// window's own pixels; the web, phones and presets without TAAU keep the reference cap and the
+/// window present's upscale (their frames are unchanged).
+#[test]
+fn only_a_native_desktop_drawing_taa_upscaling_renders_for_the_window_s_own_pixels() {
+    let ultra = preset_quality(QualityPreset::Ultra, class("desktop-ultra"));
+    for os in [TargetOs::MacOs, TargetOs::Windows, TargetOs::Linux] {
+        assert!(upscales_to_native(&ultra, class("desktop-ultra"), os), "{os:?}: ultra upscales to the window");
+        let high = preset_quality(QualityPreset::High, class("desktop-high"));
+        assert!(upscales_to_native(&high, class("desktop-high"), os), "{os:?}: high does too");
+        let medium = preset_quality(QualityPreset::Medium, class("desktop-mid"));
+        assert!(!upscales_to_native(&medium, class("desktop-mid"), os), "{os:?}: medium has no TAAU");
+    }
+    assert!(!upscales_to_native(&ultra, class("desktop-ultra"), TargetOs::Web), "the web keeps its cap");
+    for class in mobile_classes() {
+        let high = preset_quality(QualityPreset::High, class);
+        for os in [TargetOs::Ios, TargetOs::Android] {
+            assert!(!upscales_to_native(&high, class, os), "{} on {os:?} keeps its cap", class.wire());
+        }
+    }
+    let mut msaa = ultra;
+    msaa.anti_aliasing = AntiAliasing::Msaa4;
+    assert!(!upscales_to_native(&msaa, class("desktop-ultra"), TargetOs::MacOs), "no TAA, no temporal upscale");
+}
+
+/// Lane UP: AO computes at most `screen_effect_budget_px` pixels at full resolution (desktop
+/// ultra's 1.5 ms AO budget was set at 1080p): past it the frame's AO runs at half resolution with
+/// the joint-bilateral upsample, so its cost stops growing with the screen. Within it, and on every
+/// preset that already runs half-resolution AO, nothing changes.
+#[test]
+fn ao_runs_at_half_resolution_past_its_pixel_budget() {
+    let ultra_class = class("desktop-ultra");
+    let ultra = preset_quality(QualityPreset::Ultra, ultra_class);
+    assert_eq!(ultra.ao.resolution, AoResolution::Full, "the premise: ultra's AO is full resolution");
+    let (w, h) = LAPTOP_REFERENCE;
+    assert_eq!(screen_effect_budget_px(ultra_class), u64::from(w) * u64::from(h));
+    assert_eq!(effect_budgeted(&ultra, ultra_class, (1920, 1080)), ultra, "1080p of render pixels: as asked");
+    let budgeted = effect_budgeted(&ultra, ultra_class, (2376, 1491));
+    assert_eq!(budgeted.ao.resolution, AoResolution::Half, "the Mac's budgeted render size: half-resolution AO");
+    let mut halved = ultra;
+    halved.ao.resolution = AoResolution::Half;
+    assert_eq!(budgeted, halved, "and nothing else changes");
+    for class in DeviceClass::ALL {
+        for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High] {
+            let quality = preset_quality(preset, class);
+            assert_eq!(effect_budgeted(&quality, class, (3840, 2160)), quality, "{} {preset:?}: no full-resolution AO to halve", class.wire());
+        }
+    }
 }
 
 #[test]

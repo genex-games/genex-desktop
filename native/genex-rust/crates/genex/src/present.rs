@@ -2070,15 +2070,15 @@ impl Presenter {
     }
 
     /// The size Live frames draw at now (renderer pass 2, P2-0.9 step B; findings F1/RC-03): the
-    /// window's letterbox in its own pixels, capped at the Live class's reference resolution's
-    /// pixels (`presets::reference_resolution`), or the world size before a window is known. The
-    /// window present copies it texel for texel, or upscales it past the cap.
+    /// window's letterbox in its own pixels, capped at `RenderControl::live_output_cap_px` (four
+    /// times the class's render budget where Live upscales temporally to the window, lane UP; the
+    /// class's reference resolution's pixels elsewhere), or the world size before a window is
+    /// known. The window present copies it texel for texel, or upscales it past the cap.
     fn live_output(&self, handle: &RenderHandle) -> (u32, u32) {
         let world = self.resilient.renderer().renderer().logical_size();
         let Some(window) = self.window else { return world };
-        let (cap_w, cap_h) = genex_render::presets::reference_resolution(handle.borrow().live_class());
         // A cap of 0 is none: the window's own letterbox pixels.
-        let cap = if self.output_capped { u64::from(cap_w) * u64::from(cap_h) } else { 0 };
+        let cap = if self.output_capped { handle.borrow().live_output_cap_px() } else { 0 };
         output_for(world, window, cap, self.fit)
     }
 
