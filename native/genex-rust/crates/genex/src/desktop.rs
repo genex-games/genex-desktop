@@ -286,13 +286,16 @@ impl<W: Default + 'static> DesktopGame<W> {
     }
 
     /// Close the profiler's frame with the GPU time the settings last measured (timestamp
-    /// queries; none without them), as a studio run's frames do.
+    /// queries; none without them) and the per-node samples that landed, as a studio run's frames
+    /// do.
     fn close_profile_frame(&mut self, interval_ms: f64) {
         let timestamps = self.presenter.gpu().device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let source = if timestamps { genex_profile::GpuTimeSource::Timestamps } else { genex_profile::GpuTimeSource::None };
         let gpu_ms = self.runtime.render().borrow().status().gpu_ms;
+        let samples = self.presenter.take_node_samples();
         let profiling = self.runtime.profiling();
         profiling.set_gpu_source(source);
+        profiling.record_nodes(&samples);
         let index = profiling.frame_index();
         profiling.new_frame(interval_ms, gpu_ms.map(|ms| (index, f64::from(ms))));
     }
@@ -320,6 +323,9 @@ impl<W: Default + 'static> DesktopGame<W> {
             Err(refusal) => eprintln!("genex: the bench's render settings were refused: {}", refusal.wire()),
         }
         self.presenter.set_output_capped(!plan.native_output);
+        if plan.nodes {
+            self.runtime.profiling().arm(true);
+        }
         bench.begin();
     }
 
@@ -335,6 +341,9 @@ impl<W: Default + 'static> DesktopGame<W> {
         if bench.report_due() || over {
             let class = self.runtime.render().borrow().status().device_class.wire();
             bench.keep_report(self.runtime.profiling().report_json(Bench::report_frames(), destination(), &class));
+            if bench.plan.nodes {
+                self.runtime.profiling().arm(true);
+            }
         }
         if !over {
             return FrameControl::Continue;
@@ -454,6 +463,8 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
         self.begin_bench();
         let began = std::time::Instant::now();
         // One profiler frame per shell frame (PROF-5): the ticks, the draw and the present.
+        let armed = self.runtime.profiling().armed().then(|| self.runtime.profiling().frame_index());
+        self.presenter.set_node_frame(armed);
         let scope = crate::profile::engine_scope(crate::profile::EngineScope::Frame);
         self.runtime.sample_input(&core_sample(&frame.sample));
         let ticks = self.runtime.advance_live(frame.frame_ms);

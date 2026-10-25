@@ -5,7 +5,7 @@
 //! ```json
 //! { "seed": 7, "demo": "genex-clip", "camera": "horde", "fullscreen": "native",
 //!   "renderScaleLock": 1.0, "nativeOutput": true, "features": { "shadows": true },
-//!   "seconds": 60, "out": "/path/to/bench.json" }
+//!   "nodes": true, "seconds": 60, "out": "/path/to/bench.json" }
 //! ```
 //!
 //! Once the loading screen is done the run is seeded (`seed`), the demo runs (`demo`), live play
@@ -13,7 +13,9 @@
 //! holds the render scale (the `renderSettings` verb's lock; absent: dynamic resolution moves it),
 //! `deviceClass` runs as that class (the verb's emulated class; absent: the probed one),
 //! `features` switches render features as the verb does, and `nativeOutput` lifts Live's cap at the
-//! class's reference resolution, so the frame draws the window's own pixels. The run opens no audio
+//! class's reference resolution, so the frame draws the window's own pixels. `nodes` keeps per-node
+//! GPU timing armed (the profile reports then carry each frame-graph node's GPU time; the brackets
+//! cost a little themselves). The run opens no audio
 //! device unless `"audio": true`. After `seconds` the run
 //! writes `out` (every frame's wall time, shell interval, ticks and whether it drew; the window, output
 //! and render sizes; the profile reports of the run) and exits. Only the dev flavour (`studio`) reads
@@ -50,6 +52,8 @@ pub(crate) struct BenchPlan {
     pub(crate) scale_lock: Option<f64>,
     pub(crate) native_output: bool,
     pub(crate) features: Vec<(String, bool)>,
+    /// Whether per-node GPU timing stays armed through the run.
+    pub(crate) nodes: bool,
     /// Whether the run opens the audio device (off unless asked: a measured run is silent).
     pub(crate) audio: bool,
     pub(crate) seconds: f64,
@@ -66,7 +70,7 @@ impl BenchPlan {
     pub(crate) fn parse(text: &str) -> Result<BenchPlan, BenchRefusal> {
         let refuse = |what: &str| Err(BenchRefusal(what.to_owned()));
         let Ok(Value::Object(plan)) = serde_json::from_str::<Value>(text) else { return refuse("not a JSON object") };
-        const KEYS: [&str; 11] = ["seed", "demo", "camera", "fullscreen", "deviceClass", "renderScaleLock", "nativeOutput", "features", "audio", "seconds", "out"];
+        const KEYS: [&str; 12] = ["seed", "demo", "camera", "fullscreen", "deviceClass", "renderScaleLock", "nativeOutput", "features", "nodes", "audio", "seconds", "out"];
         if let Some(key) = plan.keys().find(|key| !KEYS.contains(&key.as_str())) {
             return refuse(&format!("unknown key {key}"));
         }
@@ -98,6 +102,7 @@ impl BenchPlan {
             scale_lock,
             native_output: flag("nativeOutput")?,
             features,
+            nodes: flag("nodes")?,
             audio: flag("audio")?,
             seconds,
             out,
@@ -204,7 +209,7 @@ impl Bench {
         let record = json!({
             "plan": {
                 "seed": self.plan.seed, "demo": self.plan.demo, "camera": self.plan.camera, "fullscreen": format!("{:?}", self.plan.fullscreen),
-                "deviceClass": self.plan.device_class, "renderScaleLock": self.plan.scale_lock, "nativeOutput": self.plan.native_output, "seconds": self.plan.seconds,
+                "deviceClass": self.plan.device_class, "renderScaleLock": self.plan.scale_lock, "nativeOutput": self.plan.native_output, "nodes": self.plan.nodes, "seconds": self.plan.seconds,
             },
             "surface": self.surface,
             "scaleFactor": self.scale_factor,
@@ -232,7 +237,7 @@ mod tests {
     #[test]
     fn a_plan_spells_its_scene_and_its_measurement() {
         let plan = BenchPlan::parse(
-            r#"{"seed":7,"demo":"genex-clip","camera":"horde","fullscreen":true,"renderScaleLock":1.0,"nativeOutput":true,"features":{"shadows":false},"seconds":60,"out":"/tmp/b.json"}"#,
+            r#"{"seed":7,"demo":"genex-clip","camera":"horde","fullscreen":true,"renderScaleLock":1.0,"nativeOutput":true,"features":{"shadows":false},"nodes":true,"seconds":60,"out":"/tmp/b.json"}"#,
         )
         .expect("a whole plan");
         assert_eq!(plan.seed, Some(7));
@@ -243,9 +248,10 @@ mod tests {
         assert_eq!(native.fullscreen, genex_platform_desktop::Fullscreen::Native);
         assert_eq!(plan.scale_lock, Some(1.0));
         assert_eq!(plan.features, vec![("shadows".to_owned(), false)]);
+        assert!(plan.nodes, "per-node GPU timing stays armed");
         assert_eq!(plan.seconds, 60.0);
         let least = BenchPlan::parse(r#"{"seconds":1,"out":"/tmp/b.json"}"#).expect("the least plan");
-        assert_eq!((least.seed, least.scale_lock, least.fullscreen, least.native_output), (None, None, genex_platform_desktop::Fullscreen::Off, false));
+        assert_eq!((least.seed, least.scale_lock, least.fullscreen, least.native_output, least.nodes), (None, None, genex_platform_desktop::Fullscreen::Off, false, false));
     }
 
     /// Hostile plans: each is refused whole, so a run never half-applies one.
@@ -266,6 +272,7 @@ mod tests {
             r#"{"seconds":1,"out":"/tmp/b.json","fullscreen":1}"#,
             r#"{"seconds":1,"out":"/tmp/b.json","fullscreen":"exclusive"}"#,
             r#"{"seconds":1,"out":"/tmp/b.json","demo":3}"#,
+            r#"{"seconds":1,"out":"/tmp/b.json","nodes":"yes"}"#,
             r#"{"seconds":1,"out":"/tmp/b.json","window":"big"}"#,
         ];
         for row in rows {
