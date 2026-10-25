@@ -901,7 +901,8 @@ mod metal {
         let mut presenter = presenter([160, 90])?;
         let mut game = scene_game();
         let no_ao = ClassOverride { switches: vec![(RenderFeature::Ao, false), (RenderFeature::Taa, false)], ..ClassOverride::default() };
-        game.render_settings(RenderConfig::new().class(genex::render::REFERENCE_CLASS, no_ao));
+        // Native, so Live renders the capture's pixels (lane UQ: a desktop upscales by default).
+        game.render_settings(RenderConfig::new().class(genex::render::REFERENCE_CLASS, no_ao).upscale(genex::render::UpscaleMode::Native));
         let mut runtime = Runtime::new(game).expect("installs");
         if let Some(person) = person {
             presenter.draw_view(&mut runtime, View::Game)?.expect("a first Live frame");
@@ -1044,14 +1045,16 @@ mod metal {
         let mut presenter = presenter([320, 180])?;
         let mut runtime = Runtime::new(scene_game().world_size(320, 180)).expect("installs");
         presenter.draw_view(&mut runtime, View::Game)?.expect("a first Live frame");
-        let nominal = runtime.render().borrow().live_frame().scale;
+        // The capture's own pinned nominal step (lane UQ: Live's is its upscaling mode's).
+        let nominal = runtime.render().borrow().capture_frame().1.scale;
+        let live_nominal = runtime.render().borrow().live_frame().scale;
         if dropped {
             let target = runtime.render().borrow().gpu_target_ms();
             for frame in 0..60u64 {
                 let now = std::time::Duration::from_millis(16 * frame);
                 runtime.render().borrow_mut().observe(Some(1.0), Some(&[target * 3.0]), 16.0, now);
             }
-            assert!(runtime.render().borrow().live_frame().scale < nominal, "dynamic resolution dropped Live's step");
+            assert!(runtime.render().borrow().live_frame().scale < live_nominal, "dynamic resolution dropped Live's step");
         }
         for _ in 0..3 {
             presenter.draw_view(&mut runtime, View::Game)?.expect("Live at the step");
@@ -1511,6 +1514,9 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         });
         let heavy = Heavy { iterations: std::rc::Rc::clone(&iterations), pipeline: None, group: None, uniforms: None };
         game.gpu_pass("heavy", PassStage::AfterOpaque, heavy);
+        // The row's premise is Live at scale 1: the game asks for Native (lane UQ: a desktop
+        // upscales by default).
+        game.render_settings(RenderConfig::new().upscale(genex::render::UpscaleMode::Native));
         let mut runtime = Runtime::new(game).expect("installs");
         assert!(presenter.install_for(&mut runtime).is_empty(), "the load pass is admitted");
         let handle = runtime.render();
