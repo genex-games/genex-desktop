@@ -150,8 +150,9 @@ pub fn frame_ssr(quality: &Quality, hdr: bool) -> bool {
 /// specular anti-aliasing only raise it), or a binned decal that gives the surfaces it covers a
 /// roughness under it (or one through its ORM map). Without one every trace texel is zero (the
 /// trace skips a rough surface and the sky), so the frame's reflections are binding 30's zero
-/// texel: the renderer skips the surface pass, the Hi-Z, the trace, the blur and the resolve and
-/// keeps building the colour pyramid the next frame may reflect.
+/// texel: the prepass draws its batches without the surface texel (one pass), the renderer skips
+/// the Hi-Z, the trace, the blur and the resolve and keeps building the colour pyramid the next
+/// frame may reflect.
 pub fn frame_can_reflect(plan: &crate::scene::FramePlan) -> bool {
     let smooth = |roughness: f32| roughness.is_nan() || roughness < ROUGHNESS_CUTOFF;
     let material_can = |row: u32| plan.materials.get(row as usize).is_none_or(|material| material.textures[2] != crate::layout::NO_TEXTURE || smooth(material.params[1]));

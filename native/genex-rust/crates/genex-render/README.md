@@ -412,12 +412,18 @@ On the frame (`src/renderer/ssr_draw.rs`, graph node 10b `ssr`, after the contac
 frame of the HDR scene under TAA whose quality traces runs, once the previous frame left its
 colour pyramid on the same history and size:
 
-- the surface pass (`shaders/screen/ssr_surface.wgsl`, `fs_ssr_surface` in the forward module):
-  the opaque plain batches drawn again `Equal` over the prepass depth with the forward vertex
-  shader, writing the normal and roughness the forward pass shades with (normal maps, specular
-  AA, the decals' wet patches: Harbour's puddles are decals at roughness 0.04 over the asphalt).
-  The prepass itself keeps its vertex normals. Variants, meshlets, the terrain, grass and custom
-  geometry keep the cleared texel (fully rough), so the probes reflect them;
+- the surface texel, in the prepass (lane FR; `shaders/screen/prepass_surface.wgsl` in
+  `shaders::PREPASS_SURFACE`, the forward module's surface twin): the prepass draws everything else
+  first, then the opaque plain batches in a pass of their own over that depth, writing its three
+  targets and the normal and roughness the forward pass shades with (`gx_ssr_surface_texel`:
+  normal maps, specular AA, the decals' wet patches: Harbour's puddles are decals at roughness
+  0.04 over the asphalt) in one draw. The prepass's normals stay the vertex normals. A batch that
+  variants, meshlets, the terrain, grass or custom geometry hide fails the depth test and leaves
+  the cleared texel (fully rough), and prepass part 2's meshlets write it
+  (`fs_prepass_motion_rough`), so the probes reflect them. Before lane FR the batches were drawn a
+  third time for it, `Equal` over the prepass depth (vertex 0.63 and fragment 0.49 ms busy at
+  Ashen Horde's 10k peak); the texels are the same (`tests/ssr_prepass.rs`: a traced street is
+  byte-identical, `FrameStats::camera_opaque_passes` 3 to 2);
 - `SsrNode::encode` with the jitter-free camera, last frame's view-projection along TAA's
   reprojection row and the exposure ratio between the frames;
 - after TAA, `PyramidNode` over TAA's output: the next frame's reflected colour. The water reads
