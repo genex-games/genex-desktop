@@ -17,6 +17,7 @@ import {
   buildingWords,
   canvasPhase,
   canvasWords,
+  capturePress,
   clipText,
   createFrameGate,
   embedSizeOf,
@@ -314,6 +315,55 @@ describe("mouse look while the pointer is locked", () => {
     queue = queueAction(queue, { type: "mousedown", button: "left" });
     queue = queueAction(queue, { type: "look", dx: 1, dy: 1 });
     assert.equal(queue.length, 3, "a press between turns keeps its order");
+  });
+});
+
+describe("a press takes the pointer only where Chromium lets it (PW: the setPointerCapture spam)", () => {
+  /** An element whose `setPointerCapture` throws as Chromium's does: under pointer lock, and for a pointer that is not down. */
+  function element(options: { locked: boolean; down: readonly number[] }) {
+    const captured: number[] = [];
+    const doc = { pointerLockElement: options.locked ? {} : null };
+    return {
+      captured,
+      ownerDocument: doc,
+      setPointerCapture(pointerId: number) {
+        if (doc.pointerLockElement)
+          throw new DOMException("Failed to execute 'setPointerCapture'", "InvalidStateError");
+        if (!options.down.includes(pointerId))
+          throw new DOMException("Failed to execute 'setPointerCapture'", "NotFoundError");
+        captured.push(pointerId);
+      },
+    };
+  }
+
+  const ROWS = [
+    { name: "an unlocked press", locked: false, trusted: true, down: [1], takes: true },
+    {
+      name: "a press under mouse look's pointer lock (every cast)",
+      locked: true,
+      trusted: true,
+      down: [1],
+      takes: false,
+    },
+    { name: "a synthetic press (a script's, not the person's)", locked: false, trusted: false, down: [], takes: false },
+    { name: "a press whose pointer was already let go", locked: false, trusted: true, down: [], takes: false },
+  ] as const;
+  for (const row of ROWS) {
+    it(`${row.name} ${row.takes ? "takes" : "never takes"} the pointer, and never throws`, () => {
+      const target = element(row);
+      assert.equal(capturePress(target, { pointerId: 1, isTrusted: row.trusted }), row.takes);
+      assert.deepEqual(target.captured, row.takes ? [1] : []);
+    });
+  }
+
+  it("any other failure still surfaces", () => {
+    const target = {
+      ownerDocument: { pointerLockElement: null },
+      setPointerCapture() {
+        throw new TypeError("not an element");
+      },
+    };
+    assert.throws(() => capturePress(target, { pointerId: 1, isTrusted: true }), TypeError);
   });
 });
 

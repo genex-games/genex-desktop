@@ -32,6 +32,7 @@ import {
   canvasActions,
   canvasPhase,
   canvasWords,
+  capturePress,
   createFrameGate,
   embedSizeOf,
   heldAfter,
@@ -379,7 +380,7 @@ function listenPointer(
       move(event);
       const button = mouseButtonOf(event.button);
       if (button) push({ type: "mousedown", button });
-      element.setPointerCapture(event.pointerId);
+      capturePress(element, event);
     },
     { signal },
   );

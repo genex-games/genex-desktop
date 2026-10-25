@@ -2232,6 +2232,20 @@
         document.addEventListener("visibilitychange", () => {
           if (document.visibilityState === "hidden") leave();
         });
+        /**
+         * The press's pointer for the canvas, so a drag off it still reaches the game: never under
+         * pointer lock (mouse look holds the pointer already, and Chromium throws InvalidStateError
+         * there, once per click), never for a press a script made, and a pointer let go before the
+         * press was handled (NotFoundError) is not taken either.
+         */
+        const capturePress = (event) => {
+          if (document.pointerLockElement || !event.isTrusted || !canvas.setPointerCapture) return;
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch (error) {
+            if (!(error instanceof DOMException)) throw error;
+          }
+        };
         canvas.addEventListener("pointerdown", (event) => {
           canvas.focus();
           const pointer = worldPointer(event);
@@ -2239,7 +2253,7 @@
           if (!pointer) return;
           // Asked inside the press itself: a pointer lock needs the person's gesture.
           if (mouseLook && document.pointerLockElement !== canvas) lockPointer();
-          canvas.setPointerCapture?.(event.pointerId);
+          capturePress(event);
           input.held.add(MOUSE1);
           input.ticked = false;
           call(game, "input", { pointer, down: [MOUSE1] });

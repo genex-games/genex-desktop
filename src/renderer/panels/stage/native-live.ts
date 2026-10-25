@@ -530,3 +530,30 @@ export function buildingWords(
   const title = context.copy ? NATIVE_WORDS.embed.buildingCopy(clock) : NATIVE_WORDS.embed.building(clock);
   return { title, detail: context.stack ? DESTINATION_WORDS.buildStage[context.stack] : null };
 }
+
+/** What `capturePress` touches of the canvas's box: its capture and its document's pointer lock. */
+export interface PressTarget {
+  setPointerCapture(pointerId: number): void;
+  ownerDocument: { pointerLockElement: unknown };
+}
+
+/** The DOM errors Chromium's `setPointerCapture` throws for a pointer it will not capture. */
+const UNCAPTURABLE: ReadonlySet<string> = new Set(["InvalidStateError", "NotFoundError"]);
+
+/**
+ * Takes a press's pointer for the canvas's box, so a drag that leaves the canvas still reaches the
+ * game; answers whether it did. Never under pointer lock (mouse look already holds the pointer, and
+ * Chromium throws `InvalidStateError` there: once per click while a game casts), never for a press a
+ * script made (no real pointer is down), and a pointer let go before the press was handled
+ * (`NotFoundError`) is not taken either. Any other failure is still thrown.
+ */
+export function capturePress(target: PressTarget, press: { pointerId: number; isTrusted: boolean }): boolean {
+  if (target.ownerDocument.pointerLockElement || !press.isTrusted) return false;
+  try {
+    target.setPointerCapture(press.pointerId);
+    return true;
+  } catch (error) {
+    if (error instanceof DOMException && UNCAPTURABLE.has(error.name)) return false;
+    throw error;
+  }
+}
