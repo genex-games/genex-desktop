@@ -48,6 +48,11 @@ struct Shapes;
 
 /// Cubes and spheres in rows (edges and highlights everywhere) under a white HUD rectangle.
 fn game() -> Game<Shapes> {
+    game_with_hud([HUD_LEFT, HUD_TOP, HUD_RIGHT, HUD_BOTTOM])
+}
+
+/// The rows of shapes under a white HUD rectangle at `hud` (left, top, right, bottom points).
+fn game_with_hud(hud: [f32; 4]) -> Game<Shapes> {
     let mut game = Game::new(Shapes).world_size(WORLD[0], WORLD[1]).background(Color::rgb(30, 40, 60));
     game.camera(|_| Camera::look_at(vec3(0.0, 4.0, 10.0), vec3(0.0, 0.5, 0.0)));
     game.on_draw(|_, frame, _| {
@@ -64,8 +69,8 @@ fn game() -> Game<Shapes> {
             }
         }
     });
-    game.on_ui(|_, ui, _| {
-        let rect = egui::Rect::from_min_max(egui::pos2(HUD_LEFT, HUD_TOP), egui::pos2(HUD_RIGHT, HUD_BOTTOM));
+    game.on_ui(move |_, ui, _| {
+        let rect = egui::Rect::from_min_max(egui::pos2(hud[0], hud[1]), egui::pos2(hud[2], hud[3]));
         ui.painter().rect_filled(rect, 0.0, egui::Color32::WHITE);
     });
     game
@@ -142,6 +147,39 @@ fn metal_the_hud_is_painted_after_the_upscale_at_the_windows_pixels() {
         let row: Vec<[u8; 3]> = (left - 2..left + 3).map(|x| rgb(&shot, x, y)).collect();
         assert_ne!(rgb(&shot, left - 1, y), WHITE, "row {y}: the HUD starts at column {left}, not before: {row:?}");
         assert_eq!(rgb(&shot, left, y), WHITE, "row {y}: the HUD's left edge is on column {left}: {row:?}");
+        assert_eq!(rgb(&shot, right - 1, y), WHITE, "row {y}: the HUD's right edge");
+        assert_ne!(rgb(&shot, right, y), WHITE, "row {y}: the HUD ends before column {right}");
+    }
+}
+
+/// The Mac's full-screen drawable, more pixels than any class renders (lane UP).
+const PANEL: [u32; 2] = [3456, 2169];
+/// The panel's window pixels per HUD point for [`WORLD`]: the letterbox is 3456x1944.
+const PANEL_SCALE: f32 = 7.2;
+const PANEL_LETTERBOX: [u32; 2] = [3456, 1944];
+/// The panel letterbox's top bar: (2169 - 270 x 7.2) / 2 window rows, rounded down.
+const PANEL_BAR: u32 = 112;
+
+/// The shapes with their HUD rectangle on whole window pixels of the panel (720, 256 to 1008, 400).
+fn panel_game() -> Game<Shapes> {
+    game_with_hud([100.0, 20.0, 140.0, 40.0])
+}
+
+/// Lane UP: on a native desktop drawing TAA upscaling, a full-screen window larger than the class
+/// renders is drawn at its own pixels (the renderer's TAA reaches them from the budget's), so the
+/// window present copies it texel for texel and the HUD's edges land on single window columns:
+/// text and the HUD stay as crisp as at native resolution.
+#[test]
+fn metal_a_full_screen_window_is_drawn_at_its_own_pixels_and_its_hud_stays_crisp() {
+    let Some(shot) = on_shell_stack(|| shot_of(panel_game(), PANEL)) else { return };
+    assert_eq!(shot.output, PANEL_LETTERBOX, "the world target is the letterbox's own pixels, upscaled by TAA, not by the present");
+    let pixel = |points: f32| (points * PANEL_SCALE).round() as u32;
+    let (left, right) = (pixel(100.0), pixel(140.0));
+    let (top, bottom) = (PANEL_BAR + pixel(20.0), PANEL_BAR + pixel(40.0));
+    for y in [top + 2, (top + bottom) / 2, bottom - 3] {
+        let row: Vec<[u8; 3]> = (left - 2..left + 3).map(|x| rgb(&shot, x, y)).collect();
+        assert_ne!(rgb(&shot, left - 1, y), WHITE, "row {y}: the HUD starts at column {left}, not before: {row:?}");
+        assert_eq!(rgb(&shot, left, y), WHITE, "row {y}: the HUD's left edge is one column: {row:?}");
         assert_eq!(rgb(&shot, right - 1, y), WHITE, "row {y}: the HUD's right edge");
         assert_ne!(rgb(&shot, right, y), WHITE, "row {y}: the HUD ends before column {right}");
     }
