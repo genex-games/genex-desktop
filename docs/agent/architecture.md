@@ -802,16 +802,13 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 **Worker windows and computer use.** Every building delegation and every looking read-only session
 gets one pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs (a C++ game's `target: "macos"` runs its Mac build headless in a native lease of the
-session's own); `computer` is the studio's computer use: one tool, a session referee and
+photographs (`target: "macos"` runs headless in a native lease); `computer` is the studio's computer use: one tool, a session referee and
 swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones
 pause (`paint-while-used.ts`). Once a trusted event of a type is seen, native input is sent and
 synthetic copies withheld, except a mousemove's (real delta; `game-template/src/studio.js`
 de-duplicates). Two pool windows are never a worker's (`workerWindows(max)` = max − 2, ≥ 1). A
 harness lease carries its boot as `owner` and is freed when that harness dies
-(`PreviewPool.releaseOwnedBy`). The person's Play has a hidden window (`PERSON_WINDOWS_MAX`) and a
-native lease (`PERSON_NATIVE_LEASES_MAX`) of its own past the agents' ceilings, so it never waits for
-a run's leases. Without a free window, judge and playtest answer *no window free*;
+(`PreviewPool.releaseOwnedBy`). Play has its own window and lease past the ceilings. Without a free window, judge and playtest answer *no window free*;
 unskippable passes use the stand-in, never Live. `preview.capacity` reports free windows and
 memory. Concurrent first `state` and `console` requests share one navigation. Each action emits
 `preview.frame` and `preview.screen`.

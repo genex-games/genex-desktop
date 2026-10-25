@@ -556,7 +556,7 @@ describe("the core's Rust lane: Live builds run optimized (stub cargo)", { skip:
   // OPT: the engine and every dependency at opt-level 3, the game crate at 1 (still incremental),
   // line tables kept; MK: the dependencies without debug assertions or overflow checks; exactly the
   // store prewarm's settings, so a first build clones every unit.
-  it("passes the prewarm's profile to clippy and the build of every Live and judging build, Mac and web, and none to an export", async () => {
+  it("passes the prewarm's profile to every Live build and to clippy and the build of every judging build, Mac and web, and none to an export", async () => {
     const { store, lock } = await fixtureStore();
     const resources = await shippedResources();
     const dir = await templateGame();
@@ -577,7 +577,9 @@ describe("the core's Rust lane: Live builds run optimized (stub cargo)", { skip:
         const cargo = requests.filter((request) =>
           [RustBuildStep.Clippy, RustBuildStep.Build].some((step) => request.label?.endsWith(`:${step}`)),
         );
-        assert.equal(cargo.length, 2, `${target} ${purpose}: clippy and the build ran`);
+        // The person's Live build skips clippy (PW): the judges ran it on what they passed.
+        const steps = purpose === CppBuildPurpose.Live ? 1 : 2;
+        assert.equal(cargo.length, steps, `${target} ${purpose}: the build ran, clippy too unless Live`);
         for (const request of cargo) {
           const settings = profileSettings(request.command);
           if (purpose === CppBuildPurpose.Export)
@@ -597,7 +599,7 @@ describe("the core's Rust lane builds over the store and the payload (stub cargo
     await writeFile(main, `${await readFile(main, "utf8")}\nconst _FORCED: i32 = ${FIXTURE_RUST_FORCE_ERROR};\n`);
     const { sandbox, requests } = openSandbox();
     const lane = await coreLane(store, resources, sandbox);
-    const outcome = await lane.ensure({ ...rustGame(dir), lock }, BuildTarget.Mac, CppBuildPurpose.Live);
+    const outcome = await lane.ensure({ ...rustGame(dir), lock }, BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(outcome.ok, false);
     assert.equal(outcome.problem?.reason, BuildProblemCode.CommandFailed);
     assert.equal(outcome.rust?.refusal, null, JSON.stringify(outcome.rust));

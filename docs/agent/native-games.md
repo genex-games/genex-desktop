@@ -68,7 +68,13 @@ copies build one at a time in one target, `shared/<game>-targets/<target>-<lock1
 `BuildPriority` (`game-build.ts`; default from the purpose): the person's builds (Live, Play, Native,
 exports) take a free slot of `rustBuildsMax(cores)`, else one of their own past it, and the shared
 target next; agents' (judging) take slots in the order asked; background prebuilds only a slot nobody
-else waits for, under `nice -n 10`. A person joining a waiting build raises it. Every command
+else waits for, under `nice -n 10`. A person joining a waiting build raises it. A clean checkout's
+Live or judging build is also keyed by content ([`rust-build-content.ts`](../../src/main/rust-build-content.ts):
+the commit's tree, lock, destination, profile, flavour, trust, eject, grant, SDK), recorded as
+`<bin>.content` only when its stage is that tree file for file; any copy of the same content is
+served that admitted output (or waits for its build under way) instead of building. The person's
+Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Play plays one
+copy per commit (`show/<game>-<commit12>`, `PreviewService.playCopy`). Every command
 starts with `RUSTC_BOOTSTRAP` set empty as the prewarm's `rustEnv` does, or proc-macro2's build
 script reruns and every derive-using unit with it. The sweep (`gameBuilds.sweep()`: at start, after
 a worktree goes and after freeing a game's space; the lane's own before it makes a new build

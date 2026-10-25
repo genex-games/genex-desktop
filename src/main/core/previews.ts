@@ -12,8 +12,8 @@ import {
   readGenexJobs,
 } from "../game-assets.ts";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { ensureDir } from "../../substrate/fsx.ts";
 import {
   confinedCaptureDir,
@@ -117,6 +117,7 @@ import {
 } from "../game-sound.ts";
 import { liveMaxFps } from "../live-pace.ts";
 import { PlayStage } from "../../shared/play-timing.ts";
+import { cleanTreeOf } from "../rust-build-content.ts";
 import type { PlayClock } from "./play-timings.ts";
 
 /** The most cameras one capture photographs. */
@@ -473,6 +474,44 @@ export interface ServedEntry {
   stale: string | null;
   /** The build the page is: its stack, destination and, for a lane's build, its module digest and lock; null for a stale fallback. */
   build: BuildIdentity | null;
+  /** A digest of every file a lane admitted for the page (the receipt's outputs); null for any other page or a stale fallback. */
+  outputs: string | null;
+}
+
+/** A compiled game's web page as a lane's build serves it: its output folder, or the last good one under its problem. */
+function compiledServed(
+  built: { stack: GameStack; outcome: BuildOutcome; served: { dir: string; stale: boolean }; note: string | null },
+  entry: string,
+): ServedEntry {
+  const { stack, outcome, served, note } = built;
+  const build = {
+    stack,
+    target: BuildTarget.Web,
+    digest: webModuleDigest(outcome),
+    lock: outcome.rust?.receipt?.lock ?? null,
+  };
+  return {
+    entry,
+    root: served.dir,
+    loopback: false,
+    insertMap: false,
+    stale: served.stale ? note : null,
+    build: served.stale ? null : build,
+    outputs: served.stale ? null : outputsDigest(outcome),
+  };
+}
+
+/** A digest of every file the lane admitted for a build (its receipt's outputs); null for a build with no receipt. */
+function outputsDigest(outcome: BuildOutcome): string | null {
+  const outputs = outcome.rust?.receipt?.outputs;
+  return outputs ? createHash("sha256").update(JSON.stringify(outputs)).digest("hex") : null;
+}
+
+/** Whether `dir` is a real folder holding a clean checkout of `commit`: a copy Play may play again. */
+async function isCleanCopyOf(dir: string, commit: string): Promise<boolean> {
+  if (!(await lstat(dir).catch(() => null))?.isDirectory()) return false;
+  const head = (await git(dir, ["rev-parse", "--verify", "HEAD"]).catch(() => "")).trim();
+  return head === commit && (await cleanTreeOf(dir)) !== null;
 }
 
 /** The SHA-256 of a Rust web build's module, as the lane admitted it; null for any other build. */
@@ -507,6 +546,14 @@ function notForTheBrowser(game: GameProject | undefined): boolean {
   return !destinationsOf(game ?? {}).targets.includes(BuildTarget.Web);
 }
 
+/** Under scratch: the build copies Play plays, one per commit. */
+const SHOW_FOLDER = "show";
+/** A Play's `copy` mark when it played a copy an earlier Play or prebuild made. */
+const COPY_REUSED = "reused";
+/** A Play's `candidate` mark when the build's very output already loaded without a problem in a window. */
+const CANDIDATE_BOOTED_BEFORE = "booted-before";
+/** How many lane outputs the service remembers as booted. */
+const BOOTED_KEPT = 64;
 /** A Play's `built` mark when the lane served an admitted build without building (`PlayStage.Built`'s detail). */
 const BUILT_REUSED = "reused";
 /** How often a Play's page is asked where its boot is, and for how long at most. */
@@ -514,7 +561,7 @@ const PAGE_BOOT_POLL_MS = 100;
 const PAGE_BOOT_WATCH_MS = 3 * MINUTE_MS;
 /** The web shell's boot, as `window.GenexShell` says it (`shell.html`): its state and its loading stage. */
 const PAGE_BOOT_PROBE =
-  "(() => { const s = window.GenexShell; return s ? { state: s.status?.state ?? null, stage: s.progress?.stage ?? null } : null; })()";
+  "(() => { const s = window.GenexShell; return s ? { shell: true, state: s.status?.state ?? null, stage: s.progress?.stage ?? null } : null; })()";
 /** The shell's states and the stage its loading screen leaves at (`shell.html`). Wire values. */
 const PageBoot = { Ready: "ready", Failed: "failed", Unsupported: "unsupported" } as const;
 
@@ -536,7 +583,8 @@ async function watchPageBoot(port: PreviewPort, clock: PlayClock): Promise<void>
       stage = boot.stage;
       clock.mark(PlayStage.PageStage, { detail: stage });
     }
-    await sleep(PAGE_BOOT_POLL_MS);
+    // Unref'd: a page still booting never keeps the app (or a test) from ending.
+    await sleep(PAGE_BOOT_POLL_MS, undefined, { ref: false });
   }
   clock.end(PlayStage.Failed, PAGE_BOOT_TIMED_OUT);
 }
@@ -561,6 +609,7 @@ function watchPlay(port: PreviewPort, clock: PlayClock | undefined): void {
 /** What {@link PAGE_BOOT_PROBE} answered, or null for a page with no shell. */
 function pageBootOf(value: unknown): { state: unknown; stage: unknown } | null {
   if (typeof value !== "object" || value === null) return null;
+  if (Reflect.get(value, "shell") !== true) return null;
   return { state: Reflect.get(value, "state"), stage: Reflect.get(value, "stage") };
 }
 /** Why a watched page ended its Play: it never reached its first frame in {@link PAGE_BOOT_WATCH_MS}. */
@@ -772,6 +821,8 @@ export class PreviewService {
   #liveWebBuild: WebBuildSeen | null = null;
   /** The person stopped Live's game (`stopLive`): nothing loads into it until Play or a load of theirs. */
   #liveStopped = false;
+  /** Lane outputs (by `ServedEntry.outputs`) that loaded without a problem in some window, oldest first. */
+  readonly #booted = new Set<string>();
   /** The person's Play each window is loading for, timed (`play-timings.ts`), while that load runs. */
   readonly #playClocks = new Map<string, PlayClock>();
 
@@ -1040,6 +1091,7 @@ export class PreviewService {
       insertMap: true,
       stale: served.stale ? note : null,
       build: served.stale ? null : build,
+      outputs: null,
     };
   }
 
@@ -1108,20 +1160,7 @@ export class PreviewService {
     const served = servedAfterBuild(outcome, { fallback });
     if (!served) return null;
     this.#servedBuilds.set(port, served.dir);
-    const build = {
-      stack: receipt.stack,
-      target: BuildTarget.Web,
-      digest: webModuleDigest(outcome),
-      lock: outcome.rust?.receipt?.lock ?? null,
-    };
-    return {
-      entry: entry ?? compiledEntry(descriptor, purpose),
-      root: served.dir,
-      loopback: false,
-      insertMap: false,
-      stale: served.stale ? note : null,
-      build: served.stale ? null : build,
-    };
+    return compiledServed({ stack: receipt.stack, outcome, served, note }, entry ?? compiledEntry(descriptor, purpose));
   }
 
   /**
@@ -1845,6 +1884,37 @@ export class PreviewService {
   ): Promise<LoadedServed> {
     const served = await this.servedEntry(project, root, entry, port, play);
     if (!served) return { problem: await this.#leaveNoPage(port), note: null, ready: null, build: null };
+    return await this.#loadChecked(port, project, served, forceLoopback);
+  }
+
+  /** `served` loaded into `port` and checked as `loadServed` checks it; a lane's output that loads is remembered as booted. */
+  async #loadChecked(
+    port: PreviewPort,
+    project: string,
+    served: ServedEntry,
+    forceLoopback = false,
+  ): Promise<LoadedServed> {
+    const loaded = await this.#loadAndCheck(port, project, served, forceLoopback);
+    if (!loaded.problem && served.outputs) this.#rememberBooted(served.outputs);
+    return loaded;
+  }
+
+  /** A lane's output that loaded without a problem: Play does not boot it again in its hidden window. */
+  #rememberBooted(outputs: string): void {
+    this.#booted.delete(outputs);
+    this.#booted.add(outputs);
+    for (const old of this.#booted) {
+      if (this.#booted.size <= BOOTED_KEPT) break;
+      this.#booted.delete(old);
+    }
+  }
+
+  async #loadAndCheck(
+    port: PreviewPort,
+    project: string,
+    served: ServedEntry,
+    forceLoopback: boolean,
+  ): Promise<LoadedServed> {
     const budgetMs = await this.bootMsFor(project);
     // `shim.readyMs` is the same number: one budget, so the page and the studio give up together.
     const loaded = await port.load(project, served.entry, served.root, {
@@ -2035,15 +2105,9 @@ export class PreviewService {
     resolved: string,
     clock: PlayClock,
   ): Promise<{ dir: string; commit: string }> {
-    // Prepare an independent revision. A failed build must never delete the currently served one.
-    const showDir = path.join(
-      this.#core.layout.scratch,
-      "show",
-      `${project}-${resolved.slice(0, 12)}-${randomUUID().slice(0, 8)}`,
-    );
-    await ensureDir(path.dirname(showDir));
-    await this.#core.snapshots.worktreeAt(project, resolved, showDir, await this.nestedPolicy(projectDir));
-    clock.mark(PlayStage.Copy);
+    // The commit's own copy, made once: a failed build must never delete the currently served one.
+    const { dir: showDir, made } = await this.playCopy(project, projectDir, resolved);
+    clock.mark(PlayStage.Copy, { detail: made ? null : COPY_REUSED });
     const previous = this.#x.servedRoots.get(LIVE_HANDLE);
     // A preview candidate may never borrow the user's Live window. It is the person's own window
     // past the agents' share: every caller plays a build the person asked for (their Play, or the
@@ -2055,8 +2119,7 @@ export class PreviewService {
       clock.mark(PlayStage.Window);
       candidateHandle = lease.handle;
       const port = this.pool().port(lease.handle);
-      const candidate = await this.loadServed(port, project, showDir, undefined, false, { clock });
-      clock.mark(PlayStage.Candidate);
+      const candidate = await this.#candidate(port, project, showDir, clock);
       if (candidate.problem) throw new Error(candidate.problem);
       if (this.#x.servedRoots.get(LIVE_HANDLE) !== previous) throw new Error(MESSAGE.previewChanged());
       liveAttempted = true;
@@ -2071,14 +2134,56 @@ export class PreviewService {
         await this.loadPreview({ project: previous.project, root: previous.root, entry: previous.entry }).catch(
           () => {},
         );
-      await this.#core.snapshots.removeWorktree(project, showDir).catch(() => {});
-      await rm(showDir, { recursive: true, force: true }).catch(() => {});
+      // Only a copy this Play made goes: an earlier one may be what Live shows.
+      if (made && this.#x.servedRoots.get(LIVE_HANDLE)?.root !== showDir) {
+        await this.#core.snapshots.removeWorktree(project, showDir).catch(() => {});
+        await rm(showDir, { recursive: true, force: true }).catch(() => {});
+      }
       throw error;
     } finally {
       if (candidateHandle) await this.pool().release(candidateHandle);
     }
     await this.#core.games.touch(project).catch(() => {});
     return { dir: showDir, commit: resolved };
+  }
+
+  /**
+   * The build copy Play plays `commit` from, under scratch's `show/`: the copy an earlier Play or
+   * prebuild made of it while it is still that commit's clean checkout (`made: false`), else a new
+   * worktree beside it. One copy per commit means one build folder per commit, which the Rust lane
+   * finds built (lane PW).
+   */
+  async playCopy(project: string, projectDir: string, commit: string): Promise<{ dir: string; made: boolean }> {
+    const shows = path.join(this.#core.layout.scratch, SHOW_FOLDER);
+    const stable = path.join(shows, `${project}-${commit.slice(0, 12)}`);
+    if (await isCleanCopyOf(stable, commit)) return { dir: stable, made: false };
+    const taken = await lstat(stable).catch(() => null);
+    const dir = taken ? `${stable}-${randomUUID().slice(0, 8)}` : stable;
+    await ensureDir(shows);
+    await this.#core.snapshots.worktreeAt(project, commit, dir, await this.nestedPolicy(projectDir));
+    return { dir, made: true };
+  }
+
+  /**
+   * The person's hidden window plays the copy's build before Live is given it, so a build that does
+   * not load never replaces what Live shows. A build whose very output already loaded without a
+   * problem in any window (a judge's look, an earlier Play) is not booted again (`booted`).
+   */
+  async #candidate(
+    port: PreviewPort,
+    project: string,
+    root: string,
+    clock: PlayClock,
+  ): Promise<{ problem: string | null }> {
+    const served = await this.servedEntry(project, root, undefined, port, { purpose: CppBuildPurpose.Live, clock });
+    if (!served) return { problem: await this.#leaveNoPage(port) };
+    if (served.outputs && this.#booted.has(served.outputs)) {
+      clock.mark(PlayStage.Candidate, { detail: CANDIDATE_BOOTED_BEFORE });
+      return { problem: null };
+    }
+    const loaded = await this.#loadChecked(port, project, served);
+    clock.mark(PlayStage.Candidate);
+    return { problem: loaded.problem };
   }
 
   /** Whether the studio may version this game's own nested repositories inside a fork of it. */

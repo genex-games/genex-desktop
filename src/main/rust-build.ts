@@ -162,6 +162,13 @@ import {
   sweepShared,
 } from "./rust-build-cache.ts";
 import { type CloneFile, hostTreeCloner, type TreeCloner } from "../substrate/clone-tree.ts";
+import {
+  type ContentFacts,
+  cleanTreeOf,
+  contentKeyOf,
+  RustContentIndex,
+  stageMatchesTree,
+} from "./rust-build-content.ts";
 
 const MESSAGE = {
   notAllowed: (names: readonly string[]) =>
@@ -211,6 +218,10 @@ const SWEEP_STEP = "sweep";
 const STAGE_STEP = "stage";
 const ASSETS_STEP = "assets";
 const ADMIT_STEP = "admit";
+/** The engine fork's manifests the stage writes from the store, never the game's (`rust-stage.ts`). */
+const ENGINE_HOST_MANIFESTS: ReadonlySet<string> = new Set(["Cargo.toml", "Cargo.toml.orig"]);
+/** The most of a receipt a reused build reads back. */
+const RECEIPT_MAX_BYTES = 16 * 1024 * 1024;
 /** The person's builds that may run past the lane's ceiling at once, so a Play never waits for agents' slots. */
 const PERSON_BUILD_SLOTS = 1;
 /** Which turn goes first: the person's, then agents', then background prebuilds. */
@@ -721,6 +732,22 @@ interface Pending {
   settings: Extract<RustTargetSettings, { ok: true }> | null;
   /** Whose build it is: a person's joining a background build raises it (`#join`). */
   turn: BuildTurn;
+  /** What the build is made of, when its source is a clean checkout (`rust-build-content.ts`); null otherwise. */
+  content: PendingContent | null;
+}
+
+/** A clean checkout's build: its content key and tree, and whether its stage proved to be that tree. */
+interface PendingContent {
+  key: string;
+  tree: string;
+  verified: boolean;
+}
+
+/** A build of some content under way, which a build of the same content in another copy waits for. */
+interface ContentFlight {
+  flight: InFlight;
+  bin: string;
+  linted: boolean;
 }
 
 /** A build's place in the lane's queues, shared by everyone waiting on it. */
@@ -830,11 +857,16 @@ export class RustBuilds implements GameBuildLane {
   readonly #holds = new Map<string, SharedHold>();
   /** The sweep a new build folder started, while it runs ({@link RustBuilds.sweep}). */
   #sweeping: Promise<number> | null = null;
+  /** The content keys the lane recorded beside its build folders (`rust-build-content.ts`). */
+  readonly #content: RustContentIndex;
+  /** Builds of a content key under way, by key. */
+  readonly #contentFlights = new Map<string, ContentFlight>();
   /** The Plays timing each build folder's build (`GameBuildOptions.timing`), while they wait on it. */
   readonly #timings = new Map<string, Set<PlayTimingSink>>();
 
   constructor(options: RustBuildsOptions) {
     this.options = options;
+    this.#content = new RustContentIndex(options.root);
   }
 
   /**
@@ -866,24 +898,115 @@ export class RustBuilds implements GameBuildLane {
       return this.#refused(asked, BuildProblemCode.ToolchainMissing, lines, null, RustBuildRefusal.TargetSettings);
     }
     const turn = { priority: priorityOf(purpose, options.priority) };
-    const pending: Pending = { game, target, purpose, builder, source, bin, lock, sdk, settings, turn };
+    const pending: Pending = { game, target, purpose, builder, source, bin, lock, sdk, settings, turn, content: null };
     return await this.#join(pending, options);
   }
 
   /** The build of `pending`'s folder under way (or a new one), waited for; a Play timing it hears its marks meanwhile. */
   async #join(pending: Pending, options: GameBuildOptions): Promise<BuildOutcome> {
     const { bin } = pending;
-    const running = this.#inFlight.get(bin);
     const timing = options.timing;
     if (timing) this.#timingsOf(bin).add(timing);
     try {
-      const joined = running && !running.controller.signal.aborted ? running : null;
-      if (joined) this.#raise(joined.turn, pending.turn.priority);
-      const flight = joined ?? this.#start(pending, running ?? null);
+      const running = this.#running(bin);
+      if (running) return await this.#waitRaised(running, pending, options);
+      const content = await this.#contentOf(pending);
+      const same = content ? this.#sameContent(content.key, pending) : null;
+      if (same) return await this.#waitOnContent(same, pending, options);
+      const reused = content ? await this.#reused(pending, content.key, timing) : null;
+      if (reused) return reused;
+      const started = this.#running(bin);
+      if (started) return await this.#waitRaised(started, pending, options);
+      const flight = this.#start({ ...pending, content }, this.#inFlight.get(bin) ?? null);
       return await this.#wait(flight, pending, options.signal);
     } finally {
       if (timing) this.#timings.get(bin)?.delete(timing);
     }
+  }
+
+  /** The build of `bin` under way and not stopped, or null. */
+  #running(bin: string): InFlight | null {
+    const running = this.#inFlight.get(bin);
+    return running && !running.controller.signal.aborted ? running : null;
+  }
+
+  /** Waits for `flight`, which `pending`'s caller now waits on too, at that caller's turn if it is more urgent. */
+  async #waitRaised(flight: InFlight, pending: Pending, options: GameBuildOptions): Promise<BuildOutcome> {
+    this.#raise(flight.turn, pending.turn.priority);
+    return await this.#wait(flight, pending, options.signal);
+  }
+
+  /** Waits for another copy's build of the same content, its marks told to this caller's Play too. */
+  async #waitOnContent(same: ContentFlight, pending: Pending, options: GameBuildOptions): Promise<BuildOutcome> {
+    const timing = options.timing;
+    if (timing) this.#timingsOf(same.bin).add(timing);
+    try {
+      return await this.#waitRaised(same.flight, pending, options);
+    } finally {
+      if (timing) this.#timings.get(same.bin)?.delete(timing);
+    }
+  }
+
+  /**
+   * What a build of `pending` is made of when its source is a clean checkout (an export never: it
+   * always builds). Null otherwise, and then it builds as itself.
+   */
+  async #contentOf(pending: Pending): Promise<PendingContent | null> {
+    if (pending.purpose === CppBuildPurpose.Export) return null;
+    const tree = await cleanTreeOf(pending.source).catch(() => null);
+    if (!tree) return null;
+    const grant = (await this.options.crateGrant?.(pending.game.project).catch(() => null)) ?? NO_GRANT;
+    if (!grant.ok) return null;
+    const { purpose, target, builder } = pending;
+    const facts: ContentFacts = {
+      tree,
+      lock: pending.lock.digest,
+      target,
+      triple: pending.settings?.front?.target ?? builder.triple,
+      profile: profileOf(purpose),
+      flavour: rustFlavourOf(purpose, target),
+      net: rustNetFeatureOf(purpose, builder.triple),
+      trusted: (await this.#trustOf(pending)).trusted,
+      ejectedFrom: await this.#ejectedFrom(pending),
+      grant: { names: [...grant.names].sort(), crates: grant.crates },
+      sdk: pending.sdk,
+    };
+    return { key: contentKeyOf(facts), tree, verified: false };
+  }
+
+  /** Another copy's build of `key` under way that `pending` may take: gated by clippy when a judge asks. */
+  #sameContent(key: string, pending: Pending): ContentFlight | null {
+    const same = this.#contentFlights.get(key);
+    if (!same || same.flight.controller.signal.aborted) return null;
+    return same.linted || !lintsFor(pending.purpose) ? same : null;
+  }
+
+  /**
+   * An admitted build of `key` from any copy, served as this one's (its receipt with it), or null:
+   * one clippy gated when a judge asks, none being built again now, and only while `lastAdmitted`
+   * finds its output whole.
+   */
+  async #reused(pending: Pending, key: string, timing: PlayTimingSink | undefined): Promise<BuildOutcome | null> {
+    const started = this.#now();
+    for (const record of await this.#content.recorded(key)) {
+      if (lintsFor(pending.purpose) && !record.linted) continue;
+      if (this.#inFlight.has(record.bin)) continue;
+      const output = await lastAdmitted(record.bin);
+      const receipt = output ? await readReceipt(record.bin) : null;
+      if (!output || !receipt) continue;
+      if (pending.game.recordLock) await this.#recordLock(pending.game.project, pending.lock.digest);
+      timing?.(PlayStage.BuildReused, this.#now() - started, path.basename(path.dirname(record.bin)));
+      this.#emit(pending, BuildPhase.Done);
+      return {
+        ok: true,
+        output,
+        lastGood: output,
+        problem: null,
+        ran: false,
+        rust: { refusal: null, diagnostics: [], receipt },
+      };
+    }
+    return null;
   }
 
   /** A build someone more urgent joined takes their turn: a person's Play joining a background build is the person's. */
@@ -1029,8 +1152,11 @@ export class RustBuilds implements GameBuildLane {
     const done = cancelled ? cancelled.done.then(start, start) : start();
     const flight: InFlight = { project: pending.game.project, turn: pending.turn, controller, done, waiters: 0 };
     this.#inFlight.set(pending.bin, flight);
+    const key = pending.content?.key;
+    if (key) this.#contentFlights.set(key, { flight, bin: pending.bin, linted: lintsFor(pending.purpose) });
     const forget = () => {
       if (this.#inFlight.get(pending.bin) === flight) this.#inFlight.delete(pending.bin);
+      if (key && this.#contentFlights.get(key)?.flight === flight) this.#contentFlights.delete(key);
     };
     done.then(forget, forget);
     return flight;
@@ -1192,6 +1318,8 @@ export class RustBuilds implements GameBuildLane {
       });
     }
     adoptStaged(plan, staged);
+    // Before the import step, which rewrites assets: the stage as the source gave it, file for file.
+    if (plan.content) plan.content.verified = await stagedFromTree(plan, plan.content.tree);
     // Before the import step, which rewrites assets per destination: one input for every destination.
     if (this.options.bakes) plan.bakeInput = await bakeInputDigest(stageDir(plan.bin), plan.lock.digest);
     plan.gameSlug = await this.#gameSlug(plan);
@@ -1217,8 +1345,11 @@ export class RustBuilds implements GameBuildLane {
     if (locked) return locked;
     this.#emit(plan, BuildPhase.Build);
     const timeout = RUST_BUILD_TIMEOUT_MS[plan.target];
-    const clippy = await this.#step(plan, RustBuildStep.Clippy, clippyCommand(plan, this.#jobs()), timeout, signal);
-    if (!succeeded(clippy)) return this.#failed(plan, clippy, signal, lastGood);
+    // The person's Live build skips the clippy gate: the judges ran it on what they passed (PW).
+    if (lintsFor(plan.purpose)) {
+      const clippy = await this.#step(plan, RustBuildStep.Clippy, clippyCommand(plan, this.#jobs()), timeout, signal);
+      if (!succeeded(clippy)) return this.#failed(plan, clippy, signal, lastGood);
+    }
     const build = await this.#step(plan, RustBuildStep.Build, buildCommand(plan, this.#jobs()), timeout, signal);
     if (!succeeded(build)) return this.#failed(plan, build, signal, lastGood);
     return await this.#timed(plan.bin, PlayStage.BuildStep, ADMIT_STEP, () =>
@@ -1378,9 +1509,16 @@ export class RustBuilds implements GameBuildLane {
     }
     const outputs = await this.#bake(plan, written.outputs, bakeCache, signal);
     const receipt = this.#receipt(plan, compiler, outputs, web?.receipt ?? null, written.package);
+    return await this.#admitted(plan, inside, receipt);
+  }
+
+  /** An admitted build's receipt, debug files, recorded lock and content key written; its outcome. */
+  async #admitted(plan: Plan, built: string, receipt: RustBuildReceipt): Promise<BuildOutcome> {
     await atomicWriteText(`${plan.bin}${RECEIPT_SUFFIX}`, `${JSON.stringify(receipt, null, 2)}\n`);
-    await this.#keepDebug(plan, inside, outputs);
+    await this.#keepDebug(plan, built, receipt.outputs);
     if (plan.game.recordLock) await this.#recordLock(plan.game.project, plan.lock.digest);
+    if (plan.content?.verified)
+      await this.#content.record(plan.bin, plan.content.key, lintsFor(plan.purpose), this.#now());
     this.#emit(plan, BuildPhase.Done);
     const output = `${plan.bin}${OUT_SUFFIX}`;
     return {
@@ -2166,6 +2304,40 @@ function envPrefix(plan: Plan): string {
   const env = Object.entries(buildEnv(plan)).map(([name, value]) => `${name}=${value}`);
   const niced = plan.turn.priority === BuildPriority.Background ? [NICE, "-n", String(BACKGROUND_NICENESS)] : [];
   return [...niced, ENV, "-i", ...env].map(shellQuote).join(" ");
+}
+
+/** Whether a build of `purpose` runs the clippy gate: every build but the person's Live one (PW). */
+function lintsFor(purpose: CppBuildPurpose): boolean {
+  return purpose !== CppBuildPurpose.Live;
+}
+
+/** Whether the stage holds exactly `tree`'s files besides the host's own (the manifests and the lock it writes). */
+async function stagedFromTree(plan: Plan, tree: string): Promise<boolean> {
+  const hostWritten = (rel: string): boolean => {
+    const name = path.posix.basename(rel);
+    const top = rel.split("/")[0];
+    if (rel === MANIFEST_FILE || rel === LOCK_FILE) return true;
+    return top === RUST_ENGINE_FOLDER && ENGINE_HOST_MANIFESTS.has(name);
+  };
+  return await stageMatchesTree(stageDir(plan.bin), plan.source, tree, hostWritten).catch(() => false);
+}
+
+/** A build folder's receipt, as the lane wrote it; null when it cannot be read. */
+async function readReceipt(bin: string): Promise<RustBuildReceipt | null> {
+  const bytes = await readRegularFile(`${bin}${RECEIPT_SUFFIX}`, RECEIPT_MAX_BYTES).catch(() => null);
+  if (!bytes) return null;
+  try {
+    const parsed: unknown = JSON.parse(bytes.toString("utf8"));
+    return isReceipt(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `value` has a receipt's shape as far as a reused build's caller reads it. */
+function isReceipt(value: unknown): value is RustBuildReceipt {
+  if (typeof value !== "object" || value === null) return false;
+  return Reflect.get(value, "version") === 1 && Array.isArray(Reflect.get(value, "outputs"));
 }
 
 /** Whether `turn` goes before `other`. */

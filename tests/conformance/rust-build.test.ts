@@ -38,7 +38,7 @@ import {
 } from "../../src/main/rust-build.ts";
 import { RustBuildRefusal, RustDiagnosticTool } from "../../src/main/rust-build-diagnostics.ts";
 import { RustTargetSeed, RustTargetSharing } from "../../src/main/rust-build-cache.ts";
-import type { PlayStage, PlayTimingSink } from "../../src/shared/play-timing.ts";
+import { PlayStage, type PlayTimingSink } from "../../src/shared/play-timing.ts";
 import { cloneTreeByFile, type TreeCloner } from "../../src/substrate/clone-tree.ts";
 import { RustNetFeature } from "../../src/main/rust-manifest.ts";
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
@@ -591,7 +591,7 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       "exit 101",
     ].join("\n");
     const { builds } = await lane(parent, open.sandbox, { stub: { onClippy } });
-    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(outcome.ok, false);
     assert.equal(outcome.problem?.reason, BuildProblemCode.CommandFailed);
     const [first] = outcome.rust?.diagnostics ?? [];
@@ -821,7 +821,7 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       return clock;
     };
     const { builds } = await lane(parent, open.sandbox, { now });
-    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
     const receipt = outcome.rust?.receipt;
     assert.ok(receipt);
@@ -876,14 +876,14 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       stub: { onClippy: '[ -f "$(dirname "$manifest")/src/broken.rs" ] && exit 101' },
     });
     const dir = await rustGame(parent);
-    const first = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
+    const first = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(first.ok, true, JSON.stringify(first.problem));
     await writeFile(path.join(dir, "src", "broken.rs"), "nope\n");
-    const broken = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
+    const broken = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(broken.ok, false);
     assert.equal(broken.lastGood, first.output);
     await writeFile(path.join(first.output ?? "", "game"), "swapped");
-    const swapped = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
+    const swapped = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(swapped.ok, false);
     assert.equal(swapped.lastGood, null, "an output changed since admission is no output");
   });
@@ -1508,7 +1508,8 @@ describe("the person's Play never queues behind agents' builds (PW incident)", {
     assert.deepEqual(order, ["agent-a", "agent-b", "background"]);
     const niced = open.requests.filter((request) => request.label?.startsWith("rust:prebuilt:"));
     assert.ok(niced.length > 0);
-    for (const request of niced) assert.match(request.command, /^exec '\/usr\/bin\/nice' '-n' '10' '\/usr\/bin\/env' /, request.command);
+    for (const request of niced)
+      assert.match(request.command, /^exec '\/usr\/bin\/nice' '-n' '10' '\/usr\/bin\/env' /, request.command);
     const agents = open.requests.filter((request) => request.label?.startsWith("rust:agent-"));
     for (const request of agents) assert.doesNotMatch(request.command, /\/usr\/bin\/nice/);
   });
@@ -1532,5 +1533,151 @@ describe("the person's Play never queues behind agents' builds (PW incident)", {
     await release();
     await Promise.all([first, second, person]);
     assert.deepEqual(order, ["one", "played", "two"], "the shared target goes to the person's build next");
+  });
+});
+
+describe("Play reuses an admitted build of the same content instead of building its copy again (PW)", {
+  skip: SKIP_ON_WINDOWS,
+}, () => {
+  const IDENTITY = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"];
+
+  /** `git` in `dir`, or a thrown error. */
+  async function gitIn(dir: string, args: string[]): Promise<string> {
+    return await new Promise((resolve, reject) => {
+      const child = spawn("git", ["-C", dir, ...IDENTITY, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      child.stdout.on("data", (chunk) => {
+        out += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", (code) =>
+        code === 0 ? resolve(out.trim()) : reject(new Error(`git ${args.join(" ")}: ${code}`)),
+      );
+    });
+  }
+
+  /** A committed Rust game and a second checkout of the same commit, as Play latest's copy is. */
+  async function twoCopies(parent: string) {
+    const game = await rustGame(parent, "copies");
+    await writeFile(path.join(game, ".gitignore"), "target/\n");
+    await gitIn(game, ["init", "-q"]);
+    await gitIn(game, ["add", "-A"]);
+    await gitIn(game, ["commit", "-q", "-m", "game"]);
+    const copy = path.join(parent, "show", "copies");
+    await mkdir(path.dirname(copy), { recursive: true });
+    await gitIn(game, ["worktree", "add", "-q", "--detach", copy, "HEAD"]);
+    return { game, copy: await realpath(copy) };
+  }
+
+  /** The cargo builds the sandboxes ran for folders named `copies`, by the stage they built. */
+  const builtStages = (requests: RunRequest[]) =>
+    requests.filter((request) => / 'build' /.test(request.command)).map((request) => request.label ?? "");
+
+  it("a person's Play of a commit the judge built serves the judge's admitted output: no copy build, no clippy", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const { game, copy } = await twoCopies(parent);
+    const judged = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(judged.ok, true, JSON.stringify(judged.problem));
+    const before = open.requests.length;
+    const marks: string[] = [];
+    const played = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Live, {
+      timing: (stage) => marks.push(stage),
+    });
+    assert.equal(played.ok, true, JSON.stringify(played.problem));
+    assert.equal(played.output, judged.output, "the judge's admitted output");
+    assert.equal(played.ran, false);
+    assert.deepEqual(open.requests.slice(before), [], "nothing ran for the copy");
+    assert.ok(marks.includes(PlayStage.BuildReused));
+    assert.equal(played.rust?.receipt?.lock, LOCK.digest);
+  });
+
+  it("a person's Live build skips clippy, and a judge never reuses a build clippy did not gate", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-lint-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const { game, copy } = await twoCopies(parent);
+    const live = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(live.ok, true, JSON.stringify(live.problem));
+    assert.deepEqual(
+      live.rust?.receipt?.steps.map((step) => step.step),
+      ["identity", "lock", "build"],
+    );
+    const judged = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(judged.ran, true, "the judge built its own copy");
+    assert.notEqual(judged.output, live.output);
+    assert.ok(judged.rust?.receipt?.steps.some((step) => step.step === "clippy"));
+  });
+
+  /** A copy that is not the commit's tree, as it may be found: each builds as itself and reuses nothing. */
+  const NOT_THE_COMMIT = [
+    {
+      name: "an edited file",
+      change: (copy: string) => writeFile(path.join(copy, "src", "main.rs"), "fn main() { }\n"),
+    },
+    { name: "an untracked file", change: (copy: string) => writeFile(path.join(copy, "assets", "new.txt"), "new") },
+    {
+      name: "an ignored file in a staged folder",
+      change: async (copy: string) => {
+        await writeFile(path.join(copy, ".gitignore"), "target/\nassets/secret.txt\n");
+        await writeFile(path.join(copy, "assets", "secret.txt"), "secret");
+      },
+    },
+    {
+      name: "a file changed under the same size and time",
+      change: async (copy: string) => {
+        const file = path.join(copy, "assets", "fish.txt");
+        const { atime, mtime } = await stat(file);
+        await writeFile(file, "FISH");
+        const { utimes } = await import("node:fs/promises");
+        await utimes(file, atime, mtime);
+      },
+    },
+  ] as const;
+
+  for (const row of NOT_THE_COMMIT) {
+    it(`a copy with ${row.name} builds as itself and serves nobody else's output`, async () => {
+      const parent = await realpath(await tmpDir("rust-reuse-dirty-"));
+      const open = openSandboxes();
+      const { builds } = await lane(parent, open.sandbox);
+      const { game, copy } = await twoCopies(parent);
+      await row.change(copy);
+      const changed = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Judging);
+      assert.equal(changed.ok, true, JSON.stringify(changed.problem));
+      assert.equal(changed.ran, true);
+      const clean = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Live);
+      assert.equal(clean.ran, true, "the clean checkout never got the changed copy's build");
+      assert.notEqual(clean.output, changed.output);
+    });
+  }
+
+  it("a reused output that changed since admission is no output: the copy builds", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-tampered-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const { game, copy } = await twoCopies(parent);
+    const judged = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Judging);
+    await writeFile(path.join(judged.output ?? "", "game"), "swapped");
+    const played = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(played.ran, true);
+    assert.notEqual(played.output, judged.output);
+  });
+
+  it("a Play while the judge still builds the same commit waits for that build instead of starting its own", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-join-"));
+    const gate = path.join(parent, "gate");
+    const open = openSandboxes();
+    const onBuild = `while [ ! -f ${shellWord(gate)} ]; do sleep 0.05; done`;
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild } });
+    const { game, copy } = await twoCopies(parent);
+    const judging = builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Judging);
+    await sleep(500);
+    const playing = builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Live);
+    await sleep(300);
+    await writeFile(gate, "go");
+    const [judged, played] = await Promise.all([judging, playing]);
+    assert.equal(played.output, judged.output);
+    assert.equal(builtStages(open.requests).length, 1, "one cargo build for the two copies");
   });
 });
