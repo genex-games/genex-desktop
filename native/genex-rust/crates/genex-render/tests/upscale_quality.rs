@@ -24,7 +24,7 @@
 use genex_render::capture::Capture;
 use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::motion::DrawId;
-use genex_render::presets::{budget_scale, effect_budgeted, preset_quality, render_pixel_budget, step_size};
+use genex_render::presets::{budget_scale, class_defaults, effect_budgeted, preset_quality, render_pixel_budget, step_size};
 use genex_render::scene::{CameraDesc, Material, MeshId, Scene};
 use genex_render::settings::{AoResolution, Quality, QualityPreset, SceneFormat};
 use genex_render::{CullPath, Gpu, RenderOptions, Renderer};
@@ -49,6 +49,10 @@ const SSIM_STILL_MIN: f64 = 0.93;
 const SSIM_MOVING_MIN: f64 = 0.88;
 /// The most mean absolute luma difference from the native frame, in levels (measured 0.7 to 3.2).
 const MEAN_ABS_MAX: f64 = 4.0;
+/// The least mean SSIM and the most mean absolute error at dynamic resolution's floor (0.53125 of
+/// the panel a side; measured 0.86 and 4.2 levels under the fast pan).
+const FLOOR_SSIM_MIN: f64 = 0.84;
+const FLOOR_MEAN_ABS_MAX: f64 = 5.0;
 /// The most a settled still upscaled frame may change from one frame to the next, over the
 /// native frame's change (shimmer), plus a floor of 0.25 levels for two settled frames.
 const SHIMMER_RATIO_MAX: f64 = 2.0;
@@ -84,11 +88,21 @@ fn native_quality() -> Quality {
     preset_quality(QualityPreset::Ultra, ultra_class())
 }
 
-/// The scale and quality Live draws the panel with: the budget's scale and its effect budgets.
-fn upscaled() -> (f32, Quality) {
-    let class = ultra_class();
-    let scale = budget_scale(PANEL, render_pixel_budget(class));
-    (scale, effect_budgeted(&native_quality(), class, step_size(PANEL, scale)))
+/// The scale Live draws the panel at nominally: the budget's.
+fn budget() -> f32 {
+    budget_scale(PANEL, render_pixel_budget(ultra_class()))
+}
+
+/// Dynamic resolution's lowest step on the panel: the class's lowest step times the budget's
+/// scale, in 1/32 steps (0.53125).
+fn floor_scale() -> f32 {
+    let lowest = class_defaults(ultra_class()).drs_steps[0] * budget();
+    (lowest * 32.0).round() / 32.0
+}
+
+/// The quality Live draws the panel with: ultra under its effect budgets at the nominal step.
+fn upscaled_quality() -> Quality {
+    effect_budgeted(&native_quality(), ultra_class(), step_size(PANEL, budget()))
 }
 
 fn renderer(gpu: &Gpu, quality: &Quality, scale: f32) -> Renderer {
@@ -237,7 +251,13 @@ struct Compared {
 
 /// Draw `scene_at` natively and upscaled and compare them frame for frame.
 fn compare(gpu: &Gpu, name: &str, scene_at: &dyn Fn(u64) -> Scene, settle: u64, compared: u64) -> (Compared, Vec<Vec<f32>>, Vec<Vec<f32>>) {
-    let (scale, quality) = upscaled();
+    compare_at(gpu, budget(), name, scene_at, (settle, compared))
+}
+
+/// [`compare`] with the upscaled frames drawn at `scale` (`frames`: settled, then compared).
+fn compare_at(gpu: &Gpu, scale: f32, name: &str, scene_at: &dyn Fn(u64) -> Scene, frames: (u64, u64)) -> (Compared, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    let (settle, compared) = frames;
+    let quality = upscaled_quality();
     assert_eq!(quality.ao.resolution, AoResolution::Half, "the premise: the panel's budget halves AO");
     let mut native = renderer(gpu, &native_quality(), 1.0);
     let (native_frames, native_last) = run(gpu, &mut native, scene_at, settle, compared);
@@ -317,4 +337,28 @@ fn metal_a_fast_crowd_leaves_no_ghosts_under_the_upscale() {
     eprintln!("crowd trail: {trail} pixels, {ghosts} ghosted ({:.4})", share);
     assert!(trail > 1000, "the premise: the runners leave a trail ({trail})");
     assert!(share <= GHOST_SHARE_MAX, "{ghosts} of {trail} trail pixels ghost ({share:.4})");
+}
+
+/// A compared scene: its name, its frames and how many settle before how many are compared.
+type SceneRow<'a> = (&'a str, &'a dyn Fn(u64) -> Scene, (u64, u64));
+
+/// Dynamic resolution's floor on the panel (0.53125, where a heavy frame holds 60 fps): the three
+/// scenes keep the native frame's structure within looser bounds (measured on the M4 Max and
+/// printed for the report).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_at_the_dynamic_resolution_floor_the_upscale_keeps_the_native_structure() {
+    let Some(gpu) = gpu() else { return };
+    let floor = floor_scale();
+    assert_eq!(floor, 0.53125, "the premise: the panel's lowest step");
+    let still = |_| grass_scene([0.0, 1.6, 4.0], [0.0, 0.3, -2.0]);
+    let pan = |frame: u64| {
+        let x = 0.03 * frame as f32 - 0.6;
+        grass_scene([x, 1.6, 4.0], [x, 0.3, -2.0])
+    };
+    let rows: [SceneRow<'_>; 3] = [("floor-grass-still", &still, (SETTLE, 16)), ("floor-grass-fast-pan", &pan, (SETTLE / 2, MOVING)), ("floor-crowd", &crowd_scene, (SETTLE / 2, MOVING))];
+    for (name, scene_at, frames) in rows {
+        let (compared, _, _) = compare_at(&gpu, floor, name, scene_at, frames);
+        assert!(compared.ssim >= FLOOR_SSIM_MIN && compared.mean_abs <= FLOOR_MEAN_ABS_MAX, "{name}: {compared:?}");
+    }
 }
