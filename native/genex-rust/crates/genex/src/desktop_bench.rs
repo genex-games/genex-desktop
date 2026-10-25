@@ -17,8 +17,9 @@
 //! GPU timing armed (the profile reports then carry each frame-graph node's GPU time; the brackets
 //! cost a little themselves). The run opens no audio
 //! device unless `"audio": true`. After `seconds` the run
-//! writes `out` (every frame's wall time, shell interval, ticks and whether it drew; the window, output
-//! and render sizes; the profile reports of the run) and exits. Only the dev flavour (`studio`) reads
+//! writes `out` (every frame's wall time, shell interval, ticks, whether it drew and its render
+//! scale; every `degraded` entry seen during the run; the window, output and render sizes; the
+//! profile reports of the run) and exits. Only the dev flavour (`studio`) reads
 //! it: an export never does.
 
 #![allow(clippy::disallowed_types, clippy::disallowed_methods, reason = "host glue: a measured run times frames by the wall clock; the simulation never sees it")]
@@ -145,6 +146,8 @@ struct FrameRecord {
     work_ms: f64,
     ticks: u32,
     drew: bool,
+    /// The render scale the settings held after the frame.
+    scale: f32,
 }
 
 /// A measured run in progress.
@@ -153,6 +156,8 @@ pub(crate) struct Bench {
     started: Option<Instant>,
     frames: Vec<FrameRecord>,
     reports: Vec<Value>,
+    /// Every `degraded` entry (reason:subject) a frame of the run reported, in first-seen order.
+    degraded_seen: Vec<String>,
     /// The window's surface size at the last frame.
     pub(crate) surface: [u32; 2],
     pub(crate) scale_factor: f64,
@@ -161,7 +166,7 @@ pub(crate) struct Bench {
 impl Bench {
     /// A run of `plan`, not begun.
     pub(crate) fn new(plan: BenchPlan) -> Bench {
-        Bench { plan, started: None, frames: Vec::new(), reports: Vec::new(), surface: [0, 0], scale_factor: 1.0 }
+        Bench { plan, started: None, frames: Vec::new(), reports: Vec::new(), degraded_seen: Vec::new(), surface: [0, 0], scale_factor: 1.0 }
     }
 
     /// Whether the scene was set up and the clock started.
@@ -178,8 +183,21 @@ impl Bench {
     pub(crate) fn frame(&mut self, shell_ms: f64, work_ms: f64, ticks: u32, drew: bool) -> bool {
         let Some(started) = self.started else { return false };
         let at_ms = started.elapsed().as_secs_f64() * 1000.0;
-        self.frames.push(FrameRecord { at_ms, shell_ms, work_ms, ticks, drew });
+        self.frames.push(FrameRecord { at_ms, shell_ms, work_ms, ticks, drew, scale: 1.0 });
         at_ms >= self.plan.seconds * 1000.0
+    }
+
+    /// Note the render settings after the last frame: its scale, and the `degraded` entries it
+    /// reported (each kept once for the run).
+    pub(crate) fn note_render(&mut self, scale: f32, degraded: &[String]) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.scale = scale;
+        }
+        for entry in degraded {
+            if !self.degraded_seen.contains(entry) {
+                self.degraded_seen.push(entry.clone());
+            }
+        }
     }
 
     /// Whether a profile report is due after this frame.
@@ -204,7 +222,7 @@ impl Bench {
         let frames: Vec<Value> = self
             .frames
             .iter()
-            .map(|frame| json!([round(frame.at_ms), round(frame.shell_ms), round(frame.work_ms), frame.ticks, u8::from(frame.drew)]))
+            .map(|frame| json!([round(frame.at_ms), round(frame.shell_ms), round(frame.work_ms), frame.ticks, u8::from(frame.drew), frame.scale]))
             .collect();
         let record = json!({
             "plan": {
@@ -214,7 +232,8 @@ impl Bench {
             "surface": self.surface,
             "scaleFactor": self.scale_factor,
             "render": render,
-            "frameColumns": ["atMs", "shellMs", "workMs", "ticks", "drew"],
+            "frameColumns": ["atMs", "shellMs", "workMs", "ticks", "drew", "scale"],
+            "degradedSeen": self.degraded_seen,
             "frames": frames,
             "reports": self.reports,
         });
@@ -292,5 +311,17 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         assert!(bench.frame(16.0, 1.0, 1, true), "past its seconds");
         assert!(bench.report_due());
+    }
+
+    #[test]
+    fn a_run_keeps_each_frames_scale_and_every_degraded_entry_once() {
+        let mut bench = Bench::new(BenchPlan::parse(r#"{"seconds":1,"out":"/tmp/b.json"}"#).expect("plan"));
+        bench.begin();
+        bench.frame(16.0, 1.0, 1, true);
+        bench.note_render(0.6875, &["budget:ao".to_owned()]);
+        bench.frame(16.0, 1.0, 1, true);
+        bench.note_render(0.53125, &["budget:ao".to_owned(), "budget:bloom".to_owned()]);
+        assert_eq!(bench.frames.iter().map(|frame| frame.scale).collect::<Vec<_>>(), [0.6875, 0.53125]);
+        assert_eq!(bench.degraded_seen, ["budget:ao", "budget:bloom"]);
     }
 }

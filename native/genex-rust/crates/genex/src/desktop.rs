@@ -338,6 +338,9 @@ impl<W: Default + 'static> DesktopGame<W> {
         }
         bench.scale_factor = self.shell_surface.as_ref().map_or(1.0, ShellSurface::scale);
         let over = bench.frame(shell_ms, work_ms, ticks, drew);
+        let status = self.runtime.render().borrow().status();
+        let degraded: Vec<String> = status.degraded.iter().map(|d| format!("{}:{}", d.reason.wire(), d.subject.clone().unwrap_or_default())).collect();
+        bench.note_render(status.scale, &degraded);
         if bench.report_due() || over {
             let class = self.runtime.render().borrow().status().device_class.wire();
             bench.keep_report(self.runtime.profiling().report_json(Bench::report_frames(), destination(), &class));
