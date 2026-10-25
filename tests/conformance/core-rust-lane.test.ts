@@ -554,7 +554,8 @@ function profileSettings(command: string): string[] {
 
 describe("the core's Rust lane: Live builds run optimized (stub cargo)", { skip: SKIP_UNLESS_MAC }, () => {
   // OPT: the engine and every dependency at opt-level 3, the game crate at 1 (still incremental),
-  // line tables kept; exactly the store prewarm's settings, so a first build clones every unit.
+  // line tables kept; MK: the dependencies without debug assertions or overflow checks; exactly the
+  // store prewarm's settings, so a first build clones every unit.
   it("passes the prewarm's profile to clippy and the build of every Live and judging build, Mac and web, and none to an export", async () => {
     const { store, lock } = await fixtureStore();
     const resources = await shippedResources();
@@ -563,6 +564,8 @@ describe("the core's Rust lane: Live builds run optimized (stub cargo)", { skip:
       "profile.dev.opt-level=1",
       'profile.dev.package."*".opt-level=3',
       'profile.dev.debug="line-tables-only"',
+      'profile.dev.package."*".debug-assertions=false',
+      'profile.dev.package."*".overflow-checks=false',
     ];
     const purposes = [CppBuildPurpose.Live, CppBuildPurpose.Judging, CppBuildPurpose.Export];
     for (const target of [BuildTarget.Mac, BuildTarget.Web])

@@ -81,13 +81,20 @@ export const RUST_TARGET_DIR = "target";
  * contracts or reorders float operations at any opt-level, so the determinism rows hold. A prewarm
  * built without these is another dependency build: a game's build cloning it would rebuild every
  * dependency, so a prewarm records them and one made with others is stale. Debug info is line
- * tables only (R-7), which backtraces and the symbolicator read; debug assertions and overflow
- * checks stay cargo's dev defaults.
+ * tables only (R-7), which backtraces and the symbolicator read.
+ *
+ * The dependencies run without debug assertions or overflow checks, as in an export (lane MK):
+ * kept, they cost a Live build of a 10,000-ghoul horde more than half its CPU frame (objc2 checks the
+ * signature of every Metal message, and wgpu, Rapier and the mixer check as they go), and the
+ * engine's own debug assertions are a handful of index checks. The game crate keeps cargo's dev
+ * defaults for both, so an agent's own arithmetic still traps in Live.
  */
 export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze([
   "profile.dev.opt-level=1",
   'profile.dev.package."*".opt-level=3',
   'profile.dev.debug="line-tables-only"',
+  'profile.dev.package."*".debug-assertions=false',
+  'profile.dev.package."*".overflow-checks=false',
 ]);
 /** In a destination's folder: the warm project's lock, as it was resolved offline. */
 export const RUST_WARM_LOCK_FILE = "Cargo.lock";

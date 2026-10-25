@@ -748,13 +748,16 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
-  it("builds Live and judging with the game crate at opt-level 1 over the engine and its dependencies at 3 (OPT), line tables only (R-7), the store prewarm's profile; an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
+  it("builds Live and judging with the game crate at opt-level 1 over the engine and its dependencies at 3 (OPT) without debug assertions or overflow checks (MK), line tables only (R-7), the store prewarm's profile; an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
     // Flipped from the game crate unoptimized over dependencies at opt-level 1 (K6, OPT): Live runs
-    // near release speed, and the game crate's rebuild stays incremental.
+    // near release speed, and the game crate's rebuild stays incremental. Flipped again (MK): the
+    // dependencies' debug assertions and overflow checks are off, as in an export, the game's kept.
     const liveProfile = [
       "profile.dev.opt-level=1",
       'profile.dev.package."*".opt-level=3',
       'profile.dev.debug="line-tables-only"',
+      'profile.dev.package."*".debug-assertions=false',
+      'profile.dev.package."*".overflow-checks=false',
     ];
     assert.deepEqual(RUST_DEV_PROFILE_SETTINGS, liveProfile, "the profile the store's prewarm builds with");
     for (const [purpose, expected] of [

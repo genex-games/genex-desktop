@@ -64,9 +64,11 @@ same profile again with `--reuse` instead of making a new one per round. Fixture
 keep their stub store; release builds and the normal profile never seed.
 
 Live and judging builds pass the store prewarm's cargo profile (`RUST_DEV_PROFILE_SETTINGS` in
-`rust-locate.ts`): the engine and every dependency at opt-level 3, the game crate at opt-level 1
-(its rebuild stays incremental, about half a second over unoptimized), and line tables only, so
-backtraces and the crash symbolicator still name files and lines. A prewarm records the profile it
+`rust-locate.ts`): the engine and every dependency at opt-level 3 without debug assertions or
+overflow checks (as an export; kept, they cost a 10,000-ghoul horde more than half its CPU frame),
+the game crate at opt-level 1 with both kept (its rebuild stays incremental, about half a second
+over unoptimized), and line tables only, so backtraces and the crash symbolicator still name files
+and lines. A prewarm records the profile it
 was built with, and one made with another is stale: a profile change prewarms again (a dev store:
 `dev-store.ts --stack rust-wgpu`), or every first build would compile the engine. A game's build
 folder starts its first build from a copy-on-write clone of the profile's prewarm for that lock

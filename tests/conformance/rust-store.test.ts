@@ -213,11 +213,13 @@ async function withBase(): Promise<{ root: string; store: string; lock: Toolchai
   return fake;
 }
 
-/** The cargo profile every Live and judging build passes (K6, R-7, OPT), which a prewarm must match. */
+/** The cargo profile every Live and judging build passes (K6, R-7, OPT, MK), which a prewarm must match. */
 const LIVE_PROFILE = [
   "profile.dev.opt-level=1",
   'profile.dev.package."*".opt-level=3',
   'profile.dev.debug="line-tables-only"',
+  'profile.dev.package."*".debug-assertions=false',
+  'profile.dev.package."*".overflow-checks=false',
 ];
 
 const WARM: RustWarmProject = {
@@ -700,13 +702,16 @@ describe("rust store: prewarm per (lock, destination)", () => {
     assert.equal(stale.ok, false, "other flags are another dependency build");
   });
 
-  it("a prewarm built with another cargo profile (the dependencies at opt-level 1, before OPT) is stale: it is prewarmed again", async () => {
+  it("a prewarm built with another cargo profile (the dependencies at opt-level 1, before OPT; with their debug assertions, before MK) is stale: it is prewarmed again", async () => {
     const { root, store, lock } = await withBase();
     const record = await prewarmRust(store, lock, BuildTarget.Web, WARM, prewarmDeps(root, cargoRun([])));
     assert.ok((await locateRust(store, lock, BuildTarget.Web)).ok, "the record as written locates");
     const file = path.join(rustTargetFolder(store, lock, BuildTarget.Web), RUST_PREWARM_FILE);
     const older = ['profile.dev.package."*".opt-level=1', 'profile.dev.debug="line-tables-only"'];
-    for (const profile of [older, [...LIVE_PROFILE].reverse(), [...LIVE_PROFILE, "profile.dev.lto=true"]]) {
+    const checked = LIVE_PROFILE.filter(
+      (setting) => !setting.includes("-assertions=") && !setting.includes("-checks="),
+    );
+    for (const profile of [older, checked, [...LIVE_PROFILE].reverse(), [...LIVE_PROFILE, "profile.dev.lto=true"]]) {
       await writeFile(file, JSON.stringify({ ...record, profile }));
       const located = await locateRust(store, lock, BuildTarget.Web);
       assert.deepEqual(located.ok ? [] : located.missing, [RustMissing.Prewarm], JSON.stringify(profile));
