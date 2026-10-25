@@ -218,7 +218,11 @@ fn the_planned_options_equal_the_legacy_builders() {
 fn a_four_cascade_plan_activates_five_of_the_nine_views_and_culls_each() {
     let plan = plan_with(Some(shadows_asking(4)));
     assert_eq!((plan.cascades_drawn(), plan.views), (4, 5));
-    for view in 1..5 {
+    // Lane FQ: the first cascade's receivers lie within a few metres of the camera, and the sun
+    // casts every shape away from them, so its cull view (held to the receivers' light-space
+    // polygon, no longer their box) keeps none; the farther cascades keep the shapes.
+    assert_eq!(plan.cpu_cull_view(1).counts.iter().sum::<u32>(), 0, "nothing can shadow the first cascade's receivers");
+    for view in 2..5 {
         assert!(plan.cpu_cull_view(view).counts.iter().sum::<u32>() > 0, "cascade view {view} culls");
     }
 }

@@ -87,6 +87,9 @@ const HELD_DEPTH_SLACK: f32 = 0.25;
 const OPEN_PLANE: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 /// A cascade frustum's near plane among [`frustum_planes`]'s six (left, right, bottom, top, near, far).
 const NEAR_PLANE: usize = 4;
+/// The slots a cull view held to its receivers fills with sides along the light (lane FQ): the
+/// box's four and the open near plane's, which no depth needs.
+const LATERAL_SLOTS: [usize; crate::cascade_hull::SIDES_MAX] = [0, 1, 2, 3, NEAR_PLANE];
 
 /// The casters' constant depth bias, in units of the map's depth resolution.
 pub(crate) const CASTER_CONSTANT_BIAS: i32 = 2;
@@ -543,11 +546,15 @@ pub fn cull_to_receivers(set: &mut Cascades, camera: &CameraDesc, aspect: f32, f
         let far = (((deepest + past) / depth_step).ceil() * depth_step).min(1.0);
         let (x, y, z) = (m.row(0), m.row(1), m.row(2));
         let plane = |p: glam::Vec4| (p / p.truncate().length()).to_array();
+        // The box's sides, then the sides of the receivers' light-space polygon chosen among them
+        // (lane FQ, `cascade_hull`): each a plane along the light.
+        let boxed = [Vec3::new(1.0, 0.0, -lo.x), Vec3::new(-1.0, 0.0, hi.x), Vec3::new(0.0, 1.0, -lo.y), Vec3::new(0.0, -1.0, hi.y)];
+        let points = corners.map(|corner| m.project_point3(Vec3::from(corner)).xy());
+        let sides = crate::cascade_hull::sides(&points, &boxed, reach, step);
         let planes = &mut set.planes[c];
-        planes[0] = tighter(planes[0], plane(glam::Vec4::new(x.x, x.y, x.z, x.w - lo.x)));
-        planes[1] = tighter(planes[1], plane(glam::Vec4::new(-x.x, -x.y, -x.z, hi.x - x.w)));
-        planes[2] = tighter(planes[2], plane(glam::Vec4::new(y.x, y.y, y.z, y.w - lo.y)));
-        planes[3] = tighter(planes[3], plane(glam::Vec4::new(-y.x, -y.y, -y.z, hi.y - y.w)));
+        for (slot, held) in LATERAL_SLOTS.into_iter().zip(sides.iter().map(Some).chain(std::iter::repeat(None))) {
+            planes[slot] = held.map_or(OPEN_PLANE, |side| plane(x * side.x + y * side.y + glam::Vec4::new(0.0, 0.0, 0.0, side.z)));
+        }
         planes[NEAR_PLANE + 1] = tighter(planes[NEAR_PLANE + 1], plane(glam::Vec4::new(-z.x, -z.y, -z.z, far - z.w)));
     }
 }

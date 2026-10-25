@@ -53,6 +53,8 @@ pub mod pbr;
 pub mod subsurface;
 /// Two-cascade sun shadows.
 pub mod shadow;
+/// The sides of a sun cascade's cull view seen along the light (lane FQ).
+pub mod cascade_hull;
 /// Skinned glTF and compute skinning.
 pub mod skin;
 /// Rigid node animation as skinning (game systems AN-27): `SkinnedModel::rigid_from_glb`.
