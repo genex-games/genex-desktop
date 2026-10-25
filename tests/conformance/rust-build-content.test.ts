@@ -54,6 +54,7 @@ const FACTS: ContentFacts = {
   ejectedFrom: null,
   grant: { names: [], crates: [] },
   sdk: null,
+  host: "f".repeat(64),
 };
 
 /** Every path under `dir` with its bytes or link target: what "nothing changed" compares. */

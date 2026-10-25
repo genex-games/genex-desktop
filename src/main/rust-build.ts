@@ -56,7 +56,8 @@
 import type { LoadingStyle } from "../shared/loading-style.ts";
 import { createHash } from "node:crypto";
 import { constants as FS_CONSTANTS } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
 import { BuildPhase, type BuildProblem, BuildProblemCode, CppBuildPurpose } from "../shared/build-problem.ts";
@@ -859,6 +860,8 @@ export class RustBuilds implements GameBuildLane {
   #sweeping: Promise<number> | null = null;
   /** The content keys the lane recorded beside its build folders (`rust-build-content.ts`). */
   readonly #content: RustContentIndex;
+  /** The digest of the code running this lane, read once (`#hostSalt`). */
+  #code: Promise<string | null> | null = null;
   /** Builds of a content key under way, by key. */
   readonly #contentFlights = new Map<string, ContentFlight>();
   /** The Plays timing each build folder's build (`GameBuildOptions.timing`), while they wait on it. */
@@ -954,7 +957,8 @@ export class RustBuilds implements GameBuildLane {
   async #contentOf(pending: Pending): Promise<PendingContent | null> {
     if (pending.purpose === CppBuildPurpose.Export) return null;
     const tree = await cleanTreeOf(pending.source).catch(() => null);
-    if (!tree) return null;
+    const host = tree ? await this.#hostSalt(pending.target) : null;
+    if (!tree || !host) return null;
     const grant = (await this.options.crateGrant?.(pending.game.project).catch(() => null)) ?? NO_GRANT;
     if (!grant.ok) return null;
     const { purpose, target, builder } = pending;
@@ -970,8 +974,29 @@ export class RustBuilds implements GameBuildLane {
       ejectedFrom: await this.#ejectedFrom(pending),
       grant: { names: [...grant.names].sort(), crates: grant.crates },
       sdk: pending.sdk,
+      host,
     };
     return { key: contentKeyOf(facts), tree, verified: false };
+  }
+
+  /**
+   * What of the host itself a build's output depends on: the code running this lane (the app's own
+   * main bundle, which stages, writes the manifests, packages and admits) and, for the web, the shell
+   * the page is served in. Any change to either is another key, so an app update or a development
+   * rebuild never serves an output the earlier host made. Null when it cannot be read: no key then.
+   */
+  async #hostSalt(target: BuildTarget): Promise<string | null> {
+    this.#code ??= Promise.resolve()
+      .then(() => readFile(fileURLToPath(import.meta.url)))
+      .then(
+        (bytes) => createHash("sha256").update(bytes).digest("hex"),
+        () => null,
+      );
+    const code = await this.#code;
+    if (!code) return null;
+    if (target !== BuildTarget.Web) return code;
+    const shell = await this.options.webShell?.().catch(() => null);
+    return shell ? `${code}:${createHash("sha256").update(shell).digest("hex")}` : null;
   }
 
   /** Another copy's build of `key` under way that `pending` may take: gated by clippy when a judge asks. */

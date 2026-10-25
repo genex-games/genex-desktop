@@ -70,7 +70,8 @@ exports) take a free slot of `rustBuildsMax(cores)`, else one of their own past 
 target next; agents' (judging) take slots in the order asked; background prebuilds only a slot nobody
 else waits for, under `nice -n 10`. A person joining a waiting build raises it. A clean checkout's
 Live or judging build is also keyed by content ([`rust-build-content.ts`](../../src/main/rust-build-content.ts):
-the commit's tree, lock, destination, profile, flavour, trust, eject, grant, SDK), recorded as
+the commit's tree, lock, destination, profile, flavour, trust, eject, grant, SDK, the host's own
+code and web shell), recorded as
 `<bin>.content` only when its stage is that tree file for file; any copy of the same content is
 served that admitted output (or waits for its build under way) instead of building. The person's
 Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Play plays one

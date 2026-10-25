@@ -50,6 +50,8 @@ export interface ContentFacts {
   ejectedFrom: string | null;
   grant: unknown;
   sdk: string | null;
+  /** What of the host the output depends on (its own code, the web shell): `RustBuilds`' salt. */
+  host: string;
 }
 
 /** The key of a build made of `facts`. */
