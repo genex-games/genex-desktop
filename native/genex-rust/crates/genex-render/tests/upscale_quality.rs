@@ -27,6 +27,7 @@ use genex_render::motion::DrawId;
 use genex_render::presets::{budget_scale, class_defaults, effect_budgeted, preset_quality, render_pixel_budget, step_size};
 use genex_render::scene::{CameraDesc, Material, MeshId, Scene};
 use genex_render::settings::{AoResolution, Quality, QualityPreset, SceneFormat};
+use genex_render::upscale::UpscaleMode;
 use genex_render::{CullPath, Gpu, RenderOptions, Renderer};
 use glam::{Mat4, Vec3};
 
@@ -360,5 +361,92 @@ fn metal_at_the_dynamic_resolution_floor_the_upscale_keeps_the_native_structure(
     for (name, scene_at, frames) in rows {
         let (compared, _, _) = compare_at(&gpu, floor, name, scene_at, frames);
         assert!(compared.ssim >= FLOOR_SSIM_MIN && compared.mean_abs <= FLOOR_MEAN_ABS_MAX, "{name}: {compared:?}");
+    }
+}
+
+/// The pixels behind the runners (native changed in the last eight frames, not in this one) and how
+/// many of them the upscaled frames show more than [`GHOST_LEVELS`] from native.
+fn ghosting(native_frames: &[Vec<f32>], upscaled_frames: &[Vec<f32>]) -> (usize, usize) {
+    let (mut trail, mut ghosts) = (0usize, 0usize);
+    for at in 8..native_frames.len() {
+        let now = &native_frames[at];
+        for pixel in 0..now.len() {
+            let settled = (native_frames[at - 1][pixel] - now[pixel]).abs() < 2.0;
+            let passed = (at - 8..at).any(|before| (native_frames[before][pixel] - now[pixel]).abs() > 40.0);
+            if settled && passed {
+                trail += 1;
+                ghosts += usize::from((upscaled_frames[at][pixel] - now[pixel]).abs() > GHOST_LEVELS);
+            }
+        }
+    }
+    (trail, ghosts)
+}
+
+/// `frames` (settled, then compared) of `scene_at` drawn with `quality` at `scale` of the output.
+fn frames_at(gpu: &Gpu, quality: &Quality, scale: f32, scene_at: &dyn Fn(u64) -> Scene, frames: (u64, u64)) -> Vec<Vec<f32>> {
+    let mut renderer = renderer(gpu, quality, scale);
+    run(gpu, &mut renderer, scene_at, frames.0, frames.1).0
+}
+
+/// SSIM and mean absolute error of `frames` against `native`, frame for frame, and their mean
+/// frame-to-frame change.
+fn against(native: &[Vec<f32>], frames: &[Vec<f32>]) -> Compared {
+    let width = OUTPUT.0 as usize;
+    let count = native.len() as f64;
+    let change = |frames: &[Vec<f32>]| frames.windows(2).map(|pair| mean_abs(&pair[0], &pair[1])).sum::<f64>() / (frames.len() - 1).max(1) as f64;
+    Compared {
+        ssim: native.iter().zip(frames).map(|(n, u)| ssim(n, u, width)).sum::<f64>() / count,
+        mean_abs: native.iter().zip(frames).map(|(n, u)| mean_abs(n, u)).sum::<f64>() / count,
+        native_change: change(native),
+        upscaled_change: change(frames),
+    }
+}
+
+/// Lane UQ: each upscaling mode's frames on the Mac panel against native ultra (scale 1,
+/// full-resolution AO), with the effect budget each mode's render size draws: SSIM and mean error
+/// for the still field, the fast pan and the crowd; shimmer (still field) and ghosting (crowd) for
+/// Quality and Performance. Native, Quality and Balanced keep the budget rows' bounds, Performance
+/// the floor's. Ultra Performance (11/32, measured once with the floor lowered) did not: still
+/// field 0.857, fast pan 0.765, 3.0% of the crowd's trail ghosted, so it is not offered.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_each_upscaling_mode_keeps_the_native_frame_s_structure() {
+    let Some(gpu) = gpu() else { return };
+    let still = |_| grass_scene([0.0, 1.6, 4.0], [0.0, 0.3, -2.0]);
+    let pan = |frame: u64| {
+        let x = 0.03 * frame as f32 - 0.6;
+        grass_scene([x, 1.6, 4.0], [x, 0.3, -2.0])
+    };
+    let rows: [SceneRow<'_>; 3] = [("grass-still", &still, (SETTLE, 16)), ("grass-fast-pan", &pan, (SETTLE / 2, MOVING)), ("crowd", &crowd_scene, (SETTLE / 2, MOVING))];
+    let modes: Vec<(&str, f32)> = UpscaleMode::ALL.iter().map(|mode| (mode.wire(), mode.scale())).collect();
+    for (scene, scene_at, frames) in rows {
+        let native = frames_at(&gpu, &native_quality(), 1.0, scene_at, frames);
+        for (mode, scale) in &modes {
+            let quality = effect_budgeted(&native_quality(), ultra_class(), step_size(PANEL, *scale));
+            let upscaled = frames_at(&gpu, &quality, *scale, scene_at, frames);
+            let compared = against(&native, &upscaled);
+            let mut line = format!("UQ {scene} {mode} scale {scale} (AO {:?}): ssim {:.3} mean {:.2}", quality.ao.resolution, compared.ssim, compared.mean_abs);
+            if scene == "grass-still" {
+                line += &format!(" shimmer {:.3} (native {:.3})", compared.upscaled_change, compared.native_change);
+            }
+            if scene == "crowd" {
+                let (trail, ghosts) = ghosting(&native, &upscaled);
+                line += &format!(" ghosted {:.4} of {trail}", ghosts as f64 / trail.max(1) as f64);
+                if ["quality", "performance"].contains(mode) {
+                    assert!(ghosts as f64 / trail.max(1) as f64 <= GHOST_SHARE_MAX, "{line}");
+                }
+            }
+            eprintln!("{line}");
+            let (ssim_min, mean_max) = match *mode {
+                "native" | "quality" | "balanced" if scene == "grass-still" => (SSIM_STILL_MIN, MEAN_ABS_MAX),
+                "native" | "quality" | "balanced" => (SSIM_MOVING_MIN, MEAN_ABS_MAX),
+                _ => (FLOOR_SSIM_MIN, FLOOR_MEAN_ABS_MAX),
+            };
+            assert!(compared.ssim >= ssim_min && compared.mean_abs <= mean_max, "{line}");
+            if scene == "grass-still" && ["quality", "performance"].contains(mode) {
+                let shimmer_max = (compared.native_change * SHIMMER_RATIO_MAX).max(SHIMMER_FLOOR);
+                assert!(compared.upscaled_change <= shimmer_max, "{line}");
+            }
+        }
     }
 }

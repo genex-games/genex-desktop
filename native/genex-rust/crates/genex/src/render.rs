@@ -2645,9 +2645,7 @@ mod tests {
             let poorer: Vec<_> = drawn[..at].iter().flatten().filter(|feature| !features.contains(feature)).collect();
             assert!(poorer.is_empty(), "{:?} is offered above {:?} but draws none of {poorer:?}", offered[at], &offered[..at]);
         }
-        // Flipped by lane UQ (was [Low, Medium]): the calibrated Quality mode renders 0.65625 of the
-        // panel a side, and at those render targets high's AO fits the budget again.
-        assert_eq!(offered, [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High]);
+        assert_eq!(offered, [QualityPreset::Low, QualityPreset::Medium]);
     }
 
     /// GA round 2 (live-app finding 2): Web Live booted at the world size, where medium's MSAA fit
@@ -2843,11 +2841,11 @@ mod tests {
     }
 
     /// Lanes UP and UQ: desktop-ultra on a Mac's 3456x2169 full screen draws Live at the window's
-    /// own pixels and renders the calibrated Quality mode's share of them (0.65625 a side, within the
+    /// own pixels and renders the calibrated Quality mode's share of them (0.6875 a side, within the
     /// class's 2560x1440 budget): dynamic resolution's every step is the class's step times the
     /// mode's share, never above it nor below the class floor, half-resolution AO past 1080p of
     /// render pixels, and a capture keeps its pinned scale. Flipped by lane UQ: the budget scale
-    /// (0.6875) is now the Quality mode's 0.65625, and a 1080p window, which rendered natively,
+    /// is now the Quality mode's (both 0.6875 at this panel), and a 1080p window, which rendered natively,
     /// renders Quality too (Native only when asked for).
     #[test]
     fn an_ultra_full_screen_renders_its_calibrated_mode_and_upscales_to_the_window() {
@@ -2857,9 +2855,9 @@ mod tests {
         let full_screen = (3456, 2169);
         mac.set_live_output(full_screen, Some(full_screen));
         assert_eq!(mac.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Calibrated)));
-        assert_eq!(mac.upscale_scale(), 0.65625);
+        assert_eq!(mac.upscale_scale(), 0.6875);
         let steps = mac.scale_steps().to_vec();
-        assert_eq!(steps.last(), Some(&0.65625), "the top step is the mode's share: {steps:?}");
+        assert_eq!(steps.last(), Some(&0.6875), "the top step is the mode's share: {steps:?}");
         assert!(steps.iter().all(|scale| *scale >= genex_render::settings::RENDER_SCALE_MIN), "{steps:?}");
         let frame = mac.live_asked();
         let (w, h) = step_size(full_screen, frame.scale);
@@ -2868,8 +2866,8 @@ mod tests {
         assert_eq!(mac.capture_frame().1.scale, 1.0, "captures keep their pinned scale");
         let laptop = (1920, 1080);
         mac.set_live_output(laptop, Some(laptop));
-        assert_eq!(mac.upscale_scale(), 0.65625);
-        assert_eq!(mac.scale_steps().last(), Some(&0.65625), "a 1080p window upscales from Quality too");
+        assert_eq!(mac.upscale_scale(), 0.6875);
+        assert_eq!(mac.scale_steps().last(), Some(&0.6875), "a 1080p window upscales from Quality too");
         assert_eq!(mac.live_asked().quality.ao.resolution, genex_render::settings::AoResolution::Full);
     }
 
@@ -2877,14 +2875,14 @@ mod tests {
     /// keeps its memory budget, a phone its panel), the output stays capped at the class's
     /// reference pixels, and phones and browsers keep the class's own scales. Flipped by lane UQ: a
     /// native desktop's medium, which rendered its whole capped output, renders the calibrated
-    /// mode's share of the window (Quality's 0.65625 of 3456 is 0.875 of the 2560 output).
+    /// mode's share of the window (Quality's 0.6875 of 3456 is 0.90625 of the 2560 output).
     #[test]
     fn without_taa_upscaling_live_keeps_the_reference_cap_and_renders_the_mode_s_share_of_the_window() {
         let mut medium = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Medium);
         let (rw, rh) = genex_render::presets::reference_resolution(medium.live_class());
         assert_eq!(medium.live_output_cap_px(), u64::from(rw) * u64::from(rh));
         medium.set_live_output((2560, 1440), Some((3456, 2169)));
-        assert_eq!((medium.upscale_scale(), medium.scale_steps().last().copied()), (0.875, Some(0.875)));
+        assert_eq!((medium.upscale_scale(), medium.scale_steps().last().copied()), (0.90625, Some(0.90625)));
         let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
         let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other).with_web(web_hints_from_json(&hints).expect("hints"));
         let mut browser = RenderControl::new(RenderConfig::new(), (960, 540));
@@ -2909,7 +2907,7 @@ mod tests {
         mac.set_live_output(full_screen, Some(full_screen));
         for window in [(1280, 720), (1920, 1080), full_screen] {
             mac.set_live_output(window, Some(window));
-            assert_eq!(mac.live_asked().scale, 0.65625, "{window:?}: Quality by default, never native");
+            assert_eq!(mac.live_asked().scale, 0.6875, "{window:?}: Quality by default, never native");
         }
         for mode in UpscaleMode::ALL {
             mac.set_person(ClassOverride { upscale: Some(mode), ..ClassOverride::default() });
@@ -2973,11 +2971,11 @@ mod tests {
         let mut moving = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
         moving.set_live_output((3456, 2169), Some((3456, 2169)));
         over(&mut moving);
-        assert!(moving.live_frame().scale < 0.65625 && moving.drs.demotion() > 0, "on: the scale drops to the floor, then features go");
+        assert!(moving.live_frame().scale < 0.6875 && moving.drs.demotion() > 0, "on: the scale drops to the floor, then features go");
         mac.set_person(ClassOverride { dynamic_resolution: Some(false), ..ClassOverride::default() });
-        assert_eq!(mac.scale_steps(), [0.65625], "off: the mode's scale alone");
+        assert_eq!(mac.scale_steps(), [0.6875], "off: the mode's scale alone");
         over(&mut mac);
-        assert_eq!(mac.live_frame().scale, 0.65625, "off: the scale holds");
+        assert_eq!(mac.live_frame().scale, 0.6875, "off: the scale holds");
         assert_eq!(mac.drs.demotion(), 0, "off: nothing is shed");
     }
 
@@ -2991,7 +2989,7 @@ mod tests {
         assert_eq!(phone.live_asked().scale, 0.75, "mobile-high's own nominal scale");
         phone.set_person(ClassOverride { upscale: Some(UpscaleMode::Quality), ..ClassOverride::default() });
         assert_eq!(phone.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Person)));
-        assert_eq!(phone.live_asked().scale, 0.96875, "0.65625 of the 1179 px panel is 0.97 of the 786 px output");
+        assert_eq!(phone.live_asked().scale, 1.0, "0.6875 of the 1179 px panel is all of the 786 px output");
         let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
         let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other).with_web(web_hints_from_json(&hints).expect("hints"));
         let mut browser = RenderControl::new(RenderConfig::new(), (1920, 1080));

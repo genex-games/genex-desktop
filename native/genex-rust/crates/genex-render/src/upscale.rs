@@ -40,8 +40,10 @@ pub enum UpscaleMode {
 pub const CALIBRATED_MODES: [UpscaleMode; 3] = [UpscaleMode::Quality, UpscaleMode::Balanced, UpscaleMode::Performance];
 
 /// The mode shares, a side: the industry's 2/3, 0.58 and 1/2 on the renderer's 1/32 grid, so each is
-/// an exact, stable target size ([`SCALE_QUANTUM`]).
-const QUALITY_SCALE: f32 = 21.0 / 32.0;
+/// an exact, stable target size ([`SCALE_QUANTUM`]). Quality takes 22/32 (68.75%), not the nearer
+/// 21/32: the upscale's image rows dip there (still grass SSIM 0.912 against native, mean error 3.2
+/// levels, where 20/32 holds 0.946 and 22/32 0.956; 18/32 dips too), so no mode or step sits on it.
+const QUALITY_SCALE: f32 = 22.0 / 32.0;
 const BALANCED_SCALE: f32 = 19.0 / 32.0;
 const PERFORMANCE_SCALE: f32 = 16.0 / 32.0;
 /// Absorbs float rounding before a share is put on the scale grid.

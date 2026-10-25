@@ -88,8 +88,8 @@ fn feature_switches_and_the_render_scale_follow_the_same_order() {
     assert!(on(&control, RenderFeature::Shadows), "the person's switch beats genex.toml");
     assert_eq!(control.live_frame().quality.render_scale, 0.75);
     // Flipped by lane UQ (was 0.75): on a native desktop the render scale is a share of the
-    // calibrated Quality mode's 0.65625, so the nominal step is 0.49, held at the floor.
-    assert_eq!(control.upscale_scale(), 0.65625);
+    // calibrated Quality mode's 0.6875, so the nominal step is 0.52: the floor step beside it.
+    assert_eq!(control.upscale_scale(), 0.6875);
     assert_eq!(control.live_frame().scale, genex_render::settings::RENDER_SCALE_MIN, "dynamic resolution starts at the nominal step");
 
     let off = RenderChange { features: vec![(RenderFeature::Shadows, false)], ..RenderChange::default() };

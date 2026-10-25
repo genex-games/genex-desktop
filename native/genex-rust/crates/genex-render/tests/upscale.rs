@@ -27,8 +27,8 @@ fn each_mode_is_its_share_of_the_window_a_side_on_the_scale_grid() {
     let scales: Vec<(UpscaleMode, f32)> = UpscaleMode::ALL.iter().map(|mode| (*mode, mode.scale())).collect();
     assert_eq!(
         scales,
-        [(UpscaleMode::Native, 1.0), (UpscaleMode::Quality, 0.65625), (UpscaleMode::Balanced, 0.59375), (UpscaleMode::Performance, 0.5)],
-        "67%, 58% and 50% a side, on the renderer's 1/32 grid"
+        [(UpscaleMode::Native, 1.0), (UpscaleMode::Quality, 0.6875), (UpscaleMode::Balanced, 0.59375), (UpscaleMode::Performance, 0.5)],
+        "about 67%, 58% and 50% a side, on the renderer's 1/32 grid"
     );
     for mode in UpscaleMode::ALL {
         assert_eq!(UpscaleMode::from_wire(mode.wire()), Some(mode));
@@ -49,10 +49,10 @@ fn the_calibration_picks_quality_balanced_or_performance_per_class_and_window_an
         (ultra, P1080, UpscaleMode::Quality),
         (ultra, P1440, UpscaleMode::Quality),
         (ultra, MAC_PANEL, UpscaleMode::Quality),
-        (ultra, P4K, UpscaleMode::Quality),
+        (ultra, P4K, UpscaleMode::Balanced),
         (ultra, P5K, UpscaleMode::Performance),
         (high, MAC_PANEL, UpscaleMode::Quality),
-        (high, P4K, UpscaleMode::Quality),
+        (high, P4K, UpscaleMode::Balanced),
         (mid, P1080, UpscaleMode::Quality),
         (mid, P1440, UpscaleMode::Quality),
         (mid, MAC_PANEL, UpscaleMode::Performance),
