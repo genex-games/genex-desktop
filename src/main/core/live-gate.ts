@@ -212,13 +212,15 @@ export class LiveGate {
   /** What the stage reads for a game (on mount, and in each `live.behind`): what waits for Reload, and the build Live shows. */
   state(project: string): LiveBehindEvent {
     const waiting = this.#waiting?.project === project ? this.#waiting : null;
+    const updating = this.#updating.get(project);
     return {
       project,
       reason: waiting?.reason ?? null,
       commit: waiting?.commit ?? null,
       note: waiting?.note ?? null,
       shows: this.#showsOf(project),
-      updating: this.#updating.get(project) ?? null,
+      // Only while a build is made ready: the event every other reader knows stays as it was.
+      ...(updating ? { updating } : {}),
     };
   }
 
