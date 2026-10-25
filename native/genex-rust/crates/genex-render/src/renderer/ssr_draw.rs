@@ -12,6 +12,9 @@
 //! - **The trace** ([`crate::ssr::SsrNode`]): the nearest-depth Hi-Z, the half-size trace and the
 //!   resolve into `screen reflections`, which the world pass binds at 30 (D1: the 16th sampled
 //!   texture).
+//! - **Nothing to reflect** (lane FQ, [`crate::ssr::frame_can_reflect`]): a frame whose surfaces
+//!   and decals are all at or past the cutoff opens none of the passes above; its binding 30 is
+//!   the zero texel the trace would have resolved to, the same picture.
 //! - **The pyramid** ([`Renderer::encode_ssr_pyramid`], after node 17): TAA's resolve halved into
 //!   A.6's colour pyramid, the next frame's reflected colour, reprojected along TAA's camera row
 //!   and re-exposed by the exposure ratio. On a frame that traces, the water (B.3) reads this
@@ -245,9 +248,12 @@ impl Renderer {
 
     /// Graph node 10b: the surface pass over the prepass depth (`counts`: the camera view's on the
     /// CPU path), then the Hi-Z, the trace and the resolve. The render and compute passes it opened.
+    /// A frame nothing in can reflect ([`crate::ssr::frame_can_reflect`], lane FQ) opens none:
+    /// binding 30 keeps the zero texel the trace would have resolved to, and the pyramid is still
+    /// built after node 17 for the next frame.
     pub(super) fn encode_ssr(&self, frame: &mut FrameEncoder, prep: &FramePrep, counts: Option<&[u32]>) -> (u32, u32) {
         let Some(prepass) = self.targets.prepass.as_ref() else { return (0, 0) };
-        if !self.ssr_runs() {
+        if !self.ssr_runs() || !crate::ssr::frame_can_reflect(&prep.plan) {
             return (0, 0);
         }
         let mut hook = self.ssr.borrow_mut();
