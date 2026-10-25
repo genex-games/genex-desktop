@@ -93,8 +93,11 @@ prepass (the camera) or a cascade (the sun) drew first, and leaves out what that
 measures that this pays (a walled street, a forest behind a hill). The pictures are the same;
 there is nothing to set. For a crowd, draw plain models under a stable `frame.id` each (baked
 poses past a skinned band of the nearest, under the class's skinned cap) and leave their levels to
-the import. Measured on an M4 Max in a 3456x2169 window at `ultra`, 1,000 to 10,000 such copies
-hold 60 fps under dynamic resolution and draw 30 to 40 fps with the scale held at 1: never hold it.
+the import. Measured on an M4 Max at `ultra` on its 3456x2169 full screen (which renders a
+2560x1440 budget and upscales it by TAA), 1,000 and 5,000 such copies hold 60 fps with every
+feature on; 10,000 hold 60 fps only once dynamic resolution's floor drops bloom, AO and spot
+shadows (each sun cascade the crowd stands in costs about 1.2 ms). With the scale held at 1 they
+draw 30 to 40 fps: never hold it.
 
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`

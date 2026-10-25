@@ -92,16 +92,18 @@ display. Start the built game from a shell with `GENEX_BENCH` set to a JSON plan
 
 ```sh
 GENEX_BENCH='{"seed":7,"demo":"genex-clip","camera":"horde","fullscreen":"native",
-  "renderScaleLock":1.0,"nativeOutput":true,"seconds":60,"out":"/tmp/bench.json"}' ./game
+  "renderScaleLock":1.0,"nativeOutput":true,"nodes":false,"seconds":60,"out":"/tmp/bench.json"}' ./game
 ```
 
 After the loading screen the run seeds, runs the demo, starts live play on the named camera and
 measures for `seconds`, then writes `out` and exits. `fullscreen` is `true` (borderless at the
 desktop's resolution) or `"native"` (exclusive at the display's own pixels). `renderScaleLock`
-holds the render scale; leave it out to let dynamic resolution move it. `nativeOutput` lifts the
-class's reference-resolution cap, so the frame draws the window's own pixels. `deviceClass` and
-`features` set what the `renderSettings` verb would, and `audio` (off by default) opens the sound
-device. The record lists every frame (time, interval, ticks, whether it drew), the surface, output
+holds the render scale (of the output: 1.0 renders every window pixel); leave it out to let
+dynamic resolution move it within the class's pixel budget. `nativeOutput` lifts the output cap,
+so even a class that keeps its reference resolution draws the window's own pixels. `deviceClass`
+and `features` set what the `renderSettings` verb would, `nodes` keeps per-node GPU timing armed
+(the reports then time each frame-graph node; on Apple GPUs passes overlap, so trust the totals),
+and `audio` (off by default) opens the sound device. The record lists every frame (time, interval, ticks, whether it drew), the surface, output
 and render sizes, and the profile reports. Exports ignore the variable. Any desktop build also
 opens fullscreen with `--fullscreen` or `GENEX_FULLSCREEN=1`, or at the display's own pixels with
 `--fullscreen=native` or `GENEX_FULLSCREEN=native`.

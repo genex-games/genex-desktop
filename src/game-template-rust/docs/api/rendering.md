@@ -25,7 +25,9 @@ up to 2 GiB).
 
 Every preset draws HDR, image-based lighting, the sky and fog; below a render scale of 1 it
 upscales (TAA at output size on `high` and `ultra` without lens effects or `post-hdr` passes,
-else EASU with RCAS; bilinear on a desktop's `low`). Phones are capped whatever the preset:
+else EASU with RCAS; bilinear on a desktop's `low`). A native desktop at `high` and `ultra`
+renders at most 2560x1440 pixels, TAA-upscaled to the window (render scale is a share of that);
+AO halves past 1080p rendered. Phones are capped whatever the preset:
 256 lights, at most one shadowed spot, TAA only on `mobile-high` at `high` and up, and no AO or contact
 shadows while the world pass is multisampled.
 
@@ -91,13 +93,13 @@ lod_threshold_px = 3.0      # with lod_fade_band, far_density: see Drawing
 The build lane compiles `[render]` into every destination. In code,
 `game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` replaces `[render]`;
 `RenderConfig::from_build()` starts from it instead. Give the person the last word: call
-`genex::render::settings_panel(ui)` from `on_ui` (an options menu); it shows the detected class, a
+`genex::render::settings_panel(ui)` from `on_ui`; it shows the detected class, a
 row of presets (none drawing less than the one below), the render scale, a Detail distance slider and a switch per feature (Tab, Space). A preset change rebuilds the renderer for its anti-aliasing (a short
 hitch). A switch this build does not draw is reported off and listed `not-landed`.
 
 TAA jitters the camera by a fraction of a pixel and blends with last frame through motion vectors
 that match each draw (`frame.custom` ones too) to its last frame by id. Name everything that moves
-on its own with `frame.id(key)` (a string or integer that stays with the object) until
+on its own with `frame.id(key)` (a stable string or integer) until
 `frame.end_id()` or the next id; unnamed draws match by order within their mesh, which suits still
 scenery. Call
 `frame.camera_cut()` on the frame a shot changes (respawn, cutscene, teleport), never every frame:
@@ -110,17 +112,16 @@ a v2 source reads the frame's `depth`, `normals`, `motion`, `environment` and `h
 (`RenderInputs::DEPTH`, `NORMALS`, `MOTION`, `ENVIRONMENT`, `HDR_SCENE`) and the look's exposure;
 v1 keeps working but holds the whole frame on the LDR scene. Level-3 passes register at
 `PassStage::BeforeCull`, `AfterPrepass`, `AfterOpaque`, `AfterTransparent`, `PostHdr` (before the
-tonemap) or `Post`. Bloom, fog, lights, shadows and the environment
-reach a v2 material as they reach a built-in surface, so prefer the built-ins and the look to a
-custom pass.
+tonemap) or `Post`. A v2 material gets bloom, fog, lights, shadows and the environment as
+built-ins do, so prefer the built-ins and the look to a custom pass.
 
 Captures are drawn on a pinned profile (a fixed reference class, the game's `[render]`, the verb's
 layer, the nominal scale), ignore the person's saved choice and settle on their own history: TAA a
 whole jitter cycle (8 frames, 16 on `ultra`) with AO weighing those frames alike, auto exposure at
 once, a custom pass starting empty. Desktop-high and desktop-ultra captures assume that 2 GiB, so
 1440p and 4K captures keep their preset. Each capture's `render` names its preset, class, settings
-source and settle frames: one build on one adapter gives one picture, except that under TAA two
-captures of one tick can differ by one level in a few pixels. `state().volatile.render` (class, preset, scale, `features`,
+source and settle frames: one build on one adapter gives one picture (under TAA, within one level
+in a few pixels). `state().volatile.render` (class, preset, scale, `features`,
 `degraded`, `gpuMs`, `cpuMs`) describes the last drawn frame, sits outside the checksum and is
 never compared.
 
