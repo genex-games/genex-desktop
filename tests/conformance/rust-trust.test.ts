@@ -102,8 +102,9 @@ function shellWord(text: string): string {
 }
 
 /**
- * A stub cargo: writes the lock, records its environment, and for `clippy` fails with an
- * `unsafe_code` error when RUSTFLAGS forbids unsafe and the stage holds an `unsafe` block; `build`
+ * A stub cargo: writes the lock, records its environment, and for `clippy` and `build` fails with an
+ * `unsafe_code` error when RUSTFLAGS forbids unsafe and the stage holds an `unsafe` block (rustc's
+ * own lint, so a Live build without clippy meets it too); `build`
  * runs `onBuild` (a build-script stand-in) when the stage's manifest names a build script, then
  * reports the game's executable.
  */
@@ -121,23 +122,28 @@ for a in "$@"; do
   prev=$a
 done
 stage=$(dirname "$manifest")
+# rustc's -F unsafe_code, as clippy and the build both compile under it (a Live build runs no clippy).
+gate() {
+  echo "$RUSTFLAGS" > "$CARGO_TARGET_DIR/../rustflags"
+  case " $RUSTFLAGS " in
+    *" -F unsafe_code "*)
+      if grep -q 'unsafe {' "$stage/src/game.rs" 2>/dev/null; then
+        printf '%s\\n' ${shellWord(JSON.stringify(UNSAFE_MESSAGE))} | sed "s#STAGE#$stage#g"
+        exit 101
+      fi
+      ;;
+  esac
+}
 case "$sub" in
   generate-lockfile)
     printf '%s' ${shellWord(LOCK_FILE)} > "$stage/Cargo.lock"
     ;;
   clippy)
-    echo "$RUSTFLAGS" > "$CARGO_TARGET_DIR/../rustflags"
-    case " $RUSTFLAGS " in
-      *" -F unsafe_code "*)
-        if grep -q 'unsafe {' "$stage/src/game.rs" 2>/dev/null; then
-          printf '%s\\n' ${shellWord(JSON.stringify(UNSAFE_MESSAGE))} | sed "s#STAGE#$stage#g"
-          exit 101
-        fi
-        ;;
-    esac
+    gate
     echo '{"reason":"build-finished","success":true}'
     ;;
   build)
+    gate
     if grep -q '^build = "build.rs"$' "$manifest" && [ -f "$stage/build.rs" ]; then
       echo ran > "$CARGO_TARGET_DIR/../build-script-ran"
       ${onBuild || ":"}
