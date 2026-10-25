@@ -1,13 +1,12 @@
-// The screen-space reflections' surface pass (renderer pass 2 B.9's frame hook, graph node 10b):
-// the opaque batches drawn again over the prepass depth (`Equal`, no depth writes) with the forward
-// vertex shader, writing the shading normal and perceptual roughness the forward pass will shade
-// each pixel with (normal map, specular AA, the decals' wet patches) as A.6's `rgba8unorm` texel
-// (normal_roughness.wgsl). The prepass itself writes the geometry's vertex normals: a puddle decal
-// at roughness 0.04 over rough asphalt is a mirror only here. Concatenated after forward.wgsl and
-// normal_roughness.wgsl in the forward module (`shaders::FORWARD`); `ssr_draw.rs` records it.
+// The screen-space reflections' surface texel (renderer pass 2 B.9's frame hook): the shading
+// normal and perceptual roughness the forward pass will shade a fragment with (normal map, specular
+// AA, the decals' wet patches) as A.6's `rgba8unorm` texel (normal_roughness.wgsl). The prepass
+// itself writes the geometry's vertex normals: a puddle decal at roughness 0.04 over rough asphalt
+// is a mirror only here. Concatenated after forward.wgsl and normal_roughness.wgsl in the forward
+// module (`shaders::FORWARD`); the prepass's surface twin (prepass_surface.wgsl, lane FR) writes it
+// beside the prepass's own targets.
 
-@fragment
-fn fs_ssr_surface(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn gx_ssr_surface_texel(in: VsOut, front: bool) -> vec4<f32> {
     // The decals' texture gradients and the fragment's pixel, as `surface` takes them.
     let world_dx = dpdx(in.world_pos);
     let world_dy = dpdy(in.world_pos);

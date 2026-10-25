@@ -4,11 +4,17 @@
 //!   prepass ran and whose quality traces (`ssr::frame_ssr`: desktop `high` and `ultra`), once the
 //!   previous frame left its colour pyramid on the same history and size. The other frames bind a
 //!   zero texel at forward binding 30, so the probes and the sky reflect everything.
-//! - **The surface** (`fs_ssr_surface`, shaders/screen/ssr_surface.wgsl): the opaque plain batches
-//!   drawn again `Equal` over the prepass depth with the forward module, writing A.6's normal and
-//!   roughness as the forward pass will shade them (normal maps, specular AA, the decals' wet
-//!   patches). Variants, meshlets, the terrain, grass and custom geometry keep the cleared texel
-//!   (rough: nothing traced, the probes reflect them).
+//! - **The surface** (lane FR; `vs_prepass_surface`/`fs_prepass_surface`,
+//!   shaders/screen/prepass_surface.wgsl, [`Renderer::encode_prepass_surface`]): the prepass draws
+//!   the opaque plain batches last, in a pass of their own over the depth the rest of the prepass
+//!   wrote, with the forward module's surface twin, which writes the motion prepass's three
+//!   targets and A.6's normal and roughness as the forward pass will shade them (normal maps,
+//!   specular AA, the decals' wet patches) in one draw. Variants, meshlets, the terrain, grass
+//!   and custom geometry draw first and write nothing there, so a batch they hide fails the depth
+//!   test and leaves the cleared texel (rough: nothing traced, the probes reflect them); prepass
+//!   part 2's meshlets write that texel (`fs_prepass_motion_rough`). Before lane FR a pass of its
+//!   own drew the batches again `Equal` over the prepass depth for the texel alone: the same
+//!   texels, without the second geometry pass.
 //! - **The trace** ([`crate::ssr::SsrNode`]): the nearest-depth Hi-Z, the half-size trace and the
 //!   resolve into `screen reflections`, which the world pass binds at 30 (D1: the 16th sampled
 //!   texture).
@@ -23,20 +29,19 @@
 use glam::Mat4;
 use wgpu::{RenderPipeline, TextureFormat, TextureView};
 
-use super::{FramePrep, FrameStats, PipelineSpec, Renderer, ScenePath, SurfaceKey, mesh_buffers_layout, render_pipeline_with, shader, surface_constants};
+use super::{FramePrep, FrameStats, Renderer, ScenePath, SurfaceKey, mesh_buffers_layout, shader, surface_constants};
 use crate::compile::Compiled;
 use crate::error::RenderError;
 use crate::graph::FrameEncoder;
 use crate::screen_inputs::{PyramidInput, PyramidNode, ScreenInputs};
 use crate::settle::HistorySet;
 use crate::ssr::{SsrCamera, SsrInput, SsrNode};
-use crate::tables::pipeline_layout;
 use crate::target_pool::TargetDesc;
 
-/// The surface pass's fragment entry point (shaders/screen/ssr_surface.wgsl).
-const SURFACE_ENTRY: &str = "fs_ssr_surface";
-/// The forward vertex entry point the surface pass draws the batches with.
-const SURFACE_VERTEX: &str = "vs_main";
+/// The prepass surface twin's fragment entry point (shaders/screen/prepass_surface.wgsl).
+const SURFACE_ENTRY: &str = "fs_prepass_surface";
+/// Its vertex entry point.
+const SURFACE_VERTEX: &str = "vs_prepass_surface";
 
 /// What the surface pipeline was made for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +83,8 @@ pub(super) struct SsrHook {
     frame: Option<SsrTargets>,
     /// Whether this frame's reflections were written (binding 30 binds them).
     written: bool,
+    /// Whether this frame's prepass wrote the surface texel ([`Renderer::encode_prepass_surface`]).
+    surface_written: bool,
     /// The pyramid the last frame built.
     built: Option<PyramidStamp>,
 }
@@ -103,7 +110,7 @@ impl SsrHook {
             wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
         );
         let neutral = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        SsrHook { neutral, node: None, pyramid_node: None, surface: None, frame: None, written: false, built: None }
+        SsrHook { neutral, node: None, pyramid_node: None, surface: None, frame: None, written: false, surface_written: false, built: None }
     }
 
     /// The texture binding 30 holds now: this frame's reflections once written, else the zero texel.
@@ -125,8 +132,8 @@ impl SsrHook {
     }
 }
 
-/// The cleared surface texel: straight up and fully rough, so nothing is traced where the surface
-/// pass drew nothing (the sky, the terrain, variants): the probes reflect it.
+/// The cleared surface texel: straight up and fully rough, so nothing is traced where no plain
+/// batch is in front (the sky, the terrain, variants): the probes reflect it.
 fn rough_clear() -> wgpu::Color {
     let texel = crate::screen_inputs::pack_normal_roughness([0.0, 1.0, 0.0], 1.0).map(|c| f64::from(c) / 255.0);
     wgpu::Color { r: texel[0], g: texel[1], b: texel[2], a: texel[3] }
@@ -138,10 +145,27 @@ fn surface_target(render: (u32, u32), format: TextureFormat) -> TargetDesc {
     crate::screen_inputs::targets(render, format, only).remove(0)
 }
 
+/// The prepass depth's operations in its surface pass: kept as the rest of the prepass wrote it,
+/// and stored with the batches' depth.
+fn keep_depth() -> wgpu::Operations<f32> {
+    wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }
+}
+
 /// The colour pyramid's row at `render` size.
 fn pyramid_target(render: (u32, u32), format: TextureFormat) -> TargetDesc {
     let only = ScreenInputs { history_pyramid: true, ..ScreenInputs::NONE };
     crate::screen_inputs::targets(render, format, only).remove(0)
+}
+
+/// The prepass surface twin's pipeline (lane FR): `vs_prepass_surface` and `fs_prepass_surface`
+/// of the forward module's twin over the frame and pass-view groups and `node`'s motion group,
+/// into the prepass's three targets and A.6's target, depth written as the motion prepass's, the
+/// forward constants of `key`.
+fn ssr_surface_pipeline(device: &wgpu::Device, layouts: &super::Layouts, node: &crate::motion::MotionNode, key: SurfacePipelineKey) -> Result<Compiled<RenderPipeline>, RenderError> {
+    let module = shader(device, "prepass surface", crate::shaders::PREPASS_SURFACE)?;
+    let meshes = mesh_buffers_layout();
+    let constants = surface_constants(key.reversed, key.format, key.surface);
+    Ok(node.surface_pipeline(device, &module, (SURFACE_VERTEX, SURFACE_ENTRY), &meshes, [&layouts.frame, &layouts.pass], key.reversed, &constants))
 }
 
 /// Every pool label the reflections hold.
@@ -161,7 +185,8 @@ impl Renderer {
         let traces = crate::ssr::LANDED && crate::ssr::frame_ssr(&self.quality, path.hdr) && path.taa && prepass && motion && self.samples == 1;
         let hook = self.ssr.get_mut();
         hook.written = false;
-        if !traces {
+        hook.surface_written = false;
+        if !traces || self.motion_node.is_none() {
             if hook.frame.take().is_some() {
                 LABELS.iter().for_each(|label| self.pool.release(label));
             }
@@ -180,8 +205,8 @@ impl Renderer {
         let (reflections, reflections_view) = (reflections.texture().clone(), reflections.view().clone());
         let key = SurfacePipelineKey { reversed: path.depth_reversed, format, surface: self.surface_key(path.hdr) };
         let made = self.ssr.get_mut().surface.as_ref().is_some_and(|(made, _)| *made == key);
-        if !made {
-            let pipeline = self.ssr_surface_pipeline(key)?;
+        if let (false, Some(node)) = (made, self.motion_node.as_ref()) {
+            let pipeline = ssr_surface_pipeline(&self.device, &self.layouts, node, key)?;
             self.ssr.get_mut().surface = Some((key, pipeline));
             self.note_pipeline_build();
         }
@@ -194,29 +219,6 @@ impl Renderer {
         }
         hook.frame = Some(SsrTargets { normal_roughness: surface, hiz, trace, reflections, reflections_view, pyramid, pyramid_view, render });
         Ok(())
-    }
-
-    /// The surface pass's pipeline: the forward vertex shader and `fs_ssr_surface` into A.6's
-    /// target, `Equal` over the prepass depth with depth writes off, the forward constants of `key`.
-    fn ssr_surface_pipeline(&self, key: SurfacePipelineKey) -> Result<Compiled<RenderPipeline>, RenderError> {
-        let module = shader(&self.device, "forward", crate::shaders::FORWARD)?;
-        let layout = pipeline_layout(&self.device, "ssr surface", &[&self.layouts.frame, &self.layouts.pass]);
-        let meshes = mesh_buffers_layout();
-        let equal = wgpu::DepthStencilState { depth_compare: Some(wgpu::CompareFunction::Equal), ..super::depth_state(false, key.reversed) };
-        let spec = PipelineSpec {
-            label: "ssr surface",
-            module: &module,
-            vertex: SURFACE_VERTEX,
-            fragment: Some(SURFACE_ENTRY),
-            buffers: &meshes,
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            depth: Some(equal),
-            format: crate::screen_inputs::NORMAL_ROUGHNESS_FORMAT,
-            blend: None,
-            samples: 1,
-            layout: &layout,
-        };
-        Ok(render_pipeline_with(&self.device, &spec, &surface_constants(key.reversed, key.format, key.surface)))
     }
 
     /// Whether node 10b has work: the frame traces and last frame's pyramid follows.
@@ -246,30 +248,29 @@ impl Renderer {
         hook.frame.as_ref().map(|targets| (targets.pyramid_view.clone(), built.pre_exposure))
     }
 
-    /// Graph node 10b: the surface pass over the prepass depth (`counts`: the camera view's on the
-    /// CPU path), then the Hi-Z, the trace and the resolve. The render and compute passes it opened.
-    /// A frame nothing in can reflect ([`crate::ssr::frame_can_reflect`], lane FQ) opens none:
-    /// binding 30 keeps the zero texel the trace would have resolved to, and the pyramid is still
-    /// built after node 17 for the next frame.
-    pub(super) fn encode_ssr(&self, frame: &mut FrameEncoder, prep: &FramePrep, counts: Option<&[u32]>) -> (u32, u32) {
-        let Some(prepass) = self.targets.prepass.as_ref() else { return (0, 0) };
-        if !self.ssr_runs() || !crate::ssr::frame_can_reflect(&prep.plan) {
-            return (0, 0);
-        }
-        let mut hook = self.ssr.borrow_mut();
-        let Some(built) = hook.built else { return (0, 0) };
-        let hook = &mut *hook;
-        let (Some(targets), Some(node), Some((_, surface))) = (hook.frame.as_ref(), hook.node.as_mut(), hook.surface.as_ref()) else { return (0, 0) };
+    /// Whether this frame's prepass writes the reflections' surface texel (lane FR): node 10b will
+    /// trace (the frame traces, last frame's pyramid follows and something can reflect,
+    /// [`crate::ssr::frame_can_reflect`]) and the surface twin's pipeline is made.
+    pub(super) fn ssr_surface_in_prepass(&self, prep: &FramePrep) -> bool {
+        let made = self.ssr.borrow().surface.is_some();
+        made && self.ssr_runs() && crate::ssr::frame_can_reflect(&prep.plan)
+    }
+
+    /// Graph node 7's last pass on a frame whose prepass writes the surface texel (lane FR): the
+    /// opaque plain batches (`counts`: the camera view's on the CPU path) over the depth the rest of
+    /// the prepass wrote, with the surface twin into the prepass's three targets (`colors`, kept)
+    /// and A.6's normal and roughness (cleared rough first). False when the frame has no target.
+    pub(super) fn encode_prepass_surface(&self, frame: &mut FrameEncoder, prep: &FramePrep, counts: Option<&[u32]>, (colors, depth, motion): (&[&TextureView; 3], &TextureView, &wgpu::BindGroup)) -> bool {
+        let hook = self.ssr.borrow();
+        let (Some(targets), Some((_, surface))) = (hook.frame.as_ref(), hook.surface.as_ref()) else { return false };
+        let keep = wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store };
+        let cleared = wgpu::Operations { load: wgpu::LoadOp::Clear(rough_clear()), store: wgpu::StoreOp::Store };
+        let views = [(colors[0], keep), (colors[1], keep), (colors[2], keep), (&targets.normal_roughness, cleared)];
+        let attachments = views.map(|(view, ops)| Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops }));
         let mut pass = frame.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("ssr surface"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &targets.normal_roughness,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(rough_clear()), store: wgpu::StoreOp::Store },
-            })],
-            // Read-only: the batches land `Equal` on the depth the prepass wrote.
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &prepass.depth_view, depth_ops: None, stencil_ops: None }),
+            label: Some("prepass surface"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: depth, depth_ops: Some(keep_depth()), stencil_ops: None }),
             ..Default::default()
         });
         if !prep.plan.batches.is_empty() {
@@ -277,10 +278,34 @@ impl Renderer {
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_bind_group(0, &prep.groups.frame, &[]);
             pass.set_bind_group(1, &prep.groups.pass, &[0]);
+            pass.set_bind_group(2, motion, &[]);
             let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
             self.draw_batches(&mut pass, &prep.plan, 0, counts, meshlets, &mut FrameStats::default());
         }
         drop(pass);
+        drop(hook);
+        self.ssr.borrow_mut().surface_written = true;
+        true
+    }
+
+    /// The surface texel's view while this frame's prepass wrote it (prepass part 2's meshlets
+    /// write the rough texel over it, lane FR).
+    pub(super) fn ssr_written_surface(&self) -> Option<TextureView> {
+        let hook = self.ssr.borrow();
+        hook.frame.as_ref().filter(|_| hook.surface_written).map(|targets| targets.normal_roughness.clone())
+    }
+
+    /// Graph node 10b: the Hi-Z, the trace and the resolve over the surface texel the prepass wrote
+    /// (lane FR). The compute passes it opened. A frame whose prepass wrote none (nothing in it
+    /// can reflect, [`crate::ssr::frame_can_reflect`], lane FQ) opens none: binding 30 keeps the
+    /// zero texel the trace would have resolved to, and the pyramid is still built after node 17
+    /// for the next frame.
+    pub(super) fn encode_ssr(&self, frame: &mut FrameEncoder, prep: &FramePrep) -> u32 {
+        let Some(prepass) = self.targets.prepass.as_ref() else { return 0 };
+        let mut hook = self.ssr.borrow_mut();
+        let Some(built) = hook.built.filter(|_| hook.surface_written) else { return 0 };
+        let hook = &mut *hook;
+        let (Some(targets), Some(node)) = (hook.frame.as_ref(), hook.node.as_mut()) else { return 0 };
         let (device, queue) = (frame.device().clone(), frame.queue().clone());
         let camera = self.ssr_camera(prep);
         let radiance_scale = self.path.pre_exposure / built.pre_exposure.max(f32::MIN_POSITIVE);
@@ -297,10 +322,10 @@ impl Renderer {
             reversed: camera.reversed,
         };
         if node.encode(&device, &queue, frame.encoder(), input, None).is_err() {
-            return (1, 0);
+            return 0;
         }
         hook.written = true;
-        (1, 3)
+        3
     }
 
     /// The trace's camera: this frame's jitter-free view and projection, and last frame's

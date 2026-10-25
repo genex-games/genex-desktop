@@ -59,6 +59,9 @@ pub const SKIN_VERTEX_PREPASS: &str = crate::shaders::minify::shipped_wgsl!(conc
     include_str!("../shaders/clip_position.wgsl"),
     include_str!("../shaders/effects.wgsl"),
     include_str!("../shaders/alpha_mask.wgsl"),
+    include_str!("../shaders/screen/normal_roughness_unpack.wgsl"),
+    include_str!("../shaders/screen/normal_roughness.wgsl"),
+    include_str!("../shaders/prepass_motion.wgsl"),
     include_str!("../shaders/prepass.wgsl"),
     include_str!("../shaders/skin_vertex.wgsl"),
     include_str!("../shaders/skin_vertex_prepass.wgsl")

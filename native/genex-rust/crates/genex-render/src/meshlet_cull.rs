@@ -69,6 +69,9 @@ pub const MESHLET_PREPASS_VERTEX_ENTRY: &str = "vs_meshlet_prepass";
 /// The meshlet motion prepass's vertex entry point (RQ5.6), paired with the prepass module's
 /// `fs_prepass_motion`: group 3 is [`crate::motion::MotionNode::meshlet_layout`].
 pub const MESHLET_PREPASS_MOTION_VERTEX_ENTRY: &str = "vs_meshlet_prepass_motion";
+/// The prepass module's fragment entry writing the reflections' rough surface texel beside the
+/// motion targets (lane FR): prepass part 2's meshlets on a frame that traces.
+pub const MESHLET_PREPASS_ROUGH_FRAGMENT_ENTRY: &str = "fs_prepass_motion_rough";
 /// The meshlet shadow casters' vertex entry point (depth only).
 pub const MESHLET_SHADOW_VERTEX_ENTRY: &str = "vs_meshlet_shadow";
 /// Dispatch 1 of a compaction: keep counts per candidate and per block.
@@ -1126,6 +1129,10 @@ pub struct MeshletPipelines {
     /// The motion prepass (`fs_prepass_motion` into the normals, the motion and the reactive
     /// mask; RQ5.6), made when the spec names the motion group's layout.
     pub prepass_motion: Option<Compiled<RenderPipeline>>,
+    /// The motion prepass into the reflections' surface texel too (lane FR,
+    /// `fs_prepass_motion_rough`: the rough texel where pass 2's meshlets land), with
+    /// `prepass_motion`.
+    pub prepass_motion_rough: Option<Compiled<RenderPipeline>>,
     /// The shadow casters into `depth32float` maps.
     pub shadow: Compiled<RenderPipeline>,
     /// The shadow casters into `depth16unorm` maps.
@@ -1202,26 +1209,26 @@ impl MeshletPipelines {
                 samples: 1,
             })
         });
-        let prepass_motion = spec.motion.map(|motion_layout| {
-            let layout = pipeline_layout(device, "meshlet motion prepass", &[layouts.frame, layouts.pass, &node.draw_layout, motion_layout]);
-            let targets = crate::motion::TARGET_FORMATS.map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }));
-            crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
-                label: Some("meshlet motion prepass"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState { module: &meshlet_module, entry_point: Some(MESHLET_PREPASS_MOTION_VERTEX_ENTRY), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: Some(wgpu::Face::Back), ..Default::default() },
-                depth_stencil: Some(depth(DEPTH_FORMAT, true, depth_compare(true, spec.reversed))),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &prepass_module,
-                    entry_point: Some(crate::motion::FRAGMENT_ENTRY),
-                    compilation_options: Default::default(),
-                    targets: &targets,
-                }),
-                multiview_mask: None,
-                cache: None,
+        let motion_prepass = |fragment: &str, targets: &[Option<wgpu::ColorTargetState>]| {
+            spec.motion.map(|motion_layout| {
+                let layout = pipeline_layout(device, "meshlet motion prepass", &[layouts.frame, layouts.pass, &node.draw_layout, motion_layout]);
+                crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
+                    label: Some("meshlet motion prepass"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState { module: &meshlet_module, entry_point: Some(MESHLET_PREPASS_MOTION_VERTEX_ENTRY), compilation_options: Default::default(), buffers: &[] },
+                    primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+                    depth_stencil: Some(depth(DEPTH_FORMAT, true, depth_compare(true, spec.reversed))),
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState { module: &prepass_module, entry_point: Some(fragment), compilation_options: Default::default(), targets }),
+                    multiview_mask: None,
+                    cache: None,
+                })
             })
-        });
+        };
+        let targets = crate::motion::TARGET_FORMATS.map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }));
+        let prepass_motion = motion_prepass(crate::motion::FRAGMENT_ENTRY, &targets);
+        // Lane FR: prepass part 2 on a frame whose prepass wrote the reflections' surface texel.
+        let prepass_motion_rough = motion_prepass(MESHLET_PREPASS_ROUGH_FRAGMENT_ENTRY, &crate::motion::surface_targets());
         Ok(MeshletPipelines {
             forward: make(DrawSpec {
                 label: "meshlet forward",
@@ -1243,6 +1250,7 @@ impl MeshletPipelines {
                 samples: 1,
             }),
             prepass_motion,
+            prepass_motion_rough,
             shadow: shadow(crate::settings::ShadowFormat::Depth32.texture_format()),
             shadow16: shadow(crate::settings::ShadowFormat::Depth16.texture_format()),
         })

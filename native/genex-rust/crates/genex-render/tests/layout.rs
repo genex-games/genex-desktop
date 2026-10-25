@@ -1880,3 +1880,41 @@ fn vertex_skinning_reads_two_vertex_tables_and_leaves_the_forward_fragment_uncha
         assert!(used.len() as u32 <= core.max_storage_buffers_per_shader_stage, "{name}: {used:?}");
     }
 }
+
+/// Lane FR: the prepass's surface twin (`shaders::PREPASS_SURFACE`) draws the plain batches into
+/// the motion prepass's three targets and the reflections' surface texel through the frame group,
+/// the pass view and the motion node's group, so it holds the motion prepass's vertex tables and
+/// the forward fragment's, within WebGPU core's per-stage limits, its four attachments within
+/// core's bytes per sample and its varyings within core's inter-stage variables: the same on
+/// every destination that traces (desktop `high` and `ultra`, a desktop browser's too).
+#[test]
+fn the_prepass_surface_twin_stays_within_webgpu_core_limits() {
+    let core = wgpu::Limits::defaults();
+    let module = parse("prepass-surface", shader("prepass-surface"));
+    let info = validated("prepass-surface", &module);
+    let used = storage_buffers_used(&module, &info, "vs_prepass_surface");
+    assert!(used.contains(&"prev_models".to_owned()), "the vertex stage reads last frame's rows: {used:?}");
+    let frame = layout_storage_buffers(&genex_render::renderer::frame_layout_entries(), wgpu::ShaderStages::VERTEX);
+    // The motion node's group shows two tables to the vertex stage, as on the motion prepass.
+    assert!(frame + 2 <= core.max_storage_buffers_per_shader_stage, "{} vertex storage buffers in the layout", frame + 2);
+    for stage in [naga::ShaderStage::Vertex, naga::ShaderStage::Fragment] {
+        let counts = stage_counts_in(&module, &info, stage);
+        assert!(counts.storage_buffers <= core.max_storage_buffers_per_shader_stage, "{stage:?}: {counts:?}");
+        assert!(counts.sampled_textures <= core.max_sampled_textures_per_shader_stage, "{stage:?}: {counts:?}");
+        assert!(counts.samplers <= core.max_samplers_per_shader_stage, "{stage:?}: {counts:?}");
+        assert!(counts.uniform_buffers <= core.max_uniform_buffers_per_shader_stage, "{stage:?}: {counts:?}");
+    }
+    let targets = genex_render::motion::surface_targets();
+    assert!(targets.len() as u32 <= core.max_color_attachments);
+    // WebGPU's rule: each target's byte cost after its component alignment.
+    let bytes = targets.iter().flatten().fold(0u32, |sum, target| {
+        let align = target.format.target_component_alignment().expect("a colour target");
+        sum.div_ceil(align) * align + target.format.target_pixel_byte_cost().expect("a colour target")
+    });
+    assert!(bytes <= core.max_color_attachment_bytes_per_sample, "{bytes} bytes per sample");
+    let entry = module.entry_points.iter().find(|point| point.name == "vs_prepass_surface").expect("the vertex entry");
+    let result = entry.function.result.as_ref().expect("its outputs");
+    let naga::TypeInner::Struct { members, .. } = &module.types[result.ty].inner else { panic!("a struct of outputs") };
+    let varyings = members.iter().filter(|member| matches!(member.binding, Some(naga::Binding::Location { .. }))).count() as u32;
+    assert!(varyings <= core.max_inter_stage_shader_variables, "{varyings} varyings");
+}

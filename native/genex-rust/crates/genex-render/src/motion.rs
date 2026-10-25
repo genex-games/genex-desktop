@@ -641,6 +641,37 @@ impl MotionNode {
         })
     }
 
+    /// The prepass's surface twin's pipeline (lane FR, `shaders::PREPASS_SURFACE`): `vertex` and
+    /// `fragment` of `module` over `groups` and this node's group 2, into the three prepass
+    /// targets ([`TARGET_FORMATS`]) and A.6's normal and roughness at location 3, culled and
+    /// depth-tested as [`MotionNode::pipeline`]'s, the module's overrides set to `constants`.
+    #[allow(clippy::too_many_arguments, reason = "a pipeline's module, entries, buffers, groups, depth and constants")]
+    pub fn surface_pipeline(
+        &self,
+        device: &Device,
+        module: &ShaderModule,
+        (vertex, fragment): (&str, &str),
+        buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+        groups: [&BindGroupLayout; 2],
+        reversed: bool,
+        constants: &[(&str, f64)],
+    ) -> Compiled<RenderPipeline> {
+        let layout = pipeline_layout(device, vertex, &[groups[0], groups[1], &self.layout]);
+        let targets = surface_targets();
+        let options = wgpu::PipelineCompilationOptions { constants, ..Default::default() };
+        crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
+            label: Some(vertex),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module, entry_point: Some(vertex), compilation_options: options.clone(), buffers },
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: Some(depth_state(reversed)),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState { module, entry_point: Some(fragment), compilation_options: options, targets: &targets }),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
     /// The background-motion pipeline (T-03) for a motion prepass of `reversed` depth: group 0 is
     /// this node's group (its frame row), the three prepass targets with the motion alone written,
     /// the depth tested `Equal` against the far plane and never written.
@@ -691,6 +722,13 @@ pub fn background_targets() -> [Option<wgpu::ColorTargetState>; 3] {
         location += 1;
         Some(wgpu::ColorTargetState { format, blend: None, write_mask })
     })
+}
+
+/// The prepass's targets on a frame that writes the reflections' surface texel (lane FR): the
+/// three of [`TARGET_FORMATS`] and A.6's normal and roughness, every channel written.
+pub fn surface_targets() -> [Option<wgpu::ColorTargetState>; 4] {
+    let [normals, motion, reactive] = TARGET_FORMATS;
+    [normals, motion, reactive, crate::screen_inputs::NORMAL_ROUGHNESS_FORMAT].map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }))
 }
 
 /// The prepass's depth test: written, `Less` (standard Z) or `Greater` (reverse-Z).

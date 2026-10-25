@@ -317,6 +317,10 @@ pub struct FrameStats {
     pub skin_jobs: u32,
     /// Render passes the renderer's nodes opened (shadow cascades, the world pass, the upscale).
     pub render_passes: u32,
+    /// Render passes that drew the camera's opaque batches: the prepass (its surface pass on a
+    /// frame that traces reflections, lane FR) and the world pass. Before lane FR a frame that
+    /// traced drew them a third time, in the reflections' own surface pass.
+    pub camera_opaque_passes: u32,
     /// Compute passes the renderer's nodes opened (skinning, the cull).
     pub compute_passes: u32,
     /// Meshlet candidates (instance × meshlet pairs) the frame culled (R2; 0 off the meshlet path).
@@ -2308,9 +2312,10 @@ impl<'a> WorldNodes<'a> {
                 }
             }
             NodeId::Prepass => {
-                if let Some(prepass) = renderer.encode_prepass(frame, self.prep, self.counts(0)) {
+                if let Some((prepass, passes)) = renderer.encode_prepass(frame, self.prep, self.counts(0)) {
                     self.prepass = Some(prepass);
-                    self.count_render(frame, 1);
+                    self.count_render(frame, passes);
+                    self.stats.camera_opaque_passes += u32::from(!plan.batches.is_empty());
                 }
                 // The camera's lists lose what the whole prepass hides, before anything else reads them.
                 if renderer.encode_camera_final(frame, self.prep) {
@@ -2320,8 +2325,7 @@ impl<'a> WorldNodes<'a> {
             }
             NodeId::Ao | NodeId::ContactShadows => self.encode_effect(id, frame),
             NodeId::Ssr => {
-                let (render, compute) = renderer.encode_ssr(frame, self.prep, self.counts(0));
-                self.count_render(frame, render);
+                let compute = renderer.encode_ssr(frame, self.prep);
                 self.count_compute(frame, compute);
                 if compute > 0 {
                     // The world pass binds the reflections at 30.
@@ -2545,6 +2549,7 @@ impl<'a> WorldNodes<'a> {
                     pass.draw(0..3, 0..1);
                 }
                 if !plan.batches.is_empty() {
+                    self.stats.camera_opaque_passes += 1;
                     pass.set_pipeline(renderer.opaque_pipeline());
                     pass.set_bind_group(0, &groups.frame, &[]);
                     pass.set_bind_group(1, &groups.pass, &[0]);
@@ -4229,7 +4234,11 @@ impl Renderer {
     /// Graph node 7: the opaque batches of the camera view (`counts` on the CPU path), skinned ones
     /// included, then the custom geometry, into the prepass depth and normals. None when nothing
     /// was recorded (no prepass this frame).
-    fn encode_prepass(&self, frame: &mut FrameEncoder, prep: &FramePrep, counts: Option<&[u32]>) -> Option<PrepassInfo> {
+    /// Graph node 7: the depth/normal prepass (with motion on TAA's frames), and the render passes
+    /// it opened: two on a frame whose prepass also writes the reflections' surface texel (lane
+    /// FR), where the opaque plain batches draw last, in a pass of their own
+    /// ([`Renderer::encode_prepass_surface`]).
+    fn encode_prepass(&self, frame: &mut FrameEncoder, prep: &FramePrep, counts: Option<&[u32]>) -> Option<(PrepassInfo, u32)> {
         let (Some(plan), Some(targets), Some(pipelines)) = (&prep.prepass, &self.targets.prepass, &self.prepass_pipelines) else { return None };
         let rows = self.prepass_rows.as_ref().filter(|_| !plan.draws.is_empty());
         if let Some(rows) = rows {
@@ -4250,6 +4259,9 @@ impl Renderer {
             }
             _ => None,
         };
+        // Lane FR: on a frame that traces reflections the plain batches draw last, with the surface
+        // twin, so the texel a batch writes is the one in front of everything else the prepass drew.
+        let surface = motion.is_some() && self.ssr_surface_in_prepass(prep);
         let clear = wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store };
         let attachment = |view| Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: clear });
         let colors = match motion {
@@ -4278,7 +4290,9 @@ impl Renderer {
             pass.set_bind_group(1, &prep.groups.pass, &[0]);
             // The world pass's statistics count its own draws; the prepass's repeat them.
             let meshlets = prep.meshlets.as_ref().map(|meshlets| &meshlets.frame);
-            self.draw_batches(&mut pass, &prep.plan, 0, counts, meshlets, &mut FrameStats::default());
+            if !surface {
+                self.draw_batches(&mut pass, &prep.plan, 0, counts, meshlets, &mut FrameStats::default());
+            }
             self.draw_prepass_variants(&mut pass, (&prep.groups.pass, &prep.groups.pass_fade), &prep.plan, counts, motion.is_some());
             // Pass 1's meshlets (every visible one without occlusion); node 8 adds pass 2's.
             if let (Some(_), Some(meshlet_pipelines)) = (meshlets, self.meshlet_pipelines()) {
@@ -4313,7 +4327,16 @@ impl Renderer {
             // horizon), after every draw of the pass: `Equal` against the cleared far plane.
             MotionNode::draw_background(&mut pass, &motion_pipelines.background, group);
         }
-        Some(PrepassInfo { consumers: plan.consumers, equal_depth: plan.equal, custom_draws, size: self.targets.render_size })
+        drop(pass);
+        let info = PrepassInfo { consumers: plan.consumers, equal_depth: plan.equal, custom_draws, size: self.targets.render_size };
+        // The camera's motion where nothing drew went first: a batch drawn over it writes its own.
+        let surface_pass = match motion {
+            Some((group, _, motion_view, reactive_view)) if surface => {
+                self.encode_prepass_surface(frame, prep, counts, (&[&targets.normals_view, motion_view, reactive_view], &targets.depth_view, group))
+            }
+            _ => false,
+        };
+        Some((info, 1 + u32::from(surface_pass)))
     }
 
     /// The meshlet prepass's pipeline: its motion variant on a frame writing motion (its group 3
@@ -4937,10 +4960,17 @@ impl Renderer {
         let load = wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store };
         let attachment = |view| Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: load });
         // A frame writing motion draws pass 2's meshlets into the motion and the reactive mask too.
-        let colors = match (&targets.motion, &targets.reactive, &prep.motion) {
+        // Lane FR: where the prepass wrote the reflections' surface texel, pass 2's meshlets write
+        // the rough texel where they land in front of a batch.
+        let surface = self.ssr_written_surface().filter(|_| pipelines.prepass_motion_rough.is_some());
+        let mut colors = match (&targets.motion, &targets.reactive, &prep.motion) {
             (Some((_, motion)), Some((_, reactive)), Some(_)) => vec![attachment(&targets.normals_view), attachment(motion), attachment(reactive)],
             _ => vec![attachment(&targets.normals_view)],
         };
+        let surface = surface.filter(|_| colors.len() == 3);
+        if let Some(view) = surface.as_ref() {
+            colors.push(attachment(view));
+        }
         let mut pass = frame.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("prepass part 2"),
             color_attachments: &colors,
@@ -4954,6 +4984,10 @@ impl Renderer {
             multiview_mask: None,
         });
         let pipeline = self.meshlet_prepass_pipeline(pipelines, &mut pass, prep);
+        let pipeline = match (&surface, &pipelines.prepass_motion_rough) {
+            (Some(_), Some(rough)) => rough,
+            _ => pipeline,
+        };
         self.draw_meshlets(&mut pass, &prep.groups.frame, &prep.groups.pass, 0, ArgsSlot::Second, pipeline);
         true
     }
