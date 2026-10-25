@@ -28,6 +28,7 @@ import { copyFile, lstat, mkdir, readdir, stat, writeFile } from "node:fs/promis
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { gitOrNull } from "../../substrate/snapshots.ts";
+import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { BuildTarget, GameStack } from "../../shared/game-project.ts";
 import { ToolchainHost, ToolchainId, type ToolchainLock, toolchainHostOf } from "../../shared/toolchain.ts";
 import { shellQuote } from "../../substrate/spawn.ts";
@@ -641,7 +642,8 @@ const PLAY_SURFACE = { width: 1280, height: 720, dpr: 2 } as const;
  * A build for the person to Play (lane PW). `STUDIO_FIXTURE_RUST_OFFER=1` commits a change of the
  * fixture's game in a copy of its own (the game folder's HEAD stays) and offers that commit to Live
  * once Live shows the game, so the stage's Update plays it as Play latest does.
- * `STUDIO_FIXTURE_RUST_PLAY=<after ms>[,<plays>]` instead presses Play on that commit itself, `after ms`
+ * `STUDIO_FIXTURE_RUST_HEALTHY=1` first records that commit integrated healthy (Play's background
+ * build of it starts). `STUDIO_FIXTURE_RUST_PLAY=<after ms>[,<plays>]` instead presses Play on that commit itself, `after ms`
  * after the launch, through the same `showBuild` the Play buttons call, then starts Live's Native
  * view on the copy Live shows; `plays` times (default 2: the second Play of the same commit). Each
  * Play is a `[play]` line in the Studio log. A fresh commit each launch: no earlier build of it exists.
@@ -651,12 +653,22 @@ export function startFixtureOffer(core: StudioCore, env: NodeJS.ProcessEnv): voi
   const playing = Number.isInteger(after) && after !== undefined && after >= 0;
   if (env.STUDIO_FIXTURE_RUST_OFFER !== "1" && !playing) return;
   const times = Number.isInteger(plays) && plays !== undefined && plays > 0 && plays <= 5 ? plays : 2;
+  const healthy = env.STUDIO_FIXTURE_RUST_HEALTHY === "1";
   void fixtureCommit(core)
-    .then((commit) => {
+    .then(async (commit) => {
       if (!commit) return;
+      if (healthy) await integratedHealthy(core, commit);
       return playing ? playTimes(core, commit, after, times) : offerBuild(core, commit);
     })
     .catch(() => {});
+}
+
+/** The commit integrated healthy, as a run's lead records it: what starts Play's background build of it. */
+async function integratedHealthy(core: StudioCore, commit: string): Promise<void> {
+  const project = FIXTURE_RUST_GAME.name;
+  const thread = await core.threadForGame(project);
+  const health = customEventData(CustomEvent.IntegrationHealth, { head: commit, ok: true, problems: [] });
+  await core.append([health], thread);
 }
 
 /** A commit of the fixture's game made in a copy of its own, with a file the game folder lacks; null when git cannot. */

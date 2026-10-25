@@ -14,7 +14,7 @@
  * preview is injected through {@link PreviewPort}.
  */
 import type { ChildProcess } from "node:child_process";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, statfs } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { sandboxBesidePlugins } from "./core/boot-side-by-side.ts";
@@ -53,7 +53,7 @@ import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/gam
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
 import type { NativeTimers } from "../shared/native-contract.ts";
 import type { LiveAssetsAnswer } from "../shared/live-assets.ts";
-import { hostOf } from "../shared/game-targets.ts";
+import { hostOf, STACK_HOST_MATRIX } from "../shared/game-targets.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import type { LivePrepare, LivePrepareTarget, WebBuildLoad } from "../shared/live-behind.ts";
 import {
@@ -302,6 +302,10 @@ import { SeedUpgradeMode } from "../substrate/seed-upgrade.ts";
 import { crateCheckSandboxes } from "../substrate/toolchain-store/crate-check.ts";
 import { execXcode } from "../substrate/toolchain-store/locate.ts";
 import { PlayTimings } from "./core/play-timings.ts";
+import { healthyBuilds, PlayPrebuilds } from "./core/play-prebuilds.ts";
+import { ToolchainInstallPhase } from "../shared/toolchain.ts";
+import { RustSeedPhase } from "../substrate/toolchain-store/rust-seed.ts";
+import { BuildPriority } from "./game-build.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
 export type { PreviewInputAction };
@@ -735,6 +739,18 @@ export class StudioCore {
   // One at a time, keyed by what they touch: a game's thread, a game's shown build, the cover renderer.
   readonly #gameThreadOperations = new Map<string, Promise<unknown>>();
   readonly #showOperations = new Map<string, Promise<unknown>>();
+  /** Play's builds made in the background once a run's build integrates healthy (`core/play-prebuilds.ts`). */
+  readonly #prebuilds = new PlayPrebuilds({
+    copy: (project, commit) => this.#prebuildCopy(project, commit),
+    build: (project, dir, target, signal) => this.#prebuildBuild(project, dir, target, signal),
+    targets: (project) => this.#prebuildTargets(project),
+    freeBytes: async () => {
+      const stats = await statfs(this.layout.rustBuilds).catch(() => statfs(this.layout.scratch));
+      return stats.bavail * stats.bsize;
+    },
+    announce: (project, commit, since) => this.#previews.prebuilding(project, commit, since),
+    log: (line) => this.options.onLog?.(line, "stderr"),
+  });
   readonly #coverOperations = new Map<string, Promise<unknown>>();
   readonly #showRequests = new Map<string, Promise<{ dir: string; commit: string }>>();
   /** File lists approved in Studio's Publish dialog, each waiting for its export. */
@@ -1307,7 +1323,11 @@ export class StudioCore {
       // A release build prewarms with its shipped headless platform file and installs the bundled ANGLE from here.
       resources: this.options.paths.resources,
       host: servedToolchainHost(process.platform, process.arch),
-      emit: (job) => this.emit(UiEvent.ToolchainInstall, job),
+      emit: (job) => {
+        this.emit(UiEvent.ToolchainInstall, job);
+        // A new lock: each game's last prebuilt commit is built again on it.
+        if (job.phase === ToolchainInstallPhase.Installed) void this.#prebuilds.lockChanged();
+      },
       run: (request) => this.sandbox.run(request),
       exec: execHost,
       probeClt: () => probeCommandLineTools(execHost, process.platform),
@@ -1347,7 +1367,10 @@ export class StudioCore {
   #seedRustInBackground(): void {
     if (!this.options.rustSeedFrom) return;
     void this.toolchains.seedRust().then(
-      (outcome) => this.options.onLog?.(`[core] rust dev seed: ${JSON.stringify(outcome)}`, "stderr"),
+      (outcome) => {
+        this.options.onLog?.(`[core] rust dev seed: ${JSON.stringify(outcome)}`, "stderr");
+        if (outcome?.phase === RustSeedPhase.Seeded) void this.#prebuilds.lockChanged();
+      },
       (err) => this.options.onLog?.(`[core] rust dev seed failed: ${errorMessage(err)}`, "stderr"),
     );
   }
@@ -2112,6 +2135,7 @@ export class StudioCore {
     this.#planReviews?.stop();
     this.#liveAssets?.dispose();
     // No compiled build outlives the studio; they run in the sandbox disposed below.
+    this.#prebuilds.cancelAll();
     this.#gameBuilds.cancelAll();
     // Nor a delivery's import (C-5): its job ends, so no importer outlives the core.
     await this.#assets.stopImports();
@@ -2226,6 +2250,7 @@ export class StudioCore {
     this.#autoResume.observe(threadId, result.events);
     // Off the append's path: reading the game's folder never holds up the log.
     void noteBuildEnd(this.#buildEnds, threadId, result.events).catch(() => {});
+    void this.#prebuildHealthy(threadId, result.events).catch(() => {});
     return result.latestEventId;
   }
 
@@ -3326,6 +3351,52 @@ export class StudioCore {
     const lock = isCompiledStack(stack) ? await this.toolchains.currentLock(stack, project) : null;
     const asked = { project, dir: root, shape: game.shape, destinations: destinationsOf(game), lock };
     await this.#gameBuilds.ensure(asked, target, CppBuildPurpose.Judging);
+  }
+
+  /** A run's build that integrated healthy is what Play latest plays next: its Play builds start in the background. */
+  async #prebuildHealthy(threadId: string, events: readonly EventEnvelope[]): Promise<void> {
+    const healthy = healthyBuilds(events).at(-1);
+    if (!healthy) return;
+    const project = healthy.project ?? (await this.#buildEnds.gameOf(threadId));
+    if (project) void this.#prebuilds.queue(project, healthy.head);
+  }
+
+  /** The commit's Play copy, made under the same per-game queue as Play's own (`showBuild`), so the two never race for it. */
+  async #prebuildCopy(project: string, commit: string): Promise<string | null> {
+    const projectDir = this.games.dirFor(project);
+    await this.assertProjectAllowed(projectDir);
+    this.snapshots.register({ name: project, dir: projectDir });
+    const copy = serial(this.#showOperations, project, () => this.#previews.playCopy(project, projectDir, commit));
+    return (await copy).dir;
+  }
+
+  /** A Play build of the copy, as Play's own load or Live's Native view asks for it, at background priority. */
+  async #prebuildBuild(project: string, dir: string, target: BuildTarget, signal: AbortSignal): Promise<void> {
+    const game = (await this.games.list()).find((listed) => listed.name === project);
+    if (!game) return;
+    const lock = await this.toolchains.currentLock(GameStack.RustWgpu, project).catch(() => null);
+    const asked = { project, dir, shape: game.shape, destinations: destinationsOf(game), lock, recordLock: false };
+    await this.#gameBuilds.ensure(asked, target, CppBuildPurpose.Live, { signal, priority: BuildPriority.Background });
+  }
+
+  /**
+   * Where Play plays a game here: its browser build when it is made for the browser, and this
+   * computer's desktop build when it is one of its destinations and this computer runs it. Only a
+   * Rust · wgpu game is prebuilt: its lane alone runs a build at background priority.
+   */
+  async #prebuildTargets(project: string): Promise<BuildTarget[]> {
+    const game = (await this.games.list()).find((listed) => listed.name === project);
+    if (!game || stackOf(game.shape) !== GameStack.RustWgpu) return [];
+    const destinations = destinationsOf(game).targets;
+    const host = hostOf(process.platform);
+    if (!host) return [];
+    // A host with no Rust lane (Windows) builds nothing, so it makes no copy either.
+    const lanes = STACK_HOST_MATRIX[GameStack.RustWgpu][host];
+    const build: readonly BuildTarget[] = lanes.build;
+    const run: readonly BuildTarget[] = lanes.run;
+    const desktop = hostDesktopTarget(process.platform);
+    const wanted = [BuildTarget.Web, ...(run.includes(desktop) ? [desktop] : [])];
+    return wanted.filter((target) => destinations.includes(target) && build.includes(target));
   }
 
   landBuild(...args: Parameters<PreviewService["landBuild"]>): ReturnType<PreviewService["landBuild"]> {

@@ -23,7 +23,8 @@ Play, Make live, a chat request while hidden) or a finished Unity/Godot `web/` b
 healthy build, a changed folder, a chat's show or a broken shown build lights Reload and a line
 with Update (built first, timed); hidden, all but a new build go in at once; Rust `assets/`-only
 changes swap in mid-play. Play opens Live at once, saying the asked build is on its way over the
-earlier one; builds are reused by content, and the person's never wait for agents'. The preview reaches only public CDNs. Other folders:
+earlier one; a Rust run's healthy build is prebuilt in the background, reused by content, and the
+person's builds never wait for agents'. The preview reaches only public CDNs. Other folders:
 [projects](projects-engines.md#lives-views).
 
 **Compiled games** (C++ · raylib; Rust · wgpu, needing WebGPU, on Apple-silicon Macs or Linux

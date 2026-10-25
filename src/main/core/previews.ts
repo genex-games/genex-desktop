@@ -2109,6 +2109,14 @@ export class PreviewService {
     }
   }
 
+  /** Play's background build of `commit` for `project` started (`since`) or ended (null): what Live's line says. */
+  prebuilding(project: string, commit: string, since: number | null): void {
+    // The person's own Play of it says more: a background build never takes or clears its line.
+    if (this.#live.state(project).updating?.kind === LiveUpdateKind.Play) return;
+    const updating = since === null ? null : { kind: LiveUpdateKind.Prebuild, commit, since };
+    this.#live.updating(project, updating, commit);
+  }
+
   async #showBuild(
     project: string,
     projectDir: string,

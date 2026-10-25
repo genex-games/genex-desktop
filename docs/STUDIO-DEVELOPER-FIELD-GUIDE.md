@@ -48,7 +48,8 @@ with every stage (copy, window, the lane's queue, seed and steps, candidate boot
 shell's boot stages, first frame). The `rust-game` fixture reproduces Play's waits: stub cargo takes
 `STUDIO_FIXTURE_RUST_WEB_MS` / `STUDIO_FIXTURE_RUST_MAC_MS` (`<clippy ms>,<build ms>`) per step,
 `STUDIO_FIXTURE_RUST_PLAY=<after ms>[,<plays>]` presses Play on a fresh commit (then Live's Native
-view on its copy), `STUDIO_FIXTURE_RUST_OFFER=1` offers that commit to Live's Update instead, and
+view on its copy), `STUDIO_FIXTURE_RUST_OFFER=1` offers that commit to Live's Update instead,
+`STUDIO_FIXTURE_RUST_HEALTHY=1` first records it integrated healthy (its prebuild starts), and
 `STUDIO_FIXTURE_RUST_CONTEND=<n>[,<after ms>]` starts `n` agents' judged Mac looks at copies of the
 game (native leases and build slots), as a run's checks would.
 The stage, the promo over a stage, create dialog and Toolchain sheet have rendered review runners
