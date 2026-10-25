@@ -87,7 +87,10 @@ fn feature_switches_and_the_render_scale_follow_the_same_order() {
     control.set_person(person);
     assert!(on(&control, RenderFeature::Shadows), "the person's switch beats genex.toml");
     assert_eq!(control.live_frame().quality.render_scale, 0.75);
-    assert_eq!(control.live_frame().scale, 0.75, "dynamic resolution starts at the nominal step");
+    // Flipped by lane UQ (was 0.75): on a native desktop the render scale is a share of the
+    // calibrated Quality mode's 0.65625, so the nominal step is 0.49, held at the floor.
+    assert_eq!(control.upscale_scale(), 0.65625);
+    assert_eq!(control.live_frame().scale, genex_render::settings::RENDER_SCALE_MIN, "dynamic resolution starts at the nominal step");
 
     let off = RenderChange { features: vec![(RenderFeature::Shadows, false)], ..RenderChange::default() };
     assert!(!control.apply(&off).features.contains(&(RenderFeature::Shadows, true)), "the verb's switch beats the person's");
@@ -453,12 +456,14 @@ fn dynamic_resolution_runs_the_class_table_and_never_rises_past_the_budget() {
         control.probe(mac(), None);
         control.apply(&RenderChange { device_class: Some(Some(class)), ..RenderChange::default() });
         let steps = control.scale_steps().to_vec();
-        let table: Vec<f32> = class_defaults(class).drs_steps.iter().map(|scale| bucket(*scale)).collect();
+        // Lane UQ: each step is the table's times the upscaling mode's share (1 on phones).
+        let held = |scale: f32| bucket((scale * control.upscale_scale()).max(genex_render::settings::RENDER_SCALE_MIN));
+        let table: Vec<f32> = class_defaults(class).drs_steps.iter().map(|scale| held(*scale)).collect();
         assert!(steps.iter().all(|step| table.contains(step)), "{}: {steps:?} come from its table {table:?}", class.wire());
         assert_eq!(steps[0], table[0], "{}: the table's lowest step is the floor", class.wire());
         let quality = control.live_frame().quality;
         let profile = control.live_profile();
-        let nominal = bucket(quality.render_scale);
+        let nominal = held(quality.render_scale);
         for step in steps.iter().filter(|step| **step > nominal) {
             let input = BudgetInput::new(output, *step, profile.scene_format, false);
             let bytes = ledger(&quality, &input).total();

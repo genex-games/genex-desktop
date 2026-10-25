@@ -62,11 +62,12 @@ use genex_render::budget::{DegradeMode, DegradeRung, MaterialClass, fit};
 use genex_render::texture::{fitted_textures, material_arrays};
 use genex_render::device_class::{CalibrationKey, classify, classify_calibrated};
 use genex_render::budget::ledger;
-use genex_render::drs::{DrsController, FrameSignal, ScaleSteps, demoted_quality};
+use genex_render::drs::{DrsController, FRAME_RATE_TARGETS, FrameSignal, ScaleSteps, demoted_quality};
 use genex_render::graph::{feature_drawn, feature_landed, not_landed};
 use genex_render::presets::{
-    budget_scale, class_defaults, default_preset, effect_budgeted, native_output_cap_px, profile, render_pixel_budget, step_size, upscales_to_native, with_world_samples,
+    class_defaults, default_preset, effect_budgeted, native_output_cap_px, profile, render_pixel_budget, step_size, upscales_to_native, with_world_samples,
 };
+use genex_render::upscale::{calibrated_mode, calibrated_window_scale, output_scale};
 use genex_render::post::tonemap::MsaaResolve;
 use genex_render::timing::{GpuSource, TimingWindow};
 use serde_json::{Map as JsonMap, Value, json};
@@ -74,6 +75,9 @@ use serde_json::{Map as JsonMap, Value, json};
 pub use genex_render::budget::BudgetInput;
 pub use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, ScoreLevel, TargetOs, WebHints};
 pub use genex_render::presets::{ClassDefaults, ClassOverride, RenderOverrides, RenderProfile, preset_quality};
+/// An upscaling mode (lane UQ): Native, Quality, Balanced or Performance, the share of the window a
+/// frame renders ([`RenderConfig::upscale`], [`lock_upscale`]).
+pub use genex_render::upscale::UpscaleMode;
 /// A game's or a person's choices for the sun's shadows (cascades, map size, filter): see
 /// [`RenderConfig::shadows_at`].
 pub use genex_render::presets::ShadowOverride as ShadowConfig;
@@ -173,6 +177,8 @@ pub const CAPTURE_SETTLE_FRAMES: u32 = 1;
 
 /// The panel's automatic entry (the device and the game choose).
 const PANEL_AUTO: &str = "Auto";
+/// The panel's top preset entry: ultra drawn natively (lane UQ).
+const PANEL_MAX: &str = "Max";
 
 /// A preset's label in the settings panel (user copy).
 pub fn preset_label(preset: QualityPreset) -> &'static str {
@@ -186,13 +192,50 @@ pub fn preset_label(preset: QualityPreset) -> &'static str {
 }
 
 /// The panel's preset menu: automatic first (naming what it picks now when the person has no
-/// choice of their own), then every preset.
-fn panel_presets(effective: QualityPreset, person: Option<QualityPreset>, offered: &[QualityPreset]) -> Vec<String> {
+/// choice of their own), then every preset, then Max (ultra drawn natively) when `max` is offered.
+fn panel_presets(effective: QualityPreset, person: Option<QualityPreset>, offered: &[QualityPreset], max: bool) -> Vec<String> {
     let auto = match person {
         None => format!("{PANEL_AUTO} ({})", preset_label(effective)),
         Some(_) => PANEL_AUTO.to_owned(),
     };
-    std::iter::once(auto).chain(offered.iter().map(|preset| preset_label(*preset).to_owned())).collect()
+    let presets = offered.iter().map(|preset| preset_label(*preset).to_owned());
+    std::iter::once(auto).chain(presets).chain(max.then(|| PANEL_MAX.to_owned())).collect()
+}
+
+/// An upscaling mode's label in the settings panel (user copy).
+pub fn upscale_label(mode: UpscaleMode) -> &'static str {
+    match mode {
+        UpscaleMode::Native => "Native",
+        UpscaleMode::Quality => "Quality",
+        UpscaleMode::Balanced => "Balanced",
+        UpscaleMode::Performance => "Performance",
+        _ => "Mode",
+    }
+}
+
+/// The panel's upscaling menu: automatic first (naming the calibration's mode where it picks one),
+/// then every mode.
+fn panel_upscales(calibrated: Option<UpscaleMode>, person: Option<UpscaleMode>) -> Vec<String> {
+    let auto = match (person, calibrated) {
+        (None, Some(mode)) => format!("{PANEL_AUTO} ({})", upscale_label(mode)),
+        _ => PANEL_AUTO.to_owned(),
+    };
+    std::iter::once(auto).chain(UpscaleMode::ALL.iter().map(|mode| upscale_label(*mode).to_owned())).collect()
+}
+
+/// A frame-rate target's label in the settings panel (user copy).
+fn frame_rate_label(fps: u32) -> String {
+    format!("{fps} fps")
+}
+
+/// The panel's frame-rate menu: automatic first (naming the rate it holds when the person has no
+/// choice of their own), then every target.
+fn panel_frame_rates(effective: u32, person: Option<u32>) -> Vec<String> {
+    let auto = match person {
+        None => format!("{PANEL_AUTO} ({})", frame_rate_label(effective)),
+        Some(_) => PANEL_AUTO.to_owned(),
+    };
+    std::iter::once(auto).chain(FRAME_RATE_TARGETS.iter().map(|fps| frame_rate_label(*fps))).collect()
 }
 
 /// A feature switch's label in the settings panel (user copy).
@@ -483,6 +526,17 @@ pub struct RenderConfig {
     /// The game's meshlet rendering (R2): equal on every device, and only ever a narrowing of what
     /// the device's preset runs.
     pub meshlets: Meshlets,
+    /// The game's upscaling mode (lane UQ), if it names one.
+    pub upscale: UpscaleConfig,
+}
+
+/// A game's upscaling choice (lane UQ): [`RenderConfig::upscale`], [`RenderConfig::upscale_locked`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UpscaleConfig {
+    /// The mode every device starts on, or None for the calibration's.
+    pub mode: Option<UpscaleMode>,
+    /// Whether the mode is the only one: the person's panel hides its row.
+    pub locked: bool,
 }
 
 impl From<RenderSettings> for RenderConfig {
@@ -493,7 +547,7 @@ impl From<RenderSettings> for RenderConfig {
             PresetChoice::Preset(preset) => Some(preset),
             _ => None,
         };
-        RenderConfig { look: settings.look, quality: RenderOverrides { preset, ..RenderOverrides::default() }, meshlets: settings.meshlets }
+        RenderConfig { look: settings.look, quality: RenderOverrides { preset, ..RenderOverrides::default() }, meshlets: settings.meshlets, upscale: UpscaleConfig::default() }
     }
 }
 
@@ -610,6 +664,23 @@ impl RenderConfig {
         self
     }
 
+    /// The config starting every device on upscaling `mode` (lane UQ) instead of the calibration's
+    /// pick, phones and browsers too; the person's panel may still change it:
+    /// `RenderConfig::from_build().upscale(UpscaleMode::Native)` for a game whose look needs every
+    /// pixel. Dynamic resolution moves within the mode's range.
+    pub fn upscale(mut self, mode: UpscaleMode) -> RenderConfig {
+        self.upscale = UpscaleConfig { mode: Some(mode), locked: false };
+        self
+    }
+
+    /// The config holding every device at upscaling `mode`: the panel hides its Upscaling row and
+    /// its Max preset, and a saved choice of the person's is kept but not drawn. For a mode the game
+    /// holds only for a while (a photo mode), call [`lock_upscale`] from `on_ui` instead.
+    pub fn upscale_locked(mut self, mode: UpscaleMode) -> RenderConfig {
+        self.upscale = UpscaleConfig { mode: Some(mode), locked: true };
+        self
+    }
+
     /// The config with `shadows` while the resolved preset is `preset`: a game that wants 4
     /// cascades at `high` writes `.shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))`
     /// and `low` and `medium` keep their rows. The request is held to its range and then to the
@@ -684,7 +755,7 @@ impl RenderConfig {
         let preset = section.preset().and_then(|p| QualityPreset::from_wire(p.as_str()));
         let classes = section.classes().into_iter().filter_map(|(class, table)| class_table(class.as_str(), table)).collect();
         let shadows = shadow_rows(&section.shadows);
-        RenderConfig { look, quality: RenderOverrides { preset, classes, shadows }, meshlets: Meshlets::DEFAULT }
+        RenderConfig { look, quality: RenderOverrides { preset, classes, shadows }, meshlets: Meshlets::DEFAULT, upscale: UpscaleConfig::default() }
     }
 
     /// The `[render]` tables the build lane compiled in (`GENEX_RENDER_TOML`, on every
@@ -1066,10 +1137,12 @@ pub struct RenderControl {
     verb: VerbLayer,
     live: Resolved,
     drs: DrsController,
-    /// Live's render-budget scale (lane UP): below 1 when Live draws the window's own pixels by TAA
-    /// upscaling and they are more than the class renders ([`genex_render::presets::budget_scale`]).
-    /// Dynamic resolution's steps, the nominal scale and the budget fit are multiplied by it.
-    budget_scale: f32,
+    /// Live's upscale scale (lane UQ): the share of the output its upscaling mode renders a side
+    /// ([`RenderControl::upscale`]; 1 where none is in force). Dynamic resolution's steps, the
+    /// nominal scale and the budget fit are multiplied by it.
+    upscale_scale: f32,
+    /// The mode the game holds for now ([`lock_upscale`]: a photo mode), this session only.
+    upscale_lock: Option<UpscaleMode>,
     timing: TimingWindow,
     /// The newest GPU time that landed.
     last_gpu_ms: Option<f32>,
@@ -1116,26 +1189,59 @@ fn push_switch(switches: &mut Vec<(RenderFeature, bool)>, switch: (RenderFeature
 /// than `ceiling`, at `fps` (with the class's sustained rate under thermal load), demoting at most
 /// to `low`.
 fn controller(class: DeviceClass, preset: QualityPreset, nominal: f32, ceiling: f32, fps: u32) -> DrsController {
-    budgeted_controller(class, preset, (nominal, ceiling, 1.0), fps, None)
+    budgeted_controller(class, preset, (nominal, ceiling, 1.0), fps, DrsAim { budget_ms: None, dynamic: true })
 }
 
-/// [`controller`], holding `budget_ms` per frame instead of `fps`'s frame time when the verb asks;
-/// `scales` are the nominal scale, the ceiling and the render-budget scale every step is multiplied
-/// by (lane UP; never below [`genex_render::settings::RENDER_SCALE_MIN`]).
-fn budgeted_controller(class: DeviceClass, preset: QualityPreset, scales: (f32, f32, f32), fps: u32, budget_ms: Option<f32>) -> DrsController {
-    let (relative, ceiling, budget) = scales;
+/// What dynamic resolution aims at besides the class's frame rate: the verb's frame budget, and
+/// whether it moves at all (the person's or the game's switch, lane UQ).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DrsAim {
+    budget_ms: Option<f32>,
+    dynamic: bool,
+}
+
+/// [`controller`], holding `aim.budget_ms` per frame instead of `fps`'s frame time when the verb
+/// asks, and only the nominal step with no preset demotion when `aim.dynamic` is off; `scales` are
+/// the nominal scale, the ceiling and the upscale scale every step is multiplied by (lanes UP and
+/// UQ; never below [`genex_render::settings::RENDER_SCALE_MIN`]).
+fn budgeted_controller(class: DeviceClass, preset: QualityPreset, scales: (f32, f32, f32), fps: u32, aim: DrsAim) -> DrsController {
+    let (relative, ceiling, upscale) = scales;
     let floor = genex_render::settings::RENDER_SCALE_MIN;
-    let held = |scale: f32| (scale * budget).max(floor);
+    let held = |scale: f32| (scale * upscale).max(floor);
     let defaults = class_defaults(class);
-    let table: Vec<f32> = defaults.drs_steps.iter().map(|step| held(*step)).collect();
     let nominal = held(relative);
+    let table: Vec<f32> = if aim.dynamic { defaults.drs_steps.iter().map(|step| held(*step)).collect() } else { Vec::new() };
     let steps = ScaleSteps::table(&table, nominal).up_to(held(ceiling).max(quantized(nominal)));
-    let levels = QualityPreset::ALL.iter().position(|known| *known == preset).unwrap_or(0);
+    let levels = if aim.dynamic { QualityPreset::ALL.iter().position(|known| *known == preset).unwrap_or(0) } else { 0 };
     let sustained = defaults.sustained_fps.filter(|sustained| *sustained < fps);
-    let frame = budget_ms.map_or_else(|| Duration::from_secs(1) / fps.max(1), |ms| Duration::from_secs_f32(ms / 1000.0));
+    let frame = aim.budget_ms.map_or_else(|| Duration::from_secs(1) / fps.max(1), |ms| Duration::from_secs_f32(ms / 1000.0));
     DrsController::new(steps, nominal, frame)
         .with_max_demotion(levels as u8)
         .with_sustained_fps(sustained)
+}
+
+/// Where Live's upscaling mode comes from (lane UQ, [`RenderControl::upscale`]), first source
+/// winning: the game's hold ([`lock_upscale`], then [`RenderConfig::upscale_locked`]), the person's
+/// panel, the game's default ([`RenderConfig::upscale`], a class table's first), the calibration.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum UpscaleSource {
+    /// The calibration's pick for the device class and the window (never Native).
+    Calibrated,
+    /// The game's default.
+    Game,
+    /// The person's choice in the settings panel.
+    Person,
+    /// The game holds it (the panel cannot change it).
+    Locked,
+}
+
+/// Whether two person layers differ only in what moves a frame's render scale (the upscaling mode,
+/// the render scale, the frame-rate target, dynamic resolution): no pipeline knob, so the change
+/// rebuilds nothing and warms no renderer.
+fn scale_only_change(a: &ClassOverride, b: &ClassOverride) -> bool {
+    let pipeline = |layer: &ClassOverride| ClassOverride { upscale: None, render_scale: None, fps: None, dynamic_resolution: None, ..layer.clone() };
+    pipeline(a) == pipeline(b)
 }
 
 /// Whether a landed GPU span of `gpu_ms` over `target` is the CPU's: the frame's CPU time explains
@@ -1193,9 +1299,9 @@ fn texture_arrays(class: DeviceClass, textures: TextureQuality) -> Vec<MaterialC
 struct BudgetSurface {
     output: (u32, u32),
     window: Option<(u32, u32)>,
-    /// The render-budget scale every scale is multiplied by (Live upscaled to the window; 1
-    /// elsewhere and for captures).
-    budget_scale: f32,
+    /// The upscale scale every scale is multiplied by (Live's upscaling mode; 1 with none and for
+    /// captures).
+    upscale_scale: f32,
 }
 
 /// What the budget is fitted at for `profile` on `facts`: the class's scene format, whether its
@@ -1220,7 +1326,8 @@ impl RenderControl {
         let live = Resolved { profile: profile(&facts, class, &config.quality, None), quality: Quality::off(), budget_rungs: Vec::new() };
         let mut control = RenderControl {
             drs: controller(class, live.profile.preset, 1.0, 1.0, live.profile.target_fps),
-            budget_scale: 1.0,
+            upscale_scale: 1.0,
+            upscale_lock: None,
             config,
             world,
             output: world,
@@ -1293,12 +1400,22 @@ impl RenderControl {
         if (output, window) == (self.output, self.window) {
             return;
         }
-        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live.quality.anti_aliasing);
-        let before = samples(self);
         self.output = output;
         self.window = window;
+        self.refit(false);
+    }
+
+    /// Resolve again after a change: an explicit `pipeline` change moves the settings generation (the
+    /// presenter rebuilds or warms the world pass on it); any other moves it only when the refit's
+    /// quality draws another sample count.
+    fn refit(&mut self, pipeline: bool) {
+        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live.quality.anti_aliasing);
+        let before = samples(self);
+        if pipeline {
+            self.generation += 1;
+        }
         self.resolve();
-        if samples(self) != before {
+        if !pipeline && samples(self) != before {
             self.generation += 1;
         }
     }
@@ -1320,10 +1437,69 @@ impl RenderControl {
         render_pixel_budget(class)
     }
 
-    /// Live's render-budget scale (lane UP): every Live scale is this times the class's own (1 when
-    /// Live does not upscale to the window, or its output is within the render budget).
-    pub fn budget_scale(&self) -> f32 {
-        self.budget_scale
+    /// Live's upscale scale (lanes UP and UQ): every Live scale is this times the class's own, the
+    /// share of the output the upscaling mode in force renders a side (1 where none is).
+    pub fn upscale_scale(&self) -> f32 {
+        self.upscale_scale
+    }
+
+    /// The upscaling mode Live frames render with and where it comes from (lane UQ,
+    /// [`UpscaleSource`]); None where no mode is in force (a phone or a browser the person and the
+    /// game left to the class's own scale).
+    pub fn upscale(&self) -> Option<(UpscaleMode, UpscaleSource)> {
+        let class = self.live_class();
+        let game_default = self.config.quality.class(class).and_then(|table| table.upscale).or(self.config.upscale.mode);
+        let locked = self.upscale_lock.or(self.config.upscale.mode.filter(|_| self.config.upscale.locked));
+        let chosen = [(locked, UpscaleSource::Locked), (self.person.upscale, UpscaleSource::Person), (game_default, UpscaleSource::Game)];
+        if let Some((mode, source)) = chosen.into_iter().find_map(|(mode, source)| mode.map(|mode| (mode, source))) {
+            return Some((mode, source));
+        }
+        calibrated_mode(class, self.facts.os, self.live_window()).map(|mode| (mode, UpscaleSource::Calibrated))
+    }
+
+    /// Whether the game holds the upscaling mode (the panel hides its row).
+    fn upscale_held(&self) -> bool {
+        self.upscale_lock.is_some() || self.config.upscale.locked
+    }
+
+    /// Hold Live at upscaling `mode` for now (a photo mode drawing every pixel natively), over the
+    /// person's choice, this session only and never saved; None gives the person's and the game's
+    /// back. A change rebuilds nothing: the next frame renders at the mode's scale.
+    pub fn lock_upscale(&mut self, mode: Option<UpscaleMode>) {
+        if mode != self.upscale_lock {
+            self.upscale_lock = mode;
+            self.refit(false);
+        }
+    }
+
+    /// The window pixels Live's picture fills (its letterbox), else its output.
+    fn live_window(&self) -> (u32, u32) {
+        self.window.unwrap_or(self.output)
+    }
+
+    /// The share of the output the upscaling mode in force renders a side (1 with none): the
+    /// mode's share of the window, the calibration's held to the class's pixel budget.
+    fn upscale_scale_for(&self, class: DeviceClass, upscale: Option<(UpscaleMode, UpscaleSource)>) -> f32 {
+        let window = self.live_window();
+        match upscale {
+            Some((_, UpscaleSource::Calibrated)) => output_scale(calibrated_window_scale(class, window), self.output, window),
+            Some((mode, _)) => output_scale(mode.scale(), self.output, window),
+            None => 1.0,
+        }
+    }
+
+    /// The nominal render scale within the upscaling mode in force: the person's or the game's
+    /// render scale, else all of the mode's share (the mode replaces the class's nominal scale).
+    fn nominal_within_mode(&self, class: DeviceClass) -> f32 {
+        let game = self.config.quality.class(class).and_then(|table| table.render_scale);
+        self.person.render_scale.or(game).map_or(1.0, |scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0))
+    }
+
+    /// Whether dynamic resolution moves Live's scale: the person's switch, else the game's class
+    /// table's, else on.
+    fn dynamic_resolution(&self, class: DeviceClass) -> bool {
+        let game = self.config.quality.class(class).and_then(|table| table.dynamic_resolution);
+        self.person.dynamic_resolution.or(game).unwrap_or(true)
     }
 
     /// Whether Live frames of `quality` on `class` upscale to the window temporally, as the world
@@ -1349,12 +1525,12 @@ impl RenderControl {
 
     /// What Live frames are fitted at.
     fn live_surface(&self) -> BudgetSurface {
-        BudgetSurface { output: self.output, window: self.window, budget_scale: self.budget_scale }
+        BudgetSurface { output: self.output, window: self.window, upscale_scale: self.upscale_scale }
     }
 
     /// What captures are fitted at: their own size, no window.
     fn capture_surface(&self) -> BudgetSurface {
-        BudgetSurface { output: self.capture_output(), window: None, budget_scale: 1.0 }
+        BudgetSurface { output: self.capture_output(), window: None, upscale_scale: 1.0 }
     }
 
     /// The reference class the host recorded for this adapter (captures; None:
@@ -1434,7 +1610,7 @@ impl RenderControl {
         // Captures never count the spot atlas: it appears with the first frame that asks for a
         // shadowed spot, and a capture's settings must not depend on what was drawn before it.
         let held = if own { self.buffers.clone() } else { genex_render::budget::BudgetLedger::new() };
-        let input = budget_input(surface.output, scale * surface.budget_scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
+        let input = budget_input(surface.output, scale * surface.upscale_scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
         let (class, textures) = self.textures;
         if own && profile.class == class {
             return (input.with_fixed_materials(texture_arrays(class, textures)), Vec::new());
@@ -1495,16 +1671,21 @@ impl RenderControl {
         self.textures = self.session_textures();
         let class = self.live_class();
         let top = self.verb_layer(&self.person, class);
-        let asked = profile(&self.facts, class, &self.config.quality, Some(&top));
-        self.budget_scale = if self.upscales_live(&asked.quality, class) { budget_scale(self.output, render_pixel_budget(class)) } else { 1.0 };
+        let mut asked = profile(&self.facts, class, &self.config.quality, Some(&top));
+        let upscale = self.upscale();
+        if upscale.is_some() {
+            asked.quality.render_scale = self.nominal_within_mode(class);
+        }
+        self.upscale_scale = self.upscale_scale_for(class, upscale);
         let live = self.fitted(asked, &self.facts, self.live_is_own(), self.live_surface());
         let ceiling = self.budget_ceiling(class, &live);
         let thermal = self.drs.sustained();
         // FSR1's passes run at the output size below scale 1 (RCAS alone at 1 under TAA's
         // sharpen): costs no step changes, in the class's model (RQ5 review).
         let (below_one, at_one) = genex_render::post::fsr::upscale_costs_ms(&live.quality, class, self.output);
-        let scales = (live.quality.render_scale, ceiling, self.budget_scale);
-        let drs = budgeted_controller(class, live.profile.preset, scales, live.profile.target_fps, self.verb.frame_budget_ms);
+        let scales = (live.quality.render_scale, ceiling, self.upscale_scale);
+        let aim = DrsAim { budget_ms: self.verb.frame_budget_ms, dynamic: self.dynamic_resolution(class) };
+        let drs = budgeted_controller(class, live.profile.preset, scales, live.profile.target_fps, aim);
         self.drs = drs.with_upscale_ms(below_one, at_one);
         if thermal {
             self.drs.set_thermal(true, Duration::ZERO);
@@ -1848,12 +2029,16 @@ impl RenderControl {
 
     /// Change the person's layer (the panel): it is saved per device after the tick.
     pub fn set_person(&mut self, person: ClassOverride) {
-        if person != self.person {
-            self.person = person;
-            self.person_dirty = true;
-            self.generation += 1;
-            self.resolve();
+        if person == self.person {
+            return;
         }
+        // A change of what moves the scale (the upscaling mode, the frame-rate target, dynamic
+        // resolution, the render scale) rebuilds nothing: the next frame renders at its new size, as
+        // a dynamic-resolution step does, so it never hitches on a renderer build or a warm-up.
+        let pipeline = !scale_only_change(&person, &self.person);
+        self.person = person;
+        self.person_dirty = true;
+        self.refit(pipeline);
     }
 
     /// The device's save key (numbers, never names).
@@ -1894,7 +2079,7 @@ impl RenderControl {
         }
         let person = person_value(&self.person);
         let entry = self.entry_mut();
-        for key in ["preset", "renderScale", "features", PERSON_LOD_THRESHOLD_KEY] {
+        for key in ["preset", "renderScale", "features", PERSON_LOD_THRESHOLD_KEY, PERSON_UPSCALE_KEY, PERSON_FPS_KEY, PERSON_DYNAMIC_KEY] {
             entry.remove(key);
         }
         if let Value::Object(person) = person {
@@ -1928,6 +2113,15 @@ fn person_value(person: &ClassOverride) -> Value {
     if let Some(pixels) = person.lod.threshold_px {
         value.insert(PERSON_LOD_THRESHOLD_KEY.to_owned(), json!(pixels));
     }
+    if let Some(mode) = person.upscale {
+        value.insert(PERSON_UPSCALE_KEY.to_owned(), json!(mode.wire()));
+    }
+    if let Some(fps) = person.fps {
+        value.insert(PERSON_FPS_KEY.to_owned(), json!(fps));
+    }
+    if let Some(on) = person.dynamic_resolution {
+        value.insert(PERSON_DYNAMIC_KEY.to_owned(), json!(on));
+    }
     Value::Object(value)
 }
 
@@ -1942,12 +2136,20 @@ fn person_from(entry: &Value) -> ClassOverride {
     ClassOverride {
         preset: entry["preset"].as_str().and_then(QualityPreset::from_wire),
         render_scale: entry["renderScale"].as_f64().map(|scale| (scale as f32).clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0)),
-        fps: None,
+        fps: entry[PERSON_FPS_KEY].as_u64().and_then(|fps| u32::try_from(fps).ok()).filter(|fps| FRAME_RATE_TARGETS.contains(fps)),
         switches,
         lod: person_lod(entry),
+        upscale: entry[PERSON_UPSCALE_KEY].as_str().and_then(UpscaleMode::from_wire),
+        dynamic_resolution: entry[PERSON_DYNAMIC_KEY].as_bool(),
         ..ClassOverride::default()
     }
 }
+
+/// The save entry's members holding the person's upscaling mode, frame-rate target and dynamic
+/// resolution switch (lane UQ).
+const PERSON_UPSCALE_KEY: &str = "upscale";
+const PERSON_FPS_KEY: &str = "fps";
+const PERSON_DYNAMIC_KEY: &str = "dynamicResolution";
 
 /// The save entry's member holding the person's LOD threshold ("Detail distance").
 const PERSON_LOD_THRESHOLD_KEY: &str = "lodThresholdPx";
@@ -1986,14 +2188,34 @@ impl Drop for PanelScope {
     }
 }
 
-/// The panel's preset menu index of the person's choice (0: automatic).
-fn panel_index(preset: Option<QualityPreset>, offered: &[QualityPreset]) -> usize {
-    preset.and_then(|preset| offered.iter().position(|known| *known == preset)).map_or(0, |index| index + 1)
+/// The panel's preset menu index of the person's choice (0: automatic; past the presets, Max).
+fn panel_index(person: &ClassOverride, shown: &PanelShown) -> usize {
+    if shown.max && is_max(person) {
+        return shown.presets.len() + 1;
+    }
+    person.preset.and_then(|preset| shown.presets.iter().position(|known| *known == preset)).map_or(0, |index| index + 1)
 }
 
-/// What the panel showed: the presets it offered (after Auto) and its feature switches.
+/// Whether the person's layer is the panel's Max: ultra drawn natively.
+fn is_max(person: &ClassOverride) -> bool {
+    person.preset == Some(QualityPreset::Ultra) && person.upscale == Some(UpscaleMode::Native)
+}
+
+/// A menu index past the panel's Auto entry as a choice from `choices` (0: automatic, None).
+fn chosen_after_auto<T: Copy>(index: usize, choices: &[T]) -> Option<T> {
+    index.checked_sub(1).and_then(|index| choices.get(index).copied())
+}
+
+/// The menu index of `chosen` among `choices`, past the Auto entry (0: automatic).
+fn index_after_auto<T: PartialEq>(chosen: Option<T>, choices: &[T]) -> usize {
+    chosen.and_then(|chosen| choices.iter().position(|known| *known == chosen)).map_or(0, |index| index + 1)
+}
+
+/// What the panel showed: the presets it offered (after Auto; Max after them when `max`) and its
+/// feature switches.
 struct PanelShown {
     presets: Vec<QualityPreset>,
+    max: bool,
     features: Vec<(RenderFeature, bool)>,
     /// The LOD threshold of the preset in force, before the person's "Detail distance".
     preset_threshold: f32,
@@ -2018,11 +2240,24 @@ fn person_after(control: &RenderControl, change: genex_hud::PanelChange, shown: 
     let mut person = control.person.clone();
     match change {
         genex_hud::PanelChange::Preset(index) => {
-            person.preset = index.checked_sub(1).and_then(|index| shown.presets.get(index).copied());
+            let max = shown.max && index == shown.presets.len() + 1;
+            if max {
+                person.preset = Some(QualityPreset::Ultra);
+                person.upscale = Some(UpscaleMode::Native);
+            } else {
+                person.preset = chosen_after_auto(index, &shown.presets);
+                // Leaving Max leaves its native rendering too.
+                if is_max(&control.person) {
+                    person.upscale = None;
+                }
+            }
             // A new preset brings its own switches and threshold; the person's earlier ones would mask it.
             person.switches.clear();
             person.lod = LodConfig::new();
         }
+        genex_hud::PanelChange::Upscale(index) => person.upscale = chosen_after_auto(index, &UpscaleMode::ALL),
+        genex_hud::PanelChange::FrameRate(index) => person.fps = chosen_after_auto(index, &FRAME_RATE_TARGETS),
+        genex_hud::PanelChange::DynamicResolution(on) => person.dynamic_resolution = Some(on),
         genex_hud::PanelChange::Detail(detail) => person.lod = person.lod.threshold_px(threshold_for_detail(shown.preset_threshold, detail)),
         genex_hud::PanelChange::RenderScale(scale) => person.render_scale = Some(quantized(scale)),
         genex_hud::PanelChange::Feature(index, on) => {
@@ -2053,8 +2288,9 @@ pub fn settings_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     genex_hud::settings_button(ui, label)
 }
 
-/// The in-game graphics settings panel, for a game's `on_ui` hook: the quality preset, the render
-/// scale, a switch per feature and the device class detected. A change is the person's choice on
+/// The in-game graphics settings panel, for a game's `on_ui` hook: the quality preset (Max is ultra
+/// drawn natively), the upscaling mode (hidden while the game holds one), the frame-rate target,
+/// dynamic resolution, the render scale, a switch per feature and the device class detected. A change is the person's choice on
 /// this device: saved in the game's saves, never in the simulation, so it never moves the state
 /// checksum. Answers whether the person changed anything this tick (false outside a UI hook).
 ///
@@ -2081,11 +2317,23 @@ pub fn settings_panel(ui: &mut egui::Ui) -> bool {
     let detected = DeviceClass::wire(answer.detected_class);
     let defaults = class_defaults(answer.device_class);
     let offered = control.panel_offered();
-    let presets = panel_presets(answer.preset, control.person.preset, &offered);
+    // Max is ultra drawn natively: offered with ultra, unless the game holds the upscaling mode.
+    let held = control.upscale_held();
+    let max = offered.contains(&QualityPreset::Ultra) && !held;
+    let presets = panel_presets(answer.preset, control.person.preset, &offered, max);
+    let calibrated = calibrated_mode(answer.device_class, control.facts.os, control.live_window());
+    let upscales = panel_upscales(calibrated, control.person.upscale);
+    let upscale_index = index_after_auto(control.person.upscale, &UpscaleMode::ALL);
+    let rates = panel_frame_rates(control.live.profile.target_fps, control.person.fps);
+    let rate_index = index_after_auto(control.person.fps, &FRAME_RATE_TARGETS);
     let preset_threshold = preset_quality(answer.preset, answer.device_class).lod.threshold_px;
+    let shown = PanelShown { presets: offered, max, features, preset_threshold };
     let panel = genex_hud::SettingsPanel {
         presets: &presets,
-        preset: panel_index(control.person.preset, &offered),
+        preset: panel_index(&control.person, &shown),
+        upscale: (!held).then_some((upscales.as_slice(), upscale_index)),
+        frame_rate: Some((rates.as_slice(), rate_index)),
+        dynamic_resolution: Some(control.dynamic_resolution(answer.device_class)),
         render_scale: control.live.quality.render_scale,
         scale_range: (genex_render::settings::RENDER_SCALE_MIN, defaults.drs_range.1.max(1.0)),
         features: &labels,
@@ -2094,12 +2342,32 @@ pub fn settings_panel(ui: &mut egui::Ui) -> bool {
         detail: Some((detail_of(preset_threshold, control.live.quality.lod.threshold_px), DETAIL_RANGE)),
     };
     let changes = genex_hud::settings_panel(ui, &panel);
-    let shown = PanelShown { presets: offered, features, preset_threshold };
     for change in &changes {
         let person = person_after(&control, *change, &shown);
         control.set_person(person);
     }
     !changes.is_empty()
+}
+
+/// Hold Live frames at upscaling `mode` while the game needs it (lane UQ): a photo mode drawing
+/// every pixel natively calls `genex::render::lock_upscale(Some(UpscaleMode::Native))` from `on_ui`
+/// while it is open and `lock_upscale(None)` after, which gives the person's choice back. Calling it
+/// every tick is fine (an unchanged hold does nothing), and a change rebuilds nothing: the next
+/// frame renders at the mode's scale. Outside a UI hook it does nothing; it is never saved and
+/// never reaches the simulation.
+///
+/// ```
+/// # use genex::prelude::*;
+/// # use genex::render::UpscaleMode;
+/// # #[derive(Default)] struct World { photo: bool }
+/// # let mut game = Game::new(World::default());
+/// game.on_ui(|sim, _ui, _| {
+///     genex::render::lock_upscale(sim.world.photo.then_some(UpscaleMode::Native));
+/// });
+/// ```
+pub fn lock_upscale(mode: Option<UpscaleMode>) {
+    let Some(handle) = PANEL.with_borrow(Clone::clone) else { return };
+    handle.borrow_mut().lock_upscale(mode);
 }
 
 #[cfg(test)]
@@ -2290,6 +2558,9 @@ mod tests {
         for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
             let mut control = RenderControl::new(RenderConfig::new(), (1512, 982));
             control.probe(facts.clone(), None);
+            // The live readings below were taken at scale 1: Native, the person's choice (lane UQ:
+            // the calibrated default renders Quality's share, where these frames are CPU-bound).
+            control.set_person(ClassOverride { upscale: Some(UpscaleMode::Native), ..ClassOverride::default() });
             control.apply(&RenderChange { preset: Some(Some(PresetChoice::Preset(preset))), frame_budget_ms: Some(Some(1.0)), ..RenderChange::default() });
             let nominal = control.live_frame().scale;
             // The live readings at a 1 ms budget: GPU 2.2-3.1 ms at scale 1, CPU 1.4-1.6 ms.
@@ -2374,7 +2645,9 @@ mod tests {
             let poorer: Vec<_> = drawn[..at].iter().flatten().filter(|feature| !features.contains(feature)).collect();
             assert!(poorer.is_empty(), "{:?} is offered above {:?} but draws none of {poorer:?}", offered[at], &offered[..at]);
         }
-        assert_eq!(offered, [QualityPreset::Low, QualityPreset::Medium]);
+        // Flipped by lane UQ (was [Low, Medium]): the calibrated Quality mode renders 0.65625 of the
+        // panel a side, and at those render targets high's AO fits the budget again.
+        assert_eq!(offered, [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High]);
     }
 
     /// GA round 2 (live-app finding 2): Web Live booted at the world size, where medium's MSAA fit
@@ -2547,6 +2820,12 @@ mod tests {
         };
         assert_eq!(person_from(&person_value(&person)), person);
         assert_eq!(person_from(&json!({"preset": "epic", "features": {"warp": true}})), ClassOverride::default());
+        // Lane UQ: the upscaling mode, the frame-rate target and dynamic resolution are kept too, and
+        // a value outside their vocabularies is no choice.
+        let upscaled = ClassOverride { upscale: Some(UpscaleMode::Balanced), fps: Some(30), dynamic_resolution: Some(false), ..ClassOverride::default() };
+        assert_eq!(person_from(&person_value(&upscaled)), upscaled);
+        assert_eq!(person_value(&upscaled), json!({"upscale": "balanced", "fps": 30, "dynamicResolution": false}));
+        assert_eq!(person_from(&json!({"upscale": "ultra-performance", "fps": 120, "dynamicResolution": "yes"})), ClassOverride::default());
     }
 
     /// A control probed as a Mac, then emulating `class` at `preset`.
@@ -2563,21 +2842,24 @@ mod tests {
         control
     }
 
-    /// Lane UP: desktop-ultra on a Mac's 3456x2169 full screen draws Live at the window's own
-    /// pixels and renders at most the class's 2560x1440 of them: dynamic resolution's every step is
-    /// the class's step times the budget scale (0.6875), never above it nor below the class floor,
-    /// half-resolution AO past 1080p of render pixels, and a capture keeps its pinned scale. A 1080p
-    /// window within the budget renders natively, as before.
+    /// Lanes UP and UQ: desktop-ultra on a Mac's 3456x2169 full screen draws Live at the window's
+    /// own pixels and renders the calibrated Quality mode's share of them (0.65625 a side, within the
+    /// class's 2560x1440 budget): dynamic resolution's every step is the class's step times the
+    /// mode's share, never above it nor below the class floor, half-resolution AO past 1080p of
+    /// render pixels, and a capture keeps its pinned scale. Flipped by lane UQ: the budget scale
+    /// (0.6875) is now the Quality mode's 0.65625, and a 1080p window, which rendered natively,
+    /// renders Quality too (Native only when asked for).
     #[test]
-    fn an_ultra_full_screen_renders_its_pixel_budget_and_upscales_to_the_window() {
+    fn an_ultra_full_screen_renders_its_calibrated_mode_and_upscales_to_the_window() {
         let mut mac = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
         let budget = genex_render::presets::render_pixel_budget(mac.live_class());
         assert_eq!(mac.live_output_cap_px(), 4 * budget, "the output may hold the window's own pixels");
         let full_screen = (3456, 2169);
         mac.set_live_output(full_screen, Some(full_screen));
-        assert_eq!(mac.budget_scale(), 0.6875);
+        assert_eq!(mac.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Calibrated)));
+        assert_eq!(mac.upscale_scale(), 0.65625);
         let steps = mac.scale_steps().to_vec();
-        assert_eq!(steps.last(), Some(&0.6875), "the top step is the budget: {steps:?}");
+        assert_eq!(steps.last(), Some(&0.65625), "the top step is the mode's share: {steps:?}");
         assert!(steps.iter().all(|scale| *scale >= genex_render::settings::RENDER_SCALE_MIN), "{steps:?}");
         let frame = mac.live_asked();
         let (w, h) = step_size(full_screen, frame.scale);
@@ -2586,21 +2868,23 @@ mod tests {
         assert_eq!(mac.capture_frame().1.scale, 1.0, "captures keep their pinned scale");
         let laptop = (1920, 1080);
         mac.set_live_output(laptop, Some(laptop));
-        assert_eq!(mac.budget_scale(), 1.0);
-        assert_eq!(mac.scale_steps().last(), Some(&1.0), "a 1080p window renders natively");
+        assert_eq!(mac.upscale_scale(), 0.65625);
+        assert_eq!(mac.scale_steps().last(), Some(&0.65625), "a 1080p window upscales from Quality too");
         assert_eq!(mac.live_asked().quality.ao.resolution, genex_render::settings::AoResolution::Full);
     }
 
     /// Lane UP: where Live does not upscale temporally to the window (medium has no TAAU, a browser
     /// keeps its memory budget, a phone its panel), the output stays capped at the class's
-    /// reference pixels and every scale is the class's own: those frames are unchanged.
+    /// reference pixels, and phones and browsers keep the class's own scales. Flipped by lane UQ: a
+    /// native desktop's medium, which rendered its whole capped output, renders the calibrated
+    /// mode's share of the window (Quality's 0.65625 of 3456 is 0.875 of the 2560 output).
     #[test]
-    fn without_taa_upscaling_live_keeps_the_reference_cap_and_its_own_scales() {
+    fn without_taa_upscaling_live_keeps_the_reference_cap_and_renders_the_mode_s_share_of_the_window() {
         let mut medium = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Medium);
         let (rw, rh) = genex_render::presets::reference_resolution(medium.live_class());
         assert_eq!(medium.live_output_cap_px(), u64::from(rw) * u64::from(rh));
         medium.set_live_output((2560, 1440), Some((3456, 2169)));
-        assert_eq!((medium.budget_scale(), medium.scale_steps().last().copied()), (1.0, Some(1.0)));
+        assert_eq!((medium.upscale_scale(), medium.scale_steps().last().copied()), (0.875, Some(0.875)));
         let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
         let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other).with_web(web_hints_from_json(&hints).expect("hints"));
         let mut browser = RenderControl::new(RenderConfig::new(), (960, 540));
@@ -2612,7 +2896,171 @@ mod tests {
         let (pw, ph) = genex_render::presets::reference_resolution(phone.live_class());
         assert_eq!(phone.live_output_cap_px(), u64::from(pw) * u64::from(ph), "a phone keeps its cap");
         phone.set_live_output((786, 1704), Some((1179, 2556)));
-        assert_eq!(phone.budget_scale(), 1.0);
+        assert_eq!(phone.upscale_scale(), 1.0);
+    }
+
+    /// Lane UQ: the person's mode replaces the calibration's: Native renders every window pixel
+    /// through TAA (DLAA), Balanced and Performance their shares; the panel's Reset gives the
+    /// calibration's Quality back. Captures keep their pinned scale throughout.
+    #[test]
+    fn a_native_desktop_renders_native_only_when_the_person_asks_and_each_mode_s_share_otherwise() {
+        let mut mac = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        let full_screen = (3456, 2169);
+        mac.set_live_output(full_screen, Some(full_screen));
+        for window in [(1280, 720), (1920, 1080), full_screen] {
+            mac.set_live_output(window, Some(window));
+            assert_eq!(mac.live_asked().scale, 0.65625, "{window:?}: Quality by default, never native");
+        }
+        for mode in UpscaleMode::ALL {
+            mac.set_person(ClassOverride { upscale: Some(mode), ..ClassOverride::default() });
+            assert_eq!(mac.upscale(), Some((mode, UpscaleSource::Person)));
+            assert_eq!(mac.live_asked().scale, mode.scale(), "{mode:?}");
+            assert_eq!(mac.scale_steps().last(), Some(&mode.scale()), "{mode:?}: dynamic resolution rises no higher than the mode");
+            assert!(mac.live_asked().quality.anti_aliasing.temporal(), "{mode:?} resolves through TAA");
+            assert_eq!(mac.capture_frame().1.scale, 1.0, "captures keep their pinned scale");
+        }
+        let steps = mac.scale_steps().to_vec();
+        assert_eq!(steps, [0.5], "Performance sits at the floor: dynamic resolution only sheds features there");
+        mac.set_person(ClassOverride { upscale: Some(UpscaleMode::Native), ..ClassOverride::default() });
+        assert_eq!(mac.scale_steps().to_vec(), [0.75, 0.84375, 0.90625, 1.0], "Native moves over the class's own steps");
+        mac.set_person(ClassOverride::default());
+        assert_eq!(mac.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Calibrated)), "a reset gives the calibration's back");
+    }
+
+    /// Lane UQ: a mode, a frame-rate target or dynamic resolution changes what the next frame's scale
+    /// is and nothing else: the settings generation does not move, so the presenter neither rebuilds
+    /// the world pass nor warms a renderer (no hitch, and no surface work during a warm-up, the
+    /// rule of dd8a593b). A preset change still does.
+    #[test]
+    fn a_mode_frame_rate_or_dynamic_resolution_change_rebuilds_nothing() {
+        let mut mac = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        mac.set_live_output((3456, 2169), Some((3456, 2169)));
+        mac.note_world_samples(1);
+        let generation = mac.pipeline_generation();
+        let samples = |control: &RenderControl| genex_render::renderer::landed_samples(control.live_frame().quality.anti_aliasing);
+        let changes = [
+            ClassOverride { upscale: Some(UpscaleMode::Native), ..ClassOverride::default() },
+            ClassOverride { upscale: Some(UpscaleMode::Performance), ..ClassOverride::default() },
+            ClassOverride { upscale: Some(UpscaleMode::Performance), fps: Some(30), ..ClassOverride::default() },
+            ClassOverride { upscale: Some(UpscaleMode::Balanced), fps: Some(30), dynamic_resolution: Some(false), ..ClassOverride::default() },
+            ClassOverride { render_scale: Some(0.9), ..ClassOverride::default() },
+            ClassOverride::default(),
+        ];
+        for person in changes {
+            mac.set_person(person.clone());
+            assert_eq!(mac.pipeline_generation(), generation, "{person:?} rebuilds nothing");
+            assert_eq!(samples(&mac), 1, "{person:?} keeps TAA's one sample");
+            assert!(!mac.status().degraded.iter().any(|degrade| degrade.reason == DegradeReason::PipelineChangeDeferred), "{person:?}");
+        }
+        mac.lock_upscale(Some(UpscaleMode::Native));
+        mac.lock_upscale(None);
+        assert_eq!(mac.pipeline_generation(), generation, "the game's hold rebuilds nothing either");
+        mac.set_person(ClassOverride { preset: Some(QualityPreset::High), ..ClassOverride::default() });
+        assert!(mac.pipeline_generation() > generation, "a preset is a pipeline change");
+    }
+
+    /// Lane UQ: dynamic resolution aims at the frame-rate target (30 holds 33.3 ms, 60 holds 16.7)
+    /// within the mode's range, and turned off it holds the mode's scale and sheds no feature under
+    /// a load it cannot fit.
+    #[test]
+    fn dynamic_resolution_aims_at_the_frame_rate_target_and_turned_off_holds_the_mode_s_scale() {
+        let mut mac = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        mac.set_live_output((3456, 2169), Some((3456, 2169)));
+        assert_eq!(mac.frame_interval(), Duration::from_secs(1) / 60);
+        mac.set_person(ClassOverride { fps: Some(30), ..ClassOverride::default() });
+        assert_eq!(mac.frame_interval(), Duration::from_secs(1) / 30, "the person's 30 fps target");
+        let over = |control: &mut RenderControl| modelled_frames(control, 0, 900, 1.0, |_| 40.0);
+        let mut moving = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        moving.set_live_output((3456, 2169), Some((3456, 2169)));
+        over(&mut moving);
+        assert!(moving.live_frame().scale < 0.65625 && moving.drs.demotion() > 0, "on: the scale drops to the floor, then features go");
+        mac.set_person(ClassOverride { dynamic_resolution: Some(false), ..ClassOverride::default() });
+        assert_eq!(mac.scale_steps(), [0.65625], "off: the mode's scale alone");
+        over(&mut mac);
+        assert_eq!(mac.live_frame().scale, 0.65625, "off: the scale holds");
+        assert_eq!(mac.drs.demotion(), 0, "off: nothing is shed");
+    }
+
+    /// Lane UQ: phones and browsers keep their class's own scale until a mode is chosen; a chosen
+    /// mode is a share of the window there too (the output is capped at the class's reference).
+    #[test]
+    fn phones_and_browsers_keep_their_class_scale_until_a_mode_is_chosen() {
+        let mut phone = controlled(RenderConfig::new(), "mobile-high", QualityPreset::Medium);
+        phone.set_live_output((786, 1704), Some((1179, 2556)));
+        assert_eq!(phone.upscale(), None);
+        assert_eq!(phone.live_asked().scale, 0.75, "mobile-high's own nominal scale");
+        phone.set_person(ClassOverride { upscale: Some(UpscaleMode::Quality), ..ClassOverride::default() });
+        assert_eq!(phone.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Person)));
+        assert_eq!(phone.live_asked().scale, 0.96875, "0.65625 of the 1179 px panel is 0.97 of the 786 px output");
+        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
+        let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other).with_web(web_hints_from_json(&hints).expect("hints"));
+        let mut browser = RenderControl::new(RenderConfig::new(), (1920, 1080));
+        browser.probe(web, None);
+        browser.set_live_output((1920, 1080), Some((1920, 1080)));
+        assert_eq!(browser.upscale(), None, "a desktop browser keeps its class's scale");
+        assert_eq!(browser.live_asked().scale, quantized(class_defaults(browser.live_class()).nominal_scale));
+    }
+
+    /// Lane UQ: the game's default and lock, and the person's choice between them: a lock (the
+    /// config's, then the runtime hold) wins over the person, the person over the game's default and
+    /// a class table's mode, which win over the calibration; the panel's row hides while held.
+    #[test]
+    fn the_game_s_default_and_lock_and_the_person_s_choice_resolve_in_order() {
+        let ultra = DeviceClass::new(FormFactor::Desktop, PerformanceTier::Ultra);
+        let full_screen = (3456, 2169);
+        let at = |config: RenderConfig| {
+            let mut control = controlled(config, "desktop-ultra", QualityPreset::Ultra);
+            control.set_live_output(full_screen, Some(full_screen));
+            control
+        };
+        let mut game = at(RenderConfig::new().upscale(UpscaleMode::Balanced));
+        assert_eq!(game.upscale(), Some((UpscaleMode::Balanced, UpscaleSource::Game)));
+        game.set_person(ClassOverride { upscale: Some(UpscaleMode::Native), ..ClassOverride::default() });
+        assert_eq!(game.upscale(), Some((UpscaleMode::Native, UpscaleSource::Person)), "the person's choice wins over the game's default");
+        game.lock_upscale(Some(UpscaleMode::Performance));
+        assert_eq!(game.upscale(), Some((UpscaleMode::Performance, UpscaleSource::Locked)));
+        assert!(game.upscale_held());
+        game.lock_upscale(None);
+        assert_eq!(game.upscale(), Some((UpscaleMode::Native, UpscaleSource::Person)), "the hold gives the person's back");
+        let table = ClassOverride { upscale: Some(UpscaleMode::Performance), ..ClassOverride::default() };
+        let per_class = at(RenderConfig::new().upscale(UpscaleMode::Balanced).class(ultra, table));
+        assert_eq!(per_class.upscale(), Some((UpscaleMode::Performance, UpscaleSource::Game)), "a class table's mode is that class's default");
+        let mut locked = at(RenderConfig::new().upscale_locked(UpscaleMode::Native));
+        locked.set_person(ClassOverride { upscale: Some(UpscaleMode::Performance), ..ClassOverride::default() });
+        assert_eq!(locked.upscale(), Some((UpscaleMode::Native, UpscaleSource::Locked)), "a locked mode wins over the person's");
+        assert_eq!(locked.live_asked().scale, 1.0);
+        assert!(locked.upscale_held());
+        let mut phone = controlled(RenderConfig::new().upscale(UpscaleMode::Quality), "mobile-high", QualityPreset::Medium);
+        phone.set_live_output((786, 1704), Some((1179, 2556)));
+        assert_eq!(phone.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Game)), "the game's default applies on phones too");
+    }
+
+    /// Lane UQ: the panel's Max is ultra drawn natively; leaving it for another preset leaves native
+    /// rendering too, and the upscaling and frame-rate menus map to the modes and the targets.
+    #[test]
+    fn the_panel_s_max_is_ultra_native_and_its_menus_map_to_modes_and_targets() {
+        let control = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        let shown = PanelShown { presets: QualityPreset::ALL.to_vec(), max: true, features: Vec::new(), preset_threshold: 1.0 };
+        let max = shown.presets.len() + 1;
+        let person = person_after(&control, genex_hud::PanelChange::Preset(max), &shown);
+        assert_eq!((person.preset, person.upscale), (Some(QualityPreset::Ultra), Some(UpscaleMode::Native)));
+        assert_eq!(panel_index(&person, &shown), max, "the panel names it Max");
+        let mut on_max = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        on_max.set_person(person);
+        let high = person_after(&on_max, genex_hud::PanelChange::Preset(3), &shown);
+        assert_eq!((high.preset, high.upscale), (Some(QualityPreset::High), None), "leaving Max leaves native");
+        let kept = ClassOverride { upscale: Some(UpscaleMode::Balanced), ..ClassOverride::default() };
+        let mut balanced = controlled(RenderConfig::new(), "desktop-ultra", QualityPreset::Ultra);
+        balanced.set_person(kept);
+        assert_eq!(person_after(&balanced, genex_hud::PanelChange::Preset(3), &shown).upscale, Some(UpscaleMode::Balanced), "another preset keeps the mode");
+        let mode = person_after(&control, genex_hud::PanelChange::Upscale(4), &shown);
+        assert_eq!(mode.upscale, Some(UpscaleMode::Performance));
+        assert_eq!(person_after(&control, genex_hud::PanelChange::Upscale(0), &shown).upscale, None, "Auto");
+        assert_eq!(person_after(&control, genex_hud::PanelChange::FrameRate(1), &shown).fps, Some(30));
+        assert_eq!(person_after(&control, genex_hud::PanelChange::DynamicResolution(false), &shown).dynamic_resolution, Some(false));
+        assert_eq!(panel_upscales(Some(UpscaleMode::Quality), None)[0], "Auto (Quality)");
+        assert_eq!(panel_frame_rates(60, None), ["Auto (60 fps)", "30 fps", "60 fps"]);
+        assert_eq!(panel_presets(QualityPreset::Ultra, None, &QualityPreset::ALL, true).last().map(String::as_str), Some("Max"));
     }
 
     /// Pass-1 gate finding 02: a capture "as a phone" keeps the MSAA a phone draws. Phones are tile
