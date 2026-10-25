@@ -337,7 +337,7 @@ struct PartGroup {
 /// One part's chain (AN-25), its indices moved from the part's own vertices onto the mesh's.
 fn rebased_chain(chain: LodChain, first_vertex: u32) -> LodChain {
     let levels = chain.levels.into_iter().map(|level| LodLevel { indices: level.indices.iter().map(|index| first_vertex + index).collect(), error: level.error });
-    LodChain { levels: levels.collect() }
+    LodChain { levels: levels.collect(), casters: chain.casters }
 }
 
 /// A skinned GLB's merged mesh, its skin rows, its parts and each part's chain of levels.

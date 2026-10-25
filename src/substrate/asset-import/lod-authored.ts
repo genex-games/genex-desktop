@@ -334,7 +334,7 @@ function withErrors(
     previous = error;
     return { indices, error };
   });
-  if (validateLodSet({ levels }, total) !== null) refuse(AuthoredLodSkip.NotCoarser);
+  if (validateLodSet({ levels, casters: 0 }, total) !== null) refuse(AuthoredLodSkip.NotCoarser);
   return levels;
 }
 

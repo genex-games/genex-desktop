@@ -99,6 +99,10 @@ impl SkinnedPick {
 pub fn skinned_levels(mesh: &MeshData, skin: &[GpuSkinVertex], parts: &[SkinPart], chains: &[Option<LodChain>]) -> Vec<SkinnedLevel> {
     let usable = !parts.is_empty() && chains.len() == parts.len() && skin.len() == mesh.vertices.len();
     let Some(chains) = chains.iter().map(Option::as_ref).collect::<Option<Vec<&LodChain>>>().filter(|_| usable) else { return Vec::new() };
+    // A skinned band is planned for the camera and cast as it draws (lane FQ): a chain's casters'
+    // levels (lane FR) are never drawn, so they are left out.
+    let camera: Vec<LodChain> = chains.iter().map(|chain| LodChain { levels: chain.levels[(chain.casters as usize).min(chain.levels.len())..].to_vec(), casters: 0 }).collect();
+    let chains: Vec<&LodChain> = camera.iter().collect();
     let count = chains.iter().map(|chain| chain.levels.len()).min().unwrap_or(0).min(LOD_MAX_LEVELS as usize);
     let mut levels: Vec<SkinnedLevel> = Vec::with_capacity(count);
     for at in 0..count {
@@ -198,7 +202,7 @@ mod tests {
     fn a_level_keeps_only_the_vertices_its_triangles_use_with_their_skin_rows() {
         let (mesh, skin) = strip(4);
         let parts = [SkinPart::whole(&mesh)];
-        let chain = LodChain { levels: vec![LodLevel { indices: vec![0, 1, 8, 1, 9, 8], error: 0.5 }] };
+        let chain = LodChain { casters: 0, levels: vec![LodLevel { indices: vec![0, 1, 8, 1, 9, 8], error: 0.5 }] };
         let levels = skinned_levels(&mesh, &skin, &parts, &[Some(chain)]);
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0].mesh.vertices.len(), 4);
@@ -212,7 +216,7 @@ mod tests {
         let (mesh, skin) = strip(2);
         let parts = [SkinPart { first_vertex: 0, vertex_count: 4, first_index: 0, index_count: 6, material: Some(0) }];
         assert!(skinned_levels(&mesh, &skin, &parts, &[None]).is_empty());
-        let leaving = LodChain { levels: vec![LodLevel { indices: vec![0, 1, 5], error: 0.1 }] };
+        let leaving = LodChain { casters: 0, levels: vec![LodLevel { indices: vec![0, 1, 5], error: 0.1 }] };
         assert!(skinned_levels(&mesh, &skin, &parts, &[Some(leaving)]).is_empty());
     }
 

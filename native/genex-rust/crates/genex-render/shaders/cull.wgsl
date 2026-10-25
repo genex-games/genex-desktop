@@ -385,6 +385,31 @@ const GX_LOD_FADE_TAG: u32 = 0x40000000u;
 const GX_LOD_PLANNED_TAG: u32 = 0x10000000u;
 // A chain ended by an impostor (mesh_lod.rs LOD_IMPOSTOR_TAG, game systems LOD-15).
 const GX_LOD_IMPOSTOR_TAG: u32 = 0x20000000u;
+// A chain whose first level is its shadow casters' alone (mesh_lod.rs LOD_CASTERS_TAG, lane FR):
+// the camera's band skips it.
+const GX_LOD_CASTERS_TAG: u32 = 0x08000000u;
+
+// The camera's band over a chain (mesh_lod.rs `camera_band`): `gx_lod_band`, the first level
+// skipped when `skips`, its levels counted in the whole chain's numbers (0, then 2, 3 and on).
+fn gx_cull_camera_band(errors: vec4<f32>, levels: u32, skips: bool, distance: f32, pixels_per_unit: f32, bias: f32, beta: f32) -> vec2<f32> {
+    if !skips {
+        return gx_lod_band(errors, levels, distance, pixels_per_unit, 1.0, bias, beta);
+    }
+    var band = gx_lod_band(vec4<f32>(errors.y, errors.z, errors.w, 0.0), levels - 1u, distance, pixels_per_unit, 1.0, bias, beta);
+    if band.x > 0.0 {
+        band.x = band.x + 1.0;
+    }
+    return band;
+}
+
+// The level a band at `picked` (at least 1) fades from (mesh_lod.rs `finer_level`): the mesh
+// itself below a skipped first level.
+fn gx_cull_finer(skips: bool, picked: u32) -> u32 {
+    if skips && picked == 2u {
+        return 0u;
+    }
+    return picked - 1u;
+}
 
 // The value of the non-negative, finite half float `bits` (mesh_lod.rs `f16_value`, exact):
 // decoded by hand, since naga counts `unpack2x16float` outside WebGPU core.
@@ -425,9 +450,10 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool, cas
         return vec3<f32>(1.0, 1.0, 1.0);
     }
     let level = batch.lod & 15u;
+    let levels = min((batch.lod >> 4u) & 15u, 4u);
+    let skips = (batch.lod & GX_LOD_CASTERS_TAG) != 0u && levels >= 2u;
     var band = vec2<f32>(0.0, 1.0);
     if views.lod.w > 0.0 && bounds.w > 0.0 {
-        let levels = min((batch.lod >> 4u) & 15u, 4u);
         let halves = vec4<u32>(batch.lod_error01 & 0xFFFFu, batch.lod_error01 >> 16u, batch.lod_error23 & 0xFFFFu, batch.lod_error23 >> 16u);
         var errors = vec4<f32>(gx_cull_half(halves.x), gx_cull_half(halves.y), gx_cull_half(halves.z), gx_cull_half(halves.w)) * bounds.w;
         let lod_row = lod_rows[row];
@@ -436,7 +462,7 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool, cas
             errors[levels - 1u] = gx_cull_half(halves[levels - 1u]) * lod_row.origin.w;
         }
         let distance = length(lod_row.origin.xyz - views.lod.xyz) - lod_row.origin.w;
-        band = gx_lod_band(errors, levels, distance, views.lod.w, 1.0, lod_row.bias, bitcast<f32>(views.lod_params.y));
+        band = gx_cull_camera_band(errors, levels, skips, distance, views.lod.w, lod_row.bias, bitcast<f32>(views.lod_params.y));
         if caster && impostor && u32(band.x) >= levels {
             band = vec2<f32>(f32(levels - 1u), 1.0);
         }
@@ -456,7 +482,7 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool, cas
         if level == picked {
             return vec3<f32>(1.0, -band.y * far.y, far.z);
         }
-        return vec3<f32>(select(0.0, 1.0, level + 1u == picked), (1.0 - band.y) * far.y, far.z);
+        return vec3<f32>(select(0.0, 1.0, level == gx_cull_finer(skips, picked)), (1.0 - band.y) * far.y, far.z);
     }
     if band.y >= 1.0 {
         return vec3<f32>(select(0.0, 1.0, !fade && level == picked), 1.0, 1.0);
@@ -467,7 +493,7 @@ fn gx_cull_lod_fade(batch: Batch, bounds: vec4<f32>, row: u32, caster: bool, cas
     if level == picked {
         return vec3<f32>(1.0, -band.y, 1.0);
     }
-    return vec3<f32>(select(0.0, 1.0, level + 1u == picked), 1.0 - band.y, 1.0);
+    return vec3<f32>(select(0.0, 1.0, level == gx_cull_finer(skips, picked)), 1.0 - band.y, 1.0);
 }
 
 // The world error view `view`'s casters may show (lane FQ, `views.shadow_lod`): a sun cascade's,

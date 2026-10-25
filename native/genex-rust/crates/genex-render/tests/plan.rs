@@ -343,7 +343,7 @@ mod lod {
         }
         let triangles = mesh.indices.len() / 3;
         let level = |share: usize, error: f32| LodLevel { indices: mesh.indices[..triangles / share * 3].to_vec(), error };
-        let lods = LodChain { levels: vec![level(2, 0.02), level(4, 0.08)] };
+        let lods = LodChain { casters: 0, levels: vec![level(2, 0.02), level(4, 0.08)] };
         ModelPart { mesh, meshlets: None, lods: Some(lods) }
     }
 

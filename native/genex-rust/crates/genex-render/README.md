@@ -651,7 +651,9 @@ so contact shadows near the camera keep the camera's level, and the level is per
 distance, so a moving camera never switches it. A skinned band's levels are skinned for the camera
 alone (`mesh::LOD_PLANNED_TAG`): its casters keep the camera's band. At the 10k horde's peak the
 far cascade's casters take level 1 (3.3 to 2.45 ms busy) and the picture holds (SSIM 0.9999 against
-the camera-level casters, no pixel over 24 levels).
+the camera-level casters, no pixel over 24 levels). A chain's casters' level (`casters` in
+`genex_lods`, lane FR) gives the nearer cascades a step their texels can hide where the
+half-triangle level's error is too large.
 
 ## Sun-shadow mask
 
@@ -826,6 +828,17 @@ smaller than the one before, at most four levels. `src/mesh_lod.rs` validates th
 node). `select_lod` picks the coarsest level whose error projects to at most a pixel threshold,
 compared as `error * pixels_per_unit <= threshold_px * distance` so `gx_lod_select`
 (`shaders/geometry/lod_select.wgsl`) picks the same level on every GPU.
+
+`casters` (lane FR; absent for none, at most 1, never every level) counts the first levels only
+shadow casters draw. The import step writes one when the chain has room and its half-triangle
+level strays past 2% of the GLB's extent (a ghoul pose: 10.8 cm, thin flaps and spikes the
+quadrics cannot see): a finer level simplified on positions alone, every vertex left past the
+bound locked with its triangles and the level made again until none strays (a pose: 1,189 to
+about 850 triangles at 2.8 to 3.0 cm). `LodChain::casters` carries it, the batches of its chain
+are tagged `mesh::LOD_CASTERS_TAG`, and the camera's band (`mesh_lod::camera_band`,
+`gx_cull_camera_band`) chooses among the mesh and the levels after it exactly as the chain without
+it, crossfading from the mesh itself to level 2; a sun cascade's `caster_level` may cast it. A
+skinned mesh drops it (its casters cast the camera's band).
 
 A GLB without `genex_lods` (it skipped the import step) gets its chain at load:
 `mesh_lod_runtime::add_runtime_chains` (game systems LOD-21), called by the facade's model load

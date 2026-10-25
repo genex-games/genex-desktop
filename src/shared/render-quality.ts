@@ -398,10 +398,13 @@ export const LOD_MIN_TRIANGLES = 512;
 
 /**
  * The members of the `genex_lods` extras object: the schema version, the bufferView of every
- * level's triangle list (little-endian `u32` primitive vertex indices, level after level) and the
- * levels, coarser and coarser. Wire values.
+ * level's triangle list (little-endian `u32` primitive vertex indices, level after level), the
+ * levels, coarser and coarser, and how many of the first levels only shadow casters draw (lane FR:
+ * 1 for a finer level measured on positions alone, absent for none). Wire values.
  */
-export const LodExtrasKey = { Version: "version", Indices: "indices", Levels: "levels" } as const;
+export const LodExtrasKey = { Version: "version", Indices: "indices", Levels: "levels", Casters: "casters" } as const;
+/** The most leading levels a chain may keep for its shadow casters alone (lane FR). */
+export const LOD_MAX_CASTER_LEVELS = 1;
 export type LodExtrasKey = (typeof LodExtrasKey)[keyof typeof LodExtrasKey];
 
 /**

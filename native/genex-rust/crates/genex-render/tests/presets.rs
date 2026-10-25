@@ -1804,7 +1804,7 @@ fn the_lod_threshold_and_far_density_reach_the_plan() {
     let mesh = MeshData::sphere();
     let triangles = mesh.indices.len() / 3;
     let level = |share: usize, error: f32| LodLevel { indices: mesh.indices[..triangles / share * 3].to_vec(), error };
-    let lods = LodChain { levels: vec![level(2, 0.02), level(4, 0.08)] };
+    let lods = LodChain { casters: 0, levels: vec![level(2, 0.02), level(4, 0.08)] };
     let mut library = MeshLibrary::new();
     let sphere = library.add_part(ModelPart { mesh, meshlets: None, lods: Some(lods) }).expect("part");
     let mut camera = CameraDesc::look_at([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);

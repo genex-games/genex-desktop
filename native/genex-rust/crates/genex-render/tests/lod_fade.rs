@@ -349,7 +349,7 @@ fn two_faced_quad() -> ModelPart {
         .flat_map(|facing| corners.map(|[x, y]| Vertex { position: [x, y, 0.0], normal: [0.0, 0.0, facing], uv: [x + 0.5, 0.5 - y], tangent: [1.0, 0.0, 0.0, 1.0] }))
         .collect();
     let square = |base: u32| vec![base, base + 1, base + 2, base, base + 2, base + 3];
-    let lods = LodChain { levels: vec![LodLevel { indices: square(4), error: QUAD_ERROR }] };
+    let lods = LodChain { casters: 0, levels: vec![LodLevel { indices: square(4), error: QUAD_ERROR }] };
     ModelPart { mesh: MeshData { vertices, indices: square(0) }, meshlets: None, lods: Some(lods) }
 }
 
@@ -357,7 +357,7 @@ fn two_faced_quad() -> ModelPart {
 /// a crossfade of it should look like the whole cube.
 fn twin_cube(error: f32) -> ModelPart {
     let mesh = MeshData::cube();
-    let lods = LodChain { levels: vec![LodLevel { indices: mesh.indices.clone(), error }] };
+    let lods = LodChain { casters: 0, levels: vec![LodLevel { indices: mesh.indices.clone(), error }] };
     ModelPart { mesh, meshlets: None, lods: Some(lods) }
 }
 
@@ -667,7 +667,7 @@ fn cube_and_its_bottom() -> ModelPart {
     // The cube's fourth face (normal -y): indices 18..24.
     let bottom = mesh.indices[18..24].to_vec();
     assert!(bottom.iter().all(|at| mesh.vertices[*at as usize].normal == [0.0, -1.0, 0.0]), "the bottom face");
-    let lods = LodChain { levels: vec![LodLevel { indices: bottom, error: 0.02 }] };
+    let lods = LodChain { casters: 0, levels: vec![LodLevel { indices: bottom, error: 0.02 }] };
     ModelPart { mesh, meshlets: None, lods: Some(lods) }
 }
 

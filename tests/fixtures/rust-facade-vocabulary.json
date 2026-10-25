@@ -212,8 +212,9 @@
     "extrasKey": "genex_lods",
     "schemaVersion": 1,
     "maxLevels": 4,
+    "maxCasterLevels": 1,
     "minTriangles": 512,
-    "extrasKeys": ["version", "indices", "levels"],
+    "extrasKeys": ["version", "indices", "levels", "casters"],
     "levelKeys": ["first", "count", "error"],
     "faults": ["lods-unknown-version", "lods-over-limit", "lods-range-out-of-bounds", "lods-vertex-out-of-mesh", "lods-not-coarser"]
   },

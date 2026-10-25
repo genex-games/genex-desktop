@@ -733,7 +733,7 @@ mod chain_level {
     fn chained(mesh: MeshData, levels: usize) -> ModelPart {
         let triangles = mesh.indices.len() / 3;
         let level = |k: usize| LodLevel { indices: mesh.indices[..(triangles >> (k + 1)).max(1) * 3].to_vec(), error: MESH_ERRORS[k] };
-        let lods = LodChain { levels: (0..levels).map(level).collect() };
+        let lods = LodChain { casters: 0, levels: (0..levels).map(level).collect() };
         ModelPart { mesh, meshlets: None, lods: Some(lods) }
     }
 

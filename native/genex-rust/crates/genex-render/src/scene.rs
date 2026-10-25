@@ -25,7 +25,7 @@ use crate::cull::{CullLod, active_views, cascade_view, cpu_cull_view};
 use crate::error::{RenderCode, RenderError};
 use crate::instance::instance_row;
 use crate::layout::{GpuBatch, GpuMeshlet, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
-use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex};
+use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex, casters_lod};
 use crate::mesh_arena::{ArenaStream, Rewrite, RowAllocator};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
@@ -139,6 +139,8 @@ struct PlannedPart {
     levels: Vec<MeshData>,
     /// The chain's errors, when the part kept one.
     errors: Option<Vec<f32>>,
+    /// How many of its first levels only shadow casters draw (lane FR).
+    casters: u32,
 }
 
 impl PlannedPart {
@@ -148,7 +150,8 @@ impl PlannedPart {
         let vertex_count = mesh.vertices.len() as u32;
         let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
         let levels = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
-        PlannedPart { errors: chain.map(|chain| chain.errors()), mesh, meshlets, levels }
+        let casters = chain.as_ref().map_or(0, |chain| chain.casters);
+        PlannedPart { errors: chain.map(|chain| chain.errors()), casters, mesh, meshlets, levels }
     }
 }
 
@@ -171,6 +174,9 @@ pub struct MeshLods {
     pub levels: Vec<MeshId>,
     /// Their object-space errors, never decreasing.
     pub errors: Vec<f32>,
+    /// How many of the first levels only shadow casters draw (lane FR,
+    /// [`crate::mesh::LOD_CASTERS_TAG`]): the camera's selection skips them.
+    pub casters: u32,
 }
 
 /// A library mesh's impostor level (game systems LOD-15): one more level past its mesh levels,
@@ -601,7 +607,7 @@ impl MeshLibrary {
 
     /// Push a part and its levels at the rows taken for them, in order.
     fn push_part(&mut self, part: PlannedPart, placements: &mut impl Iterator<Item = Placement>) -> MeshId {
-        let PlannedPart { mesh, meshlets, levels, errors } = part;
+        let PlannedPart { mesh, meshlets, levels, errors, casters } = part;
         let (center, radius) = mesh.bounds();
         let mut next = || placements.next().expect("a placement per part and level");
         let id = self.push(mesh, EntryRole::Mesh, meshlets, next());
@@ -613,7 +619,7 @@ impl MeshLibrary {
             ids.push(level_id);
         }
         if let Some(errors) = errors.filter(|_| !ids.is_empty()) {
-            self.lods.insert(id.index, MeshLods { levels: ids, errors });
+            self.lods.insert(id.index, MeshLods { levels: ids, errors, casters });
         }
         id
     }
@@ -1565,6 +1571,8 @@ struct LodMesh {
     count: usize,
     levels: Vec<MeshId>,
     errors: Vec<f32>,
+    /// Its chain's caster levels (lane FR).
+    casters: u32,
     radius: f32,
     far: bool,
     /// Its impostor level (game systems LOD-15): its chain's LOD rows carry it.
@@ -1574,7 +1582,7 @@ struct LodMesh {
 impl LodMesh {
     /// The LOD row of its level `level` batch (a fade twin's when `fade`).
     fn lod(&self, level: u32, fade: bool) -> [u32; 3] {
-        chain_lod(level, &self.errors, self.radius, self.impostor, fade)
+        casters_lod(chain_lod(level, &self.errors, self.radius, self.impostor, fade), self.casters)
     }
 }
 
@@ -1626,6 +1634,7 @@ impl Rows {
             let kept = if impostor.is_some() { crate::mesh::LOD_IMPOSTOR_MESH_LEVELS } else { usize::MAX };
             let level_meshes: Vec<MeshId> = lods.map_or_else(Vec::new, |lods| lods.levels.iter().copied().take(kept).collect());
             let errors: Vec<f32> = lods.map_or_else(Vec::new, |lods| lods.errors.iter().copied().take(kept).collect());
+            let casters = lods.map_or(0, |lods| lods.casters);
             let chained = lods.is_some() || impostor.is_some();
             for level in 0..=level_meshes.len() {
                 let (level_mesh, geometry) = match level.checked_sub(1) {
@@ -1635,12 +1644,12 @@ impl Rows {
                 self.slot_base[variant * self.slot_count + level_mesh.raw() as usize] = self.slots;
                 let mut row = batch(self.slots as usize, count, geometry.first_index, geometry.index_count, geometry.base_vertex);
                 row.first_row = first_row;
-                row.lod = if chained { chain_lod(level as u32, &errors, entry.radius, impostor, false) } else { [0; 3] };
+                row.lod = if chained { casters_lod(chain_lod(level as u32, &errors, entry.radius, impostor, false), casters) } else { [0; 3] };
                 self.batches.push(row);
                 self.slots += count as u32;
             }
             if let Some(species) = impostor.and_then(|impostor| impostor.species) {
-                self.push_impostor_batch(first_row, count, chain_lod(level_meshes.len() as u32 + 1, &errors, entry.radius, impostor, false), species);
+                self.push_impostor_batch(first_row, count, casters_lod(chain_lod(level_meshes.len() as u32 + 1, &errors, entry.radius, impostor, false), casters), species);
             }
             self.lod_batches |= chained;
             // A clustered mesh's meshlet path culls its instances itself: it is never thinned
@@ -1651,7 +1660,7 @@ impl Rows {
             let far = self.lod_rows[first_row as usize..].iter().any(|row| row.far_rule != FAR_RULE_NONE);
             if chained || far {
                 let levels = std::iter::once(*mesh).chain(level_meshes).collect();
-                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, radius: entry.radius, far, impostor });
+                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, casters, radius: entry.radius, far, impostor });
             }
         }
         Ok(())

@@ -92,6 +92,7 @@ fn the_lod_extras_schema_is_the_fixtures() {
     let numbers = [
         ("schemaVersion", mesh::LOD_SCHEMA_VERSION),
         ("maxLevels", mesh::LOD_MAX_LEVELS),
+        ("maxCasterLevels", mesh::LOD_MAX_CASTER_LEVELS),
         ("minTriangles", mesh::LOD_MIN_TRIANGLES),
     ];
     for (key, value) in numbers {

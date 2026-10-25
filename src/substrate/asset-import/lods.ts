@@ -15,13 +15,22 @@
  * before's error. The chain's length is the GLB's largest primitive's (levels stop when one is no
  * longer markedly coarser, its error passes {@link LOD_MAX_RELATIVE_ERROR}, or at
  * {@link LOD_MAX_LEVELS}); a primitive that cannot be simplified that far repeats its last level,
- * so every primitive has the same number. Never an extension, never in `extensionsRequired`: any
+ * so every primitive has the same number.
+ *
+ * Lane FR: a chain with room under {@link LOD_MAX_LEVELS} whose half-triangle level strays past
+ * {@link LOD_FINE_RELATIVE_ERROR} of the extent (thin flaps and spikes the quadrics cannot see)
+ * opens with a finer level for the shadow casters alone (`casters: 1`), measured on positions only
+ * and guarded by measured deviation: a sun cascade whose texels hide that error casts it, while the
+ * camera's selection skips it and keeps the levels it had. Skinned meshes get none.
+ *
+ * Never an extension, never in `extensionsRequired`: any
  * glTF reader still draws the primitive whole, and the runtime validates the levels again.
  *
  * All or nothing per GLB, like the meshlets step: when any primitive cannot be read, the GLB is
  * returned unchanged with the reason. The output is a pure function of the input.
  */
 import {
+  LOD_MAX_CASTER_LEVELS,
   LOD_MAX_LEVELS,
   LOD_MIN_TRIANGLES,
   LOD_SCHEMA_VERSION,
@@ -34,7 +43,7 @@ import { MeshoptSimplifyFlag, meshoptSimplifier } from "./decoders.ts";
 import { GltfComponent, type GltfJson, readGlb, writeGlb } from "./glb.ts";
 import { index, isObject, type Json, objects } from "./gltf-json.ts";
 import { findCards } from "./lod-cards.ts";
-import { vertexDeviation } from "./lod-deviation.ts";
+import { vertexDeviation, verticesBeyond } from "./lod-deviation.ts";
 import { type Geometry, readGeometry } from "./meshlets.ts";
 import { accessorData, type PackDoc } from "./prune.ts";
 
@@ -44,6 +53,16 @@ const LOD_RATIO = 0.5;
 const LOD_MIN_REDUCTION = 0.85;
 /** The coarsest error a level may have, relative to the mesh's extent. */
 export const LOD_MAX_RELATIVE_ERROR = 0.1;
+/**
+ * The finer first level's error bound, relative to the GLB's extent (lane FR): about 2.5 cm on a
+ * person-sized model, the step a sun cascade's few texels can hide where the half-triangle level's
+ * error (a ghoul pose's 10 cm: thin flaps fold into their own planes at no quadric cost) cannot.
+ */
+export const LOD_FINE_RELATIVE_ERROR = 0.02;
+/** Rounds of the finer level's guard: simplify, then keep what strayed past the bound, again. */
+const FINE_ROUNDS_MAX = 8;
+/** The finer level weighs no attribute: an empty attribute stream. */
+const NO_ATTRIBUTES = new Float32Array(0);
 /** How much a unit of normal difference weighs against a unit of position error (Godot's and kansei's choice). */
 const NORMAL_WEIGHT = 0.5;
 /** How much a unit of texture-coordinate difference weighs against a unit of position error. */
@@ -54,6 +73,7 @@ const PRUNE_FROM_LEVEL = 2;
 const VERTEX_LOCKED = 1;
 const NORMAL = "NORMAL";
 const TEXCOORD_0 = "TEXCOORD_0";
+const JOINTS_0 = "JOINTS_0";
 const U32_BYTES = 4;
 const TRIANGLE = 3;
 const NORMAL_FLOATS = 3;
@@ -82,9 +102,10 @@ export interface LodLevel {
   error: number;
 }
 
-/** One primitive's levels, coarser and coarser. */
+/** One primitive's levels, coarser and coarser, and how many of the first only shadow casters draw. */
 export interface LodSet {
   levels: LodLevel[];
+  casters: number;
 }
 
 /** What {@link addLodExtras} did: the bytes to deliver and whether they carry levels. */
@@ -97,11 +118,15 @@ const padded = (size: number) => Math.ceil(size / U32_BYTES) * U32_BYTES;
 
 /**
  * Null when `set` is a chain the runtime takes for a primitive of `vertexCount` vertices: at most
- * {@link LOD_MAX_LEVELS} levels of whole triangles, each no finer than the one before, errors
+ * {@link LOD_MAX_LEVELS} levels of whole triangles, at most {@link LOD_MAX_CASTER_LEVELS} of them
+ * the casters' and never all of them, each no finer than the one before, errors
  * finite, never negative and never smaller than the one before, every index a vertex.
  */
 export function validateLodSet(set: LodSet, vertexCount: number): LodFault | null {
   if (set.levels.length > LOD_MAX_LEVELS) return LodFault.OverLimit;
+  // A caster level leaves the camera at least one level of its own.
+  const castersFit = Number.isInteger(set.casters) && set.casters >= 0 && set.casters <= LOD_MAX_CASTER_LEVELS;
+  if (!castersFit || (set.casters > 0 && set.casters >= set.levels.length)) return LodFault.OverLimit;
   let previous: LodLevel | null = null;
   for (const level of set.levels) {
     const whole = level.indices.length > 0 && level.indices.length % TRIANGLE === 0;
@@ -123,6 +148,8 @@ interface SimplifyInput {
   weights: number[];
   lock: Uint8Array;
   doubleSided: boolean;
+  /** Whether the primitive is skinned (`JOINTS_0`). */
+  skinned: boolean;
 }
 
 /** A float or normalized-integer attribute of `width` components as tight floats, or null. */
@@ -250,13 +277,22 @@ async function simplifyTo(
   );
 }
 
-/** The levels of one primitive, `count` of them, each with its object-space error. */
-async function simplifyPrimitive(input: SimplifyInput, count: number): Promise<LodSet> {
+/**
+ * The levels of one primitive: its finer level within `fineBound` first when the chain has one
+ * (a finite bound), then `count` halving levels, each with its object-space error.
+ */
+async function simplifyPrimitive(input: SimplifyInput, count: number, fineBound: number | null): Promise<LodSet> {
   const { positions } = input.geometry;
   const original = input.geometry.indices;
   const levels: LodLevel[] = [];
   let last: LodLevel = { indices: original, error: 0 };
-  if (!original.length) return { levels: Array.from({ length: count }, () => last) };
+  const casters = fineBound === null ? 0 : 1;
+  const total = count + casters;
+  if (!original.length) return { levels: Array.from({ length: total }, () => last), casters };
+  if (fineBound !== null) {
+    last = (await fineLevel(input, fineBound)) ?? last;
+    levels.push(last);
+  }
   const scale = (await meshoptSimplifier()).getScale(positions, TRIANGLE);
   for (let level = 1; level <= count; level++) {
     const [indices, error] = await simplifyTo(input, original, LOD_RATIO ** level, level);
@@ -267,14 +303,17 @@ async function simplifyPrimitive(input: SimplifyInput, count: number): Promise<L
     }
     levels.push(last);
   }
-  return { levels };
+  return { levels, casters };
+}
+
+/** The primitive with the most triangles (the one that sets the chain). */
+function largestOf(inputs: SimplifyInput[]): SimplifyInput {
+  return inputs.reduce((most, each) => (each.geometry.indices.length > most.geometry.indices.length ? each : most));
 }
 
 /** How many levels the largest primitive gets before they stop getting coarser. */
 async function chainLength(inputs: SimplifyInput[]): Promise<number> {
-  const largest = inputs.reduce((most, each) =>
-    each.geometry.indices.length > most.geometry.indices.length ? each : most,
-  );
+  const largest = largestOf(inputs);
   const original = largest.geometry.indices;
   let previous = original.length;
   let length = 0;
@@ -285,6 +324,103 @@ async function chainLength(inputs: SimplifyInput[]): Promise<number> {
     previous = indices.length;
   }
   return length;
+}
+
+/** Per vertex, every vertex at the same position (seam twins move together), by first vertex. */
+function positionGroups(positions: Float32Array): (vertex: number) => number[] {
+  const groups = new Map<string, number[]>();
+  for (let vertex = 0; vertex < positions.length / 3; vertex++) {
+    const key = positionKey(positions, vertex);
+    const group = groups.get(key);
+    if (group) group.push(vertex);
+    else groups.set(key, [vertex]);
+  }
+  return (vertex) => groups.get(positionKey(positions, vertex)) ?? [vertex];
+}
+
+/** Locks, in `lock`, every corner of each triangle of `indices` that touches a vertex of `far`. */
+function lockAround(
+  indices: Uint32Array,
+  far: readonly number[],
+  twins: (vertex: number) => number[],
+  lock: Uint8Array,
+) {
+  const strayed = new Uint8Array(lock.length);
+  for (const vertex of far) for (const twin of twins(vertex)) strayed[twin] = 1;
+  for (let first = 0; first < indices.length; first += TRIANGLE) {
+    const corners = [indices[first] ?? 0, indices[first + 1] ?? 0, indices[first + 2] ?? 0];
+    if (!corners.some((corner) => strayed[corner])) continue;
+    for (const corner of corners) for (const twin of twins(corner)) lock[twin] = VERTEX_LOCKED;
+  }
+}
+
+/**
+ * The primitive's finer level (lane FR), for its shadow casters alone: as coarse as the simplifier
+ * takes it on positions within `bound`, an object-space distance, and guarded by measurement. A
+ * shadow map holds depth only, so neither the normals nor the texture coordinates weigh here (they
+ * would hold a ghoul pose at 1,122 of its 1,189 triangles; the camera's levels keep weighing them).
+ * The quadrics miss a thin flap folding into its own plane and a spike shortening along its ridge
+ * (a ghoul pose loses 9 cm of rag at a reported 0.7 mm), so every vertex left farther than `bound`
+ * from the level has its triangles' corners locked and the level is made again, until none strays
+ * ({@link FINE_ROUNDS_MAX} rounds; null when it still does). Its error is the larger of the
+ * simplifier's and the measured deviation.
+ */
+async function fineLevel(input: SimplifyInput, bound: number): Promise<LodLevel | null> {
+  const simplifier = await meshoptSimplifier();
+  const { positions } = input.geometry;
+  const original = input.geometry.indices;
+  const scale = simplifier.getScale(positions, TRIANGLE);
+  const twins = positionGroups(positions);
+  const lock = input.lock.slice();
+  const flags = input.doubleSided
+    ? [MeshoptSimplifyFlag.ErrorClamped, MeshoptSimplifyFlag.PreserveFolds]
+    : [MeshoptSimplifyFlag.ErrorClamped];
+  for (let round = 0; round < FINE_ROUNDS_MAX; round++) {
+    const [indices, error] = simplifier.simplifyWithAttributes(
+      original,
+      positions,
+      TRIANGLE,
+      NO_ATTRIBUTES,
+      0,
+      [],
+      lock,
+      0,
+      bound / scale,
+      flags,
+    );
+    if (!indices.length) return null;
+    const far = verticesBeyond(positions, original, indices, bound);
+    if (!far.length) {
+      const deviation = vertexDeviation(positions, original, indices);
+      return { indices, error: Math.max(Math.fround(error * scale), Math.fround(deviation)) };
+    }
+    lockAround(original, far, twins, lock);
+  }
+  return null;
+}
+
+/**
+ * The finer level's bound for a GLB of `inputs` whose largest primitive has `count` halving
+ * levels, or null when the chain keeps none: no room under {@link LOD_MAX_LEVELS}, a skinned
+ * primitive, the halving level within the bound already, or a finer level not markedly coarser
+ * than the mesh and markedly finer than the halving level.
+ */
+async function fineBoundFor(inputs: SimplifyInput[], count: number): Promise<number | null> {
+  // A skinned mesh's levels are planned for the camera and cast as it draws: no caster level.
+  if (count < 1 || count >= LOD_MAX_LEVELS || inputs.some((input) => input.skinned)) return null;
+  const largest = largestOf(inputs);
+  const simplifier = await meshoptSimplifier();
+  const { positions, indices: original } = largest.geometry;
+  const scale = simplifier.getScale(positions, TRIANGLE);
+  const bound = Math.fround(LOD_FINE_RELATIVE_ERROR * scale);
+  const [half, halfError] = await simplifyTo(largest, original, LOD_RATIO, 1);
+  const halfLevelError = Math.max(halfError * scale, vertexDeviation(positions, original, half));
+  if (halfLevelError <= bound) return null;
+  const fine = await fineLevel(largest, bound);
+  if (!fine) return null;
+  const coarser = fine.indices.length <= original.length * LOD_MIN_REDUCTION;
+  const finer = half.length <= fine.indices.length * LOD_MIN_REDUCTION;
+  return coarser && finer ? bound : null;
 }
 
 /** Each primitive's simplifier input, its attributes read from `doc`. */
@@ -300,6 +436,7 @@ function simplifyInputs(doc: PackDoc, primitives: Json[], geometry: Geometry[]):
       ...weighedAttributes(doc, primitive, count),
       lock,
       doubleSided: isDoubleSided(doc.json, primitive),
+      skinned: isObject(primitive.attributes) && primitive.attributes[JOINTS_0] !== undefined,
     };
   });
 }
@@ -354,8 +491,9 @@ export async function addLodExtras(glb: Uint8Array, options: { minTriangles?: nu
   try {
     const count = await chainLength(inputs);
     if (!count) return skip(LodSkip.NotCoarser);
+    const fineBound = await fineBoundFor(inputs, count);
     sets = [];
-    for (const each of inputs) sets.push(await simplifyPrimitive(each, count));
+    for (const each of inputs) sets.push(await simplifyPrimitive(each, count, fineBound));
   } catch {
     return skip(LodSkip.NoSimplifier);
   }
@@ -396,6 +534,8 @@ function writeExtras(json: Json, bin: Uint8Array, primitives: Json[], sets: LodS
         [LodExtrasKey.Version]: LOD_SCHEMA_VERSION,
         [LodExtrasKey.Indices]: views.length - 1,
         [LodExtrasKey.Levels]: levels,
+        // Written only for a chain that has one, so every other chain keeps its bytes.
+        ...(set.casters > 0 ? { [LodExtrasKey.Casters]: set.casters } : {}),
       },
     };
   });
@@ -440,20 +580,27 @@ export function readLodSet(json: Json, bin: Uint8Array, primitive: Json): { set:
   const size = index(view?.byteLength);
   const inside = view !== undefined && size !== null && size % U32_BYTES === 0 && start + size <= bin.byteLength;
   if (!inside) return { set: null, fault: LodFault.RangeOutOfBounds };
-  const data = new DataView(bin.buffer, bin.byteOffset + start, size);
+  const levels = levelsIn(new DataView(bin.buffer, bin.byteOffset + start, size), entries);
+  if (!levels) return { set: null, fault: LodFault.RangeOutOfBounds };
+  // Extras an earlier import wrote have no caster levels.
+  const casters = extras[LodExtrasKey.Casters] ?? 0;
+  if (typeof casters !== "number") return { set: null, fault: LodFault.OverLimit };
+  const fault = validateLodSet({ levels, casters }, vertexCountOf(json, primitive));
+  return fault ? { set: null, fault } : { set: { levels, casters } };
+}
+
+/** The levels `entries` name in the indices view `data`, or null when one lies past it. */
+function levelsIn(data: DataView, entries: unknown[]): LodLevel[] | null {
   const levels: LodLevel[] = [];
   for (const value of entries) {
     const entry = levelEntry(value);
-    if (!entry || (entry.first + entry.count) * U32_BYTES > size)
-      return { set: null, fault: LodFault.RangeOutOfBounds };
+    if (!entry || (entry.first + entry.count) * U32_BYTES > data.byteLength) return null;
     const indices = Uint32Array.from({ length: entry.count }, (_, at) =>
       data.getUint32((entry.first + at) * U32_BYTES, true),
     );
     levels.push({ indices, error: entry.error });
   }
-  const vertexCount = vertexCountOf(json, primitive);
-  const fault = validateLodSet({ levels }, vertexCount);
-  return fault ? { set: null, fault } : { set: { levels } };
+  return levels;
 }
 
 /** A primitive's vertex count: its POSITION accessor's. */
