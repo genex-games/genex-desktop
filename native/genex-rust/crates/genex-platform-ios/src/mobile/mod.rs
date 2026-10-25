@@ -20,12 +20,14 @@
 //! - [`thermal`]: frame pacing from the thermal state.
 //! - [`frame_time`]: what a display frame feeds the live clock (whole refreshes).
 //! - [`recovery`]: when a lost GPU device is re-created.
+//! - [`configure`]: a surface configured only when no warm-up thread may submit.
 //! - [`records`]: the self-test record, the typed `gpu-unsupported` record and the lifecycle log.
 //! - [`selftest`]: the game's self-test run once on the device's GPU before live play.
 //! - [`shell`]: the winit + wgpu loop (WebGPU-core adapter check, surface per `resumed`, present).
 
 pub mod admit;
 pub mod audio;
+pub mod configure;
 pub mod crash;
 pub mod frame_time;
 pub mod gamepad;

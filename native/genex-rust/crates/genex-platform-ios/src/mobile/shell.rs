@@ -55,6 +55,7 @@
 
 use crate::mobile::admit::{Admission, ShellAdapter, admit};
 use crate::mobile::audio::{AudioGate, AudioPlatform, follow_gate};
+use crate::mobile::configure::ConfigureGate;
 use crate::mobile::frame_time::FrameTimes;
 use crate::mobile::gamepad::{PadChange, PhoneButton, PhonePads, controller_id};
 use crate::mobile::keyboard::{KeyNews, TypingFeed, key_news};
@@ -152,10 +153,11 @@ pub enum ShellOutcome {
     Failed(&'static str, String),
 }
 
-/// A live surface and its configuration.
+/// A live surface and the configuration its swapchain holds (None until it is configured: a
+/// configuration wanted while a warm-up thread may submit waits, [`ConfigureGate`]).
 struct Live {
     surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
+    config: Option<wgpu::SurfaceConfiguration>,
 }
 
 /// The open GPU and genex's presenter on it: the renderer, the game's passes, the HUD painter and
@@ -270,6 +272,8 @@ struct App {
     window: Option<Arc<Window>>,
     device: Option<Device>,
     live: Option<Live>,
+    /// The live surface's configuration waiting for the warm-up to end (lane FQ).
+    configure: ConfigureGate<wgpu::SurfaceConfiguration>,
     /// What each display frame feeds the live clock: whole refreshes (review F2).
     frame_times: FrameTimes,
     /// When the platform's refresh report was last read.
@@ -552,7 +556,8 @@ impl App {
         shown
     }
 
-    fn configure(&self, surface: &wgpu::Surface<'static>, window: &Window) -> Option<wgpu::SurfaceConfiguration> {
+    /// The configuration of `surface` for `window` (None for an empty window), not yet applied.
+    fn surface_config(&self, surface: &wgpu::Surface<'static>, window: &Window) -> Option<wgpu::SurfaceConfiguration> {
         let device = self.device.as_ref()?;
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
@@ -568,8 +573,42 @@ impl App {
         }
         config.present_mode = wgpu::PresentMode::Fifo;
         config.desired_maximum_frame_latency = MAX_FRAME_LATENCY;
-        surface.configure(&device.gpu().device, &config);
         Some(config)
+    }
+
+    /// Whether a warm-up thread may submit GPU work now (the boot's or a settings change's).
+    fn warming(&self) -> bool {
+        self.device.as_ref().is_some_and(|device| device.presenter.warm_in_flight())
+    }
+
+    /// The live surface's swapchain takes `config` now, or once no warm-up thread may submit
+    /// ([`ConfigureGate`]): wgpu's configure waits for the queue to go idle and refuses when another
+    /// thread submits meanwhile (the fullscreen crash UP fixed on the desktop, dd8a593b).
+    fn want_configuration(&mut self, config: wgpu::SurfaceConfiguration) {
+        let warming = self.warming();
+        if let Some(config) = self.configure.want(config, warming) {
+            self.apply_configuration(config);
+        }
+    }
+
+    /// At a frame: a configuration that waited for the warm-up, applied once it is done.
+    fn configure_when_due(&mut self) {
+        let warming = self.warming();
+        if let Some(config) = self.configure.due(warming) {
+            self.apply_configuration(config);
+        }
+    }
+
+    fn apply_configuration(&mut self, config: wgpu::SurfaceConfiguration) {
+        let (Some(device), Some(live)) = (self.device.as_ref(), self.live.as_mut()) else { return };
+        live.surface.configure(&device.gpu().device, &config);
+        live.config = Some(config);
+    }
+
+    /// The live surface went away: nothing waits to configure it.
+    fn drop_live(&mut self) {
+        self.live = None;
+        self.configure.forget();
     }
 
     /// Install the game's custom passes, run the self-test once, then reseed and start live play.
@@ -626,6 +665,8 @@ impl App {
         let (Some(device), Some(live), Some(loading)) = (self.device.as_mut(), self.live.as_ref(), self.loading.as_mut()) else {
             return self.loading.is_some();
         };
+        // A swapchain still waiting for its configuration shows nothing yet.
+        let Some(config) = live.config.as_ref() else { return true };
         let texture = match live.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
             _ => return true,
@@ -633,10 +674,10 @@ impl App {
         loading.screen.advance((frame_ms / 1000.0) as f32);
         let progress = genex::loading::compiling(compile_tally().since(loading.base));
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let size = [live.config.width, live.config.height];
+        let size = [config.width, config.height];
         let ratio = self.window.as_ref().map_or(1.0, |window| window.scale_factor());
         let gpu = device.gpu();
-        loading.screen.paint(&gpu.device, &gpu.queue, &view, live.config.format, size, genex_hud::pixels_per_point(ratio), &loading.look, &progress);
+        loading.screen.paint(&gpu.device, &gpu.queue, &view, config.format, size, genex_hud::pixels_per_point(ratio), &loading.look, &progress);
         gpu.queue.present(texture);
         true
     }
@@ -660,7 +701,8 @@ impl App {
             Ok(surface) => surface,
             Err(error) => return self.fail(event_loop, "surface-failed", error.to_string()),
         };
-        if self.device.is_none() {
+        let first = self.device.is_none();
+        if first {
             let opened = match open_gpu(&self.instance, &surface) {
                 Admission::Play(gpu) => {
                     let models = models_for(self.config.assets, self.config.files.as_ref());
@@ -671,7 +713,6 @@ impl App {
             match opened {
                 Ok(device) => {
                     self.device = Some(device);
-                    self.first_gpu_open();
                 }
                 Err(error) => {
                     // The refused surface goes before the screen is drawn into the same window.
@@ -681,9 +722,17 @@ impl App {
                 }
             }
         }
-        let config = self.configure(&surface, window);
+        let config = self.surface_config(&surface, window);
         self.log(json!({ "event": "surface-created", "configured": config.is_some() }));
-        self.live = config.map(|config| Live { surface, config });
+        self.live = config.is_some().then_some(Live { surface, config: None });
+        if let Some(config) = config {
+            self.want_configuration(config);
+        }
+        // The boot's warm-up starts after the first surface is configured: its loading screen
+        // presents on that swapchain, and no configure races the warm-up's submits.
+        if first {
+            self.first_gpu_open();
+        }
         self.presented = false;
         if self.live.is_some() {
             self.request_preferred_rate(window);
@@ -703,7 +752,8 @@ impl App {
             self.log(json!({ "event": "rotated", "orientation": orientation.wire(), "rotations": self.rotation.rotations() }));
         }
         let area = (self.config.safe_area)(window);
-        let copyable = self.live.as_ref().is_some_and(|live| live.config.usage.contains(wgpu::TextureUsages::COPY_DST));
+        let config = self.live.as_ref().and_then(|live| live.config.as_ref()).or(self.configure.held());
+        let copyable = config.is_some_and(|config| config.usage.contains(wgpu::TextureUsages::COPY_DST));
         let insets = if copyable { area } else { SafeArea::default() };
         let [width, height] = self.game.world_size();
         let presentation = Presentation::new((size.width, size.height), insets, (width, height));
@@ -731,9 +781,11 @@ impl App {
             self.show_refusal();
             return;
         }
-        if let Some(live) = self.live.take() {
-            let config = self.configure(&live.surface, &window);
-            self.live = config.map(|config| Live { surface: live.surface, config });
+        let config = self.live.as_ref().map(|live| self.surface_config(&live.surface, &window));
+        match config {
+            Some(Some(config)) => self.want_configuration(config),
+            Some(None) => self.drop_live(),
+            None => {}
         }
         self.present_in_safe_area(&window);
     }
@@ -843,6 +895,8 @@ impl App {
         let now = Instant::now();
         self.read_refresh(now);
         let frame = self.frame_times.frame(now);
+        // A configuration that waited for a warm-up thread takes effect at the first frame after it.
+        self.configure_when_due();
         // Until the warm-up compiled the first frame's pipelines the phone shows the loading
         // screen: the game neither ticks nor draws, so nothing of it runs unseen.
         if self.loading.is_some() && self.loading_frame(frame.display_ms) {
@@ -887,7 +941,7 @@ impl App {
                 self.log(json!({ "event": "device-recovered", "tries": self.recovery.tries() }));
                 self.recovery.recovered();
                 // The surface, its configuration and the safe-area copy were made on the lost device.
-                self.live = None;
+                self.drop_live();
                 self.presenter = SafePresenter::default();
                 self.gate.mark_stale();
                 if let Some(window) = &self.window {
@@ -933,12 +987,14 @@ impl App {
         else {
             return;
         };
+        // A swapchain still waiting for its configuration shows nothing yet.
+        let Some(config) = live.config.clone() else { return };
         let texture = match live.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.lifecycle.surface_lost();
                 self.log(json!({ "event": "surface-lost" }));
-                self.live = None;
+                self.drop_live();
                 return;
             }
             other => {
@@ -946,12 +1002,12 @@ impl App {
                 return;
             }
         };
-        self.presenter.present(&mut device.presenter, &texture.texture, live.config.format, &presentation);
+        self.presenter.present(&mut device.presenter, &texture.texture, config.format, &presentation);
         device.gpu().queue.present(texture);
         let rendered = self.gate.tally().rendered;
         if !self.presented && rendered > 0 {
             self.presented = true;
-            let window = (live.config.width, live.config.height);
+            let window = (config.width, config.height);
             self.log(frame_presented_event(rendered, window));
         }
     }
@@ -979,7 +1035,7 @@ impl ApplicationHandler for App {
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         let Suspension { dropped, saved } = suspend(&mut self.lifecycle, self.game.as_mut());
-        self.live = None;
+        self.drop_live();
         self.log(json!({ "event": "suspended", "surfaceDropped": dropped }));
         if let Some(saved) = saved {
             let (slot, code) = match &saved {
@@ -1050,6 +1106,7 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         window: None,
         device: None,
         live: None,
+        configure: ConfigureGate::new(),
         frame_times: FrameTimes::default(),
         refresh_read: None,
         gate: FrameGate::default(),
