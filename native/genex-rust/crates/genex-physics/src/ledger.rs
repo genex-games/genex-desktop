@@ -3,9 +3,13 @@
 //! before anything is applied. A command checked against the ledger cannot fail when applied.
 //!
 //! Memory (§11.1) is the objects' modelled bytes plus the contact pairs counted at the end of the
-//! last step, so a refusal never depends on where in a batch a removal freed contacts.
+//! last step, so a refusal never depends on where in a batch a removal freed contacts. When a
+//! counting allocator measures the world (`accounting`), a call starts from the measured bytes
+//! instead ([`Ledger::sync`]) and adds the model's estimate of each command it checks.
 
 use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::joint::JointType;
@@ -13,8 +17,9 @@ use crate::memory::WORLD_BASE_BYTES;
 use crate::types::BodyType;
 
 /// What the ledger keeps per body.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct BodyFacts {
+    #[serde(with = "crate::snapshot::body_type_code")]
     pub body_type: BodyType,
     pub ccd: bool,
     pub triangles: usize,
@@ -22,16 +27,17 @@ pub(crate) struct BodyFacts {
 }
 
 /// What the ledger keeps per joint.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct JointFacts {
     pub a: String,
     pub b: Option<String>,
+    #[serde(with = "crate::snapshot::joint_type_code")]
     pub joint_type: JointType,
     pub bytes: u64,
 }
 
 /// Keys, types, counts and memory of one world.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Ledger {
     pub bodies: BTreeMap<String, BodyFacts>,
     pub joints: BTreeMap<String, JointFacts>,
@@ -43,6 +49,12 @@ pub(crate) struct Ledger {
     pub object_bytes: u64,
     /// The contact pairs' modelled bytes at the end of the last step.
     pub contact_bytes: u64,
+    /// The measured bytes at the start of this call, when an allocator measures the world.
+    #[serde(skip)]
+    live: Option<u64>,
+    /// The modelled bytes checked commands added (removals subtract) since [`Ledger::sync`].
+    #[serde(skip)]
+    delta: i64,
 }
 
 impl Ledger {
@@ -57,12 +69,39 @@ impl Ledger {
             static_added: false,
             object_bytes: WORLD_BASE_BYTES,
             contact_bytes: 0,
+            live: None,
+            delta: 0,
         }
     }
 
-    /// The world's accounted memory (§11.1).
-    pub(crate) fn memory(&self) -> u64 {
+    /// The world's modelled memory (§11.1): what a world reports without a counting allocator.
+    pub(crate) fn model_bytes(&self) -> u64 {
         self.object_bytes + self.contact_bytes
+    }
+
+    /// The memory a check starts from: the measured bytes plus what this call's checked commands
+    /// add by the model, or the model alone when nothing measures the world.
+    pub(crate) fn memory(&self) -> u64 {
+        match self.live {
+            Some(measured) => measured.saturating_add_signed(self.delta),
+            None => self.model_bytes(),
+        }
+    }
+
+    /// Starts a call from the world's measured bytes (`None`: the model).
+    pub(crate) fn sync(&mut self, measured: Option<u64>) {
+        self.live = measured;
+        self.delta = 0;
+    }
+
+    fn grow(&mut self, bytes: u64) {
+        self.object_bytes += bytes;
+        self.delta = self.delta.saturating_add_unsigned(bytes);
+    }
+
+    fn shrink(&mut self, bytes: u64) {
+        self.object_bytes -= bytes;
+        self.delta = self.delta.saturating_sub_unsigned(bytes);
     }
 
     /// Refuses `LimitMemory` unless `bytes` more fit within `limit`.
@@ -99,7 +138,7 @@ impl Ledger {
     pub(crate) fn add_body(&mut self, key: &str, facts: BodyFacts) {
         self.triangles += facts.triangles;
         self.ccd_bodies += usize::from(facts.ccd);
-        self.object_bytes += facts.bytes;
+        self.grow(facts.bytes);
         self.bodies.insert(key.to_string(), facts);
     }
 
@@ -117,21 +156,21 @@ impl Ledger {
         if let Some(facts) = self.bodies.remove(key) {
             self.triangles -= facts.triangles;
             self.ccd_bodies -= usize::from(facts.ccd);
-            self.object_bytes -= facts.bytes;
+            self.shrink(facts.bytes);
         }
         joints
     }
 
     /// Records a new joint.
     pub(crate) fn add_joint(&mut self, key: &str, facts: JointFacts) {
-        self.object_bytes += facts.bytes;
+        self.grow(facts.bytes);
         self.joints.insert(key.to_string(), facts);
     }
 
     /// Forgets a joint.
     pub(crate) fn remove_joint(&mut self, key: &str) {
         if let Some(facts) = self.joints.remove(key) {
-            self.object_bytes -= facts.bytes;
+            self.shrink(facts.bytes);
         }
     }
 
@@ -139,6 +178,6 @@ impl Ledger {
     pub(crate) fn add_static(&mut self, pieces: usize, bytes: u64) {
         self.static_added = true;
         self.static_pieces = pieces;
-        self.object_bytes += bytes;
+        self.grow(bytes);
     }
 }

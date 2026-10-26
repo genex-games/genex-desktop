@@ -40,7 +40,7 @@ impl<B: Backend> Core<B> {
         self.track_changes();
         self.contact_pairs = self.backend.contact_pairs();
         self.ledger.contact_bytes = contact_bytes(self.contact_pairs);
-        let memory_exceeded = self.ledger.memory() > u64::from(self.desc.limits.memory_bytes);
+        let memory_exceeded = self.ledger.model_bytes() > u64::from(self.desc.limits.memory_bytes);
         let (events, overflowed) = events.finish(self.desc.limits.events_per_step as usize);
         StepResult { tick: self.tick, events, overflowed, escaped, memory_exceeded }
     }

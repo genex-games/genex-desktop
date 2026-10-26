@@ -121,7 +121,7 @@ impl JointDesc {
 }
 
 /// A motor with every value rounded and checked; `None` is an absent value.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ValidMotor {
     pub target_vel: Option<f32>,
     pub target_pos: Option<f32>,
@@ -138,8 +138,9 @@ impl ValidMotor {
 }
 
 /// A joint in the core's frame.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct JointSpec {
+    #[serde(with = "crate::snapshot::joint_type_code")]
     pub joint_type: JointType,
     pub anchor_a: [f32; 3],
     pub anchor_b: [f32; 3],

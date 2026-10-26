@@ -25,6 +25,7 @@ use crate::types::{Axis, BodyType};
 const RAPIER_VERSION: &str = "0.36.0";
 
 /// One Rapier world.
+#[derive(serde::Deserialize)]
 pub(crate) struct RapierBackend {
     world: PhysicsWorld,
     /// A fixed body without colliders at the origin: the other end of a joint to the world.
@@ -32,6 +33,16 @@ pub(crate) struct RapierBackend {
     /// Bodies a command inserted, moved or froze since the last inner step: Rapier's broad phase
     /// and their colliders' world poses catch up only in the next step (see `queries`).
     stale: Vec<RigidBodyHandle>,
+}
+
+/// What `save` writes: the same fields as [`RapierBackend`], borrowed. Rapier skips its pipelines
+/// (workspaces rebuilt each step); everything a step reads from one step to the next, contact
+/// manifolds and warm-start impulses included, is in the sets it writes.
+#[derive(serde::Serialize)]
+struct Saved<'a> {
+    world: &'a PhysicsWorld,
+    anchor: RigidBodyHandle,
+    stale: &'a [RigidBodyHandle],
 }
 
 fn vector(v: [f32; 3]) -> Vector {
@@ -204,6 +215,17 @@ fn apply_motor(joint: &mut GenericJoint, axis: JointAxis, motor: &ValidMotor) {
 }
 
 impl RapierBackend {
+    /// Whether a loaded world was saved for `params` and has its world anchor.
+    fn matches(&self, params: &StepParams) -> bool {
+        let p = &self.world.integration_parameters;
+        let same_params = p.dt == params.inner_dt
+            && p.length_unit == params.length_unit
+            && p.num_solver_iterations == params.solver_iterations as usize;
+        let anchor_ok = self.world.bodies.get(self.anchor).is_some_and(|rb| rb.is_fixed() && rb.colliders().is_empty());
+        let stale_ok = self.stale.iter().all(|body| self.world.bodies.contains(*body));
+        same_params && self.world.gravity == vector(params.gravity) && anchor_ok && stale_ok
+    }
+
     fn mark_stale(&mut self, body: RigidBodyHandle) {
         if !self.stale.contains(&body) {
             self.stale.push(body);
@@ -251,6 +273,8 @@ impl Backend for RapierBackend {
     const NAME: &'static str = "rapier";
     const VERSION: &'static str = RAPIER_VERSION;
     const FEATURES: &'static str = "det";
+    /// The world anchor.
+    const OWN_BODIES: usize = 1;
 
     fn create(params: &StepParams) -> Self {
         let mut world = PhysicsWorld::new();
@@ -258,6 +282,27 @@ impl Backend for RapierBackend {
         world.integration_parameters = integration_parameters(params);
         let anchor = world.insert_body(RigidBodyBuilder::fixed());
         Self { world, anchor, stale: Vec::new() }
+    }
+
+    fn save(&self) -> Option<Vec<u8>> {
+        postcard::to_allocvec(&Saved { world: &self.world, anchor: self.anchor, stale: &self.stale }).ok()
+    }
+
+    fn load(bytes: &[u8], params: &StepParams) -> Option<Self> {
+        let loaded: Self = postcard::from_bytes(bytes).ok()?;
+        loaded.matches(params).then_some(loaded)
+    }
+
+    fn body_count(&self) -> usize {
+        self.world.bodies.len()
+    }
+
+    fn collider_count(&self, body: Self::Body) -> Option<usize> {
+        self.world.bodies.get(body).map(|rb| rb.colliders().len())
+    }
+
+    fn has_joint(&self, joint: Self::Joint) -> bool {
+        self.world.impulse_joints.get(joint).is_some()
     }
 
     fn check(&self, spec: &BodySpec) -> Result<(), BackendRefusal> {
@@ -415,3 +460,4 @@ impl Backend for RapierBackend {
         self.query_overlap(shape, filter)
     }
 }
+

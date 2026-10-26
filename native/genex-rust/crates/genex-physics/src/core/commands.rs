@@ -11,7 +11,7 @@ use super::{Core, Entry, JointEntry};
 use crate::axes::{vec_in, vec_out};
 use crate::backend::{Backend, BodyEdit};
 use crate::body::ValidBody;
-use crate::command::{Command, CommandOutcome};
+use crate::command::Command;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::joint::{ValidJoint, ValidMotor};
 use crate::memory::body_bytes;
@@ -35,11 +35,6 @@ impl<B: Backend> Core<B> {
             ops.push(op);
         }
         ops.into_iter().try_for_each(|op| self.commit(op))
-    }
-
-    /// Applies every command that succeeds, in order; one outcome per command (§7.1).
-    pub(crate) fn apply_each(&mut self, commands: &[Command]) -> Vec<CommandOutcome> {
-        commands.iter().map(|command| self.run(command).map_err(|failure| failure.code)).collect()
     }
 
     /// Records `op` in the ledger and applies it.
@@ -187,6 +182,7 @@ impl<B: Backend> Core<B> {
         }
         self.ledger.add_static(valid.pieces.len(), bytes);
         self.static_canon = Some(valid.canon);
+        self.static_world = Some(world.clone());
         Ok(())
     }
 }

@@ -16,7 +16,10 @@ workspace = true
 # public API (CONTRACT.md §1.3). serde_json reads a WorldDesc and commands in their JSON forms; the
 # canonical JSON of physicsHash (§10.2) is written by hand. libm gives the core's own transcendental
 # math (kinematic angular velocity, areaPush falloff) the same bits on every target. All already
-# locked (no new vendored crate).
+# locked (no new vendored crate). serde and postcard write a snapshot's payload (§9.4): postcard
+# keeps every f32 as its four bytes, so a restored world steps bit for bit, and is target-independent.
 libm = { workspace = true }
+postcard = { workspace = true }
 rapier3d = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }

@@ -55,6 +55,33 @@
 //! The core reads no clock. `stats().stepMs` reports what a binding recorded with
 //! [`World::record_step_ms`] around its own call to `step()`, and 0 until one does.
 //!
+//! # Snapshots (§9.4)
+//!
+//! [`World::snapshot`] writes a `GXPH` header (contract version, buildId, tick, FNV-1a 64 of the
+//! payload, its length) and a postcard payload: the resolved description, the static world as
+//! given, every record the core keeps and the backend's own state with its solver caches, so a
+//! restored world steps on bit for bit, on any target of the same build. [`World::restore`]
+//! checks the header (`BadSnapshot`, `BuildMismatch`), then every record against the others and
+//! against its own limits (`BadSnapshot` for anything no world could hold), then `LimitMemory`
+//! by the core's model, and only then reads the backend's state. The checksum catches damage, not
+//! forgery: a resealed payload that passes these checks can still hold backend state the backend
+//! cannot step, which a native build reports as `internal` (§11.3).
+//!
+//! # Memory (§11.1)
+//!
+//! A binary that installs [`accounting::CountingAllocator`] (the WASM binding) gets each world's
+//! exact live bytes: its calls are charged to it and a per-allocation header credits frees to the
+//! world that allocated. A binary that does not (a native host) gets the model in [`memory`], the
+//! same on every target; [`World::memory_is_measured`] says which. Either way a command is judged
+//! before it allocates, from the world's bytes now plus the model's estimate of what it adds, so a
+//! refusal never relies on an allocation failing. Near the limit, a measured world can end a call
+//! slightly past what the estimate allowed; `memoryExceeded` reports it after the next step.
+//!
+//! # Failure (§11.3)
+//!
+//! A native build catches a backend panic, poisons the world and returns `internal` from then on
+//! ([`World::check`]); see [`World`].
+//!
 //! # Joints
 //!
 //! A joint's coordinate is `a` relative to `b` (or to the world when `b` is `None`): a positive
@@ -62,6 +89,7 @@
 //! `a`'s anchor along `+axis` from `b`'s. A fixed joint holds the two bodies' local axes parallel.
 //! The readings of `axis`, `limits` and `motor` the contract leaves open are listed in `joint`.
 
+pub mod accounting;
 mod axes;
 mod backend;
 pub mod body;
@@ -81,6 +109,7 @@ pub mod memory;
 mod num;
 pub mod query;
 mod shape;
+mod snapshot;
 pub mod state;
 pub mod static_world;
 pub mod types;
@@ -95,6 +124,7 @@ pub use error::{PhysicsError, PhysicsFailure};
 pub use hash::{fnv1a64, hex16};
 pub use joint::{JointDesc, JointType, Motor};
 pub use limits::Limits;
+pub use snapshot::{SNAPSHOT_CONTRACT, SNAPSHOT_MAGIC};
 pub use query::{EXCLUDE_BODIES_MAX, Hit, Query, QueryAnswer, QueryFilter};
 pub use state::{BodyFilter, BodyState, ChangedExport, EXPORT_STRIDE, NetBodyState, PhysicsEvent, Stats, StepResult};
 pub use static_world::StaticWorld;

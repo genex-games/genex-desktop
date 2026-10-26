@@ -4,6 +4,9 @@
 
 pub(crate) mod rapier;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
 use crate::joint::JointSpec;
 use crate::types::{Axis, BodyType};
 
@@ -192,10 +195,10 @@ pub(crate) struct ShapeAt<'a> {
 
 /// A physics engine under the neutral layer.
 pub(crate) trait Backend: Sized {
-    /// The backend's handle for one body.
-    type Body: Copy + PartialEq;
-    /// The backend's handle for one joint.
-    type Joint: Copy;
+    /// The backend's handle for one body; a snapshot carries it (§9.4).
+    type Body: Copy + PartialEq + Serialize + DeserializeOwned;
+    /// The backend's handle for one joint; a snapshot carries it.
+    type Joint: Copy + Serialize + DeserializeOwned;
     /// The backend's handle for one colliding pair.
     type Pair: Copy + PartialEq;
     /// The `<backend>` part of the buildId.
@@ -204,9 +207,23 @@ pub(crate) trait Backend: Sized {
     const VERSION: &'static str;
     /// The `<features>` part.
     const FEATURES: &'static str;
+    /// The bodies the backend holds for itself (in [`Backend::body_count`]).
+    const OWN_BODIES: usize;
 
     /// An empty world.
     fn create(params: &StepParams) -> Self;
+    /// The backend's whole state, solver caches included, as bytes (§9.4), or `None` when it
+    /// cannot write it.
+    fn save(&self) -> Option<Vec<u8>>;
+    /// The backend `save` wrote, for a world of `params`; `None` when the bytes do not read back
+    /// or were saved for other parameters.
+    fn load(bytes: &[u8], params: &StepParams) -> Option<Self>;
+    /// How many bodies the backend holds, static pieces and its own included.
+    fn body_count(&self) -> usize;
+    /// How many colliders a body has, or `None` when the backend holds no such body.
+    fn collider_count(&self, body: Self::Body) -> Option<usize>;
+    /// Whether the backend holds a joint.
+    fn has_joint(&self, joint: Self::Joint) -> bool;
     /// Whether the backend can build every shape of `spec`; touches nothing.
     fn check(&self, spec: &BodySpec) -> Result<(), BackendRefusal>;
     /// Inserts a body and its colliders, named `tag` in events and queries; a refusal inserts

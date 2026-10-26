@@ -11,9 +11,12 @@ mod events;
 mod ops;
 mod queries;
 mod reads;
+mod snapshot;
 mod step;
 
 use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 
 use crate::axes::{quat_out, vec_in, vec_out};
 use crate::backend::{Backend, StepParams};
@@ -25,11 +28,12 @@ use crate::kinematic::RawPose;
 use crate::ledger::Ledger;
 use crate::num::{out_quat, out_vec};
 use crate::state::{BodyFilter, BodyState};
+use crate::static_world::StaticWorld;
 use crate::types::{BodyType, Pose, UpAxis};
 use crate::world_desc::ResolvedWorldDesc;
 
 /// A body's replicated fields in the caller frame, as the f32s the core holds (§9.2).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct NetState {
     pub p: [f32; 3],
     pub q: [f32; 4],
@@ -51,6 +55,7 @@ impl NetState {
 }
 
 /// What the neutral layer keeps per body besides its ledger facts.
+#[derive(Serialize, Deserialize)]
 struct Entry<H> {
     handle: H,
     /// The body's name in the backend's events and query results (see [`Core::names`]).
@@ -58,6 +63,7 @@ struct Entry<H> {
     /// Its colliders' keys, in the order the backend indexes them.
     colliders: Vec<String>,
     kind: Option<String>,
+    #[serde(with = "crate::snapshot::body_type_code")]
     body_type: BodyType,
     escaped: bool,
     /// Each collider's (member, collides) masks, for `areaPush`'s filter.
@@ -71,6 +77,7 @@ struct Entry<H> {
 }
 
 /// What the neutral layer keeps per joint.
+#[derive(Serialize, Deserialize)]
 struct JointEntry<J> {
     handle: J,
     a: String,
@@ -87,6 +94,8 @@ pub(crate) struct Core<B: Backend> {
     joints: BTreeMap<String, JointEntry<B::Joint>>,
     /// The static world as given, for `physicsHash`; `None` until `addStaticWorld`.
     static_canon: Option<Canon>,
+    /// The static world as given, for a snapshot (§9.4).
+    static_world: Option<StaticWorld>,
     /// Every body's and static piece's key by its tag. Tags are handed out in order and never
     /// reused, so a stale backend report can never name a later body.
     names: BTreeMap<u64, String>,
@@ -103,12 +112,7 @@ pub(crate) struct Core<B: Backend> {
 impl<B: Backend> Core<B> {
     /// An empty world of a resolved description.
     pub(crate) fn new(desc: ResolvedWorldDesc) -> Self {
-        let params = StepParams {
-            gravity: vec_in(desc.up_axis, desc.gravity),
-            inner_dt: desc.inner_dt(),
-            length_unit: desc.length_unit,
-            solver_iterations: desc.solver_iterations,
-        };
+        let params = step_params(&desc);
         Self {
             desc,
             backend: B::create(&params),
@@ -116,6 +120,7 @@ impl<B: Backend> Core<B> {
             bodies: BTreeMap::new(),
             joints: BTreeMap::new(),
             static_canon: None,
+            static_world: None,
             names: BTreeMap::new(),
             static_tags: BTreeMap::new(),
             next_tag: 0,
@@ -158,7 +163,12 @@ impl<B: Backend> Core<B> {
 
     /// The world's modelled memory (§11.1).
     pub(crate) fn memory_bytes(&self) -> u64 {
-        self.ledger.memory()
+        self.ledger.model_bytes()
+    }
+
+    /// Starts a call from the world's measured bytes, or from the model when `None` (§11.1).
+    pub(crate) fn sync_memory(&mut self, measured: Option<u64>) {
+        self.ledger.sync(measured);
     }
 
     /// The number of joints.
@@ -252,6 +262,16 @@ impl<B: Backend> Core<B> {
     /// `physicsHash` (§10.2): 16 lowercase hex digits.
     pub(crate) fn physics_hash(&self) -> String {
         hex16(fnv1a64(self.physics_json().as_bytes()))
+    }
+}
+
+/// The settings a backend steps a world of `desc` with.
+fn step_params(desc: &ResolvedWorldDesc) -> StepParams {
+    StepParams {
+        gravity: vec_in(desc.up_axis, desc.gravity),
+        inner_dt: desc.inner_dt(),
+        length_unit: desc.length_unit,
+        solver_iterations: desc.solver_iterations,
     }
 }
 

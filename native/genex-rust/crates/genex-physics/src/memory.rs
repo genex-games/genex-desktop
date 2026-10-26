@@ -1,9 +1,9 @@
-//! Memory accounting per world (CONTRACT.md §11.1).
+//! The memory model per world (CONTRACT.md §11.1).
 //!
-//! The core charges every object a world holds by a fixed model of what the backend stores for it,
-//! not by what an allocator happened to return. That makes a refusal (`LimitMemory`) the same on
-//! every target, which a pointer-width-dependent byte count could not, and lets a command be judged
-//! before it allocates anything. The model's rates are below; `stats().memoryBytes` reports it.
+//! A fixed model of what the backend stores for each object. It is the estimate every command is
+//! judged by before it allocates (`LimitMemory`), and what a world reports when no counting
+//! allocator measures it (`accounting`): then a refusal is the same on every target, which a
+//! pointer-width-dependent byte count could not be. The model's rates are below.
 
 use crate::shape::ShapeFacts;
 
