@@ -1,5 +1,7 @@
 //! The command JSON form (CONTRACT.md §7.3): one object with exactly one key, the verb, whose value
-//! is an object of its named arguments.
+//! is an object of its named arguments. Queries (§13) share the form: `ray`, `shapeCast` or
+//! `overlap` to their arguments, with an optional `filter` of `groups`, `excludeBodies` and
+//! `includeSensors`.
 //!
 //! Anything malformed gives `BadCommand`: no key, more than one, an unknown verb, a missing or
 //! unknown argument at any depth (a collider's or a shape's fields too), and a value of the wrong
@@ -13,6 +15,7 @@ use crate::body::{BodyDesc, ColliderDesc, Groups, Shape};
 use crate::command::{Command, SetPoseOptions};
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::joint::{JointDesc, JointType, Motor};
+use crate::query::{Query, QueryFilter};
 use crate::types::{Axis, BodyType, Pose, Quat, Vec3};
 
 type Parsed<T> = Result<T, PhysicsFailure>;
@@ -318,4 +321,46 @@ fn joint_desc(value: &Value) -> Parsed<JointDesc> {
     desc.motor = args.optional("motor", motor)?;
     desc.collide_connected = args.flag("collideConnected", false)?;
     Ok(desc)
+}
+
+/// A query filter (§13): `groups`, `excludeBodies` and `includeSensors`, each optional.
+fn query_filter(value: &Value) -> Parsed<QueryFilter> {
+    let args = Args::read(value, &[], &["groups", "excludeBodies", "includeSensors"])?;
+    Ok(QueryFilter {
+        groups: args.optional("groups", groups)?,
+        exclude_bodies: args.optional("excludeBodies", |v| array(v, string))?.unwrap_or_default(),
+        include_sensors: args.flag("includeSensors", false)?,
+    })
+}
+
+fn filter_of(args: &Args<'_>) -> Parsed<QueryFilter> {
+    Ok(args.optional("filter", query_filter)?.unwrap_or_default())
+}
+
+/// Reads one query in its JSON form (§13): one key, `ray`, `shapeCast` or `overlap`, to its named
+/// arguments; anything malformed gives `BadCommand`, as a command does.
+pub(crate) fn query(value: &Value) -> Parsed<Query> {
+    let Some(map) = value.as_object() else { return bad("a query is an object") };
+    let mut entries = map.iter();
+    let (Some((verb, value)), None) = (entries.next(), entries.next()) else {
+        return bad("a query has exactly one key, its kind");
+    };
+    match verb.as_str() {
+        "ray" => {
+            let args = Args::read(value, &["origin", "dir", "maxDist"], &["filter"])?;
+            let (origin, dir, max_dist) = (args.vec3("origin")?, args.vec3("dir")?, args.number("maxDist")?);
+            Ok(Query::Ray { origin, dir, max_dist, filter: filter_of(&args)? })
+        }
+        "shapeCast" => {
+            let args = Args::read(value, &["shape", "pose", "dir", "maxDist"], &["filter"])?;
+            let (shape, pose) = (args.field("shape", shape)?, args.field("pose", pose)?);
+            let (dir, max_dist) = (args.vec3("dir")?, args.number("maxDist")?);
+            Ok(Query::ShapeCast { shape, pose, dir, max_dist, filter: filter_of(&args)? })
+        }
+        "overlap" => {
+            let args = Args::read(value, &["shape", "pose"], &["filter"])?;
+            Ok(Query::Overlap { shape: args.field("shape", shape)?, pose: args.field("pose", pose)?, filter: filter_of(&args)? })
+        }
+        other => bad(format!("unknown query {other}")),
+    }
 }

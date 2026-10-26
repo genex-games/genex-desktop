@@ -1,7 +1,7 @@
 //! What a world reports (CONTRACT.md §8, §9.1): step results, events and body states, in the caller
 //! frame and key order.
 
-use crate::types::{BodyType, Pose, Vec3};
+use crate::types::{BodyType, Pose, Quat, Vec3};
 
 /// A body's state in the caller frame (§9.1). Numbers are the f32 values the core holds.
 #[derive(Clone, Debug, PartialEq)]
@@ -117,4 +117,54 @@ pub struct StepResult {
     pub escaped: Vec<String>,
     /// The world ended this step over `limits.memoryBytes` (§11.1).
     pub memory_exceeded: bool,
+}
+
+/// The replicated fields of a body (§9.2), as the f32 values the core holds, in the caller frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NetBodyState {
+    /// Position.
+    pub p: Vec3,
+    /// Rotation `[x, y, z, w]`.
+    pub q: Quat,
+    /// Linear velocity.
+    pub v: Vec3,
+    /// Angular velocity, rad/s.
+    pub w: Vec3,
+    /// Asleep.
+    pub sleeping: bool,
+}
+
+/// The numbers per body in [`ChangedExport::data`]: p(3), q(4), v(3), w(3), sleeping(1).
+pub const EXPORT_STRIDE: usize = 14;
+
+/// The flat per-tick read (§9.1): [`EXPORT_STRIDE`] numbers per body, in `keys` order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChangedExport {
+    /// The changed bodies, in key order.
+    pub keys: Vec<String>,
+    /// p(3), q(4), v(3), w(3) and sleeping (0 or 1) per body.
+    pub data: Vec<f32>,
+}
+
+/// The world's counters (§11). `step_ms` is wall time for display only and in no hash.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Stats {
+    /// The tick counter.
+    pub tick: u64,
+    /// Bodies of every type; static pieces excluded.
+    pub bodies: usize,
+    /// Bodies that are awake.
+    pub awake: usize,
+    /// The bodies' colliders; static pieces excluded.
+    pub colliders: usize,
+    /// Joints.
+    pub joints: usize,
+    /// Contact pairs the backend held at the end of the last step.
+    pub contact_pairs: usize,
+    /// Queries counted toward this step's `limits.queriesPerStep`.
+    pub queries_this_step: u32,
+    /// Wall time of the last `step()` as the binding recorded it (`World::record_step_ms`); 0 until then.
+    pub step_ms: f64,
+    /// The accounted memory (§11.1).
+    pub memory_bytes: u64,
 }

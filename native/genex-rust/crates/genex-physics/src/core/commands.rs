@@ -3,7 +3,8 @@
 //!
 //! An escaped body stays frozen (§8.2): an impulse, velocity, wake or sleep on it is accepted and
 //! changes nothing; only `setPose` (always inside `worldExtent`) returns it to the simulation,
-//! asleep and still, then woken unless `wake: false`.
+//! asleep and still, then woken unless `wake: false`. `importBodyState` (§9.2) returns it the same
+//! way, then sets every field it is given.
 
 use super::ops::{AreaPush, Op, record};
 use super::{Core, Entry, JointEntry};
@@ -62,13 +63,17 @@ impl<B: Backend> Core<B> {
     }
 
     fn insert_body(&mut self, valid: ValidBody) -> Result<(), PhysicsFailure> {
-        let Ok(handle) = self.backend.insert(&valid.spec) else {
+        let tag = self.new_tag(&valid.key);
+        let Ok(handle) = self.backend.insert(&valid.spec, tag) else {
+            self.names.remove(&tag);
             return fail(PhysicsError::Internal, "the backend refused a body it had accepted");
         };
         let body_type = valid.spec.body_type;
         let groups = valid.spec.colliders.iter().map(|c| (c.member, c.collides)).collect();
         let entry = Entry {
             handle,
+            tag,
+            colliders: valid.collider_keys,
             kind: valid.kind,
             body_type,
             escaped: false,
@@ -94,6 +99,7 @@ impl<B: Backend> Core<B> {
         }
         if let Some(entry) = self.bodies.remove(key) {
             self.backend.remove(entry.handle);
+            self.names.remove(&entry.tag);
         }
     }
 
@@ -116,9 +122,9 @@ impl<B: Backend> Core<B> {
         self.backend.set_motor(joint.handle, &joint.spec);
     }
 
-    fn edit_body(&mut self, key: &str, edit: BodyEdit) {
+    pub(super) fn edit_body(&mut self, key: &str, edit: BodyEdit) {
         let Some(entry) = self.bodies.get_mut(key) else { return };
-        let teleport = matches!(edit, BodyEdit::Teleport { .. });
+        let teleport = matches!(edit, BodyEdit::Teleport { .. } | BodyEdit::Import { .. });
         if entry.escaped && !teleport {
             return;
         }
@@ -173,7 +179,9 @@ impl<B: Backend> Core<B> {
             return fail(PhysicsError::BadShape, "the backend could not build a static piece");
         }
         for piece in &valid.pieces {
-            if self.backend.insert(&piece.spec).is_err() {
+            let tag = self.new_tag(&piece.key);
+            self.static_tags.insert(piece.key.clone(), tag);
+            if self.backend.insert(&piece.spec, tag).is_err() {
                 return fail(PhysicsError::Internal, "the backend refused a piece it had accepted");
             }
         }

@@ -2,7 +2,7 @@
 //! it validated values in the core's Y-up frame and reads raw state back.
 
 use rapier3d::dynamics::{GenericJoint, GenericJointBuilder, ImpulseJointHandle, JointAxesMask, JointAxis};
-use rapier3d::geometry::{Group, InteractionGroups, InteractionTestMode};
+use rapier3d::geometry::{ActiveCollisionTypes, Group, InteractionGroups, InteractionTestMode};
 use rapier3d::pipeline::ActiveEvents;
 use rapier3d::math::{Pose, Rotation, Vector};
 use rapier3d::parry::utils::Array2;
@@ -10,7 +10,14 @@ use rapier3d::prelude::{
     ColliderBuilder, IntegrationParameters, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, RigidBodyType,
 };
 
-use super::{Backend, BackendRefusal, BodyEdit, BodySpec, ColliderSpec, MassSpec, RawBodyState, ShapeSpec, StepParams};
+mod events;
+mod queries;
+
+use self::events::{Collector, PairHandle, user_data};
+use super::{
+    Backend, BackendRefusal, BodyEdit, BodySpec, ColliderId, ColliderSpec, InnerStep, MassSpec, RawBodyState, RawHit,
+    RawQueryFilter, ShapeAt, ShapeSpec, StepParams,
+};
 use crate::joint::{JointSpec, JointType, ValidMotor};
 use crate::types::{Axis, BodyType};
 
@@ -22,6 +29,9 @@ pub(crate) struct RapierBackend {
     world: PhysicsWorld,
     /// A fixed body without colliders at the origin: the other end of a joint to the world.
     anchor: RigidBodyHandle,
+    /// Bodies a command inserted, moved or froze since the last inner step: Rapier's broad phase
+    /// and their colliders' world poses catch up only in the next step (see `queries`).
+    stale: Vec<RigidBodyHandle>,
 }
 
 fn vector(v: [f32; 3]) -> Vector {
@@ -107,6 +117,16 @@ fn column_major(rows: usize, cols: usize, row_major: &[f32]) -> Array2<f32> {
     Array2::new(rows, cols, data)
 }
 
+/// Sensors see every body type, so a fixed or kinematic sensor reports a kinematic body entering
+/// (§6.2: sensors always report); solid colliders keep Rapier's default, which only pairs a
+/// dynamic body with anything.
+fn collision_types(sensor: bool) -> ActiveCollisionTypes {
+    match sensor {
+        true => ActiveCollisionTypes::all(),
+        false => ActiveCollisionTypes::default(),
+    }
+}
+
 fn collider_builder(spec: &ColliderSpec) -> Option<ColliderBuilder> {
     let builder = shape_builder(&spec.shape)?;
     let builder = match spec.mass {
@@ -126,6 +146,7 @@ fn collider_builder(spec: &ColliderSpec) -> Option<ColliderBuilder> {
             .restitution(spec.restitution)
             .collision_groups(groups)
             .sensor(spec.sensor)
+            .active_collision_types(collision_types(spec.sensor))
             .active_events(events),
     )
 }
@@ -183,6 +204,28 @@ fn apply_motor(joint: &mut GenericJoint, axis: JointAxis, motor: &ValidMotor) {
 }
 
 impl RapierBackend {
+    fn mark_stale(&mut self, body: RigidBodyHandle) {
+        if !self.stale.contains(&body) {
+            self.stale.push(body);
+        }
+    }
+
+    /// Sets a body's replicated fields (§9.2). Rapier's `sleep` zeroes velocities, so they are set
+    /// again after it: an imported sleeping body keeps the velocities it was given.
+    fn import(&mut self, body: RigidBodyHandle, at: Pose, linvel: Vector, angvel: Vector, sleeping: bool) {
+        let Some(rb) = self.world.bodies.get_mut(body) else { return };
+        rb.set_position(at, false);
+        if sleeping {
+            rb.sleep();
+        }
+        rb.set_linvel(linvel, false);
+        rb.set_angvel(angvel, false);
+        if !sleeping {
+            self.wake_body(body);
+        }
+        self.mark_stale(body);
+    }
+
     fn wake_body(&mut self, body: RigidBodyHandle) {
         self.world.wake_up(body, true);
     }
@@ -197,12 +240,14 @@ impl RapierBackend {
         if wake {
             self.wake_body(body);
         }
+        self.mark_stale(body);
     }
 }
 
 impl Backend for RapierBackend {
     type Body = RigidBodyHandle;
     type Joint = ImpulseJointHandle;
+    type Pair = PairHandle;
     const NAME: &'static str = "rapier";
     const VERSION: &'static str = RAPIER_VERSION;
     const FEATURES: &'static str = "det";
@@ -212,7 +257,7 @@ impl Backend for RapierBackend {
         world.gravity = vector(params.gravity);
         world.integration_parameters = integration_parameters(params);
         let anchor = world.insert_body(RigidBodyBuilder::fixed());
-        Self { world, anchor }
+        Self { world, anchor, stale: Vec::new() }
     }
 
     fn check(&self, spec: &BodySpec) -> Result<(), BackendRefusal> {
@@ -222,18 +267,20 @@ impl Backend for RapierBackend {
         }
     }
 
-    fn insert(&mut self, spec: &BodySpec) -> Result<Self::Body, BackendRefusal> {
+    fn insert(&mut self, spec: &BodySpec, tag: u64) -> Result<Self::Body, BackendRefusal> {
         let colliders: Option<Vec<ColliderBuilder>> = spec.colliders.iter().map(collider_builder).collect();
         let colliders = colliders.ok_or(BackendRefusal::BadShape)?;
-        let handle = self.world.insert_body(body_builder(spec));
-        for collider in colliders {
-            self.world.insert_collider(collider, Some(handle));
+        let handle = self.world.insert_body(body_builder(spec).user_data(user_data(tag, 0)));
+        for (index, collider) in (0u32..).zip(colliders) {
+            self.world.insert_collider(collider.user_data(user_data(tag, index)), Some(handle));
         }
+        self.mark_stale(handle);
         Ok(handle)
     }
 
     fn remove(&mut self, body: Self::Body) {
         self.world.remove_body(body);
+        self.stale.retain(|stale| *stale != body);
     }
 
     fn edit(&mut self, body: Self::Body, edit: BodyEdit) {
@@ -260,6 +307,9 @@ impl Backend for RapierBackend {
             }
             BodyEdit::Wake => self.wake_body(body),
             BodyEdit::Sleep => rb.sleep(),
+            BodyEdit::Import { translation, rotation, linvel, angvel, sleeping } => {
+                self.import(body, pose(translation, rotation), vector(linvel), vector(angvel), sleeping);
+            }
         }
     }
 
@@ -273,13 +323,20 @@ impl Backend for RapierBackend {
     fn place(&mut self, body: Self::Body, translation: [f32; 3], rotation: [f32; 4]) {
         let Some(rb) = self.world.bodies.get_mut(body) else { return };
         rb.set_position(pose(translation, rotation), false);
+        self.mark_stale(body);
     }
 
     /// Rapier quarantines a body whose state went non-finite (disabled, rolled back, still); the
     /// core reads that as §8.2's non-finite case.
-    fn step(&mut self) -> Vec<Self::Body> {
-        self.world.step();
-        self.world.quarantine().bodies().to_vec()
+    fn step(&mut self) -> InnerStep<Self::Body, Self::Pair> {
+        self.stale.clear();
+        let collector = Collector::default();
+        self.world.step_with_events(&(), &collector);
+        InnerStep { non_finite: self.world.quarantine().bodies().to_vec(), events: collector.take() }
+    }
+
+    fn pair_impulse(&self, pair: Self::Pair) -> f32 {
+        self.world.contact_pair(pair.0, pair.1).map_or(0.0, |contact| contact.total_impulse_magnitude())
     }
 
     fn state(&self, body: Self::Body) -> RawBodyState {
@@ -310,6 +367,7 @@ impl Backend for RapierBackend {
         rb.set_position(pose(translation, rotation), false);
         rb.set_linvel(Vector::ZERO, false);
         rb.set_angvel(Vector::ZERO, false);
+        self.mark_stale(body);
     }
 
     fn unfreeze(&mut self, body: Self::Body, body_type: BodyType) {
@@ -337,5 +395,23 @@ impl Backend for RapierBackend {
 
     fn contact_pairs(&self) -> usize {
         self.world.contact_pairs().count()
+    }
+
+    fn ray(&self, origin: [f32; 3], dir: [f32; 3], max_dist: f32, filter: &RawQueryFilter) -> Vec<RawHit> {
+        self.query_ray(origin, dir, max_dist, filter)
+    }
+
+    fn shape_cast(
+        &self,
+        shape: ShapeAt<'_>,
+        dir: [f32; 3],
+        max_dist: f32,
+        filter: &RawQueryFilter,
+    ) -> Result<Vec<RawHit>, BackendRefusal> {
+        self.query_cast(shape, dir, max_dist, filter)
+    }
+
+    fn overlap(&self, shape: ShapeAt<'_>, filter: &RawQueryFilter) -> Result<Vec<ColliderId>, BackendRefusal> {
+        self.query_overlap(shape, filter)
     }
 }

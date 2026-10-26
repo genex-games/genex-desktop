@@ -7,7 +7,10 @@
 //! batch checks every command on a copy of the ledger before committing any (`commands.rs`).
 
 mod commands;
+mod events;
 mod ops;
+mod queries;
+mod reads;
 mod step;
 
 use std::collections::BTreeMap;
@@ -50,6 +53,10 @@ impl NetState {
 /// What the neutral layer keeps per body besides its ledger facts.
 struct Entry<H> {
     handle: H,
+    /// The body's name in the backend's events and query results (see [`Core::names`]).
+    tag: u64,
+    /// Its colliders' keys, in the order the backend indexes them.
+    colliders: Vec<String>,
     kind: Option<String>,
     body_type: BodyType,
     escaped: bool,
@@ -80,6 +87,16 @@ pub(crate) struct Core<B: Backend> {
     joints: BTreeMap<String, JointEntry<B::Joint>>,
     /// The static world as given, for `physicsHash`; `None` until `addStaticWorld`.
     static_canon: Option<Canon>,
+    /// Every body's and static piece's key by its tag. Tags are handed out in order and never
+    /// reused, so a stale backend report can never name a later body.
+    names: BTreeMap<u64, String>,
+    /// Each static piece's tag by its key.
+    static_tags: BTreeMap<String, u64>,
+    next_tag: u64,
+    /// Queries counted toward the next step's `limits.queriesPerStep` (§13).
+    queries_this_step: u32,
+    /// Contact pairs the backend held at the end of the last step.
+    contact_pairs: usize,
     tick: u64,
 }
 
@@ -99,8 +116,34 @@ impl<B: Backend> Core<B> {
             bodies: BTreeMap::new(),
             joints: BTreeMap::new(),
             static_canon: None,
+            names: BTreeMap::new(),
+            static_tags: BTreeMap::new(),
+            next_tag: 0,
+            queries_this_step: 0,
+            contact_pairs: 0,
             tick: 0,
         }
+    }
+
+    /// A fresh tag for a body or static piece named `key`.
+    fn new_tag(&mut self, key: &str) -> u64 {
+        let tag = self.next_tag;
+        self.next_tag += 1;
+        self.names.insert(tag, key.to_string());
+        tag
+    }
+
+    /// The body (or static piece) key, collider key and kind of a collider the backend names.
+    fn collider_name(&self, id: crate::backend::ColliderId) -> Option<(&str, &str, Option<&str>)> {
+        let key = self.names.get(&id.tag)?;
+        let Some(entry) = self.bodies.get(key) else { return Some((key, key, None)) };
+        let collider = entry.colliders.get(id.index as usize)?;
+        Some((key, collider, entry.kind.as_deref()))
+    }
+
+    /// The tag of a body or static piece, by key.
+    fn tag_of(&self, key: &str) -> Option<u64> {
+        self.bodies.get(key).map(|entry| entry.tag).or_else(|| self.static_tags.get(key).copied())
     }
 
     /// The resolved description.

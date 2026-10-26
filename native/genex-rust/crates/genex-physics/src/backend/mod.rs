@@ -113,6 +113,81 @@ pub(crate) enum BodyEdit {
     Wake,
     /// Puts the body to sleep, its velocities zero.
     Sleep,
+    /// Sets pose and velocities as given, then wakes or sleeps the body (§9.2).
+    Import { translation: [f32; 3], rotation: [f32; 4], linvel: [f32; 3], angvel: [f32; 3], sleeping: bool },
+}
+
+/// A collider as the core names it: the body's tag (given at `insert`) and the collider's index in
+/// its body's spec.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ColliderId {
+    pub tag: u64,
+    pub index: u32,
+}
+
+/// What a raw event says happened between two colliders, in the core's frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum RawEventKind {
+    /// The pair's first active contact: the deepest contact point and the normal from `first`
+    /// toward `second`.
+    ContactBegin { point: [f32; 3], normal: [f32; 3] },
+    /// The pair's last active contact went away.
+    ContactEnd,
+    /// A sensor pair started intersecting.
+    TriggerEnter,
+    /// A sensor pair stopped intersecting.
+    TriggerExit,
+}
+
+/// One event of one inner step, in the backend's own pair order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RawEvent<P> {
+    pub kind: RawEventKind,
+    pub first: ColliderId,
+    pub second: ColliderId,
+    /// Whether `first` (`second`) is a sensor.
+    pub sensors: [bool; 2],
+    /// The backend's handle on the pair, to read its impulse after later inner steps.
+    pub pair: P,
+}
+
+/// What one inner step reports.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct InnerStep<B, P> {
+    /// Bodies whose state went non-finite.
+    pub non_finite: Vec<B>,
+    /// Contact and trigger events, in no particular order.
+    pub events: Vec<RawEvent<P>>,
+}
+
+/// Which colliders a query sees, in the backend's terms.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RawQueryFilter {
+    pub member: u16,
+    pub collides: u16,
+    /// Tags of bodies to skip, sorted.
+    pub exclude: Vec<u64>,
+    pub include_sensors: bool,
+}
+
+/// One collider a ray or a shape cast reached, in the core's frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RawHit {
+    pub id: ColliderId,
+    /// Distance along the unit direction.
+    pub dist: f32,
+    /// The point on the hit collider.
+    pub point: [f32; 3],
+    /// The hit collider's outward normal there.
+    pub normal: [f32; 3],
+}
+
+/// A query shape at a pose, in the core's frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ShapeAt<'a> {
+    pub shape: &'a ShapeSpec,
+    pub translation: [f32; 3],
+    pub rotation: [f32; 4],
 }
 
 /// A physics engine under the neutral layer.
@@ -121,6 +196,8 @@ pub(crate) trait Backend: Sized {
     type Body: Copy + PartialEq;
     /// The backend's handle for one joint.
     type Joint: Copy;
+    /// The backend's handle for one colliding pair.
+    type Pair: Copy + PartialEq;
     /// The `<backend>` part of the buildId.
     const NAME: &'static str;
     /// The `<backend version>` part.
@@ -132,8 +209,9 @@ pub(crate) trait Backend: Sized {
     fn create(params: &StepParams) -> Self;
     /// Whether the backend can build every shape of `spec`; touches nothing.
     fn check(&self, spec: &BodySpec) -> Result<(), BackendRefusal>;
-    /// Inserts a body and its colliders; a refusal inserts nothing.
-    fn insert(&mut self, spec: &BodySpec) -> Result<Self::Body, BackendRefusal>;
+    /// Inserts a body and its colliders, named `tag` in events and queries; a refusal inserts
+    /// nothing.
+    fn insert(&mut self, spec: &BodySpec, tag: u64) -> Result<Self::Body, BackendRefusal>;
     /// Removes a body, its colliders and its joints.
     fn remove(&mut self, body: Self::Body);
     /// Applies a command's effect to a simulated (not frozen) body.
@@ -142,8 +220,10 @@ pub(crate) trait Backend: Sized {
     fn drive(&mut self, body: Self::Body, linvel: [f32; 3], angvel: [f32; 3]);
     /// Places a kinematic body exactly, keeping its velocities.
     fn place(&mut self, body: Self::Body, translation: [f32; 3], rotation: [f32; 4]);
-    /// Advances one inner step; returns the bodies whose state went non-finite in it.
-    fn step(&mut self) -> Vec<Self::Body>;
+    /// Advances one inner step; reports the bodies whose state went non-finite in it and its events.
+    fn step(&mut self) -> InnerStep<Self::Body, Self::Pair>;
+    /// The total normal impulse a pair's contacts applied in the last inner step.
+    fn pair_impulse(&self, pair: Self::Pair) -> f32;
     /// A body's state.
     fn state(&self, body: Self::Body) -> RawBodyState;
     /// Freezes a body at a pose: velocities zero, out of the simulation, never woken (§8.2).
@@ -158,4 +238,12 @@ pub(crate) trait Backend: Sized {
     fn set_motor(&mut self, joint: Self::Joint, spec: &JointSpec);
     /// The number of contact pairs the backend holds, for memory accounting.
     fn contact_pairs(&self) -> usize;
+    /// Every collider `filter` passes that a ray (unit `dir`) reaches within `max_dist`, as the
+    /// world stands now (commands since the last inner step included).
+    fn ray(&self, origin: [f32; 3], dir: [f32; 3], max_dist: f32, filter: &RawQueryFilter) -> Vec<RawHit>;
+    /// Every collider `filter` passes that `shape` meets sweeping along unit `dir` within `max_dist`.
+    fn shape_cast(&self, shape: ShapeAt<'_>, dir: [f32; 3], max_dist: f32, filter: &RawQueryFilter)
+    -> Result<Vec<RawHit>, BackendRefusal>;
+    /// Every collider `filter` passes that `shape` overlaps.
+    fn overlap(&self, shape: ShapeAt<'_>, filter: &RawQueryFilter) -> Result<Vec<ColliderId>, BackendRefusal>;
 }

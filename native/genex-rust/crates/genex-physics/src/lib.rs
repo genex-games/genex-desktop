@@ -27,6 +27,34 @@
 //! `DuplicateKey` and the `Limit*` codes (`core::ops`). The static world checks `upAxis`, then
 //! §17.7's rules, then `DuplicateKey`, `LimitStatic` and `LimitMemory` (`static_world`).
 //!
+//! # Events (§8.1)
+//!
+//! A contact pair reports when either collider has `events: true`; a sensor always reports. A
+//! begin's `point` is the midpoint of the two surfaces' points at the pair's deepest active contact
+//! on the sub-step it began, its `normal` points from `a` to `b`, and its `impulse` is the pair's
+//! total normal impulse from that sub-step to the end of the step (or to its end within the step),
+//! summed in f32. Contacts are the backend's active contacts, which include its speculative ones, so
+//! a begin can come a sub-step before the shapes meet. Removing a body reports no `contactEnd` or
+//! `triggerExit` for it: removals are the caller's own (§9.1). Sensors pair with every body type, so
+//! a fixed or kinematic sensor sees a kinematic body; two solid colliders pair only when one of them
+//! is on a dynamic body, so a kinematic body touching a fixed one reports nothing. When both
+//! colliders of a trigger are sensors, the lower body key is the `sensor`.
+//!
+//! # Queries (§13)
+//!
+//! A query sees the world as of the last step plus every command applied since (a spawned or moved
+//! body is found where it is now). Its origin or pose lies within `worldExtent`, its direction is
+//! normalised in f32 and must not be zero, and `maxDist` is at least 0; `dist` runs along the
+//! normalised direction. A hit's `point` is on the hit collider and its `normal` is that collider's
+//! outward normal; a ray or cast that starts inside a solid hits it at 0. Only box, sphere, capsule
+//! and hull shapes are swept or overlapped (`OutOfRange` otherwise). A query counts toward
+//! `queriesPerStep` only when it succeeds.
+//!
+//! # Time (§11.4)
+//!
+//! The core reads no clock. `stats().stepMs` reports what a binding recorded with
+//! [`World::record_step_ms`] around its own call to `step()`, and 0 until one does.
+//!
 //! # Joints
 //!
 //! A joint's coordinate is `a` relative to `b` (or to the world when `b` is `None`): a positive
@@ -51,6 +79,7 @@ mod ledger;
 pub mod limits;
 pub mod memory;
 mod num;
+pub mod query;
 mod shape;
 pub mod state;
 pub mod static_world;
@@ -66,7 +95,8 @@ pub use error::{PhysicsError, PhysicsFailure};
 pub use hash::{fnv1a64, hex16};
 pub use joint::{JointDesc, JointType, Motor};
 pub use limits::Limits;
-pub use state::{BodyFilter, BodyState, PhysicsEvent, StepResult};
+pub use query::{EXCLUDE_BODIES_MAX, Hit, Query, QueryAnswer, QueryFilter};
+pub use state::{BodyFilter, BodyState, ChangedExport, EXPORT_STRIDE, NetBodyState, PhysicsEvent, Stats, StepResult};
 pub use static_world::StaticWorld;
 pub use types::{Axis, BodyType, Pose, QUAT_IDENTITY, Quat, UpAxis, Vec3};
 pub use world::World;

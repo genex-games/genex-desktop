@@ -4,13 +4,14 @@
 use serde_json::Value;
 
 use crate::backend::ActiveBackend;
-use crate::body::{BodyDesc, Groups};
+use crate::body::{BodyDesc, Groups, Shape};
 use crate::command::{Command, CommandOutcome, SetPoseOptions};
 use crate::core::Core;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::hash::hex16;
 use crate::joint::{JointDesc, Motor};
-use crate::state::{BodyFilter, BodyState, StepResult};
+use crate::query::{Hit, Query, QueryAnswer, QueryFilter};
+use crate::state::{BodyFilter, BodyState, ChangedExport, NetBodyState, Stats, StepResult};
 use crate::static_world::StaticWorld;
 use crate::types::{Pose, Vec3};
 use crate::world_desc::{ResolvedWorldDesc, WorldDesc};
@@ -18,13 +19,16 @@ use crate::world_desc::{ResolvedWorldDesc, WorldDesc};
 /// One physics world: single-threaded, deterministic per `buildId`, addressed by caller keys.
 pub struct World {
     core: Core<ActiveBackend>,
+    /// The binding's own measure of the last step's wall time, for `stats().stepMs` only (§11.4).
+    step_ms: f64,
 }
+
 
 impl World {
     /// Validates `desc` and makes a world (§4); a failure creates nothing.
     pub fn create(desc: &WorldDesc) -> Result<World, PhysicsFailure> {
         let resolved = ResolvedWorldDesc::resolve(desc)?;
-        Ok(World { core: Core::new(resolved) })
+        Ok(World { core: Core::new(resolved), step_ms: 0.0 })
     }
 
     /// The resolved description, every default filled (§4).
@@ -151,6 +155,20 @@ impl World {
         Ok(self.core.step())
     }
 
+    /// Records the wall time a binding measured around the last `step()`, which `stats().stepMs`
+    /// reports for display (§11.4). The core never reads a clock, so it is 0 until a binding
+    /// records one; a negative or non-finite value is refused and changes nothing.
+    pub fn record_step_ms(&mut self, ms: f64) -> Result<(), PhysicsFailure> {
+        if !ms.is_finite() {
+            return fail(PhysicsError::NonFinite, "stepMs is not finite");
+        }
+        if ms < 0.0 {
+            return fail(PhysicsError::OutOfRange, "stepMs is negative");
+        }
+        self.step_ms = ms;
+        Ok(())
+    }
+
     /// One body's state in the caller frame, or `None` (§9.1).
     pub fn body(&self, key: &str) -> Option<BodyState> {
         self.core.body(key)
@@ -159,6 +177,65 @@ impl World {
     /// The bodies `filter` selects, in key order (§9.1).
     pub fn bodies(&self, filter: &BodyFilter) -> Vec<BodyState> {
         self.core.bodies(filter)
+    }
+
+    /// The bodies changed after `since_tick`, flat: 14 numbers per body in key order (§9.1).
+    pub fn export_changed(&self, since_tick: u64) -> ChangedExport {
+        self.core.export_changed(since_tick)
+    }
+
+    /// A body's replicated fields (§9.2), or `None`.
+    pub fn export_body_state(&self, key: &str) -> Option<NetBodyState> {
+        self.core.export_body_state(key)
+    }
+
+    /// Sets a dynamic or kinematic body's replicated fields and its sleep state (§9.2).
+    pub fn import_body_state(&mut self, key: &str, state: &NetBodyState) -> Result<(), PhysicsFailure> {
+        self.core.import_body_state(key, state)
+    }
+
+    /// The world's counters (§11).
+    pub fn stats(&self) -> Stats {
+        self.core.stats(self.step_ms)
+    }
+
+    /// The nearest hit along a ray (§13); counts toward `limits.queriesPerStep`.
+    pub fn ray(&mut self, origin: Vec3, dir: Vec3, max_dist: f64, filter: &QueryFilter) -> Result<Option<Hit>, PhysicsFailure> {
+        self.core.ray(origin, dir, max_dist, filter)
+    }
+
+    /// The first hit of a swept box, sphere, capsule or hull (§13).
+    pub fn shape_cast(
+        &mut self,
+        shape: &Shape,
+        pose: Pose,
+        dir: Vec3,
+        max_dist: f64,
+        filter: &QueryFilter,
+    ) -> Result<Option<Hit>, PhysicsFailure> {
+        self.core.shape_cast(shape, &pose, dir, max_dist, filter)
+    }
+
+    /// The bodies a shape overlaps, in key order, each once (§13).
+    pub fn overlap(&mut self, shape: &Shape, pose: Pose, filter: &QueryFilter) -> Result<Vec<String>, PhysicsFailure> {
+        self.core.overlap(shape, &pose, filter)
+    }
+
+    /// Runs one query (§13).
+    pub fn query(&mut self, query: &Query) -> Result<QueryAnswer, PhysicsFailure> {
+        match query {
+            Query::Ray { origin, dir, max_dist, filter } => self.ray(*origin, *dir, *max_dist, filter).map(QueryAnswer::Hit),
+            Query::ShapeCast { shape, pose, dir, max_dist, filter } => {
+                self.shape_cast(shape, *pose, *dir, *max_dist, filter).map(QueryAnswer::Hit)
+            }
+            Query::Overlap { shape, pose, filter } => self.overlap(shape, *pose, filter).map(QueryAnswer::Keys),
+        }
+    }
+
+    /// Runs one query in its JSON form (§13); a malformed one gives `BadCommand`.
+    pub fn query_json(&mut self, query: &Value) -> Result<QueryAnswer, PhysicsFailure> {
+        let query = Query::from_json(query)?;
+        self.query(&query)
     }
 
     /// The state hash (§10.1).

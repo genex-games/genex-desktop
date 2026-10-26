@@ -1,6 +1,8 @@
-//! `step()` (§8): kinematic interpolation over the sub-steps (§7.2), the inner steps, escaped
-//! bodies (§8.2), change marks (§9.1) and memory after the step (§11.1).
+//! `step()` (§8): kinematic interpolation over the sub-steps (§7.2), the inner steps and their
+//! events (§8.1), escaped bodies (§8.2), change marks (§9.1), memory after the step (§11.1) and a
+//! fresh query quota (§13).
 
+use super::events::StepEvents;
 use super::{Core, net_state};
 use crate::axes::{quat_in, quat_out, vec_in, vec_out};
 use crate::backend::{Backend, RawBodyState};
@@ -23,17 +25,24 @@ impl<B: Backend> Core<B> {
         let moves = self.take_moves();
         let substeps = self.desc.substeps;
         let mut non_finite = Vec::new();
+        let mut events = StepEvents::new();
         for k in 1..=substeps {
             self.drive_moves(&moves, k);
-            non_finite.extend(self.backend.step());
+            let inner = self.backend.step();
+            events.add(self, k, &inner.events);
+            events.add_impulses(&self.backend);
+            non_finite.extend(inner.non_finite);
             self.place_moves(&moves, k);
         }
         self.tick += 1;
+        self.queries_this_step = 0;
         let escaped = self.freeze_escaped(&starts, &non_finite);
         self.track_changes();
-        self.ledger.contact_bytes = contact_bytes(self.backend.contact_pairs());
+        self.contact_pairs = self.backend.contact_pairs();
+        self.ledger.contact_bytes = contact_bytes(self.contact_pairs);
         let memory_exceeded = self.ledger.memory() > u64::from(self.desc.limits.memory_bytes);
-        StepResult { tick: self.tick, events: Vec::new(), overflowed: false, escaped, memory_exceeded }
+        let (events, overflowed) = events.finish(self.desc.limits.events_per_step as usize);
+        StepResult { tick: self.tick, events, overflowed, escaped, memory_exceeded }
     }
 
     /// Takes every kinematic target set for this step; a kinematic body without one is stopped,
