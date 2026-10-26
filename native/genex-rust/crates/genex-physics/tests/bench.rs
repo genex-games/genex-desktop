@@ -8,7 +8,9 @@
 //! The scene: a z-up world at default limits on a static floor; 512 bodies in one dense heap
 //! (boxes, balls, hulls and capsules, every fifth with contact events), 64 of them paired by ball
 //! joints, 16 of them CCD balls fired into the heap every second, a push every half second that
-//! keeps the heap awake, and 64 queries per tick (32 rays, 16 sphere casts, 16 overlaps).
+//! keeps the heap awake, and 64 queries per tick (32 rays, 16 sphere casts, 16 overlaps). A second
+//! variant adds the host's corrections: every body's state imported back each tick before the
+//! queries, so every body is moved since the last step when they run.
 
 // A benchmark reads the wall clock by definition; the simulation it measures never does.
 #![allow(clippy::disallowed_types)]
@@ -105,7 +107,16 @@ fn summary(mut samples: Vec<f64>) -> (f64, f64, f64) {
     (mean, p99, samples[samples.len() - 1])
 }
 
-fn run(dt: f64, substeps: f64) {
+/// Every body's exported state imported back, as a host's corrections would be.
+fn corrections(w: &mut World) {
+    let keys: Vec<String> = w.bodies(&Default::default()).into_iter().filter(|b| b.body_type == BodyType::Dynamic).map(|b| b.key).collect();
+    for key in keys {
+        let state = w.export_body_state(&key).expect("exported");
+        w.import_body_state(&key, &state).expect("imported");
+    }
+}
+
+fn run(dt: f64, substeps: f64, correct: bool) {
     let ticks_per_second = (1.0 / dt).round() as u64;
     let mut w = scene(dt, substeps);
     let warmup = (WARMUP_SECONDS / dt).round() as u64;
@@ -117,6 +128,9 @@ fn run(dt: f64, substeps: f64) {
         let start = Instant::now();
         for outcome in w.apply_each(&commands(tick, ticks_per_second)) {
             outcome.expect("command");
+        }
+        if correct {
+            corrections(&mut w);
         }
         queries(&mut w, tick);
         let before_step = Instant::now();
@@ -135,7 +149,8 @@ fn run(dt: f64, substeps: f64) {
     let (s_mean, s_p99, s_max) = summary(steps);
     let (t_mean, t_p99, t_max) = summary(ticks);
     let stats = w.stats();
-    println!("worst case at default limits, dt 1/{ticks_per_second} x{substeps}, {measured} ticks after {warmup}:");
+    let variant = if correct { ", every body corrected each tick" } else { "" };
+    println!("worst case at default limits{variant}, dt 1/{ticks_per_second} x{substeps}, {measured} ticks after {warmup}:");
     println!(
         "  bodies {} joints {} awake {:.0} contact pairs {:.0} (means), memory {} B",
         stats.bodies,
@@ -159,6 +174,8 @@ fn run(dt: f64, substeps: f64) {
 #[ignore = "a measurement: cargo test --release --test bench -- --ignored --nocapture"]
 fn worst_case_at_default_limits() {
     println!("target {}", genex_physics::build_id());
-    run(1.0 / 60.0, 1.0);
-    run(1.0 / 20.0, 3.0);
+    for correct in [false, true] {
+        run(1.0 / 60.0, 1.0, correct);
+        run(1.0 / 20.0, 3.0, correct);
+    }
 }

@@ -9,6 +9,13 @@
 //! - A motor's `targetVel` is a speed a command sets (§4.1): at most `maxAngularSpeed` on a hinge,
 //!   `maxSpeed` otherwise. Stiffness, damping and maxForce are at least 0; an absent maxForce is
 //!   unlimited.
+//! - An absent `stiffness` or `damping` is 0, and an absent `targetPos` or `targetVel` is 0. The
+//!   backend's velocity motor pulls with `damping`, so a motor given only `targetVel` does nothing
+//!   until `damping` is set. This default is pending the owner's ruling; §16's motorised doors
+//!   will pin whichever it is.
+//! - A `fixed` joint holds the two bodies' local frames at the anchors with no relative rotation
+//!   (their local axes parallel), not at the relative pose they had when joined. Also pending
+//!   the owner's ruling.
 //! - `a` and `b` must name two different bodies.
 
 use crate::axes::vec_in;

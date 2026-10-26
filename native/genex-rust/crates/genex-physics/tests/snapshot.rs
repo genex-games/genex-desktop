@@ -336,3 +336,45 @@ fn a_resealed_payload_no_world_could_hold_is_bad_snapshot() {
     target.restore(&reseal(ok)).expect("a resealed payload that a world could hold restores");
     assert_eq!(target.desc().limits.bodies, 3);
 }
+
+/// A joint edit made right before a snapshot, with no step between them.
+type JointEdit = fn(&mut World);
+
+fn joint_edits() -> Vec<(&'static str, JointEdit)> {
+    use genex_physics::{JointDesc, JointType, Motor};
+    vec![
+        ("addJoint", |w| {
+            let joint = JointDesc::new("j.new", "heap.000", Some("heap.009"), JointType::Ball, [0.0; 3], [0.0, 0.0, 0.9]);
+            w.add_joint(&joint).expect("adds");
+        }),
+        ("addJoint to the world", |w| {
+            let at = w.body("heap.020").expect("there").pose.p;
+            let joint = JointDesc::new("j.world", "heap.020", None, JointType::Fixed, [0.0; 3], at);
+            w.add_joint(&joint).expect("adds");
+        }),
+        ("removeJoint", |w| w.remove_joint("j.door").expect("removes")),
+        ("setMotor", |w| w.set_motor("j.door", Motor { target_vel: Some(-2.0), damping: Some(20.0), ..Motor::default() }).expect("sets")),
+        ("remove a body with joints", |w| w.remove("bob").expect("removes")),
+        ("remove a body without joints", |w| w.remove("heap.031").expect("removes")),
+        ("spawn", |w| w.spawn(&body("late", BodyType::Dynamic, [0.0, 0.0, 9.0], cube(0.3))).expect("spawns")),
+    ]
+}
+
+#[test]
+fn a_snapshot_right_after_a_joint_edit_steps_on_bit_for_bit() {
+    for up in [UpAxis::Z, UpAxis::Y] {
+        for (name, edit) in joint_edits() {
+            let mut original = busy_world(up, HEAP);
+            run_busy(&mut original, up, WARMUP);
+            edit(&mut original);
+            let bytes = original.snapshot().expect("snapshots");
+            let mut restored = world(UpAxis::Y);
+            restored.restore(&bytes).expect("restores");
+            let a = run_busy(&mut original, up, AFTER);
+            let b = run_busy(&mut restored, up, AFTER);
+            let first = a.iter().zip(&b).position(|(x, y)| x != y);
+            assert!(first.is_none(), "{up:?} {name}: diverges at step {first:?}: {:?} vs {:?}", first.map(|i| &a[i]), first.map(|i| &b[i]));
+            assert_eq!(everything(&restored), everything(&original), "{up:?} {name}");
+        }
+    }
+}

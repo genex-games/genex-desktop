@@ -67,7 +67,11 @@
 //! against its own limits (`BadSnapshot` for anything no world could hold), then `LimitMemory`
 //! by the core's model, and only then reads the backend's state. The checksum catches damage, not
 //! forgery: a resealed payload that passes these checks can still hold backend state the backend
-//! cannot step, which a native build reports as `internal` (§11.3).
+//! cannot step, which a native build reports as `internal` (§11.3) and a WASM build cannot catch at
+//! all. **A snapshot is trusted input**: restore only bytes this core wrote and the caller kept
+//! (server replay, resync, saves on the caller's own storage), never bytes from a client or other
+//! untrusted storage. Joint edits made since the last step travel in the snapshot too, so a
+//! snapshot taken right after them steps on bit for bit.
 //!
 //! # Memory (§11.1)
 //!
@@ -128,7 +132,7 @@ pub mod world_desc;
 pub use body::{BodyDesc, ColliderDesc, Groups, Shape};
 pub use build_id::{CORE_VERSION, build_id, build_id_without_target, target_name};
 pub use canon::es_number;
-pub use command::{Command, CommandOutcome, SetPoseOptions};
+pub use command::{ApplyMode, Command, CommandOutcome, SetPoseOptions};
 pub use error::{PhysicsError, PhysicsFailure};
 pub use hash::{fnv1a64, hex16};
 pub use joint::{JointDesc, JointType, Motor};

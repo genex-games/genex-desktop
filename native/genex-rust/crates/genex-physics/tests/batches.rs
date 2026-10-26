@@ -96,3 +96,18 @@ fn an_each_batch_matches_the_same_commands_one_by_one() {
     atomic.apply_atomic(&valid).expect("all valid");
     assert_eq!(observe(&atomic), observe(&single), "atomic and each agree when nothing fails");
 }
+
+#[test]
+fn apply_takes_the_mode_by_its_wire_name() {
+    use genex_physics::{ApplyMode, Command, PhysicsError};
+    assert_eq!(ApplyMode::from_name("atomic"), Some(ApplyMode::Atomic));
+    assert_eq!(ApplyMode::from_name("each"), Some(ApplyMode::Each));
+    assert_eq!(ApplyMode::from_name("Each"), None);
+    let mut w = common::world(genex_physics::UpAxis::Y);
+    w.spawn(&common::body("a", genex_physics::BodyType::Dynamic, [0.0, 1.0, 0.0], common::ball(0.5))).expect("a");
+    let batch = [Command::Wake { key: "a".into() }, Command::Wake { key: "nope".into() }];
+    assert_eq!(w.apply(&batch, ApplyMode::Each).expect("each"), vec![Ok(()), Err(PhysicsError::UnknownKey)]);
+    let failure = w.apply(&batch, ApplyMode::Atomic).expect_err("atomic");
+    assert_eq!((failure.code, failure.index), (PhysicsError::UnknownKey, Some(1)));
+    assert_eq!(w.apply(&batch[..1], ApplyMode::Atomic).expect("applies"), vec![Ok(())]);
+}

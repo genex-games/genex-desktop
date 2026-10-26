@@ -28,13 +28,13 @@ fn passes(collider: &Collider, filter: &RawQueryFilter) -> bool {
 
 impl RapierBackend {
     fn is_stale(&self, collider: &Collider) -> bool {
-        collider.parent().is_some_and(|body| self.stale.contains(&body))
+        collider.parent().is_some_and(|body| self.is_stale_body(body))
     }
 
     /// The colliders of stale bodies that `filter` passes, each at its body's current pose.
     fn stale_colliders(&self, filter: &RawQueryFilter) -> Vec<(&Collider, Pose)> {
         let mut out = Vec::new();
-        for body in &self.stale {
+        for body in self.stale.values() {
             let Some(rb) = self.world.bodies.get(*body) else { continue };
             for handle in rb.colliders() {
                 let Some(collider) = self.world.colliders.get(*handle) else { continue };

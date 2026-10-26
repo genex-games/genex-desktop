@@ -1,0 +1,497 @@
+{
+  "contract": "1.0",
+  "name": "ccd-balls",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.01666666753590107,
+    "substeps": 1,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.8100004196167
+    ],
+    "upAxis": "z",
+    "lengthUnit": 1.0
+  },
+  "static": {
+    "boxes": [
+      [
+        -50,
+        -50,
+        -1,
+        50,
+        50,
+        0
+      ]
+    ],
+    "ramps": []
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "wall",
+            "type": "fixed",
+            "pose": {
+              "p": [
+                10.0,
+                0.0,
+                1.5
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.019999999552965164,
+                    5.0,
+                    1.5
+                  ]
+                },
+                "events": true
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.0",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                -3.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.1",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                -2.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.2",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                -1.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.3",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                -0.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.4",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.5",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                1.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.6",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                2.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "bullet.7",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                3.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.05000000074505806
+                }
+              }
+            ],
+            "ccd": true,
+            "linvel": [
+              200.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "repeat": 4,
+      "expect": {
+        "stateHash": "14f62277fd9c1cc8",
+        "events": [
+          {
+            "kind": "contactBegin",
+            "a": "bullet.0",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              -3.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.1",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              -2.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.2",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              -1.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.3",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              -0.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.4",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              0.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.5",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              1.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.6",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              2.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "bullet.7",
+            "b": "wall",
+            "ca": "c",
+            "cb": "c",
+            "impulse": 0.10471975803375244,
+            "point": [
+              9.982500076293945,
+              3.5,
+              0.986855149269104
+            ],
+            "normal": [
+              1.0,
+              0.0,
+              -0.0
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "repeat": 30,
+      "expect": {
+        "stateHash": "cbd05210faad2746"
+      }
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 //! The Rapier 0.36 backend (enhanced-determinism). Nothing here is public: the neutral layer hands
 //! it validated values in the core's Y-up frame and reads raw state back.
 
+use std::collections::BTreeMap;
+
 use rapier3d::dynamics::{GenericJoint, GenericJointBuilder, ImpulseJointHandle, JointAxesMask, JointAxis};
 use rapier3d::geometry::{ActiveCollisionTypes, Group, InteractionGroups, InteractionTestMode};
 use rapier3d::pipeline::ActiveEvents;
@@ -24,25 +26,57 @@ use crate::types::{Axis, BodyType};
 /// The Rapier version this build pins (`rapier3d = "=0.36.0"` in the workspace).
 const RAPIER_VERSION: &str = "0.36.0";
 
+/// A joint edit a command made, applied to Rapier at the start of the next step.
+///
+/// Rapier queues the island links and unlinks a joint insertion, removal or mutable access makes
+/// in fields it does not serialise, to be consumed by its next step. A snapshot taken between a
+/// joint command and that step would lose them, and the restored world's islands (and so its
+/// sleep) would differ (§9.3). Keeping the edits here, where a snapshot carries them, and handing
+/// them to Rapier only right before it steps, means Rapier never holds a pending one at a snapshot.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+enum JointEdit {
+    /// Join `second` to `first` (the joint's coordinate is `second` relative to `first`).
+    Insert { id: u64, first: RigidBodyHandle, second: RigidBodyHandle, spec: JointSpec },
+    /// Remove an inserted joint.
+    Remove { id: u64 },
+    /// Replace an inserted joint's motor.
+    Motor { id: u64, spec: JointSpec },
+    /// Remove a body that still had joints in Rapier when the command removed it (Rapier would
+    /// queue their unlinks too).
+    RemoveBody { body: RigidBodyHandle },
+}
+
 /// One Rapier world.
 #[derive(serde::Deserialize)]
 pub(crate) struct RapierBackend {
     world: PhysicsWorld,
     /// A fixed body without colliders at the origin: the other end of a joint to the world.
     anchor: RigidBodyHandle,
-    /// Bodies a command inserted, moved or froze since the last inner step: Rapier's broad phase
-    /// and their colliders' world poses catch up only in the next step (see `queries`).
-    stale: Vec<RigidBodyHandle>,
+    /// Bodies a command inserted, moved or froze since the last inner step, by their handle's raw
+    /// parts: Rapier's broad phase and their colliders' world poses catch up only in the next step
+    /// (see `queries`). A map, so a query tests each candidate in log time however many bodies a
+    /// tick teleported or imported.
+    stale: BTreeMap<(u32, u32), RigidBodyHandle>,
+    /// Each joint the core holds by its id, once Rapier holds it.
+    joints: BTreeMap<u64, ImpulseJointHandle>,
+    /// The id the next joint gets.
+    next_joint: u64,
+    /// Joint edits not yet handed to Rapier, in command order.
+    edits: Vec<JointEdit>,
 }
 
 /// What `save` writes: the same fields as [`RapierBackend`], borrowed. Rapier skips its pipelines
 /// (workspaces rebuilt each step); everything a step reads from one step to the next, contact
-/// manifolds and warm-start impulses included, is in the sets it writes.
+/// manifolds and warm-start impulses included, is in the sets it writes, and the joint edits it
+/// would not write are still in `edits`.
 #[derive(serde::Serialize)]
 struct Saved<'a> {
     world: &'a PhysicsWorld,
     anchor: RigidBodyHandle,
-    stale: &'a [RigidBodyHandle],
+    stale: &'a BTreeMap<(u32, u32), RigidBodyHandle>,
+    joints: &'a BTreeMap<u64, ImpulseJointHandle>,
+    next_joint: u64,
+    edits: &'a [JointEdit],
 }
 
 fn vector(v: [f32; 3]) -> Vector {
@@ -226,14 +260,71 @@ impl RapierBackend {
             && p.length_unit == params.length_unit
             && p.num_solver_iterations == params.solver_iterations as usize;
         let anchor_ok = self.world.bodies.get(self.anchor).is_some_and(|rb| rb.is_fixed() && rb.colliders().is_empty());
-        let stale_ok = self.stale.iter().all(|body| self.world.bodies.contains(*body));
-        same_params && self.world.gravity == vector(params.gravity) && anchor_ok && stale_ok
+        let stale_ok = self.stale.iter().all(|(key, body)| *key == body.into_raw_parts() && self.world.bodies.contains(*body));
+        let joints_ok = self.joints.iter().all(|(id, joint)| *id < self.next_joint && self.world.impulse_joints.contains(*joint));
+        let edits_ok = self.edits.iter().all(|edit| self.edit_fits(edit));
+        let structure_ok = stale_ok && joints_ok && edits_ok;
+        same_params && self.world.gravity == vector(params.gravity) && anchor_ok && structure_ok
+    }
+
+    /// Whether a loaded edit names bodies Rapier holds and joints it holds (or will).
+    fn edit_fits(&self, edit: &JointEdit) -> bool {
+        let body = |handle: &RigidBodyHandle| self.world.bodies.contains(*handle);
+        match edit {
+            JointEdit::Insert { id, first, second, .. } => *id < self.next_joint && body(first) && body(second),
+            JointEdit::Remove { id } | JointEdit::Motor { id, .. } => self.joints.contains_key(id),
+            JointEdit::RemoveBody { body: handle } => body(handle),
+        }
+    }
+
+    /// Hands every queued joint edit to Rapier, in order, right before it steps.
+    fn apply_joint_edits(&mut self) {
+        for edit in std::mem::take(&mut self.edits) {
+            match edit {
+                JointEdit::Insert { id, first, second, spec } => {
+                    let handle = self.world.insert_impulse_joint(first, second, joint_data(&spec));
+                    self.joints.insert(id, handle);
+                }
+                JointEdit::Remove { id } => {
+                    if let Some(handle) = self.joints.remove(&id) {
+                        self.world.remove_impulse_joint(handle);
+                    }
+                }
+                JointEdit::Motor { id, spec } => self.apply_motor_now(id, &spec),
+                JointEdit::RemoveBody { body } => {
+                    self.world.remove_body(body);
+                }
+            }
+        }
+    }
+
+    fn apply_motor_now(&mut self, id: u64, spec: &JointSpec) {
+        let Some(motor) = &spec.motor else { return };
+        let Some(handle) = self.joints.get(&id) else { return };
+        let Some(joint) = self.world.impulse_joints.get_mut(*handle, true) else { return };
+        apply_motor(&mut joint.data, free_axis(spec.joint_type), motor);
+    }
+
+    /// The queued insertion of joint `id`, if it has not reached Rapier yet.
+    fn queued_insert(&mut self, id: u64) -> Option<&mut JointSpec> {
+        self.edits.iter_mut().find_map(|edit| match edit {
+            JointEdit::Insert { id: queued, spec, .. } if *queued == id => Some(spec),
+            _ => None,
+        })
+    }
+
+    /// Bodies whose removal is queued.
+    fn queued_removals(&self) -> usize {
+        self.edits.iter().filter(|edit| matches!(edit, JointEdit::RemoveBody { .. })).count()
     }
 
     fn mark_stale(&mut self, body: RigidBodyHandle) {
-        if !self.stale.contains(&body) {
-            self.stale.push(body);
-        }
+        self.stale.insert(body.into_raw_parts(), body);
+    }
+
+    /// Whether a command moved `body` since the last inner step.
+    fn is_stale_body(&self, body: RigidBodyHandle) -> bool {
+        self.stale.contains_key(&body.into_raw_parts())
     }
 
     /// Sets a body's replicated fields (§9.2). Rapier's `sleep` zeroes velocities, so they are set
@@ -272,7 +363,7 @@ impl RapierBackend {
 
 impl Backend for RapierBackend {
     type Body = RigidBodyHandle;
-    type Joint = ImpulseJointHandle;
+    type Joint = u64;
     type Pair = PairHandle;
     const NAME: &'static str = "rapier";
     const VERSION: &'static str = RAPIER_VERSION;
@@ -285,11 +376,19 @@ impl Backend for RapierBackend {
         world.gravity = vector(params.gravity);
         world.integration_parameters = integration_parameters(params);
         let anchor = world.insert_body(RigidBodyBuilder::fixed());
-        Self { world, anchor, stale: Vec::new() }
+        Self { world, anchor, stale: BTreeMap::new(), joints: BTreeMap::new(), next_joint: 0, edits: Vec::new() }
     }
 
     fn save(&self) -> Option<Vec<u8>> {
-        postcard::to_allocvec(&Saved { world: &self.world, anchor: self.anchor, stale: &self.stale }).ok()
+        let saved = Saved {
+            world: &self.world,
+            anchor: self.anchor,
+            stale: &self.stale,
+            joints: &self.joints,
+            next_joint: self.next_joint,
+            edits: &self.edits,
+        };
+        postcard::to_allocvec(&saved).ok()
     }
 
     fn load(bytes: &[u8], params: &StepParams) -> Option<Self> {
@@ -298,7 +397,7 @@ impl Backend for RapierBackend {
     }
 
     fn body_count(&self) -> usize {
-        self.world.bodies.len()
+        self.world.bodies.len() - self.queued_removals()
     }
 
     fn collider_count(&self, body: Self::Body) -> Option<usize> {
@@ -306,7 +405,8 @@ impl Backend for RapierBackend {
     }
 
     fn has_joint(&self, joint: Self::Joint) -> bool {
-        self.world.impulse_joints.get(joint).is_some()
+        let queued = self.edits.iter().any(|edit| matches!(edit, JointEdit::Insert { id, .. } if *id == joint));
+        queued || self.joints.contains_key(&joint)
     }
 
     fn check(&self, spec: &BodySpec) -> Result<(), BackendRefusal> {
@@ -327,9 +427,15 @@ impl Backend for RapierBackend {
         Ok(handle)
     }
 
+    /// Removes a body now, or at the start of the next step when Rapier still holds joints on it
+    /// (the core queued their removal just before), so their unlinks never wait in Rapier.
     fn remove(&mut self, body: Self::Body) {
+        self.stale.remove(&body.into_raw_parts());
+        if self.world.impulse_joints.attached_joints(body).next().is_some() {
+            self.edits.push(JointEdit::RemoveBody { body });
+            return;
+        }
         self.world.remove_body(body);
-        self.stale.retain(|stale| *stale != body);
     }
 
     fn edit(&mut self, body: Self::Body, edit: BodyEdit) {
@@ -379,6 +485,7 @@ impl Backend for RapierBackend {
     /// disables a collider whose bounds went non-finite; the core reads either as §8.2's
     /// non-finite case of the body that owns it.
     fn step(&mut self) -> InnerStep<Self::Body, Self::Pair> {
+        self.apply_joint_edits();
         self.stale.clear();
         let collector = Collector::default();
         self.world.step_with_events(&(), &collector);
@@ -436,19 +543,32 @@ impl Backend for RapierBackend {
         }
     }
 
+    /// Queues the joint (see [`JointEdit`]); Rapier holds it from the next step.
     fn insert_joint(&mut self, a: Self::Body, b: Option<Self::Body>, spec: &JointSpec) -> Self::Joint {
+        let id = self.next_joint;
+        self.next_joint += 1;
         let first = b.unwrap_or(self.anchor);
-        self.world.insert_impulse_joint(first, a, joint_data(spec))
+        self.edits.push(JointEdit::Insert { id, first, second: a, spec: spec.clone() });
+        id
     }
 
+    /// Drops a joint still queued, else queues its removal.
     fn remove_joint(&mut self, joint: Self::Joint) {
-        self.world.remove_impulse_joint(joint);
+        let queued = |edit: &JointEdit| matches!(edit, JointEdit::Insert { id, .. } | JointEdit::Motor { id, .. } if *id == joint);
+        if self.queued_insert(joint).is_some() {
+            self.edits.retain(|edit| !queued(edit));
+            return;
+        }
+        self.edits.push(JointEdit::Remove { id: joint });
     }
 
+    /// Changes a queued joint's motor in place, else queues the change.
     fn set_motor(&mut self, joint: Self::Joint, spec: &JointSpec) {
-        let Some(motor) = &spec.motor else { return };
-        let Some(handle) = self.world.impulse_joints.get_mut(joint, true) else { return };
-        apply_motor(&mut handle.data, free_axis(spec.joint_type), motor);
+        if let Some(queued) = self.queued_insert(joint) {
+            *queued = spec.clone();
+            return;
+        }
+        self.edits.push(JointEdit::Motor { id: joint, spec: spec.clone() });
     }
 
     fn contact_pairs(&self) -> usize {

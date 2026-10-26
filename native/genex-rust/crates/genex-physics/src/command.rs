@@ -133,3 +133,23 @@ impl Command {
 
 /// One command's outcome in an `"each"` batch (§7.1): `Ok(())` or its code.
 pub type CommandOutcome = Result<(), PhysicsError>;
+
+/// How `apply` treats a failing command (§7.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyMode {
+    /// Every command or none; a failure names the first failing index.
+    Atomic,
+    /// Every command that succeeds, in order, one outcome per command.
+    Each,
+}
+
+impl ApplyMode {
+    /// The mode by its wire name, `"atomic"` or `"each"`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "atomic" => Some(Self::Atomic),
+            "each" => Some(Self::Each),
+            _ => None,
+        }
+    }
+}

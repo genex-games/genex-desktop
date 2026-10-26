@@ -1,0 +1,1095 @@
+{
+  "contract": "1.0",
+  "name": "firstperson-static-inches",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.03333333507180214,
+    "substeps": 2,
+    "gravity": [
+      0.0,
+      0.0,
+      -800.0
+    ],
+    "upAxis": "z",
+    "lengthUnit": 39.369998931884766
+  },
+  "static": {
+    "boxes": [
+      [
+        -1024,
+        -1024,
+        -64,
+        1024,
+        1024,
+        0
+      ],
+      [
+        128,
+        -256,
+        0,
+        384,
+        256,
+        96
+      ],
+      [
+        -512,
+        -64,
+        0,
+        -448,
+        64,
+        256
+      ]
+    ],
+    "ramps": [
+      [
+        -256,
+        -256,
+        0,
+        0,
+        256,
+        128,
+        0,
+        0,
+        128
+      ],
+      [
+        400,
+        -128,
+        0,
+        640,
+        128,
+        96,
+        0,
+        96,
+        0
+      ],
+      [
+        -128,
+        300,
+        0,
+        128,
+        600,
+        64,
+        1,
+        16,
+        64
+      ]
+    ]
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "ball.0",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                -192.0,
+                0.0,
+                320.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 8.0
+                },
+                "events": true
+              }
+            ],
+            "kind": "prop"
+          }
+        },
+        {
+          "spawn": {
+            "key": "ball.1",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                -64.0,
+                100.0,
+                320.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 8.0
+                },
+                "events": true
+              }
+            ],
+            "kind": "prop"
+          }
+        },
+        {
+          "spawn": {
+            "key": "ball.2",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                256.0,
+                0.0,
+                320.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 8.0
+                },
+                "events": true
+              }
+            ],
+            "kind": "prop"
+          }
+        },
+        {
+          "spawn": {
+            "key": "ball.3",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                500.0,
+                0.0,
+                320.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 8.0
+                },
+                "events": true
+              }
+            ],
+            "kind": "prop"
+          }
+        },
+        {
+          "spawn": {
+            "key": "ball.4",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                450.0,
+                320.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 8.0
+                },
+                "events": true
+              }
+            ],
+            "kind": "prop"
+          }
+        },
+        {
+          "spawn": {
+            "key": "ball.5",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                -480.0,
+                0.0,
+                320.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 8.0
+                },
+                "events": true
+              }
+            ],
+            "kind": "prop"
+          }
+        },
+        {
+          "spawn": {
+            "key": "player",
+            "type": "kinematic",
+            "pose": {
+              "p": [
+                -700.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "capsule",
+                  "halfHeight": 20,
+                  "radius": 16,
+                  "axis": "z"
+                },
+                "events": true
+              }
+            ],
+            "kind": "player"
+          }
+        }
+      ],
+      "repeat": 60,
+      "expect": {
+        "stateHash": "120fc9e88213a661",
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -690.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -680.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -670.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -660.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -650.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -640.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -630.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -620.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -610.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -600.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "stateHash": "298ceb3a39adfb33",
+        "events": [
+          {
+            "kind": "contactBegin",
+            "a": "ball.4",
+            "b": "static:box:0000",
+            "ca": "c",
+            "cb": "static:box:0000",
+            "ka": "prop",
+            "impulse": 0.0,
+            "point": [
+              -0.000027178739401279017,
+              263.9390869140625,
+              0.32552647590637207
+            ],
+            "normal": [
+              -0.0,
+              0.0,
+              -1.0
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -590.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -580.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -570.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -560.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -550.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -540.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -530.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -520.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -510.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -500.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "stateHash": "d9a16bbd86578635",
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -490.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -480.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -470.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -460.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -450.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -440.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -430.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -420.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -410.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "player",
+            "pose": {
+              "p": [
+                -400.0,
+                0.0,
+                36.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "stateHash": "4059a8c4148b8b38",
+        "events": []
+      }
+    },
+    {
+      "query": [
+        {
+          "ray": {
+            "origin": [
+              -128.0,
+              0.0,
+              400.0
+            ],
+            "dir": [
+              0,
+              0,
+              -1
+            ],
+            "maxDist": 1000
+          }
+        },
+        {
+          "ray": {
+            "origin": [
+              520.0,
+              0.0,
+              400.0
+            ],
+            "dir": [
+              0,
+              0,
+              -1
+            ],
+            "maxDist": 1000
+          }
+        },
+        {
+          "overlap": {
+            "shape": {
+              "kind": "sphere",
+              "radius": 40.0
+            },
+            "pose": {
+              "p": [
+                256.0,
+                0.0,
+                100.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "repeat": 0,
+      "expect": {
+        "queries": [
+          {
+            "hit": {
+              "body": "static:ramp:0000",
+              "collider": "static:ramp:0000",
+              "dist": 336.0,
+              "point": [
+                -128.0,
+                0.0,
+                64.0
+              ],
+              "normal": [
+                -0.44721347093582153,
+                -0.0,
+                0.8944272398948669
+              ]
+            }
+          },
+          {
+            "hit": {
+              "body": "static:ramp:0001",
+              "collider": "static:ramp:0001",
+              "dist": 352.0,
+              "point": [
+                520.0,
+                0.0,
+                48.0
+              ],
+              "normal": [
+                0.3713907301425934,
+                -0.0,
+                0.9284766316413879
+              ]
+            }
+          },
+          {
+            "keys": [
+              "ball.2",
+              "static:box:0001"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

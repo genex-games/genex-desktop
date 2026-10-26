@@ -28,7 +28,7 @@ use serde_json::Value;
 use crate::accounting::Account;
 use crate::backend::ActiveBackend;
 use crate::body::{BodyDesc, Groups, Shape};
-use crate::command::{Command, CommandOutcome, SetPoseOptions};
+use crate::command::{ApplyMode, Command, CommandOutcome, SetPoseOptions};
 use crate::core::Core;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::hash::hex16;
@@ -187,6 +187,19 @@ impl World {
     /// Applies one command (§7).
     pub fn command(&mut self, command: &Command) -> Result<(), PhysicsFailure> {
         self.call(|core| core.run(command))
+    }
+
+    /// `apply(commands, mode)` as the TypeScript binding names it (§7.1, §15): in `Atomic` mode
+    /// every command or none (the outcomes all `Ok`, or the first failure), in `Each` mode one
+    /// outcome per command.
+    pub fn apply(&mut self, commands: &[Command], mode: ApplyMode) -> Result<Vec<CommandOutcome>, PhysicsFailure> {
+        match mode {
+            ApplyMode::Atomic => self.apply_atomic(commands).map(|()| vec![Ok(()); commands.len()]),
+            ApplyMode::Each => {
+                self.check()?;
+                Ok(self.apply_each(commands))
+            }
+        }
     }
 
     /// Applies every command or none (§7.1); a failure names the first failing index.
