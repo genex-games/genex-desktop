@@ -1342,6 +1342,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-physics"
+version = "0.1.0"
+dependencies = [
+ "rapier3d",
+ "serde_json",
+]
+
+[[package]]
 name = "genex-platform-android"
 version = "0.1.0"
 dependencies = [

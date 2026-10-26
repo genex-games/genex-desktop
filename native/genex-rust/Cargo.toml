@@ -37,6 +37,9 @@ members = [
   "crates/genex-ui",
   "crates/genex-profile",
   "crates/genex-crash",
+  # Genex Physics (contract 1.0, crates/genex-physics/CONTRACT.md): the deterministic Layer 1 core
+  # shared with genex-demo's authority host, Rapier its first backend behind an internal trait.
+  "crates/genex-physics",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
@@ -92,6 +95,7 @@ genex-save = { path = "crates/genex-save", version = "0.1.0" }
 genex-ui = { path = "crates/genex-ui", version = "0.1.0" }
 genex-profile = { path = "crates/genex-profile", version = "0.1.0" }
 genex-crash = { path = "crates/genex-crash", version = "0.1.0" }
+genex-physics = { path = "crates/genex-physics", version = "0.1.0" }
 genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.1.0" }
 # Without its default `physics` too: the phone shells reach the facade through it and must not turn
 # Rapier on for a game that turned it off (a web game's manifest names the crate itself).
