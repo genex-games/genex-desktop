@@ -1,0 +1,654 @@
+// @genex-ai/physics: the hand-written wrapper over the generated WASM glue (`./wasm/`), giving
+// exactly the API of `index.d.ts` (contract 1.0; § numbers are CONTRACT.md's). The entries
+// `index.js` (browsers, bundlers) and `node.js` (Node 24, loads itself) re-export it.
+//
+// - Errors are values (§1.5, §14): no method throws on any input. A contract error is
+//   `{ ok: false, code, index?, detail }`; a read with no error channel returns its empty form.
+// - Numbers become f32 here, as `Math.fround`, before they cross (§4.1), so the JSON text the core
+//   reads names that f32 exactly. NaN and ±Infinity cross as ±1e39, which the core rounds to an
+//   infinite f32 and refuses with `non-finite`, as it does a finite number too big for f32.
+// - §11.3: if the instance traps (a WebAssembly.RuntimeError, or anything else thrown from inside
+//   a WASM call) it is poisoned: every later call on every world answers `internal`, and its reads
+//   their empty forms. `init()` then makes a new instance; worlds of the old one stay `internal`.
+import * as glue from "./wasm/genex_physics_wasm.js";
+
+/** The error vocabulary (§14). */
+export const PhysicsError = Object.freeze({
+  InvalidKey: "invalid-key",
+  DuplicateKey: "duplicate-key",
+  UnknownKey: "unknown-key",
+  NonFinite: "non-finite",
+  OutOfRange: "out-of-range",
+  BadShape: "bad-shape",
+  DynamicMesh: "dynamic-mesh",
+  WrongBodyType: "wrong-body-type",
+  BadCommand: "bad-command",
+  LimitBodies: "limit-bodies",
+  LimitColliders: "limit-colliders",
+  LimitHullVertices: "limit-hull-vertices",
+  LimitTriangles: "limit-triangles",
+  LimitJoints: "limit-joints",
+  LimitCcd: "limit-ccd",
+  LimitQueries: "limit-queries",
+  LimitStatic: "limit-static",
+  LimitMemory: "limit-memory",
+  BadSnapshot: "bad-snapshot",
+  BuildMismatch: "build-mismatch",
+  ContractMismatch: "contract-mismatch",
+  Internal: "internal",
+});
+
+/** The `apply` modes (§7.1). */
+const ApplyMode = Object.freeze({ Atomic: "atomic", Each: "each" });
+
+/** Nesting deeper than any contract shape (a body's collider's shape's points is 5). */
+const MAX_DEPTH = 32;
+/**
+ * The largest input, in UTF-16 units of its JSON text: above any input the 4x limit ceiling
+ * admits (4,194,304 heightfield samples of f32 text), so only an input no world could take is
+ * refused here, with the code a limit gives (`out-of-range`), before it reaches the instance.
+ */
+const MAX_INPUT_CHARS = 128 * 1024 * 1024;
+/** The largest snapshot `restore` hands over: above any world the 4x memory ceiling admits. */
+const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
+/** §17.7's caps on the static world, refused here with the core's code before flattening. */
+const STATIC_BOXES_MAX = 4096;
+const STATIC_RAMPS_MAX = 512;
+/** One more than a static row's longest valid length (a ramp's 9): longer rows are the core's to refuse. */
+const STATIC_ROW_PASS = 10;
+/**
+ * A key longer than 64 UTF-16 units is over 64 bytes and refused `invalid-key` whatever it holds,
+ * so a read hands over at most this much of it: the core's answer is the same and a huge string
+ * never crosses.
+ */
+const KEY_PASS_CHARS = 65;
+/** What NaN and ±Infinity cross as: finite as f64, infinite as f32 (§4.1). */
+const NOT_FINITE_TEXT = "1e39";
+const NEGATIVE_INFINITE_TEXT = "-1e39";
+/** `-0` as JSON text the core reads as an f64 `-0.0` (`-0` alone reads as the integer 0). */
+const NEGATIVE_ZERO_TEXT = "-0.0";
+/** `bodies()` with no `changedSinceTick`. */
+const NO_TICK = -1;
+/** The numbers per body of `exportChanged` (§9.1). */
+const EXPORT_STRIDE = 14;
+
+const Detail = Object.freeze({
+  NotReady: "init() has not finished: await init() first (§15)",
+  Poisoned: "the WebAssembly instance trapped and is unusable (§11.3): await init() for a new one and make new worlds",
+  Stale: "this world belongs to an instance that trapped (§11.3)",
+  Freed: "this world was freed",
+  TooLarge: "the input is larger than any world accepts",
+  TooDeep: "the input nests deeper than any contract shape",
+  BigInt: "a BigInt is not a number",
+  Unreadable: "the input could not be read",
+  NotSnapshot: "a snapshot is a Uint8Array",
+  BigSnapshot: "the snapshot is larger than any world this build writes",
+  BadMode: 'mode is "atomic" or "each"',
+  BadOptions: "setPose options are an object of resetVelocity and wake",
+  BadStatic: "a static world is { boxes: number[][], ramps: number[][] }",
+  StaticCaps: "more than 4096 boxes or 512 ramps",
+});
+
+/** The instance: whether one is loaded, its generation (bumped per instance) and health. */
+const instance = { ready: false, generation: 0, poisoned: false, buildId: "" };
+
+/** A contract error as a value. */
+function failure(code, detail) {
+  return { ok: false, code, detail };
+}
+
+/** Why calls cannot run now, or `undefined` when they can. */
+function unavailable() {
+  if (!instance.ready) return failure(PhysicsError.Internal, Detail.NotReady);
+  if (instance.poisoned) return failure(PhysicsError.Internal, Detail.Poisoned);
+  return undefined;
+}
+
+/** Runs `fn` against the instance; anything thrown inside it poisons the instance (§11.3). */
+function guarded(fallback, fn) {
+  if (unavailable() !== undefined) return fallback();
+  try {
+    return fn(glue);
+  } catch {
+    instance.poisoned = true;
+    return fallback();
+  }
+}
+
+/** Takes the glue's current instance as the live one. */
+function adopt() {
+  instance.ready = true;
+  instance.generation += 1;
+  instance.poisoned = false;
+  instance.buildId = glue.build_id();
+}
+
+/**
+ * A new instance after a trap (§11.3): the glue's own reset (wasm-bindgen's
+ * `--experimental-reset-state-function`) instantiates the module it loaded again, with a fresh
+ * linear memory, synchronously.
+ */
+function renew() {
+  glue.__wbg_reset_state();
+  adopt();
+}
+
+/**
+ * Loads the module synchronously from `source` (a WebAssembly.Module or its bytes). `node.js`
+ * calls it on import; a later call is the same as `init()`.
+ */
+export function loadSync(source) {
+  if (instance.ready) {
+    if (instance.poisoned) renew();
+    return;
+  }
+  const module = source instanceof WebAssembly.Module ? source : new WebAssembly.Module(source);
+  glue.initSync({ module });
+  adopt();
+}
+
+/** Loads the WASM module once; later calls resolve at once, or make a new instance after a trap (§15, §11.3). */
+export async function init(input) {
+  if (instance.ready) {
+    if (instance.poisoned) renew();
+    return;
+  }
+  const source = input?.module;
+  if (source !== undefined) {
+    loadSync(source);
+    return;
+  }
+  await glue.default();
+  adopt();
+}
+
+/** This build's identity (§2). */
+export function buildId() {
+  return instance.buildId;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Encoding what crosses.
+
+/** Thrown inside the encoder only; `encode` turns it into a failure value. */
+class Refusal {
+  constructor(code, detail) {
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+function numberText(value) {
+  const rounded = Math.fround(value);
+  if (Number.isNaN(rounded) || rounded === Number.POSITIVE_INFINITY) return NOT_FINITE_TEXT;
+  if (rounded === Number.NEGATIVE_INFINITY) return NEGATIVE_INFINITE_TEXT;
+  if (Object.is(rounded, -0)) return NEGATIVE_ZERO_TEXT;
+  return String(rounded);
+}
+
+/** Whether a value is left out of an object, as JSON.stringify leaves it out. */
+function omitted(value) {
+  return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+
+/** Writes `value` as JSON into `out`, every number as its f32 (§4.1). */
+function write(value, out, depth) {
+  if (depth > MAX_DEPTH) throw new Refusal(PhysicsError.BadCommand, Detail.TooDeep);
+  if (out.size > MAX_INPUT_CHARS) throw new Refusal(PhysicsError.OutOfRange, Detail.TooLarge);
+  const text = scalarText(value);
+  if (text !== undefined) {
+    out.parts.push(text);
+    out.size += text.length;
+    return;
+  }
+  if (Array.isArray(value)) {
+    writeArray(value, out, depth);
+    return;
+  }
+  writeObject(value, out, depth);
+}
+
+/** A scalar's JSON text, or `undefined` for an array or object. */
+function scalarText(value) {
+  if (value === null || omitted(value)) return "null";
+  switch (typeof value) {
+    case "number":
+      return numberText(value);
+    case "string":
+      return JSON.stringify(value);
+    case "boolean":
+      return value ? "true" : "false";
+    case "bigint":
+      throw new Refusal(PhysicsError.BadCommand, Detail.BigInt);
+    default:
+      return undefined;
+  }
+}
+
+function writeArray(items, out, depth) {
+  out.parts.push("[");
+  for (let index = 0; index < items.length; index += 1) {
+    if (index > 0) out.parts.push(",");
+    write(items[index], out, depth + 1);
+  }
+  out.parts.push("]");
+  out.size += items.length + 2;
+}
+
+function writeObject(object, out, depth) {
+  out.parts.push("{");
+  let first = true;
+  for (const name of Object.keys(object)) {
+    const item = object[name];
+    if (omitted(item)) continue;
+    out.parts.push(first ? "" : ",", JSON.stringify(name), ":");
+    out.size += name.length + 4;
+    first = false;
+    write(item, out, depth + 1);
+  }
+  out.parts.push("}");
+}
+
+/** `value` as JSON text with f32 numbers, or a failure value for one that cannot cross. */
+function encode(value) {
+  const out = { parts: [], size: 0 };
+  try {
+    write(value, out, 0);
+  } catch (error) {
+    if (error instanceof Refusal) return failure(error.code, error.detail);
+    return failure(PhysicsError.BadCommand, Detail.Unreadable);
+  }
+  if (out.size > MAX_INPUT_CHARS) return failure(PhysicsError.OutOfRange, Detail.TooLarge);
+  return { text: out.parts.join("") };
+}
+
+/** The static world's flat form (§6.5), every value as given (§17.7 checks float32s exactly). */
+function flattenStatic(world) {
+  const shapeOk =
+    world !== null && typeof world === "object" && Array.isArray(world.boxes) && Array.isArray(world.ramps);
+  if (!shapeOk || Object.keys(world).some((name) => name !== "boxes" && name !== "ramps")) {
+    return failure(PhysicsError.BadCommand, Detail.BadStatic);
+  }
+  if (world.boxes.length > STATIC_BOXES_MAX || world.ramps.length > STATIC_RAMPS_MAX) {
+    return failure(PhysicsError.OutOfRange, Detail.StaticCaps);
+  }
+  const boxes = flattenRows(world.boxes);
+  const ramps = flattenRows(world.ramps);
+  if (boxes === undefined || ramps === undefined) return failure(PhysicsError.BadCommand, Detail.BadStatic);
+  return { boxes, ramps };
+}
+
+/** Rows of numbers as lengths and values; `undefined` when a row is not an array of numbers. */
+function flattenRows(rows) {
+  const lengths = new Uint32Array(rows.length);
+  const values = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!Array.isArray(row) || row.some((value) => typeof value !== "number")) return undefined;
+    const kept = row.length > STATIC_ROW_PASS ? row.slice(0, STATIC_ROW_PASS) : row;
+    lengths[index] = kept.length;
+    values.push(...kept);
+  }
+  return { lengths, values: Float64Array.from(values) };
+}
+
+/** A key a read hands over: a string cut to at most `KEY_PASS_CHARS`, or `undefined` for a non-string. */
+function passedKey(key) {
+  if (typeof key !== "string") return undefined;
+  return key.length > KEY_PASS_CHARS ? key.slice(0, KEY_PASS_CHARS) : key;
+}
+
+function isWholeTick(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Worlds.
+
+const constructing = Symbol("World.create");
+const emptyStats = () => ({
+  tick: 0,
+  bodies: 0,
+  awake: 0,
+  colliders: 0,
+  joints: 0,
+  contactPairs: 0,
+  queriesThisStep: 0,
+  stepMs: 0,
+  memoryBytes: 0,
+});
+const emptyExport = () => ({ keys: [], data: new Float32Array(0) });
+const ids = new WeakMap();
+
+/** Frees a world its owner dropped without `free()`, when its instance is still the live one. */
+const finalizer = new FinalizationRegistry(({ id, generation }) => {
+  if (generation !== instance.generation) return;
+  guarded(
+    () => false,
+    (wasm) => wasm.world_free(id),
+  );
+});
+
+/** One physics world (§15). Make it with `World.create`; release it with `free()`. */
+export class World {
+  #id;
+  #generation;
+  #freed = false;
+  #desc;
+
+  constructor(token, id, desc) {
+    if (token !== constructing) throw new TypeError("use World.create(desc)");
+    this.#id = id;
+    this.#generation = instance.generation;
+    this.#desc = desc;
+    ids.set(this, id);
+    finalizer.register(this, { id, generation: this.#generation }, this);
+  }
+
+  /** Validates `desc` and makes a world (§4); a failure creates nothing. */
+  static create(desc) {
+    const refused = unavailable();
+    if (refused !== undefined) return refused;
+    const encoded = encode(desc);
+    if (encoded.text === undefined) return encoded;
+    return guarded(
+      () => failure(PhysicsError.Internal, Detail.Poisoned),
+      (wasm) => {
+        const made = JSON.parse(wasm.world_create(encoded.text));
+        if (!made.ok) return made;
+        const resolved = JSON.parse(wasm.world_desc(made.id));
+        return { ok: true, world: new World(constructing, made.id, resolved) };
+      },
+    );
+  }
+
+  /** Why this world cannot run a call, or `undefined`. */
+  #unusable() {
+    if (this.#freed) return failure(PhysicsError.Internal, Detail.Freed);
+    const refused = unavailable();
+    if (refused !== undefined) return refused;
+    if (this.#generation !== instance.generation) return failure(PhysicsError.Internal, Detail.Stale);
+    return undefined;
+  }
+
+  /** A call with a result: `internal` when unusable or if the instance traps in it. */
+  #result(fn) {
+    const refused = this.#unusable();
+    if (refused !== undefined) return refused;
+    return guarded(
+      () => failure(PhysicsError.Internal, Detail.Poisoned),
+      (wasm) => fn(wasm, this.#id),
+    );
+  }
+
+  /** A read with no error channel: `empty()` when unusable or if the instance traps in it. */
+  #read(empty, fn) {
+    if (this.#unusable() !== undefined) return empty();
+    return guarded(empty, (wasm) => fn(wasm, this.#id));
+  }
+
+  /** A call whose JSON text result is returned parsed. */
+  #json(fn) {
+    return this.#result((wasm, id) => JSON.parse(fn(wasm, id)));
+  }
+
+  /** One command in its JSON form (§7.3). */
+  #command(command) {
+    const encoded = encode(command);
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_command(id, encoded.text));
+  }
+
+  /** One query in its JSON form (§13). */
+  #query(query) {
+    const encoded = encode(query);
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_query(id, encoded.text));
+  }
+
+  /** `internal` when this world failed or cannot run calls, else `{ ok: true }` (§11.3). */
+  check() {
+    return this.#json((wasm, id) => wasm.world_check(id));
+  }
+
+  /** The resolved description, every default filled (§4); readable on a failed world too. */
+  desc() {
+    return structuredClone(this.#desc);
+  }
+
+  /** The tick counter: 0 until the first step. */
+  get tick() {
+    return this.#read(
+      () => 0,
+      (wasm, id) => wasm.world_tick(id),
+    );
+  }
+
+  addStaticWorld(world) {
+    const flat = flattenStatic(world);
+    if (flat.boxes === undefined) return flat;
+    const { boxes, ramps } = flat;
+    return this.#json((wasm, id) =>
+      wasm.world_add_static(id, boxes.lengths, boxes.values, ramps.lengths, ramps.values),
+    );
+  }
+
+  spawn(desc) {
+    return this.#command({ spawn: desc });
+  }
+
+  remove(key) {
+    return this.#command({ remove: { key } });
+  }
+
+  addJoint(desc) {
+    return this.#command({ addJoint: desc });
+  }
+
+  removeJoint(key) {
+    return this.#command({ removeJoint: { key } });
+  }
+
+  impulse(key, j, at) {
+    return this.#command({ impulse: { key, j, at } });
+  }
+
+  setVelocity(key, linvel, angvel) {
+    return this.#command({ setVelocity: { key, linvel, angvel } });
+  }
+
+  setPose(key, pose, options) {
+    if (options === undefined) return this.#command({ setPose: { key, pose } });
+    const optionsOk = options !== null && typeof options === "object" && !Array.isArray(options);
+    if (!optionsOk || Object.hasOwn(options, "key") || Object.hasOwn(options, "pose")) {
+      return failure(PhysicsError.BadCommand, Detail.BadOptions);
+    }
+    return this.#command({ setPose: { ...options, key, pose } });
+  }
+
+  setNextKinematicPose(key, pose) {
+    return this.#command({ setNextKinematicPose: { key, pose } });
+  }
+
+  areaPush(center, radius, strength, falloff, groups) {
+    return this.#command({ areaPush: { center, radius, strength, falloff, groups } });
+  }
+
+  setMotor(jointKey, motor) {
+    return this.#command({ setMotor: { key: jointKey, motor } });
+  }
+
+  wake(key) {
+    return this.#command({ wake: { key } });
+  }
+
+  sleep(key) {
+    return this.#command({ sleep: { key } });
+  }
+
+  /** Applies commands in order (§7.1): `"atomic"` all or none, `"each"` one result per command. */
+  apply(commands, mode) {
+    if (mode !== ApplyMode.Atomic && mode !== ApplyMode.Each) return failure(PhysicsError.BadCommand, Detail.BadMode);
+    const encoded = encode(commands);
+    if (encoded.text === undefined) return encoded;
+    const result = this.#json((wasm, id) => wasm.world_apply(id, encoded.text, mode === ApplyMode.Atomic));
+    if (mode === ApplyMode.Each && result.ok) return result.results;
+    return result;
+  }
+
+  /** Advances `dt` in `substeps` inner steps (§8); records its wall time for `stats().stepMs` (§11.4). */
+  step() {
+    return this.#result((wasm, id) => {
+      const start = performance.now();
+      const result = JSON.parse(wasm.world_step(id));
+      if (result.ok) wasm.world_record_step_ms(id, performance.now() - start);
+      return result;
+    });
+  }
+
+  body(key) {
+    const passed = passedKey(key);
+    if (passed === undefined) return null;
+    return this.#read(
+      () => null,
+      (wasm, id) => JSON.parse(wasm.world_body(id, passed)),
+    );
+  }
+
+  bodies(filter) {
+    const read = bodyFilter(filter);
+    if (read === undefined) return [];
+    return this.#read(
+      () => [],
+      (wasm, id) => JSON.parse(wasm.world_bodies(id, read.kinds, read.awakeOnly, read.since)),
+    );
+  }
+
+  exportChanged(sinceTick) {
+    if (!isWholeTick(sinceTick)) return emptyExport();
+    return this.#read(emptyExport, (wasm, id) => {
+      const keys = JSON.parse(wasm.world_export_changed(id, sinceTick));
+      const data = wasm.take_changed_data();
+      if (data.length !== keys.length * EXPORT_STRIDE) return emptyExport();
+      return { keys, data };
+    });
+  }
+
+  exportBodyState(key) {
+    const passed = passedKey(key);
+    if (passed === undefined) return null;
+    return this.#read(
+      () => null,
+      (wasm, id) => JSON.parse(wasm.world_export_body_state(id, passed)),
+    );
+  }
+
+  importBodyState(key, state) {
+    const passed = passedKey(key);
+    if (passed === undefined) return failure(PhysicsError.InvalidKey, "a key is a string");
+    const encoded = encode(state);
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_import_body_state(id, passed, encoded.text));
+  }
+
+  ray(origin, dir, maxDist, filter) {
+    return this.#query({ ray: { origin, dir, maxDist, filter } });
+  }
+
+  shapeCast(shape, pose, dir, maxDist, filter) {
+    return this.#query({ shapeCast: { shape, pose, dir, maxDist, filter } });
+  }
+
+  overlap(shape, pose, filter) {
+    return this.#query({ overlap: { shape, pose, filter } });
+  }
+
+  /** Runs one query in its JSON form (§13). */
+  query(query) {
+    return this.#query(query);
+  }
+
+  /** The opaque snapshot (§9.4); empty when the world failed. */
+  snapshot() {
+    return this.#read(
+      () => new Uint8Array(0),
+      (wasm, id) => wasm.world_snapshot(id) ?? new Uint8Array(0),
+    );
+  }
+
+  /** Replaces the whole world from a snapshot of the same build (§9.4). */
+  restore(bytes) {
+    if (!(bytes instanceof Uint8Array)) return failure(PhysicsError.BadSnapshot, Detail.NotSnapshot);
+    if (bytes.byteLength > MAX_SNAPSHOT_BYTES) return failure(PhysicsError.BadSnapshot, Detail.BigSnapshot);
+    const result = this.#json((wasm, id) => wasm.world_restore(id, bytes));
+    if (result.ok) {
+      this.#desc =
+        this.#read(
+          () => undefined,
+          (wasm, id) => JSON.parse(wasm.world_desc(id)),
+        ) ?? this.#desc;
+    }
+    return result;
+  }
+
+  /** 16 lowercase hex digits (§10.1); empty when the world failed. */
+  stateHash() {
+    return this.#read(
+      () => "",
+      (wasm, id) => wasm.world_state_hash(id),
+    );
+  }
+
+  /** 16 lowercase hex digits (§10.2); empty when the world failed. */
+  physicsHash() {
+    return this.#read(
+      () => "",
+      (wasm, id) => wasm.world_physics_hash(id),
+    );
+  }
+
+  /** The world's counters (§11); zeros when the world failed. */
+  stats() {
+    return this.#read(emptyStats, (wasm, id) => JSON.parse(wasm.world_stats(id)) ?? emptyStats());
+  }
+
+  /** Releases the world's memory. Every later call on it fails with `internal`. */
+  free() {
+    if (this.#freed) return;
+    this.#freed = true;
+    finalizer.unregister(this);
+    if (this.#generation !== instance.generation) return;
+    guarded(
+      () => false,
+      (wasm) => wasm.world_free(this.#id),
+    );
+  }
+}
+
+/** A `bodies()` filter (§9.1) as the export takes it, or `undefined` for a malformed one. */
+function bodyFilter(filter) {
+  if (filter === undefined) return { kinds: undefined, awakeOnly: false, since: NO_TICK };
+  if (filter === null || typeof filter !== "object") return undefined;
+  const known = Object.keys(filter).every((name) => ["kinds", "awakeOnly", "changedSinceTick"].includes(name));
+  const { kinds, awakeOnly = false, changedSinceTick } = filter;
+  const kindsOk = kinds === undefined || (Array.isArray(kinds) && kinds.every((kind) => typeof kind === "string"));
+  const tickOk = changedSinceTick === undefined || isWholeTick(changedSinceTick);
+  if (!(known && kindsOk && tickOk && typeof awakeOnly === "boolean")) return undefined;
+  const since = changedSinceTick ?? NO_TICK;
+  return { kinds: kinds === undefined ? undefined : JSON.stringify(kinds), awakeOnly, since };
+}
+
+/** Internal, for this package's own tests: a world's id in the instance. */
+export function worldId(world) {
+  return ids.get(world);
+}
+
+/** Internal, for this package's own tests: the live instance's health. */
+export function instanceState() {
+  return { ready: instance.ready, generation: instance.generation, poisoned: instance.poisoned };
+}
+
+/** Internal, for this package's own tests: runs `fn` on the glue under the trap guard. */
+export function guardedForTests(fallback, fn) {
+  return guarded(fallback, fn);
+}

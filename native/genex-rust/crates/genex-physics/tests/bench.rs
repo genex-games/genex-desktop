@@ -4,6 +4,9 @@
 //! substeps 1` and `dt 1/20, substeps 3`, and holds them against the owner's meter (§11.4, option
 //! (a)): a mean of at most 1 ms per 1/60 s of simulated time, and at most 8 ms per 1/60 s in any
 //! one tick.
+//! It also prints how long building the scene took (the static world, every spawn and joint) and
+//! the stateHash the run ends on, which `scripts/physics-wasm-bench.ts` runs the same scene against
+//! in the WASM build (`@genex-ai/physics`) for the Node-vs-native numbers and a cross-target check.
 //!
 //! The scene: a z-up world at default limits on a static floor; 512 bodies in one dense heap
 //! (boxes, balls, hulls and capsules, every fifth with contact events), 64 of them paired by ball
@@ -118,7 +121,9 @@ fn corrections(w: &mut World) {
 
 fn run(dt: f64, substeps: f64, correct: bool) {
     let ticks_per_second = (1.0 / dt).round() as u64;
+    let built = Instant::now();
     let mut w = scene(dt, substeps);
+    let build_ms = built.elapsed().as_secs_f64() * 1e3;
     let warmup = (WARMUP_SECONDS / dt).round() as u64;
     let measured = (MEASURED_SECONDS / dt).round() as u64;
     let (mut steps, mut ticks) = (Vec::new(), Vec::new());
@@ -159,6 +164,7 @@ fn run(dt: f64, substeps: f64, correct: bool) {
         pairs as f64 / measured as f64,
         stats.memory_bytes
     );
+    println!("  scene built (static world, {BODIES} spawns, {JOINTS} joints) in {build_ms:.3} ms");
     println!("  per step: mean {s_mean:.3} ms, p99 {s_p99:.3} ms, worst {s_max:.3} ms");
     println!("  per tick: mean {t_mean:.3} ms, p99 {t_p99:.3} ms, worst {t_max:.3} ms");
     let (mean_meter, worst_meter) = (t_mean * per_sixtieth, t_max * per_sixtieth);
@@ -168,6 +174,7 @@ fn run(dt: f64, substeps: f64, correct: bool) {
         verdict(mean_meter <= METER_MEAN_MS),
         verdict(worst_meter <= METER_TICK_MS)
     );
+    println!("  stateHash after the run {}", w.state_hash_hex());
 }
 
 #[test]

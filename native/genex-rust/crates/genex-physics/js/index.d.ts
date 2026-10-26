@@ -288,7 +288,13 @@ export declare function init(input?: { module?: WebAssembly.Module | BufferSourc
 /** This build's identity (§2), e.g. `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+wasm32`. */
 export declare function buildId(): string;
 
-/** One physics world. Make it with `World.create`; release it with `free()`. */
+/**
+ * One physics world. Make it with `World.create`; release it with `free()`.
+ *
+ * If the WASM instance traps (§11.3), every call with a `Result` returns `internal` on every world,
+ * and the reads with no error channel return their empty forms (`null`, `[]`, an empty export or
+ * snapshot, zero stats, `""` hashes, tick 0); `check()` names the failure. `desc()` stays readable.
+ */
 export declare class World {
   private constructor();
   /** Validates `desc` and makes a world (§4); a failure creates nothing. */
@@ -297,6 +303,8 @@ export declare class World {
   desc(): Required<Omit<WorldDesc, "limits" | "solver">> & { limits: Limits; solver: { iterations: number } };
   /** The world's tick counter: 0 until the first step. */
   readonly tick: number;
+  /** `internal` when the world failed, was freed or its instance trapped (§11.3), else `{ ok: true }`. */
+  check(): Result;
 
   addStaticWorld(world: StaticWorld): Result;
   spawn(desc: BodyDesc): Result;
@@ -331,7 +339,7 @@ export declare class World {
   /** Runs one query in its JSON form (§13). */
   query(query: Query): Result<QueryAnswer>;
 
-  /** The opaque snapshot (§9.4). */
+  /** The opaque snapshot (§9.4); empty when the world failed (§11.3). */
   snapshot(): Uint8Array;
   /** Replaces the whole world from a snapshot of the same build (§9.4). */
   restore(bytes: Uint8Array): Result;

@@ -141,6 +141,9 @@ crates from `node scripts/toolchains/rust-release.ts tree --out .studio-dev/rust
 budget; the raylib comparison needs `GENEX_RAYLIB_BENCH_RECORD`, and
 `GENEX_REQUIRE_RAYLIB_BASELINE=1` fails without it). Run cargo only through `node scripts/toolchains/rust-env.ts -- cargo …` with
 one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check free disk first.
+`physics-wasm-real` loads the `@genex-ai/physics` test build (`node scripts/physics-wasm.ts --test`, the
+`test-trap` flavour) in Node 24: every method, hostile inputs, memory per world, every conformance vector in
+wasm32 and the §11.3 poison rule; it skips without that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`.
 `rust-examples-web` holds each example game's genex.toml switches to the genex features its
 Cargo.toml names; with `GENEX_EXAMPLES_WEB=1` it also builds every web example alone (one cargo
 run each, so no feature unification) in the export flavour and fails one over 4 MiB gzip.

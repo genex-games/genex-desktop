@@ -40,6 +40,8 @@ members = [
   # Genex Physics (contract 1.0, crates/genex-physics/CONTRACT.md): the deterministic Layer 1 core
   # shared with genex-demo's authority host, Rapier its first backend behind an internal trait.
   "crates/genex-physics",
+  # Its WebAssembly binding: the wasm-bindgen exports under the @genex-ai/physics npm package.
+  "crates/genex-physics-wasm",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
@@ -228,3 +230,11 @@ incremental = false
 [profile.release]
 codegen-units = 1
 lto = "thin"
+
+# The @genex-ai/physics WebAssembly module (`scripts/physics-wasm.ts`): release with fat LTO, at
+# opt-level 3 for the authority host's speed. Measured on the worst-case heap (lane P2): opt-level
+# "z" is 739 KB gzipped against this 1.07 MB, but steps 3.7x slower; "s" is 920 KB and 2.4x slower.
+[profile.wasm-physics]
+inherits = "release"
+opt-level = 3
+lto = "fat"

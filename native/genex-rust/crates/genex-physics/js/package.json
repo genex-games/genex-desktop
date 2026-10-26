@@ -1,0 +1,37 @@
+{
+  "name": "@genex-ai/physics",
+  "version": "0.1.0",
+  "description": "Genex Physics (contract 1.0): a deterministic, key-addressed physics world in WebAssembly for Node 24 and evergreen browsers, with errors as values.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "./node.js"
+  ],
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "node": "./node.js",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "node.js",
+    "core.js",
+    "index.d.ts",
+    "README.md",
+    "CONTRACT.md",
+    "wasm/genex_physics_wasm.js",
+    "wasm/genex_physics_wasm_bg.wasm"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/genex-games/genex-desktop",
+    "directory": "native/genex-rust/crates/genex-physics/js"
+  }
+}
