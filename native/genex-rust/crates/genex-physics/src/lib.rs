@@ -23,6 +23,16 @@
 //! in declaration order (`NonFinite` before `OutOfRange` for one number; `BadShape`, then
 //! `DynamicMesh`, for one shape), duplicate collider keys, then the world's checks: `DuplicateKey`,
 //! `LimitBodies`, `LimitColliders`, `LimitHullVertices`, `LimitTriangles`, `LimitCcd`, `LimitMemory`.
+//! Other commands follow the same shape: key syntax, numbers, then `UnknownKey`, `WrongBodyType`,
+//! `DuplicateKey` and the `Limit*` codes (`core::ops`). The static world checks `upAxis`, then
+//! §17.7's rules, then `DuplicateKey`, `LimitStatic` and `LimitMemory` (`static_world`).
+//!
+//! # Joints
+//!
+//! A joint's coordinate is `a` relative to `b` (or to the world when `b` is `None`): a positive
+//! hinge angle or motor velocity turns `a` about `+axis` right-handedly, and a slider position is
+//! `a`'s anchor along `+axis` from `b`'s. A fixed joint holds the two bodies' local axes parallel.
+//! The readings of `axis`, `limits` and `motor` the contract leaves open are listed in `joint`.
 
 mod axes;
 mod backend;
