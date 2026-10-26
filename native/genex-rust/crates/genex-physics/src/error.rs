@@ -135,6 +135,11 @@ impl PhysicsFailure {
     pub fn new(code: PhysicsError, detail: impl Into<String>) -> Self {
         Self { code, index: None, detail: detail.into() }
     }
+
+    /// The same failure naming command `index` of an atomic batch (§7.1).
+    pub fn at(self, index: usize) -> Self {
+        Self { index: Some(index), ..self }
+    }
 }
 
 impl fmt::Display for PhysicsFailure {

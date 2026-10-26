@@ -4,6 +4,7 @@
 
 pub(crate) mod rapier;
 
+use crate::joint::JointSpec;
 use crate::types::{Axis, BodyType};
 
 /// The backend this build links.
@@ -99,10 +100,27 @@ pub(crate) enum BackendRefusal {
     BadShape,
 }
 
+/// A command's effect on one body, in the core's frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BodyEdit {
+    /// A linear impulse, with its torque when applied at a world point; wakes the body.
+    Impulse { j: [f32; 3], at: Option<[f32; 3]> },
+    /// Sets the given velocities; wakes the body.
+    Velocity { linvel: Option<[f32; 3]>, angvel: Option<[f32; 3]> },
+    /// A teleport.
+    Teleport { translation: [f32; 3], rotation: [f32; 4], reset_velocity: bool, wake: bool },
+    /// Wakes the body.
+    Wake,
+    /// Puts the body to sleep, its velocities zero.
+    Sleep,
+}
+
 /// A physics engine under the neutral layer.
 pub(crate) trait Backend: Sized {
     /// The backend's handle for one body.
-    type Body: Copy;
+    type Body: Copy + PartialEq;
+    /// The backend's handle for one joint.
+    type Joint: Copy;
     /// The `<backend>` part of the buildId.
     const NAME: &'static str;
     /// The `<backend version>` part.
@@ -112,16 +130,32 @@ pub(crate) trait Backend: Sized {
 
     /// An empty world.
     fn create(params: &StepParams) -> Self;
+    /// Whether the backend can build every shape of `spec`; touches nothing.
+    fn check(&self, spec: &BodySpec) -> Result<(), BackendRefusal>;
     /// Inserts a body and its colliders; a refusal inserts nothing.
     fn insert(&mut self, spec: &BodySpec) -> Result<Self::Body, BackendRefusal>;
-    /// Removes a body and its colliders.
+    /// Removes a body, its colliders and its joints.
     fn remove(&mut self, body: Self::Body);
-    /// Advances one inner step.
-    fn step(&mut self);
+    /// Applies a command's effect to a simulated (not frozen) body.
+    fn edit(&mut self, body: Self::Body, edit: BodyEdit);
+    /// Sets a kinematic body's velocities for the next inner step.
+    fn drive(&mut self, body: Self::Body, linvel: [f32; 3], angvel: [f32; 3]);
+    /// Places a kinematic body exactly, keeping its velocities.
+    fn place(&mut self, body: Self::Body, translation: [f32; 3], rotation: [f32; 4]);
+    /// Advances one inner step; returns the bodies whose state went non-finite in it.
+    fn step(&mut self) -> Vec<Self::Body>;
     /// A body's state.
     fn state(&self, body: Self::Body) -> RawBodyState;
     /// Freezes a body at a pose: velocities zero, out of the simulation, never woken (§8.2).
     fn freeze(&mut self, body: Self::Body, translation: [f32; 3], rotation: [f32; 4]);
+    /// Returns a frozen body to the simulation as `body_type`, asleep and still.
+    fn unfreeze(&mut self, body: Self::Body, body_type: BodyType);
+    /// Joins `a` to `b`, or to the world when `b` is `None`.
+    fn insert_joint(&mut self, a: Self::Body, b: Option<Self::Body>, spec: &JointSpec) -> Self::Joint;
+    /// Removes a joint.
+    fn remove_joint(&mut self, joint: Self::Joint);
+    /// Replaces a joint's motor with the one in `spec`.
+    fn set_motor(&mut self, joint: Self::Joint, spec: &JointSpec);
     /// The number of contact pairs the backend holds, for memory accounting.
     fn contact_pairs(&self) -> usize;
 }

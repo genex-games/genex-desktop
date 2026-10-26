@@ -21,6 +21,8 @@ pub const TRIMESH_VERTEX_BYTES: u64 = 24;
 pub const TRIMESH_TRIANGLE_BYTES: u64 = 64;
 /// One heightfield sample: the height and its cell status.
 pub const HEIGHTFIELD_SAMPLE_BYTES: u64 = 8;
+/// One joint: the backend's joint, its solver rows and the core's entry.
+pub const JOINT_BYTES: u64 = 512;
 /// One contact pair: the narrow phase's pair, its manifold and solver contact.
 pub const CONTACT_PAIR_BYTES: u64 = 768;
 
@@ -40,4 +42,9 @@ pub(crate) fn body_bytes(colliders: usize, key_bytes: usize, facts: &ShapeFacts)
 /// The modelled bytes of `pairs` contact pairs.
 pub(crate) fn contact_bytes(pairs: usize) -> u64 {
     CONTACT_PAIR_BYTES * pairs as u64
+}
+
+/// The modelled bytes of one joint with a key of `key_bytes`.
+pub(crate) fn joint_bytes(key_bytes: usize) -> u64 {
+    JOINT_BYTES + key_bytes as u64
 }

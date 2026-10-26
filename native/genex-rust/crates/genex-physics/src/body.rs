@@ -254,6 +254,11 @@ fn velocity(value: Option<Vec3>, body_type: BodyType, what: &str, max: f32) -> R
     if body_type != BodyType::Dynamic {
         return fail(PhysicsError::OutOfRange, format!("{what} is for dynamic bodies only"));
     }
+    bounded_speed(v, what, max)
+}
+
+/// A velocity a command sets (§4.1): finite, and at most `max` in length.
+pub(crate) fn bounded_speed(v: Vec3, what: &str, max: f32) -> Result<[f32; 3], PhysicsFailure> {
     let v = finite_vec(v, what)?;
     if length_squared(v) > f64::from(max) * f64::from(max) {
         return fail(PhysicsError::OutOfRange, format!("{what} is above its limit"));
@@ -302,7 +307,8 @@ fn mass(desc: &ColliderDesc) -> Result<MassSpec, PhysicsFailure> {
     }
 }
 
-fn group(value: Option<f64>, what: &str) -> Result<u16, PhysicsFailure> {
+/// A 16-bit group mask (§6.2); absent is all groups.
+pub(crate) fn group(value: Option<f64>, what: &str) -> Result<u16, PhysicsFailure> {
     let mask = value.map_or(Ok(GROUPS_ALL), |v| integer(v, what, 0, GROUPS_ALL))?;
     Ok(mask as u16)
 }
