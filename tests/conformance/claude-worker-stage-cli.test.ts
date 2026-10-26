@@ -6,8 +6,10 @@ import { MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
 import type { InstallerRun } from "../../src/substrate/cli-installer.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
-/** The whole self test's limit in `run-electron-e2e.mjs`, which the CLI's install must report inside. */
-const SELF_TEST_MS = 8 * MINUTE_MS;
+/** The whole self test's limit with this stage (`run-electron-e2e.mjs`), which the install must report inside. */
+const SELF_TEST_MS = 10 * MINUTE_MS;
+/** What the stage needs after the install, its worker's turn included, as the canary measured it. */
+const AFTER_INSTALL_MS = 3 * MINUTE_MS;
 
 /** A fetch that serves a stand-in installer script for any URL. */
 const serving: typeof fetch = (async (input: string | URL | Request) => {
@@ -29,7 +31,10 @@ test("a stalled Claude install is reported inside the self test, with how long i
   const cli = await stageCli(home, { fetch: serving, run: stalls, now: () => clock });
 
   assert.equal(cli.path, null);
-  assert.ok(allowed > 0 && allowed <= SELF_TEST_MS / 2, `the install gets ${allowed} ms, well inside the self test`);
+  assert.ok(
+    allowed > 0 && allowed <= SELF_TEST_MS - AFTER_INSTALL_MS,
+    `the install gets ${allowed} ms, inside the self test`,
+  );
   assert.match(cli.detail, new RegExp(`^${CliInstallProblem.TimedOut} after ${allowed / SECOND_MS} s: `));
   assert.match(cli.detail, /Setting up Claude Code\.\.\./);
 });

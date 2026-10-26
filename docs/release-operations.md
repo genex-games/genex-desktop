@@ -132,8 +132,10 @@ installed app until the self test's sandboxed chat turn has reported (`scripts/c
 when the release's runner has the stage, the run adds `--claude-worker`: one Loop worker on the real
 Claude Code CLI (the vendor's installer puts it in a home of the stage's own), its model a scripted Anthropic
 stand-in (`tests/helpers/fake-anthropic.ts`, a dummy token, nothing billed), must run its turn
-unrefused and write its folder from Genex's sandbox (`smoke/claude-worker-check.ts`). The vendor's installer gets 4 minutes there, inside the self test's 8, so a stalled install
-reports how long it ran and what it last printed; every install says how long it took. Machines:
+unrefused and write its folder from Genex's sandbox (`smoke/claude-worker-check.ts`). The vendor's installer gets 6 minutes there, inside the self test's 10 (8 without the stage):
+Defender scanning its 283 MB executable takes 154 to 270 s on the two-core Windows 10 VM. A stalled
+install reports how long it ran, what it printed and at which second, and how long it had been
+silent; every install says how long it took. Machines:
 macOS 26 and 15, Ubuntu 26.04 and 24.04 and Windows Server 2025 on GitHub-hosted runners, Fedora
 (install and repository only, in a container), and with `CANARY_AZURE=on` Windows 11 and 10 on
 Azure VMs made for the run and deleted after it. Every Windows machine starts Genex as its

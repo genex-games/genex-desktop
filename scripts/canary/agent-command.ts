@@ -35,8 +35,8 @@ export const CLAUDE_WORKER_CHECKS = [
 const CLAUDE_WORKER_SWITCH = "--claude-worker";
 const SELFTEST_LINE = /^\[selftest\] (PASS|FAIL) (.+?)(?:: (.*))?$/gm;
 /**
- * The self test's own limit is 8 minutes; the agent checks come in its first few, and the Claude
- * worker's after them, its CLI download included.
+ * The self test's own limit is 10 minutes with the Claude worker; the agent checks come in its
+ * first few, and the Claude worker's after them, its CLI download included.
  */
 const AGENT_COMMAND_TIMEOUT_MS = 15 * MINUTE_MS;
 

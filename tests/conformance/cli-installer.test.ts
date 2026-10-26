@@ -7,6 +7,7 @@ import {
   installerCommand,
   installerSource,
   type InstallerRun,
+  stampOutput,
 } from "../../src/substrate/cli-installer.ts";
 import { CliInstallProblem } from "../../src/shared/cli-install.ts";
 import type { CodingProvider } from "../../src/shared/coding-cli.ts";
@@ -223,4 +224,40 @@ test("an installer that fails or hangs is reported with its last words, and a hu
   assert.ok(Date.now() - started < 10_000, "the hung installer was not waited on");
   assert.equal(existsSync(marker), false);
   assert.deepEqual(readdirSync(tmpRoot), []);
+});
+
+test("an installer's output is stamped with the second each line came in, split lines stamped once", () => {
+  assert.equal(stampOutput("Downloading\nSetting up", 3, true), "[3 s] Downloading\n[3 s] Setting up");
+  assert.equal(stampOutput(" Claude Code...\n", 9, false), " Claude Code...\n");
+  assert.equal(stampOutput("done\n", 12, true), "[12 s] done\n");
+});
+
+test("a stopped installer says when it last printed and how long it was silent, or that it printed nothing", {
+  skip: POSIX_ONLY,
+}, async () => {
+  const tmpRoot = await tmpDir("cli-installer-");
+  // Each reading of the clock is 5 s on: the run starts, the line arrives, the stop comes.
+  let clock = 0;
+  const now = () => (clock += 5_000) - 5_000;
+  const talked = await installCodingCli("codex", {
+    platform: process.platform,
+    env: PARENT,
+    fetch: serving("#!/bin/sh\necho 'Setting up Claude Code...'\nsleep 30\n"),
+    tmpRoot,
+    timeoutMs: 1_000,
+    now,
+  });
+  assert.equal(!talked.ok && talked.problem, CliInstallProblem.TimedOut);
+  assert.match(!talked.ok ? talked.detail : "", /\[5 s\] Setting up Claude Code\.\.\. \(silent for its last 5 s\)$/);
+
+  clock = 0;
+  const silent = await installCodingCli("codex", {
+    platform: process.platform,
+    env: PARENT,
+    fetch: serving("#!/bin/sh\nsleep 30\n"),
+    tmpRoot,
+    timeoutMs: 300,
+    now,
+  });
+  assert.match(!silent.ok ? silent.detail : "", /\(it printed nothing\) \(silent for its last 5 s\)$/);
 });

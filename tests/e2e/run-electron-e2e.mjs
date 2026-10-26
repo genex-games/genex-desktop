@@ -31,6 +31,10 @@ const givenUserData = process.argv.find((arg) => arg.startsWith("--userdata="))?
 // scripted Anthropic stand-in below (the release canary asks for it; it needs a machine that has
 // or may install the CLI).
 const claudeWorker = process.argv.includes("--claude-worker");
+// The self test's limit. The Claude worker's stage installs the real CLI first, which on a
+// two-core Windows PC with Defender scanning its 283 MB executable took 154 to 270 s
+// (`smoke/claude-worker-check.ts`), so that run gets the time the install needs on top.
+const SELF_TEST_MINUTES = claudeWorker ? 10 : 8;
 
 /** A small but real game: keeps the studio contract, adds its own probe. */
 const GAME_SOURCE = `import * as THREE from "three";
@@ -384,9 +388,9 @@ child.stderr.on("data", (chunk) => process.stderr.write(chunk));
 
 const code = await new Promise((resolve) => {
   const timer = setTimeout(() => {
-    console.error("\ne2e timed out after 8 minutes — killing electron");
+    console.error(`\ne2e timed out after ${SELF_TEST_MINUTES} minutes — killing electron`);
     child.kill("SIGKILL");
-  }, 8 * 60_000);
+  }, SELF_TEST_MINUTES * 60_000);
   child.on("exit", (exitCode) => {
     clearTimeout(timer);
     resolve(exitCode ?? 1);
