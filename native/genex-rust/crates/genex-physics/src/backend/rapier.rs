@@ -371,13 +371,22 @@ impl Backend for RapierBackend {
         self.mark_stale(body);
     }
 
-    /// Rapier quarantines a body whose state went non-finite (disabled, rolled back, still); the
-    /// core reads that as §8.2's non-finite case.
+    /// Rapier quarantines a body whose state went non-finite (disabled, rolled back, still), and
+    /// disables a collider whose bounds went non-finite; the core reads either as §8.2's
+    /// non-finite case of the body that owns it.
     fn step(&mut self) -> InnerStep<Self::Body, Self::Pair> {
         self.stale.clear();
         let collector = Collector::default();
         self.world.step_with_events(&(), &collector);
-        InnerStep { non_finite: self.world.quarantine().bodies().to_vec(), events: collector.take() }
+        let quarantine = self.world.quarantine();
+        let mut non_finite = quarantine.bodies().to_vec();
+        let owners = quarantine.colliders().iter().filter_map(|handle| self.world.colliders.get(*handle)?.parent());
+        for owner in owners {
+            if !non_finite.contains(&owner) {
+                non_finite.push(owner);
+            }
+        }
+        InnerStep { non_finite, events: collector.take() }
     }
 
     fn pair_impulse(&self, pair: Self::Pair) -> f32 {
@@ -461,3 +470,53 @@ impl Backend for RapierBackend {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params() -> StepParams {
+        StepParams { gravity: [0.0, -9.81, 0.0], inner_dt: 1.0 / 60.0, length_unit: 1.0, solver_iterations: 4 }
+    }
+
+    fn crate_spec() -> BodySpec {
+        let collider = ColliderSpec {
+            shape: ShapeSpec::Cuboid { half: [0.5; 3] },
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            mass: MassSpec::Density(1.0),
+            friction: 0.5,
+            restitution: 0.0,
+            member: u16::MAX,
+            collides: u16::MAX,
+            sensor: false,
+            events: false,
+        };
+        BodySpec {
+            body_type: BodyType::Dynamic,
+            translation: [0.0, 2.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            linvel: [0.0; 3],
+            angvel: [0.0; 3],
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+            gravity_scale: 1.0,
+            locked_rotations: [false; 3],
+            ccd: false,
+            can_sleep: true,
+            colliders: vec![collider],
+        }
+    }
+
+    #[test]
+    fn a_body_whose_collider_goes_non_finite_is_reported_non_finite() {
+        let mut backend = RapierBackend::create(&params());
+        let body = backend.insert(&crate_spec(), 0).expect("inserts");
+        assert!(backend.step().non_finite.is_empty());
+        let handle = backend.world.bodies.get(body).expect("there").colliders()[0];
+        let collider = backend.world.colliders.get_mut(handle).expect("there");
+        collider.set_translation_wrt_parent(Vector::new(f32::NAN, 0.0, 0.0));
+        let report = backend.step();
+        assert_eq!(report.non_finite, vec![body], "its collider was quarantined, so the body is non-finite (§8.2)");
+    }
+}

@@ -1,5 +1,11 @@
 //! Shape validation (CONTRACT.md §6.2, §6.3): numbers, degenerate shapes (`BadShape`), and each
 //! shape in the core's Y-up frame, the heightfield's rows reversed for `upAxis: "z"`.
+//!
+//! Sizes are bounded as positions are (§4.1): a half-extent, radius, half-height, hull point or
+//! trimesh vertex is at most `limits.worldExtent` per axis, a heightfield at most twice that wide
+//! and each of its scaled heights at most `worldExtent`; past that, `OutOfRange`. A shape too big
+//! for f32 arithmetic would otherwise reach the backend, which quietly disables a collider whose
+//! bounds go non-finite.
 
 use crate::axes::{axis_in, extent_in, vec_in};
 use crate::backend::ShapeSpec;
@@ -38,16 +44,17 @@ pub(crate) fn validate_shape(
     limits: &Limits,
     facts: &mut ShapeFacts,
 ) -> Result<ShapeSpec, PhysicsFailure> {
+    let max = limits.world_extent;
     match shape {
-        Shape::Box { half } => Ok(ShapeSpec::Cuboid { half: extent_in(up, sizes(*half, "half")?) }),
-        Shape::Sphere { radius } => Ok(ShapeSpec::Ball { radius: extent(*radius, "radius")? }),
+        Shape::Box { half } => Ok(ShapeSpec::Cuboid { half: extent_in(up, sizes(*half, "half", max)?) }),
+        Shape::Sphere { radius } => Ok(ShapeSpec::Ball { radius: extent(*radius, "radius", max)? }),
         Shape::Capsule { half_height, radius, axis } => {
-            let half_height = non_negative(*half_height, "halfHeight")?;
-            let radius = extent(*radius, "radius")?;
+            let half_height = within(non_negative(*half_height, "halfHeight")?, "halfHeight", max)?;
+            let radius = extent(*radius, "radius", max)?;
             Ok(ShapeSpec::Capsule { half_height, radius, axis: axis_in(up, *axis) })
         }
-        Shape::Hull { points } => hull(points, up, facts),
-        Shape::Trimesh { vertices, indices } => trimesh(vertices, indices, up, facts),
+        Shape::Hull { points } => hull(points, up, max, facts),
+        Shape::Trimesh { vertices, indices } => trimesh(vertices, indices, up, max, facts),
         Shape::Heightfield { rows, cols, heights, size } => {
             heightfield(HeightfieldDesc { rows: *rows, cols: *cols, heights, size: *size }, up, limits, facts)
         }
@@ -55,29 +62,45 @@ pub(crate) fn validate_shape(
 }
 
 /// A size that must be above 0: negative is `OutOfRange`, zero `BadShape`.
-fn extent(x: f64, what: &str) -> Result<f32, PhysicsFailure> {
-    let value = non_negative(x, what)?;
+fn extent(x: f64, what: &str, max: f32) -> Result<f32, PhysicsFailure> {
+    let value = within(non_negative(x, what)?, what, max)?;
     if value == 0.0 {
         return fail(PhysicsError::BadShape, format!("{what} is zero"));
     }
     Ok(value)
 }
 
-/// Three sizes that must each be above 0.
-fn sizes(v: Vec3, what: &str) -> Result<[f32; 3], PhysicsFailure> {
-    let values = [non_negative(v[0], what)?, non_negative(v[1], what)?, non_negative(v[2], what)?];
+/// `value` when it is at most `max`, else `OutOfRange`.
+fn within(value: f32, what: &str, max: f32) -> Result<f32, PhysicsFailure> {
+    if value > max {
+        return fail(PhysicsError::OutOfRange, format!("{what} is above limits.worldExtent"));
+    }
+    Ok(value)
+}
+
+/// Three sizes that must each be above 0 and at most `max`.
+fn sizes(v: Vec3, what: &str, max: f32) -> Result<[f32; 3], PhysicsFailure> {
+    let size = |x: f64| within(non_negative(x, what)?, what, max);
+    let values = [size(v[0])?, size(v[1])?, size(v[2])?];
     if values.contains(&0.0) {
         return fail(PhysicsError::BadShape, format!("{what} has a zero extent"));
     }
     Ok(values)
 }
 
-fn points_in(points: &[Vec3], up: UpAxis, what: &str) -> Result<Vec<[f32; 3]>, PhysicsFailure> {
-    points.iter().map(|p| Ok(vec_in(up, finite_vec(*p, what)?))).collect()
+fn points_in(points: &[Vec3], up: UpAxis, what: &str, max: f32) -> Result<Vec<[f32; 3]>, PhysicsFailure> {
+    let point = |p: &Vec3| {
+        let p = finite_vec(*p, what)?;
+        if p.iter().any(|c| c.abs() > max) {
+            return fail(PhysicsError::OutOfRange, format!("{what} lies outside limits.worldExtent"));
+        }
+        Ok(vec_in(up, p))
+    };
+    points.iter().map(point).collect()
 }
 
-fn hull(points: &[Vec3], up: UpAxis, facts: &mut ShapeFacts) -> Result<ShapeSpec, PhysicsFailure> {
-    let points = points_in(points, up, "hull point")?;
+fn hull(points: &[Vec3], up: UpAxis, max: f32, facts: &mut ShapeFacts) -> Result<ShapeSpec, PhysicsFailure> {
+    let points = points_in(points, up, "hull point", max)?;
     if points.len() < HULL_POINTS_MIN || is_flat(&points) {
         return fail(PhysicsError::BadShape, "a hull needs 4 points that are not all in one plane");
     }
@@ -90,9 +113,10 @@ fn trimesh(
     vertices: &[Vec3],
     indices: &[[f64; 3]],
     up: UpAxis,
+    max: f32,
     facts: &mut ShapeFacts,
 ) -> Result<ShapeSpec, PhysicsFailure> {
-    let vertices = points_in(vertices, up, "trimesh vertex")?;
+    let vertices = points_in(vertices, up, "trimesh vertex", max)?;
     let last = u32::try_from(vertices.len()).unwrap_or(u32::MAX).checked_sub(1);
     let mut triangles = Vec::with_capacity(indices.len());
     for triangle in indices {
@@ -143,13 +167,66 @@ fn heightfield(
         return fail(PhysicsError::OutOfRange, "heights does not hold rows × cols values");
     }
     let heights: Vec<f32> = desc.heights.iter().map(|h| finite(*h, "height")).collect::<Result<_, _>>()?;
-    let scale = extent_in(up, sizes(desc.size, "size")?);
+    let max = limits.world_extent;
+    let size = sizes(desc.size, "size", 2.0 * max)?;
+    let up_scale = f64::from(size[up_index(up)]);
+    if heights.iter().any(|h| (f64::from(*h) * up_scale).abs() > f64::from(max)) {
+        return fail(PhysicsError::OutOfRange, "a scaled height lies outside limits.worldExtent");
+    }
+    let scale = extent_in(up, size);
     facts.heightfield_samples += samples;
     let heights = match up {
         UpAxis::Y => heights,
         UpAxis::Z => reverse_rows(&heights, cols),
     };
     Ok(ShapeSpec::Heightfield { rows, cols, heights, scale })
+}
+
+/// The index of the caller's up axis in a size vector.
+fn up_index(up: UpAxis) -> usize {
+    match up {
+        UpAxis::Y => 1,
+        UpAxis::Z => 2,
+    }
+}
+
+/// How far a shape reaches from its own origin and the volume of its bounding box, in f64: the
+/// bounds a collider's mass and inertia are judged by (`body`).
+pub(crate) fn reach_and_volume(shape: &ShapeSpec) -> (f64, f64) {
+    let wide = |v: [f32; 3]| v.map(f64::from);
+    match shape {
+        ShapeSpec::Cuboid { half } => {
+            let h = wide(*half);
+            (norm_squared(h).sqrt(), 8.0 * h[0] * h[1] * h[2])
+        }
+        ShapeSpec::Ball { radius } => {
+            let r = f64::from(*radius);
+            (r, 8.0 * r * r * r)
+        }
+        ShapeSpec::Capsule { half_height, radius, .. } => {
+            let (h, r) = (f64::from(*half_height), f64::from(*radius));
+            (h + r, 4.0 * r * r * (2.0 * h + 2.0 * r))
+        }
+        ShapeSpec::Hull { points, .. } => cloud_bounds(points),
+        ShapeSpec::Trimesh { vertices, .. } => cloud_bounds(vertices),
+        ShapeSpec::Heightfield { heights, scale, .. } => {
+            let s = wide(*scale);
+            let tallest = heights.iter().map(|h| (f64::from(*h) * s[1]).abs()).fold(0.0, f64::max);
+            let half = [s[0] * 0.5, tallest, s[2] * 0.5];
+            (norm_squared(half).sqrt(), s[0] * s[2] * 2.0 * tallest)
+        }
+    }
+}
+
+/// The farthest point's distance from the origin and the points' bounding-box volume.
+fn cloud_bounds(points: &[[f32; 3]]) -> (f64, f64) {
+    let wide: Vec<[f64; 3]> = points.iter().map(|p| p.map(f64::from)).collect();
+    let reach = wide.iter().map(|p| norm_squared(*p).sqrt()).fold(0.0, f64::max);
+    let span = |axis: usize| {
+        let values = wide.iter().map(|p| p[axis]);
+        values.clone().fold(f64::MIN, f64::max) - values.fold(f64::MAX, f64::min)
+    };
+    (reach, span(0).max(0.0) * span(1).max(0.0) * span(2).max(0.0))
 }
 
 /// The grid with its row order reversed (§6.3): caller row r is internal row rows − 1 − r.

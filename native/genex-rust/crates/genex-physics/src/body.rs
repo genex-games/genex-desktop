@@ -7,7 +7,7 @@ use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::key::{check_kind, check_object_key};
 use crate::limits::Limits;
 use crate::num::{finite, finite_vec, integer, length_squared, non_negative, unit_quat};
-use crate::shape::{ShapeFacts, validate_shape};
+use crate::shape::{ShapeFacts, reach_and_volume, validate_shape};
 use crate::types::{Axis, BodyType, Pose, UpAxis, Vec3};
 
 /// The default collider density, kg per caller-unit³.
@@ -197,6 +197,7 @@ pub(crate) fn validate_body(desc: &BodyDesc, up: UpAxis, limits: &Limits) -> Res
     for collider in &desc.colliders {
         colliders.push(validate_collider(collider, desc.body_type, up, limits, &mut facts)?);
     }
+    check_mass_fits(&colliders)?;
     check_unique_colliders(desc)?;
     let spec = BodySpec {
         body_type: desc.body_type,
@@ -223,6 +224,29 @@ fn check_keys(desc: &BodyDesc) -> Result<(), PhysicsFailure> {
         check_kind(kind)?;
     }
     desc.colliders.iter().try_for_each(|collider| check_object_key(&collider.key))
+}
+
+/// Refuses `OutOfRange` unless the body's mass and an upper bound of its inertia (each collider's
+/// mass times the square of how far it reaches from the body's origin) are finite in f32, which the
+/// backend computes them in. Mass is a density times the shape's bounding-box volume, an upper
+/// bound of what the backend computes.
+fn check_mass_fits(colliders: &[ColliderSpec]) -> Result<(), PhysicsFailure> {
+    let (mut mass, mut inertia) = (0.0f64, 0.0f64);
+    for collider in colliders {
+        let (shape_reach, volume) = reach_and_volume(&collider.shape);
+        let reach = length_squared(collider.translation).sqrt() + shape_reach;
+        let kg = match collider.mass {
+            MassSpec::Density(density) => f64::from(density) * volume,
+            MassSpec::Mass(kg) => f64::from(kg),
+        };
+        mass += kg;
+        inertia += kg * reach * reach;
+    }
+    let largest = f64::from(f32::MAX);
+    if mass > largest || inertia > largest {
+        return fail(PhysicsError::OutOfRange, "the body's mass or inertia does not fit f32");
+    }
+    Ok(())
 }
 
 fn check_unique_colliders(desc: &BodyDesc) -> Result<(), PhysicsFailure> {
@@ -284,7 +308,7 @@ fn validate_collider(
     if is_mesh && body_type != BodyType::Fixed {
         return fail(PhysicsError::DynamicMesh, "a trimesh or heightfield needs a fixed body");
     }
-    let (translation, rotation) = offset(desc.offset.as_ref())?;
+    let (translation, rotation) = offset(desc.offset.as_ref(), limits)?;
     Ok(ColliderSpec {
         shape,
         translation: vec_in(up, translation),
@@ -299,9 +323,10 @@ fn validate_collider(
     })
 }
 
-fn offset(pose: Option<&Pose>) -> Result<([f32; 3], [f32; 4]), PhysicsFailure> {
+/// A collider's offset: within `worldExtent` per axis, as a position (§4.1).
+fn offset(pose: Option<&Pose>, limits: &Limits) -> Result<([f32; 3], [f32; 4]), PhysicsFailure> {
     let Some(pose) = pose else { return Ok(([0.0; 3], [0.0, 0.0, 0.0, 1.0])) };
-    Ok((finite_vec(pose.p, "offset.p")?, unit_quat(pose.q, "offset.q")?))
+    Ok((position(pose.p, "offset.p", limits)?, unit_quat(pose.q, "offset.q")?))
 }
 
 fn mass(desc: &ColliderDesc) -> Result<MassSpec, PhysicsFailure> {

@@ -22,6 +22,8 @@ const INF: f64 = f64::INFINITY;
 const F32_OVERFLOW: f64 = 1e39;
 /// Finite in f32, past every default bound.
 const HUGE: f64 = 1e30;
+/// Finite in f32, near its largest value.
+const F32_NEAR_MAX: f64 = 3e38;
 
 /// The worlds the rows run against.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -199,6 +201,29 @@ fn command_rows() -> Vec<(&'static str, Fixture, Command, PhysicsError)> {
             vertices: vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
             indices: vec![[0.0, 1.0, 2.0]],
         }), BadShape),
+        m("spawn: a box past worldExtent", spawn_with("n", BodyType::Dynamic, Shape::Box { half: [F32_NEAR_MAX, 1.0, 1.0] }), OutOfRange),
+        m("spawn: a sphere past worldExtent", spawn_with("n", BodyType::Fixed, ball(F32_NEAR_MAX)), OutOfRange),
+        m("spawn: a capsule past worldExtent", spawn_with("n", BodyType::Kinematic, Shape::Capsule { half_height: f64::from(f32::MAX), radius: 1.0, axis: genex_physics::Axis::Z }), OutOfRange),
+        m("spawn: a hull point past worldExtent", spawn_with("n", BodyType::Dynamic, Shape::Hull { points: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, F32_NEAR_MAX]] }), OutOfRange),
+        m("spawn: a trimesh vertex past worldExtent", spawn_with("n", BodyType::Fixed, Shape::Trimesh {
+            vertices: vec![[0.0, 0.0, 0.0], [F32_NEAR_MAX, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![[0.0, 1.0, 2.0]],
+        }), OutOfRange),
+        m("spawn: a heightfield taller than worldExtent", spawn_with("n", BodyType::Fixed, Shape::Heightfield {
+            rows: 2.0, cols: 2.0, heights: vec![0.0, 0.0, 0.0, HUGE], size: [1.0, 1.0, 1.0],
+        }), OutOfRange),
+        m("spawn: a heightfield wider than worldExtent", spawn_with("n", BodyType::Fixed, Shape::Heightfield {
+            rows: 2.0, cols: 2.0, heights: vec![0.0; 4], size: [F32_NEAR_MAX, 1.0, 1.0],
+        }), OutOfRange),
+        m("spawn: an offset past worldExtent", spawn_edit(|d| d.colliders[0].offset = Some(Pose::at([F32_NEAR_MAX, 0.0, 0.0]))), OutOfRange),
+        m("spawn: a density whose mass overflows f32", spawn_edit(|d| {
+            d.colliders[0].shape = cube(1.0);
+            d.colliders[0].density = Some(F32_NEAR_MAX);
+        }), OutOfRange),
+        m("spawn: a mass whose inertia overflows f32", spawn_edit(|d| {
+            d.colliders[0].shape = cube(2.0);
+            d.colliders[0].mass = Some(F32_NEAR_MAX);
+        }), OutOfRange),
         m("spawn: groups past 16 bits", spawn_edit(|d| d.colliders[0].groups = Some(Groups { member: 65536.0, collides: 1.0 })), OutOfRange),
         m("spawn: fractional groups", spawn_edit(|d| d.colliders[0].groups = Some(Groups { member: 1.5, collides: 1.0 })), OutOfRange),
         m("spawn: three colliders", spawn_edit(|d| {
@@ -358,6 +383,7 @@ fn other_rows() -> Vec<(&'static str, Fixture, PhysicsError, Call)> {
         ("shapeCast: a trimesh", Main, OutOfRange, Box::new(|w| w.shape_cast(&trimesh(1), Pose::at([0.0; 3]), [0.0, 0.0, 1.0], 5.0, &QueryFilter::default()).map(drop))),
         ("shapeCast: nine hull points", Main, LimitHullVertices, Box::new(|w| w.shape_cast(&Shape::Hull { points: hull_points(9) }, Pose::at([0.0; 3]), [0.0, 0.0, 1.0], 5.0, &QueryFilter::default()).map(drop))),
         ("overlap: a zero sphere", Main, BadShape, Box::new(|w| w.overlap(&ball(0.0), Pose::at([0.0; 3]), &QueryFilter::default()).map(drop))),
+        ("overlap: a sphere past worldExtent", Main, OutOfRange, Box::new(|w| w.overlap(&ball(F32_NEAR_MAX), Pose::at([0.0; 3]), &QueryFilter::default()).map(drop))),
         ("overlap: pose past worldExtent", Main, OutOfRange, Box::new(|w| w.overlap(&ball(1.0), Pose::at([HUGE, 0.0, 0.0]), &QueryFilter::default()).map(drop))),
         ("query JSON: unknown verb", Main, BadCommand, Box::new(|w| w.query_json(&json!({"sweep": {}})).map(drop))),
         ("addStaticWorld: past staticPieces", Main, LimitStatic, Box::new(move |w| w.add_static_world(&static_two))),
@@ -419,4 +445,18 @@ fn this_binary_reports_the_model_without_the_counting_allocator() {
     let w = fixture(Fixture::Main);
     assert!(!w.memory_is_measured());
     assert!(!genex_physics::accounting::installed());
+}
+
+#[test]
+fn a_body_at_the_largest_sizes_is_accepted_and_stays_solid() {
+    let mut w = World::create(&limited_desc(UpAxis::Z)).expect("world");
+    let extent = f64::from(w.desc().limits.world_extent);
+    let floor = Shape::Box { half: [extent, extent, 1.0] };
+    w.spawn(&body("floor", BodyType::Fixed, [0.0, 0.0, -1.0], floor)).expect("a floor as wide as the world");
+    w.spawn(&body("ball", BodyType::Dynamic, [0.0, 0.0, 2.0], ball(0.5))).expect("ball");
+    for _ in 0..120 {
+        assert!(w.step().expect("steps").escaped.is_empty());
+    }
+    let z = w.body("ball").expect("there").pose.p[2];
+    assert!((z - 0.5).abs() < 0.05, "the ball rests on the floor, not through it: {z}");
 }
