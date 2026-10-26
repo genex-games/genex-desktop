@@ -36,9 +36,11 @@
 //! summed in f32. Contacts are the backend's active contacts, which include its speculative ones, so
 //! a begin can come a sub-step before the shapes meet. Removing a body reports no `contactEnd` or
 //! `triggerExit` for it: removals are the caller's own (§9.1). Sensors pair with every body type, so
-//! a fixed or kinematic sensor sees a kinematic body; two solid colliders pair only when one of them
-//! is on a dynamic body, so a kinematic body touching a fixed one reports nothing. When both
-//! colliders of a trigger are sensors, the lower body key is the `sensor`.
+//! a fixed or kinematic sensor sees a kinematic body, and two sensors see each other. An opted-in
+//! solid collider also pairs with every body type, so a kinematic body with `events: true` reports
+//! touching a static piece, a fixed body or another kinematic body (with no response: neither is
+//! dynamic); two solid colliders without the opt-in pair only when one is on a dynamic body. When
+//! both colliders of a trigger are sensors, the lower body key is the `sensor`.
 //!
 //! # Queries (§13)
 //!

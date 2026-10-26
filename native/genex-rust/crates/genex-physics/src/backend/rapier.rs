@@ -130,10 +130,13 @@ fn column_major(rows: usize, cols: usize, row_major: &[f32]) -> Array2<f32> {
 }
 
 /// Sensors see every body type, so a fixed or kinematic sensor reports a kinematic body entering
-/// (§6.2: sensors always report); solid colliders keep Rapier's default, which only pairs a
-/// dynamic body with anything.
-fn collision_types(sensor: bool) -> ActiveCollisionTypes {
-    match sensor {
+/// (§6.2: sensors always report), and so does a solid collider with `events: true` (§6.2: the
+/// opt-in is per collider), so an opted-in kinematic player reports touching a static piece or
+/// another kinematic body. Rapier computes those contacts without any solver response, as neither
+/// body is dynamic. Other solid colliders keep Rapier's default, which pairs a dynamic body with
+/// anything.
+fn collision_types(spec: &ColliderSpec) -> ActiveCollisionTypes {
+    match spec.sensor || spec.events {
         true => ActiveCollisionTypes::all(),
         false => ActiveCollisionTypes::default(),
     }
@@ -158,7 +161,7 @@ fn collider_builder(spec: &ColliderSpec) -> Option<ColliderBuilder> {
             .restitution(spec.restitution)
             .collision_groups(groups)
             .sensor(spec.sensor)
-            .active_collision_types(collision_types(spec.sensor))
+            .active_collision_types(collision_types(spec))
             .active_events(events),
     )
 }

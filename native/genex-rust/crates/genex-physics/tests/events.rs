@@ -408,3 +408,54 @@ fn a_heap_s_events_repeat_bit_for_bit_and_each_pair_is_named_lower_key_first() {
     }
     assert!(total > 24, "the heap produced events: {total}");
 }
+
+/// A kinematic player box with events on, driven down through the origin, z-up: every event.
+fn drive_player_down(w: &mut World) -> Vec<PhysicsEvent> {
+    let player = with_events(body("player", BodyType::Kinematic, [0.0, 0.0, 3.0], Shape::Box { half: [0.5; 3] }));
+    w.spawn(&player).expect("player");
+    let mut events = Vec::new();
+    for step in 1..=60 {
+        w.set_next_kinematic_pose("player", Pose::at([0.0, 0.0, 3.0 - 0.05 * f64::from(step)])).expect("moves");
+        events.extend(w.step().expect("steps").events);
+    }
+    events
+}
+
+fn first_begin(events: &[PhysicsEvent]) -> (String, String) {
+    let begin = events.first().unwrap_or_else(|| panic!("the player overlapped something and reported nothing"));
+    let PhysicsEvent::ContactBegin { a, b, .. } = begin else { panic!("{begin:?}") };
+    (a.clone(), b.clone())
+}
+
+#[test]
+fn an_opted_in_kinematic_body_reports_contacts_with_static_pieces_and_kinematic_bodies() {
+    let mut w = world(UpAxis::Z);
+    let floor = StaticWorld { boxes: vec![vec![-5.0, -5.0, -1.0, 5.0, 5.0, 0.0]], ramps: vec![] };
+    w.add_static_world(&floor).expect("imports");
+    let begin = first_begin(&drive_player_down(&mut w));
+    assert_eq!(begin, ("player".to_string(), "static:box:0000".to_string()), "§6.2: the opt-in is per collider");
+
+    let mut w = world(UpAxis::Z);
+    w.spawn(&body("door", BodyType::Kinematic, [0.0, 0.0, -0.5], Shape::Box { half: [2.0, 2.0, 0.5] })).expect("door");
+    let begin = first_begin(&drive_player_down(&mut w));
+    assert_eq!(begin, ("door".to_string(), "player".to_string()));
+}
+
+#[test]
+fn two_overlapping_sensors_report_a_trigger_with_the_lower_key_as_the_sensor() {
+    let mut w = world(UpAxis::Y);
+    let mut zone = body("zone", BodyType::Fixed, [0.0, 0.0, 0.0], Shape::Box { half: [1.0; 3] });
+    zone.colliders[0].sensor = true;
+    w.spawn(&zone).expect("zone");
+    let mut probe = body("probe", BodyType::Kinematic, [5.0, 0.0, 0.0], ball(0.5));
+    probe.colliders[0].sensor = true;
+    w.spawn(&probe).expect("probe");
+    let mut events = Vec::new();
+    for step in 1..=30 {
+        w.set_next_kinematic_pose("probe", Pose::at([5.0 - 0.2 * f64::from(step), 0.0, 0.0])).expect("moves");
+        events.extend(w.step().expect("steps").events);
+    }
+    let enter = events.first().unwrap_or_else(|| panic!("two sensors overlapped and reported nothing"));
+    let PhysicsEvent::TriggerEnter { sensor, other, .. } = enter else { panic!("{enter:?}") };
+    assert_eq!((sensor.as_str(), other.as_str()), ("probe", "zone"), "both are sensors: the lower key is the sensor");
+}
