@@ -6,8 +6,9 @@
  * error-as-value shape; hostile inputs through JS, each asserting the world unchanged; no method
  * throwing on any argument; memory per world (`stats().memoryBytes` follows spawns, the counting
  * allocator measures it, 1,000 worlds made and freed leave the instance's memory flat); every
- * conformance vector (`crates/genex-physics/vectors/`, pinned on the native core) giving the same
- * hashes, events and refusals in wasm32; and last the §11.3 poison rule after a forced trap.
+ * conformance vector (`crates/genex-physics/vectors/`, pinned on the native core, run by the shared
+ * `js/conformance.js`) giving the same hashes, events and refusals in wasm32; and last the §11.3
+ * poison rule after a forced trap.
  *
  * Without the test build the rows skip; `GENEX_REQUIRE_TOOLCHAINS=1` makes its absence a failure.
  */
@@ -16,6 +17,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runVector } from "../../native/genex-rust/crates/genex-physics/js/conformance.js";
 import type * as Physics from "../../native/genex-rust/crates/genex-physics/js/index.d.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
@@ -521,78 +523,6 @@ describe("@genex-ai/physics: memory per world (§11.1)", gate, () => {
   });
 });
 
-/** A §16 vector's step entry. */
-interface VectorStep {
-  snapshotRestore?: boolean;
-  apply?: Physics.Command[];
-  query?: Physics.Query[];
-  repeat?: number;
-  expect?: Record<string, unknown>;
-}
-
-/** Every number rounded to f32, as the native runner compares (§16's numbers are f32 values). */
-function asF32(value: unknown): unknown {
-  if (typeof value === "number") return Math.fround(value);
-  if (Array.isArray(value)) return value.map(asF32);
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, asF32(v)]));
-  return value;
-}
-
-function openVector(vector: { world: Physics.WorldDesc; static: Physics.StaticWorld }): Physics.World {
-  const world = made(vector.world);
-  if (vector.static.boxes.length + vector.static.ramps.length > 0) ok(world.addStaticWorld(vector.static));
-  return world;
-}
-
-function refusals(world: Physics.World, commands: Physics.Command[], atomic: boolean): unknown[] {
-  if (atomic) {
-    const result = world.apply(commands, "atomic") as Physics.Result;
-    return result.ok ? [] : [[result.index ?? null, result.code]];
-  }
-  const results = world.apply(commands, "each") as Physics.CommandResult[];
-  return results.flatMap((result, index) => (result.ok ? [] : [[index, result.code]]));
-}
-
-function answer(result: Physics.Result<Physics.QueryAnswer>): unknown {
-  if (!result.ok) return { error: result.code };
-  return "keys" in result ? { keys: result.keys } : { hit: result.hit };
-}
-
-function runVector(file: string): void {
-  const vector = JSON.parse(readFileSync(path.join(VECTORS, file), "utf8"));
-  const atomic = vector.mode === "atomic";
-  let world = openVector(vector);
-  (vector.steps as VectorStep[]).forEach((entry, index) => {
-    if (entry.snapshotRestore) {
-      const fresh = openVector(vector);
-      ok(fresh.restore(world.snapshot()));
-      world.free();
-      world = fresh;
-    }
-    const refused = entry.apply ? refusals(world, entry.apply, atomic) : [];
-    const queries = (entry.query ?? []).map((query) => answer(world.query(query)));
-    let last: Physics.StepResult | undefined;
-    for (let i = 0; i < (entry.repeat ?? 1); i += 1) {
-      const stepped = world.step();
-      assert.ok(stepped.ok, `${file} step ${index}`);
-      last = stepped;
-    }
-    for (const [field, expected] of Object.entries(entry.expect ?? {})) {
-      const actual: Record<string, unknown> = {
-        stateHash: world.stateHash(),
-        physicsHash: world.physicsHash(),
-        refused,
-        queries,
-        escaped: last?.escaped ?? [],
-        events: typeof expected === "number" ? (last?.events.length ?? 0) : (last?.events ?? []),
-      };
-      assert.deepEqual(asF32(actual[field]), asF32(expected), `${file} step ${index}: ${field}`);
-    }
-  });
-  world.free();
-}
-
 describe("@genex-ai/physics: the conformance vectors in wasm32 (§16)", gate, () => {
   const files = gate.skip
     ? []
@@ -600,7 +530,11 @@ describe("@genex-ai/physics: the conformance vectors in wasm32 (§16)", gate, ()
         .filter((name) => name.endsWith(".json"))
         .sort();
   for (const file of files) {
-    it(`${file} matches the pins`, () => runVector(file));
+    it(`${file} matches the pins`, () => {
+      const outcome = runVector(pkg(), JSON.parse(readFileSync(path.join(VECTORS, file), "utf8")));
+      assert.deepEqual(outcome.problems, [], `${file}: ${outcome.problems.join("; ")}`);
+      assert.ok(outcome.checks > 0, `${file}: at least one pinned value was compared`);
+    });
   }
 });
 

@@ -144,6 +144,11 @@ one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check
 `physics-wasm-real` loads the `@genex-ai/physics` test build (`node scripts/physics-wasm.ts --test`, the
 `test-trap` flavour) in Node 24: every method, hostile inputs, memory per world, every conformance vector in
 wasm32 and the §11.3 poison rule; it skips without that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`.
+`physics-wasm-vectors` replays every conformance vector through the shipped package
+(`.studio-dev/build/physics-wasm/`, or `GENEX_PHYSICS_PACKAGE=<unpacked tarball>`) with the shared runner
+`crates/genex-physics/js/conformance.js`, so a pass means wasm32 gives native's pins; with
+`STUDIO_BROWSER_TESTS=1` it also runs them in Playwright's headless Chromium. For the Linux row run the same
+file in a `linux/amd64` `node:24` container with `--network none`, the repo mounted read-only.
 `rust-examples-web` holds each example game's genex.toml switches to the genex features its
 Cargo.toml names; with `GENEX_EXAMPLES_WEB=1` it also builds every web example alone (one cargo
 run each, so no feature unification) in the export flavour and fails one over 4 MiB gzip.

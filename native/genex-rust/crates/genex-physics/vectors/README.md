@@ -21,7 +21,8 @@ its commit.
 
 ## Format
 
-The format is §16's. The runner (`tests/vectors.rs`) reads it as follows where §16 leaves a detail open:
+The format is §16's. The runner (`tests/vectors.rs`, and its JS twin `../js/conformance.js` for the
+`@genex-ai/physics` package) reads it as follows where §16 leaves a detail open:
 
 - `repeat: 0` runs no step, so a hostile entry can expect the hash its refusal left unchanged.
 - `events` is the last step's list (or its length when the pin is a number), in the binding's form:
@@ -85,8 +86,9 @@ The same pins pass on every target the row runs; a target that differs is a dete
 | Target | How it ran | Result |
 |---|---|---|
 | aarch64-macos | native `cargo test` | every vector passes |
-| x86_64-linux | `cargo zigbuild -p genex-physics --tests --target x86_64-unknown-linux-gnu --offline --locked` (the toolchain's cargo-zigbuild and zig, offline), each test binary then run in Docker `amd64/debian:bookworm-slim` with `--network none` and the crate mounted at its own path | builds offline; not run yet (2026-10-27: the Mac had too little disk free) |
-| wasm32 | not yet: needs the WASM binding (P2) | not run |
+| x86_64-linux | `cargo zigbuild -p genex-physics --tests --target x86_64-unknown-linux-gnu --offline --locked` (the toolchain's cargo-zigbuild and zig, offline), each test binary then run in Docker `amd64/debian:bookworm-slim` with `--network none` and the crate mounted at its own path | every vector passes, and every other genex-physics test (2026-10-27; amd64 emulated on an arm64 Mac) |
+| wasm32, Node 24 | `tests/conformance/physics-wasm-vectors.test.ts` on the shipped package (`../js/conformance.js`) | every vector passes on aarch64-macos, and in Docker `node:24-bookworm` linux/amd64 with `--network none` (2026-10-27) |
+| wasm32, Chromium | the same file's browser row (`STUDIO_BROWSER_TESTS=1`): Playwright's headless Chromium loads the browser entry and the same runner, every request answered from disk | every vector passes (HeadlessChrome 153, aarch64-macos, 2026-10-27) |
 
 ## Release
 
