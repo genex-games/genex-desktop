@@ -2,7 +2,7 @@
 //!
 //! A key is 1 to 64 bytes of `[A-Za-z0-9_.:-]`, never `__proto__`, `constructor` or `prototype`; a
 //! body, collider or joint key never starts with the reserved `static:` prefix (§6.5). A kind is 1
-//! to 32 bytes of the same charset.
+//! to 32 bytes of the same charset, and the empty kind `''` means no kind (§6.1).
 
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 
@@ -46,11 +46,11 @@ pub fn check_object_key(key: &str) -> Result<(), PhysicsFailure> {
     Ok(())
 }
 
-/// Checks a body's kind tag (§6.1): 1-32 bytes of the key charset.
+/// Checks a body's kind tag (§6.1): 1-32 bytes of the key charset, or `''`, which means no kind.
 ///
 /// The contract names no code for a bad kind; `InvalidKey` is the closest, as a kind is a key-like tag.
 pub fn check_kind(kind: &str) -> Result<(), PhysicsFailure> {
-    if !fits_charset(kind, KIND_MAX_BYTES) {
+    if !kind.is_empty() && !fits_charset(kind, KIND_MAX_BYTES) {
         return fail(PhysicsError::InvalidKey, "a kind is 1-32 bytes of [A-Za-z0-9_.:-]");
     }
     Ok(())

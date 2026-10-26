@@ -187,6 +187,18 @@ fn command_rows() -> Vec<(&'static str, Fixture, Command, PhysicsError)> {
         m("spawn: zero box", spawn_with("n", BodyType::Dynamic, Shape::Box { half: [0.0, 1.0, 1.0] }), BadShape),
         m("spawn: flat hull", spawn_with("n", BodyType::Dynamic, Shape::Hull { points: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]] }), BadShape),
         m("spawn: dynamic trimesh", spawn_with("n", BodyType::Dynamic, trimesh(1)), DynamicMesh),
+        m("spawn: a trimesh of repeated indices", spawn_with("n", BodyType::Fixed, Shape::Trimesh {
+            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![[0.0, 0.0, 1.0], [2.0, 2.0, 2.0]],
+        }), BadShape),
+        m("spawn: a trimesh at one point", spawn_with("n", BodyType::Fixed, Shape::Trimesh {
+            vertices: vec![[1.0, 2.0, 3.0]; 3],
+            indices: vec![[0.0, 1.0, 2.0]],
+        }), BadShape),
+        m("spawn: a trimesh on one line", spawn_with("n", BodyType::Fixed, Shape::Trimesh {
+            vertices: vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+            indices: vec![[0.0, 1.0, 2.0]],
+        }), BadShape),
         m("spawn: groups past 16 bits", spawn_edit(|d| d.colliders[0].groups = Some(Groups { member: 65536.0, collides: 1.0 })), OutOfRange),
         m("spawn: fractional groups", spawn_edit(|d| d.colliders[0].groups = Some(Groups { member: 1.5, collides: 1.0 })), OutOfRange),
         m("spawn: three colliders", spawn_edit(|d| {
@@ -203,6 +215,10 @@ fn command_rows() -> Vec<(&'static str, Fixture, Command, PhysicsError)> {
         m("addJoint: malformed key", joint_edit(|j| j.key = "bad key".into()), InvalidKey),
         m("addJoint: duplicate key", joint_edit(|j| j.key = "j".into()), DuplicateKey),
         m("addJoint: unknown body", joint_edit(|j| j.a = "nope".into()), UnknownKey),
+        m("addJoint: unknown body and a duplicate key", joint_edit(|j| {
+            j.key = "j".into();
+            j.b = Some("nope".into());
+        }), UnknownKey),
         ("addJoint: a static piece", Static, joint_edit(|j| j.b = Some("static:box:0000".into())), UnknownKey),
         m("addJoint: NaN anchor", joint_edit(|j| j.anchor_a[0] = NAN), NonFinite),
         m("addJoint: anchor past worldExtent", joint_edit(|j| j.anchor_b[1] = HUGE), OutOfRange),

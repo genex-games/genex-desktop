@@ -1,15 +1,15 @@
 //! State reads (§9.1, §9.2, §11): the flat export of changed bodies, one body's replicated fields,
 //! importing them, and the world's counters.
 
-use super::{Core, NetState};
+use super::{Core, NetState, changed_after};
 use crate::axes::{quat_in, vec_in};
 use crate::backend::{Backend, BodyEdit};
-use crate::body::{body_pose, bounded_speed};
+use crate::body::{bounded_speed, position};
 use crate::error::PhysicsFailure;
 use crate::key::check_key;
-use crate::num::{out_quat, out_vec};
+use crate::num::{any_quat, out_quat, out_vec};
 use crate::state::{ChangedExport, EXPORT_STRIDE, NetBodyState, Stats};
-use crate::types::{BodyType, Pose};
+use crate::types::BodyType;
 
 /// The flat numbers of one body: p(3), q(4), v(3), w(3), sleeping as 0 or 1 (§9.1).
 fn flat(net: &NetState) -> [f32; EXPORT_STRIDE] {
@@ -26,7 +26,7 @@ impl<B: Backend> Core<B> {
     /// The bodies changed after `since_tick`, flat, in key order (§9.1).
     pub(crate) fn export_changed(&self, since_tick: u64) -> ChangedExport {
         let mut export = ChangedExport::default();
-        let changed = self.bodies.iter().filter(|(_, entry)| entry.changed_mark > 2 * since_tick);
+        let changed = self.bodies.iter().filter(|(_, entry)| changed_after(entry.changed_mark, since_tick));
         for (key, entry) in changed {
             let net = self.net_state(entry.handle, entry.body_type, entry.escaped);
             export.keys.push(key.clone());
@@ -44,10 +44,13 @@ impl<B: Backend> Core<B> {
 
     /// Sets a dynamic or kinematic body's replicated fields and sleep state (§9.2), with the
     /// bounds of a command (§4.1); an escaped body returns to the simulation, as with `setPose`.
+    /// The rotation may be off unit, as a quantized one is: it is renormalised, and refused only
+    /// when it has no length.
     pub(crate) fn import_body_state(&mut self, key: &str, state: &NetBodyState) -> Result<(), PhysicsFailure> {
         check_key(key)?;
         let limits = self.desc.limits;
-        let (p, q) = body_pose(&Pose { p: state.p, q: state.q }, &limits)?;
+        let p = position(state.p, "p", &limits)?;
+        let q = any_quat(state.q, "q")?;
         let v = bounded_speed(state.v, "v", limits.max_speed)?;
         let w = bounded_speed(state.w, "w", limits.max_angular_speed)?;
         self.ledger.body_of_type(key, &[BodyType::Dynamic, BodyType::Kinematic])?;

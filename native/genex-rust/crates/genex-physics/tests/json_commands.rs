@@ -263,3 +263,17 @@ fn apply_over_json_atomically_names_a_malformed_command_and_applies_nothing() {
     w.apply_json_atomic(&json!([{ "impulse": { "key": "a", "j": [1, 0, 0] } }, { "sleep": { "key": "a" } }])).expect("applies");
     assert!(w.body("a").expect("there").sleeping);
 }
+
+#[test]
+fn an_atomic_json_batch_names_the_first_failure_whether_it_is_malformed_or_refused() {
+    let mut w = world(UpAxis::Z);
+    w.spawn(&body("a", BodyType::Dynamic, [0.0, 0.0, 1.0], ball(0.5))).expect("a");
+    let before = observe(&w);
+    let batch = json!([{ "wake": { "key": "nope" } }, { "wake": { "key": "a" } }, { "impulse": { "key": "a" } }]);
+    let failure = w.apply_json_atomic(&batch).expect_err("refused");
+    assert_eq!((failure.index, failure.code), (Some(0), PhysicsError::UnknownKey));
+    let batch = json!([{ "wake": { "key": "a" } }, { "impulse": { "key": "a" } }, { "wake": { "key": "nope" } }]);
+    let failure = w.apply_json_atomic(&batch).expect_err("malformed");
+    assert_eq!((failure.index, failure.code), (Some(1), PhysicsError::BadCommand));
+    assert_eq!(observe(&w), before);
+}

@@ -100,7 +100,7 @@ impl Ledger {
     }
 
     fn shrink(&mut self, bytes: u64) {
-        self.object_bytes -= bytes;
+        self.object_bytes = self.object_bytes.saturating_sub(bytes);
         self.delta = self.delta.saturating_sub_unsigned(bytes);
     }
 
@@ -154,8 +154,8 @@ impl Ledger {
             self.remove_joint(joint);
         }
         if let Some(facts) = self.bodies.remove(key) {
-            self.triangles -= facts.triangles;
-            self.ccd_bodies -= usize::from(facts.ccd);
+            self.triangles = self.triangles.saturating_sub(facts.triangles);
+            self.ccd_bodies = self.ccd_bodies.saturating_sub(usize::from(facts.ccd));
             self.shrink(facts.bytes);
         }
         joints

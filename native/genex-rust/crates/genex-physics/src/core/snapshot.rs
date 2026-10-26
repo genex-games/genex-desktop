@@ -147,7 +147,7 @@ fn check_records<H, J>(image: &Image<'_, H, J>, desc: &ResolvedWorldDesc) -> Res
 fn check_bodies<H, J>(image: &Image<'_, H, J>, colliders_max: u32) -> Result<(), PhysicsFailure> {
     for (key, entry) in &image.bodies {
         check_object_key(key).map_err(|_| bad("a body key is malformed"))?;
-        let kind_ok = entry.kind.as_deref().is_none_or(|kind| check_kind(kind).is_ok());
+        let kind_ok = entry.kind.as_deref().is_none_or(|kind| !kind.is_empty() && check_kind(kind).is_ok());
         let count = entry.colliders.len();
         let unique: BTreeSet<&String> = entry.colliders.iter().collect();
         let keys_ok = entry.colliders.iter().all(|c| check_object_key(c).is_ok()) && unique.len() == count;
@@ -180,12 +180,12 @@ fn check_joints<H, J>(image: &Image<'_, H, J>) -> Result<(), PhysicsFailure> {
 fn check_ledger<H, J>(ledger: &Ledger, image: &Image<'_, H, J>, desc: &ResolvedWorldDesc) -> Result<(), PhysicsFailure> {
     let limits = &desc.limits;
     let same_keys = ledger.bodies.keys().eq(image.bodies.keys()) && ledger.joints.keys().eq(image.joints.keys());
-    let triangles: usize = ledger.bodies.values().map(|f| f.triangles).sum();
+    let triangles = checked_sum(ledger.bodies.values().map(|f| f.triangles as u64));
     let ccd = ledger.bodies.values().filter(|f| f.ccd).count();
-    let body_bytes: u64 = ledger.bodies.values().map(|f| f.bytes).sum();
-    let joint_bytes: u64 = ledger.joints.values().map(|f| f.bytes).sum();
-    let floor = WORLD_BASE_BYTES.checked_add(body_bytes).and_then(|b| b.checked_add(joint_bytes));
-    let totals_ok = ledger.triangles == triangles
+    let body_bytes = checked_sum(ledger.bodies.values().map(|f| f.bytes));
+    let joint_bytes = checked_sum(ledger.joints.values().map(|f| f.bytes));
+    let floor = [body_bytes, joint_bytes].into_iter().try_fold(WORLD_BASE_BYTES, |sum, part| sum.checked_add(part?));
+    let totals_ok = triangles == Some(ledger.triangles as u64)
         && ledger.ccd_bodies == ccd
         && floor.is_some_and(|floor| ledger.object_bytes >= floor)
         && ledger.contact_bytes == contact_bytes(image.contact_pairs as usize)
@@ -196,6 +196,11 @@ fn check_ledger<H, J>(ledger: &Ledger, image: &Image<'_, H, J>, desc: &ResolvedW
     within(ledger.triangles, limits.triangles, "triangles")?;
     within(ledger.ccd_bodies, limits.ccd_bodies, "CCD bodies")?;
     within(ledger.static_pieces, limits.static_pieces, "static pieces")
+}
+
+/// The sum of forged numbers, or `None` when it overflows.
+fn checked_sum(values: impl Iterator<Item = u64>) -> Option<u64> {
+    values.into_iter().try_fold(0u64, u64::checked_add)
 }
 
 /// The static world validates again, in a z-up world, and its pieces are the image's static keys.

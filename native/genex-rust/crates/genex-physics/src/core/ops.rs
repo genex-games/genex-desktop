@@ -126,12 +126,12 @@ impl<B: Backend> Core<B> {
     fn check_add_joint(&self, ledger: &Ledger, desc: &JointDesc) -> Result<Op, PhysicsFailure> {
         let limits = self.desc.limits;
         let valid = validate_joint(desc, self.desc.up_axis, &limits)?;
-        if ledger.joints.contains_key(&valid.key) {
-            return fail(PhysicsError::DuplicateKey, "a joint already has that key");
-        }
         ledger.body_type(&valid.a)?;
         if let Some(b) = &valid.b {
             ledger.body_type(b)?;
+        }
+        if ledger.joints.contains_key(&valid.key) {
+            return fail(PhysicsError::DuplicateKey, "a joint already has that key");
         }
         if ledger.joints.len() >= limits.joints as usize {
             return fail(PhysicsError::LimitJoints, "limits.joints reached");

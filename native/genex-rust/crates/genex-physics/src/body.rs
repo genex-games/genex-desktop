@@ -145,7 +145,7 @@ pub struct BodyDesc {
     pub ccd: bool,
     /// Default true.
     pub can_sleep: bool,
-    /// An optional caller tag, echoed in events and exports.
+    /// An optional caller tag, echoed in events and exports; `''` means no kind (§6.1).
     pub kind: Option<String>,
 }
 
@@ -213,7 +213,8 @@ pub(crate) fn validate_body(desc: &BodyDesc, up: UpAxis, limits: &Limits) -> Res
         colliders,
     };
     let collider_keys = desc.colliders.iter().map(|c| c.key.clone()).collect();
-    Ok(ValidBody { key: desc.key.clone(), kind: desc.kind.clone(), spec, collider_keys, facts })
+    let kind = desc.kind.clone().filter(|kind| !kind.is_empty());
+    Ok(ValidBody { key: desc.key.clone(), kind, spec, collider_keys, facts })
 }
 
 fn check_keys(desc: &BodyDesc) -> Result<(), PhysicsFailure> {
@@ -241,11 +242,16 @@ fn optional(value: Option<f64>, default: f32, check: impl Fn(f64) -> Result<f32,
 /// A body pose in the caller frame: position within `worldExtent` per axis, rotation a unit
 /// quaternion renormalised in f32 (§4.1, §6.1).
 pub(crate) fn body_pose(pose: &Pose, limits: &Limits) -> Result<([f32; 3], [f32; 4]), PhysicsFailure> {
-    let p = finite_vec(pose.p, "pose.p")?;
+    Ok((position(pose.p, "pose.p", limits)?, unit_quat(pose.q, "pose.q")?))
+}
+
+/// A position a command sets: finite in f32 and within `worldExtent` per axis (§4.1).
+pub(crate) fn position(p: Vec3, what: &str, limits: &Limits) -> Result<[f32; 3], PhysicsFailure> {
+    let p = finite_vec(p, what)?;
     if p.iter().any(|c| c.abs() > limits.world_extent) {
-        return fail(PhysicsError::OutOfRange, "pose.p lies outside limits.worldExtent");
+        return fail(PhysicsError::OutOfRange, format!("{what} lies outside limits.worldExtent"));
     }
-    Ok((p, unit_quat(pose.q, "pose.q")?))
+    Ok(p)
 }
 
 /// A velocity: dynamic bodies only, finite, and at most `max` in length.

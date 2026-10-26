@@ -89,6 +89,9 @@
 //! `a`'s anchor along `+axis` from `b`'s. A fixed joint holds the two bodies' local axes parallel.
 //! The readings of `axis`, `limits` and `motor` the contract leaves open are listed in `joint`.
 
+// `GlobalAlloc` is an unsafe trait, and the header lives in front of the caller's block: the
+// accounting module is the crate's only unsafe code, each block with its reason beside it.
+#[allow(unsafe_code)]
 pub mod accounting;
 mod axes;
 mod backend;

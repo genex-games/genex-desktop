@@ -40,9 +40,10 @@ fn the_static_prefix_is_reserved_for_static_pieces() {
 }
 
 #[test]
-fn kinds_take_one_to_thirty_two_bytes_of_the_charset() {
+fn kinds_take_one_to_thirty_two_bytes_of_the_charset_and_the_empty_kind_is_no_kind() {
     assert_eq!(check_kind(&"k".repeat(32)), Ok(()));
-    for kind in ["", &"k".repeat(33), "a b", "ü"] {
+    assert_eq!(check_kind(""), Ok(()), "'' means no kind (§6.1)");
+    for kind in [&"k".repeat(33), "a b", "ü"] {
         assert_eq!(check_kind(kind).expect_err(kind).code, PhysicsError::InvalidKey, "{kind:?}");
     }
 }
@@ -111,4 +112,21 @@ fn error_codes_are_spelled_as_the_contract_spells_them() {
         assert_eq!(PhysicsError::from_code(code), Some(error));
     }
     assert_eq!(PhysicsError::from_code("Invalid-Key"), None);
+}
+
+#[test]
+fn a_spawn_with_the_empty_kind_has_no_kind_in_its_state_and_its_events() {
+    use genex_physics::{BodyFilter, PhysicsEvent};
+    let mut w = world(UpAxis::Y);
+    w.spawn(&body("ground", BodyType::Fixed, [0.0, -0.5, 0.0], genex_physics::Shape::Box { half: [5.0, 0.5, 5.0] })).expect("ground");
+    let mut falling = body("box", BodyType::Dynamic, [0.0, 1.0, 0.0], cube(0.5));
+    falling.kind = Some(String::new());
+    falling.colliders[0].events = true;
+    w.spawn(&falling).expect("the empty kind is no kind");
+    assert_eq!(w.body("box").expect("spawned").kind, None);
+    let tagged = BodyFilter { kinds: Some(vec![String::new()]), ..BodyFilter::default() };
+    assert!(w.bodies(&tagged).is_empty(), "no body carries the empty kind");
+    let begin = (0..120).flat_map(|_| w.step().expect("steps").events).next().expect("the box lands");
+    let PhysicsEvent::ContactBegin { a, ka, kb, .. } = begin else { panic!("a contact begins first") };
+    assert_eq!((a.as_str(), ka, kb), ("box", None, None));
 }

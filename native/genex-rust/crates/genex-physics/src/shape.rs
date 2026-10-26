@@ -102,12 +102,20 @@ fn trimesh(
         let index = |i: usize| integer(triangle[i], "trimesh index", 0, last);
         triangles.push([index(0)?, index(1)?, index(2)?]);
     }
-    if triangles.is_empty() {
-        return fail(PhysicsError::BadShape, "a trimesh needs a triangle");
+    if !triangles.iter().any(|triangle| has_area(&vertices, *triangle)) {
+        return fail(PhysicsError::BadShape, "a trimesh needs a triangle with an area");
     }
     facts.trimesh_vertices += vertices.len();
     facts.triangles += triangles.len();
     Ok(ShapeSpec::Trimesh { vertices, indices: triangles })
+}
+
+/// Whether a triangle's corners span an area: its edges' cross product is not zero in f64, where
+/// each product of two f32 differences is exact enough to tell zero from not.
+fn has_area(vertices: &[[f32; 3]], triangle: [u32; 3]) -> bool {
+    let corner = |i: usize| vertices.get(triangle[i] as usize).map_or([0.0; 3], |v| v.map(f64::from));
+    let (a, b, c) = (corner(0), corner(1), corner(2));
+    norm_squared(cross(sub(b, a), sub(c, a))) > 0.0
 }
 
 /// A heightfield as given, before checks.

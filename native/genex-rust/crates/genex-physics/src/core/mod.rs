@@ -283,8 +283,14 @@ fn selects(filter: &BodyFilter, changed_mark: u64, state: &BodyState) -> bool {
         (Some(_), None) => false,
     };
     let awake_ok = !(filter.awake_only && state.sleeping);
-    let changed_ok = filter.changed_since_tick.is_none_or(|tick| changed_mark > 2 * tick);
+    let changed_ok = filter.changed_since_tick.is_none_or(|tick| changed_after(changed_mark, tick));
     kind_ok && awake_ok && changed_ok
+}
+
+/// Whether a body last changed at `changed_mark` changed after `tick` (§9.1): its mark is above
+/// `2·tick`. A tick past `u64::MAX / 2` saturates, and no mark reaches `u64::MAX`, so nothing did.
+fn changed_after(changed_mark: u64, tick: u64) -> bool {
+    changed_mark > tick.saturating_mul(2)
 }
 
 /// A body's replicated fields in the caller frame. Fixed and escaped bodies report asleep and still.

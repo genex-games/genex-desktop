@@ -25,12 +25,16 @@ impl<B: Backend> Core<B> {
         self.commit(op)
     }
 
-    /// Applies every command or none (§7.1); a failure names the first failing index.
-    pub(crate) fn apply_atomic(&mut self, commands: &[Command]) -> Result<(), PhysicsFailure> {
+    /// Applies every command or none (§7.1); a failure names the first failing index, whether the
+    /// command there could not be read (its `Err`) or was refused.
+    pub(crate) fn apply_atomic<'a>(
+        &mut self,
+        commands: impl IntoIterator<Item = Result<&'a Command, PhysicsFailure>>,
+    ) -> Result<(), PhysicsFailure> {
         let mut shadow = self.ledger.clone();
-        let mut ops = Vec::with_capacity(commands.len());
-        for (index, command) in commands.iter().enumerate() {
-            let op = self.check(&shadow, command).map_err(|failure| failure.at(index))?;
+        let mut ops = Vec::new();
+        for (index, command) in commands.into_iter().enumerate() {
+            let op = command.and_then(|command| self.check(&shadow, command)).map_err(|failure| failure.at(index))?;
             record(&mut shadow, &op);
             ops.push(op);
         }

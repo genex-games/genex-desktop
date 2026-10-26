@@ -15,10 +15,6 @@
 //! Attribution is per thread: a world's calls run on one thread (§1.1), and a call on another
 //! thread is charged to the world running there, or to none.
 
-// `GlobalAlloc` is an unsafe trait, and the header lives in front of the caller's block: this module
-// is the crate's only unsafe code, each block with its reason beside it.
-#![allow(unsafe_code)]
-
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};

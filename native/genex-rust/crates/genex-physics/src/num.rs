@@ -72,6 +72,19 @@ pub(crate) fn unit_quat(q: Quat, what: &str) -> Result<[f32; 4], PhysicsFailure>
     Ok([x / norm, y / norm, z / norm, w / norm])
 }
 
+/// A rotation a correction imports (§9.2): rounded to f32 and renormalised in f32 whatever its
+/// length, as a wire-quantized rotation may be off unit by more than §6.1's tolerance; only a
+/// rotation whose length is zero or not finite in f32 is refused, with `OutOfRange`.
+pub(crate) fn any_quat(q: Quat, what: &str) -> Result<[f32; 4], PhysicsFailure> {
+    let rounded = [finite(q[0], what)?, finite(q[1], what)?, finite(q[2], what)?, finite(q[3], what)?];
+    let [x, y, z, w] = rounded;
+    let norm = (x * x + y * y + z * z + w * w).sqrt();
+    if norm == 0.0 || !norm.is_finite() {
+        return fail(PhysicsError::OutOfRange, format!("{what} has no direction"));
+    }
+    Ok([x / norm, y / norm, z / norm, w / norm])
+}
+
 /// The squared length of a vector, in f64 (each f32 square is exact there).
 pub(crate) fn length_squared(v: [f32; 3]) -> f64 {
     v.iter().map(|c| f64::from(*c) * f64::from(*c)).sum()

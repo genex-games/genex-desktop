@@ -78,7 +78,8 @@ impl World {
     }
 
     /// Runs `f` on the core as one call that may change the world: charged to the world's account,
-    /// starting from its measured bytes, and caught if it panics (which poisons the world).
+    /// starting from its measured bytes, and caught if it panics. A panic or an `internal` failure
+    /// (a backend that refused what it had accepted) poisons the world (§11.3).
     fn call<T>(&mut self, f: impl FnOnce(&mut Core<ActiveBackend>) -> Result<T, PhysicsFailure>) -> Result<T, PhysicsFailure> {
         self.check()?;
         let measured = self.account.live_bytes();
@@ -88,10 +89,11 @@ impl World {
             core.sync_memory(measured);
             f(core)
         }));
-        outcome.unwrap_or_else(|_| {
+        let result = outcome.unwrap_or_else(|_| Err(internal("the backend failed; the world is now unusable (§11.3)")));
+        if result.as_ref().is_err_and(|failure| failure.code == PhysicsError::Internal) {
             self.poisoned.set(true);
-            Err(internal("the backend failed; the world is now unusable (§11.3)"))
-        })
+        }
+        result
     }
 
     /// Runs a read that has no error channel: `empty` once the world is poisoned or if it panics.
@@ -108,14 +110,15 @@ impl World {
         }
     }
 
-    /// The resolved description, every default filled (§4).
+    /// The resolved description, every default filled (§4). It is fixed when the world is made (or
+    /// restored), so it stays readable on a poisoned world, the one read exempt from §11.3.
     pub fn desc(&self) -> &ResolvedWorldDesc {
         self.core.desc()
     }
 
-    /// The tick counter: 0 until the first step.
+    /// The tick counter: 0 until the first step, and 0 on a poisoned world.
     pub fn tick(&self) -> u64 {
-        self.core.tick()
+        self.read(0, Core::tick)
     }
 
     /// Inserts a body and its colliders (§6.1, §7).
@@ -192,7 +195,7 @@ impl World {
 
     /// Applies every command or none (§7.1); a failure names the first failing index.
     pub fn apply_atomic(&mut self, commands: &[Command]) -> Result<(), PhysicsFailure> {
-        self.call(|core| core.apply_atomic(commands))
+        self.call(|core| core.apply_atomic(commands.iter().map(Ok)))
     }
 
     /// Applies every command that succeeds, in order, one outcome per command (§7.1).
@@ -200,18 +203,20 @@ impl World {
         commands.iter().map(|command| self.command(command).map_err(|failure| failure.code)).collect()
     }
 
-    /// [`World::apply_atomic`] over a JSON array of commands (§7.3); a malformed command fails
-    /// the batch with `BadCommand` at its index, and a non-array with `BadCommand` alone.
+    /// [`World::apply_atomic`] over a JSON array of commands (§7.3); the batch fails at its first
+    /// failing index, with `BadCommand` for a malformed command there, and a non-array fails with
+    /// `BadCommand` alone.
     pub fn apply_json_atomic(&mut self, commands: &Value) -> Result<(), PhysicsFailure> {
+        self.check()?;
         let items = json_items(commands)?;
-        let parsed = items.iter().enumerate().map(|(index, item)| Command::from_json(item).map_err(|f| f.at(index)));
-        let commands = parsed.collect::<Result<Vec<_>, _>>()?;
-        self.apply_atomic(&commands)
+        let parsed: Vec<Result<Command, PhysicsFailure>> = items.iter().map(Command::from_json).collect();
+        self.call(|core| core.apply_atomic(parsed.iter().map(|command| command.as_ref().map_err(Clone::clone))))
     }
 
     /// [`World::apply_each`] over a JSON array of commands (§7.3); a malformed command's outcome
     /// is `BadCommand`, and a non-array fails with `BadCommand` alone.
     pub fn apply_json_each(&mut self, commands: &Value) -> Result<Vec<CommandOutcome>, PhysicsFailure> {
+        self.check()?;
         let items = json_items(commands)?;
         let mut run = |item: &Value| Command::from_json(item).and_then(|command| self.command(&command));
         Ok(items.iter().map(|item| run(item).map_err(|failure| failure.code)).collect())
@@ -342,6 +347,7 @@ impl World {
 
     /// Runs one query in its JSON form (§13); a malformed one gives `BadCommand`.
     pub fn query_json(&mut self, query: &Value) -> Result<QueryAnswer, PhysicsFailure> {
+        self.check()?;
         let query = Query::from_json(query)?;
         self.query(&query)
     }
@@ -436,5 +442,18 @@ mod tests {
         assert!(world.export_body_state("a").is_none() && world.export_changed(0).keys.is_empty());
         assert_eq!((world.state_hash(), world.physics_hash(), world.joint_count()), (0, String::new(), 0));
         assert_eq!(world.stats().bodies, 0);
+        assert!(is_internal(world.apply_json_atomic(&serde_json::json!("not a batch"))), "internal before parsing");
+        assert!(is_internal(world.apply_json_each(&serde_json::json!([{ "nope": {} }]))));
+        assert!(is_internal(world.query_json(&serde_json::json!({ "nope": {} }))));
+        assert_eq!(world.tick(), 0, "tick is a read with no error channel");
+    }
+
+    #[test]
+    fn a_backend_refusal_after_its_check_poisons_the_world_as_a_panic_does() {
+        let mut world = World::create(&WorldDesc::new(1.0 / 60.0, 1.0, [0.0, -9.81, 0.0], UpAxis::Y, 1.0)).expect("world");
+        let refused = world.call(|_core| fail::<()>(PhysicsError::Internal, "an injected refusal"));
+        assert!(is_internal(refused));
+        assert!(is_internal(world.check()), "an internal failure leaves the world unusable (§11.3)");
+        assert!(is_internal(world.spawn(&crate_at("a", 1.0))));
     }
 }

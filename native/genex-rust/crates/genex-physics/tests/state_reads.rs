@@ -161,7 +161,7 @@ fn hostile_imports() -> Vec<(&'static str, &'static str, NetBodyState, PhysicsEr
         ("1e39 velocity", "ball", NetBodyState { v: [1e39, 0.0, 0.0], ..fine }, PhysicsError::NonFinite),
         ("an infinite spin", "ball", NetBodyState { w: [0.0, f64::NEG_INFINITY, 0.0], ..fine }, PhysicsError::NonFinite),
         ("past worldExtent", "ball", NetBodyState { p: [0.0, 100_001.0, 0.0], ..fine }, PhysicsError::OutOfRange),
-        ("a non-unit rotation", "ball", NetBodyState { q: [0.0, 0.0, 0.0, 1.1], ..fine }, PhysicsError::OutOfRange),
+        ("a rotation too long for f32", "ball", NetBodyState { q: [0.0, 0.0, 0.0, 1e20], ..fine }, PhysicsError::OutOfRange),
         ("a zero rotation", "ball", NetBodyState { q: [0.0; 4], ..fine }, PhysicsError::OutOfRange),
         ("past maxSpeed", "ball", NetBodyState { v: [1001.0, 0.0, 0.0], ..fine }, PhysicsError::OutOfRange),
         ("past maxAngularSpeed", "ball", NetBodyState { w: [0.0, 0.0, 1001.0], ..fine }, PhysicsError::OutOfRange),
@@ -218,4 +218,29 @@ fn stats_count_the_world() {
     assert_eq!(w.stats().queries_this_step, 1);
     let awake = w.bodies(&BodyFilter { awake_only: true, ..BodyFilter::default() }).len();
     assert_eq!(w.stats().awake, awake, "the same rule as bodies(awakeOnly)");
+}
+
+#[test]
+fn changed_since_the_largest_tick_lists_nothing_and_never_fails_the_world() {
+    let mut w = scene(UpAxis::Z);
+    w.step().expect("steps");
+    assert!(changed_keys(&w, u64::MAX).is_empty());
+    assert!(changed_keys(&w, u64::MAX / 2 + 1).is_empty());
+    let export = w.export_changed(u64::MAX);
+    assert!(export.keys.is_empty() && export.data.is_empty());
+    assert!(w.export_changed(1 << 63).keys.is_empty());
+    w.check().expect("a read never poisons the world");
+    assert_eq!(changed_keys(&w, 0).len(), 3);
+}
+
+#[test]
+fn an_import_renormalises_a_coarsely_quantized_rotation() {
+    let mut w = scene(UpAxis::Y);
+    w.step().expect("steps");
+    let coarse = NetBodyState { p: [0.0, 1.0, 0.0], q: [0.0, 0.0, 0.6, 0.6], v: [0.0; 3], w: [0.0; 3], sleeping: false };
+    w.import_body_state("ball", &coarse).expect("a quantized rotation is a correction (§9.2)");
+    let q = w.export_body_state("ball").expect("there").q;
+    let norm = q.iter().map(|c| c * c).sum::<f64>().sqrt();
+    assert!((norm - 1.0).abs() < 1e-6, "renormalised: {q:?}");
+    assert!((q[2] - q[3]).abs() < 1e-6 && q[2] > 0.7, "{q:?}");
 }
