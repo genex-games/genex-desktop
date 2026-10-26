@@ -1,5 +1,6 @@
 {
   "contract": "1.0",
+  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
   "name": "full-17-7-world",
   "world": {
     "contract": "1.0",

@@ -16,14 +16,31 @@
 use std::path::PathBuf;
 
 use genex_physics::{
-    BodyFilter, PhysicsEvent, PhysicsFailure, QueryAnswer, StaticWorld, StepResult, World, WorldDesc,
+    BodyFilter, PhysicsError, PhysicsEvent, PhysicsFailure, QueryAnswer, StaticWorld, StepResult, World, WorldDesc,
+    build_id, build_id_without_target,
 };
 use serde_json::{Map, Value, json};
 
 const VECTOR_CONTRACT: &str = "1.0";
 
+/// The codes no §16 operation can give, so no vector shows them: a vector's `static` is imported
+/// when the world opens (a refused one is no scene at all, and its codes are §6.5's), `world.contract`
+/// is the file's own, `snapshotRestore` restores this world's own snapshot (never foreign bytes), and
+/// `internal` is a core failure. `tests/static_world.rs`, `world_desc.rs`, `snapshot.rs` and
+/// `hostile.rs` hold each one's rows.
+const UNREACHABLE_BY_VECTOR_OPERATIONS: [PhysicsError; 5] =
+    [PhysicsError::LimitStatic, PhysicsError::BadSnapshot, PhysicsError::BuildMismatch, PhysicsError::ContractMismatch, PhysicsError::Internal];
+
 fn vectors_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vectors")
+}
+
+/// Every pinned vector: the `.json` files of `vectors/`, sorted (the README beside them is not one).
+fn vector_files() -> Vec<PathBuf> {
+    let entries = std::fs::read_dir(vectors_dir()).expect("vectors/");
+    let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    files.sort();
+    files
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -169,9 +186,14 @@ fn actual(w: &World, observed: &Observed, field: &str, expected: &Value) -> Valu
     }
 }
 
-/// Runs `vector`. With `record`, every expected value is replaced by what this build gives and
+/// Runs `vector`, which must be pinned on this build (`build`, the buildId without its target, §2).
+/// With `record`, every expected value is replaced by what this build gives and
 /// the recorded vector is returned; without, the first mismatch is an error naming its step.
 fn run_vector(vector: &Value, record: bool) -> Result<Value, String> {
+    let ours = build_id_without_target();
+    if !record && vector.get("build").and_then(Value::as_str) != Some(ours.as_str()) {
+        return Err(format!("build: the vector is pinned on {}, this core is {ours}; vectors are per build (§16)", vector["build"]));
+    }
     let atomic = vector.get("mode").and_then(Value::as_str) == Some("atomic");
     let mut w = open_world(vector)?;
     let mut recorded = vector.clone();
@@ -231,7 +253,7 @@ fn none() -> Value {
 }
 
 fn vector(name: &str, world: Value, statics: Value, mode: &str, steps: Vec<Value>) -> Value {
-    json!({ "contract": VECTOR_CONTRACT, "name": name, "world": world, "static": statics, "mode": mode, "steps": steps })
+    json!({ "contract": VECTOR_CONTRACT, "build": build_id_without_target(), "name": name, "world": world, "static": statics, "mode": mode, "steps": steps })
 }
 
 fn no_static() -> Value {
@@ -343,32 +365,48 @@ fn motorised_doors_32() -> Value {
     vector("motorised-doors-32", world(1.0 / 60.0, 1, [0.0, -9.81, 0.0], "y", 1.0), no_static(), "each", steps)
 }
 
+/// The firstperson preset's `dressed` world (§17.7), verbatim from genex-demo's
+/// `packages/netcode-bench/conformance/authority/presets/firstperson.json` (`worlds`, name `dressed`,
+/// §17.7 hash 1340734173): a floor, a wall, two stairs, a crate, a floating slab, a platform and
+/// three ramps on both axes, in inches, z-up.
+fn firstperson_dressed_world() -> Value {
+    json!({
+        "boxes": [[-4096, -4096, -64, 4096, 4096, 0], [200, -300, 0, 260, 300, 120], [-400, 150, 0, -150, 210, 16], [-400, 210, 0, -150, 270, 32], [-420, -420, 0, -300, -300, 40], [-60, -60, 100, 60, 60, 110], [500, -50, 0, 900, 50, 64]],
+        "ramps": [[-100, -500, 0, 100, -300, 64, 1, 0, 64], [260, 300, 0, 500, 400, 48, 0, 48, 0], [-300, 300, 0, -200, 500, 200, 1, 0, 200]],
+    })
+}
+
+/// The preset player walking +x along y = 0 under the slab, kicking the ball in its path.
+const FIRSTPERSON_WALK_STEPS: u32 = 40;
+const FIRSTPERSON_WALK_INCHES: f64 = 20.0;
+
 fn firstperson_static_inches() -> Value {
-    let statics = json!({
-        "boxes": [[-1024, -1024, -64, 1024, 1024, 0], [128, -256, 0, 384, 256, 96], [-512, -64, 0, -448, 64, 256]],
-        "ramps": [[-256, -256, 0, 0, 256, 128, 0, 0, 128], [400, -128, 0, 640, 128, 96, 0, 96, 0], [-128, 300, 0, 128, 600, 64, 1, 16, 64]],
-    });
+    // A ball over every kind of piece: both stairs, the crate, the slab, the platform, the wall's
+    // top, each ramp, and one on the floor in the player's path.
+    let drops = [(-275.0, 180.0), (-275.0, 240.0), (-360.0, -360.0), (0.0, 0.0), (700.0, 0.0), (230.0, 0.0), (0.0, -400.0), (380.0, 350.0), (-250.0, 400.0), (-300.0, 0.0)];
     let mut setup = Vec::new();
-    for (i, (x, y)) in [(-192.0, 0.0), (-64.0, 100.0), (256.0, 0.0), (500.0, 0.0), (0.0, 450.0), (-480.0, 0.0)].into_iter().enumerate() {
+    for (i, (x, y)) in drops.into_iter().enumerate() {
         setup.push(spawn(&format!("ball.{i}"), "dynamic", [x, y, 320.0], sphere(8.0), json!({ "kind": "prop" }), json!({ "events": true })));
     }
     setup.push(spawn("player", "kinematic", [-700.0, 0.0, 36.0], json!({ "kind": "capsule", "halfHeight": 20, "radius": 16, "axis": "z" }), json!({ "kind": "player" }), json!({ "events": true })));
     let mut steps = vec![json!({ "apply": setup, "repeat": 60, "expect": { "stateHash": null, "events": null } })];
-    for t in 1..=30 {
-        let walk = json!([{ "setNextKinematicPose": { "key": "player", "pose": pose([-700.0 + 10.0 * f64::from(t), 0.0, 36.0]) } }]);
-        let expect = if t % 10 == 0 { json!({ "stateHash": null, "events": null }) } else { Value::Null };
+    for t in 1..=FIRSTPERSON_WALK_STEPS {
+        let walk = json!([{ "setNextKinematicPose": { "key": "player", "pose": pose([-700.0 + FIRSTPERSON_WALK_INCHES * f64::from(t), 0.0, 36.0]) } }]);
         let mut entry = json!({ "apply": walk });
-        if !expect.is_null() {
-            entry["expect"] = expect;
+        if t % 10 == 0 {
+            entry["expect"] = json!({ "stateHash": null, "events": null });
         }
         steps.push(entry);
     }
+    steps.push(json!({ "repeat": 30, "expect": { "stateHash": null, "physicsHash": null } }));
     steps.push(json!({ "query": [
-        { "ray": { "origin": vec_json([-128.0, 0.0, 400.0]), "dir": [0, 0, -1], "maxDist": 1000 } },
-        { "ray": { "origin": vec_json([520.0, 0.0, 400.0]), "dir": [0, 0, -1], "maxDist": 1000 } },
-        { "overlap": { "shape": sphere(40.0), "pose": pose([256.0, 0.0, 100.0]) } },
+        { "ray": { "origin": vec_json([0.0, 0.0, 400.0]), "dir": [0, 0, -1], "maxDist": 1000 } },
+        { "ray": { "origin": vec_json([800.0, 0.0, 400.0]), "dir": [0, 0, -1], "maxDist": 1000 } },
+        { "ray": { "origin": vec_json([-800.0, 0.0, 36.0]), "dir": [1, 0, 0], "maxDist": 2000, "filter": { "excludeBodies": ["player"] } } },
+        { "overlap": { "shape": sphere(40.0), "pose": pose([380.0, 350.0, 40.0]) } },
+        { "shapeCast": { "shape": sphere(16.0), "pose": pose([-275.0, 240.0, 200.0]), "dir": [0, 0, -1], "maxDist": 400 } },
     ], "repeat": 0, "expect": { "queries": null } }));
-    vector("firstperson-static-inches", world(1.0 / 30.0, 2, [0.0, 0.0, -800.0], "z", 39.37), statics, "each", steps)
+    vector("firstperson-static-inches", world(1.0 / 30.0, 2, [0.0, 0.0, -800.0], "z", 39.37), firstperson_dressed_world(), "each", steps)
 }
 
 fn vehicle_hull_pushing_props() -> Value {
@@ -603,8 +641,7 @@ fn write_vectors() {
 
 #[test]
 fn every_pinned_vector_passes_on_this_build() {
-    let mut names: Vec<PathBuf> = std::fs::read_dir(vectors_dir()).expect("vectors/").filter_map(|e| e.ok().map(|e| e.path())).collect();
-    names.sort();
+    let names = vector_files();
     assert!(names.len() >= scenes().len(), "every required scene is pinned");
     for path in names {
         let text = std::fs::read_to_string(&path).expect("reads");
@@ -637,6 +674,59 @@ fn a_changed_expectation_is_reported_with_its_step() {
     let error = run_vector(&vector, false).expect_err("a wrong hash");
     assert!(error.starts_with("step 0: stateHash expected \"0000000000000000\""), "{error}");
     assert!(error.contains("bodies: ["), "the dump follows");
+}
+
+#[test]
+fn every_pinned_vector_names_this_build_without_its_target() {
+    for path in vector_files() {
+        let vector: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("JSON");
+        assert_eq!(vector["build"], json!(build_id_without_target()), "{path:?}");
+    }
+}
+
+#[test]
+fn a_vector_pinned_on_another_build_is_refused_naming_both_builds() {
+    let pinned: Value = serde_json::from_str(&std::fs::read_to_string(file_of(&key_at_64_bytes())).expect("pinned")).expect("JSON");
+    let other = "genex-physics/9.9.9+contract-1.0+rapier-0.36.0+det";
+    let cases = [json!(other), Value::Null, json!(""), json!(build_id())];
+    for build in cases {
+        let mut vector = pinned.clone();
+        vector["build"] = build.clone();
+        let error = run_vector(&vector, false).expect_err("another build's vector");
+        assert!(error.starts_with("build:"), "{build}: {error}");
+        assert!(error.contains(&build_id_without_target()), "{build}: names this build: {error}");
+    }
+}
+
+#[test]
+fn the_vectors_reach_every_code_their_operations_can_give() {
+    let mut seen = std::collections::BTreeSet::new();
+    for path in vector_files() {
+        let vector: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("JSON");
+        for entry in vector["steps"].as_array().expect("steps") {
+            for pair in entry["expect"].get("refused").and_then(Value::as_array).into_iter().flatten() {
+                seen.insert(pair[1].as_str().expect("a code").to_string());
+            }
+            for answer in entry["expect"].get("queries").and_then(Value::as_array).into_iter().flatten() {
+                if let Some(code) = answer.get("error").and_then(Value::as_str) {
+                    seen.insert(code.to_string());
+                }
+            }
+        }
+    }
+    let wanted: std::collections::BTreeSet<String> =
+        PhysicsError::ALL.iter().filter(|code| !UNREACHABLE_BY_VECTOR_OPERATIONS.contains(code)).map(|code| code.code().to_string()).collect();
+    assert_eq!(seen, wanted);
+}
+
+#[test]
+fn the_readme_names_every_pinned_vector() {
+    let readme = std::fs::read_to_string(vectors_dir().join("README.md")).expect("vectors/README.md");
+    for path in vector_files() {
+        let name = path.file_name().and_then(|n| n.to_str()).expect("a file name");
+        assert!(readme.contains(&format!("`{name}`")), "README.md lists {name}");
+    }
+    assert!(readme.contains(&build_id_without_target()), "README.md names the build the pins are for");
 }
 
 #[test]
