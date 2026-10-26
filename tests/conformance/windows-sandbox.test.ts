@@ -1897,6 +1897,40 @@ describe("the grant session", () => {
     assert.deepEqual(s.runtime.calls, ["initialize"]);
   });
 
+  it("the last member's leave resolves once every grant is released, so a stopping core leaves none behind", async () => {
+    const s = session();
+    const only = {};
+    await s.session.join(only, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
+    let finish = () => {};
+    const resetting = new Promise<void>((resolve) => (finish = resolve));
+    s.runtime.runtime.reset = async () => {
+      s.runtime.calls.push("reset");
+      await resetting;
+      s.runtime.calls.push("reset done");
+    };
+    let left = false;
+    const leaving = Promise.resolve(s.session.leave(only)).then(() => (left = true));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(left, false, "srt's reset is still running");
+    finish();
+    await leaving;
+    assert.deepEqual(s.runtime.calls, ["initialize", "reset", "reset done"]);
+    assert.equal(s.ancestors.revoked(), 1);
+  });
+
+  it("a leave that others outlast does not wait for the regrant a running command holds back", async () => {
+    const s = session();
+    const leaves = {};
+    await s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
+    await s.session.join(leaves, { grants: { write: [LATE], read: [] }, config: BASE_CONFIG });
+    await s.session.settled();
+    const release = await s.session.acquire();
+    await s.session.leave(leaves);
+    assert.equal(s.session.regrants, 1, "nothing is reset under a running command");
+    release();
+    await s.session.settled();
+  });
+
   it("the last member out releases every grant, and a later join starts the session again", async () => {
     const s = session();
     const only = {};

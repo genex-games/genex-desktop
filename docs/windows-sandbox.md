@@ -22,7 +22,8 @@ the setup screen opens on `git-missing`. What differs from macOS:
   sessions (a root's first grant walks its tree once; later starts read one ACL per root) and
   marks them safe for Git. One `WindowsSandboxSession` holds the union of every `ProcessSandbox`'s roots. A folder opened later,
   or a disposed member's folders, queue one `reset()` + `initialize()` that runs once no command
-  holds the session; the last member out releases everything. A per-run grant outside the
+  holds the session; the last member out releases everything, and its `dispose()` resolves only
+  once that release is done, so a stopped core leaves no srt grant behind. A per-run grant outside the
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
   `initialize()` is tried a second time when srt-win's egress check (`wfp`) times out, and again
   after 5 s and 10 s when Windows refuses that check's start of srt-win as the sandbox user
@@ -294,8 +295,11 @@ agent command ([harness runtime](harness-runtime.md#a-workers-engine-that-cannot
 The CLI process itself runs as the person, like Codex, so its sign-in and its network to Anthropic
 are its own; its file tools are held by the never-touch hook and the permission rules, as on every
 platform. DNS still resolves; the proxy token is on the
-runner's command line. A folder opened while the harness runs is writable only after it next
-stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
+runner's command line. A game's build or package install is not confined to its own folders
+(`RunConfinement` only makes them and its temp folder): it can write whatever every sandboxed
+process can, other games and the games folder among them, because a write entry for the one
+`srt-sandbox` user would hold for every command running meanwhile. A folder opened while the
+harness runs is writable only after it next stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
 under that path's parent, holding each folder open meanwhile. Genex's own entries stay between
 launches (the owner's choice, for start times): while Genex is closed, only processes running as
 the sandbox user (any srt sandbox on the PC, Claude Code's shell sandbox among them) keep reading
