@@ -150,13 +150,17 @@ fn locked_axes(joint_type: JointType) -> JointAxesMask {
 
 /// The joint: its locked axes, anchors, axis, limits and motor. A rope couples the three
 /// linear axes and limits their distance, as Rapier's own rope joint does.
+///
+/// Rapier measures a joint's coordinate as its second body relative to its first, so the core
+/// inserts `b` (or the world anchor) first and `a` second: a hinge angle, slider position and
+/// motor target are `a` relative to `b`, as a caller who names the moving part `a` expects.
 fn joint_data(spec: &JointSpec) -> GenericJoint {
     let axis = vector(spec.axis);
     let mut builder = GenericJointBuilder::new(locked_axes(spec.joint_type))
         .local_axis1(axis)
         .local_axis2(axis)
-        .local_anchor1(vector(spec.anchor_a))
-        .local_anchor2(vector(spec.anchor_b))
+        .local_anchor1(vector(spec.anchor_b))
+        .local_anchor2(vector(spec.anchor_a))
         .contacts_enabled(spec.collide_connected);
     if spec.joint_type == JointType::Rope {
         builder = builder.coupled_axes(JointAxesMask::LIN_AXES);
@@ -317,8 +321,8 @@ impl Backend for RapierBackend {
     }
 
     fn insert_joint(&mut self, a: Self::Body, b: Option<Self::Body>, spec: &JointSpec) -> Self::Joint {
-        let other = b.unwrap_or(self.anchor);
-        self.world.insert_impulse_joint(a, other, joint_data(spec))
+        let first = b.unwrap_or(self.anchor);
+        self.world.insert_impulse_joint(first, a, joint_data(spec))
     }
 
     fn remove_joint(&mut self, joint: Self::Joint) {
