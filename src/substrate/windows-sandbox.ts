@@ -7,6 +7,10 @@
  *    the whole process; a per-command grant throws. One {@link WindowsSandboxSession} holds the
  *    union of every `ProcessSandbox`'s grants and re-applies it (`reset()` + `initialize()`)
  *    only while no sandboxed command runs, batching every change that queued meanwhile.
+ *  - A command runs under a write-restricted token: it writes only the roots srt-win itself
+ *    granted for writing (each carries an identifier of its own that the token names), so every
+ *    write root is srt-win's ({@link routeWindowsGrants}). srt-win keeps those grants between
+ *    sessions and takes them back when Genex is uninstalled ({@link forgetKeptGrants}).
  *  - The sandbox user reads nothing in the real user's profile unless granted. Node's realpath
  *    walk and Git stat every directory above a granted folder, so each directory between the
  *    profile and a grant root gets FILE_READ_ATTRIBUTES (no inheritance, no listing) as well;
@@ -15,7 +19,8 @@
  *    They are granted after srt-win initializes, every time: its deny stamp puts a deny on each
  *    denied path's parent that replaces the sandbox user's entry there (userData, the parent of
  *    the secrets folder, lost its grant that way), and its reset removes that entry.
- *  - A deny on a path that exists is Genex's own ({@link ownAclEntries}): srt-win's stamp
+ *  - A read grant and a deny on a path that exists are Genex's own ({@link ownAclEntries}): srt-win
+ *    passes a read grant down through everything under it at every start and exit, and its stamp
  *    re-propagates permissions through everything under each denied path's parent, which for
  *    `~\.ssh` is the whole profile and for a game's `.claude` the whole game.
  *  - The environment given to `spawn()` never reaches the child: it starts with the sandbox
@@ -26,13 +31,14 @@
  * everywhere; only the session's defaults touch srt-win and the folders' entries.
  */
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
-import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import type { FilesystemPathEntry, SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform, WindowsSetupNeed } from "../shared/boot.ts";
 import { ROBLOX_WINDOWS_SIGN_IN_STORES, sandboxedCliHomes } from "./credential-homes.ts";
@@ -198,13 +204,18 @@ const MESSAGE = {
   /** srt-win's grant and stamp walk each folder again, so a later grant or stamp timeout reads as this. */
   OwnEntriesOff: (count: number) =>
     `own entries off: srt-win sets all ${count} grants and denies (no sandbox users' group, or PowerShell could not set them)`,
-  LauncherNotGranted: (why: string) => `launcher folders not granted: ${why}`,
-  NoLauncherSid: "srt-win did not say the sandbox user's id",
   NoAnswer: "no answer for this folder",
   NoSandboxSid: "could not read the sandbox user's id from srt-win, so the folders above its grants stay closed to it",
   NoMembers: "the Windows sandbox session has no members",
   UserNotSetUp: (user: boolean, cred: boolean) => `Sandbox user is not provisioned (user=${user}, cred=${cred}).`,
   FiltersNotSetUp: "WFP filters are not installed for the sandbox user.",
+  NotInGroup: "The sandbox user is not in the sandbox users' group.",
+  /** Why Genex's own entries are off this start: srt-win's group, or PowerShell ({@link ownAclEntries}). */
+  OwnNoGroup: "own entries: the sandbox user is not in the sandbox users' group",
+  OwnPowerShellRefused:
+    "own entries: Windows PowerShell could not run Genex's batch (an antivirus or a policy may block it)",
+  OtherRelease: (installed: number | undefined, needed: number) =>
+    `The sandbox was set up by another release (setup version ${installed ?? "unknown"}; this one needs ${needed}).`,
   LogonServiceDisabled:
     "The Secondary Logon service (seclogon) is disabled, so Windows refuses to start commands as the sandbox user.",
 } as const;
@@ -497,7 +508,8 @@ export interface EnvFileInput {
  * The env file a Git Bash command sources first (`. file`): every variable exported under its
  * own single quotes, the toolchain PATH put after Git's `/usr/bin` (so the POSIX tools beat
  * `System32`'s `find` and `sort`), and Git's credential helper switched off by appending to the
- * `GIT_CONFIG_*` list srt already set (its `safe.directory` entries stay).
+ * `GIT_CONFIG_*` list srt already set (its `safe.directory` entries and its
+ * `http.sslBackend=openssl` stay).
  */
 export function renderEnvFile(input: EnvFileInput): string {
   const lines: string[] = [];
@@ -931,6 +943,12 @@ export interface DenyRouteDeps {
   /** Where a path really is (default: Windows' own resolution, links followed, {@link longPath}). */
   realpath?: (p: string) => string;
   exists?: (p: string) => boolean;
+  /**
+   * srt-win's write roots: a deny inside one is srt-win's. Its first grant of a root rewrote a file
+   * under a folder Genex had denied as its own, protected and with no allow left (the harness's
+   * skills, unreadable at its first boot); srt-win keeps a deny under a kept root with the root.
+   */
+  srtRoots?: readonly string[];
 }
 
 /**
@@ -944,8 +962,9 @@ function setByGenex(real: string, exists: (p: string) => boolean): boolean {
 }
 
 /**
- * Split the session's deny paths between srt-win and Genex ({@link setByGenex}), each judged and
- * denied where it really is: a link is denied at its target, as srt-win's stamp would.
+ * Split the session's deny paths between srt-win and Genex ({@link setByGenex}; a path inside one of
+ * srt-win's write roots is srt-win's, {@link DenyRouteDeps.srtRoots}), each judged and denied where
+ * it really is: a link is denied at its target, as srt-win's stamp would.
  */
 export function routeWindowsDenies(
   deny: { read: readonly string[]; write: readonly string[] },
@@ -955,9 +974,10 @@ export function routeWindowsDenies(
   const exists = deps.exists ?? existsSync;
   const srt = { read: [] as string[], write: [] as string[] };
   const own: OwnAclEntry[] = [];
+  const inSrtRoot = (p: string) => (deps.srtRoots ?? []).some((root) => insideWindowsPath(root, p));
   const route = (p: string, access: DenyAccess, sent: string[]) => {
     const real = realpath(p);
-    if (!setByGenex(real, exists)) {
+    if (!setByGenex(real, exists) || inSrtRoot(p) || inSrtRoot(real)) {
       sent.push(p);
       return;
     }
@@ -969,22 +989,22 @@ export function routeWindowsDenies(
 }
 
 /**
- * Split the session's grant roots the same way: Genex grants each folder that exists to the
- * sandbox users' group, where it really is. srt-win's grant passed its entry down through
- * everything under the folder at every start and took it back at every exit; Genex's stays.
+ * Split the session's grant roots: every write root goes to srt-win, and Genex grants each read
+ * root that exists to the sandbox users' group, where it really is. A sandboxed command runs under
+ * a write-restricted token that writes only where srt-win's own grant names the root's identifier,
+ * and srt-win keeps those grants between sessions. Its read grants it passes down through
+ * everything under the folder at every start and takes back at every exit; Genex's stay.
  */
 export function routeWindowsGrants(grants: WindowsGrants, deps: DenyRouteDeps = {}): DenyRoutes {
   const realpath = deps.realpath ?? ((p: string) => longPath(p));
   const exists = deps.exists ?? existsSync;
-  const srt = { read: [] as string[], write: [] as string[] };
+  const srt = { read: [] as string[], write: [...grants.write] };
   const own: OwnAclEntry[] = [];
-  const route = (p: string, grant: GrantAccess, sent: string[]) => {
+  for (const p of grants.read) {
     const real = realpath(p);
-    if (setByGenex(real, exists)) own.push({ path: real, deny: null, guard: false, grant });
-    else sent.push(p);
-  };
-  for (const p of grants.write) route(p, GrantAccess.Modify, srt.write);
-  for (const p of grants.read) route(p, GrantAccess.Read, srt.read);
+    if (setByGenex(real, exists)) own.push({ path: real, deny: null, guard: false, grant: GrantAccess.Read });
+    else srt.read.push(p);
+  }
   return { srt, own: mergeEntries(own) };
 }
 
@@ -1342,7 +1362,10 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
   return {
     async sync(entries) {
       const sid = await deps.sid();
-      if (!sid) return false;
+      if (!sid) {
+        deps.log?.(MESSAGE.OwnNoGroup);
+        return false;
+      }
       const wanted = mergeEntries(entries);
       const others = otherHolders(holders, self, alive, readOwnRecord);
       const stale = others.stale.flatMap((holder) => (holder.record ? [holder.record] : []));
@@ -1363,7 +1386,10 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
         return { previous, edits, later };
       });
       const left = edits.length > 0 ? await setAll(edits, later) : [];
-      if (!left) return false;
+      if (!left) {
+        deps.log?.(MESSAGE.OwnPowerShellRefused);
+        return false;
+      }
       await withRecord(async () => {
         const walks = walksAfterSync(readOwnRecord(recordFile) ?? previous, stale, later, left, wanted);
         if (edits.length > 0 || walks.length > 0) await save(ownRecord(sid, wanted, walks));
@@ -1425,9 +1451,17 @@ export interface SessionMember {
   config: SandboxRuntimeConfig;
 }
 
+/**
+ * The paths of a config's path list. sandbox-runtime takes `{ path, literal }` entries too; Genex's
+ * configs are plain paths, and the session judges an entry by its path either way.
+ */
+function entryPaths(entries: readonly FilesystemPathEntry[] | undefined): string[] {
+  return (entries ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
+}
+
 /** Every deny path a member asks for. */
 function memberDenies(member: SessionMember): string[] {
-  return [...member.config.filesystem.denyRead, ...member.config.filesystem.denyWrite];
+  return entryPaths([...member.config.filesystem.denyRead, ...member.config.filesystem.denyWrite]);
 }
 
 /** The session's collaborators. */
@@ -1440,18 +1474,14 @@ export interface WindowsSessionDeps {
   ancestors: AncestorGrants;
   /** Filters deny paths before they reach srt-win ({@link keepWindowsDenies}). */
   keepDenies?: (paths: readonly string[], scope: DenyScope) => string[];
-  /**
-   * Lets the sandbox user start srt-win, before an initialize ({@link grantLauncherFolders});
-   * answers how to take that back, which a failed initialize does.
-   */
-  launcher?: () => Promise<LauncherGrant>;
   /** Where the session says how long each step of a start took (Genex's log). */
   log?: (line: string) => void;
   /** Genex's own grants and denies for the paths that exist ({@link ownAclEntries}); without it srt-win sets them all. */
   own?: OwnAclEntries;
   /**
-   * The folders srt-win starts from: Genex grants them with its own entries, before srt-win's egress
-   * check, and `launcher` only where Genex cannot.
+   * The folders srt-win starts from: Genex grants them with its own entries, or srt-win among the
+   * session's read grants where Genex cannot; either way before srt-win's egress check runs it as the
+   * sandbox user.
    */
   launchDirs?: readonly string[];
   /** Where a deny path really is (default: Windows' own resolution, {@link longPath}). */
@@ -1473,7 +1503,7 @@ function sentToSrt(config: SandboxRuntimeConfig): number {
 /** The paths srt-win sets entries on for `config`: its grants and its denies. */
 function srtPaths(config: SandboxRuntimeConfig): string[] {
   const { allowRead = [], allowWrite = [], denyRead = [], denyWrite = [] } = config.filesystem;
-  return [...allowRead, ...allowWrite, ...denyRead, ...denyWrite];
+  return entryPaths([...allowRead, ...allowWrite, ...denyRead, ...denyWrite]);
 }
 
 /** One own entry as comparable text: its path's identity and what it sets there. */
@@ -1493,11 +1523,15 @@ export function sandboxUserRefused(error: unknown): boolean {
   return hresult !== undefined && Number(hresult) === ACCESS_DENIED_HRESULT;
 }
 
+/** Whether sandbox-runtime failed because an srt-win call ran out of time. */
+function srtWinTimedOut(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === SRT_WIN_TIMEOUT;
+}
+
 /** Whether sandbox-runtime failed because srt-win's egress check (`wfp`) ran out of time. */
 function egressCheckTimedOut(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const timedOut = "code" in error && error.code === SRT_WIN_TIMEOUT;
-  return timedOut && "subcommand" in error && error.subcommand === SrtWinSubcommand.Wfp;
+  if (!srtWinTimedOut(error) || typeof error !== "object" || error === null) return false;
+  return "subcommand" in error && error.subcommand === SrtWinSubcommand.Wfp;
 }
 
 /**
@@ -1521,8 +1555,6 @@ export class WindowsSandboxSession {
   #networkChanged = false;
   #active = 0;
   #regrants = 0;
-  /** An initialize succeeded, so its once-per-process egress check has run srt-win as the sandbox user. */
-  #started = false;
   /** The last apply left the grants and denies on paths that exist to Genex ({@link ownAclEntries}), not srt-win. */
   #ownRouted = false;
   /**
@@ -1678,22 +1710,14 @@ export class WindowsSandboxSession {
    * refusal that outlasts the pauses fails with plain words; the log keeps srt-win's.
    */
   async #initialize(config: SandboxRuntimeConfig): Promise<void> {
-    // Genex's own entries already grant the folders srt-win starts from.
-    const launcher = this.#started || this.#ownRouted ? undefined : this.#deps.launcher;
-    const release = launcher ? await this.#timed("launcher folders", launcher) : undefined;
-    // Waiting cannot open folders the launcher could not grant: that refusal is set up's to repair.
-    const launchOpen = release?.granted !== false;
-    const tryAgain = this.#retries(launchOpen);
+    const tryAgain = this.#retries();
     for (;;) {
       try {
         await this.#timed("initialize", () => this.#deps.runtime.initialize(config));
-        this.#started = true;
         return;
       } catch (error) {
         if (await tryAgain(error)) continue;
-        // srt's reset takes back only what an initialize recorded; the launcher's grant is ours.
-        await release?.();
-        throw this.#startFailure(error, launchOpen);
+        throw this.#startFailure(error);
       }
     }
   }
@@ -1702,8 +1726,8 @@ export class WindowsSandboxSession {
    * Whether to initialize again after a failure: once more after an egress check that ran out of
    * time, and after each pause while Windows refuses srt-win's start as the sandbox user.
    */
-  #retries(launchOpen: boolean): (error: unknown) => Promise<boolean> {
-    const pauses = launchOpen ? [...(this.#deps.logonRetryMs ?? LOGON_RETRY_MS)] : [];
+  #retries(): (error: unknown) => Promise<boolean> {
+    const pauses = [...(this.#deps.logonRetryMs ?? LOGON_RETRY_MS)];
     let timeouts = 0;
     return async (error) => {
       if (egressCheckTimedOut(error)) return ++timeouts < INITIALIZE_ATTEMPTS;
@@ -1716,8 +1740,11 @@ export class WindowsSandboxSession {
   }
 
   /** What a failed start reports: plain words for a refusal that outlasted the pauses (the log keeps srt-win's), else the runtime's own error. */
-  #startFailure(error: unknown, launchOpen: boolean): unknown {
-    if (!sandboxUserRefused(error) || !launchOpen) return error;
+  #startFailure(error: unknown): unknown {
+    if (srtWinTimedOut(error)) {
+      return new SandboxLaunchError(SandboxLaunchCode.SrtWinTimeout, errorMessage(error), { cause: error });
+    }
+    if (!sandboxUserRefused(error)) return error;
     this.#deps.log?.(MESSAGE.LogonRefusedAtLast(error));
     return new SandboxLaunchError(SandboxLaunchCode.SandboxUserRefused, undefined, { cause: error });
   }
@@ -1937,22 +1964,20 @@ export class WindowsSandboxSession {
     const scope = { roots, profile: this.#deps.profile };
     const union = (pick: (member: SessionMember) => readonly string[]) => keep(members.flatMap(pick), scope);
     const domains = [...new Set(members.flatMap((member) => member.config.network.allowedDomains ?? []))];
-    const read = union((member) => member.config.filesystem.denyRead);
+    const read = union((member) => entryPaths(member.config.filesystem.denyRead));
     const deny = {
       read,
       write: writeDeniesBeyondRead(
-        union((member) => member.config.filesystem.denyWrite),
+        union((member) => entryPaths(member.config.filesystem.denyWrite)),
         read,
       ),
     };
-    // A reset replaces the launcher's entries too: srt-win's fallback must regrant those folders.
+    // Where Genex cannot set entries, srt-win grants the folders it starts from with the session's.
     const routes = own
       ? this.#ownRoutes(grants, deny)
       : { grants: grantUnion([grants, { write: [], read: [...(this.#deps.launchDirs ?? [])] }]), deny, own: [] };
     const config = {
       ...latest,
-      // srt-win marks its write grants safe for Git (dubious ownership); Genex's own need it said.
-      ...(own ? { git: { safeDirectories: [...(latest.git?.safeDirectories ?? []), ...grants.write] } } : {}),
       network: { ...latest.network, allowedDomains: domains },
       filesystem: {
         ...latest.filesystem,
@@ -1970,7 +1995,7 @@ export class WindowsSandboxSession {
     const route = { realpath: this.#deps.realpath, exists: this.#deps.exists };
     const read = [...grants.read, ...(this.#deps.launchDirs ?? [])];
     const granting = routeWindowsGrants({ write: grants.write, read }, route);
-    const denying = routeWindowsDenies(deny, route);
+    const denying = routeWindowsDenies(deny, { ...route, srtRoots: granting.srt.write });
     return { grants: granting.srt, deny: denying.srt, own: mergeEntries([...granting.own, ...denying.own]) };
   }
 }
@@ -2044,14 +2069,35 @@ export function takeBackSandboxEntries(
   return edits.length;
 }
 
-/** The `srt-sandbox` user's SID, or null while the sandbox is not provisioned. */
-export async function srtSandboxSid(srtWin: string): Promise<string | null> {
+/** The first argument sandbox-runtime puts before every srt-win subcommand (its `SRT_WIN_DISPATCH_ARG1`). */
+const SRT_WIN_DISPATCH = "--srt-win";
+/** What srt-win takes back the write grants it keeps between sessions with: every one of this user's. */
+const FORGET_KEPT_GRANTS = ["acl", "forget", "--all"] as const;
+/** The files beside srt-win.exe it loads: the Visual C++ runtime the package puts there. */
+const PROGRAM_FILE = /\.(?:exe|dll)$/i;
+
+/**
+ * Have srt-win take back the write grants it keeps between sessions (on the games folder, the
+ * harness workspace, a linked project) when Genex is uninstalled. It runs on after the uninstall
+ * launch exits, as the entry take-back does ({@link takeBackSandboxEntries}): passing a removal down
+ * a large folder takes longer than Squirrel waits. It runs from a copy in `tmp`, since Squirrel
+ * removes the install folder next and cannot remove a program that is running. Answers whether it
+ * started; an uninstall never fails on it.
+ */
+export function forgetKeptGrants(spawnBatch: DetachedSpawn, srtWin: string = srtWinPath(), tmp = os.tmpdir()): boolean {
   try {
-    const srt = await import(SRT_PACKAGE);
-    const status = await srt.getWindowsSandboxUserStatusAsync({ srtWin: srt.resolveSrtWin({ path: srtWin }) });
-    return status.sid ?? null;
+    const dir = path.dirname(srtWin);
+    const copy = mkdtempSync(path.join(tmp, "genex-srt-forget-"));
+    const program = path.join(copy, path.basename(srtWin));
+    copyFileSync(srtWin, program);
+    for (const name of readdirSync(dir)) {
+      if (PROGRAM_FILE.test(name) && name !== path.basename(srtWin))
+        copyFileSync(path.join(dir, name), path.join(copy, name));
+    }
+    spawnBatch(program, [SRT_WIN_DISPATCH, ...FORGET_KEPT_GRANTS], process.env).unref();
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -2135,77 +2181,21 @@ export function sandboxSidOnce(
   };
 }
 
-/** How to take a launcher grant back, and whether it was made (false: the log says why not). */
-export type LauncherGrant = (() => void | Promise<void>) & { granted?: boolean };
-
-/** How the launcher grant reaches srt-win ({@link grantLauncherFolders}); the session's are srt-win's own. */
-export interface LauncherGrantDeps {
-  /** The sandbox user's SID, asked again while srt-win cannot say ({@link sandboxSidOnce}); null before it exists. */
-  sid: () => Promise<string | null>;
-  /** Grant `dirs` for reading to `sid`, held for this process; throws when srt-win refuses. */
-  grant: (sid: string, dirs: readonly string[]) => Promise<void>;
-  /** Take back what this process granted `sid`. */
-  revoke: (sid: string) => Promise<void>;
-  /** Where a grant that did not happen is said (Genex's log). */
-  log?: (line: string) => void;
-}
-
-/** srt-win's own grant and take-back for {@link grantLauncherFolders}, run off the event loop. */
-export function srtLauncherGrants(srtWin: string): Pick<LauncherGrantDeps, "grant" | "revoke"> {
-  const acl = async (sid: string) => {
-    const srt = await import(SRT_PACKAGE);
-    return { srt, acl: { sandboxUserSid: sid, srtWin: srt.resolveSrtWin({ path: srtWin }) } };
-  };
-  return {
-    async grant(sid, dirs) {
-      const { srt, acl: target } = await acl(sid);
-      // The async grant (patched into sandbox-runtime): a sync one holds the start window's thread.
-      await srt.grantWindowsAclAsync({ ...target, read: [...dirs], write: [] });
-    },
-    async revoke(sid) {
-      const { srt, acl: target } = await acl(sid);
-      await srt.revokeWindowsAclAsync(target);
-    },
-  };
-}
-
-/**
- * Let the sandbox user open the folders srt-win starts from: initialize's egress check runs
- * srt-win as that user before it applies any grant, and a per-user install (Squirrel's, under
- * `%LOCALAPPDATA%`) sits in the profile, where that user may open nothing, so Windows refused it
- * ("CreateProcessWithLogonW(srt-sandbox): Access is denied"). The grant is srt's own, held for
- * this process like the session's, so a reset after a successful initialize takes it back with
- * them; the answer takes it back after a failed one. Before the sandbox is set up there is no user
- * to grant to, and initialize says so. A grant that fails is taken back at once and leaves
- * initialize to report what that costs (an install outside the profile needs none); either way the
- * log says the folders were not granted, the cause of that refusal.
- */
-export async function grantLauncherFolders(dirs: readonly string[], deps: LauncherGrantDeps): Promise<LauncherGrant> {
-  const sid = await deps.sid();
-  if (!sid) {
-    deps.log?.(MESSAGE.LauncherNotGranted(MESSAGE.NoLauncherSid));
-    return Object.assign(async () => {}, { granted: false });
-  }
-  const release = async () => {
-    // A read grant on the app's own files; the next start's grant replaces it.
-    await deps.revoke(sid).catch(() => {});
-  };
-  try {
-    await deps.grant(sid, dirs);
-    return Object.assign(release, { granted: true });
-  } catch (error) {
-    deps.log?.(MESSAGE.LauncherNotGranted(errorMessage(error)));
-    await release();
-    return Object.assign(release, { granted: false });
-  }
-}
-
 /** srt-win's `wfp status` answer for filters that were never installed (or were removed). */
 const WFP_ABSENT = "absent";
 
 /** srt-win's `user status` and `wfp status` answers, as far as setup goes. */
 export interface SrtSetupStatus {
-  user: { provisioned: boolean; credPresent: boolean };
+  user: {
+    provisioned: boolean;
+    credPresent: boolean;
+    /** The setup version the install on this PC recorded; absent before one. */
+    markerVersion?: number;
+    /** The setup version this srt-win needs; absent from an srt-win that does not say. */
+    setupVersion?: number;
+    /** Whether the sandbox user is in the sandbox users' group; absent from an srt-win that does not say. */
+    inSandboxGroup?: boolean;
+  };
   wfp: { state: string };
 }
 
@@ -2221,12 +2211,20 @@ export interface WindowsSetupGap {
   detail: string;
 }
 
-/** What srt-win says is missing: the sandbox user, its credential, or the WFP filters once the user exists. */
-function srtGaps({ user, wfp }: SrtSetupStatus): string[] {
-  if (!user.provisioned || !user.credPresent) {
-    return [MESSAGE.UserNotSetUp(user.provisioned, user.credPresent)];
+/**
+ * What srt-win says is missing: the sandbox user, its credential, the install again where another
+ * release made it (srt-win starts nothing there), or the WFP filters.
+ */
+function srtGaps({ user, wfp }: SrtSetupStatus): WindowsSetupGap[] {
+  const sandbox = (detail: string) => [{ need: WindowsSetupNeed.Sandbox, detail }];
+  if (!user.provisioned || !user.credPresent) return sandbox(MESSAGE.UserNotSetUp(user.provisioned, user.credPresent));
+  const { markerVersion, setupVersion } = user;
+  if (setupVersion !== undefined && markerVersion !== setupVersion) {
+    return [{ need: WindowsSetupNeed.Reinstall, detail: MESSAGE.OtherRelease(markerVersion, setupVersion) }];
   }
-  return wfp.state === WFP_ABSENT ? [MESSAGE.FiltersNotSetUp] : [];
+  // Without the group Genex cannot set its own entries, and srt-win walks the profile for every deny.
+  if (user.inSandboxGroup === false) return [{ need: WindowsSetupNeed.Reinstall, detail: MESSAGE.NotInGroup }];
+  return wfp.state === WFP_ABSENT ? sandbox(MESSAGE.FiltersNotSetUp) : [];
 }
 
 /**
@@ -2235,7 +2233,7 @@ function srtGaps({ user, wfp }: SrtSetupStatus): string[] {
  * a start failed.
  */
 export function setupGaps(status: WindowsSetupStatus): WindowsSetupGap[] {
-  const gaps = srtGaps(status).map((detail) => ({ need: WindowsSetupNeed.Sandbox, detail }));
+  const gaps = srtGaps(status);
   if (status.logonService !== ServiceStartType.Disabled) return gaps;
   return [...gaps, { need: WindowsSetupNeed.LogonService, detail: MESSAGE.LogonServiceDisabled }];
 }
@@ -2310,11 +2308,6 @@ export function windowsSessionFor(
     urgent: (dir) => needed.some((root) => insideWindowsPath(root, dir)),
     ...(log ? { log } : {}),
   });
-  // Asked again while srt-win cannot say, and kept once found: one probe that timed out used to
-  // skip the grant, and srt-win's egress check then could not start.
-  const userSid = sandboxSidOnce(() => srtSandboxSid(options.srtWin));
-  const launcher = () =>
-    grantLauncherFolders(launchDirs, { sid: userSid, ...srtLauncherGrants(options.srtWin), ...(log ? { log } : {}) });
   if (log) void logSrtSteps(log);
   const session = new WindowsSandboxSession({
     runtime,
@@ -2323,7 +2316,6 @@ export function windowsSessionFor(
     ancestors,
     own,
     launchDirs,
-    launcher,
     ...(log ? { log } : {}),
   });
   // Genex's own grants and denies stay for the next start; the folder entries above them go, and

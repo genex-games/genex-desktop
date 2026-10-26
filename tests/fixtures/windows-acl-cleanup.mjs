@@ -17,38 +17,46 @@ const calls = [];
 const gate = Promise.withResolvers();
 const failure = new Error("synthetic ACL failure");
 const srtWin = { exe: "fixture-srt-win", prependArgs: [] };
+const outcomes = [{ path: "fixture", status: "stillHeld" }];
+/** What a cleanup call answers: a revoke says it completed, so the restore may follow. */
+const answer = (kind) => (kind === "revoke" ? { complete: true, outcomes, pending: [] } : outcomes);
 const syncCleanup = (kind) => (opts) => {
   events.push(`sync ${kind}`);
   calls.push({ kind, opts });
-  return [{ path: "fixture", status: "stillHeld" }];
+  return answer(kind);
 };
 const asyncCleanup = (kind) => async (opts) => {
   events.push(`async ${kind} start`);
   calls.push({ kind, opts });
   await gate.promise;
   events.push(`async ${kind} end`);
-  return [{ path: "fixture", status: "stillHeld" }];
+  return answer(kind);
 };
+const capabilities = Object.values(windows.WINDOWS_SRT_WIN_CAPABILITIES);
 mock.module(moduleUrl("sandbox/windows-sandbox-utils.js"), {
   namedExports: {
     ...windows,
     checkWindowsDependenciesAsync: async () => ({ errors: [], warnings: [] }),
-    getWindowsSandboxUserStatusAsync: async () => ({ provisioned: true, credPresent: true, sid: "fixture-sid" }),
-    verifyWindowsWfpEgress: async () => {},
+    getWindowsSandboxUserStatusAsync: async () => ({
+      provisioned: true,
+      credPresent: true,
+      sid: "fixture-sid",
+      capabilities,
+    }),
+    verifyWindowsWfpEgress: async () => {
+      events.push("egress");
+      if (["egress-failure", "exit-rollback"].includes(scenario)) throw failure;
+    },
     resolveSrtWin: () => srtWin,
     expandWindowsFsPaths: (paths) => paths,
-    grantWindowsAclAsync: async () => {
+    grantWindowsAclPersistent: async () => {
       events.push("grant");
       if (scenario === "exit-grant") await new Promise(() => {});
       if (scenario === "grant-failure") throw failure;
     },
-    stampWindowsAclAsync: async () => {
-      events.push("stamp");
-      if (["stamp-failure", "exit-rollback"].includes(scenario)) throw failure;
-    },
-    revokeWindowsAcl: syncCleanup("revoke"),
+    revokeWindowsAclChecked: syncCleanup("revoke"),
     restoreWindowsAcl: syncCleanup("restore"),
-    revokeWindowsAclAsync: asyncCleanup("revoke"),
+    revokeWindowsAclCheckedAsync: asyncCleanup("revoke"),
     restoreWindowsAclAsync: asyncCleanup("restore"),
   },
 });
@@ -64,7 +72,7 @@ const starting = SandboxManager.initialize(config).catch((error) => {
   report.originalError = error === failure;
 }).finally(() => { settled = true; });
 
-if (["grant-failure", "stamp-failure", "exit-grant", "exit-rollback"].includes(scenario)) {
+if (["grant-failure", "egress-failure", "exit-grant", "exit-rollback"].includes(scenario)) {
   await setImmediate();
 } else {
   await starting;

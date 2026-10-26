@@ -38,7 +38,7 @@ export type ChildEnvRequest =
        * The CLI's vendor: the other vendors' variables are dropped wholesale. `none` is a tool that
        * is no coding CLI (the Ollama server): every vendor's variables stay behind.
        */
-      vendor: "claude" | "codex" | "opencode" | "none";
+      vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "none";
       /** Credential variables this child is meant to use — its own sign-in, never a metered key. */
       keep?: readonly string[];
       set?: Record<string, string | undefined>;
@@ -91,6 +91,8 @@ const VENDOR = {
   claude: /^(?:ANTHROPIC|CLAUDE)_/i,
   codex: /^(?:OPENAI|CODEX)_/i,
   opencode: /^OPENCODE_/i,
+  grok: /^(?:XAI|GROK)_/i,
+  cursor: /^(?:CURSOR|AGENT_CLI)_/i,
 } as const;
 
 export function isCredentialVariable(name: string, value?: string): boolean {
@@ -104,10 +106,12 @@ export function isCredentialVariable(name: string, value?: string): boolean {
 
 /** The other vendor's variables a coding CLI's child never sees; a tool of neither vendor sees neither's. */
 const FOREIGN_VENDORS: Record<ContractorRequest["vendor"], readonly RegExp[]> = {
-  claude: [VENDOR.codex, VENDOR.opencode],
-  codex: [VENDOR.claude, VENDOR.opencode],
-  opencode: [VENDOR.claude, VENDOR.codex],
-  none: [VENDOR.claude, VENDOR.codex, VENDOR.opencode],
+  claude: [VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
+  codex: [VENDOR.claude, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
+  opencode: [VENDOR.claude, VENDOR.codex, VENDOR.grok, VENDOR.cursor],
+  grok: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.cursor],
+  cursor: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok],
+  none: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
 };
 
 type ContractorRequest = Extract<ChildEnvRequest, { base: "contractor" }>;

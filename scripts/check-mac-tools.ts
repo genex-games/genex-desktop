@@ -96,8 +96,9 @@ export const XCODE_STAND_INS: readonly string[] = [
 
 /**
  * Stand-ins Genex runs on purpose, each with its reason. Git: Create's version history, Publish and
- * Remix run it; Play asks `hostGitRuns` (`substrate/git-policy.ts`) first, so a player's Mac without
- * the developer tools never runs the stand-in.
+ * Remix run `git` by name; on a Mac without the developer tools the app puts its own git first on
+ * PATH (`ensureMacGit` in `substrate/git-policy.ts`), and Play asks `hostGitRuns` before
+ * Remix, so a player's Mac never runs the stand-in.
  */
 const RUN_ON_PURPOSE: ReadonlySet<string> = new Set(["git"]);
 

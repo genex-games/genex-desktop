@@ -16,6 +16,8 @@ import { crane } from "../ui/wire-art.ts";
 import {
   CLAUDE_CODE_MARK,
   CODEX_MARK,
+  CURSOR_MARK,
+  GROK_MARK,
   OPENCODE_MARK,
   OPENROUTER_MARK,
   type ProviderMark,
@@ -1322,11 +1324,13 @@ export type Provider = (typeof Provider)[keyof typeof Provider];
 /** Both marks, left to right. */
 export const MARK_PROVIDERS: readonly Provider[] = [Provider.Claude, Provider.Codex];
 /** The metered providers' marks, each alone on its own screen. */
-export const MeteredMark = { OpenRouter: "openrouter", OpenCode: "opencode" } as const;
+export const MeteredMark = { OpenRouter: "openrouter", OpenCode: "opencode", Grok: "grok", Cursor: "cursor" } as const;
 export type MeteredMark = (typeof MeteredMark)[keyof typeof MeteredMark];
 const METERED_MARKS: Record<MeteredMark, ProviderMark> = {
   [MeteredMark.OpenRouter]: OPENROUTER_MARK,
   [MeteredMark.OpenCode]: OPENCODE_MARK,
+  [MeteredMark.Grok]: GROK_MARK,
+  [MeteredMark.Cursor]: CURSOR_MARK,
 };
 
 const MARK_CAM: Camera = { yaw: 0, pitch: 0.32, scale: 44, cx: 320, cy: 100, dist: 16, tx: 0, ty: 1.3, tz: 0, R: 2.5 };

@@ -167,10 +167,19 @@ async function trimNodePty(appDir, platform, arch) {
  * would try to sign their ELF and PE files inside a Developer ID bundle.
  */
 const SANDBOX_VENDOR_PLATFORM = { seccomp: "linux", "srt-win": "win32" };
+/**
+ * sandbox-runtime's JVM proxy agent, which every platform's sandbox hands Java (`JAVA_TOOL_OPTIONS`,
+ * substrate/spawn.ts `packagedJavaAgent`): its jar is kept, its build script is not.
+ */
+const SANDBOX_JAVA_AGENT = { folder: "java-proxy-agent", jar: "srt-proxy-agent.jar" };
 
-/** Keep only the target platform's and architecture's sandbox-runtime helper; drop the others. */
+/** Keep only the target platform's and architecture's sandbox-runtime helper, and the JVM agent's jar; drop the rest. */
 async function trimSandboxVendor(appDir, platform, arch) {
   const vendor = path.join(appDir, "node_modules", "@anthropic-ai", "sandbox-runtime", "vendor");
+  const agent = path.join(vendor, SANDBOX_JAVA_AGENT.folder);
+  for (const name of await fs.readdir(agent).catch(() => [])) {
+    if (name !== SANDBOX_JAVA_AGENT.jar) await fs.rm(path.join(agent, name), { recursive: true, force: true });
+  }
   for (const [helper, owner] of Object.entries(SANDBOX_VENDOR_PLATFORM)) {
     const folder = path.join(vendor, helper);
     if (owner !== platform) {

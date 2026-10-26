@@ -10,6 +10,9 @@ import { resolveElectron, fixtureElectronArgs, fixtureElectronEnv } from "../../
  *   node tests/e2e/run-electron-e2e.mjs [--show] [--keep]
  */
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAUDE_WORKER_COMMAND, CLAUDE_WORKER_PROOF, startFakeAnthropic } from "../helpers/fake-anthropic.ts";
@@ -19,6 +22,11 @@ import { packagedApp } from "./packaged-app.mjs";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const show = process.argv.includes("--show");
 const keep = process.argv.includes("--keep");
+/**
+ * `--userdata=<dir>`: run the self test on that data folder and keep it, as the release canary's
+ * upgrade mode does on the profile an earlier release left; by default a folder of its own.
+ */
+const givenUserData = process.argv.find((arg) => arg.startsWith("--userdata="))?.slice("--userdata=".length);
 // `--claude-worker`: the self test also runs one Claude Code worker on the real CLI, its model the
 // scripted Anthropic stand-in below (the release canary asks for it; it needs a machine that has
 // or may install the CLI).
@@ -341,9 +349,12 @@ const packaged = process.argv.includes("--packaged");
 // The package this machine makes (out/Genex-<platform>-<arch>, or STUDIO_PACKAGE_DIR).
 const electron = packaged ? packagedApp(root).bin : resolveElectron(root);
 const appArgs = packaged ? [] : ["."];
-const args = [...appArgs, "--studio-selftest", `--ollama-host=${server.host}`];
+// The self test's own data folder, named here so its log can be shown when a check fails: on a
+// machine only the release canary reaches, that log is the one account of what the core did.
+// Windows' temp folder can be spelled with 8.3 names (GENEXO~1), which the app's folders never are.
+const userData = givenUserData ?? realpathSync.native(await mkdtemp(path.join(os.tmpdir(), "studio-selftest-")));
+const args = [...appArgs, "--studio-selftest", `--ollama-host=${server.host}`, `--userdata=${userData}`];
 if (show) args.push("--show");
-if (keep) args.push("--keep-userdata");
 const anthropic = claudeWorker ? await startFakeAnthropic({ command: CLAUDE_WORKER_COMMAND }) : null;
 if (anthropic) args.push(`--claude-worker-check=${CLAUDE_WORKER_PROOF.file}`);
 // The scripted Anthropic stand-in, and a dummy token so the CLI starts signed in to nothing real.
@@ -389,12 +400,27 @@ if (anthropic) {
   await anthropic.close();
 }
 
+/** How much of the self test's log a failed run prints. */
+const LOG_TAIL_LINES = 300;
+
+/** Print the end of the self test's log, then drop its data folder unless asked to keep it. */
+async function settleUserData(failed) {
+  if (failed) {
+    const log = await readFile(path.join(userData, "logs", "studio.log"), "utf8").catch(() => "");
+    const tail = log.split(/\r?\n/).slice(-LOG_TAIL_LINES).join("\n");
+    console.log(`\n── the self test's log (last ${LOG_TAIL_LINES} lines) ──\n${tail || "(no log)"}`);
+  }
+  if (!keep && !givenUserData) await rm(userData, { recursive: true, force: true }).catch(() => {});
+}
+
 const match = /__SELFTEST_JSON__([\s\S]*?)__END__/.exec(stdout);
 if (!match) {
   console.error(`\ne2e: no report was produced (exit ${code})`);
+  await settleUserData(true);
   process.exit(1);
 }
 const report = JSON.parse(match[1]);
+await settleUserData(report.failed > 0);
 console.log("\n── e2e checks (headless self test) ──");
 for (const check of report.checks) {
   console.log(`${check.ok ? "✔" : "✖"} ${check.name}${check.detail ? `  — ${check.detail}` : ""}`);

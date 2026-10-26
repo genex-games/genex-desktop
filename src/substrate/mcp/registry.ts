@@ -345,6 +345,27 @@ function pendingRefuses(pending: McpConnector | undefined, project: string | nul
   return !pending.enabled || !mcpScopeCovers(pending.scope, project) || !allowed;
 }
 
+/** How a session's connector tools are asked for: see {@link McpRegistry.toolsFor}. */
+export interface ToolsForOptions {
+  signal?: AbortSignal;
+  facts?: readonly FactRef[];
+  holds?: FolderHolds | undefined;
+  kindServers?: boolean;
+}
+
+/** An in-scope connector that gave a session no tools: `why` it failed, or null when it listed none. */
+export interface SilentConnector {
+  id: string;
+  name: string;
+  why: string | null;
+}
+
+/** A session's connector tools, and the connectors that gave none. */
+export interface McpToolsReport {
+  tools: McpLiveTool[];
+  silent: SilentConnector[];
+}
+
 export class McpRegistry {
   readonly store: McpStore;
   #secrets: SecretPort | null;
@@ -1005,15 +1026,16 @@ export class McpRegistry {
    * scoped to other facts is left out and never started; with `kindServers: false`, so is every
    * plugin server scoped to facts at all.
    */
-  async toolsFor(
-    project?: string | null,
-    options: {
-      signal?: AbortSignal;
-      facts?: readonly FactRef[];
-      holds?: FolderHolds | undefined;
-      kindServers?: boolean;
-    } = {},
-  ): Promise<McpLiveTool[]> {
+  async toolsFor(project?: string | null, options: ToolsForOptions = {}): Promise<McpLiveTool[]> {
+    return (await this.toolsReport(project, options)).tools;
+  }
+
+  /**
+   * {@link toolsFor}'s tools, and the in-scope connectors that gave none: those that failed, with
+   * why, and those that answered with no tools at all (an editor's connection whose editor isn't
+   * there yet), so a session can be told what it is missing rather than look for it.
+   */
+  async toolsReport(project?: string | null, options: ToolsForOptions = {}): Promise<McpToolsReport> {
     const game = options.facts ? { facts: options.facts, holds: options.holds } : undefined;
     // `kindServers: false` leaves out every plugin server scoped to facts: a game kind's own server,
     // such as an engine's live editor, which a worker is never handed.
@@ -1021,14 +1043,18 @@ export class McpRegistry {
       (entry) => options.kindServers !== false || !entry.facts?.length,
     );
     const lists = await Promise.all(entries.map((entry) => this.#listFor(entry, project, options.signal)));
-    const live: McpLiveTool[] = [];
+    const report: McpToolsReport = { tools: [], silent: [] };
     for (const { entry, tools } of lists) {
       // Same reason: a list answered by a configuration the user has since replaced is not this
       // connector's tool list any more, and must not be published or cached as one.
       if (!this.#stillCurrent(entry)) continue;
-      live.push(...this.#publish(entry, tools, project ?? null));
+      report.tools.push(...this.#publish(entry, tools, project ?? null));
+      if (tools.length === 0) {
+        const { id, name } = entry.connector;
+        report.silent.push({ id, name, why: this.#errors.get(id) ?? null });
+      }
     }
-    return live;
+    return report;
   }
 
   /** The entry is still the connector's configuration, switched on and not queued for removal. */

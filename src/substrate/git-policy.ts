@@ -144,3 +144,43 @@ export async function hostGitRuns(probe: HostGitProbe = thisComputersGit()): Pro
   const developer = await probe.developerDir();
   return developer !== null && (await probe.runnable(path.posix.join(developer, "usr", "bin", "git")));
 }
+
+/** The folder of a Mac build's resources that holds Genex's own git (`scripts/vendor-git-for-mac.ts`). */
+export const MAC_GIT_DIR = "git";
+
+/** The `bin` folder of Genex's own git in a Mac build's `resources`: what goes on PATH. */
+export function macOwnGitBin(resources: string): string {
+  return path.posix.join(resources, MAC_GIT_DIR, "bin");
+}
+
+/**
+ * The PATH `probe` names, with the folder of the first git in `fallback` that runs put first, when
+ * the PATH's own git cannot run: on a Mac without Apple's developer tools. Unchanged off a Mac,
+ * where the PATH's git runs (a Mac with the tools, or with its own git first), and where `fallback`
+ * has no git that runs either.
+ */
+export async function pathWithGitThatRuns(probe: HostGitProbe, fallback: string): Promise<string> {
+  if (probe.platform !== "darwin" || (await hostGitRuns(probe))) return probe.path;
+  const other = { ...probe, path: fallback };
+  const git = await gitOnMacPath(other);
+  if (!git || !(await hostGitRuns(other))) return probe.path;
+  const dir = path.posix.dirname(git);
+  return [dir, ...probe.path.split(path.posix.delimiter).filter((entry) => entry && entry !== dir)].join(
+    path.posix.delimiter,
+  );
+}
+
+/**
+ * Put Genex's own git (`<resources>/git/bin`) first on `env`'s PATH where the git there cannot
+ * run, as on a Mac without Apple's developer tools, so host git and every PATH made from this one
+ * run it. True when the PATH's git runs now.
+ */
+export async function ensureMacGit(
+  resources: string,
+  env: NodeJS.ProcessEnv = process.env,
+  probe: HostGitProbe = thisComputersGit(env),
+): Promise<boolean> {
+  const chosen = await pathWithGitThatRuns(probe, macOwnGitBin(resources));
+  if (chosen !== probe.path) env.PATH = chosen;
+  return hostGitRuns({ ...probe, path: chosen });
+}

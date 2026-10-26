@@ -14,6 +14,8 @@ import { buildDesignGallery } from "../../scripts/design-gallery.mjs";
 import { fixtureElectronArgs, fixtureElectronEnv, resolveElectron } from "../../scripts/electron-runtime.mjs";
 import { sourceIdentity } from "../../scripts/studio-dev/files.mjs";
 
+/** The foot's line when the game has no picture to go out with. */
+const NO_COVER = "No cover yet, so it goes out without a picture.";
 /** The whole check, from Electron's start to its exit. */
 const RUN_TIMEOUT_MS = 90_000;
 
@@ -67,7 +69,14 @@ app.whenReady().then(async()=>{
   assert.equal(taken.another,'picture','Another cover is offered');
   assert.equal(taken.arrows,0,'one frame: nothing to flip');
   report.cover=await capture('cover');
-  // Three recent frames: dots and arrows; an arrow makes the next one the kept frame.
+  // Studio's take finds only a blank screen: nothing is kept, and the foot says it goes out without a picture.
+  const blankTake=await step('blank-taking','window.publishCover.open({blank:true})');
+  assert.ok(!blankTake.hints.includes(${JSON.stringify(NO_COVER)}),'while the take runs, nothing says there is none');
+  const blank=await step('blank','window.publishCover.untilTaken()');
+  assert.equal(blank.shot,false,'no frame on the banner');
+  assert.ok(blank.hints.includes(${JSON.stringify(NO_COVER)}),'the dialog says it goes out without a picture: '+JSON.stringify(blank.hints));
+  report.blank=await capture('blank');
+    // Three recent frames: dots and arrows; an arrow makes the next one the kept frame.
   const three=await step('three','window.publishCover.open({kept:"b",candidates:["c","b","a"]})');
   assert.deepEqual(three.actions,[],'a kept shot: Studio takes none');
   assert.equal(three.arrows,2);

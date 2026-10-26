@@ -12,6 +12,7 @@ import {
   RobloxPublishKind,
   RobloxPublishPhase,
   type RobloxPublishState,
+  robloxCreatorHubUrl,
   robloxGameUrl,
 } from "../../../../shared/roblox-publish.ts";
 import { type StepSegment, StepState } from "../../../ui/step-bar.ts";
@@ -46,6 +47,13 @@ export interface RobloxCardView {
   name: string;
   /** The game's page on Roblox, once it is there. */
   url?: string;
+  /** The game's page in Creator Hub, once it is there. */
+  hubUrl?: string;
+  /**
+   * A first publish just went out: Roblox keeps a new game private and unrated, so only the person
+   * can open it until they answer its content questions and make it public in Creator Hub.
+   */
+  notPublicYet: boolean;
   /** The agent's words on how it ended. */
   detail?: string;
   /** The publish's steps, while it runs or once it ended. */
@@ -96,10 +104,12 @@ const PHASE_STAGE: Record<RobloxPublishPhase, RobloxCardStage> = {
 
 /** The card for the game's latest publish, under way or just ended. */
 function attemptView(base: RobloxCardView, attempt: RobloxPublishAttempt): RobloxCardView {
+  const first = attempt.kind === RobloxPublishKind.First;
   return {
     ...base,
     stage: PHASE_STAGE[attempt.phase],
-    first: attempt.kind === RobloxPublishKind.First,
+    first,
+    notPublicYet: first && attempt.phase === RobloxPublishPhase.Published,
     name: attempt.name ?? base.name,
     steps: stepsAt(attempt.phase),
     ...(attempt.detail ? { detail: attempt.detail } : {}),
@@ -109,12 +119,15 @@ function attemptView(base: RobloxCardView, attempt: RobloxPublishAttempt): Roblo
 /** What the card shows for the game's state at `now`; Loading until the first answer. */
 export function robloxCardView(state: RobloxPublishState | null, now: number): RobloxCardView {
   const url = robloxGameUrl(state?.placeId);
+  const hubUrl = robloxCreatorHubUrl(state?.universeId);
   const base: RobloxCardView = {
     stage: RobloxCardStage.Loading,
     first: !state?.published,
     name: state?.name ?? "",
     steps: [],
+    notPublicYet: false,
     ...(url ? { url } : {}),
+    ...(hubUrl ? { hubUrl } : {}),
   };
   if (!state) return base;
   if (!state.linked) return { ...base, stage: RobloxCardStage.NoPlace };

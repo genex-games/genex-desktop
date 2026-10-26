@@ -88,6 +88,7 @@ const STOPPED_TITLE: Partial<Record<MakingPhase, string>> = {
   [MakingPhase.Unsure]: MAKING_WORDS.unsure,
   [MakingPhase.NotFetched]: MAKING_WORDS.notFetched,
   [MakingPhase.NotInGame]: MAKING_WORDS.notInGame,
+  [MakingPhase.NeedsCredits]: MAKING_WORDS.needsCredits,
 };
 
 /** What a job that stopped short is called (Didn’t finish, Not confirmed…), or null for one still on its way. */

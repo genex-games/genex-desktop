@@ -109,6 +109,21 @@ test("a sandbox that only needs installing says nothing about the service", asyn
   }
 });
 
+test("a sandbox another release set up asks for one OK to update it, with one button", async () => {
+  const words = SANDBOX_SETUP_WORDS.windows.reinstall;
+  const held = problem([WindowsSetupNeed.Reinstall]);
+  const waiting = await renderCard(held, { settingUp: false, error: null });
+  assert.match(waiting, /data-windows-setup="needs-ok"/);
+  assert.ok(waiting.includes(escaped(words.title)));
+  assert.ok(waiting.includes(escaped(words.line)));
+  assert.equal(waiting.match(/data-sandbox-set-up/g)?.length, 1, "one button");
+  assert.ok(waiting.includes(`>${escaped(words.update)}</button>`));
+  assert.ok(!waiting.includes(escaped(SANDBOX_SETUP_WORDS.windows.needsOk.title)));
+  const updating = await renderCard(held, { settingUp: true, error: null });
+  assert.ok(updating.includes(escaped(words.updating)));
+  assert.doesNotMatch(updating, /data-sandbox-set-up/);
+});
+
 const UPDATE_LINE = /data-boot-update="restart"/;
 const NEXT: ReadyUpdate = { version: "0.1.14", action: UpdateAction.Restart };
 

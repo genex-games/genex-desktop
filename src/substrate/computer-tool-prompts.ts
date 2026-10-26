@@ -84,6 +84,11 @@ const WEB_LINES =
   "web_read [text=<what you look for>]: the page as text, every link, button and field with its [ref]. " +
   "web_click ref=<ref>. web_type ref=<ref> text=<text> [submit=true presses Enter]. Refs change whenever the page does: read again after a click. Web verbs answer in text; add observe=screenshot to see the tab too. ";
 
+/** The app sentence, for a desktop where the app the agent needs can sit behind a full-screen one. */
+const APPS_LINE =
+  "bring_to_front text=<app>: bring a running app's window in front of the others when it is covered and no part of it can be clicked (the taskbar and Dock are never driven) — its executable on Windows (msedge.exe, chrome.exe, firefox.exe), its bundle id on a Mac (com.apple.Safari, com.google.Chrome); it opens nothing, and the app is asked for like any other. Add window=<part of a title> to raise one of the app's windows when it has several (a Mac runs one Roblox Studio per open place); a title no window has is answered with the titles it has. " +
+  "open_page text=<https:// address>: open a page of the task you answer in the person's own default browser, where they are signed in (Roblox's Creator Hub for a publish), when no browser is running; then take a screenshot and bring_to_front the browser if it is not in front. ";
+
 /** The batch sentence: several moves in one call. */
 const BATCH_LINE =
   'batch actions=[{"action":"key","text":"w"},{"action":"wait","duration":0.5}]: up to 8 input actions and waits in one call, run in order, stopping at the first that fails. ';
@@ -154,6 +159,7 @@ export function computerToolDescription(options: {
       ? "act text=<action> [duration=<seconds>]: the game's own named action (jump, attack), pressed once or held. "
       : "") +
     (caps.dom ? WEB_LINES : "") +
+    (caps.apps ? APPS_LINE : "") +
     BATCH_LINE +
     playersLine(caps) +
     observeLine(options.observeByDefault ?? false) +
@@ -201,6 +207,7 @@ export const COMPUTER_PARAMETER_TEXT = {
   actions: 'batch only: a JSON list of steps, e.g. [{"action":"key","text":"w"},{"action":"wait","duration":0.5}]',
   ref: "web_click and web_type: the element ref web_read listed, e.g. p3:12",
   submit: "web_type only: true presses Enter after the text (submits a search or a form)",
+  window: "bring_to_front only: part of the title of the app's window to raise, when it has several open",
   player: (players: number) =>
     `which player, 1 to ${players}, this and every later action addresses (player 1 to start)`,
 } as const;
@@ -220,6 +227,10 @@ export const COMPUTER_ARG_PROBLEM = {
   lookNeedsDelta: "look needs dx=<pixels> and/or dy=<pixels> of mouse motion",
   actNeedsName: "act needs text=<the game's action name, e.g. jump>",
   webOpenNeedsUrl: "web_open needs text=<an https:// address>",
+  frontNeedsApp: "bring_to_front needs text=<app>: its executable on Windows (msedge.exe) or bundle id on a Mac",
+  frontCouldNot: (why: string) => `bring_to_front did not happen: ${why}`,
+  pageNeedsAddress: "open_page needs text=<an https:// address> of the page the task names",
+  pageCouldNot: (why: string) => `open_page did not happen: ${why}`,
   webCouldNot: (action: string, why: string) => `${action} did not happen: ${why}`,
   webPageCut: "(the page goes on: web_read text=<what you look for> reads the part you need)",
   webNeedsRef: (action: string) => `${action} needs ref=<an element ref web_read listed, e.g. p3:12>`,

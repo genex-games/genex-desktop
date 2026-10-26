@@ -1,5 +1,6 @@
 /** Harness RPC: the event log, threads, artifacts and turns. */
 import { HostMethod, type HarnessHostHandlers } from "../../shared/harness-api.ts";
+import { assistGrants, followAssistDeliveries } from "../core/desktop-assist.ts";
 import { inboxOf } from "../core/inbox.ts";
 import { refuseHostRecords, vouchedInteractions } from "../core/harness-events.ts";
 import { threadOr } from "../core/main-thread.ts";
@@ -23,6 +24,8 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
       // A message the queue answered or took back is nobody's to answer any more; one still
       // queued outlives a Stop.
       x.permissions.followQueueRecords(threadId, p.batch);
+      // An assist's message delivered into a running turn takes its grant there, by interrupt too.
+      followAssistDeliveries(assistGrants(core), threadId, p.batch);
       return latest;
     },
     // A rewound chat reads without its withdrawn rows and sessions (`core/rewind.ts`).

@@ -7,7 +7,7 @@ import path from "node:path";
 import { parseStudioDevArgs, parseOperation } from "../../scripts/studio-dev/args.ts";
 import { FIXTURE_NAMES, installOlderPlugins } from "../../src/main/dev/fixtures.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
-import { devBuildArgs, launchEnv, main } from "../../scripts/studio-dev.ts";
+import { devBuildArgs, devLaunchCommand, launchEnv, main } from "../../scripts/studio-dev.ts";
 import { gamesRootWarnings, liveEnvStripped, StudioDevWarning } from "../../scripts/studio-dev/live-env.ts";
 import { fixtureElectronEnv } from "../../scripts/electron-runtime.mjs";
 import { freshMachineEnv } from "../../scripts/studio-dev/fresh-machine.ts";
@@ -345,7 +345,54 @@ test("a live games root under a .claude folder is warned about, through a link t
   }
 });
 
-test("a fixture profile's build counts React commits for its checks; a live profile's does not", () => {
+test("a fixture profile's build counts React commits for its checks; a live profile's carries computer control's driver instead", () => {
   assert.deepEqual(devBuildArgs("b-1", "fixture"), ["scripts/build.mjs", "--dev-build=b-1", "--commit-counts"]);
-  assert.deepEqual(devBuildArgs("b-2", "live"), ["scripts/build.mjs", "--dev-build=b-2"]);
+  assert.deepEqual(devBuildArgs("b-2", "live"), ["scripts/build.mjs", "--dev-build=b-2", "--vendor-cua-driver"]);
+});
+
+test("a live profile on a Mac starts through macOS's launcher, so Electron holds its own Accessibility and Screen Recording", () => {
+  const executable = "/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron";
+  const args = ["/repo/.studio-dev/builds/b-1/main/main.mjs", "--studio-dev-launch=/repo/launch.json"];
+  const env = { HOME: "/Users/me", PATH: "/usr/bin:/bin" };
+  const logs = { stdout: "/logs/stdout.log", stderr: "/logs/stderr.log" };
+  const live = { providers: "live" };
+  // A process the caller spawns stays in the caller's macOS responsibility chain (Terminal, or an
+  // agent's shell), so its grants would be checked against that app instead of Electron.
+  assert.deepEqual(devLaunchCommand({ owner: live, platform: "darwin", executable, args, env, logs }), {
+    command: "/usr/bin/open",
+    args: [
+      "-n",
+      "-W",
+      "--stdout",
+      logs.stdout,
+      "--stderr",
+      logs.stderr,
+      "--env",
+      "HOME=/Users/me",
+      "--env",
+      "PATH=/usr/bin:/bin",
+      "-a",
+      "/repo/node_modules/electron/dist/Electron.app",
+      "--args",
+      ...args,
+    ],
+  });
+  const direct = { command: executable, args };
+  assert.deepEqual(
+    devLaunchCommand({ owner: { providers: "fixture" }, platform: "darwin", executable, args, env, logs }),
+    direct,
+  );
+  assert.deepEqual(
+    devLaunchCommand({
+      owner: { providers: "live", freshMachine: true },
+      platform: "darwin",
+      executable,
+      args,
+      env,
+      logs,
+    }),
+    direct,
+  );
+  for (const platform of ["win32", "linux"] as const)
+    assert.deepEqual(devLaunchCommand({ owner: live, platform, executable, args, env, logs }), direct, platform);
 });

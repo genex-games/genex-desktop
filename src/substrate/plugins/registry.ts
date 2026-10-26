@@ -317,7 +317,7 @@ function capabilityFor(method: string): PluginCapability | undefined {
 /**
  * The services that link a game to an engine project, snapshot the game before the plugin changes
  * it, make a game for a project, name the games whose run is going, and hand a setup task to the
- * game's chat (Do it for me) or say whether that can run here.
+ * game's chat (Do it for me), say whether that can run here, or whether the chat still runs it.
  */
 const ENGINE_SERVICES = new Set<string>([
   PluginService.GameEngineLink,
@@ -328,6 +328,7 @@ const ENGINE_SERVICES = new Set<string>([
   PluginService.GameEngineRuns,
   PluginService.GameEngineAssist,
   PluginService.GameEngineCanAssist,
+  PluginService.GameEngineAssisting,
 ]);
 /** The account services the registry answers from the session lease. */
 const CREDENTIAL_SERVICES = new Set<string>([
@@ -655,6 +656,7 @@ const DECLINED_MESSAGE: Record<PluginConsentBy, (name: string) => string> = {
   restart: (name) => `${name} was declined because the turn ended`,
   // A mode answers only with a yes; listed so every ending has its words.
   mode: (name) => `${name} was answered by the chat's mode`,
+  chat: (name) => `${name} was answered by the user's Allow in this chat`,
 };
 /** Rejects with the reason `signal` is aborted with, once it is: a host tool call's cut-off. */
 function cutOffOf(signal: AbortSignal): Promise<never> {

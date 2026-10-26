@@ -267,7 +267,7 @@ describe("a Loop's lead in place has its run's tools on the game folder", () => 
         bindings.push({ tool, ...(binding.directory ? { directory: binding.directory } : {}) });
         return "delivered";
       }) as never;
-      core.mcp.toolsFor = (async () => [CONNECTOR_TOOL]) as never;
+      core.mcp.toolsReport = (async () => ({ tools: [CONNECTOR_TOOL], silent: [] })) as never;
       core.mcp.owns = ((name: string) => name === CONNECTOR_TOOL.name) as never;
       core.mcp.ownerOf = ((id: string) => (id === ENGINE_PLUGIN ? ENGINE_PLUGIN : undefined)) as never;
       core.mcp.tool = (async () => "found") as never;

@@ -7,8 +7,9 @@
  * Connect: Claude Code and ChatGPT sign in through the same flows as Settings → Model Providers.
  * Each has one button that hugs its words and changes them as the sign-in moves on. Under them,
  * "or use" offers local models (the Best fit for this Mac downloads), OpenRouter (browser sign-in
- * or a pasted key) and OpenCode (installs, then its free models run), each on its own screen. The
- * first connection turns Skip into Start building.
+ * or a pasted key), OpenCode (installs, then its free models run), Grok Build and Cursor (each
+ * installs, then signs in to the person's account), each on its own screen. The first connection
+ * turns Skip into Start building.
  */
 import {
   useCallback,
@@ -42,11 +43,13 @@ import { openSettings, SettingsSection } from "../settings-navigation.ts";
 import { SHOW_TERMINAL_EVENT } from "../panels/terminal-events.ts";
 import { prefersReducedMotion, REDUCED_MOTION_QUERY } from "../ui/media-queries.ts";
 import { ArtCanvas, type Draw } from "./ArtCanvas.tsx";
+import { CliScreen } from "./CliScreen.tsx";
+import { useCli } from "./cli-way.tsx";
 import { OpenCodeScreen, useFreeModel, useOpenCode } from "./OpenCodeScreen.tsx";
 import { OpenRouterScreen, useOpenRouter } from "./OpenRouterScreen.tsx";
 import { OtherWays } from "./OtherWays.tsx";
 import { Check, Hug, OnboardingAction, StartBuilding, TopBar, useHeadingFocus } from "./parts.tsx";
-import { localWay, openCodeWay, openRouterWay, OtherWay, RouterStep, type WayView } from "./ways.ts";
+import { cliWay, localWay, openCodeWay, openRouterWay, OtherWay, RouterStep, type WayView } from "./ways.ts";
 import {
   CHIP,
   ChipState,
@@ -85,6 +88,8 @@ const Screen = {
   Local: "local",
   OpenRouter: "openrouter",
   OpenCode: "opencode",
+  Grok: "grok",
+  Cursor: "cursor",
 } as const;
 type Screen = (typeof Screen)[keyof typeof Screen];
 type Hardware = Awaited<ReturnType<typeof window.studio.hardware>>;
@@ -112,9 +117,18 @@ const WAY_SCREEN: Record<OtherWay, Screen> = {
   [OtherWay.Local]: Screen.Local,
   [OtherWay.OpenRouter]: Screen.OpenRouter,
   [OtherWay.OpenCode]: Screen.OpenCode,
+  [OtherWay.Grok]: Screen.Grok,
+  [OtherWay.Cursor]: Screen.Cursor,
 };
-/** The engines besides OpenCode that, once ready, are something to build with. */
-const BUILDS_WITH: readonly string[] = [EngineId.ClaudeCode, EngineId.Codex, EngineId.LocalServer, EngineId.OpenRouter];
+/** The engines besides OpenCode that, once ready, are something to build with (Grok Build and Cursor are ready once signed in). */
+const BUILDS_WITH: readonly string[] = [
+  EngineId.ClaudeCode,
+  EngineId.Codex,
+  EngineId.LocalServer,
+  EngineId.OpenRouter,
+  EngineId.Grok,
+  EngineId.Cursor,
+];
 
 /** Each subscription's mark on the connect art. */
 const MARK_OF: Record<Subscription, Provider> = {
@@ -988,7 +1002,7 @@ function Connect({
 }: {
   engines: EngineDescriptor[];
   onEnginesRefresh: () => void;
-  /** The row's buttons under the subscriptions: local models, OpenRouter and OpenCode. */
+  /** The row's buttons under the subscriptions: local models, OpenRouter, OpenCode, Grok Build and Cursor. */
   ways: Record<OtherWay, WayView>;
   anyOn: boolean;
   back: boolean;
@@ -1241,6 +1255,23 @@ function useWelcomeExit(
   return { closing, leaving, finish };
 }
 
+/** Connect's other ways as first launch drives them, and the row's button for each. */
+function useOtherWays(engines: EngineDescriptor[], onEnginesRefresh: () => void) {
+  const local = useLocalModel(engines, onEnginesRefresh);
+  const router = useOpenRouter(engines, onEnginesRefresh);
+  const code = useOpenCode(engines, onEnginesRefresh);
+  const grok = useCli(EngineId.Grok, engines, onEnginesRefresh);
+  const cursor = useCli(EngineId.Cursor, engines, onEnginesRefresh);
+  const ways: Record<OtherWay, WayView> = {
+    [OtherWay.Local]: localWay(local.state, local.name, local.percent),
+    [OtherWay.OpenRouter]: openRouterWay(router.status, router.step === RouterStep.Browser),
+    [OtherWay.OpenCode]: openCodeWay(code.row),
+    [OtherWay.Grok]: cliWay(EngineId.Grok, grok.row),
+    [OtherWay.Cursor]: cliWay(EngineId.Cursor, cursor.row),
+  };
+  return { local, router, code, grok, cursor, ways };
+}
+
 export function Onboarding({
   engines,
   onEnginesRefresh,
@@ -1257,9 +1288,7 @@ export function Onboarding({
   const [screen, setScreen] = useState<{ id: Screen; back: boolean }>({ id: Screen.Welcome, back: false });
   const [idea, setIdea] = useState("");
   const root = useRef<HTMLDivElement>(null);
-  const local = useLocalModel(engines, onEnginesRefresh);
-  const router = useOpenRouter(engines, onEnginesRefresh);
-  const code = useOpenCode(engines, onEnginesRefresh);
+  const { local, router, code, grok, cursor, ways } = useOtherWays(engines, onEnginesRefresh);
   const { closing, leaving, finish } = useWelcomeExit(idea, onReady, onFinish);
   const ready = (id: string) => engines.find((engine) => engine.id === id)?.status.code === EngineStatusCode.Ready;
   const othersOn = local.installed || BUILDS_WITH.some(ready);
@@ -1270,11 +1299,6 @@ export function Onboarding({
   const end = (then?: () => void) => {
     freeModel.remember();
     finish(then);
-  };
-  const ways: Record<OtherWay, WayView> = {
-    [OtherWay.Local]: localWay(local.state, local.name, local.percent),
-    [OtherWay.OpenRouter]: openRouterWay(router.status, router.step === RouterStep.Browser),
-    [OtherWay.OpenCode]: openCodeWay(code.row),
   };
 
   useEffect(() => {
@@ -1323,6 +1347,10 @@ export function Onboarding({
         return <OpenRouterScreen key={Screen.OpenRouter} router={router} {...after} />;
       case Screen.OpenCode:
         return <OpenCodeScreen key={Screen.OpenCode} code={code} free={freeModel.free} {...after} />;
+      case Screen.Grok:
+        return <CliScreen key={Screen.Grok} provider={EngineId.Grok} cli={grok} {...after} />;
+      case Screen.Cursor:
+        return <CliScreen key={Screen.Cursor} provider={EngineId.Cursor} cli={cursor} {...after} />;
       default:
         return (
           <Local

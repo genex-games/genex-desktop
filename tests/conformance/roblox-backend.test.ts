@@ -3,7 +3,7 @@
  * button's word and dot for each state of Studio (not installed, not set up, not open, starting,
  * ready), the panel's status, the lock's probe, and that none of it reads the person's Documents
  * folder. Then the built package: it builds, seeds off, shows no button while off, and shows the
- * "Roblox Studio" button with the box glyph and a status word once turned on.
+ * "Roblox" button with the box glyph and a status word once turned on.
  */
 import assert from "node:assert/strict";
 import { access, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -27,6 +27,7 @@ import {
   studioStatusOf,
 } from "../../src/plugins/roblox/backend.ts";
 import type { StepsCard } from "../../src/renderer/chat/engine-steps.ts";
+import { noMomentServices } from "../../src/plugins/roblox/moment-ops.ts";
 import { HELPER_FILE } from "../../src/plugins/roblox/setup.ts";
 import type { InstallDeps } from "../../src/plugins/roblox/studio-install.ts";
 import { type Launch, QUIT_WAIT_MS } from "../../src/plugins/roblox/studio-launch.ts";
@@ -542,9 +543,11 @@ async function finished(backend: ReturnType<typeof createRobloxBackend>, storage
   assert.fail("Get Roblox Studio never finished");
 }
 
-/** The steps card the chat draws, for the game the call is bound to. */
-async function stepsCard(mac: Mac, linked = false) {
-  const backend = createRobloxBackend(fakeMac(mac).deps);
+/** The steps card the chat draws, for the game the call is bound to; `helper` is the Studio its helper bound. */
+async function stepsCard(mac: Mac, linked = false, helper?: { studio: string | undefined }) {
+  const deps = fakeMac(mac).deps;
+  const moments = helper ? { ...noMomentServices(() => 0), bound: () => helper.studio } : undefined;
+  const backend = createRobloxBackend(moments ? { ...deps, moments } : deps);
   const host = (async (method: string) => {
     if (method === "storage.root") return STORAGE;
     if (method === "game.engine.read") return linked ? { kind: "roblox", project: "place.rbxl", name: "place" } : null;
@@ -565,6 +568,21 @@ describe("Get Roblox Studio and the steps card", () => {
       card.steps.map((row) => row.id),
       ["studio", "sign-in", "helper", "mcp", "place"],
     );
+  });
+
+  it("Studio answering with the game's place is ready only once its Genex helper is connected", async () => {
+    const away = await stepsCard(READY, true, { studio: undefined });
+    const helper = away.steps.find((row) => row.id === "helper");
+    assert.equal(helper?.done, false, "Studio answers, but the helper never loaded: not ready");
+    assert.equal(helper?.action?.name, "restart-studio");
+    assert.equal(away.open, true, "so nobody is told Studio is ready");
+    const here = await stepsCard(READY, true, { studio: "studio-1" });
+    assert.equal(
+      here.steps.every((row) => row.done),
+      true,
+      "with the helper connected every step is done",
+    );
+    assert.equal(here.open, false);
   });
 
   it("without Studio, the Studio row offers Get Roblox Studio and sign-in stays the person's step", async () => {
@@ -860,7 +878,7 @@ describe("the built Roblox Studio plugin", () => {
         );
       assert.equal(on({ facts: [{ id: "web-game", path: "." }] }), undefined, "a web game shows no Roblox button");
       const entry = on({ facts: [{ id: "roblox-project", path: "." }] });
-      assert.deepEqual([entry?.item.label, entry?.item.icon], ["Roblox Studio", "roblox"]);
+      assert.deepEqual([entry?.item.label, entry?.item.icon], ["Roblox", "roblox"]);
       const status = (await lite.core.plugins.action("roblox", "toolbar-status", {})) as PluginToolbarStatus;
       const words = STATES.map(([, , badge]) => badge);
       assert.ok(words.includes(status.badge ?? ""), `a status word: ${JSON.stringify(status)}`);

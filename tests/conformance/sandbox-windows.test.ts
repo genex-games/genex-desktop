@@ -139,6 +139,42 @@ after(async () => {
 const inside = (command: string, extra: Partial<Parameters<ProcessSandbox["run"]>[0]> = {}) =>
   sandbox.run({ command, cwd: workspace, timeoutMs: RUN_TIMEOUT_MS, ...extra });
 
+describe("Windows sandbox: a frozen folder in a write root", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
+  it("reads the files of a write-denied folder in a root srt-win grants for the first time", async () => {
+    // The harness workspace's skills, prompts and judge folders are write-denied by Genex, and
+    // srt-win grants the workspace above them: the harness's first boot could not read the
+    // skills already there (EPERM on skills/director.md on every release canary machine).
+    const root = realpathSync.native(await tmpDir("genex-frozen-in-root-"));
+    const workspaceRoot = path.join(root, "workspaces");
+    const frozen = path.join(workspaceRoot, "harness", "skills");
+    await mkdir(frozen, { recursive: true });
+    await writeFile(path.join(frozen, "director.md"), "playbook");
+    const box = await ProcessSandbox.create({
+      writableRoots: [workspaceRoot],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      denyWrite: [frozen],
+    });
+    try {
+      const run = (command: string) =>
+        box.run({ command, cwd: path.join(workspaceRoot, "harness"), timeoutMs: RUN_TIMEOUT_MS });
+      const read = await run("cat skills/director.md");
+      const acls = () =>
+        [workspaceRoot, path.dirname(frozen), frozen, path.join(frozen, "director.md")]
+          .map((p) => execFileSync("icacls", [p], { encoding: "utf8" }))
+          .join("\n");
+      assert.equal(read.stdout, "playbook", `${read.stderr}\n${read.stderr ? acls() : ""}`);
+      const written = await run("printf x > skills/director.md");
+      assert.notEqual(written.code, 0, "the frozen folder stays write-denied");
+      const beside = await run("printf ok > beside.txt && cat beside.txt");
+      assert.equal(beside.stdout, "ok", beside.stderr);
+    } finally {
+      await box.dispose();
+      await removeTree(root);
+    }
+  });
+});
+
 describe("Windows sandbox: identity and files", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
   it("runs Git Bash commands as the sandbox user", async () => {
     const result = await inside("echo hello-sandbox; whoami");
@@ -360,10 +396,20 @@ describe("Windows sandbox: environment", { skip: SKIP, timeout: TEST_TIMEOUT_MS 
     assert.ok(status.sid, "the sandbox user has a SID");
     const acl = { sandboxUserSid: status.sid, holderPid: holder.pid, srtWin };
     try {
-      srt.grantWindowsAcl({ ...acl, read: [theirs[2]], write: [theirs[1]] });
-      srt.stampWindowsAcl({ ...acl, denyRead: [theirs[0]], denyWrite: [] });
+      // As a host on sandbox-runtime 0.0.81 starts and ends a session: srt-win refuses the
+      // ordinary token's grant once a write grant is kept. A write root of theirs would be kept.
+      const { grantWindowsAclPersistent } = await import(
+        "@anthropic-ai/sandbox-runtime/dist/sandbox/windows-sandbox-utils.js"
+      );
+      await grantWindowsAclPersistent({
+        ...acl,
+        read: [theirs[1], theirs[2]],
+        write: [],
+        denyRead: [theirs[0]],
+        denyWrite: [],
+      });
+      srt.revokeWindowsAclChecked(acl);
       srt.restoreWindowsAcl(acl);
-      srt.revokeWindowsAcl(acl);
     } finally {
       holder.kill();
       for (const dir of theirs) await removeTree(dir);
@@ -495,10 +541,17 @@ describe("Windows sandbox: network", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, (
     assert.equal((await inside(probe)).stdout.trim(), "403", "closed again after the run");
   });
 
-  it("reaches an allowed registry over HTTPS with curl and with Node's fetch", async () => {
+  it("reaches an allowed Git host over HTTPS with git, on the OpenSSL backend sandbox-runtime sets", async () => {
+    const policy = { allowedDomains: ["github.com"] };
+    const git = await inside("git ls-remote https://github.com/git/git.git HEAD", { policy });
+    assert.equal(git.code, 0, git.stderr);
+    assert.match(git.stdout, /^[0-9a-f]{40}\tHEAD/);
+  });
+
+  it("reaches an allowed registry over HTTPS with Node's fetch", async () => {
+    // Not with curl: Git for Windows' curl uses Schannel alone, which the write-restricted token
+    // every command runs under (sandbox-runtime 0.0.81) cannot use.
     const policy = { allowedDomains: ["registry.npmjs.org"] };
-    const viaCurl = await inside(curl("https://registry.npmjs.org/left-pad"), { policy });
-    assert.equal(viaCurl.stdout.trim(), "200", viaCurl.stderr);
     const viaNode = await inside(
       `node -e 'fetch("https://registry.npmjs.org/left-pad").then(r=>console.log(r.status),e=>console.log(e.cause?.code??e.message))'`,
       { policy },

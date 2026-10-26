@@ -88,11 +88,6 @@ export interface ComputerTools {
   runtime: TargetRuntime;
   /** Stop what the computer started: a Play Protocol game's process. The browser window is the session's. */
   release: () => Promise<void>;
-  /**
-   * Load the target now and describe the tool from what it says it can do — a Play Protocol game
-   * says so only in its `hello`, so until then the tool is described from what such a game may do.
-   */
-  prepare: () => Promise<void>;
 }
 
 /**
@@ -190,15 +185,14 @@ function toolsOver<T extends ComputerTarget>(
     offer?: (caps: TargetCapabilities) => TargetCapabilities;
   },
 ): ComputerTools {
-  const describe = (caps: TargetCapabilities) =>
-    computerToolDefinition({
-      role: parts.toolRole,
-      capabilities: parts.offer ? parts.offer(caps) : caps,
-      observeByDefault: parts.observeByDefault,
-    });
-  const liveTools = [describe(parts.caps)];
+  // A Play Protocol game says what it can do only once it runs, so its tool offers what such a game may do.
+  const definition = computerToolDefinition({
+    role: parts.toolRole,
+    capabilities: parts.offer ? parts.offer(parts.caps) : parts.caps,
+    observeByDefault: parts.observeByDefault,
+  });
   return {
-    liveTools,
+    liveTools: [definition],
     onLiveTool: (name, args) => session.run(name, args),
     ensureLoaded: async (force = false) => {
       const loaded = await session.ensureLoaded(force);
@@ -210,10 +204,6 @@ function toolsOver<T extends ComputerTarget>(
     trace: () => session.trace(),
     runtime: parts.caps.runtime,
     release: parts.release,
-    prepare: async () => {
-      const loaded = await session.ensureLoaded();
-      if (!loaded.problem) liveTools[0] = describe(loaded.target.caps);
-    },
   };
 }
 

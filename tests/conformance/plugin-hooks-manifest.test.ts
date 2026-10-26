@@ -380,7 +380,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     const raw = JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest;
     const roblox = validateManifest(raw);
     // A change to the plugin raises its version above the one dev has (check-plugin-versions).
-    assert.equal(roblox.version, "0.1.10", "a step above the version dev has");
+    assert.equal(roblox.version, "0.1.31", "a step above the version dev has");
     assert.deepEqual(roblox.locks, [
       { id: "studio", label: "Roblox Studio", per: LockScope.Project, personFirst: "studio-activity" },
     ]);
@@ -390,7 +390,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     assert.deepEqual(roblox.toolbar, [
       {
         id: "studio",
-        label: "Roblox Studio",
+        label: "Roblox",
         ariaLabel: "Roblox Studio",
         icon: "roblox",
         facts: ["roblox-project"],
@@ -422,6 +422,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
       [
         { on: "run.prepare", tool: "open-for-run", facts: ROBLOX_PROJECT },
         { on: "turn.start", tool: "team-note", facts: ROBLOX_PROJECT },
+        { on: "turn.end", tool: "close-after-publish", facts: ROBLOX_PROJECT },
         { on: "checkpoint.before", tool: "save-place", facts: ROBLOX_PROJECT, messages: true },
         { on: "checkpoint.after", tool: "hero-shots", facts: ROBLOX_PROJECT },
         { on: "restore.before", tool: "save-place", facts: ROBLOX_PROJECT },

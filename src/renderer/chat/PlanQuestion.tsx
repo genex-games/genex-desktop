@@ -4,6 +4,9 @@ import { t } from "../../shared/i18n.ts";
 import { Markdown } from "../ui/Markdown.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { problemWords } from "../words.ts";
+import { answerKeys } from "./answer-keys.ts";
+import { AnswerKeyCaps, useAnswerKeys } from "./ChatQuestion.tsx";
+import { hostPlatform } from "../platform.ts";
 import { planAwaitsAnswer } from "./use-plan-review.ts";
 
 type Review = Omit<PlanReview, "options">;
@@ -71,9 +74,17 @@ interface PlanQuestionProps {
   onRevise: () => void;
 }
 
-/** The plan scrolls; its three explicit actions always remain in view. */
+/** Whether a plan can be approved now: it is written and waits, and no revision is under way. */
+const approvable = (review: Review, revising: boolean | undefined): boolean =>
+  !revising && review.state === PlanReviewState.Waiting && Boolean(review.plan);
+
+/**
+ * The plan scrolls; its three explicit actions always remain in view, Approve first and filled,
+ * pressed from anywhere in the chat by the answer keys.
+ */
 export function PlanQuestion(props: PlanQuestionProps) {
   const titleId = useId();
+  const card = useRef<HTMLElement>(null);
   const action = useSingleAction();
   const blocked = props.busy || action.pending;
   const answer = (approved: boolean): void => {
@@ -81,13 +92,14 @@ export function PlanQuestion(props: PlanQuestionProps) {
     void action.run(() => props.onAnswer(approved));
   };
   const { review } = props;
+  const canApprove = approvable(review, props.revising);
+  useAnswerKeys(card, planAwaitsAnswer(review) && canApprove && !blocked, () => answer(true));
   if (!planAwaitsAnswer(review)) return null;
   if (review.state === PlanReviewState.Failed)
     return <PlanRecovery {...props} titleId={titleId} blocked={blocked} action={action} answer={answer} />;
   const problem = action.failure || review.error;
-  const canApprove = !props.revising && review.state === PlanReviewState.Waiting && Boolean(review.plan);
   return (
-    <section data-plan-review aria-labelledby={titleId} aria-busy={blocked} className="chat-plan">
+    <section ref={card} data-plan-review aria-labelledby={titleId} aria-busy={blocked} className="chat-plan">
       <div
         data-plan-body
         tabIndex={0}
@@ -105,20 +117,22 @@ export function PlanQuestion(props: PlanQuestionProps) {
           </p>
         )}
       </div>
-      <div data-plan-actions className="flex shrink-0 flex-wrap items-center gap-1 border-t border-line px-2 py-2">
+      <div data-plan-actions className="chat-answers shrink-0 border-t border-line">
         <button
           type="button"
           data-plan-approve
-          className="chat-question-submit"
+          aria-keyshortcuts={answerKeys(hostPlatform()).aria}
+          className="chat-answer chat-answer-primary"
           disabled={blocked || !canApprove}
           onClick={() => answer(true)}
         >
           {t("Approve")}
+          <AnswerKeyCaps />
         </button>
         <button
           type="button"
           data-plan-revise
-          className="chat-plan-secondary"
+          className="chat-answer chat-answer-secondary"
           disabled={blocked}
           onClick={props.onRevise}
         >
@@ -127,7 +141,7 @@ export function PlanQuestion(props: PlanQuestionProps) {
         <button
           type="button"
           data-plan-cancel
-          className="chat-plan-secondary"
+          className="chat-answer chat-answer-secondary"
           disabled={blocked}
           onClick={() => answer(false)}
         >

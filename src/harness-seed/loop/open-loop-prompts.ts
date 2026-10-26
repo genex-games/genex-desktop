@@ -41,7 +41,7 @@ export const OPEN_LAUNCH_WORDS = {
 export const OPEN_LOOP_REFUSAL = {
   /** `found`: what Genex found that makes the project's Loop work in place (`openLoopBecause`). */
   needsSession: (engine: string, found?: string) =>
-    `A Loop on this project${found ? ` (Genex finds ${found})` : ""} needs an engine that works as an agent in the project's folder (Claude Code, Codex or OpenCode); ${engine} doesn't, so nothing was built.`,
+    `A Loop on this project${found ? ` (Genex finds ${found})` : ""} needs an engine that works as an agent in the project's folder (Claude Code, Codex, OpenCode or Grok Build); ${engine} doesn't, so nothing was built.`,
   webOnly: "This kind of run works on web games only; a Loop on this project is led by the chat's own session.",
   openLoopNeedsUpdate:
     "This harness's edited Loop files predate Loops on any project; update them, then start the Loop again.",

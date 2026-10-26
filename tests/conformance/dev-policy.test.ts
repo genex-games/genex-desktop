@@ -12,9 +12,13 @@ import { fixtureEngines } from "../../src/main/dev/fixtures.ts";
 import { OllamaEngine } from "../../src/substrate/engines/ollama.ts";
 import { CodexEngine } from "../../src/substrate/engines/codex.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
+import { GrokEngine } from "../../src/substrate/engines/grok.ts";
 import { OpenCodeEngine } from "../../src/substrate/engines/opencode.ts";
 import { OpenRouterEngine } from "../../src/substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../../src/substrate/engines/local-server.ts";
+import { CursorEngine } from "../../src/substrate/engines/cursor.ts";
+import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
+import { EngineId } from "../../src/shared/providers.ts";
 test("pre-init injection avoids every real engine status/models/auth probe and keeps sandbox enabled", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dev-policy-"));
   for (const proto of [
@@ -22,8 +26,10 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
     CodexEngine.prototype,
     ClaudeCodeEngine.prototype,
     OpenCodeEngine.prototype,
+    GrokEngine.prototype,
     OpenRouterEngine.prototype,
     LocalServerEngine.prototype,
+    CursorEngine.prototype,
   ])
     for (const key of ["status", "models", "probeAuth"])
       if (typeof (proto as any)[key] === "function")
@@ -45,8 +51,8 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   });
   await core.start();
   assert.equal(core.host.state, "ready");
-  // Flipped (OpenCode, OpenRouter, a local server): six scripted engines, never a real one.
-  assert.equal((await core.engines.describe()).length, 6);
+  // Flipped (OpenCode, OpenRouter, a local server, Grok Build, Cursor): eight scripted engines, never a real one.
+  assert.equal((await core.engines.describe()).length, 8);
   assert.equal(core.sandbox.enabled, true);
   await core.updateSettings({ architect: true });
   let calls = 0;
@@ -58,6 +64,19 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
       });
   await core.runIdleCheckNow();
   assert.equal(calls, 0);
+});
+test("a fixture's Cursor is not installed unless the usage file makes it ready", async (t) => {
+  const cursorOf = () => fixtureEngines().find((engine) => engine.id === EngineId.Cursor);
+  assert.equal((await cursorOf()?.status())?.code, EngineStatusCode.NotInstalled, "pickers stay as they were");
+  const file = path.join(await tmpDir("fixture-usage-"), "usage.json");
+  await fs.writeFile(file, JSON.stringify({ [EngineId.Cursor]: "ready" }));
+  const before = process.env.STUDIO_FIXTURE_USAGE_FILE;
+  process.env.STUDIO_FIXTURE_USAGE_FILE = file;
+  t.after(() => {
+    if (before === undefined) delete process.env.STUDIO_FIXTURE_USAGE_FILE;
+    else process.env.STUDIO_FIXTURE_USAGE_FILE = before;
+  });
+  assert.equal((await cursorOf()?.status())?.code, EngineStatusCode.Ready);
 });
 test("owned project policy rejects external adoption and symlink escapes before writes", async (t) => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "dev-project-")));

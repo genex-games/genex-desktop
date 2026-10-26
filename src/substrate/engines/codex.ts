@@ -1260,7 +1260,9 @@ export class CodexEngine implements Engine {
     // id survives for "Continue". A user stop that raced the deadline still reads as the user's.
     const aborted = request.signal?.aborted;
     if (aborted || run.deadlineHit) return partialDelegateResult(this.id, interruption(aborted), partialState());
-    const classified = this.#classify(err as Error, run.stderrTail);
+    // The CLI names a limit in its stream and then exits non-zero with an empty stderr: read the
+    // stream's own failure too, or a 429 reads as a crash and the run ends instead of waiting.
+    const classified = this.#classify(err as Error, [run.failure, run.stderrTail].filter(Boolean).join("\n"));
     if (classified.kind === EngineFailureKind.Auth) this.#authFailure = classified.message;
     throw classified;
   }

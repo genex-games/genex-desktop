@@ -1,11 +1,12 @@
 /* ── Play's people: friends, profiles, stats, Top creators, the account's avatar ─────────────────── */
-/* genex.games' blue in its roles: the light tint of secondary actions, the gradient of the one primary
-   action, the translucent chips, the green of people playing now and of Accept, the requests badge.
-   The tinted families (chips, tint buttons, the credits card, the invite card) wear the Play / Create
-   switch's selected blue until the colour tweaker's "Play: chips, buttons and cards" group gives one
-   its own hue (`--*-hue`), so a theme that sets Play's blue carries them. That group and "Play: people
-   and stats" set the other colours here by name; their defaults for an unset role are copied in
-   `PEOPLE_COLORS`, tweaker.ts: change both together. */
+/* genex.games' blue, the app's accent, in its roles: the light tint of secondary actions, the filled
+   blue of the one primary action, the translucent chips, the green of people playing now and of
+   Accept, the requests badge. The tinted families (chips, tint buttons, the credits card, the invite
+   card) wear the Play / Create switch's selected blue until the colour tweaker's "Play: chips, buttons
+   and cards" group gives one its own hue (`--*-hue`), so a theme that sets Play's blue carries them.
+   That group and "Play: people and stats" set the other colours here by name; their defaults for an
+   unset role are copied in `PEOPLE_COLORS`, tweaker.ts, except the ones that follow the accent
+   (`ACCENT_PEOPLE`): change both together. */
 :root {
   --people-blue: var(--play-selected, var(--play-blue));
   --people-tint-color: var(--people-tint-hue, var(--people-blue));
@@ -15,8 +16,9 @@
   --people-tint: color-mix(in srgb, var(--people-tint-color) 16%, transparent);
   --people-tint-hover: color-mix(in srgb, var(--people-tint-color) 24%, transparent);
   --people-tint-edge: color-mix(in srgb, var(--people-tint-color) 55%, transparent);
-  --people-primary-top: #4b60bf;
-  --people-primary-bottom: #3f51a8;
+  /* The one main action is the accent button, filled flat: a palette may still shade it top to bottom. */
+  --people-primary-top: var(--accent-fill);
+  --people-primary-bottom: var(--accent-fill);
   --people-accept: rgb(34 165 91 / 0.16);
   --people-accept-hover: rgb(34 165 91 / 0.24);
   --people-accept-edge: rgb(34 165 91 / 0.5);
@@ -27,7 +29,7 @@
   --people-live-ink: #5fd18b;
   --people-pro: #8d9bff;
   --people-pro-ring: rgb(103 120 245 / 0.7);
-  --people-request: #3f61f5;
+  --people-request: var(--accent);
   --people-card-hover: var(--hover);
   /* On the dark canvas a chip's edge is its hue lifted toward white, so it reads as a rim. */
   --people-chip-top: color-mix(in srgb, var(--people-chip-color) 22%, transparent);
@@ -127,9 +129,7 @@
 }
 .people-button[data-tone="primary"] {
   background: linear-gradient(180deg, var(--people-primary-top), var(--people-primary-bottom));
-  box-shadow:
-    0 0.5px 1.5px rgb(75 96 191 / 0.25),
-    inset 0 0.8px 0 -0.25px rgb(255 255 255 / 0.2);
+  box-shadow: 0 0.5px 1.5px color-mix(in srgb, var(--people-primary-bottom) 25%, transparent);
   color: #ffffff;
 }
 .people-button[data-tone="primary"]:hover {
@@ -163,9 +163,7 @@
 }
 .play-fill {
   background: linear-gradient(180deg, var(--people-primary-top), var(--people-primary-bottom));
-  box-shadow:
-    0 0.5px 1.5px rgb(75 96 191 / 0.25),
-    inset 0 0.8px 0 -0.25px rgb(255 255 255 / 0.2);
+  box-shadow: 0 0.5px 1.5px color-mix(in srgb, var(--people-primary-bottom) 25%, transparent);
   color: #ffffff;
 }
 .play-fill:enabled:hover {
@@ -1791,7 +1789,7 @@
   gap: 5px;
 }
 
-/* ── The friends under the games in the sidebar (`play/SidebarFriends.tsx`) ── */
+/* ── The friends on the account plate in the sidebar (`play/SidebarFriends.tsx`) ── */
 /* About four and a half rows, then they scroll on their own: the half row says there are more. */
 .sidebar-friends {
   --page: var(--sidebar);
@@ -1800,13 +1798,21 @@
   flex-direction: column;
   min-height: 0;
 }
+/* Their one line, as the games' heading: the word on the left, the fold on the right where Games has +. */
+.sidebar-friends-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 36px;
+  padding-inline: 8px;
+}
 /* The word Friends is the way to the Friends page: the games' heading type, with its ↗ always on. */
 .sidebar-friends-heading {
   display: flex;
   align-items: center;
   gap: 4px;
-  align-self: flex-start;
-  margin: 12px 0 4px 8px;
+  min-width: 0;
   padding: 4px 8px;
   border-radius: var(--radius-control);
   color: var(--ink-3);
@@ -1839,9 +1845,59 @@
 .sidebar-friends-heading:hover .sidebar-friends-arrow {
   opacity: 1;
 }
-/* 4½ rows of a friend in a game (45px and the list's 2px gap), and a 16px foot the fade lies on. */
+/* The fold: the chevron points down while they are open (they fold down onto the plate), up once folded. */
+.sidebar-friends-fold {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.sidebar-friends-fold:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+.sidebar-friends-fold:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+.sidebar-friends-fold > .gi {
+  transition: rotate var(--duration-fast) var(--ease-smooth-out);
+}
+.sidebar-friends-fold[aria-expanded="false"] > .gi {
+  rotate: 180deg;
+}
+/* Folding: the rows' track goes from their height to nothing, and the games take the room. */
+.sidebar-friends-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--duration-fast) var(--ease-smooth-out),
+    opacity 180ms ease;
+}
+.sidebar-friends-body[data-folded="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.sidebar-friends-body > .sidebar-friends-list {
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-friends-body,
+  .sidebar-friends-fold > .gi {
+    transition: none;
+  }
+}
+/* 4½ rows of a friend in a game (45px and the list's 2px gap), and a 16px foot the fade lies on; in
+   a short window no more than half the list (`.sidebar-list`), their heading line included. */
 .sidebar-friends-scroll {
-  max-height: calc(4.5 * 47px + 16px);
+  max-height: min(calc(4.5 * 47px + 16px), calc(50cqh - 36px));
   padding-block-end: 16px;
   overflow-x: hidden;
 }
@@ -1915,20 +1971,29 @@
 .sidebar-friend-playing > .gi {
   flex: none;
 }
-/* A small face keeps a thin ring and a small dot. */
-.sidebar-friend .people-avatar:not([data-gear])[data-live] > .cy-avatar,
-.sidebar-friend .people-avatar:not([data-gear])[data-live] > .person-avatar {
-  box-shadow:
-    0 0 0 1.5px var(--page),
-    0 0 0 3px var(--people-live);
+/* A small face keeps a thin ring and a small dot. The ring lies inside the face, so a ringed face
+   starts where every other face and game picture does. */
+.sidebar-friend .people-avatar:not([data-gear]):is([data-live], [data-pro]) > :is(.cy-avatar, .person-avatar) {
+  box-shadow: none;
 }
-.sidebar-friend .people-avatar:not([data-gear])[data-pro] > .cy-avatar,
-.sidebar-friend .people-avatar:not([data-gear])[data-pro] > .person-avatar {
+.sidebar-friend .people-avatar:not([data-gear]):is([data-live], [data-pro])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
   box-shadow:
-    0 0 0 1.5px var(--page),
-    0 0 0 3px var(--people-pro-ring);
+    inset 0 0 0 1.5px var(--friend-ring),
+    inset 0 0 0 3px var(--page);
+  pointer-events: none;
+}
+.sidebar-friend .people-avatar[data-live] {
+  --friend-ring: var(--people-live);
+}
+.sidebar-friend .people-avatar[data-pro] {
+  --friend-ring: var(--people-pro-ring);
 }
 .sidebar-friend .people-live-dot {
+  z-index: 1;
   right: -2px;
   bottom: -2px;
   width: 9px;

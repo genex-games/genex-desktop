@@ -1,5 +1,6 @@
 /**
- * The chat column's identity row — which game, how full the context is, and its file actions.
+ * The chat column's identity row — which game, what it is made in, how full the context is, and its
+ * file actions.
  * Rename lives here (click the title, or ⋯). One game has one chat, so there is no chat switcher.
  * Every gap between the controls drags the window.
  */
@@ -20,6 +21,7 @@ import { t } from "../../shared/i18n.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
 import { SidebarToggle } from "../shell/use-shell-chrome.ts";
+import { setEngineSlot } from "./engine-slot.ts";
 
 interface Props {
   chatTitle: string;
@@ -376,6 +378,10 @@ export function ChatHeader({
       {contextUsage && contextWindow ? (
         <ContextMeter usage={{ ...contextUsage, contextWindow }} compacting={compacting} onCompact={onCompact} />
       ) : null}
+      {/* The game's engine button (Roblox, Unity…), drawn here by the stage's toolbar (`engine-slot.ts`). */}
+      {project && (
+        <span ref={setEngineSlot} data-chat-engine="" className="me-1 flex shrink-0 items-center empty:hidden" />
+      )}
 
       {project && onReveal && (
         <HeaderButton

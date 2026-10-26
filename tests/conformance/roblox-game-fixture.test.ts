@@ -52,7 +52,7 @@ it("turns Roblox Studio on, links the game to its place and puts the steps card 
     const button = visibleToolbarEntries(toolbarItems(core.plugins.list(), project.name, game), {}).find(
       (entry) => entry.key === `${ROBLOX}:studio`,
     );
-    assert.equal(button?.item.label, "Roblox Studio", "the game's toolbar shows the Roblox Studio button");
+    assert.equal(button?.item.label, "Roblox", "the game's engine button says Roblox");
     const place = String(linked?.file);
     assert.equal(path.dirname(place), await realpath(project.dir), "the place sits at the game's top");
     assert.match(await readFile(place, "utf8"), /^<roblox /, "a place file Studio reads");

@@ -6,7 +6,7 @@
  * name players will see, Publish, its progress in that same button and under it, and the link once the game is live.
  * A failed attempt is said calmly, with the raw detail kept for support. The Publish press is the
  * consent to the files it uploads (listed on request beside it); nothing asks again. While the
- * game has no Genex cover to send, one quiet line offers to ask its chat for one.
+ * game has no Genex cover to send, one quiet line says it goes out without a picture.
  */
 import type { JSX, ReactNode, RefObject } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -914,7 +914,14 @@ function PublishBody({
             onRights={remix.onRights}
           />
         )}
-        <Hint view={view} publishing={publishing} making={Boolean(cover.making)} record={record} name={name} />
+        <Hint
+          view={view}
+          publishing={publishing}
+          making={Boolean(cover.making)}
+          taking={Boolean(cover.taking)}
+          record={record}
+          name={name}
+        />
       </div>
     </div>
   );
@@ -976,11 +983,12 @@ function WhoPlays({ project, shown }: { project: string; shown: boolean }): JSX.
   return <p className="genex-publish-hint">{WORDS.intro}</p>;
 }
 
-/** The quiet line at the foot: that closing does not stop it, the way out of a slow test, or that a cover is coming. */
+/** The quiet line at the foot: that closing does not stop it, the way out of a slow test, that a cover is coming, or that there is none. */
 function Hint({
   view,
   publishing,
   making,
+  taking,
   record,
   name,
 }: {
@@ -988,6 +996,8 @@ function Hint({
   publishing: boolean;
   /** Another cover is on its way: the line says where it shows. */
   making: boolean;
+  /** Studio is taking the first cover now: whether the game has one is not known yet. */
+  taking: boolean;
   record: ReturnType<typeof usePublishRecord>;
   name: string;
 }): JSX.Element | null {
@@ -1005,6 +1015,7 @@ function Hint({
     );
   if (publishing) return <p className="genex-publish-hint">{WORDS.keepsGoing}</p>;
   if (making) return <p className="genex-publish-hint">{WORDS.coverMakingSoon}</p>;
+  if (view.withoutCover && !taking) return <p className="genex-publish-hint">{WORDS.withoutCover}</p>;
   return null;
 }
 

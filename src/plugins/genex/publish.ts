@@ -45,6 +45,9 @@ export const MESSAGE = {
   NotCurrent: () => t("That upload is no longer the current one"),
   OnlyDraftUpdated: "Only the draft page was updated: the public version is unchanged. Publish again to update it.",
   AllowedNewUpload: "Published again before Studio knew whether this upload reached Genex.",
+  EmptyStarter: "This game is still the empty starter: build something first, then publish.",
+  /** {@link MESSAGE.EmptyStarter} as Publish's refusal. */
+  EmptyStarterRefusal: () => t("This game is still the empty starter: build something first, then publish."),
   ConnectFirst: "Connect the Genex plugin first",
   /** {@link MESSAGE.ConnectFirst} as Publish's refusal. */
   ConnectFirstRefusal: () => t("Connect the Genex plugin first"),

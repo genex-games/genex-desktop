@@ -58,7 +58,7 @@ const DIRECT_WITH_SESSIONS = { id: "bonsai", label: "Bonsai", kind: "direct", su
 const GODOT_FOUND = "godot-project at the folder's root";
 /** The words a refused Loop on a direct engine closes with (flipped: they name what Genex found). */
 const NEEDS_SESSION =
-  "A Loop on this project (Genex finds godot-project at the folder's root) needs an engine that works as an agent in the project's folder (Claude Code, Codex or OpenCode); Ollama doesn't, so nothing was built.";
+  "A Loop on this project (Genex finds godot-project at the folder's root) needs an engine that works as an agent in the project's folder (Claude Code, Codex, OpenCode or Grok Build); Ollama doesn't, so nothing was built.";
 const WEB_ONLY = "This kind of run works on web games only; a Loop on this project is led by the chat's own session.";
 const CANNOT_RESUME =
   "This Loop was paused by an earlier version and can't be picked up. Start a new Loop: it goes on from the project as it is now, with every save point kept.";

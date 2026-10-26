@@ -13,7 +13,7 @@ export type GenexStudioTool = (typeof GenexStudioTool)[keyof typeof GenexStudioT
 /** Refusals and failures of a Studio-run Genex CLI command or package install. */
 export const GENEX_CLI_PROMPT = {
   Unavailable: (command: string) =>
-    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, items list and items search through genex__cli; llm bench, shop set|remove|test and items add|remove through genex__cli-paid. Only the person puts an item on sale, from its card in the chat; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
+    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, shop set|remove on a local draft, items list and items search through genex__cli; llm bench, shop set|remove on an item in the store, shop test and items add|remove through genex__cli-paid. Studio puts the game's items on sale when it is published; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
   UseTool: (command: string, tool: GenexStudioTool) =>
     `\`genex ${command}\` is ${tool} in Studio: call that tool instead.`,
   PaidTool: (command: string) =>
@@ -29,6 +29,8 @@ export const GENEX_CLI_PROMPT = {
   NoPositional: (command: string) => `\`genex ${command}\` takes no positional argument; leave args out.`,
   NeedsPositional: (command: string) => `\`genex ${command}\` needs its positional argument in args.`,
   NeedsOption: (command: string, name: string) => `\`genex ${command}\` needs the ${name} option.`,
+  NeedsPicture:
+    "A store item is listed with its picture, never without: render the item alone on a transparent background with the game's own code (or make it with genex__asset image), save the PNG under .genex/scratch/, then call shop add again with the image option.",
   Locked: "Genex is locked: ask the user to unlock Genex in Studio's Plugins page, then try again.",
   NoDraft:
     'This game has no hosted Genex project yet. Publish a draft first with genex__publish {"operation":"draft"}, then run the command again.',

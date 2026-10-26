@@ -114,14 +114,17 @@
         "src/substrate/paths.ts",
         "tests/conformance/paths.test.ts",
         "tests/conformance/fsx.test.ts",
-        "src/substrate/windows-sandbox.ts"
+        "src/substrate/windows-sandbox.ts",
+        "src/substrate/git-policy.ts",
+        "scripts/vendor-git-for-mac.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/workspace.md",
         "docs/harness-runtime.md",
-        "docs/windows-sandbox.md"
+        "docs/windows-sandbox.md",
+        "docs/mac-bundled-git.md"
       ],
       "commands": ["check", "test:fast"]
     },

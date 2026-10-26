@@ -2198,9 +2198,9 @@ function judgePrompt(request: CompleteRequest): unknown {
 }
 
 /**
- * What the session reads: a steerable one is fed through an input the delegation holds open
- * (claude-steer.ts), any other gets the brief. No uuid on the brief itself: the CLI reports
- * lifecycles only for messages that carry one, and the only ones this delegation tracks are steers.
+ * What the session reads: a steerable or resumed one is fed through an input the delegation holds
+ * open (claude-steer.ts), with a uuid on the brief so the session says when it read it; a new one
+ * nobody steers gets the brief.
  */
 function sessionPrompt(
   request: DelegateRequest,
@@ -2209,8 +2209,10 @@ function sessionPrompt(
   signal: AbortSignal,
 ): unknown {
   if (request.compact) return COMPACT_COMMAND;
-  if (!steer) return delegatePrompt(request);
-  run.feed = steerFeed(steer, userFrame(request.prompt, briefImages(request)), signal, () => run.sessionId);
+  // A resumed session may first answer what it had queued: its input waits for the brief's answer.
+  if (!steer && !request.resume) return delegatePrompt(request);
+  const session = steer ?? steerSession(() => {});
+  run.feed = steerFeed(session, userFrame(request.prompt, briefImages(request)), signal, () => run.sessionId);
   return run.feed.prompt;
 }
 

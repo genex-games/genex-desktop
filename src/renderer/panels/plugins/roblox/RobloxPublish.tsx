@@ -106,16 +106,44 @@ function MainPress({
   );
 }
 
-/** The game's page on Roblox, with Open. */
-function RobloxLink({ url }: { url: string }): JSX.Element {
+/** The game's page on Roblox, with Open: the accent's while anyone can open it, quiet while only its owner can. */
+function RobloxLink({ url, open }: { url: string; open: boolean }): JSX.Element {
   return (
-    <div className="genex-publish-link-field" data-public>
+    <div className="genex-publish-link-field" data-public={open || undefined}>
       <Icon name="globe" size={15} />
       <span title={url}>{url.replace(/^https?:\/\//, "")}</span>
       <Button onClick={() => void window.studio.openUrl(url)}>
         {WORDS.open}
         <Icon name="arrow-up-right" size={14} />
       </Button>
+    </div>
+  );
+}
+
+/**
+ * What a new game on Roblox still needs before others can open it (Roblox keeps it private and
+ * unrated), with Creator Hub, where each is done.
+ */
+function NotPublicYet({ hubUrl }: { hubUrl: string | undefined }): JSX.Element {
+  return (
+    <div className="genex-publish-next" data-roblox-not-public>
+      <p className="genex-publish-hint">{WORDS.onlyYou}</p>
+      <ol className="genex-publish-next-steps">
+        <li>{WORDS.nextQuestions}</li>
+        <li>{WORDS.nextPublic}</li>
+        <li>{WORDS.nextIcon}</li>
+      </ol>
+      {hubUrl && (
+        <Button
+          variant="default"
+          size="default"
+          className="genex-publish-primary"
+          onClick={() => void window.studio.openUrl(hubUrl)}
+        >
+          {WORDS.openHub}
+          <Icon name="arrow-up-right" size={14} />
+        </Button>
+      )}
     </div>
   );
 }
@@ -269,8 +297,14 @@ function CardContent({
           <Icon name="check" size={16} className="text-green" />
           {view.first ? WORDS.publishedFirst : WORDS.publishedUpdate}
         </p>
-        {view.url && <RobloxLink url={view.url} />}
-        <Button variant="default" size="default" className="genex-publish-primary" onClick={onClose}>
+        {view.url && <RobloxLink url={view.url} open={!view.notPublicYet} />}
+        {view.notPublicYet && <NotPublicYet hubUrl={view.hubUrl} />}
+        <Button
+          variant={view.notPublicYet && view.hubUrl ? "secondary" : "default"}
+          size="default"
+          className="genex-publish-primary"
+          onClick={onClose}
+        >
           {WORDS.done}
         </Button>
       </>

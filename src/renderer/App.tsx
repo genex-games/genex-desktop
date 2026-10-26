@@ -78,7 +78,6 @@ function Rooms({
             sidebarHidden={chrome.sidebarHidden}
             onToggleSidebar={chrome.toggleSidebar}
             onOpenGame={navigation.enterProject}
-            onNewGame={navigation.newGame}
           />
         </Suspense>
       )}

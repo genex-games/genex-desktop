@@ -288,6 +288,8 @@ export type GenexUseVerification = (typeof GenexUseVerification)[keyof typeof Ge
 export const GenexBlocked = {
   /** Genex's terms changed and the account has not accepted them yet. */
   Terms: "terms",
+  /** The account had too few credits for it: Genex refused it before making or charging anything. */
+  Credits: "credits",
 } as const;
 export type GenexBlocked = (typeof GenexBlocked)[keyof typeof GenexBlocked];
 

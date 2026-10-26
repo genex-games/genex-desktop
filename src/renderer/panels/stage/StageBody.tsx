@@ -157,18 +157,21 @@ export function LiveLoading({ leaving }: { leaving: boolean }): JSX.Element {
 }
 
 /**
- * The person stopped the game. While a run builds, the stage is what it is for a building game
- * (the crane, Play latest or Watch progress); otherwise it says the game is stopped, with Play.
+ * The game is not running: the person stopped it, or (`idle`) it was opened and waits for Play.
+ * While a run builds, the stage is what it is for a building game (the crane, Play latest or Watch
+ * progress); otherwise it says so, with Play.
  */
 export function StoppedGame({
   graph,
   project,
+  idle = false,
   onWatch,
   onPlay,
   onResume,
 }: {
   graph: RunGraphModel | null;
   project: string | null;
+  idle?: boolean;
   onWatch: () => void;
   onPlay: (head: string) => Promise<void>;
   onResume: () => void;
@@ -177,7 +180,7 @@ export function StoppedGame({
   return (
     <StageEmpty
       art="stopped"
-      title={t("Game stopped")}
+      title={idle ? t("Ready to play") : t("Game stopped")}
       subtitle=""
       action={<PlayButton label={t("Play")} onPlay={onResume} />}
     />

@@ -33,7 +33,13 @@ import {
   type GenexPublishState,
 } from "../../shared/genex.ts";
 import { PluginStillProblemCode, type PluginStillProblem } from "../../shared/plugins.ts";
-import { CaptureSource, type StillExposure, StillMimeType } from "../../shared/preview-contract.ts";
+import {
+  CaptureSource,
+  isFlatStill,
+  isTooDarkStill,
+  type StillExposure,
+  StillMimeType,
+} from "../../shared/preview-contract.ts";
 import { atomicWriteText, isJsonObject, replaceFile } from "../../substrate/fsx.ts";
 import { stripAnsi } from "./cli.ts";
 
@@ -58,8 +64,6 @@ export const COVER_SEND_TIMEOUT_MS = 90 * SECOND_MS;
 /** How long asking Genex for the game's current cover may take. */
 export const COVER_VIEW_TIMEOUT_MS = 30 * SECOND_MS;
 
-/** Advisory mirror of Genex's gate on a cover's luma (0–1): the server decides, on the encoded frame. */
-const GATE = { MinMean: 0.12, MaxNearBlack: 0.85, MinSpread: 0.04 } as const;
 /** The cover card's comfort line: a frame that only just clears the gate reads murky on a card. */
 const COMFORT = { MinMean: 0.2, MinSpread: 0.08, MaxNearBlack: 0.7 } as const;
 /** Mirror of the size Genex stores a cover at: a smaller frame is scaled up and goes soft. */
@@ -197,7 +201,7 @@ export const MESSAGE = {
     `The cover frame is ${w}×${h}: Genex stores covers at 1280×720 and scales a smaller one up, so it looks soft.`,
   NotWide: (w: number, h: number) => `The cover frame is ${w}×${h}, not 16:9: Genex crops it to its middle 16:9.`,
   TooDark:
-    "Genex will likely refuse this frame as too dark (mean brightness under 0.12, or over 85% near-black). Find the game's best-lit honest moment; if it is dark by design, stop: never relight the game for a cover.",
+    "Genex will likely refuse this frame as too dark (mean brightness under 0.11, or over 85% near-black). Find the game's best-lit honest moment; if it is dark by design, stop: never relight the game for a cover.",
   Flat: "Genex will likely refuse this frame as one flat colour (contrast under 0.04): the canvas may not have drawn, or a fade, a loading screen, sky or fog fills it.",
   Dim: "This frame only just clears Genex's gate and will read murky on a card: where the game's own light allows, aim for brightness 0.2 or more, contrast 0.08 or more and under 70% near-black.",
   Rejected: (reason: string, stats: GenexCoverFrameStats | null) => {
@@ -348,8 +352,9 @@ export function readStillAnswer(answer: unknown): { still: CoverStill } | { prob
 export function coverAdvice(shot: Pick<GenexCoverShot, "width" | "height" | "stats">): CoverAdvice[] {
   const { lumaMean, lumaStdDev, nearBlackFraction } = shot.stats;
   const advice: CoverAdvice[] = [];
-  const dark = lumaMean < GATE.MinMean || nearBlackFraction > GATE.MaxNearBlack;
-  const flat = lumaStdDev < GATE.MinSpread;
+  // Advisory: Genex's own gate decides, on the encoded frame.
+  const dark = isTooDarkStill(shot.stats);
+  const flat = isFlatStill(shot.stats);
   const dim = lumaMean < COMFORT.MinMean || lumaStdDev < COMFORT.MinSpread || nearBlackFraction >= COMFORT.MaxNearBlack;
   if (dark) advice.push(CoverAdvice.TooDark);
   if (flat) advice.push(CoverAdvice.Flat);

@@ -1,11 +1,10 @@
 /**
- * Local item drafts after the game is published (contract "Local item drafts"; D40). The person's
- * "Sell when published" is an approval Studio keeps in its own app data, never in the game folder,
- * keyed by game and local id and holding the content hash the person saw. Once the game is on Genex,
- * Studio runs its own `shop sync` (paced, at most one per game at a time) and puts on sale only an
- * uploaded draft whose approval names the very hash the sync reports; a draft changed since its
- * approval stays a draft and says so, a refusal is kept with its code, and nothing the agent can
- * write (the game's files, a sync record in the game) approves anything.
+ * Local item drafts after the game is published (contract "Local item drafts"). Studio keeps what it
+ * knows of them in its own app data, never in the game folder. Once the game is on Genex, Studio runs
+ * its own `shop sync` (paced, at most one per game at a time) and puts every uploaded draft on sale,
+ * keeping genex.games' refusal with its code; right after a publish it also puts on sale the game's
+ * items still drafts on genex.games. Nothing the agent can write (a sync record in the game) names
+ * what goes up.
  */
 import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
@@ -23,7 +22,12 @@ import {
 } from "../../src/main/core/item-approvals.ts";
 import type { SyncedItem } from "../../src/main/core/item-draft.ts";
 import type { LocalDraftChange } from "../../src/main/core/genex-cli.ts";
-import { LOCAL_SETTLE_GAP_MS, LocalItems, type LocalItemsDeps } from "../../src/main/core/local-items.ts";
+import {
+  hostedDraftIds,
+  LOCAL_SETTLE_GAP_MS,
+  LocalItems,
+  type LocalItemsDeps,
+} from "../../src/main/core/local-items.ts";
 import { type LocalListingDraft, LocalOutcomeKind } from "../../src/shared/item-draft.ts";
 import {
   type CreatorItem,
@@ -56,6 +60,7 @@ const draft = (localId: string, fields: Partial<LocalListingDraft> = {}): LocalL
   tags: [],
   shareable: false,
   contentHash: HASH,
+  picture: null,
   ...fields,
 });
 
@@ -97,6 +102,7 @@ async function rig(options: { published?: boolean; drafts?: boolean; synced?: Sy
   let synced = options.synced === undefined ? [] : options.synced;
   let unreadable = false;
   let shareAnswer: LocalDraftChange | null = null;
+  let hostedDrafts: string[] | Error = [];
   let release: (() => void) | null = null;
   let held: Promise<void> | null = null;
   const deps: LocalItemsDeps = {
@@ -119,6 +125,10 @@ async function rig(options: { published?: boolean; drafts?: boolean; synced?: Sy
       calls.putOnSale.push(skuId);
       return sale[skuId] ?? onSale(skuId);
     },
+    hostedDrafts: async () => {
+      if (hostedDrafts instanceof Error) throw hostedDrafts;
+      return hostedDrafts;
+    },
     now: () => clock,
     changed: (project) => calls.changed.push(project),
   };
@@ -140,6 +150,9 @@ async function rig(options: { published?: boolean; drafts?: boolean; synced?: Sy
     },
     answerShare: (answer: LocalDraftChange | null) => {
       shareAnswer = answer;
+    },
+    hosted: (answer: string[] | Error) => {
+      hostedDrafts = answer;
     },
     holdSync: () => {
       held = new Promise((resolve) => {
@@ -246,7 +259,7 @@ describe("the person's approvals, as Studio keeps them", () => {
 });
 
 describe("settling a game's local drafts after its publish", () => {
-  it("puts on sale only what the person approved with the very hash uploaded, and keeps the rest a draft", async () => {
+  it("puts every draft the sync uploaded on sale, and keeps why genex.games refused an upload", async () => {
     const r = await rig({
       synced: [
         uploaded(ICE, "sku_ice"),
@@ -260,7 +273,7 @@ describe("settling a game's local drafts after its publish", () => {
       await r.items.approve(GAME, localId, HASH);
     }
     const view = await r.items.settle(GAME, { force: false });
-    assert.deepEqual(r.calls.putOnSale, ["sku_ice"]);
+    assert.deepEqual(r.calls.putOnSale, ["sku_ice", "sku_sled", "sku_cape"], "approved or not, changed or not");
     assert.deepEqual(view.outcomes[ICE], {
       kind: LocalOutcomeKind.OnSale,
       skuId: "sku_ice",
@@ -269,9 +282,9 @@ describe("settling a game's local drafts after its publish", () => {
       field: null,
       at: T0,
     });
-    assert.equal(view.outcomes[SLED]?.kind, LocalOutcomeKind.Changed, "changed since its approval: a draft");
+    assert.equal(view.outcomes[SLED]?.kind, LocalOutcomeKind.OnSale);
     assert.equal(view.outcomes[SLED]?.skuId, "sku_sled");
-    assert.equal(view.outcomes[CAPE]?.kind, LocalOutcomeKind.Draft, "never approved: a draft");
+    assert.equal(view.outcomes[CAPE]?.kind, LocalOutcomeKind.OnSale);
     assert.deepEqual(view.outcomes[AXE], {
       kind: LocalOutcomeKind.Refused,
       skuId: null,
@@ -280,17 +293,16 @@ describe("settling a game's local drafts after its publish", () => {
       field: "price",
       at: T0,
     });
-    assert.deepEqual(Object.keys(view.approvals), [AXE], "an approval is used once; a refused upload keeps its own");
+    assert.deepEqual(Object.keys(view.approvals), [AXE], "an upload ends its approval; a refused one keeps it");
     assert.equal(view.drafts[ICE]?.name, "Ice Shield", "an uploaded draft's card still shows what it was");
   });
 
   it("records the content Genex got, which an edit outside Studio makes differ from the card's", async () => {
     const r = await rig({ synced: [uploaded(ICE, "sku_ice", OTHER_HASH), uploaded(SLED, "sku_sled")] });
     for (const localId of [ICE, SLED]) await r.items.noteDraft(draft(localId), PRINT);
-    await r.items.approve(GAME, ICE, HASH);
     const view = await r.items.settle(GAME, { force: true });
-    assert.deepEqual(r.calls.putOnSale, [], "the approved content is not what went up");
-    assert.equal(view.outcomes[ICE]?.kind, LocalOutcomeKind.Changed);
+    assert.deepEqual(r.calls.putOnSale, ["sku_ice", "sku_sled"]);
+    assert.equal(view.outcomes[ICE]?.kind, LocalOutcomeKind.OnSale);
     assert.equal(view.outcomes[ICE]?.contentHash, OTHER_HASH, "what Genex got, not what the card shows");
     assert.equal(view.drafts[ICE]?.contentHash, HASH);
     assert.equal(view.outcomes[SLED]?.contentHash, HASH, "an unapproved draft uploaded as the card shows it");
@@ -383,13 +395,60 @@ describe("nothing the agent can write approves a local draft (D40)", () => {
     assert.deepEqual(view.outcomes, {});
     assert.equal(r.calls.sync, 0);
   });
+});
 
-  it("puts nothing on sale for an approval of content the agent changed after the person saw it", async () => {
-    const r = await rig({ synced: [uploaded(ICE, "sku_ice", OTHER_HASH)] });
-    await r.items.noteDraft(draft(ICE), PRINT);
-    await r.items.approve(GAME, ICE, HASH);
+describe("the game's items already on Genex", () => {
+  it("go on sale right after a publish, and never on a focus or an open", async () => {
+    const r = await rig({ drafts: false });
+    r.hosted(["sku_rod", "sku_bait"]);
+    await r.items.settle(GAME, { force: false });
+    assert.deepEqual(r.calls.putOnSale, [], "the published build may not deliver them yet");
     await r.items.settle(GAME, { force: true });
-    assert.deepEqual(r.calls.putOnSale, []);
+    assert.deepEqual(r.calls.putOnSale, ["sku_rod", "sku_bait"]);
+    assert.ok(r.calls.changed.includes(GAME), "the cards read again");
+  });
+
+  it("are the game's own drafts as Selling lists them, and none when Selling is refused", () => {
+    const row = (id: string, game: string | null, state: ItemState) => ({
+      id,
+      name: id,
+      iconUrl: null,
+      type: ItemType.Durable,
+      game: game ? { id: game, slug: game, title: game } : null,
+      gamesCount: 1,
+      state,
+      underReview: false,
+      shareable: false,
+      priceCoins: 100,
+      priceDisplayUsdCents: 100,
+      sold: 0,
+      earned: 0,
+    });
+    const selling = {
+      earnedReady: 0,
+      earnedHeld: 0,
+      nextReleaseAt: null,
+      holdDays: 0,
+      items: [
+        row("sku_rod", "proj_1", ItemState.Draft),
+        row("sku_hat", "proj_1", ItemState.OnSale),
+        row("sku_cap", "proj_1", ItemState.OffSale),
+        row("sku_axe", "proj_2", ItemState.Draft),
+        row("sku_orb", null, ItemState.Draft),
+      ],
+    };
+    assert.deepEqual(hostedDraftIds(selling, "proj_1"), ["sku_rod"], "taken off sale stays off");
+    assert.deepEqual(hostedDraftIds({ refused: StoreRefusal.Unknown }, "proj_1"), []);
+  });
+
+  it("stay as they are for a game that is not published, or when genex.games can't be read", async () => {
+    const r = await rig({ published: false, drafts: false });
+    r.hosted(["sku_rod"]);
+    await r.items.settle(GAME, { force: true });
+    const unread = await rig({ drafts: false });
+    unread.hosted(new Error("offline"));
+    await unread.items.settle(GAME, { force: true });
+    assert.deepEqual([...r.calls.putOnSale, ...unread.calls.putOnSale], []);
   });
 });
 

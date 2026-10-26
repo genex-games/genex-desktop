@@ -127,7 +127,7 @@ const bound = (p: Profile, directory = p.game): PluginBinding => ({ project: "sp
 const shopAdd = (options: Record<string, unknown>) => ({
   command: "shop add",
   args: "Frost Axe",
-  options: { price: 1200, ...options },
+  options: { price: 1200, image: ".genex/scratch/frost-axe.png", ...options },
 });
 /** A change to a listed item takes the same files, and the person approves it on a card. */
 const shopSet = (options: Record<string, unknown>) => ({ command: "shop set", args: ITEM, options });
@@ -397,7 +397,6 @@ describe("the network a run that moves an item's files opens", () => {
       WITH_STORAGE,
     ],
     ["items add", itemsAdd, WITH_STORAGE],
-    ["shop add without files", shopAdd({}), API_ONLY],
     ["shop set without files", { command: "shop set", args: ITEM, options: { price: 300 } }, API_ONLY],
     ["items remove", { command: "items remove", args: ITEM }, API_ONLY],
   ];

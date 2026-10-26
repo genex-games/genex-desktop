@@ -1,6 +1,6 @@
 /**
- * One game, one row. The chrome and navigation stay put; the game list scrolls, and under it the
- * friends scroll on their own.
+ * One game, one row. The chrome and navigation stay put; the game list takes the room and scrolls,
+ * and the friends stand at its foot on the account plate, folding to one line.
  */
 import type { ComponentPropsWithRef, CSSProperties, JSX, ReactNode, RefObject } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -213,8 +213,8 @@ export function Sidebar(props: Props): JSX.Element {
           </div>
           <span className="sidebar-fade" aria-hidden="true" />
         </div>
-        <SidebarFriends onPlayMode={props.onPlayMode} />
         <SidebarFooter {...props} />
+        <SidebarFriends onPlayMode={props.onPlayMode} />
       </div>
       {/* Shown once, until the first sign-in: the account plate stays under it. */}
       {playOpen && <PlayPromo />}

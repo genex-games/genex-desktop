@@ -33,7 +33,7 @@ import {
 import { type ConversationRecord, type EventEnvelope, ThreadKind } from "../../shared/event-log.ts";
 import { ExecutionStatus, RUN_START_EVENTS } from "../../shared/run-state.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
-import type { McpLiveTool } from "../../substrate/mcp/registry.ts";
+import type { McpLiveTool, SilentConnector } from "../../substrate/mcp/registry.ts";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -95,6 +95,8 @@ import {
   unsavedFilesNotice,
   leadToolsNote,
   mainAgentReachNote,
+  silentConnectorLog,
+  silentConnectorsNotice,
   withdrawnNotice,
   withdrawnSince,
 } from "./delegation-prompts.ts";
@@ -421,6 +423,8 @@ interface SessionTools {
   handed: HandedPlugin[];
   /** A resumed session's plugins and skills that were handed to it before and are gone now. */
   withdrawn: PluginAppliedSet | null;
+  /** The in-scope connectors that gave this session no tools, each told to it so it doesn't look for them. */
+  silent: SilentConnector[];
   /** A resumed session's plugins handed to it now and not before; none for a new session. */
   added: HandedPlugin[];
   /** The thread's cut-off calls its brief names; forgotten once the session answers (`#settled`). */
@@ -800,14 +804,11 @@ export class DelegationService {
     const shape = await readProjectShape(initialRoot).catch(() => null);
     if (shape?.runtime !== TargetRuntime.Bridge)
       return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
-    const tools = computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
+    // Started on the session's first move, never here: every chat turn is handed a computer, and a
+    // native game opens a window of its own. Until it runs, the tool offers what such a game may do.
+    return computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
       bridge: { sandbox: this.#core.sandbox, engine: (engine, root) => this.#core.startEngine(engine, root) },
     });
-    // A Play Protocol game says what it can do only once it runs: start it now, so the tool the
-    // session is handed offers only what this game can do. A game that fails to start is said on
-    // the first call.
-    await tools.prepare().catch(() => {});
-    return tools;
   }
 
   /**
@@ -2473,13 +2474,17 @@ export class DelegationService {
    */
   async #offerConnectors(p: DelegateParams, session: DelegationSession, tools: SessionTools): Promise<void> {
     const asWorker = Boolean(session.worker) || typeof p.worker?.id === "string";
-    const connectors = await this.#core.mcp.toolsFor(p.project, {
+    const report = await this.#core.mcp.toolsReport(p.project, {
       signal: session.abort.signal,
       facts: session.facts,
       ...(session.holds ? { holds: session.holds } : {}),
       ...(asWorker ? { kindServers: false } : {}),
     });
-    tools.mcp = connectors.filter((tool) => offers(session, tool.name));
+    tools.mcp = report.tools.filter((tool) => offers(session, tool.name));
+    // A connector that gave nothing is said, in the log and to the session, never left to be looked for.
+    tools.silent = report.silent;
+    for (const connector of report.silent)
+      this.#core.options.onLog?.(`[core] ${silentConnectorLog(connector)} in ${p.project}`, "stderr");
   }
 
   /**
@@ -2708,6 +2713,7 @@ export class DelegationService {
       unsavedFilesNotice(tools.unsaved),
       tools.jobNews.notice,
       tools.withdrawn ? withdrawnNotice(tools.withdrawn) : "",
+      silentConnectorsNotice(tools.silent),
       addedNotice(tools.added),
       p.prompt,
       tools.judgeBrief,
@@ -3096,6 +3102,7 @@ function sessionTools(
     applied: plugins.applied,
     handed,
     withdrawn: null,
+    silent: [],
     added: [],
     cutOffs: [],
     unsaved: [],

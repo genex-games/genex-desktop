@@ -71,6 +71,11 @@ export const WindowsSetupNeed = {
    * sandbox user through it, so with it disabled Windows refuses each one.
    */
   LogonService: "logon-service",
+  /**
+   * Run srt-win's install again: an earlier Genex set the sandbox up for another release of it, and
+   * this one starts nothing on that install until it is upgraded in place.
+   */
+  Reinstall: "reinstall",
 } as const;
 export type WindowsSetupNeed = (typeof WindowsSetupNeed)[keyof typeof WindowsSetupNeed];
 

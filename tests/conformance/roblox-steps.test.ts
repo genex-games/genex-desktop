@@ -90,6 +90,7 @@ const STATES: Record<string, RobloxStepFacts> = {
   "open, switch on, place linked": { ...BASE, answering: false, mcpOn: true, canClick: true, linked: true },
   "ready, no place": BASE,
   "ready, linked": { ...BASE, linked: true, place: "Place1" },
+  "ready, linked, helper away": { ...BASE, linked: true, place: "Place1", helperAway: true },
   "linked, live data": { ...BASE, linked: true, place: "Pet Valley", liveData: true },
   "linked, Rojo": { ...BASE, linked: true, place: "Obby Lab", rojo: true },
 };
@@ -111,6 +112,7 @@ const NEXT: Record<string, RobloxStepId | undefined> = {
   "open, switch on, place linked": RobloxStepId.Mcp,
   "ready, no place": RobloxStepId.Place,
   "ready, linked": undefined,
+  "ready, linked, helper away": RobloxStepId.Helper,
   "linked, live data": undefined,
   "linked, Rojo": undefined,
 };
@@ -282,6 +284,7 @@ describe("the Roblox Studio setup rows", () => {
     "open, switch on, place linked": false,
     "ready, no place": true,
     "ready, linked": false,
+    "ready, linked, helper away": true,
     "linked, live data": false,
     "linked, Rojo": false,
   };
@@ -302,6 +305,16 @@ describe("the Roblox Studio setup rows", () => {
       "the person stopped it",
     );
     assert.equal(robloxSteps(STATES.missing as RobloxStepFacts).stuckSays, undefined);
+  });
+
+  it("Studio answering without the Genex helper loaded is not ready: the helper step offers Restart Studio", () => {
+    const facts = STATES["ready, linked, helper away"] as RobloxStepFacts;
+    const helper = row(facts, RobloxStepId.Helper);
+    assert.equal(helper.done, false, "a helper in the Plugins folder that Studio never loaded is no helper");
+    assert.equal(helper.action?.name, RobloxAction.RestartStudio);
+    const card = robloxSteps(facts);
+    assert.equal(card.open, true, "the card stays open, so nobody is told Studio is ready");
+    assert.equal(card.intro, MESSAGE.Steps.Intro(1));
   });
 
   it("Studio open before Set up: the helper step offers Restart Studio, since Set up waits for Studio to close", () => {

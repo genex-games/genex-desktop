@@ -300,7 +300,7 @@ describe("a settled plugin or connector question", () => {
       consentLineWords(consentOutcomeWords(outcome), "Unreal Engine");
     assert.equal(line({ state: "approved", by: "user", always: true }), "Always allowed · Unreal Engine");
     assert.equal(line({ state: "approved", by: "user" }), "Allowed · Unreal Engine");
-    assert.equal(line({ state: "approved", by: "mode" }), "Allowed · Unreal Engine");
+    assert.equal(line({ state: "approved", by: "mode" }), "Allowed in Bypass · Unreal Engine");
     assert.equal(line({ state: "declined", by: "user" }), "Declined · Unreal Engine");
     assert.equal(line({ state: "declined", by: "timeout" }), "Nobody answered · Unreal Engine");
   });

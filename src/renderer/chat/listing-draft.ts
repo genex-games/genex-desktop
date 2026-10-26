@@ -40,6 +40,8 @@ export interface ListingCardView {
   description: string | null;
   iconUrl: string | null;
   priceCoins: number;
+  /** Its state on genex.games, as last read. */
+  state: ItemState;
   sale: ListingSale;
   /** Put on sale can be pressed now: offered, with no other press under way. */
   canPutOnSale: boolean;
@@ -81,6 +83,7 @@ export function listingCardView(
     description: draft.description,
     iconUrl: draft.iconUrl,
     priceCoins: draft.priceCoins,
+    state,
     sale,
     canPutOnSale: sale === ListingSale.Offer && busy === undefined,
     shared: latest?.shareable ?? draft.shareable,
@@ -211,6 +214,3 @@ export function holdsLocalDrafts(view: LocalItemsView | undefined): boolean {
 /** The press "Sell when published" makes as it stands: approve, or take the approval back. */
 export const sellWhenPublished = (sale: LocalSale): LocalAction =>
   sale === LocalSale.Approved ? LocalAction.Withdraw : LocalAction.Approve;
-
-/** The press the local toggle makes when set to `on`. */
-export const localShareChange = (on: boolean): LocalAction => (on ? LocalAction.Share : LocalAction.Unshare);

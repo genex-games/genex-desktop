@@ -37,7 +37,13 @@ const MESSAGE = {
 } as const;
 
 /** The CLIs an Install button can install. */
-const INSTALLABLE: readonly CodingProvider[] = [EngineId.ClaudeCode, EngineId.Codex, EngineId.OpenCode];
+const INSTALLABLE: readonly CodingProvider[] = [
+  EngineId.ClaudeCode,
+  EngineId.Codex,
+  EngineId.OpenCode,
+  EngineId.Grok,
+  EngineId.Cursor,
+];
 
 const isInstallable = (value: unknown): value is CodingProvider =>
   typeof value === "string" && (INSTALLABLE as readonly string[]).includes(value);

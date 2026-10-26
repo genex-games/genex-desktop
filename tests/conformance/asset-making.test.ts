@@ -24,7 +24,7 @@ import {
   MakingPhase,
   readToolAsset,
 } from "../../src/shared/asset-making.ts";
-import { GenexJobStatus, GenexOperation, type GenexJob } from "../../src/shared/genex.ts";
+import { GenexBlocked, GenexJobStatus, GenexOperation, type GenexJob } from "../../src/shared/genex.ts";
 import type { PluginAssetKind } from "../../src/plugin-sdk/index.d.ts";
 import { elapsedWords, kindLook, makingView } from "../../src/renderer/asset-making.ts";
 import { MakingDrawing } from "../../src/renderer/making-art.ts";
@@ -163,6 +163,25 @@ describe("Genex's operations in the shared words", () => {
       true,
       "a submit whose answer never came may have started one",
     );
+  });
+
+  it("shows a request refused for too few credits as waiting on credits, wherever it ended unmade", () => {
+    const short = { operation: GenexOperation.Model, blocked: GenexBlocked.Credits };
+    for (const status of [GenexJobStatus.Failed, GenexJobStatus.Canceled, GenexJobStatus.Stopped]) {
+      assert.equal(genexJobShown({ ...short, status }), true, status);
+      assert.equal(genexPhase(status, { blocked: GenexBlocked.Credits }), MakingPhase.NeedsCredits, status);
+    }
+    assert.equal(
+      genexPhase(GenexJobStatus.Generating, { blocked: GenexBlocked.Credits }),
+      MakingPhase.Making,
+      "a job still being made is being made, whatever an older record said",
+    );
+    assert.equal(
+      genexPhase(GenexJobStatus.Failed, { blocked: GenexBlocked.Terms }),
+      MakingPhase.Failed,
+      "only credits make a job wait on credits",
+    );
+    assert.equal(isUnderWay(MakingPhase.NeedsCredits), false, "nothing is on its way until it is asked again");
   });
 
   it("stamps a call of Genex's asset tool with its lane, and a lookup with nothing", () => {

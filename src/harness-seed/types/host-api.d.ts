@@ -569,7 +569,7 @@ export interface ProjectAsset {
 export type MakingKind = 'character' | 'creature' | 'model' | 'rigged-model' | 'animation' | 'image' | 'texture' | 'video' | 'sound-effect' | 'music' | 'voice';
 // ↑ src/shared/asset-making.ts
 
-export type MakingPhase = 'queued' | 'making' | 'review' | 'not-fetched' | 'not-in-game' | 'failed' | 'stopped' | 'unsure';
+export type MakingPhase = 'queued' | 'making' | 'review' | 'not-fetched' | 'not-in-game' | 'failed' | 'stopped' | 'unsure' | 'needs-credits';
 // ↑ src/shared/asset-making.ts
 
 /**
@@ -593,6 +593,8 @@ export interface MakingJob {
   operation?: string;
   /** It delivered files earlier that the game no longer holds. */
   delivered?: boolean;
+  /** What it costs in Genex credits, as Genex quoted or charged it (after refunds); absent when unknown. */
+  credits?: number;
 }
 // ↑ src/shared/asset-making.ts
 
@@ -986,7 +988,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -1015,7 +1017,8 @@ export interface EngineAccount {
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
  * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
+ * in the embedded terminal (which keeps every provider it signs in to), Grok Build and Cursor through
+ * their own sign-in command there (the person's account, in the browser), `none` for an engine with
  * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
@@ -1065,6 +1068,8 @@ export interface ProviderInfo {
   readonly billing: Billing;
   /** Subscriptions only. */
   readonly signIn: SignInCopy | null;
+  /** Shipped before a live test proved it: Settings and the picker say Beta. */
+  readonly beta?: true;
 }
 // ↑ src/shared/providers.ts
 

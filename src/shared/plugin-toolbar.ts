@@ -40,6 +40,23 @@ export function toolbarItems(
   return entries;
 }
 
+/** Where a toolbar button stands. */
+export const ToolbarPlace = {
+  /** The stage strip's end, beside Make multiplayer and Publish. */
+  Strip: "strip",
+  /** The chat header, left of its folder, terminal and ⋯ icons. */
+  Header: "header",
+} as const;
+export type ToolbarPlace = (typeof ToolbarPlace)[keyof typeof ToolbarPlace];
+
+/**
+ * An engine's button (Roblox, Unity, Unreal, Godot: an item scoped to the kinds of game it builds)
+ * names what the game is made in, so it stands in the chat header beside the game's name; every other
+ * button acts on the stage and stays on its strip.
+ */
+export const toolbarPlace = (entry: PluginToolbarEntry): ToolbarPlace =>
+  entry.item.facts?.length ? ToolbarPlace.Header : ToolbarPlace.Strip;
+
 /** The buttons the strip draws: every one in scope, and one out of scope only while its status says `shown`. */
 export function visibleToolbarEntries(
   entries: readonly PluginToolbarEntry[],

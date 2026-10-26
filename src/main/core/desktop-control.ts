@@ -44,12 +44,16 @@ export interface DesktopControlOptions {
   shutdown?: () => Promise<void>;
   /** The timer the daemon's idle stop waits on ({@link IDLE_SHUTDOWN_MS}); the answer cancels it. */
   later?: (ms: number, fire: () => void) => () => void;
+  /** Wait for this computer's own grants (a Mac's Accessibility and Screen Recording); absent where none are asked. */
+  awaitGrants?: (binary: string, signal?: AbortSignal) => Promise<boolean>;
+  /** Open an https page in the person's own default browser; absent where pages never open (a VM's desktop). */
+  openPage?: (address: string) => Promise<void>;
 }
 
 /** One session's desktop: where its frames go, how its person is asked, and what its screen shows. */
 export type DesktopSessionDeps = Pick<
   DesktopToolsDeps,
-  "frameDir" | "frame" | "downscale" | "maxActions" | "enabled" | "engineApps"
+  "frameDir" | "frame" | "downscale" | "maxActions" | "enabled" | "engineApps" | "keepInFront" | "openPage"
 > & {
   ask: (question: DesktopQuestion, app?: DesktopApp) => Promise<boolean>;
 };
@@ -57,6 +61,8 @@ export type DesktopSessionDeps = Pick<
 /** The registry: what is installed, what is running, and how to stop it all. */
 export function desktopControl(options: DesktopControlOptions) {
   const running = new Set<DesktopTools>();
+  // Counts every stop of them all, so a yes given before one is known to have ended.
+  let stoppedAll = 0;
   let found: Promise<string | null> | null = null;
   const binary = () => {
     found ??= options.findDriver().catch(() => null);
@@ -125,16 +131,31 @@ export function desktopControl(options: DesktopControlOptions) {
       };
       return held;
     },
+    /** How many times every session was stopped at once (the stop shortcut, control turned off). */
+    stopsAll: (): number => stoppedAll,
     /** How many desktop sessions are holding the computer now. */
     active: (): number => running.size,
+    /** Whether the driver can see and move here, waiting while the person gives its grants. */
+    grantsReady: async (signal?: AbortSignal): Promise<boolean> => {
+      const path = await binary();
+      if (!path) return false;
+      return options.awaitGrants ? options.awaitGrants(path, signal) : true;
+    },
     /** Stop every desktop session at once: the person's stop, or the app quitting. */
     stopAll: async (): Promise<void> => {
+      stoppedAll += 1;
       const all = [...running];
       running.clear();
       keepDaemon();
       options.onActive?.(0);
       await Promise.all(all.map((tools) => tools.release().catch(() => {})));
       await options.shutdown?.().catch(() => {});
+    },
+    /** Open a page in the person's own browser, where this computer can; false where it never does. */
+    openPage: async (address: string): Promise<boolean> => {
+      if (!options.openPage) return false;
+      await options.openPage(address);
+      return true;
     },
     /** Look for the driver again (after the person installs it). */
     rescan: (): void => {

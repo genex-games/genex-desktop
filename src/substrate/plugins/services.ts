@@ -75,6 +75,7 @@ const MESSAGE = {
   InvalidAssistTask: `Invalid task: one plain line of at most ${ENGINE_ASSIST_TASK_MAX_CHARS} characters`,
   GamesUnavailable: "Games unavailable",
   RunsUnavailable: "Runs unavailable",
+  AssistsUnavailable: "Assists unavailable",
   NotMadeHere: "A link may name only a game this plugin made, and only from outside another game",
   InvalidObservation: "Invalid observation: give { project, root, files }",
   InvalidStill: (why: string) => `Invalid still: ${why}`,
@@ -397,6 +398,11 @@ export class PluginServices {
    * computer. Unset, it never can.
    */
   engineCanAssist: ((pluginId: string) => Promise<boolean>) | undefined;
+  /**
+   * Host assists' turn (`game.engine.assisting`): whether the bound game's chat still runs the turn
+   * the plugin's Do it for me started. Unset → 'Assists unavailable'.
+   */
+  engineAssisting: ((pluginId: string, binding: PluginBinding) => Promise<boolean>) | undefined;
   /** Host runs (`game.engine.runs`): the games whose run is going now. Unset → 'Runs unavailable'. */
   runningGames: (() => Promise<Array<{ project: string; directory: string; title: string }>>) | undefined;
   /** The games each plugin made through `game.create` while this host runs, by name, with their folders. */
@@ -434,6 +440,10 @@ export class PluginServices {
     [PluginService.GameEngineRuns]: ({ id }) => this.#engineRuns(id),
     [PluginService.GameEngineAssist]: (call) => this.#assist(call),
     [PluginService.GameEngineCanAssist]: async ({ id }) => (this.engineCanAssist ? this.engineCanAssist(id) : false),
+    [PluginService.GameEngineAssisting]: async ({ id, binding }) => {
+      if (!this.engineAssisting) throw new Error(MESSAGE.AssistsUnavailable);
+      return this.engineAssisting(id, requireBinding(binding));
+    },
     [PluginService.JobsRead]: async (call) =>
       JSON.parse(await readFile(await jobReferenceFile(call), "utf8").catch(() => "null")),
     [PluginService.JobsWrite]: async (call) => {

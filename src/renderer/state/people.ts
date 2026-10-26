@@ -87,6 +87,8 @@ export interface PeopleState {
   ended: PlayMe | null;
   /** The balance as last read, or null before it was. */
   credits: AccountCredits | null;
+  /** What each kind of generation costs, read with the balance (empty before it was): prices where credits are spent. */
+  creditPrices: PlayCredits["prices"];
   /** The coin the account may spend as last read, for the plate in Play; null before a read or with coin off. */
   coins: number | null;
   friends: PlayFriendsPage | null;
@@ -111,6 +113,7 @@ export const initialPeople = (): PeopleState => ({
   genexTermsPending: false,
   ended: null,
   credits: null,
+  creditPrices: {},
   coins: null,
   friends: null,
   friendsStatus: LoadStatus.Idle,
@@ -480,9 +483,11 @@ function accountCalls(
     const asked = store.getState().me?.id;
     if (!asked) return;
     try {
-      const { balance, unlimited } = await api.playCredits();
+      const { balance, unlimited, prices } = await api.playCredits();
       // A balance read for another account lands nowhere.
-      set((state) => (state.me?.id === asked ? { ...state, credits: { balance, unlimited } } : state));
+      set((state) =>
+        state.me?.id === asked ? { ...state, credits: { balance, unlimited }, creditPrices: prices } : state,
+      );
     } catch {
       // Offline or Genex down: the last balance stays.
     }

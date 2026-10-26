@@ -19,7 +19,9 @@ import {
   markStarting,
   openPlaceLaunch,
   quitLaunch,
+  QUIT_RAISE_MS,
   quitStudio,
+  raiseLaunches,
   STARTING_MAX_MS,
   StudioLaunchError,
   startingNow,
@@ -157,6 +159,67 @@ describe("quitting Roblox Studio", () => {
     assert.deepEqual([...mac.asked].sort(), [4530, 8620, 9114]);
   });
 
+  /**
+   * A PC whose Studio waits on its save question for `closesAfterMs` once asked to close, its window
+   * minimized behind Genex: what ran, and when.
+   */
+  function studioOnAPc(closesAfterMs: number) {
+    let now = 0;
+    let askedAt: number | null = null;
+    const ran: Array<{ file: string; args: readonly string[]; at: number }> = [];
+    const running = () => askedAt === null || now - askedAt < closesAfterMs;
+    const deps: LaunchDeps = {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      home: "C:\\Users\\maker",
+      fs: { lstat: async () => undefined, realpath: async (file) => file, readdir: async () => [] },
+      run: async (file, args) => {
+        ran.push({ file, args, at: now });
+        if (file.endsWith("tasklist.exe"))
+          return { code: 0, stdout: running() ? '"RobloxStudioBeta.exe","5020","Console","1","1,056,380 K"\r\n' : "" };
+        if (file.endsWith("taskkill.exe")) askedAt ??= now;
+        return { code: 0, stdout: "" };
+      },
+      open: async () => undefined,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      now: () => now,
+    };
+    const raised = () => ran.filter((launch) => launch.file.toLowerCase().endsWith("powershell.exe"));
+    return { deps, ran, raised };
+  }
+
+  it("brings a Studio still open after it was asked to close to the front, once, so its save question shows", async () => {
+    const pc = studioOnAPc(20_000);
+    assert.equal(await quitStudio(pc.deps, 60_000), true, "the person answered, and Studio closed");
+    const raised = pc.raised();
+    assert.equal(raised.length, 1, "brought forward once");
+    assert.ok((raised[0]?.at ?? 0) >= QUIT_RAISE_MS, "after Studio had a moment to close by itself");
+    assert.ok(!pc.ran.some((launch) => launch.args.some((arg) => /^\/F$/i.test(arg))), "never forced");
+  });
+
+  it("brings nothing forward when Studio closes by itself, and nothing on a Mac with no Studio left", async () => {
+    const pc = studioOnAPc(1_000);
+    assert.equal(await quitStudio(pc.deps, 60_000), true);
+    assert.deepEqual(pc.raised(), []);
+    assert.deepEqual(
+      await raiseLaunches({ ...pc.deps, platform: "darwin", run: async () => ({ code: 1, stdout: "" }) }),
+      [],
+    );
+  });
+
+  it("restores Studio's own windows only, with no shell string, by an encoded Windows PowerShell command", async () => {
+    const [launch] = await raiseLaunches(studioOnAPc(0).deps);
+    assert.equal(launch?.file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    const encoded = launch?.args.at(-1) ?? "";
+    assert.deepEqual(launch?.args.slice(0, -1), ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    const script = Buffer.from(encoded, "base64").toString("utf16le");
+    assert.match(script, /Get-Process -Name 'RobloxStudioBeta'/);
+    assert.match(script, /ShowWindow/);
+    assert.doesNotMatch(script, /Stop-Process|CloseMainWindow|kill/i, "it only shows a window");
+  });
+
   it("names the process as its own argument and never a kill", () => {
     const mac = quitLaunch("darwin", {}, 4530);
     assert.equal(mac.file, "/usr/bin/osascript");
@@ -175,6 +238,28 @@ describe("the Mac's quit script", () => {
       const { stdout } = await promisify(execFile)(launch.file, launch.args, { timeout: 30_000 });
       assert.equal(stdout.trim(), "not-studio", `pid ${pid}`);
     }
+  });
+});
+
+describe("the PC's raise", () => {
+  it("runs under Windows PowerShell and, with no Studio open, does nothing", {
+    skip: process.platform !== "win32" && "Windows PowerShell exists only on Windows",
+  }, async () => {
+    const [launch] = await raiseLaunches({
+      platform: "win32",
+      env: process.env,
+      home: "",
+      fs: { lstat: async () => undefined, realpath: async (file) => file, readdir: async () => [] },
+      run: async () => ({ code: 0, stdout: "" }),
+      open: async () => undefined,
+      sleep: async () => undefined,
+      now: () => 0,
+    });
+    assert.ok(launch);
+    // A script that fails to parse or run exits non-zero, which execFile throws; PowerShell's
+    // progress records on stderr are no failure.
+    const { stdout } = await promisify(execFile)(launch.file, [...launch.args], { timeout: 60_000 });
+    assert.equal(stdout.trim(), "", "it says nothing: it only shows windows");
   });
 });
 

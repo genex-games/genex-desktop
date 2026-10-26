@@ -23,6 +23,7 @@
  *               names collide at the 48-character limit.
  *   --identity  introduce itself with a title and icons (a data: PNG and a refused javascript: one),
  *               the way a real server names itself and ships its picture.
+ *   --none      list no tools at all: a server whose own source (an editor it fronts) isn't there yet.
  *   --leak      print `--env NAME` and its value on stderr and exit without speaking MCP: a real
  *               server logging its own configuration, so the host's error text can be proven not
  *               to repeat a materialized secret back to the user.
@@ -45,6 +46,7 @@ const envIndex = argv.indexOf('--env');
 const envName = envIndex >= 0 ? argv[envIndex + 1] : undefined;
 const wantsFd3 = argv.includes('--fd3');
 const leak = argv.includes('--leak');
+const none = argv.includes('--none');
 let server;
 
 /** Read fd 3 to EOF before anything else, exactly as src/genex-host/preload.mjs does. */
@@ -158,7 +160,7 @@ if (leak) {
     ? { name: 'echo-server', version: '1.0.0', title: 'Echo Tools', icons: [{ src: 'javascript:alert(1)' }, { src: ICON, mimeType: 'image/png' }] }
     : { name: 'echo-server', version: '1.0.0' };
   server = new Server(info, { capabilities: { tools: { listChanged: true } } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: none ? [] : tools }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => call(request.params.name, request.params.arguments ?? {}, extra?.signal));
   await server.connect(new StdioServerTransport());
 }

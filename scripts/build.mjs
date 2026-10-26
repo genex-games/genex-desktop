@@ -11,6 +11,8 @@ import { SEED_GENERATED } from "./gen-harness-types.ts";
 import { packageBin } from "./package-bin.ts";
 import { vendorCuaDriver } from "./vendor-cua-driver.ts";
 import { vendorGitForWindows } from "./vendor-git-for-windows.ts";
+import { vendorGitForMac } from "./vendor-git-for-mac.ts";
+import { MAC_GIT_DIR } from "../src/substrate/git-policy.ts";
 import { VENDORED_GIT } from "./package-git.cjs";
 import { vendorTsc } from "./vendor-tsc.ts";
 import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
@@ -369,8 +371,10 @@ async function copyResources() {
       .join(", ")}`,
   );
   // Computer control's driver ships with every macOS and Windows release, so it works once the app is
-  // installed (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
-  const vendorCua = release || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
+  // installed (scripts/vendor-cua-driver.ts); a development build takes it only when asked to
+  // (`--vendor-cua-driver`, which every live studio:dev profile passes).
+  const vendorCua =
+    release || process.argv.includes("--vendor-cua-driver") || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
   const driverShipsHere = process.platform === "darwin" || process.platform === "win32";
   if (driverShipsHere && vendorCua) {
     const cua = await vendorCuaDriver(root, resources);
@@ -379,6 +383,14 @@ async function copyResources() {
   // Git for Windows ships with every Windows release, so the app starts on a PC without Git; Forge
   // copies it beside the archive (scripts/package-git.cjs). A development build uses an installed Git.
   const vendorGit = release || process.env.GENEX_VENDOR_GIT === "1";
+  // Every macOS release ships git built from its pinned source, run on a Mac without Apple's
+  // developer tools (scripts/vendor-git-for-mac.ts); it stays in the unpacked resources the
+  // packager signs. A development build takes it only when asked to.
+  if (process.platform === "darwin" && vendorGit) {
+    const cacheDir = path.join(root, "node_modules", ".cache", "genex", "git-macos");
+    const git = await vendorGitForMac(path.join(resources, MAC_GIT_DIR), { cacheDir });
+    console.log(`vendored git ${git.version}: ${git.files} files, ${(git.bytes / 1024 / 1024).toFixed(1)} MB`);
+  }
   if (process.platform === "win32" && vendorGit) {
     const cacheDir = path.join(root, "node_modules", ".cache", "genex", "git-for-windows-archive");
     const git = await vendorGitForWindows(VENDORED_GIT, { cacheDir });

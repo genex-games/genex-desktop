@@ -63,6 +63,8 @@ const MESSAGE = {
   engineExport: (name: string | undefined) =>
     `${name} was exported from a game engine, so the studio cannot edit or judge it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
   stoppedBeforeStart: "Stopped before the build started — nothing was built.",
+  olderBuild:
+    "This build was paused by an earlier version of Genex and can't go on in this one, so it is closed as it stood: what it built is kept. Ask here for what you want next.",
 } as const;
 
 /** How a runner is called: the thread the run tells its story in, the run, whether it resumes, and the folder's profile. */
@@ -160,15 +162,17 @@ function keptOfEarlier(earlier: AnyRecord | null, reopen: boolean): AnyRecord {
  * words, and its report. Nothing was built this time. A resumed run stays paused (Resume picks it up
  * once the cause is fixed) and keeps what its earlier session built (`KEPT_ON_REFUSAL`, under the
  * refusal's own outcome); a finished build's reopen stays finished, its report and outcome kept too,
- * and the chat says why it was not picked up, which the finished build's card would not.
+ * and the chat says why it was not picked up, which the finished build's card would not. A paused
+ * build no Resume can pick up (`closes`) is closed as it stood, the same way.
  */
 async function refusedRun(
   ctx: HarnessCtx,
   { threadId, run, resume = false }: { threadId: string; run: Run; resume?: boolean },
   words: string,
-  { reopen = false }: { reopen?: boolean } = {},
+  { reopen = false, closes = false }: { reopen?: boolean; closes?: boolean } = {},
 ) {
-  const paused = resume && !reopen;
+  const endsFinished = reopen || closes;
+  const paused = resume && !endsFinished;
   // Every reader takes the latest close as the truth: the earlier session's build, workers and notes stay on it.
   const earlier = resume || reopen ? await latestClose(ctx, threadId, run.runId) : null;
   const started = {
@@ -183,7 +187,7 @@ async function refusedRun(
   const report = {
     landed: false,
     victory: false,
-    ...keptOfEarlier(earlier, reopen),
+    ...keptOfEarlier(earlier, endsFinished),
     runId: run.runId,
     project: run.project,
     goal: run.goal,
@@ -199,7 +203,7 @@ async function refusedRun(
       customEvent(RunEvent.RunStarted, started),
       customEvent(RunEvent.RunFinished, report),
       ...(paused ? [pausedRecord] : []),
-      ...(reopen && earlier ? [assistantSays(words)] : []),
+      ...(endsFinished && earlier ? [assistantSays(words)] : []),
     ],
   });
   if (!resume) await writeRunArtifact(ctx, run.runId, "report.json", report).catch(() => {});
@@ -514,7 +518,16 @@ async function conductRun(
   forgetProviderLosses(run.runId);
   const route = await routeOf(host, run, { threadId, resume });
   const { games, profile } = route;
-  const ask = { threadId, described, games, resume, reopen, profile, webElsewhere: route.webElsewhere };
+  const ask = {
+    threadId,
+    described,
+    games,
+    resume,
+    reopen,
+    profile,
+    webElsewhere: route.webElsewhere,
+    ...(route.classicResume ? { classicResume: route.classicResume } : {}),
+  };
   const chosen = route.refusal ? refusing(route.refusal, reopen) : await runnerFor(host, run, ask);
   const report = await chosen.runner(ctx, { threadId, run, resume, profile, described });
   closed();
@@ -541,10 +554,23 @@ function profileOf(games: readonly GameProject[], project: string): LoopProfile 
  * journal: the folder decides. A journal the host can't read throws, as the runner's own read does:
  * read as none, the folder would decide, and the run would resume from a journal of the other kind.
  */
-async function resumedProfile(host: Host, threadId: string, runId: string): Promise<LoopProfile | null> {
-  const journal = await host.call(HostMethod.ArtifactRead, { threadId, artifactId: journalId(runId) });
+async function resumedJournal(host: Host, threadId: string, runId: string): Promise<AnyRecord | null> {
+  return (await host.call(HostMethod.ArtifactRead, { threadId, artifactId: journalId(runId) })) ?? null;
+}
+
+/** The profile a resumed journal goes on in (`resumedJournal`); null with no journal. */
+function resumedProfile(journal: AnyRecord | null): LoopProfile | null {
   if (!journal) return null;
   return journal.director?.open || journal.kind === OLDER_LEAD_JOURNAL_KIND ? LoopProfile.Open : LoopProfile.Web;
+}
+
+/**
+ * A journal the classic pipeline wrote (a plan and facets, no director): a session engine's run goes
+ * to the director now, which can't pick it up — it would start the whole build again from its goal.
+ */
+function classicJournal(journal: AnyRecord | null): boolean {
+  if (!journal || journal.director || journal.kind === OLDER_LEAD_JOURNAL_KIND) return false;
+  return Boolean(journal.plan || journal.facets);
 }
 
 /** How a run is routed: its game list, its profile, a paused web Loop's folder read otherwise, or why it is refused. */
@@ -554,6 +580,8 @@ interface Route {
   /** A paused web Loop resumed while its folder reads as no web game: the words that say what Genex finds there. */
   webElsewhere: string | null;
   refusal: string | null;
+  /** A paused build resumed from the classic pipeline's journal (`classicJournal`). */
+  classicResume?: true;
 }
 
 /** The game list as the run reads it (an answer that holds none is an empty list), or null when the host refused it. */
@@ -577,12 +605,13 @@ const refusedRoute = (refusal: string): Route => ({ games: [], profile: LoopProf
  * on a folder of a kind Genex can't name (that one is refused below, and stays paused).
  */
 async function routeOf(host: Host, run: Run, { threadId, resume }: { threadId: string; resume: boolean }) {
-  let resumedIn: LoopProfile | null = null;
+  let journal: AnyRecord | null = null;
   try {
-    resumedIn = resume ? await resumedProfile(host, threadId, run.runId) : null;
+    journal = resume ? await resumedJournal(host, threadId, run.runId) : null;
   } catch {
     return refusedRoute(OPEN_LOOP_REFUSAL.journalUnreadable);
   }
+  const resumedIn = resumedProfile(journal);
   const games = await listedGames(host);
   if (!games) return refusedRoute(OPEN_LOOP_REFUSAL.gamesUnreadable);
   const game = games.find((listed) => listed.name === run.project);
@@ -591,7 +620,13 @@ async function routeOf(host: Host, run: Run, { threadId, resume }: { threadId: s
   const folder = profileOf(games, run.project);
   const elsewhere = resumedIn === LoopProfile.Web && folder !== LoopProfile.Web && game !== undefined;
   const webElsewhere = elsewhere ? OPEN_LOOP_REFUSAL.webElsewhere(openLoopBecause(game)) : null;
-  const route: Route = { games, profile: resumedIn ?? folder, webElsewhere, refusal: null };
+  const route: Route = {
+    games,
+    profile: resumedIn ?? folder,
+    webElsewhere,
+    refusal: null,
+    ...(classicJournal(journal) ? { classicResume: true as const } : {}),
+  };
   return route;
 }
 
@@ -612,7 +647,15 @@ interface RunnerAsk {
   profile: LoopProfile;
   /** A paused web Loop resumed while its folder reads as no web game: the words that refuse it there. */
   webElsewhere: string | null;
+  /** A paused build resumed from the classic pipeline's journal (`Route.classicResume`). */
+  classicResume?: true;
 }
+
+/** A runner that closes a paused build no Resume can pick up as it stood, its work kept, and says why. */
+const closingOlderBuild = (): ChosenRunner => ({
+  runner: (ctx, options) => refusedRun(ctx, options, MESSAGE.olderBuild, { closes: true }),
+  refuses: true,
+});
 
 /** A runner that only refuses the run with `words` (paused for a Resume when it resumes one, finished when it reopens one). */
 const refusing = (words: string, reopen = false): ChosenRunner => ({
@@ -631,7 +674,12 @@ async function runnerFor(host: Host, run: Run, ask: RunnerAsk): Promise<ChosenRu
   const byKind = (kind: RunnerKind): ChosenRunner => ({ runner: RUNNERS[kind], refuses: REFUSING_RUNNERS.has(kind) });
   if (ask.webElsewhere)
     return refusing(ask.reopen ? OPEN_LOOP_REFUSAL.webBuildElsewhere : ask.webElsewhere, ask.reopen);
-  if (profile !== LoopProfile.Open) return byKind(chooseRunner(run, described, profile));
+  if (profile !== LoopProfile.Open) {
+    const kind = chooseRunner(run, described, profile);
+    // The director can't pick up a classic build: it would start it again from its goal, on a fresh clock.
+    if (ask.classicResume && kind === RunnerKind.Director) return closingOlderBuild();
+    return byKind(kind);
+  }
   if (!openLoopServed()) return refusing(OPEN_LOOP_REFUSAL.openLoopNeedsUpdate);
   const game = games.find((listed) => listed.name === run.project);
   // The saved journal's kind is read only when the switch is named: no other run makes the call.

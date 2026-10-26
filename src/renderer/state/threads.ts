@@ -41,6 +41,12 @@ export interface ThreadsState {
   /** The game chat Cmd-1 returns to, remembered across launches. */
   lastGameThreadId: string | null;
   /**
+   * The game whose page Live holds or is loading, as main last said (`preview.identity`); null
+   * before any load and after a failed one. Opening a game never loads it, so Live keeps this game
+   * (paused out of sight) while another is on the stage, and that one waits for Play.
+   */
+  liveProject: string | null;
+  /**
    * What the person is waited on to finish in, per chat: each lock's label ("Unreal") a call waits
    * on there, in the order the waits began.
    */
@@ -55,6 +61,7 @@ export const initialThreads = (lastGameThreadId: string | null = null): ThreadsS
   stageProject: null,
   stageThreadId: null,
   lastGameThreadId,
+  liveProject: null,
   personFirst: {},
 });
 
@@ -282,6 +289,20 @@ export function harnessDown(state: ThreadsState): ThreadsState {
 /** A bootstrap's snapshot, unless the harness has already reported since. */
 export function statusBootstrapped(state: ThreadsState, snapshot: ThreadStatusMap | undefined): ThreadsState {
   return state.statusSource === "live" ? state : { ...state, status: snapshot ?? {}, statusSource: "bootstrap" };
+}
+
+/** What main says Live loaded or is loading: its game, or none once a load failed. */
+export function liveIdentified(
+  state: ThreadsState,
+  identity: { project: string | null; error: string | null } | null | undefined,
+): ThreadsState {
+  const project = identity && !identity.error ? identity.project : null;
+  return project === state.liveProject ? state : { ...state, liveProject: project };
+}
+
+/** A load of this game failed before main named it: Live holds no page of it. */
+export function liveLoadFailed(state: ThreadsState, project: string): ThreadsState {
+  return state.liveProject === project ? { ...state, liveProject: null } : state;
 }
 
 /**

@@ -25,6 +25,7 @@ import path from "node:path";
 import { SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import type { SetupScripts } from "../shared/build-problem.ts";
+import { type HostGitProbe, pathWithGitThatRuns, thisComputersGit } from "./git-policy.ts";
 
 /** The tools a game's build may need on PATH. `node` first: everything else rides on it. */
 export const BUILD_TOOLS = ["node", "npm", "pnpm", "yarn", "bun"] as const;
@@ -211,6 +212,8 @@ export interface ToolchainDeps {
   platform?: NodeJS.Platform;
   /** Where PATH, and on Windows APPDATA, LOCALAPPDATA, ProgramFiles and PATHEXT, are read. */
   env?: NodeJS.ProcessEnv;
+  /** macOS: the folder its developer tools are taken from (`xcode-select -p`), or null. */
+  developerDir?: HostGitProbe["developerDir"];
 }
 
 /**
@@ -302,10 +305,10 @@ async function pathSources(deps: ToolchainDeps, platform: NodeJS.Platform, env: 
   const own = deps.envPath === undefined ? envPath(env) : deps.envPath;
   if (isWindows(platform)) {
     const registry = await (deps.registryPath ?? (() => readRegistryPath(env)))().catch(() => null);
-    return { login: null, sources: [own, registry] };
+    return { login: null, own, sources: [own, registry] };
   }
   const login = await (deps.loginPath ?? (() => readLoginPath(undefined, undefined, platform)))().catch(() => null);
-  return { login, sources: [login, own] };
+  return { login, own, sources: [login, own] };
 }
 
 export async function resolveToolchain(deps: ToolchainDeps = {}): Promise<Toolchain> {
@@ -313,12 +316,22 @@ export async function resolveToolchain(deps: ToolchainDeps = {}): Promise<Toolch
   const env = deps.env ?? process.env;
   const home = deps.home ?? os.homedir();
   const isExecutable = deps.executable ?? executable;
-  const { login, sources } = await pathSources(deps, platform, env);
+  const { login, own, sources } = await pathSources(deps, platform, env);
   const present: string[] = [];
   for (const dir of candidateDirs(home, platform, env))
     if (await isExecutable(dir).catch(() => false)) present.push(dir);
   const launchd = isWindows(platform) ? [] : LAUNCHD_PATH;
-  const resolved = mergePathsFor(platform, ...sources, ...present, ...launchd);
+  // A Mac without Apple's developer tools: the login shell's git is the stand-in, so the app's own
+  // PATH's (Genex's own git, put there at boot) goes first; a git that runs stays where it is.
+  const resolved = await pathWithGitThatRuns(
+    {
+      platform,
+      path: mergePathsFor(platform, ...sources, ...present, ...launchd),
+      runnable: (file) => isExecutable(file).catch(() => false),
+      developerDir: deps.developerDir ?? thisComputersGit(env).developerDir,
+    },
+    own ?? "",
+  );
 
   const dirs = resolved.split(pathDelimiter(platform));
   const found: Partial<Record<BuildTool, string>> = {};

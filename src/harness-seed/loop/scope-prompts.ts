@@ -15,6 +15,8 @@ const WORDS = {
   inScopeUnnamed: "IN SCOPE: what the user asked, nothing more",
   cut: "CUT — not this build; never build or propose it:",
   added: "ADDED beyond the ask — not in scope until the user says yes:",
+  store:
+    "GENEX STORE — sold in this build for Nex whatever CUT says. Give each item its picture as soon as it can be drawn (render it alone on a transparent background with the game's own code, save the PNG under .genex/scratch/), then list it with genex__cli shop add, its name in args and its price, type, description and image options, unless genex__cli shop list shows it already: the store takes no item without its picture, and shop set changes one at any time. Build each in, unlock it with getEntitlements() and sell it with buy() (the genex-items skill):",
   reference: "The reference is a look-and-feel bar, not a feature list.",
 } as const;
 
@@ -66,6 +68,7 @@ export function scopeLines(run: ScopeCarrier): string {
     WORDS.asked,
     ...scope.asked.map(askedItem),
     scope.inScope.length ? `${WORDS.inScope} ${scope.inScope.join(ITEM_JOIN)}` : WORDS.inScopeUnnamed,
+    scope.store?.length ? `${WORDS.store} ${scope.store.join(ITEM_JOIN)}` : "",
     scope.cut.length ? `${WORDS.cut} ${scope.cut.join(ITEM_JOIN)}` : "",
     scope.added.length ? `${WORDS.added} ${scope.added.join(ITEM_JOIN)}` : "",
     WORDS.reference,

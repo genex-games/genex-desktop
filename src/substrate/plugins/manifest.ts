@@ -196,6 +196,7 @@ const MESSAGE = {
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
   InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
+  InvalidOnAccount: "Invalid tools[].onAccount (API 3, with a confirmation: true or absent)",
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
   InvalidAction: "Invalid action",
@@ -359,6 +360,13 @@ function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConf
   return { parameter: parameter as string, label: label as string };
 }
 
+/** A tool that acts on the person's account elsewhere (API 3): only `true`, on a tool with a card. */
+function onAccount(t: PluginManifestTool, m: PluginManifest): true {
+  const value: unknown = t.onAccount;
+  if (m.apiVersion < 3 || t.confirmation === undefined || value !== true) throw new Error(MESSAGE.InvalidOnAccount);
+  return true;
+}
+
 /** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
 function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.confirmation !== undefined) {
@@ -403,6 +411,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.onAccount !== undefined) tool.onAccount = onAccount(t, m);
   if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.

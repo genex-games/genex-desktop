@@ -801,6 +801,25 @@ describe("codex engine", () => {
     }
   });
 
+  it("reads a 429 the stream named as a rate limit, though the CLI then exits non-zero", async () => {
+    // Codex names the limit in its stream, then exits 1 with nothing on stderr: the exit alone
+    // ("codex exited with 1") read as a crash, and a Loop's lead ended the run instead of waiting.
+    const fn: CodexExec = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "thread.started", thread_id: "t" };
+        yield { type: "turn.failed", error: { message: "exceeded retry limit, last status: 429 Too Many Requests" } };
+        throw new Error("codex exited with 1");
+      },
+    });
+    const { engine, root } = await signedInEngine(fn);
+    const cwd = path.join(root, "game429");
+    await mkdir(cwd, { recursive: true });
+    await assert.rejects(
+      () => engine.delegate({ prompt: "build", cwd }),
+      (err: EngineError) => err instanceof EngineError && err.kind === "rate_limit",
+    );
+  });
+
   it("reports a stale sign-in as auth, so the remedy is a login and not a retry", async () => {
     const { fn } = fakeExec([{ type: "turn.failed", error: { message: "Not logged in. Run `codex login`." } }]);
     const { engine, root } = await signedInEngine(fn);

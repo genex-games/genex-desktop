@@ -180,8 +180,9 @@ function useLoopSettings(props: PromptBarProps) {
     setPick({ thread: conversationKey, setting: next });
     rememberChatLoop(browserStorage(), conversationKey, next);
   };
-  // As Mode is: a build that owns the chat keeps its own plan, so its follow-ups get no review.
-  const planAvailable = view.editable && !coordinating;
+  // As Mode is: a build that owns the chat keeps its own plan, so its follow-ups get no review; nor
+  // do a paused build's, whose Loop is kept for later.
+  const planAvailable = view.editable && view.forLater !== true && !coordinating;
   // What the bulb, Add's row and the box show: plan review that this chat's next send will carry.
   const planOn = reviewPlan && planAvailable;
   return { setting, view, chooseLoop, reviewPlan, setReviewPlan, planAvailable, planOn, gate: props.loopGate };

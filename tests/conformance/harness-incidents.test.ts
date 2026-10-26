@@ -169,6 +169,37 @@ it("AUDIT-STOP-RACE: cancellation is visible before a delayed queue-pause write"
   }
 });
 
+import { lookAtStart, observeStart } from "../../src/harness-seed/loop/director/setup.ts";
+
+it("STOP-AT-START. Stop while a Loop looks at its starting game: the look ends at once and no second look begins, however long the page holds a call", async () => {
+  const calls: string[] = [];
+  const ctx = {
+    threadId: "thread",
+    cancelled: false,
+    setStatus: () => {},
+    notify: () => {},
+    call: async (method: string) => {
+      calls.push(method);
+      if (method === HostMethod.PreviewLoad) return "url";
+      // A page that never answers: the host holds each call for its whole deadline (minutes).
+      return new Promise(() => {});
+    },
+  };
+  const run = { runId: "run_stop_at_start", project: "game", goal: "update the multiplayer" };
+  const loopRun = { ctx, run, lookAtStart: (prefix?: string) => lookAtStart(loopRun as never, prefix) };
+  const looking = lookAtStart(loopRun as never, "iter_000_before");
+  while (calls.length < 2) await nextTurn();
+  ctx.cancelled = true;
+  const stillLooking = "still looking";
+  assert.equal(await Promise.race([looking, setTimeoutPromise(2 * SECOND_MS, stillLooking)]), null);
+  const seen = calls.length;
+  assert.equal(
+    await Promise.race([observeStart(loopRun as never), setTimeoutPromise(2 * SECOND_MS, stillLooking)]),
+    null,
+  );
+  assert.equal(calls.length, seen, "a stopped run asks the page nothing more");
+});
+
 import { timedWorkRemaining } from "../../src/harness-seed/loop/director/budgets.ts";
 import { restoreLoopRun } from "../../src/harness-seed/loop/director/journal.ts";
 import { reopenedJournal } from "../../src/harness-seed/loop/director/reopen.ts";
@@ -3069,10 +3100,10 @@ describe("the modeller in the loop (AG-930)", () => {
     const threadId = await rig.core.createGameThread("snapshot-world");
     // The disable lands in the one await every builder's preparation makes: the connectors' tool lists.
     const mcp = rig.core.mcp;
-    const toolsFor = mcp.toolsFor.bind(mcp);
-    mcp.toolsFor = async (...args: Parameters<typeof toolsFor>) => {
+    const toolsReport = mcp.toolsReport.bind(mcp);
+    mcp.toolsReport = async (...args: Parameters<typeof toolsReport>) => {
       await rig.core.plugins.setEnabled("blender", false);
-      return toolsFor(...args);
+      return toolsReport(...args);
     };
     await apiOf(rig)["engine.delegate"]!({
       engine: "fake-delegate",
@@ -3897,6 +3928,379 @@ describe("a Loop chat asked for research (corner-guy)", () => {
       "the answer reaches the chat",
     );
     assert.ok(!messages.some((m) => /loads clean|black|console error/.test(m.content ?? "")), "no verdict on a plan");
+  });
+});
+
+import { gameRepo, loopHost } from "../helpers/loop-host.ts";
+import { copyProject, Project } from "../helpers/project-fixtures.ts";
+
+/**
+ * A build an earlier version paused with the classic pipeline's journal was resumed by the director
+ * on a session engine: it kept none of its plan, got a fresh time budget and started the whole build
+ * again from its old goal. Such a build is closed as it stood, its work kept, and the chat says why.
+ */
+describe("a paused build from an earlier version (old-pause)", () => {
+  it("old-pause. Resume on a classic journal: the build closes as it stood, never starting over on the director", {
+    timeout: 60_000,
+  }, async () => {
+    const dir = await gameRepo(await copyProject(Project.GodotGame, await tmpDir("old-pause-")));
+    const host = loopHost({
+      dir,
+      facts: [{ id: "web-game", path: "." }],
+      run: { runId: "run_old_pause", engine: "codex" },
+    });
+    host.artifacts.set("autopilot_run_old_pause", {
+      runId: "run_old_pause",
+      run: host.run,
+      plan: { facets: [{ id: "museum", title: "Museum" }] },
+      phase: "paused",
+      facets: { museum: { stoppedBecause: "stopped by the user" } },
+      finalization: { report: { runId: "run_old_pause" } },
+    });
+    await host.rec.ctx.call("events.append", {
+      threadId: host.threadId,
+      batch: [
+        {
+          type: "custom",
+          event_type: "run_finished",
+          payload: {
+            runId: "run_old_pause",
+            executionStatus: "paused",
+            paused: true,
+            integrationHead: "head-1",
+            stoppedBecause: "stopped by the user",
+          },
+        },
+      ],
+    });
+    await host.dispatch({ resume: true });
+    assert.equal(host.leadCalls().length, 0, "no director led it");
+    const closed = host.appended("run_finished").at(-1);
+    assert.match(String(closed?.stoppedBecause), /earlier version of Genex/);
+    assert.equal(closed?.executionStatus, "completed", "closed, not paused again");
+    assert.equal(closed?.integrationHead, "head-1", "what it built is kept");
+    assert.equal(host.appended("autopilot_paused").length, 0);
+  });
+});
+
+/**
+ * A build paused long ago is still the chat's latest run, so its coordinator answers the chat. Work
+ * the person asks for that is not that build's — "update our multiplayer" after a paused visual
+ * build — had one way through: resume_run, which restarted the old build with its old goal and hours.
+ * A contained change after a paused build is made in the chat by one builder, and the build stays
+ * paused.
+ */
+describe("a change after a paused build (stale-pause)", () => {
+  it("stale-pause. a contained change after a paused build: one builder makes it in the chat, nothing resumes", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    await rig.core.games.scaffold("paused-plaza");
+    const thread = await rig.core.createGameThread("paused-plaza");
+    const runId = "run_paused_plaza";
+    await rig.core.append(
+      [
+        { type: "messages", messages: [{ role: "user", content: "Make the plaza photoreal" }] },
+        {
+          type: "custom",
+          event_type: "run_started",
+          payload: { runId, project: "paused-plaza", goal: "a photoreal plaza", mode: "autopilot", engine: "codex" },
+        },
+        {
+          type: "custom",
+          event_type: "run_finished",
+          payload: { runId, project: "paused-plaza", victory: false, stoppedBecause: "stopped by the user" },
+        },
+        { type: "custom", event_type: "autopilot_paused", payload: { runId, project: "paused-plaza" } },
+      ],
+      thread,
+    );
+    const answers: string[] = [];
+    let built = 0;
+    rig.core.engines.register({
+      id: "codex",
+      label: "fixture",
+      kind: "delegated",
+      status: async () => ({ code: "ready", detail: "" }),
+      models: async () => [],
+      delegate: async (request: DelegateRequest) => {
+        if (request.coordinator) {
+          const text = "Update the multiplayer packages to their newest versions";
+          answers.push(
+            String(
+              await request.onLiveTool!("continue_build", { text, build: false }).catch((err) => `refused: ${err}`),
+            ),
+          );
+          return {
+            ok: true,
+            summary: "Updating the multiplayer here.",
+            sessionId: "coordinator",
+            turns: 1,
+            usage: {},
+            engine: "codex",
+          };
+        }
+        await writeFile(path.join(request.cwd, "multiplayer.txt"), "0.17.1");
+        built++;
+        return {
+          ok: true,
+          summary: "Updated the multiplayer.",
+          sessionId: "builder",
+          turns: 1,
+          usage: {},
+          engine: "codex",
+        };
+      },
+    });
+    await rig.core.sendUserMessage("Update our in-game multiplayer", { thread, engine: "codex" });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "coordinator_message_handled").length === 1,
+      30_000,
+      "the message answered",
+    );
+    assert.doesNotMatch(answers.join("\n"), /refused/, "the change is taken, not refused for a paused run");
+    assert.equal(built, 1, "one builder made the change in the chat");
+    assert.equal(await readFile(path.join(rig.core.games.dirFor("paused-plaza"), "multiplayer.txt"), "utf8"), "0.17.1");
+    const restarted = customEvents(events, "run_registered").length + customEvents(events, "run_started").length;
+    assert.equal(restarted, 1, "the paused build did not start again");
+  });
+
+  it("stale-pause words. after a paused build, only going on with that build resumes it; other work is made in the chat", async () => {
+    const { afterLoopRunNote } = await import("../../src/harness-seed/loop/after-loop-run-prompts.ts");
+    const { coordinatorPrompt } = await import("../../src/harness-seed/loop/coordinator-prompts.ts");
+    const { coordinatorTools } = await import("../../src/harness-seed/loop/run-inbox.ts");
+    const paused = {
+      runId: "run_paused",
+      state: "paused",
+      goal: "a photoreal plaza",
+      stoppedBecause: "stopped by the user",
+    };
+    const note = afterLoopRunNote(paused as never, "claude-code");
+    const coordinator = coordinatorPrompt({
+      events: [],
+      run: { runId: "run_paused", state: "paused" },
+      text: "update our multiplayer",
+      journal: null,
+      savedPlan: null,
+      history: "",
+    });
+    const resume = coordinatorTools.find((tool) => tool.name === "resume_run")?.description ?? "";
+    for (const [label, words] of [
+      ["the chat's own session", note],
+      ["the run's coordinator", coordinator],
+      ["resume_run", resume],
+    ]) {
+      assert.doesNotMatch(String(words), /new instruction after a stop is a request to continue/i, `${label}`);
+      assert.doesNotMatch(String(words), /or with work for it/, `${label}`);
+      assert.doesNotMatch(String(words), /requests further work, including a new instruction after Stop/, `${label}`);
+    }
+    assert.match(note, /stays paused/, "the session's own work leaves the build paused");
+    assert.match(coordinator, /build: false[^\n]*stays paused/i, "the coordinator hands other work to one builder");
+  });
+});
+
+/**
+ * While a Loop prepared its start (its first look at the game), the chat's messages waited for its
+ * lead to sit down: twenty minutes of silence, and "stop the workers" reached nobody. The chat had no
+ * way to stop a build either, and told the person to use a button. A message sent while a Loop
+ * starts is answered by the chat at once, and the chat stops (and restarts) the build itself.
+ */
+describe("the chat while a Loop starts (chat-stop)", () => {
+  it("chat-stop. a message while the Loop prepares is answered at once, and the chat's stop_run stops the build", {
+    timeout: 120_000,
+  }, async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    await rig.core.games.scaffold("starting-plaza");
+    const thread = await rig.core.createGameThread("starting-plaza");
+    // The page never answers a step while the start is looked at: the Loop stays preparing.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const studioCall = rig.preview.studioCall.bind(rig.preview);
+    rig.preview.studioCall = async (method, arg) => {
+      await held;
+      return studioCall(method, arg);
+    };
+    const answers: string[] = [];
+    registerFakeEngine(rig, {
+      complete: () => null,
+      delegate: async (request) => {
+        if (!request.coordinator) return null;
+        answers.push(String(await request.onLiveTool!("stop_run", {}).catch((err) => `refused: ${err}`)));
+        return { summary: "Stopping the build.", sessionId: "coordinator" };
+      },
+    });
+    const runId = rig.core.newRunId();
+    // The start answers once the run is over: the row talks to the chat meanwhile.
+    const running = rig.core.dispatchRun({
+      runId,
+      goal: "a plaza",
+      project: "starting-plaza",
+      mode: "autopilot",
+      engine: "fake-delegate",
+      reference: { name: "plaza", shots: [], kind: "direction" },
+      budgets: { wallClockMs: 3_600_000 },
+    } as never);
+    void running.catch(() => {});
+    await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "autopilot_started").some((e) => e.runId === runId),
+      60_000,
+      "the run started",
+    );
+    await rig.core.sendUserMessage("stop the workers", { thread, engine: "fake-delegate" });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "coordinator_message_handled").length === 1,
+      30_000,
+      "the chat answered while the Loop prepared",
+    );
+    assert.equal(
+      customEvents(events, "run_finished").filter((e) => e.runId === runId).length,
+      0,
+      "answered before the build closed",
+    );
+    assert.doesNotMatch(answers.join("\n"), /refused/, "the chat's stop is taken");
+    release();
+    const closed = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
+      60_000,
+      "the build closed",
+    );
+    const close = customEvents(closed, "run_finished").find((e) => e.runId === runId);
+    assert.match(String(close?.stoppedBecause), /stop/i, JSON.stringify(close));
+    await running;
+  });
+
+  it("chat-stop restart. stop_run with restart: the build stops, then goes on again with the chat's instruction", async () => {
+    const { stopAfterReply } = await import("../../src/harness-seed/loop/chat-stop.ts");
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let close = () => {};
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    const build = { run: { runId: "run_restart", project: "plaza" }, threadId: "thread", settled: closed, closed };
+    const studio = {
+      host: {
+        call: async (method: string, params: Record<string, unknown>) => {
+          calls.push({ method, params });
+          return null;
+        },
+        notify: () => {},
+      },
+      cancels: new Set<string>(),
+      activeRuns: new Map([["run_restart", build]]),
+      startingRuns: new Map(),
+    };
+    const stopping = stopAfterReply(
+      studio as never,
+      { threadId: "thread", runId: "run_restart", messageId: "m1" },
+      { restart: true, text: "update the multiplayer first" },
+    );
+    await nextTurn();
+    assert.equal((build as { stopped?: boolean }).stopped, true, "the build's own Stop");
+    assert.equal(studio.cancels.has("thread"), true, "and the chat's");
+    assert.ok(!calls.some((c) => c.method === HostMethod.CoordinatorTool), "nothing goes on before it has stopped");
+    close();
+    await stopping;
+    const resume = calls.find((c) => c.method === HostMethod.CoordinatorTool);
+    assert.deepEqual(resume?.params, {
+      threadId: "thread",
+      runId: "run_restart",
+      messageId: "m1",
+      name: "resume_run",
+      args: { text: "update the multiplayer first" },
+    });
+  });
+});
+
+/**
+ * Steering that reached a classic build after its last round was written to the game's NOTES.md
+ * under "Steering backlog" and headed the next plan. NOTES.md is read in every later chat, so a
+ * "stop the workers" said to one build stayed in the game for good, telling every later agent the
+ * work was cancelled. Such steering stays with the build it was said to, and the studio's old
+ * section no longer reaches a later chat.
+ */
+describe("steering said to a closed build (stale-backlog)", () => {
+  const STALE = [
+    "# plaza",
+    "",
+    "## Pitch",
+    "",
+    "A plaza to skate.",
+    "",
+    "## Steering backlog",
+    "",
+    '- The user explicitly cancelled the work: "ok kill the workers". Do not begin further implementation.',
+    "",
+    "## Current state",
+    "",
+    "Playable.",
+    "",
+  ].join("\n");
+
+  it("stale-backlog. a chat after that build: the old section is gone from NOTES.md and from what the agent reads, the rest kept", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    await rig.core.games.scaffold("backlog-plaza");
+    const thread = await rig.core.createGameThread("backlog-plaza");
+    const notesFile = path.join(rig.core.games.dirFor("backlog-plaza"), "NOTES.md");
+    await writeFile(notesFile, STALE);
+    const read: string[] = [];
+    rig.core.engines.register({
+      id: "codex",
+      label: "fixture",
+      kind: "delegated",
+      status: async () => ({ code: "ready", detail: "" }),
+      models: async () => [],
+      delegate: async (request: DelegateRequest) => {
+        read.push(String(request.prompt), await readFile(path.join(request.cwd, "NOTES.md"), "utf8"));
+        return { ok: true, summary: "Updated.", sessionId: "chat", turns: 1, usage: {}, engine: "codex" };
+      },
+    });
+    await rig.core.sendUserMessage("Update our in-game multiplayer", { thread, engine: "codex" });
+    await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "coordinator_message_handled").length === 1,
+      30_000,
+      "answered",
+    );
+    assert.doesNotMatch(read.join("\n"), /kill the workers/, "the agent never reads the old cancellation");
+    const notes = await readFile(notesFile, "utf8");
+    assert.doesNotMatch(notes, /Steering backlog|kill the workers/);
+    assert.match(
+      notes,
+      /## Pitch\n\nA plaza to skate\.\n\n## Current state\n\nPlayable\.\n/,
+      "the rest of the notes stays",
+    );
+  });
+
+  it("stale-backlog close. steering a build got too late is kept with that build: NOTES.md is left as it was", async () => {
+    const { keepSteeringBacklog } = await import("../../src/harness-seed/loop/autopilot.ts");
+    const projectDir = await tmpDir("stale-backlog-close-");
+    const notes = "# plaza\n\n## Pitch\n\nA plaza to skate.\n";
+    await writeFile(path.join(projectDir, "NOTES.md"), notes);
+    const decisions: string[] = [];
+    const ctx = {
+      cancelled: false,
+      call: async (_method: string, params: { batch?: Array<{ payload?: { decision?: string } }> }) => {
+        for (const record of params.batch ?? []) decisions.push(String(record.payload?.decision));
+        return null;
+      },
+    };
+    const report: Record<string, unknown> = {};
+    const late = 'The user explicitly cancelled the work: "ok kill the workers".';
+    // `projectDir` is what the close was handed before; it no longer writes there.
+    await keepSteeringBacklog(
+      ctx as never,
+      { threadId: "thread", run: { runId: "run_late" }, report, projectDir, backlog: [late] } as never,
+    );
+    assert.equal(await readFile(path.join(projectDir, "NOTES.md"), "utf8"), notes);
+    assert.deepEqual(report.steeringBacklog, [late], "kept on the build's report");
+    assert.doesNotMatch(decisions.join("\n"), /NOTES\.md|next run|next plan/);
   });
 });
 

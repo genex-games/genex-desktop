@@ -13,7 +13,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { claudeFolderDenyWrites, ProcessSandbox } from "../../src/substrate/spawn.ts";
+import { claudeFolderDenyWrites, packagedVendorFile, ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 let sandbox: ProcessSandbox;
@@ -469,5 +469,45 @@ describe("a run confined to its own game", {
       cwd: mine,
     });
     assert.equal(result.code, 0, result.stderr);
+  });
+});
+
+describe("sandbox-runtime's helpers in a package", () => {
+  it("names a vendored file by its unpacked copy, which a program outside Electron can open", () => {
+    // Inside app.asar Electron's fs answers for the archive, so sandbox-runtime's own lookup finds
+    // an `app.asar/...` path that Java or bwrap cannot open.
+    for (const sep of ["/", "\\"]) {
+      const join = (...parts: string[]) => parts.join(sep);
+      const packaged = join(
+        "",
+        "Genex.app",
+        "Resources",
+        "app.asar",
+        "node_modules",
+        "@anthropic-ai",
+        "sandbox-runtime",
+      );
+      assert.equal(
+        packagedVendorFile(packaged, sep, "java-proxy-agent", "srt-proxy-agent.jar"),
+        join(
+          "",
+          "Genex.app",
+          "Resources",
+          "app.asar.unpacked",
+          "node_modules",
+          "@anthropic-ai",
+          "sandbox-runtime",
+          "vendor",
+          "java-proxy-agent",
+          "srt-proxy-agent.jar",
+        ),
+        sep,
+      );
+      // A development checkout leaves sandbox-runtime to find its own files.
+      assert.equal(
+        packagedVendorFile(join("", "dev", "node_modules", "@anthropic-ai", "sandbox-runtime"), sep, "x"),
+        undefined,
+      );
+    }
   });
 });

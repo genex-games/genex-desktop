@@ -20,6 +20,9 @@ licenses and terms of included third-party software.
 - On Windows, Git for Windows (GPL-2.0 and its components' licenses) keeps its `LICENSE.txt` and
   `usr/share/licenses` under `resources/git`
   ([Bundled Git for Windows](#bundled-git-for-windows)).
+- On macOS, git (GPL-2.0, with parts under LGPL-2.1, BSD-3-Clause and MIT) keeps its `COPYING`, `LGPL-2.1`,
+  `licenses/` and a `SOURCE.txt` naming its source under `dist/resources/git`
+  ([Bundled git (macOS)](#bundled-git-macos)).
 - On Windows, Microsoft's Visual C++ runtime DLL ships beside sandbox-runtime's `srt-win.exe`
   ([Visual C++ runtime](#visual-c-runtime-windows)).
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
@@ -69,9 +72,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.36.15 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  `@genex-ai/cli-demo` 1.36.17 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.15), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.17), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -133,6 +136,18 @@ it. The copy is the release's own files with its documentation, graphical tools,
 Credential Manager left out (`scripts/vendor-git-for-windows.ts`); nothing in it is modified. The
 source of every part is published with that release on GitHub and in the MSYS2 and Git for Windows
 package repositories it names.
+
+## Bundled git (macOS)
+
+The macOS app ships git 2.56.0 as `dist/resources/git`, compiled by the release build from the
+unmodified source tarball <https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz>
+(SHA-256 `26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3`), with only the
+programs Genex reaches kept (`scripts/vendor-git-for-mac.ts`, [why](docs/mac-bundled-git.md)).
+Git is under the GNU General Public License version 2 (`COPYING`); parts are under the GNU Lesser
+General Public License 2.1 (`LGPL-2.1`), and its reftable library (BSD-3-Clause,
+`licenses/reftable/LICENSE`) and SHA-1 collision detection (MIT, `licenses/sha1dc/LICENSE.txt`)
+keep their own. All ship beside it unchanged, with `SOURCE.txt` naming the tarball and the build's
+settings; the source is the tarball above.
 
 ## Visual C++ runtime (Windows)
 
@@ -482,11 +497,11 @@ SOFTWARE.
 
 ## Provider marks from lobe-icons
 
-The Claude Code, Codex, OpenRouter and OpenCode marks in `src/renderer/ui/provider-marks.ts` are
-copied unaltered from @lobehub/icons-static-svg 1.95.1 (claudecode.svg, codex.svg,
-openrouter-color.svg, opencode.svg). Claude Code is a trademark of Anthropic, Codex of OpenAI,
-OpenRouter of OpenRouter, Inc. and OpenCode of its owners; the marks only name the providers
-Studio connects to.
+The Claude Code, Codex, OpenRouter, OpenCode, Grok and Cursor marks in
+`src/renderer/ui/provider-marks.ts` are copied unaltered from @lobehub/icons-static-svg 1.95.1
+(claudecode.svg, codex.svg, openrouter-color.svg, opencode.svg, grok.svg, cursor.svg). Claude Code
+is a trademark of Anthropic, Codex of OpenAI, OpenRouter of OpenRouter, Inc., OpenCode of its
+owners, Grok of xAI and Cursor of Anysphere; the marks only name the providers Studio connects to.
 Source: https://github.com/lobehub/lobe-icons/blob/master/LICENSE
 
 MIT License

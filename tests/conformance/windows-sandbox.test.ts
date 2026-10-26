@@ -50,7 +50,6 @@ import {
   msysPath,
   msysPathList,
   granteeOf,
-  grantLauncherFolders,
   groupSidOnce,
   ownAclEntries,
   renderEnvFile,
@@ -62,6 +61,7 @@ import {
   setupGaps,
   srtWinExecFailure,
   srtWinPath,
+  forgetKeptGrants,
   takeBackSandboxEntries,
   toolDirEntries,
   windowsAccessReport,
@@ -93,6 +93,11 @@ import {
   windowsPowerShell,
 } from "../../src/substrate/windows-folder-ace.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+/** The paths of an srt config's path list; Genex sends plain paths, never `{ path, literal }`. */
+function entryPaths(entries: readonly (string | { path: string })[] | undefined): string[] {
+  return (entries ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
+}
 
 /** How long a test waits for a file removed in the background: polls of POLL_MS each. */
 const ENV_FILE_POLLS = 200;
@@ -333,46 +338,6 @@ describe("read-attributes grants above each root", () => {
     assert.equal(granteeOf({ sid: user, groupSid: group, inSandboxGroup: false }), user, "not a member yet");
     assert.equal(granteeOf({ sid: user }), user, "an srt-win that names no group");
     assert.equal(granteeOf({}), null, "no sandbox user yet");
-  });
-
-  it("grants the folders srt-win starts from after a status probe that failed once", async () => {
-    // A per-user install sits in the profile, where the sandbox user may open nothing: without
-    // this grant srt-win's egress check fails with "CreateProcessWithLogonW(srt-sandbox): Access
-    // is denied". One probe that timed out used to skip the grant without a word.
-    const answers = [null, "S-1-5-21-9"];
-    const calls: string[] = [];
-    const logged: string[] = [];
-    const release = await grantLauncherFolders([at("AppData", "Local", "genex", "app-0.1.12")], {
-      sid: sandboxSidOnce(async () => answers.shift() ?? null, 0),
-      grant: async (sid, dirs) => void calls.push(`grant ${sid} ${dirs.join(",")}`),
-      revoke: async (sid) => void calls.push(`revoke ${sid}`),
-      log: (line) => logged.push(line),
-    });
-    assert.deepEqual(calls, [`grant S-1-5-21-9 ${at("AppData", "Local", "genex", "app-0.1.12")}`]);
-    assert.deepEqual(logged, []);
-    await release();
-    assert.deepEqual(calls.at(-1), "revoke S-1-5-21-9");
-  });
-
-  it("says why the folders srt-win starts from were not granted, and takes back a grant srt-win refused", async () => {
-    const logged: string[] = [];
-    const calls: string[] = [];
-    const deps = {
-      grant: async () => {
-        calls.push("grant");
-        throw new Error("srt-win acl grant timed out after 60000ms");
-      },
-      revoke: async () => void calls.push("revoke"),
-      log: (line: string) => logged.push(line),
-    };
-    await grantLauncherFolders([PROFILE], { ...deps, sid: async () => "S-1-5-21-9" });
-    assert.deepEqual(calls, ["grant", "revoke"]);
-    await grantLauncherFolders([PROFILE], { ...deps, sid: async () => null });
-    assert.deepEqual(calls, ["grant", "revoke"], "nothing to grant to without the user's id");
-    assert.deepEqual(logged, [
-      "launcher folders not granted: srt-win acl grant timed out after 60000ms",
-      "launcher folders not granted: srt-win did not say the sandbox user's id",
-    ]);
   });
 
   it("asks again for the sandbox user's id when a probe comes back empty, and keeps it once found", async () => {
@@ -1126,7 +1091,7 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, "game");
     const entries = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
-    assert.equal(await entries.sync(routeWindowsGrants({ write: [game], read: [] }).own), true);
+    assert.equal(await entries.sync(routeWindowsGrants({ write: [], read: [game] }).own), true);
     const granted = /\(A;OICI;[^;]+;;;BG\)/;
     const inherited = /\(A;ID;[^;]+;;;BG\)/;
     assert.match(sddl(game, root), granted, "the folder is granted, passed down");
@@ -1152,7 +1117,7 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     await mkdir(path.dirname(moved), { recursive: true });
     await mkdir(elsewhere);
     const first = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
-    const own = routeWindowsGrants({ write: [game], read: [] }).own;
+    const own = routeWindowsGrants({ write: [], read: [game] }).own;
     assert.equal(await first.sync(own), true);
     // A folder moved in keeps what it inherited where it was made until a walk works it out again.
     execFileSync("icacls", [elsewhere, "/grant", `*${USERS}:(OI)(CI)(RA)`], { stdio: "ignore" });
@@ -1946,39 +1911,22 @@ describe("the grant session", () => {
     assert.deepEqual(s.runtime.last().filesystem.allowWrite, [WS]);
   });
 
-  it("an srt-win timeout in an ACL step is not tried again", async () => {
+  it("an srt-win timeout in an ACL step is not tried again, and says an antivirus can cause it", async () => {
+    // Issue #476: a real-time antivirus scanning every file srt-win touched held its ACL step past
+    // its deadline, and the agents never started with only srt-win's own words to go on.
     const s = session();
     s.runtime.failInitializeIn("acl", "srt_win_timeout");
     await assert.rejects(
       s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }),
-      /srt_win_timeout/,
+      (error: unknown) => {
+        assert.ok(error instanceof SandboxLaunchError, String(error));
+        assert.equal(error.code, SandboxLaunchCode.SrtWinTimeout);
+        assert.match(error.message, /antivirus/i);
+        assert.match(error.message, /srt-win acl failed: srt_win_timeout/, "srt-win's words stay for the report");
+        return true;
+      },
     );
     assert.deepEqual(s.runtime.calls, ["initialize"]);
-  });
-
-  it("lets the sandbox user start srt-win from the install folder before initializing, taken back when it fails, until one succeeds", async () => {
-    // initialize's egress check runs srt-win as the sandbox user before it applies any grant, and
-    // a per-user install sits in the profile, where that user may open nothing.
-    const runtime = fakeSessionRuntime();
-    const value = new WindowsSandboxSession({
-      runtime: runtime.runtime,
-      profile: PROFILE,
-      ancestors: fakeAncestors().ancestors,
-      launcher: async () => {
-        runtime.calls.push("launcher");
-        return () => {
-          runtime.calls.push("launcher taken back");
-        };
-      },
-    });
-    const owner = {};
-    runtime.failInitializeIn("user", "not_provisioned");
-    await assert.rejects(value.join(owner, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }));
-    await value.join(owner, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
-    assert.deepEqual(runtime.calls, ["launcher", "initialize", "launcher taken back", "launcher", "initialize"]);
-    value.update(owner, { write: [GAMES, LATE], read: [] });
-    await value.settled();
-    assert.deepEqual(runtime.calls.slice(5), ["reset", "initialize"], "the egress check runs once per process");
   });
 
   it("an srt-win timeout in the egress check is tried once more, two attempts in all", async () => {
@@ -2032,27 +1980,6 @@ describe("the grant session", () => {
     );
   });
 
-  it("does not wait out a refusal where the launcher could not open srt-win's folders: set up repairs that", async () => {
-    const runtime = fakeSessionRuntime();
-    const value = new WindowsSandboxSession({
-      runtime: runtime.runtime,
-      profile: PROFILE,
-      ancestors: fakeAncestors().ancestors,
-      launcher: async () => Object.assign(async () => {}, { granted: false }),
-      logonRetryMs: [0, 0],
-    });
-    runtime.failInitializeWith(refusedLogon("0x80070005", "Access is denied."));
-    await assert.rejects(
-      value.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }),
-      (error: unknown) => {
-        assert.ok(!(error instanceof SandboxLaunchError), "srt-win's own error, which the setup check reads");
-        assert.match(String(error), /0x80070005/);
-        return true;
-      },
-    );
-    assert.deepEqual(runtime.calls, ["initialize"]);
-  });
-
   it("does not wait out a refusal that is not the sandbox user's: a disabled service is Set up's", async () => {
     const s = session({ logonRetryMs: [0, 0] });
     s.runtime.failInitializeWith(
@@ -2066,37 +1993,6 @@ describe("the grant session", () => {
       /0x80070422/,
     );
     assert.deepEqual(s.runtime.calls, ["initialize"]);
-  });
-
-  it("waits for asynchronous launcher rollback before allowing the next initialization", async () => {
-    const runtime = fakeSessionRuntime();
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const value = new WindowsSandboxSession({
-      runtime: runtime.runtime,
-      profile: PROFILE,
-      ancestors: fakeAncestors().ancestors,
-      launcher: async () => async () => {
-        await gate;
-        runtime.calls.push("launcher taken back");
-      },
-    });
-    runtime.failInitializeIn("acl", "srt_win_timeout");
-    let settled = false;
-    const joining = value.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }).catch((error) => {
-      settled = true;
-      assert.match(error.message, /srt_win_timeout/);
-    });
-    await turn();
-    assert.equal(settled, false);
-    assert.deepEqual(runtime.calls, ["initialize"]);
-    release();
-    await joining;
-    assert.equal(settled, true);
-    assert.deepEqual(runtime.calls, ["initialize", "launcher taken back"]);
-    await value.dispose();
   });
 
   it("network changes apply live, with every member's domains and no regrant", async () => {
@@ -2166,20 +2062,24 @@ describe("deny paths Genex sets itself", () => {
   ];
   const WRITE_ONLY = [at("AppData", "Local", "Roblox", "AssistantSettings"), at("AI Games", "Pong", ".claude")];
 
-  it("never hands srt-win a deny on a path that exists, whose parent its stamp would walk whole", async () => {
+  it("never hands srt-win a deny on a path that exists outside its write roots, whose parent its stamp would walk whole", async () => {
+    // Inside a write root the deny is srt-win's: its first grant of the root rewrote a file under a
+    // folder Genex had denied as its own, protected and closed (EPERM on the harness's skills).
+    // srt-win keeps a deny under a kept root with the root, so its walk of the parent runs once.
     const s = session({ ownDenies: true, exists });
     await s.session.join({}, denying(SECRETS, WRITE_ONLY));
     const sent = s.runtime.last().filesystem;
-    assert.deepEqual(sent.denyRead, [NEVER_MADE], "only a path srt-win must make a placeholder for");
-    assert.deepEqual(sent.denyWrite, []);
+    assert.deepEqual(
+      sent.denyRead,
+      [at("AI Games", "Pong", ".env"), NEVER_MADE],
+      "the write root's, and a missing path",
+    );
+    assert.deepEqual(sent.denyWrite, [at("AI Games", "Pong", ".claude")]);
     assert.deepEqual(s.own.synced, [
       [
         { path: PROFILE, deny: null, guard: true },
         { path: at(".claude"), deny: DenyAccess.Read, guard: false },
         { path: at(".ssh"), deny: DenyAccess.Read, guard: false },
-        { path: PONG, deny: null, guard: true, grant: GrantAccess.Modify },
-        { path: at("AI Games", "Pong", ".claude"), deny: DenyAccess.Write, guard: false },
-        { path: at("AI Games", "Pong", ".env"), deny: DenyAccess.Read, guard: false },
         { path: at("AppData", "Local", "Roblox"), deny: null, guard: true },
         { path: at("AppData", "Local", "Roblox", "AssistantSettings"), deny: DenyAccess.Write, guard: false },
         { path: at("AppData", "Roaming", "Microsoft"), deny: null, guard: true },
@@ -2356,44 +2256,37 @@ describe("deny paths Genex sets itself", () => {
     assert.equal(s.own.walked(), 0);
   });
 
-  it("hands srt-win no grant on a folder that exists, so no start walks a granted folder again", async () => {
-    // srt-win's grant passed its entry down through everything under each folder at every start
-    // (a toolchain, a games folder full of node_modules) and ran past its 60-second deadline.
+  it("hands srt-win every write root and no read grant on a folder that exists", async () => {
+    // A command writes only where srt-win's own grant names the root (its write-restricted token),
+    // and srt-win keeps those between sessions. Its read grant passed its entry down through
+    // everything under each folder at every start (a toolchain) and ran past its deadline.
     const runtime = fakeSessionRuntime();
     const own = fakeOwnEntries(runtime.calls);
     const npm = at("AppData", "Roaming", "npm");
     const install = at("AppData", "Local", "genex", "app-0.1.13");
+    const gone = at("AppData", "Roaming", "uninstalled-tool");
     const value = new WindowsSandboxSession({
       runtime: runtime.runtime,
       profile: PROFILE,
       ancestors: fakeAncestors().ancestors,
       own: own.entries,
       launchDirs: [install],
-      launcher: async () => {
-        runtime.calls.push("launcher");
-        return () => {};
-      },
       keepDenies: (paths) => [...paths],
-      exists: (p) => p !== LATE,
+      exists: (p) => p !== LATE && p !== gone,
     });
-    await value.join({}, { grants: { write: [PONG, LATE], read: [npm] }, config: BASE_CONFIG });
+    await value.join({}, { grants: { write: [PONG, LATE], read: [npm, gone] }, config: BASE_CONFIG });
     const sent = runtime.last();
-    assert.deepEqual(sent.filesystem.allowWrite, [LATE], "only a folder Genex cannot grant (gone here)");
-    assert.deepEqual(sent.filesystem.allowRead, []);
-    assert.deepEqual(
-      sent.git?.safeDirectories,
-      [PONG, LATE],
-      "Git trusts the writable folders, as with srt-win's grant",
-    );
+    assert.deepEqual(sent.filesystem.allowWrite, [PONG, LATE], "srt-win grants every write root, gone or not");
+    assert.deepEqual(sent.filesystem.allowRead, [gone], "only a read root Genex cannot grant (gone here)");
+    assert.equal(sent.git, undefined, "srt-win marks its own write grants safe for Git");
     assert.deepEqual(own.synced[0], [
-      { path: PONG, deny: null, guard: false, grant: GrantAccess.Modify },
       { path: install, deny: null, guard: false, grant: GrantAccess.Read },
       { path: npm, deny: null, guard: false, grant: GrantAccess.Read },
     ]);
     assert.deepEqual(runtime.calls, ["own entries", "initialize"], "the launch folders are among Genex's grants");
   });
 
-  it("grants with srt-win and its launcher where Genex cannot set entries itself", async () => {
+  it("grants with srt-win, the folders it starts from among them, where Genex cannot set entries itself", async () => {
     const runtime = fakeSessionRuntime();
     const own = fakeOwnEntries(runtime.calls, { available: false });
     const install = at("AppData", "Local", "genex", "app-0.1.13");
@@ -2407,10 +2300,6 @@ describe("deny paths Genex sets itself", () => {
       ancestors: fakeAncestors().ancestors,
       own: own.entries,
       launchDirs: [install, broker.toUpperCase().replaceAll("\\", "/")],
-      launcher: async () => {
-        runtime.calls.push("launcher");
-        return () => {};
-      },
       keepDenies: (paths) => [...paths],
       exists: () => true,
     });
@@ -2425,7 +2314,7 @@ describe("deny paths Genex sets itself", () => {
       assert.equal(read.length, 3, "only the member's read root and the launch folders are readable");
       for (const dir of [install, broker, npm]) {
         assert.ok(
-          read.some((root) => insideWindowsPath(root, dir) && insideWindowsPath(dir, root)),
+          entryPaths(read).some((root) => insideWindowsPath(root, dir) && insideWindowsPath(dir, root)),
           `the session keeps the read grant on ${dir}`,
         );
       }
@@ -2435,15 +2324,15 @@ describe("deny paths Genex sets itself", () => {
       assert.equal(sent.git, undefined);
     };
     assertConfig([PONG]);
-    assert.deepEqual(runtime.calls, ["own entries", "launcher", "initialize"]);
+    assert.deepEqual(runtime.calls, ["own entries", "initialize"]);
     value.update(owner, { write: [PONG, LATE], read: [npm] });
     await value.settled();
     assertConfig([PONG, LATE]);
-    assert.deepEqual(runtime.calls, ["own entries", "launcher", "initialize", "reset", "own entries", "initialize"]);
+    assert.deepEqual(runtime.calls, ["own entries", "initialize", "reset", "own entries", "initialize"]);
     await value.dispose();
   });
 
-  it("leaves srt-win a grant root that is gone, a drive root or a share", () => {
+  it("leaves srt-win every write root, and a read root that is gone, a drive root or a share", () => {
     const table: Array<[string, string]> = [
       ["a folder that is gone (srt-win drops it)", NEVER_MADE],
       ["a drive root", "D:\\"],
@@ -2453,8 +2342,12 @@ describe("deny paths Genex sets itself", () => {
       const routes = routeWindowsGrants({ write: [root], read: [root] }, { realpath: (p) => p, exists });
       assert.deepEqual(routes, { srt: { read: [root], write: [root] }, own: [] }, label);
     }
-    const both = routeWindowsGrants({ write: [PONG], read: [at("AI Games", "pong")] }, { realpath: (p) => p, exists });
-    assert.deepEqual(both.own, [{ path: PONG, deny: null, guard: false, grant: GrantAccess.Modify }], "write wins");
+    const npm = at("AppData", "Roaming", "npm");
+    const both = routeWindowsGrants({ write: [PONG], read: [npm] }, { realpath: (p) => p, exists });
+    assert.deepEqual(both, {
+      srt: { read: [], write: [PONG] },
+      own: [{ path: npm, deny: null, guard: false, grant: GrantAccess.Read }],
+    });
   });
 
   it("denies a path where it really is, its spelling and links worked out", () => {
@@ -2515,6 +2408,21 @@ describe("Genex's own deny entries", () => {
     deny: DenyAccess.Write,
     guard: false,
   };
+
+  it("says why Genex cannot set its own entries: no sandbox users' group, or PowerShell refused the batch", async () => {
+    // Issue #476: the log said "no sandbox users' group, or PowerShell could not set them", and a
+    // report could not tell an install to repair from a PowerShell an antivirus or policy blocks.
+    const logged: string[] = [];
+    const log = (line: string) => logged.push(line);
+    const noGroup = holder(await tmpDir("windows-denies-"), 1, [], { sid: async () => null, log });
+    assert.equal(await noGroup.sync([ssh]), false);
+    const refused = holder(await tmpDir("windows-denies-"), 1, [], { edit: async () => null, log });
+    assert.equal(await refused.sync([ssh]), false);
+    assert.deepEqual(logged, [
+      "own entries: the sandbox user is not in the sandbox users' group",
+      "own entries: Windows PowerShell could not run Genex's batch (an antivirus or a policy may block it)",
+    ]);
+  });
 
   it("records each entry before setting it, and takes back what is no longer needed", async () => {
     const holders = await tmpDir("windows-denies-");
@@ -3033,6 +2941,32 @@ describe("Genex's own deny entries", () => {
     );
   });
 
+  it("has srt-win forget the write grants it keeps, from a copy outside the folder Squirrel removes", async () => {
+    const install = await tmpDir("windows-uninstall-srt-");
+    const temp = await tmpDir("windows-uninstall-tmp-");
+    const exe = path.join(install, "srt-win.exe");
+    await writeFile(exe, "srt-win");
+    await writeFile(path.join(install, "vcruntime140.dll"), "vc");
+    await writeFile(path.join(install, "notes.txt"), "not a program");
+    const started: Array<{ file: string; args: string[] }> = [];
+    const spawnBatch = (file: string, args: string[]) => {
+      started.push({ file, args });
+      return { unref: () => {} };
+    };
+    assert.equal(forgetKeptGrants(spawnBatch, exe, temp), true);
+    const [run] = started;
+    assert.ok(run, "one srt-win, left to run after the uninstall launch exits");
+    assert.deepEqual(run.args, ["--srt-win", "acl", "forget", "--all"]);
+    assert.ok(insideWindowsPath(temp, run.file) || run.file.startsWith(temp), run.file);
+    assert.equal(path.basename(run.file), "srt-win.exe");
+    const copied = await readdir(path.dirname(run.file));
+    assert.deepEqual(copied.sort(), ["srt-win.exe", "vcruntime140.dll"], "the program and the runtime it loads");
+    // A build without srt-win (or one Windows will not let it copy) starts nothing, and never throws.
+    started.length = 0;
+    assert.equal(forgetKeptGrants(spawnBatch, path.join(install, "gone.exe"), temp), false);
+    assert.deepEqual(started, []);
+  });
+
   it("records under %LOCALAPPDATA%, beside the folder grants", () => {
     assert.equal(windowsDenyHolders(PROFILE, at("AppData", "Local")), at("AppData", "Local", "genex-sandbox-denies"));
     assert.equal(windowsDenyHolders(PROFILE, ""), at("AppData", "Local", "genex-sandbox-denies"));
@@ -3129,6 +3063,17 @@ describe("ProcessSandbox on Windows", () => {
     const curlrc = await readFile(path.join(w.sandbox.scratchDir, ".curl", ".curlrc"), "utf8");
     assert.match(curlrc, /ssl-revoke-best-effort/);
     assert.equal(w.session.session.active, 0, "the run gave the session back");
+  });
+
+  it("keeps loopback closed, as the install Genex makes does, even for a run that asks for a local server", async () => {
+    // srt-win refuses a session or a command whose loopback mode is not the installed one, and
+    // Genex installs without --allow-loopback: commands reach the sandbox's proxies only.
+    const w = await windowsSandbox();
+    assert.equal(w.sandbox.policy.allowLocalBinding, true, "the policy still says what macOS and Linux open");
+    const result = await w.sandbox.run({ command: "true", cwd: w.workspace, policy: { allowLocalBinding: true } });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(w.session.runtime.last().network.allowLocalBinding, false, "the session");
+    assert.equal(w.wraps[0]?.config?.network.allowLocalBinding, false, "the command");
   });
 
   it("feeds a run's stdin from a file the command opens and deletes, since srt-win does not pass it", async () => {
@@ -3359,9 +3304,9 @@ describe("ProcessSandbox on Windows", () => {
     await w.session.session.settled();
     assert.equal(w.session.session.regrants, 1);
     assert.ok(
-      w.session.runtime
-        .last()
-        .filesystem.allowWrite.some((dir) => dir.toLowerCase() === path.win32.resolve(later).toLowerCase()),
+      entryPaths(w.session.runtime.last().filesystem.allowWrite).some(
+        (dir) => dir.toLowerCase() === path.win32.resolve(later).toLowerCase(),
+      ),
     );
   });
 
@@ -3524,6 +3469,40 @@ describe("what is not set up yet", () => {
     assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" }, logonService: on }), []);
     // Reading the filters needs an administrator; srt treats it as informational, and so do we.
     assert.deepEqual(setupGaps({ user: set, wfp: { state: "cannot-read" }, logonService: on }), []);
+  });
+
+  it("asks for the install again where another release set the sandbox up, and only then", () => {
+    const installed = { state: "installed" };
+    const by = (markerVersion?: number, setupVersion?: number) => ({
+      ...set,
+      ...(markerVersion === undefined ? {} : { markerVersion }),
+      ...(setupVersion === undefined ? {} : { setupVersion }),
+    });
+    for (const user of [by(2, 3), by(undefined, 3), by(4, 3)]) {
+      assert.deepEqual(needs(setupGaps({ user, wfp: installed, logonService: on })), [WindowsSetupNeed.Reinstall]);
+    }
+    // This release's own install, or an srt-win that does not say which setup it needs.
+    for (const user of [by(3, 3), by(2), set]) {
+      assert.deepEqual(setupGaps({ user, wfp: installed, logonService: on }), [], JSON.stringify(user));
+    }
+    // A sandbox user that is not there is a first install, whatever a stale marker says.
+    const missing = { provisioned: false, credPresent: false, markerVersion: 2, setupVersion: 3 };
+    assert.deepEqual(needs(setupGaps({ user: missing, wfp: installed, logonService: on })), [WindowsSetupNeed.Sandbox]);
+  });
+
+  it("asks for the install again where the sandbox user is not in the sandbox users' group", () => {
+    // Issue #476: an install without the group (made by another program's srt-win) turned Genex's
+    // own entries off for good, so srt-win walked the profile for every deny at every start.
+    const installed = { state: "installed" };
+    for (const user of [
+      { ...set, inSandboxGroup: false },
+      { ...set, groupExists: false, inSandboxGroup: false },
+    ]) {
+      assert.deepEqual(needs(setupGaps({ user, wfp: installed, logonService: on })), [WindowsSetupNeed.Reinstall]);
+    }
+    // An srt-win that does not say leaves it as it is.
+    assert.deepEqual(setupGaps({ user: { ...set, inSandboxGroup: true }, wfp: installed, logonService: on }), []);
+    assert.deepEqual(setupGaps({ user: set, wfp: installed, logonService: on }), []);
   });
 
   it("names a disabled Secondary Logon service beside whatever else is missing", () => {

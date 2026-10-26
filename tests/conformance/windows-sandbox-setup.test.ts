@@ -11,6 +11,7 @@ import { SandboxProblemCode, StudioPlatform, type SandboxProblem, WindowsSetupNe
 import { ServiceStartType } from "../../src/substrate/windows-logon-service.ts";
 import {
   installWindowsSandbox,
+  srtInstallOptions,
   srtWinPath,
   unpackedPath,
   type WindowsSetupSteps,
@@ -81,6 +82,24 @@ test("Set up installs the sandbox alone when that is all it needs, or when the p
     assert.deepEqual(await installWindowsSandbox(held, run.steps), { cancelled: false });
     assert.deepEqual(run.ran, ["install"]);
   }
+});
+
+test("Set up runs the install again for a sandbox another release set up", async () => {
+  const run = steps();
+  assert.deepEqual(await installWindowsSandbox(problem([WindowsSetupNeed.Reinstall]), run.steps), { cancelled: false });
+  assert.deepEqual(run.ran, ["install"]);
+});
+
+test("the install leaves the profile unreadable, and replaces only a newer release's install", () => {
+  const status = (markerVersion?: number) => ({
+    setupVersion: 3,
+    ...(markerVersion === undefined ? {} : { markerVersion }),
+  });
+  assert.deepEqual(srtInstallOptions(status()), { skipProfileGrant: true, force: false });
+  assert.deepEqual(srtInstallOptions(status(2)), { skipProfileGrant: true, force: false });
+  assert.deepEqual(srtInstallOptions(status(3)), { skipProfileGrant: true, force: false });
+  assert.deepEqual(srtInstallOptions(status(4)), { skipProfileGrant: true, force: true });
+  assert.deepEqual(srtInstallOptions({}), { skipProfileGrant: true, force: false });
 });
 
 test("Set up turns the Secondary Logon service back on, and installs nothing a set-up PC has", async () => {

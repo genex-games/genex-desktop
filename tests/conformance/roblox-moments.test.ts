@@ -15,6 +15,7 @@ import {
   AGENT_MARK_MAX_MS,
   AGENT_TRAIL_MS,
   agentBusyMarker,
+  agentsAt,
   type AgentMarks,
   clearAgentPlay,
   markAgentPlay,
@@ -630,6 +631,40 @@ describe("the person first: the agent's own work in Studio is not the person's",
     assert.equal((await readAgentMarks(folder, clock)).play, undefined);
     await writeFile(path.join(folder, "agent-play.json"), "not json");
     assert.equal((await readAgentMarks(folder, clock)).play, undefined, "a damaged mark says nothing");
+  });
+});
+
+describe("Genex's reads in Studio, one after another", () => {
+  it("keep one busy window while each follows within the trail, so a late report of an earlier read stays Genex's", async () => {
+    const folder = path.join(await realpath(await tmpDir("roblox-marks-")), "mcp", GAME);
+    let clock = 9_000_000;
+    // Each read marks through its own marker, as `asAgentInStudio` and the helper link do.
+    await agentBusyMarker(folder, () => clock).around(async () => {
+      clock += 300;
+    });
+    clock += AGENT_TRAIL_MS - 1_000;
+    const earlierReport = 9_000_900;
+    let during = await readAgentMarks(folder, clock);
+    await agentBusyMarker(folder, () => clock).around(async () => {
+      during = await readAgentMarks(folder, clock);
+      clock += 300;
+    });
+    assert.equal(agentsAt(during, earlierReport, clock), true, "while the next read runs");
+    assert.equal(agentsAt(await readAgentMarks(folder, clock), earlierReport, clock), true, "after it ended");
+  });
+
+  it("start a new window after a quiet gap: what Studio reports in the gap is the person's", async () => {
+    const folder = path.join(await realpath(await tmpDir("roblox-marks-")), "mcp", GAME);
+    let clock = 9_000_000;
+    await agentBusyMarker(folder, () => clock).around(async () => {
+      clock += 300;
+    });
+    clock += AGENT_TRAIL_MS + 5_000;
+    const inTheGap = clock - 1_000;
+    await agentBusyMarker(folder, () => clock).around(async () => {
+      clock += 300;
+    });
+    assert.equal(agentsAt(await readAgentMarks(folder, clock), inTheGap, clock), false);
   });
 });
 

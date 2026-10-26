@@ -11,7 +11,7 @@ import path from "node:path";
 import { after, before, it } from "node:test";
 import { type AssetJobRecord, reconcileGeneratedAssets } from "../../src/main/game-assets.ts";
 import { GenexTool, MakingKind, MakingPhase } from "../../src/shared/asset-making.ts";
-import { GenexJobStatus, GenexOperation } from "../../src/shared/genex.ts";
+import { GenexBlocked, GenexJobStatus, GenexOperation } from "../../src/shared/genex.ts";
 
 let root: string;
 before(async () => {
@@ -118,4 +118,45 @@ it("says a job that still claims to be made hours after it started is not confir
   });
   assert.equal((await waiting([job], Date.parse(started) + 40 * 60_000))[0]?.phase, MakingPhase.Making);
   assert.equal((await waiting([job], Date.parse(started) + 3 * 3_600_000))[0]?.phase, MakingPhase.Unsure);
+});
+
+it("lists a request refused for too few credits as waiting on credits, and still no card for other refusals", async () => {
+  const jobs = await waiting([
+    record("short", {
+      operation: GenexOperation.Model,
+      status: GenexJobStatus.Failed,
+      blocked: GenexBlocked.Credits,
+      prompt: "Dragon boss",
+    }),
+    record("quote", { operation: GenexOperation.Model, status: GenexJobStatus.Failed, prompt: "Imperial guard" }),
+  ]);
+  assert.deepEqual(
+    jobs.map((job) => [job.jobId, job.phase, job.prompt]),
+    [["short", MakingPhase.NeedsCredits, "Dragon boss"]],
+  );
+});
+
+it("waits on credits only for a job that ended unmade: one still being made is being made", async () => {
+  const jobs = await waiting([
+    record("made", {
+      operation: GenexOperation.Model,
+      status: GenexJobStatus.Generating,
+      blocked: GenexBlocked.Credits,
+    }),
+  ]);
+  assert.equal(jobs[0]?.phase, MakingPhase.Making);
+});
+
+it("carries what a job costs onto its card, and nothing when Genex never named a price", async () => {
+  const jobs = await waiting([
+    record("priced", { operation: GenexOperation.Model, status: GenexJobStatus.Generating, credits: 35 }),
+    record("plain", { operation: GenexOperation.Image, status: GenexJobStatus.Generating }),
+  ]);
+  assert.deepEqual(
+    jobs.map((job) => [job.jobId, job.credits]),
+    [
+      ["priced", 35],
+      ["plain", undefined],
+    ],
+  );
 });

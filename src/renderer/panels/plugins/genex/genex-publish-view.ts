@@ -28,6 +28,7 @@ import type { PluginInfo } from "../../../../shared/plugins.ts";
 import type { FactRef, FolderHolds, GameKind } from "../../../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../../../shared/project-workspace.ts";
 import { MINUTE_MS } from "../../../../shared/duration.ts";
+import { isBlankStill } from "../../../../shared/preview-contract.ts";
 import { t } from "../../../../shared/i18n.ts";
 import { FEEDBACK_TEXT_MAX_CHARS, type FeedbackDraft, FeedbackScreen } from "../../../../shared/feedback.ts";
 import { relativeTime } from "../../../chat-labels.ts";
@@ -130,6 +131,8 @@ export interface PublishView {
   needsCover: boolean;
   /** Whether the banner offers Another cover: the plugin keeps covers, nothing runs, and the owner chose none. */
   canAskCover: boolean;
+  /** The game would go out with no picture: no cover to send, and none on Genex ({@link goesWithoutCover}). */
+  withoutCover: boolean;
 }
 
 export const isListed = (state: GenexPublishState): boolean => state.status === GenexHostedStatus.Published;
@@ -214,6 +217,27 @@ export function needsCover(state: GenexPublishState): boolean {
   return canAskCover(state);
 }
 
+/** Answers whose frame Genex shows as the game's cover now. */
+const SHOWN_ON_GENEX = new Set<GenexCoverOutcome>([GenexCoverOutcome.Applied]);
+
+/** Whether the last answer left a cover Genex shows: one it applied, then or when these bytes were first sent. */
+const genexShowsCover = (cover: GenexCoverRecord): boolean => {
+  const last = cover.last;
+  if (!last) return false;
+  return SHOWN_ON_GENEX.has(last.kind) || (last.settled !== undefined && SHOWN_ON_GENEX.has(last.settled));
+};
+
+/**
+ * Whether the game would go out with no picture: the plugin keeps covers, nothing runs, the owner
+ * chose none, Genex shows none from an earlier send, and Studio keeps no frame that is a picture
+ * (none, or only a blank or loading screen Genex would refuse).
+ */
+export function goesWithoutCover(state: GenexPublishState): boolean {
+  const cover = state.cover;
+  if (!cover || !canAskCover(state) || genexShowsCover(cover)) return false;
+  return !cover.shot || isBlankStill(cover.shot.stats);
+}
+
 /** Whether a new cover may be asked for now: the plugin keeps covers, nothing runs, and the owner chose none. */
 export function canAskCover(state: GenexPublishState): boolean {
   const cover = state.cover;
@@ -273,6 +297,7 @@ export function publishView(state: GenexPublishState, now = Date.now()): Publish
     testLink: testLinkOf(state, listed),
     needsCover: needsCover(state),
     canAskCover: canAskCover(state),
+    withoutCover: goesWithoutCover(state),
   };
 }
 

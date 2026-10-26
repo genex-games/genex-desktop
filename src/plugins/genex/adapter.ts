@@ -42,6 +42,7 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { PluginStillProblemCode } from "../../shared/plugins.ts";
+import { isBlankStill } from "../../shared/preview-contract.ts";
 import { GenexCliStopped, runGenexCli, genexCliPath } from "./cli.ts";
 import {
   appClipCommit,
@@ -168,6 +169,7 @@ import {
   readLedger,
   RECONCILE_BATCH,
   settledFailureStatus,
+  shortOfCredits,
   siblingWithFiles,
   type LedgerRow,
   type ReviewAnswer,
@@ -1602,7 +1604,8 @@ export class GenexTools {
     const plain = readStillAnswer(
       await within(camera.shoot({ camera: COVER_FALLBACK_CAMERA }), this.#coverTimeouts.shotMs),
     );
-    if (!("still" in plain)) return;
+    // A frame still blank after the host's retakes is a loading screen, no cover: Publish says it goes without one.
+    if (!("still" in plain) || isBlankStill(plain.still.stats)) return;
     const takenAt = new Date(this.#now()).toISOString();
     await this.#coverWrite(project, () => saveShot(dir, plain.still, takenAt, GenexCoverOrigin.Studio));
   }
@@ -2018,6 +2021,20 @@ export class GenexTools {
     const ca = this.#ca ? { ca: this.#ca } : {};
     return runGenexCli({ cli, preload: this.#preload, api: this.api, token, cwd, args, signal, ...ca, ...options });
   }
+  /**
+   * Mark a job Genex refused before starting it because the account had too few credits for it
+   * (`blocked: credits`), read from the balance and the price list: its card then offers credits.
+   * Only a submit that reached Genex can be refused so. Never throws; an unread balance never holds
+   * a job on credits.
+   */
+  async #markShortOfCredits(job: GenexJob, submitted: boolean, signal: AbortSignal): Promise<void> {
+    const refused = job.status === GenexJobStatus.Failed && !job.generationId && !READ_OPERATIONS.has(job.operation);
+    if (!submitted || !refused || job.blocked || signal.aborted) return;
+    try {
+      const [account, prices] = await Promise.all([this.#fetch(GenexRoute.Credits), this.#fetch(GenexRoute.Prices)]);
+      if (shortOfCredits(account, prices, job.operation)) job.blocked = GenexBlocked.Credits;
+    } catch {} // An unread balance or price list leaves the job as it failed.
+  }
   /** Read Genex's durable admission evidence; never change its credit ledger. */
   async #reconcileJob(cwd: string, job: GenexJob, read: RemoteRead = RemoteRead.None, signal?: AbortSignal) {
     const reservation = await readLedger(cwd, job);
@@ -2280,6 +2297,8 @@ export class GenexTools {
     const save = () => atomicWriteJson(path.join(dir, "job.json"), job);
     await atomicWriteJson(path.join(dir, "request.json"), { root, request });
     await save();
+    // Only a submit that reached Genex can be refused for credits; terms, time and arguments fail first.
+    let submitted = false;
     try {
       if (!READ_OPERATIONS.has(request.operation)) await this.#waitForTerms(signal, hooks);
       const cliMs = assetCliTimeoutMs(this.#now() - startedAt);
@@ -2293,6 +2312,7 @@ export class GenexTools {
       const { args, output } = await cliArgsFor(request, root, dir, approved);
       job.status = GenexJobStatus.Submitting;
       await save();
+      submitted = true;
       const response = await this.#cli(cwd, args, signal, cliMs);
       await this.#recordAnswer(cwd, dir, root, job, response, output, signal);
       await save();
@@ -2303,6 +2323,7 @@ export class GenexTools {
       if (e instanceof GenexTermsPending) job.blocked = GenexBlocked.Terms;
       await this.#reconcileJob(cwd, job);
       job.status = settledFailureStatus(job, READ_OPERATIONS.has(request.operation), () => signal.aborted);
+      await this.#markShortOfCredits(job, submitted, signal);
       await save();
       return job;
     }

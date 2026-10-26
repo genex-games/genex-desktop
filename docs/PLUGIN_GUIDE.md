@@ -118,7 +118,7 @@ undeclared method is a compile error.
 | `assets.deliver` | `project.write` | Copies your output into a unique asset directory in the game; delivered files reach the host ledger |
 | `jobs.read` / `jobs.write` | `jobs` | Durable provider references. Not a credit ledger |
 | `events.emit` | `jobs` | Sanitized progress, attributed to the bound project/thread. `{kind:'toolbar', …}` updates a toolbar badge |
-| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each. API 3: with `clip: { demo, width, height, seconds? (2–10, 5), fps? (15–30, 30), maxBytes? (256 KiB–8 MiB, 8 MiB) }` and `files: []`, the demo stages a moment and returns, the host starts the clock and records that many seconds as MP4 or WebM with a JPEG `poster` and a 0–1 `motion` (about 0 when frozen), or a `clipProblem` with a still's codes (`PluginClipIgnored` from an older host) |
+| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; a picture that is still a blank or loading screen is taken again up to three times, two seconds of play apart, and the last one is answered; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each. API 3: with `clip: { demo, width, height, seconds? (2–10, 5), fps? (15–30, 30), maxBytes? (256 KiB–8 MiB, 8 MiB) }` and `files: []`, the demo stages a moment and returns, the host starts the clock and records that many seconds as MP4 or WebM with a JPEG `poster` and a 0–1 `motion` (about 0 when frozen), or a `clipProblem` with a still's codes (`PluginClipIgnored` from an older host) |
 | `export.stage` | `export` | Studio writes the public export of the bound game under `storage.root/publish/<project>/dist` and returns the result |
 | `credentials.session` | `credentials`, API 3 | Reuse an explicitly unlocked host-memory lease; never opens the OS store |
 | `runtime.detect` / `runtime.installation` | `native-runtime`, API 3 | Read declared native runtime readiness and durable installation progress |
@@ -128,6 +128,7 @@ undeclared method is a compile error.
 | `game.engine.steps` | `game-engine` | Show your setup card (your `steps` action's answer, read live) in the calling chat; see [Setup in the chat](#setup-in-the-chat) |
 | `game.snapshot` | `game-engine` | `{reason}` → `{snapshotId}`: a game snapshot of the bound game, listed in Rewind under `reason` (one plain line, at most 200 characters), before you change files there |
 | `game.engine.canAssist` | `game-engine` | `true` when Do it for me (`game.engine.assist`) can run for your plugin on this computer: a desktop with its driver, and apps your `engine.apps` names here. Asks nothing; offer the click path when it is `false` |
+| `game.engine.assisting` | `game-engine` | `true` while the bound game's chat still runs the turn your Do it for me started; `false` once that turn has ended (answered, failed or taken back) or after 20 minutes. End a progress display the agent never ended with it |
 | `game.engine.runs` | `game-engine` | `{game, title, project}[]`: the games whose run (a Loop) is going now that your plugin linked to a project, with that project file; needs no bound game. Read it before you offer to quit an editor a run may be using |
 | `game.create` | `game-engine` | `{title}` → `{project, directory}`: a new Genex game (title one plain line, at most 80 characters) for an engine project made with no game open; link it with `game.engine.link {project, game}`, which accepts only a game your plugin made, from outside any game |
 | `credentials.read` / `write` / `clear` | `credentials` | Plugin-scoped protected storage; only the reserved `unlock` / `connect` / `disconnect` actions authorize these |
@@ -202,7 +203,8 @@ has (one or two dotted parts, such as `.project.json`); `fact` is one your `dete
 it. Optional `play` says what your editor can do in play (`players` 1–8, `clock`, `pointer`,
 `state`), and `apps` names the apps your editor runs as (Mac bundle ids, Windows `.exe` names, at
 most 4 each), which computer use never drives to build or play; `playerApps` names the apps your
-published games are played in, which computer use never drives at all. See
+published games are played in, which computer use never drives at all; `pages` names 1–4 web hosts
+(such as `create.roblox.com`) your assist may open in the person's browser with `open_page`. See
 [The engine declaration](plugins.md#the-engine-declaration).
 
 What your engine generates while it runs stays out of the game's history when you say so:
@@ -372,7 +374,10 @@ Two different things, both asked by the host and never by the plugin or the agen
   (`{consent:'declined', by, message}`), never as an error — say in your skill text that a declined
   request must not be repeated. API 3: `confirmationInput: {parameter, label}` names one of the
   tool's string parameters the person may edit on the card before Allow (a game's name, say); the
-  call runs with their edit.
+  call runs with their edit. A chat in Bypass approves an agent's card by itself; API 3:
+  `onAccount: true` marks a tool that acts on the person's account with another service (an upload
+  it moderates, a generation against its limits, a publish), whose card asks even in Bypass and
+  offers **Allow in this chat**, covering that tool for the rest of the chat.
 - **`tools[].timeoutMs`** (API 3) — whole milliseconds, 1,000 to 540,000: how long one call may
   run when that is longer than the host's 190-second ceiling, such as an engine's import or export.
 - **`actions[].confirmation`** — a user-invoked action behind a Studio-owned review and a native

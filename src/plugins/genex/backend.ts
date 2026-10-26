@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { GenexTools, type RemixChoice } from "./adapter.ts";
 import { COVER_CLIP } from "./clip.ts";
 import { nativeUploads } from "./native-publish.ts";
+import { MESSAGE as PUBLISH_MESSAGE } from "./publish.ts";
+import { isEmptyStarter } from "./starter.ts";
 import { type CoverCamera, CoverOperation, COVER_STILL, MESSAGE as COVER_MESSAGE } from "./cover.ts";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import { PLUGIN_API_ENV, PLUGIN_CA_ENV, PLUGIN_GAMES_ENV } from "../../substrate/plugins/process.ts";
@@ -139,6 +141,11 @@ function coverTool(genex: GenexTools, project: string, args: Args, camera: Cover
   throw new Error(COVER_MESSAGE.BadOperation);
 }
 
+/** Publish's refusal of a game that is still Studio's empty starter: nothing is exported or sent. */
+async function refuseEmptyStarter(ctx: Invocation): Promise<void> {
+  if (ctx.directory && (await isEmptyStarter(ctx.directory))) throw new Error(PUBLISH_MESSAGE.EmptyStarterRefusal());
+}
+
 const isPublishKind = (value: unknown) => value === GenexPublishKind.Draft || value === GenexPublishKind.Gallery;
 
 /** The agent's publish tool: announce, run the export, the cover shot and the upload start, then report the phase. */
@@ -151,6 +158,7 @@ async function publishTool(
   camera: CoverCamera | undefined,
 ) {
   if (!isPublishKind(args.operation)) throw new Error(MESSAGE.BadPublishOperation);
+  if (ctx.directory && (await isEmptyStarter(ctx.directory))) throw new Error(PUBLISH_MESSAGE.EmptyStarter);
   await ctx.host(PluginService.EventsEmit, {
     kind: "publish",
     operation: args.operation,
@@ -306,11 +314,15 @@ const ACTIONS: Record<string, Action> = {
   },
   [GenexAction.Approve]: withProject((genex, project, args) => genex.approve(project, args.id, args.candidate)),
   [GenexAction.PublishStatus]: withProject((genex, project, args) => publishStatusFor(genex, project, args)),
-  [GenexAction.PublishDraft]: withProject((genex, project, _args, service, camera) =>
-    genex.publishDraft(project, () => service(PluginService.ExportStage, {}), camera),
-  ),
+  [GenexAction.PublishDraft]: async (genex, _args, ctx, service, invokedAt) => {
+    if (!ctx.project) throw new Error(MESSAGE.OpenProject());
+    await refuseEmptyStarter(ctx);
+    const camera = coverCamera(ctx, service, invokedAt);
+    return genex.publishDraft(ctx.project, () => service(PluginService.ExportStage, {}), camera);
+  },
   [GenexAction.PublishGallery]: async (genex, args, ctx, service, invokedAt) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
+    await refuseEmptyStarter(ctx);
     // The dialog names the game's apps by their place in its folder; only real builds inside it go.
     const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
     const exportStage = () => service(PluginService.ExportStage, {});

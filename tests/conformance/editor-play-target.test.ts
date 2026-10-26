@@ -55,6 +55,7 @@ function standInEngine(options: { refuseOpen?: boolean; afterOpen?: (answer: unk
         return { held: keys, gameSeconds: 1 };
       }
       case EnginePlayTool.Shot:
+        if (!game.playing) return { refused: EnginePlayRefusal.NotPlaying, message: "No play test is running." };
         return { png: PIXEL, ...ENGINE_PLAY_VIEW };
       case EnginePlayTool.State:
         return { pawn: "Hero_0", phase: game.heldW >= 2 ? "won" : "playing" };
@@ -196,6 +197,18 @@ describe("the computer on a game played in its engine's editor", () => {
     assert.equal(game.playing, false, "the play it started ended");
     await source.release();
     assert.equal(calls.filter(([tool]) => tool === EnginePlayTool.Close).length, 1, "closed once");
+  });
+
+  it("opens play again once the engine says its play ended, instead of failing every call after", async () => {
+    const { source, game, calls } = standInEngine();
+    const session = computerSession(source, "/game", { pacing: "running", frameDir: await tmpDir("editor-play-") });
+    await session.run("computer", { action: "screenshot" });
+    game.playing = false;
+    assert.match(text(await session.run("computer", { action: "screenshot" })), /No play test is running/);
+    const again = await session.run("computer", { action: "screenshot" });
+    assert.equal(images(again), 1, "the next look plays again");
+    assert.equal(calls.filter(([tool]) => tool === EnginePlayTool.Open).length, 2, "a fresh play was opened");
+    await source.release();
   });
 
   it("runs its after-open step once, right after the play opens and before any move, with the open's answer", async () => {

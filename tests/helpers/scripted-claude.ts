@@ -70,6 +70,14 @@ export function alwaysLoaded(record: ScriptedClaude, tool: string): boolean {
   return registeredTools(record.options)[tool]?._meta?.["anthropic/alwaysLoad"] === true;
 }
 
+/** The text of the first frame a streaming-input session reads, as the SDK hands it to the CLI. */
+async function briefText(prompt: unknown): Promise<string> {
+  type Frame = { message?: { content?: Array<{ text?: string }> } };
+  const first: IteratorResult<Frame> = await (prompt as AsyncIterable<Frame>)[Symbol.asyncIterator]().next();
+  const parts = first.done ? [] : (first.value.message?.content ?? []);
+  return parts.map((part) => part.text ?? "").join("");
+}
+
 export function scriptedClaude(plan: ScriptedToolStep[]): ScriptedClaude {
   const record: ScriptedClaude = { queryFn: (() => ({})) as never, options: null, tools: [], calls: [], prompt: null };
   record.queryFn = ((params: { prompt: unknown; options?: Record<string, unknown> }) => {
@@ -78,6 +86,8 @@ export function scriptedClaude(plan: ScriptedToolStep[]): ScriptedClaude {
     record.tools = Object.keys(registeredTools(record.options)).sort();
     return {
       async *[Symbol.asyncIterator]() {
+        // A session fed through streaming input (steered or resumed): the brief is its first frame.
+        if (typeof params.prompt !== "string") record.prompt = await briefText(params.prompt);
         yield { type: "system", subtype: "init", model: "scripted", tools: record.tools, session_id: "shapes-claude" };
         const tools = registeredTools(record.options);
         for (const [index, step] of plan.entries()) {

@@ -1,11 +1,11 @@
 {
-  "cliVersion": "1.36.15",
-  "skillMdVersion": "1.36.15",
+  "cliVersion": "1.36.17",
+  "skillMdVersion": "1.36.17",
   "url": "https://genex.games/SKILL.md",
   "files": {
     "genex/SKILL.md": {
       "source": "https://genex.games/SKILL.md",
-      "sha256": "9f3b2d106412a440969bd286aa017e2b853accb148eedd1314b66e725a06ac0d",
+      "sha256": "03bc487ae0afdf9df0cd460a32558542a03078ed117684bdfd7bc6f39c988b7a",
       "bytes": 9930
     },
     "genex-threejs-multiplayer/SKILL.md": {
@@ -45,8 +45,8 @@
     },
     "genex-llm-in-games/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md",
-      "sha256": "01274d76ee89e945428efeaa3970a63575f2e9727e481980fec9bea726f3c14d",
-      "bytes": 20347
+      "sha256": "18d32f25298790f1efc9dc3d757aa84cf72e63476448cf9fc73c3594584f2135",
+      "bytes": 20346
     },
     "genex-llm-in-games/references/pricing.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/references/pricing.md",
@@ -60,13 +60,13 @@
     },
     "genex-monetization/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md",
-      "sha256": "8fadc7b7500c8e68b8e766c526e9dd33e76e64a0d4d972cc57d5278eabdf6abd",
-      "bytes": 17614
+      "sha256": "a48accb99d8c08bc245b961438ddceed6831dca55fb81f5b58fb0fc70f2ea80c",
+      "bytes": 19729
     },
     "genex-items/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-items/SKILL.md",
-      "sha256": "9874956caafe24fceef25fdb269167570fcbac51b8efcb9f2278eb65ce6435d4",
-      "bytes": 11219
+      "sha256": "e093be967a4e217bf7c6a699615f7a8048e777f96e31ee54faaab90b405708f2",
+      "bytes": 12195
     },
     "genex-tool-publish/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md",
@@ -75,7 +75,7 @@
     },
     "genex-cover/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-cover/SKILL.md",
-      "sha256": "d112fa31e709a519aa9c453f3b1fdecd640464dcd0bf5efdfc698a1438e04b8c",
+      "sha256": "4fe35db9a02d707f48581d9e2af6ebaa972cf901e48a0fcd47e754dfc4dd5255",
       "bytes": 25685
     },
     "genex-updates/SKILL.md": {

@@ -19,6 +19,8 @@ import { atomicWriteJson } from "../../substrate/fsx.ts";
 import { SYSTEM_CLOCK } from "../../substrate/job-process.ts";
 import { EnginePlayTool } from "../../shared/engine-play.ts";
 import { PluginService } from "../../shared/plugins.ts";
+import { coverPictures, makeCover } from "./cover-pictures.ts";
+import { backToEdit } from "./studio-edit.ts";
 import { RobloxAction } from "./actions.ts";
 import { agentFolder } from "./agent-marks.ts";
 import { type AiTool, type AskFirstGame, createAiTools } from "./ai-tools.ts";
@@ -52,6 +54,7 @@ import { createProbes, type ProbeLuauFile, RobloxProbe } from "./probes.ts";
 import {
   firstPublish,
   firstPublishName,
+  PUBLISH_FLUSH_MS,
   type PublishAnswer,
   PublishAsker,
   type PublishDeps,
@@ -120,10 +123,16 @@ import {
 import { insertAsset } from "./insert-asset.ts";
 import { checkModelTool, importModel } from "./model-import.ts";
 import { linkedPlace, listPlaces, type ScanCache, usePlace, usePlaceNamed } from "./places.ts";
+import { closePlaceStudios, markClose, takeClose } from "./studio-close.ts";
 import { type PlaceTarget, quitStudio, startingNow, systemOpener } from "./studio-launch.ts";
-import { signInWatch, studioLogFolder } from "./studio-logs.ts";
+import { publishedSince, signInWatch, studioLogFolder } from "./studio-logs.ts";
 import { attemptNow, endAttempt, readAttempt, writeAttempt } from "./publish-attempt.ts";
-import { RobloxPublishKind, RobloxPublishPhase, type RobloxPublishState } from "../../shared/roblox-publish.ts";
+import {
+  type RobloxPublishAttempt,
+  RobloxPublishKind,
+  RobloxPublishPhase,
+  type RobloxPublishState,
+} from "../../shared/roblox-publish.ts";
 import {
   type LocateDeps,
   locateStudio,
@@ -456,6 +465,17 @@ async function placeFacts(
   return { ...facts, published: false, firstName };
 }
 
+/**
+ * Whether the game's Studio answers without the Genex helper connected for this game: its link has
+ * no Studio bound, and Genex didn't just open Studio (a helper takes a moment to connect). Only
+ * where the backend has the helper link; without it no helper is ever bound.
+ */
+async function helperAway(deps: RobloxDeps, context: PluginContext, storage: string | undefined): Promise<boolean> {
+  if (!deps.moments || !context.project || !storage) return false;
+  if (await startingNow(storage, deps.now())) return false;
+  return deps.moments.bound(context.project) === undefined;
+}
+
 /** Where Get Roblox Studio stands, as the rows read it: under way, or stopped and why. */
 function installFacts(job: InstallJob | undefined): Pick<RobloxStepFacts, "getting" | "failed"> {
   if (!job) return {};
@@ -474,8 +494,10 @@ async function stepFacts(deps: RobloxDeps, context: PluginContext, job: InstallJ
   const mcp = facts.installed ? await mcpSwitch(deps) : undefined;
   const helper = facts.setUp && storage ? await recordedHelper(storage, deps.helper) : undefined;
   const { published, firstName, ...place } = await placeFacts(context, storage);
+  const away = place.linked && facts.answering && (await helperAway(deps, context, storage));
   const rows: RobloxStepFacts = {
     ...facts,
+    ...(away ? { helperAway: true } : {}),
     running,
     ...(install?.version ? { version: install.version } : {}),
     ...installFacts(job),
@@ -554,8 +576,8 @@ function setupDoneAnswer(setup: SetupDone): SetupAnswer {
       choices: openStudioChoices().filter((choice) => choice.action === RobloxAction.DoItForMe),
       clickPath: MCP_SWITCH_CLICK_PATH,
     };
-  const newer = setup.helper === HelperChange.Kept && setup.switches.turnedOn === 0;
-  return { done: true, setup, message: newer ? MESSAGE.Setup.NewerHelper() : MESSAGE.Setup.Done() };
+  const kept = setup.helper === HelperChange.Kept && setup.switches.turnedOn === 0;
+  return { done: true, setup, message: kept ? MESSAGE.Setup.HelperAlreadyThere() : MESSAGE.Setup.Done() };
 }
 
 /** Runs Set up, answering its refusals in plain words. Studio is checked first: nothing is read while it runs. */
@@ -622,6 +644,22 @@ async function setUpThenOpen(deps: RobloxDeps, context: PluginContext): Promise<
   return { ...answer, reopened: true, message: `${answer.message} ${opened.message}` };
 }
 
+/**
+ * A new game's place, written and opened, with Genex's helper added first while Studio is still
+ * closed: added after, it would take a Restart Studio (and its save prompt) before the build starts.
+ */
+async function newGameSetUp<T>(deps: RobloxDeps, context: PluginContext, create: () => Promise<T>): Promise<T> {
+  const closed = (await locateStudio(deps)).installed && !(await studioRunning(deps));
+  if (closed && !(await setUpIn(deps, await context.host(PluginService.StorageRoot)))) await runSetup(deps, context);
+  return create();
+}
+
+/** The panel's New Roblox game, titled as the press says, set up first like the agent's. */
+function createAction(deps: RobloxDeps, context: PluginContext, args: Record<string, unknown>) {
+  const title = typeof args.title === "string" ? { title: args.title } : {};
+  return newGameSetUp(deps, context, () => createGame(deps, context, { snapshot: true, ...title }));
+}
+
 /** What Set it up for me runs next. Never leaves the backend. */
 const ForMeStep = {
   GetStudio: "get-studio",
@@ -646,7 +684,8 @@ async function nextForMe(deps: RobloxDeps, context: PluginContext, snapshot: boo
   const running = await studioRunning(deps);
   if (!(await setUpIn(deps, storage))) return running ? ForMeStep.Restart : ForMeStep.SetUp;
   if (!running || place.written) return ForMeStep.Open;
-  if (await deps.answers()) return ForMeStep.Done;
+  // Studio answers, but opened before the helper was added: a restart loads it.
+  if (await deps.answers()) return (await helperAway(deps, context, storage)) ? ForMeStep.Restart : ForMeStep.Done;
   const mcp = await mcpSwitch(deps);
   // The switch is on: Studio waits for the person's sign-in.
   if (mcp && mcp.on > 0) return ForMeStep.SignIn;
@@ -954,7 +993,16 @@ function publishDeps(deps: RobloxDeps, services: MomentServices, context: Plugin
   const game = context.project ?? "";
   const answer: PublishDeps = {
     assist: (task) => context.host(PluginService.GameEngineAssist, { task }),
-    flush: () => services.flush(game),
+    flush: () => services.flush(game, PUBLISH_FLUSH_MS),
+    toEdit: () =>
+      backToEdit({
+        studio: deps.studio,
+        studioId: services.bound(game),
+        now: deps.now,
+        sleep: async (ms) => {
+          await deps.sleep(ms);
+        },
+      }),
   };
   const project = place.link?.project;
   if (!project) return answer;
@@ -1056,25 +1104,82 @@ async function publishStatus(
     published: Boolean(remote),
     canClick: await canClickHere(deps, context),
   };
-  if (remote) state.placeId = remote.placeId;
-  else if (place.link) state.name = firstPublishName(place);
+  if (remote) {
+    state.placeId = remote.placeId;
+    state.universeId = remote.universeId;
+  } else if (place.link) state.name = firstPublishName(place);
   if (!context.project) return state;
-  const recorded = await readAttempt(await context.host(PluginService.StorageRoot), context.project);
-  if (recorded) state.attempt = attemptNow(recorded, Boolean(remote), deps.now());
+  const storage = await context.host(PluginService.StorageRoot);
+  const recorded = await readAttempt(storage, context.project);
+  if (!recorded) return state;
+  if (await finishedInStudio(deps, recorded, Boolean(remote))) {
+    state.attempt = { phase: RobloxPublishPhase.Published, kind: recorded.kind, at: recorded.at };
+    if (recorded.name) state.attempt.name = recorded.name;
+    await writeAttempt(storage, context.project, state.attempt).catch(() => undefined);
+    return state;
+  }
+  const assisting = recorded.phase === RobloxPublishPhase.Publishing ? await assistUnderWay(context) : true;
+  state.attempt = attemptNow(recorded, Boolean(remote), deps.now(), assisting);
+  // Ended with its turn: recorded so, and a word from the agent after that changes nothing.
+  if (!assisting) await writeAttempt(storage, context.project, state.attempt).catch(() => undefined);
   return state;
 }
 
 /**
- * The publishing turn's word on how its publish ended, for Studio's publishing card: published, or
- * stopped with what Roblox asked the person. Only a publish under way is ended.
+ * Whether a first publish the agent stopped was finished by the person in Studio (its Retry after
+ * Roblox's "Save failed"): Roblox has the place now, and Studio's log records a publish since the press.
  */
-async function publishResult(deps: RobloxDeps, context: PluginContext, args: Record<string, unknown>) {
+async function finishedInStudio(deps: RobloxDeps, attempt: RobloxPublishAttempt, onRoblox: boolean) {
+  const stoppedFirst = attempt.phase === RobloxPublishPhase.Stopped && attempt.kind === RobloxPublishKind.First;
+  return stoppedFirst && onRoblox && (await studioLogged(deps, attempt.at));
+}
+
+/** Whether the game's chat still runs the turn this plugin's assist started; true when the host can't say. */
+async function assistUnderWay(context: PluginContext): Promise<boolean> {
+  return context.host(PluginService.GameEngineAssisting).catch(() => true);
+}
+
+/**
+ * The publishing turn's word on how its publish ended, for Studio's publishing card: published, or
+ * stopped with what Roblox asked the person. A publish the agent could not confirm is published when
+ * Studio's own log records one that went through since the press. Only a publish under way is ended.
+ */
+async function publishResult(
+  deps: RobloxDeps,
+  services: MomentServices,
+  context: PluginContext,
+  args: Record<string, unknown>,
+) {
   if (!context.project) return PUBLISH_PROMPTS.NoAttempt;
+  // Linked now, while Studio still shows the published place: the turn closes Studio once all is done.
+  await relinkQuietly(deps, services, context, true);
   const storage = await context.host(PluginService.StorageRoot);
-  const end = { published: args.published === true, detail: args.detail };
-  return (await endAttempt(storage, context.project, end, deps.now()))
-    ? PUBLISH_PROMPTS.ResultNoted
-    : PUBLISH_PROMPTS.NoAttempt;
+  const said = args.published === true;
+  const pressed = await readAttempt(storage, context.project);
+  const logged = !said && pressed !== undefined && (await studioLogged(deps, pressed.at));
+  const end = logged ? { published: true } : { published: said, detail: args.detail };
+  if (!(await endAttempt(storage, context.project, end, deps.now()))) return PUBLISH_PROMPTS.NoAttempt;
+  if (end.published) await markClose(storage, context.project, deps.now());
+  if (logged) return PUBLISH_PROMPTS.LoggedPublished;
+  return said ? PUBLISH_PROMPTS.PublishedNoted : PUBLISH_PROMPTS.ResultNoted;
+}
+
+/**
+ * `close-after-publish` at a turn's end: the game's Studio closed when this turn published it, as
+ * the person asked, whatever the agent closed itself. Quiet either way.
+ */
+async function closeAfterPublish(deps: RobloxDeps, context: PluginContext): Promise<Record<string, never>> {
+  if (!context.project) return {};
+  const storage = await context.host(PluginService.StorageRoot);
+  if (!(await takeClose(storage, context.project, deps.now()))) return {};
+  const link = await linkHere(context);
+  if (link) await closePlaceStudios(deps, { file: link.project, placeId: link.remote?.placeId });
+  return {};
+}
+
+/** Whether Studio's log on this computer records a publish that went through since `since`. */
+function studioLogged(deps: RobloxDeps, since: number): Promise<boolean> {
+  return publishedSince(studioLogFolder(deps.platform, deps.env, deps.home), since).catch(() => false);
 }
 
 /**
@@ -1092,6 +1197,19 @@ function firstPublishHandler(deps: RobloxDeps, services: MomentServices, asker: 
     if (unfit) return unfit;
     const answer = await firstPublish(place, publishDeps(deps, services, context, place), asker, requested);
     return noteAttempt(deps, context, RobloxPublishKind.First, answer);
+  };
+}
+
+/** `cover-pictures`: the game's icon and thumbnail for Roblox, from its connected Studio's viewport. */
+function coverTool(deps: RobloxDeps, services: MomentServices): Handler {
+  return async (_args, context) => {
+    const ops = await momentOps(deps, services, context);
+    return coverPictures({
+      bound: () => ops.bound(),
+      shot: (timeoutMs) => ops.shot(timeoutMs),
+      folder: context.directory,
+      make: (picture, folder) => makeCover(picture, folder),
+    });
   };
 }
 
@@ -1242,8 +1360,7 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     [RobloxAction.QuitStudio]: (_args, context) => quitStudioAction(deps, context),
     [RobloxAction.Places]: (_args, context) => listPlaces(deps, context, scan),
     [RobloxAction.UsePlace]: (args, context) => usePlace(deps, context, args, scan),
-    [RobloxAction.Create]: (args, context) =>
-      createGame(deps, context, { snapshot: true, ...(typeof args.title === "string" ? { title: args.title } : {}) }),
+    [RobloxAction.Create]: (args, context) => createAction(deps, context, args),
     [RobloxAction.Setup]: (_args, context) => setupAction(deps, context),
     [RobloxAction.UndoSetup]: (_args, context) => undoAction(deps, context),
     [RobloxAction.RestartStudio]: (_args, context) => restartStudio(deps, context),
@@ -1262,7 +1379,7 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     [RobloxTool.LuauFinish]: async (_args, context) => (context.hook ? luauFinishAt(deps, luau, context) : {}),
     [RobloxTool.UseProject]: async (args, context) => (await usePlaceNamed(deps, context, args.project)).message,
     [RobloxTool.ShowSteps]: async (_args, context) => showSteps(context, (await steps(deps, context, slot.job)).open),
-    [RobloxTool.NewGame]: (_args, context) => newGameTool(deps, context),
+    [RobloxTool.NewGame]: (_args, context) => newGameSetUp(deps, context, () => newGameTool(deps, context)),
     [RobloxTool.EngineStatus]: () => engineStatus(deps),
     [RobloxTool.OpenForRun]: atMoment((ops) => openForRun(ops)),
     [RobloxTool.SavePlace]: atMoment(savePlaceAt),
@@ -1270,12 +1387,14 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     [RobloxTool.StudioState]: atMoment((ops) => studioStateAt(ops)),
     [RobloxTool.StudioCrashNote]: async (_args, context) => (context.hook ? crashAnswer() : {}),
     [RobloxTool.TeamNote]: atMoment((ops) => teamNoteAt(ops)),
+    [RobloxTool.CloseAfterPublish]: async (_args, context) => (context.hook ? closeAfterPublish(deps, context) : {}),
     ...playHandlers(deps, services),
     ...askFirstHandlers(deps, services),
     ...modelHandlers(deps, services),
     [RobloxTool.PublishUpdate]: publishHandler(deps, services, PublishAsker.Agent),
     [RobloxTool.FirstPublish]: firstPublishHandler(deps, services, PublishAsker.Agent),
-    [RobloxTool.PublishResult]: (args, context) => publishResult(deps, context, args),
+    [RobloxTool.PublishResult]: (args, context) => publishResult(deps, services, context, args),
+    [RobloxTool.CoverPictures]: coverTool(deps, services),
     ...pressHandlers(deps, slot, luau),
     [RobloxTool.HeroShots]: async (_args, context) => {
       // As the viewport observer: the picture within the time Genex gives.

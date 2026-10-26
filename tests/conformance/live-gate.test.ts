@@ -550,6 +550,55 @@ describe("the harness's other doors into Live", () => {
     assert.equal(lite.core.liveState("pong").reason, null);
   });
 
+  it("a show the person asked for plays when their stage has its game open, while Live holds another out of sight", async () => {
+    const { lite, live, dir } = await stage();
+    const { tool, personSays } = await finishedRun(lite, dir);
+    await lite.core.games.scaffold("tetris");
+    await lite.core.loadPreview({ project: "tetris" });
+    const bounds = previewIpc(lite)("studio:preview.bounds");
+    // Opening pong started nothing: its stage waits for Play, and tetris is paused out of sight.
+    await bounds({ x: 0, y: 0, width: 0, height: 0, watching: false, project: "pong" });
+    const shown = String(await tool("show_build", await personSays("m-open")));
+    assert.match(shown, /now shows the run's build/, shown);
+    assert.deepEqual(
+      live.loads.map((load) => load.project),
+      ["pong", "tetris", "pong"],
+      "the ask is the person's Play",
+    );
+  });
+
+  it("a landing the person asked for plays when their stage has its game open, while Live holds another out of sight", async () => {
+    const { lite, live, dir } = await stage();
+    const { head, tool, personSays } = await finishedRun(lite, dir);
+    await lite.core.games.scaffold("tetris");
+    await lite.core.loadPreview({ project: "tetris" });
+    const bounds = previewIpc(lite)("studio:preview.bounds");
+    await bounds({ x: 0, y: 0, width: 0, height: 0, watching: false, project: "pong" });
+    const landed = String(await tool("land_build", await personSays("m-open-land", "put the build in my game")));
+    assert.match(landed, /^Landed [0-9a-f]{10} in the game folder \(merged\); Live now shows it/, landed);
+    await gitFile(["merge-base", "--is-ancestor", head, "HEAD"], { cwd: dir });
+    assert.equal(live.loads.at(-1)?.project, "pong");
+  });
+
+  it("a show the person asked for never replaces another game on their screen, nor one out of sight their stage does not have open", async () => {
+    const { lite, live, dir } = await stage();
+    const { tool, personSays } = await finishedRun(lite, dir);
+    await lite.core.games.scaffold("tetris");
+    await lite.core.loadPreview({ project: "tetris" });
+    const bounds = previewIpc(lite)("studio:preview.bounds");
+    await bounds({ x: 0, y: 0, width: 640, height: 360, watching: true, project: "tetris" });
+    const watched = String(await tool("show_build", await personSays("m-watched")));
+    assert.match(watched, /Another game is open in Live/, watched);
+    // Home or Play in front: no stage has pong open, and tetris waits paused for the person.
+    await bounds({ x: 0, y: 0, width: 0, height: 0, watching: false, project: null });
+    const away = String(await tool("show_build", await personSays("m-away")));
+    assert.match(away, /Another game is open in Live/, away);
+    assert.deepEqual(
+      live.loads.map((load) => load.project),
+      ["pong", "tetris"],
+    );
+  });
+
   it("a landing nobody asked for lands the build and only offers the game folder to Reload", async () => {
     const { lite, live, behind, dir } = await stage();
     const { head, tool } = await finishedRun(lite, dir);

@@ -1,14 +1,24 @@
 /**
- * The connect screen's quiet row under the subscriptions: "or use" Local models, OpenRouter or
- * OpenCode. Each button is its icon and name, or its progress, or a check once it is ready; the
- * line under the row says what the button pointed at (or focused) offers.
+ * The connect screen's quiet row under the subscriptions: "or use" Local models, OpenRouter,
+ * OpenCode, Grok Build or Cursor. Each button is its icon and name, or its progress, or a check once
+ * it is ready, with Beta beside a beta provider's name; the line under the row says what the button
+ * pointed at (or focused) offers.
  */
 import { useId, useState, type JSX } from "react";
+import { BetaTag } from "../ui/beta-tag.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { LoaderGrid } from "../ui/LoadingState.tsx";
-import { OPENCODE_MARK, OPENROUTER_MARK, type ProviderMark } from "../ui/provider-marks.ts";
+import { CURSOR_MARK, GROK_MARK, OPENCODE_MARK, OPENROUTER_MARK, type ProviderMark } from "../ui/provider-marks.ts";
 import { Check } from "./parts.tsx";
 import { OTHER_WAYS, OtherWay, WAYS_WORDS, WayState, type WayView } from "./ways.ts";
+
+/** Each provider's mark in the row; local models show a chip. */
+const WAY_MARKS: Partial<Record<OtherWay, ProviderMark>> = {
+  [OtherWay.OpenRouter]: OPENROUTER_MARK,
+  [OtherWay.OpenCode]: OPENCODE_MARK,
+  [OtherWay.Grok]: GROK_MARK,
+  [OtherWay.Cursor]: CURSOR_MARK,
+};
 
 /** A provider's mark at icon size, in the button's own ink. */
 function MarkGlyph({ mark }: { mark: ProviderMark }): JSX.Element {
@@ -23,12 +33,12 @@ function MarkGlyph({ mark }: { mark: ProviderMark }): JSX.Element {
 function WayIcon({ way, state }: { way: OtherWay; state: WayState }): JSX.Element {
   if (state === WayState.On) return <Check />;
   if (state === WayState.Busy) return <LoaderGrid />;
-  if (way === OtherWay.OpenRouter) return <MarkGlyph mark={OPENROUTER_MARK} />;
-  if (way === OtherWay.OpenCode) return <MarkGlyph mark={OPENCODE_MARK} />;
+  const mark = WAY_MARKS[way];
+  if (mark) return <MarkGlyph mark={mark} />;
   return <Icon name="chip" />;
 }
 
-/** The row: "or use", the three ways, and the line about the one pointed at. */
+/** The row: "or use", the ways, and the line about the one pointed at. */
 export function OtherWays({
   views,
   onOpen,
@@ -61,6 +71,7 @@ export function OtherWays({
             >
               <WayIcon way={way} state={view.state} />
               {view.label}
+              {view.beta && <BetaTag />}
             </button>
           );
         })}

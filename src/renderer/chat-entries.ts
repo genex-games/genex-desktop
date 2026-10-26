@@ -198,6 +198,8 @@ export type Entry =
       kind: typeof EntryKind.Question;
       id: string;
       text: string;
+      /** The agent's one line above its question: what it found or did. */
+      recap?: string;
       choices: Array<{ id: string; label: string; description?: string }>;
       pending: boolean;
     }
@@ -228,9 +230,12 @@ export type Entry =
       consentSourceId?: string;
       consentSource?: string;
       consentPrompt?: string;
+      /** The line the card shows under its question (the studio's own cards). */
+      consentNote?: string;
       consentExport?: ExportReview;
       /** A connector's card: Always allow is offered. */
       consentAlwaysOffered?: boolean;
+      consentChatOffered?: boolean;
       /** A card with a field the person may edit before Allow: its label and the value it holds. */
       consentInput?: { label: string; value: string };
       /** action "permission": Claude's own Allow / Deny question (or a plan to approve), as first asked, and how it ended. */
@@ -781,6 +786,7 @@ function readConversation(chat: ChatDraft, event: EventEnvelope): boolean {
       kind: EntryKind.Question,
       id: event.id,
       text: asked.question,
+      ...(asked.recap ? { recap: asked.recap } : {}),
       choices: asked.choices ?? [],
       pending: true,
     });
@@ -1943,7 +1949,13 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
   const consentId = consent.consentId ?? event.id;
   const existing = chat.entries.find((e): e is ActionEntry => isConsentCard(e) && e.consentId === consentId);
   const pending = consent.state === "pending";
-  const outcome = () => consentOutcomeWords({ state: consent.state, by: consent.by, always: consent.always });
+  const outcome = () =>
+    consentOutcomeWords({
+      state: consent.state,
+      by: consent.by,
+      always: consent.always,
+      chatOffered: consent.chatOffered,
+    });
   if (existing) {
     existing.pending = pending;
     if (!pending) existing.outcome = outcome();
@@ -1959,8 +1971,10 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
     ...(consent.pluginId ? { consentSourceId: consent.pluginId } : {}),
     consentSource: consent.pluginName || A_PLUGIN,
     consentPrompt: consent.prompt || undefined,
+    ...(consent.note ? { consentNote: consent.note } : {}),
     consentExport: consent.exportReview,
     ...(consent.alwaysOffered ? { consentAlwaysOffered: true } : {}),
+    ...(consent.chatOffered ? { consentChatOffered: true } : {}),
     ...(consent.input ? { consentInput: consent.input } : {}),
     text: consentAskWords({
       pluginName: consent.pluginName,

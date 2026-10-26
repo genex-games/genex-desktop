@@ -26,7 +26,7 @@ Read the pricing reference with
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.15 sha256 01274d76ee89e945428efeaa3970a63575f2e9727e481980fec9bea726f3c14d -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.17 sha256 18d32f25298790f1efc9dc3d757aa84cf72e63476448cf9fc73c3594584f2135 -->
 ---
 name: genex-llm-in-games
 description: Call a language model from inside a running game — an NPC that answers in its own words, a quest written for this save, a judge that reads what the player typed. The PLAYER pays and approves, on a Genex surface the game cannot forge. Covers the two modes (a popup per call, or one standing budget then many silent calls), benchmarking the price before declaring it, the receiver pattern, and honest handling of every refusal.
@@ -264,7 +264,7 @@ function applyGeneration(res) {     // THE only place output becomes game state
 - Boot reads any stored id, calls `waitForGeneration(savedId)`, and passes the
   result to the **same** `applyGeneration`. One writer, two entry points, is the
   difference between "works once" and "survives a reload".
-- Output is **data, never authority**: it may not grant coin, items,
+- Output is **data, never authority**: it may not grant Nex, items,
   entitlements, scores or progression by saying so. `source: 'external'` carries
   `modelProvenance: 'unverified'` because it is user-supplied — check it exactly
   as you would check typed player input.

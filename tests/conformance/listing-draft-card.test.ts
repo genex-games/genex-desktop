@@ -252,6 +252,7 @@ const ICE: LocalListingDraft = {
   tags: [],
   shareable: false,
   contentHash: "3f9a".repeat(16),
+  picture: null,
 };
 const NEWER = "b".repeat(64);
 

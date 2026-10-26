@@ -3,28 +3,20 @@
  * Plugins, with two tabs. Browse lists other creators' shared items with a search and the item on
  * show beside them; its Add to \<game> allows the item in one of the account's games on Genex, then
  * opens that game's chat and sends the agent the prompt that puts it in ("Your agent puts it in the
- * game."). Selling lists the account's own items with the ready / on-hold strip; New item opens the
- * chosen game's chat with the cursor in its composer, which asks for an item. Every number is
- * genex.games' own; every press is the person's, carried out by main.
+ * game."). Selling lists the account's own items with the ready / on-hold strip, which opens the Nex
+ * sheet. Both tabs keep one width, so nothing moves when the tab changes; items are made in a game's
+ * chat, so the page offers no New item. Every number is genex.games' own; every press is the
+ * person's, carried out by main.
  */
 import type { JSX } from "react";
 import { useCallback, useEffect, useId, useMemo } from "react";
 import { type BrowseItem, isStoreRefused, type SellingRow } from "../../../shared/store-items.ts";
-import { chatPrompt, composeInChatWhenOpen } from "../../compose-in-chat.ts";
+import { composeInChatWhenOpen } from "../../compose-in-chat.ts";
 import { SIDEBAR_TOGGLE, SidebarToggle } from "../../shell/use-shell-chrome.ts";
 import { useItems, useLibrary, usePeople, useThreads } from "../../state/hooks.ts";
-import {
-  addTarget,
-  askedForItem,
-  hostedGames,
-  ItemsRead,
-  ItemsTab,
-  localGameOf,
-  targetChosen,
-} from "../../state/items.ts";
+import { addTarget, hostedGames, ItemsRead, ItemsTab, localGameOf, targetChosen } from "../../state/items.ts";
 import { studio } from "../../state/studio.ts";
 import { sidebarGames, threadMeta } from "../../state/threads.ts";
-import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/icons.tsx";
 import { ITEMS_WORDS } from "../../words.ts";
 import { type AddToGame, BrowseTab } from "./BrowseTab.tsx";
@@ -40,8 +32,6 @@ interface Props {
   onToggleSidebar: () => void;
   /** Open a local game's chat; `focus` puts the cursor in its composer. */
   onOpenGame: (game: string, focus: boolean) => Promise<void>;
-  /** New item with no game yet: start one. */
-  onNewGame: () => void;
 }
 
 /** The account's local games in the sidebar's order, and the one whose chat was open last. */
@@ -85,7 +75,7 @@ function useItemsReads(names: readonly string[]): { retryBrowse: () => void; ret
 }
 
 /** What Browse's Add to and Selling's presses do with the account's local games. */
-function useGameActions(onOpenGame: Props["onOpenGame"], onNewGame: () => void) {
+function useGameActions(onOpenGame: Props["onOpenGame"]) {
   const hosted = useItems((s) => s.hosted);
   const target = useItems((s) => s.target);
   const { games, open } = useLocalGames();
@@ -114,11 +104,6 @@ function useGameActions(onOpenGame: Props["onOpenGame"], onNewGame: () => void) 
     // Asked first in the panel; what genex.games refuses shows under it.
     onRemove: (item: BrowseItem, game: string) => void studio().items.removeFromGame(item.id, game),
   };
-  const newItem = () => {
-    if (!chosen) return onNewGame();
-    studio().items.setState((state) => askedForItem(state, chosen), true);
-    void onOpenGame(chosen, true).then(() => requestAnimationFrame(() => chatPrompt()?.focus()));
-  };
   const askAgent = (row: SellingRow) => {
     const game = localGameOf(hosted, row.game?.id);
     if (!game) return;
@@ -126,7 +111,7 @@ function useGameActions(onOpenGame: Props["onOpenGame"], onNewGame: () => void) 
     void onOpenGame(game, true);
   };
   const askable = (row: SellingRow) => localGameOf(hosted, row.game?.id) !== null;
-  return { add, newItem, askAgent, askable, ...reads };
+  return { add, askAgent, askable, ...reads };
 }
 
 /** Browse and Selling, as a pair of tabs; the arrow keys move between them. A tab chosen is read again when its last read is old. */
@@ -180,18 +165,16 @@ function Search(): JSX.Element {
 
 /**
  * The page's head, which the window drags by: the sidebar's toggle while it is hidden, the title,
- * the tabs, then Browse's search or Selling's New item.
+ * the tabs, then Browse's search.
  */
 function Head({
   tab,
   panel,
   sidebarHidden,
   onToggleSidebar,
-  onNewItem,
 }: Pick<Props, "sidebarHidden" | "onToggleSidebar"> & {
   tab: ItemsTab;
   panel: string;
-  onNewItem: () => void;
 }): JSX.Element {
   const searchable = useItems((s) => s.browse.read !== ItemsRead.SignedOut && s.browse.read !== ItemsRead.Off);
   return (
@@ -211,32 +194,16 @@ function Head({
       )}
       <h1 className="items-title">{WORDS.title}</h1>
       <Tabs tab={tab} panel={panel} />
-      <div className="items-head-end">
-        {tab === ItemsTab.Browse && searchable && <Search />}
-        {tab === ItemsTab.Selling && (
-          <Button variant="default" className="no-drag" data-items-new onClick={onNewItem}>
-            <Icon name="sparkle" size={14} />
-            {WORDS.newItem}
-          </Button>
-        )}
-      </div>
+      <div className="items-head-end">{tab === ItemsTab.Browse && searchable && <Search />}</div>
     </div>
   );
 }
 
-export function ItemsPage({ sidebarHidden, onToggleSidebar, onOpenGame, onNewGame }: Props): JSX.Element {
+export function ItemsPage({ sidebarHidden, onToggleSidebar, onOpenGame }: Props): JSX.Element {
   const panel = useId();
   const tab = useItems((s) => s.tab);
-  const actions = useGameActions(onOpenGame, onNewGame);
-  const head = (
-    <Head
-      tab={tab}
-      panel={panel}
-      sidebarHidden={sidebarHidden}
-      onToggleSidebar={onToggleSidebar}
-      onNewItem={actions.newItem}
-    />
-  );
+  const actions = useGameActions(onOpenGame);
+  const head = <Head tab={tab} panel={panel} sidebarHidden={sidebarHidden} onToggleSidebar={onToggleSidebar} />;
   return (
     <section data-items-page={tab} aria-label={WORDS.title} className="items-page">
       {tab === ItemsTab.Browse ? (

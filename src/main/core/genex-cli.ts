@@ -465,6 +465,11 @@ export class GenexCliService {
     return hostedProjectOf(await this.#publishRecord(project));
   }
 
+  /** The game's hosted Genex project id, as its publish record names it; null before its first publish. */
+  async hostedProjectId(project: string): Promise<string | null> {
+    return (await this.#hostedProjectOrNull(project))?.id ?? null;
+  }
+
   /**
    * Whether the game is public on Genex: its publish workspace names a hosted project that its publish
    * marked published. A publish makes the project first and marks it last, so one that failed part-way,

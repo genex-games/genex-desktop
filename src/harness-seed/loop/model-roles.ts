@@ -42,6 +42,8 @@ export const EngineId = {
   OpenCode: "opencode",
   OpenRouter: "openrouter",
   LocalServer: "local-server",
+  Grok: "grok",
+  Cursor: "cursor",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -63,6 +65,8 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.OpenCode,
   EngineId.OpenRouter,
   EngineId.LocalServer,
+  EngineId.Grok,
+  EngineId.Cursor,
 ];
 
 /** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */
@@ -125,6 +129,7 @@ export const DELEGATED_ENGINES = [EngineId.ClaudeCode, EngineId.Codex];
 export const ENGINE_LABELS: Record<string, string> = {
   [EngineId.ClaudeCode]: "Claude Code",
   [EngineId.Codex]: "Codex",
+  [EngineId.Cursor]: "Cursor",
 };
 
 /** "Claude Code", "Codex", or the id itself for an engine nobody named. */
@@ -333,8 +338,8 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
 }
 
 /**
- * How a Codex or OpenCode session spells a studio tool. Claude Code receives the studio's tools as
- * MCP tools and calls them by name; Codex and OpenCode have no tool channel of the studio's, so the
+ * How a Codex, OpenCode, Grok Build or Cursor session spells a studio tool. Claude Code receives the
+ * studio's tools as MCP tools and calls them by name; the others have no tool channel of the studio's, so the
  * studio ships a bridge and the session runs it as a shell command. The two spellings are the ONLY thing in
  * the whole harness that branches on the engine, and every prompt that mentions a tool renders
  * it through `toolCall` — a Claude session that reads a bridge command tries to run it, and a
@@ -347,7 +352,7 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
 export const BRIDGE_TOOL_CMD = "node .studio/bridge/tool.mjs";
 
 /** The engines whose sessions reach the studio's tools through the bridge command. */
-const BRIDGE_ENGINES: readonly string[] = [EngineId.Codex, EngineId.OpenCode];
+const BRIDGE_ENGINES: readonly string[] = [EngineId.Codex, EngineId.OpenCode, EngineId.Grok, EngineId.Cursor];
 
 /** One studio tool, spelled the way this engine's session must write it. */
 export function toolCall(engine: string | null | undefined, name: unknown): string {

@@ -7,7 +7,12 @@ name: Release canary
 # secret). A failing run opens or updates one issue labelled `canary`; a passing one closes it.
 # A dispatch with `package_run` checks an unreleased build instead: the Azure machines install the
 # Windows installer that Package workflow run made, its commit's e2e runner drives the agent
-# command, and no other machine runs and no issue is touched.
+# command, and no other machine runs and no issue is touched. With `upgrade_from` as well, each
+# Azure machine's owner installs that release first, starts it once (its sandbox set up by it), and
+# installs the build over it as its update: the update card, its one approval prompt (photographed
+# and approved on the owner's desktop) and the start on the updated sandbox are steps of their own.
+# The build must carry a higher version than that release (Package's `version` input), or Squirrel
+# has nothing to update.
 on:
   release:
     types: [published]
@@ -21,6 +26,9 @@ on:
         required: false
       package_run:
         description: A Package workflow run whose Windows installer the Azure machines install instead of a release
+        required: false
+      upgrade_from:
+        description: With package_run, a release tag the owner installs first and the build updates (e.g. v0.1.23)
         required: false
 permissions:
   contents: read
@@ -44,7 +52,12 @@ jobs:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
           AZURE: ${{ vars.CANARY_AZURE }}
           PACKAGE_RUN: ${{ inputs.package_run }}
+          UPGRADE_FROM: ${{ inputs.upgrade_from }}
         run: |
+          if [ -n "$UPGRADE_FROM" ]; then
+            [ -n "$PACKAGE_RUN" ] || { echo "::error::upgrade_from updates a package_run build"; exit 1; }
+            case "$UPGRADE_FROM" in v[0-9]*) ;; *) echo "::error::Not a release tag: $UPGRADE_FROM"; exit 1 ;; esac
+          fi
           if [ -n "$PACKAGE_RUN" ]; then
             [ "$AZURE" = on ] || { echo "::error::A build is checked on the Azure machines, and CANARY_AZURE is not on"; exit 1; }
             read -r workflow sha <<< "$(gh run view "$PACKAGE_RUN" -R "$GITHUB_REPOSITORY" --json workflowName,headSha -q '"\(.workflowName) \(.headSha)"')"
@@ -213,13 +226,14 @@ jobs:
         run: zip -qr "$RUNNER_TEMP/canary-src.zip" scripts/canary src/shared/duration.ts package.json release-src $(test -d canary-package && echo canary-package) -x 'release-src/.git/*'
       - name: Canary (${{ matrix.machine }}, owner then standard user)
         env:
+          UPGRADE_FROM: ${{ inputs.upgrade_from }}
           IMAGE: ${{ matrix.machine == 'windows-11' && vars.CANARY_WIN11_IMAGE || matrix.machine == 'windows-10' && vars.CANARY_WIN10_IMAGE || '' }}
           SIZE: ${{ vars.CANARY_AZURE_SIZE }}
           LOCATION: ${{ vars.CANARY_AZURE_LOCATION }}
         run: >-
           node scripts/canary/azure.ts run --machine "${{ matrix.machine }}" --image "${IMAGE:-${{ matrix.image }}}"
           --tag "$TAG" --source "$RUNNER_TEMP/canary-src.zip" --evidence "$RUNNER_TEMP/canary/${{ matrix.machine }}"
-          --size "$SIZE" --location "$LOCATION"
+          --size "$SIZE" --location "$LOCATION" --upgrade-from "$UPGRADE_FROM"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
         with:

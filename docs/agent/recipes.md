@@ -163,7 +163,8 @@ No core change. See [the plugin guide](../PLUGIN_GUIDE.md) and [plugin contract]
 
 1. Plugin stage button: declare `toolbar[]` with a matching `actions[]` in the manifest; the
    host renders it through `src/renderer/panels/PluginToolbar.tsx`. No core change.
-   An engine's button (one per engine plugin) names the engine's `facts` and an `icon`, says its
+   An engine's button (one per engine plugin) names the engine's `facts` and an `icon`, is labelled
+   with the engine's short name, stands in the chat header, says its
    status as a dot, and opens a panel built to [Engine panels](../../design/genex/README.md#engine-panels)
    (`src/plugins/unreal/panel.html` and `src/plugins/unity/panel.html` are the models).
 2. Built-in stage view: extend `StageView` and `VIEWS` in `src/renderer/stage.ts`, the

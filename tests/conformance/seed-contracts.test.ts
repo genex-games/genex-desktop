@@ -297,8 +297,8 @@ describe("a compaction's end of the chat's sessions (shared/chat-rewind.ts ↔ l
 });
 
 describe("the run inbox's wrap-up (shared/coordinator.ts ↔ loop/run-inbox.ts)", () => {
-  it("names the wrap-up the same way, in its persisted spelling", () => {
-    assert.deepEqual(coordinator.RunControlAction, { Finish: "finish" });
+  it("names the wrap-up and the chat's stop the same way, in their persisted spelling", () => {
+    assert.deepEqual(coordinator.RunControlAction, { Finish: "finish", Stop: "stop" });
     assert.deepEqual(seedInbox.RunControlAction, coordinator.RunControlAction);
   });
 

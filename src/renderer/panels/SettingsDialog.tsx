@@ -1,10 +1,10 @@
-import { type JSX, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type JSX, type KeyboardEvent, lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { EngineDescriptor } from "../types.ts";
 import { SettingsSection } from "../settings-navigation.ts";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { AppearanceSection } from "./AppearanceSection.tsx";
-import { ModelProvidersSection, type ModelSettingsProps } from "./ModelsSection.tsx";
+import type { ModelSettingsProps } from "./ModelsSection.tsx";
 import { LocalModelsSection } from "./LocalModelsSection.tsx";
 import { HarnessSection } from "./HarnessSection.tsx";
 import { GamesSection } from "./GamesSection.tsx";
@@ -16,6 +16,14 @@ import { AccountSection, AccountSignOut } from "./AccountSection.tsx";
 import { usePeople } from "../state/hooks.ts";
 import { ABOUT_WORDS, ACCOUNT_WORDS, PRIVACY_WORDS, STORAGE_WORDS } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
+
+/**
+ * Model Providers, loaded when Settings first shows it: its rows (every provider's sign-in, install
+ * and account controls) are not part of what a window reads before it shows.
+ */
+const ModelProvidersSection = lazy(() =>
+  import("./ModelsSection.tsx").then((section) => ({ default: section.ModelProvidersSection })),
+);
 
 interface SectionTab {
   id: SettingsSection;
@@ -73,7 +81,11 @@ function SectionBody({
   if (section === SettingsSection.Storage) return <StorageSection />;
   if (section === SettingsSection.Appearance) return <AppearanceSection />;
   if (section === SettingsSection.Providers)
-    return <ModelProvidersSection engines={engines} onEnginesRefresh={onEnginesRefresh} />;
+    return (
+      <Suspense fallback={null}>
+        <ModelProvidersSection engines={engines} onEnginesRefresh={onEnginesRefresh} />
+      </Suspense>
+    );
   if (section === SettingsSection.Harness) return <HarnessSection />;
   if (section === SettingsSection.Permissions) return <PermissionsSection />;
   if (section === SettingsSection.Privacy) return <PrivacySection />;

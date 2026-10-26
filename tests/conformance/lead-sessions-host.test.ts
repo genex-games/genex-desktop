@@ -1500,7 +1500,7 @@ function standInHostTools(core: CoreLite["core"]) {
     calls.push({ tool, binding: { ...binding } });
     return answers.plugin(binding, signal);
   }) as never;
-  core.mcp.toolsFor = (async () => [CONNECTOR_TOOL]) as never;
+  core.mcp.toolsReport = (async () => ({ tools: [CONNECTOR_TOOL], silent: [] })) as never;
   core.mcp.owns = ((name: string) => name === CONNECTOR_TOOL.name) as never;
   core.mcp.guidance = ((tools?: Array<{ name: string }>) => (tools?.length ? CONNECTOR_GUIDANCE : "")) as never;
   core.mcp.tool = (async (tool: string, _args: unknown, binding: HostToolCall["binding"], signal: AbortSignal) => {

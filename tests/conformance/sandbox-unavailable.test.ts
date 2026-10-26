@@ -96,6 +96,18 @@ describe("sandbox problem mapping", () => {
     assert.deepEqual(problem?.windowsNeeds, needs);
   });
 
+  it("an install by another release asks for the install again, and a disabled Secondary Logon for the service", () => {
+    const typed = (code: string) => Object.assign(new Error("anything at all"), { code });
+    const reinstall = windowsSetupProblem(typed("reinstall_required"));
+    assert.equal(reinstall?.code, SandboxProblemCode.NotProvisioned);
+    assert.deepEqual(reinstall?.windowsNeeds, [WindowsSetupNeed.Reinstall]);
+    assert.deepEqual(windowsSetupProblem(typed("seclogon_disabled"))?.windowsNeeds, [WindowsSetupNeed.LogonService]);
+    // A first install says nothing, which Set up reads as the sandbox install alone.
+    assert.equal(windowsSetupProblem(typed("not_provisioned"))?.windowsNeeds, undefined);
+    // A loopback mode another program installed is not Genex's to replace: it stays the start's error.
+    assert.equal(windowsSetupProblem(typed("wfp_loopback_mismatch")), null);
+  });
+
   it("Windows initialize errors map by their code, never by their words", () => {
     for (const code of ["not_provisioned", "wfp_fence_inactive"]) {
       const error = Object.assign(new Error("anything at all"), { code });

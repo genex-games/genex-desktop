@@ -30,6 +30,7 @@ import { appIdentity, pendingKindRule, unknownKindRules } from "./project-prompt
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 import { folderLabelOf } from "./workers/identity.ts";
+import { withoutSteeringBacklog } from "./steering-backlog.ts";
 
 /** What the system prompt stands on besides the tools and the turn's briefing: read once per turn. */
 export interface StandingContext {
@@ -164,7 +165,8 @@ async function readGameNotes(ctx: HarnessCtx, project: string): Promise<string |
   try {
     const text = await ctx.call(HostMethod.GameRead, { project, file: "NOTES.md" });
     const body = typeof text === "string" ? text : ((text as { text?: string } | null)?.text ?? "");
-    const trimmed = body.trim();
+    // An older build's late steering is that build's, never this turn's (steering-backlog.ts).
+    const trimmed = withoutSteeringBacklog(body).trim();
     return trimmed.length > 0 ? trimmed.slice(0, GAME_NOTES_CHARS) : null;
   } catch {
     return null;

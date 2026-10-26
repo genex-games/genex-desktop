@@ -46,6 +46,26 @@ const CONTROLS_BUT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f]/g;
 
 /** Whether a value is a local draft's id as the CLI makes one: all a host-run command may name. */
 export const isLocalItemId = (value: unknown): value is string => typeof value === "string" && LOCAL_ID.test(value);
+
+/**
+ * A local draft's picture as the CLI names it (contract "Local item drafts"): one file in the
+ * draft's own folder, `.genex/items/<localId>/<name>`; the CLI gives each stored file its one name.
+ */
+const LOCAL_PICTURE = /^\.genex\/items\/(local_[a-z0-9]{12})\/([a-z0-9][a-z0-9._-]{0,63})$/i;
+
+/** The draft `localId`'s picture path, when `value` names a file in that draft's own folder; else null. */
+export function localPictureOf(value: unknown, localId: string): string | null {
+  if (typeof value !== "string") return null;
+  const match = LOCAL_PICTURE.exec(value);
+  const name = match?.[2] ?? "";
+  return match?.[1] === localId && !name.includes("..") ? value : null;
+}
+
+/** Whether a game file is a local draft's picture as the CLI names one: what Studio reads for its card. */
+export const isLocalPicture = (file: string): boolean => {
+  const match = LOCAL_PICTURE.exec(file);
+  return Boolean(match?.[1]) && localPictureOf(file, match?.[1] ?? "") !== null;
+};
 /** Whether a value is a content hash as the CLI prints one. */
 export const isContentHash = (value: unknown): value is string => typeof value === "string" && CONTENT_HASH.test(value);
 
@@ -90,8 +110,10 @@ export interface LocalListingDraft {
   tags: string[];
   /** "Other games can use it". */
   shareable: boolean;
-  /** The CLI's hash of its fields and files: what the person's "Sell when published" approves. */
+  /** The CLI's hash of its fields and files. */
   contentHash: string;
+  /** Its picture in the game, `.genex/items/<localId>/<name>`, once it has one. */
+  picture: string | null;
 }
 
 /** What an `item_drafted` record carries: an item on genex.games, or a local draft. */
@@ -209,6 +231,7 @@ export function localDraftOf(value: unknown, project: string): LocalListingDraft
     tags,
     shareable,
     contentHash,
+    picture: localPictureOf(value.picture, localId),
   };
 }
 

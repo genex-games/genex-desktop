@@ -46,6 +46,16 @@ import {
 } from "../../scripts/canary/results.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { newestSquirrelApp } from "../../scripts/canary/platforms.ts";
+import {
+  approvalsBetween,
+  approvalVerdict,
+  readApprovals,
+  SEEDED_GAME,
+  seedGame,
+  upgradeCardLine,
+} from "../../scripts/canary/upgrade.ts";
+import { setupGaps } from "../../src/substrate/windows-sandbox.ts";
 
 const ASSETS = "https://github.com/genex-games/genex-desktop/releases/download";
 const DMG = PUBLIC_LINKS[PackageKind.Dmg];
@@ -559,5 +569,66 @@ describe("release canary settle", () => {
     const clock = heldClock();
     const settled = await waitForIdle(samples(clock, [0]), clock);
     assert.deepEqual(settled, { idle: true, waitedMs: QUIET_SAMPLES * SAMPLE_MS, lastBusy: 0 });
+  });
+});
+
+describe("release canary upgrade", () => {
+  test("finds the update card's problem in main's log, in the setup check's words or srt-win's", () => {
+    const user = { provisioned: true, credPresent: true, markerVersion: 2, setupVersion: 3 };
+    const [gap] = setupGaps({ user, wfp: { state: "installed" }, logonService: null });
+    assert.ok(gap, "the setup check names the earlier release's install");
+    const line = `2026-10-26T10:00:00.000Z [main] sandbox unavailable: not-provisioned ${gap.detail}`;
+    assert.equal(upgradeCardLine(`${line}\n`), `[main] sandbox unavailable: not-provisioned ${gap.detail}`);
+    const srt =
+      "[main] sandbox unavailable: not-provisioned The Windows sandbox on this machine was set up by a different release";
+    assert.ok(upgradeCardLine(srt));
+    // A first install's card, or a studio that came up, is no update card.
+    assert.equal(upgradeCardLine("[main] sandbox unavailable: not-provisioned Sandbox user is not provisioned"), null);
+    assert.equal(upgradeCardLine("[main] studio ready at 9000 ms"), null);
+  });
+
+  test("counts the approval prompts the Update button raised, and only one passes", () => {
+    const text = [
+      '\uFEFF{"n":1,"at":"2026-10-26T10:00:00.000Z","pid":10,"approved":"pressed Yes","shot":"uac-1.png"}',
+      "not a line",
+      '{"n":2,"at":"2026-10-26T10:05:00.000Z","pid":11,"approved":"pressed Yes","shot":"uac-2.png"}',
+      '{"n":3,"at":"2026-10-26T10:06',
+    ].join("\r\n");
+    const prompts = readApprovals(text);
+    assert.deepEqual(
+      prompts.map((prompt) => prompt.n),
+      [1, 2],
+    );
+    const pressed = Date.parse("2026-10-26T10:04:00.000Z");
+    const ready = Date.parse("2026-10-26T10:08:00.000Z");
+    const update = approvalsBetween(prompts, pressed, ready);
+    assert.deepEqual(
+      update.map((prompt) => prompt.n),
+      [2],
+      "the earlier release's own setup prompt is not the update's",
+    );
+    assert.equal(approvalVerdict(update).outcome, StepOutcome.Pass);
+    assert.equal(approvalVerdict([]).outcome, StepOutcome.Fail);
+    assert.equal(approvalVerdict(prompts).outcome, StepOutcome.Fail, "two prompts for one update");
+    // Without the helper Windows elevated without asking: no prompt is no proof.
+    const unasked = approvalVerdict(update, false);
+    assert.equal(unasked.outcome, StepOutcome.Fail);
+    assert.match(unasked.detail, /without asking/);
+  });
+
+  test("takes Squirrel's newest app folder, never the one its update replaces", () => {
+    assert.equal(newestSquirrelApp(["app-0.1.23", "packages", "app-0.1.99"]), "app-0.1.99");
+    assert.equal(newestSquirrelApp(["app-0.1.9", "app-0.1.23"]), "app-0.1.23", "by number, not by text");
+    assert.equal(newestSquirrelApp(["app-0.1.23"], "app-0.1.23"), null, "the update's folder is not there yet");
+    assert.equal(newestSquirrelApp(["app-0.1.23", "app-0.1.99"], "app-0.1.23"), "app-0.1.99");
+  });
+
+  test("seeds a game with a Claude Code folder and a dependency tree in the earlier release's library", async () => {
+    const userData = await tmpDir("canary-seed-");
+    const game = await seedGame(userData);
+    assert.equal(game, path.join(userData, "workspaces", "games", SEEDED_GAME));
+    const files = await readdir(game, { recursive: true });
+    assert.ok(files.includes(path.join(".claude", "settings.json")));
+    assert.ok(files.filter((file) => file.endsWith(".js")).length >= 1000);
   });
 });

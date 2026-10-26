@@ -9,6 +9,7 @@ export const RESERVED_TOOLBAR_LABELS: ReadonlySet<string> = new Set([
   "Ready",
   "Live",
   "Builds",
+  "Shop",
   "Assets",
   "Export",
   "Plugins",

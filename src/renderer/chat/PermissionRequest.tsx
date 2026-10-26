@@ -29,16 +29,15 @@ import {
 } from "../words.ts";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { type ChatChoice, ChatQuestion } from "./ChatQuestion.tsx";
+import type { OwnAnswer } from "./waiting-cards.ts";
 
 /** The card's own words. */
 const WORDS = {
-  allow: t("Allow"),
-  allowOnce: t("Just this once."),
+  allowOnce: t("Allow once"),
   deny: t("Deny"),
   keepPlanningPlaceholder: t("Keep planning: what should change?"),
   reviewRequest: t("Review permission request"),
   reviewPlan: t("Review plan"),
-  details: t("Request details"),
   plan: t("Plan"),
 } as const;
 
@@ -78,38 +77,41 @@ function RequestSubject({ event }: { event: ToolPermissionEvent }): JSX.Element 
   );
 }
 
-/** Everything else Claude Code sent: why it asks (when not already said) and the tool's input. */
-function RequestDetails({ event, reason }: { event: ToolPermissionEvent; reason?: string }): JSX.Element | null {
+/** Everything else Claude Code sent, under Details: why it asks (when not already said) and the tool's input. */
+function requestDetails(event: ToolPermissionEvent, reason: string | undefined): JSX.Element | undefined {
   const input = Object.keys(event.input ?? {}).length ? JSON.stringify(event.input, null, 2) : "";
-  const plan = isPlanRequest(event) ? event.plan : undefined;
-  if (!input && !reason && !plan) return null;
+  if (!input && !reason) return undefined;
   return (
-    <details className="group/request mt-1">
-      <summary className="chat-disclosure">
-        {WORDS.details}
-        <Icon name="chevron-right" size={14} className="chat-chevron group-open/request:rotate-90" />
-      </summary>
+    <>
       {reason && (
-        <p className="mt-1 text-chat-sub text-ink-3 [overflow-wrap:anywhere]">
+        <span className="block [overflow-wrap:anywhere]">
           <FileText text={reason} />
-        </p>
+        </span>
       )}
-      {plan ? (
-        <div className="mt-1">
-          <Markdown text={plan} />
-        </div>
-      ) : (
-        input && (
-          <pre className="chat-tool-code mt-1">
-            <SyntaxCode text={input} language="json" />
-          </pre>
-        )
+      {input && (
+        <pre className="chat-tool-code mt-1">
+          <SyntaxCode text={input} language="json" />
+        </pre>
       )}
-    </details>
+    </>
   );
 }
 
-/** A plan from Plan mode, approved into the mode work continues in, or sent back with words. */
+/**
+ * What the composer does while a request waits: its words go to Claude instead (a Deny with them),
+ * and for a plan they say what should change.
+ */
+export function permissionOwnAnswer(
+  event: ToolPermissionEvent,
+  onAnswer: (answer: ToolPermissionAnswer) => Promise<void>,
+): OwnAnswer {
+  return {
+    placeholder: isPlanRequest(event) ? WORDS.keepPlanningPlaceholder : permissionInsteadWords(event),
+    send: (message) => onAnswer({ decision: PermissionDecision.Deny, message }),
+  };
+}
+
+/** A plan from Plan mode, approved into the mode work continues in; words in the composer send it back. */
 function PlanRequest({
   event,
   onAnswer,
@@ -127,12 +129,10 @@ function PlanRequest({
       title={permissionTitleWords(event)}
       choices={choices}
       reopenLabel={WORDS.reviewPlan}
-      answerPlaceholder={WORDS.keepPlanningPlaceholder}
       onConfirm={(id) => {
         const choice = PLAN_CHOICES.find((option) => option.id === id);
         return choice ? onAnswer({ decision: PermissionDecision.ApprovePlan, mode: choice.id }) : undefined;
       }}
-      onAnswerText={(message) => onAnswer({ decision: PermissionDecision.Deny, message })}
     >
       {event.plan && <PlanPreview plan={event.plan} />}
     </ChatQuestion>
@@ -165,8 +165,8 @@ function choiceAnswer(id: string): ToolPermissionAnswer {
 
 /**
  * Claude asking before it acts: Allow once, the standing permission Claude Code offers (every grant
- * named), or Deny, with words for Claude typed in the card. A plan from Plan mode is approved the
- * same way, choosing the mode work continues in.
+ * named), or Deny; words for Claude go in the composer (`permissionOwnAnswer`). A plan from Plan
+ * mode is approved the same way, choosing the mode work continues in.
  */
 export function PermissionRequest({
   event,
@@ -183,7 +183,7 @@ export function PermissionRequest({
   const question = commandOf(event) ? permissionCommandWords(event) : permissionTitleWords(event);
   const description = event.description || event.reason;
   const choices: ChatChoice[] = [
-    { id: PermissionDecision.Allow, label: WORDS.allow, description: WORDS.allowOnce },
+    { id: PermissionDecision.Allow, label: WORDS.allowOnce },
     ...(event.always?.length ? [{ id: PermissionDecision.Always, label: alwaysWords(event.always) }] : []),
     { id: PermissionDecision.Deny, label: WORDS.deny },
   ];
@@ -191,14 +191,12 @@ export function PermissionRequest({
     <ChatQuestion
       title={question}
       description={description}
+      details={requestDetails(event, event.description && event.reason ? event.reason : undefined)}
       choices={choices}
       reopenLabel={WORDS.reviewRequest}
-      answerPlaceholder={permissionInsteadWords(event)}
       onConfirm={(id) => onAnswer(choiceAnswer(id))}
-      onAnswerText={(message) => onAnswer({ decision: PermissionDecision.Deny, message })}
     >
       <RequestSubject event={event} />
-      <RequestDetails event={event} reason={event.description && event.reason ? event.reason : undefined} />
     </ChatQuestion>
   );
 }

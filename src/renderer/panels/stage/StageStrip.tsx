@@ -204,7 +204,7 @@ function ViewMark({
 }
 
 /**
- * The views folded into one button (`strip-fold.ts`): the current one in the switcher's accent and a
+ * The views folded into one button (`strip-fold.ts`): the current one in the switcher's selected tint and a
  * chevron, opening a menu of every view with the current one ticked. The button lists the views'
  * keys (`data-stage-views`) and names the current one (`data-stage-current`); each row keeps its
  * tab's `data-stage-action`, so a check finds and presses the same view either way.
@@ -240,9 +240,9 @@ function ViewMenu({
           aria-label={STAGE_WORDS.viewsButton(current.label)}
           data-stage-views={tabs.map((tab) => tab.key).join(" ")}
           data-stage-current={current.key}
-          className="no-drag surface-glass flex shrink-0 cursor-pointer items-center gap-1 rounded-lg p-0.5 pe-1.5 text-control-text transition-colors duration-(--duration-quick) hover:text-control-text-hover"
+          className="no-drag surface-glass me-1 flex shrink-0 cursor-pointer items-center gap-1 rounded-lg p-0.5 pe-1.5 text-control-text transition-colors duration-(--duration-quick) hover:text-control-text-hover"
         >
-          <span className="flex h-7 items-center gap-1.5 rounded-md bg-[var(--switch-fill,var(--accent-fill))] px-2.5 font-mono text-body-sm text-accent-foreground">
+          <span className="selected-tint flex h-7 items-center gap-1.5 rounded-md px-2.5 font-mono text-body-sm">
             <ViewMark tab={current} views={views} plugins={plugins} />
             {current.label}
           </span>
@@ -277,6 +277,7 @@ export function StageStrip({
   loaded,
   project,
   hasBuilds,
+  hasShop,
   buildsLive,
   beside,
   stageView,
@@ -297,6 +298,8 @@ export function StageStrip({
   loaded: GameProject | null;
   project: string | null;
   hasBuilds: boolean;
+  /** The game sells something: Shop joins the tabs. */
+  hasShop: boolean;
   buildsLive: boolean;
   beside: BesideTarget | null;
   stageView: StageView;
@@ -339,7 +342,7 @@ export function StageStrip({
     return () => onToolbarOpen(false);
   }, [pluginsOpen, viewsOpen, onToolbarOpen]);
   const secondRow = step === StripFoldStep.Plugins || step === StripFoldStep.Game;
-  const tabs = stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, beside });
+  const tabs = stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, hasShop, beside });
   const active = activeStageTab(stageView, live.views, live.shown);
   return (
     <div
@@ -350,12 +353,13 @@ export function StageStrip({
     >
       {/* Three groups the fold measures and lays out (theme.css `.stage-strip`), none of them
           no-drag: every gap between the strip's controls still drags the window. */}
-      <div ref={start} className="stage-strip-start flex shrink-0 items-center gap-2">
+      {/* The game's controls (Play/Stop, Reload, Sound, Full screen) sit 4px apart, 8px after the views. */}
+      <div ref={start} className="stage-strip-start flex shrink-0 items-center gap-1">
         {/* Every loaded game's views; Builds joins them once there is a build to draw, and Assets is
             always there — a game with no build still has files. */}
         {project && step === StripFoldStep.Full ? (
           <ViewSwitcher
-            className="no-drag shrink-0"
+            className="no-drag me-1 shrink-0"
             label={STAGE_WORDS.views}
             dataAttribute="data-stage-action"
             items={switcherItems(tabs)}
@@ -377,7 +381,7 @@ export function StageStrip({
         {livePreview && gameControls ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
         {livePreview ? <ReloadButton behind={behind} onReload={onReload} /> : null}
       </div>
-      <div ref={game} className="stage-strip-game flex shrink-0 items-center gap-2">
+      <div ref={game} className="stage-strip-game flex shrink-0 items-center gap-1">
         {livePreview && gameControls ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
         {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
       </div>

@@ -1,24 +1,31 @@
 /**
  * A game's local item drafts once it is on Genex (contract "Local item drafts"): after a publish
  * finishes, and when the game is opened or the window comes back (paced, one at a time per game),
- * Studio runs its own `genex shop sync --json` while the game holds drafts, then puts on sale only
- * the uploaded drafts the person approved with the very content hash the sync reports
- * (`itemPutOnSale`, as Put on sale does). A draft changed since its approval stays a draft and says
- * so; genex.games' refusals (of the upload, or of Put on sale) are kept with their codes for the
- * cards. Only Studio's own sync names what goes on sale: nothing in the game folder does (D40).
- * The person's approvals, the drafts as the CLI printed them and the outcomes live in Studio's app
- * data (`item-approvals.ts`). Electron-free: everything outside comes in as deps.
+ * Studio runs its own `genex shop sync --json` while the game holds drafts, then puts every uploaded
+ * draft on sale (`itemPutOnSale`, as Put on sale does). Right after a publish it also puts on sale
+ * the game's items still drafts on genex.games: a draft listed once the game was on Genex goes on
+ * sale with the publish that carries it, never on a mere focus. genex.games' refusals (of the
+ * upload, or of Put on sale) are kept with their codes for the cards. Only Studio's own sync names
+ * what goes up: nothing in the game folder does. The drafts as the CLI printed them and the
+ * outcomes live in Studio's app data (`item-approvals.ts`). Electron-free: everything outside comes
+ * in as deps.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import {
-  type ItemApproval,
   type LocalItemsView,
   type LocalListingDraft,
   type LocalOutcome,
   LocalOutcomeKind,
   type LocalShareResult,
 } from "../../shared/item-draft.ts";
-import { type CreatorItem, isStoreRefused, type StoreRefused, StoreRefusal } from "../../shared/store-items.ts";
+import {
+  type CreatorItem,
+  ItemState,
+  isStoreRefused,
+  type Selling,
+  type StoreRefused,
+  StoreRefusal,
+} from "../../shared/store-items.ts";
 import type { LocalDraftChange } from "./genex-cli.ts";
 import {
   type ApprovalsDoc,
@@ -37,6 +44,13 @@ import type { SyncedItem } from "./item-draft.ts";
 /** How long a game waits after its last settle before a focus or an open settles it again. */
 export const LOCAL_SETTLE_GAP_MS = 15 * SECOND_MS;
 
+/** The SKUs of the game `projectId`'s items on genex.games still drafts, as Selling lists them; none for a refusal. */
+export function hostedDraftIds(selling: Selling | StoreRefused, projectId: string): string[] {
+  if (isStoreRefused(selling)) return [];
+  const drafts = selling.items.filter((row) => row.game?.id === projectId && row.state === ItemState.Draft);
+  return drafts.map((row) => row.id);
+}
+
 /** What settling needs from Studio. */
 export interface LocalItemsDeps {
   approvals: ItemApprovals;
@@ -53,6 +67,8 @@ export interface LocalItemsDeps {
   setShared(project: string, localId: string, shared: boolean): Promise<LocalDraftChange | null>;
   /** Put on sale on genex.games, as the app's account. */
   putOnSale(skuId: string): Promise<CreatorItem | StoreRefused>;
+  /** The game's items on genex.games that are still drafts, by SKU; throws when genex.games can't be read. */
+  hostedDrafts(project: string): Promise<string[]>;
   now(): number;
   /** The game's local drafts changed: the renderer reads them again. */
   changed(project: string): void;
@@ -141,31 +157,43 @@ export class LocalItems {
     const last = this.#settledAt.get(project);
     const recent = last !== undefined && this.#deps.now() - last < LOCAL_SETTLE_GAP_MS;
     if (recent && !options.force) return this.view(project);
-    const run = this.#settle(project).finally(() => this.#settling.delete(project));
+    const run = this.#settle(project, options.force).finally(() => this.#settling.delete(project));
     this.#settling.set(project, run);
     return run;
   }
 
-  async #settle(project: string): Promise<LocalItemsView> {
+  async #settle(project: string, publishedNow: boolean): Promise<LocalItemsView> {
     this.#settledAt.set(project, this.#deps.now());
     const published = await this.#deps.published(project).catch(() => false);
-    const ready = published && (await this.#deps.hasDrafts(project).catch(() => false));
-    if (!ready) return this.view(project);
+    if (!published) return this.view(project);
+    const view = await this.#upload(project);
+    if (publishedNow) await this.#hostedOnSale(project);
+    return view;
+  }
+
+  /** Upload the game's local drafts, and put each upload on sale. */
+  async #upload(project: string): Promise<LocalItemsView> {
+    if (!(await this.#deps.hasDrafts(project).catch(() => false))) return this.view(project);
     const synced = await this.#deps.sync(project).catch(() => null);
     if (!synced || synced.length === 0) return this.view(project);
-    const doc = await this.#deps.approvals.read();
     const outcomes: Record<string, LocalOutcome> = {};
     const used: string[] = [];
     for (const item of synced) {
-      const approval = approvalFor(doc, project, item.localId);
-      if (approval && item.skuId) used.push(item.localId);
-      outcomes[item.localId] = await this.#outcomeOf(item, approval);
+      if (item.skuId) used.push(item.localId);
+      outcomes[item.localId] = await this.#outcomeOf(item);
     }
     return this.#update(project, (current) => settled(current, project, outcomes, used));
   }
 
-  /** What becomes of one synced draft: on sale only for the approval of its very content. */
-  async #outcomeOf(item: SyncedItem, approval: ItemApproval | null): Promise<LocalOutcome> {
+  /** Put on sale the game's items still drafts on genex.games; one it can't put stays as it is. */
+  async #hostedOnSale(project: string): Promise<void> {
+    const drafts = await this.#deps.hostedDrafts(project).catch((): string[] => []);
+    for (const skuId of drafts) await this.#deps.putOnSale(skuId).catch(() => null);
+    if (drafts.length > 0) this.#deps.changed(project);
+  }
+
+  /** What becomes of one synced draft: on sale, unless genex.games refused its upload or the sale. */
+  async #outcomeOf(item: SyncedItem): Promise<LocalOutcome> {
     const at = this.#deps.now();
     const { skuId, contentHash } = item;
     if (!skuId)
@@ -178,8 +206,6 @@ export class LocalItems {
         at,
       };
     const uploaded = { skuId, contentHash, refusal: null, field: null, at };
-    if (!approval) return { kind: LocalOutcomeKind.Draft, ...uploaded };
-    if (approval.contentHash !== contentHash) return { kind: LocalOutcomeKind.Changed, ...uploaded };
     const answer = await this.#deps.putOnSale(skuId).catch((): StoreRefused => ({ refused: StoreRefusal.Unknown }));
     if (isStoreRefused(answer)) return { kind: LocalOutcomeKind.Refused, ...uploaded, refusal: answer.refused };
     return { kind: LocalOutcomeKind.OnSale, ...uploaded };

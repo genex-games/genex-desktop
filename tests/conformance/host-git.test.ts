@@ -6,7 +6,14 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type HostGitProbe, hostGitRuns, thisComputersGit } from "../../src/substrate/git-policy.ts";
+import {
+  type HostGitProbe,
+  hostGitRuns,
+  macOwnGitBin,
+  pathWithGitThatRuns,
+  thisComputersGit,
+  ensureMacGit,
+} from "../../src/substrate/git-policy.ts";
 
 const CLT = "/Library/Developer/CommandLineTools";
 
@@ -68,5 +75,54 @@ describe("whether this computer runs Git", () => {
   }, async () => {
     const env = { ...process.env, DEVELOPER_DIR: "/nonexistent-developer-tools", PATH: "/usr/bin:/bin" };
     assert.equal(await hostGitRuns(thisComputersGit(env)), false);
+  });
+});
+
+describe("Genex's own git on a Mac", () => {
+  const OWN = "/Applications/Genex.app/Contents/Resources/app.asar.unpacked/dist/resources/git/bin";
+  const STAND_IN_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+  it("goes first on the PATH only where the PATH's git cannot run", async () => {
+    const cases: Array<[string, Parameters<typeof probe>[0], string]> = [
+      ["a Mac without developer tools", { files: ["/usr/bin/git", `${OWN}/git`] }, `${OWN}:${STAND_IN_PATH}`],
+      [
+        "a Mac with the Command Line Tools keeps Apple's",
+        { files: ["/usr/bin/git", `${CLT}/usr/bin/git`, `${OWN}/git`], developerDir: async () => CLT },
+        STAND_IN_PATH,
+      ],
+      [
+        "a Mac with its own git first keeps it",
+        { path: "/opt/homebrew/bin:/usr/bin", files: ["/opt/homebrew/bin/git", "/usr/bin/git", `${OWN}/git`] },
+        "/opt/homebrew/bin:/usr/bin",
+      ],
+      ["a build without its own git changes nothing", { files: ["/usr/bin/git"] }, STAND_IN_PATH],
+      ["a Mac with no git at all", { path: "/bin", files: [`${OWN}/git`] }, `${OWN}:/bin`],
+      [
+        "already first, not twice",
+        { path: `${OWN}:/usr/bin`, files: ["/usr/bin/git", `${OWN}/git`] },
+        `${OWN}:/usr/bin`,
+      ],
+      ["Linux", { platform: "linux", files: [`${OWN}/git`] }, STAND_IN_PATH],
+      ["Windows", { platform: "win32", files: [`${OWN}/git`] }, STAND_IN_PATH],
+    ];
+    for (const [why, overrides, want] of cases)
+      assert.equal(await pathWithGitThatRuns(probe(overrides).computer, OWN), want, why);
+  });
+
+  it("never takes a stand-in for its own git", async () => {
+    const { computer } = probe({ files: ["/usr/bin/git"] });
+    assert.equal(await pathWithGitThatRuns(computer, "/usr/bin"), STAND_IN_PATH);
+  });
+
+  it("is looked for under the app's resources, and put on the app's own PATH", async () => {
+    const resources = "/Applications/Genex.app/Contents/Resources/app.asar.unpacked/dist/resources";
+    assert.equal(macOwnGitBin(resources), OWN);
+    const env: NodeJS.ProcessEnv = { PATH: STAND_IN_PATH };
+    const { computer } = probe({ files: ["/usr/bin/git", `${OWN}/git`] });
+    assert.equal(await ensureMacGit(resources, env, computer), true);
+    assert.equal(env.PATH, `${OWN}:${STAND_IN_PATH}`);
+    const without: NodeJS.ProcessEnv = { PATH: STAND_IN_PATH };
+    assert.equal(await ensureMacGit(resources, without, probe({ files: ["/usr/bin/git"] }).computer), false);
+    assert.equal(without.PATH, STAND_IN_PATH);
   });
 });

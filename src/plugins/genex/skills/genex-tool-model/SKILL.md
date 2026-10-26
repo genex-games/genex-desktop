@@ -19,7 +19,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
   Its meshes are dense (150000 faces by default): use `low-poly` or `face-limit` for props seen in
   numbers.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.15 sha256 f3b1f01dad1bc7bb44aa550bbb8ee4d589963a0574be7e341541d1c1e692b4b3 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 f3b1f01dad1bc7bb44aa550bbb8ee4d589963a0574be7e341541d1c1e692b4b3 -->
 ---
 name: genex-tool-model
 description: Generate a 3D model (GLB) from a text prompt or a reference image with `npx genex model` — props, vehicles, weapons, furniture, environment pieces, anything the scene needs as geometry. Also splits a model into named parts, rigs any mesh across 7 body plans, and retargets ready-made animation clips onto that rig. Files download to ./assets.

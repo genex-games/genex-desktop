@@ -13,6 +13,14 @@ export const CanaryStep = {
   FirstStart: "first-start",
   Repository: "repository",
   AgentCommand: "agent-command",
+  /** Upgrade mode: the earlier release's install and first start, which set the sandbox up. */
+  EarlierRelease: "earlier-release",
+  /** Upgrade mode: the build installed over it shows the card that asks to update the sandbox. */
+  UpgradeCard: "upgrade-card",
+  /** Upgrade mode: its Update button asks Windows for exactly one approval. */
+  UpgradeApproval: "upgrade-approval",
+  /** Upgrade mode: the studio comes up on the updated sandbox, the earlier profile's games kept. */
+  UpgradeStart: "upgrade-start",
   Crashes: "crashes",
 } as const;
 export type CanaryStep = (typeof CanaryStep)[keyof typeof CanaryStep];

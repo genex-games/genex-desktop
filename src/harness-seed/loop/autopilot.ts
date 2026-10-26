@@ -47,7 +47,7 @@ import { EngineFailure, outageDelays, withProviderPatience } from "./outage.ts";
 import { unionMergeMain } from "./merge.ts";
 import { parsePlanSteering } from "./replan.ts";
 import { createRunInbox } from "./run-inbox.ts";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { isCommit } from "./shell.ts";
 import { GIT, commitAll, gitExec, headOf, isAncestor, landIntegration, mergeNoFf, shortFailure } from "./git.ts";
@@ -82,6 +82,7 @@ import { noteHudUpgrade } from "./held-hud.ts";
 import { keptContractWords } from "./contract-kept.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CompleteResponse, EngineDescriptor, Message, SnapshotRecord } from "../types/host-api.d.ts";
+import { STEERING_BACKLOG_HEADING } from "./steering-backlog.ts";
 import type { ScoutReport } from "./scout.ts";
 import type { Catalogue, Check } from "./spec.ts";
 
@@ -216,10 +217,7 @@ const GameSource = {
 } as const;
 type GameSource = (typeof GameSource)[keyof typeof GameSource];
 
-/** The NOTES.md heading under which steering that arrived too late to be built is kept. */
-const STEERING_BACKLOG_HEADING = "## Steering backlog";
-
-/** The unapplied steering of earlier runs, from the project's NOTES.md; empty when none. */
+/** The items of the steering backlog section older builds wrote into NOTES.md (steering-backlog.ts); empty when none. */
 export function parseSteeringBacklog(notes: unknown): string[] {
   const text = String(notes ?? "");
   const start = text.indexOf(STEERING_BACKLOG_HEADING);
@@ -395,7 +393,8 @@ export async function decompose(
   // The craft recipes as a menu (M4.7): technique, not law — the planner picks the packs this
   // game needs. An install whose library predates them simply gets nothing.
   const craftRecipes = await library.loadRecipes(ctx.workspace).catch(() => []);
-  const backlog = await previousSteering(ctx, run);
+  // Steering said to an earlier build stays with that build (steering-backlog.ts): none heads this plan.
+  const backlog: string[] = [];
   const single = singleFacetPlan(run, known);
   const activePlugins = await ctx
     .call(HostMethod.PluginsTools, { project: run.project })
@@ -465,21 +464,6 @@ function craftMenu(craftRecipes: CraftRecipes): string {
     return library.renderCraftForPlanner(craftRecipes, {}) ?? "";
   } catch {
     return "";
-  }
-}
-
-/**
- * Steering the previous run could not build (it arrived with no iteration left) is not
- * lost: it heads the planner's ask so the plan starts from it.
- */
-async function previousSteering(ctx: HarnessCtx, run: Run): Promise<string[]> {
-  try {
-    const games = await ctx.call(HostMethod.GameList, {});
-    const dir = games.find((g) => g.name === run.project)?.dir;
-    if (!dir) return [];
-    return parseSteeringBacklog(await readFile(path.join(dir, "NOTES.md"), "utf8").catch(() => ""));
-  } catch {
-    return [];
   }
 }
 
@@ -2609,10 +2593,10 @@ function globalVerdict(pipeline: Pipeline): Promise<AnyRecord> {
 
 /** Steering that came too late, the verified baseline, and the run's close. */
 async function closePipeline(pipeline: Pipeline): Promise<PipelineEnd> {
-  const { catalogue, ctx, finalDeadline, journal, projectDir, report, run, steeringBacklog, threadId } = pipeline;
-  // Steering that arrived after the last builder hand-off is kept, said so, and heads the
-  // next run's planner ask — never dropped in silence.
-  await keepSteeringBacklog(ctx, { threadId, run, report, projectDir, backlog: await steeringBacklog() });
+  const { catalogue, ctx, finalDeadline, journal, report, run, steeringBacklog, threadId } = pipeline;
+  // Steering that arrived after the last builder hand-off is kept with this build and said so —
+  // never dropped in silence, and never handed to a later build.
+  await keepSteeringBacklog(ctx, { threadId, run, report, backlog: await steeringBacklog() });
   const verifiedBaseline =
     pipeline.verdict.pick === VERDICT_CHALLENGER ? await acceptIntegrated(pipeline) : await rejectIntegrated(pipeline);
   if (verifiedBaseline) {
@@ -2801,25 +2785,27 @@ function iterationForReport(record: AnyRecord | null | undefined): AnyRecord {
   return rest;
 }
 
-async function keepSteeringBacklog(
+/**
+ * Steering that reached the build after its last round: kept on its report and said so, and left
+ * in its inbox for this build alone should it go on — never written into the game's NOTES.md, which
+ * every later chat reads (steering-backlog.ts). Exported for its tests.
+ */
+export async function keepSteeringBacklog(
   ctx: HarnessCtx,
   {
     threadId,
     run,
     report,
-    projectDir,
     backlog,
   }: {
     threadId: string;
     run: Pick<Run, "runId">;
     report: AnyRecord;
-    projectDir?: string | null;
     backlog?: string[] | null;
   },
 ): Promise<void> {
   if (!backlog?.length) return;
   report.steeringBacklog = backlog;
-  if (projectDir) await writeSteeringBacklog(projectDir, backlog);
   await ctx
     .call(HostMethod.EventsAppend, {
       threadId,
@@ -2828,26 +2814,12 @@ async function keepSteeringBacklog(
         event_type: RunEvent.AutopilotDecision,
         payload: {
           runId: run.runId,
-          decision: `kept for the next run (arrived with no iteration left to build it): "${item}" — written to NOTES.md › Steering backlog and prepended to the next plan`,
+          decision: `kept with this build (arrived with no iteration left to build it): "${item}" — it reaches the builders only if this build goes on`,
           at: new Date().toISOString(),
         },
       })),
     })
     .catch(() => {});
-}
-
-/** Add the backlog's new items to the project's NOTES.md, under its steering backlog heading. */
-async function writeSteeringBacklog(projectDir: string, backlog: readonly string[]): Promise<void> {
-  const file = path.join(projectDir, "NOTES.md");
-  const notes = await readFile(file, "utf8").catch(() => "");
-  const existing = parseSteeringBacklog(notes);
-  const fresh = backlog.filter((item) => !existing.includes(item));
-  if (!fresh.length) return;
-  const block = `${STEERING_BACKLOG_HEADING}\n\n${[...existing, ...fresh].map((item) => `- ${item}`).join("\n")}\n`;
-  const next = notes.includes(STEERING_BACKLOG_HEADING)
-    ? notes.replace(new RegExp(`${STEERING_BACKLOG_HEADING}[\\s\\S]*?(?=\\n## |$)`), block)
-    : `${notes.trimEnd()}\n\n${block}`;
-  await writeFile(file, next).catch(() => {});
 }
 
 async function closeRun(

@@ -23,6 +23,7 @@ import {
   type CustomScheme,
   type NativeImage,
   type Session,
+  type WebContents,
   WebContentsView,
   nativeImage,
   net,
@@ -108,6 +109,7 @@ const MESSAGE = {
   notMethodName: (method: string) => `not a studio method name: ${method}`,
   consoleUnavailable: "Console observation unavailable; no console-clean claim is possible",
   closed: "this game window was closed",
+  noPage: (why: string | null) => `this game window holds no page: ${why ?? "nothing was loaded into it"}`,
 } as const;
 
 export type { PageCaptureInfo };
@@ -703,36 +705,37 @@ export class GamePreview {
     root?: string,
     options: { loopback?: boolean; shim?: Partial<ShimOptions> } = {},
   ): Promise<string> {
-    this.#nativeDelivery = null;
-    this.#pageSurfaceNoted = false;
-    this.#stoppedUrl = null;
-    this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
-    this.#shimLoad = options.shim ?? null;
-    this.#reach = { reach: "none", hooked: {} };
-    await this.#profiler.invalidate("source loaded");
-    const view = this.create();
+    // From the first line: a page call made while this load gets ready waits for its page (`#page`).
     this.#navigating = true;
-    // Entries cached before no-store shipped would otherwise outlive it.
-    await this.#session?.clearCache().catch(() => {});
-    this.#project = project;
-    this.#rootOverride = root ? { project, dir: path.resolve(root) } : null;
-    const servedDir = path.resolve(this.#gameRoot(project));
-    this.#pinnedRoot = { project, dir: servedDir, real: await realpath(servedDir).catch(() => null) };
-    this.#loadError = null;
-    this.#crashed = false;
-    this.#gone = null;
-    this.#console = [];
-    this.#blockedNoted.clear();
-    this.#consoleAvailable = false;
-    const url = options.loopback
-      ? `http://localhost:${loopbackPortFor(project)}/${entry}`
-      : `${SCHEME}://${project}/${entry}`;
     try {
+      this.#nativeDelivery = null;
+      this.#pageSurfaceNoted = false;
+      this.#stoppedUrl = null;
+      this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
+      this.#shimLoad = options.shim ?? null;
+      this.#reach = { reach: "none", hooked: {} };
+      await this.#profiler.invalidate("source loaded");
+      const view = this.create();
+      // Entries cached before no-store shipped would otherwise outlive it.
+      await this.#session?.clearCache().catch(() => {});
+      this.#project = project;
+      this.#rootOverride = root ? { project, dir: path.resolve(root) } : null;
+      const servedDir = path.resolve(this.#gameRoot(project));
+      this.#pinnedRoot = { project, dir: servedDir, real: await realpath(servedDir).catch(() => null) };
+      this.#loadError = null;
+      this.#crashed = false;
+      this.#gone = null;
+      this.#console = [];
+      this.#blockedNoted.clear();
+      this.#consoleAvailable = false;
+      const url = options.loopback
+        ? `http://localhost:${loopbackPortFor(project)}/${entry}`
+        : `${SCHEME}://${project}/${entry}`;
       await view.webContents.loadURL(url);
+      return url;
     } finally {
       this.#navigating = false;
     }
-    return url;
   }
 
   /**
@@ -989,7 +992,7 @@ export class GamePreview {
    */
   async clip(request: PreviewClipRequest): Promise<PreviewClipAnswer> {
     await this.#profiler.invalidate("clip during sample");
-    const wc = this.create().webContents;
+    const wc = this.#page();
     const rate = this.options.offscreen ? wc.getFrameRate() : null;
     if (rate !== null && rate < request.fps) wc.setFrameRate(request.fps);
     if (this.options.offscreen && !wc.isPainting()) wc.startPainting();
@@ -1028,6 +1031,7 @@ export class GamePreview {
     opts: { page?: boolean; surface?: CaptureSurface } = {},
     maxSamples?: number,
   ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null; stats?: PixelStats }> {
+    this.#page();
     const asked = resolveSurface(opts);
     const chosen = await chooseCapture(asked, {
       pageUi: () => this.pageUi(),
@@ -1118,7 +1122,7 @@ export class GamePreview {
   async #captureCanvas(
     pageTimeoutMs = PAGE_CAPTURE_TIMEOUT_MS,
   ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null }> {
-    const view = this.create();
+    const page = this.#page();
     // First choice: ask the page itself. `__studio.capture()` re-renders and reads the WebGL
     // canvas in one JS turn, so the pixels never touch the compositor — a window that is
     // covered, on another Space, or on a sleeping display photographs exactly the same. One
@@ -1128,7 +1132,7 @@ export class GamePreview {
     const declined = this.#pageCaptureInfo;
     await this.#awaitPresent();
     try {
-      return { image: await view.webContents.capturePage(), source: CaptureSource.Compositor, info: declined };
+      return { image: await page.capturePage(), source: CaptureSource.Compositor, info: declined };
     } catch (err) {
       // Occluded windows can lose their compositor surface too. The failed request can wake
       // the compositor, so allow one paced retry without changing the user's window state.
@@ -1139,13 +1143,13 @@ export class GamePreview {
         message: MESSAGE.compositorRetry(errorMessage(err)),
       });
       try {
-        view.webContents.invalidate();
+        page.invalidate();
       } catch {
         /* offscreen-only in some Electron versions — the timed retry still stands alone */
       }
       await sleep(COMPOSITOR_RETRY_MS);
       await this.#awaitPresent();
-      return { image: await view.webContents.capturePage(), source: CaptureSource.Compositor, info: declined };
+      return { image: await page.capturePage(), source: CaptureSource.Compositor, info: declined };
     }
   }
 
@@ -1223,15 +1227,28 @@ export class GamePreview {
   }
 
   /**
+   * The view's page, for a call that runs script in it or photographs it. A view nothing was
+   * loaded into (a pooled window whose game did not build, so it was served no page) is refused
+   * at once with the reason it has none: Electron holds a script until a load stops, and no load
+   * is coming, so each call would otherwise wait out the caller's whole deadline.
+   */
+  #page(): WebContents {
+    const wc = this.create().webContents;
+    const holdsNoPage = wc.getURL() === "" && !wc.isLoading() && !this.#navigating;
+    if (holdsNoPage) throw new Error(MESSAGE.noPage(this.#loadError));
+    return wc;
+  }
+
+  /**
    * Evaluate in the game's main world. The result is untrusted data — it is produced by code the
    * agent wrote — so it is size-capped and only ever handled as JSON.
    */
   async evaluate(expression: string, maxChars = 64_000): Promise<unknown> {
-    const view = this.create();
+    const page = this.#page();
     // `Promise.resolve` first: an expression that evaluates to a promise (a `fetch`, an async
     // probe) must be awaited *before* serialising, otherwise every async probe silently returns
     // `{}` and any check built on it passes without testing anything.
-    const raw = (await view.webContents.executeJavaScript(pageEvaluation(expression), true)) as string | undefined;
+    const raw = (await page.executeJavaScript(pageEvaluation(expression), true)) as string | undefined;
     if (raw === undefined) return undefined;
     const text = String(raw);
     if (text.length > maxChars) {
@@ -1369,6 +1386,7 @@ export class GamePreview {
    */
   async input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }> {
     await this.#profiler.invalidate("input during sample");
+    this.#page();
     const view = this.create();
     const bounds = view.getBounds();
     const width = Math.max(1, Math.round(bounds.width));

@@ -19,6 +19,7 @@ import { MODEL_PICKER_WORDS } from "../words.ts";
 import { autoChoice, findChoice, roleChoices, withoutFreeWord } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
+import { BetaTag } from "./beta-tag.tsx";
 import type { RunRoles } from "../../shared/protocol.ts";
 import type { ModelCapabilities } from "../../shared/model-preferences.ts";
 
@@ -53,6 +54,8 @@ export interface ModelChoice extends ModelCapabilities {
   resolvedModel?: string;
   /** Runs at no cost and with no account: the studio may pick it when there is nothing else. */
   free?: boolean;
+  /** Its provider ships in beta: its group in the list says Beta. */
+  beta?: boolean;
 }
 /** The composer's way to open the menu (a plan that failed on its model offers "Choose model"). */
 export interface ModelMenuHandle {
@@ -196,7 +199,16 @@ function ModelList({
     >
       {groups.map((group, index) => (
         <div key={group} role="group" aria-label={group}>
-          <PickerLabel first={index === 0}>{group}</PickerLabel>
+          <PickerLabel first={index === 0}>
+            {models.some((choice) => groupOf(choice) === group && choice.beta) ? (
+              <span className="inline-flex items-center gap-1.5">
+                {group}
+                <BetaTag />
+              </span>
+            ) : (
+              group
+            )}
+          </PickerLabel>
           {models
             .filter((c) => groupOf(c) === group)
             .map((choice) => (

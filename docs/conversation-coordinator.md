@@ -53,7 +53,7 @@ project, and graph: a request to wait for the remaining workers could start a se
   ([after the build](#after-the-build-the-same-session)): it answers, after a finished run does
   requested work itself (Loop off, or a contained change with Loop on) or, with Loop on, reopens the
   same run for more work, until the ask is checked (a new run only when asked to start over; the
-  [coordinator](#the-coordinator-a-fallback)'s `continue_build` reopens one it answers for too), resumes a paused one with the latest instruction, and shows or
+  [coordinator](#the-coordinator-a-fallback)'s `continue_build` reopens one it answers for too), resumes a paused one when asked to go on with it (other work it makes itself, and the build stays paused), and shows or
   lands the build. Questions alone do not restart builders. Sending a message needs no Keep going
   button.
   Optional **Resume** also keeps the journal; a run interrupted by a quit or a crash is repaired
@@ -69,6 +69,10 @@ project, and graph: a request to wait for the remaining workers could start a se
   state. A run that has begun writing its own end (`ActiveRun.closing`, set just before its
   `run_finished` or `autopilot_paused` is appended) no longer owns it: a Resume pressed as the
   pause shows waits for that close, then starts.
+  A paused build an earlier version left with the classic pipeline's journal, resumed on an engine
+  whose runs the director now leads, is closed as it stood instead (`run-dispatch.ts`
+  `closingOlderBuild`): the director would start it again from its goal on a fresh clock. Its work
+  is kept and the chat says why.
 
 ## Controls and delivery
 
@@ -94,6 +98,10 @@ Delivery and wrap-up are read from the log (`loop/run-inbox.ts`): a resumed sess
 run hands over only steers with no `run_steering_delivered` yet, and a `finish` counts only after
 the run's latest `run_registered` (`finishRequested`, the app's copy in `shared/coordinator.ts`).
 A resumed run never inherits an earlier wrap-up, and `finish_run` after Resume is recorded again.
+Steering that reaches a classic build after its last round stays with that build: kept on its report
+and handed over only if it goes on, never written into the game's NOTES.md, which every later chat
+reads. The chat removes the "Steering backlog" section older builds left there before it answers
+(`loop/steering-backlog.ts`), and prompts built from NOTES.md leave it out.
 Its director's first message (its first `worker_wait` on the long turn, `directorLoop: "turn"`) still says
 every earlier steer once, since the run may have opened a fresh session that never heard them —
 all but the chat's messages a run's lead heard or gave back ([live chat](#live-chat-during-a-build));
@@ -102,7 +110,14 @@ on the wake loop they open that message's digest, read from the journal (THE USE
 
 `finish_run` is distinct from Stop: it lets in-flight facet attempts finish, prevents new facet
 rounds, then merges, performs an integration attempt and validation, and displays accepted
-work. It does not promise the result passes all checks. Stop remains explicit cancellation.
+work. It does not promise the result passes all checks. Stop remains explicit cancellation: the
+coordinator's `stop_run` records it for its message (`run_control` of action `stop`), and the chat
+does it once the reply ends, as Builds' Stop does (`loop/chat-stop.ts`); with `restart` the build
+goes on again once it has stopped, through the host's `resume_run` with the instruction given. The
+coordinator never steers a stop or sends the person to a button.
+After a stop, `resume_run` is for going on with that build itself; other work asked for then goes to
+one builder in the chat through `continue_build` with `build: false`, which the host takes after a
+paused run too, and the build stays paused.
 `resume_run` can only resume a paused journal and cannot create a replacement run; a finished
 run is reopened by the harness itself once a Loop message's reply recorded `reopen_run` or the
 coordinator's `continue_build`, never through it
@@ -209,7 +224,9 @@ chat turn; messages go to the run's lead ([live chat](#live-chat-during-a-build)
   bubble (`delivery-order.ts`). This needs a CLI that advertises `msg_lifecycle_v1` in its init
   capabilities (2.1.281 does); the input stays open until a result has answered everything read, so
   a late message is never cut off, and one taken but never started closes it after
-  `STEER_STALL_MS`, reported as not delivered. A tool that only waits ends early when a message is
+  `STEER_STALL_MS`, reported as not delivered. The brief carries a uuid too: a resumed session may
+  first answer what it had queued (a background task's notice), and that result does not close the
+  input before the brief's own turn, whose Genex tool calls answer over it. A tool that only waits ends early when a message is
   handed over (`loop/person-wrote.ts`: a worker wait, a lead's wait for a busy reviewer, a plugin
   lock wait on the host), so the session reaches its next step in seconds and may wait again.
 - **Cut at the next step and resume.** Any other session — Codex (`codex exec` closes stdin at
@@ -276,7 +293,10 @@ queue takes no switches, and a switch then waits for a turn of its own as before
 While a director run is going on the wake loop, its lead is the chat: a message sent meanwhile is
 handed to it at once, and it answers in the chat. The long turn (`directorLoop: "turn"`,
 `STUDIO_DIRECTOR_LOOP=turn`), the classic pipeline and a kept `director.ts` from before live chat
-open no line, and their messages wait for the run to close as before. A waking run's start
+open no line, and their messages wait for the run to close as before. While a waking run prepares
+its start — its first look at the game, before its lead's line opens (`director/lead-line.ts`
+`expectLeadLine`) — the run's coordinator answers what is sent at once instead (`live-chat.ts`
+`chatWaitsFor`): a question gets an answer, and a stop reaches the run. A waking run's start
 says so (`autopilot_started.liveChat`) when the chat's queue hands messages to it (main.ts tells
 `live-chat-served.ts` `serveLiveChat` which queue it wired; a kept older `message-queue.ts` lacks
 `SERVES_LIVE_CHAT`), and while it runs the composer reads "Talk to the lead while
@@ -822,4 +842,4 @@ session's reopen of a finished run, for an explicit start over
 ([reopening a finished run](#after-the-build-the-same-session)), and never commissions a
 duplicate run.
 
-The Loop chat uses `ask_user` for necessary questions. The question panel requires **Send answer**, or focuses the composer for custom text. The selected answer remains an ordinary durable user message, and commission settings are restored from the question artifact for that reply; reference images are not duplicated in the chat context. No worker or native provider turn waits while the question is open. Routine decisions, repairs and failure reports never become answer forms. Handoff/session bookkeeping is recorded as `contractor_handoff` diagnostics rather than assistant prose.
+The Loop chat uses `ask_user` for necessary questions. The question card answers on one press of an answer button (⌘↩ presses the recommended one), and the composer takes custom text. The selected answer remains an ordinary durable user message, and commission settings are restored from the question artifact for that reply; reference images are not duplicated in the chat context. No worker or native provider turn waits while the question is open. Routine decisions, repairs and failure reports never become answer forms. Handoff/session bookkeeping is recorded as `contractor_handoff` diagnostics rather than assistant prose.

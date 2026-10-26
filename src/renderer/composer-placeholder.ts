@@ -27,8 +27,8 @@ export const PLAN_PLACEHOLDER = t("Describe what to plan…");
 export const HOME_PLACEHOLDER = t("What do you want to make?");
 
 /**
- * What a game's chat asks while it makes a store item: opened from Create › Items' New item, or
- * under a Listing draft card ("or ask for changes below"; marketplace screen 09).
+ * What a game's chat asks under a Listing draft card, while it makes a store item ("or ask for
+ * changes below"; marketplace screen 09).
  */
 export const ITEM_PLACEHOLDER = t("Ask for an item or a change…");
 

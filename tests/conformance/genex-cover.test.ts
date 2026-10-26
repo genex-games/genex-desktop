@@ -31,6 +31,8 @@ import {
 } from "../../src/plugins/genex/clip.ts";
 import {
   COVER_AUTO_GAP_MS,
+  CoverAdvice,
+  coverAdvice,
   COVER_MAX_BYTES,
   COVER_VIEW,
   type CoverCamera,
@@ -62,6 +64,8 @@ const SLUG = "racing-demo";
 const AGENT_COVER = "https://cdn.genex.games/covers/racing-demo-agent.webp";
 const OWNER_COVER = "https://cdn.genex.games/covers/racing-demo-owner.webp";
 const LIT = { lumaMean: 0.45, lumaStdDev: 0.21, nearBlackFraction: 0.08, litFraction: 0.97 };
+/** A canvas that has not drawn yet. */
+const DARK = { lumaMean: 0.02, lumaStdDev: 0.01, nearBlackFraction: 0.99, litFraction: 0 };
 
 /**
  * A PNG whose header says `width`×`height`, tagged so two shots differ. The CLI reads only the
@@ -165,6 +169,21 @@ describe("the clip's length", () => {
     const oneFrame = 1000 / COVER_CLIP.fps;
     for (const recorded of [asked - oneFrame, asked, asked + oneFrame])
       assert.equal(framesGenexKeeps(recorded), GENEX_KEEPS.frames, `${recorded} ms recorded`);
+  });
+});
+
+describe("how dark a cover may be", () => {
+  it("passes a dark menu Genex takes, and flags a frame that is black or one flat colour", () => {
+    const size = { width: 1920, height: 1080 };
+    // A real game's dark start menu measured 0.117: dark by design, and a picture all the same.
+    const menu = { lumaMean: 0.115, lumaStdDev: 0.1, nearBlackFraction: 0.2, litFraction: 0.9 };
+    assert.deepEqual(
+      coverAdvice({ ...size, stats: menu }).filter((a) => a === CoverAdvice.TooDark),
+      [],
+    );
+    assert.ok(coverAdvice({ ...size, stats: DARK }).includes(CoverAdvice.TooDark));
+    const flat = { lumaMean: 0.3, lumaStdDev: 0.01, nearBlackFraction: 0, litFraction: 1 };
+    assert.ok(coverAdvice({ ...size, stats: flat }).includes(CoverAdvice.Flat));
   });
 });
 
@@ -1251,6 +1270,17 @@ describe("Studio's own cover step", () => {
     );
     await genex.coverAuto(PROJECT, ownerLens);
     assert.deepEqual(ownerLens.asked, [], "the owner's cover on Genex stands");
+  });
+
+  it("keeps no plain frame that is still blank, so Publish says the game goes out without a cover", async () => {
+    const { genex } = await localGenex();
+    const lens = twoViewCamera(
+      () => noDemo,
+      () => ({ still: { ...still("plain").still, stats: DARK } }),
+    );
+    const state = await genex.coverAuto(PROJECT, lens);
+    assert.deepEqual(lens.asked, ["demo", "plain"]);
+    assert.equal(state.cover?.shot, null, "a black loading frame is no cover");
   });
 
   it("takes a game's cover at most once in a while", async () => {

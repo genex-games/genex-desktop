@@ -191,7 +191,7 @@ describe("a local `shop add` in a game that is not on Genex yet", () => {
     const sandbox = fakeSandbox({ stdout: localLine() });
     await assert.rejects(
       service(p, sandbox).run(
-        { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+        { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
         bound(p, p.outside),
         {
           paid: false,
@@ -211,7 +211,7 @@ describe("a local `shop add` in a game that is not on Genex yet", () => {
       act: (cwd) => writeDraft(path.join(cwd, ...ITEMS), ICE),
     });
     const answer = await service(p, sandbox).run(
-      { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+      { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
       bound(p),
       { paid: false },
     );
@@ -239,7 +239,7 @@ describe("a local `shop set` and `shop remove`", () => {
     const answer = await service(p, sandbox, drafts).run(
       { command: "shop set", args: ICE, options: { price: 250 } },
       bound(p),
-      { paid: true },
+      { paid: false },
     );
     assert.equal(answer.ok, true);
     const [run] = sandbox.seen;
@@ -272,7 +272,7 @@ describe("a local `shop set` and `shop remove`", () => {
       },
     });
     const answer = await service(p, sandbox, [], removed).run({ command: "shop remove", args: ICE }, bound(p), {
-      paid: true,
+      paid: false,
     });
     assert.equal(answer.ok, true);
     assert.deepEqual(Object.keys(await tree(gameItems(p))).sort(), [`${SLED}.json`, path.join(SLED, "picture.png")]);
@@ -304,7 +304,7 @@ describe("a `shop add` in a game that is on Genex", () => {
     const before = await tree(gameItems(p));
     const sandbox = fakeSandbox({ stdout: "{}" });
     const answer = await service(p, sandbox).run(
-      { command: "shop add", args: "Frost Axe", options: { price: 1200 } },
+      { command: "shop add", args: "Frost Axe", options: { price: 1200, image: ".genex/scratch/ice.png" } },
       bound(p),
       { paid: false },
     );
@@ -462,11 +462,13 @@ describe("what the CLI leaves in the run folder, carried into a hostile game", (
     it(`refuses ${name}, telling the agent, and changes nothing outside the game`, async () => {
       const p = await profile();
       await arrange(p);
+      // The picture sits outside .genex, which some of these games break.
+      await writeFile(path.join(p.game, "ice.png"), "PNG-ice");
       const outside = await tree(p.outside);
       const sandbox = fakeSandbox({ stdout: localLine(), act: (cwd) => act(cwd, p) });
       const drafts: Array<{ draft: ListingRecord; fingerprint: string | null }> = [];
       const answer = await service(p, sandbox, drafts).run(
-        { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+        { command: "shop add", args: "Ice Shield", options: { price: 300, image: "ice.png" } },
         bound(p),
         { paid: false },
       );
@@ -489,7 +491,7 @@ describe("what the CLI leaves in the run folder, carried into a hostile game", (
       },
     });
     const answer = await service(p, sandbox).run(
-      { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+      { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
       bound(p),
       { paid: false },
     );
@@ -686,7 +688,7 @@ describe("the person's Other games can use it on a local draft", () => {
     });
 });
 
-describe("only Studio uploads local drafts, and only the person puts one on sale (D40)", () => {
+describe("only Studio uploads local drafts and puts them on sale", () => {
   it("never runs `genex shop sync` for an agent, through either tool", () => {
     for (const paid of [true, false])
       assert.throws(

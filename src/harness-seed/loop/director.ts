@@ -105,6 +105,7 @@ import {
 import { longTurnRules, wakeTools } from "./director/wake-prompts.ts";
 import { DirectorLoop, directorLoopOf, WRAP_UP_MARGIN_MS, WrapCause } from "./director/wake-schedule.ts";
 import { openLeadLine, type LeadLine } from "./director/lead-line.ts";
+import * as leadLineParts from "./director/lead-line.ts";
 import { bookmarkLead, freshChat, leadSeat, servesLead } from "./director/lead-session.ts";
 import type { LoopRun } from "./director/loop-run.ts";
 import type { DirectorTalk, WakeClock } from "./director/wake.ts";
@@ -912,20 +913,48 @@ export async function runDirector(
     }),
   );
   const options = { threadId, run, resume, oneSession, liveChat, ...(open ? { profile, clock } : {}) };
+  // Until its lead takes the chat, the chat answers what is sent (live-chat.ts): a stop reaches the start.
+  const prepared = liveChat ? expectLine(run.runId) : () => {};
+  let ready: ReadyLead;
+  try {
+    ready = await readyTheLead({ ctx, measured }, options, loop, (loopRun) => {
+      tracing = loopRun;
+      keepTimings(loopRun, timings);
+    });
+  } finally {
+    prepared();
+  }
+  if (!ready.session) return ready.loopRun.report;
+  await leadTheRun(ready.loopRun, { ...ready.session, loop, line: ready.line, clock });
+  return ready.loopRun.report;
+}
+
+/** The run prepared up to its lead's line; no session when its resume was refused (its report says so). */
+type ReadyLead = { loopRun: LoopRun; session: SessionParts | null; line: LeadLine | null };
+
+/** Prepare the run up to its lead's line (`leadLine`): its start, its lead's seat and session. */
+async function readyTheLead(
+  { ctx, measured }: { ctx: HarnessCtx; measured: HarnessCtx },
+  options: Parameters<typeof prepareLoopRun>[1],
+  loop: DirectorLoop,
+  traced: (loopRun: LoopRun) => void,
+): Promise<ReadyLead> {
   const loopRun = await prepareLoopRun(measured, options, LOOP_RUN_MODULES);
   // A paused run its open Loop can't pick up is refused before anything of it runs or is written over.
   const refused = loopRun.open?.refused;
   if (refused) {
     await refuseResume(loopRun, refused, loopRun.open?.refusalPauses === true);
-    return loopRun.report;
+    return { loopRun, session: null, line: null };
   }
-  tracing = loopRun;
-  keepTimings(loopRun, timings);
-  if (oneSession) await seatTheLead(loopRun);
+  traced(loopRun);
+  if (options.oneSession) await seatTheLead(loopRun);
   const session = await sessionParts(ctx, loopRun, loop);
-  const line = leadLine(loopRun, loop);
-  await leadTheRun(loopRun, { ...session, loop, line, clock });
-  return loopRun.report;
+  return { loopRun, session, line: leadLine(loopRun, loop) };
+}
+
+/** Mark the run's lead as preparing (lead-line.ts `expectLeadLine`); a kept older lead-line.ts can't, and its messages wait. */
+function expectLine(runId: string): () => void {
+  return typeof leadLineParts.expectLeadLine === "function" ? leadLineParts.expectLeadLine(runId) : () => {};
 }
 
 /** What the host's spans of a run add up to, kept on its journal and its report. */

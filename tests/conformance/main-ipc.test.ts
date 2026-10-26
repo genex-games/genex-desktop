@@ -285,7 +285,7 @@ const codexIdle: CodexLoginState = {
 function loginFixture(
   logins: Record<string, Awaited<ReturnType<SubscriptionEngine["resolveLogin"]>>>,
   busy = false,
-  accountsFor: { signedIn?: string[]; emails?: Record<string, string> } = {},
+  accountsFor: { signedIn?: string[]; emails?: Record<string, string>; noCursor?: boolean } = {},
 ) {
   const started: string[] = [];
   const accountsRoot = mkdtempSync(path.join(os.tmpdir(), "studio-ipc-accounts-"));
@@ -324,6 +324,27 @@ function loginFixture(
         return { started: true };
       },
     },
+    grokLogin: {
+      start: async () => {
+        started.push("grok");
+        return { started: true };
+      },
+    },
+    cursorLogin: {
+      start: async () => {
+        started.push("cursor");
+        return { started: true };
+      },
+    },
+    cursor: () =>
+      accountsFor.noCursor
+        ? null
+        : {
+            signOut: async () => {
+              started.push("cursor sign-out");
+            },
+            status: async () => ({ code: EngineStatusCode.NeedsLogin, detail: "Not signed in to Cursor." }),
+          },
     claudeLogin: {
       start: async (home: string | null) => {
         started.push(`claude ${home}`);
@@ -533,6 +554,64 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(started, ["opencode"]);
   });
 
+  it("Cursor signs in through its own CLI in its row's terminal, whatever else is running, and signs out through its engine", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:cursor.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(await invoke("studio:cursor.signout"), {
+      ok: true,
+      value: { code: EngineStatusCode.NeedsLogin, detail: "Not signed in to Cursor." },
+    });
+    assert.deepEqual(started, ["cursor", "cursor sign-out"]);
+    const none = loginFixture({}, false, { noCursor: true });
+    assert.equal((await none.invoke("studio:cursor.signout")).ok, false, "no Cursor engine, nothing to sign out");
+  });
+
+  it("the Cursor sign-in runs `cursor-agent login` keeping its sign-in in its file, and rechecks when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { cursorLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t1", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onCursorSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", OPENCODE_CONFIG: "/oc.json", CURSOR_API_KEY: "key_not_for_genex" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await cursorLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/cursor");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "cursor-login");
+    assert.equal(opened[0]?.env.AGENT_CLI_CREDENTIAL_STORE, "file", "the sign-in every sandboxed session can read");
+    assert.equal(opened[0]?.env.OPENCODE_CONFIG, undefined, "no other vendor's variables reach the sign-in");
+    assert.equal(opened[0]?.env.CURSOR_API_KEY, undefined, "nor a key: the person signs in with their account");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
+  });
+
   it("the OpenCode sign-in runs `opencode auth login` in the terminal, and rechecks its models when it ends", async () => {
     const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
     let exit: ((code: number) => void) | undefined;
@@ -599,6 +678,58 @@ describe("both sign-in paths go through the controllers", () => {
       },
     });
     assert.deepEqual(await missing.openCodeLogin.start(), { started: false, missingCli: true });
+  });
+
+  it("Grok Build signs in through its own CLI in the terminal, whatever else is running", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:grok.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(started, ["grok"]);
+  });
+
+  it("the Grok Build sign-in runs `grok login` in the terminal, on its own home, and rechecks it when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { grokLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t3", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onGrokSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", ANTHROPIC_API_KEY: "sk-ant-not-for-grok", XAI_API_KEY: "xai-not-for-grok" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await grokLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/grok");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "grok-login");
+    assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
+    assert.equal(opened[0]?.env.XAI_API_KEY, undefined, "an xAI key never stands in for the Grok sign-in");
+    assert.ok(opened[0]?.env.GROK_HOME, "the home its sessions read the sign-in from");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
   });
 
   it("on OpenCode 2.x the sign-in runs on a server of its own, never the shared background one", async () => {

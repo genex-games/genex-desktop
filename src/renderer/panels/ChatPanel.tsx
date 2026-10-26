@@ -21,6 +21,8 @@ import { ChatConversation } from "../chat/ChatConversation.tsx";
 import { ChatPanelHeader } from "../chat/ChatPanelHeader.tsx";
 import { answerConsent, answerPermission, planPrompt } from "../chat/composer-cards.ts";
 import { ComposerDock } from "../chat/ComposerDock.tsx";
+import type { Send } from "../chat/use-submit.ts";
+import type { OwnAnswer } from "../chat/waiting-cards.ts";
 import { stepsOffer } from "../chat/engine-steps.ts";
 import { EngineStepsCard } from "../chat/EngineStepsCard.tsx";
 import { RewindDialog } from "../chat/RewindDialog.tsx";
@@ -29,11 +31,8 @@ import { HeldState } from "../chat/use-launch-handover.ts";
 import { chatPlaceholder } from "../composer-placeholder.ts";
 import { loopAvailableFor } from "../loop-setting.ts";
 import { notifyProblem } from "../state/toasts.ts";
-import { useItems } from "../state/hooks.ts";
-import { askedForItem } from "../state/items.ts";
 import { isLocalDraft } from "../../shared/item-draft.ts";
 import { useLocalItemsSettle } from "../chat/use-local-items.ts";
-import { studio } from "../state/studio.ts";
 import { ChatSkeleton } from "../chat/ChatSkeleton.tsx";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import { PromptBar, type PromptBarHandle } from "../ui/PromptBar.tsx";
@@ -99,17 +98,41 @@ function heldAsksSignIn({ handover, composer }: ChatParts): boolean {
   return handover.held?.state === HeldState.SignedOut && !composer.gate.card?.waiting;
 }
 
+/**
+ * The composer's send while a card waits: words go to the card's own answer when it takes them
+ * (words for Claude instead of its request); pictures alone, and every other card, go to the chat.
+ */
+function ownSend(own: OwnAnswer | null, send: Send): Send {
+  const answer = own?.send;
+  if (!answer) return send;
+  return async (text, extras, preserveDraft) => {
+    if (!text.trim()) return send(text, extras, preserveDraft);
+    await answer(text.trim());
+  };
+}
+
+/** The quiet card an engine plugin offers above a game chat's composer: its steps, and what they did. */
+function EngineSteps(parts: ChatParts): JSX.Element {
+  const { chat, props, report } = parts;
+  return (
+    <EngineStepsCard
+      offer={stepsOffer(chat.threadEvents)}
+      onNotice={props.onNotice}
+      onFinished={(says) => void report(says, MessageOrigin.SetupCard).catch(notifyProblem(props.onNotice))}
+    />
+  );
+}
+
 /** The composer and the cards docked above it: sign-in, questions, the plan and consents. */
 function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandle | null> }): JSX.Element {
-  const { chat, composer, work, submit, composerRef, focusComposer, reply } = parts;
+  const { chat, composer, work, submit, composerRef, reply } = parts;
   const { threadId, transcript, working, run } = chat;
   const { drafts, gate, model, compact } = composer;
   const { plan } = work;
   const busy = drafts.busy;
   const { about } = reply;
-  // New item opened this chat, or a Listing draft card is the last thing in it: the box asks for an item.
+  // A Listing draft card is the last thing in it: the box asks for an item or a change.
   const project = chat.meta.project ?? null;
-  const askedForAnItem = useItems((s) => project !== null && s.askingIn === project);
   const underListing = transcript.readingEntries.at(-1)?.kind === EntryKind.ListingDraft;
   // A local draft waits for the game's publish: while this chat shows its card, or the game holds
   // one, Studio settles them when the chat opens, the window comes back and the publish finishes.
@@ -117,10 +140,6 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
     (entry) => entry.kind === EntryKind.ListingDraft && isLocalDraft(entry.draft),
   );
   useLocalItemsSettle(project, showsLocalDraft);
-  const send: typeof submit = (...args) => {
-    if (askedForAnItem) studio().items.setState((state) => askedForItem(state, null), true);
-    return submit(...args);
-  };
   // A summary written mid-turn or mid-build would miss what is happening.
   const compactWaits = busy || working || chat.answering || run?.state === RunState.Running;
   return (
@@ -132,68 +151,62 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
       questions={transcript.interviewQuestions.filter((entry) => entry.kind === EntryKind.Question)}
       questionsDisabled={busy || working}
       onAnswerQuestion={(answer) => submit(answer, undefined, true)}
-      onChatAbout={() => requestAnimationFrame(focusComposer)}
       plan={planPrompt(parts, composerRef)}
       consents={transcript.pendingConsents.filter((entry) => entry.kind === EntryKind.Action)}
       onConsent={answerConsent}
       permissions={transcript.pendingPermissions.filter((entry) => entry.kind === EntryKind.Action)}
       onPermission={answerPermission}
       planModes={composer.permissions.planModes}
-      steps={
-        chat.isStudioThread ? null : (
-          <EngineStepsCard
-            offer={stepsOffer(chat.threadEvents)}
-            onNotice={parts.props.onNotice}
-            onFinished={(says) =>
-              void parts.report(says, MessageOrigin.SetupCard).catch(notifyProblem(parts.props.onNotice))
-            }
-          />
-        )
-      }
+      steps={chat.isStudioThread ? null : <EngineSteps {...parts} />}
     >
-      <PromptBar
-        ref={composerRef}
-        project={chat.meta.project}
-        loopAvailable={loopAvailableFor(chat.folder)}
-        loopGate={engineLoopGate(chat.folder)}
-        conversationKey={threadId}
-        build={composer.build}
-        about={
-          about
-            ? { label: about.label, placeholder: about.placeholder, onClear: () => reply.drop(about.threadId) }
-            : null
-        }
-        activityLabel={work.activity.label}
-        gameMode={!chat.isStudioThread}
-        contextUsage={composer.contextUsage}
-        onCompact={compact.compactNow}
-        compacting={compact.compacting}
-        compactBusy={compactWaits}
-        // A finished or paused run is not a run in progress: leaving this true kept the
-        // composer saying "Building" for the rest of the chat's life, and took the hours control
-        // switch away with no way back.
-        coordinating={run?.state === RunState.Running}
-        leadListens={chat.leadListens}
-        placeholder={chatPlaceholder({
-          revisingPlan: plan.revising,
-          studio: chat.isStudioThread,
-          // A game still waiting for its idea asks for one, as home does.
-          draft: chat.isDraft || chat.folder?.provisional === true,
-          item: askedForAnItem || underListing,
-        })}
-        value={drafts.draft}
-        onChange={drafts.setDraft}
-        model={model.bar}
-        permissions={composer.permissions.bar}
-        busy={busy}
-        // A game chat with no model keeps its prompt: Connect AI model takes the model's place.
-        disabled={composer.noModel && chat.isStudioThread}
-        onSend={send}
-        stoppable={work.stoppable && Boolean(parts.props.activeThread)}
-        onStop={work.stop.requestStop}
-        blockSend={gate.needsSignIn}
-        onBlockedSend={() => void gate.signIn()}
-      />
+      {(own) => (
+        <PromptBar
+          ref={composerRef}
+          project={chat.meta.project}
+          loopAvailable={loopAvailableFor(chat.folder)}
+          loopGate={engineLoopGate(chat.folder)}
+          conversationKey={threadId}
+          build={composer.build}
+          about={
+            about
+              ? { label: about.label, placeholder: about.placeholder, onClear: () => reply.drop(about.threadId) }
+              : null
+          }
+          activityLabel={work.activity.label}
+          gameMode={!chat.isStudioThread}
+          contextUsage={composer.contextUsage}
+          onCompact={compact.compactNow}
+          compacting={compact.compacting}
+          compactBusy={compactWaits}
+          // A finished or paused run is not a run in progress: leaving this true kept the
+          // composer saying "Building" for the rest of the chat's life, and took the hours control
+          // switch away with no way back.
+          coordinating={run?.state === RunState.Running}
+          leadListens={chat.leadListens}
+          placeholder={
+            own?.placeholder ??
+            chatPlaceholder({
+              revisingPlan: plan.revising,
+              studio: chat.isStudioThread,
+              // A game still waiting for its idea asks for one, as home does.
+              draft: chat.isDraft || chat.folder?.provisional === true,
+              item: underListing,
+            })
+          }
+          value={drafts.draft}
+          onChange={drafts.setDraft}
+          model={model.bar}
+          permissions={composer.permissions.bar}
+          busy={busy}
+          // A game chat with no model keeps its prompt: Connect AI model takes the model's place.
+          disabled={composer.noModel && chat.isStudioThread}
+          onSend={ownSend(own, submit)}
+          stoppable={work.stoppable && Boolean(parts.props.activeThread)}
+          onStop={work.stop.requestStop}
+          blockSend={gate.needsSignIn}
+          onBlockedSend={() => void gate.signIn()}
+        />
+      )}
     </ComposerDock>
   );
 }

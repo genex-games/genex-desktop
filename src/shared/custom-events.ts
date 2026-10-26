@@ -715,7 +715,8 @@ export interface CustomEventMap {
   facet_provider_outage: RunScope & { phase?: string; wait?: number; attempt?: number; error?: string; lost?: string };
   facet_review_enforced: FacetReviewEnforcedPayload;
   improvement_applied: { file?: string; reason?: string; snapshot_id?: string };
-  interview_question: { question?: string; choices?: InterviewChoice[] };
+  /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
+  interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };
   /** A provider signed out mid-turn (harness `turn-loop.ts`); `message` is the provider's own error. */
   needs_signin: { engine?: string; message?: string };
   plan_review: PlanReviewRecord;

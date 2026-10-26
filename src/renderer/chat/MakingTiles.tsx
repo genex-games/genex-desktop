@@ -65,6 +65,7 @@ export const MakingTiles = memo(function MakingTiles({
             <MakingCard
               job={job}
               plugin={plugins.get(job.source) ?? (job.sourceName ? { name: job.sourceName } : undefined)}
+              project={project}
             />
           </div>
         ))}

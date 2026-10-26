@@ -104,16 +104,20 @@ async function launchAndAsk() {
     const s = await snap();
     return (
       s.text.includes("Where should the scene take place?") &&
-      s.controls.some((c) => c.text === "Send answer") &&
+      offersAnswers(s) &&
       !s.controls.some((c) => c.label === "Stop")
     );
   }, "interview question");
   return (await snap()).state.activeThread;
 }
+/** The question's answers are on show: its buttons, the recommended one first. */
+const offersAnswers = (s) => s.controls.some((c) => c.text?.startsWith("Ashlands"));
+/** The keys that press the recommended answer on this system. */
+const ANSWER_KEYS = process.platform === "darwin" ? ["Meta"] : ["Control"];
 async function answered() {
   await until(async () => {
     const s = await snap();
-    return !s.controls.some((c) => c.text === "Send answer") && s.text.includes("A coast at night, understood.");
+    return !offersAnswers(s) && s.text.includes("A coast at night, understood.");
   }, "provider resumes after answer");
 }
 try {
@@ -154,7 +158,7 @@ try {
       await click('nav [data-project="model-recovery"]');
       await until(async () => (await snap()).text.includes("This model is unavailable"), "recovery banner");
       let s = await snap();
-      assert.ok(!s.controls.some((c) => c.text === "Approve" || c.text === "Make changes"));
+      assert.ok(!s.controls.some((c) => c.text?.startsWith("Approve") || c.text === "Make changes"));
       for (const text of ["Choose model", "Model providers", "Try again", "Dismiss"])
         assert.ok(s.controls.some((c) => c.text === text && c.cursor === "pointer"));
       await capture("model-unavailable");
@@ -168,7 +172,7 @@ try {
       await key("Escape");
       await click("[data-model-recovery] button:nth-child(3)");
       await until(
-        async () => (await snap()).controls.some((c) => c.text === "Approve" && !c.disabled),
+        async () => (await snap()).controls.some((c) => c.text?.startsWith("Approve") && !c.disabled),
         "retry produced a reviewable plan",
       );
       await capture("recovered-plan");
@@ -217,20 +221,16 @@ try {
     report.modelInheritance = { engine: handoff.engine, model: handoff.model };
     await capture("question");
   });
-  await check("choice selection waits for confirmation and preserves an existing draft", async () => {
-    assert.ok((await snap()).controls.some((c) => c.text === "Send answer" && c.disabled));
-    await type('[aria-label="Prompt"]', "Keep this draft");
-    await click(`${question} input[value="0"]`);
-    await pause(300);
-    assert.ok((await snap()).controls.some((c) => c.text === "Send answer" && !c.disabled));
-    assert.equal(
-      events(thread)
-        .filter((e) => e.data.type === "messages")
-        .flatMap((e) => e.data.messages)
-        .filter((m) => m.role === "user").length,
-      1,
+  await check("the answer keys press the recommended answer from the composer and keep its draft", async () => {
+    // Flipped: an answer is one press, so there is no Send answer to wait for.
+    assert.ok(!(await snap()).controls.some((c) => c.text === "Send answer"));
+    assert.match(
+      (await snap()).text,
+      /A night scene needs a place first\./,
+      "the agent's recap sits above the question",
     );
-    await click(`${question} button[type="submit"]`);
+    await type('[aria-label="Prompt"]', "Keep this draft");
+    await op("key", { surface: "desktop", key: "Enter", code: "Enter", modifiers: ANSWER_KEYS });
     await answered();
     assert.equal((await snap()).controls.find((c) => c.label === "Prompt")?.value, "Keep this draft");
     assert.equal(
@@ -247,20 +247,16 @@ try {
     );
     await capture("answered");
   });
-  await check("an unanswered question survives restart and accepts a custom response", async () => {
+  await check("an unanswered question survives restart and takes the composer's words as its answer", async () => {
     thread = await launchAndAsk();
-    await click(`${question} [data-question-chat]`);
+    await click(`${question} [aria-label="Put question aside"]`);
     assert.ok((await snap()).controls.some((c) => c.text === "Answer question"));
-    assert.equal((await snap()).activeTag, "TEXTAREA");
     report.restartedIdentity = await cli(["restart", "--profile", profile]);
     attach();
     await click(`nav [data-thread="${thread}"]`);
-    await until(async () => (await snap()).controls.some((c) => c.text === "Send answer"), "question restored");
-    await type(`${question} [data-question-own] input[type="text"]`, "Actually, a coast at night");
-    assert.ok(
-      (await snap()).controls.some((c) => c.text === "Send answer" && !c.disabled),
-      "typing picks the own answer",
-    );
+    await until(async () => offersAnswers(await snap()), "question restored");
+    // The composer takes the person's own answer.
+    await type('[aria-label="Prompt"]', "Actually, a coast at night");
     await key("Enter");
     await answered();
     const log = events(thread);
@@ -279,11 +275,11 @@ try {
       // moving the choices a row down: a click measured before that lands on the other choice.
       await until(async () => {
         const s = await snap();
-        return s.controls.some((c) => c.value === "approve") && s.text.includes("No new build");
+        return s.controls.some((c) => c.text === "Approve plan") && s.text.includes("No new build");
       }, "held plan below the settled run");
       thread = (await snap()).state.activeThread;
-      await click(`${question} input[value="${choice === "approval" ? "approve" : "revise"}"]`);
-      await click(`${question} button[type="submit"]`);
+      // Flipped: the answer is one press of its button, with no Continue after it.
+      await click(`${question} [data-answer="${choice === "approval" ? "approve" : "revise"}"]`);
       if (choice === "changes") {
         await type('[aria-label="Prompt"]', "Use warmer lighting");
         await key("Enter");
@@ -295,7 +291,7 @@ try {
       );
       assert.ok(!events(thread).some((e) => e.data.event_type === "message_queued"));
       await until(
-        async () => !(await snap()).controls.some((c) => c.value === "approve"),
+        async () => !(await snap()).controls.some((c) => c.text === "Approve plan"),
         "plan answer reflected in the chat",
       );
     }

@@ -269,6 +269,12 @@ export interface PluginManifestTool extends PluginTool {
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
   /**
+   * API 3, with `confirmation`: the call acts on the person's account with another service (an
+   * upload it moderates, a generation that counts against its limits). Its card asks in every chat
+   * mode, Bypass included, and offers Allow in this chat, which covers the tool for that chat.
+   */
+  onAccount?: true;
+  /**
    * API 3: the longest one call may run in the backend when that is longer than the host's ceiling
    * (a game engine's import or export), at most {@link PLUGIN_TOOL_MAX_TIMEOUT_MS}.
    */
@@ -803,7 +809,11 @@ export interface PluginChange {
   skills?: PluginSkillChange;
 }
 /** How a consent question ended; `mode`: the person switched the chat to a mode that asks nothing first for it. */
-export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode";
+/**
+ * Who settled a consent card: the person, the timeout, a stop, the turn's end, a restart, the chat's
+ * mode (Bypass), or the person's earlier Allow in this chat (`chat`).
+ */
+export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode" | "chat";
 /** Host-generated paths in the staged public copy, shown before upload approval. */
 export interface ExportReview {
   included: string[];
@@ -826,8 +836,15 @@ export interface PluginConsentEvent {
   project: string;
   threadId?: string;
   prompt: string;
+  /** One line the card shows under its question: what a yes lets the agent do. */
+  note?: string;
   /** A connector's card: the person may also allow this exact tool from now on. */
   alwaysOffered?: boolean;
+  /**
+   * An `onAccount` tool's card: the person may also allow this tool for the rest of the chat
+   * (answered with `always`).
+   */
+  chatOffered?: boolean;
   /** Approved with Always allow: the tool runs without asking from now on. */
   always?: boolean;
   /**
@@ -1012,9 +1029,12 @@ export type StudioConsentSource = (typeof StudioConsentSource)[keyof typeof Stud
  * consent record keeps it as the prompt, so both say the same words.
  */
 export function computerSettingQuestion(): string {
-  return t(
-    "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.",
-  );
+  return t("Turn on computer control?");
+}
+
+/** The line under that question: the setting is one for every chat. */
+export function computerSettingNote(): string {
+  return t("Agents in any chat can then ask to use your apps.");
 }
 
 /** The name a studio consent card shows; getters, as main reads it in the language it sets after loading. */
@@ -1093,6 +1113,11 @@ export const PluginService = {
    * has a desktop and its driver, and the plugin's engine declares apps here. Asks the person nothing.
    */
   GameEngineCanAssist: "game.engine.canAssist",
+  /**
+   * `game-engine`: whether the bound game's chat still runs the turn this plugin's Do it for me
+   * started: false once that turn has ended (answered, failed or taken back) or its time is up.
+   */
+  GameEngineAssisting: "game.engine.assisting",
   /**
    * `game-engine`: a long job of the plugin's (an engine's build or package) started in Genex's
    * process sandbox, writing only folders inside the bound game; answers its id at once, and the

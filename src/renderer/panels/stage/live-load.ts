@@ -29,21 +29,46 @@ export type LiveLoad = { project: string; pending: boolean; since: number };
 
 type LivePage = Awaited<ReturnType<typeof window.studio.previewLive>>;
 
-/** What the game reports about itself, whether it is stopped, the load Live waits on, and a way to start one. */
-export function useLiveLoad(project: string | null) {
+/**
+ * Whether this game waits for the person's Play: Live holds another game's page, or none, and no load
+ * of this one is under way. Opening a game never starts it, so a game Live does not hold shows Play.
+ */
+export function waitsForPlay(at: { project: string | null; holds: boolean; liveLoad: LiveLoad | null }): boolean {
+  return Boolean(at.project) && !at.holds && at.liveLoad?.project !== at.project;
+}
+
+/** The load a game Live holds starts with: its page is waited for until it settles. A game it does not hold waits for Play. */
+const loadOnOpen = (project: string | null, holds: boolean): LiveLoad | null =>
+  project && holds ? { project, pending: false, since: Date.now() } : null;
+
+/** The load waited on once Live takes this game (`holds`) or lets it go: then only one still under way. */
+function loadOnHolds(current: LiveLoad | null, project: string | null, holds: boolean): LiveLoad | null {
+  if (holds) return current ?? loadOnOpen(project, holds);
+  return current?.pending ? current : null;
+}
+
+/**
+ * What the game reports about itself, whether it is stopped or waits for Play (`idle`), the load
+ * Live waits on, and a way to start one. `holds`: Live holds this game's page or is loading it.
+ */
+export function useLiveLoad(project: string | null, holds: boolean) {
   const [state, setState] = useState<Record<string, unknown> | null>(null);
   /** The person stopped the game (Stop on the strip): main says so on every probe. */
   const [stopped, setStopped] = useState(false);
-  const [liveLoad, setLiveLoad] = useState<LiveLoad | null>(() =>
-    project ? { project, pending: false, since: Date.now() } : null,
-  );
-  const [loadFor, setLoadFor] = useState(project);
-  if (loadFor !== project) {
-    setLoadFor(project);
+  const [liveLoad, setLiveLoad] = useState<LiveLoad | null>(() => loadOnOpen(project, holds));
+  const [loadFor, setLoadFor] = useState({ project, holds });
+  if (loadFor.project !== project) {
+    setLoadFor({ project, holds });
     setState(null);
     setStopped(false);
-    setLiveLoad(project ? { project, pending: false, since: Date.now() } : null);
+    setLiveLoad(loadOnOpen(project, holds));
+  } else if (loadFor.holds !== holds) {
+    // Main started a load of this game itself (a chat's show, the morning card): wait for its page.
+    // Live let go of it (a failed load): nothing is waited for but a load still under way.
+    setLoadFor({ project, holds });
+    setLiveLoad((current) => loadOnHolds(current, project, holds));
   }
+  const idle = waitsForPlay({ project, holds, liveLoad });
   const liveLoadRef = useRef(liveLoad);
   liveLoadRef.current = liveLoad;
   /** Hide the game while `load` runs, then wait for the page it produced to settle. */
@@ -62,7 +87,7 @@ export function useLiveLoad(project: string | null) {
       },
     );
   }, []);
-  return { state, setState, stopped, setStopped, liveLoad, setLiveLoad, liveLoadRef, loadLive };
+  return { state, setState, stopped, setStopped, idle, liveLoad, setLiveLoad, liveLoadRef, loadLive };
 }
 
 /**
@@ -92,14 +117,16 @@ export function useLoadOnceStarted(
  * changes, and again while main answers that the build is still being written. Main decides
  * (`loadWebBuild`): only a finished build Live lacks, never into a stopped game or a build the
  * person chose to view. A load it made is awaited like the stage's own until the page settles; the
- * loader is not shown while main only decides, which would hide a running game every time.
+ * loader is not shown while main only decides, which would hide a running game every time. A game
+ * waiting for Play is asked nothing: its build waits for the Play too.
  */
 export function useWebGamePage(
   stage: { project: string | null; game: GameKind | null; onWebGame: boolean },
-  live: Pick<ReturnType<typeof useLiveLoad>, "stopped" | "setLiveLoad">,
+  live: Pick<ReturnType<typeof useLiveLoad>, "stopped" | "idle" | "setLiveLoad">,
 ): void {
   const { project, game, onWebGame } = stage;
-  const { stopped, setLiveLoad } = live;
+  const { setLiveLoad } = live;
+  const stopped = live.stopped || live.idle;
   const folder = game ? webFolderOf(game) : null;
   useEffect(() => {
     if (!onWebGame || stopped || !project || !folder) return;

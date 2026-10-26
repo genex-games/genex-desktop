@@ -411,11 +411,11 @@ stand-in viewport shot from one finished run, and the steps card, whose rows com
 and unreal-chat (a short synthetic Unreal chat, `tests/fixtures/unreal-chat/sample-chat.json`:
 connector rows in words, Worked in Unreal headings, failures, play views and a Blender delivery)
 and roblox-game (the game linked to a stand-in place, `FixtureGame.rbxlx`, at its top with the
-Roblox Studio plugin on: the toolbar's Roblox Studio button, the chat's link line with Undo and the
+Roblox Studio plugin on: the chat header's Roblox button, the chat's link line with Undo and the
 steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|place]`), whose rows come from the real plugin on
 this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them)
 and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
-Genex, so Create › Items' Add to and New item reach its chat, which ends with Frost Axe's Listing draft
+Genex, so Create › Items' Add to and Ask the agent reach its chat, which ends with Frost Axe's Listing draft
 card; [the item store](play.md#the-item-store)).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth

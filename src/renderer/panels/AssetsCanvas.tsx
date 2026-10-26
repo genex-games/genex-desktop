@@ -71,17 +71,19 @@ function WaitingCard({
   group,
   job,
   plugin,
+  project,
 }: {
   layout: Layout;
   group: Group;
   job: MakingJob;
   plugin: MakingSource;
+  project: string;
 }): JSX.Element | null {
   const rect = layout.rects[`pending:${group.source}:${job.jobId}`];
   if (!rect) return null;
   return (
     <div className="absolute" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
-      <MakingCard job={job} plugin={plugin} />
+      <MakingCard job={job} plugin={plugin} project={project} />
     </div>
   );
 }
@@ -242,7 +244,9 @@ const AssetGroups = memo(function AssetGroups({
             </div>
             {group.jobs.map((job) => (
               <div key={job.id}>
-                {job.waiting && <WaitingCard layout={layout} group={group} job={job.waiting} plugin={source} />}
+                {job.waiting && (
+                  <WaitingCard layout={layout} group={group} job={job.waiting} plugin={source} project={project} />
+                )}
                 {job.assets.map((asset) => card(group, asset))}
               </div>
             ))}

@@ -128,11 +128,50 @@ function liveNotes(owner: any, launched: boolean) {
 
 /**
  * How an owned build is built: a fixture profile's also counts React commits for its checks; a
- * live one does not, since profiling every render slows the app a person is using.
+ * live one does not, since profiling every render slows the app a person is using, and carries the
+ * bundled cua-driver instead, so computer control works there as in a release.
  */
 export function devBuildArgs(buildId: string, providers: string): string[] {
   const args = ["scripts/build.mjs", `--dev-build=${buildId}`];
-  return providers === "fixture" ? [...args, "--commit-counts"] : args;
+  return providers === "fixture" ? [...args, "--commit-counts"] : [...args, "--vendor-cua-driver"];
+}
+
+/** macOS's launcher, which starts an app as LaunchServices does. */
+const MAC_OPEN = "/usr/bin/open";
+
+/** How a build's Electron is started: the program to spawn and its arguments. */
+export interface DevLaunchCommand {
+  command: string;
+  args: string[];
+}
+
+/**
+ * How a profile's Electron is started. A process the caller spawns stays in the caller's macOS
+ * responsibility chain (Terminal, or an agent's shell), so a live profile on a Mac goes through
+ * `open`: Electron is then its own responsible app, and Accessibility and Screen Recording are
+ * checked against Electron, as the person allowed them, not against whatever ran this script.
+ * `-W` keeps `open` alive until the app quits, so its exit still tells readiness and ownership that
+ * the app is gone.
+ */
+export function devLaunchCommand(options: {
+  owner: { providers?: string; freshMachine?: boolean };
+  platform: NodeJS.Platform;
+  executable: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  logs: { stdout: string; stderr: string };
+}): DevLaunchCommand {
+  const { owner, platform, executable, args, env, logs } = options;
+  const bundleEnd = executable.indexOf(".app/");
+  if (platform !== "darwin" || !launchesLive(owner) || bundleEnd < 0) return { command: executable, args };
+  const vars = Object.entries(env).flatMap(([name, value]) =>
+    value === undefined ? [] : ["--env", `${name}=${value}`],
+  );
+  const bundle = executable.slice(0, bundleEnd + ".app".length);
+  return {
+    command: MAC_OPEN,
+    args: ["-n", "-W", "--stdout", logs.stdout, "--stderr", logs.stderr, ...vars, "-a", bundle, "--args", ...args],
+  };
 }
 
 /**
@@ -146,19 +185,28 @@ async function launchApp(owner: any, id: string, providers: string) {
   pruneUnusedBuilds(devRoot(checkout));
   const logRoot = safeChild(devRoot(checkout), `evidence/launch-${buildId}`);
   fs.mkdirSync(logRoot, { mode: 0o700 });
-  const out = fs.openSync(path.join(logRoot, "stdout.log"), "wx", 0o600);
-  const err = fs.openSync(path.join(logRoot, "stderr.log"), "wx", 0o600);
-  const executable = resolveElectron(checkout);
+  const logs = { stdout: path.join(logRoot, "stdout.log"), stderr: path.join(logRoot, "stderr.log") };
+  const out = fs.openSync(logs.stdout, "wx", 0o600);
+  const err = fs.openSync(logs.stderr, "wx", 0o600);
   const launchArgs = [
     path.join(checkout, `.studio-dev/builds/${buildId}/main/main.mjs`),
     `--studio-dev-launch=${path.join(owner.root, "launch.json")}`,
   ];
   const fixture = providers === "fixture";
-  const child = spawn(executable, fixture ? fixtureElectronArgs(launchArgs) : launchArgs, {
+  const env = launchEnv(owner);
+  const plan = devLaunchCommand({
+    owner,
+    platform: process.platform,
+    executable: resolveElectron(checkout),
+    args: fixture ? fixtureElectronArgs(launchArgs) : launchArgs,
+    env,
+    logs,
+  });
+  const child = spawn(plan.command, plan.args, {
     cwd: checkout,
     detached: true,
     stdio: ["ignore", out, err],
-    env: launchEnv(owner),
+    env,
   });
   writeJson(safeChild(owner.root, "attempt.json"), {
     version: 1,

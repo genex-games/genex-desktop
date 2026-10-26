@@ -17,11 +17,17 @@ import {
 import { ROBLOX_PLUGIN_ID } from "../../src/shared/observers.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
-import { RobloxPublishKind, RobloxPublishPhase, type RobloxPublishState } from "../../src/shared/roblox-publish.ts";
+import {
+  RobloxPublishKind,
+  RobloxPublishPhase,
+  type RobloxPublishState,
+  robloxCreatorHubUrl,
+} from "../../src/shared/roblox-publish.ts";
 import { StepState } from "../../src/renderer/ui/step-bar.ts";
 
 const NOW = 10_000_000;
 const PLACE_ID = "7781440219";
+const UNIVERSE_ID = "2650912";
 const ROBLOX_FACTS = [{ id: CoreFact.RobloxProject, path: "sky-race.rbxlx" }];
 
 const roblox = (over: Partial<PluginInfo> = {}) =>
@@ -95,5 +101,26 @@ describe("the publishing card", () => {
     const later = robloxCardView(published({ attempt: stopped }), NOW + RESULT_SHOWN_MS + 1);
     assert.equal(later.stage, RobloxCardStage.Ready);
     assert.equal(later.detail, undefined);
+  });
+
+  it("after a first publish, says only the person sees it yet and links Creator Hub for what is left", () => {
+    const done = { phase: RobloxPublishPhase.Published, kind: RobloxPublishKind.First, at: NOW };
+    const view = robloxCardView(published({ universeId: UNIVERSE_ID, attempt: done }), NOW + 1);
+    assert.equal(view.stage, RobloxCardStage.Published);
+    assert.equal(view.hubUrl, `https://create.roblox.com/dashboard/creations/experiences/${UNIVERSE_ID}/overview`);
+    assert.equal(view.notPublicYet, true, "a new game is private and unrated until the person says otherwise");
+    const update = { ...done, kind: RobloxPublishKind.Update };
+    assert.equal(robloxCardView(published({ universeId: UNIVERSE_ID, attempt: update }), NOW + 1).notPublicYet, false);
+  });
+});
+
+describe("a Roblox game's Creator Hub page", () => {
+  it("is only for a universe id", () => {
+    assert.equal(
+      robloxCreatorHubUrl(UNIVERSE_ID),
+      `https://create.roblox.com/dashboard/creations/experiences/${UNIVERSE_ID}/overview`,
+    );
+    for (const bad of [undefined, "", "12a", "../1", "1".repeat(21), "1/../../x"])
+      assert.equal(robloxCreatorHubUrl(bad), undefined, bad);
   });
 });

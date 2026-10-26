@@ -28,6 +28,14 @@ interface CleanupReport {
   originalError?: boolean;
 }
 
+type ReleaseOpts = { sandboxUserSid: string; holderPid?: number; srtWin: { exe: string; prependArgs: string[] } };
+
+/** The async release `action` runs through (the patch's twins), answering its per-path outcomes. */
+async function release(action: string, opts: ReleaseOpts): Promise<{ path: string; status: string }[] | undefined> {
+  if (action === "restore") return windows.restoreWindowsAclAsync(opts);
+  return (await windows.revokeWindowsAclCheckedAsync(opts)).outcomes;
+}
+
 async function exercise(scenario: string): Promise<CleanupReport> {
   const { stdout } = await run(process.execPath, ["--experimental-test-module-mocks", FIXTURE, scenario], {
     timeout: CHILD_TIMEOUT_MS,
@@ -66,8 +74,8 @@ describe("Windows ACL cleanup keeps the main process responsive", () => {
     assert.equal(report.originalError, true);
   });
 
-  it("yields during partial deny stamp rollback and preserves the original error", async () => {
-    const report = await exercise("stamp-failure");
+  it("yields during the rollback after a failed egress check and preserves the original error", async () => {
+    const report = await exercise("egress-failure");
     assertAsyncCleanup(report);
     assert.equal(report.originalError, true);
   });
@@ -86,14 +94,14 @@ describe("Windows ACL cleanup keeps the main process responsive", () => {
     assert.deepEqual(report.events.slice(-2), ["sync revoke", "sync restore"]);
   });
 
-  it("cleans partial grants synchronously if the process exits during initialization", async () => {
+  it("cleans a grant still being written synchronously if the process exits during initialization", async () => {
     const report = await exercise("exit-grant");
     assert.deepEqual(report.events, ["grant", "sync revoke", "sync restore"]);
   });
 
   it("retains exit cleanup while an async rollback is still pending", async () => {
     const report = await exercise("exit-rollback");
-    assert.deepEqual(report.events, ["grant", "stamp", "async revoke start", "sync revoke", "sync restore"]);
+    assert.deepEqual(report.events, ["grant", "egress", "async revoke start", "sync revoke", "sync restore"]);
   });
 });
 
@@ -104,13 +112,14 @@ describe("async Windows ACL cleanup transport", () => {
       const tick = setImmediate().then(() => {
         turned = true;
       });
-      const outcomes = await windows[`${action}WindowsAclAsync`]({
+      const outcomes = await release(action, {
         sandboxUserSid: "fixture sid with spaces",
         holderPid: 12345,
         srtWin: { exe: process.execPath, prependArgs: [REPLY, "array"] },
       });
       assert.equal(turned, true, "ACL subprocess must not block the caller's event loop");
       await tick;
+      assert.ok(outcomes?.[0], action);
       assert.deepEqual(JSON.parse(outcomes[0].path), [
         "acl",
         action,
@@ -134,11 +143,11 @@ describe("async Windows ACL cleanup transport", () => {
 
   it("retains per-path outcomes on a nonzero cleanup exit", async () => {
     for (const action of ["revoke", "restore"]) {
-      const outcomes = await windows[`${action}WindowsAclAsync`]({
+      const outcomes = await release(action, {
         sandboxUserSid: "fixture-sid",
         srtWin: { exe: process.execPath, prependArgs: [REPLY, "partial"] },
       });
-      assert.equal(outcomes[0].status, "revoked");
+      assert.equal(outcomes?.[0]?.status, "revoked");
     }
   });
 
@@ -148,33 +157,29 @@ describe("async Windows ACL cleanup transport", () => {
         { exe: process.execPath, prependArgs: [REPLY, "bad-json"] },
         { exe: path.join(dist, "fixture-missing-srt-win"), prependArgs: [] },
       ]) {
-        assert.equal(await windows[`${action}WindowsAclAsync`]({ sandboxUserSid: "fixture-sid", srtWin }), undefined);
+        assert.equal(await release(action, { sandboxUserSid: "fixture-sid", srtWin }), undefined);
       }
     }
   });
 });
 
-describe("srt-win gets two minutes for its ACL calls and the egress check", () => {
-  it("gives srt-win two minutes for each synchronous grant, stamp, revoke and restore", async () => {
+describe("srt-win gets two minutes for the session release and the egress check", () => {
+  it("gives srt-win two minutes for each synchronous revoke and restore", async () => {
     const { stdout } = await run(process.execPath, ["--experimental-test-module-mocks", SYNC_DEADLINES], {
       timeout: CHILD_TIMEOUT_MS,
       windowsHide: true,
     });
     assert.deepEqual(JSON.parse(stdout), {
-      "acl grant": SRT_WIN_DEADLINE_MS,
-      "acl stamp": SRT_WIN_DEADLINE_MS,
       "acl revoke": SRT_WIN_DEADLINE_MS,
       "acl restore": SRT_WIN_DEADLINE_MS,
     });
   });
 
-  it("stops a silent srt-win at two minutes, not before, on each async ACL call and the egress check", async (t) => {
+  it("stops a silent srt-win at two minutes, not before, on each async release and the egress check", async (t) => {
     const opts = { sandboxUserSid: "fixture-sid", srtWin: { exe: process.execPath, prependArgs: [HANG] } };
     const calls = {
-      grant: () => windows.grantWindowsAclAsync({ ...opts, read: [], write: [] }),
-      stamp: () => windows.stampWindowsAclAsync({ ...opts, denyRead: [], denyWrite: [] }),
-      revoke: () => windows.revokeWindowsAclAsync(opts),
-      restore: () => windows.restoreWindowsAclAsync(opts),
+      revoke: () => release("revoke", opts),
+      restore: () => release("restore", opts),
       egress: () => windows.verifyWindowsWfpEgress({ target: "127.0.0.1:9", srtWin: opts.srtWin }),
     };
     const kill = t.mock.method(ChildProcess.prototype, "kill");
@@ -189,7 +194,7 @@ describe("srt-win gets two minutes for its ACL calls and the egress check", () =
       assert.equal(kill.mock.callCount(), 0, `${verb}: srt-win still has its time`);
       t.mock.timers.tick(1);
       assert.equal(kill.mock.callCount(), 1, `${verb}: srt-win is stopped at the deadline`);
-      // A grant, stamp or egress check that ran out of time fails the start; a revoke or restore stays best effort.
+      // An egress check that ran out of time fails the start; a revoke or restore stays best effort.
       const expected = verb === "revoke" || verb === "restore" ? null : "srt_win_timeout";
       assert.equal(await outcome, expected, verb);
     }

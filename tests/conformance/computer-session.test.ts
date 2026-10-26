@@ -444,3 +444,81 @@ describe("computer session — why a game refused", () => {
     );
   });
 });
+
+describe("computer session — bringing an app to the front", () => {
+  it("hands bring_to_front to a target that can, says why when it could not, and refuses it elsewhere", async () => {
+    const { target, calls } = fakeTarget();
+    const desk: ComputerTarget = {
+      ...target,
+      caps: { ...BROWSER_CAPABILITIES, apps: true },
+      front: async (app, window) => {
+        calls.push(window ? `front:${app}:${window}` : `front:${app}`);
+        return app === "chrome.exe" ? `${app} did not come to the front` : null;
+      },
+    };
+    const { s } = await session({ target: desk });
+    assert.match(
+      text(await s.run("computer", { action: "bring_to_front", text: "msedge.exe" })),
+      /^OK — bring msedge\.exe to the front/,
+    );
+    assert.match(
+      text(await s.run("computer", { action: "bring_to_front", text: "chrome.exe" })),
+      /bring_to_front did not happen: chrome\.exe did not come to the front/,
+    );
+    assert.match(text(await s.run("computer", { action: "bring_to_front" })), /bring_to_front needs text=<app>/);
+    assert.match(
+      text(
+        await s.run("computer", {
+          action: "bring_to_front",
+          text: "com.Roblox.RobloxStudio",
+          window: " spinning-colored-block ",
+        }),
+      ),
+      /^OK — bring com\.Roblox\.RobloxStudio \(spinning-colored-block\) to the front/,
+      "one of the app's windows, by part of its title",
+    );
+    assert.deepEqual(calls, [
+      "front:msedge.exe",
+      "front:chrome.exe",
+      "front:com.Roblox.RobloxStudio:spinning-colored-block",
+    ]);
+    const plain = await session();
+    assert.match(
+      text(await plain.s.run("computer", { action: "bring_to_front", text: "msedge.exe" })),
+      /not available/,
+    );
+  });
+});
+
+describe("computer session — opening a page in the person's browser", () => {
+  it("hands open_page to a target that can, says why when it could not, and refuses it elsewhere", async () => {
+    const { target, calls } = fakeTarget();
+    const desk: ComputerTarget = {
+      ...target,
+      caps: { ...BROWSER_CAPABILITIES, apps: true },
+      openPage: async (address) => {
+        calls.push(`page:${address}`);
+        return address.startsWith("https://create.example.com/") ? null : "that page is not this task's";
+      },
+    };
+    const { s } = await session({ target: desk });
+    assert.match(
+      text(await s.run("computer", { action: "open_page", text: "https://create.example.com/icon" })),
+      /^OK — open create\.example\.com in the browser/,
+    );
+    assert.match(
+      text(await s.run("computer", { action: "open_page", text: "https://elsewhere.example/" })),
+      /open_page did not happen: that page is not this task's/,
+    );
+    assert.match(
+      text(await s.run("computer", { action: "open_page" })),
+      /open_page needs text=<an https:\/\/ address>/,
+    );
+    assert.deepEqual(calls, ["page:https://create.example.com/icon", "page:https://elsewhere.example/"]);
+    const plain = await session();
+    assert.match(
+      text(await plain.s.run("computer", { action: "open_page", text: "https://create.example.com/icon" })),
+      /not available/,
+    );
+  });
+});

@@ -125,7 +125,7 @@ it.
 | `not_hosted` | No hosted project yet: the first publish sends it. |
 | `busy` | A publish of this game is running: check `genex__cover {"operation":"status"}` once it is done. |
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-cover/SKILL.md v1.36.15 sha256 d112fa31e709a519aa9c453f3b1fdecd640464dcd0bf5efdfc698a1438e04b8c -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-cover/SKILL.md v1.36.17 sha256 4fe35db9a02d707f48581d9e2af6ebaa972cf901e48a0fcd47e754dfc4dd5255 -->
 ---
 name: genex-cover
 description: Make this game's cover — the one real frame its gallery card, game page and every shared link show. Choose or stage its best moment from its own world, models, light and effects (the hero, the action at its peak, the best-lit angle; no HUD, no text, 16:9), shoot several candidates, judge them at card size and send the best. Load once the game looks like itself, before its first publish, and again when its look changes.
@@ -400,7 +400,7 @@ from it instead of from scratch; a game kept as it is records nothing.
 | Shape | Landscape 16:9, at least 320×180; shoot 1920×1080 (any 16:9 from 1280×720 up). Anything else is centre-cropped to 16:9. |
 | File | PNG preferred; JPEG and WebP too, recognised by their bytes, not the name. At most 8 MB — over that, a high-quality JPEG. |
 | Stored | 1280×720 WebP plus a JPEG sibling, EXIF-rotated, transparency flattened onto black. A smaller frame is scaled up and goes soft. |
-| Gate | Rec.709 luma of the encoded pixels (0–1) on a 160×90 downscale of the centre 16:9. **Too dark**: mean below 0.12, or more than 85% of samples below 0.10. **Flat**: luma spread (std) below 0.04. A plainly lit scene reads about 0.4–0.6. The gate catches broken frames only; passing it says nothing about beauty. |
+| Gate | Rec.709 luma of the encoded pixels (0–1) on a 160×90 downscale of the centre 16:9. **Too dark**: mean below 0.11, or more than 85% of samples below 0.10. **Flat**: luma spread (std) below 0.04. A plainly lit scene reads about 0.4–0.6. The gate catches broken frames only; passing it says nothing about beauty. |
 | Who wins | The owner > you > a frame from the owner's own play > a build-session screenshot > the game's menu art > a remix's inherited cover > old AI art — decided by the credential the frame arrives with, never by anything you send. You replace your own pick and every automatic one, never the owner's; their own upload is never gated. |
 | Limits | 10 upload starts and 20 commits an hour per account, for all its agents together. |
 

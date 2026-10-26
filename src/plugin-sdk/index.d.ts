@@ -201,6 +201,12 @@ export interface PluginManifestTool extends PluginTool {
    * Their Allow runs the call with what the field holds (one plain line, 1–200 characters).
    */
   confirmationInput?: { parameter: string; label: string };
+  /**
+   * API 3, with `confirmation`: the call acts on the person's account with another service (an
+   * upload it moderates, a generation that counts against its limits, a publish). Its card asks in
+   * every chat mode, Bypass included, and offers Allow in this chat, which covers the tool there.
+   */
+  onAccount?: true;
   /** API 3, agent tools only: the kind of asset a call makes. */
   asset?: PluginToolAsset;
   /**
@@ -748,6 +754,12 @@ export interface PluginHostCall {
    * Offer Do it for me only when it answers true, and the click path otherwise.
    */
   (method: "game.engine.canAssist"): Promise<boolean>;
+  /**
+   * `game-engine`: whether the bound game's chat still runs the turn your Do it for me started:
+   * false once that turn has ended (answered, failed or taken back), or after 20 minutes. Use it to
+   * end a progress display the agent never ended. Throws where the host has no assists.
+   */
+  (method: "game.engine.assisting"): Promise<boolean>;
 }
 
 /** `game.engine.assist`'s task: what the chat is asked to click, in plain words. */

@@ -586,17 +586,19 @@ describe("what a chat's Loop is", () => {
     assert.deepEqual(modeMenuReach({ view: own, coordinating: true }), { opens: false, changes: false });
   });
 
-  it("Mode shows the chat's own Loop with no build or after it finished, and a running or paused build's own limit", () => {
+  it("Mode shows the chat's own Loop with no build, after it finished or while it is paused, and a running build's own limit", () => {
     const own = halfHour;
     assert.deepEqual(composerLoopView({ own, build: null }), { shown: own, editable: true });
     assert.deepEqual(composerLoopView({ own, build: { state: "running", loop: infinite } }), {
       shown: infinite,
       editable: false,
     });
-    assert.deepEqual(composerLoopView({ own: infinite, build: { state: "paused", loop: halfHour } }), {
-      shown: halfHour,
-      editable: false,
-    });
+    // A paused build no longer holds Mode on its own limit: Off can be picked after a Stop.
+    assert.deepEqual(
+      composerLoopView({ own: infinite, build: { state: "paused", loop: halfHour } }),
+      { shown: infinite, editable: true, forLater: true },
+      "a paused build shows the chat's own Loop, which can change",
+    );
     assert.deepEqual(
       composerLoopView({ own, build: { state: "running", loop: null } }).shown,
       infinite,

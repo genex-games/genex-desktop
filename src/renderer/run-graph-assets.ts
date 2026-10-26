@@ -369,7 +369,8 @@ function genexEnding(job: AssetInfo, payload: Payload): { refused: boolean; erro
   const status = strOrNull(reply?.status);
   if (!genexEndedUnmade(status)) return null;
   const generationId = job.generationId ?? strOrNull(reply?.generationId);
-  return { refused: genexRefused({ status, generationId }), error: strOrNull(reply?.error)?.trim() || null };
+  const blocked = strOrNull(reply?.blocked);
+  return { refused: genexRefused({ status, generationId, blocked }), error: strOrNull(reply?.error)?.trim() || null };
 }
 
 /**

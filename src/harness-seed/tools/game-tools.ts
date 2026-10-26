@@ -17,6 +17,7 @@ import { LoopProfile, loopProfileOf, ProjectStarter, ProjectTool } from "../loop
 import { OPEN_LAUNCH_WORDS } from "../loop/open-loop-prompts.ts";
 import { UNTIL_DONE_WORDS } from "../loop/until-done-prompts.ts";
 import { scopeItems } from "../loop/scope.ts";
+import { storeItemsOf } from "../loop/store-items.ts";
 
 /** How long `run_command` lets a command run when the call names no timeout. */
 const COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
@@ -70,6 +71,27 @@ const IN_SCOPE_WORDS = "what this build delivers, each item in the user's words"
 const CUT_WORDS =
   "what a game like this often has that this build will not (a reference is a look bar, not a feature list)";
 
+/** What a launch sells in the game's Genex store: never cut, listed by the build with its picture (loop/store-items.ts). */
+const STORE_ITEMS_WORDS =
+  'each thing the user sells for Nex, Genex\'s currency (a class, a character, a skin, an item), as {"name","price","type","description"}: price in whole Nex as they named it (Genex takes the nearest step on the store grid), 100 when they named none; type "durable" for what is kept once bought (a class, a character, a skin), "consumable" only for what is used up. The build lists each in the game\'s store with its picture, so never put these in cut; an item can also be added or changed at any time with genex__cli, no launch needed. Leave it out when nothing is sold for Nex: coins, gold or gems are a currency the game keeps itself';
+
+/** A store item list parameter: objects, or their JSON array as text from an engine that sends every field as a string. */
+const storeList = () => ({
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      price: { type: "number" },
+      type: { type: "string" },
+      description: { type: "string" },
+    },
+    required: ["name"],
+  },
+  acceptJsonString: true,
+  description: STORE_ITEMS_WORDS,
+});
+
 /**
  * A launch's hours, for a Loop an Auto chat was asked for in words (delegated-turn.ts `autoLaunchFor`
  * bridges this tool only while it has them); with Loop on the composer's hours win.
@@ -77,11 +99,19 @@ const CUT_WORDS =
 const LOOP_HOURS_WORDS =
   "The hours the user named, digits only (3, 1.5); 0 when they said until done; leave it out when they named none (the Loop switch's hours, if on, else until done).";
 
-/** A launch's in-scope and cut lists as the run carries them to its scope (chat-dispatch.ts `intakeRun`); none when unnamed. */
-function scopeArgs(args: AnyRecord): { inScope?: string[]; cut?: string[] } {
+/**
+ * A launch's in-scope and cut lists and its store items as the run carries them to its scope
+ * (chat-dispatch.ts `intakeRun`); none when unnamed.
+ */
+function scopeArgs(args: AnyRecord): { inScope?: string[]; cut?: string[]; storeItems?: AnyRecord[] } {
   const inScope = scopeItems(args.in_scope);
   const cut = scopeItems(args.cut);
-  return { ...(inScope.length ? { inScope } : {}), ...(cut.length ? { cut } : {}) };
+  const storeItems = storeItemsOf(args.store_items);
+  return {
+    ...(inScope.length ? { inScope } : {}),
+    ...(cut.length ? { cut } : {}),
+    ...(storeItems.length ? { storeItems } : {}),
+  };
 }
 
 /** Does the call name a folder other than the one this chat is pinned to? */
@@ -368,6 +398,7 @@ export const tools: HarnessTool[] = [
         notes: str("optional extra for the critic"),
         in_scope: list(IN_SCOPE_WORDS),
         cut: list(CUT_WORDS),
+        store_items: storeList(),
       },
       required: ["goal", "direction"],
     },
@@ -428,6 +459,7 @@ export const tools: HarnessTool[] = [
         textual_reference: str("if the user had no images: the game/film they named as the vibe"),
         in_scope: list(IN_SCOPE_WORDS),
         cut: list(CUT_WORDS),
+        store_items: storeList(),
         hours: { type: "number", description: LOOP_HOURS_WORDS },
       },
       required: ["goal", "direction"],
@@ -540,6 +572,8 @@ function slugProject(text: unknown): string {
     .toLowerCase()
     .replace(/[^a-z0-9\s-]+/g, " ")
     .split(/\s+/)
+    // A word whose other half was not Latin ("game-магазин") keeps a dash at its edge: drop it.
+    .map((word) => word.replace(/^-+|-+$/g, ""))
     .filter((word) => word && !SLUG_STOP.has(word));
   return (words.slice(0, SLUG_WORDS).join("-") || FALLBACK_FOLDER).slice(0, MAX_SLUG_CHARS);
 }

@@ -1,17 +1,16 @@
 /**
  * Settings → Model Providers, the metered rows: OpenCode, which signs in to providers itself in
- * Studio's terminal, and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
+ * Studio's terminal, Grok Build and Cursor, which sign in to the person's account there the same way,
+ * and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
  * subscription's (`ModelsSection.tsx`): one status plate, one line, at most one visible action, an
  * Account menu once connected, and the picker's model list under it. The OpenRouter key goes
  * straight to main, which checks it with OpenRouter and keeps it in the OS secret store; it is
  * never shown again, and the field forgets it the moment it is sent.
  */
-import { type JSX, lazy, Suspense, useEffect, useRef, useState } from "react";
+import { type JSX, lazy, Suspense, useState } from "react";
 import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
-import { EngineId } from "../../shared/providers.ts";
-import { TerminalKind, type TerminalSession } from "../../shared/terminal.ts";
-import { useCliInstall } from "../cli-install.ts";
+import { EngineId, isBeta } from "../../shared/providers.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
 import {
@@ -22,16 +21,13 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { prefersReducedMotion } from "../ui/media-queries.ts";
-import { Pending } from "../ui/Pending.tsx";
 import { METERED_PROVIDER_WORDS, problemWords } from "../words.ts";
-import { OpenCodeRowState, openCodeRowState } from "./opencode-row.ts";
 import { PickerModels } from "./PickerModels.tsx";
 import { type ProviderWords, RowHeading, RowTone, type RowView } from "./provider-row.tsx";
-import { useSignInTerminal } from "./use-sign-in-terminal.ts";
 
 const WORDS = METERED_PROVIDER_WORDS;
-const TerminalView = lazy(() => import("./TerminalView.tsx"));
+/** OpenCode's and Grok Build's rows, loaded when Settings shows them: they are not on the first screen. */
+const CliSignInRow = lazy(() => import("./CliSignInRow.tsx"));
 
 /** What the metered rows need: the engines, and a way to read them again. */
 export type MeteredProviderProps = { engines: EngineDescriptor[]; onEnginesRefresh: () => Promise<void> | void };
@@ -98,7 +94,7 @@ export function ItemWords({ title, line }: { title: string; line: string }): JSX
 }
 
 /** The row's card: its heading, the picker's models once connected, and its trouble. */
-function ProviderCard({
+export function ProviderCard({
   words,
   engine,
   view,
@@ -123,6 +119,7 @@ function ProviderCard({
         tone={checking ? RowTone.Busy : view.tone}
         status={checking ? WORDS.checking : view.status}
         view={view}
+        beta={isBeta(engine.id)}
       />
       {children}
       {connected && <PickerModels engine={engine} name={words.name} />}
@@ -148,187 +145,6 @@ export function useRecheck(engineId: string, onEnginesRefresh: () => Promise<voi
     }
   };
   return { checking, recheck };
-}
-
-const OPEN_CODE_WORDS: ProviderWords = { name: WORDS.openCode.name, plans: "", guide: WORDS.openCode.guide };
-
-/** What OpenCode's row can do: install, recheck, sign in to a provider or stop signing in, update. */
-type OpenCodeActions = {
-  install: () => void;
-  recheck: () => void;
-  signIn: () => void;
-  cancelSignIn: () => void;
-  /** Open the sign-in page OpenCode printed, when it printed one. */
-  openSignInPage: (() => void) | null;
-  update: () => void;
-};
-
-/** OpenCode's row by its state: installing, missing, signing in, free models only, connected or unreachable. */
-function openCodeView(state: OpenCodeRowState, act: OpenCodeActions): RowView {
-  switch (state) {
-    case OpenCodeRowState.Installing:
-      return { tone: RowTone.Busy, status: WORDS.installing, line: WORDS.openCode.installingLine, actions: null };
-    case OpenCodeRowState.NotInstalled:
-      return {
-        tone: RowTone.Off,
-        status: WORDS.notInstalled,
-        line: WORDS.openCode.installLine,
-        actions: (
-          <>
-            <Button variant="default" onClick={act.install}>
-              {WORDS.openCode.install}
-            </Button>
-            <Button onClick={act.recheck}>{WORDS.checkAgain}</Button>
-          </>
-        ),
-      };
-    case OpenCodeRowState.SigningIn:
-      return openCodeSigningInView(act);
-    case OpenCodeRowState.SignedOut:
-      return {
-        tone: RowTone.Off,
-        status: WORDS.notConnected,
-        line: WORDS.openCode.signInLine,
-        actions: (
-          <Button variant="default" onClick={act.signIn}>
-            {WORDS.openCode.signIn}
-          </Button>
-        ),
-      };
-    case OpenCodeRowState.FreeOnly:
-      return openCodeFreeOnlyView(act);
-    case OpenCodeRowState.Connected:
-      return openCodeConnectedView(act);
-    default:
-      return {
-        tone: RowTone.Danger,
-        status: WORDS.couldNotCheck,
-        line: WORDS.openCode.unreachable,
-        actions: <Button onClick={act.recheck}>{WORDS.tryAgain}</Button>,
-      };
-  }
-}
-
-/** OpenCode's own sign-in runs in the row's terminal, below: finish it there, or stop it. */
-function openCodeSigningInView(act: OpenCodeActions): RowView {
-  return {
-    tone: RowTone.Busy,
-    status: WORDS.signingIn,
-    line: WORDS.openCode.signingIn,
-    actions: (
-      <>
-        {act.openSignInPage && (
-          <Button variant="default" onClick={act.openSignInPage}>
-            {WORDS.openCode.openSignInPage}
-          </Button>
-        )}
-        <Button onClick={act.cancelSignIn}>{WORDS.openCode.cancelSignIn}</Button>
-      </>
-    ),
-  };
-}
-
-/** The sign-in's terminal inside the row, so Settings stays open while OpenCode asks its questions. */
-function SignInTerminal({ session, onError }: { session: TerminalSession; onError: (error: string) => void }) {
-  const box = useRef<HTMLDivElement>(null);
-  // The row may sit below the fold: bring the sign-in's questions into view once it starts.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once per sign-in session
-  useEffect(() => {
-    box.current?.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" });
-  }, [session.id]);
-  return (
-    <div
-      ref={box}
-      data-keeps-escape
-      data-sign-in-terminal
-      className="h-[26rem] min-h-0 overflow-hidden rounded-lg border border-line bg-base pt-2"
-    >
-      <Suspense fallback={<Pending label={WORDS.signingIn} className="px-3 py-2" working />}>
-        <TerminalView session={session} visible onError={onError} />
-      </Suspense>
-    </div>
-  );
-}
-
-/** No provider signed in: OpenCode's free models run, and Sign in comes first. */
-function openCodeFreeOnlyView(act: OpenCodeActions): RowView {
-  return {
-    tone: RowTone.Warning,
-    status: WORDS.openCode.freeOnly,
-    line: WORDS.openCode.freeOnlyLine,
-    actions: (
-      <>
-        <Button variant="default" onClick={act.signIn}>
-          {WORDS.openCode.signIn}
-        </Button>
-        <AccountMenu name={WORDS.openCode.name} onCheck={act.recheck}>
-          <DropdownMenuItem onSelect={act.update}>{WORDS.openCode.update}</DropdownMenuItem>
-        </AccountMenu>
-      </>
-    ),
-  };
-}
-
-/** A provider signed in: billed by each one, and another can be added. */
-function openCodeConnectedView(act: OpenCodeActions): RowView {
-  return {
-    tone: RowTone.Connected,
-    status: WORDS.connected,
-    line: WORDS.openCode.connectedLine,
-    actions: (
-      <AccountMenu name={WORDS.openCode.name} onCheck={act.recheck}>
-        <>
-          <DropdownMenuItem onSelect={act.signIn}>
-            <ItemWords title={WORDS.openCode.addProvider} line={WORDS.openCode.addProviderLine} />
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={act.update}>{WORDS.openCode.update}</DropdownMenuItem>
-        </>
-      </AccountMenu>
-    ),
-  };
-}
-
-function OpenCodeRow({
-  engine,
-  onEnginesRefresh,
-}: { engine: EngineDescriptor } & Pick<MeteredProviderProps, "onEnginesRefresh">) {
-  const install = useCliInstall(EngineId.OpenCode);
-  const { run, error } = useRun();
-  const { checking, recheck } = useRecheck(EngineId.OpenCode, onEnginesRefresh);
-  // The sign-in runs in this row's terminal; when it exits, the host rechecks OpenCode's models.
-  const terminal = useSignInTerminal(TerminalKind.OpenCodeLogin);
-  const [terminalError, setTerminalError] = useState<string | null>(null);
-  const ready = engine.status.code === EngineStatusCode.Ready;
-  const state = openCodeRowState(engine, { installing: install.installing, signingIn: Boolean(terminal) });
-  const signIn = (): void =>
-    void run(async () => {
-      setTerminalError(null);
-      const started = await window.studio.openCodeSignIn();
-      if (!started.started) await recheck();
-    });
-  const cancelSignIn = (): void => {
-    if (terminal) void run(() => window.studio.terminalStop(terminal.id));
-  };
-  const view = openCodeView(state, {
-    install: () => void install.install(),
-    recheck: () => void run(recheck),
-    signIn,
-    cancelSignIn,
-    openSignInPage: terminal?.signInPage ? () => void run(() => window.studio.terminalOpenLink(terminal.id)) : null,
-    update: () => void install.update(),
-  });
-  return (
-    <ProviderCard
-      words={OPEN_CODE_WORDS}
-      engine={engine}
-      view={view}
-      checking={checking}
-      connected={ready && !install.installing}
-      problem={error ?? terminalError ?? install.problem}
-    >
-      {terminal && <SignInTerminal session={terminal} onError={setTerminalError} />}
-    </ProviderCard>
-  );
 }
 
 const OPEN_ROUTER_WORDS: ProviderWords = { name: WORDS.openRouter.name, plans: "", guide: WORDS.openRouter.keysUrl };
@@ -456,10 +272,19 @@ function OpenRouterRow({
 /** The metered rows, under the subscriptions: each only when its engine is registered. */
 export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProviderProps): JSX.Element {
   const openCode = engines.find((engine) => engine.id === EngineId.OpenCode);
+  const grok = engines.find((engine) => engine.id === EngineId.Grok);
+  const cursor = engines.find((engine) => engine.id === EngineId.Cursor);
   const openRouter = engines.find((engine) => engine.id === EngineId.OpenRouter);
   return (
     <>
-      {openCode && <OpenCodeRow engine={openCode} onEnginesRefresh={onEnginesRefresh} />}
+      {/* The CLI rows load with Settings; OpenRouter's row below waits for nothing. */}
+      <Suspense fallback={null}>
+        {openCode && (
+          <CliSignInRow engine={openCode} onEnginesRefresh={onEnginesRefresh} provider={EngineId.OpenCode} />
+        )}
+        {grok && <CliSignInRow engine={grok} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Grok} />}
+        {cursor && <CliSignInRow engine={cursor} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Cursor} />}
+      </Suspense>
       {openRouter && <OpenRouterRow engine={openRouter} onEnginesRefresh={onEnginesRefresh} />}
     </>
   );

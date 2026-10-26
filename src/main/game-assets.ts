@@ -231,6 +231,10 @@ export interface AssetJobRecord {
   prompt?: string;
   createdAt?: string;
   use?: ProjectAsset["use"];
+  /** What the job went no further for (`GenexBlocked`). */
+  blocked?: string;
+  /** What it costs in credits, as Genex quoted or charged it (after refunds). */
+  credits?: number;
 }
 
 /** Where the Genex plugin keeps one project's jobs. */
@@ -401,6 +405,10 @@ function inventoryRecord(value: Record<string, unknown>, name: string): Record<s
     "createdAt",
     "state",
     "inputs",
+    "blocked",
+    "creditsQuoted",
+    "creditsCharged",
+    "creditsRefunded",
   ];
   return Object.fromEntries(fields.filter((key) => value[key] !== undefined).map((key) => [key, value[key]]));
 }
@@ -455,6 +463,16 @@ function requestPrompt(request: Record<string, unknown> | null): string | undefi
   return prompt.length > PROMPT_MAX ? `${prompt.slice(0, PROMPT_MAX - 1)}…` : prompt;
 }
 
+const creditCount = (value: unknown): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+/** What a job costs, as Genex charged it (less refunds) or else quoted it; undefined when it said neither. */
+function jobCredits(record: Record<string, unknown>): number | undefined {
+  const charged = creditCount(record.creditsCharged);
+  if (charged !== null && charged > 0) return Math.max(0, charged - (creditCount(record.creditsRefunded) ?? 0));
+  return creditCount(record.creditsQuoted) ?? undefined;
+}
+
 /** One job folder's record, when it is this project's and named by its own id. */
 async function readGenexJob(jobsRoot: string, name: string, project: string): Promise<AssetJobRecord | null> {
   if (!UUID.test(name)) return null;
@@ -466,14 +484,16 @@ async function readGenexJob(jobsRoot: string, name: string, project: string): Pr
   const files = Array.isArray(record.files) ? record.files.filter((f): f is string => typeof f === "string") : [];
   const prompt = requestPrompt(await readJson(path.join(dir, "request.json"), dir));
   const use = plainObject(record.use) as ProjectAsset["use"] | null;
+  const credits = jobCredits(record);
   return {
     id: name,
     files,
     manifest: jobManifest(record.manifest),
     preferredFile: typeof record.preferredFile === "string" ? record.preferredFile : undefined,
-    ...stringFields(record, ["operation", "status", "generationId", "createdAt"]),
+    ...stringFields(record, ["operation", "status", "generationId", "createdAt", "blocked"]),
     ...(prompt ? { prompt } : {}),
     ...(use ? { use } : {}),
+    ...(credits !== undefined ? { credits } : {}),
   };
 }
 
@@ -1067,7 +1087,7 @@ function genexWaitingJob(j: AssetJobRecord, now: number): MakingJob {
   return {
     source: GENEX_PLUGIN_ID,
     jobId: j.generationId ?? j.id,
-    phase: genexPhase(j.status, { delivered, ageMs }),
+    phase: genexPhase(j.status, { delivered, ageMs, blocked: j.blocked ?? null }),
     ...(made ? { kind: made.kind } : {}),
     ...(made?.tool ? { tool: made.tool } : {}),
     ...(j.createdAt ? { at: j.createdAt } : {}),
@@ -1075,6 +1095,7 @@ function genexWaitingJob(j: AssetJobRecord, now: number): MakingJob {
     ...(j.prompt ? { prompt: j.prompt } : {}),
     ...(j.status ? { pluginStatus: j.status } : {}),
     ...(delivered ? { delivered: true } : {}),
+    ...(j.credits !== undefined ? { credits: j.credits } : {}),
   };
 }
 

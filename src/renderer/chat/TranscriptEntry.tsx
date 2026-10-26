@@ -350,6 +350,7 @@ function ActionEntry({
     const held = entry.pending && entry.runId === activeRunId && (entry.expiresAt ?? 0) > Date.now();
     return held ? (
       <ChatQuestion
+        keys={false}
         title={t("Review the build plan")}
         choices={[
           { id: "approve", label: t("Approve plan") },

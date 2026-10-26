@@ -51,9 +51,10 @@ function chipClass({
     fullWidth && !iconOnly && "flex-1 justify-center",
     "transition-colors duration-(--duration-quick)",
     "focus-visible:outline-none",
-    // The current view is drawn as an accent button: the palette's switch fill, else its button fill, and label.
+    // The current view wears the accent as a tint with its edge (theme.css `.selected-tint`): only a
+    // surface's one main action is filled.
     isActive
-      ? "bg-[var(--switch-fill,var(--accent-fill))] text-accent-foreground"
+      ? "selected-tint"
       : "text-control-text hover:bg-[var(--control-hover,transparent)] hover:text-control-text-hover",
   );
 }
