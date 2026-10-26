@@ -102,6 +102,7 @@ pub mod command;
 mod core;
 pub mod error;
 mod hash;
+mod hull;
 pub mod joint;
 mod json;
 mod kinematic;

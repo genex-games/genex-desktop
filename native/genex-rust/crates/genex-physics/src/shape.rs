@@ -11,6 +11,7 @@ use crate::axes::{axis_in, extent_in, vec_in};
 use crate::backend::ShapeSpec;
 use crate::body::Shape;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
+use crate::hull::convex_hull;
 use crate::limits::Limits;
 use crate::num::{finite, finite_vec, integer, non_negative};
 use crate::types::{UpAxis, Vec3};
@@ -101,12 +102,14 @@ fn points_in(points: &[Vec3], up: UpAxis, what: &str, max: f32) -> Result<Vec<[f
 
 fn hull(points: &[Vec3], up: UpAxis, max: f32, facts: &mut ShapeFacts) -> Result<ShapeSpec, PhysicsFailure> {
     let points = points_in(points, up, "hull point", max)?;
+    let refused = || fail(PhysicsError::BadShape, "a hull needs 4 points that are not all in one plane");
     if points.len() < HULL_POINTS_MIN || is_flat(&points) {
-        return fail(PhysicsError::BadShape, "a hull needs 4 points that are not all in one plane");
+        return refused();
     }
+    let Some((corners, triangles)) = convex_hull(&points) else { return refused() };
     facts.hull_points_max = facts.hull_points_max.max(points.len());
     facts.hull_points += points.len();
-    Ok(ShapeSpec::Hull { points })
+    Ok(ShapeSpec::Hull { points: corners, triangles })
 }
 
 fn trimesh(

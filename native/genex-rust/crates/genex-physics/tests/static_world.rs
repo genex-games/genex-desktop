@@ -213,3 +213,45 @@ fn the_full_section_17_7_world_of_4096_boxes_and_512_ramps_imports() {
     let z = w.body("ball").expect("there").pose.p[2];
     assert!((z - 1.5).abs() < 0.01, "rests on box 0: {z}");
 }
+
+/// Ramps §17.7 accepts at extreme aspect ratios: a key of the wedge or 8-point ramp each makes.
+fn extreme_ramps() -> Vec<(&'static str, Vec<f64>)> {
+    let subnormal = 1.401_298_464_324_817e-45;
+    let ulp_above_one = 1.0 + 2f64.powi(-23);
+    vec![
+        ("2e9 wide, a subnormal tall", vec![-1e9, -1e9, 0.0, 1e9, 1e9, subnormal, 0.0, 0.0, subnormal]),
+        ("one ulp tall", vec![0.0, 0.0, 1.0, 4.0, 2.0, ulp_above_one, 1.0, 1.0, ulp_above_one]),
+        ("1e9 by 1e9, two units of rise", vec![0.0, 0.0, 0.0, 1e9, 1e9, 3.0, 0.0, 1.0, 3.0]),
+        ("2^-100 wide, 2e9 of rise", vec![0.0, 0.0, -1e9, 2f64.powi(-100), 1.0, 1e9, 0.0, -1e9, 1e9]),
+        ("1e9 long, 2^-100 across", vec![-1e9, 0.0, 0.0, 1e9, 2f64.powi(-100), 2.0, 0.0, 2.0, 1.0]),
+    ]
+}
+
+#[test]
+fn ramps_at_extreme_aspect_ratios_are_accepted_and_step() {
+    for (name, ramp) in extreme_ramps() {
+        let mut w = world(UpAxis::Z);
+        w.add_static_world(&StaticWorld { boxes: vec![], ramps: vec![ramp] }).unwrap_or_else(|f| panic!("{name}: {f:?}"));
+        w.spawn(&body("ball", BodyType::Dynamic, [1e3, 1e3, 10.0], ball(0.25))).expect("ball");
+        for _ in 0..90 {
+            w.step().unwrap_or_else(|f| panic!("{name}: {f:?}"));
+        }
+        w.check().unwrap_or_else(|f| panic!("{name}: {f:?}"));
+    }
+}
+
+/// Contact on a hull is computed in f32 relative to the hull's own size, so a ramp a billion units
+/// wide is accepted and steps, but a ball is held by it only where f32 resolves the ramp: this one
+/// spans the default worldExtent (1e5), a ramp 20 units high over 2e5.
+#[test]
+fn a_ball_lands_on_a_ramp_as_wide_as_the_world() {
+    let mut w = world(UpAxis::Z);
+    let ramp = vec![-1e5, -1e5, 0.0, 1e5, 1e5, 21.0, 0.0, 1.0, 21.0];
+    w.add_static_world(&StaticWorld { boxes: vec![], ramps: vec![ramp] }).expect("imports");
+    w.spawn(&body("ball", BodyType::Dynamic, [0.0, 0.0, 14.0], ball(0.25))).expect("ball");
+    for _ in 0..120 {
+        w.step().expect("steps");
+    }
+    let z = w.body("ball").expect("there").pose.p[2];
+    assert!(z > 10.0 && z < 11.5, "on the ramp's top near its middle (11): {z}");
+}

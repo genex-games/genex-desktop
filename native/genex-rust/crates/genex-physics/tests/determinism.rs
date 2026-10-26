@@ -18,7 +18,7 @@ const STEPS: usize = 300;
 const HEAP: usize = 64;
 const RESTORE_EVERY: usize = 50;
 /// The trace's FNV-1a 64 for the z-up and y-up scenes, this build.
-const PINNED_TRACE: [(UpAxis, &str); 2] = [(UpAxis::Z, "44676348412c77bb"), (UpAxis::Y, "267a7863761f1660")];
+const PINNED_TRACE: [(UpAxis, &str); 2] = [(UpAxis::Z, "d0960f84d74a8226"), (UpAxis::Y, "e6a0bca37e622ca5")];
 const PINNED_BUILD: &str = "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det";
 
 fn trace(up: UpAxis) -> Vec<String> {

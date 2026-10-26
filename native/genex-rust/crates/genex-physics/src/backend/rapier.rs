@@ -93,7 +93,8 @@ fn body_builder(spec: &BodySpec) -> RigidBodyBuilder {
         .can_sleep(spec.can_sleep)
 }
 
-/// The shape's builder, or `None` when Rapier cannot build it.
+/// The shape's builder, or `None` when Rapier cannot build it. A hull arrives as the closed mesh
+/// the core computed (`hull`), so Rapier's own hull algorithm never runs.
 fn shape_builder(shape: &ShapeSpec) -> Option<ColliderBuilder> {
     match shape {
         ShapeSpec::Cuboid { half } => Some(ColliderBuilder::cuboid(half[0], half[1], half[2])),
@@ -103,9 +104,9 @@ fn shape_builder(shape: &ShapeSpec) -> Option<ColliderBuilder> {
             Axis::Y => ColliderBuilder::capsule_y(*half_height, *radius),
             Axis::Z => ColliderBuilder::capsule_z(*half_height, *radius),
         }),
-        ShapeSpec::Hull { points } => {
+        ShapeSpec::Hull { points, triangles } => {
             let points: Vec<Vector> = points.iter().map(|p| vector(*p)).collect();
-            ColliderBuilder::convex_hull(&points)
+            ColliderBuilder::convex_mesh(points, triangles)
         }
         ShapeSpec::Trimesh { vertices, indices } => {
             let vertices = vertices.iter().map(|v| vector(*v)).collect();

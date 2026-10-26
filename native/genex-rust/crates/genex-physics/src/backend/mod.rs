@@ -35,8 +35,9 @@ pub(crate) enum ShapeSpec {
     Ball { radius: f32 },
     /// A capsule along an internal axis.
     Capsule { half_height: f32, radius: f32, axis: Axis },
-    /// The convex hull of points.
-    Hull { points: Vec<[f32; 3]> },
+    /// A convex hull the core computed (`hull`): its vertices and its triangles, a closed mesh
+    /// wound counter-clockwise from outside.
+    Hull { points: Vec<[f32; 3]>, triangles: Vec<[u32; 3]> },
     /// A triangle mesh (fixed bodies only).
     Trimesh { vertices: Vec<[f32; 3]>, indices: Vec<[u32; 3]> },
     /// A heightfield grid in internal row order: `heights[r * cols + c]` is internal row r, column c;

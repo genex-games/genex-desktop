@@ -12,6 +12,7 @@ use crate::backend::{BodySpec, ColliderSpec, MassSpec, ShapeSpec};
 use crate::body::{DEFAULT_DENSITY, DEFAULT_FRICTION, DEFAULT_RESTITUTION, GROUPS_ALL};
 use crate::canon::Canon;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
+use crate::hull::convex_hull;
 use crate::num::{fround, unsigned_zero};
 use crate::shape::ShapeFacts;
 use crate::types::{BodyType, UpAxis};
@@ -75,7 +76,7 @@ pub(crate) fn validate_static(world: &StaticWorld) -> Result<ValidStatic, Physic
     for (index, values) in ramps.iter().enumerate() {
         check_bounds(values)?;
         check_ramp(values)?;
-        pieces.push(ramp_piece(index, values));
+        pieces.push(ramp_piece(index, values)?);
     }
     let rows = |entries: &[Vec<f32>]| Canon::Arr(entries.iter().map(|v| Canon::numbers(v)).collect());
     let canon = Canon::object([("boxes", rows(&boxes)), ("ramps", rows(&ramps))]);
@@ -137,15 +138,20 @@ fn box_piece(index: usize, values: &[f32]) -> StaticPiece {
     StaticPiece { key: piece_key("box", index), spec: fixed_body(middle(values), shape), facts: ShapeFacts::default() }
 }
 
-fn ramp_piece(index: usize, values: &[f32]) -> StaticPiece {
+/// A ramp's piece: the exact hull of its corners (`hull`), with no flatness tolerance, so any
+/// ramp §17.7 accepts is one, however thin or wide.
+fn ramp_piece(index: usize, values: &[f32]) -> Result<StaticPiece, PhysicsFailure> {
     let centre = middle(values);
     let points: Vec<[f32; 3]> = ramp_corners(values)
         .into_iter()
         .map(|p| vec_in(UpAxis::Z, [p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]]))
         .collect();
     let facts = ShapeFacts { hull_points_max: points.len(), hull_points: points.len(), ..ShapeFacts::default() };
-    let spec = fixed_body(centre, ShapeSpec::Hull { points });
-    StaticPiece { key: piece_key("ramp", index), spec, facts }
+    let Some((corners, triangles)) = convex_hull(&points) else {
+        return fail(PhysicsError::BadShape, "a ramp's corners span no volume");
+    };
+    let spec = fixed_body(centre, ShapeSpec::Hull { points: corners, triangles });
+    Ok(StaticPiece { key: piece_key("ramp", index), spec, facts })
 }
 
 /// A ramp's hull points in the caller frame (§6.5): the 4 bottom corners at `minZ`, then the 2 top
