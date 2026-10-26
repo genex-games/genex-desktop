@@ -9,8 +9,8 @@
 //!
 //! A binary that does not install it (a native host, these crate's own tests) gets the core's
 //! fixed per-object model instead (`memory`), which is the same on every target. Either way a
-//! command is judged before it allocates: the world's bytes now plus the model's estimate of what
-//! the command adds (`ledger`).
+//! command is judged before it allocates, by the model alone (`ledger`), so refusals do not depend
+//! on whether this allocator is installed.
 //!
 //! Attribution is per thread: a world's calls run on one thread (§1.1), and a call on another
 //! thread is charged to the world running there, or to none.

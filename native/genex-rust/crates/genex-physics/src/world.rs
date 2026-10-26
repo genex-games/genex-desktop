@@ -18,7 +18,7 @@
 //! installed [`crate::accounting::CountingAllocator`], `memory_bytes`, `stats().memoryBytes` and
 //! `memoryExceeded` report the bytes the world's live allocations asked for. A native binary that
 //! did not install it reports the core's fixed per-object model (`memory`), the same on every
-//! target.
+//! target. `LimitMemory` refusals follow the model in both (see the crate docs).
 
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -78,17 +78,13 @@ impl World {
     }
 
     /// Runs `f` on the core as one call that may change the world: charged to the world's account,
-    /// starting from its measured bytes, and caught if it panics. A panic or an `internal` failure
+    /// and caught if it panics. A panic or an `internal` failure
     /// (a backend that refused what it had accepted) poisons the world (§11.3).
     fn call<T>(&mut self, f: impl FnOnce(&mut Core<ActiveBackend>) -> Result<T, PhysicsFailure>) -> Result<T, PhysicsFailure> {
         self.check()?;
-        let measured = self.account.live_bytes();
         let _scope = self.account.enter();
         let core = &mut self.core;
-        let outcome = catch_unwind(AssertUnwindSafe(move || {
-            core.sync_memory(measured);
-            f(core)
-        }));
+        let outcome = catch_unwind(AssertUnwindSafe(move || f(core)));
         let result = outcome.unwrap_or_else(|_| Err(internal("the backend failed; the world is now unusable (§11.3)")));
         if result.as_ref().is_err_and(|failure| failure.code == PhysicsError::Internal) {
             self.poisoned.set(true);

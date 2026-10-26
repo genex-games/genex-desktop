@@ -158,3 +158,28 @@ pub fn run_busy(w: &mut World, up: UpAxis, steps: usize) -> Vec<String> {
         })
         .collect()
 }
+
+/// A y-up world whose memory limit is the model's empty world plus `headroom` bytes.
+pub fn model_tight_world(headroom: u64) -> World {
+    let mut desc = WorldDesc::new(1.0 / 60.0, 1.0, [0.0, -9.81, 0.0], UpAxis::Y, 1.0);
+    desc.limits.memory_bytes = Some((genex_physics::memory::WORLD_BASE_BYTES + headroom) as f64);
+    World::create(&desc).expect("world")
+}
+
+/// Five ball spawns, one by one, into a world with room by the model for three of them (§11.1):
+/// the outcomes every binary must agree on, with or without the counting allocator (§1.2).
+pub fn spawns_near_the_memory_limit() -> Vec<genex_physics::CommandOutcome> {
+    use genex_physics::memory::{BODY_BYTES, COLLIDER_BYTES};
+    let ball_bytes = BODY_BYTES + COLLIDER_BYTES + 3;
+    let mut w = model_tight_world(3 * ball_bytes + 100);
+    let spawns: Vec<genex_physics::Command> = (0..5)
+        .map(|i| genex_physics::Command::Spawn(body(&format!("m{i}"), BodyType::Dynamic, [2.0 * f64::from(i), 1.0, 0.0], ball(0.5))))
+        .collect();
+    w.apply_each(&spawns)
+}
+
+/// What [`spawns_near_the_memory_limit`] gives on every target.
+pub fn spawns_near_the_memory_limit_expected() -> Vec<genex_physics::CommandOutcome> {
+    use genex_physics::PhysicsError::LimitMemory;
+    vec![Ok(()), Ok(()), Ok(()), Err(LimitMemory), Err(LimitMemory)]
+}

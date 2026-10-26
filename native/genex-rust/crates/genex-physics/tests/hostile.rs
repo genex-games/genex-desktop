@@ -460,3 +460,8 @@ fn a_body_at_the_largest_sizes_is_accepted_and_stays_solid() {
     let z = w.body("ball").expect("there").pose.p[2];
     assert!((z - 0.5).abs() < 0.05, "the ball rests on the floor, not through it: {z}");
 }
+
+#[test]
+fn refusals_near_the_memory_limit_follow_the_model() {
+    assert_eq!(common::spawns_near_the_memory_limit(), common::spawns_near_the_memory_limit_expected());
+}

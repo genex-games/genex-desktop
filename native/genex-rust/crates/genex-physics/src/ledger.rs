@@ -3,9 +3,11 @@
 //! before anything is applied. A command checked against the ledger cannot fail when applied.
 //!
 //! Memory (§11.1) is the objects' modelled bytes plus the contact pairs counted at the end of the
-//! last step, so a refusal never depends on where in a batch a removal freed contacts. When a
-//! counting allocator measures the world (`accounting`), a call starts from the measured bytes
-//! instead ([`Ledger::sync`]) and adds the model's estimate of each command it checks.
+//! last step, so a refusal never depends on where in a batch a removal freed contacts. Every
+//! `LimitMemory` refusal is judged by this model, on every target and whether or not a counting
+//! allocator measures the world (`accounting`): the same calls are then refused the same way
+//! across the determinism row (§1.2), which measured bytes (pointer widths, allocator overheads,
+//! results a caller still holds) could not promise.
 
 use std::collections::BTreeMap;
 
@@ -49,12 +51,6 @@ pub(crate) struct Ledger {
     pub object_bytes: u64,
     /// The contact pairs' modelled bytes at the end of the last step.
     pub contact_bytes: u64,
-    /// The measured bytes at the start of this call, when an allocator measures the world.
-    #[serde(skip)]
-    live: Option<u64>,
-    /// The modelled bytes checked commands added (removals subtract) since [`Ledger::sync`].
-    #[serde(skip)]
-    delta: i64,
 }
 
 impl Ledger {
@@ -69,44 +65,26 @@ impl Ledger {
             static_added: false,
             object_bytes: WORLD_BASE_BYTES,
             contact_bytes: 0,
-            live: None,
-            delta: 0,
         }
     }
 
-    /// The world's modelled memory (§11.1): what a world reports without a counting allocator.
+    /// The world's modelled memory (§11.1): what every refusal is judged by, and what a world
+    /// reports without a counting allocator.
     pub(crate) fn model_bytes(&self) -> u64 {
-        self.object_bytes + self.contact_bytes
-    }
-
-    /// The memory a check starts from: the measured bytes plus what this call's checked commands
-    /// add by the model, or the model alone when nothing measures the world.
-    pub(crate) fn memory(&self) -> u64 {
-        match self.live {
-            Some(measured) => measured.saturating_add_signed(self.delta),
-            None => self.model_bytes(),
-        }
-    }
-
-    /// Starts a call from the world's measured bytes (`None`: the model).
-    pub(crate) fn sync(&mut self, measured: Option<u64>) {
-        self.live = measured;
-        self.delta = 0;
+        self.object_bytes.saturating_add(self.contact_bytes)
     }
 
     fn grow(&mut self, bytes: u64) {
-        self.object_bytes += bytes;
-        self.delta = self.delta.saturating_add_unsigned(bytes);
+        self.object_bytes = self.object_bytes.saturating_add(bytes);
     }
 
     fn shrink(&mut self, bytes: u64) {
         self.object_bytes = self.object_bytes.saturating_sub(bytes);
-        self.delta = self.delta.saturating_sub_unsigned(bytes);
     }
 
-    /// Refuses `LimitMemory` unless `bytes` more fit within `limit`.
+    /// Refuses `LimitMemory` unless `bytes` more fit within `limit`, by the model.
     pub(crate) fn admit(&self, bytes: u64, limit: u32) -> Result<(), PhysicsFailure> {
-        if self.memory() + bytes > u64::from(limit) {
+        if self.model_bytes().saturating_add(bytes) > u64::from(limit) {
             return fail(PhysicsError::LimitMemory, "the command would take the world past limits.memoryBytes");
         }
         Ok(())

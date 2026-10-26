@@ -166,11 +166,6 @@ impl<B: Backend> Core<B> {
         self.ledger.model_bytes()
     }
 
-    /// Starts a call from the world's measured bytes, or from the model when `None` (§11.1).
-    pub(crate) fn sync_memory(&mut self, measured: Option<u64>) {
-        self.ledger.sync(measured);
-    }
-
     /// The number of joints.
     pub(crate) fn joint_count(&self) -> usize {
         self.joints.len()

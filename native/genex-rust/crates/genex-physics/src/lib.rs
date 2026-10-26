@@ -74,10 +74,13 @@
 //! A binary that installs [`accounting::CountingAllocator`] (the WASM binding) gets each world's
 //! exact live bytes: its calls are charged to it and a per-allocation header credits frees to the
 //! world that allocated. A binary that does not (a native host) gets the model in [`memory`], the
-//! same on every target; [`World::memory_is_measured`] says which. Either way a command is judged
-//! before it allocates, from the world's bytes now plus the model's estimate of what it adds, so a
-//! refusal never relies on an allocation failing. Near the limit, a measured world can end a call
-//! slightly past what the estimate allowed; `memoryExceeded` reports it after the next step.
+//! same on every target; [`World::memory_is_measured`] says which. Either way every `LimitMemory`
+//! refusal (a command, the static world, a restore) is judged before it allocates, by the model,
+//! so the same calls are refused the same way on every target of the determinism row (§1.2) and a
+//! refusal never relies on an allocation failing. The measured bytes are what `stats().memoryBytes`
+//! and `memoryExceeded` report, so a measured world can be over its limit while the model still
+//! admits a command; `memoryExceeded` tells the caller after the next step (§11.1: the caller
+//! decides). This reading of §11.1 against §1.2 is the core's, pending the owner's.
 //!
 //! # Failure (§11.3)
 //!

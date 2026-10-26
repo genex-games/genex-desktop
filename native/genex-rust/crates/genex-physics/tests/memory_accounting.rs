@@ -1,14 +1,14 @@
 //! Memory per world (§11.1) with the counting allocator installed, as the WASM binding installs it:
 //! allocations are charged to the world whose call runs, frees credit the world that allocated,
-//! `LimitMemory` is judged before allocating, and `memoryExceeded` / `stats().memoryBytes` report
-//! the measured bytes. This test binary is the only one that installs the allocator.
+//! `LimitMemory` is judged before allocating and by the model (as without the allocator), and
+//! `memoryExceeded` / `stats().memoryBytes` report the measured bytes. This test binary is the only one that installs the allocator.
 
 mod common;
 
 use std::alloc::System;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use common::{ball, body, cube, world};
+use common::{ball, body, cube, model_tight_world, world};
 use genex_physics::accounting::{ACCOUNT_SLOTS, CountingAllocator, installed};
 use genex_physics::{BodyType, PhysicsError, UpAxis, World, WorldDesc};
 
@@ -91,7 +91,7 @@ fn tight_world(headroom: u64) -> World {
 #[test]
 fn limit_memory_is_judged_before_allocating_and_changes_nothing() {
     let _serial = serial();
-    let mut w = tight_world(4096);
+    let mut w = model_tight_world(4096);
     w.spawn(&body("first", BodyType::Dynamic, [0.0, 1.0, 0.0], ball(0.5))).expect("one body fits");
     let before = (w.memory_bytes(), w.state_hash(), w.bodies(&Default::default()).len());
     let points: Vec<[f64; 3]> = (0..60).map(|i| [(i % 4) as f64, ((i / 4) % 4) as f64, (i / 16) as f64 + (i % 3) as f64 * 0.1]).collect();
@@ -148,14 +148,20 @@ fn slots_are_given_back_and_worlds_past_them_report_the_model() {
 }
 
 #[test]
-fn an_atomic_batch_adds_each_command_s_estimate_to_the_measured_bytes() {
+fn an_atomic_batch_adds_each_command_s_estimate_to_the_model() {
     let _serial = serial();
     let spawn = |key: &str| genex_physics::Command::Spawn(body(key, BodyType::Dynamic, [0.0, 1.0, 0.0], ball(0.5)));
     // Room for one body by the model's estimate (about 1.5 KiB each), not for two.
-    let mut w = tight_world(2500);
+    let mut w = model_tight_world(2500);
     let before = (w.memory_bytes(), w.state_hash());
     let refused = w.apply_atomic(&[spawn("a"), spawn("b")]).map_err(|f| (f.code, f.index));
     assert_eq!(refused, Err((PhysicsError::LimitMemory, Some(1))));
     assert_eq!((w.memory_bytes(), w.state_hash()), before);
     w.apply_atomic(&[spawn("a")]).expect("one fits");
+}
+
+#[test]
+fn refusals_near_the_limit_follow_the_model_as_in_a_binary_without_the_allocator() {
+    let _serial = serial();
+    assert_eq!(common::spawns_near_the_memory_limit(), common::spawns_near_the_memory_limit_expected());
 }
