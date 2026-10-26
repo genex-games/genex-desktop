@@ -106,7 +106,7 @@ game.on_update(|sim, _| {
   here (streamed colliders, nav islands: `docs/api/navigation.md`); a game rarely needs one.
 - `game.stream_colliders()` streams static colliders (physics builds only): a builder adds them
   with `.part(CellColliders::new().with(collider))`, each a Rapier `ColliderBuilder`. They enter
-  `sim.physics` with their cell (cells ascending, then in build order) and leave with it in
+  the raw Rapier world `sim.physics` dereferences to (`docs/api/physics.md`) with their cell (cells ascending, then in build order) and leave with it in
   reverse; `sim.facets.get::<StreamColliders>().handles(cell)` lists their handles. Register it
   once.
 - A compiled cell pack (`world/*.cells.json`, compiled by the host into `assets/<folder>/`) is read

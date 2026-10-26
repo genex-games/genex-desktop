@@ -18,8 +18,17 @@ import { parseGenexToml } from "../../src/substrate/genex-toml.ts";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const GENEX_VERSION = "0.1.0";
 const GAME = '[game]\ntitle = "Pond"\n';
-/** The facade's default features in its own order (genex's and genex-platform-web's `default`). */
+/** The genex.toml tables that switch a game system off. */
 const DEFAULTS = ["physics", "audio", "nav", "streaming", "animation"] as const;
+/**
+ * The facade's default features in its own order (genex's and genex-platform-web's `default`):
+ * `physics-raw` (raw Rapier, deprecated for one release, shared physics P4) follows `[physics]`.
+ */
+const FEATURES = ["physics", "physics-raw", "audio", "nav", "streaming", "animation"] as const;
+
+/** The features a game keeps with `system` switched off. */
+const keptWithout = (system: string) =>
+  FEATURES.filter((feature) => feature !== system && !(system === "physics" && feature === "physics-raw"));
 
 function manifestOf(text: string) {
   const parsed = parseGenexToml(text);
@@ -44,7 +53,7 @@ describe("cargo manifest: the game systems a genex.toml switches off (release R-
   for (const system of DEFAULTS) {
     it(`a game without ${system} links every other default, natively and on the web`, () => {
       const manifest = manifestOf(switchedOff([system]));
-      const kept = quoted(DEFAULTS.filter((feature) => feature !== system));
+      const kept = quoted(keptWithout(system));
       assert.equal(
         facadeLine(cargoManifest(manifest, GENEX_VERSION)),
         `genex = { version = "=0.1.0", default-features = false, features = [${kept}] }`,
@@ -60,7 +69,7 @@ describe("cargo manifest: the game systems a genex.toml switches off (release R-
     const manifest = manifestOf(switchedOff(["nav", "streaming", "animation"]));
     assert.equal(
       facadeLine(cargoManifest(manifest, GENEX_VERSION, RustFlavour.Dev)),
-      'genex = { version = "=0.1.0", default-features = false, features = ["studio", "physics", "audio"] }',
+      'genex = { version = "=0.1.0", default-features = false, features = ["studio", "physics", "physics-raw", "audio"] }',
     );
   });
 
@@ -84,7 +93,7 @@ describe("cargo manifest: the game systems a genex.toml switches off (release R-
     const manifest = manifestOf(text.replace("__GAME_TITLE__", "Pond"));
     assert.equal(
       facadeLine(cargoManifest(manifest, GENEX_VERSION, RustFlavour.Export, RustFacadePackage.Web)),
-      'genex = { package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics"] }',
+      'genex = { package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics", "physics-raw"] }',
     );
   });
 });
@@ -104,14 +113,14 @@ describe("cargo lock: the crates a switched-off system leaves (release R-2)", ()
     }
   });
 
-  it("every system off drops Rapier's and the mixer's closures and nothing else a switch names", async () => {
+  it("every system off drops Genex Physics', Rapier's and the mixer's closures and nothing else a switch names", async () => {
     const baseLock = await readFile(path.join(ROOT, "native", "genex-rust", "Cargo.lock"), "utf8");
     const pins = { genexVersion: GENEX_VERSION, baseLock };
     const bare = gameCargoLock(manifestOf(switchedOff(DEFAULTS)), pins);
     const engines = gameCargoLock(manifestOf(switchedOff(["physics", "audio"])), pins);
     assert.ok(bare.ok && engines.ok, JSON.stringify([bare, engines]));
     assert.equal(bare.text, engines.text);
-    for (const crate of ["rapier3d", "kira", "cpal", "symphonia"]) {
+    for (const crate of ["genex-physics", "rapier3d", "kira", "cpal", "symphonia"]) {
       assert.doesNotMatch(bare.text, new RegExp(`\nname = "${crate}"\n`), crate);
     }
   });

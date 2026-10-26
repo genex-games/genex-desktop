@@ -12,7 +12,7 @@
 //! genex-anim's own rows (`crates/genex-anim/tests/character.rs`) cover the controller's
 //! behaviour; this file proves the facade path.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 use genex::physics::ColliderBuilder;
 use genex::prelude::*;

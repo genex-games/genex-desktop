@@ -33,7 +33,7 @@ studio = ["genex/studio"]
 
 [dependencies]
 # The game systems it uses, as its genex.toml switches them on (release R-1).
-genex = { workspace = true, features = ["physics", "nav", "animation"] }
+genex = { workspace = true, features = ["physics", "physics-raw", "nav", "animation"] }
 genex-platform-web = { workspace = true }
 
 # The native self-test renders headless on the host GPU (Metal on the Mac).

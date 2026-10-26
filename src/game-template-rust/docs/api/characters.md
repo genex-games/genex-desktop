@@ -4,6 +4,11 @@ A world holds its characters and ragdolls and drives them in `on_update`, before
 physics step. The types come from `genex` (`Character`, `CharacterMotion` and `CharacterNav` are
 in the prelude).
 
+Characters and ragdolls live in the raw Rapier world that `sim.physics` dereferences to
+(deprecated `physics-raw`, for this release; `docs/api/physics.md`, "What stays raw"): they stand
+on and collide with raw colliders (`genex::physics::ColliderBuilder`, streamed and terrain tile
+colliders), never with bodies a game spawns with `sim.physics.spawn`.
+
 ## The controller
 
 `Character::spawn(&mut sim.physics, feet, CharacterParams::default())` puts a kinematic capsule

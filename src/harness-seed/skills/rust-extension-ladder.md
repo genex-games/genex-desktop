@@ -62,7 +62,7 @@ loosens the sandbox.
 - A switched-off system is never a reason to climb. Physics, sound, navigation, streaming and
   animation each have a `genex.toml` table with `enabled`; while it is false the system's calls
   are refused (`audio-disabled`, `nav-disabled`, `streaming-disabled`, `animation-disabled`) or,
-  for Rapier, do not compile. Set `enabled = true` when the brief needs the system, and write none
+  for physics, do not compile. Set `enabled = true` when the brief needs the system, and write none
   of your own.
 - A recurring need (the same crate, the same eject reason across games) is a missing genex
   feature: say so in your summary.

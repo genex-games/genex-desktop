@@ -16,7 +16,7 @@
 //! Every row is new behaviour (section 0 of the game systems plan); the restore row's equality to
 //! the uninterrupted run is the S5 promise, which excludes Rapier's arena generations.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 use std::sync::Arc;
 

@@ -19,7 +19,7 @@
 //! Every row is new behaviour (section 0 of the game systems plan). A game built without physics
 //! has no colliders to stream: this file is not compiled then.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

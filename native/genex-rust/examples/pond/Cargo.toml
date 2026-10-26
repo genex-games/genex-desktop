@@ -33,7 +33,7 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-genex = { workspace = true, features = ["physics"] }
+genex = { workspace = true, features = ["physics", "physics-raw"] }
 # The splash plays through genex-audio's own mixer (its `mixer` feature, G6 AU-11).
 genex-audio = { workspace = true, features = ["mixer"] }
 genex-platform-web = { workspace = true }

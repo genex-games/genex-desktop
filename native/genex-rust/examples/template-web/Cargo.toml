@@ -22,7 +22,7 @@ path = "../../../../src/game-template-rust/src/main.rs"
 # decoders (G6 AU-11); `--features physics` keeps Rapier alone.
 [features]
 default = ["physics", "audio"]
-physics = ["genex/physics"]
+physics = ["genex/physics", "genex/physics-raw"]
 audio = ["genex/audio"]
 
 [dependencies]

@@ -1183,6 +1183,7 @@ dependencies = [
  "genex-input",
  "genex-nav",
  "genex-net",
+ "genex-physics",
  "genex-platform-desktop",
  "genex-profile",
  "genex-render",
@@ -1350,6 +1351,15 @@ dependencies = [
  "rapier3d",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "genex-physics-wasm"
+version = "0.1.0"
+dependencies = [
+ "genex-physics",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

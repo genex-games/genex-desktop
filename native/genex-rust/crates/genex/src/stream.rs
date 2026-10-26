@@ -373,7 +373,7 @@ pub(crate) fn runtime_value(active: &BTreeSet<CellId>) -> CoreValue {
     value
 }
 
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 impl CellPart for genex_stream::physics::CellColliders {
     fn colliders(&self) -> u32 {
         u32::try_from(self.len()).unwrap_or(u32::MAX)
@@ -381,10 +381,10 @@ impl CellPart for genex_stream::physics::CellColliders {
 }
 
 /// The commit hook that streams `CellColliders` parts into `sim.physics`, its ledger in facet state.
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 pub(crate) struct ColliderCommit;
 
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 impl<W> crate::stream_tick::StreamCommit<W> for ColliderCommit {
     fn leave(&self, sim: &mut crate::Sim<W>, cell: CellId) {
         sim.facets.get_mut::<genex_stream::physics::StreamColliders>().leave(&mut sim.physics, cell);

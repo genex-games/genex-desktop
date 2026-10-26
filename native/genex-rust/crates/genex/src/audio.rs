@@ -485,19 +485,19 @@ fn ears_of(camera: &Camera) -> Listener {
 }
 
 /// Colliders that count toward one occlusion ray.
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 const OCCLUDING_HITS_MAX: usize = 3;
 /// A ray shorter than this is open air, in metres.
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 const OCCLUSION_RAY_MIN_M: f32 = 1e-3;
 
 /// The occluder over the game's Rapier colliders: each non-sensor collider the ray crosses (at
 /// most three) lets [`ga::OCCLUDER_TRANSMISSION`] through. Physics colliders only, never render
 /// LODs or impostors.
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 struct RapierOccluder<'a>(&'a crate::PhysicsWorld);
 
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 impl ga::Occluder for RapierOccluder<'_> {
     fn transmission(&mut self, from: Vec3, to: Vec3) -> f32 {
         use rapier3d::prelude::{QueryFilter, Ray};
@@ -659,11 +659,11 @@ impl State {
         let commands = std::mem::take(&mut queue.commands);
         let Some(director) = queue.director.as_mut() else { return };
         let camera = camera();
-        #[cfg(feature = "physics")]
+        #[cfg(feature = "physics-raw")]
         let mut rapier = RapierOccluder(&sim.physics);
-        #[cfg(feature = "physics")]
+        #[cfg(feature = "physics-raw")]
         let occluder: Option<&mut dyn ga::Occluder> = Some(&mut rapier);
-        #[cfg(not(feature = "physics"))]
+        #[cfg(not(feature = "physics-raw"))]
         let occluder: Option<&mut dyn ga::Occluder> = {
             let _ = sim;
             None

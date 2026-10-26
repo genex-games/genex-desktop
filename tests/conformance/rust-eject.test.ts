@@ -537,6 +537,7 @@ describe("a game using every renderer feature ejects whole", { skip: SKIP_ON_WIN
         "genex-frames",
         "genex-gpu-memory",
         "genex-multiplayer",
+        "genex-physics",
         "genex-platform-android",
         "genex-platform-ios",
         "genex-studio",

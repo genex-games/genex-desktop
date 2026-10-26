@@ -20,8 +20,10 @@ workspace = true
 # A web game links Rapier unless its genex.toml turns physics off (the host writes the facade line
 # without default features then).
 [features]
-default = ["physics", "audio", "nav", "streaming", "animation"]
+default = ["physics", "physics-raw", "audio", "nav", "streaming", "animation"]
 physics = ["genex/physics"]
+# Raw Rapier beside Genex Physics (deprecated, one release): the facade feature of the same name.
+physics-raw = ["genex/physics-raw"]
 # A web game links the mixer and decoders unless its genex.toml turns audio off (AU-11).
 audio = ["genex/audio"]
 # The game systems a genex.toml switches off (`[nav]`, `[streaming]`, `[animation]`, release R-1):

@@ -618,7 +618,7 @@ impl StreamTick {
         }
         // Scene queries (a probe's ray down to the ground) see the rebuilt colliders, as the step
         // that ended the saved tick left them; Rapier refreshes them only in a step otherwise.
-        #[cfg(feature = "physics")]
+        #[cfg(feature = "physics-raw")]
         sim.physics.detect_collisions(&(), &());
         sim.stream.carried = Some(Carried { before, entered });
         Ok(true)

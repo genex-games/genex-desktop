@@ -354,7 +354,7 @@ fn decode_tile(cell: CellId, bytes: &[u8], index: &TileIndex) -> Result<Heightfi
     tile_field(cell, samples, index.cell_size, (index.min, index.max), height)
 }
 
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 mod colliders {
     use rapier3d::prelude::{Array2, Collider, ColliderBuilder, Vector};
 

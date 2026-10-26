@@ -43,7 +43,7 @@ use std::fmt;
 
 /// One simulation tick, in milliseconds (genex-core's).
 pub const FIXED_STEP_MS: f64 = genex_core::clock::FIXED_STEP_MS;
-const FIXED_STEP_SECONDS: f32 = 1.0 / 60.0;
+pub(crate) const FIXED_STEP_SECONDS: f32 = 1.0 / 60.0;
 /// The most ticks one `step(ms)` runs: ten minutes of simulation (genex-core's).
 pub const MAX_STEP_TICKS: u32 = genex_core::clock::MAX_STEP_TICKS;
 /// The seed a game starts on before anyone calls `seed` (genex-core's).
@@ -181,11 +181,16 @@ pub enum InstallErrorCode {
     /// `game.streaming` in a game built with `[streaming] enabled = false` (release R-1): the build
     /// links no streaming.
     StreamingDisabled,
+    /// A second `game.physics_world`.
+    DuplicatePhysicsWorld,
+    /// A `game.physics_world` description the physics core refuses, or one whose `dt` is not the
+    /// fixed tick (1/60 s).
+    PhysicsWorldInvalid,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 28] = [
+    pub const ALL: [InstallErrorCode; 30] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -214,6 +219,8 @@ impl InstallErrorCode {
         InstallErrorCode::SettingsInvalid,
         InstallErrorCode::NavDisabled,
         InstallErrorCode::StreamingDisabled,
+        InstallErrorCode::DuplicatePhysicsWorld,
+        InstallErrorCode::PhysicsWorldInvalid,
     ];
 
     /// The typed code's wire spelling.
@@ -247,6 +254,8 @@ impl InstallErrorCode {
             InstallErrorCode::SettingsInvalid => "settings-invalid",
             InstallErrorCode::NavDisabled => "nav-disabled",
             InstallErrorCode::StreamingDisabled => "streaming-disabled",
+            InstallErrorCode::DuplicatePhysicsWorld => "duplicate-physics-world",
+            InstallErrorCode::PhysicsWorldInvalid => "physics-world-invalid",
         }
     }
 }
@@ -1366,7 +1375,7 @@ fn studio_run() -> bool {
 pub(crate) fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
     Sim {
         world,
-        physics: fresh_physics(),
+        physics: fresh_physics(game),
         facets: FacetState::fresh(&game.facets),
         nav: crate::nav::fresh(game.nav_config()),
         stream: crate::stream_tick::StreamState::fresh(game.stream_registration()),
@@ -1374,18 +1383,16 @@ pub(crate) fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
     }
 }
 
-/// An empty physics world stepping at the fixed tick.
+/// The physics world a seed starts from: the game's registered description, else the default.
 #[cfg(feature = "physics")]
-fn fresh_physics() -> crate::PhysicsWorld {
-    let mut physics = crate::PhysicsWorld::default();
-    physics.integration_parameters.dt = FIXED_STEP_SECONDS;
-    physics
+fn fresh_physics<W>(game: &Game<W>) -> crate::Physics {
+    crate::phys::fresh(&game.physics_worlds)
 }
 
 /// A game built without physics: its empty stand-in.
 #[cfg(not(feature = "physics"))]
-fn fresh_physics() -> crate::PhysicsWorld {
-    crate::PhysicsWorld
+fn fresh_physics<W>(_game: &Game<W>) -> crate::Physics {
+    crate::Physics
 }
 
 fn simulated_ms(tick: u64) -> f64 {
@@ -1531,7 +1538,10 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     core.g6.settings_leave(&game.g6, settings_scope, core.gfx.saves());
     core.g6.ui.note_pads(&input.core.pads);
     #[cfg(feature = "physics")]
-    core.sim.physics.step();
+    {
+        let _physics = crate::profile::engine_scope(genex_profile::EngineScope::Physics);
+        core.sim.physics.step();
+    }
     core.g6.net.flush(&game.g6.net, &mut core.sim.net, core.tick);
     core.stream.prefetch(&core.sim);
     // Audio after physics (occlusion sees this tick's bodies), with the game's own camera as the
@@ -1659,6 +1669,8 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     crate::ui::check(&game.g6.ui).map_err(|(code, detail)| InstallError::new(code, detail))?;
     crate::settings::check(&game.g6).map_err(|(code, detail)| InstallError::new(code, detail))?;
     game.g6.net.check().map_err(|(code, detail)| InstallError::new(code, detail))?;
+    #[cfg(feature = "physics")]
+    crate::phys::check_registrations(&game.physics_worlds).map_err(|(code, detail)| InstallError::new(code, detail))?;
     let mut facets = Set::default();
     for facet in &game.facets {
         if !facets.insert(facet.type_id) {
