@@ -548,7 +548,8 @@ const PhysicsError = {
 - **Rust:** `genex_physics::{World, WorldDesc, BodyDesc, ...}`, with methods in snake_case (`spawn`,
   `set_next_kinematic_pose`, `state_hash`). The genex facade's `sim.physics` is a `World`.
 - **TypeScript (`@genex-ai/physics`):**
-  - `await init()`, then `new World(desc)` and the same methods in camelCase;
+  - `await init()`, then `World.create(desc)` (a result, since errors are values) and the same methods in
+    camelCase;
   - `Vec3` is `[number, number, number]` and `Quat` is `[x, y, z, w]`;
   - `world.free()` releases the world's memory;
   - `init()` is idempotent, and the package works in Node 24 and evergreen browsers.
