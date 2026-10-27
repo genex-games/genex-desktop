@@ -14,7 +14,14 @@
 //   with the glue's exports, handed in through `bindWire` (internal: `@genex-ai/physics-native`'s
 //   sidecar process). Both get exactly this file's encoding, budgets and result forms, and a wire
 //   that throws is poisoned as a trapped instance is.
-import * as glue from "./wasm/genex_physics_wasm.js";
+// - `createBinding()` gives a caller a WebAssembly instance of its own (a new glue from
+//   `createGlue()`, instantiated from the module the package compiled once): its worlds live in
+//   that instance alone, so a trap poisons that binding only, never the package's own instance or
+//   another binding.
+import { createGlue } from "./wasm/genex_physics_wasm.js";
+
+/** The package's own glue: its one WebAssembly instance, made again after a trap. */
+const glue = createGlue();
 
 /** The error vocabulary (§14). */
 export const PhysicsError = Object.freeze({
@@ -94,6 +101,9 @@ const EXPORT_STRIDE = 14;
 
 const Detail = Object.freeze({
   NotReady: "init() has not finished: await init() first (§15)",
+  BindingPoisoned:
+    "this binding's WebAssembly instance trapped and is unusable (§11.3): make a new binding and new worlds",
+  Instantiate: "the WebAssembly module could not be instantiated for a new binding",
   Poisoned: "the WebAssembly instance trapped and is unusable (§11.3): await init() for a new one and make new worlds",
   Stale: "this world belongs to an instance that trapped (§11.3)",
   NotWorld: "not a World",
@@ -127,6 +137,9 @@ function newBinding(wire, detail) {
 
 /** The module's own binding: the one WASM instance, its generation bumped per instance. */
 const instance = newBinding(glue, { poisoned: Detail.Poisoned, stale: Detail.Stale });
+
+/** Each `createBinding()` handle's binding (for this package's tests). */
+const bindings = new WeakMap();
 
 /** A contract error as a value. */
 function failure(code, detail) {
@@ -197,6 +210,39 @@ export async function init(input) {
   }
   await glue.default();
   adopt();
+}
+
+/**
+ * A binding of its own (§11.3, additive to 1.0): a new WebAssembly instance, with its own linear
+ * memory, of the module the package already compiled (`init()` or the Node entry's load), so it costs
+ * an instantiation and no compile. `binding.World.create(desc)` makes worlds in that instance alone,
+ * each this package's own `World`. If the instance traps, the binding is poisoned for good: its
+ * worlds answer `internal`, their reads give their empty forms, and it makes no more worlds; the
+ * package's own instance and every other binding never notice. Make a new binding instead.
+ * Never throws: `{ ok: true, binding }`, or `internal` before the package loaded or when the
+ * instance cannot be made.
+ */
+export function createBinding() {
+  const module = instance.ready ? glue.__genex_module() : undefined;
+  if (module === undefined) return failure(PhysicsError.Internal, Detail.NotReady);
+  const binding = newBinding(undefined, { poisoned: Detail.BindingPoisoned, stale: Detail.Stale });
+  try {
+    binding.wire = createGlue();
+    binding.wire.initSync({ module });
+    binding.buildId = binding.wire.build_id();
+  } catch {
+    return failure(PhysicsError.Internal, Detail.Instantiate);
+  }
+  binding.ready = true;
+  binding.generation = 1;
+  const handle = Object.freeze({
+    buildId: () => binding.buildId,
+    poisoned: () => binding.poisoned,
+    PhysicsError,
+    World: Object.freeze({ create: (desc) => createWorld(binding, desc) }),
+  });
+  bindings.set(handle, binding);
+  return { ok: true, binding: handle };
 }
 
 /** This build's identity (§2). */
@@ -1135,4 +1181,11 @@ export function instanceState() {
 /** Internal, for this package's own tests: runs `fn` on the glue under the trap guard. */
 export function guardedForTests(fallback, fn) {
   return guarded(instance, fallback, fn);
+}
+
+/** Internal, for this package's own tests: runs `fn` on a `createBinding()` handle's glue under its trap guard. */
+export function guardedBindingForTests(handle, fallback, fn) {
+  const binding = bindings.get(handle);
+  if (binding === undefined) return fallback();
+  return guarded(binding, fallback, fn);
 }

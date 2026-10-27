@@ -6,4 +6,4 @@ import { loadSync } from "./core.js";
 
 loadSync(readFileSync(new URL("./wasm/genex_physics_wasm_bg.wasm", import.meta.url)));
 
-export { buildId, init, PhysicsError, World } from "./core.js";
+export { buildId, createBinding, init, PhysicsError, World } from "./core.js";

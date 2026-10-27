@@ -81,6 +81,24 @@ forms, and `world.check()` names the failure (`desc()` stays readable). End thos
 `await init()` makes a new instance, and `World.create` works again. Worlds of the old instance stay
 `internal`.
 
+## An instance per caller: `createBinding()` (§11.3, additive to 1.0, pending sign-off)
+
+Every `World.create` world shares the package's one WebAssembly instance, so one trap fails them all.
+A caller that must keep worlds apart (an authority server runs one per room) makes a binding each:
+
+```js
+import { createBinding } from "@genex-ai/physics";
+
+const made = createBinding(); // after init() (Node: on import); internal before
+if (!made.ok) throw new Error(made.code);
+const { world } = made.binding.World.create(desc); // this package's own World, in its own instance
+```
+
+A binding is a new instance of the module the package already compiled, with its own linear memory:
+it costs an instantiation, never a compile. If it traps, it is poisoned for good (`binding.poisoned()`):
+its worlds answer `internal` and their reads give their empty forms, it makes no more worlds, and the
+package's instance and every other binding never notice. Make a new binding instead.
+
 ## Native core: `@genex-ai/physics-native` (pending sign-off)
 
 For an authority server on Linux x64 or macOS arm64, the same core runs natively, **one process per
@@ -113,7 +131,9 @@ core.close(); // or world.free(): the process exits and its folder is removed
   caller's meter (§11.4); `stats().stepMs` is the process's own wall time around its step.
 - **Deadline:** every round trip has `deadlineMs`. Past it the process ends itself (exit 4), and a
   `worker_thread` watchdog in the caller (one per thread, waiting at no CPU cost) kills it with SIGKILL,
-  which ends the blocked read. The call then answers `internal`.
+  which ends the blocked read. The call then answers `internal`. `core.setDeadline(ms)` sets this side's
+  deadline for later round trips (the process keeps its start's), so a server starts cores with a
+  generous deadline for setup frames (create, a heavy spawn) and sets a tick's before ticking.
 - **If the process fails** (§11.3): a crash, the deadline, `kill -9`, EPIPE, or a reply that does not
   parse. That world answers `internal` to every call with a result and its reads give their empty forms,
   for good, as a trapped instance does; nothing is thrown, and other cores never notice. Make a new core.

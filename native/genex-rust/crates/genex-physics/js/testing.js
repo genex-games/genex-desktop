@@ -1,17 +1,29 @@
 // Test builds only (never packed: package.json `files` leaves it out): hooks this package's own
 // tests use to reach what the API keeps private. `trap()` needs the `test-trap` build, whose glue
 // exports `test_trap`.
-import * as glue from "./wasm/genex_physics_wasm.js";
-import { guardedForTests, instanceState, worldId } from "./core.js";
+import { guardedBindingForTests, guardedForTests, instanceState, worldId } from "./core.js";
+
+/** Traps the glue `guard` runs on through the test-only export; whether the export exists. */
+function trapThrough(guard) {
+  let exported = false;
+  guard(
+    () => undefined,
+    (glue) => {
+      exported = typeof glue.test_trap === "function";
+      if (exported) glue.test_trap();
+    },
+  );
+  return exported;
+}
 
 /** Makes the instance trap through the test-only export (§11.3); whether the export exists. */
 export function trap() {
-  if (typeof glue.test_trap !== "function") return false;
-  guardedForTests(
-    () => undefined,
-    (glue) => glue.test_trap(),
-  );
-  return true;
+  return trapThrough(guardedForTests);
+}
+
+/** Makes a `createBinding()` binding's instance trap (§11.3); whether the export exists. */
+export function trapBinding(binding) {
+  return trapThrough((fallback, fn) => guardedBindingForTests(binding, fallback, fn));
 }
 
 /** Whether the counting allocator measures `world`'s memory (§11.1). */

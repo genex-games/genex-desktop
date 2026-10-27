@@ -13,7 +13,9 @@
  *    faster. Node 24 and every current browser run SIMD (Safari since 16.4).
  * 2. The toolchain's wasm-bindgen (0.2.129) writes the ES module glue with `--target web` and its
  *    instance reset (the wrapper's new instance after a trap, CONTRACT.md §11.3); the package's
- *    `node.js` reads the `.wasm` beside it, so one glue serves Node 24 and browsers.
+ *    `node.js` reads the `.wasm` beside it, so one glue serves Node 24 and browsers. The glue is
+ *    then wrapped as a factory (`physics-wasm-glue.ts`): `createGlue()` per instance, so
+ *    `createBinding()` gives a caller a WebAssembly instance of its own from the module compiled once.
  * 3. wasm-opt -Oz shrinks the module, unless `--no-opt`: the toolchain's own binaryen (version_133,
  *    `tools/binaryen`, installed by setup-toolchain.sh for this host from its sha256-pinned archive)
  *    run through the env helper, which refuses a tool outside the toolchain folder, as web.sh does.
@@ -37,6 +39,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
+import { factoryGlue } from "./physics-wasm-glue.ts";
 import {
   commonText,
   crateClosure,
@@ -156,6 +159,8 @@ function bindgen(wasm: string, out: string, optimize: boolean): void {
     GLUE_NAME,
     wasm,
   ]);
+  const glue = path.join(glueDir, `${GLUE_NAME}.js`);
+  writeFileSync(glue, factoryGlue(readFileSync(glue, "utf8")));
   if (!optimize) return;
   const module = path.join(glueDir, `${GLUE_NAME}_bg.wasm`);
   const optimized = path.join(glueDir, `${GLUE_NAME}_bg.opt.wasm`);

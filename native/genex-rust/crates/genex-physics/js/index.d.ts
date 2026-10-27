@@ -289,6 +289,26 @@ export declare function init(input?: { module?: WebAssembly.Module | BufferSourc
 export declare function buildId(): string;
 
 /**
+ * A WebAssembly instance of its own (§11.3, additive to 1.0; `createBinding`): its worlds live in it
+ * alone, so a trap poisons this binding and its worlds only (they answer `internal`, their reads give
+ * their empty forms, and it makes no more worlds), never the package's instance or another binding.
+ */
+export interface Binding {
+  /** The build's identity (§2), the package's own. */
+  buildId(): string;
+  /** Whether this binding's instance trapped. */
+  poisoned(): boolean;
+  readonly PhysicsError: typeof PhysicsError;
+  readonly World: { create(desc: WorldDesc): Result<{ world: World }> };
+}
+
+/**
+ * A new binding: a new instance of the module the package already compiled (after `init()`, or on
+ * import in Node), so it costs an instantiation and no compile. `internal` before the package loaded.
+ */
+export declare function createBinding(): Result<{ binding: Binding }>;
+
+/**
  * One physics world. Make it with `World.create`; release it with `free()`.
  *
  * If the WASM instance traps (§11.3), every call with a `Result` returns `internal` on every world,

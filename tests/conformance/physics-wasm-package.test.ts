@@ -11,7 +11,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   commonText,
   crateClosure,
@@ -22,6 +22,7 @@ import {
   noticeCrate,
   noticesMarkdown,
 } from "../../scripts/physics-wasm-notices.ts";
+import { factoryGlue } from "../../scripts/physics-wasm-glue.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
@@ -112,6 +113,49 @@ describe("the physics module holds no path of the machine that built it", () => 
     for (const [name, text, found] of rows) {
       assert.deepEqual(localPathsIn(bytes(text), ["/build/repo"]), found, name);
     }
+  });
+});
+
+describe("the physics glue as a factory, one WebAssembly instance per call", () => {
+  const glue = [
+    "export function __wbg_reset_state () {",
+    "    state++;",
+    "}",
+    "let state = 0;",
+    "let wasmModule;",
+    "export function build_id() {",
+    '    return "b" + state;',
+    "}",
+    "function initSync(module) { wasmModule = module; return state; }",
+    "async function __wbg_init(input) { return input; }",
+    "export { initSync, __wbg_init as default };",
+    "",
+  ].join("\n");
+
+  it("wraps the glue in createGlue(), each call with state of its own and the same exports", async () => {
+    const dir = await tmpDir("physics-glue-");
+    const file = path.join(dir, "glue.mjs");
+    await writeFile(file, factoryGlue(glue));
+    const { createGlue } = (await import(pathToFileURL(file).href)) as {
+      createGlue: () => Record<string, (...args: unknown[]) => unknown>;
+    };
+    const [a, b] = [createGlue(), createGlue()];
+    assert.deepEqual(Object.keys(a), ["__wbg_reset_state", "build_id", "initSync", "default", "__genex_module"]);
+    a.__wbg_reset_state();
+    assert.deepEqual([a.build_id(), b.build_id()], ["b1", "b0"], "each call keeps its own state");
+    a.initSync("module");
+    assert.deepEqual([a.__genex_module(), b.__genex_module()], ["module", undefined]);
+    assert.ok(Object.isFrozen(a));
+  });
+
+  it("refuses a glue of any other shape", () => {
+    const rows: [string, string][] = [
+      ["an import", `import x from "y";\n${glue}`],
+      ["no init export at the end", glue.replace("export { initSync, __wbg_init as default };", "")],
+      ["another export form", glue.replace("let state = 0;", "export let state = 0;")],
+      ["no exported function", glue.replace(/export function/g, "function")],
+    ];
+    for (const [name, text] of rows) assert.throws(() => factoryGlue(text), /physics-wasm-glue/, name);
   });
 });
 

@@ -487,6 +487,11 @@ The core must not trap. If it ever does (a bug), the WASM instance is unusable. 
 code `internal` for every later call on every world in that instance; the caller ends those worlds and makes a
 new instance. A native build reports the same code for the world that failed.
 
+**An instance per caller (pending sign-off).** The TS binding's `createBinding()` makes a WASM instance of its
+own from the module already compiled; its worlds live in it alone, so a trap fails that binding's worlds and no
+other instance's. A caller that must keep one world's failure from every other (an authority server's rooms)
+makes a binding per world.
+
 **Native process per world (pending sign-off).** `@genex-ai/physics-native` runs each world in a process of its
 own (`genex-physics-room`, §15). A crash, a frame past the caller's deadline, a protocol fault or the process
 being killed fails that one world exactly as a trap fails a WASM instance: every later call on it returns
@@ -652,6 +657,7 @@ A vector file is JSON:
   production droplet when the owner approves the run.
 - **The bulk calls (§19):** additive to 1.0, awaiting the owner's sign-off and genex-demo's.
 - **The native process per world (§11.3, §15):** awaiting the owner's sign-off.
+- **`createBinding()`, a WASM instance per caller (§11.3):** awaiting the owner's sign-off.
 
 ## 19. Additions to 1.0: bulk calls (pending sign-off)
 
