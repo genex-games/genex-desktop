@@ -50,6 +50,12 @@ the ears (never an observer or debug camera). `PlayOpts::ui()` plays menu sounds
 The buses are `music`, `sfx`, `ui`, `voice` and `ambience`; the settings menu's Audio tab (`docs/api/settings.md`) sets the
 person's volume for each, outside the simulation.
 
+A sound plays once unless its options loop it: `ctx.audio.play_with(&hum, PlayOpts::default()
+.looped().on(Bus::Ambience).volume_db(-6.0))` plays an engine hum, rain or a room tone until
+`ctx.audio.stop(voice, fade_s)`, so keep the answered `Voice` in the world. `.on(bus)` picks its
+bus (`Bus::Music`, `Bus::Sfx`, the default, `Bus::Ui`, `Bus::Voice`, `Bus::Ambience`) and
+`.volume_db(db)` its level.
+
 A play keeps at most 4 voices of one sound (`MAX_INSTANCES_DEFAULT`): another play of it steals the
 oldest. `ctx.audio.play_with(&steps, PlayOpts::default().max_instances(8))` sets the cap, and
 `.max_instances(0)` removes it, as a ring of looping emitters of one sound needs.

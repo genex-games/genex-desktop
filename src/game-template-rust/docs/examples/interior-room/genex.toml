@@ -1,0 +1,36 @@
+# The interior-room example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Interior room"
+fit = "expand"
+
+# Desktops and phones each start on their own preset. The room is built to be judged at a desktop
+# preset (`high` or `ultra`: volumetric sun shafts, AO, TAA); check it at `low` and as a phone too.
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure meters the room, so the windows burn out as a camera would see them. The fog and
+# the grade are set in code on top of this (`game::look`).
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.0
+
+# A small interior: the sun's cascades cover 30 m, so its shadows on the floor stay sharp.
+[render.shadows]
+distance = 30
+
+[physics]
+enabled = false
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

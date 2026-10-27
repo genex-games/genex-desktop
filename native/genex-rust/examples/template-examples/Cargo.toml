@@ -1,0 +1,39 @@
+# The Rust template's copyable examples (src/game-template-rust/docs/examples/), built as the lane
+# builds a game folder, so they keep compiling and passing clippy as the facade changes: each
+# example's `src/main.rs` is a binary here, and tests/ seeds them, drives them and (on the host
+# GPU, `--ignored metal`) writes a capture of each.
+[package]
+name = "template-examples"
+description = "The Rust template's copyable examples: a lit interior room and an FPS facet set."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# `cargo run -p template-examples --bin interior-room`: the room in a window (its CC0 maps read from
+# beside the binary, stand-in colours without them).
+[[bin]]
+name = "interior-room"
+path = "../../../../src/game-template-rust/docs/examples/interior-room/src/main.rs"
+
+[[bin]]
+name = "fps"
+path = "../../../../src/game-template-rust/docs/examples/fps/src/main.rs"
+
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+# What the two examples' genex.toml switch on: physics and animation (the FPS set).
+genex = { workspace = true, features = ["physics", "animation"] }
+
+[dev-dependencies]
+# The FPS rows' enemy: the characters example's mannequin GLB, written in code.
+characters = { path = "../characters" }
+image = { workspace = true }

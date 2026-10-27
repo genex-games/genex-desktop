@@ -16,6 +16,10 @@ panel with `genex::render::settings_button(ui, "Settings")`, a drawn gear beside
 The whole settings menu (graphics, audio, controls, language and accessibility, the game's own
 options) is `genex::settings::menu(ui)` (`docs/api/settings.md`).
 
+The HUD is egui 0.36. Inside a hook `ui.max_rect()` is the hook's area (its centre is the
+screen's, for a crosshair); the whole window is `ui.ctx().content_rect()`, which older egui
+called `screen_rect`.
+
 ## The kit (`game.ui`)
 
 Register the gameplay UI once with `game.ui(UiConfig::new().locales(&["en", "fr"]))`; its text,

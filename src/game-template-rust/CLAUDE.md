@@ -2,7 +2,10 @@ This is a Rust game on the studio's `genex` runtime (wgpu on WebGPU core, Rapier
 for UI) for the destinations in `studio.json`: desktop, phones and the web, from one source.
 `docs/GENEX_API.md` indexes the whole API it is written against (each topic is a page in
 `docs/api/`), and `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the
-game with and which refusals a run can meet.
+game with and which refusals a run can meet. `docs/examples/README.md` lists working code for this
+engine to copy from: a lit interior room (`docs/examples/interior-room/`), a room's shell as a
+Blender kit, and an FPS facet set (`docs/examples/fps/`, explained in `docs/examples/fps.md`).
+Start an indoor scene or a first-person game from them, not from a blank file.
 
 1. **Read `.studio/BRIEF.md` first when it exists.**
 2. **Keep the studio contract.** `src/main.rs` ends `main` with `genex::install(game);`. A facet
@@ -14,7 +17,9 @@ game with and which refusals a run can meet.
    reviewed list. A crate off that list is asked for with the `request_crate` tool (one exact
    version, and why); only the person approves it, and once approved it is named in `[crates]` at
    `=<version>`. Never add cargo files, build scripts, `unsafe`, or renderer internals, and never
-   edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`.
+   edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`. The build runs clippy with warnings
+   as errors, so a style lint (a collapsible `if`, an approximate `TAU`, a manual range check)
+   fails it like a type error: fix what the message names.
 4. **One screen, one input path, phone first.** Draw all UI with egui in `on_ui` (the HUD is egui
    too). Read input only from `ctx` inside the hooks (`ctx.actions` for a game's own actions,
    `ctx.keys`, `ctx.touches`, `ctx.pointer`, `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a
@@ -156,6 +161,16 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
   volume.
 - **Lens off in play.** `.depth_of_field(..)` and `.motion_blur(..)` suit cutscenes, photo modes
   and racers, never where the person steers.
+
+## Rooms and buildings
+
+A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the order. Greybox in code
+with Rapier colliders, fetch a CC0 scan per surface, then build the shell as one GLB kit with
+`blender__model` from a bpy script at `assets/src/<name>.py` (walls with real openings, frames,
+sills, trims, radiators, world-scale UVs; `docs/examples/room-kit/room_kit.py` is one) and draw it
+with `frame.model`. Then light it as World look says: a sun that falls in at the windows, every
+glowing fitting paired with a light, a probe and a volume per room, decals for wear, thin fog.
+Boxes are for the greybox; a box face stretches its scan.
 
 ## Game systems
 
