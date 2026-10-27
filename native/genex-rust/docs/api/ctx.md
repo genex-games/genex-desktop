@@ -2,7 +2,10 @@
 
 `ctx.keys` (`down`, `pressed`, `released` by `Key`, the DOM code names), `ctx.touches`,
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,
-`ctx.text`, `ctx.rng` (the only randomness), `ctx.dt` (1/60), `ctx.tick` (ticks since the last
+`ctx.text`, `ctx.rng` (the only randomness: `ctx.rng.f32()` in `[0, 1)`, `ctx.rng.range(lo, hi)`
+for an `f32` in `[lo, hi)`, `ctx.rng.range_i32(lo, hi)` inclusive, `ctx.rng.below(n)`,
+`ctx.rng.chance(p)`, `ctx.rng.next_u32()`; a reset's `Pcg32` has the same calls), `ctx.dt`
+(1/60), `ctx.tick` (ticks since the last
 seed), `ctx.world_size`, and `ctx.save(file, bytes)` / `ctx.load(file)` for the game's own save
 folder (a safe relative name; a folder the studio gives each run). One save holds at most 16 MiB
 and all of a game's saves 64 MiB together; `ctx.save` answers false past either. On Vulkan the

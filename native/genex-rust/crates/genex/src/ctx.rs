@@ -257,6 +257,16 @@ impl<'a> CtxRng<'a> {
         self.with(|rng| rng.range_f32(lo, hi))
     }
 
+    /// Uniform in `[0, 1)`: [`CtxRng::unit`] under the name most code reaches for.
+    pub fn f32(&self) -> f32 {
+        self.unit()
+    }
+
+    /// Uniform in `[lo, hi)`: [`CtxRng::range_f32`] under the name most code reaches for.
+    pub fn range(&self, lo: f32, hi: f32) -> f32 {
+        self.range_f32(lo, hi)
+    }
+
     /// True with probability `p`.
     pub fn chance(&self, p: f32) -> bool {
         self.with(|rng| rng.chance(p))
