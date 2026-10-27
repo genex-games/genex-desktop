@@ -7,11 +7,17 @@
  *   node scripts/physics-wasm-bench.ts [--package <folder>] [--seconds <measured>]
  *
  * It prints, per variant and schedule, how long building the scene took (the static world, 512
- * spawns, 64 joints), the mean, p99 and worst wall time per `step()` and per tick (commands, 64
- * queries and the step, plus every body's state imported back in the corrections variant), and
- * the stateHash the run ends on: with the default 10 measured seconds it must equal the native
- * bench's (`cargo test --release --test bench -- --ignored --nocapture`), the same build on
- * another target (§1.2). A measurement, never a check: it exits 0 whatever the numbers.
+ * spawns, 64 joints), the mean, p99 and worst wall time per `step()`, per tick (commands, 64
+ * queries and the step, plus every body's state imported back in the corrections variants) and
+ * per tick's corrections and queries alone, and the stateHash the run ends on: with the default 10
+ * measured seconds the plain and per-body variants must equal the native bench's (`cargo test
+ * --release --test bench -- --ignored --nocapture`), the same build on another target (§1.2).
+ *
+ * The variants: `plain` (no corrections, one call per query, as bench.rs), `plain-many` (the 64
+ * queries as one `queryMany`, §19.2), `per-body` (every body's state exported and imported back
+ * one call each, as bench.rs) and `bulk` (the same corrections as one `exportChanged` and one
+ * `importStates`, §19.1, with `queryMany`). The bulk variants end on the same stateHash as their
+ * one-call-each twins. A measurement, never a check: it exits 0 whatever the numbers.
  */
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -35,6 +41,26 @@ const SCHEDULES = [
   { dt: 1 / 60, substeps: 1 },
   { dt: 1 / 20, substeps: 3 },
 ] as const;
+
+/** How a tick corrects every body: not at all, one export and import call per body, or in bulk. */
+const Correction = { None: "none", PerBody: "per-body", Bulk: "bulk" } as const;
+type Correction = (typeof Correction)[keyof typeof Correction];
+/** How a tick runs its 64 queries: one call each, or one `queryMany`. */
+const QueryMode = { Single: "single", Many: "many" } as const;
+type QueryMode = (typeof QueryMode)[keyof typeof QueryMode];
+
+interface Variant {
+  name: string;
+  correction: Correction;
+  queries: QueryMode;
+}
+
+const VARIANTS: readonly Variant[] = [
+  { name: "plain", correction: Correction.None, queries: QueryMode.Single },
+  { name: "plain-many", correction: Correction.None, queries: QueryMode.Many },
+  { name: "per-body", correction: Correction.PerBody, queries: QueryMode.Single },
+  { name: "bulk", correction: Correction.Bulk, queries: QueryMode.Many },
+];
 
 interface Options {
   packageDir: string;
@@ -160,15 +186,33 @@ function commands(tick: number, ticksPerSecond: number): Physics.Command[] {
   return out;
 }
 
-function queries(w: Physics.World, tick: number): void {
+/** The tick's 64 queries (bench.rs `queries`), in its order, in their JSON form (§13). */
+function queryList(tick: number): Physics.Query[] {
   const t = (tick % 64) * 0.1;
-  for (let i = 0; i < RAYS; i += 1) must(w.ray([(i - 15.5) * 0.25, -10, 1 + t * 0.2], [0, 1, -0.05], 30), "ray");
-  for (let i = 0; i < CASTS; i += 1)
-    must(w.shapeCast(ball(0.3), pose([-10, (i - 7.5) * 0.5, 1.5]), [1, 0, 0], 25), "cast");
+  const out: Physics.Query[] = [];
+  for (let i = 0; i < RAYS; i += 1) {
+    out.push({ ray: { origin: [(i - 15.5) * 0.25, -10, 1 + t * 0.2], dir: [0, 1, -0.05], maxDist: 30 } });
+  }
+  for (let i = 0; i < CASTS; i += 1) {
+    out.push({ shapeCast: { shape: ball(0.3), pose: pose([-10, (i - 7.5) * 0.5, 1.5]), dir: [1, 0, 0], maxDist: 25 } });
+  }
   for (let i = 0; i < OVERLAPS; i += 1) {
     const [x, y] = [(i % 4) * 1.5 - 2.25, Math.floor(i / 4) * 1.5 - 2.25];
-    must(w.overlap(ball(0.8), pose([x, y, 1 + t * 0.1])), "overlap");
+    out.push({ overlap: { shape: ball(0.8), pose: pose([x, y, 1 + t * 0.1]) } });
   }
+  return out;
+}
+
+/** One call per query, as bench.rs makes them (`query()` takes the path `ray`, `shapeCast` and `overlap` take). */
+function queriesOneByOne(w: Physics.World, tick: number): void {
+  for (const one of queryList(tick)) must(w.query(one), "query");
+}
+
+/** The same queries in one crossing (§19.2). */
+function queriesAtOnce(w: Physics.World, tick: number): void {
+  const answered = w.queryMany(queryList(tick));
+  const refused = Array.isArray(answered) ? answered.find((result) => !result.ok) : answered;
+  if (refused) throw new Error(`queryMany: ${JSON.stringify(refused)}`);
 }
 
 function corrections(w: Physics.World): void {
@@ -179,6 +223,28 @@ function corrections(w: Physics.World): void {
   }
 }
 
+/**
+ * The same corrections in two calls (§19.1): every body changed since tick 0, which is every body
+ * here (all dynamic: the floor is the static world), exported flat and imported back as read.
+ */
+function bulkCorrections(w: Physics.World): void {
+  const { keys, data } = w.exportChanged(0);
+  must(w.importStates(keys, data), "importStates");
+}
+
+function correct(w: Physics.World, correction: Correction): void {
+  if (correction === Correction.PerBody) corrections(w);
+  if (correction === Correction.Bulk) bulkCorrections(w);
+}
+
+function query(w: Physics.World, mode: QueryMode, tick: number): void {
+  if (mode === QueryMode.Many) {
+    queriesAtOnce(w, tick);
+    return;
+  }
+  queriesOneByOne(w, tick);
+}
+
 function summary(samples: number[]): { mean: number; p99: number; worst: number } {
   const sorted = [...samples].sort((a, b) => a - b);
   const mean = sorted.reduce((sum, x) => sum + x, 0) / sorted.length;
@@ -186,38 +252,44 @@ function summary(samples: number[]): { mean: number; p99: number; worst: number 
   return { mean, p99, worst: sorted[sorted.length - 1] };
 }
 
-function run(physics: typeof Physics, dt: number, substeps: number, correct: boolean, measuredSeconds: number) {
+function run(physics: typeof Physics, dt: number, substeps: number, variant: Variant, measuredSeconds: number) {
   const ticksPerSecond = Math.round(1 / dt);
   const built = performance.now();
   const w = scene(physics, dt, substeps);
   const buildMs = performance.now() - built;
   const warmup = Math.round(WARMUP_SECONDS / dt);
   const measured = Math.round(measuredSeconds / dt);
-  const [steps, ticks]: number[][] = [[], []];
+  const [steps, ticks, corrected, queried]: number[][] = [[], [], [], []];
   for (let tick = 0; tick < warmup + measured; tick += 1) {
     const start = performance.now();
     const applied = w.apply(commands(tick, ticksPerSecond), "each");
     const refused = Array.isArray(applied) ? applied.find((outcome) => !outcome.ok) : applied;
     if (refused) throw new Error(`command: ${JSON.stringify(refused)}`);
-    if (correct) corrections(w);
-    queries(w, tick);
+    const beforeCorrections = performance.now();
+    correct(w, variant.correction);
+    const beforeQueries = performance.now();
+    query(w, variant.queries, tick);
     const beforeStep = performance.now();
     must(w.step(), "step");
     const end = performance.now();
     if (tick < warmup) continue;
     steps.push(end - beforeStep);
     ticks.push(end - start);
+    corrected.push(beforeQueries - beforeCorrections);
+    queried.push(beforeStep - beforeQueries);
   }
   const perSixtieth = MS_PER_SIXTIETH_TICK / dt;
   const tick = summary(ticks);
   const stats = w.stats();
   const result = {
+    variant: variant.name,
     schedule: `dt 1/${ticksPerSecond} x${substeps}`,
-    corrections: correct,
     measuredTicks: measured,
     buildMs,
     step: summary(steps),
     tick,
+    corrections: summary(corrected),
+    queries: summary(queried),
     meter: { meanMs: tick.mean * perSixtieth, worstTickMs: tick.worst * perSixtieth },
     bodies: stats.bodies,
     memoryBytes: stats.memoryBytes,
@@ -231,9 +303,9 @@ async function main(): Promise<void> {
   const { packageDir, measuredSeconds } = options(process.argv.slice(2));
   const physics: typeof Physics = await import(pathToFileURL(path.join(packageDir, "node.js")).href);
   console.log(JSON.stringify({ buildId: physics.buildId(), node: process.version, arch: process.arch }));
-  for (const correct of [false, true]) {
+  for (const variant of VARIANTS) {
     for (const { dt, substeps } of SCHEDULES) {
-      console.log(JSON.stringify(run(physics, dt, substeps, correct, measuredSeconds)));
+      console.log(JSON.stringify(run(physics, dt, substeps, variant, measuredSeconds)));
     }
   }
 }

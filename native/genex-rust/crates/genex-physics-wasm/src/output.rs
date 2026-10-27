@@ -4,8 +4,8 @@
 //! it is written as that f64, so `JSON.parse` gives back the very value the core holds.
 
 use genex_physics::{
-    BodyState, CommandOutcome, Hit, Limits, NetBodyState, PhysicsEvent, PhysicsFailure, Pose, QueryAnswer, ResolvedWorldDesc,
-    Stats, StepResult,
+    BodyState, CommandOutcome, Hit, Limits, NetBodyState, PhysicsEvent, PhysicsFailure, Pose, QueryAnswer, QueryOutcome,
+    ResolvedWorldDesc, Stats, StepResult,
 };
 use serde_json::{Map, Value, json};
 
@@ -28,12 +28,16 @@ pub(crate) fn ok() -> String {
 
 /// `{ ok: false, code, index?, detail }` (§14).
 pub(crate) fn failure(failure: &PhysicsFailure) -> String {
+    failure_value(failure).to_string()
+}
+
+fn failure_value(failure: &PhysicsFailure) -> Value {
     let mut out = object([("ok", Value::Bool(false)), ("code", json!(failure.code.code()))]);
     if let Some(index) = failure.index {
         out.insert("index".to_string(), json!(index));
     }
     out.insert("detail".to_string(), json!(failure.detail));
-    Value::Object(out).to_string()
+    Value::Object(out)
 }
 
 /// A unit result as text.
@@ -133,10 +137,25 @@ fn hit(hit: &Hit) -> Value {
 
 /// A query's answer (§13): `{ ok: true, hit }` or `{ ok: true, keys }`.
 pub(crate) fn answer(answer: &QueryAnswer) -> String {
-    match answer {
-        QueryAnswer::Hit(found) => ok_with([("hit", found.as_ref().map_or(Value::Null, hit))]),
-        QueryAnswer::Keys(keys) => ok_with([("keys", json!(keys))]),
-    }
+    answer_value(answer).to_string()
+}
+
+fn answer_value(answer: &QueryAnswer) -> Value {
+    let field = match answer {
+        QueryAnswer::Hit(found) => ("hit", found.as_ref().map_or(Value::Null, hit)),
+        QueryAnswer::Keys(keys) => ("keys", json!(keys)),
+    };
+    Value::Object(object([("ok", Value::Bool(true)), field]))
+}
+
+/// A `queryMany`'s outcomes (§19.2): `{ ok: true, results }`, each result exactly the text
+/// [`answer`] or [`failure`] writes for that query alone.
+pub(crate) fn answers(outcomes: &[QueryOutcome]) -> String {
+    let results = outcomes.iter().map(|outcome| match outcome {
+        Ok(found) => answer_value(found),
+        Err(refused) => failure_value(refused),
+    });
+    ok_with([("results", Value::Array(results.collect()))])
 }
 
 /// The world's counters (§11).

@@ -7,8 +7,10 @@
  * throwing on any argument; memory per world (`stats().memoryBytes` follows spawns, the counting
  * allocator measures it, 1,000 worlds made and freed leave the instance's memory flat); every
  * conformance vector (`crates/genex-physics/vectors/`, pinned on the native core, run by the shared
- * `js/conformance.js`) giving the same hashes, events and refusals in wasm32; and last the §11.3
- * poison rule after a forced trap.
+ * `js/conformance.js`) giving the same hashes, events and refusals in wasm32; the bulk calls (§19,
+ * additive to 1.0: `importStates` equal to one `importBodyState` per key and atomic, with its hostile
+ * table, and `queryMany` equal to one `query` per item, quota included); and last the §11.3 poison
+ * rule after a forced trap.
  *
  * Without the test build the rows skip; `GENEX_REQUIRE_TOOLCHAINS=1` makes its absence a failure.
  */
@@ -590,6 +592,207 @@ describe("@genex-ai/physics: hostile inputs through JS", gate, () => {
       ],
       [null, [], []],
     );
+    world.free();
+  });
+});
+
+/** `scene()` stepped `ticks` times. */
+function steppedScene(ticks: number): Physics.World {
+  const world = scene();
+  for (let i = 0; i < ticks; i += 1) ok(world.step());
+  return world;
+}
+
+/** The `index`th entry of `exportChanged`'s layout as the state `importBodyState` takes. */
+function netState(data: ArrayLike<number>, index: number): Physics.NetBodyState {
+  const at = (slot: number) => data[index * EXPORT_STRIDE + slot];
+  return {
+    p: [at(0), at(1), at(2)],
+    q: [at(3), at(4), at(5), at(6)],
+    v: [at(7), at(8), at(9)],
+    w: [at(10), at(11), at(12)],
+    sleeping: at(13) === 1,
+  };
+}
+
+/** An export's entries an import takes: every one but the scene's fixed floor. */
+function importable(world: Physics.World, exported: Physics.ChangedExport): Physics.ChangedExport {
+  const kept = exported.keys.flatMap((key, index) => (world.body(key)?.type === "fixed" ? [] : [index]));
+  const data = new Float32Array(kept.length * EXPORT_STRIDE);
+  for (const [at, index] of kept.entries()) {
+    data.set(exported.data.subarray(index * EXPORT_STRIDE, (index + 1) * EXPORT_STRIDE), at * EXPORT_STRIDE);
+  }
+  return { keys: kept.map((index) => exported.keys[index]), data };
+}
+
+const SOURCE_TICKS = 40;
+const TARGET_TICKS = 10;
+const AFTER_TICKS = 30;
+/** One entry of the flat layout: a body held 4 above the origin, awake and still. */
+const HELD = [0, 4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+/** Index 1's slot `slot` in a two-entry flat layout. */
+const second = (slot: number) => EXPORT_STRIDE + slot;
+/** Two held entries with `value` at `at`. */
+const spoiled = (at: number, value: unknown): unknown[] => Object.assign([...HELD, ...HELD], { [at]: value });
+
+/** A row of the bulk import's hostile table: its arguments, and the refusal they give. */
+interface BulkRow {
+  name: string;
+  keys: unknown;
+  data: unknown;
+  code: Physics.PhysicsError;
+  index?: number;
+}
+
+const bulkRows: BulkRow[] = [
+  { name: "keys that are not a list", keys: "a", data: HELD, code: "bad-command" },
+  { name: "a key that is not a string", keys: ["a", 5], data: [...HELD, ...HELD], code: "bad-command" },
+  { name: "a Float64Array", keys: ["a", "b"], data: new Float64Array(2 * EXPORT_STRIDE), code: "bad-command" },
+  { name: "a number given as a string", keys: ["a", "b"], data: spoiled(second(1), "4"), code: "bad-command" },
+  { name: "data one number short", keys: ["a", "b"], data: [...HELD, ...HELD].slice(1), code: "bad-command" },
+  { name: "a key with no data", keys: ["a", "b", "lift"], data: [...HELD, ...HELD], code: "bad-command" },
+  {
+    name: `more than ${BATCH_COMMANDS_MAX} keys`,
+    keys: Array.from({ length: BATCH_COMMANDS_MAX + 1 }, () => "a"),
+    data: new Float32Array((BATCH_COMMANDS_MAX + 1) * EXPORT_STRIDE),
+    code: "out-of-range",
+  },
+  { name: "keys of a throwing Proxy", keys: new Proxy([], { get: boom }), data: [], code: "bad-command" },
+  { name: "data of a throwing Proxy", keys: [], data: new Proxy([], { get: boom }), code: "bad-command" },
+  { name: "a revoked Proxy", keys: revokedProxy, data: revokedProxy, code: "bad-command" },
+  { name: "NaN", keys: ["a", "b"], data: spoiled(second(0), Number.NaN), code: "non-finite", index: 1 },
+  { name: "a number past f32", keys: ["a", "b"], data: spoiled(second(8), 1e39), code: "non-finite", index: 1 },
+  {
+    name: "an infinite Float32Array spin",
+    keys: ["a", "b"],
+    data: Float32Array.from(spoiled(second(11), Number.POSITIVE_INFINITY) as number[]),
+    code: "non-finite",
+    index: 1,
+  },
+  { name: "a sleeping of 2", keys: ["a", "b"], data: spoiled(second(13), 2), code: "bad-command", index: 1 },
+  { name: "past worldExtent", keys: ["a", "b"], data: spoiled(second(1), 2e5), code: "out-of-range", index: 1 },
+  { name: "a zero rotation", keys: ["a", "b"], data: spoiled(second(6), 0), code: "out-of-range", index: 1 },
+  { name: "an unknown key", keys: ["a", "nobody"], data: [...HELD, ...HELD], code: "unknown-key", index: 1 },
+  { name: "the fixed floor", keys: ["a", "floor"], data: [...HELD, ...HELD], code: "wrong-body-type", index: 1 },
+  { name: "a key past 64 bytes", keys: ["a", "k".repeat(70)], data: [...HELD, ...HELD], code: "invalid-key", index: 1 },
+];
+
+/** A world whose `queriesPerStep` is `queries`, with a fixed wall at x = 5. */
+function limitedWorld(queries: number): Physics.World {
+  const world = made({ ...Y_UP, limits: { queriesPerStep: queries } });
+  ok(world.spawn({ ...box("wall", 0), type: "fixed", pose: { p: [5, 0, 0], q: IDENTITY } }));
+  return world;
+}
+
+const RAY_X: Physics.Query = { ray: { origin: [0, 0, 0], dir: [1, 0, 0], maxDist: 10 } };
+/** Hits and refusals of every source, in an order that runs past a quota of 3. */
+const MIXED_QUERIES: Physics.Query[] = [
+  RAY_X,
+  { ray: { origin: [0, 0, 0], dir: [0, 0, 0], maxDist: 10 } },
+  { cone: {} } as unknown as Physics.Query,
+  { ray: { origin: [0, 0, 0], dir: [1, 0, 0], maxDist: 10n as unknown as number } },
+  { overlap: { shape: { kind: "sphere", radius: 1 }, pose: { p: [5, 0, 0], q: IDENTITY } } },
+  {
+    shapeCast: {
+      shape: { kind: "sphere", radius: 0.1 },
+      pose: { p: [0, 0, 0], q: IDENTITY },
+      dir: [1, 0, 0],
+      maxDist: 10,
+    },
+  },
+  RAY_X,
+  { ray: { origin: [0, 0, 0], dir: [-1, 0, 0], maxDist: 10 } },
+];
+/** Characters of one query that fits the call's budget alone, though four of them do not. */
+const QUARTER_PAST_BUDGET = Math.ceil(INPUT_CHARS_BUDGET / 4) + 1;
+
+describe("@genex-ai/physics: bulk calls, additive to 1.0 (§19)", gate, () => {
+  it("imports exportChanged's data in one call exactly as one importBodyState per key", () => {
+    const source = steppedScene(SOURCE_TICKS);
+    const { keys, data } = importable(source, source.exportChanged(0));
+    assert.deepEqual(keys, ["a", "b", "lift"]);
+    const each = steppedScene(TARGET_TICKS);
+    const bulk = steppedScene(TARGET_TICKS);
+    const numbers = steppedScene(TARGET_TICKS);
+    for (const [index, key] of keys.entries()) ok(each.importBodyState(key, netState(data, index)));
+    ok(bulk.importStates(keys, data));
+    ok(numbers.importStates(keys, Array.from(data)));
+    assert.equal(bulk.stateHash(), each.stateHash());
+    assert.equal(numbers.stateHash(), each.stateHash(), "a number array imports as its Float32Array");
+    assert.deepEqual(bulk.exportChanged(0), each.exportChanged(0), "the same changed marks too");
+    for (const [index, key] of keys.entries()) {
+      const back = bulk.exportBodyState(key);
+      const sent = netState(data, index);
+      assert.deepEqual([back?.p, back?.v, back?.w, back?.sleeping], [sent.p, sent.v, sent.w, sent.sleeping], key);
+    }
+    for (let i = 0; i < AFTER_TICKS; i += 1) {
+      for (const world of [each, bulk, numbers]) ok(world.step());
+      assert.equal(bulk.stateHash(), each.stateHash(), `step ${i}`);
+    }
+    for (const world of [source, each, bulk, numbers]) world.free();
+  });
+
+  it("imports a key named twice in order, the later winning, as two calls do", () => {
+    const each = steppedScene(TARGET_TICKS);
+    const bulk = steppedScene(TARGET_TICKS);
+    const first = [...HELD];
+    const later = Object.assign([...HELD], { 0: 2, 13: 1 });
+    ok(each.importBodyState("a", netState(first, 0)));
+    ok(each.importBodyState("a", netState(later, 0)));
+    ok(bulk.importStates(["a", "a"], [...first, ...later]));
+    assert.equal(bulk.stateHash(), each.stateHash());
+    assert.deepEqual(bulk.exportBodyState("a"), netState(later, 0));
+    ok(bulk.importStates([], new Float32Array(0)));
+    each.free();
+    bulk.free();
+  });
+
+  for (const row of bulkRows) {
+    it(`refuses a bulk import of ${row.name} with ${row.code}, applying none of it`, () => {
+      const world = steppedScene(1);
+      const before = observe(world);
+      const refused = world.importStates(row.keys as Physics.Key[], row.data as number[]) as Physics.Failure;
+      assert.equal(code(refused), row.code);
+      assert.equal(refused.index, row.index);
+      assert.equal(observe(world), before);
+      world.free();
+    });
+  }
+
+  it("answers queryMany exactly as one query per item, counting queriesPerStep the same", () => {
+    const single = limitedWorld(3);
+    const many = limitedWorld(3);
+    const oneByOne = MIXED_QUERIES.map((query) => single.query(query));
+    const together = many.queryMany(MIXED_QUERIES);
+    assert.deepEqual(together, oneByOne);
+    assert.deepEqual(
+      oneByOne.map((result) => (result.ok ? "ok" : result.code)),
+      ["ok", "out-of-range", "bad-command", "bad-command", "ok", "ok", "limit-queries", "limit-queries"],
+    );
+    assert.equal(many.stats().queriesThisStep, 3);
+    assert.equal(single.stats().queriesThisStep, 3);
+    for (const world of [single, many]) ok(world.step());
+    assert.deepEqual(many.queryMany([RAY_X]), [single.query(RAY_X)], "a step starts a new quota");
+    assert.deepEqual(many.queryMany([]), []);
+    single.free();
+    many.free();
+  });
+
+  it("answers an item past the budget as query does, and refuses a whole call past it counting nothing", () => {
+    const world = limitedWorld(64);
+    const overCap = { ray: { ...RAY_X.ray, filter: { excludeBodies: ["k".repeat(OVER_INPUT_CAP)] } } } as Physics.Query;
+    assert.deepEqual(world.queryMany([overCap, RAY_X]), [world.query(overCap), world.query(RAY_X)]);
+    const quarter = { ray: { ...RAY_X.ray, filter: { excludeBodies: ["k".repeat(QUARTER_PAST_BUDGET)] } } };
+    const before = world.stats().queriesThisStep;
+    const refusals = [
+      [world.queryMany(RAY_X as unknown as Physics.Query[]), "bad-command"],
+      [world.queryMany(new Proxy([RAY_X], { get: boom })), "bad-command"],
+      [world.queryMany(revokedProxy as Physics.Query[]), "bad-command"],
+      [world.queryMany(Array.from({ length: BATCH_COMMANDS_MAX + 1 }, () => RAY_X)), "out-of-range"],
+      [world.queryMany(Array.from({ length: 4 }, () => quarter as Physics.Query)), "out-of-range"],
+    ] as const;
+    for (const [result, expected] of refusals) assert.equal(code(result), expected);
+    assert.equal(world.stats().queriesThisStep, before, "a refused call runs no query");
     world.free();
   });
 });

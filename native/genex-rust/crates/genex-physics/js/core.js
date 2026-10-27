@@ -63,6 +63,8 @@ const NON_ASCII = /[^\u0000-\u007f]/;
 const NON_ASCII_WEIGHT = 3;
 /** The most commands one `apply` carries; a longer batch is refused whole with `out-of-range`. */
 const BATCH_COMMANDS_MAX = 16_384;
+/** The most entries one bulk call (`importStates`, `queryMany`; §19) carries, as an `apply` batch. */
+const BULK_ITEMS_MAX = BATCH_COMMANDS_MAX;
 /** The largest snapshot `restore` hands over: above any world the 4x memory ceiling admits. */
 const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 /** §17.7's caps on the static world, refused here with the core's code before flattening. */
@@ -93,6 +95,10 @@ const Detail = Object.freeze({
   Freed: "this world was freed",
   TooLarge: "the input is over this call's budget (values and characters of JSON; see README)",
   BigBatch: "the batch holds more than 16,384 commands",
+  BigBulk: "the call carries more than 16,384 entries",
+  BadKeys: "keys is an array of strings",
+  BadData: "data is a Float32Array or an array of numbers, 14 per key",
+  BadQueries: "queries is an array of queries",
   TooDeep: "the input nests deeper than any contract shape",
   BigInt: "a BigInt is not a number",
   Unreadable: "the input could not be read",
@@ -307,7 +313,7 @@ function encode(value, budget) {
   const out = { parts: [], size: 0, values: 0, budget };
   try {
     write(value, out, 0);
-    return { text: out.parts.join("") };
+    return { text: out.parts.join(""), size: out.size, values: out.values };
   } catch (error) {
     if (error instanceof Refusal) return failure(error.code, error.detail);
     if (error instanceof RangeError) return failure(PhysicsError.OutOfRange, Detail.TooLarge);
@@ -409,6 +415,114 @@ function snapshotBytes(bytes) {
   } catch {
     return { refused: failure(PhysicsError.BadSnapshot, Detail.NotSnapshot) };
   }
+}
+
+/**
+ * `importStates`' arguments (§19.1) as they cross: the keys, each cut as a read cuts one, and 14
+ * numbers per key as a Float32Array, or a failure for a call of the wrong shape (`bad-command`, or
+ * `out-of-range` past `BULK_ITEMS_MAX` keys). Anything thrown while reading (a getter, a Proxy) is
+ * `bad-command`.
+ */
+function bulkImport(keys, data) {
+  try {
+    return bulkImportFields(keys, data);
+  } catch {
+    return { refused: failure(PhysicsError.BadCommand, Detail.Unreadable) };
+  }
+}
+
+function bulkImportFields(keys, data) {
+  if (!Array.isArray(keys)) return { refused: failure(PhysicsError.BadCommand, Detail.BadKeys) };
+  const count = keys.length;
+  if (count > BULK_ITEMS_MAX) return { refused: failure(PhysicsError.OutOfRange, Detail.BigBulk) };
+  const passed = [];
+  for (let index = 0; index < count; index += 1) {
+    const key = passedKey(keys[index]);
+    if (key === undefined) return { refused: failure(PhysicsError.BadCommand, Detail.BadKeys) };
+    passed.push(key);
+  }
+  const numbers = flatNumbers(data, count * EXPORT_STRIDE);
+  if (numbers === undefined) return { refused: failure(PhysicsError.BadCommand, Detail.BadData) };
+  return { keys: passed, data: numbers };
+}
+
+/** `data` as a Float32Array of exactly `length` numbers, or `undefined` for any other shape. */
+function flatNumbers(data, length) {
+  if (Array.isArray(data)) return numberArray(data, length);
+  return float32View(data, length);
+}
+
+/**
+ * A Float32Array's numbers as a plain view of the caller's buffer, read from its internal slots
+ * only (no getter, own property or Proxy trap of it runs), so the values cross bit for bit.
+ */
+function float32View(data, length) {
+  if (typedArrayName.call(data) !== "Float32Array") return undefined;
+  if (typedArrayLength.call(data) !== length * Float32Array.BYTES_PER_ELEMENT) return undefined;
+  return new Float32Array(typedArrayBuffer.call(data), typedArrayOffset.call(data), length);
+}
+
+/** An array of numbers as f32s, as `Math.fround` rounds them (§4.1); NaN and ±Infinity stay so for the core to refuse. */
+function numberArray(data, length) {
+  if (data.length !== length) return undefined;
+  const out = new Float32Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const value = data[index];
+    if (typeof value !== "number") return undefined;
+    out[index] = value;
+  }
+  return out;
+}
+
+/**
+ * `queryMany`'s queries (§19.2), each read once, or a failure for a call that is not an array
+ * (`bad-command`, also for one that throws while read) or longer than `BULK_ITEMS_MAX`.
+ */
+function queryList(queries) {
+  try {
+    if (!Array.isArray(queries)) return { refused: failure(PhysicsError.BadCommand, Detail.BadQueries) };
+    const count = queries.length;
+    if (count > BULK_ITEMS_MAX) return { refused: failure(PhysicsError.OutOfRange, Detail.BigBulk) };
+    const items = [];
+    for (let index = 0; index < count; index += 1) items.push(queries[index]);
+    return { items };
+  } catch {
+    return { refused: failure(PhysicsError.BadCommand, Detail.Unreadable) };
+  }
+}
+
+/**
+ * Each query encoded as `query()` encodes it alone, so an item that cannot cross keeps that refusal
+ * as its own value; the rest cross as one text, which must fit the call's budget together, or the
+ * call is one `out-of-range`. It stops at the first item that passes that budget.
+ */
+function encodeEach(items, budget) {
+  const encoded = [];
+  const texts = [];
+  let size = 0;
+  let values = 0;
+  for (const item of items) {
+    const one = encode(item, budget);
+    encoded.push(one);
+    if (one.text === undefined) continue;
+    size += one.size + 1;
+    values += one.values;
+    if (size > budget.chars || values > budget.values) {
+      return { refused: failure(PhysicsError.OutOfRange, Detail.TooLarge) };
+    }
+    texts.push(one.text);
+  }
+  return { encoded, text: `[${texts.join(",")}]` };
+}
+
+/** Every item's result in order: its own refusal where it could not cross, else the module's next answer. */
+function mergeAnswers(encoded, answers) {
+  let next = 0;
+  return encoded.map((one) => {
+    if (one.text === undefined) return one;
+    next += 1;
+    return answers[next - 1];
+  });
 }
 
 /** A key a read hands over: a string cut to at most `KEY_PASS_CHARS`, or `undefined` for a non-string. */
@@ -671,6 +785,19 @@ export class World {
     );
   }
 
+  /**
+   * Imports many bodies' replicated fields in one call (§19.1, additive to 1.0): `keys[i]` takes
+   * `data[14·i … 14·i + 13]`, `exportChanged`'s layout. All or none, a refusal naming its index;
+   * when all pass the world ends exactly as one `importBodyState` per key in order leaves it.
+   */
+  importStates(keys, data) {
+    const read = bulkImport(keys, data);
+    if (read.refused !== undefined) return read.refused;
+    const encoded = encode(read.keys, this.#budget());
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_import_states(id, encoded.text, read.data));
+  }
+
   importBodyState(key, state) {
     const passed = passedKey(key);
     if (passed === undefined) return failure(PhysicsError.InvalidKey, "a key is a string");
@@ -694,6 +821,21 @@ export class World {
   /** Runs one query in its JSON form (§13). */
   query(query) {
     return this.#query(query);
+  }
+
+  /**
+   * Runs many queries in one crossing (§19.2, additive to 1.0): one result per query, in order,
+   * each exactly what `query()` gives for it, `queriesPerStep` counted the same. A failure of the
+   * whole call (not a list, over the call's budget or 16,384 queries, `internal`) is one failure.
+   */
+  queryMany(queries) {
+    const read = queryList(queries);
+    if (read.refused !== undefined) return read.refused;
+    const sent = encodeEach(read.items, this.#budget());
+    if (sent.refused !== undefined) return sent.refused;
+    const result = this.#json((wasm, id) => wasm.world_query_many(id, sent.text));
+    if (!result.ok) return result;
+    return mergeAnswers(sent.encoded, result.results);
   }
 
   /** The opaque snapshot (§9.4); empty when the world failed. */

@@ -47,7 +47,8 @@ or takes `init({ module })` (a `WebAssembly.Module` or its bytes). A bundler res
   trimesh as large as the world's own limits admit (`max(heightfieldSamples, 16 × triangles)` more
   values of 24 characters each); text with non-ASCII characters counts three per character. At the
   default limits that is 1,572,864 values and 32 Mi characters. Past it the call gives
-  `out-of-range`; so does an `apply` of more than 16,384 commands, as one failure in either mode. A
+  `out-of-range`; so does an `apply` of more than 16,384 commands, as one failure in either mode,
+  and an `importStates` or `queryMany` of more than 16,384 entries. A
   snapshot over 512 MiB gives `bad-snapshot`. Measured at the default limits, the heaviest input
   the budget admits (a 1,048,576-sample heightfield) grows the instance's memory by about 117 MB
   once and every other stays within that; at the 4× ceiling expect about four times as much.
@@ -59,6 +60,18 @@ or takes `init({ module })` (a `WebAssembly.Module` or its bytes). A bundler res
   one instance. `LimitMemory` refusals are judged before anything is allocated.
 - **`stats().stepMs`** is the wall time the wrapper measured around the last `step()`, for display
   only (§11.4).
+
+## Bulk calls (§19, additive to 1.0, pending sign-off)
+
+Two calls take a whole tick's work in one crossing; each means exactly a sequence of 1.0 calls.
+
+- `world.importStates(keys, data)` imports many bodies' replicated fields, `data` a `Float32Array` (or
+  number array) of 14 numbers per key in `exportChanged`'s layout, so `exportChanged`'s output imports
+  as read (leave out fixed bodies). It is all or none: the first refusal names its `index` and nothing
+  changes; when all pass the world ends as one `importBodyState` per key in order leaves it.
+- `world.queryMany(queries)` runs §13's JSON queries and returns one result per query, each what
+  `query()` would return for it, `queriesPerStep` counted the same; only a malformed call (not a list,
+  over the budget or 16,384 queries, `internal`) is one failure instead of a list.
 
 ## If the instance fails (§11.3)
 
@@ -79,13 +92,19 @@ v24.18.0 (`node scripts/physics-wasm-bench.ts`). Milliseconds, mean / p99.
 |---|---|---|---|
 | native aarch64-macos | dt 1/60, 1 substep | 0.494 / 0.787 | 0.612 / 1.054 |
 | native aarch64-macos | dt 1/20, 3 substeps | 1.437 / 2.148 | 1.561 / 2.425 |
-| wasm32, Node 24 | dt 1/60, 1 substep | 1.264 / 1.775 | 1.784 / 2.555 |
-| wasm32, Node 24 | dt 1/20, 3 substeps | 3.666 / 4.705 | 4.207 / 5.344 |
-| native x86_64-linux (droplet) | both | pending the owner-approved run | |
+| wasm32 (SIMD), Node 24 | dt 1/60, 1 substep | 0.764 / 1.355 | 1.294 / 2.071 |
+| wasm32 (SIMD), Node 24 | dt 1/20, 3 substeps | 2.149 / 3.619 | 2.707 / 4.406 |
+| native x86_64-linux, DigitalOcean s5 (AMD EPYC 9555P) | dt 1/60, 1 substep | 0.746 / 1.235 | 0.897 / 1.644 |
+| native x86_64-linux, DigitalOcean Premium Intel | dt 1/60, 1 substep | 1.978 / 3.795 | 2.334 / 4.442 |
 
-In WASM the 1/60 tick mean is over the authority host's 1 ms meter (§11.4); the worst tick stays under
-8 ms. Correcting every body each tick (512 `exportBodyState` + `importBodyState`) costs about 10 ms a
-tick more in WASM.
+The module is built with WebAssembly SIMD (simd128): every vector and the bench's `stateHash` are the
+same bits as without it, and a step is 1.6-1.9x faster. Node 24 and every current browser run SIMD
+(Safari since 16.4). In WASM the 1/60 tick mean is over the authority host's 1 ms meter (§11.4) on
+this worst case; the worst tick stays under 8 ms. Correcting every body each tick costs, in the test build on the same Mac: about 6.3 ms as 512
+`exportBodyState` + `importBodyState` calls, and about 0.3 ms as one `exportChanged` + `importStates`
+(§19.1). Either way the first query after the corrections pays about 3.5 ms more, the backend
+refreshing 512 moved bodies. The 64 queries as one `queryMany` take about 0.44 ms against 0.53 ms one
+call each: most of a query's cost is its work and its JSON, not the crossing.
 
 ## Building
 

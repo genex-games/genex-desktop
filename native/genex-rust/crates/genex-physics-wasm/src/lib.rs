@@ -5,8 +5,8 @@
 //! hand-written wrapper (`../genex-physics/js/core.js`) is the API; these exports are its private
 //! wire and change with it. Worlds live in this instance's registry, addressed by an id that is
 //! never reused. Values cross as JSON text in the TypeScript shapes (`output`), except the static
-//! world (flat f64 arrays, `input`), `exportChanged`'s data (a `Float32Array`) and snapshots
-//! (bytes). Every export returns a value for every input; an id that names no world (never made,
+//! world (flat f64 arrays, `input`), `exportChanged`'s and `importStates`' data (a `Float32Array`)
+//! and snapshots (bytes). Every export returns a value for every input; an id that names no world (never made,
 //! or freed) gives `internal` where the call has a result, and the empty form where it has none.
 //!
 //! # Memory (§11.1)
@@ -228,6 +228,23 @@ pub fn world_import_body_state(id: u32, key: &str, state: &str) -> String {
     call(id, |world| output::unit(input::net_state(state).and_then(|state| world.import_body_state(key, &state))))
 }
 
+/// Imports many bodies' replicated fields at once (§19.1): `keys` a JSON array of strings, `data`
+/// 14 numbers per key in `exportChanged`'s layout. All or none; a refusal names its index.
+#[wasm_bindgen]
+pub fn world_import_states(id: u32, keys: &str, data: &[f32]) -> String {
+    call(id, |world| output::unit(input::keys(keys).and_then(|keys| world.import_states(&keys, data))))
+}
+
+/// Runs a JSON array of queries (§19.2): `{ ok: true, results }`, one result per query as
+/// [`world_query`] writes it, or one failure for a non-array (or `internal`).
+#[wasm_bindgen]
+pub fn world_query_many(id: u32, queries: &str) -> String {
+    call(id, |world| match input::json(queries).and_then(|value| world.query_many_json(&value)) {
+        Ok(outcomes) => output::answers(&outcomes),
+        Err(refused) => output::failure(&refused),
+    })
+}
+
 /// Runs one query in its JSON form (§13).
 #[wasm_bindgen]
 pub fn world_query(id: u32, query: &str) -> String {
@@ -367,6 +384,42 @@ mod tests {
         assert_eq!(parse(&world_export_changed(id, 0.0)), serde_json::json!(["crate"]));
         assert_eq!(take_changed_data().len(), genex_physics::EXPORT_STRIDE);
         assert!(take_changed_data().is_empty());
+        world_free(id);
+    }
+
+    #[test]
+    fn import_states_takes_export_changed_s_data_and_refuses_with_an_index() {
+        let id = create();
+        world_command(id, CRATE);
+        world_command(id, &CRATE.replace(r#""key":"crate""#, r#""key":"crate2""#));
+        for _ in 0..5 {
+            world_step(id);
+        }
+        let keys = world_export_changed(id, 0.0);
+        let mut data = take_changed_data();
+        let hash = world_state_hash(id);
+        assert_eq!(parse(&world_import_states(id, &keys, &data))["ok"], true);
+        assert_eq!(world_state_hash(id), hash, "the world's own export imports as it was read");
+        data[genex_physics::EXPORT_STRIDE] = f32::NAN;
+        let refused = parse(&world_import_states(id, &keys, &data));
+        assert_eq!((refused["code"].clone(), refused["index"].clone()), (serde_json::json!("non-finite"), serde_json::json!(1)));
+        assert_eq!(parse(&world_import_states(id, "[1]", &[]))["code"], "bad-command");
+        assert_eq!(parse(&world_import_states(id, &keys, &data[1..]))["code"], "bad-command");
+        assert_eq!(world_state_hash(id), hash, "a refusal changes nothing");
+        world_free(id);
+        assert_eq!(parse(&world_import_states(id, "[]", &[]))["code"], "internal");
+    }
+
+    #[test]
+    fn query_many_writes_each_result_as_query_does() {
+        let id = create();
+        world_command(id, CRATE);
+        let queries = [r#"{"ray":{"origin":[0,9,0],"dir":[0,-1,0],"maxDist":20}}"#, r#"{"ray":{"origin":[0,9,0],"dir":[0,0,0],"maxDist":20}}"#, "{}"];
+        let many = parse(&world_query_many(id, &format!("[{}]", queries.join(","))));
+        let single: Vec<Value> = queries.iter().map(|query| parse(&world_query(id, query))).collect();
+        assert_eq!(many["results"], Value::Array(single));
+        assert_eq!(parse(&world_query_many(id, "{}"))["code"], "bad-command");
+        assert_eq!(parse(&world_query_many(id, "not json"))["code"], "bad-command");
         world_free(id);
     }
 

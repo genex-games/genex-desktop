@@ -1,6 +1,7 @@
 //! What a world reports (CONTRACT.md §8, §9.1): step results, events and body states, in the caller
 //! frame and key order.
 
+use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::types::{BodyType, Pose, Quat, Vec3};
 
 /// A body's state in the caller frame (§9.1). Numbers are the f32 values the core holds.
@@ -136,6 +137,35 @@ pub struct NetBodyState {
 
 /// The numbers per body in [`ChangedExport::data`]: p(3), q(4), v(3), w(3), sleeping(1).
 pub const EXPORT_STRIDE: usize = 14;
+
+/// Where `sleeping` sits in one body's [`EXPORT_STRIDE`] numbers.
+const SLEEPING_SLOT: usize = EXPORT_STRIDE - 1;
+
+impl NetBodyState {
+    /// One body's numbers in [`ChangedExport::data`]'s layout (§9.1) as a network state (§19.1): the
+    /// first [`EXPORT_STRIDE`] of `values`, each widened exactly; `sleeping` must be 0 or 1 and
+    /// anything else (NaN included) is `BadCommand`, as a non-boolean is in the JSON form. The
+    /// numbers are left for the import to judge (`NonFinite`, `OutOfRange`), so the codes match
+    /// `importBodyState`'s.
+    pub fn from_flat(values: &[f32]) -> Result<NetBodyState, PhysicsFailure> {
+        let Some(values) = values.get(..EXPORT_STRIDE) else {
+            return fail(PhysicsError::BadCommand, "a network state is 14 numbers");
+        };
+        let sleeping = match values[SLEEPING_SLOT] {
+            0.0 => false,
+            1.0 => true,
+            _ => return fail(PhysicsError::BadCommand, "sleeping is 0 or 1"),
+        };
+        let v = |at: usize| f64::from(values[at]);
+        Ok(NetBodyState {
+            p: [v(0), v(1), v(2)],
+            q: [v(3), v(4), v(5), v(6)],
+            v: [v(7), v(8), v(9)],
+            w: [v(10), v(11), v(12)],
+            sleeping,
+        })
+    }
+}
 
 /// The flat per-tick read (§9.1): [`EXPORT_STRIDE`] numbers per body, in `keys` order.
 #[derive(Clone, Debug, Default, PartialEq)]

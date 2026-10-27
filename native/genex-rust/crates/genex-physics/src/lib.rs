@@ -52,6 +52,13 @@
 //! and hull shapes are swept or overlapped (`OutOfRange` otherwise). A query counts toward
 //! `queriesPerStep` only when it succeeds.
 //!
+//! # Bulk calls (§19, additive to 1.0, pending sign-off)
+//!
+//! [`World::import_states`] takes [`World::export_changed`]'s flat layout and means one
+//! `import_body_state` per key in order, judged all before any applies (atomic, the refusal naming
+//! its index); [`World::query_many`] means one `query` per item, `queriesPerStep` counted the same.
+//! They exist for the WASM binding, where each call is a crossing.
+//!
 //! # Measured worst case (§11.2)
 //!
 //! The required scene at default limits (512 bodies in one heap, 64 joints, 16 CCD bodies, 64
@@ -154,7 +161,7 @@ pub use hash::{fnv1a64, hex16};
 pub use joint::{JointDesc, JointType, Motor};
 pub use limits::Limits;
 pub use snapshot::{SNAPSHOT_CONTRACT, SNAPSHOT_MAGIC};
-pub use query::{EXCLUDE_BODIES_MAX, Hit, Query, QueryAnswer, QueryFilter};
+pub use query::{EXCLUDE_BODIES_MAX, Hit, Query, QueryAnswer, QueryFilter, QueryOutcome};
 pub use state::{BodyFilter, BodyState, ChangedExport, EXPORT_STRIDE, NetBodyState, PhysicsEvent, Stats, StepResult};
 pub use static_world::StaticWorld;
 pub use types::{Axis, BodyType, Pose, QUAT_IDENTITY, Quat, UpAxis, Vec3};

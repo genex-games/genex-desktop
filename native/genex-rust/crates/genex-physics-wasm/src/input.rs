@@ -1,8 +1,9 @@
 //! What JavaScript hands the binding, read into the core's types. Commands, queries and the world
 //! description arrive in their JSON forms and are read by the core itself (§7.3, §13, §4); this
-//! module reads only the three inputs the core has no JSON form for: a network state (§9.2), a
-//! `bodies()` filter (§9.1) and the static world (§6.5), which arrives as flat f64 arrays so every
-//! value reaches §17.7's float32 check bit for bit.
+//! module reads only the inputs the core has no JSON form for: a network state (§9.2), the keys of
+//! a bulk import (§19.1, whose data arrives as a flat f32 array), a `bodies()` filter (§9.1) and the
+//! static world (§6.5), which arrives as flat f64 arrays so every value reaches §17.7's float32
+//! check bit for bit.
 //!
 //! A malformed input gives `BadCommand` (a value of the wrong JSON type, a wrong array length, a
 //! missing or unknown field), as the command JSON form does.
@@ -38,6 +39,11 @@ pub(crate) fn net_state(text: &str) -> Result<NetBodyState, PhysicsFailure> {
     }
     let Some(sleeping) = map.get("sleeping").and_then(Value::as_bool) else { return bad("sleeping is not a boolean") };
     Ok(NetBodyState { p: numbers(map, "p")?, q: numbers(map, "q")?, v: numbers(map, "v")?, w: numbers(map, "w")?, sleeping })
+}
+
+/// The keys of an `importStates` (§19.1): a JSON array of strings.
+pub(crate) fn keys(text: &str) -> Result<Vec<String>, PhysicsFailure> {
+    serde_json::from_str(text).or_else(|_| bad("keys is not an array of strings"))
 }
 
 /// The `kinds` of a `bodies()` filter: a JSON array of strings.
@@ -102,6 +108,14 @@ mod tests {
         assert_eq!((code(short), code(long)), (PhysicsError::BadCommand, PhysicsError::BadCommand));
         let ragged = static_world(&[5, 7], &[0.0; 12], &[], &[]).expect("lengths are the core's to judge");
         assert_eq!(ragged.boxes.iter().map(Vec::len).collect::<Vec<_>>(), vec![5, 7]);
+    }
+
+    #[test]
+    fn import_keys_are_an_array_of_strings() {
+        assert_eq!(keys(r#"["a","b"]"#).expect("reads"), vec!["a".to_string(), "b".to_string()]);
+        for text in ["[1]", r#""a""#, "null", "{}", "not json"] {
+            assert_eq!(code(keys(text)), PhysicsError::BadCommand, "{text}");
+        }
     }
 
     #[test]

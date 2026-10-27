@@ -376,6 +376,8 @@ or any of its state is non-finite.
     world's f32 state. (The §17.10 wire packs q into ±1, v into ±64 · `lengthUnit` per second and w into
     ±64 rad/s; angular velocity doesn't scale with length. Those ranges are the wire's, not the core's.)
   - An import is a correction: on its own, it isn't a promise of bit-exact future steps (§9.3).
+- *Additive to 1.0, pending sign-off:* `importStates(keys, data)` imports many states in one call, in
+  `exportChanged`'s layout (§19.1).
 
 ### 9.3 What is and isn't reproducible
 
@@ -524,6 +526,8 @@ interface QueryFilter { groups?: { member: number; collides: number }; excludeBo
 - The JSON form of a query, for vectors and §17.10, is a one-key object like a command:
   `{ "ray": { origin, dir, maxDist, filter? } }`, `{ "shapeCast": { shape, pose, dir, maxDist, filter? } }`,
   `{ "overlap": { shape, pose, filter? } }`.
+- *Additive to 1.0, pending sign-off:* `queryMany(queries)` runs many queries in that form in one call
+  (§19.2).
 
 ## 14. Errors
 
@@ -632,3 +636,47 @@ A vector file is JSON:
 
 - **The measured worst-case bound per target (§11.2):** filled in by P1/P2 with the real core, and on a
   production droplet when the owner approves the run.
+- **The bulk calls (§19):** additive to 1.0, awaiting the owner's sign-off and genex-demo's.
+
+## 19. Additions to 1.0: bulk calls (pending sign-off)
+
+Status: **additive to contract 1.0, pending the owner's sign-off.** Nothing above changes: a world still
+says `contract: "1.0"`, every 1.0 call keeps its meaning, and a caller that never uses these calls sees no
+difference. They let a caller cross the binding once per tick instead of once per body or per query, which
+in WASM is most of a correction's cost against the 1 ms meter (§11.4). Each means exactly a sequence of
+1.0 calls, so neither adds a behaviour of its own; the names are camelCase in TS and snake_case in Rust
+(§15).
+
+### 19.1 `importStates(keys, data)`
+
+- `importStates(keys: Key[], data: Float32Array | number[]) → Result`; in Rust
+  `import_states(&[impl AsRef<str>], &[f32]) → Result<(), PhysicsFailure>`.
+- `data` holds 14 numbers per key, in `keys` order, in `exportChanged`'s layout (§9.1): p(3), q(4), v(3),
+  w(3), sleeping (0 or 1). An export imports as it was read, once the caller leaves out any fixed body it
+  holds (one appears only when it was spawned or teleported after the tick asked for).
+- It means `importBodyState(keys[i], …)` for each entry in order, with the same checks and codes, and it is
+  **atomic**: every entry is checked before any is applied. The first refusal is
+  `{ ok: false, code, index, detail }` naming its entry, and nothing changes. When all pass, the world (its
+  `stateHash`, change marks and sleep states) ends exactly as the per-key calls leave it; a key named twice
+  is imported twice in order, so the later wins. Checking one entry never depends on another, since an
+  import changes no body's type and nothing else a check reads.
+- At an entry: a sleeping value other than 0 or 1 is `BadCommand` (as a non-boolean is in the JSON form);
+  NaN, ±Infinity and numbers too large for f32 are `NonFinite`; then the codes of `importBodyState`
+  (`InvalidKey`, `OutOfRange`, `UnknownKey`, `WrongBodyType`).
+- A call of the wrong shape fails whole, with no index: keys that are not strings, or `data` that is not
+  14 numbers per key, give `BadCommand`; more than 16,384 keys give `OutOfRange` (the TS binding's
+  per-call cap, as `apply`'s).
+- As `importBodyState` does (§9.2), the rotation is renormalised in f32, so an exported rotation that is
+  not exactly unit can come back an ulp away; p, v, w and sleeping come back bit for bit.
+
+### 19.2 `queryMany(queries)`
+
+- `queryMany(queries: Query[]) → Result<QueryAnswer>[] | Failure`, the queries in §13's JSON form; in Rust
+  `query_many(&[Query])` and `query_many_json(&Value)`, each `→ Result<Vec<QueryOutcome>, PhysicsFailure>`.
+- One result per query, in order, each exactly what `query()` returns for that query alone: errors are
+  values, `{ ok: false, code, detail }`, with no index.
+- `limits.queriesPerStep` is counted exactly as by the same `query()` calls in order: a query counts only
+  when it succeeds, so those past the quota are `LimitQueries` values.
+- The call fails as one value only when it is not a list (`BadCommand`), when it holds more than 16,384
+  queries or passes the TS binding's per-call input budget (`OutOfRange`; no query runs), or with
+  `internal` (§11.3).

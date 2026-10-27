@@ -81,6 +81,9 @@ impl Query {
     }
 }
 
+/// One query's outcome in a `query_many` (§19.2): its answer or its refusal, as `query` gives it.
+pub type QueryOutcome = Result<QueryAnswer, PhysicsFailure>;
+
 /// A query's answer: a hit or none for a ray or shape cast, body keys for an overlap.
 #[derive(Clone, Debug, PartialEq)]
 pub enum QueryAnswer {

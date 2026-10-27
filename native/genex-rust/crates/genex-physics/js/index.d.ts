@@ -336,12 +336,29 @@ export declare class World {
   exportChanged(sinceTick: number): ChangedExport;
   exportBodyState(key: Key): NetBodyState | null;
   importBodyState(key: Key, state: NetBodyState): Result;
+  /**
+   * Imports many bodies' replicated fields in one call (§19.1, additive to 1.0): `keys[i]` takes
+   * `data[14·i … 14·i + 13]` in `exportChanged`'s layout (p3 q4 v3 w3, sleeping as 0 or 1), so an
+   * export imports as it was read. All or none: every entry is judged as `importBodyState` judges
+   * it, and the first refusal names its `index` (`bad-command` there for a sleeping not 0 or 1);
+   * when all pass the world ends exactly as one `importBodyState` per key in order leaves it, a
+   * repeated key included (the later wins). A call of the wrong shape (keys not strings, `data` not
+   * 14 numbers per key, more than 16,384 keys) is one failure with no index.
+   */
+  importStates(keys: Key[], data: Float32Array | number[]): Result;
 
   ray(origin: Vec3, dir: Vec3, maxDist: number, filter?: QueryFilter): Result<{ hit: Hit | null }>;
   shapeCast(shape: Shape, pose: Pose, dir: Vec3, maxDist: number, filter?: QueryFilter): Result<{ hit: Hit | null }>;
   overlap(shape: Shape, pose: Pose, filter?: QueryFilter): Result<{ keys: Key[] }>;
   /** Runs one query in its JSON form (§13). */
   query(query: Query): Result<QueryAnswer>;
+  /**
+   * Runs many queries in one crossing (§19.2, additive to 1.0): one result per query, in order, each
+   * exactly what `query()` gives for it, `queriesPerStep` counted the same. A failure of the whole
+   * call (not a list, over the call's input budget or 16,384 queries, `internal`) is one `Failure`,
+   * not a list.
+   */
+  queryMany(queries: Query[]): Result<QueryAnswer>[] | Failure;
 
   /** The opaque snapshot (§9.4); empty when the world failed (§11.3). */
   snapshot(): Uint8Array;

@@ -33,7 +33,7 @@ use crate::core::Core;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::hash::hex16;
 use crate::joint::{JointDesc, Motor};
-use crate::query::{Hit, Query, QueryAnswer, QueryFilter};
+use crate::query::{Hit, Query, QueryAnswer, QueryFilter, QueryOutcome};
 use crate::state::{BodyFilter, BodyState, ChangedExport, NetBodyState, Stats, StepResult};
 use crate::static_world::StaticWorld;
 use crate::types::{Pose, Vec3};
@@ -314,6 +314,17 @@ impl World {
         self.call(|core| core.import_body_state(key, state))
     }
 
+    /// Imports many bodies' replicated fields in one call (§19.1, additive to 1.0): `keys[i]` takes
+    /// `data[i·14 .. i·14 + 14]`, [`World::export_changed`]'s layout (sleeping as 0 or 1), so an
+    /// export imports as it was read. All or none: every entry is judged as
+    /// [`World::import_body_state`] judges it before any is applied, and the first refusal names its
+    /// index (`BadCommand` there for a sleeping that is not 0 or 1). When all pass, the world ends
+    /// exactly as one import per key in order leaves it, a repeated key included (the later wins).
+    /// A `data` that is not 14 numbers per key is `BadCommand`, with no index.
+    pub fn import_states<K: AsRef<str>>(&mut self, keys: &[K], data: &[f32]) -> Result<(), PhysicsFailure> {
+        self.call(|core| core.import_states(keys, data))
+    }
+
     /// The world's counters (§11); `memoryBytes` as [`World::memory_bytes`] reports it.
     pub fn stats(&self) -> Stats {
         let mut stats = self.read(Stats::default(), |core| core.stats(self.step_ms));
@@ -359,6 +370,25 @@ impl World {
         self.check()?;
         let query = Query::from_json(query)?;
         self.query(&query)
+    }
+
+    /// Runs many queries in one call (§19.2, additive to 1.0): one outcome per query, in order, each
+    /// exactly what [`World::query`] gives for it, `limits.queriesPerStep` counted the same (a query
+    /// counts only when it succeeds, so the ones past the quota are `LimitQueries` values). Fails as
+    /// a whole only with `internal` (§11.3).
+    pub fn query_many(&mut self, queries: &[Query]) -> Result<Vec<QueryOutcome>, PhysicsFailure> {
+        self.check()?;
+        Ok(queries.iter().map(|query| self.query(query)).collect())
+    }
+
+    /// [`World::query_many`] over a JSON array of queries (§13): a malformed one's outcome is
+    /// `BadCommand`, as [`World::query_json`] gives, and a non-array fails with `BadCommand` alone.
+    pub fn query_many_json(&mut self, queries: &Value) -> Result<Vec<QueryOutcome>, PhysicsFailure> {
+        self.check()?;
+        let Some(items) = queries.as_array() else {
+            return fail(PhysicsError::BadCommand, "queryMany takes a JSON array of queries");
+        };
+        Ok(items.iter().map(|query| self.query_json(query)).collect())
     }
 
     /// The state hash (§10.1).
@@ -454,6 +484,9 @@ mod tests {
         assert!(is_internal(world.apply_json_atomic(&serde_json::json!("not a batch"))), "internal before parsing");
         assert!(is_internal(world.apply_json_each(&serde_json::json!([{ "nope": {} }]))));
         assert!(is_internal(world.query_json(&serde_json::json!({ "nope": {} }))));
+        assert!(is_internal(world.query_many_json(&serde_json::json!("not a list"))), "internal before parsing");
+        assert!(is_internal(world.query_many(&[])));
+        assert!(is_internal(world.import_states(&["a"], &[0.0; 14])));
         assert_eq!(world.tick(), 0, "tick is a read with no error channel");
     }
 
