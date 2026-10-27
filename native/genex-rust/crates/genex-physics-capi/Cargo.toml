@@ -1,0 +1,29 @@
+[package]
+name = "genex-physics-capi"
+description = "The C ABI of Genex Physics (contract 1.0, 1.1 draft): `gxph_*` functions over genex-physics-binding's registry, for hosts that load a native library (Unity, Godot, Unreal). The header is the hand-written include/genex_physics.h."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# cdylib: the .dylib / .so / .dll a host loads (`scripts/physics-capi.ts`); staticlib: the iOS
+# xcframework's archives; rlib: this crate's own Rust tests call the exports as functions.
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# All already locked and vendored (no new crate): the core (its counting allocator), the
+# host-neutral registry every binding shares, and the JSON a created world's id is read from.
+genex-physics = { workspace = true }
+genex-physics-binding = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+# `gxph_test_panic`, so the C tests can see a panic caught at the boundary and the library poisoned.
+# Only the test build (`scripts/physics-capi.ts --test`) turns it on; the shipped libraries never.
+test-panic = []

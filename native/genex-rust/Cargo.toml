@@ -48,6 +48,9 @@ members = [
   # Its native process: one world per process over the same registry, so a fault ends one room
   # (the bin genex-physics-room under the @genex-ai/physics-native npm package).
   "crates/genex-physics-sidecar",
+  # Its C ABI (R2-1): `gxph_*` functions over the same registry for hosts that load a native library
+  # (Unity, Godot, Unreal), with the hand-written include/genex_physics.h.
+  "crates/genex-physics-capi",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
