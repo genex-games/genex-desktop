@@ -517,7 +517,7 @@ interface Stats { tick: number; bodies: number; awake: number; colliders: number
 ## 12. Reserved for release 2
 
 - `canonicalize()`: drafted in §20 (contract 1.1 draft, pending sign-off).
-- The C ABI (`libgenex_physics`) mirrors the TS shapes as plain C structs and length-prefixed buffers.
+- The C ABI: drafted in `crates/genex-physics-capi` (R2-1, pending sign-off), see §15.
 
 ## 13. Queries
 
@@ -577,7 +577,13 @@ const PhysicsError = {
   runs a room's tick (`apply(batch, "each")` per batch, `step()`, `exportChanged`, `queryMany`) in one
   round trip. The process speaks a frame protocol of its own (`crates/genex-physics-sidecar`), private to the
   package.
-- **C** (release 2): `gxph_*` functions, with this contract as the source of truth.
+- **C (`genex-physics-capi`, release 2, pending sign-off):** `gxph_*` functions declared in the hand-written
+  `include/genex_physics.h`, one per binding method, over the same registry: an opaque `gxph_world*` handle
+  (an id never reused), inputs as UTF-8 text or arrays with explicit lengths, every reply a library-owned
+  `gxph_bytes` holding the same JSON text (or bytes, or f32 rows) the WASM wire gives, freed with
+  `gxph_buf_free`. A `gxph_result` other than `GXPH_OK` is a refusal at the boundary (`NULL`, length,
+  alignment, UTF-8, an out still in use, a double free) that changed nothing; contract refusals stay in the
+  JSON. A panic never unwinds into C: it answers `GXPH_ERR_PANIC` and poisons the library (§11.3).
 
 ## 16. Conformance vectors
 

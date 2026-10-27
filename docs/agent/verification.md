@@ -156,7 +156,9 @@ to its separate calls on a twin world, on both cores, with a table of hostile an
 `physics-native-hostile` holds the raw frame table (protocol 3's 1.1 methods included), both watchdogs (the client's under
 `--input-type=module`, polling and parked, each in a Node process of its own), kill -9,
 EPIPE and bad binaries; `physics-native-package` the tarball, its files and the Linux binary's glibc ≤ 2.28
-and no RPATH. `physics-wasm-package` checks the built package's
+and no RPATH. `physics-capi` loads the C ABI's test build (`node scripts/physics-capi.ts --test`): the header
+test as C11 and C++17, the exports equal to the header's, a panic caught at the boundary, and every vector
+through the C runner with every step's `stateHash` equal to both packages'. `physics-wasm-package` checks the built package's
 `LICENSE`, `THIRD-PARTY-NOTICES.md` and that its module holds no absolute path of the build machine.
 `physics-wasm-vectors` replays every conformance vector through the shipped package
 (`.studio-dev/build/physics-wasm/`, or `GENEX_PHYSICS_PACKAGE=<unpacked tarball>`, either package) with the shared runner
