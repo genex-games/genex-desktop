@@ -74,7 +74,9 @@ the commit's tree, lock, destination, profile, flavour, trust, eject, grant, SDK
 code and web shell), recorded as
 `<bin>.content` only when its stage is that tree file for file; any copy of the same content is
 served that admitted output (or waits for its build under way) instead of building. The person's
-Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Play plays one
+Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Clippy denies
+every warning but its style and complexity groups and `approx_constant`; the store `clippy.toml`'s
+determinism bans stay errors (`CLIPPY_LINT_LEVELS`). Play plays one
 copy per commit (`show/<game>-<commit12>`, `PreviewService.playCopy`), and a healthy integrated Rust
 build is prebuilt there in the background, web and this host's desktop
 ([`play-prebuilds.ts`](../../src/main/core/play-prebuilds.ts)). Every command

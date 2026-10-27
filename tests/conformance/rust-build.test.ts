@@ -190,6 +190,55 @@ exit 0
 `;
 }
 
+/** One clippy lint a stub game's code trips: its name, its group and clippy's default level (`W` warn, `D` deny). */
+interface LintHit {
+  lint: string;
+  group: string;
+  level: "W" | "D";
+}
+
+/**
+ * The stub clippy's run over a game that trips `hits`: each lint's level resolved from the lint
+ * flags after `--` as rustc resolves them (in order, the last flag naming the lint, its group or
+ * `clippy::all` wins; a lint left at warn is an error while `warnings` is denied), and an error
+ * message for each one that ends denied, failing the run when any does.
+ */
+function clippyLevels(hits: readonly LintHit[]): string {
+  const levelOf = [
+    "flags=''; after=0",
+    'for a in "$@"; do if [ "$after" = 1 ]; then flags="$flags $a"; fi; if [ "$a" = -- ]; then after=1; fi; done',
+    "level_of() {",
+    "  level=$3; flag=''",
+    "  for a in $flags; do",
+    "    case $a in -D|-W|-A|-F) flag=$a; continue ;; esac",
+    '    case $a in "clippy::$1"|"clippy::$2"|clippy::all) if [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
+    '    if [ "$a" = warnings ] && [ -n "$flag" ]; then warnings=$(echo "$flag" | cut -c2); fi',
+    "    flag=''",
+    "  done",
+    '  if [ "$level" = W ] && { [ "$warnings" = D ] || [ "$warnings" = F ]; }; then level=D; fi',
+    '  if [ "$level" = F ]; then level=D; fi',
+    '  echo "$level"',
+    "}",
+    "failed=0",
+  ];
+  const each = hits.map((hit) => {
+    const message = {
+      reason: "compiler-message",
+      message: {
+        message: `lint ${hit.lint}`,
+        code: { code: `clippy::${hit.lint}` },
+        level: "error",
+        spans: [{ file_name: "src/main.rs", line_start: 1, column_start: 1, is_primary: true }],
+        children: [],
+        rendered: `error: lint ${hit.lint}`,
+      },
+    };
+    const denied = `warnings=''; if [ "$(level_of ${hit.lint} ${hit.group} ${hit.level})" = D ]; then`;
+    return `${denied} printf '%s\\n' '${JSON.stringify(message)}'; failed=1; fi`;
+  });
+  return [...levelOf, ...each, 'if [ "$failed" = 1 ]; then exit 101; fi'].join("\n");
+}
+
 /** A stub cargo and rustc in `bin`. */
 async function writeToolchain(bin: string, stub: StubCargo = {}): Promise<void> {
   await mkdir(bin, { recursive: true });
@@ -613,6 +662,27 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.equal(await readFile(path.join(conf, "clippy.toml"), "utf8"), "disallowed-types = []\n");
     const args = await readFile(path.join(spec.bin, "clippy-args"), "utf8");
     for (const flag of ["--offline", "--locked", "-D warnings"]) assert.ok(args.includes(flag), `clippy ran ${flag}`);
+  });
+
+  it("never fails a build on a style or complexity lint, while the store's determinism bans stay errors (B6: bodycam's collapsible_if)", async () => {
+    // Bodycam's game tripped these four, each a hard error under `-D warnings` alone.
+    const styleHits = [
+      { lint: "collapsible_if", group: "style", level: "W" },
+      { lint: "manual_is_multiple_of", group: "complexity", level: "W" },
+      { lint: "approx_constant", group: "correctness", level: "D" },
+    ];
+    const bans = [{ lint: "disallowed_methods", group: "style", level: "W" }];
+    for (const [name, hits, failsOn] of [
+      ["style", styleHits, null],
+      ["bans", [...styleHits, ...bans], "clippy::disallowed_methods"],
+    ] as const) {
+      const parent = await realpath(await tmpDir(`rust-clippy-levels-${name}-`));
+      const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+      const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);
+      assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
+      if (failsOn) assert.deepEqual(codes, [failsOn]);
+    }
   });
 
   it("compiles in the native-enhanced features genex.toml declares (GENEX_NATIVE_FEATURES), and none for a core game", async () => {
