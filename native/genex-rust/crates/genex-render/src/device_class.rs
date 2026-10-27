@@ -7,7 +7,8 @@
 //!
 //! Classification has two steps:
 //! - [`classify`] is the **form-factor default** from static facts alone: Mac → desktop-high,
-//!   Windows/Linux → desktop-mid, iOS → mobile-high, Android → mobile-mid, the web by its hints.
+//!   Windows/Linux → desktop-mid, iOS → mobile-high, Android → mobile-mid, the web by its hints
+//!   (a phone mid, a desktop browser mid, high when it reports 8 GB and 8 threads).
 //!   Captures and conformance use only this (plus a pinned genex.toml preset), never calibration.
 //! - [`classify_calibrated`] refines it with a **calibration hint**: two fixed kernels (ALU and
 //!   blended fill on a 256x256 target, at most [`CALIBRATION_GPU_BUDGET_MS`] of GPU time, timed by
@@ -30,8 +31,14 @@ pub const APPLE_VENDOR_ID: u32 = 0x106B;
 pub const QUALCOMM_VENDOR_ID: u32 = 0x5143;
 /// Arm's vendor id (Mali).
 pub const ARM_VENDOR_ID: u32 = 0x13B5;
-/// The short side, in CSS pixels, at or below which a browser screen reads as a phone or tablet.
-pub const WEB_MOBILE_SHORT_SIDE_CSS_PX: u32 = 900;
+/// The short side, in CSS pixels, at or below which a touch screen reads as a phone. Bodycam B1:
+/// at 900 (any screen) a 1440x900 MacBook Air read as a phone; tablets past it report a coarse
+/// pointer, and a screen without touch is never a phone's.
+pub const WEB_MOBILE_SHORT_SIDE_CSS_PX: u32 = 600;
+/// The `deviceMemory` (GB; Chrome reports at most 8) from which a desktop browser starts high.
+pub const WEB_HIGH_DEVICE_MEMORY_GB: f32 = 8.0;
+/// The `hardwareConcurrency` from which a desktop browser starts high.
+pub const WEB_HIGH_HARDWARE_CONCURRENCY: u32 = 8;
 /// `navigator.deviceMemory` when the browser hides it (Safari, Firefox), in GB.
 pub const WEB_DEFAULT_DEVICE_MEMORY_GB: f32 = 4.0;
 
@@ -216,12 +223,22 @@ pub struct WebHints {
 
 impl WebHints {
     /// Whether the hints say phone or tablet: a mobile user agent, touch with a coarse pointer
-    /// (iPadOS Safari reports a desktop user agent), or a short screen side of at most
-    /// [`WEB_MOBILE_SHORT_SIDE_CSS_PX`].
+    /// (iPadOS Safari reports a desktop user agent), or a touch screen whose short side is at most
+    /// [`WEB_MOBILE_SHORT_SIDE_CSS_PX`]. A screen without touch is a desktop's at any size.
     pub fn is_mobile(&self) -> bool {
-        let coarse_touch = self.max_touch_points > 0 && self.coarse_pointer;
-        let small_screen = self.short_side_css_px > 0 && self.short_side_css_px <= WEB_MOBILE_SHORT_SIDE_CSS_PX;
-        self.ua_mobile == Some(true) || coarse_touch || small_screen
+        let touch = self.max_touch_points > 0;
+        let coarse_touch = touch && self.coarse_pointer;
+        let small_touch_screen = touch && self.short_side_css_px > 0 && self.short_side_css_px <= WEB_MOBILE_SHORT_SIDE_CSS_PX;
+        self.ua_mobile == Some(true) || coarse_touch || small_touch_screen
+    }
+
+    /// Whether a desktop browser's hints describe a roomy machine (at least
+    /// [`WEB_HIGH_DEVICE_MEMORY_GB`] of `deviceMemory` and [`WEB_HIGH_HARDWARE_CONCURRENCY`]
+    /// threads), which starts high; calibration may still move it one tier down.
+    pub fn is_roomy(&self) -> bool {
+        let memory = self.device_memory_gb() >= WEB_HIGH_DEVICE_MEMORY_GB;
+        let threads = self.hardware_concurrency.is_some_and(|threads| threads >= WEB_HIGH_HARDWARE_CONCURRENCY);
+        memory && threads
     }
 
     /// `deviceMemory` in GB, reading a missing or nonsense hint as [`WEB_DEFAULT_DEVICE_MEMORY_GB`].
@@ -357,9 +374,17 @@ impl DeviceFacts {
                 _ => PerformanceTier::Mid,
             },
             TargetOs::Ios => PerformanceTier::High,
-            TargetOs::Android | TargetOs::Web => PerformanceTier::Mid,
+            TargetOs::Web => web_tier(self),
+            TargetOs::Android => PerformanceTier::Mid,
         }
     }
+}
+
+/// A browser starts mid, a roomy desktop one ([`WebHints::is_roomy`]) high: browsers name no
+/// adapter, so Studio's Live page on a Mac would otherwise never start where a native Mac does.
+fn web_tier(facts: &DeviceFacts) -> PerformanceTier {
+    let roomy_desktop = facts.web.is_some_and(|hints| !hints.is_mobile() && hints.is_roomy());
+    if roomy_desktop { PerformanceTier::High } else { PerformanceTier::Mid }
 }
 
 /// Apple silicon (or an unknown vendor) starts high; an Intel Mac's integrated GPU starts low and
