@@ -76,6 +76,17 @@ pub fn forbid_new_processes() -> io::Result<()> {
     set_limit(libc::RLIMIT_NPROC as libc::c_int, 0)
 }
 
+/// macOS: the world's thread asks for user-interactive QoS, so the scheduler keeps it on a
+/// performance core; a process that sleeps on its FIFO between frames otherwise drifts to an
+/// efficiency core, about twice as slow per step. Linux has no such classes: nothing to do.
+pub fn prefer_performance_cores() {
+    #[cfg(target_os = "macos")]
+    // SAFETY: sets this thread's own QoS class; both arguments are plain values.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
+    }
+}
+
 /// Linux: the process gets SIGKILL when the thread that started it (the host) ends, so no sidecar
 /// outlives its server. Elsewhere the FIFO's end does it: the next read sees EOF and exits.
 pub fn die_with_parent() {

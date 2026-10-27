@@ -31,6 +31,7 @@ fn main() {
         std::process::exit(exit::SETUP);
     };
     os::die_with_parent();
+    os::prefer_performance_cores();
     let _ = os::no_core_dumps();
     let watchdog = match Watchdog::start(config.deadline, || os::exit_now(exit::DEADLINE)) {
         Ok(watchdog) => watchdog,
