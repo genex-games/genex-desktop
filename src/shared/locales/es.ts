@@ -603,6 +603,8 @@ export default {
   Building: "Creando",
   "Building the Mac version of this build… {clock}": "Creando la versión para Mac de esta build… {clock}",
   "Building the Mac version of your changes… {clock}": "Creando la versión para Mac de tus cambios… {clock}",
+  "Getting this build ready… {clock}": "Preparando esta build… {clock}",
+  "Getting the newest build ready… {clock}": "Preparando la build más reciente… {clock}",
   "Building the Mac version… {clock}": "Creando la versión para Mac… {clock}",
   "Building the browser version of your changes… {clock}": "Creando la versión para navegador de tus cambios… {clock}",
   "Building the game": "Creando el juego",

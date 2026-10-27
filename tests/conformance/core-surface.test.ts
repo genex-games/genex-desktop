@@ -44,6 +44,7 @@ const METHODS = [
   "dispatchRun",
   "emit",
   "exportPublicCopy",
+  "fixtureAgentLook",
   "forgetPermission",
   // What freeing space deletes, and deleting it (studio:storage, studio:storage.free).
   "freeStorage",
@@ -172,6 +173,7 @@ const FIELDS = [
   "nativeRuns",
   "ollamaSidecar",
   "options",
+  "playTimings",
   "pluginServices",
   "plugins",
   "sandbox",

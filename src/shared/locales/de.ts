@@ -604,6 +604,8 @@ export default {
   Building: "Baut",
   "Building the Mac version of this build… {clock}": "Die Mac-Version dieses Builds wird gebaut… {clock}",
   "Building the Mac version of your changes… {clock}": "Die Mac-Version deiner Änderungen wird gebaut… {clock}",
+  "Getting this build ready… {clock}": "Dieser Build wird vorbereitet… {clock}",
+  "Getting the newest build ready… {clock}": "Der neueste Build wird vorbereitet… {clock}",
   "Building the Mac version… {clock}": "Die Mac-Version wird gebaut… {clock}",
   "Building the browser version of your changes… {clock}": "Die Browser-Version deiner Änderungen wird gebaut… {clock}",
   "Building the game": "Spiel wird gebaut",

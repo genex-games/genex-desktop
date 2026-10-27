@@ -568,6 +568,8 @@ export default {
   Building: "Собирает",
   "Building the Mac version of this build… {clock}": "Собираем версию для Mac из этой сборки… {clock}",
   "Building the Mac version of your changes… {clock}": "Собираем версию для Mac с твоими изменениями… {clock}",
+  "Getting this build ready… {clock}": "Готовим эту сборку… {clock}",
+  "Getting the newest build ready… {clock}": "Готовим новейшую сборку… {clock}",
   "Building the Mac version… {clock}": "Собираем версию для Mac… {clock}",
   "Building the browser version of your changes… {clock}": "Собираем версию для браузера с твоими изменениями… {clock}",
   "Building the game": "Собираем игру",
