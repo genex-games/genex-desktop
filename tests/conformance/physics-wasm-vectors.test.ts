@@ -8,6 +8,9 @@
  *   unpacked tarball) or `.studio-dev/build/physics-wasm/` (`node scripts/physics-wasm.ts`); without
  *   it they skip, and `GENEX_REQUIRE_TOOLCHAINS=1` makes its absence a failure. The same file runs
  *   unchanged in a linux/amd64 `node:24` container (see `docs/agent/verification.md`).
+ * - A folder holding `native.js` instead is `@genex-ai/physics-native` (`node scripts/physics-native.ts`):
+ *   the rows then run through its package shape (`nativePhysics`, one `genex-physics-room` process
+ *   per world, this host's binary from the package) and expect its native target's buildId.
  * - The runner's own rows (a changed pin is reported, another build's or contract's vector is
  *   refused before any world exists, a malformed vector is a problem and never a throw) need no build.
  * - Chromium rows launch Playwright's headless Chromium (only with `STUDIO_BROWSER_TESTS=1` and a
@@ -15,11 +18,13 @@
  *   is answered from disk by a route; any other request is aborted.
  */
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type * as Physics from "../../native/genex-rust/crates/genex-physics/js/index.d.ts";
+import type * as Native from "../../native/genex-rust/crates/genex-physics/js/native.d.ts";
 import {
   buildWithoutTarget,
   firstDifferingBody,
@@ -41,6 +46,10 @@ const REFUSING_VECTOR = "hostile-commands-each.json";
 /** The page origin the Chromium rows route; nothing is served from the network. */
 const ORIGIN = "http://genex-physics.test";
 const BROWSER_TIMEOUT_MS = 300_000;
+/** The native package's round-trip deadline: generous, these rows judge results, not time. */
+const NATIVE_DEADLINE_MS = 20_000;
+/** A package folder is `@genex-ai/physics-native` when it holds `native.js`. */
+const NATIVE = existsSync(path.join(PACKAGE, "native.js"));
 
 type Package = typeof Physics;
 
@@ -55,16 +64,31 @@ function readVector(file: string): Vector {
 }
 
 function needsPackage(): { skip?: string } {
-  if (existsSync(path.join(PACKAGE, "node.js"))) return {};
+  if (NATIVE || existsSync(path.join(PACKAGE, "node.js"))) return {};
   const missing = `the physics package (${PACKAGE}; node scripts/physics-wasm.ts)`;
   if (process.env.GENEX_REQUIRE_TOOLCHAINS === "1") throw new Error(`GENEX_REQUIRE_TOOLCHAINS=1: ${missing} absent`);
   return { skip: `not run: ${missing} absent` };
 }
 
+/** The native package's shape over its own binary, its process folders under a temporary one. */
+async function nativePackage(): Promise<Package> {
+  const native: typeof Native = await import(pathToFileURL(path.join(PACKAGE, "native.js")).href);
+  const binary = native.packagedBinary();
+  if (binary === undefined) throw new Error(`no ${native.platformKey()} binary in ${PACKAGE}`);
+  const dir = mkdtempSync(path.join(os.tmpdir(), "gxph-vectors-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const made = native.nativePhysics({ ...binary, dir, deadlineMs: NATIVE_DEADLINE_MS });
+  if (!made.ok) throw new Error(`the native core did not start: ${made.detail}`);
+  return made.physics as unknown as Package;
+}
+
+async function loadPackage(): Promise<Package> {
+  if (NATIVE) return nativePackage();
+  return import(pathToFileURL(path.join(PACKAGE, "node.js")).href);
+}
+
 const gate = needsPackage();
-const physics: Package | undefined = gate.skip
-  ? undefined
-  : await import(pathToFileURL(path.join(PACKAGE, "node.js")).href);
+const physics: Package | undefined = gate.skip ? undefined : await loadPackage();
 
 function pkg(): Package {
   assert.ok(physics, "the package loaded");
@@ -87,10 +111,11 @@ function countingPackage(buildId: string): { physics: Package; created: () => nu
   return { physics, created: () => created };
 }
 
-describe("@genex-ai/physics: every conformance vector in wasm32 matches native (§16)", gate, () => {
-  it("is the wasm32 build of the core the vectors are pinned on", () => {
-    assert.equal(pkg().buildId(), WASM_BUILD);
+describe("@genex-ai/physics: every conformance vector in this build matches native (§16)", gate, () => {
+  it("is the build of the core the vectors are pinned on, for its own target", () => {
     assert.equal(buildWithoutTarget(pkg().buildId()), PINNED_BUILD);
+    if (NATIVE) assert.notEqual(pkg().buildId(), WASM_BUILD, "the native package runs a native target");
+    else assert.equal(pkg().buildId(), WASM_BUILD);
   });
 
   for (const file of gate.skip ? [] : vectorFiles()) {
@@ -256,6 +281,7 @@ describe("the conformance runner on the real package catches a changed pin", gat
 /** Why the Chromium rows cannot run here, or undefined when they can. */
 async function browserSkip(): Promise<string | undefined> {
   if (gate.skip) return gate.skip;
+  if (NATIVE) return "the native package runs in Node only";
   if (process.env.STUDIO_BROWSER_TESTS !== "1") return "launches Chromium; set STUDIO_BROWSER_TESTS=1 to run";
   const { playwrightHeadlessChromiumOnDisk } = await import("../helpers/playwright-chromium.ts");
   if (!playwrightHeadlessChromiumOnDisk()) return "not run: Playwright's headless Chromium is not installed";
