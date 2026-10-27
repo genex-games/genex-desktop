@@ -8,14 +8,15 @@
  * names; never C++ · raylib, whose creation is retired (M6.3). Pure, so conformance tests hold it
  * without a DOM.
  */
-import type { StudioPlatform } from "../shared/boot.ts";
+import { StudioPlatform } from "../shared/boot.ts";
 import {
-  BUILD_TARGETS,
+  ALL_BUILD_TARGETS,
   BuildTarget,
   type CompiledStack,
   CREATABLE_STACKS,
   type CreatableStack,
   GameStack,
+  MOBILE_TARGETS,
   parseStackDefaultSwitch,
   StackDefaultSwitch,
 } from "../shared/game-project.ts";
@@ -138,36 +139,47 @@ export interface DestinationChoice {
   notes: Record<BuildTarget, TargetRefusal | null>;
 }
 
-/** One value per destination, in the table's order. */
+/** One value per destination, in the table's order: the phones last. */
 function perTarget(value: (target: BuildTarget) => TargetRefusal | null): Record<BuildTarget, TargetRefusal | null> {
   return {
     [BuildTarget.Web]: value(BuildTarget.Web),
     [BuildTarget.Mac]: value(BuildTarget.Mac),
     [BuildTarget.Windows]: value(BuildTarget.Windows),
     [BuildTarget.Linux]: value(BuildTarget.Linux),
-    // Create game lists no phone: a Rust game names one later (game.export's destinations, or a
-    // chat intake), so its box is not a destination this dialog makes.
-    [BuildTarget.Ios]: TargetRefusal.NotADestination,
-    [BuildTarget.Android]: TargetRefusal.NotADestination,
+    [BuildTarget.Ios]: value(BuildTarget.Ios),
+    [BuildTarget.Android]: value(BuildTarget.Android),
   };
 }
 
 /**
  * The label a box carries on this host: only "not runnable here". The host's own OS needs
  * a game box to run (`runRefusal`); that is the stage's concern, not a reason to hesitate here.
- * An unknown host cannot promise any desktop build runs on it.
+ * An unknown host cannot promise any desktop build runs on it, and Studio runs no phone build on
+ * any host: a Simulator, emulator or phone launch is the person's.
  */
 function noteFor(host: StudioPlatform | null, target: BuildTarget): TargetRefusal | null {
   if (target === BuildTarget.Web) return null;
-  if (!host) return TargetRefusal.NotRunnableHere;
+  if (!host || MOBILE_TARGETS.includes(target)) return TargetRefusal.NotRunnableHere;
   const refusal = runRefusal(host, target, { gameBox: true });
   return refusal === TargetRefusal.NotRunnableHere ? refusal : null;
 }
 
 /**
- * Why `target` cannot be ticked on `host`: the host's own refusal (Mac games are built on a Mac),
- * else, for the compiled stack the dialog makes, a destination its lane does not build here yet,
- * and with none, every box but Browser (`unoffered`: a browser game is all it makes).
+ * The host's own refusal of `target`: Mac games are built on a Mac, and so are iPhone games (the
+ * same Apple SDK licence), which the stack's host matrix names where it builds a phone at all.
+ */
+function hostRefusal(chosen: CompiledStack | undefined, host: StudioPlatform, target: BuildTarget) {
+  if (!MOBILE_TARGETS.includes(target)) return buildRefusal(host, target);
+  if (!chosen) return null;
+  const builds: readonly BuildTarget[] = STACK_HOST_MATRIX[chosen][host].build;
+  const appleOnly = target === BuildTarget.Ios && host !== StudioPlatform.Mac;
+  return appleOnly && !builds.includes(target) ? TargetRefusal.MacBuildsNeedAMac : null;
+}
+
+/**
+ * Why `target` cannot be ticked on `host`: the host's own refusal (Mac and iPhone games are built
+ * on a Mac), else, for the compiled stack the dialog makes, a destination its lane does not build
+ * here yet, and with none, every box but Browser (`unoffered`: a browser game is all it makes).
  */
 function refusalFor(
   chosen: CompiledStack | undefined,
@@ -175,7 +187,7 @@ function refusalFor(
   target: BuildTarget,
   unoffered: TargetRefusal,
 ) {
-  const refusal = host ? buildRefusal(host, target) : null;
+  const refusal = host ? hostRefusal(chosen, host, target) : null;
   if (refusal) return refusal;
   if (!chosen) return target === BuildTarget.Web ? null : unoffered;
   if (!host) return null;
@@ -196,7 +208,7 @@ export function destinationChoice(
   unoffered: TargetRefusal = TargetRefusal.StackGated,
 ): DestinationChoice {
   const disabled = perTarget((target) => refusalFor(chosen, host, target, unoffered));
-  const targets = BUILD_TARGETS.filter((target) => checked.includes(target) && disabled[target] === null);
+  const targets = ALL_BUILD_TARGETS.filter((target) => checked.includes(target) && disabled[target] === null);
   return {
     ...(chosen ? { stack: chosen } : {}),
     targets,

@@ -104,6 +104,14 @@ const WEB_PINS = {
   [ToolchainId.Binaryen]: { version: "133", sha12: "e".repeat(12) },
 };
 
+/** The cross and phone standard libraries a lock may name, with the destination each builds. */
+const CROSS_STDS = [
+  [ToolchainId.RustStdWindows, BuildTarget.Windows],
+  [ToolchainId.RustStdLinux, BuildTarget.Linux],
+  [ToolchainId.RustStdIos, BuildTarget.Ios],
+  [ToolchainId.RustStdAndroid, BuildTarget.Android],
+] as const;
+
 /** A lock naming the Rust components at made-up pins. */
 function rustLock(withWasm = true): ToolchainLock {
   return lockOf({
@@ -199,8 +207,8 @@ function probeRun(calls: RunRequest[], override?: (request: RunRequest) => RunRe
     const sysroot = path.join(request.cwd, "sysroot");
     const command = plain(request.command);
     if (command.includes("--print sysroot")) return ok(`${sysroot}\n`);
-    if (command.includes("--print target-libdir"))
-      return ok(`${path.join(sysroot, "lib", "rustlib", "wasm32-unknown-unknown", "lib")}\n`);
+    const libdir = / --print target-libdir --target (\S+)/.exec(command)?.[1];
+    if (libdir) return ok(`${path.join(sysroot, "lib", "rustlib", libdir, "lib")}\n`);
     if (command.includes("bin/cargo --version")) return ok(`cargo ${VERSION} (fake 2026-10-01)\n`);
     return ok(`rustc ${VERSION} (fake 2026-10-01)\n`);
   };
@@ -577,6 +585,33 @@ describe("rust store: the sysroot", () => {
       assert.ok(call.policy?.allowWrite?.every((folder) => isInside(path.join(store, ".staging"), folder)));
     }
     assert.equal(existsSync(path.join(store, ".staging")), false);
+  });
+
+  it("merges every cross and phone standard library the lock names into the sysroot, each probed", async () => {
+    const { root, store, lock } = await fakeRustStore();
+    const entries = { ...lock.entries };
+    for (const [id, target] of CROSS_STDS) {
+      const pin = { version: VERSION, sha12: createHash("sha256").update(id).digest("hex").slice(0, 12) };
+      const folder = componentFolder(store, id, pin);
+      await writeTree(folder, { [`lib/rustlib/${RUST_TRIPLE[target]}/lib/libstd.rlib`]: id, "manifest.in": "x\n" });
+      await writeReceipt(folder, id, pin.version, pin.sha12);
+      entries[id] = pin;
+    }
+    const iosSim = { version: VERSION, sha12: "f".repeat(12) };
+    const sim = componentFolder(store, ToolchainId.RustStdIosSim, iosSim);
+    await writeTree(sim, { "lib/rustlib/aarch64-apple-ios-sim/lib/libstd.rlib": "sim", "manifest.in": "x\n" });
+    await writeReceipt(sim, ToolchainId.RustStdIosSim, VERSION, iosSim.sha12);
+    const all = lockOf({ ...entries, [ToolchainId.RustStdIosSim]: iosSim });
+    const calls: RunRequest[] = [];
+    const record = await installRustBase(store, all, { run: probeRun(calls), denyWrite: [path.join(root, "games")] });
+    const sysroot = rustSysroot(store, all);
+    const triples = [...CROSS_STDS.map(([, target]) => RUST_TRIPLE[target]), "aarch64-apple-ios-sim"];
+    for (const triple of triples)
+      assert.ok(existsSync(path.join(sysroot, "lib", "rustlib", triple, "lib", "libstd.rlib")), triple);
+    assert.deepEqual([...record.triples].sort(), [HOST_TRIPLE, RUST_TRIPLE[BuildTarget.Web], ...triples].sort());
+    assert.equal(record.triples[0], HOST_TRIPLE, "the host's first");
+    const probed = calls.map((call) => / --target (\S+)/.exec(plain(call.command))?.[1]).filter(Boolean);
+    assert.deepEqual(probed.sort(), [RUST_TRIPLE[BuildTarget.Web], ...triples].sort());
   });
 
   it("a probe that finds another sysroot refuses the base and swaps nothing in", async () => {

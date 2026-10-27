@@ -967,6 +967,32 @@ describe("Create game carries where people play", () => {
     assert.equal(await hasPage(plain.dir), false);
   });
 
+  it("studio:game.create forwards a Rust game's phones, and refuses a phone for any other game before asking the core", async () => {
+    const { invoke, asked } = await gamesIpc();
+    const all = [
+      BuildTarget.Web,
+      BuildTarget.Mac,
+      BuildTarget.Windows,
+      BuildTarget.Linux,
+      BuildTarget.Ios,
+      BuildTarget.Android,
+    ];
+    await invoke("studio:game.create", { title: "Bodycam", stack: GameStack.RustWgpu, targets: all });
+    assert.deepEqual(asked.at(-1), [
+      "Bodycam",
+      { stack: GameStack.RustWgpu, targets: all, caller: ScaffoldCaller.Person },
+    ]);
+    const before = asked.length;
+    for (const fields of [
+      { stack: GameStack.ThreeJs, targets: [BuildTarget.Web, BuildTarget.Ios] },
+      { targets: [BuildTarget.Web, BuildTarget.Android] },
+    ]) {
+      const reply = await invoke("studio:game.create", { title: "Pong", ...fields });
+      assert.equal(reply.ok, false, JSON.stringify(fields));
+    }
+    assert.equal(asked.length, before, "the core was never asked for a phone it cannot make");
+  });
+
   it("refuses a stack or destinations it does not know before any folder is made", async () => {
     const { invoke, asked, root } = await gamesIpc();
     const hostile: Array<[string, Record<string, unknown>]> = [

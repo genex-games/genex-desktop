@@ -10,12 +10,13 @@
  *   (`scripts/toolchains/rust-release.ts`, M2.18) and its `rust-vendor` entry is pinned.
  * - The dist tarballs unpack one folder per part (`RUST_PARTS`), each with its own `manifest.in`,
  *   so rustc would find no standard library beside it. The base merges the parts and each
- *   standard-library component the lock names into `locks/<digest12>/sysroot`, hard-linking the
+ *   standard-library component the lock names (the browser's, the cross destinations' and the
+ *   phones') into `locks/<digest12>/sysroot`, hard-linking the
  *   installed files (the bytes are shared, the store is write-denied to every sandbox) and
  *   refusing a link, a special file or two parts that disagree about one file.
  * - It is assembled in `.staging/`, probed there under the injected sandbox `run` with the network
  *   off and only staging writable (`rustc --version`, `cargo --version`, `rustc --print sysroot`
- *   must be the staged sysroot, and the browser's target-libdir must be in it), then swapped in;
+ *   must be the staged sysroot, and each named standard library's target-libdir must be in it), then swapped in;
  *   `rust-base.json` is written last, so a base without it is no base.
  */
 import { createHash } from "node:crypto";
@@ -233,10 +234,23 @@ export interface RustBaseDeps {
   signal?: AbortSignal;
 }
 
+/** Each destination standard library a lock may name, and the triple it holds. */
+const STD_TRIPLES = {
+  [ToolchainId.RustStdWasm]: RUST_TRIPLE[BuildTarget.Web],
+  [ToolchainId.RustStdWindows]: RUST_TRIPLE[BuildTarget.Windows],
+  [ToolchainId.RustStdLinux]: RUST_TRIPLE[BuildTarget.Linux],
+  [ToolchainId.RustStdIos]: RUST_TRIPLE[BuildTarget.Ios],
+  [ToolchainId.RustStdIosSim]: "aarch64-apple-ios-sim",
+  [ToolchainId.RustStdAndroid]: RUST_TRIPLE[BuildTarget.Android],
+} as const satisfies Partial<Record<ToolchainId, string>>;
+type StdId = keyof typeof STD_TRIPLES;
+const STD_IDS = Object.keys(STD_TRIPLES) as StdId[];
+
 interface BaseParts {
   root: string;
   rust: InstalledComponent;
-  wasm: InstalledComponent | null;
+  /** The destination standard libraries the lock names, in {@link STD_TRIPLES}' order. */
+  stds: Array<{ triple: string; component: InstalledComponent }>;
   vendor: InstalledComponent;
 }
 
@@ -246,15 +260,18 @@ async function baseParts(store: string, lock: ToolchainLock): Promise<BaseParts>
     throw new ToolchainError(ToolchainProblem.Prewarm, MESSAGE.NoStore(store));
   });
   if (!isToolchainLock(lock)) throw new ToolchainError(ToolchainProblem.Prewarm, MESSAGE.BadLock);
-  const wantsWasm = lock.entries[ToolchainId.RustStdWasm] !== undefined;
-  const ids = [ToolchainId.Rust, ToolchainId.RustVendor, ...(wantsWasm ? [ToolchainId.RustStdWasm] : [])];
+  const named = STD_IDS.filter((id) => lock.entries[id] !== undefined);
+  const ids = [ToolchainId.Rust, ToolchainId.RustVendor, ...named];
   const found = await locateComponents(root, lock, ids);
   if (!found.ok) throw new ToolchainError(ToolchainProblem.Prewarm, MESSAGE.Missing(found.missing));
-  const get = (id: ToolchainId) => found.components.get(id) ?? null;
-  const rust = get(ToolchainId.Rust);
-  const vendor = get(ToolchainId.RustVendor);
+  const rust = found.components.get(ToolchainId.Rust);
+  const vendor = found.components.get(ToolchainId.RustVendor);
   if (!rust || !vendor) throw new ToolchainError(ToolchainProblem.Prewarm, MESSAGE.Missing(ids));
-  return { root, rust, vendor, wasm: get(ToolchainId.RustStdWasm) };
+  const stds = named.flatMap((id) => {
+    const component = found.components.get(id);
+    return component ? [{ triple: STD_TRIPLES[id], component }] : [];
+  });
+  return { root, rust, vendor, stds };
 }
 
 /** The vendored set installed in `folder`, held again to the tree digest recorded at its install; `integrity` otherwise. */
@@ -293,7 +310,7 @@ async function probe(
   return result.stdout.trim();
 }
 
-/** Probes the staged sysroot: its rustc and cargo are the pinned version, and rustc finds itself and the browser's std there. */
+/** Probes the staged sysroot: its rustc and cargo are the pinned version, and rustc finds itself and each named std there. */
 async function probeBase(parts: BaseParts, staging: string, deps: RustBaseDeps): Promise<void> {
   const sysroot = path.join(staging, RustStoreFolder.Sysroot);
   const rustc = path.join(sysroot, "bin", "rustc");
@@ -309,11 +326,11 @@ async function probeBase(parts: BaseParts, staging: string, deps: RustBaseDeps):
   const printed = await probe(staging, parts.root, [rustc, "--print", "sysroot"], deps);
   const real = await realpath(sysroot);
   expect("rustc --print sysroot", printed === real || printed === sysroot, printed);
-  if (!parts.wasm) return;
-  const web = RUST_TRIPLE[BuildTarget.Web];
-  const libdir = await probe(staging, parts.root, [rustc, "--print", "target-libdir", "--target", web], deps);
-  const inside = [real, sysroot].some((root) => libdir === path.join(root, "lib", "rustlib", web, "lib"));
-  expect(`rustc --print target-libdir --target ${web}`, inside, libdir);
+  for (const { triple } of parts.stds) {
+    const libdir = await probe(staging, parts.root, [rustc, "--print", "target-libdir", "--target", triple], deps);
+    const inside = [real, sysroot].some((root) => libdir === path.join(root, "lib", "rustlib", triple, "lib"));
+    expect(`rustc --print target-libdir --target ${triple}`, inside, libdir);
+  }
 }
 
 /** Replaces the lock folder's sysroot and CARGO_HOME with the staged ones, the record written last. */
@@ -330,8 +347,8 @@ async function swapBase(root: string, lock: ToolchainLock, staging: string, reco
 
 /** The triples a base's sysroot holds a standard library for, the host's first. */
 function baseTriples(parts: BaseParts): string[] {
-  const host = parts.rust.receipt.host ?? ToolchainHost.MacArm64;
-  return [RUST_HOST_TRIPLE[host], ...(parts.wasm ? [RUST_TRIPLE[BuildTarget.Web]] : [])];
+  const host = RUST_HOST_TRIPLE[parts.rust.receipt.host ?? ToolchainHost.MacArm64];
+  return [host, ...parts.stds.map(({ triple }) => triple).filter((triple) => triple !== host)];
 }
 
 /**
@@ -346,7 +363,7 @@ export async function installRustBase(store: string, lock: ToolchainLock, deps: 
   await rm(staging, { recursive: true, force: true });
   await mkdir(path.join(staging, TMP_FOLDER), { recursive: true });
   try {
-    const sources = [...rustPartFolders(parts.rust.folder), ...(parts.wasm ? [parts.wasm.folder] : [])];
+    const sources = [...rustPartFolders(parts.rust.folder), ...parts.stds.map(({ component }) => component.folder)];
     await assembleSysroot(sources, path.join(staging, RustStoreFolder.Sysroot));
     const cargoHome = path.join(staging, RustStoreFolder.CargoHome);
     await mkdir(cargoHome);

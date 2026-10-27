@@ -33,7 +33,7 @@ administrator prompt (two if Secondary Logon is off).
 
 - **Home's first message** starts a game the model names, where the chip says
   ([its kind](projects-engines.md)). Duplicates never overwrite; a greeting stays **Untitled game** until an idea. **New game**, the Games **+** and Command-N open home.
-- **Create game** offers Three.js or Rust · wgpu, starting on Rust where it builds ([rollback](../release-operations.md#default-stack-and-rollback)).
+- **Create game** offers Three.js or Rust · wgpu, starting on Rust where it builds ([rollback](../release-operations.md#default-stack-and-rollback)); a Rust game may pick iPhone and iPad and Android beside Browser, Mac, Windows and Linux.
 - **Settings → Games** moves new games to an empty folder (default `~/AI Games`);
   **Storage** frees older builds (keeps paused, latest) and [moves data](../windows-sandbox.md#data-folder-on-another-drive) (Windows).
 - **Settings → Privacy**: Share build metrics (off by default), its preview and delete, and
