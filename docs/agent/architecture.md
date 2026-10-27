@@ -794,8 +794,10 @@ are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals. `g
 **Readiness and validation.** [`src/substrate/preview-ready.ts`](../../src/substrate/preview-ready.ts)
 waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. The order is
 ready → gesture → setup → start, with one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
-`studio.json` `bootMs`). A spent budget is a note (`timedOut`), not a failure; `phase: "failed"` is
-only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `missing`;
+`studio.json` `bootMs`). A page with the Rust web shell is booting until `GenexShell.progress`
+reaches `ready` (its first lit frame), whatever the shim settled. A spent budget is a note
+(`timedOut`), not a failure: `capture` still takes its frames but opens with `NOT LOADED:` and the
+page's own words for where its boot is; `phase: "failed"` is only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `missing`;
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 

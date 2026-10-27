@@ -134,8 +134,37 @@ const NO_GESTURE = { needed: false, done: false, reasons: [] as string[] };
  * present, `__shim !== true`, and a `state()` that answers something other than `{__missing}`.
  * The shim's own merging facade must never be mistaken for a game's contract, or every page
  * would report itself attached and the whole premise would collapse.
+ *
+ * A page with the Rust web shell (`window.GenexShell.progress`, `game-template-rust/web/shell.html`)
+ * is booting until the shell says its first lit frame is on screen (stage `ready`): the shim settles
+ * a quiet page half way through its budget, and a page compiling its pipelines fetches nothing, so
+ * without this every look photographed the loading screen as the game. A shell that failed or
+ * refused shows its card instead and is read as before.
  */
 export const READY_PROBE = `(() => {
+  var shellLoading = function () {
+    var shell = window.GenexShell;
+    var progress = shell && shell.progress;
+    if (!progress || typeof progress !== "object" || typeof progress.stage !== "string") return null;
+    var state = shell.status && shell.status.state;
+    if (state === "failed" || state === "unsupported" || progress.stage === "ready") return null;
+    var counted = typeof progress.done === "number" && typeof progress.total === "number" ? " " + progress.done + " of " + progress.total : "";
+    return ("the game is still on its loading screen (" + progress.stage + counted + ")").slice(0, ${MAX_REASON_CHARS});
+  };
+  var held = function (answer) {
+    var loading = answer.via === "none" ? null : shellLoading();
+    if (!loading) return answer;
+    answer.ready = false;
+    answer.phase = "boot";
+    answer.reason = loading;
+    return answer;
+  };
+  try {
+    return held(readAnswer());
+  } catch (err) {
+    return { via: "none", ready: false, phase: "unknown", attached: false, frames: 0, drawCalls: 0, pageMs: null, timedOut: false, reason: String((err && err.message) || err).slice(0, ${MAX_REASON_CHARS}), gesture: { needed: false, done: false, reasons: [] } };
+  }
+  function readAnswer() {
   var noGesture = { needed: false, done: false, reasons: [] };
   var readGesture = function (raw) {
     if (!raw || typeof raw !== "object") return noGesture;
@@ -193,6 +222,7 @@ export const READY_PROBE = `(() => {
     return fail("the page reports no readiness signal");
   } catch (err) {
     return fail(String((err && err.message) || err).slice(0, ${MAX_REASON_CHARS}));
+  }
   }
 })()`;
 
