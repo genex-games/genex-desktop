@@ -39,6 +39,13 @@ const RELOADING_ROLES: ReadonlySet<ComputerToolRole> = new Set(["builder", "dire
 /** The roles whose clock the studio holds still between moves, where the target can hold it. */
 const PACED_TOOL_ROLES: ReadonlySet<ComputerToolRole> = new Set(["playtester", "judge"]);
 
+/**
+ * The check sentence, after the reload's: a compiled game's edits compiled through its lane with no
+ * reload (B6: bodycam's builder wrote its own clippy script to skip a reload per error).
+ */
+const CHECK_LINE =
+  " check — compile your edits without reloading: a compiled game answers its first compiler or lint error, or that it builds clean (a page game has nothing to compile).";
+
 /** The reload sentence, for the roles that edit files. */
 const RELOAD_LINE =
   " reload — rebuild and reload the window after you edit files (until you do, the window keeps running the build it last loaded).";
@@ -159,7 +166,7 @@ export function computerToolDescription(options: {
 }): string {
   const caps = options.capabilities ?? BROWSER_CAPABILITIES;
   const whose = WHOSE_BUILD[options.role];
-  const reload = RELOADING_ROLES.has(options.role) && caps.reload ? reloadLineFor(options) : "";
+  const reload = RELOADING_ROLES.has(options.role) && caps.reload ? reloadLineFor(options) + CHECK_LINE : "";
   const surface = caps.surfaces
     ? " screenshot, camera and zoom take surface=screen|canvas: screen is the whole page — a DOM menu, an HTML HUD, a loading screen — and canvas is only what the game draws. Leave it out and the studio picks. "
     : " ";

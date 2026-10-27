@@ -962,6 +962,55 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.match(outcome.problem?.lines[0] ?? "", /SIGKILL/);
   });
 
+  it("checks a game with the gate's clippy in the build's own sandbox, and builds, admits and serves nothing (B6 fast check)", async () => {
+    const parent = await realpath(await tmpDir("rust-check-"));
+    const open = openSandboxes();
+    const error = {
+      reason: "compiler-message",
+      message: {
+        message: "mismatched types",
+        code: { code: "E0308" },
+        level: "error",
+        spans: [{ file_name: "STAGE/src/main.rs", line_start: 3, column_start: 9, is_primary: true }],
+        children: [],
+        rendered: "error[E0308]: mismatched types\n --> src/main.rs:3:9\n",
+      },
+    };
+    const onClippy = [
+      'stage=$(dirname "$manifest")',
+      'echo "$*" > "$CARGO_TARGET_DIR/../clippy-args"',
+      `if grep -q broken "$stage/src/main.rs"; then printf '%s\\n' ${shellWord(JSON.stringify(error))} | sed "s#STAGE#$stage#g"; exit 101; fi`,
+    ].join("\n");
+    const { builds } = await lane(parent, open.sandbox, { stub: { onClippy } });
+    const dir = await rustGame(parent);
+    const game = gameOf(dir);
+    const steps = () => open.requests.map((request) => request.label?.split(":").at(-1));
+    await writeFile(path.join(dir, "src", "main.rs"), "fn main() { broken }\n");
+    const failed = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live, { check: true });
+    assert.equal(failed.ok, false);
+    assert.deepEqual(
+      failed.rust?.diagnostics.map((d) => [d.code, d.file, d.line]),
+      [["E0308", "src/main.rs", 3]],
+    );
+    assert.equal(failed.problem?.lines[0], "error[E0308]: mismatched types");
+    await writeFile(path.join(dir, "src", "main.rs"), "fn main() {}\n");
+    const passed = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live, { check: true });
+    assert.equal(passed.ok, true, JSON.stringify(passed.problem));
+    assert.equal(passed.output, null, "a check makes no output to serve");
+    assert.deepEqual(
+      steps(),
+      ["identity", "lock", "clippy", "identity", "lock", "clippy"],
+      "clippy even for Live, never the build",
+    );
+    const [spec] = open.specs;
+    assert.ok(spec);
+    assert.ok((await readFile(path.join(spec.bin, "clippy-args"), "utf8")).includes("-D warnings"), "the gate's lints");
+    assert.equal(await lstat(`${spec.bin}.out`).catch(() => null), null, "nothing admitted");
+    const built = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(built.ok, true, "a build after a check builds as ever");
+    assert.ok(built.output);
+  });
+
   it("writes a receipt with each step's timing and the compiler's identity", async () => {
     const parent = await realpath(await tmpDir("rust-receipt-"));
     const open = openSandboxes();

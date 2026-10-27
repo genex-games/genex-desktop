@@ -262,6 +262,9 @@ const MESSAGE = {
   snapshotNotBuilt: "the snapshot's web build failed; the game's console says why",
   buildDidNotRun: (reason: string, lines: readonly string[]) =>
     `the game's build did not run (${reason})${lines.length ? `: ${lines.join(", ")}` : ""}`,
+  checkedClean: (workspace: string) =>
+    `${workspace} compiles clean: no compiler or lint error. Nothing was reloaded; reload to see it running.`,
+  nothingToCheck: "this game has no compile step to check: reload to see your edits",
 } as const;
 
 /** A reference file that could not become a still, and why. */
@@ -1116,6 +1119,30 @@ export class PreviewService {
   /** A game of the library by name, or undefined when there is none (or the library cannot be read). */
   async #game(project: string): Promise<GameProject | undefined> {
     return (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
+  }
+
+  /**
+   * A compiled game's fast check (the computer's `check`): `root`'s web build through the
+   * build-lane seam with `check`, so its lane runs only its compiler gate (Rust: clippy in the
+   * build's own sandbox) and nothing is built, served, loaded or reported to the stage. The answer
+   * is the agent's: the build problem's note, or that it compiles clean.
+   */
+  async checkBuild(project: string, root: string): Promise<string> {
+    const descriptor = await this.#game(project);
+    const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    if (!isCompiledStack(stackOf(shape))) return MESSAGE.nothingToCheck;
+    const game = {
+      project,
+      dir: root,
+      shape,
+      destinations: destinationsOf(descriptor ?? {}),
+      lock: await this.#gameLock(project, shape),
+      recordLock: false,
+    };
+    const receipt = await this.#x.gameBuilds.ensure(game, BuildTarget.Web, CppBuildPurpose.Judging, { check: true });
+    if (!receipt.outcome) return MESSAGE.laneMissing(receipt.stack);
+    const { problem } = receipt.outcome;
+    return problem ? problemNote(problem) : MESSAGE.checkedClean(path.basename(root));
   }
 
   /**

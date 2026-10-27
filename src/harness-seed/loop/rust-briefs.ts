@@ -173,10 +173,15 @@ type BriefFacets = NonNullable<RustBasePlan["facets"]>;
 /** The run as a tool sentence reads it: whichever engine plays the builder. */
 type RoleRun = Parameters<typeof roleEngine>[0];
 
-/** `capture` and `computer` as a Rust game's builders read them. */
+/**
+ * `capture` and `computer` as a Rust game's builders read them, with the computer's `check`: an
+ * edit compiled through the lane without a rebuild and page boot (B6: bodycam's builder wrote its
+ * own clippy script to skip a reload per compiler error).
+ */
 function eyesSentence(run: RoleRun, what: string): string {
   const engine = roleEngine(run, RoleKey.Builder);
-  return `${toolCall(engine, "capture")} builds ${what} through the studio's Rust lane for the game's judging destination and takes every registered camera at once; a failed build answers with its first compiler error, which is the one to fix. When Browser is one of the game's destinations, ${toolCall(engine, "computer")} drives that web build live in its own window.`;
+  const computer = toolCall(engine, "computer");
+  return `${toolCall(engine, "capture")} builds ${what} through the studio's Rust lane for the game's judging destination and takes every registered camera at once; a failed build answers with its first compiler error, which is the one to fix. When Browser is one of the game's destinations, ${computer} drives that web build live in its own window, and ${computer} action=check compiles your edits through the same lane, clippy included, without reloading: fix what it names until it answers clean, then look.`;
 }
 
 /** The base builder's brief for a Rust · wgpu game: `baseBrief` in Rust terms, the same roll call and rules. */

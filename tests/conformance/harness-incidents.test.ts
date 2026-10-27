@@ -75,6 +75,8 @@ import {
   tasteVeto,
 } from "../../src/harness-seed/loop/judge.ts";
 import { EngineId } from "../../src/shared/providers.ts";
+import { RUST_FACET } from "../../src/harness-seed/loop/rust-briefs.ts";
+import { computerToolDefinition } from "../../src/substrate/computer-tool.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { GameValidationCode } from "../../src/shared/game-project.ts";
 import { LEAD_WINDOWS, MAX_BUILDERS } from "../../src/shared/builders.ts";
@@ -17937,5 +17939,14 @@ describe("a high bar on a short clock (bodycam B9)", () => {
     assert.match(short, /plan's risks which layer the time reaches/);
     assert.doesNotMatch(briefFor(6 * 60, CompletionPolicy.Duration), /A HIGH BAR ON/, "six hours fit every layer");
     assert.doesNotMatch(briefFor(56, CompletionPolicy.Goal), /A HIGH BAR ON/, "an until-done run has no clock to beat");
+  });
+});
+
+describe("a Rust builder's build loop (B6, bodycam)", () => {
+  it("B6. A Rust builder paid a rebuild and page boot per compiler error and wrote its own clippy script: its eyes offer the computer's check, which the computer has", () => {
+    const eyes = RUST_FACET.eyes({ engine: EngineId.ClaudeCode });
+    assert.match(eyes, /mcp__studio__computer action=check\b/, eyes);
+    const offered = computerToolDefinition({ role: "builder" }).parameters.properties.action?.description ?? "";
+    assert.match(offered, /\bcheck\b/, "the builder's computer offers check");
   });
 });

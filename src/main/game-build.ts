@@ -733,6 +733,12 @@ export interface GameBuildOptions {
   priority?: BuildPriority;
   /** A person's Play timing the build (`play-timings.ts`): the lane marks its wait and its steps; absent: nobody is. */
   timing?: PlayTimingSink;
+  /**
+   * Only what the lane checks before it builds, for an agent's fast check (Rust: the gate's clippy
+   * on the staged game, whatever the purpose): no output is made, admitted or served, and an `ok`
+   * outcome has no `output`. A lane with no cheaper check builds as asked.
+   */
+  check?: boolean;
 }
 
 /** One compiled stack's build lane, as the seam drives it. */
