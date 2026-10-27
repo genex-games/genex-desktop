@@ -33,10 +33,18 @@ pub const DESKTOP_BUDGET_MEMORY_DIVISOR: u64 = 8;
 /// ...up to this ceiling (owner decision 2026-10-12 (2): a 36 GB M-series Mac gets 2 GiB, an 8 GB
 /// MacBook Air about 680 MiB, an 8 GB discrete PC 1 GiB).
 pub const DESKTOP_BUDGET_MEMORY_CAP_BYTES: u64 = 2 * GIB;
-/// The web's memory budget never exceeds this, whatever the class.
+/// A phone browser's memory budget never exceeds this, whatever the class.
 pub const WEB_BUDGET_CAP_BYTES: u64 = 256 * MIB;
-/// The web's budget per GB of `navigator.deviceMemory`.
+/// A phone browser's budget per GB of `navigator.deviceMemory`.
 pub const WEB_BUDGET_PER_DEVICE_GB: u64 = 32 * MIB;
+/// A desktop browser's memory budget never exceeds this (Bodycam B1: at 256 MB desktop-high's own
+/// `high` at its 1440p reference dropped the froxel fog, and a forced `ultra` AO and TAA as well;
+/// with its material arrays `ultra` at 1440p asks about 850 MB).
+pub const WEB_DESKTOP_BUDGET_CAP_BYTES: u64 = 1024 * MIB;
+/// A desktop browser's budget per GB of `deviceMemory`, whatever its class (as a native desktop's
+/// follows its GPU-visible memory): Chrome reports at most 8 (512 MB: `high` keeps every feature at
+/// 1440p), Studio's Electron the machine's (1 GB from 16 GB: `ultra` keeps every feature).
+pub const WEB_DESKTOP_BUDGET_PER_DEVICE_GB: u64 = 64 * MIB;
 /// The highest preset the web defaults to (a game or the person may still pick `ultra`).
 pub const WEB_DEFAULT_PRESET_CAP: QualityPreset = QualityPreset::High;
 
@@ -304,15 +312,19 @@ pub fn default_preset(class: DeviceClass, os: TargetOs) -> QualityPreset {
 /// The memory budget of `class` on the device `facts` describe: the class's; on a native desktop
 /// (macOS, Windows, Linux) that reports its GPU-visible memory, at least
 /// 1/[`DESKTOP_BUDGET_MEMORY_DIVISOR`] of it up to [`DESKTOP_BUDGET_MEMORY_CAP_BYTES`]; on the web
-/// at most [`WEB_BUDGET_CAP_BYTES`] and [`WEB_BUDGET_PER_DEVICE_GB`] per GB of `deviceMemory` (a
-/// missing hint reads as 4 GB, so 128 MB). Phones keep the class's: memory pressure kills apps.
+/// a desktop class takes [`WEB_DESKTOP_BUDGET_PER_DEVICE_GB`] per GB of `deviceMemory` up to
+/// [`WEB_DESKTOP_BUDGET_CAP_BYTES`] whatever its class's, a phone's the class's at most
+/// [`WEB_BUDGET_CAP_BYTES`] and [`WEB_BUDGET_PER_DEVICE_GB`] per GB (a missing hint reads as 4 GB:
+/// 256 and 128 MB). Phones keep the class's: memory pressure kills apps.
 pub fn class_budget_bytes(class: DeviceClass, facts: &DeviceFacts) -> u64 {
     let budget = class_defaults(class).budget_bytes;
     match facts.os {
         TargetOs::Web => {
-            let gb = facts.web.unwrap_or_default().device_memory_gb();
-            let by_memory = (f64::from(gb) * WEB_BUDGET_PER_DEVICE_GB as f64) as u64;
-            budget.min(WEB_BUDGET_CAP_BYTES).min(by_memory)
+            let gb = f64::from(facts.web.unwrap_or_default().device_memory_gb());
+            match class.form {
+                FormFactor::Desktop => ((gb * WEB_DESKTOP_BUDGET_PER_DEVICE_GB as f64) as u64).min(WEB_DESKTOP_BUDGET_CAP_BYTES),
+                FormFactor::Mobile => budget.min(WEB_BUDGET_CAP_BYTES).min((gb * WEB_BUDGET_PER_DEVICE_GB as f64) as u64),
+            }
         }
         TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux => {
             let by_memory = facts.gpu_visible_memory_bytes.map_or(0, |bytes| (bytes / DESKTOP_BUDGET_MEMORY_DIVISOR).min(DESKTOP_BUDGET_MEMORY_CAP_BYTES));

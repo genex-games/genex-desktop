@@ -214,7 +214,7 @@ pub const MATERIAL_EXT_NO_TEXTURE: f32 = -1.0;
 
 /// The extension row of a material that emits nothing: what every row holds until RQ6.3 fills it.
 pub const MATERIAL_EXT_NONE: GpuMaterialExt =
-    GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0], subsurface: [0.0, 0.0, 0.0, 1.0], transmission: [0.0; 4] };
+    GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0], subsurface: [0.0, 0.0, 0.0, 1.0], transmission: [0.0; 4], uv: [0.0; 4], tiling: [0.0; 4] };
 
 /// One instance in the instance table (`Instance`).
 #[repr(C)]

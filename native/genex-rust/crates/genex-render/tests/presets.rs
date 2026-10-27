@@ -622,9 +622,17 @@ fn the_class_budget_on_the_web_is_capped_by_device_memory() {
         }
     };
     let eight = WebHints { device_memory_gb: Some(8.0), ..WebHints::default() };
-    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(eight))), 256 * MIB, "the web caps at 256 MB");
-    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(WebHints::default()))), 128 * MIB, "a missing deviceMemory reads as 4");
-    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(None)), 128 * MIB);
+    // Bodycam B1 flipped the desktop rows (256 -> 512, 128 -> 256, 128 -> 256): a desktop browser
+    // takes 64 MB a GB up to 1 GB whatever its class; a phone's keeps 32 MB a GB up to 256 MB.
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(eight))), 512 * MIB, "Chrome's 8 GB reading");
+    let electron = WebHints { device_memory_gb: Some(32.0), ..WebHints::default() };
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(electron))), 1024 * MIB, "a desktop browser caps at 1 GB");
+    assert_eq!(class_budget_bytes(class("desktop-high"), &web(Some(electron))), 1024 * MIB, "past the class's own, as a native desktop");
+    assert_eq!(class_budget_bytes(class("desktop-mid"), &web(Some(eight))), 512 * MIB);
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(WebHints::default()))), 256 * MIB, "a missing deviceMemory reads as 4");
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(None)), 256 * MIB);
+    assert_eq!(class_budget_bytes(class("mobile-high"), &web(Some(electron))), 160 * MIB, "a phone's browser keeps its class");
+    assert_eq!(class_budget_bytes(class("mobile-high"), &web(Some(WebHints::default()))), 128 * MIB, "and 32 MB a GB");
     let two = WebHints { device_memory_gb: Some(2.0), ..WebHints::default() };
     assert_eq!(class_budget_bytes(class("mobile-mid"), &web(Some(two))), 64 * MIB);
     assert_eq!(class_budget_bytes(class("mobile-low"), &web(Some(eight))), 48 * MIB, "never above the class");
@@ -661,7 +669,9 @@ fn a_native_desktop_budget_scales_with_the_gpu_visible_memory_the_platform_repor
         // reads deviceMemory.
         ("iPhone", "mobile-high", pc(TargetOs::Ios, Backend::Metal, DeviceType::IntegratedGpu, Some(6 * GIB)), 160 * MIB),
         ("Android", "mobile-mid", pc(TargetOs::Android, Backend::Vulkan, DeviceType::IntegratedGpu, Some(12 * GIB)), 96 * MIB),
-        ("browser", "desktop-ultra", pc(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other, Some(27 * GIB)), 128 * MIB),
+        // Bodycam B1 flipped 128 -> 256 MB: a desktop browser's 64 MB a GB of its (unknown, so 4)
+        // deviceMemory.
+        ("browser", "desktop-ultra", pc(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other, Some(27 * GIB)), 256 * MIB),
     ];
     for (device, wire, facts, bytes) in rows {
         assert_eq!(class_budget_bytes(class(wire), &facts), bytes, "{device} as {wire}");
@@ -1502,8 +1512,10 @@ fn desktop_high_in_a_browser_hiding_device_memory_keeps_taa_at_the_web_reference
     let desktop = class("desktop-high");
     let facts = DeviceFacts::new(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other);
     let quality = preset_quality(default_preset(desktop, TargetOs::Web), desktop);
-    let budget = class_budget_bytes(desktop, &facts);
-    assert_eq!(budget, 128 * MIB);
+    // Bodycam B1 flipped 128 -> 256 MB (a desktop browser's 64 MB a GB of the 4 a hidden
+    // deviceMemory reads as); the tighter 128 MB is still the floor TAA must survive.
+    assert_eq!(class_budget_bytes(desktop, &facts), 256 * MIB);
+    let budget = 128 * MIB;
     let fitted = fit(&quality, &input(&quality, desktop, WEB_REFERENCE, false), budget, DegradeMode::Boot);
     assert!(fitted.fits, "{:?}", fitted.steps);
     assert!(fitted.quality.anti_aliasing.temporal(), "TAA kept: {:?}", fitted.steps);
@@ -1867,6 +1879,39 @@ fn a_high_tier_phone_draws_each_preset_s_shadow_reach_up_to_desktop_high_s() {
         for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
             let reach = preset_quality(preset, phone).shadows.distance;
             assert_eq!(reach, MOBILE_MAX_SHADOW_DISTANCE_M, "{} at {}: {reach} units", phone.wire(), preset.wire());
+        }
+    }
+}
+
+
+/// Bodycam B1: Studio's Live page on an M-series Mac classified desktop-mid and dropped AO, the
+/// froxel fog and the TAA history from `ultra` to fit the web's 256 MB. Studio's Electron page
+/// (which reports the machine's memory) keeps AO, the froxel fog and TAA at `high` and `ultra`,
+/// material arrays and all, at its class's reference resolution, where Live draws on the web;
+/// Chrome (which reports at most 8 GB) keeps them at `high` there and at `ultra` at 1080p.
+#[test]
+fn a_roomy_desktop_browser_keeps_ao_froxel_fog_and_taa_at_high_and_ultra() {
+    let rows = [
+        ("Studio's Electron", 32.0, QualityPreset::High, None),
+        ("Studio's Electron", 32.0, QualityPreset::Ultra, None),
+        ("Chrome", 8.0, QualityPreset::High, None),
+        ("Chrome", 8.0, QualityPreset::Ultra, Some(LAPTOP_REFERENCE)),
+    ];
+    for (browser, memory_gb, preset, output) in rows {
+        let hints = WebHints { device_memory_gb: Some(memory_gb), hardware_concurrency: Some(12), ua_mobile: Some(false), short_side_css_px: 982, ..WebHints::default() };
+        let facts = DeviceFacts::new(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other).with_web(hints);
+        let classified = genex_render::device_class::classify(&facts);
+        assert_eq!(classified, class("desktop-high"), "{browser}");
+        let budget = class_budget_bytes(classified, &facts);
+        let quality = preset_quality(preset, classified);
+        let materials = genex_render::texture::material_arrays(classified, quality.textures);
+        let at = input(&quality, classified, output.unwrap_or(reference_resolution(classified)), false).with_materials(materials);
+        let fitted = fit(&quality, &at, budget, DegradeMode::Boot);
+        let dropped: Vec<DegradeRung> = fitted.steps.iter().map(|step| step.rung).collect();
+        let name = format!("{browser} ({} MB) {} at {:?}", budget / MIB, preset.wire(), at.output);
+        assert!(fitted.fits, "{name}: {dropped:?}");
+        for kept in [DegradeRung::Ao, DegradeRung::FroxelFog, DegradeRung::TaaHistory] {
+            assert!(!dropped.contains(&kept), "{name} gave up {kept:?}: {dropped:?}");
         }
     }
 }

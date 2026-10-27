@@ -107,6 +107,16 @@ impl Pcg32 {
     pub fn chance(&mut self, p: f32) -> bool {
         self.unit() < p
     }
+
+    /// Uniform in `[0, 1)`: [`Pcg32::unit`] under the name most code reaches for.
+    pub fn f32(&mut self) -> f32 {
+        self.unit()
+    }
+
+    /// Uniform in `[lo, hi)`: [`Pcg32::range_f32`] under the name most code reaches for.
+    pub fn range(&mut self, lo: f32, hi: f32) -> f32 {
+        self.range_f32(lo, hi)
+    }
 }
 
 /// What a deterministic query draws from: the reset's [`Pcg32`] or a tick's `ctx.rng` (the facade

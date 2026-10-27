@@ -14,8 +14,8 @@ use genex_render::layout::{NO_TEXTURE, TEXTURE_SIZE_CLASSES, texture_ref_parts};
 use genex_render::presets::{class_defaults, preset_quality, reference_resolution, scene_format};
 use genex_render::settings::{Quality, QualityPreset, TextureClass, TextureQuality};
 use genex_render::texture::{
-    ClassArrays, MAX_TEXTURE_LAYERS, TEXTURE_LAYER_PX, TextureData, TextureId, TextureKind, class_for_source, class_layer_caps,
-    fitted_textures, material_arrays, mip_chain, normal_mip_chain, preset_textures, toksvig_roughness,
+    ClassArrays, MAX_TEXTURE_LAYERS, SOURCE_TEXTURE_MAX_SIDE, TEXTURE_LAYER_PX, TextureData, TextureId, TextureKind, capped_source,
+    class_for_source, class_layer_caps, fitted_textures, material_arrays, mip_chain, normal_mip_chain, preset_textures, toksvig_roughness,
 };
 use genex_render::scene::{CameraDesc, Material, MeshId, Scene, scaled};
 use genex_render::{CullPath, Gpu, RenderCode, RenderOptions, Renderer};
@@ -599,4 +599,21 @@ fn metal_a_device_loss_replays_textures_into_the_classes_they_had() {
     assert_eq!(replayed.texture_quality(), high);
     let added = resilient.add_texture(&checker(1024, 2), TextureKind::Color).expect("after recovery");
     assert_eq!((added.class(), added.layer()), (TextureClass::S1024, 1), "the replayed texture kept layer 0 of class 1024");
+}
+
+#[test]
+fn a_source_past_the_largest_class_is_kept_at_its_side_and_a_smaller_one_untouched() {
+    // Bodycam B1: a 4K map was decoded and kept whole for device-loss replay (64 MiB each) though
+    // no size class stores more than 2048 texels a side.
+    assert_eq!(SOURCE_TEXTURE_MAX_SIDE, TextureClass::S2048.side());
+    let wide = TextureData::rgba8(4096, 1024, vec![200; 4096 * 1024 * 4]).expect("image");
+    let capped = capped_source(&wide, TextureKind::Color);
+    assert_eq!((capped.width(), capped.height()), (2048, 512), "the aspect is kept");
+    assert!(capped.rgba().iter().all(|byte| *byte == 200), "a flat image stays flat");
+    let small = TextureData::rgba8(2048, 2048, vec![7; 2048 * 2048 * 4]).expect("image");
+    assert!(matches!(capped_source(&small, TextureKind::Data), std::borrow::Cow::Borrowed(_)), "a source within the cap is not copied");
+    let pattern: Vec<u8> = (0..4096 * 4096 * 4).map(|at: usize| (at * 37 % 251) as u8).collect();
+    let square = TextureData::rgba8(4096, 4096, pattern).expect("image");
+    let from_capped = mip_chain(&capped_source(&square, TextureKind::Color), TextureKind::Color, 2048);
+    assert_eq!(from_capped, mip_chain(&square, TextureKind::Color, 2048), "the 2048 class stores the same texels from the capped source");
 }

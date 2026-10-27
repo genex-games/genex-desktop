@@ -1,5 +1,29 @@
 # Drawing
 
+Every call in one line (each returns `&mut Frame`, so calls chain):
+
+```rust
+frame.tag("walls");                                         // later draws count under "walls"
+frame.model(&model, transform);                             // a GLB with its own materials
+frame.model_with(&model, transform, &material);             // a GLB (or a built mesh) in one Material
+frame.model_tinted(&model, transform, color);               // its own materials times a colour
+frame.cube(transform, color);                               // a unit cube (-0.5..0.5), scaled by the transform
+frame.cube_with(transform, &material);
+frame.sphere(center, radius, color);                        // a Vec3 and a radius, never a Transform
+frame.sphere_with(center, radius, &material);
+frame.line(from, to, color);
+frame.lines(&points, color);                                // each pair of points one segment
+frame.clear(color);
+```
+
+A `Transform` is `Transform::from_xyz(x, y, z)` or `Transform::from_translation(v)`, then
+`.with_rotation(quat)` and `.with_scale(vec3(4.0, 3.0, 0.2))`: a 4 m wide, 3 m tall, 0.2 m thick
+wall panel from the unit cube. Give such a panel `Material::with_world_uv(metres)`
+(`docs/api/lighting.md`) and its texture keeps one size on every face instead of stretching; give
+each panel `.with_uv_jitter(index)` (and the material `.with_stochastic_tiling(true)` or
+`.with_macro_variation(strength, metres)`) so a corridor of them does not show the same tile over
+and over.
+
 `frame.tag(name)` names what the following draws count under (`state().__render.tags`);
 `frame.model(&model, transform)`, `frame.cube`, `frame.sphere`, `frame.line` and
 `frame.clear(color)` record draws; `frame.lines(&points, color)` draws many segments (each pair of
@@ -101,6 +125,44 @@ the import. Measured on an M4 Max at `ultra` on its 3456x2169 full screen (which
 feature on; 10,000 hold a median of 60 fps at dynamic resolution's floor with every feature on,
 dipping to 52-56 (their four sun cascades cost most of a frame). With the scale held at 1 they draw 30 to 40 fps: never
 hold it.
+
+**Built meshes.** Shapes the cube cannot make (a window recessed into a wall, a door frame, a
+sill, a skirting board, a broken plaster edge, a stair) are built in `on_reset` from vertices with
+`gfx.mesh(&data)`, which answers a `Model` like `gfx.assets().model(..)`'s: draw it with
+`frame.model` or `frame.model_with`, give it `.with_levels`, an impostor or a compound, and read
+its triangles with `gfx.assets().triangles(&model)` for a collider or a navmesh. Keep the handle in
+the world and draw it every frame; build it once.
+
+```rust
+use genex::prelude::*;
+
+// A 4 m wall, 3 m tall and 0.25 m thick, with a 1.2 x 1.4 m window 0.9 m up.
+let mut wall = MeshData::new();
+wall.cuboid(vec3(-2.0, 0.0, 0.0), vec3(-0.6, 3.0, 0.25), 1.0)
+    .cuboid(vec3(0.6, 0.0, 0.0), vec3(2.0, 3.0, 0.25), 1.0)
+    .cuboid(vec3(-0.6, 0.0, 0.0), vec3(0.6, 0.9, 0.25), 1.0)
+    .cuboid(vec3(-0.6, 2.3, 0.0), vec3(0.6, 3.0, 0.25), 1.0);
+let wall = gfx.mesh(&wall).expect("a wall"); // in on_reset; keep it in the world
+// in on_draw:
+frame.model_with(&wall, Transform::from_xyz(0.0, 0.0, -5.0), &plaster);
+```
+
+`MeshData` holds `positions`, `normals`, `uvs` (`Vec<Vec3>`, `Vec<Vec3>`, `Vec<Vec2>`) and
+`indices` (`Vec<u32>`, three a triangle, counter-clockwise seen from its front). Fill them
+yourself, or with `data.vertex(position, normal, uv)` (answers the index) and
+`data.triangle(a, b, c)`, or with the builders: `data.quad([bottom_left, bottom_right, top_right,
+top_left], metres)` (a flat quad as you face it) and `data.cuboid(min, max, metres)` (an
+axis-aligned box), whose UVs are in tiles of `metres`, so faces of any size keep one texel size.
+Leave `normals` empty to have them computed from the triangles (smooth where vertices are
+shared), and `uvs` empty to project them from the world one tile a metre; tangents are always
+computed. The same data builds the same model on every destination. `data.check()` answers
+whether it builds; `gfx.mesh` refuses with a `MeshError` (`error.code.wire()`), making nothing:
+`mesh-empty` (no position or no index), `mesh-not-triangles` (an index count not a multiple of
+3), `mesh-index-out-of-range`, `mesh-attribute-mismatch` (normals or UVs given but not one per
+position), `mesh-not-finite` and `mesh-too-large` (past `MESH_VERTICES_MAX` or
+`MESH_TRIANGLES_MAX`, 262,144 each). A built mesh's path starts `genex-mesh/` and is no file under
+`assets/`. A bigger or organic shape (furniture, a radiator, a car) is still a GLB: generated, a
+CC0 download or a Blender script.
 
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`

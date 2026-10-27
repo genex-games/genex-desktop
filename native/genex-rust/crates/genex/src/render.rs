@@ -2604,8 +2604,9 @@ mod tests {
     fn the_panel_never_offers_a_preset_that_draws_less_than_the_one_below_it() {
         // Pass-1 gate round 3: on a desktop-mid browser the memory budget dropped ultra's AO and
         // spot shadows (with its shadow size and format and bloom mips), so the panel's Ultra drew
-        // less than High.
-        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
+        // less than High. Bodycam B1 moved the premise from an 8 GB browser to one hiding
+        // deviceMemory: either is 256 MB now that a desktop browser takes 64 MB a GB.
+        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "uaMobile": false});
         let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other)
             .with_web(web_hints_from_json(&hints).expect("hints"));
         let mut browser = RenderControl::new(RenderConfig::new(), (1280, 720));
@@ -2656,7 +2657,8 @@ mod tests {
     /// pipeline change; one that keeps it is not.
     #[test]
     fn a_new_live_output_whose_budget_changes_the_world_pass_samples_is_a_pipeline_change() {
-        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "deviceMemoryGb": 8, "uaMobile": false});
+        // A browser hiding deviceMemory: the 256 MB an 8 GB one had before Bodycam B1.
+        let hints = json!({"maxTouchPoints": 0, "coarsePointer": false, "shortSideCssPx": 1080, "uaMobile": false});
         let web = DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other)
             .with_web(web_hints_from_json(&hints).expect("hints"));
         let mut browser = RenderControl::new(RenderConfig::new(), (960, 540));

@@ -21,6 +21,10 @@ use crate::extend::{CustomMaterial, PostPass};
 use crate::gfx::Model;
 use genex_render::motion::DrawId;
 use genex_render::settings::Environment;
+pub use genex_render::scene::{UvMapping, UvVariation};
+
+/// The PCG32 stream [`Material::with_uv_jitter`] draws its offset from.
+const UV_JITTER_SEQUENCE: u64 = 0xB2B;
 use glam::{Mat4, Quat, Vec3};
 
 /// Metallic factor of [`Material::default`]: a dielectric.
@@ -168,9 +172,13 @@ pub struct Material {
     base_texture: Option<Arc<str>>,
     normal_texture: Option<Arc<str>>,
     metal_rough_texture: Option<Arc<str>>,
+    occlusion_texture: Option<Arc<str>>,
+    occlusion_strength: f32,
     emissive_texture: Option<Arc<str>>,
     untextured_color: Option<Color>,
     subsurface: Option<crate::Subsurface>,
+    uv: UvMapping,
+    variation: UvVariation,
 }
 
 impl Default for Material {
@@ -187,9 +195,13 @@ impl Default for Material {
             base_texture: None,
             normal_texture: None,
             metal_rough_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
             emissive_texture: None,
             untextured_color: None,
             subsurface: None,
+            uv: UvMapping::default(),
+            variation: UvVariation::default(),
         }
     }
 }
@@ -268,9 +280,95 @@ impl Material {
     }
 
     /// This material with a glTF metallic-roughness texture (`assets/<path>`): green roughness,
-    /// blue metallic.
+    /// blue metallic, each times [`Material::roughness`] and [`Material::metallic`] (leave them
+    /// at 1 to take the map's values as they are).
     pub fn with_metal_rough_texture(self, path: &str) -> Material {
         Material { metal_rough_texture: Some(Arc::from(path)), ..self }
+    }
+
+    /// This material with a packed ORM texture (`assets/<path>`, glTF's packing and most texture
+    /// sites' `_ORM`/`_ARM` maps): red ambient occlusion, green roughness, blue metallic, read in
+    /// one fetch. [`Material::with_metal_rough_texture`] plus [`Material::with_occlusion_texture`]
+    /// on the same file at strength 1.
+    pub fn with_orm_texture(self, path: &str) -> Material {
+        Material { metal_rough_texture: Some(Arc::from(path)), occlusion_texture: Some(Arc::from(path)), occlusion_strength: 1.0, ..self }
+    }
+
+    /// This material with an ambient-occlusion texture (`assets/<path>`, red channel) darkening
+    /// the ambient light in its crevices by `strength` (0..1; never the sun or other lights).
+    pub fn with_occlusion_texture(self, path: &str, strength: f32) -> Material {
+        Material { occlusion_texture: Some(Arc::from(path)), occlusion_strength: strength, ..self }
+    }
+
+    /// This material repeating its textures `u` times across and `v` times down the mesh's own
+    /// UVs (Bodycam B2b): a cube's face, a model's UV layout. 0, negative or not finite reads as 1.
+    /// For a box of any size, [`Material::with_world_uv`] keeps one texel density instead.
+    pub fn with_uv_scale(self, u: f32, v: f32) -> Material {
+        Material { uv: UvMapping::Mesh { scale: [u, v] }, ..self }
+    }
+
+    /// This material projecting its textures from the world (Bodycam B2b): every face takes the
+    /// texture along the axis it faces most, repeating every `metres` metres, so a 4 m wall, a
+    /// 0.2 m sill and a floor drawn with `frame.cube_with` all show the same texel size without
+    /// stretch. u runs to the viewer's right and v down a wall. For geometry that stays put: a
+    /// moving draw's texture slides over it, and a curved model shows seams where its faces turn
+    /// (give it [`Material::with_uv_scale`]). 0, negative or not finite reads as 1 m.
+    pub fn with_world_uv(self, metres: f32) -> Material {
+        let tiles = if metres.is_finite() && metres > 0.0 { 1.0 / metres } else { 1.0 };
+        Material { uv: UvMapping::World { tiles_per_metre: [tiles, tiles] }, ..self }
+    }
+
+    /// How its textures meet the surface ([`Material::with_uv_scale`], [`Material::with_world_uv`]).
+    pub fn uv_mapping(&self) -> UvMapping {
+        self.uv
+    }
+
+    /// This material with its textures moved by `u` and `v` tiles (Bodycam B2b): wall panels of
+    /// one texture that each start it somewhere else no longer line up into a visible repeat.
+    pub fn with_uv_offset(self, u: f32, v: f32) -> Material {
+        Material { variation: UvVariation { offset: [u, v], ..self.variation }, ..self }
+    }
+
+    /// This material with its textures moved by an offset drawn from `seed` (Bodycam B2b): the
+    /// same seed gives the same offset on every destination, so give each panel its own (its index
+    /// in the level), never a per-frame value.
+    pub fn with_uv_jitter(self, seed: u32) -> Material {
+        let mut rng = genex_core::rng::Pcg32::new(u64::from(seed), UV_JITTER_SEQUENCE);
+        let (u, v) = (rng.unit(), rng.unit());
+        self.with_uv_offset(u, v)
+    }
+
+    /// This material with its textures turned by `radians` (Bodycam B2b; the normal map turns
+    /// with them): for textures with no direction (plaster, concrete, dirt), never brick or wood.
+    pub fn with_uv_rotation(self, radians: f32) -> Material {
+        Material { variation: UvVariation { rotation: radians, ..self.variation }, ..self }
+    }
+
+    /// This material blending each texture from two copies at offsets that change across the
+    /// surface (Bodycam B2b, stochastic tiling), so a long wall shows no tile twice. It costs a
+    /// second fetch of the base colour, normal and metal-rough maps; an emissive map keeps the
+    /// plain tiling, so leave it off a material with one.
+    pub fn with_stochastic_tiling(self, on: bool) -> Material {
+        Material { variation: UvVariation { stochastic: on, ..self.variation }, ..self }
+    }
+
+    /// This material's base colour varied in large patches of about `metres` by up to `strength`
+    /// (Bodycam B2b, 0..1: 0.15 is ±15%), from a world-space noise: dirt and fading across a wall
+    /// a tile cannot hold. For geometry that stays put.
+    pub fn with_macro_variation(self, strength: f32, metres: f32) -> Material {
+        Material { variation: UvVariation { macro_strength: strength, macro_metres: metres, ..self.variation }, ..self }
+    }
+
+    /// What keeps its tiled textures from reading as a repeat ([`Material::with_uv_offset`],
+    /// [`Material::with_uv_jitter`], [`Material::with_uv_rotation`],
+    /// [`Material::with_stochastic_tiling`], [`Material::with_macro_variation`]).
+    pub fn uv_variation(&self) -> UvVariation {
+        self.variation
+    }
+
+    /// The ambient-occlusion texture's path and strength ([`Material::with_occlusion_texture`]).
+    pub fn occlusion_texture(&self) -> Option<(&str, f32)> {
+        self.occlusion_texture.as_deref().map(|path| (path, self.occlusion_strength))
     }
 
     /// The base-colour texture's path.

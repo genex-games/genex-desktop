@@ -192,9 +192,10 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     gx_sun_shadow_end_fade(frame.shadow_soft.z);
     let facing = select(-1.0, 1.0, front);
     let tangent = vec4<f32>(in.tangent.xyz * facing, in.tangent.w * facing);
-    var s = gx_surface(in.world_pos, in.normal * facing, in.uv, tangent, in.material);
-    s.v = normalize(frame.camera_pos.xyz - in.world_pos);
     let ext = material_ext[in.material];
+    let mapped = gx_surface_uv(ext.uv, ext.tiling, in.uv, tangent, in.world_pos, in.normal * facing);
+    var s = gx_surface(in.world_pos, in.normal * facing, mapped.uv, mapped.tangent, in.material);
+    s.v = normalize(frame.camera_pos.xyz - in.world_pos);
     // The occlusion map eased from 1 by its strength (P2-0.12 LG-09).
     gx_material_ao = mix(1.0, gx_material_ao, ext.emissive.w);
     // An alpha-tested surface that survived its test is opaque (P2-0.12): its alpha is the
@@ -223,7 +224,7 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
         color += gx_subsurface_sun(s, ext, sun);
     }
     color = gx_local_lights(color, s);
-    color += gx_emission(ext, in.uv);
+    color += gx_emission(ext, mapped.uv);
     color = gx_forward_fog(color, s.world_pos);
     return vec4<f32>(color, s.alpha);
 }

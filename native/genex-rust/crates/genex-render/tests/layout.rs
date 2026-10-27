@@ -125,7 +125,9 @@ const GOLDEN: [(&str, usize); 35] = [
     ("LightExt", 32),
     // Renderer pass 2 B.1 flipped 32 -> 64: the subsurface scatter colour and thickness, and the
     // forward-scatter power, diffuse transmission and scattering depth (two rows).
-    ("GxMaterialExt", 64),
+    // Bodycam B2b flipped 64 -> 96: the UV mapping row (scale, offset) and the tiling row (world
+    // projection and stochastic flags, rotation, macro variation).
+    ("GxMaterialExt", 96),
     // Renderer pass 2 A.0 (LG-16) flipped 32 -> 64: the clusterable kinds' index ranges and the
     // decals' and probes' own depth mappings (lights, decals and probes share one index space).
     ("LightBinParams", 64),

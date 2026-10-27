@@ -57,7 +57,7 @@ use crate::settings::Meshlets;
 use crate::scene::{MeshId, ModelPart};
 use crate::skin::{SkinId, SkinnedMeshData, SkinnedModel};
 use crate::tables::CullPath;
-use crate::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind};
+use crate::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, capped_source};
 
 /// Whether a device has been lost, set from wgpu's device-lost callback.
 #[derive(Clone, Debug)]
@@ -546,15 +546,17 @@ impl Resilient {
         self.upload(Upload::SkinnedModel(Box::new(model.clone())), |r, gpu| r.add_skinned_model(gpu, model))
     }
 
-    /// Add a texture (kept for replay).
+    /// Add a texture (kept for replay at most [`crate::texture::SOURCE_TEXTURE_MAX_SIDE`] a
+    /// side: no size class stores more).
     pub fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
-        self.upload(Upload::Texture(data.clone(), kind), |r, gpu| r.add_texture(gpu, data, kind))
+        let capped = capped_source(data, kind);
+        self.upload(Upload::Texture(capped.clone().into_owned(), kind), |r, gpu| r.add_texture(gpu, &capped, kind))
     }
 
     /// [`Resilient::add_texture`] for a texture that `source` decodes again (as
     /// [`Resilient::add_meshes_from`]): nothing is kept.
     pub fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
-        self.upload(Upload::TextureFrom(source, kind), |r, gpu| r.add_texture(gpu, data, kind))
+        self.upload(Upload::TextureFrom(source, kind), |r, gpu| r.add_texture(gpu, &capped_source(data, kind), kind))
     }
 
     /// Store the larger size classes in `family` (renderer pass 2 A6.4,
@@ -879,7 +881,7 @@ fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<()
         Upload::Skinned(data) => renderer.add_skinned_mesh(gpu, data).map(drop),
         Upload::SkinnedModel(model) => renderer.add_skinned_model(gpu, model).map(drop),
         Upload::Texture(data, kind) => renderer.add_texture(gpu, data, *kind).map(drop),
-        Upload::TextureFrom(source, kind) => renderer.add_texture(gpu, &source()?, *kind).map(drop),
+        Upload::TextureFrom(source, kind) => renderer.add_texture(gpu, &capped_source(&source()?, *kind), *kind).map(drop),
         Upload::Compressed(texture, kind) => renderer.add_compressed_texture(gpu, texture, *kind).map(drop),
         Upload::CompressedFrom(source, kind) => renderer.add_compressed_texture(gpu, &source()?, *kind).map(drop),
         Upload::Material(kept) => renderer.add_material_api(gpu, kept.api, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),

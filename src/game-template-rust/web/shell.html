@@ -562,8 +562,8 @@
       const STREAM_HANDOFF_BYTES = 8 * 1024 * 1024;
       /** The WebGPU features of the compressed texture families, in the order the plan is told them. */
       const TEXTURE_FEATURES = ["texture-compression-bc", "texture-compression-astc", "texture-compression-etc2"];
-      /** A screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
-      const MOBILE_SHORT_SIDE_CSS_PX = 900;
+      /** A touch screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
+      const MOBILE_SHORT_SIDE_CSS_PX = 600;
       /** Why an asset stopped the boot (the module's own refusals keep their codes). Wire values. */
       const AssetFailure = {
         FetchFailed: "asset-fetch-failed",
@@ -695,12 +695,14 @@
 
       /**
        * Whether the hints say phone or tablet (genex-render's WebHints::is_mobile): a mobile user
-       * agent, touch with a coarse pointer, or a short screen side of at most MOBILE_SHORT_SIDE_CSS_PX.
+       * agent, touch with a coarse pointer, or a touch screen whose short side is at most
+       * MOBILE_SHORT_SIDE_CSS_PX. A screen without touch is a desktop's at any size.
        */
       function isMobile(hints) {
-        const coarseTouch = hints.maxTouchPoints > 0 && hints.coarsePointer;
-        const smallScreen = hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
-        return hints.uaMobile === true || coarseTouch || smallScreen;
+        const touch = hints.maxTouchPoints > 0;
+        const coarseTouch = touch && hints.coarsePointer;
+        const smallTouchScreen = touch && hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
+        return hints.uaMobile === true || coarseTouch || smallTouchScreen;
       }
 
       /** One element with its text (never markup) and attributes. */

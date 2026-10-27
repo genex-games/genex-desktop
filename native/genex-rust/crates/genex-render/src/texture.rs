@@ -167,6 +167,22 @@ impl TextureData {
     }
 }
 
+/// The longest side a texture source is kept at once decoded: the largest size class
+/// (`layout::TEXTURE_SIZE_CLASSES`), since no array stores more. Bodycam B1: a 4K map was kept
+/// whole for device-loss replay, 64 MiB of a browser's heap per map.
+pub const SOURCE_TEXTURE_MAX_SIDE: u32 = TextureClass::S2048.side();
+
+/// `texture` with its longer side held to [`SOURCE_TEXTURE_MAX_SIDE`] (aspect kept, filtered as
+/// `kind` says); borrowed untouched when it already fits, so its texels are the same bits.
+pub fn capped_source(texture: &TextureData, kind: TextureKind) -> std::borrow::Cow<'_, TextureData> {
+    let side = texture.width.max(texture.height);
+    if side <= SOURCE_TEXTURE_MAX_SIDE {
+        return std::borrow::Cow::Borrowed(texture);
+    }
+    let shrink = |px: u32| ((u64::from(px) * u64::from(SOURCE_TEXTURE_MAX_SIDE) / u64::from(side)) as u32).max(1);
+    std::borrow::Cow::Owned(resample(texture, shrink(texture.width), shrink(texture.height), kind))
+}
+
 /// Mip levels of a `px`-sided square down to one texel.
 pub fn mip_level_count(px: u32) -> u32 {
     px.max(1).ilog2() + 1
