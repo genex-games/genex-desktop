@@ -666,12 +666,12 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
 
   it("never fails a build on a style or complexity lint, while the store's determinism bans stay errors (B6: bodycam's collapsible_if)", async () => {
     // Bodycam's game tripped these four, each a hard error under `-D warnings` alone.
-    const styleHits = [
+    const styleHits: LintHit[] = [
       { lint: "collapsible_if", group: "style", level: "W" },
       { lint: "manual_is_multiple_of", group: "complexity", level: "W" },
       { lint: "approx_constant", group: "correctness", level: "D" },
     ];
-    const bans = [{ lint: "disallowed_methods", group: "style", level: "W" }];
+    const bans: LintHit[] = [{ lint: "disallowed_methods", group: "style", level: "W" }];
     for (const [name, hits, failsOn] of [
       ["style", styleHits, null],
       ["bans", [...styleHits, ...bans], "clippy::disallowed_methods"],
