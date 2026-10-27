@@ -266,6 +266,7 @@ impl Physics {
             v: [at(7), at(8), at(9)],
             w: [at(10), at(11), at(12)],
             sleeping: false,
+            rest: None,
         };
         self.world.import_body_state(key, &state)
     }

@@ -106,7 +106,7 @@ fn import_then_export_round_trips_every_bit_awake_or_asleep() {
 #[test]
 fn an_imported_sleeping_body_stays_put_and_an_awake_one_moves_on() {
     let mut w = scene(UpAxis::Y);
-    let hover = NetBodyState { p: [0.0, 5.0, 0.0], q: [0.0, 0.0, 0.0, 1.0], v: [1.0, 0.0, 0.0], w: [0.0; 3], sleeping: true };
+    let hover = NetBodyState { p: [0.0, 5.0, 0.0], q: [0.0, 0.0, 0.0, 1.0], v: [1.0, 0.0, 0.0], w: [0.0; 3], sleeping: true, rest: None };
     w.import_body_state("ball", &hover).expect("imports");
     assert!(w.body("ball").expect("there").sleeping);
     for _ in 0..5 {
@@ -142,7 +142,7 @@ fn an_import_puts_an_escaped_body_back_into_the_simulation() {
     w.spawn(&far).expect("rocket");
     let escaped = w.step().expect("steps").escaped;
     assert_eq!(escaped, ["rocket"]);
-    let back = NetBodyState { p: [3.0, 3.0, 0.0], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false };
+    let back = NetBodyState { p: [3.0, 3.0, 0.0], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false, rest: None };
     w.import_body_state("rocket", &back).expect("imports");
     w.step().expect("steps");
     let state = w.body("rocket").expect("there");
@@ -150,7 +150,7 @@ fn an_import_puts_an_escaped_body_back_into_the_simulation() {
 }
 
 fn hostile_imports() -> Vec<(&'static str, &'static str, NetBodyState, PhysicsError)> {
-    let fine = NetBodyState { p: [0.0, 1.0, 0.0], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false };
+    let fine = NetBodyState { p: [0.0, 1.0, 0.0], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false, rest: None };
     vec![
         ("a malformed key", "bad key", fine, PhysicsError::InvalidKey),
         ("a refused name", "__proto__", fine, PhysicsError::InvalidKey),
@@ -237,7 +237,7 @@ fn changed_since_the_largest_tick_lists_nothing_and_never_fails_the_world() {
 fn an_import_renormalises_a_coarsely_quantized_rotation() {
     let mut w = scene(UpAxis::Y);
     w.step().expect("steps");
-    let coarse = NetBodyState { p: [0.0, 1.0, 0.0], q: [0.0, 0.0, 0.6, 0.6], v: [0.0; 3], w: [0.0; 3], sleeping: false };
+    let coarse = NetBodyState { p: [0.0, 1.0, 0.0], q: [0.0, 0.0, 0.6, 0.6], v: [0.0; 3], w: [0.0; 3], sleeping: false, rest: None };
     w.import_body_state("ball", &coarse).expect("a quantized rotation is a correction (§9.2)");
     let q = w.export_body_state("ball").expect("there").q;
     let norm = q.iter().map(|c| c * c).sum::<f64>().sqrt();

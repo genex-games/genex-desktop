@@ -2,8 +2,10 @@
 //! events (§8.1), escaped bodies (§8.2), change marks (§9.1), memory after the step (§11.1) and a
 //! fresh query quota (§13).
 
+use std::collections::BTreeSet;
+
 use super::events::StepEvents;
-use super::{Core, net_state};
+use super::{Core, PairName, net_state};
 use crate::axes::{quat_in, quat_out, vec_in, vec_out};
 use crate::backend::{Backend, RawBodyState};
 use crate::kinematic::{RawPose, pose_at, velocity_between};
@@ -26,14 +28,18 @@ impl<B: Backend> Core<B> {
         let substeps = self.desc.substeps;
         let mut non_finite = Vec::new();
         let mut events = StepEvents::new();
+        let mut carried = std::mem::take(&mut self.carried);
         for k in 1..=substeps {
             self.drive_moves(&moves, k);
+            let awake_before = self.awake_in(&carried);
             let inner = self.backend.step();
-            events.add(self, k, &inner.events);
+            events.add(self, k, &inner.events, &mut carried);
+            self.end_carried(&mut carried, &awake_before, k, &mut events);
             events.add_impulses(&self.backend);
             non_finite.extend(inner.non_finite);
             self.place_moves(&moves, k);
         }
+        self.carried = carried;
         self.tick += 1;
         self.queries_this_step = 0;
         let escaped = self.freeze_escaped(&starts, &non_finite);
@@ -43,6 +49,35 @@ impl<B: Backend> Core<B> {
         let memory_exceeded = self.ledger.model_bytes() > u64::from(self.desc.limits.memory_bytes);
         let (events, overflowed) = events.finish(self.desc.limits.events_per_step as usize);
         StepResult { tick: self.tick, events, overflowed, escaped, memory_exceeded }
+    }
+
+    /// The bodies of `carried` pairs that are awake (simulated and not asleep), by key.
+    fn awake_in(&self, carried: &BTreeSet<PairName>) -> BTreeSet<String> {
+        let mut awake = BTreeSet::new();
+        for (body, _) in carried.iter().flat_map(|pair| pair.sides.iter()) {
+            let Some(entry) = self.bodies.get(body) else { continue };
+            let simulated = entry.body_type != BodyType::Fixed && !entry.escaped;
+            if simulated && !self.backend.state(entry.handle).sleeping {
+                awake.insert(body.clone());
+            }
+        }
+        awake
+    }
+
+    /// Ends every carried pair with a side that was awake when inner step `k` began but that the
+    /// backend did not find touching in it: it would have reported that pair had it known it.
+    /// A pair whose bodies were all asleep (or fixed) stays carried, as a sleeping pair stays.
+    fn end_carried(&self, carried: &mut BTreeSet<PairName>, awake: &BTreeSet<String>, k: u32, events: &mut StepEvents<B::Pair>) {
+        if carried.is_empty() {
+            return;
+        }
+        let apart: Vec<PairName> = carried.iter().filter(|pair| pair.sides.iter().any(|(body, _)| awake.contains(body))).cloned().collect();
+        for pair in apart {
+            carried.remove(&pair);
+            if let Some(event) = self.carried_end(&pair) {
+                events.add_end(k, event);
+            }
+        }
     }
 
     /// Takes every kinematic target set for this step; a kinematic body without one is stopped,

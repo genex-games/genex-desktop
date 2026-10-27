@@ -16,6 +16,13 @@ const PLAIN_EXPONENT_MIN: i32 = -6;
 pub(crate) enum Canon {
     /// A number the core holds as f32.
     Num(f32),
+    /// A number the core holds as f32, its sign kept: −0 is written `-0` (a descriptor's canonical
+    /// form, §20.5, where the sign of a zero can reach the simulation through the z-up mapping).
+    Signed(f32),
+    /// `true` or `false`.
+    Bool(bool),
+    /// `null`.
+    Null,
     /// A string.
     Str(String),
     /// An array, in order.
@@ -45,6 +52,10 @@ impl Canon {
     fn write_into(&self, out: &mut String) {
         match self {
             Canon::Num(value) => out.push_str(&es_number(*value)),
+            Canon::Signed(value) if *value == 0.0 && value.is_sign_negative() => out.push_str("-0"),
+            Canon::Signed(value) => out.push_str(&es_number(*value)),
+            Canon::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Canon::Null => out.push_str("null"),
             Canon::Str(text) => write_string(text, out),
             Canon::Arr(items) => write_array(items, out),
             Canon::Obj(members) => write_object(members, out),

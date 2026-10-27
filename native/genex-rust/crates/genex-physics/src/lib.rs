@@ -132,6 +132,7 @@ mod build_id;
 mod canon;
 pub mod command;
 mod core;
+mod desc_canon;
 pub mod error;
 mod hash;
 mod hull;
@@ -150,6 +151,7 @@ pub mod state;
 pub mod static_world;
 pub mod types;
 mod world;
+pub mod wire;
 pub mod world_desc;
 
 pub use body::{BodyDesc, ColliderDesc, Groups, Shape};
@@ -162,7 +164,11 @@ pub use joint::{JointDesc, JointType, Motor};
 pub use limits::Limits;
 pub use snapshot::{SNAPSHOT_CONTRACT, SNAPSHOT_MAGIC};
 pub use query::{EXCLUDE_BODIES_MAX, Hit, Query, QueryAnswer, QueryFilter, QueryOutcome};
-pub use state::{BodyFilter, BodyState, ChangedExport, EXPORT_STRIDE, NetBodyState, PhysicsEvent, Stats, StepResult};
+pub use state::{
+    BodyFilter, BodyState, CanonicalizeOptions, ChangedExport, EXPORT_STRIDE, EXPORT_STRIDE_REST, NetBodyState, PhysicsEvent, Stats,
+    StepResult,
+};
+pub use wire::WIRE_STRIDE;
 pub use static_world::StaticWorld;
 pub use types::{Axis, BodyType, Pose, QUAT_IDENTITY, Quat, UpAxis, Vec3};
 pub use world::World;

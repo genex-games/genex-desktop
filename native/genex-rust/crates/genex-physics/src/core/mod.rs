@@ -6,6 +6,7 @@
 //! [`ops::Op`] that cannot fail, and `commit` records it in the ledger and applies it. An atomic
 //! batch checks every command on a copy of the ledger before committing any (`commands.rs`).
 
+mod canonical;
 mod commands;
 mod events;
 mod ops;
@@ -14,7 +15,7 @@ mod reads;
 mod snapshot;
 mod step;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +77,31 @@ struct Entry<H> {
     changed_mark: u64,
 }
 
+/// A colliding pair by name: each side's (body key, collider key), the lower first, and whether
+/// each side is a sensor. A canonical rebuild (1.1 draft) starts the backend with no pairs, so the
+/// core carries the pairs that were touching across it (`Core::carried`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) struct PairName {
+    pub sides: [(String, String); 2],
+    pub sensors: [bool; 2],
+}
+
+impl PairName {
+    /// The pair of two named sides, the lower (body, collider) first.
+    pub(crate) fn of(first: (&str, &str), second: (&str, &str), sensors: [bool; 2]) -> Self {
+        let own = |side: (&str, &str)| (side.0.to_string(), side.1.to_string());
+        match first <= second {
+            true => Self { sides: [own(first), own(second)], sensors },
+            false => Self { sides: [own(second), own(first)], sensors: [sensors[1], sensors[0]] },
+        }
+    }
+
+    /// Whether either side is on body `key`.
+    pub(crate) fn names_body(&self, key: &str) -> bool {
+        self.sides.iter().any(|(body, _)| body == key)
+    }
+}
+
 /// What the neutral layer keeps per joint.
 #[derive(Serialize, Deserialize)]
 struct JointEntry<J> {
@@ -107,6 +133,11 @@ pub(crate) struct Core<B: Backend> {
     /// Contact pairs the backend held at the end of the last step.
     contact_pairs: usize,
     tick: u64,
+    /// Pairs that were touching (or intersecting) when the world was last canonicalized and that
+    /// the backend has not reported touching since (1.1 draft): a begin for one is not reported
+    /// again, and one that is found apart is ended. Empty unless `canonicalize` ran, so a 1.0
+    /// world's steps and snapshots are exactly 1.0's.
+    carried: BTreeSet<PairName>,
 }
 
 impl<B: Backend> Core<B> {
@@ -127,6 +158,7 @@ impl<B: Backend> Core<B> {
             queries_this_step: 0,
             contact_pairs: 0,
             tick: 0,
+            carried: BTreeSet::new(),
         }
     }
 

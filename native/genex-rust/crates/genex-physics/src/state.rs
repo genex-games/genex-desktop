@@ -133,10 +133,16 @@ pub struct NetBodyState {
     pub w: Vec3,
     /// Asleep.
     pub sleeping: bool,
+    /// The sleep timer (contract 1.1 draft, §20.3): how long, in seconds, the body has been still
+    /// enough to sleep. An export always gives it; an import without it (`None`) leaves the timer
+    /// as waking or sleeping the body leaves it, exactly as 1.0 does.
+    pub rest: Option<f64>,
 }
 
 /// The numbers per body in [`ChangedExport::data`]: p(3), q(4), v(3), w(3), sleeping(1).
 pub const EXPORT_STRIDE: usize = 14;
+/// The numbers per body in an export or import with the sleep timer (§20.3): the 14, then rest.
+pub const EXPORT_STRIDE_REST: usize = 15;
 
 /// Where `sleeping` sits in one body's [`EXPORT_STRIDE`] numbers.
 const SLEEPING_SLOT: usize = EXPORT_STRIDE - 1;
@@ -163,8 +169,26 @@ impl NetBodyState {
             v: [v(7), v(8), v(9)],
             w: [v(10), v(11), v(12)],
             sleeping,
+            rest: None,
         })
     }
+
+    /// One body's numbers in the layout with the sleep timer (§20.3): the first
+    /// [`EXPORT_STRIDE_REST`] of `values`, as [`NetBodyState::from_flat`] reads the first 14, then
+    /// the timer.
+    pub fn from_flat_rest(values: &[f32]) -> Result<NetBodyState, PhysicsFailure> {
+        let Some(rest) = values.get(EXPORT_STRIDE) else {
+            return fail(PhysicsError::BadCommand, "a network state with its timer is 15 numbers");
+        };
+        Ok(NetBodyState { rest: Some(f64::from(*rest)), ..Self::from_flat(values)? })
+    }
+}
+
+/// What `canonicalize` does besides the rebuild (contract 1.1 draft, §20.1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CanonicalizeOptions {
+    /// Snap every simulated body onto its wire row first (§20.2).
+    pub quantize: bool,
 }
 
 /// The flat per-tick read (§9.1): [`EXPORT_STRIDE`] numbers per body, in `keys` order.

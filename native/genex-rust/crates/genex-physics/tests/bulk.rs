@@ -49,6 +49,7 @@ fn state_at(data: &[f32], index: usize) -> NetBodyState {
         v: [v(7), v(8), v(9)],
         w: [v(10), v(11), v(12)],
         sleeping: data[index * EXPORT_STRIDE + 13] == 1.0,
+        rest: None,
     }
 }
 
@@ -103,7 +104,7 @@ fn an_export_imported_in_bulk_reads_back_exactly_but_the_rotation_renormalised_a
 fn a_duplicate_key_is_imported_twice_in_order_as_two_calls_are() {
     let mut each = stepped(UpAxis::Y, TARGET_TICKS);
     let mut bulk = stepped(UpAxis::Y, TARGET_TICKS);
-    let first = NetBodyState { p: [1.0, 4.0, 1.0], q: [0.0, 0.0, 0.0, 1.0], v: [2.0, 0.0, 0.0], w: [0.0; 3], sleeping: false };
+    let first = NetBodyState { p: [1.0, 4.0, 1.0], q: [0.0, 0.0, 0.0, 1.0], v: [2.0, 0.0, 0.0], w: [0.0; 3], sleeping: false, rest: None };
     let second = NetBodyState { p: [-1.0, 3.0, 2.0], sleeping: true, ..first };
     each.import_body_state("bob", &first).expect("imports");
     each.import_body_state("bob", &second).expect("imports");
@@ -111,7 +112,8 @@ fn a_duplicate_key_is_imported_twice_in_order_as_two_calls_are() {
     let data: Vec<f32> = [first, second].iter().flat_map(flat).collect();
     bulk.import_states(&keys, &data).expect("imports");
     assert_eq!(bulk.state_hash(), each.state_hash());
-    assert_eq!(bulk.export_body_state("bob"), Some(second), "the last one wins");
+    let without_timer = bulk.export_body_state("bob").map(|net| NetBodyState { rest: None, ..net });
+    assert_eq!(without_timer, Some(second), "the last one wins");
 }
 
 fn flat(state: &NetBodyState) -> Vec<f32> {
@@ -146,7 +148,7 @@ fn hostile_bulk_imports() -> Vec<(&'static str, Spoil, PhysicsError, Option<usiz
 
 #[test]
 fn hostile_bulk_imports_are_refused_whole_with_their_index_and_change_nothing() {
-    let moved = NetBodyState { p: [2.0, 5.0, 2.0], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false };
+    let moved = NetBodyState { p: [2.0, 5.0, 2.0], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false, rest: None };
     for (name, spoil, code, index) in hostile_bulk_imports() {
         let mut w = stepped(UpAxis::Y, TARGET_TICKS);
         let mut keys = vec!["slide".to_string(), "bob".to_string()];

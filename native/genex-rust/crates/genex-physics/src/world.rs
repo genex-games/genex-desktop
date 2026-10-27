@@ -34,7 +34,7 @@ use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::hash::hex16;
 use crate::joint::{JointDesc, Motor};
 use crate::query::{Hit, Query, QueryAnswer, QueryFilter, QueryOutcome};
-use crate::state::{BodyFilter, BodyState, ChangedExport, NetBodyState, Stats, StepResult};
+use crate::state::{BodyFilter, BodyState, CanonicalizeOptions, ChangedExport, NetBodyState, Stats, StepResult};
 use crate::static_world::StaticWorld;
 use crate::types::{Pose, Vec3};
 use crate::world_desc::{ResolvedWorldDesc, WorldDesc};
@@ -325,6 +325,67 @@ impl World {
         self.call(|core| core.import_states(keys, data))
     }
 
+    /// Puts the world into its canonical state (contract 1.1 draft, §20.1): the backend rebuilt in
+    /// key order from each body's state and parameters alone, with no contact manifolds,
+    /// warm-start impulses or islands, so a world that holds the same bodies with the same states
+    /// (spawned from the same descriptors, then imported) and canonicalizes steps on bit for bit
+    /// with this one. With `quantize`, every simulated body is first snapped onto its wire row
+    /// (§20.2) exactly as [`World::import_wire`] would set it. Pairs touching across it are carried,
+    /// so their begins are not reported again. Fails only with `internal` (§11.3).
+    pub fn canonicalize(&mut self, options: CanonicalizeOptions) -> Result<(), PhysicsFailure> {
+        self.call(|core| core.canonicalize(options.quantize))
+    }
+
+    /// Imports wire rows (§20.2): `data` holds [`crate::wire::WIRE_STRIDE`] numbers per key,
+    /// p(3) as float32, q(4), lv(3) and av(3) as 16-bit integers, sleep (0 or 1) and rest in whole
+    /// inner steps, decoded as a client decodes them. All or none, as [`World::import_states`]; a
+    /// fixed body takes the pose only.
+    pub fn import_wire<K: AsRef<str>>(&mut self, keys: &[K], data: &[f32]) -> Result<(), PhysicsFailure> {
+        self.call(|core| core.import_wire(keys, data))
+    }
+
+    /// [`World::export_changed`] with the sleep timer (§20.3): 15 numbers per body, and every awake
+    /// body listed besides the changed ones.
+    pub fn export_changed_rest(&self, since_tick: u64) -> ChangedExport {
+        let empty = ChangedExport { keys: Vec::new(), data: Vec::new() };
+        self.read(empty, |core| core.export_changed_rest(since_tick))
+    }
+
+    /// [`World::import_states`] with the sleep timer (§20.3): 15 numbers per key.
+    pub fn import_states_rest<K: AsRef<str>>(&mut self, keys: &[K], data: &[f32]) -> Result<(), PhysicsFailure> {
+        self.call(|core| core.import_states_rest(keys, data))
+    }
+
+    /// A body descriptor's canonical form (§20.5), or the refusal `spawn` gives it on its own.
+    pub fn body_desc_canonical(&self, desc: &BodyDesc) -> Result<String, PhysicsFailure> {
+        self.check()?;
+        let world = self.core.desc();
+        crate::desc_canon::body_desc_canonical(desc, world.up_axis, &world.limits)
+    }
+
+    /// [`World::body_desc_canonical`] of a descriptor in its JSON form (`BadCommand` if malformed).
+    pub fn body_desc_canonical_json(&self, desc: &Value) -> Result<String, PhysicsFailure> {
+        match Command::from_json(&serde_json::json!({ "spawn": desc }))? {
+            Command::Spawn(desc) => self.body_desc_canonical(&desc),
+            _ => fail(PhysicsError::BadCommand, "a body descriptor"),
+        }
+    }
+
+    /// A joint descriptor's canonical form (§20.5), or the refusal `addJoint` gives it on its own.
+    pub fn joint_desc_canonical(&self, desc: &JointDesc) -> Result<String, PhysicsFailure> {
+        self.check()?;
+        let world = self.core.desc();
+        crate::desc_canon::joint_desc_canonical(desc, world.up_axis, &world.limits)
+    }
+
+    /// [`World::joint_desc_canonical`] of a descriptor in its JSON form (`BadCommand` if malformed).
+    pub fn joint_desc_canonical_json(&self, desc: &Value) -> Result<String, PhysicsFailure> {
+        match Command::from_json(&serde_json::json!({ "addJoint": desc }))? {
+            Command::AddJoint(desc) => self.joint_desc_canonical(&desc),
+            _ => fail(PhysicsError::BadCommand, "a joint descriptor"),
+        }
+    }
+
     /// The world's counters (§11); `memoryBytes` as [`World::memory_bytes`] reports it.
     pub fn stats(&self) -> Stats {
         let mut stats = self.read(Stats::default(), |core| core.stats(self.step_ms));
@@ -463,7 +524,7 @@ mod tests {
 
         assert!(is_internal(fail_inside(&mut world)), "the panic is caught and reported as internal");
         assert!(is_internal(world.check()));
-        let net = NetBodyState { p: [0.0; 3], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false };
+        let net = NetBodyState { p: [0.0; 3], q: [0.0, 0.0, 0.0, 1.0], v: [0.0; 3], w: [0.0; 3], sleeping: false, rest: None };
         let filter = QueryFilter::default();
         assert!(is_internal(world.spawn(&crate_at("b", 4.0))));
         assert!(is_internal(world.remove("a")));
@@ -487,6 +548,11 @@ mod tests {
         assert!(is_internal(world.query_many_json(&serde_json::json!("not a list"))), "internal before parsing");
         assert!(is_internal(world.query_many(&[])));
         assert!(is_internal(world.import_states(&["a"], &[0.0; 14])));
+        assert!(is_internal(world.canonicalize(CanonicalizeOptions::default())));
+        assert!(is_internal(world.import_wire(&["a"], &[0.0; 15])));
+        assert!(is_internal(world.import_states_rest(&["a"], &[0.0; 15])));
+        assert!(world.export_changed_rest(0).keys.is_empty());
+        assert!(is_internal(world.body_desc_canonical(&crate_at("b", 1.0))));
         assert_eq!(world.tick(), 0, "tick is a read with no error channel");
     }
 

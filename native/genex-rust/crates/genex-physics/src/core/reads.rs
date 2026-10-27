@@ -7,8 +7,8 @@ use crate::backend::{Backend, BodyEdit};
 use crate::body::{bounded_speed, position};
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::key::check_key;
-use crate::num::{any_quat, out_quat, out_vec};
-use crate::state::{ChangedExport, EXPORT_STRIDE, NetBodyState, Stats};
+use crate::num::{any_quat, exact_quat, non_negative, out_quat, out_vec};
+use crate::state::{ChangedExport, EXPORT_STRIDE, EXPORT_STRIDE_REST, NetBodyState, Stats};
 use crate::types::BodyType;
 
 /// The flat numbers of one body: p(3), q(4), v(3), w(3), sleeping as 0 or 1 (§9.1).
@@ -35,11 +35,44 @@ impl<B: Backend> Core<B> {
         export
     }
 
-    /// A body's replicated fields, or `None` (§9.2).
+    /// A body's sleep timer (§20.3): the backend's, or 0 for a fixed or escaped body, which is
+    /// not simulated.
+    pub(super) fn rest_of(&self, handle: B::Body, body_type: BodyType, escaped: bool) -> f32 {
+        match escaped || body_type == BodyType::Fixed {
+            true => 0.0,
+            false => self.backend.state(handle).rest,
+        }
+    }
+
+    /// The bodies changed after `since_tick`, and every awake body (whose timer moves while its
+    /// other fields may not), flat with the sleep timer: 15 numbers each, in key order (§20.3).
+    pub(crate) fn export_changed_rest(&self, since_tick: u64) -> ChangedExport {
+        let mut export = ChangedExport::default();
+        for (key, entry) in &self.bodies {
+            let net = self.net_state(entry.handle, entry.body_type, entry.escaped);
+            if !(changed_after(entry.changed_mark, since_tick) || !net.sleeping) {
+                continue;
+            }
+            export.keys.push(key.clone());
+            export.data.extend_from_slice(&flat(&net));
+            export.data.push(self.rest_of(entry.handle, entry.body_type, entry.escaped));
+        }
+        export
+    }
+
+    /// A body's replicated fields and its sleep timer, or `None` (§9.2, §20.3).
     pub(crate) fn export_body_state(&self, key: &str) -> Option<NetBodyState> {
         let entry = self.bodies.get(key)?;
         let net = self.net_state(entry.handle, entry.body_type, entry.escaped);
-        Some(NetBodyState { p: out_vec(net.p), q: out_quat(net.q), v: out_vec(net.v), w: out_vec(net.w), sleeping: net.sleeping })
+        let rest = self.rest_of(entry.handle, entry.body_type, entry.escaped);
+        Some(NetBodyState {
+            p: out_vec(net.p),
+            q: out_quat(net.q),
+            v: out_vec(net.v),
+            w: out_vec(net.w),
+            sleeping: net.sleeping,
+            rest: Some(f64::from(rest)),
+        })
     }
 
     /// Sets a dynamic or kinematic body's replicated fields and sleep state (§9.2), with the
@@ -58,13 +91,27 @@ impl<B: Backend> Core<B> {
     /// and no ledger fact), so when all pass the world ends exactly as one import per key in order
     /// leaves it, a key named twice included (the later wins).
     pub(crate) fn import_states<K: AsRef<str>>(&mut self, keys: &[K], data: &[f32]) -> Result<(), PhysicsFailure> {
-        if keys.len().checked_mul(EXPORT_STRIDE) != Some(data.len()) {
-            return fail(PhysicsError::BadCommand, "data holds 14 numbers per key");
+        self.import_flat::<K, EXPORT_STRIDE>(keys, data, NetBodyState::from_flat)
+    }
+
+    /// `importStates` in the layout with the sleep timer, 15 numbers per key (§20.3).
+    pub(crate) fn import_states_rest<K: AsRef<str>>(&mut self, keys: &[K], data: &[f32]) -> Result<(), PhysicsFailure> {
+        self.import_flat::<K, EXPORT_STRIDE_REST>(keys, data, NetBodyState::from_flat_rest)
+    }
+
+    fn import_flat<K: AsRef<str>, const N: usize>(
+        &mut self,
+        keys: &[K],
+        data: &[f32],
+        read: fn(&[f32]) -> Result<NetBodyState, PhysicsFailure>,
+    ) -> Result<(), PhysicsFailure> {
+        if keys.len().checked_mul(N) != Some(data.len()) {
+            return fail(PhysicsError::BadCommand, format!("data holds {N} numbers per key"));
         }
         let mut edits = Vec::with_capacity(keys.len());
-        for (index, (key, values)) in keys.iter().zip(data.as_chunks::<EXPORT_STRIDE>().0).enumerate() {
+        for (index, (key, values)) in keys.iter().zip(data.as_chunks::<N>().0).enumerate() {
             let key = key.as_ref();
-            let state = NetBodyState::from_flat(values).map_err(|failure| failure.at(index))?;
+            let state = read(values).map_err(|failure| failure.at(index))?;
             let edit = self.check_import(key, &state).map_err(|failure| failure.at(index))?;
             edits.push((key, edit));
         }
@@ -75,13 +122,17 @@ impl<B: Backend> Core<B> {
     }
 
     /// Judges one import (§9.2) and returns its edit; changes nothing.
-    fn check_import(&self, key: &str, state: &NetBodyState) -> Result<BodyEdit, PhysicsFailure> {
+    pub(super) fn check_import(&self, key: &str, state: &NetBodyState) -> Result<BodyEdit, PhysicsFailure> {
         check_key(key)?;
         let limits = self.desc.limits;
         let p = position(state.p, "p", &limits)?;
-        let q = any_quat(state.q, "q")?;
+        let q = match state.rest {
+            Some(_) => exact_quat(state.q, "q")?,
+            None => any_quat(state.q, "q")?,
+        };
         let v = bounded_speed(state.v, "v", limits.max_speed)?;
         let w = bounded_speed(state.w, "w", limits.max_angular_speed)?;
+        let rest = state.rest.map(|rest| non_negative(rest, "rest")).transpose()?;
         self.ledger.body_of_type(key, &[BodyType::Dynamic, BodyType::Kinematic])?;
         let up = self.desc.up_axis;
         Ok(BodyEdit::Import {
@@ -90,6 +141,7 @@ impl<B: Backend> Core<B> {
             linvel: vec_in(up, v),
             angvel: vec_in(up, w),
             sleeping: state.sleeping,
+            rest,
         })
     }
 

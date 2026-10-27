@@ -95,6 +95,8 @@ pub(crate) struct RawBodyState {
     pub linvel: [f32; 3],
     pub angvel: [f32; 3],
     pub sleeping: bool,
+    /// The sleep timer: how long the body has been still enough to sleep, in seconds (1.1 draft).
+    pub rest: f32,
 }
 
 /// Why a backend refused a body the neutral layer accepted.
@@ -117,8 +119,9 @@ pub(crate) enum BodyEdit {
     Wake,
     /// Puts the body to sleep, its velocities zero.
     Sleep,
-    /// Sets pose and velocities as given, then wakes or sleeps the body (§9.2).
-    Import { translation: [f32; 3], rotation: [f32; 4], linvel: [f32; 3], angvel: [f32; 3], sleeping: bool },
+    /// Sets pose and velocities as given, then wakes or sleeps the body (§9.2), then sets its sleep
+    /// timer when one is given (1.1 draft); without one the timer is what waking or sleeping left.
+    Import { translation: [f32; 3], rotation: [f32; 4], linvel: [f32; 3], angvel: [f32; 3], sleeping: bool, rest: Option<f32> },
 }
 
 /// A collider as the core names it: the body's tag (given at `insert`) and the collider's index in
@@ -163,6 +166,19 @@ pub(crate) struct InnerStep<B, P> {
     /// Contact and trigger events, in no particular order.
     pub events: Vec<RawEvent<P>>,
 }
+
+/// A pair of colliders the backend holds as touching (a contact pair with an active contact) or
+/// intersecting (a sensor pair), where either collider reports events (§6.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RawPair {
+    pub first: ColliderId,
+    pub second: ColliderId,
+    /// Whether `first` (`second`) is a sensor.
+    pub sensors: [bool; 2],
+}
+
+/// A joint a rebuild adds: its `a` body, its `b` body (or the world), and its spec.
+pub(crate) type RebuiltJoint<'a, B> = (B, Option<B>, &'a JointSpec);
 
 /// Which colliders a query sees, in the backend's terms.
 #[derive(Clone, Debug, PartialEq)]
@@ -256,6 +272,19 @@ pub(crate) trait Backend: Sized {
     fn set_motor(&mut self, joint: Self::Joint, spec: &JointSpec);
     /// The number of contact pairs the backend holds, for memory accounting.
     fn contact_pairs(&self) -> usize;
+    /// Every pair that touches now and reports events (§6.2), in no particular order.
+    fn touching(&self) -> Vec<RawPair>;
+    /// Rebuilds the backend's world from scratch in a canonical order (1.1 draft `canonicalize`):
+    /// its own bodies, then the static pieces tagged `static_tags` (in that order), then `bodies`
+    /// (in that order), each with its current state and parameters and none of its history (no
+    /// contact manifolds, warm-start impulses, islands or broad-phase tree), then `joints` in that
+    /// order. Returns the bodies' and joints' new handles, in the order given.
+    fn rebuild(
+        &mut self,
+        static_tags: &[u64],
+        bodies: &[Self::Body],
+        joints: &[RebuiltJoint<'_, Self::Body>],
+    ) -> (Vec<Self::Body>, Vec<Self::Joint>);
     /// Every collider `filter` passes that a ray (unit `dir`) reaches within `max_dist`, as the
     /// world stands now (commands since the last inner step included).
     fn ray(&self, origin: [f32; 3], dir: [f32; 3], max_dist: f32, filter: &RawQueryFilter) -> Vec<RawHit>;

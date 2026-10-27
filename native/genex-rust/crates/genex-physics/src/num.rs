@@ -85,6 +85,24 @@ pub(crate) fn any_quat(q: Quat, what: &str) -> Result<[f32; 4], PhysicsFailure> 
     Ok([x / norm, y / norm, z / norm, w / norm])
 }
 
+/// How far an f32 rotation's length may lie from 1 and still be taken as it is by an import that
+/// carries the sleep timer (1.1 draft, §20.3): four f32 epsilons, which a rotation the backend
+/// normalised always meets, and a wire-quantized one never does.
+pub(crate) const UNIT_EXACT_TOLERANCE: f32 = 4.0 * f32::EPSILON;
+
+/// A rotation an import with the sleep timer sets (§20.3): rounded to f32, then taken bit for bit
+/// when it is already unit to f32 precision, so a world's own export imports exactly; otherwise
+/// renormalised as [`any_quat`] does.
+pub(crate) fn exact_quat(q: Quat, what: &str) -> Result<[f32; 4], PhysicsFailure> {
+    let rounded = [finite(q[0], what)?, finite(q[1], what)?, finite(q[2], what)?, finite(q[3], what)?];
+    let [x, y, z, w] = rounded;
+    let norm = (x * x + y * y + z * z + w * w).sqrt();
+    if (norm - 1.0).abs() <= UNIT_EXACT_TOLERANCE {
+        return Ok(rounded);
+    }
+    any_quat(q, what)
+}
+
 /// The squared length of a vector, in f64 (each f32 square is exact there).
 pub(crate) fn length_squared(v: [f32; 3]) -> f64 {
     v.iter().map(|c| f64::from(*c) * f64::from(*c)).sum()

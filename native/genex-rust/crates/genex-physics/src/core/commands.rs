@@ -100,6 +100,7 @@ impl<B: Backend> Core<B> {
             self.backend.remove(entry.handle);
             self.names.remove(&entry.tag);
         }
+        self.carried.retain(|pair| !pair.names_body(key));
     }
 
     fn insert_joint(&mut self, valid: ValidJoint) {

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize, Serializer};
 
-use super::{Core, Entry, JointEntry, step_params};
+use super::{Core, Entry, JointEntry, PairName, step_params};
 use crate::backend::Backend;
 use crate::build_id::build_id;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
@@ -92,7 +92,12 @@ impl<B: Backend> Core<B> {
             ledger: &self.ledger,
             backend: Bytes(&backend),
         };
-        let payload = postcard::to_allocvec(&image).map_err(|_| internal("the snapshot could not be written"))?;
+        let mut payload = postcard::to_allocvec(&image).map_err(|_| internal("the snapshot could not be written"))?;
+        if !self.carried.is_empty() {
+            let carried: Vec<&PairName> = self.carried.iter().collect();
+            let extension = postcard::to_allocvec(&carried).map_err(|_| internal("the snapshot could not be written"))?;
+            payload.extend_from_slice(&extension);
+        }
         Ok(seal(&build_id(), self.tick, &payload))
     }
 
@@ -101,9 +106,10 @@ impl<B: Backend> Core<B> {
         let header = open(bytes)?;
         let (image, rest) = postcard::take_from_bytes::<Image<'_, B::Body, B::Joint>>(header.payload)
             .map_err(|_| bad("the snapshot's payload does not read back"))?;
-        if !rest.is_empty() || image.tick != header.tick {
+        if image.tick != header.tick {
             return fail(PhysicsError::BadSnapshot, "the snapshot's payload does not match its header");
         }
+        let carried = read_carried(rest, &image)?;
         let desc = image.desc.resolve()?;
         let static_canon = check_records(&image, &desc)?;
         if image.ledger.model_bytes() > u64::from(desc.limits.memory_bytes) {
@@ -125,8 +131,30 @@ impl<B: Backend> Core<B> {
             queries_this_step: image.queries_this_step,
             contact_pairs: image.contact_pairs as usize,
             tick: image.tick,
+            carried,
         })
     }
+}
+
+/// The 1.1 draft's extension (§20.4): the carried pairs, written after the 1.0 payload only when
+/// there are any, so a world never canonicalized writes 1.0's bytes exactly. Every side must
+/// name a body (or static piece) of the image and one of its colliders, and the list must be in
+/// order and non-empty, as `snapshot` writes it.
+fn read_carried<H, J>(bytes: &[u8], image: &Image<'_, H, J>) -> Result<BTreeSet<PairName>, PhysicsFailure> {
+    if bytes.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let (pairs, rest) = postcard::take_from_bytes::<Vec<PairName>>(bytes).map_err(|_| bad("the snapshot's extension does not read back"))?;
+    let ordered = pairs.windows(2).all(|two| two[0] < two[1]);
+    let named = |(body, collider): &(String, String)| match image.bodies.get(body) {
+        Some(entry) => entry.colliders.contains(collider),
+        None => image.static_tags.contains_key(body) && body == collider,
+    };
+    let sides_ok = pairs.iter().all(|pair| pair.sides[0] < pair.sides[1] && pair.sides.iter().all(named));
+    if !rest.is_empty() || pairs.is_empty() || !ordered || !sides_ok {
+        return fail(PhysicsError::BadSnapshot, "the snapshot's carried pairs are malformed");
+    }
+    Ok(pairs.into_iter().collect())
 }
 
 /// Checks every neutral record against the others and the limits; returns the static world's

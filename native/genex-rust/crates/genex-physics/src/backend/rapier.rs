@@ -12,13 +12,14 @@ use rapier3d::prelude::{
     ColliderBuilder, IntegrationParameters, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, RigidBodyType,
 };
 
+mod canonical;
 mod events;
 mod queries;
 
 use self::events::{Collector, PairHandle, user_data};
 use super::{
     Backend, BackendRefusal, BodyEdit, BodySpec, ColliderId, ColliderSpec, InnerStep, MassSpec, RawBodyState, RawHit,
-    RawQueryFilter, ShapeAt, ShapeSpec, StepParams,
+    RawPair, RawQueryFilter, RebuiltJoint, ShapeAt, ShapeSpec, StepParams,
 };
 use crate::joint::{JointSpec, JointType, ValidMotor};
 use crate::types::{Axis, BodyType};
@@ -63,6 +64,11 @@ pub(crate) struct RapierBackend {
     next_joint: u64,
     /// Joint edits not yet handed to Rapier, in command order.
     edits: Vec<JointEdit>,
+    /// The static pieces of the last rebuild as a world of their own, its broad-phase tree built,
+    /// for the next rebuild to start from (`canonical`). A cache: a snapshot does not carry it,
+    /// and a rebuild makes it again from the pieces whenever it is missing or stale.
+    #[serde(skip)]
+    template: Option<Box<canonical::Template>>,
 }
 
 /// What `save` writes: the same fields as [`RapierBackend`], borrowed. Rapier skips its pipelines
@@ -329,7 +335,7 @@ impl RapierBackend {
 
     /// Sets a body's replicated fields (§9.2). Rapier's `sleep` zeroes velocities, so they are set
     /// again after it: an imported sleeping body keeps the velocities it was given.
-    fn import(&mut self, body: RigidBodyHandle, at: Pose, linvel: Vector, angvel: Vector, sleeping: bool) {
+    fn import(&mut self, body: RigidBodyHandle, at: Pose, linvel: Vector, angvel: Vector, sleeping: bool, rest: Option<f32>) {
         let Some(rb) = self.world.bodies.get_mut(body) else { return };
         rb.set_position(at, false);
         if sleeping {
@@ -339,6 +345,11 @@ impl RapierBackend {
         rb.set_angvel(angvel, false);
         if !sleeping {
             self.wake_body(body);
+        }
+        if let Some(rest) = rest
+            && let Some(rb) = self.world.bodies.get_mut(body)
+        {
+            rb.activation_mut().time_since_can_sleep = rest;
         }
         self.mark_stale(body);
     }
@@ -376,7 +387,7 @@ impl Backend for RapierBackend {
         world.gravity = vector(params.gravity);
         world.integration_parameters = integration_parameters(params);
         let anchor = world.insert_body(RigidBodyBuilder::fixed());
-        Self { world, anchor, stale: BTreeMap::new(), joints: BTreeMap::new(), next_joint: 0, edits: Vec::new() }
+        Self { world, anchor, stale: BTreeMap::new(), joints: BTreeMap::new(), next_joint: 0, edits: Vec::new(), template: None }
     }
 
     fn save(&self) -> Option<Vec<u8>> {
@@ -462,8 +473,8 @@ impl Backend for RapierBackend {
             }
             BodyEdit::Wake => self.wake_body(body),
             BodyEdit::Sleep => rb.sleep(),
-            BodyEdit::Import { translation, rotation, linvel, angvel, sleeping } => {
-                self.import(body, pose(translation, rotation), vector(linvel), vector(angvel), sleeping);
+            BodyEdit::Import { translation, rotation, linvel, angvel, sleeping, rest } => {
+                self.import(body, pose(translation, rotation), vector(linvel), vector(angvel), sleeping, rest);
             }
         }
     }
@@ -512,6 +523,7 @@ impl Backend for RapierBackend {
                 linvel: [0.0; 3],
                 angvel: [0.0; 3],
                 sleeping: true,
+                rest: 0.0,
             };
         };
         let position = rb.position();
@@ -522,6 +534,7 @@ impl Backend for RapierBackend {
             linvel: rb.linvel().to_array(),
             angvel: rb.angvel().to_array(),
             sleeping: rb.is_sleeping(),
+            rest: rb.activation().time_since_can_sleep,
         }
     }
 
@@ -573,6 +586,19 @@ impl Backend for RapierBackend {
 
     fn contact_pairs(&self) -> usize {
         self.world.contact_pairs().count()
+    }
+
+    fn touching(&self) -> Vec<RawPair> {
+        self.touching_pairs()
+    }
+
+    fn rebuild(
+        &mut self,
+        static_tags: &[u64],
+        bodies: &[Self::Body],
+        joints: &[RebuiltJoint<'_, Self::Body>],
+    ) -> (Vec<Self::Body>, Vec<Self::Joint>) {
+        self.rebuild_world(static_tags, bodies, joints)
     }
 
     fn ray(&self, origin: [f32; 3], dir: [f32; 3], max_dist: f32, filter: &RawQueryFilter) -> Vec<RawHit> {

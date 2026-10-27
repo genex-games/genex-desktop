@@ -357,7 +357,7 @@ fn other_rows() -> Vec<(&'static str, Fixture, PhysicsError, Call)> {
     use Fixture::{Main, Static, YUp};
     use PhysicsError::*;
     let free = QueryFilter::default();
-    let net = NetBodyState { p: [0.0, 0.0, 1.0], q: QUAT_IDENTITY, v: [0.0; 3], w: [0.0; 3], sleeping: false };
+    let net = NetBodyState { p: [0.0, 0.0, 1.0], q: QUAT_IDENTITY, v: [0.0; 3], w: [0.0; 3], sleeping: false, rest: None };
     let static_two = StaticWorld { boxes: vec![vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], vec![2.0, 0.0, 0.0, 3.0, 1.0, 1.0]], ramps: vec![] };
     let static_one = |values: Vec<f64>| StaticWorld { boxes: vec![values], ramps: vec![] };
     let other_build = {
