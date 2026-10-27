@@ -1,0 +1,7 @@
+# genex-physics-sidecar is host code, not a simulation: the lane's game rules (../../clippy.toml,
+# M0a.9) do not bind it, and this file replaces them for this crate. Its watchdog reads the wall
+# clock (`Instant`) on a thread of its own; the world it drives runs on the main thread only.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use an ordered Vec or BTreeMap" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use an ordered Vec or BTreeSet" },
+]

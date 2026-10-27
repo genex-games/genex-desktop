@@ -1362,6 +1362,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "genex-physics-sidecar"
+version = "0.1.0"
+dependencies = [
+ "genex-physics",
+ "genex-physics-binding",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
 name = "genex-physics-wasm"
 version = "0.1.0"
 dependencies = [

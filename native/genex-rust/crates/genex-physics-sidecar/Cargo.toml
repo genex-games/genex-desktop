@@ -1,0 +1,29 @@
+[package]
+name = "genex-physics-sidecar"
+description = "The native process of Genex Physics (contract 1.0): one world per process, driven over two FIFOs by the frame protocol (the bin `genex-physics-room`), so a fault, hang or crash of one room's core ends that room alone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "genex-physics-room"
+path = "src/main.rs"
+
+[dependencies]
+# All already locked and vendored (no new crate): the core (its counting allocator), the
+# host-neutral registry every binding shares, and the JSON its description is read from.
+genex-physics = { workspace = true }
+genex-physics-binding = { workspace = true }
+serde_json = { workspace = true }
+
+# The process's own plumbing, which std has no API for: mkfifo, setrlimit, the thread CPU clock,
+# _exit from the watchdog thread and (Linux) the parent-death signal. The workspace already pins it
+# (genex-studio uses it); this binary is Unix only, as its FIFOs are.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

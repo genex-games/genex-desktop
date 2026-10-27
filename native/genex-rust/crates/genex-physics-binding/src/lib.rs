@@ -281,6 +281,11 @@ impl Registry {
         self.with_world(id, "null".to_string(), |world| output::stats(&world.stats()))
     }
 
+    /// The world's `stats().memoryBytes` (§11.1) as a number, without the JSON; 0 for no world.
+    pub fn world_memory_bytes(&mut self, id: u32) -> f64 {
+        self.with_world(id, 0.0, |world| world.stats().memory_bytes as f64)
+    }
+
     /// Whether the counting allocator measures this world's memory (§11.1); `false` for no world.
     pub fn world_memory_is_measured(&mut self, id: u32) -> bool {
         self.with_world(id, false, |world| world.memory_is_measured())
@@ -360,10 +365,12 @@ mod tests {
         assert_eq!(parse(&registry.world_command(id, CRATE))["ok"], true);
         let one = parse(&registry.world_stats(id))["memoryBytes"].as_u64().expect("bytes");
         assert!(one > empty, "a spawn is charged to its world: {empty} -> {one}");
+        assert_eq!(registry.world_memory_bytes(id), one as f64, "the number stats() writes");
         assert_eq!(parse(&registry.world_command(id, r#"{"remove":{"key":"crate"}}"#))["ok"], true);
         let after = parse(&registry.world_stats(id))["memoryBytes"].as_u64().expect("bytes");
         assert!(after < one, "a removal credits it back: {one} -> {after}");
         registry.world_free(id);
+        assert_eq!(registry.world_memory_bytes(id), 0.0, "no world, no bytes");
     }
 
     #[test]

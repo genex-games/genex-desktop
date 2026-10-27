@@ -45,6 +45,9 @@ members = [
   "crates/genex-physics-binding",
   # Its WebAssembly binding, a thin shell over that registry: the wasm-bindgen exports under the @genex-ai/physics npm package.
   "crates/genex-physics-wasm",
+  # Its native process: one world per process over the same registry, so a fault ends one room
+  # (the bin genex-physics-room under the @genex-ai/physics-native npm package).
+  "crates/genex-physics-sidecar",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
   "crates/genex-platform-ios",
@@ -175,7 +178,8 @@ mach2 = "0.4.3"
 # Windows: the studio pipe is opened overlapped (std has no overlapped I/O). The version is the
 # one the lock already resolves for winit/wgpu.
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
-# Unix test doubles only (std has no signal API).
+# Unix test doubles (std has no signal API), and the physics sidecar's FIFOs, thread CPU clock and
+# resource limits.
 libc = "=0.2.190"
 
 # Web.
@@ -243,3 +247,16 @@ lto = "thin"
 inherits = "release"
 opt-level = 3
 lto = "fat"
+
+# The @genex-ai/physics-native sidecar binary (`scripts/physics-native.ts`): release with fat LTO
+# and one codegen unit at opt-level 3, as the WASM module. No `target-cpu`: the binary runs on any
+# x86-64 or aarch64 host, and baseline code is what the backend-parity rows hold to WASM's hashes.
+# `panic = "unwind"` is spelled out: the core catches a backend panic per world (§11.3) and answers
+# `internal`, which an abort would turn into a dead room. Symbols are stripped (no paths, smaller).
+[profile.native-physics]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+strip = "symbols"
