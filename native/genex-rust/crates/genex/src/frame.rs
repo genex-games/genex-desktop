@@ -21,7 +21,10 @@ use crate::extend::{CustomMaterial, PostPass};
 use crate::gfx::Model;
 use genex_render::motion::DrawId;
 use genex_render::settings::Environment;
-pub use genex_render::scene::UvMapping;
+pub use genex_render::scene::{UvMapping, UvVariation};
+
+/// The PCG32 stream [`Material::with_uv_jitter`] draws its offset from.
+const UV_JITTER_SEQUENCE: u64 = 0xB2B;
 use glam::{Mat4, Quat, Vec3};
 
 /// Metallic factor of [`Material::default`]: a dielectric.
@@ -175,6 +178,7 @@ pub struct Material {
     untextured_color: Option<Color>,
     subsurface: Option<crate::Subsurface>,
     uv: UvMapping,
+    variation: UvVariation,
 }
 
 impl Default for Material {
@@ -197,6 +201,7 @@ impl Default for Material {
             untextured_color: None,
             subsurface: None,
             uv: UvMapping::default(),
+            variation: UvVariation::default(),
         }
     }
 }
@@ -316,6 +321,49 @@ impl Material {
     /// How its textures meet the surface ([`Material::with_uv_scale`], [`Material::with_world_uv`]).
     pub fn uv_mapping(&self) -> UvMapping {
         self.uv
+    }
+
+    /// This material with its textures moved by `u` and `v` tiles (Bodycam B2b): wall panels of
+    /// one texture that each start it somewhere else no longer line up into a visible repeat.
+    pub fn with_uv_offset(self, u: f32, v: f32) -> Material {
+        Material { variation: UvVariation { offset: [u, v], ..self.variation }, ..self }
+    }
+
+    /// This material with its textures moved by an offset drawn from `seed` (Bodycam B2b): the
+    /// same seed gives the same offset on every destination, so give each panel its own (its index
+    /// in the level), never a per-frame value.
+    pub fn with_uv_jitter(self, seed: u32) -> Material {
+        let mut rng = genex_core::rng::Pcg32::new(u64::from(seed), UV_JITTER_SEQUENCE);
+        let (u, v) = (rng.unit(), rng.unit());
+        self.with_uv_offset(u, v)
+    }
+
+    /// This material with its textures turned by `radians` (Bodycam B2b; the normal map turns
+    /// with them): for textures with no direction (plaster, concrete, dirt), never brick or wood.
+    pub fn with_uv_rotation(self, radians: f32) -> Material {
+        Material { variation: UvVariation { rotation: radians, ..self.variation }, ..self }
+    }
+
+    /// This material blending each texture from two copies at offsets that change across the
+    /// surface (Bodycam B2b, stochastic tiling), so a long wall shows no tile twice. It costs a
+    /// second fetch of the base colour, normal and metal-rough maps; an emissive map keeps the
+    /// plain tiling, so leave it off a material with one.
+    pub fn with_stochastic_tiling(self, on: bool) -> Material {
+        Material { variation: UvVariation { stochastic: on, ..self.variation }, ..self }
+    }
+
+    /// This material's base colour varied in large patches of about `metres` by up to `strength`
+    /// (Bodycam B2b, 0..1: 0.15 is ±15%), from a world-space noise: dirt and fading across a wall
+    /// a tile cannot hold. For geometry that stays put.
+    pub fn with_macro_variation(self, strength: f32, metres: f32) -> Material {
+        Material { variation: UvVariation { macro_strength: strength, macro_metres: metres, ..self.variation }, ..self }
+    }
+
+    /// What keeps its tiled textures from reading as a repeat ([`Material::with_uv_offset`],
+    /// [`Material::with_uv_jitter`], [`Material::with_uv_rotation`],
+    /// [`Material::with_stochastic_tiling`], [`Material::with_macro_variation`]).
+    pub fn uv_variation(&self) -> UvVariation {
+        self.variation
     }
 
     /// The ambient-occlusion texture's path and strength ([`Material::with_occlusion_texture`]).

@@ -21,10 +21,10 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::layout::NO_TEXTURE;
 use genex_render::mesh::{GlbModel, MeshData, Vertex};
 use genex_render::presets::preset_quality;
-use genex_render::pbr::{UV_SCALE_MAX, UV_SCALE_MIN};
-use genex_render::scene::{CameraDesc, DrawVariant, FramePlan, Material, MeshId, MeshLibrary, Scene, UvMapping, scaled};
+use genex_render::pbr::{MACRO_METRES_MAX, MACRO_METRES_MIN, UV_FLAG_STOCHASTIC, UV_FLAG_WORLD, UV_SCALE_MAX, UV_SCALE_MIN, uv_rows};
+use genex_render::scene::{CameraDesc, DrawVariant, FramePlan, Material, MeshId, MeshLibrary, Scene, UvMapping, UvVariation, scaled};
 use genex_render::settings::{AntiAliasing, Quality, QualityPreset, SceneFormat};
-use genex_render::texture::{CUTOUT_COVERAGE_ALPHA, TextureData, TextureId, TextureKind, alpha_coverage, cutout_mip_chain, mip_chain};
+use genex_render::texture::{CUTOUT_COVERAGE_ALPHA, TextureData, TextureId, TextureKind, alpha_coverage, cutout_mip_chain, mip_chain, preset_textures};
 use genex_render::{CullPath, Gpu, RenderOptions, Renderer};
 use glam::{Mat4, Vec3};
 use serde_json::{Value, json};
@@ -777,19 +777,41 @@ fn metal_an_occlusion_map_darkens_the_ambient_light_and_never_the_sun() {
 
 #[test]
 fn uv_mapping_rows_hold_hostile_scales_and_the_identity_is_the_legacy_row() {
-    assert_eq!(UvMapping::default().row(), [0.0; 4], "the mesh's UVs as authored keep the legacy extension row");
-    assert_eq!(UvMapping::Mesh { scale: [1.0, 1.0] }.row(), [0.0; 4]);
-    assert_eq!(UvMapping::Mesh { scale: [4.0, 3.0] }.row(), [4.0, 3.0, 0.0, 0.0]);
-    assert_eq!(UvMapping::World { tiles_per_metre: [0.5, 0.5] }.row(), [0.5, 0.5, 1.0, 0.0]);
+    let none = UvVariation::default();
+    let rows = |mapping: UvMapping| uv_rows(mapping, none);
+    assert_eq!(rows(UvMapping::default()), [[0.0; 4]; 2], "the mesh's UVs as authored keep the legacy extension row");
+    assert_eq!(rows(UvMapping::Mesh { scale: [1.0, 1.0] }), [[0.0; 4]; 2]);
+    assert_eq!(rows(UvMapping::Mesh { scale: [4.0, 3.0] })[0], [4.0, 3.0, 0.0, 0.0]);
+    assert_eq!(rows(UvMapping::World { tiles_per_metre: [0.5, 0.5] }), [[0.5, 0.5, 0.0, 0.0], [UV_FLAG_WORLD as f32, 0.0, 0.0, 0.0]]);
     let hostile = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -2.0];
     for value in hostile {
-        assert_eq!(UvMapping::Mesh { scale: [value, 2.0] }.row(), [1.0, 2.0, 0.0, 0.0], "{value} reads as 1");
-        assert_eq!(UvMapping::World { tiles_per_metre: [value, value] }.row(), [1.0, 1.0, 1.0, 0.0], "{value} reads as 1");
+        assert_eq!(rows(UvMapping::Mesh { scale: [value, 2.0] })[0], [1.0, 2.0, 0.0, 0.0], "{value} reads as 1");
+        assert_eq!(rows(UvMapping::World { tiles_per_metre: [value, value] })[0], [1.0, 1.0, 0.0, 0.0], "{value} reads as 1");
     }
-    assert_eq!(UvMapping::Mesh { scale: [1.0e-9, 1.0e9] }.row(), [UV_SCALE_MIN, UV_SCALE_MAX, 0.0, 0.0]);
+    assert_eq!(rows(UvMapping::Mesh { scale: [1.0e-9, 1.0e9] })[0], [UV_SCALE_MIN, UV_SCALE_MAX, 0.0, 0.0]);
     let plain = Material::color([200; 4]);
     assert_eq!(plain.to_gpu_ext(), genex_render::layout::MATERIAL_EXT_NONE, "a plain material's extension row is unchanged");
-    assert_eq!(plain.with_uv(UvMapping::World { tiles_per_metre: [2.0, 2.0] }).to_gpu_ext().uv, [2.0, 2.0, 1.0, 0.0]);
+    let world = plain.with_uv(UvMapping::World { tiles_per_metre: [2.0, 2.0] }).to_gpu_ext();
+    assert_eq!((world.uv, world.tiling), ([2.0, 2.0, 0.0, 0.0], [UV_FLAG_WORLD as f32, 0.0, 0.0, 0.0]));
+}
+
+#[test]
+fn uv_variation_rows_wrap_offsets_and_turns_and_hold_hostile_values() {
+    let mesh = UvMapping::default();
+    let rows = |variation: UvVariation| uv_rows(mesh, variation);
+    let jittered = rows(UvVariation { offset: [2.25, -0.25], rotation: -std::f32::consts::FRAC_PI_2, ..UvVariation::default() });
+    assert_eq!(jittered[0], [0.0, 0.0, 0.25, 0.75], "offsets wrap into one tile");
+    assert!((jittered[1][1] - 1.5 * std::f32::consts::PI).abs() < 1.0e-5, "a turn wraps into [0, TAU): {:?}", jittered[1]);
+    let stochastic = rows(UvVariation { stochastic: true, macro_strength: 0.2, macro_metres: 3.0, ..UvVariation::default() });
+    assert_eq!(stochastic[1], [UV_FLAG_STOCHASTIC as f32, 0.0, 0.2, 3.0]);
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let held = rows(UvVariation { offset: [value; 2], rotation: value, stochastic: false, macro_strength: value, macro_metres: value });
+        assert_eq!(held, [[0.0; 4]; 2], "{value} varies nothing");
+    }
+    let strong = rows(UvVariation { macro_strength: 5.0, macro_metres: 1.0e9, ..UvVariation::default() });
+    assert_eq!(strong[1][2..], [1.0, MACRO_METRES_MAX], "strength 0..=1, patches held");
+    let tiny = rows(UvVariation { macro_strength: 0.5, macro_metres: 0.0, ..UvVariation::default() });
+    assert_eq!(tiny[1][3], MACRO_METRES_MIN);
 }
 
 #[test]
@@ -800,8 +822,10 @@ fn materials_that_differ_only_in_their_uv_mapping_take_their_own_rows() {
     scene.draw(MeshId::CUBE, scaled([2.0, 0.0, 0.0], [1.0; 3]), plain.with_uv(UvMapping::Mesh { scale: [4.0, 1.0] }));
     scene.draw(MeshId::CUBE, scaled([4.0, 0.0, 0.0], [1.0; 3]), plain.with_uv(UvMapping::World { tiles_per_metre: [4.0, 1.0] }));
     scene.draw(MeshId::CUBE, scaled([6.0, 0.0, 0.0], [1.0; 3]), plain.with_uv(UvMapping::Mesh { scale: [1.0, 1.0] }));
+    scene.draw(MeshId::CUBE, scaled([8.0, 0.0, 0.0], [1.0; 3]), plain.with_variation(UvVariation { offset: [0.5, 0.0], ..UvVariation::default() }));
+    scene.draw(MeshId::CUBE, scaled([10.0, 0.0, 0.0], [1.0; 3]), plain.with_variation(UvVariation { stochastic: true, ..UvVariation::default() }));
     let plan = FramePlan::build(&scene, &MeshLibrary::new(), 1.5).expect("plan");
-    assert_eq!(plan.materials.len(), 3, "an identity scale shares the plain row; a scale and a projection each take one");
+    assert_eq!(plan.materials.len(), 5, "an identity scale shares the plain row; a scale, a projection, an offset and stochastic tiling each take one");
 }
 
 /// Two periods of light and dark across one tile: a stripe edge every half tile.
@@ -860,6 +884,136 @@ fn metal_a_world_projected_wall_tiles_at_one_density_whatever_its_width() {
     let scaled_mesh = shot(UvMapping::Mesh { scale: [4.0, 1.0] });
     let scaled_edges = edges(&scaled_mesh);
     assert!(scaled_edges[0] >= 6 && scaled_edges[1] >= 6, "a mesh scale repeats the texture on every wall ({scaled_edges:?})");
+}
+
+/// One wall `size` metres (width, height, 0.2 deep) centred at the origin facing the camera at
+/// z = 10, drawn in `material` (textured with `texture` when given), lit head-on.
+fn wall_shot(gpu: &Gpu, size: [f32; 2], texture: Option<TextureData>, material: impl Fn(Option<TextureId>) -> Material) -> (Capture, CameraDesc) {
+    let canvas = (320, 180);
+    let camera = CameraDesc::look_at([0.0, 0.0, 10.0], [0.0, 0.0, 0.0]);
+    // Texture quality on, as every preset has it: stochastic tiling draws on its size classes.
+    let mut quality = hdr_msaa();
+    quality.textures = preset_textures(QualityPreset::High, desktop());
+    let mut renderer = renderer_sized(gpu, &quality, canvas, desktop());
+    let id = texture.map(|data| renderer.add_texture(gpu, &data, TextureKind::Color).expect("texture"));
+    let mut scene = Scene::new(camera, CLEAR);
+    scene.lighting.shadows = false;
+    scene.lighting.sun_dir = [0.0, 0.0, 1.0];
+    scene.draw(MeshId::CUBE, scaled([0.0; 3], [size[0], size[1], 0.2]), material(id));
+    (draw(gpu, &mut renderer, &scene, 1), camera)
+}
+
+/// The lumas along the row through world height `y` of a wall's front face from `x0` to `x1`
+/// metres (two pixels in from each end).
+fn wall_row(capture: &Capture, camera: &CameraDesc, y: f32, x0: f32, x1: f32) -> Vec<f32> {
+    let size = (capture.width(), capture.height());
+    let (left, right) = (pixel(camera, size, Vec3::new(x0, y, 0.1)), pixel(camera, size, Vec3::new(x1, y, 0.1)));
+    let luma = lumas(capture);
+    let row = left.1 as usize * capture.width() as usize;
+    ((left.0 as usize + 2)..(right.0 as usize - 2)).map(|x| luma[row + x]).collect()
+}
+
+/// The lumas down the column through world `x` of a wall's front face from `y0` to `y1` metres.
+fn wall_column(capture: &Capture, camera: &CameraDesc, x: f32, y0: f32, y1: f32) -> Vec<f32> {
+    let size = (capture.width(), capture.height());
+    let (top, bottom) = (pixel(camera, size, Vec3::new(x, y1, 0.1)), pixel(camera, size, Vec3::new(x, y0, 0.1)));
+    let luma = lumas(capture);
+    let w = capture.width() as usize;
+    ((top.1 as usize + 2)..(bottom.1 as usize - 2)).map(|y| luma[y * w + top.0 as usize]).collect()
+}
+
+/// A range of lumas narrower than this has no stripes to cross.
+const STRIPE_CONTRAST_LEVELS: f32 = 20.0;
+
+/// How often `values` cross the middle of their range (none for a flat run).
+fn crossings_of(values: &[f32]) -> usize {
+    let (low, high) = values.iter().fold((f32::MAX, f32::MIN), |(low, high), v| (low.min(*v), high.max(*v)));
+    if high - low < STRIPE_CONTRAST_LEVELS {
+        return 0;
+    }
+    let middle = (low + high) / 2.0;
+    values.windows(2).filter(|pair| (pair[0] < middle) != (pair[1] < middle)).count()
+}
+
+fn world_wall(texture: Option<TextureId>, variation: UvVariation) -> Material {
+    let material = Material::color([255; 4]).with_pbr(0.0, 1.0).with_uv(UvMapping::World { tiles_per_metre: [1.0, 1.0] }).with_variation(variation);
+    match texture {
+        Some(texture) => material.with_base_texture(texture),
+        None => material,
+    }
+}
+
+#[test]
+#[ignore = "needs a Metal adapter"]
+fn metal_a_uv_offset_shifts_the_texture_and_a_quarter_turn_lays_its_stripes_down() {
+    let Some(gpu) = gpu() else { return };
+    let shot = |variation: UvVariation| wall_shot(&gpu, [4.0, 3.0], Some(halves()), |id| world_wall(id, variation));
+    let (plain, camera) = shot(UvVariation::default());
+    let (shifted, _) = shot(UvVariation { offset: [0.5, 0.0], ..UvVariation::default() });
+    let (turned, _) = shot(UvVariation { rotation: std::f32::consts::FRAC_PI_2, ..UvVariation::default() });
+    write_evidence("uv-offset", &shifted);
+    write_evidence("uv-quarter-turn", &turned);
+    let (a, b) = (wall_row(&plain, &camera, 0.2, -2.0, 2.0), wall_row(&shifted, &camera, 0.2, -2.0, 2.0));
+    let moved = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).sum::<f32>() / a.len() as f32;
+    println!("half-tile offset: mean luma change {moved:.1} levels");
+    assert!(moved > 40.0, "half a tile swaps light and dark stripes ({moved:.1})");
+    let (row, column) = (crossings_of(&wall_row(&turned, &camera, 0.2, -2.0, 2.0)), crossings_of(&wall_column(&turned, &camera, 0.3, -1.5, 1.5)));
+    println!("quarter turn: {row} edges along a row, {column} down a column");
+    assert!(row <= 1 && column >= 4, "a quarter turn lays the stripes down (row {row}, column {column})");
+}
+
+/// A ramp from dark to light across each tile: a repeat shows as the same ramp every metre.
+fn ramp() -> TextureData {
+    texture(64, |x, y| {
+        let level = (40 + x * 3 + (y % 16)) as u8;
+        [level, level, level, 255]
+    })
+}
+
+#[test]
+#[ignore = "needs a Metal adapter"]
+fn metal_stochastic_tiling_breaks_the_metre_repeat() {
+    let Some(gpu) = gpu() else { return };
+    let shot = |stochastic: bool| wall_shot(&gpu, [8.0, 2.0], Some(ramp()), |id| world_wall(id, UvVariation { stochastic, ..UvVariation::default() }));
+    let (plain, camera) = shot(false);
+    let (varied, _) = shot(true);
+    write_evidence("stochastic-wall", &varied);
+    let size = (plain.width(), plain.height());
+    let period = pixel(&camera, size, Vec3::new(1.0, 0.0, 0.1)).0 - pixel(&camera, size, Vec3::new(0.0, 0.0, 0.1)).0;
+    // The median change one metre along (the row read between pixels): a tile edge's few pixels
+    // do not move it.
+    let repeat = |capture: &Capture| {
+        let row = wall_row(capture, &camera, 0.3, -4.0, 4.0);
+        let at = |x: f32| {
+            let (i, t) = (x.floor() as usize, x - x.floor());
+            row[i] * (1.0 - t) + row[(i + 1).min(row.len() - 1)] * t
+        };
+        let mut pairs: Vec<f32> = (0..row.len()).filter(|i| (*i as f32 + period) < (row.len() - 1) as f32).map(|i| (row[i] - at(i as f32 + period)).abs()).collect();
+        pairs.sort_by(f32::total_cmp);
+        pairs[pairs.len() / 2]
+    };
+    let (exact, broken) = (repeat(&plain), repeat(&varied));
+    println!("median luma change one metre along: plain {exact:.2}, stochastic {broken:.2} levels ({period:.2} px a metre)");
+    assert!(exact < 3.0, "the plain wall repeats every metre ({exact:.2})");
+    assert!(broken > 4.0 * exact.max(1.0), "stochastic tiling does not ({broken:.2})");
+}
+
+#[test]
+#[ignore = "needs a Metal adapter"]
+fn metal_macro_variation_tints_a_flat_wall_in_patches() {
+    let Some(gpu) = gpu() else { return };
+    let shot = |strength: f32| wall_shot(&gpu, [8.0, 2.0], None, |_| world_wall(None, UvVariation { macro_strength: strength, macro_metres: 1.5, ..UvVariation::default() }));
+    let (plain, camera) = shot(0.0);
+    let (varied, _) = shot(0.4);
+    write_evidence("macro-wall", &varied);
+    let spread = |capture: &Capture| {
+        let row = wall_row(capture, &camera, 0.0, -4.0, 4.0);
+        let mean = row.iter().sum::<f32>() / row.len() as f32;
+        libm::sqrtf(row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / row.len() as f32)
+    };
+    let (flat, patchy) = (spread(&plain), spread(&varied));
+    println!("luma spread along the wall: plain {flat:.2}, macro variation {patchy:.2} levels");
+    assert!(flat < 1.5 && patchy > 6.0, "macro variation tints the flat wall in patches ({flat:.2} -> {patchy:.2})");
 }
 
 // ---------------------------------------------------------------------------------------------

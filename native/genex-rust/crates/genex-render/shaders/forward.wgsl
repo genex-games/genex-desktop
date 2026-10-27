@@ -193,7 +193,7 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     let facing = select(-1.0, 1.0, front);
     let tangent = vec4<f32>(in.tangent.xyz * facing, in.tangent.w * facing);
     let ext = material_ext[in.material];
-    let mapped = gx_surface_uv(ext.uv, in.uv, tangent, in.world_pos, in.normal * facing);
+    let mapped = gx_surface_uv(ext.uv, ext.tiling, in.uv, tangent, in.world_pos, in.normal * facing);
     var s = gx_surface(in.world_pos, in.normal * facing, mapped.uv, mapped.tangent, in.material);
     s.v = normalize(frame.camera_pos.xyz - in.world_pos);
     // The occlusion map eased from 1 by its strength (P2-0.12 LG-09).

@@ -3007,6 +3007,7 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
         surface = surface.with_occlusion_texture(occlusion, strength);
     }
     surface.uv = material.uv_mapping();
+    surface.variation = material.uv_variation();
     if let Some(normal) = texture(material.normal_texture(), TextureKind::Normal) {
         let scale = if material.normal_scale.is_finite() { material.normal_scale } else { 1.0 };
         surface = surface.with_normal_map(normal, scale);

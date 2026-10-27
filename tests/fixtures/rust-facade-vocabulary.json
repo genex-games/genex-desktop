@@ -183,7 +183,18 @@
     "calls": [".with_subsurface", "Subsurface::new", ".with_transmission"]
   },
   "materials": {
-    "calls": [".with_metal_rough_texture", ".with_orm_texture", ".with_occlusion_texture", ".with_uv_scale", ".with_world_uv"]
+    "calls": [
+      ".with_metal_rough_texture",
+      ".with_orm_texture",
+      ".with_occlusion_texture",
+      ".with_uv_scale",
+      ".with_world_uv",
+      ".with_uv_offset",
+      ".with_uv_jitter",
+      ".with_uv_rotation",
+      ".with_stochastic_tiling",
+      ".with_macro_variation"
+    ]
   },
   "mesh": {
     "calls": ["gfx.mesh", "MeshData::new", ".vertex", ".triangle", ".quad", ".cuboid", ".check"],

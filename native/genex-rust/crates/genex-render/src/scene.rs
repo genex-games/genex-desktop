@@ -39,7 +39,7 @@ use crate::skinned_lod::{SkinLods, SkinnedLevel, SkinnedLodInput, SkinnedPick, p
 use crate::transparent::back_to_front;
 
 pub use crate::cull::{CpuCull, frustum_planes, frustum_planes_for, in_frustum};
-pub use crate::pbr::{Lighting, Material, PointLight, UvMapping, srgb_to_linear};
+pub use crate::pbr::{Lighting, Material, PointLight, UvMapping, UvVariation, srgb_to_linear};
 
 /// A mesh in a [`MeshLibrary`]: its slot and the generation of that slot it was handed out in
 /// (game systems STR-2). Removing a mesh moves its slot to the next generation, so the slot can
@@ -1516,6 +1516,7 @@ fn same_bits(a: &Material, b: &Material) -> bool {
         && a.occlusion_texture == b.occlusion_texture
         && bits(a.occlusion_strength, b.occlusion_strength)
         && a.uv == b.uv
+        && a.variation == b.variation
 }
 
 /// A transparent instance before sorting.

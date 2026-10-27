@@ -19,7 +19,10 @@ frame.clear(color);
 A `Transform` is `Transform::from_xyz(x, y, z)` or `Transform::from_translation(v)`, then
 `.with_rotation(quat)` and `.with_scale(vec3(4.0, 3.0, 0.2))`: a 4 m wide, 3 m tall, 0.2 m thick
 wall panel from the unit cube. Give such a panel `Material::with_world_uv(metres)`
-(`docs/api/lighting.md`) and its texture keeps one size on every face instead of stretching.
+(`docs/api/lighting.md`) and its texture keeps one size on every face instead of stretching; give
+each panel `.with_uv_jitter(index)` (and the material `.with_stochastic_tiling(true)` or
+`.with_macro_variation(strength, metres)`) so a corridor of them does not show the same tile over
+and over.
 
 `frame.tag(name)` names what the following draws count under (`state().__render.tags`);
 `frame.model(&model, transform)`, `frame.cube`, `frame.sphere`, `frame.line` and

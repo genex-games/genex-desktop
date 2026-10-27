@@ -28,7 +28,34 @@ across and `v` times down, and `.with_world_uv(metres)` projects it from the wor
 axis each face looks at, repeating every `metres`: a 4 m wall drawn with `frame.cube_with`, a
 0.2 m sill and a floor then show one texel size, never a stretched photo. World projection is for
 geometry that stays put (a moving draw's texture slides) and for flat faces (a curved model shows
-seams; give it `.with_uv_scale`). Drawn with `frame.cube_with`,
+seams; give it `.with_uv_scale`). A tiled texture then repeats, and a long corridor shows the same
+blotch every metre; break it up: `.with_uv_jitter(seed)` moves each panel's texture by an offset
+drawn from its seed (use the panel's index in the level: the same seed gives the same offset
+everywhere), `.with_uv_offset(u, v)` sets one, `.with_uv_rotation(radians)` turns the texture and
+its normal map (plaster, concrete or dirt; never brick or wood grain),
+`.with_stochastic_tiling(true)` blends every fetch from two copies at offsets that change across
+the surface so no tile shows twice (a second fetch of the colour, normal and roughness maps; keep it
+off a material with an emissive map), and `.with_macro_variation(strength, metres)` varies the
+base colour by up to `strength` (0.1 to 0.25 reads as wear) in patches of about `metres`, from the
+world position: what a single tile cannot hold. All are the same every frame and on every
+destination:
+
+```rust
+let plaster = Material::color(Color::rgb(214, 206, 188))
+    .with_base_texture("textures/plaster_albedo.jpg")
+    .with_normal_texture("textures/plaster_normal.png", 1.0)
+    .with_orm_texture("textures/plaster_orm.png")
+    .with_roughness(1.0)
+    .with_metallic(1.0)
+    .with_world_uv(1.5)
+    .with_stochastic_tiling(true)
+    .with_macro_variation(0.18, 3.0);
+for (index, panel) in level.panels.iter().enumerate() {
+    frame.cube_with(panel.transform, &plaster.clone().with_uv_jitter(index as u32));
+}
+```
+
+Drawn with `frame.cube_with`,
 `frame.sphere_with` or `frame.model_with` (a GLB's own materials, emission and textures load by
 themselves: an alpha-`MASK` leaf or fence is cut out in its shadow too, a `doubleSided` card
 draws both faces, an occlusion map darkens its crevices' ambient light). A missing texture leaves the surface untextured; `.with_untextured_color(color)` names

@@ -59,6 +59,69 @@ pub struct Material {
     pub subsurface: Option<Subsurface>,
     /// How its maps meet the surface (Bodycam B2b): the mesh's UVs by default.
     pub uv: UvMapping,
+    /// What keeps a tiled texture from reading as a repeat (Bodycam B2b): none by default.
+    pub variation: UvVariation,
+}
+
+/// [`GpuMaterialExt`] `tiling.x` bit: the maps are projected from the world ([`UvMapping::World`]).
+pub const UV_FLAG_WORLD: u32 = 1;
+/// [`GpuMaterialExt`] `tiling.x` bit: stochastic tiling ([`UvVariation::stochastic`]).
+pub const UV_FLAG_STOCHASTIC: u32 = 2;
+/// The shortest macro-variation patch a material keeps, in metres.
+pub const MACRO_METRES_MIN: f32 = 0.1;
+/// The longest macro-variation patch a material keeps, in metres.
+pub const MACRO_METRES_MAX: f32 = 1.0e3;
+
+/// What keeps a tiled texture from reading as a repeat (Bodycam B2b: "the same blotch pattern
+/// repeats along the corridor's wall"). Everything is a pure function of the material and the
+/// surface position, the same every frame and on every destination.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct UvVariation {
+    /// Added to the mapped UVs, in tiles (u, v): give each wall panel its own and no two panels
+    /// start the texture at the same place.
+    pub offset: [f32; 2],
+    /// Turns the mapped UVs, in radians (the tangent turns with them, so normal maps stay right):
+    /// for textures with no direction (plaster, concrete, dirt).
+    pub rotation: f32,
+    /// Stochastic tiling: each fetch is blended from two copies of the texture at offsets that
+    /// change across the surface by a value noise (Quilez's technique 3), so no tile repeats
+    /// exactly. Two fetches of the base colour, normal and metal-rough maps instead of one; drawn
+    /// where texture quality is on (every preset).
+    pub stochastic: bool,
+    /// How much a large-scale world-space noise varies the base colour (0..=1: 0.2 is ±20%).
+    pub macro_strength: f32,
+    /// The size of that noise's patches, in metres.
+    pub macro_metres: f32,
+}
+
+/// `value` if finite, else 0.
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
+}
+
+/// The extension row's `uv` and `tiling` for `mapping` with `variation` (both zero for the mesh's
+/// UVs as authored and no variation, the legacy row): `uv` the scale (0 for 1) and the offset
+/// (wrapped into one tile), `tiling` the flags, the rotation (wrapped into one turn), the macro
+/// strength (0..=1) and its patch size (held to [`MACRO_METRES_MIN`]..=[`MACRO_METRES_MAX`], 0
+/// without macro variation).
+pub fn uv_rows(mapping: UvMapping, variation: UvVariation) -> [[f32; 4]; 2] {
+    let wrap = |value: f32, period: f32| {
+        let wrapped = finite_or(value, 0.0) % period;
+        if wrapped < 0.0 { wrapped + period } else { wrapped }
+    };
+    let [ou, ov] = variation.offset.map(|value| wrap(value, 1.0));
+    let mut flags = if variation.stochastic { UV_FLAG_STOCHASTIC } else { 0 };
+    let scale = match mapping {
+        UvMapping::Mesh { .. } => mapping.row(),
+        UvMapping::World { .. } => {
+            flags |= UV_FLAG_WORLD;
+            mapping.row()
+        }
+    };
+    let strength = finite_or(variation.macro_strength, 0.0).clamp(0.0, 1.0);
+    let metres = if strength > 0.0 { finite_or(variation.macro_metres, 1.0).clamp(MACRO_METRES_MIN, MACRO_METRES_MAX) } else { 0.0 };
+    let rotation = wrap(variation.rotation, std::f32::consts::TAU);
+    [[scale[0], scale[1], ou, ov], [flags as f32, rotation, strength, metres]]
 }
 
 /// The least UV scale (or tiles per metre) a material keeps: a smaller positive one reads as this,
@@ -94,15 +157,15 @@ impl Default for UvMapping {
 }
 
 impl UvMapping {
-    /// The extension row's `uv` (`[0; 4]` for the mesh's UVs as authored, so the row is the
-    /// legacy one), each scale held to [`UV_SCALE_MIN`]..=[`UV_SCALE_MAX`] (1 when not finite or
-    /// not positive).
-    pub fn row(self) -> [f32; 4] {
+    /// The scale the extension row's `uv.xy` holds (`[0, 0]` for the mesh's UVs as authored, so
+    /// the row is the legacy one), each held to [`UV_SCALE_MIN`]..=[`UV_SCALE_MAX`] (1 when not
+    /// finite or not positive); [`uv_rows`] adds the world bit.
+    pub fn row(self) -> [f32; 2] {
         let held = |value: f32| if value.is_finite() && value > 0.0 { value.clamp(UV_SCALE_MIN, UV_SCALE_MAX) } else { 1.0 };
         match self {
-            UvMapping::Mesh { scale } if scale.map(held) == [1.0, 1.0] => [0.0; 4],
-            UvMapping::Mesh { scale } => [held(scale[0]), held(scale[1]), 0.0, 0.0],
-            UvMapping::World { tiles_per_metre } => [held(tiles_per_metre[0]), held(tiles_per_metre[1]), 1.0, 0.0],
+            UvMapping::Mesh { scale } if scale.map(held) == [1.0, 1.0] => [0.0; 2],
+            UvMapping::Mesh { scale } => scale.map(held),
+            UvMapping::World { tiles_per_metre } => tiles_per_metre.map(held),
         }
     }
 }
@@ -128,6 +191,7 @@ impl Material {
             occlusion_strength: 1.0,
             subsurface: None,
             uv: UvMapping::default(),
+            variation: UvVariation::default(),
         }
     }
 
@@ -188,6 +252,11 @@ impl Material {
     /// This material with its maps meeting the surface as `uv` says (Bodycam B2b).
     pub fn with_uv(self, uv: UvMapping) -> Material {
         Material { uv, ..self }
+    }
+
+    /// This material with `variation` keeping its tiled maps from repeating (Bodycam B2b).
+    pub fn with_variation(self, variation: UvVariation) -> Material {
+        Material { variation, ..self }
     }
 
     /// This material letting light through as `subsurface` describes (renderer pass 2 B.1).
@@ -254,7 +323,7 @@ impl Material {
             double_sided: self.double_sided,
             occlusion: self.occlusion_reference().map(|reference| (reference, self.occlusion_strength().to_bits())),
             subsurface: self.visible_subsurface().map(Subsurface::key),
-            uv: self.uv.row().map(f32::to_bits),
+            uv: uv_bits(uv_rows(self.uv, self.variation)),
         }
     }
 
@@ -275,7 +344,7 @@ impl Material {
     pub fn to_gpu_ext(self) -> GpuMaterialExt {
         let occlusion = self.occlusion_reference().map_or(0.0, |_| self.occlusion_strength());
         let mut row = crate::layout::MATERIAL_EXT_NONE;
-        row.uv = self.uv.row();
+        [row.uv, row.tiling] = uv_rows(self.uv, self.variation);
         row.emissive[3] = occlusion;
         row.params[3] = self.cutoff();
         let mut flags = 0;
@@ -336,8 +405,13 @@ pub(crate) struct MaterialKey {
     occlusion: Option<(u32, u32)>,
     /// The scattering's bits (renderer pass 2 B.1), when it lets light through.
     subsurface: Option<[u32; 7]>,
-    /// The UV mapping row's bits (Bodycam B2b).
-    uv: [u32; 4],
+    /// The UV mapping and variation rows' bits (Bodycam B2b).
+    uv: [u32; 8],
+}
+
+/// The bits of a material's UV rows ([`uv_rows`]), for its key.
+fn uv_bits(rows: [[f32; 4]; 2]) -> [u32; 8] {
+    std::array::from_fn(|at| rows[at / 4][at % 4].to_bits())
 }
 
 /// `value`, or 0 when it is negative or not finite.

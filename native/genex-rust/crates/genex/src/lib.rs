@@ -127,6 +127,8 @@ pub use genex_render::terrain::TerrainLook;
 pub use genex_render::subsurface::Subsurface;
 /// How a [`Material`]'s textures meet a surface ([`Material::with_uv_scale`], [`Material::with_world_uv`]; Bodycam B2b).
 pub use frame::UvMapping;
+/// What keeps a [`Material`]'s tiled textures from reading as a repeat (Bodycam B2b).
+pub use frame::UvVariation;
 pub use mesh::{MESH_PATH_PREFIX, MESH_TRIANGLES_MAX, MESH_VERTICES_MAX, MeshData, MeshError, MeshErrorCode};
 pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
