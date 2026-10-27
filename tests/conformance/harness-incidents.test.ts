@@ -17917,7 +17917,10 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
 describe("a high bar on a short clock (bodycam B9)", () => {
   it("B9. a 56-minute photoreal run polished its greybox and never reached geometry or hands: a timed lead hears the layer order and to say which layer the time reaches; a long or until-done run does not", async () => {
     const { directorBrief } = await import("../../src/harness-seed/loop/director/briefs.ts");
-    const briefFor = (workingMinutes: number, completionPolicy: CompletionPolicy) => {
+    const briefFor = (
+      workingMinutes: number,
+      completionPolicy: (typeof CompletionPolicy)[keyof typeof CompletionPolicy],
+    ) => {
       const now = Date.now();
       return directorBrief({
         run: {
