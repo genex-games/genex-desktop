@@ -44,7 +44,15 @@ export function isRustStack(stack: unknown): boolean {
 
 /** What a Rust game is, in the one sentence every brief opens its Rust rules with. */
 const RUST_GAME =
-  "This is a Rust game on the studio's genex runtime (wgpu on WebGPU core, Rapier 3D physics, egui for UI), one source for desktop, phones and the web.";
+  "This is a Rust game on the studio's genex runtime (wgpu on WebGPU core, Genex Physics, egui for UI), one source for desktop, phones and the web.";
+
+/**
+ * The seed upgrade's physics note (shared physics P4): `sim.physics` is Genex Physics now, and raw
+ * Rapier still compiles for one release, so a game written before it moves when its physics next
+ * changes.
+ */
+const RUST_PHYSICS_MOVE =
+  "Physics moved: sim.physics is Genex Physics (genex::phys, keyed bodies, docs/api/physics.md). Raw Rapier (genex::physics, genex::rapier3d, handles, RigidBodyBuilder) still compiles for one release only: write no new code on it, and when you change an older game's physics, move that game's bodies to sim.physics.spawn and its saves to export_row.";
 
 /** Where a Rust game's build comes from: genex.toml, the studio's lane, never cargo files of its own. */
 const RUST_BUILD =
@@ -139,7 +147,7 @@ export function rustPlannerLines(): string[] {
   const measured = kindsWith(CheckSupport.Measured);
   const unmeasured = kindsWith(CheckSupport.Unmeasured);
   return [
-    `${RUST_PLANNER_HEADER} (Rust 2024 on the studio's genex runtime: wgpu, Rapier 3D, egui): plan it in Rust terms, whatever JavaScript paths the plan format's example shows.`,
+    `${RUST_PLANNER_HEADER} (Rust 2024 on the studio's genex runtime: wgpu, Genex Physics, egui): plan it in Rust terms, whatever JavaScript paths the plan format's example shows.`,
     `- Each facet owns src/facets/<slug>.rs (a Rust module name: lower case, words joined by _) with \`pub fn wire(game: &mut Game<super::World>)\` and its own state through game.facet_state::<T>(). mainOwner alone may restructure ${RUST_ENTRY_MAIN}, src/game.rs and genex.toml; every other facet adds exactly two lines inside the FACET WIRING block of ${RUST_ENTRY_MAIN}: ${RUST_WIRING_LINES}.`,
     `- base.files are the Rust modules every facet shares (the World type in src/game.rs, named colours and constants beside it), never .js modules. ${RUST_API_DOC} is read-only.`,
     `- Check kinds measured on a Rust game: ${measured.join(", ")}. A ${unmeasured.join(" or ")} check is never measured here: say the same thing with a probe over a game.probe leaf (\`houses >= 6\`), milestones included.`,
@@ -305,7 +313,7 @@ const RUST_DETERMINISM =
   "randomness only from ctx.rng or the reset rng, time only from ctx.tick and ctx.dt, transcendental math from genex::math, genex::Map and genex::Set instead of HashMap and HashSet; never std::time, threads or thread_rng";
 
 /** The chat build's first rule for a Rust game the studio scaffolded: the Rust twin of `TEMPLATE_RULE`. */
-export const RUST_TEMPLATE_RULE = `Follow CLAUDE.md in the workspace root: keep genex::install(game) at the end of main in ${RUST_ENTRY_MAIN} and its FACET WIRING block, write only against ${RUST_API_DOC} (read-only), keep gameplay deterministic (${RUST_DETERMINISM}), and let the studio build: ${RUST_BUILD} Capture builds this folder for its destination through the studio's own lane and answers with the first compiler error when a build fails. Models come from assets/ through gfx.assets().model(..), procedural code, or the currently enabled plugin tools. Follow the selected tool's returned file paths and verification guidance.`;
+export const RUST_TEMPLATE_RULE = `Follow CLAUDE.md in the workspace root: keep genex::install(game) at the end of main in ${RUST_ENTRY_MAIN} and its FACET WIRING block, write only against ${RUST_API_DOC} (read-only), keep gameplay deterministic (${RUST_DETERMINISM}), and let the studio build: ${RUST_BUILD} Capture builds this folder for its destination through the studio's own lane and answers with the first compiler error when a build fails. Models come from assets/ through gfx.assets().model(..), procedural code, or the currently enabled plugin tools. Follow the selected tool's returned file paths and verification guidance. ${RUST_PHYSICS_MOVE}`;
 
 /** What a chat build of a fresh Rust workspace is told about where it starts. */
 export const RUST_FRESH_WORKSPACE = "This is a fresh workspace scaffolded from the studio's Rust · wgpu template.";
@@ -321,6 +329,7 @@ export function rustOwnShapeChatRules(shape: RustBriefShape | null | undefined, 
       : []),
     `This game came with its own shape — the studio did not write it. Its entry is ${main}; the studio builds it from genex.toml for the destinations in studio.json, and capture shows that build. Follow CLAUDE.md in the workspace root. Keep its structure, its screen and its input handling as they are, and keep genex::install(game) where its entry calls it. Do not replace this game's randomness or its clock with the template's — this is the user's own code, not the studio's scaffold.`,
     "A failed build answers capture with its first error: fix that first.",
+    RUST_PHYSICS_MOVE,
   ];
 }
 

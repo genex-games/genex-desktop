@@ -107,7 +107,7 @@ fn a_stream_cell_that_splits_nav_tiles_refuses_streaming_invalid() {
     assert_eq!(refused(32.0, 64.0), Some(InstallErrorCode::StreamingInvalid), "a tile larger than a cell");
 }
 
-#[cfg(not(feature = "physics"))]
+#[cfg(not(feature = "physics-raw"))]
 #[test]
 fn with_colliders_does_not_compile_without_physics() {
     let cases = trybuild::TestCases::new();

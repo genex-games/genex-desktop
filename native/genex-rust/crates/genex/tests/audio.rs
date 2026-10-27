@@ -277,7 +277,7 @@ fn a_symlink_out_of_the_asset_folder_is_a_missing_sound() {
 /// A wall collider between the camera and an emitter occludes it: `occluded` within two
 /// round-robin cycles (one voice is cast every tick) and at least 8 dB down once the 100 ms
 /// tween settles; the same game without the wall is open.
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 #[test]
 fn a_wall_collider_occludes_a_voice_behind_it() {
     use genex::physics::ColliderBuilder;

@@ -29,7 +29,7 @@ navigation, characters and animation, sound, terrain, multiplayer, profiling and
 each a page in `docs/api/` that `docs/GENEX_API.md` lists. Physics, sound, navigation, streaming
 and animation each have a `genex.toml` table with an `enabled` switch, and a switched-off system's
 calls are refused (`audio-disabled`, `nav-disabled`, `streaming-disabled`, `animation-disabled`;
-Rapier code does not compile). Read the game's `genex.toml` before calling one, and switch one on
+physics code does not compile). Read the game's `genex.toml` before calling one, and switch one on
 only when the brief needs it.
 
 Two lessons every contractor re-learned: before re-tuning lighting or a material, capture the game

@@ -17,7 +17,7 @@
 //! New behaviour (section 0 of the game systems plan): the section is red until `genex.stream` is
 //! wired into `saves.rs`.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 use std::sync::Arc;
 

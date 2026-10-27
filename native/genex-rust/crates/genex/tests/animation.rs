@@ -274,7 +274,7 @@ fn refusing_game() -> Game<Refusals> {
 }
 
 /// A humanoid ragdoll asked of a three-joint chain refuses `ragdoll-profile-invalid`.
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 fn ragdoll_refusal(physics: &mut PhysicsWorld, gfx: &Gfx) -> String {
     let chain = gfx.character("chain.glb").expect("the chain");
     let mut g = chain.graph();
@@ -286,7 +286,7 @@ fn ragdoll_refusal(physics: &mut PhysicsWorld, gfx: &Gfx) -> String {
 }
 
 /// Without physics there are no ragdolls: the code is still the error type's own.
-#[cfg(not(feature = "physics"))]
+#[cfg(not(feature = "physics-raw"))]
 fn ragdoll_refusal(_: &mut PhysicsWorld, _: &Gfx) -> String {
     AnimationErrorCode::RagdollProfileInvalid.wire().to_owned()
 }

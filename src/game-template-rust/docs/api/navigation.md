@@ -27,7 +27,8 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
   the stream cell size must be a whole number of tiles, or `install` refuses `streaming-invalid`.
 - **Input.** `NavInput::new()` takes `with_triangles`, `with_mesh`, `with_box`, `with_terrain`,
   `with_area_volume(outline, min_y, max_y, area)` and `with_bounds`. Areas are `NavArea::WALK`,
-  `ROAD`, `GRASS`, `WATER`, `DOOR` and `NavArea::custom(8..=62)`. With physics,
+  `ROAD`, `GRASS`, `WATER`, `DOOR` and `NavArea::custom(8..=62)`. With physics (the raw Rapier
+  world `sim.physics` dereferences to, `docs/api/physics.md`),
   `.with_static_colliders(&sim.physics, area)` adds the world's static colliders (no body or a
   fixed body), and `.with_colliders(&sim.physics, |view| ..)` lets the game pick: return an area to
   take the collider, `None` to skip it. Sensors and disabled colliders never count; balls,

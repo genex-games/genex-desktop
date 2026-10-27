@@ -114,7 +114,7 @@ function snapshot(dir: string): string[] {
 /** A fake rust tool: `--version` answers the pinned version, anything else prints its argv and env as JSON. */
 const FAKE_TOOL = (name: string) => `#!/bin/bash
 if [ "$1" = "--version" ] || [ "$1" = "-V" ]; then echo "${name} ${RUST_VERSION} (fake)"; exit 0; fi
-node -e 'const e = process.env; process.stdout.write(JSON.stringify({tool: process.argv[1], argv: process.argv.slice(2), env: {CARGO_HOME: e.CARGO_HOME, CARGO: e.CARGO, PATH: e.PATH, RUSTC: e.RUSTC, RUSTUP_TOOLCHAIN: e.RUSTUP_TOOLCHAIN ?? null, RUSTUP_HOME: e.RUSTUP_HOME ?? null, RUSTC_WRAPPER: e.RUSTC_WRAPPER ?? null, CARGO_BUILD_RUSTC_WRAPPER: e.CARGO_BUILD_RUSTC_WRAPPER ?? null, CARGO_TARGET_DIR: e.CARGO_TARGET_DIR, CARGO_NET_OFFLINE: e.CARGO_NET_OFFLINE, GENEX_NO_WINDOW: e.GENEX_NO_WINDOW ?? null, GENEX_COLYSEUS_LIB_DIR: e.GENEX_COLYSEUS_LIB_DIR ?? null, GENEX_COLYSEUS_ARCHIVE: e.GENEX_COLYSEUS_ARCHIVE ?? null}, configKeys: Object.keys(e).filter((k) => /^(CARGO_|RUST)/.test(k)).sort()}))' "${name}" "$@"
+node -e 'const e = process.env; process.stdout.write(JSON.stringify({tool: process.argv[1], argv: process.argv.slice(2), env: {CARGO_HOME: e.CARGO_HOME, CARGO: e.CARGO, PATH: e.PATH, RUSTC: e.RUSTC, RUSTUP_TOOLCHAIN: e.RUSTUP_TOOLCHAIN ?? null, RUSTUP_HOME: e.RUSTUP_HOME ?? null, RUSTC_WRAPPER: e.RUSTC_WRAPPER ?? null, CARGO_BUILD_RUSTC_WRAPPER: e.CARGO_BUILD_RUSTC_WRAPPER ?? null, CARGO_TARGET_DIR: e.CARGO_TARGET_DIR, CARGO_NET_OFFLINE: e.CARGO_NET_OFFLINE, GENEX_NO_WINDOW: e.GENEX_NO_WINDOW ?? null, GENEX_COLYSEUS_LIB_DIR: e.GENEX_COLYSEUS_LIB_DIR ?? null, GENEX_COLYSEUS_ARCHIVE: e.GENEX_COLYSEUS_ARCHIVE ?? null, CARGO_ENCODED_RUSTFLAGS: e.CARGO_ENCODED_RUSTFLAGS ?? null}, configKeys: Object.keys(e).filter((k) => /^(CARGO_|RUST)/.test(k)).sort()}))' "${name}" "$@"
 exit "\${FAKE_TOOL_EXIT:-0}"
 `;
 
@@ -258,6 +258,7 @@ interface FakeCargoOutput {
     GENEX_NO_WINDOW: string | null;
     GENEX_COLYSEUS_LIB_DIR: string | null;
     GENEX_COLYSEUS_ARCHIVE: string | null;
+    CARGO_ENCODED_RUSTFLAGS: string | null;
   };
   /** Every `CARGO_*` and `RUST*` variable the tool saw, sorted. */
   configKeys: string[];
@@ -521,6 +522,64 @@ describe("rust-env.ts runs cargo with the pinned toolchain only", POSIX_ONLY, ()
     assert.ok(out.configKeys.includes("CARGO_TERM_COLOR"), "terminal output is the caller's");
     assert.equal(out.env.CARGO_TARGET_DIR, path.join(f.root, "target"), "the target folder is the caller's");
     assert.equal(out.env.CARGO_HOME, path.join(f.toolchain, "cargo-home"));
+  });
+
+  it("remaps the build's absolute paths only on GENEX_RUST_REMAP_PATHS=1, still dropping a caller's flags", async () => {
+    const f = await fakeToolchain();
+    const configured = path.join(f.root, "configured-vendor");
+    await writeFile(
+      path.join(f.toolchain, "cargo-home", "config.toml"),
+      `[source.vendored]\ndirectory = "${configured}"\n\n[net]\noffline = true\n`,
+    );
+    const callerFlags = { RUSTFLAGS: "-Clinker=/bin/false", CARGO_ENCODED_RUSTFLAGS: "-Clinker=/bin/false" };
+    const plain = await runEnv(["--", "cargo", "build", "--offline"], { ...f.env, ...callerFlags });
+    assert.equal(plain.code, 0, plain.stderr);
+    assert.equal(
+      (JSON.parse(plain.stdout) as FakeCargoOutput).env.CARGO_ENCODED_RUSTFLAGS,
+      null,
+      "no opt-in, no flags",
+    );
+
+    const remapped = await runEnv(["--", "cargo", "build", "--offline"], {
+      ...f.env,
+      ...callerFlags,
+      GENEX_RUST_REMAP_PATHS: "1",
+    });
+    assert.equal(remapped.code, 0, remapped.stderr);
+    const out = JSON.parse(remapped.stdout) as FakeCargoOutput;
+    const flags = (out.env.CARGO_ENCODED_RUSTFLAGS ?? "").split("\x1f");
+    assert.ok(!out.configKeys.includes("RUSTFLAGS"), "a caller's RUSTFLAGS never reaches cargo");
+    assert.ok(
+      flags.every((flag) => flag.startsWith("--remap-path-prefix=")),
+      `only remaps: ${flags.join(" ")}`,
+    );
+    for (const [from, to] of [
+      [path.resolve(REPO), "genex"],
+      [f.workspace, "genex-rust"],
+      [path.join(f.toolchain, "cargo-home"), "cargo-home"],
+      [path.join(f.toolchain, "vendor"), "vendor"],
+      [configured, "vendor"],
+    ]) {
+      assert.ok(flags.includes(`--remap-path-prefix=${from}=${to}`), `${from} → ${to}: ${flags.join(" ")}`);
+    }
+  });
+
+  it("adds its own simd128 flag only on GENEX_RUST_WASM_SIMD=1, beside the remaps and never a caller's", async () => {
+    const f = await fakeToolchain();
+    const callerFlags = { RUSTFLAGS: "-Clinker=/bin/false", CARGO_ENCODED_RUSTFLAGS: "-Clinker=/bin/false" };
+    const encoded = async (extra: Record<string, string>) => {
+      const result = await runEnv(["--", "cargo", "build", "--offline"], { ...f.env, ...callerFlags, ...extra });
+      assert.equal(result.code, 0, result.stderr);
+      return ((JSON.parse(result.stdout) as FakeCargoOutput).env.CARGO_ENCODED_RUSTFLAGS ?? "").split("\x1f");
+    };
+    assert.deepEqual(await encoded({ GENEX_RUST_WASM_SIMD: "1" }), ["-Ctarget-feature=+simd128"]);
+    assert.deepEqual(await encoded({ GENEX_RUST_WASM_SIMD: "yes" }), [""], "only 1 opts in");
+    const both = await encoded({ GENEX_RUST_WASM_SIMD: "1", GENEX_RUST_REMAP_PATHS: "1" });
+    assert.equal(both.at(-1), "-Ctarget-feature=+simd128");
+    assert.ok(
+      both.slice(0, -1).every((flag) => flag.startsWith("--remap-path-prefix=")),
+      `remaps, then simd128: ${both.join(" ")}`,
+    );
   });
 
   it("builds the genex workspace by default, also without the leading --", async () => {

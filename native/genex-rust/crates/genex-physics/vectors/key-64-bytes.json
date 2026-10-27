@@ -1,0 +1,72 @@
+{
+  "contract": "1.0",
+  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
+  "name": "key-64-bytes",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.01666666753590107,
+    "substeps": 1,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.8100004196167
+    ],
+    "upAxis": "z",
+    "lengthUnit": 1.0
+  },
+  "static": {
+    "boxes": [
+      [
+        -50,
+        -50,
+        -1,
+        50,
+        50,
+        0
+      ]
+    ],
+    "ramps": []
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk.1",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                2.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                },
+                "events": true
+              }
+            ],
+            "kind": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+          }
+        }
+      ],
+      "repeat": 60,
+      "expect": {
+        "stateHash": "e0ff45adcb105f50",
+        "events": []
+      }
+    }
+  ]
+}

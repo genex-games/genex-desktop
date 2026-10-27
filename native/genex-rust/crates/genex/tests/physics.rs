@@ -5,7 +5,7 @@
 //!
 //! A game built without physics has no Rapier: this file is not compiled then.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 use genex::physics::{
     Ball, ColliderBuilder, Pose, QueryFilter, Ray, RevoluteJointBuilder, RigidBody, RigidBodyBuilder, RigidBodyHandle, RopeJointBuilder,

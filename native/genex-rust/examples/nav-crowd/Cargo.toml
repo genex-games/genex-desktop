@@ -33,7 +33,7 @@ studio = ["genex/studio"]
 
 [dependencies]
 # The game systems it uses, as its genex.toml switches them on (release R-1).
-genex = { workspace = true, features = ["physics", "nav"] }
+genex = { workspace = true, features = ["physics", "physics-raw", "nav"] }
 genex-platform-web = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

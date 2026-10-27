@@ -556,7 +556,7 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
   });
 
   // G6 AU-11: a game without audio opts out of the mixer and the decoders, the web build's largest
-  // game-system share. The facade keeps physics by its own feature, and the lock drops kira, cpal and
+  // game-system share. Flipped (shared physics P4): the kept defaults name physics-raw after physics. The facade keeps physics by its own feature, and the lock drops kira, cpal and
   // symphonia and every crate only they reach, as cargo's resolve of that manifest does.
   // Flipped (release R-2): the kept defaults also name nav, streaming and animation, and a game with
   // neither physics nor audio keeps those three.
@@ -569,14 +569,14 @@ describe("Rust manifest: host-written, no host path, deterministic lock", () => 
     );
     assert.match(
       web.cargoToml,
-      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["physics", "nav", "streaming", "animation"\] \}\n/,
+      /\ngenex = \{ package = "genex-platform-web", version = "=0\.1\.0", default-features = false, features = \["physics", "physics-raw", "nav", "streaming", "animation"\] \}\n/,
     );
     const mac = staged(
       await stageRustGame({ source: silent, stage: await stagePath(), target: BuildTarget.Mac, pins }),
     );
     assert.match(
       mac.cargoToml,
-      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["physics", "nav", "streaming", "animation"\] \}\n/,
+      /\ngenex = \{ version = "=0\.1\.0", default-features = false, features = \["physics", "physics-raw", "nav", "streaming", "animation"\] \}\n/,
     );
     for (const lock of [web.cargoLock ?? "", mac.cargoLock ?? ""]) {
       for (const crate of ["kira", "cpal", "symphonia"]) assert.doesNotMatch(lock, new RegExp(`\nname = "${crate}"\n`));

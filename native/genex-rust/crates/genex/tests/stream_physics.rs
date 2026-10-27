@@ -12,7 +12,7 @@
 //! Every row is new behaviour (section 0 of the game systems plan). A game built without physics
 //! has no colliders to stream: this file, like genex-stream's `physics` module, is not compiled.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]

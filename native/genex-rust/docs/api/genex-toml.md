@@ -26,7 +26,7 @@ native_features = ["subgroup"]
 [web]                     # optional: the browser build's code budget, in MB of gzip
 wasm_budget_mb = 8        # 1..=32, default 4
 
-[physics]                 # optional: a game with no physics builds without Rapier
+[physics]                 # optional: a game with no physics builds without a physics engine
 enabled = false           # default true
 
 [audio]                   # optional: a game with no sound builds without the mixer and decoders
@@ -87,10 +87,10 @@ still exports, with a warning that it loads slower on phones and weak devices; r
 only when the brief targets strong desktops. Past 32 MB it is refused `wasm-over-budget`, and a
 budget outside 1..=32 is refused `invalid-web-budget`. Live builds have no budget.
 
-Rapier is about a fifth of a web build's code. A game that never touches `sim.physics` or
-`genex::physics` sets `[physics] enabled = false`: it builds without Rapier, `sim.physics` is an
-empty stand-in that is never stepped, and code that reaches for Rapier does not compile until
-physics is turned back on.
+Physics (Genex Physics, with Rapier inside) is about a fifth of a web build's code. A game that
+never touches `sim.physics` or `genex::phys` sets `[physics] enabled = false`: it builds without
+it, `sim.physics` is an empty stand-in that is never stepped, and code that reaches for physics
+does not compile until physics is turned back on.
 
 A game that plays no sound sets `[audio] enabled = false`: it builds without the mixer and the
 decoders, and its code compiles unchanged, with every sound missing `audio-disabled`

@@ -22,7 +22,7 @@
 //! - the parity record (checksums every 60 ticks) is byte-identical across runs, and written to
 //!   `GENEX_NAV_PARITY_OUT` for the cross-target comparison.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 #[path = "../../genex-anim/tests/support/mod.rs"]
 mod rigs;

@@ -1,7 +1,7 @@
 //! The simulation every hook reads or writes: the game's world, the physics world and each
 //! facet's private state. `seed` rebuilds all three from their defaults.
 
-use crate::PhysicsWorld;
+use crate::Physics;
 use crate::map::Map;
 use std::any::{Any, TypeId, type_name};
 
@@ -9,8 +9,9 @@ use std::any::{Any, TypeId, type_name};
 pub struct Sim<W> {
     /// The game's own world, rebuilt from `W::default()` on every seed.
     pub world: W,
-    /// The physics world, empty after every seed; the runtime steps it once per tick.
-    pub physics: PhysicsWorld,
+    /// The physics world (Genex Physics, `docs/api/physics.md`), empty after every seed; the
+    /// runtime steps it once per tick.
+    pub physics: Physics,
     /// Per-facet private state, so facets do not edit the entry file's world type.
     pub facets: FacetState,
     /// The navigation world, rebuilt on every seed: empty unless `game.navigation` registered one
@@ -27,7 +28,7 @@ pub struct Sim<W> {
 
 impl<W> Sim<W> {
     /// The world and the physics world, borrowed mutably together.
-    pub fn split(&mut self) -> (&mut W, &mut PhysicsWorld) {
+    pub fn split(&mut self) -> (&mut W, &mut Physics) {
         (&mut self.world, &mut self.physics)
     }
 }
@@ -117,6 +118,6 @@ mod without_physics {
         let ticks = runtime.advance_live(1000.0 / 60.0 * 3.0);
         assert!(ticks >= 2, "the game ticked: {ticks}");
         assert_eq!(runtime.sim().world.ticks, ticks);
-        assert_eq!(runtime.sim().physics, PhysicsWorld, "the empty stand-in, never Rapier's");
+        assert_eq!(runtime.sim().physics, crate::Physics, "the empty stand-in, never a physics world");
     }
 }

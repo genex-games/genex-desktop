@@ -28,6 +28,12 @@
  * - `cargo test` and `cargo bench` run with `GENEX_NO_WINDOW=1`, so a test that reaches the desktop
  *   shell's window is refused `window-refused` instead of opening one; a caller's explicit
  *   `GENEX_NO_WINDOW=0` (the owner's windowed smoke rows) is kept.
+ * - `GENEX_RUST_REMAP_PATHS=1` (a build that ships, e.g. `scripts/physics-wasm.ts`) makes the helper
+ *   set `CARGO_ENCODED_RUSTFLAGS` to `--remap-path-prefix` flags of its own and nothing else: the
+ *   repository, the workspace, the vendored `CARGO_HOME` and crate tree become `genex`,
+ *   `genex-rust`, `cargo-home` and `vendor`, so no absolute path of this machine lands in the binary.
+ * - `GENEX_RUST_WASM_SIMD=1` adds the helper's own `-Ctarget-feature=+simd128` to those flags (a
+ *   wasm32 build only: the flag reaches the `--target` crates, never a build script or the host).
  * - The cross-compiler env (Android NDK, llvm-mingw, iOS deployment target, JAVA_HOME) is set for
  *   whatever is installed. `CARGO_TARGET_DIR` defaults to `.studio-dev/cargo-target`.
  *
@@ -134,6 +140,16 @@ const FLAG_VARIABLES = [
   "CARGO_ENCODED_RUSTDOCFLAGS",
   "RUSTC_BOOTSTRAP",
 ] as const;
+/** The caller's opt-in to remapping the build's absolute paths (see the header). */
+const REMAP_PATHS_ENV = "GENEX_RUST_REMAP_PATHS";
+const REMAP_PATHS_ON = "1";
+/** The caller's opt-in to WebAssembly SIMD (see the header); the flag is the helper's, never the caller's. */
+const WASM_SIMD_ENV = "GENEX_RUST_WASM_SIMD";
+const WASM_SIMD_FLAG = "-Ctarget-feature=+simd128";
+/** What `CARGO_ENCODED_RUSTFLAGS` separates its flags with. */
+const ENCODED_FLAG_SEPARATOR = "\x1f";
+/** The vendored source's folder as the toolchain's cargo config names it. */
+const VENDOR_DIRECTORY_LINE = /^\s*directory\s*=\s*"([^"]+)"\s*$/m;
 /**
  * The `CARGO_*` variables a caller may set: the target folder and how cargo prints. Cargo reads
  * every other `CARGO_*` as configuration (a source replacement, a registry, a target's runner or
@@ -430,6 +446,35 @@ function crossEnv(layout: RustToolchainLayout, env: NodeJS.ProcessEnv): NodeJS.P
   return out;
 }
 
+/** The vendored crate folder the toolchain's cargo config names, if it names one. */
+function configuredVendor(layout: RustToolchainLayout): string | undefined {
+  try {
+    return VENDOR_DIRECTORY_LINE.exec(readFileSync(path.join(layout.cargoHome, "config.toml"), "utf8"))?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `--remap-path-prefix` flags of a build that ships: each absolute folder a source path can
+ * start with, as spelled and as resolved, to a short relative name. rustc applies the last flag
+ * that matches, so the folders inside the repository come after it.
+ */
+export function remapPathFlags(layout: RustToolchainLayout): string[] {
+  const vendors = [layout.vendor, realOrNull(layout.vendor), configuredVendor(layout)];
+  const pairs: [string | null | undefined, string][] = [
+    [path.resolve(REPO), "genex"],
+    [realOrNull(REPO), "genex"],
+    [path.resolve(layout.workspace), "genex-rust"],
+    [path.resolve(layout.cargoHome), "cargo-home"],
+    ...vendors.map((dir): [string | null | undefined, string] => [dir, "vendor"]),
+  ];
+  const flags = pairs
+    .filter((pair): pair is [string, string] => typeof pair[0] === "string" && pair[0] !== "")
+    .map(([from, to]) => `--remap-path-prefix=${path.resolve(from)}=${to}`);
+  return [...new Set(flags)];
+}
+
 /** The environment every tool runs with: the pinned sysroot first, no rustup, the vendored CARGO_HOME. */
 export function rustEnvironment(layout: RustToolchainLayout, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const extras = ["bin", "zig", path.join("binaryen", "bin")]
@@ -445,6 +490,11 @@ export function rustEnvironment(layout: RustToolchainLayout, env: NodeJS.Process
   }
   // Empty, not unset: an empty wrapper variable also overrides `build.rustc-wrapper` in a config.
   for (const name of WRAPPER_VARIABLES) out[name] = "";
+  const flags = [
+    ...(env[REMAP_PATHS_ENV] === REMAP_PATHS_ON ? remapPathFlags(layout) : []),
+    ...(env[WASM_SIMD_ENV] === REMAP_PATHS_ON ? [WASM_SIMD_FLAG] : []),
+  ];
+  if (flags.length > 0) out.CARGO_ENCODED_RUSTFLAGS = flags.join(ENCODED_FLAG_SEPARATOR);
   return {
     ...out,
     PATH: [bin, ...extras, ...filteredPath(env)].join(path.delimiter),

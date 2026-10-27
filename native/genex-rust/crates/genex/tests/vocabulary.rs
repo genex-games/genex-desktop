@@ -437,18 +437,79 @@ fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the
     assert!(leaf.subsurface().is_some());
 }
 
-/// The Physics page's calls (lane PH): Rapier 0.36 through `genex::physics`, as `docs/api/physics.md`
-/// teaches them. They are Rapier's own names, pinned so the page, the physics recipe and the
-/// template guide teach only calls this chain makes.
+/// The Physics page's calls (shared physics P4): Genex Physics through `sim.physics` and
+/// `genex::phys`, as `docs/api/physics.md` teaches them, pinned so the page, the physics recipe and
+/// the template guide teach only calls this chain makes.
 #[cfg(feature = "physics")]
 #[test]
-fn the_physics_calls_are_the_fixtures_and_each_is_a_call_of_rapier() {
+fn the_physics_calls_are_the_fixtures_and_each_is_a_call_of_genex_physics() {
+    use genex::phys::{self, BodyDesc, BodyFilter, BodyType, ColliderDesc, JointDesc, JointType, Motor, QueryFilter, SetPoseOptions, WorldDesc};
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "physics"),
+        [
+            "game.physics_world", "WorldDesc::new", "phys::default_world", "BodyDesc::new", "ColliderDesc::new", "JointDesc::new", "phys::pose", "phys::xyz",
+            "phys::vec3_of", "phys::quat_of", "phys::cuboid", "phys::ball", "physics.spawn", "physics.remove", "physics.add_joint",
+            "physics.set_motor", "physics.impulse", "physics.set_velocity", "physics.area_push", "physics.set_pose",
+            "physics.set_next_kinematic_pose", "physics.wake", "physics.sleep", "physics.body", "physics.bodies", "physics.stats",
+            "physics.ray", "physics.shape_cast", "physics.overlap", "QueryFilter::default", "physics.events", "physics.escaped",
+            "physics.export_row", "physics.import_row", "physics.export_body_state", "physics.state_hash_hex", "physics.snapshot",
+            "physics.restore", "physics.failure", "Transform::from_translation",
+        ]
+    );
+    // Every pinned name is a real call, chained as the Physics page teaches it.
+    let mut game = Game::new(World);
+    let resolved = WorldDesc::new(genex::FIXED_STEP_MS / 1000.0, 1.0, [0.0, -9.81, 0.0], phys::UpAxis::Y, 1.0);
+    assert_eq!(resolved, phys::default_world(), "the default world is the page's");
+    game.physics_world(resolved);
+    let mut runtime = genex::Runtime::new(game).expect("installs");
+    runtime.seed(1);
+    let physics = &mut runtime.sim_mut().physics;
+    let at = |v: Vec3| phys::pose(v, Quat::IDENTITY);
+    let ground = BodyDesc::new("ground", BodyType::Fixed, at(vec3(0.0, -0.5, 0.0)), vec![ColliderDesc::new("slab", phys::cuboid(vec3(20.0, 0.5, 20.0)))]);
+    let crate_box = BodyDesc::new("crate", BodyType::Dynamic, at(vec3(0.0, 0.5, 0.0)), vec![ColliderDesc::new("box", phys::ball(0.5))]);
+    let trolley = BodyDesc::new("trolley", BodyType::Kinematic, at(vec3(-8.0, 12.0, 0.0)), vec![ColliderDesc::new("hook", phys::ball(0.2))]);
+    for body in [ground, crate_box, trolley] {
+        physics.spawn(&body).expect("spawns");
+    }
+    let rope = JointDesc { limits: Some([0.0, 13.0]), ..JointDesc::new("rope", "crate", Some("trolley"), JointType::Rope, [0.0; 3], [0.0; 3]) };
+    physics.add_joint(&rope).expect("a rope");
+    physics.set_motor("rope", Motor::default()).expect("a motor");
+    physics.impulse("crate", phys::xyz(Vec3::Y), None).expect("an impulse");
+    physics.set_velocity("crate", Some([0.0; 3]), None).expect("a velocity");
+    physics.area_push([0.0; 3], 4.0, 1.0, 1.0, None).expect("a push");
+    physics.set_pose("crate", at(vec3(0.0, 0.6, 0.0)), SetPoseOptions::default()).expect("a teleport");
+    physics.set_next_kinematic_pose("trolley", at(vec3(-7.0, 12.0, 0.0))).expect("a target");
+    physics.sleep("crate").expect("asleep");
+    physics.wake("crate").expect("awake");
+    let hit = physics.ray([0.0, 5.0, 0.0], [0.0, -1.0, 0.0], 10.0, &QueryFilter::default()).expect("a ray");
+    let cast = physics.shape_cast(&phys::ball(0.1), at(vec3(0.0, 5.0, 0.0)), [0.0, -1.0, 0.0], 10.0, &QueryFilter::default()).expect("a cast");
+    let near = physics.overlap(&phys::ball(4.0), at(Vec3::ZERO), &QueryFilter::default()).expect("an overlap");
+    assert!(hit.is_some_and(|hit| hit.body == "crate") && cast.is_some() && near.contains(&"crate".to_owned()));
+    let row = physics.export_row("crate").expect("a row");
+    physics.import_row("crate", &row).expect("imported");
+    let bytes = physics.snapshot().expect("a snapshot");
+    physics.restore(&bytes).expect("restored");
+    physics.remove("trolley").expect("removed");
+    let body = physics.body("crate").expect("the crate");
+    let drawn = Transform::from_translation(phys::vec3_of(body.pose.p)).with_rotation(phys::quat_of(body.pose.q));
+    assert!(drawn.translation.y > 0.0 && physics.export_body_state("crate").is_some() && physics.bodies(&BodyFilter::default()).len() == 2);
+    assert!(physics.stats().bodies == 2 && physics.events().is_empty() && physics.escaped().is_empty() && physics.failure().is_none());
+    assert_eq!(physics.state_hash_hex().len(), 16);
+}
+
+/// The deprecated raw Rapier names (`physics-raw`, for one release): what games written before
+/// shared physics P4 call through `genex::physics` and `sim.physics`'s Rapier world. No page
+/// teaches them; this chain keeps them compiling.
+#[cfg(feature = "physics-raw")]
+#[test]
+fn the_raw_physics_calls_are_the_fixtures_and_each_is_a_call_of_rapier() {
     use genex::physics::{
         Ball, ColliderBuilder, Pose, QueryFilter, Ray, RevoluteJointBuilder, RigidBodyBuilder, RopeJointBuilder,
     };
     let pinned = fixture();
     assert_eq!(
-        pinned_calls(&pinned, "physics"),
+        names(&pinned["physics"]["rawCalls"]),
         [
             "RigidBodyBuilder::dynamic", "RigidBodyBuilder::fixed", "RigidBodyBuilder::kinematic_position_based",
             ".translation", ".linvel", ".linear_damping", ".ccd_enabled", "ColliderBuilder::cuboid", "ColliderBuilder::ball",

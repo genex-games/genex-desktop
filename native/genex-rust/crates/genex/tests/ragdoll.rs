@@ -10,7 +10,7 @@
 //!
 //! genex-anim's own rows (`crates/genex-anim/tests/ragdoll.rs`) cover the ragdoll's behaviour.
 
-#![cfg(feature = "physics")]
+#![cfg(feature = "physics-raw")]
 
 #[path = "../../genex-anim/tests/support/mod.rs"]
 mod rigs;

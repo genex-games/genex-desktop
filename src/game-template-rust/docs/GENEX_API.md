@@ -41,7 +41,7 @@ change touches (nearly every game needs Ctx and Drawing).
 | Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
-| Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
+| Physics | `docs/api/physics.md` | Keyed bodies, joints, forces, events, queries, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
@@ -64,7 +64,7 @@ change touches (nearly every game needs Ctx and Drawing).
 
 ## Hooks
 
-Every hook gets a `Sim<W>`: `sim.world` (your `W`), `sim.physics` (Rapier 3D) and
+Every hook gets a `Sim<W>`: `sim.world` (your `W`), `sim.physics` (Genex Physics) and
 `sim.facets` (each facet's private state). `sim.split()` lends the world and physics together.
 
 | Hook | Signature | Kind |
@@ -123,8 +123,9 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   registration), `streaming-invalid` (Streaming and Navigation pages), `input-invalid` (Input
   page), `audio-zone-limit` (more than 16 reverb zones),
   `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`,
-  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps), `settings-invalid`, `nav-disabled`
-  and `streaming-disabled` (that system is off in genex.toml).
+  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps), `settings-invalid`,
+  `duplicate-physics-world`, `physics-world-invalid`, `nav-disabled` and `streaming-disabled`
+  (switched off in genex.toml).
   `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
   pass name, or one pass over the cap.
 

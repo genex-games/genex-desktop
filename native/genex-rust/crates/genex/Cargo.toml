@@ -15,13 +15,18 @@ workspace = true
 # genex-render renderer for captures and, on a Mac, Live's frames through genex-frames. An export
 # is built without it and never links genex-studio (the admission symbol scan proves that).
 [features]
-default = ["physics", "audio", "nav", "streaming", "animation"]
+default = ["physics", "physics-raw", "audio", "nav", "streaming", "animation"]
 studio = ["dep:genex-studio", "dep:genex-frames"]
-# Rapier 3D, stepped once per tick (`Sim::physics`). A game with `[physics] enabled = false` in its
-# genex.toml is built without it: about a fifth of a web build's code (renderer pass 2, D11).
-# The area crates' Rapier parts (characters, ragdolls, collider nav input, streamed colliders)
-# follow it.
-physics = ["dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-stream/physics"]
+# Genex Physics (shared physics P4; crates/genex-physics, contract 1.0): `sim.physics` is its world,
+# stepped once per tick (`genex::phys`, `docs/api/physics.md`). A game with `[physics] enabled =
+# false` in its genex.toml is built without it, and without Rapier: about a fifth of a web build's
+# code (renderer pass 2, D11).
+physics = ["dep:genex-physics"]
+# Deprecated, for one release: raw Rapier 3D beside it (`genex::rapier3d`, `genex::physics`, and
+# `sim.physics` dereferencing to Rapier's world), so games written before P4 keep compiling. The
+# area crates' Rapier parts (characters, ragdolls, collider nav input, streamed colliders) follow
+# it. The host turns it on with `physics` until the release that drops it.
+physics-raw = ["physics", "dep:rapier3d", "genex-anim/physics", "genex-nav/physics", "genex-stream/physics"]
 # Sounds and music (G6 AU-11): genex-audio's mixer, device output and decoders (kira, cpal and
 # symphonia). A game with `[audio] enabled = false` in its genex.toml is built without them:
 # `genex::audio` keeps its whole surface, every sound is missing (`audio-disabled`) and `ctx.audio`
@@ -57,6 +62,7 @@ glam = { workspace = true }
 indexmap = { workspace = true }
 libm = { workspace = true }
 rapier3d = { workspace = true, optional = true }
+genex-physics = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

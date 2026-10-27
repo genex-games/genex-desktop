@@ -37,7 +37,7 @@ studio = ["genex/studio"]
 [dependencies]
 # Physics: the occluding wall is a Rapier collider the audio rays hit. Audio: the mixer and
 # decoders, which a game links only by naming the feature (AU-11).
-genex = { workspace = true, features = ["physics", "audio"] }
+genex = { workspace = true, features = ["physics", "physics-raw", "audio"] }
 genex-platform-web = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

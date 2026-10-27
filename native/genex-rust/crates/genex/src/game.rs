@@ -81,6 +81,9 @@ pub struct Game<W> {
     pub(crate) nav_bakes: crate::nav_bake::NavBakes,
     /// `game.impostor_bake` registrations, in registration order (LOD-23).
     pub(crate) impostor_bakes: crate::lod::ImpostorBakes,
+    /// `game.physics_world` registrations (install refuses more than one).
+    #[cfg(feature = "physics")]
+    pub(crate) physics_worlds: Vec<crate::phys::WorldDesc>,
 }
 
 /// The handle `game.camera(..)` returns; `.camera_override()` lets this camera replace an
@@ -145,6 +148,8 @@ impl<W: Default + 'static> Game<W> {
             save_sections: crate::saves::Sections::default(),
             nav_bakes: crate::nav_bake::NavBakes::default(),
             impostor_bakes: crate::lod::ImpostorBakes::default(),
+            #[cfg(feature = "physics")]
+            physics_worlds: Vec::new(),
         }
     }
 
@@ -331,7 +336,7 @@ impl<W: Default + 'static> Game<W> {
 
     /// Stream the static colliders cell builders add (`CellBuild::part(CellColliders)`): they enter
     /// `sim.physics` with their cell and leave with it, in canonical order.
-    #[cfg(feature = "physics")]
+    #[cfg(feature = "physics-raw")]
     pub fn stream_colliders(&mut self) -> &mut Self {
         self.facet_state::<genex_stream::physics::StreamColliders>();
         self.stream_commit(crate::stream::ColliderCommit)

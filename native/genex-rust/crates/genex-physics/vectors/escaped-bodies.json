@@ -1,0 +1,176 @@
+{
+  "contract": "1.0",
+  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
+  "name": "escaped-bodies",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.01666666753590107,
+    "substeps": 1,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.8100004196167
+    ],
+    "upAxis": "z",
+    "lengthUnit": 1.0,
+    "limits": {
+      "worldExtent": 50
+    }
+  },
+  "static": {
+    "boxes": [
+      [
+        -50,
+        -50,
+        -1,
+        50,
+        50,
+        0
+      ]
+    ],
+    "ramps": []
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "rocket",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                }
+              }
+            ],
+            "linvel": [
+              0,
+              0,
+              300
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "stay",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                5.0,
+                0.0,
+                0.5
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "repeat": 0
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "ff4b592166aec491"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "e84161a36144f487"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "f27fde4b211bb529"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "ac3c4b872a76904a"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "0a808a7f6e63cfcd"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "5dc7dac77a749185"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "c893b8dfd40d7696"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "2ef5577700e24acd"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "259e2f10db86a61e"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [
+          "rocket"
+        ],
+        "stateHash": "19fed06dda6455d2"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "4c1b9d9530e0f474"
+      }
+    },
+    {
+      "expect": {
+        "escaped": [],
+        "stateHash": "29e142851209750a"
+      }
+    }
+  ]
+}

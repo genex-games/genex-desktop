@@ -12,7 +12,7 @@ pub use genex_nav::debug::NavDebugLine;
 pub use genex_nav::error::NavError;
 pub use genex_nav::filter::NavFilter;
 pub use genex_nav::input::{HeightGrid, NAV_AREA_VOLUMES_MAX, NAV_INPUT_TRIANGLES_MAX, NavArea, NavInput, TerrainHeights};
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 pub use genex_nav::input_rapier::ColliderView;
 // NAV_MEMO_BYTES_MAX_PHONE stays in genex-nav until the runtime applies a per-class cap.
 pub use genex_nav::memo::NAV_MEMO_BYTES_MAX;

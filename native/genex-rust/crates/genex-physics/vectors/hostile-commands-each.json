@@ -1,0 +1,859 @@
+{
+  "contract": "1.0",
+  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
+  "name": "hostile-commands-each",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.03333333507180214,
+    "substeps": 2,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.8100004196167
+    ],
+    "upAxis": "z",
+    "lengthUnit": 1.0,
+    "limits": {
+      "bodies": 5,
+      "collidersPerBody": 2,
+      "hullVertices": 8,
+      "triangles": 4,
+      "joints": 1,
+      "ccdBodies": 0,
+      "queriesPerStep": 2
+    }
+  },
+  "static": {
+    "boxes": [],
+    "ramps": []
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "d",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.5,
+                    0.5,
+                    0.5
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "d2",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                2.0,
+                0.0,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                }
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "f",
+            "type": "fixed",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    10.0,
+                    10.0,
+                    1.0
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "k",
+            "type": "kinematic",
+            "pose": {
+              "p": [
+                4.0,
+                0.0,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.5,
+                    0.5,
+                    0.5
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "addJoint": {
+            "key": "j",
+            "a": "d",
+            "b": null,
+            "type": "ball",
+            "anchorA": [
+              0,
+              0,
+              0
+            ],
+            "anchorB": [
+              0,
+              0,
+              1
+            ]
+          }
+        }
+      ],
+      "repeat": 5,
+      "expect": {
+        "stateHash": "52295cb55de06d3b"
+      }
+    },
+    {
+      "apply": [
+        {
+          "wake": {
+            "key": "a b"
+          }
+        },
+        {
+          "spawn": {
+            "key": "d",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.5,
+                    0.5,
+                    0.5
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "wake": {
+            "key": "nope"
+          }
+        },
+        {
+          "impulse": {
+            "key": "d",
+            "j": [
+              1e+39,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "setPose": {
+            "key": "d",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                1.0000000150474662e+30
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "n",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.0,
+                    1.0,
+                    1.0
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "n",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "trimesh",
+                  "vertices": [
+                    [
+                      0,
+                      0,
+                      0
+                    ],
+                    [
+                      1,
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      1,
+                      0
+                    ]
+                  ],
+                  "indices": [
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "impulse": {
+            "key": "f",
+            "j": [
+              0,
+              0,
+              1
+            ]
+          }
+        },
+        {
+          "explode": {
+            "key": "d"
+          }
+        },
+        {
+          "spawn": {
+            "key": "n",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c1",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.10000000149011612
+                }
+              },
+              {
+                "key": "c2",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.10000000149011612
+                }
+              },
+              {
+                "key": "c3",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.10000000149011612
+                }
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "n",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "hull",
+                  "points": [
+                    [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    [
+                      1.0,
+                      0.0,
+                      0.009999999776482582
+                    ],
+                    [
+                      0.0,
+                      1.0,
+                      0.019999999552965164
+                    ],
+                    [
+                      1.0,
+                      1.0,
+                      0.029999999329447746
+                    ],
+                    [
+                      0.0,
+                      0.0,
+                      1.0399999618530273
+                    ],
+                    [
+                      1.0,
+                      0.0,
+                      1.0499999523162842
+                    ],
+                    [
+                      0.0,
+                      1.0,
+                      1.059999942779541
+                    ],
+                    [
+                      1.0,
+                      1.0,
+                      1.0700000524520874
+                    ],
+                    [
+                      0.0,
+                      0.0,
+                      2.0799999237060547
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "n",
+            "type": "fixed",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "trimesh",
+                  "vertices": [
+                    [
+                      0,
+                      0,
+                      0
+                    ],
+                    [
+                      1,
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      1,
+                      0
+                    ]
+                  ],
+                  "indices": [
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ],
+                    [
+                      0,
+                      1,
+                      2
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "addJoint": {
+            "key": "j2",
+            "a": "d",
+            "b": "d2",
+            "type": "ball",
+            "anchorA": [
+              0,
+              0,
+              0
+            ],
+            "anchorB": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "n",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                0.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.5,
+                    0.5,
+                    0.5
+                  ]
+                }
+              }
+            ],
+            "ccd": true
+          }
+        }
+      ],
+      "repeat": 0,
+      "expect": {
+        "refused": [
+          [
+            0,
+            "invalid-key"
+          ],
+          [
+            1,
+            "duplicate-key"
+          ],
+          [
+            2,
+            "unknown-key"
+          ],
+          [
+            3,
+            "non-finite"
+          ],
+          [
+            4,
+            "out-of-range"
+          ],
+          [
+            5,
+            "bad-shape"
+          ],
+          [
+            6,
+            "dynamic-mesh"
+          ],
+          [
+            7,
+            "wrong-body-type"
+          ],
+          [
+            8,
+            "bad-command"
+          ],
+          [
+            9,
+            "limit-colliders"
+          ],
+          [
+            10,
+            "limit-hull-vertices"
+          ],
+          [
+            11,
+            "limit-triangles"
+          ],
+          [
+            12,
+            "limit-joints"
+          ],
+          [
+            13,
+            "limit-ccd"
+          ]
+        ],
+        "stateHash": "52295cb55de06d3b"
+      }
+    },
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "n1",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                3.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.5,
+                    0.5,
+                    0.5
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "repeat": 0,
+      "expect": {
+        "stateHash": "1d48216726933b51"
+      }
+    },
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "n2",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                3.0,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.5,
+                    0.5,
+                    0.5
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "repeat": 0,
+      "expect": {
+        "refused": [
+          [
+            0,
+            "limit-bodies"
+          ]
+        ],
+        "stateHash": "1d48216726933b51"
+      }
+    },
+    {
+      "query": [
+        {
+          "ray": {
+            "origin": [
+              0,
+              0,
+              9
+            ],
+            "dir": [
+              0,
+              0,
+              -1
+            ],
+            "maxDist": 20
+          }
+        },
+        {
+          "ray": {
+            "origin": [
+              0,
+              0,
+              9
+            ],
+            "dir": [
+              0,
+              0,
+              -1
+            ],
+            "maxDist": 20
+          }
+        },
+        {
+          "ray": {
+            "origin": [
+              0,
+              0,
+              9
+            ],
+            "dir": [
+              0,
+              0,
+              -1
+            ],
+            "maxDist": 20
+          }
+        }
+      ],
+      "repeat": 0,
+      "expect": {
+        "queries": [
+          {
+            "hit": {
+              "body": "d",
+              "collider": "c",
+              "dist": 7.5,
+              "point": [
+                0.0,
+                0.0,
+                1.5
+              ],
+              "normal": [
+                0.0,
+                -0.0,
+                1.0
+              ]
+            }
+          },
+          {
+            "hit": {
+              "body": "d",
+              "collider": "c",
+              "dist": 7.5,
+              "point": [
+                0.0,
+                0.0,
+                1.5
+              ],
+              "normal": [
+                0.0,
+                -0.0,
+                1.0
+              ]
+            }
+          },
+          {
+            "error": "limit-queries"
+          }
+        ],
+        "stateHash": "1d48216726933b51"
+      }
+    },
+    {
+      "repeat": 1,
+      "expect": {
+        "stateHash": "442c4083b82bc8cf"
+      }
+    }
+  ]
+}

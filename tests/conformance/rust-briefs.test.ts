@@ -270,6 +270,19 @@ describe("a Rust game's builders read Rust", () => {
     assert.equal(rustBriefs.facetLinesFor(ProjectKind.StudioTemplate), null);
   });
 
+  // Shared physics P4: an existing game's chat is told that sim.physics moved and raw Rapier is
+  // deprecated, whether the studio scaffolded the game or it came with its own shape.
+  it("a Rust game's chat rules say physics moved to Genex Physics and raw Rapier is deprecated", () => {
+    assert.ok(rustBriefs);
+    const scaffolded = rustBriefs.RUST_TEMPLATE_RULE;
+    const own = rustBriefs.rustOwnShapeChatRules(RUST_SHAPE).join("\n");
+    for (const rules of [scaffolded, own]) {
+      assert.match(rules, /sim\.physics is Genex Physics/);
+      assert.match(rules, /Raw Rapier \(genex::physics, genex::rapier3d[^)]*\) still compiles for one release/);
+      assert.match(rules, /docs\/api\/physics\.md/);
+    }
+  });
+
   it("a facet's module name is a Rust module name", () => {
     assert.ok(rustBriefs);
     const table: Array<[string, string]> = [

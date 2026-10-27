@@ -1,4 +1,4 @@
-This is a Rust game on the studio's `genex` runtime (wgpu on WebGPU core, Rapier 3D physics, egui
+This is a Rust game on the studio's `genex` runtime (wgpu on WebGPU core, Genex Physics, egui
 for UI) for the destinations in `studio.json`: desktop, phones and the web, from one source.
 `docs/GENEX_API.md` indexes the whole API it is written against (each topic is a page in
 `docs/api/`), and `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the
@@ -165,7 +165,7 @@ its engine out of the build; facade calls still compile, but they are refused:
 
 | Switch | Off means | Refused |
 | --- | --- | --- |
-| `[physics]` | no Rapier (a fifth of the web build); `sim.physics` is never stepped | code that reaches for Rapier does not compile |
+| `[physics]` | no physics engine (a fifth of the web build); `sim.physics` is never stepped | code that calls `sim.physics` or names `genex::phys` does not compile |
 | `[audio]` | no mixer or decoders | every sound is missing, `audio-disabled` |
 | `[nav]` | no walkers or paths | `game.navigation` fails install, `nav-disabled` |
 | `[streaming]` | no streamed cells | `game.streaming` fails install, `streaming-disabled` |
@@ -198,10 +198,12 @@ write your own system around it.
   its capsule at the feet, draw the model at the capsule, never placed by its centre, and call
   `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground
   (`docs/api/animation.md`).
-- **Physics**: crates, debris, a wrecking ball on a rope, a door on a hinge are Rapier bodies in
-  `sim.physics`, built in `on_reset` and stepped by the runtime after `on_update`; never step it
-  yourself. Draw each moving body in `on_draw` under its own `frame.id(..)`, save each body's pose
-  and velocities in a section of its own, and probe each mechanic (`docs/api/physics.md`).
+- **Physics**: crates, debris, a wrecking ball on a rope, a door on a hinge are keyed bodies in
+  `sim.physics` (Genex Physics, `genex::phys`), spawned in `on_reset` and stepped by the runtime
+  after `on_update`; there is no step call. Draw each moving body in `on_draw` under its own
+  `frame.id(..)`, save each body's `export_row` in a section of its own, and probe each mechanic
+  (`docs/api/physics.md`). Raw Rapier (`genex::physics`, `genex::rapier3d`) is deprecated: never
+  start new code on it; move an older game's physics when you next change it.
 - **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
   tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
   cards past their last level, declared once in `on_reset`. A model only streamed cells draw

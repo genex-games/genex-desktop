@@ -85,12 +85,16 @@ const STUDIO_FEATURE = "studio";
 export const RustNetFeature = { Loopback: "net-loopback", Relay: "net" } as const;
 export type RustNetFeature = (typeof RustNetFeature)[keyof typeof RustNetFeature];
 /**
- * The facade's default features (genex's and genex-platform-web's), in the facade's order, each a
- * build switch in genex.toml: a game that turns one off links the facade without default features
- * and names the ones it keeps. Wire values: the facade's cargo feature names.
+ * The facade's default features (genex's and genex-platform-web's), in the facade's order, each
+ * kept by a build switch in genex.toml: a game that turns one off links the facade without default
+ * features and names the ones it keeps. `physics-raw` (raw Rapier beside Genex Physics, deprecated
+ * for one release, shared physics P4) follows the `[physics]` switch, so a game written against raw
+ * Rapier keeps compiling whichever other system it turns off. Wire values: the facade's cargo
+ * feature names.
  */
 const FacadeFeature = {
   Physics: "physics",
+  PhysicsRaw: "physics-raw",
   Audio: "audio",
   Nav: "nav",
   Streaming: "streaming",
@@ -102,6 +106,7 @@ const FACADE_FEATURES: readonly FacadeFeature[] = Object.values(FacadeFeature);
 /** Whether a game keeps a default feature: its genex.toml switch, on when absent (a manifest built by hand names none). */
 const KEEPS = {
   [FacadeFeature.Physics]: (manifest) => manifest.physics ?? true,
+  [FacadeFeature.PhysicsRaw]: (manifest) => manifest.physics ?? true,
   [FacadeFeature.Audio]: (manifest) => manifest.audio ?? true,
   [FacadeFeature.Nav]: (manifest) => manifest.nav ?? true,
   [FacadeFeature.Streaming]: (manifest) => manifest.streaming ?? true,
@@ -124,8 +129,9 @@ interface DroppedEdges {
 }
 
 /**
- * - `physics`: every edge to Rapier (the facade's feature, and genex-render's layout check, which a
- *   game never turns on), so the closure drops Rapier and every crate only it reaches.
+ * - `physics`: every edge to Genex Physics and to Rapier (the facade's features, and genex-render's
+ *   layout check, which a game never turns on), so the closure drops both and every crate only they
+ *   reach; `physics-raw` follows the same switch and drops nothing more.
  * - `audio`: genex-audio's edges to its mixer crates (its `mixer` feature), so the closure drops
  *   kira, cpal and symphonia; the logical side stays (G6 AU-11).
  * - `nav`, `streaming`, `animation`: none. The facade keeps each system's surface (types, `sim.nav`,
@@ -133,7 +139,8 @@ interface DroppedEdges {
  *   in the lock (release R-1).
  */
 const DROPPED_EDGES = {
-  [FacadeFeature.Physics]: { from: null, to: ["rapier3d"] },
+  [FacadeFeature.Physics]: { from: null, to: ["genex-physics", "rapier3d"] },
+  [FacadeFeature.PhysicsRaw]: null,
   [FacadeFeature.Audio]: { from: "genex-audio", to: ["kira", "cpal", "symphonia"] },
   [FacadeFeature.Nav]: null,
   [FacadeFeature.Streaming]: null,
@@ -192,14 +199,16 @@ export const RUST_ENGINE_CRATES: readonly string[] = Object.freeze([
 /**
  * The genex crates an eject leaves in the store: the studio's transport and Live's frame wire
  * (the host contract the conformance suite judges), the adapter's GPU-visible memory query, the
- * vendored relay client `genex-multiplayer` (libcolyseus over FFI, linked by a build script) and
- * the phone shells, each FFI over `unsafe` that the lane's `-F unsafe_code` would refuse in a
- * game's own crate.
+ * vendored relay client `genex-multiplayer` (libcolyseus over FFI, linked by a build script), the
+ * phone shells, each FFI over `unsafe` that the lane's `-F unsafe_code` would refuse in a game's
+ * own crate, and Genex Physics (`genex-physics`, shared with genex-demo's authority host under a
+ * signed contract; its per-world allocator accounting is `unsafe`).
  */
 export const RUST_ENGINE_KEPT_CRATES: readonly string[] = Object.freeze([
   "genex-frames",
   "genex-gpu-memory",
   "genex-multiplayer",
+  "genex-physics",
   "genex-platform-android",
   "genex-platform-ios",
   "genex-studio",

@@ -1,0 +1,1580 @@
+{
+  "contract": "1.0",
+  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
+  "name": "query-and-event-ordering",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.01666666753590107,
+    "substeps": 1,
+    "gravity": [
+      0.0,
+      -9.8100004196167,
+      0.0
+    ],
+    "upAxis": "y",
+    "lengthUnit": 1.0
+  },
+  "static": {
+    "boxes": [],
+    "ramps": []
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "ground",
+            "type": "fixed",
+            "pose": {
+              "p": [
+                0.0,
+                -0.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    20.0,
+                    0.5,
+                    20.0
+                  ]
+                }
+              }
+            ],
+            "kind": "floor"
+          }
+        },
+        {
+          "spawn": {
+            "key": "b3",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                -3.0,
+                1.0,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                },
+                "events": true
+              }
+            ],
+            "kind": "ball"
+          }
+        },
+        {
+          "spawn": {
+            "key": "b1",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                -1.0,
+                1.0,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                },
+                "events": true
+              }
+            ],
+            "kind": "ball"
+          }
+        },
+        {
+          "spawn": {
+            "key": "b2",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                1.0,
+                1.0,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                },
+                "events": true
+              }
+            ],
+            "kind": "ball"
+          }
+        },
+        {
+          "spawn": {
+            "key": "a9",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                3.0,
+                1.0,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                },
+                "events": true
+              }
+            ],
+            "kind": "ball"
+          }
+        },
+        {
+          "spawn": {
+            "key": "zone",
+            "type": "fixed",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    2.0,
+                    2.0,
+                    2.0
+                  ]
+                },
+                "sensor": true
+              }
+            ]
+          }
+        },
+        {
+          "spawn": {
+            "key": "probe",
+            "type": "kinematic",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                8.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "sphere",
+                  "radius": 0.5
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "repeat": 0
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                7.800000190734863
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": [
+          {
+            "kind": "triggerEnter",
+            "sensor": "zone",
+            "sc": "c",
+            "other": "ground",
+            "oc": "c",
+            "ko": "floor"
+          }
+        ]
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                7.599999904632568
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                7.400000095367432
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                7.199999809265137
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                7.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                6.800000190734863
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                6.599999904632568
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                6.400000095367432
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                6.199999809265137
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": [
+          {
+            "kind": "triggerEnter",
+            "sensor": "zone",
+            "sc": "c",
+            "other": "probe",
+            "oc": "c"
+          }
+        ]
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                5.800000190734863
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                5.599999904632568
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                5.400000095367432
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                5.199999809265137
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                5.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.800000190734863
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.599999904632568
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.400000095367432
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.199999809265137
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": [
+          {
+            "kind": "contactBegin",
+            "a": "a9",
+            "b": "ground",
+            "ca": "c",
+            "cb": "c",
+            "ka": "ball",
+            "kb": "floor",
+            "impulse": 1.7121671438217163,
+            "point": [
+              3.0,
+              0.0008328557014465332,
+              0.0
+            ],
+            "normal": [
+              -0.0,
+              -1.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "b1",
+            "b": "ground",
+            "ca": "c",
+            "cb": "c",
+            "ka": "ball",
+            "kb": "floor",
+            "impulse": 1.7121671438217163,
+            "point": [
+              -1.0,
+              0.0008328557014465332,
+              0.0
+            ],
+            "normal": [
+              -0.0,
+              -1.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "b2",
+            "b": "ground",
+            "ca": "c",
+            "cb": "c",
+            "ka": "ball",
+            "kb": "floor",
+            "impulse": 1.7121671438217163,
+            "point": [
+              1.0,
+              0.0008328557014465332,
+              0.0
+            ],
+            "normal": [
+              -0.0,
+              -1.0,
+              -0.0
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "b3",
+            "b": "ground",
+            "ca": "c",
+            "cb": "c",
+            "ka": "ball",
+            "kb": "floor",
+            "impulse": 1.7121671438217163,
+            "point": [
+              -3.0,
+              0.0008328557014465332,
+              0.0
+            ],
+            "normal": [
+              -0.0,
+              -1.0,
+              -0.0
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                3.799999952316284
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                3.5999999046325684
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                3.4000000953674316
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                3.200000047683716
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                2.799999952316284
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                2.5999999046325684
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                2.4000000953674316
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                2.200000047683716
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                2.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                1.7999999523162842
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                1.600000023841858
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                1.399999976158142
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                1.2000000476837158
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": [
+          {
+            "kind": "triggerExit",
+            "sensor": "zone",
+            "sc": "c",
+            "other": "probe",
+            "oc": "c"
+          }
+        ]
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                1.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                0.800000011920929
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                0.6000000238418579
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                0.4000000059604645
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                0.20000000298023224
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": []
+      }
+    },
+    {
+      "apply": [
+        {
+          "setNextKinematicPose": {
+            "key": "probe",
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "expect": {
+        "events": [
+          {
+            "kind": "contactBegin",
+            "a": "b1",
+            "b": "probe",
+            "ca": "c",
+            "cb": "c",
+            "ka": "ball",
+            "impulse": 1.2080721855163574,
+            "point": [
+              -0.5,
+              0.4999655485153198,
+              0.10000000149011612
+            ],
+            "normal": [
+              0.9805806875228882,
+              0.00006756492075510323,
+              0.1961161494255066
+            ]
+          },
+          {
+            "kind": "contactBegin",
+            "a": "b2",
+            "b": "probe",
+            "ca": "c",
+            "cb": "c",
+            "ka": "ball",
+            "impulse": 1.2080721855163574,
+            "point": [
+              0.5,
+              0.4999655485153198,
+              0.10000000149011612
+            ],
+            "normal": [
+              -0.9805806875228882,
+              0.00006756492075510323,
+              0.1961161494255066
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "query": [
+        {
+          "ray": {
+            "origin": [
+              0,
+              5,
+              0
+            ],
+            "dir": [
+              0,
+              -1,
+              0
+            ],
+            "maxDist": 10
+          }
+        },
+        {
+          "ray": {
+            "origin": [
+              -6,
+              0.5,
+              0
+            ],
+            "dir": [
+              1,
+              0,
+              0
+            ],
+            "maxDist": 20,
+            "filter": {
+              "excludeBodies": [
+                "a9"
+              ]
+            }
+          }
+        },
+        {
+          "shapeCast": {
+            "shape": {
+              "kind": "sphere",
+              "radius": 0.25
+            },
+            "pose": {
+              "p": [
+                -1.0,
+                5.0,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "dir": [
+              0,
+              -1,
+              0
+            ],
+            "maxDist": 10
+          }
+        },
+        {
+          "overlap": {
+            "shape": {
+              "kind": "box",
+              "half": [
+                4.0,
+                1.0,
+                1.0
+              ]
+            },
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        },
+        {
+          "overlap": {
+            "shape": {
+              "kind": "box",
+              "half": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "pose": {
+              "p": [
+                0.0,
+                0.5,
+                4.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "filter": {
+              "includeSensors": true
+            }
+          }
+        }
+      ],
+      "repeat": 0,
+      "expect": {
+        "queries": [
+          {
+            "hit": {
+              "body": "probe",
+              "collider": "c",
+              "dist": 4.0,
+              "point": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "normal": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "hit": {
+              "body": "b3",
+              "collider": "c",
+              "dist": 2.5,
+              "point": [
+                -3.5,
+                0.5,
+                0.0
+              ],
+              "normal": [
+                -1.0,
+                0.00013780593872070312,
+                0.0
+              ]
+            }
+          },
+          {
+            "hit": {
+              "body": "b1",
+              "collider": "c",
+              "dist": 3.750445604324341,
+              "point": [
+                -1.005279541015625,
+                0.9996802806854248,
+                -0.005893017165362835
+              ],
+              "normal": [
+                0.02111832983791828,
+                0.9994984865188599,
+                0.02357208915054798
+              ]
+            }
+          },
+          {
+            "keys": [
+              "a9",
+              "b1",
+              "b2",
+              "b3",
+              "ground",
+              "probe"
+            ]
+          },
+          {
+            "keys": [
+              "ground",
+              "zone"
+            ]
+          }
+        ],
+        "stateHash": "a425affff3055445"
+      }
+    }
+  ]
+}

@@ -89,9 +89,9 @@ fn fixture_tiles() -> TerrainTiles {
 
 #[derive(Default)]
 struct World {
-    #[cfg(feature = "physics")]
+    #[cfg(feature = "physics-raw")]
     ball: Option<genex::physics::RigidBodyHandle>,
-    #[cfg(feature = "physics")]
+    #[cfg(feature = "physics-raw")]
     lowest: f32,
 }
 
@@ -213,7 +213,7 @@ fn a_hostile_tile_or_index_is_refused_terrain_heights_invalid_with_nothing_made(
     assert!(fixture_tiles().with_height_range(0.0, 1.0).is_err(), "authored tiles keep the import's range");
 }
 
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 mod physics {
     use std::sync::Arc;
 

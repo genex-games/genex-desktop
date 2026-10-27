@@ -18,7 +18,7 @@
 //! has no colliders to occlude, and one built without audio plays nothing (AU-11): this file is
 //! not compiled then.
 
-#![cfg(all(feature = "physics", feature = "audio"))]
+#![cfg(all(feature = "physics-raw", feature = "audio"))]
 
 use genex::audio::{PoolClass, Sound};
 use genex::physics::ColliderBuilder;

@@ -75,8 +75,11 @@ mod node_anim;
 pub mod render;
 mod rng;
 mod runtime;
-#[cfg(feature = "physics")]
+#[cfg(feature = "physics-raw")]
 mod ragdoll;
+/// Genex Physics (shared physics P4): the world `sim.physics` is, its vocabulary and glam helpers.
+#[cfg(feature = "physics")]
+pub mod phys;
 mod sim;
 mod particles;
 mod stream;
@@ -146,9 +149,10 @@ pub use character::{
     CHARACTER_SKIN, Character, CharacterError, CharacterErrorCode, CharacterMotion, CharacterNav, CharacterParams, CharacterStep, GroundHit, NavFit, RootMotion,
     TERMINAL_FALL_SPEED,
 };
-/// Humanoid ragdolls (genex-anim, AN-20; physics only): `Ragdoll::build` / `follow` / `go_limp` /
-/// `power` / `recover` / `view` over `sim.physics`.
-#[cfg(feature = "physics")]
+/// Humanoid ragdolls (genex-anim, AN-20; raw physics only, `physics-raw`): `Ragdoll::build` /
+/// `follow` / `go_limp` / `power` / `recover` / `view` over the raw Rapier world `sim.physics`
+/// dereferences to.
+#[cfg(feature = "physics-raw")]
 pub use ragdoll::{
     HumanoidBone, RAGDOLL_DEFAULT_MASS, RAGDOLL_GROUP, RAGDOLL_LIMP_DAMPING, RAGDOLL_MOTOR_DAMPING, RAGDOLL_MOTOR_STIFFNESS, RAGDOLL_PARTS_MAX, Ragdoll, RagdollBody,
     RagdollJoint, RagdollMode, RagdollPart, RagdollProfile, RagdollView,
@@ -189,8 +193,8 @@ pub use terrain_tiles::{
 /// Named asset groups loaded during play (STR-29): `sim.stream.require`, `ready`, `release_group`.
 pub use stream_groups::{GroupHandles, STREAM_GROUP_PREFETCH_TICKS, STREAM_GROUPS_REQUIRED_MAX};
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
-#[cfg(feature = "physics")]
-/// A cell's static colliders and the ledger of streamed colliders (STR-10).
+#[cfg(feature = "physics-raw")]
+/// A cell's static colliders and the ledger of streamed colliders (STR-10), in the raw world.
 pub use genex_stream::physics::{CellColliders, StreamColliders};
 pub use runtime::{
     DEFAULT_SEED, DemoDriver, FIXED_STEP_MS, InstallError, InstallErrorCode, MAX_STEP_TICKS,
@@ -204,27 +208,38 @@ pub use desktop::{DesktopShot, DesktopShotError, desktop_shot};
 /// Pinned re-exports, so games never name a crate version themselves.
 pub use egui;
 pub use glam;
-#[cfg(feature = "physics")]
+/// Rapier itself (deprecated, `physics-raw`, for one release): games move to `genex::phys`.
+#[cfg(feature = "physics-raw")]
 pub use rapier3d;
 pub use serde_json::{Value, json};
 /// serde, for a world `game.save_world()` keeps: a game crate cannot name serde itself, so it
 /// derives through this one with `#[serde(crate = "genex::serde")]` (`docs/api/saves.md`).
 pub use serde;
 
-/// The physics world every [`Sim`] carries: Rapier 3D with `enhanced-determinism`, stepped by the
-/// runtime once per tick after the update hooks.
+/// The physics every [`Sim`] carries (`sim.physics`): a Genex Physics world, stepped by the runtime
+/// once per tick after the update hooks (`docs/api/physics.md`).
 #[cfg(feature = "physics")]
-pub type PhysicsWorld = rapier3d::prelude::PhysicsWorld;
+pub use phys::Physics;
 
 /// A game built without physics (`[physics] enabled = false` in its genex.toml, renderer pass 2
-/// D11) carries this empty world instead, never stepped; Rapier is not in its build. Turn physics
-/// back on to use `sim.physics` or `genex::physics`.
+/// D11) carries this empty stand-in instead, never stepped; no physics engine is in its build.
+/// Turn physics back on to use `sim.physics` or `genex::phys`.
 #[cfg(not(feature = "physics"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PhysicsWorld;
+pub struct Physics;
 
-/// Rapier's prelude (bodies, colliders, joints, queries) for game code.
-#[cfg(feature = "physics")]
+/// Rapier's world, which `sim.physics` dereferences to (deprecated, `physics-raw`): what a game
+/// written against raw Rapier names. New code names [`Physics`].
+#[cfg(feature = "physics-raw")]
+pub type PhysicsWorld = rapier3d::prelude::PhysicsWorld;
+
+/// Without `physics-raw`, the old name of [`Physics`].
+#[cfg(not(feature = "physics-raw"))]
+pub type PhysicsWorld = Physics;
+
+/// Rapier's prelude (bodies, colliders, joints, queries) for game code written against raw Rapier
+/// (deprecated, `physics-raw`, for one release; new code uses [`phys`]).
+#[cfg(feature = "physics-raw")]
 pub mod physics {
     pub use rapier3d::prelude::*;
 }
@@ -237,7 +252,7 @@ pub mod prelude {
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
-        Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
+        Material, Model, Pcg32, Physics, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
     // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.

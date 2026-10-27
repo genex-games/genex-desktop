@@ -34,7 +34,7 @@ studio = ["genex/studio"]
 
 [dependencies]
 # The game systems it uses, as its genex.toml switches them on (release R-1).
-genex = { workspace = true, features = ["physics", "streaming"] }
+genex = { workspace = true, features = ["physics", "physics-raw", "streaming"] }
 # The cell pack reader (C-28's output) and the digests, below the facade: the facade has no
 # `Streaming::cells_from` yet, so the example reads its built-in pack itself.
 genex-core = { workspace = true }

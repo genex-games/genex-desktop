@@ -1,0 +1,2440 @@
+{
+  "contract": "1.0",
+  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
+  "name": "motorised-doors-32",
+  "world": {
+    "contract": "1.0",
+    "dt": 0.01666666753590107,
+    "substeps": 1,
+    "gravity": [
+      0.0,
+      -9.8100004196167,
+      0.0
+    ],
+    "upAxis": "y",
+    "lengthUnit": 1.0
+  },
+  "static": {
+    "boxes": [],
+    "ramps": []
+  },
+  "mode": "each",
+  "steps": [
+    {
+      "apply": [
+        {
+          "spawn": {
+            "key": "door.00",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.00",
+            "a": "door.00",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              -0.6000000238418579,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.01",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                3.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.01",
+            "a": "door.01",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              2.4000000953674316,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.02",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                6.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.02",
+            "a": "door.02",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              5.400000095367432,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.03",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                9.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.03",
+            "a": "door.03",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              8.399999618530273,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.04",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                12.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.04",
+            "a": "door.04",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              11.399999618530273,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.05",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                15.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.05",
+            "a": "door.05",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              14.399999618530273,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.06",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                18.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.06",
+            "a": "door.06",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              17.399999618530273,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.07",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                21.0,
+                1.5,
+                0.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.07",
+            "a": "door.07",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              20.399999618530273,
+              1.5,
+              0.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.08",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.08",
+            "a": "door.08",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              -0.6000000238418579,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.09",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                3.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.09",
+            "a": "door.09",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              2.4000000953674316,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.10",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                6.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.10",
+            "a": "door.10",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              5.400000095367432,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.11",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                9.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.11",
+            "a": "door.11",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              8.399999618530273,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.12",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                12.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.12",
+            "a": "door.12",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              11.399999618530273,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.13",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                15.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.13",
+            "a": "door.13",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              14.399999618530273,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.14",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                18.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.14",
+            "a": "door.14",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              17.399999618530273,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.15",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                21.0,
+                1.5,
+                3.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.15",
+            "a": "door.15",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              20.399999618530273,
+              1.5,
+              3.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.16",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.16",
+            "a": "door.16",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              -0.6000000238418579,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.17",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                3.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.17",
+            "a": "door.17",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              2.4000000953674316,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.18",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                6.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.18",
+            "a": "door.18",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              5.400000095367432,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.19",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                9.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.19",
+            "a": "door.19",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              8.399999618530273,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.20",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                12.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.20",
+            "a": "door.20",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              11.399999618530273,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.21",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                15.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.21",
+            "a": "door.21",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              14.399999618530273,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.22",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                18.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.22",
+            "a": "door.22",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              17.399999618530273,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.23",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                21.0,
+                1.5,
+                6.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.23",
+            "a": "door.23",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              20.399999618530273,
+              1.5,
+              6.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.24",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                0.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.24",
+            "a": "door.24",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              -0.6000000238418579,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.25",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                3.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.25",
+            "a": "door.25",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              2.4000000953674316,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.26",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                6.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.26",
+            "a": "door.26",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              5.400000095367432,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.27",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                9.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.27",
+            "a": "door.27",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              8.399999618530273,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.28",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                12.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.28",
+            "a": "door.28",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              11.399999618530273,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.29",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                15.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.29",
+            "a": "door.29",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              14.399999618530273,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.30",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                18.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.30",
+            "a": "door.30",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              17.399999618530273,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": 1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        },
+        {
+          "spawn": {
+            "key": "door.31",
+            "type": "dynamic",
+            "pose": {
+              "p": [
+                21.0,
+                1.5,
+                9.0
+              ],
+              "q": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "colliders": [
+              {
+                "key": "c",
+                "shape": {
+                  "kind": "box",
+                  "half": [
+                    0.6000000238418579,
+                    1.0,
+                    0.05000000074505806
+                  ]
+                }
+              }
+            ],
+            "kind": "door"
+          }
+        },
+        {
+          "addJoint": {
+            "key": "hinge.31",
+            "a": "door.31",
+            "b": null,
+            "type": "hinge",
+            "anchorA": [
+              -0.6000000238418579,
+              0.0,
+              0.0
+            ],
+            "anchorB": [
+              20.399999618530273,
+              1.5,
+              9.0
+            ],
+            "axis": [
+              0,
+              1,
+              0
+            ],
+            "limits": [
+              -1.5,
+              1.5
+            ],
+            "motor": {
+              "targetVel": -1.5,
+              "damping": 10,
+              "maxForce": 200
+            }
+          }
+        }
+      ],
+      "repeat": 120,
+      "expect": {
+        "stateHash": "769915e542d268ab"
+      }
+    },
+    {
+      "apply": [
+        {
+          "setMotor": {
+            "key": "hinge.00",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.01",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.02",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.03",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.04",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.05",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.06",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.07",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.08",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.09",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.10",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.11",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.12",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.13",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.14",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.15",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.16",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.17",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.18",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.19",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.20",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.21",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.22",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.23",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.24",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.25",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.26",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.27",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.28",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.29",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.30",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        },
+        {
+          "setMotor": {
+            "key": "hinge.31",
+            "motor": {
+              "targetPos": 0,
+              "stiffness": 50,
+              "damping": 5
+            }
+          }
+        }
+      ],
+      "repeat": 120,
+      "expect": {
+        "stateHash": "afe9ddd247dad357"
+      }
+    }
+  ]
+}
