@@ -613,7 +613,7 @@ groups.push((gate) =>
       ];
       const before = observe(world);
       const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(world)).filter(
-        (name) => !["constructor", "free", "step", "tick"].includes(name),
+        (name) => !["constructor", "free", "step", "tick", "canonicalize"].includes(name),
       );
       for (const name of methods) {
         const method = (world as unknown as Record<string, (...args: unknown[]) => unknown>)[name];
@@ -885,6 +885,231 @@ function heightfield(key: string, side: number): Physics.BodyDesc {
   const shape: Physics.Shape = { kind: "heightfield", rows: side, cols: side, heights, size: [1000, 10, 1000] };
   return { key, type: "fixed", pose: { p: [0, 0, 0], q: IDENTITY }, colliders: [{ key: "hf", shape }] };
 }
+
+/** Numbers per body of an export with the sleep timer and of a wire row (contract 1.1 draft, §20). */
+const REST_STRIDE = 15;
+/** The wire's 16-bit span and ranges, as `physics-draw.reference.mjs` writes them. */
+const WIRE_SPAN = 65534;
+const decode = (q: number, min: number, max: number) => min + (q / WIRE_SPAN) * (max - min);
+const quantize = (v: number, min: number, max: number) => {
+  const c = Number.isNaN(v) ? min : v < min ? min : v > max ? max : v;
+  return Math.floor(((c - min) / (max - min)) * WIRE_SPAN + 0.5);
+};
+/** A steady stack of crates on a floor, some pushed: the server of the 1.1 rows. */
+function stackScene(): Physics.World {
+  const world = made();
+  ok(
+    world.spawn({
+      key: "floor",
+      type: "fixed",
+      pose: { p: [0, -1, 0], q: IDENTITY },
+      colliders: [{ key: "c", shape: { kind: "box", half: [20, 1, 20] } }],
+    }),
+  );
+  for (let i = 0; i < 6; i += 1)
+    ok(world.spawn(box(`crate.${i}`, 0.5 + i * 1.05, { pose: { p: [i * 0.05, 0.5 + i * 1.05, 0], q: IDENTITY } })));
+  for (let t = 0; t < 30; t += 1) {
+    if (t === 10) ok(world.impulse("crate.5", [3, 0, 0]));
+    ok(world.step());
+  }
+  return world;
+}
+/** Every body's state with its timer, in key order. */
+function stateOf(world: Physics.World): unknown[] {
+  return world.bodies().map((b) => [b.key, world.exportBodyState(b.key, { rest: true })]);
+}
+/** A client of `server`: its bodies spawned from their canonical descriptors in reverse order and stepped on their own. */
+function clientOf(server: Physics.World): Physics.World {
+  const client = made();
+  for (const body of server.bodies().reverse()) {
+    const desc = server.bodyDescCanonical({
+      key: body.key,
+      type: body.type,
+      pose: body.pose,
+      colliders:
+        body.key === "floor"
+          ? [{ key: "c", shape: { kind: "box", half: [20, 1, 20] } }]
+          : [{ key: "c", shape: { kind: "box", half: [0.5, 0.5, 0.5] } }],
+    });
+    assert.ok(desc.ok, JSON.stringify(desc));
+    ok(client.spawn(JSON.parse(desc.desc)));
+  }
+  for (let t = 0; t < 4; t += 1) ok(client.step());
+  return client;
+}
+/** The host's wire rows of `world`'s export with its timer (PROTOCOL §17.10's quantization). */
+function hostRows(world: Physics.World): { keys: string[]; rows: Float32Array } {
+  const { keys, data } = world.exportChanged(0, { rest: true });
+  const rows = new Float32Array(keys.length * REST_STRIDE);
+  const innerDt = Math.fround(Math.fround(1 / 60) / 1);
+  for (let i = 0; i < keys.length; i += 1) {
+    const d = (slot: number) => data[i * REST_STRIDE + slot];
+    const row = [d(0) || 0, d(1) || 0, d(2) || 0];
+    for (let s = 3; s < 7; s += 1) row.push(quantize(d(s), -1, 1));
+    for (let s = 7; s < 13; s += 1) row.push(quantize(d(s), -64, 64));
+    row.push(d(13), Math.min(65535, Math.floor(d(14) / innerDt + 0.5)));
+    rows.set(row, i * REST_STRIDE);
+  }
+  return { keys, rows };
+}
+
+groups.push((gate) =>
+  describe(`${title()}: contract 1.1 draft, pending sign-off (§20)`, gate, () => {
+    it("a client importing the server's state with its timer, canonicalized, steps on bit for bit", () => {
+      for (const quantized of [false, true]) {
+        const server = stackScene();
+        ok(server.canonicalize({ quantize: quantized }));
+        const client = clientOf(server);
+        if (quantized) {
+          const { keys, rows } = hostRows(server);
+          ok(client.importWire(keys, rows));
+        } else {
+          const { keys, data } = server.exportChanged(0, { rest: true });
+          const movable = keys.flatMap((key, i) => (server.body(key)?.type === "fixed" ? [] : [i]));
+          const picked = new Float32Array(movable.length * REST_STRIDE);
+          for (const [at, i] of movable.entries())
+            picked.set(data.subarray(i * REST_STRIDE, (i + 1) * REST_STRIDE), at * REST_STRIDE);
+          ok(
+            client.importStates(
+              movable.map((i) => keys[i]),
+              picked,
+              { rest: true },
+            ),
+          );
+        }
+        ok(client.canonicalize());
+        assert.deepEqual(
+          stateOf(client),
+          stateOf(server),
+          `quantize ${quantized}: the client holds the server's state`,
+        );
+        for (let t = 0; t < 60; t += 1) {
+          ok(server.step());
+          ok(client.step());
+          assert.deepEqual(stateOf(client), stateOf(server), `quantize ${quantized}: step ${t}`);
+        }
+        server.free();
+        client.free();
+      }
+    });
+
+    it("decodes every wire integer as the reference does, to the bit", () => {
+      for (const lengthUnit of [1, 100]) {
+        const world = made({
+          ...Y_UP,
+          gravity: [0, 0, 0],
+          lengthUnit,
+          limits: { maxSpeed: 256 * lengthUnit, maxAngularSpeed: 256 },
+        });
+        ok(world.spawn({ ...box("b", 0), colliders: [{ key: "c", shape: { kind: "sphere", radius: 0.5 } }] }));
+        for (let q = 0; q <= WIRE_SPAN; q += 1) {
+          ok(world.importWire(["b"], [1.5, -2, 0.25, 32767, 32767, 32767, 65534, q, 32767, 0, 32767, q, 65534, 1, 7]));
+          const net = world.exportBodyState("b");
+          assert.equal(net?.v[0], Math.fround(decode(q, -64, 64) * lengthUnit), `lv ${q} at lengthUnit ${lengthUnit}`);
+          if (net?.w[1] !== Math.fround(decode(q, -64, 64))) assert.fail(`av ${q}`);
+        }
+        world.free();
+      }
+    });
+
+    it("keeps the 1.0 forms and reads the timer only when asked", () => {
+      const world = stackScene();
+      assert.equal(world.exportBodyState("crate.0")?.rest, undefined, "the 1.0 form has no rest");
+      assert.equal(typeof world.exportBodyState("crate.0", { rest: true })?.rest, "number");
+      const plain = world.exportChanged(0);
+      const timed = world.exportChanged(0, { rest: true });
+      assert.equal(plain.data.length, plain.keys.length * EXPORT_STRIDE);
+      assert.equal(timed.data.length, timed.keys.length * REST_STRIDE);
+      let read = 0;
+      const sneaky = Object.defineProperty({}, "rest", {
+        get: () => {
+          read += 1;
+          return true;
+        },
+        enumerable: true,
+      });
+      assert.equal(
+        world.exportChanged(0, sneaky as Physics.RestOption).data.length,
+        plain.data.length,
+        "a getter is never called",
+      );
+      assert.equal(read, 0);
+      world.free();
+    });
+
+    it("refuses hostile 1.1 calls and changes nothing", () => {
+      const world = stackScene();
+      const before = observe(world);
+      const rows: [string, () => unknown, Physics.PhysicsError][] = [
+        ["canonicalize of an array", () => world.canonicalize([] as unknown as object), "bad-command"],
+        [
+          "canonicalize with a numeric quantize",
+          () => world.canonicalize({ quantize: 1 as unknown as boolean }),
+          "bad-command",
+        ],
+        ["canonicalize with an unknown option", () => world.canonicalize({ quantise: true } as object), "bad-command"],
+        ["canonicalize of a throwing getter", () => world.canonicalize(throwingGetter("quantize")), "bad-command"],
+        ["importWire of 14 numbers", () => world.importWire(["crate.0"], new Float32Array(14)), "bad-command"],
+        [
+          "importWire of a throwing Proxy",
+          () => world.importWire(["crate.0"], new Proxy([], { get: boom })),
+          "bad-command",
+        ],
+        [
+          "importWire with a sleep of 2",
+          () =>
+            world.importWire(
+              ["crate.0"],
+              [0, 1, 0, 32767, 32767, 32767, 65534, 32767, 32767, 32767, 32767, 32767, 32767, 2, 0],
+            ),
+          "bad-command",
+        ],
+        [
+          "importWire past the span",
+          () =>
+            world.importWire(
+              ["crate.0"],
+              [0, 1, 0, 65535, 32767, 32767, 65534, 32767, 32767, 32767, 32767, 32767, 32767, 0, 0],
+            ),
+          "out-of-range",
+        ],
+        [
+          "importStates with the timer, 14 numbers",
+          () => world.importStates(["crate.0"], new Float32Array(14), { rest: true }),
+          "bad-command",
+        ],
+        [
+          "bodyDescCanonical of a number",
+          () => world.bodyDescCanonical(7 as unknown as Physics.BodyDesc),
+          "bad-command",
+        ],
+        [
+          "bodyDescCanonical with no colliders",
+          () => world.bodyDescCanonical({ ...box("x", 1), colliders: [] }),
+          "out-of-range",
+        ],
+        [
+          "jointDescCanonical of a hinge with no axis",
+          () =>
+            world.jointDescCanonical({
+              key: "j",
+              a: "crate.0",
+              b: null,
+              type: "hinge",
+              anchorA: [0, 0, 0],
+              anchorB: [0, 0, 0],
+            }),
+          "out-of-range",
+        ],
+      ];
+      for (const [name, call, expected] of rows) {
+        assert.equal(code(call()), expected, name);
+        assert.equal(observe(world), before, `${name}: nothing changed`);
+      }
+      world.free();
+    });
+  }),
+);
 
 groups.push((gate) =>
   describe(`${title()}: one world's input cannot sink the others (§11.1, §11.3)`, gate, () => {

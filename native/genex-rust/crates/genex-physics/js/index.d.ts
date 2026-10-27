@@ -222,6 +222,11 @@ export interface BodyState {
   sleeping: boolean;
 }
 
+/** Asks an export or import for the sleep timer (contract 1.1 draft, §20.3). */
+export interface RestOption {
+  rest?: boolean;
+}
+
 /** The replicated fields of a body (§9.2). */
 export interface NetBodyState {
   p: Vec3;
@@ -229,6 +234,11 @@ export interface NetBodyState {
   v: Vec3;
   w: Vec3;
   sleeping: boolean;
+  /**
+   * The sleep timer in seconds (contract 1.1 draft, §20.3): in an export asked `{ rest: true }`;
+   * an import that gives it sets it, and takes an already-unit rotation bit for bit.
+   */
+  rest?: number;
 }
 
 /** Which bodies `bodies()` lists (§9.1). */
@@ -353,8 +363,14 @@ export declare class World {
 
   body(key: Key): BodyState | null;
   bodies(filter?: BodyFilter): BodyState[];
-  exportChanged(sinceTick: number): ChangedExport;
-  exportBodyState(key: Key): NetBodyState | null;
+  /**
+   * The bodies changed after `sinceTick`, 14 numbers each (§9.1). With `{ rest: true }` (contract
+   * 1.1 draft, §20.3) each has a 15th, its sleep timer, and every awake body is listed too.
+   */
+  exportChanged(sinceTick: number, options?: RestOption): ChangedExport;
+  /** A body's replicated fields (§9.2); with `{ rest: true }` its sleep timer as `rest` (§20.3). */
+  exportBodyState(key: Key, options?: RestOption): NetBodyState | null;
+  /** Sets a body's replicated fields (§9.2); a given `rest` sets its sleep timer too (§20.3). */
   importBodyState(key: Key, state: NetBodyState): Result;
   /**
    * Imports many bodies' replicated fields in one call (§19.1, additive to 1.0): `keys[i]` takes
@@ -365,7 +381,29 @@ export declare class World {
    * repeated key included (the later wins). A call of the wrong shape (keys not strings, `data` not
    * 14 numbers per key, more than 16,384 keys) is one failure with no index.
    */
-  importStates(keys: Key[], data: Float32Array | number[]): Result;
+  importStates(keys: Key[], data: Float32Array | number[], options?: RestOption): Result;
+
+  /**
+   * Contract 1.1 draft (§20.1), pending sign-off: puts the world into its canonical state, the
+   * backend rebuilt in key order from each body's state and parameters alone (no contact manifolds,
+   * warm-start impulses or islands), so a world holding the same bodies in the same states
+   * (spawned from their canonical descriptors, then imported) and canonicalized steps on bit for
+   * bit with this one. `quantize` first snaps every simulated body onto its wire row (§20.2).
+   * Pairs touching across it are not reported again. Fails only with `internal`; options of
+   * another shape are `bad-command`.
+   */
+  canonicalize(options?: { quantize?: boolean }): Result;
+  /**
+   * Imports wire rows (§20.2): `rows[15·i … 15·i + 14]` for `keys[i]`: p(3) float32, q(4), lv(3)
+   * and av(3) the 16-bit integers the wire sends, sleep 0 or 1, rest in whole inner steps. Decoded
+   * as a client decodes them; all or none, a refusal naming its index; a fixed body takes the pose
+   * only.
+   */
+  importWire(keys: Key[], rows: Float32Array | number[]): Result;
+  /** A body descriptor's canonical JSON (§20.5), or the refusal `spawn` gives it on its own. */
+  bodyDescCanonical(desc: BodyDesc): Result<{ desc: string }>;
+  /** A joint descriptor's canonical JSON (§20.5), or the refusal `addJoint` gives it on its own. */
+  jointDescCanonical(desc: JointDesc): Result<{ desc: string }>;
 
   ray(origin: Vec3, dir: Vec3, maxDist: number, filter?: QueryFilter): Result<{ hit: Hit | null }>;
   shapeCast(shape: Shape, pose: Pose, dir: Vec3, maxDist: number, filter?: QueryFilter): Result<{ hit: Hit | null }>;

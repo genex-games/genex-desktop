@@ -51,7 +51,16 @@ const EXIT_DEADLINE = 4;
 const Kind = { Hello: 1, Create: 2, AddStatic: 3, Tick: 4, Call: 5, Shutdown: 6 } as const;
 const REPLY_BIT = 0x80;
 const METHOD_COMMAND = 4;
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
+/** The contract 1.1 draft's `Call` methods (protocol version 3). */
+const DraftMethod = {
+  Canonicalize: 21,
+  ExportChangedRest: 22,
+  ImportStatesRest: 24,
+  ImportWire: 25,
+  BodyDescCanonical: 26,
+} as const;
+const METHOD_PAST_LAST = 28;
 const MAX_FRAME_BYTES = 512 * 1024 * 1024 + 1024 * 1024;
 /** A deadline no row's legal frame comes near. */
 const ROOMY_MS = 20_000;
@@ -272,6 +281,32 @@ const frameRows: FrameRow[] = [
     name: "a tick with a byte after its queries (after a valid tick of an empty batch)",
     before: [hello(), create(), tickOf(u8(Item.Value), u8(Tag.Array), u32(0))],
     hostile: frame(Kind.Tick, u32(0), u8(1), f64(-1), u8(0), u8(0)),
+  },
+  { name: "a method past the last", before: [hello(), create()], hostile: frame(Kind.Call, u8(METHOD_PAST_LAST)) },
+  {
+    name: "canonicalize options running past the frame",
+    before: [hello(), create()],
+    hostile: frame(Kind.Call, u8(DraftMethod.Canonicalize), u32(64), Buffer.from("{}")),
+  },
+  {
+    name: "a rest export since NaN",
+    before: [hello(), create()],
+    hostile: frame(Kind.Call, u8(DraftMethod.ExportChangedRest), f64(Number.NaN)),
+  },
+  {
+    name: "wire rows claiming more than they carry",
+    before: [hello(), create()],
+    hostile: frame(Kind.Call, u8(DraftMethod.ImportWire), text("[]"), u32(1_000_000)),
+  },
+  {
+    name: "a rest import with a byte left over",
+    before: [hello(), create()],
+    hostile: frame(Kind.Call, u8(DraftMethod.ImportStatesRest), text("[]"), u32(0), u8(0)),
+  },
+  {
+    name: "a descriptor that is not UTF-8",
+    before: [hello(), create()],
+    hostile: frame(Kind.Call, u8(DraftMethod.BodyDescCanonical), text(Buffer.of(0xc3, 0x28))),
   },
   {
     name: "a string length past the payload",

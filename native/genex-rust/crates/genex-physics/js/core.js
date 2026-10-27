@@ -96,6 +96,25 @@ const NEGATIVE_INFINITE_TEXT = "-1e39";
 const NEGATIVE_ZERO_TEXT = "-0.0";
 /** `bodies()` with no `changedSinceTick`. */
 const NO_TICK = -1;
+/** The numbers per body of `exportChanged` with the sleep timer (contract 1.1 draft, §20.3). */
+const EXPORT_STRIDE_REST = 15;
+/** The numbers per body of an `importWire` row (§20.2). */
+const WIRE_STRIDE = 15;
+
+/**
+ * Whether options ask for the sleep timer: `{ rest: true }` as an own data property (a getter is
+ * never called); any other shape, or a Proxy whose trap throws, is no.
+ */
+function restOption(options) {
+  try {
+    if (options === null || typeof options !== "object" || Array.isArray(options)) return false;
+    const descriptor = Reflect.getOwnPropertyDescriptor(options, "rest");
+    return descriptor !== undefined && "value" in descriptor && descriptor.value === true;
+  } catch {
+    return false;
+  }
+}
+
 /** The numbers per body of `exportChanged` (§9.1). */
 const EXPORT_STRIDE = 14;
 
@@ -485,15 +504,15 @@ function snapshotBytes(bytes) {
  * `out-of-range` past `BULK_ITEMS_MAX` keys). Anything thrown while reading (a getter, a Proxy) is
  * `bad-command`.
  */
-function bulkImport(keys, data) {
+function bulkImport(keys, data, stride = EXPORT_STRIDE) {
   try {
-    return bulkImportFields(keys, data);
+    return bulkImportFields(keys, data, stride);
   } catch {
     return { refused: failure(PhysicsError.BadCommand, Detail.Unreadable) };
   }
 }
 
-function bulkImportFields(keys, data) {
+function bulkImportFields(keys, data, stride) {
   if (!Array.isArray(keys)) return { refused: failure(PhysicsError.BadCommand, Detail.BadKeys) };
   const count = keys.length;
   if (count > BULK_ITEMS_MAX) return { refused: failure(PhysicsError.OutOfRange, Detail.BigBulk) };
@@ -503,7 +522,7 @@ function bulkImportFields(keys, data) {
     if (key === undefined) return { refused: failure(PhysicsError.BadCommand, Detail.BadKeys) };
     passed.push(key);
   }
-  const numbers = flatNumbers(data, count * EXPORT_STRIDE);
+  const numbers = flatNumbers(data, count * stride);
   if (numbers === undefined) return { refused: failure(PhysicsError.BadCommand, Detail.BadData) };
   return { keys: passed, data: numbers };
 }
@@ -850,23 +869,73 @@ export class World {
     );
   }
 
-  exportChanged(sinceTick) {
+  /**
+   * The bodies changed after `sinceTick`, flat (§9.1). With `{ rest: true }` (contract 1.1 draft,
+   * §20.3) each body has a 15th number, its sleep timer, and every awake body is listed besides
+   * the changed ones. Options of any other shape read as none.
+   */
+  exportChanged(sinceTick, options) {
     if (!isWholeTick(sinceTick)) return emptyExport();
+    const rest = restOption(options);
+    const stride = rest ? EXPORT_STRIDE_REST : EXPORT_STRIDE;
     return this.#read(emptyExport, (wasm, id) => {
-      const keys = JSON.parse(wasm.world_export_changed(id, sinceTick));
+      const listed = rest ? wasm.world_export_changed_rest(id, sinceTick) : wasm.world_export_changed(id, sinceTick);
+      const keys = JSON.parse(listed);
       const data = wasm.take_changed_data();
-      if (data.length !== keys.length * EXPORT_STRIDE) return emptyExport();
+      if (data.length !== keys.length * stride) return emptyExport();
       return { keys, data };
     });
   }
 
-  exportBodyState(key) {
+  /** A body's replicated fields (§9.2); with `{ rest: true }` its sleep timer too (§20.3). */
+  exportBodyState(key, options) {
     const passed = passedKey(key);
     if (passed === undefined) return null;
+    const rest = restOption(options);
     return this.#read(
       () => null,
-      (wasm, id) => JSON.parse(wasm.world_export_body_state(id, passed)),
+      (wasm, id) =>
+        JSON.parse(rest ? wasm.world_export_body_state_rest(id, passed) : wasm.world_export_body_state(id, passed)),
     );
+  }
+
+  /**
+   * Puts the world into its canonical state (contract 1.1 draft, §20.1): rebuilt in key order from
+   * each body's state alone, so a world holding the same bodies in the same states, canonicalized,
+   * steps on bit for bit with this one. `{ quantize: true }` first snaps every simulated body onto
+   * its wire row (§20.2). Options of any other shape are `bad-command`.
+   */
+  canonicalize(options) {
+    const encoded = encode(options === undefined ? {} : options, this.#budget());
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_canonicalize(id, encoded.text));
+  }
+
+  /**
+   * Imports wire rows (§20.2): 15 numbers per key, p(3) as float32, q(4), lv(3) and av(3) as the
+   * 16-bit integers the wire sends, sleep (0 or 1) and rest in whole inner steps. All or none, a
+   * refusal naming its index; a fixed body takes the pose only.
+   */
+  importWire(keys, rows) {
+    const read = bulkImport(keys, rows, WIRE_STRIDE);
+    if (read.refused !== undefined) return read.refused;
+    const encoded = encode(read.keys, this.#budget());
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_import_wire(id, encoded.text, read.data));
+  }
+
+  /** A body descriptor's canonical JSON (§20.5): `{ ok: true, desc }`, or `spawn`'s own refusal. */
+  bodyDescCanonical(desc) {
+    const encoded = encode(desc, this.#budget());
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_body_desc_canonical(id, encoded.text));
+  }
+
+  /** A joint descriptor's canonical JSON (§20.5): `{ ok: true, desc }`, or `addJoint`'s own refusal. */
+  jointDescCanonical(desc) {
+    const encoded = encode(desc, this.#budget());
+    if (encoded.text === undefined) return encoded;
+    return this.#json((wasm, id) => wasm.world_joint_desc_canonical(id, encoded.text));
   }
 
   /**
@@ -874,11 +943,13 @@ export class World {
    * `data[14·i … 14·i + 13]`, `exportChanged`'s layout. All or none, a refusal naming its index;
    * when all pass the world ends exactly as one `importBodyState` per key in order leaves it.
    */
-  importStates(keys, data) {
-    const read = bulkImport(keys, data);
+  importStates(keys, data, options) {
+    const rest = restOption(options);
+    const read = bulkImport(keys, data, rest ? EXPORT_STRIDE_REST : EXPORT_STRIDE);
     if (read.refused !== undefined) return read.refused;
     const encoded = encode(read.keys, this.#budget());
     if (encoded.text === undefined) return encoded;
+    if (rest) return this.#json((wasm, id) => wasm.world_import_states_rest(id, encoded.text, read.data));
     return this.#json((wasm, id) => wasm.world_import_states(id, encoded.text, read.data));
   }
 

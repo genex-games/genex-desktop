@@ -38,7 +38,7 @@ import { Worker } from "node:worker_threads";
 import { bindWire, PhysicsError, tickWorld } from "@genex-ai/physics/binding";
 
 /** The frame protocol's version (crates/genex-physics-sidecar/src/protocol.rs). */
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 /** Request kinds; a reply's kind is its request's with `REPLY_BIT` set. */
 const Kind = Object.freeze({ Hello: 1, Create: 2, AddStatic: 3, Tick: 4, Call: 5, Shutdown: 6 });
 const REPLY_BIT = 0x80;
@@ -64,6 +64,13 @@ const Method = Object.freeze({
   PhysicsHash: 18,
   Stats: 19,
   MemoryIsMeasured: 20,
+  Canonicalize: 21,
+  ExportChangedRest: 22,
+  ExportBodyStateRest: 23,
+  ImportStatesRest: 24,
+  ImportWire: 25,
+  BodyDescCanonical: 26,
+  JointDescCanonical: 27,
 });
 /** The largest frame either side sends, kind byte included (frame.rs `MAX_FRAME_BYTES`). */
 export const MAX_FRAME_BYTES = 512 * 1024 * 1024 + 1024 * 1024;
@@ -557,17 +564,8 @@ function wireOf(proc) {
     world_body: withText(Method.Body),
     world_bodies: (_id, kinds, awakeOnly, since) =>
       call(proc, Method.Bodies, (f) => f.optStr(kinds).bool(awakeOnly).f64(since), readText),
-    world_export_changed: (_id, since) =>
-      call(
-        proc,
-        Method.ExportChanged,
-        (f) => f.f64(since),
-        (r) => {
-          const keys = r.str();
-          proc.changed = r.f32s();
-          return keys;
-        },
-      ),
+    world_export_changed: (_id, since) => exportOf(proc, Method.ExportChanged, since),
+    world_export_changed_rest: (_id, since) => exportOf(proc, Method.ExportChangedRest, since),
     take_changed_data: () => {
       const data = proc.changed;
       proc.changed = new Float32Array(0);
@@ -577,6 +575,13 @@ function wireOf(proc) {
     world_import_body_state: (_id, key, state) =>
       call(proc, Method.ImportBodyState, (f) => f.str(key).str(state), readText),
     world_import_states: (_id, keys, data) => call(proc, Method.ImportStates, (f) => f.str(keys).array(data), readText),
+    world_canonicalize: withText(Method.Canonicalize),
+    world_export_body_state_rest: withText(Method.ExportBodyStateRest),
+    world_import_states_rest: (_id, keys, data) =>
+      call(proc, Method.ImportStatesRest, (f) => f.str(keys).array(data), readText),
+    world_import_wire: (_id, keys, data) => call(proc, Method.ImportWire, (f) => f.str(keys).array(data), readText),
+    world_body_desc_canonical: withText(Method.BodyDescCanonical),
+    world_joint_desc_canonical: withText(Method.JointDescCanonical),
     world_query_many: withText(Method.QueryMany),
     world_query: withText(Method.Query),
     world_snapshot: () => call(proc, Method.Snapshot, undefined, (r) => (r.bool() ? r.bytes() : undefined)),
@@ -588,6 +593,20 @@ function wireOf(proc) {
     world_tick_frame: (_id, request) => tickFrame(proc, request),
     tick_cpu_ns: () => proc.lastCpuNs,
   };
+}
+
+/** An export (`method` with or without the timer): its keys, its data kept for `take_changed_data`. */
+function exportOf(proc, method, since) {
+  return call(
+    proc,
+    method,
+    (f) => f.f64(since),
+    (r) => {
+      const keys = r.str();
+      proc.changed = r.f32s();
+      return keys;
+    },
+  );
 }
 
 /**
