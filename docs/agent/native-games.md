@@ -76,7 +76,10 @@ code and web shell), recorded as
 served that admitted output (or waits for its build under way) instead of building. The person's
 Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Clippy denies
 every warning but its style and complexity groups and `approx_constant`; the store `clippy.toml`'s
-determinism bans stay errors (`CLIPPY_LINT_LEVELS`). Play plays one
+determinism bans stay errors (`CLIPPY_LINT_LEVELS`). A failed step's lines are its first error as
+rustc renders it, empty gutter lines dropped, then how many more errors named a place; the note the
+console and the agents read (`buildFailureNote`) names the exit, never the command and its
+environment, which the stage's Details keep. Play plays one
 copy per commit (`show/<game>-<commit12>`, `PreviewService.playCopy`), and a healthy integrated Rust
 build is prebuilt there in the background, web and this host's desktop
 ([`play-prebuilds.ts`](../../src/main/core/play-prebuilds.ts)). Every command

@@ -144,9 +144,15 @@ export function servedAfterBuild(
   return { dir: outcome.lastGood, stale: true };
 }
 
-/** The sentence the game console and the agent loop get; the stage gets the payload instead. */
+/**
+ * The sentence the game console and the agent loop get; the stage gets the payload instead. It
+ * names the exit and what the build printed, never the command: a lane's command carries its
+ * whole environment (the Rust lane's `env -i …` with `GENEX_RENDER_TOML`, kilobytes before the
+ * first error), and the stage's Details and the receipt keep it.
+ */
 export function buildFailureNote(problem: BuildProblem): string {
-  return `the game's build failed (${problem.command}, exit ${problem.code}):\n${problem.lines.join("\n")}`;
+  const exit = problem.code === null ? "stopped" : `exit ${problem.code}`;
+  return `the game's build failed (${exit}):\n${problem.lines.join("\n")}`;
 }
 
 /** Files that are never part of a build, however big the folder is. */

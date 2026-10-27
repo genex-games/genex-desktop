@@ -24,7 +24,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { coreGameBuilds } from "../../src/main/core/internals.ts";
-import { BuildPriority, type GameBuildGame } from "../../src/main/game-build.ts";
+import { BuildPriority, buildFailureNote, type GameBuildGame } from "../../src/main/game-build.ts";
 import {
   RUST_CRATE_ALLOWLIST,
   RUST_TARGET_BUILDERS,
@@ -849,6 +849,86 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       assert.deepEqual(profileSettings, expected, `${purpose}: ${args.join(" ")}`);
       assert.equal(args.includes("--release"), purpose === CppBuildPurpose.Export);
     }
+  });
+
+  it("tells the agent the first error with its place and how many more, never the command and its environment (B6)", async () => {
+    const parent = await realpath(await tmpDir("rust-first-error-"));
+    const located = (code: string, message: string, line: number, rendered: string) => ({
+      reason: "compiler-message",
+      message: {
+        message,
+        code: { code },
+        level: "error",
+        spans: [{ file_name: "STAGE/src/facets/player.rs", line_start: line, column_start: 15, is_primary: true }],
+        children: [{ message: "method defined here", level: "note", spans: [] }],
+        rendered,
+      },
+    });
+    // rustc's rendering of bodycam's first error, its gutter lines included.
+    const first = located(
+      "E0061",
+      "this method takes 3 arguments but 2 arguments were supplied",
+      243,
+      [
+        "error[E0061]: this method takes 3 arguments but 2 arguments were supplied",
+        "   --> src/facets/player.rs:243:15",
+        "    |",
+        "243 |     frame.sphere_with(Transform::IDENTITY, &mat);",
+        "    |           ^^^^^^^^^^^ ------------------- argument #2 of type `f32` is missing",
+        "    |                       |",
+        "    |                       expected `Vec3`, found `Transform`",
+        "    |",
+        "note: method defined here",
+        "   --> genex-0.1.0/src/frame.rs:830:12",
+        "    |",
+        "830 |     pub fn sphere_with(&mut self, center: Vec3, radius: f32, material: &Material) -> &mut Self {",
+        "help: provide the argument",
+        "",
+      ].join("\n"),
+    );
+    const second = located(
+      "E0599",
+      "no method named `screen_rect` found",
+      56,
+      "error[E0599]: no method named `screen_rect`\n",
+    );
+    const third = located("E0308", "mismatched types", 70, "error[E0308]: mismatched types\n");
+    const aborting = {
+      reason: "compiler-message",
+      message: { message: "aborting due to 3 previous errors", level: "error", spans: [] },
+    };
+    const printed = [first, second, third, aborting].map(
+      (message) => `printf '%s\\n' ${shellWord(JSON.stringify(message))} | sed "s#STAGE#$stage#g"`,
+    );
+    const onClippy = ['stage=$(dirname "$manifest")', ...printed, "exit 101"].join("\n");
+    const { builds } = await lane(parent, openSandboxes().sandbox, {
+      stub: { onClippy },
+      staging: stager(undefined, [], { renderToml: '[render]\npreset = "auto"\n' }),
+    });
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const problem = outcome.problem;
+    assert.ok(problem);
+    assert.match(problem.command, /clippy/, "the stage's Details keep the command");
+    const note = buildFailureNote(problem);
+    assert.ok(!note.includes(problem.command), note);
+    for (const noise of ["env -i", "CARGO_HOME", "GENEX_RENDER_TOML", "[render]"])
+      assert.ok(!note.includes(noise), noise);
+    const [head, ...lines] = note.split("\n");
+    assert.equal(head, "the game's build failed (exit 101):");
+    assert.equal(lines[0], "error[E0061]: this method takes 3 arguments but 2 arguments were supplied");
+    assert.equal(lines[1], "   --> src/facets/player.rs:243:15");
+    for (const kept of [
+      "expected `Vec3`, found `Transform`",
+      "note: method defined here",
+      "help: provide the argument",
+    ])
+      assert.ok(
+        lines.some((line) => line.includes(kept)),
+        `${kept} in ${note}`,
+      );
+    assert.ok(!lines.some((line) => line.trim() === "|"), "no empty gutter lines");
+    assert.equal(lines.at(-1), "…and 2 more errors");
+    assert.ok(!note.includes("E0599"), "only the first error is shown");
   });
 
   it("names cargo's own error, not its progress, when a step fails with no diagnostic", async () => {
