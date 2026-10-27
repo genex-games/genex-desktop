@@ -326,6 +326,34 @@ describe("app_look", () => {
     assert.deepEqual(looked, [1]);
   });
 
+  it("a game Genex runs is looked at as the window named game, with no macOS access asked", async () => {
+    let looks = 0;
+    const picture = { mimeType: "image/jpeg" as const, data: "R0FNRQ==" };
+    const game = {
+      look: async () => {
+        looks++;
+        return { image: picture };
+      },
+    };
+    // The game's look reaches neither the window list nor macOS access: an empty core proves it.
+    const core = {} as Parameters<typeof runAppLook>[0];
+    const looked = await runAppLook(core, { window: "game" }, { project: "pond", chatThreadId: null, game });
+    assert.equal(looks, 1);
+    assert.match(textOf(looked), /^Genex — pond: the game/);
+    assert.deepEqual(imagesOf(looked), [picture]);
+    const failed = await runAppLook(
+      core,
+      { window: "Game" },
+      {
+        project: "pond",
+        chatThreadId: null,
+        game: { look: async () => ({ problem: "the build failed to load" }) },
+      },
+    );
+    assert.match(textOf(failed), /could not show the game: the build failed to load/);
+    assert.equal(typeof failed === "object" && failed.isError, true);
+  });
+
   it("its spec takes which window to look at, and where to keep its picture", () => {
     assert.equal(APP_LOOK_TOOL.name, APP_LOOK_TOOL_NAME);
     assert.deepEqual(Object.keys(APP_LOOK_TOOL.parameters.properties ?? {}).sort(), ["app", "save", "window"]);
