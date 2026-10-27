@@ -28,6 +28,7 @@ import { appIdentity } from "../project-prompts.ts";
 import { DIRECTOR_SCOPE_RULE, scopeLines } from "../scope-prompts.ts";
 import { visionBriefLines } from "../vision-prompts.ts";
 import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
+import { layeredBarRule } from "./layer-prompts.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
 // Type-only: erased at runtime, so this module still imports no part of the run.
 import type { Worker } from "./loop-run.ts";
@@ -334,6 +335,8 @@ export function directorBrief({
     requestedStateLine(run.setup),
     ``,
     `TIME: ${minutes(finalDeadline - Date.now())} minutes in all. Your working time ends at ${new Date(softDeadline).toISOString().slice(11, 16)} UTC (${minutes(softDeadline - Date.now())} minutes from now); then ${minutes(finalDeadline - softDeadline)} more minutes for wrapping up. ${completionWords(run)}`,
+    // A timed run whose bar may outrun its clock builds the look in layers (director/layer-prompts.ts).
+    layeredBarRule(run, minutes(softDeadline - Date.now())),
     whereLine({ gameFolder: lead?.gameFolder ?? null, integrationWorktree, baseCommit }),
     `CAPACITY: ${pool}. ${CAPACITY_RULE}`,
     nestedLine(nestedRepos, leads),

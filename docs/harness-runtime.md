@@ -1108,7 +1108,10 @@ too. Beside that retrieval, the game's craft is chosen before anything fails
 two words of the brief name, at most ten. It is written whole to `.studio/CRAFT.md` and listed in
 the director's opening brief, in the `plan` answer that declares a kind (only recipes not yet
 listed), in each single-session builder's brief and in every round of a loop builder's BRIEF.md
-(director/craft.ts, facet/phases/brief.ts). A builder's `capture` (Claude Code, Codex and local sessions alike) shoots its part's own
+(director/craft.ts, facet/phases/brief.ts). A timed director run of at most four working hours also
+hears the layer order for a bar its clock may not reach — greybox, geometry, light and materials,
+then what sits closest to the camera — and is told to name the layer the time reaches in the plan's
+risks (director/layer-prompts.ts); the person's hours are never lengthened. A builder's `capture` (Claude Code, Codex and local sessions alike) shoots its part's own
 cameras unless it names others, and `page=bench/<part>.html` loads a bench page (an existing `.html`
 file inside the workspace, by real path; anything else, or any page of a game served from its
 build output, is refused and nothing loads) through the served root with no setup. A rebaseline

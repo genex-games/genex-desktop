@@ -17911,3 +17911,31 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
     );
   });
 });
+
+describe("a high bar on a short clock (bodycam B9)", () => {
+  it("B9. a 56-minute photoreal run polished its greybox and never reached geometry or hands: a timed lead hears the layer order and to say which layer the time reaches; a long or until-done run does not", async () => {
+    const { directorBrief } = await import("../../src/harness-seed/loop/director/briefs.ts");
+    const briefFor = (workingMinutes: number, completionPolicy: CompletionPolicy) => {
+      const now = Date.now();
+      return directorBrief({
+        run: {
+          runId: "run_bc",
+          project: "body-cam",
+          goal: "Make the photorealistic bodycam fps shooter in post-soviet environment in our RUST engine.",
+          engine: "claude",
+          budgets: { wallClockMs: (workingMinutes + 15) * MINUTE_MS, completionPolicy },
+        },
+        softDeadline: now + workingMinutes * MINUTE_MS,
+        finalDeadline: now + (workingMinutes + 15) * MINUTE_MS,
+        integrationWorktree: "/runs/body-cam/integration",
+        baseCommit: "a".repeat(40),
+      } as never);
+    };
+    const short = briefFor(56, CompletionPolicy.Duration);
+    assert.match(short, /A HIGH BAR ON 5[56] MINUTES/);
+    assert.match(short, /greybox that plays[\s\S]*real geometry[\s\S]*light and materials[\s\S]*hands and weapon/);
+    assert.match(short, /plan's risks which layer the time reaches/);
+    assert.doesNotMatch(briefFor(6 * 60, CompletionPolicy.Duration), /A HIGH BAR ON/, "six hours fit every layer");
+    assert.doesNotMatch(briefFor(56, CompletionPolicy.Goal), /A HIGH BAR ON/, "an until-done run has no clock to beat");
+  });
+});
