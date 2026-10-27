@@ -728,6 +728,11 @@ TS and snake_case in Rust (§15). It replaces §12's reservation of `canonicaliz
   broad-phase tree or internal order survive. Every zero is written +0. Rapier's sleep check compares
   a body's pose with its pose one inner step earlier, which no state carries; the rebuild sets it to
   the current pose moved back by the current velocities over one inner step.
+- A body asleep stays asleep where it lies. The rebuild registers every pair without computing it,
+  so the next step computes only the pairs with an awake side, as any step does; a pair whose bodies
+  are all asleep or fixed waits, contact-less, until one side wakes, then begins and wakes the other.
+  So a rebuilt sleeping stack woken at one body wakes contact by contact (one inner step per contact
+  link) rather than as one island. Joints are held as they were, without the wake adding one brings.
 - **The promise:** two worlds of the same `buildId` (any target in the determinism row), the same
   description and static world, that hold the same bodies (spawned from the same descriptors, §20.5)
   and joints with the same `NetBodyState`s including `rest`, and are then both canonicalized, step on
@@ -745,9 +750,11 @@ TS and snake_case in Rust (§15). It replaces §12's reservation of `canonicaliz
   §20.4.
 - Canonicalizing changes a world's trajectory (warm starts are dropped). Measured on this build: a
   five-box stack built at rest sleeps on the same tick as the uncanonicalized run when canonicalized
-  every 2, 3 or 6 ticks (with or without `quantize`), and 3 ticks later every tick; a stack dropped
-  from 4 m settles 22-32 ticks sooner, and canonicalized every 2 ticks did not sleep within 1,200 ticks
-  (R2-0b's to measure further).
+  every 2, 3 or 6 ticks (with or without `quantize`), and 3 ticks later every tick, then stays asleep
+  with its poses unchanged; a stack dropped from 4 m settles 22-32 ticks sooner (92 later every 2
+  ticks). Canonicalized at patchHz 20 (15 at 30 Hz), resting stacks of 10 and awake stacks of 8 boxes
+  do not stand at 4 solver iterations; at 8, resting stacks of 20 and awake stacks of 10 do (awake 15
+  do not). R2-0b's tables are in its results.
 
 ### 20.2 `importWire(keys, rows)` and the wire row
 

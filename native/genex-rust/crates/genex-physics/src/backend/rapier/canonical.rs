@@ -4,8 +4,7 @@
 //! same world bit for bit, whatever each did before.
 //!
 //! Order: the world anchor, the static pieces by tag (their key order), the core's bodies in the
-//! order given (key order), then the joints in the order given, queued as joint edits as a command
-//! queues them. A body is built anew from its parameters (type, pose, velocities, damping, gravity
+//! order given (key order), then the joints in the order given, handed to Rapier at once. A body is built anew from its parameters (type, pose, velocities, damping, gravity
 //! scale, locks, CCD, sleep thresholds, user data) and its sleep state and timer; its colliders are
 //! copied, which carry nothing a step leaves behind. Rapier's sleep check measures a body's
 //! displacement since the last step from a previous pose it keeps privately; the rebuild sets that
@@ -15,17 +14,28 @@
 //! The static pieces are rebuilt once and kept as a template whose broad-phase tree is already
 //! built, so queries see them at once and a rebuild costs only the bodies; the template is a cache
 //! made again whenever the static pieces differ from the ones it holds.
+//!
+//! A body asleep stays asleep, as it would have in the world rebuilt. Rapier treats an inserted
+//! collider as changed by the user, so the first step after a plain insertion would compute every
+//! pair of it, sleeping or not; a pair that starts touching wakes its sleeping side, and Rapier
+//! leaves such a pair out of the solver while it recycles its contacts, so the woken body fell
+//! through its support until the next rebuild. The rebuild therefore registers the bodies'
+//! colliders in the broad and narrow phases itself, every pair refused (no contact computed, no
+//! begin, no wake), and the first step computes only the pairs with an awake side, as any step
+//! does: a sleeping pair waits, contact-less, until one of its bodies wakes, and then begins and
+//! wakes the other through Rapier's own rule. The joints are held at once, without the wake that
+//! adding a joint brings.
 
 use std::collections::BTreeMap;
 
 use rapier3d::dynamics::RigidBodyActivation;
-use rapier3d::geometry::Collider;
+use rapier3d::geometry::{Collider, ColliderHandle, SolverFlags};
 use rapier3d::math::{Pose, Rotation, Vector};
-use rapier3d::pipeline::ActiveEvents;
+use rapier3d::pipeline::{ActiveEvents, ActiveHooks, PairFilterContext, PhysicsHooks};
 use rapier3d::prelude::{PhysicsWorld, RigidBody, RigidBodyBuilder, RigidBodyHandle};
 
 use super::events::collider_id;
-use super::{JointEdit, RapierBackend};
+use super::{RapierBackend, joint_data};
 use crate::backend::{RawPair, RebuiltJoint};
 
 /// The bits of a body's `user_data` below its tag (`events::user_data`).
@@ -146,6 +156,47 @@ fn empty_like(like: &PhysicsWorld) -> PhysicsWorld {
     world
 }
 
+/// Refuses every pair: the rebuild's registration pass computes no contact and no intersection.
+struct Unpaired;
+
+impl PhysicsHooks for Unpaired {
+    fn filter_contact_pair(&self, _: &PairFilterContext) -> Option<SolverFlags> {
+        None
+    }
+
+    fn filter_intersection_pair(&self, _: &PairFilterContext) -> bool {
+        false
+    }
+}
+
+/// Registers the colliders of `bodies` in `world`'s broad and narrow phases with every pair
+/// refused, then marks the bodies and colliders changed again (a mark alone, which asks for no
+/// narrow-phase update): the next step files the bodies in Rapier's islands, asleep or awake as
+/// they were built, and places the colliders in the broad phase with that step's parameters.
+fn register_unpaired(world: &mut PhysicsWorld, bodies: &[RigidBodyHandle]) {
+    let colliders: Vec<(ColliderHandle, ActiveHooks)> = bodies
+        .iter()
+        .filter_map(|body| world.bodies.get(*body))
+        .flat_map(|body| body.colliders().iter().copied())
+        .filter_map(|handle| world.colliders.get(handle).map(|collider| (handle, collider.active_hooks())))
+        .collect();
+    let refuse = ActiveHooks::FILTER_CONTACT_PAIRS | ActiveHooks::FILTER_INTERSECTION_PAIR;
+    for (handle, hooks) in &colliders {
+        if let Some(collider) = world.colliders.get_mut(*handle) {
+            collider.set_active_hooks(*hooks | refuse);
+        }
+    }
+    world.detect_collisions(&Unpaired, &());
+    for (handle, hooks) in &colliders {
+        if let Some(collider) = world.colliders.get_mut(*handle) {
+            collider.set_active_hooks(*hooks);
+        }
+    }
+    for body in bodies {
+        world.bodies.get_mut(*body);
+    }
+}
+
 impl Template {
     /// A fresh world holding the template's pieces, stepping as `like` does.
     fn instance(&self, like: &PhysicsWorld) -> PhysicsWorld {
@@ -229,23 +280,24 @@ impl RapierBackend {
             moved.insert(old.into_raw_parts(), new);
             handles.push(new);
         }
+        register_unpaired(&mut world, &handles);
         let anchor = template.anchor;
-        let mut edits = Vec::with_capacity(joints.len());
+        let mut held = BTreeMap::new();
         let mut ids = Vec::with_capacity(joints.len());
         for (id, (a, b, spec)) in (0u64..).zip(joints) {
             let second = moved.get(&a.into_raw_parts()).copied();
             let first = b.map_or(Some(anchor), |b| moved.get(&b.into_raw_parts()).copied());
             if let (Some(first), Some(second)) = (first, second) {
-                edits.push(JointEdit::Insert { id, first, second, spec: (*spec).clone() });
+                held.insert(id, world.impulse_joints.insert(first, second, joint_data(spec), false));
             }
             ids.push(id);
         }
         self.world = world;
         self.anchor = anchor;
         self.stale = handles.iter().map(|handle| (handle.into_raw_parts(), *handle)).collect();
-        self.joints = BTreeMap::new();
+        self.joints = held;
         self.next_joint = ids.len() as u64;
-        self.edits = edits;
+        self.edits = Vec::new();
         self.template = Some(template);
         (handles, ids)
     }

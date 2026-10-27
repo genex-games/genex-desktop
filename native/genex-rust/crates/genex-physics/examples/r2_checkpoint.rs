@@ -26,7 +26,8 @@
 //! `canonicalize()`, the exact-rebuild row (a client with its own history adopts each keyframe,
 //! steps K ticks with the same commands and is compared bit for bit before the next keyframe), the
 //! subset-rebuild row (the client holds only the 100 bodies nearest a viewer) and the server's CPU
-//! for 128 crates kept awake.
+//! for 128 crates kept awake. Section `g0` adds Gate G0's stacking rows (stacks of 5 to 20, the
+//! pile and the yard's towers at 4 and 8 solver iterations, canonQ at the decided K).
 
 // A benchmark reads the wall clock by definition; the simulation it measures never does.
 #![allow(clippy::disallowed_types)]
@@ -72,10 +73,14 @@ const ITERATION_SWEEP: [u32; 3] = [4, 8, 16];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Scene {
     Stack5,
+    Stack8,
     Stack10,
+    Stack15,
     Stack20,
     Stack5Drop,
+    Stack8Awake,
     Stack10Awake,
+    Stack15Awake,
     Stack20Awake,
     Pile,
     Chain,
@@ -131,6 +136,8 @@ struct Measure {
     canon_calls: usize,
     tunnels: usize,
     clipped_keyframes: usize,
+    /// Ticks after the first all-asleep tick with some body awake.
+    awake_after_sleep: usize,
 }
 
 /// One exact-rebuild run's numbers.
@@ -159,10 +166,14 @@ impl Scene {
     fn name(self) -> &'static str {
         match self {
             Scene::Stack5 => "stack-5",
+            Scene::Stack8 => "stack-8",
             Scene::Stack10 => "stack-10",
+            Scene::Stack15 => "stack-15",
             Scene::Stack20 => "stack-20",
             Scene::Stack5Drop => "stack-5 dropped 4 m",
+            Scene::Stack8Awake => "stack-8 never sleeping",
             Scene::Stack10Awake => "stack-10 never sleeping",
+            Scene::Stack15Awake => "stack-15 never sleeping",
             Scene::Stack20Awake => "stack-20 never sleeping",
             Scene::Pile => "pile (128, pushed 0-5 s)",
             Scene::Chain => "chain (12 links)",
@@ -177,7 +188,17 @@ impl Scene {
     fn rests(self) -> bool {
         matches!(
             self,
-            Scene::Stack5 | Scene::Stack10 | Scene::Stack20 | Scene::Stack5Drop | Scene::Stack10Awake | Scene::Stack20Awake | Scene::Pile
+            Scene::Stack5
+                | Scene::Stack8
+                | Scene::Stack10
+                | Scene::Stack15
+                | Scene::Stack20
+                | Scene::Stack5Drop
+                | Scene::Stack8Awake
+                | Scene::Stack10Awake
+                | Scene::Stack15Awake
+                | Scene::Stack20Awake
+                | Scene::Pile
         )
     }
 
@@ -196,10 +217,14 @@ impl Scene {
         let statics = StaticWorld { boxes, ramps: Vec::new() };
         let (bodies, joints) = match self {
             Scene::Stack5 => (stack(5, 0.0), Vec::new()),
+            Scene::Stack8 => (stack(8, 0.0), Vec::new()),
             Scene::Stack10 => (stack(10, 0.0), Vec::new()),
+            Scene::Stack15 => (stack(15, 0.0), Vec::new()),
             Scene::Stack20 => (stack(20, 0.0), Vec::new()),
             Scene::Stack5Drop => (stack(5, 4.0), Vec::new()),
+            Scene::Stack8Awake => (never_sleeping(stack(8, 0.0)), Vec::new()),
             Scene::Stack10Awake => (never_sleeping(stack(10, 0.0)), Vec::new()),
+            Scene::Stack15Awake => (never_sleeping(stack(15, 0.0)), Vec::new()),
             Scene::Stack20Awake => (never_sleeping(stack(20, 0.0)), Vec::new()),
             Scene::Pile | Scene::Crates128 => (heap(), Vec::new()),
             Scene::Chain => chain(),
@@ -572,6 +597,7 @@ fn measure_with(scene: Scene, hz: u32, mode: Mode, k: u64, iterations: u32) -> M
     let mut asleep_at = None;
     let mut tunnelled = BTreeSet::new();
     let mut clipped_keyframes = 0;
+    let mut awake_after_sleep = 0;
     for t in 0..ticks {
         apply(&mut world, &scene.commands(t, hz), None);
         let start = Instant::now();
@@ -601,9 +627,10 @@ fn measure_with(scene: Scene, hz: u32, mode: Mode, k: u64, iterations: u32) -> M
         if asleep_at.is_none() && awake.is_empty() {
             asleep_at = Some(tick);
         }
+        awake_after_sleep += usize::from(asleep_at.is_some() && !awake.is_empty());
     }
     let canon_calls = canons.len();
-    Measure { positions, asleep_at, step_us: summary(steps), canon_us: summary(canons), canon_calls, tunnels: tunnelled.len(), clipped_keyframes }
+    Measure { positions, asleep_at, step_us: summary(steps), canon_us: summary(canons), canon_calls, tunnels: tunnelled.len(), clipped_keyframes, awake_after_sleep }
 }
 
 /// Drift against the reference: the mean over bodies at the end and the worst over the run.
@@ -871,6 +898,55 @@ fn iteration_sweep() {
     println!();
 }
 
+/// What a stack ends as: standing (mean end drift under this from `off`, metres).
+const STANDS_WITHIN: f64 = 0.1;
+
+/// Gate G0's stacking rows: the decided regime (canonQ at patchHz 20, or 15 at 30 Hz) against
+/// `off`, stacks of 5 to 20 at rest and kept awake, the pile and the yard's towers, at 4 and 8
+/// solver iterations.
+fn g0_stacking() {
+    println!("## G0 stacking, canonQ at the decided K, solver iterations 4 and 8\n");
+    println!("| Scene | Iterations | Hz | K | off: all asleep / step µs | canonQ: all asleep | canonQ: ticks awake after first sleep | drift end mean / max (m) | stands | jitter (µm/tick) | canonQ: step µs + canonicalize µs per tick |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|");
+    let scenes = [
+        Scene::Stack5,
+        Scene::Stack8,
+        Scene::Stack10,
+        Scene::Stack15,
+        Scene::Stack20,
+        Scene::Stack5Drop,
+        Scene::Stack8Awake,
+        Scene::Stack10Awake,
+        Scene::Stack15Awake,
+        Scene::Stack20Awake,
+        Scene::Pile,
+        Scene::Yard,
+    ];
+    for scene in scenes {
+        for iterations in [DEFAULT_ITERATIONS, 8] {
+            for hz in RATES {
+                let k = keyframe_interval(hz);
+                let reference = measure_with(scene, hz, Mode::Off, k, iterations);
+                let run = measure_with(scene, hz, Mode::CanonQ, k, iterations);
+                let (drift_end, drift_max) = drift(&run, &reference);
+                let stands = if drift_end < STANDS_WITHIN { "yes" } else { "**no**" };
+                let per_tick = run.canon_us.mean * run.canon_calls as f64 / run.positions.len() as f64;
+                println!(
+                    "| {} | {iterations} | {hz} | {k} | {} / {:.1} | {} | {} | {drift_end:.2e} / {drift_max:.2e} | {stands} | {:.2} | {:.1} + {per_tick:.1} |",
+                    scene.name(),
+                    seconds(reference.asleep_at, hz),
+                    reference.step_us.mean,
+                    seconds(run.asleep_at, hz),
+                    run.awake_after_sleep,
+                    jitter(&run, hz),
+                    run.step_us.mean
+                );
+            }
+        }
+    }
+    println!();
+}
+
 fn subset_rows() {
     println!("## Subset rebuild (100 bodies nearest the viewer, canonQ)\n");
     println!("| Scene | Hz | K | Windows | Pure body-windows mismatched | Boundary body-windows mismatched | Position error at a mismatch p99 / max (m) |");
@@ -962,5 +1038,8 @@ fn main() {
     }
     if wants("main") {
         main_matrix();
+    }
+    if wants("g0") {
+        g0_stacking();
     }
 }

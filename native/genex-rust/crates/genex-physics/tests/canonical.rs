@@ -478,6 +478,144 @@ fn a_five_stack_sleeps_within_a_tick_of_the_uncanonicalized_run() {
     }
 }
 
+/// Every body's key, pose and velocities as bits, and sleep flag, in key order.
+type Poses = Vec<(String, Vec<u64>, bool)>;
+
+/// Every body's pose and velocities as bits and its sleep flag, in key order.
+fn poses(world: &World) -> Poses {
+    world
+        .bodies(&BodyFilter::default())
+        .iter()
+        .map(|body| {
+            let net = world.export_body_state(&body.key).expect("a body");
+            let bits = net.p.iter().chain(&net.q).chain(&net.v).chain(&net.w).map(|v| v.to_bits()).collect();
+            (body.key.clone(), bits, net.sleeping)
+        })
+        .collect()
+}
+
+/// A world where every simulated body is asleep.
+fn all_asleep(world: &World) -> bool {
+    world.bodies(&BodyFilter { awake_only: true, ..BodyFilter::default() }).is_empty()
+}
+
+#[test]
+fn a_box_asleep_on_the_floor_is_rebuilt_asleep_where_it_lies() {
+    // R2-0b's defect: a body rebuilt asleep had no contact pairs, woke on the next step and fell
+    // freely (v = −g·dt) until the next rebuild.
+    let mut world = common::world(UpAxis::Y);
+    world.spawn(&common::body("floor", BodyType::Fixed, [0.0, -5.0, 0.0], common::cube(5.0))).expect("floor");
+    world.spawn(&common::body("box", BodyType::Dynamic, [0.0, 0.5, 0.0], common::cube(0.5))).expect("box");
+    let mut ticks = 0;
+    while !all_asleep(&world) {
+        world.step().expect("steps");
+        ticks += 1;
+        assert!(ticks < 600, "the box sleeps on its own");
+    }
+    let before = poses(&world);
+    world.canonicalize(CanonicalizeOptions::default()).expect("canonicalizes");
+    assert_eq!(poses(&world), before, "the rebuild changes no state");
+    for tick in 1..=120 {
+        world.step().expect("steps");
+        assert_eq!(poses(&world), before, "tick {tick} after the rebuild: still asleep where it lay");
+    }
+}
+
+#[test]
+fn a_resting_stack_canonicalized_every_k_ticks_stays_asleep_and_still() {
+    // The keyframe regime of R2-2: a five-stack at rest sleeps when the uncanonicalized one does
+    // (within a tick; three at K = 1) and then stays asleep, its poses unchanged, keyframe after
+    // keyframe. With `quantize` the first keyframe after sleep snaps the poses onto their rows;
+    // from then on they hold.
+    let plain = stack_sleeps(0.0, None, false);
+    for (every, quantize) in STACK_RATES {
+        let mut world = common::world(UpAxis::Y);
+        world.spawn(&common::body("floor", BodyType::Fixed, [0.0, -5.0, 0.0], common::cube(5.0))).expect("floor");
+        for i in 0..5 {
+            world.spawn(&common::body(&format!("box.{i}"), BodyType::Dynamic, [0.0, 0.5 + f64::from(i), 0.0], common::cube(0.5))).expect("box");
+        }
+        let mut asleep_at = None;
+        let mut held: Option<(u64, Poses)> = None;
+        for tick in 1..=600u64 {
+            world.step().expect("steps");
+            let keyframe = tick.is_multiple_of(every as u64);
+            if keyframe {
+                world.canonicalize(CanonicalizeOptions { quantize }).expect("canonicalizes");
+            }
+            match (&held, asleep_at) {
+                (Some((since, pose)), _) => {
+                    assert_eq!(&poses(&world), pose, "every {every}, quantize {quantize}: tick {tick} moved or woke a stack asleep since tick {since}");
+                }
+                (None, Some(_)) if keyframe => held = Some((tick, poses(&world))),
+                (None, None) if all_asleep(&world) => asleep_at = Some(tick),
+                _ => assert!(asleep_at.is_none() || all_asleep(&world), "every {every}, quantize {quantize}: tick {tick} woke the stack"),
+            }
+        }
+        let asleep_at = asleep_at.expect("the stack sleeps");
+        assert!(held.is_some(), "every {every}: a keyframe followed the sleep");
+        let bound = if every == 1 { 3 } else { 1 };
+        assert!(plain.abs_diff(asleep_at) <= bound, "every {every}, quantize {quantize}: asleep at {asleep_at}, plain at {plain}");
+    }
+}
+
+#[test]
+fn a_jointed_pair_asleep_stays_asleep_across_rebuilds() {
+    // A rebuilt joint is held as it was, not added anew: adding a joint wakes its bodies.
+    let mut world = common::world(UpAxis::Y);
+    world.spawn(&common::body("floor", BodyType::Fixed, [0.0, -5.0, 0.0], common::cube(5.0))).expect("floor");
+    world.spawn(&common::body("a", BodyType::Dynamic, [0.0, 0.5, 0.0], common::cube(0.5))).expect("a");
+    world.spawn(&common::body("b", BodyType::Dynamic, [1.5, 0.5, 0.0], common::cube(0.5))).expect("b");
+    let joint = genex_physics::JointDesc::new("link", "a", Some("b"), genex_physics::JointType::Fixed, [0.75, 0.0, 0.0], [-0.75, 0.0, 0.0]);
+    world.add_joint(&joint).expect("joint");
+    let mut ticks = 0;
+    while !all_asleep(&world) {
+        world.step().expect("steps");
+        ticks += 1;
+        assert!(ticks < 600, "the pair sleeps on its own");
+    }
+    let before = poses(&world);
+    for tick in 1..=120u64 {
+        if tick.is_multiple_of(3) {
+            world.canonicalize(CanonicalizeOptions::default()).expect("canonicalizes");
+        }
+        world.step().expect("steps");
+        assert_eq!(poses(&world), before, "tick {tick}: the jointed pair stays asleep where it lay");
+    }
+}
+
+#[test]
+fn a_rebuilt_sleeping_stack_woken_at_its_foot_settles_again_in_place() {
+    // Waking one body of a rebuilt sleeping stack wakes the rest through their contacts; the stack
+    // settles back without falling over.
+    let mut world = common::world(UpAxis::Y);
+    world.spawn(&common::body("floor", BodyType::Fixed, [0.0, -5.0, 0.0], common::cube(5.0))).expect("floor");
+    for i in 0..5 {
+        world.spawn(&common::body(&format!("box.{i}"), BodyType::Dynamic, [0.0, 0.5 + f64::from(i), 0.0], common::cube(0.5))).expect("box");
+    }
+    let mut ticks = 0;
+    while !all_asleep(&world) {
+        world.step().expect("steps");
+        ticks += 1;
+        assert!(ticks < 600, "the stack sleeps on its own");
+    }
+    let top = world.export_body_state("box.4").expect("top").p;
+    world.canonicalize(CanonicalizeOptions::default()).expect("canonicalizes");
+    world.wake("box.0").expect("wakes");
+    let mut woke = false;
+    for _ in 0..600 {
+        world.step().expect("steps");
+        woke |= !world.export_body_state("box.4").expect("top").sleeping;
+        if woke && all_asleep(&world) {
+            break;
+        }
+    }
+    assert!(woke, "the wake reached the top of the stack");
+    assert!(all_asleep(&world), "the stack settled back to sleep");
+    let moved = world.export_body_state("box.4").expect("top").p;
+    let drift = ((moved[0] - top[0]).powi(2) + (moved[1] - top[1]).powi(2) + (moved[2] - top[2]).powi(2)).sqrt();
+    assert!(drift < 0.01, "the top box stayed within 1 cm: moved {drift} m");
+}
+
 #[test]
 #[ignore = "a measurement for R2-0b: a dropped stack's settling differs once warm starts are dropped"]
 fn measure_a_dropped_five_stack() {
