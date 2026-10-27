@@ -57,7 +57,9 @@ fn draw(world: &World, frame: &mut Frame) {
     let floor = Transform::from_xyz(0.0, -0.5, 0.0).with_scale(vec3(FLOOR_SIDE, 1.0, FLOOR_SIDE));
     let block = Transform::from_xyz(0.0, 0.5, 0.0).with_rotation(Quat::from_rotation_y(world.spin));
     frame.tag("floor").cube_with(floor, &Material::color(FLOOR_COLOR).with_roughness(FLOOR_ROUGHNESS));
-    frame.tag("block").cube_with(block, &Material::color(BLOCK_COLOR).with_metallic(1.0).with_roughness(BLOCK_ROUGHNESS));
+    // The block moves, so it is drawn under an id that stays with it: TAA follows its pixels.
+    frame.tag("block").id("block").cube_with(block, &Material::color(BLOCK_COLOR).with_metallic(1.0).with_roughness(BLOCK_ROUGHNESS));
+    frame.end_id();
 }
 
 /// The gear button in the top-right corner and, while it is open, the graphics settings panel
