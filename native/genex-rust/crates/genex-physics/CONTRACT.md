@@ -28,7 +28,7 @@ owns the world: the authority host, a Rust game, or a predicting client in relea
    core itself fails.
 6. **Network state is not bit-exact on its own in contract 1.x.** Stepping from imported pose, velocity and
    sleep alone may differ from the world that exported them (§9.3). The `canonicalize()` operation that
-   would close this gap is reserved for release 2 (§12).
+   closes this gap is the 1.1 draft's (§20, pending sign-off).
 
 ## 2. Versioning and identity
 
@@ -385,7 +385,7 @@ or any of its state is non-finite.
   matches the original world bit for bit for the same `buildId`.
 - Rebuilding a world from `NetBodyState`s alone (spawning from descriptors, then importing) does **not**
   promise to match. Warm-start impulses, contact caches, internal ordering and sleep timers are missing.
-- Release 2's `canonicalize()` (§12) is how that gap may close.
+- Release 2's `canonicalize()` (§20, the 1.1 draft) is how that gap closes.
 
 ### 9.4 Snapshot and restore
 
@@ -516,8 +516,7 @@ interface Stats { tick: number; bodies: number; awake: number; colliders: number
 
 ## 12. Reserved for release 2
 
-- `canonicalize()`: drop warm-start impulses and contact manifolds, rebuild internal order by key, set sleep
-  from each body's flag and reset the counters. Its exact promise is written after the R2-0 experiment.
+- `canonicalize()`: drafted in §20 (contract 1.1 draft, pending sign-off).
 - The C ABI (`libgenex_physics`) mirrors the TS shapes as plain C structs and length-prefixed buffers.
 
 ## 13. Queries
@@ -658,6 +657,8 @@ A vector file is JSON:
 - **The bulk calls (§19):** additive to 1.0, awaiting the owner's sign-off and genex-demo's.
 - **The native process per world (§11.3, §15):** awaiting the owner's sign-off.
 - **`createBinding()`, a WASM instance per caller (§11.3):** awaiting the owner's sign-off.
+- **Contract 1.1 draft (§20):** `canonicalize`, carried pairs, `rest`, `importWire` and the canonical
+  descriptors, awaiting the owner's and genex-demo's sign-off (R2-0a).
 
 ## 19. Additions to 1.0: bulk calls (pending sign-off)
 
@@ -701,3 +702,117 @@ in WASM is most of a correction's cost against the 1 ms meter (§11.4). Each mea
 - The call fails as one value only when it is not a list (`BadCommand`), when it holds more than 16,384
   queries or passes the TS binding's per-call input budget (`OutOfRange`; no query runs), or with
   `internal` (§11.3).
+
+## 20. Contract 1.1 draft: canonical state (pending owner sign-off)
+
+Status: **1.1 draft, pending the owner's sign-off and genex-demo's** (release 2, R2-0a). Additive: a
+world still says `contract: "1.0"`; a caller that never makes these calls sees 1.0 exactly (every §16
+vector, `stateHash`, `physicsHash`, parity row and snapshot byte is unchanged). Names are camelCase in
+TS and snake_case in Rust (§15). It replaces §12's reservation of `canonicalize()`. Tests:
+`tests/canonical.rs`, and the binding rows of both packages.
+
+### 20.1 `canonicalize({ quantize? })`
+
+- `canonicalize(options?: { quantize?: boolean }) → Result`; in Rust `canonicalize(CanonicalizeOptions)`.
+  Options of another shape are `BadCommand`; otherwise it fails only with `internal`.
+- The backend is rebuilt from scratch in a fixed order: its own anchor, the static pieces in key
+  order, every body in key order, then every joint in key order. Each body is built anew from its
+  parameters (type, damping, gravity scale, locks, CCD, sleep thresholds, colliders), its state (pose,
+  velocities, sleeping, `rest`) and nothing else: no contact manifolds, warm-start impulses, islands,
+  broad-phase tree or internal order survive. Every zero is written +0. Rapier's sleep check compares
+  a body's pose with its pose one inner step earlier, which no state carries; the rebuild sets it to
+  the current pose moved back by the current velocities over one inner step.
+- **The promise:** two worlds of the same `buildId` (any target in the determinism row), the same
+  description and static world, that hold the same bodies (spawned from the same descriptors, §20.5)
+  and joints with the same `NetBodyState`s including `rest`, and are then both canonicalized, step on
+  bit for bit: every body's p, q, v, w, sleeping and `rest`, and every query answer. The tick counter is
+  each world's own. Held over all 15 vectors at their middle tick, with the client spawned in reverse
+  order and stepped on its own before it imports.
+- **`quantize: true`** first snaps every simulated body (escaped bodies excepted) onto its wire row
+  (§20.2) by the very import `importWire` makes: velocities clamp to the wire's ranges, and a rotation
+  takes the integers whose decoded, renormalised rotation quantizes back to themselves (one or two
+  rounds; found within eight). The host's own quantization (PROTOCOL §17.10) of the snapped state then
+  sends exactly those integers, so the R1 rows are the state.
+- Queries see the world at once: the static pieces' tree is built at the rebuild (kept as a template
+  until the static world changes); bodies are tested directly until the next step.
+- `contactPairs` reads 0 until the next step. Snapshot and restore carry the world as for 1.0, plus
+  §20.4.
+- Canonicalizing changes a world's trajectory (warm starts are dropped). Measured on this build: a
+  five-box stack built at rest sleeps on the same tick as the uncanonicalized run when canonicalized
+  every 2, 3 or 6 ticks (with or without `quantize`), and 3 ticks later every tick; a stack dropped
+  from 4 m settles 22-32 ticks sooner, and canonicalized every 2 ticks did not sleep within 1,200 ticks
+  (R2-0b's to measure further).
+
+### 20.2 `importWire(keys, rows)` and the wire row
+
+- A row is 15 numbers: p(3) as the float32 the wire sends (−0 sent as 0), q(4) as 16-bit integers over
+  [−1, 1], lv(3) over [−64, 64] metres per second (linear velocity over `lengthUnit`), av(3) over
+  [−64, 64] rad/s, sleep (0 or 1) and rest in whole inner steps (0..65,535). An integer `q` decodes in
+  float64 as `min + (q / 65534) · (max − min)`, exactly as `physics-draw.reference.mjs` decodes it; lv is
+  then multiplied by the world's `lengthUnit` (its f32, widened); every value is rounded to f32 on entry
+  (§4.1) with 0 ulp of error, and the rotation is renormalised in f32. Rest is `steps · innerDt` in f32.
+- `importWire(keys: Key[], rows: Float32Array | number[]) → Result`; in Rust `import_wire`. All or
+  none as §19.1: the first refusal is `{ ok: false, code, index }`. At an entry: a sleep other than 0 or
+  1 is `BadCommand`; NaN or infinite is `NonFinite`; an integer field that is not a whole number in its
+  range, a position outside `worldExtent`, a rotation of no length are `OutOfRange`; then `InvalidKey`
+  and `UnknownKey`. A dynamic or kinematic body takes the whole row (as `importBodyState` with `rest`);
+  a fixed body takes the pose only, waking nothing. Rows not 15 numbers per key are `BadCommand`.
+- The host's rest field (R2-2a) is `min(65535, floor(rest / innerDt + 0.5))`, in float64 from the f32
+  values, `innerDt` being `dt / substeps` in f32.
+
+### 20.3 `rest`, the sleep timer
+
+- `NetBodyState` gains `rest?: number`: how long, in seconds, the body has been still enough to sleep.
+  A fixed or escaped body's is 0. Its JSON form appears only when asked (below); the 1.0 forms are
+  unchanged.
+- `exportBodyState(key, { rest: true })` gives it; `exportChanged(since, { rest: true })` gives 15
+  numbers per body (rest last) and lists every awake body besides the changed ones (an awake body's
+  timer moves while its other fields may not); `importStates(keys, data, { rest: true })` takes 15 per
+  key. In Rust: `export_body_state` always sets it, `export_changed_rest`, `import_states_rest`.
+- An import that gives `rest` (`importBodyState` with it, `importStates` with `{ rest: true }`,
+  `importWire`) sets the timer after waking or sleeping the body, and takes a rotation whose f32 length
+  is within 4 f32 epsilons of 1 bit for bit (any other is renormalised, as §9.2): a world's own export
+  then imports exactly. A negative rest is `OutOfRange`, a non-finite one `NonFinite`. An import
+  without it is 1.0's exactly.
+
+### 20.4 Carried pairs: events across a rebuild
+
+- A rebuilt backend holds no pairs, so every touching pair would begin again. The core carries every
+  pair that was touching (or intersecting) and reported events at `canonicalize`: the backend finding
+  one again reports no begin (or enter); a carried pair with a side awake when an inner step began
+  that the backend did not find touching in it is ended (end or exit) at that sub-step; a pair whose
+  bodies are all asleep or fixed stays carried. Removing a body drops its pairs.
+- **The promise:** over every vector canonicalized every 1, 2 or 3 ticks, no pair begins while
+  touching or ends while apart. Events equal the uncanonicalized run's where the trajectory does not
+  move (27 of 45 vector-rate runs on this build, every scene without contact-rich event pairs); a
+  contact-rich scene's trajectory, and which near pairs the backend's fresh manifolds count as touching,
+  change with the rebuild.
+- The carried pairs are a world's own: a client that imports and canonicalizes carries the pairs its
+  own world touched, so its events may differ from the server's. Prediction clients run no module.
+- A snapshot carries them after the 1.0 payload, written only when there are any (the header still
+  names 1.0); a list that names no body or collider of the snapshot, runs out of order or trails bytes
+  is `BadSnapshot`.
+
+### 20.5 Canonical descriptors
+
+- `bodyDescCanonical(desc) → { ok: true, desc: string } | Failure` and `jointDescCanonical(desc)`; in
+  Rust `body_desc_canonical(_json)`, `joint_desc_canonical(_json)`. The descriptor is judged as `spawn`
+  (`addJoint`) judges it on its own (keys, numbers, bounds, shapes, not the world's contents), with the
+  same codes; a value that is not a descriptor is `BadCommand`.
+- The text: object keys sorted, no whitespace, every number the f32 the core rounds it to on entry in
+  shortest round-trip form with −0 written `-0`, every documented default filled (body: damping 0,
+  gravityScale 1, lockRotation all false, ccd false, canSleep true, linvel and angvel [0, 0, 0] for a
+  dynamic body only, `kind` only when non-empty; collider: offset identity, density 1 unless `mass` is
+  given, friction 0.5, restitution 0, groups 65535/65535, sensor and events false; joint:
+  collideConnected false, `b` null for the world, `axis`, `limits` and the motor's given values only).
+- Equal descriptors give equal text; the text of the text is itself; spawning the text makes the body
+  the descriptor makes, bit for bit (snapshot bytes equal after stepping).
+
+### 20.6 Bindings
+
+- `@genex-ai/physics` and `@genex-ai/physics-native` both carry the calls above. The native process's
+  frame protocol is version 3: `Call` bytes 21-27 (`Canonicalize`, `ExportChangedRest`,
+  `ExportBodyStateRest`, `ImportStatesRest`, `ImportWire`, `BodyDescCanonical`, `JointDescCanonical`);
+  no other frame changed, and a process answering another version is refused.
+- Not in this draft: `canonicalize` inside the one-crossing tick, and a tick counter option for a
+  client that keeps the server's tick.

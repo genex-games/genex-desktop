@@ -144,14 +144,16 @@ one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check
 `physics-wasm-real` loads the `@genex-ai/physics` test build (`node scripts/physics-wasm.ts --test`, the
 `test-trap` flavour) in Node 24: every method, hostile inputs (getters, Proxies and revoked Proxies included),
 memory per world, the per-call input budget keeping another world in the instance unharmed, the
-cross-target snapshot fixture, every conformance vector in wasm32 and the §11.3 poison rule; it skips without
+cross-target snapshot fixture, every conformance vector in wasm32, the contract 1.1 draft's calls (a client
+canonicalized from the server's state stepping on bit for bit, every wire integer decoded to the bit) and the
+§11.3 poison rule; it skips without
 that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`. `physics-native-real` runs the same rows
 (`physics-binding-rows.ts`) through `@genex-ai/physics-native`'s test build (`node scripts/physics-native.ts
 --test`: this host's `genex-physics-room`, one process per world), where a killed process fails its own world
 only; `physics-backend-parity` steps both cores in lockstep (every vector, a 128-crate and the worst-case
 scene, snapshots across); `physics-tick-frame` holds a tick in one crossing (the binary tick both cores take)
 to its separate calls on a twin world, on both cores, with a table of hostile and odd inputs;
-`physics-native-hostile` holds the raw frame table, both watchdogs (the client's under
+`physics-native-hostile` holds the raw frame table (protocol 3's 1.1 methods included), both watchdogs (the client's under
 `--input-type=module`, polling and parked, each in a Node process of its own), kill -9,
 EPIPE and bad binaries; `physics-native-package` the tarball, its files and the Linux binary's glibc ≤ 2.28
 and no RPATH. `physics-wasm-package` checks the built package's

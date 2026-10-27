@@ -73,6 +73,22 @@ Two calls take a whole tick's work in one crossing; each means exactly a sequenc
   `query()` would return for it, `queriesPerStep` counted the same; only a malformed call (not a list,
   over the budget or 16,384 queries, `internal`) is one failure instead of a list.
 
+## Contract 1.1 draft calls (§20, pending sign-off)
+
+For release 2's client prediction; a world that never calls them behaves exactly as in 1.0.
+
+- `world.canonicalize({ quantize? })` rebuilds the world in key order from each body's state alone (no
+  contact manifolds, warm starts or islands), so a client holding the same bodies (spawned from
+  `bodyDescCanonical`) in the same states, canonicalized, steps on bit for bit with the server.
+  `quantize` first snaps every body onto its wire row. Touching pairs are not reported again.
+- `exportChanged(since, { rest: true })`, `exportBodyState(key, { rest: true })` and
+  `importStates(keys, data, { rest: true })` carry the sleep timer as a 15th number (`rest`, seconds);
+  the timed export also lists every awake body.
+- `world.importWire(keys, rows)` takes the wire's rows: 15 numbers per key, the position as float32,
+  the rotation and velocities as their 16-bit integers, sleep, and rest in whole inner steps.
+- `world.bodyDescCanonical(desc)` and `world.jointDescCanonical(desc)` give a descriptor's canonical
+  JSON (`{ ok, desc }`): defaults filled, numbers as f32, keys sorted; spawning it makes the very body.
+
 ## If the instance fails (§11.3)
 
 The core must not trap. If it ever does, the WebAssembly instance is unusable, so the wrapper marks
@@ -129,7 +145,7 @@ core.close(); // or world.free(): the process exits and its folder is removed
   `apply(batch, "each")`, then `step()`, `exportChanged(exportSince)` and `queryMany(queries)`, each part
   exactly what that call returns. `cpuNs` is the process's own thread CPU time for the tick, for the
   caller's meter (§11.4); `stats().stepMs` is the process's own wall time around its step. A tick crosses
-  in a binary form (frame protocol 2; `crates/genex-physics-binding/src/tick.rs`): commands and queries as
+  in a binary form (frame protocol 3; `crates/genex-physics-binding/src/tick.rs`): commands and queries as
   the value trees their JSON text parses to, with no number text, and a reply read with no `JSON.parse`,
   into exactly the objects the separate calls give, refusals included. This package's internal
   `tickWorld` crosses a WebAssembly world's tick in the same form, in one call.
