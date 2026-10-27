@@ -145,10 +145,16 @@ one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check
 `test-trap` flavour) in Node 24: every method, hostile inputs (getters, Proxies and revoked Proxies included),
 memory per world, the per-call input budget keeping another world in the instance unharmed, the
 cross-target snapshot fixture, every conformance vector in wasm32 and the §11.3 poison rule; it skips without
-that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`. `physics-wasm-package` checks the built package's
+that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`. `physics-native-real` runs the same rows
+(`physics-binding-rows.ts`) through `@genex-ai/physics-native`'s test build (`node scripts/physics-native.ts
+--test`: this host's `genex-physics-room`, one process per world), where a killed process fails its own world
+only; `physics-backend-parity` steps both cores in lockstep (every vector, a 128-crate and the worst-case
+scene, snapshots across); `physics-native-hostile` holds the raw frame table, both watchdogs, kill -9,
+EPIPE and bad binaries; `physics-native-package` the tarball, its files and the Linux binary's glibc ≤ 2.28
+and no RPATH. `physics-wasm-package` checks the built package's
 `LICENSE`, `THIRD-PARTY-NOTICES.md` and that its module holds no absolute path of the build machine.
 `physics-wasm-vectors` replays every conformance vector through the shipped package
-(`.studio-dev/build/physics-wasm/`, or `GENEX_PHYSICS_PACKAGE=<unpacked tarball>`) with the shared runner
+(`.studio-dev/build/physics-wasm/`, or `GENEX_PHYSICS_PACKAGE=<unpacked tarball>`, either package) with the shared runner
 `crates/genex-physics/js/conformance.js`, so a pass means wasm32 gives native's pins; with
 `STUDIO_BROWSER_TESTS=1` it also runs them in Playwright's headless Chromium. For the Linux row run the same
 file in a `linux/amd64` `node:24` container with `--network none`, the repo mounted read-only.

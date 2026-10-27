@@ -1,6 +1,6 @@
 [package]
 name = "genex-physics-binding"
-description = "The host-neutral binding of Genex Physics (contract 1.0): a registry of worlds by id, read from and written to the JSON and flat-array forms every binding shares (the WASM exports today; the native sidecar and the C ABI next)."
+description = "The host-neutral binding of Genex Physics (contract 1.0): a registry of worlds by id, read from and written to the JSON and flat-array forms every binding shares (the WASM exports and the native sidecar; the C ABI next)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

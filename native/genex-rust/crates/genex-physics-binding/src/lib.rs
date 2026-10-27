@@ -5,7 +5,8 @@
 //! and flat arrays, results written as JSON text in the TypeScript shapes of
 //! `genex-physics/js/index.d.ts`. That adapter is [`Registry`]; a host's shell owns one and
 //! forwards to it. The WASM binding (`genex-physics-wasm`, the `@genex-ai/physics` npm package)
-//! keeps one per instance; the native sidecar and the C ABI are the next shells. Each method is
+//! keeps one per instance, the native sidecar (`genex-physics-sidecar`) one per process holding one
+//! world; the C ABI is the next shell. Each method is
 //! one export of that wire, with its inputs and return forms: JSON text, `Vec<f32>` for
 //! `exportChanged`'s data, `Option<Vec<u8>>` for snapshots, bools and f64.
 //!

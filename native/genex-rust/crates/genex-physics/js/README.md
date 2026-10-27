@@ -81,6 +81,65 @@ forms, and `world.check()` names the failure (`desc()` stays readable). End thos
 `await init()` makes a new instance, and `World.create` works again. Worlds of the old instance stay
 `internal`.
 
+## Native core: `@genex-ai/physics-native` (pending sign-off)
+
+For an authority server on Linux x64 or macOS arm64, the same core runs natively, **one process per
+world**: a crash, hang or fault of one room's core ends that room alone, never the server. Its results
+are this package's bit for bit, and its worlds are this package's own `World` (it depends on exactly this
+version), so everything above holds unchanged.
+
+```js
+import { createNativeCore } from "@genex-ai/physics-native";
+
+const started = createNativeCore({ binaryPath, sha256, dir: "/tmp/genex-phys", deadlineMs: 16 });
+if (!started.ok) throw new Error(started.detail); // a bad binary, sha256 or folder starts nothing
+const { core } = started;
+const { world } = core.createWorld(desc); // one world per core
+const tick = core.runTick({ batches: [commands], step: true, exportSince: world.tick, queries });
+// tick: { ok, tick, results, step, exported, answers, cpuNs, memoryBytes }, one round trip
+core.close(); // or world.free(): the process exits and its folder is removed
+```
+
+- **Starting** checks the binary's sha256 before anything runs, makes a `room-*` folder in `dir`, starts
+  `genex-physics-room` there with no environment, and waits up to `startMs` (5 s by default) for it to
+  open its two FIFOs and answer `Hello` with this protocol version. It takes a few milliseconds and blocks
+  the calling thread meanwhile. `packagedBinary()` names this package's own binary for the host and the
+  sha256 its `binaries.json` records; a server pins its own sha256 instead. `nativePhysics(options)` gives
+  this package's shape (`World.create`, `buildId`), one process per world, for code written against it.
+- **Each call is a blocking round trip** (`writeSync`, then `readSync`) over the FIFOs, about 0.01 ms
+  plus the work, so a room's tick stays synchronous. `runTick` puts a room's tick in one: each batch is
+  `apply(batch, "each")`, then `step()`, `exportChanged(exportSince)` and `queryMany(queries)`, each part
+  exactly what that call returns. `cpuNs` is the process's own thread CPU time for the tick, for the
+  caller's meter (§11.4); `stats().stepMs` is the process's own wall time around its step.
+- **Deadline:** every round trip has `deadlineMs`. Past it the process ends itself (exit 4), and a
+  `worker_thread` watchdog in the caller (one per thread, waiting at no CPU cost) kills it with SIGKILL,
+  which ends the blocked read. The call then answers `internal`.
+- **If the process fails** (§11.3): a crash, the deadline, `kill -9`, EPIPE, or a reply that does not
+  parse. That world answers `internal` to every call with a result and its reads give their empty forms,
+  for good, as a trapped instance does; nothing is thrown, and other cores never notice. Make a new core.
+- **Hardening:** a malformed or out-of-order frame makes the process exit 3 before any of it runs. Once
+  its world exists, its address space is capped at `memoryBytes × 1.5 + 1 GiB` (enforced on Linux; macOS
+  ignores it), and it opens no file or socket, starts no process and dumps no core. It has no network
+  code; the package test holds the Linux binary to importing no socket call. On Linux it also dies with the
+  thread that started it.
+- **Memory:** `stats().memoryBytes` is measured by the process's counting allocator. A 64-bit process
+  allocates otherwise than wasm32, so its numbers differ from this package's; `LimitMemory` refusals are
+  the model's and the same on both.
+
+Measured on the worst case (§11.2) on a Mac M-series in Node 24, both cores in the same run
+(`node scripts/physics-wasm-bench.ts --backend native|wasm`, its `room-tick` variant: the commands, the step
+and the 64 queries as one tick), mean / p99 per tick including every crossing: at dt 1/60, native 0.89 /
+1.29-1.43 ms against WASM 1.13-1.20 / 1.87-2.00 ms, of which the process's own CPU is 0.74 ms; at dt 1/20
+with 3 substeps, native 1.87-1.93 / 2.90-2.96 ms against WASM 2.46-2.56 / 3.81-4.13 ms. The `stateHash`
+is the same in every variant. A round trip costs about 15 µs, so a call per body or per query adds up
+(one `exportBodyState` and `importBodyState` per body: 26 ms a tick native, 11 ms in WASM): use `runTick`
+and the bulk calls (§19).
+
+The Linux binary is built with `cargo zigbuild` against glibc 2.28 (RHEL 8, Debian 10, Ubuntu 20.04 and
+later) with no `target-cpu`, so any x86-64 runs it, and it is refused if it needs a newer glibc, has a
+search path or holds a path of the build machine. `node scripts/physics-native.ts [--target
+linux-x64-gnu|darwin-arm64|all]` builds and packs it; `--test` builds this host's binary for the tests.
+
 ## Measured worst case (§11.2)
 
 The required scene at default limits (512 bodies in one heap, 64 joints, 16 CCD bodies, 64 queries a

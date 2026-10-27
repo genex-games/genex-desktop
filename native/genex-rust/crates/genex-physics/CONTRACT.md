@@ -487,6 +487,14 @@ The core must not trap. If it ever does (a bug), the WASM instance is unusable. 
 code `internal` for every later call on every world in that instance; the caller ends those worlds and makes a
 new instance. A native build reports the same code for the world that failed.
 
+**Native process per world (pending sign-off).** `@genex-ai/physics-native` runs each world in a process of its
+own (`genex-physics-room`, §15). A crash, a frame past the caller's deadline, a protocol fault or the process
+being killed fails that one world exactly as a trap fails a WASM instance: every later call on it returns
+`internal`, its reads their empty forms, and no other world notices. Its results are the WASM build's bit for
+bit (every §16 vector, `stateHash` per tick, `physicsHash`), and snapshots restore across the two (§9.4).
+`stats().memoryBytes` is the process's own measured bytes; a 64-bit process allocates otherwise than wasm32,
+so it is for display and §11.1's refusals stay the model's, the same on every target.
+
 ### 11.4 Time is the caller's
 
 - **The CPU budget is not the core's job.** `stats().stepMs` reports wall time measured by the binding, for
@@ -559,6 +567,12 @@ const PhysicsError = {
   - `init()` is idempotent, and the package works in Node 24 and evergreen browsers.
 - **The module API** (`ctx.physics`, genex-demo) uses `{ x, y, z }` vectors like `ctx.rewind`; the sandbox
   prelude converts. The core never sees that form.
+- **TypeScript, native (`@genex-ai/physics-native`, pending sign-off):** `createNativeCore({ binaryPath,
+  sha256, dir, deadlineMs })` starts one process for one world and never throws; `core.createWorld(desc)`
+  gives `@genex-ai/physics`'s own `World`, with the same methods, results and errors, and `core.runTick(...)`
+  runs a room's tick (`apply(batch, "each")` per batch, `step()`, `exportChanged`, `queryMany`) in one
+  round trip. The process speaks a frame protocol of its own (`crates/genex-physics-sidecar`), private to the
+  package.
 - **C** (release 2): `gxph_*` functions, with this contract as the source of truth.
 
 ## 16. Conformance vectors
@@ -637,6 +651,7 @@ A vector file is JSON:
 - **The measured worst-case bound per target (§11.2):** filled in by P1/P2 with the real core, and on a
   production droplet when the owner approves the run.
 - **The bulk calls (§19):** additive to 1.0, awaiting the owner's sign-off and genex-demo's.
+- **The native process per world (§11.3, §15):** awaiting the owner's sign-off.
 
 ## 19. Additions to 1.0: bulk calls (pending sign-off)
 
