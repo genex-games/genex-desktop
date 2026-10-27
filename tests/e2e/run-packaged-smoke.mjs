@@ -81,7 +81,11 @@ const ANGLE_HOME = "/dist/resources/angle/";
 const CPP_TEMPLATE = "/dist/resources/game-template-cpp/CMakeLists.txt";
 const HEADLESS_PLATFORM = ["dist", "resources", "native", "raylib-platform", "rcore_genex_headless.c"];
 const FRAMES_ADDON = ["dist", "resources", "native", "genex-frames.node"];
-const MAIN_BUNDLE = ["dist", "main", "main.mjs"];
+/**
+ * The main process's code: `main.mjs` is only Electron's entry (it turns on V8's compile cache and
+ * imports this file, scripts/build.mjs), so the inlined recipes are found here.
+ */
+const MAIN_BUNDLE = ["dist", "main", "app.mjs"];
 /** Hosts the Rust store pins a sysroot for (`rust-recipe.json`): where the Rust acceptance launches. */
 const RUST_ACCEPTANCE_HOSTS = new Set(["darwin-arm64", "linux-x64"]);
 /** How long the Rust acceptance launch may take before it is killed. */
