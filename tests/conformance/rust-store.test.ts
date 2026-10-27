@@ -610,6 +610,7 @@ describe("rust store: the sysroot", () => {
       assert.ok(existsSync(path.join(sysroot, "lib", "rustlib", triple, "lib", "libstd.rlib")), triple);
     assert.deepEqual([...record.triples].sort(), [HOST_TRIPLE, RUST_TRIPLE[BuildTarget.Web], ...triples].sort());
     assert.equal(record.triples[0], HOST_TRIPLE, "the host's first");
+    assert.deepEqual(await readRustBase(store, all), record, "the record reads back: every triple it names is known");
     const probed = calls.map((call) => / --target (\S+)/.exec(plain(call.command))?.[1]).filter(Boolean);
     assert.deepEqual(probed.sort(), [RUST_TRIPLE[BuildTarget.Web], ...triples].sort());
   });

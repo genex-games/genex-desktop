@@ -123,6 +123,7 @@ import {
 } from "../../src/substrate/toolchain-store/prewarm.ts";
 import { devStoreLockFile, devStoreRustLockFile } from "../../tests/helpers/dev-toolchains.ts";
 import { splitSwiftShader } from "../../src/substrate/toolchain-store/swiftshader-bundle.ts";
+import { pinnedDownloadNames, rustToolchainLayout } from "./rust-env.ts";
 import { readCutVendor } from "./rust-release.ts";
 
 const execFileAsync = promisify(execFile);
@@ -665,9 +666,12 @@ function rustToolchainDir(): string {
 /** The Rust entries this host installs from downloads, each served from `<rust>/downloads/<archive name>`. */
 function rustArchives(rust: string): { entries: ToolchainEntry[]; served: Map<string, string> } {
   const entries = rustWanted().archives;
+  // setup-toolchain.sh saves an archive under the pins table's name (cargo-zigbuild's carries its version).
+  const names = pinnedDownloadNames({ ...rustToolchainLayout(), dir: rust });
   const served = new Map<string, string>();
   for (const archive of entries.flatMap((entry) => entry.archives)) {
-    const file = path.join(rust, "downloads", path.basename(new URL(archive.url).pathname));
+    const name = names.get(archive.url) ?? path.basename(new URL(archive.url).pathname);
+    const file = path.join(rust, "downloads", name);
     if (!existsSync(file)) throw new Error(RUST_MESSAGE.NoDownload(file));
     served.set(archive.url, file);
   }

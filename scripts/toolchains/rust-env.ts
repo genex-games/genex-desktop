@@ -277,6 +277,11 @@ export function rustToolchainLayout(env: NodeJS.ProcessEnv = process.env): RustT
   };
 }
 
+/** The file each pinned archive URL was saved as in `downloads/` (the pins table's `file` column). */
+export function pinnedDownloadNames(layout: RustToolchainLayout = rustToolchainLayout()): Map<string, string> {
+  return new Map(readPins(layout.pins).map((pin) => [pin.url, pin.file]));
+}
+
 /** The host's Rust triple, as the sysroot archives spell it. */
 function hostTriple(): string {
   const arch = process.arch === "arm64" ? "aarch64" : "x86_64";

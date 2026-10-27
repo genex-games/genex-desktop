@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GameStack } from "../src/shared/game-project.ts";
 import { STACK_REQUIRED_COMPONENTS } from "../src/shared/toolchain.ts";
-import { rustManifestOf } from "../src/substrate/toolchain-store/manifest.ts";
+import { rustManifestOf, TOOLCHAIN_MANIFEST } from "../src/substrate/toolchain-store/manifest.ts";
 import { requiresSignature } from "./release-policy.mjs";
 
 const ARTIFACT = /\.(dmg|zip|deb|rpm|exe|nupkg)$|^RELEASES$/;
@@ -45,8 +45,10 @@ export async function toolchainLockSha256(root) {
  * Every download the Rust store installs, as a release records it: one row per pinned archive with
  * its sha256, size and URL, after `rustManifestOf` refused any URL that is not a durable release URL
  * of its publisher (a CI artifact, a mirror, a moving `latest` link) or any archive without a
- * digest. `unpinned` names the components a Rust game needs that the recipe does not pin yet (the
- * vendored crate set until the genex release is cut), so a provenance never implies a complete store.
+ * digest. `unpinned` names the components a Rust game needs that neither the recipe nor the shared
+ * manifest pins yet (the vendored crate set until the genex release is cut), so a provenance never
+ * implies a complete store. The shared pins a Rust cross build reads (zig, llvm-mingw, the Linux
+ * headers, the SwiftShader split) are the toolchain inputs' own (`manifest.ts`, the bundle locks).
  */
 export function rustStoreInputs(recipe) {
   const entries = rustManifestOf(recipe);
@@ -62,7 +64,7 @@ export function rustStoreInputs(recipe) {
       bytes: archive.bytes,
     })),
   );
-  const pinned = new Set(entries.map((entry) => entry.id));
+  const pinned = new Set([...entries, ...TOOLCHAIN_MANIFEST].map((entry) => entry.id));
   const needed = new Set(Object.values(STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu]).flat());
   return { inputs, unpinned: [...needed].filter((id) => !pinned.has(id)) };
 }

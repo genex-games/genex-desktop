@@ -34,7 +34,12 @@ import { ToolchainHost, ToolchainId, type ToolchainLock, toolchainHostOf } from 
 import { shellQuote } from "../../substrate/spawn.ts";
 import { treeDigest } from "../../substrate/toolchain-store/archive.ts";
 import { ReceiptSource, type ToolchainReceipt } from "../../substrate/toolchain-store/install.ts";
-import { lockFolder, RECEIPT_FILE, RUST_COMPONENT_LAYOUT } from "../../substrate/toolchain-store/locate.ts";
+import {
+  lockFolder,
+  MOBILE_COMPONENT_LAYOUT,
+  RECEIPT_FILE,
+  RUST_COMPONENT_LAYOUT,
+} from "../../substrate/toolchain-store/locate.ts";
 import { lockOf, writeCurrentLock } from "../../substrate/toolchain-store/lock.ts";
 import {
   RUST_BASE_FILE,
@@ -117,8 +122,17 @@ interface FakeRustComponent {
   version: string;
   /** The component's own host, or null for a target library or the vendored tree. */
   hosted: boolean;
+  /** The destination a standard library is for; absent for a tool or the vendored tree. */
+  target?: BuildTarget;
   files: Readonly<Record<string, string>>;
 }
+
+/** The phones' standard libraries the mobile fixture's lock names, as `STACK_REQUIRED_COMPONENTS` asks. */
+const PHONE_STDS = [
+  [ToolchainId.RustStdIos, BuildTarget.Ios],
+  [ToolchainId.RustStdIosSim, BuildTarget.Ios],
+  [ToolchainId.RustStdAndroid, BuildTarget.Android],
+] as const;
 
 /** The lock the stub's `generate-lockfile` writes: the game and the vendored genex, nothing else. */
 export function fixtureRustLock(): string {
@@ -342,7 +356,7 @@ exit 1
  * wasm-bindgen serves the copy of the committed output inside its own component folder: a build's
  * sandbox reads the store, never the checkout (the core denies the home folder it sits in).
  */
-function fakeRustComponents(store: string): FakeRustComponent[] {
+function fakeRustComponents(store: string, kind: RustFixtureKind): FakeRustComponent[] {
   const vendored = `${RUST_VENDOR_LAYOUT}/genex-${FIXTURE_GENEX_VERSION}`;
   const bindgen = { id: ToolchainId.WasmBindgen, version: "0.2.129" };
   const webOutput = path.join(fakeComponentFolder(store, bindgen), ...WEB_OUTPUT_DIR.split("/"));
@@ -361,8 +375,16 @@ function fakeRustComponents(store: string): FakeRustComponent[] {
       id: ToolchainId.RustStdWasm,
       version: FIXTURE_RUSTC_IDENTITY.release,
       hosted: false,
+      target: BuildTarget.Web,
       files: { [`${RUST_COMPONENT_LAYOUT.wasmStd}/libstd.rlib`]: PLACEHOLDER },
     },
+    ...(kind === RustFixtureKind.Mobile ? PHONE_STDS : []).map(([id, target]) => ({
+      id,
+      version: FIXTURE_RUSTC_IDENTITY.release,
+      hosted: false,
+      target,
+      files: { [`${MOBILE_COMPONENT_LAYOUT.std[id]}/libstd.rlib`]: PLACEHOLDER },
+    })),
     {
       ...bindgen,
       hosted: true,
@@ -446,7 +468,7 @@ async function seedRustComponent(
     sha12,
     bytes,
     host: component.hosted ? place.host : null,
-    target: component.id === ToolchainId.RustStdWasm ? BuildTarget.Web : null,
+    target: component.target ?? null,
     source: ReceiptSource.Archive,
     installedAt: WHEN,
   };
@@ -551,13 +573,14 @@ export async function seedFixtureRustStore(
   await writeFile(path.join(store, FIXTURE_STORE_MARKER), "A Genex fixture's disposable toolchain store.\n");
   const host = toolchainHostOf(options.platform ?? process.platform, process.arch) ?? ToolchainHost.MacArm64;
   const entries: ToolchainLock["entries"] = {};
-  for (const component of fakeRustComponents(store)) {
+  const kind = options.kind ?? RustFixtureKind.Game;
+  for (const component of fakeRustComponents(store, kind)) {
     const receipt = await seedRustComponent(store, component, { host, webOutput: options.webOutput });
     entries[component.id] = { version: receipt.version, sha12: receipt.sha12 };
   }
   const lock = lockOf(entries);
   const vendor = path.join(componentDir(store, lock, ToolchainId.RustVendor), RUST_VENDOR_LAYOUT);
-  const targets = fixtureRustTargets(options.kind ?? RustFixtureKind.Game);
+  const targets = fixtureRustTargets(kind);
   const delays = options.delays ?? NO_RUST_DELAYS;
   await seedRustLockFolder(store, lock, { host, webOutput: options.webOutput, vendor, targets, delays });
   await writeCurrentLock(store, lock, GameStack.RustWgpu);

@@ -57,6 +57,7 @@ import { entrySha12 } from "./manifest.ts";
 import {
   RUST_BASE_FILE,
   RUST_HOST_TRIPLE,
+  RUST_IOS_SIMULATOR_TRIPLE,
   RUST_TRIPLE,
   RUST_VENDOR_LAYOUT,
   type RustBaseRecord,
@@ -240,7 +241,7 @@ const STD_TRIPLES = {
   [ToolchainId.RustStdWindows]: RUST_TRIPLE[BuildTarget.Windows],
   [ToolchainId.RustStdLinux]: RUST_TRIPLE[BuildTarget.Linux],
   [ToolchainId.RustStdIos]: RUST_TRIPLE[BuildTarget.Ios],
-  [ToolchainId.RustStdIosSim]: "aarch64-apple-ios-sim",
+  [ToolchainId.RustStdIosSim]: RUST_IOS_SIMULATOR_TRIPLE,
   [ToolchainId.RustStdAndroid]: RUST_TRIPLE[BuildTarget.Android],
 } as const satisfies Partial<Record<ToolchainId, string>>;
 type StdId = keyof typeof STD_TRIPLES;
