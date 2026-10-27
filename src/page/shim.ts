@@ -1488,6 +1488,9 @@ function backendOf(watch: CanvasWatch) {
   return three ? three.kind : null;
 }
 
+/** Who counted `__render`'s draws: the graphics API's counters, nobody (the shim alone), or the game itself. */
+const RenderSource = { Counters: "counters", Shim: "shim", Game: "game" } as const;
+
 // The LAST COMPLETED FRAME, not the lifetime total: `__render.drawCalls` is the whole
 // frame's honest figure, and a board check reads it against a per-frame budget.
 function renderReport(watch: CanvasWatch, clock: ShimClock) {
@@ -1498,16 +1501,29 @@ function renderReport(watch: CanvasWatch, clock: ShimClock) {
     triangles: drawn ? (drawn.triangles ?? null) : null,
     vertices: drawn ? (drawn.vertices ?? null) : null,
     fps: clock.fps(),
-    source: drawn ? "counters" : "shim",
+    source: drawn ? RenderSource.Counters : RenderSource.Shim,
     trianglesExact: drawn ? drawn.trianglesExact !== false : false,
   };
 }
 
-/** The game's own state with the render report merged in, filling the draw counts it left out. */
-function withRender(game: Foreign, render: ReturnType<typeof renderReport>) {
-  const merged = { ...game, __render: render };
-  if (merged.drawCalls === undefined && render.drawCalls !== null) merged.drawCalls = render.drawCalls;
-  if (merged.triangles === undefined && render.triangles !== null) merged.triangles = render.triangles;
+/** A game's own `__render`, when its state carries one as an object. */
+function ownRender(game: Foreign): Record<string, unknown> | null {
+  const own = game?.__render;
+  return own && typeof own === "object" && !Array.isArray(own) ? own : null;
+}
+
+/**
+ * The game's own state with the render report merged in, filling the draw counts it left out.
+ * A game that keeps its own tally (a Rust · wgpu page: its frame's tagged draws and its refusals)
+ * keeps every figure it gave: a frame its paused shell repeated without drawing closes the
+ * counters' frame at 0, and that 0 is no fact about the game. The report fills the rest (backend).
+ */
+export function withRender(game: Foreign, render: ReturnType<typeof renderReport>) {
+  const own = ownRender(game);
+  const report = own ? { ...render, ...own, source: RenderSource.Game } : render;
+  const merged = { ...game, __render: report };
+  if (merged.drawCalls === undefined && report.drawCalls != null) merged.drawCalls = report.drawCalls;
+  if (merged.triangles === undefined && report.triangles != null) merged.triangles = report.triangles;
   return merged;
 }
 

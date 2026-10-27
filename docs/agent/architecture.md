@@ -781,22 +781,23 @@ un-raced `evaluate()` calls never settle.
 
 **Page world.** [`src/page/`](../../src/page/) is bundled into `vendor/studio/{shim,hook,hook-entry}.js`.
 `shim.ts` owns the clock (`step`, `pause`, `seed`), counts `steppedFrames` and yields a microtask
-per stepped frame; `window.__studio` is a merging facade that keeps whatever the game defines. The
+per stepped frame; `window.__studio` is a merging facade keeping what the game defines. The
 evidence globals (`__studioClock`, `__studioDraw`, `__studioCapture`, `__studioGl`, `__studioHook`)
-are accessors with no-op setters. `hook.ts` reports renderers and reads the scene and camera off
-frames the game draws; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
-reads the canvas at the end of a drawn frame and composites over the page background (WebGPU reads
+are accessors with no-op setters. `hook.ts` reports renderers and reads scene and camera off
+drawn frames; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
+reads the canvas after a drawn frame, composited over the page background (WebGPU reads
 depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers.
 Every shot records its provenance. Draw calls are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals.
+A compiled page keeps its own `state().__render`; the shim adds `backend` and `fps`.
 `game-template`'s `src/studio.js` is the contract every template game installs; never remove a method.
 
 **Readiness and validation.** [`src/substrate/preview-ready.ts`](../../src/substrate/preview-ready.ts)
-waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. The order is
-ready → gesture → setup → start, with one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
+waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. Order:
+ready → gesture → setup → start, one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
 `studio.json` `bootMs`). Rust shells boot until `GenexShell.progress` is `ready`. A spent budget is a note (`timedOut`; capture says `NOT LOADED:`),
 not a failure; `phase: "failed"` is a page's own failure. `validateAt` answers `loaded`, `attached` or `missing`;
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
-`preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
+`preview.pageUi` and `game.attached` are host RPC, not tools.
 
 **Worker windows and computer use.** Every building delegation and looking read-only session
 gets one pooled preview window

@@ -28,6 +28,7 @@ import {
   mulberry32,
   normalizeShimOptions,
   readinessVerdict,
+  withRender,
 } from "../../src/page/shim.ts";
 
 const FRAME_MS = 1000 / 60;
@@ -671,6 +672,37 @@ describe("the studio's input dispatch", () => {
     } finally {
       p.restore();
     }
+  });
+});
+
+describe("state()'s render report on a game that counts its own draws (bodycam drawCalls 0)", () => {
+  /** The shim's report after a frame a paused Rust shell repeated without drawing. */
+  const repeated = {
+    backend: "webgpu",
+    drawCalls: 0,
+    triangles: null,
+    vertices: 0,
+    fps: 60,
+    source: "counters" as const,
+    trianglesExact: false,
+  };
+
+  it("keeps the game's own tally and only fills what it left out", () => {
+    const tags = { level: { drawCalls: 40, triangles: 9_000 }, hands: { drawCalls: 2, triangles: 800 } };
+    const game = { frame: 9, __render: { drawCalls: 42, triangles: 9_800, tags, exact: false } };
+    const merged = withRender(game, repeated) as Record<string, any>;
+    assert.equal(merged.__render.drawCalls, 42, "a repeated frame is not a frame with no draws");
+    assert.deepEqual(merged.__render.tags, tags);
+    assert.equal(merged.__render.triangles, 9_800);
+    assert.equal(merged.__render.backend, "webgpu", "what the game cannot see is the shim's");
+    assert.equal(merged.drawCalls, 42, "the root copy follows the tally kept");
+  });
+
+  it("is the shim's report for a game that keeps no tally", () => {
+    const merged = withRender({ frame: 9 }, { ...repeated, drawCalls: 7 }) as Record<string, any>;
+    assert.equal(merged.__render.drawCalls, 7);
+    assert.equal(merged.__render.source, "counters");
+    assert.equal(merged.drawCalls, 7);
   });
 });
 
