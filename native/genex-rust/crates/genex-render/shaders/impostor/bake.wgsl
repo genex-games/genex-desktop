@@ -106,8 +106,9 @@ fn fs_impostor_bake(in: GxBakeVaryings, @builtin(front_facing) front: bool) -> G
     let alpha = gx_mask_alpha(in.material, in.uv);
     let facing = select(-1.0, 1.0, front);
     let tangent = vec4<f32>(in.tangent.xyz * facing, in.tangent.w * facing);
-    let s = gx_surface(in.position, in.normal * facing, in.uv, tangent, in.material);
     let ext = material_ext[in.material];
+    let mapped = gx_surface_uv(ext.uv, in.uv, tangent, in.position, in.normal * facing);
+    let s = gx_surface(in.position, in.normal * facing, mapped.uv, mapped.tangent, in.material);
     let cutoff = ext.params.w;
     if cutoff > 0.0 && alpha < cutoff {
         discard;

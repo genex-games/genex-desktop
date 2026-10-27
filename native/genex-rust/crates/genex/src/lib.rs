@@ -62,6 +62,7 @@ mod gfx;
 pub mod gpu;
 mod input;
 mod lod;
+mod mesh;
 #[doc(hidden)]
 pub mod loading;
 pub mod manifest;
@@ -124,6 +125,9 @@ pub use genex_render::terrain::TerrainLook;
 /// How a material lets light through: subsurface scattering and diffuse transmission
 /// ([`Material::with_subsurface`]; renderer pass 2 B.1).
 pub use genex_render::subsurface::Subsurface;
+/// How a [`Material`]'s textures meet a surface ([`Material::with_uv_scale`], [`Material::with_world_uv`]; Bodycam B2b).
+pub use frame::UvMapping;
+pub use mesh::{MESH_PATH_PREFIX, MESH_TRIANGLES_MAX, MESH_VERTICES_MAX, MeshData, MeshError, MeshErrorCode};
 pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
@@ -237,7 +241,7 @@ pub mod prelude {
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
-        Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
+        Material, MeshData, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
     // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.

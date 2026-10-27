@@ -802,6 +802,8 @@ impl AssetCache {
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
     pub fn load(&mut self, frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
+        let built = WithBuiltMeshes { frame, inner: source };
+        let source: &dyn ModelSource = &built;
         if !self.family_chosen {
             let models = self.untried_sidecars(frame, source);
             let textured = texture_paths(frame).next().is_some() || models.iter().any(|model| model.samples_images);
@@ -870,6 +872,41 @@ impl AssetCache {
             self.environments.push((hdri.path.clone(), map));
         }
         Ok(())
+    }
+}
+
+/// `inner` with the meshes a game built (`gfx.mesh`, Bodycam B2c) that `frame` draws served first:
+/// their GLBs ride on the handles, so every loader reads them as files. Only a built mesh's path
+/// ([`crate::mesh::MESH_PATH_PREFIX`]) is looked up in the frame.
+struct WithBuiltMeshes<'a> {
+    frame: &'a Frame,
+    inner: &'a dyn ModelSource,
+}
+
+impl WithBuiltMeshes<'_> {
+    fn built(&self, path: &str) -> Option<&[u8]> {
+        if !crate::mesh::is_mesh_path(path) {
+            return None;
+        }
+        let reached = drawn_models(self.frame).flat_map(Model::reached);
+        reached.filter(|model| model.path() == Some(path)).find_map(Model::inline_glb)
+    }
+}
+
+impl ModelSource for WithBuiltMeshes<'_> {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.built(path).map(<[u8]>::to_vec).or_else(|| self.inner.model_bytes(path))
+    }
+
+    fn has_asset(&self, path: &str) -> bool {
+        self.built(path).is_some() || self.inner.has_asset(path)
+    }
+
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        if self.built(path).is_some() {
+            return None;
+        }
+        self.inner.static_bytes(path)
     }
 }
 
@@ -986,6 +1023,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
             (material.base_texture(), TextureKind::Color),
             (material.normal_texture(), TextureKind::Normal),
             (material.metal_rough_texture(), TextureKind::Data),
+            (material.occlusion_texture().map(|(path, _)| path), TextureKind::Data),
             (material.emissive_texture(), TextureKind::Color),
         ];
         slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
@@ -2964,6 +3002,11 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     let mut surface = Material::color(rgba(tinted(base_color, tint))).with_pbr(metallic, roughness);
     surface.base_texture = base_texture;
     surface.metal_rough_texture = texture(material.metal_rough_texture(), TextureKind::Data);
+    // An ORM file names one texture in both slots, so its red is read from the metal-rough fetch.
+    if let Some((occlusion, strength)) = material.occlusion_texture().and_then(|(path, strength)| Some((texture(Some(path), TextureKind::Data)?, strength))) {
+        surface = surface.with_occlusion_texture(occlusion, strength);
+    }
+    surface.uv = material.uv_mapping();
     if let Some(normal) = texture(material.normal_texture(), TextureKind::Normal) {
         let scale = if material.normal_scale.is_finite() { material.normal_scale } else { 1.0 };
         surface = surface.with_normal_map(normal, scale);

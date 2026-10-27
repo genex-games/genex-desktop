@@ -44,6 +44,7 @@ use crate::lod::{Impostor, LOD_BIAS_DEFAULT, LOD_BIAS_MAX, LOD_BIAS_MIN, LodRefu
 use crate::lod::LOD_LEVELS_MAX;
 use crate::map::Map;
 use crate::math::Vec3;
+use crate::mesh::{InlineMesh, MeshData, MeshError};
 
 /// A game's assets compiled into its binary: `(path under assets/, bytes)`. A dev build that
 /// passes none reads `assets/` beside the executable (`../Resources/assets/` in a Mac bundle), or
@@ -84,6 +85,8 @@ pub struct Model {
     path: Option<Arc<str>>,
     /// Its level-of-detail options (game systems LOD-07); `None` for a plain model.
     lod: Option<Arc<ModelLod>>,
+    /// The GLB a game built (`gfx.mesh`, Bodycam B2c), read before the asset source.
+    mesh: Option<InlineMesh>,
 }
 
 impl Model {
@@ -119,11 +122,11 @@ impl Model {
             if lod.members.is_empty() {
                 lod.key = None;
             }
-            return Model { path: self.path, lod: Some(Arc::new(lod)) };
+            return Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh };
         }
         lod.levels = levels.iter().map(|(level, metres)| (level.clone(), metres.to_bits())).collect();
         lod.key = Some(crate::lod::levels_key(&path, levels));
-        Model { path: self.path, lod: Some(Arc::new(lod)) }
+        Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh }
     }
 
     /// How long this model keeps its detail: 2.0 holds each level twice as far, 0.5 half
@@ -134,7 +137,7 @@ impl Model {
         let bias = if bias.is_nan() { LOD_BIAS_DEFAULT } else { bias.clamp(LOD_BIAS_MIN, LOD_BIAS_MAX) };
         let mut lod = self.lod_options().cloned().unwrap_or_default();
         lod.bias = bias.to_bits();
-        Model { path: self.path, lod: Some(Arc::new(lod)) }
+        Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh }
     }
 
     /// Past its last mesh level, draw this model as an impostor baked from its own parts at load
@@ -151,7 +154,7 @@ impl Model {
         if self.path.is_none() {
             lod.refused = Some(LodRefusalCode::ImpostorInvalid);
         }
-        Model { path: self.path, lod: Some(Arc::new(lod)) }
+        Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh }
     }
 
     /// Its impostor, unless refused (game systems LOD-16).
@@ -191,7 +194,29 @@ impl Model {
         if !is_safe_asset_path(path) {
             return Model::default();
         }
-        Model { path: Some(Arc::from(path)), lod: None }
+        Model { path: Some(Arc::from(path)), lod: None, mesh: None }
+    }
+
+    /// The handle of a mesh a game built, at `path` ([`crate::mesh::MESH_PATH_PREFIX`]).
+    pub(crate) fn inline(path: &str, mesh: InlineMesh) -> Model {
+        Model { path: Some(Arc::from(path)), lod: None, mesh: Some(mesh) }
+    }
+
+    /// The GLB a game built for this handle (`gfx.mesh`), if it is one.
+    pub(crate) fn inline_glb(&self) -> Option<&[u8]> {
+        self.mesh.as_ref().map(InlineMesh::bytes)
+    }
+
+    /// This handle and every handle its draws read (a compound's members, authored levels), each
+    /// with what they read in turn.
+    pub(crate) fn reached(&self) -> Vec<&Model> {
+        let mut reached = vec![self];
+        if let Some(lod) = self.lod.as_deref() {
+            for model in lod.members.iter().chain(lod.levels.iter().map(|(level, _)| level)) {
+                reached.extend(model.reached());
+            }
+        }
+        reached
     }
 }
 
@@ -540,7 +565,7 @@ impl Assets {
             return Model::default();
         }
         self.note(path);
-        Model { path: Some(Arc::from(path)), lod: None }
+        Model { path: Some(Arc::from(path)), lod: None, mesh: None }
     }
 
     /// Several models drawn as one (a tree's wood and foliage GLBs): one transform, one level
@@ -556,10 +581,10 @@ impl Assets {
         if let Some(code) = crate::lod::compound_refusal(members) {
             let lod = ModelLod { refused: Some(code), ..ModelLod::default() };
             let path = first.path.clone();
-            return Model { path, lod: Some(Arc::new(lod)) };
+            return Model { path, lod: Some(Arc::new(lod)), mesh: first.mesh };
         }
         let lod = ModelLod { members: members.iter().map(|member| (*member).clone()).collect(), key: Some(crate::lod::compound_key(members)), ..ModelLod::default() };
-        Model { path: first.path, lod: Some(Arc::new(lod)) }
+        Model { path: first.path, lod: Some(Arc::new(lod)), mesh: first.mesh }
     }
 
     /// A texture at `assets/<path>` ([`GAME_TEXTURE_FORMATS`]); a missing texture when the path is
@@ -616,6 +641,10 @@ impl Assets {
         let Some(path) = model.path() else {
             return Err(AssetError::new(AssetErrorCode::UnsafePath, "a missing model has no file"));
         };
+        // A mesh the game built (`gfx.mesh`) carries its GLB: no read, no group rule.
+        if let Some(glb) = model.inline_glb() {
+            return Ok(Arc::new(ModelTriangles::from_glb(path, glb)?));
+        }
         let bytes = self.bytes(path)?;
         if let Some(triangles) = self.reads.borrow().triangles.get(path) {
             return Ok(Arc::clone(triangles));
@@ -731,6 +760,16 @@ impl Gfx {
     /// What the resets decoded for audio (the runtime hands it to the mixer after each reset).
     pub(crate) fn audio_bank(&self) -> &crate::audio::Bank {
         &self.audio
+    }
+
+    /// A model built from `data` (Bodycam B2c, `crate::mesh`): drawn with `frame.model` or
+    /// `frame.model_with`, given levels, an impostor or a compound like a GLB from `assets/`, and
+    /// read by `gfx.assets().triangles(&model)` for a collider or a navmesh. The same data builds
+    /// the same model on every destination. Refused with a [`MeshError`] (`mesh-empty`,
+    /// `mesh-not-triangles`, `mesh-index-out-of-range`, `mesh-attribute-mismatch`,
+    /// `mesh-not-finite`, `mesh-too-large`); nothing is made.
+    pub fn mesh(&self, data: &MeshData) -> Result<Model, MeshError> {
+        crate::mesh::build(data)
     }
 
     /// The rigged GLB at `assets/<path>` as a [`CharacterAsset`], in `on_reset` (an asset of the

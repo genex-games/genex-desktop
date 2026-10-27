@@ -533,6 +533,10 @@ pub struct GxMaterialExt {
     /// x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
     /// world units, w: reserved (renderer pass 2 B.1).
     pub transmission: [f32; 4],
+    /// The UV mapping (Bodycam B2b, `pbr::UvMapping`): xy the scale (0 reads as 1, so a zeroed row
+    /// samples the mesh's UVs as authored), z 1 for a world-aligned box projection (xy then tiles
+    /// per metre), w reserved.
+    pub uv: [f32; 4],
 }
 
 /// A v2 struct's Rust layout and the WGSL struct it mirrors, member for member.
@@ -596,7 +600,7 @@ pub const V2_STRUCTS: &[V2Struct] = &[
         shader: "material-v2-sample",
         rust_size: size_of::<GxMaterialExt>(),
         rust_align: align_of::<GxMaterialExt>(),
-        fields: fields!(GxMaterialExt: emissive, params, subsurface, transmission),
+        fields: fields!(GxMaterialExt: emissive, params, subsurface, transmission, uv),
     },
 ];
 

@@ -437,6 +437,33 @@ fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the
     assert!(leaf.subsurface().is_some());
 }
 
+/// Bodycam B2b, B2c and B7: the material texture and UV calls, and the built-mesh calls and
+/// refusals (`gfx.mesh`), each a call of the facade.
+#[test]
+fn the_material_and_mesh_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::{MeshData, MeshErrorCode};
+    let pinned = fixture();
+    assert_eq!(pinned_calls(&pinned, "materials"), [".with_metal_rough_texture", ".with_orm_texture", ".with_occlusion_texture", ".with_uv_scale", ".with_world_uv"]);
+    let plaster = Material::color(Color::WHITE)
+        .with_metal_rough_texture("textures/plaster_rough.png")
+        .with_orm_texture("textures/plaster_orm.png")
+        .with_occlusion_texture("textures/plaster_ao.png", 0.8)
+        .with_uv_scale(4.0, 3.0)
+        .with_world_uv(2.0);
+    assert_eq!(plaster.occlusion_texture(), Some(("textures/plaster_ao.png", 0.8)));
+    assert_eq!(pinned_calls(&pinned, "mesh"), ["gfx.mesh", "MeshData::new", ".vertex", ".triangle", ".quad", ".cuboid", ".check"]);
+    let refusals = MeshErrorCode::ALL.map(MeshErrorCode::wire);
+    assert_eq!(names(&pinned["mesh"]["refusals"]), refusals);
+    let mut data = MeshData::new();
+    let a = data.vertex(Vec3::ZERO, Vec3::Z, genex::glam::Vec2::ZERO);
+    let b = data.vertex(Vec3::X, Vec3::Z, genex::glam::Vec2::X);
+    let c = data.vertex(Vec3::Y, Vec3::Z, genex::glam::Vec2::Y);
+    data.triangle(a, b, c).quad([Vec3::ZERO, Vec3::X, Vec3::ONE, Vec3::Y], 1.0).cuboid(Vec3::ZERO, Vec3::ONE, 1.0);
+    assert!(data.check().is_ok());
+    let mut game = Game::new(());
+    game.on_reset(move |_, _, _, gfx| assert!(gfx.mesh(&data).is_ok()));
+}
+
 /// The Physics page's calls (lane PH): Rapier 0.36 through `genex::physics`, as `docs/api/physics.md`
 /// teaches them. They are Rapier's own names, pinned so the page, the physics recipe and the
 /// template guide teach only calls this chain makes.

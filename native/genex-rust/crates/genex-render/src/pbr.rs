@@ -57,6 +57,54 @@ pub struct Material {
     /// How it lets light through (renderer pass 2 B.1): wax, skin, leaves. `None` (the default)
     /// is opaque to light, shaded exactly as before.
     pub subsurface: Option<Subsurface>,
+    /// How its maps meet the surface (Bodycam B2b): the mesh's UVs by default.
+    pub uv: UvMapping,
+}
+
+/// The least UV scale (or tiles per metre) a material keeps: a smaller positive one reads as this,
+/// zero, a negative or one not finite as 1.
+pub const UV_SCALE_MIN: f32 = 1.0e-3;
+/// The most UV scale (or tiles per metre) a material keeps; more reads as this.
+pub const UV_SCALE_MAX: f32 = 1.0e3;
+
+/// How a material's maps meet a surface (Bodycam B2b). A box drawn 4 m wide stretches a texture
+/// made for one metre over it with the mesh's own UVs; a scale repeats it, and a world projection
+/// tiles every face at one density whatever the draw's size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UvMapping {
+    /// The mesh's UVs times `scale` (u, v): `[1, 1]` is as authored, `[4, 3]` repeats the texture
+    /// four times across and three times down.
+    Mesh {
+        /// Repeats across (u) and down (v).
+        scale: [f32; 2],
+    },
+    /// The world position projected along the axis the surface faces most (a box's every face, a
+    /// wall, a floor): u runs to the viewer's right, v down a wall. For geometry that stays put;
+    /// a moving draw's texture slides over it.
+    World {
+        /// Repeats per metre across (u) and down (v).
+        tiles_per_metre: [f32; 2],
+    },
+}
+
+impl Default for UvMapping {
+    fn default() -> UvMapping {
+        UvMapping::Mesh { scale: [1.0, 1.0] }
+    }
+}
+
+impl UvMapping {
+    /// The extension row's `uv` (`[0; 4]` for the mesh's UVs as authored, so the row is the
+    /// legacy one), each scale held to [`UV_SCALE_MIN`]..=[`UV_SCALE_MAX`] (1 when not finite or
+    /// not positive).
+    pub fn row(self) -> [f32; 4] {
+        let held = |value: f32| if value.is_finite() && value > 0.0 { value.clamp(UV_SCALE_MIN, UV_SCALE_MAX) } else { 1.0 };
+        match self {
+            UvMapping::Mesh { scale } if scale.map(held) == [1.0, 1.0] => [0.0; 4],
+            UvMapping::Mesh { scale } => [held(scale[0]), held(scale[1]), 0.0, 0.0],
+            UvMapping::World { tiles_per_metre } => [held(tiles_per_metre[0]), held(tiles_per_metre[1]), 1.0, 0.0],
+        }
+    }
 }
 
 impl Material {
@@ -79,6 +127,7 @@ impl Material {
             occlusion_texture: None,
             occlusion_strength: 1.0,
             subsurface: None,
+            uv: UvMapping::default(),
         }
     }
 
@@ -134,6 +183,11 @@ impl Material {
     /// darkening by `strength` (P2-0.12).
     pub fn with_occlusion_texture(self, texture: TextureId, strength: f32) -> Material {
         Material { occlusion_texture: Some(texture), occlusion_strength: strength, ..self }
+    }
+
+    /// This material with its maps meeting the surface as `uv` says (Bodycam B2b).
+    pub fn with_uv(self, uv: UvMapping) -> Material {
+        Material { uv, ..self }
     }
 
     /// This material letting light through as `subsurface` describes (renderer pass 2 B.1).
@@ -200,6 +254,7 @@ impl Material {
             double_sided: self.double_sided,
             occlusion: self.occlusion_reference().map(|reference| (reference, self.occlusion_strength().to_bits())),
             subsurface: self.visible_subsurface().map(Subsurface::key),
+            uv: self.uv.row().map(f32::to_bits),
         }
     }
 
@@ -213,12 +268,14 @@ impl Material {
     /// The material-extension row ([`GpuMaterialExt`], parallel to [`Material::to_gpu`]'s row):
     /// the emitted radiance, the emissive map's layer and its size class, the occlusion map's
     /// strength (`emissive.w`), the alpha cutoff (`params.w`; P2-0.12) and the scattering
-    /// (`subsurface`, `transmission`; renderer pass 2 B.1), each part's flag in `params.z`. A
-    /// material that emits nothing, has no occlusion map, is not alpha-tested and lets no light
-    /// through has [`crate::layout::MATERIAL_EXT_NONE`]'s row.
+    /// (`subsurface`, `transmission`; renderer pass 2 B.1), each part's flag in `params.z`, and the
+    /// UV mapping (`uv`, Bodycam B2b). A material that emits nothing, has no occlusion map, is not
+    /// alpha-tested, lets no light through and samples its mesh's UVs as authored has
+    /// [`crate::layout::MATERIAL_EXT_NONE`]'s row.
     pub fn to_gpu_ext(self) -> GpuMaterialExt {
         let occlusion = self.occlusion_reference().map_or(0.0, |_| self.occlusion_strength());
         let mut row = crate::layout::MATERIAL_EXT_NONE;
+        row.uv = self.uv.row();
         row.emissive[3] = occlusion;
         row.params[3] = self.cutoff();
         let mut flags = 0;
@@ -279,6 +336,8 @@ pub(crate) struct MaterialKey {
     occlusion: Option<(u32, u32)>,
     /// The scattering's bits (renderer pass 2 B.1), when it lets light through.
     subsurface: Option<[u32; 7]>,
+    /// The UV mapping row's bits (Bodycam B2b).
+    uv: [u32; 4],
 }
 
 /// `value`, or 0 when it is negative or not finite.

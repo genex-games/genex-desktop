@@ -17,7 +17,18 @@ at their range, so give each the range it needs, not more: a lantern 3 to 4 unit
 may hold hundreds; the preset caps how many a frame lights (phones at most 256), nearest first,
 fading the farthest kept ones out so a light crossing the cap never pops. Give a draw its surface with a `Material`:
 `Material::color(Color::rgb(255, 200, 80)).with_metallic(1.0).with_roughness(0.25)`, textures by
-asset path with `.with_base_texture("textures/bark.png")`, drawn with `frame.cube_with`,
+asset path with `.with_base_texture("textures/bark.png")`, `.with_normal_texture(path, strength)`
+and, for roughness and metalness, `.with_metal_rough_texture(path)` (glTF's packing: green
+roughness, blue metallic) or `.with_orm_texture(path)` for a packed occlusion-roughness-metallic
+map (the `_ORM` or `_ARM` file of a CC0 set: red occlusion as well); a separate occlusion map is
+`.with_occlusion_texture(path, strength)` (it darkens ambient light only, never the sun). The
+maps multiply `roughness` and `metallic`, so set both to 1 to take a map's values as they are.
+A texture covers each face of a mesh once by default; `.with_uv_scale(u, v)` repeats it `u` times
+across and `v` times down, and `.with_world_uv(metres)` projects it from the world along the
+axis each face looks at, repeating every `metres`: a 4 m wall drawn with `frame.cube_with`, a
+0.2 m sill and a floor then show one texel size, never a stretched photo. World projection is for
+geometry that stays put (a moving draw's texture slides) and for flat faces (a curved model shows
+seams; give it `.with_uv_scale`). Drawn with `frame.cube_with`,
 `frame.sphere_with` or `frame.model_with` (a GLB's own materials, emission and textures load by
 themselves: an alpha-`MASK` leaf or fence is cut out in its shadow too, a `doubleSided` card
 draws both faces, an occlusion map darkens its crevices' ambient light). A missing texture leaves the surface untextured; `.with_untextured_color(color)` names

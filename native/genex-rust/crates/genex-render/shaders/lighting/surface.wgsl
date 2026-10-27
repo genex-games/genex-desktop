@@ -103,6 +103,37 @@ fn gx_toksvig_roughness(roughness: f32, normal_length: f32) -> f32 {
     return sqrt(sqrt(min(alpha * alpha + 1.0 / kappa, 1.0)));
 }
 
+// A fragment's texture coordinates and tangent frame under its material's UV mapping (Bodycam
+// B2b, the extension row's `uv`, `pbr::UvMapping`).
+struct GxSurfaceUv {
+    uv: vec2<f32>,
+    tangent: vec4<f32>,
+}
+
+// The mesh's own `uv` and `tangent` times the row's scale (a zero scale reads as 1, so a zeroed
+// row is the mesh's UVs bit for bit), or with `row.z` set the world position projected along the
+// axis `normal` faces most, `row.xy` tiles per metre: u runs to the viewer's right and v down a
+// wall, and the tangent is the projection's own u axis with the meshes' handedness (-1: the
+// bitangent is where v grows), so a box of any size tiles its texture at one texel density. A
+// moving draw's texture slides over it: the projection is for architecture that stays put.
+fn gx_surface_uv(row: vec4<f32>, uv: vec2<f32>, tangent: vec4<f32>, world_pos: vec3<f32>, normal: vec3<f32>) -> GxSurfaceUv {
+    let scale = select(row.xy, vec2<f32>(1.0), row.xy == vec2<f32>(0.0));
+    if row.z < 0.5 {
+        return GxSurfaceUv(uv * scale, tangent);
+    }
+    let a = abs(normal);
+    if a.x >= a.y && a.x >= a.z {
+        let s = select(-1.0, 1.0, normal.x >= 0.0);
+        return GxSurfaceUv(vec2<f32>(-s * world_pos.z, -world_pos.y) * scale, vec4<f32>(0.0, 0.0, -s, -1.0));
+    }
+    if a.z >= a.y {
+        let s = select(-1.0, 1.0, normal.z >= 0.0);
+        return GxSurfaceUv(vec2<f32>(s * world_pos.x, -world_pos.y) * scale, vec4<f32>(s, 0.0, 0.0, -1.0));
+    }
+    let s = select(-1.0, 1.0, normal.y >= 0.0);
+    return GxSurfaceUv(vec2<f32>(world_pos.x, s * world_pos.z) * scale, vec4<f32>(1.0, 0.0, 0.0, -1.0));
+}
+
 // The surface of material row `material_index` at a fragment, its view direction still unset.
 fn gx_surface(world_pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, tangent: vec4<f32>, material_index: u32) -> Surface {
     let material = materials[material_index];

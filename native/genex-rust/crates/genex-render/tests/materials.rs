@@ -2,7 +2,8 @@
 //! and the world pass (alpha-to-coverage under MSAA, hashed alpha under TAA), alpha-coverage
 //! preserving mips, double-sided materials (S11, A4.0); anisotropic filtering of the material
 //! textures per preset (LG-02); the sun as a disc for specular and the roughness floor (LG-04);
-//! glTF occlusion maps (LG-09); specular anti-aliasing from the geometric normal (C8).
+//! glTF occlusion maps (LG-09); specular anti-aliasing from the geometric normal (C8); UV scale and
+//! world-aligned box projection (Bodycam B2b).
 //!
 //! The CPU rows run everywhere. The GPU rows are `#[ignore]`d and every name contains `metal`:
 //!
@@ -20,7 +21,8 @@ use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::layout::NO_TEXTURE;
 use genex_render::mesh::{GlbModel, MeshData, Vertex};
 use genex_render::presets::preset_quality;
-use genex_render::scene::{CameraDesc, DrawVariant, FramePlan, Material, MeshId, MeshLibrary, Scene, scaled};
+use genex_render::pbr::{UV_SCALE_MAX, UV_SCALE_MIN};
+use genex_render::scene::{CameraDesc, DrawVariant, FramePlan, Material, MeshId, MeshLibrary, Scene, UvMapping, scaled};
 use genex_render::settings::{AntiAliasing, Quality, QualityPreset, SceneFormat};
 use genex_render::texture::{CUTOUT_COVERAGE_ALPHA, TextureData, TextureId, TextureKind, alpha_coverage, cutout_mip_chain, mip_chain};
 use genex_render::{CullPath, Gpu, RenderOptions, Renderer};
@@ -768,6 +770,96 @@ fn metal_an_occlusion_map_darkens_the_ambient_light_and_never_the_sun() {
             assert!((sun_ratio - 1.0).abs() < 0.02, "{name}: the sun is never occluded by the map ({sun_ratio:.3})");
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bodycam B2b: UV scale and world-aligned box projection
+
+#[test]
+fn uv_mapping_rows_hold_hostile_scales_and_the_identity_is_the_legacy_row() {
+    assert_eq!(UvMapping::default().row(), [0.0; 4], "the mesh's UVs as authored keep the legacy extension row");
+    assert_eq!(UvMapping::Mesh { scale: [1.0, 1.0] }.row(), [0.0; 4]);
+    assert_eq!(UvMapping::Mesh { scale: [4.0, 3.0] }.row(), [4.0, 3.0, 0.0, 0.0]);
+    assert_eq!(UvMapping::World { tiles_per_metre: [0.5, 0.5] }.row(), [0.5, 0.5, 1.0, 0.0]);
+    let hostile = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -2.0];
+    for value in hostile {
+        assert_eq!(UvMapping::Mesh { scale: [value, 2.0] }.row(), [1.0, 2.0, 0.0, 0.0], "{value} reads as 1");
+        assert_eq!(UvMapping::World { tiles_per_metre: [value, value] }.row(), [1.0, 1.0, 1.0, 0.0], "{value} reads as 1");
+    }
+    assert_eq!(UvMapping::Mesh { scale: [1.0e-9, 1.0e9] }.row(), [UV_SCALE_MIN, UV_SCALE_MAX, 0.0, 0.0]);
+    let plain = Material::color([200; 4]);
+    assert_eq!(plain.to_gpu_ext(), genex_render::layout::MATERIAL_EXT_NONE, "a plain material's extension row is unchanged");
+    assert_eq!(plain.with_uv(UvMapping::World { tiles_per_metre: [2.0, 2.0] }).to_gpu_ext().uv, [2.0, 2.0, 1.0, 0.0]);
+}
+
+#[test]
+fn materials_that_differ_only_in_their_uv_mapping_take_their_own_rows() {
+    let mut scene = Scene::new(CameraDesc::look_at([0.0, 0.0, 4.0], [0.0; 3]), CLEAR);
+    let plain = white_card();
+    scene.draw(MeshId::CUBE, scaled([0.0; 3], [1.0; 3]), plain);
+    scene.draw(MeshId::CUBE, scaled([2.0, 0.0, 0.0], [1.0; 3]), plain.with_uv(UvMapping::Mesh { scale: [4.0, 1.0] }));
+    scene.draw(MeshId::CUBE, scaled([4.0, 0.0, 0.0], [1.0; 3]), plain.with_uv(UvMapping::World { tiles_per_metre: [4.0, 1.0] }));
+    scene.draw(MeshId::CUBE, scaled([6.0, 0.0, 0.0], [1.0; 3]), plain.with_uv(UvMapping::Mesh { scale: [1.0, 1.0] }));
+    let plan = FramePlan::build(&scene, &MeshLibrary::new(), 1.5).expect("plan");
+    assert_eq!(plan.materials.len(), 3, "an identity scale shares the plain row; a scale and a projection each take one");
+}
+
+/// Two periods of light and dark across one tile: a stripe edge every half tile.
+fn halves() -> TextureData {
+    texture(64, |x, _| if x < 32 { [240, 240, 240, 255] } else { [30, 30, 30, 255] })
+}
+
+/// How many times the luma along the row through `y` crosses the middle of its range between
+/// `from` and `to` (pixels, exclusive of two pixels at each end): the stripe edges seen.
+fn crossings(capture: &Capture, y: f32, from: f32, to: f32) -> usize {
+    let luma = lumas(capture);
+    let w = capture.width() as usize;
+    let row = y as usize * w;
+    let span: Vec<f32> = ((from as usize + 2)..(to as usize - 2)).map(|x| luma[row + x]).collect();
+    let (low, high) = span.iter().fold((f32::MAX, f32::MIN), |(low, high), v| (low.min(*v), high.max(*v)));
+    let middle = (low + high) / 2.0;
+    span.windows(2).filter(|pair| (pair[0] < middle) != (pair[1] < middle)).count()
+}
+
+#[test]
+#[ignore = "needs a Metal adapter"]
+fn metal_a_world_projected_wall_tiles_at_one_density_whatever_its_width() {
+    let Some(gpu) = gpu() else { return };
+    let size = (320, 180);
+    let camera = CameraDesc::look_at([0.0, 0.0, 10.0], [0.0, 0.0, 0.0]);
+    // Walls 1 m and 4 m wide, 1 m tall and 0.2 m deep: their front faces at z = 0.1.
+    let walls = [(-3.0, 1.0), (2.0, 4.0)];
+    let shot = |uv: UvMapping| {
+        let mut renderer = renderer_sized(&gpu, &hdr_msaa(), size, desktop());
+        let stripes = renderer.add_texture(&gpu, &halves(), TextureKind::Color).expect("stripes");
+        let mut scene = Scene::new(camera, CLEAR);
+        scene.lighting.shadows = false;
+        scene.lighting.sun_dir = [0.0, 0.2, 1.0];
+        let material = Material::color([255; 4]).with_base_texture(stripes).with_pbr(0.0, 1.0).with_uv(uv);
+        for (x, width) in walls {
+            scene.draw(MeshId::CUBE, scaled([x, 0.0, 0.0], [width, 1.0, 0.2]), material);
+        }
+        draw(&gpu, &mut renderer, &scene, 1)
+    };
+    let edges = |capture: &Capture| {
+        walls.map(|(x, width)| {
+            let left = pixel(&camera, size, Vec3::new(x - width / 2.0, 0.0, 0.1));
+            let right = pixel(&camera, size, Vec3::new(x + width / 2.0, 0.0, 0.1));
+            crossings(capture, left.1, left.0, right.0)
+        })
+    };
+    let mesh = shot(UvMapping::default());
+    let world = shot(UvMapping::World { tiles_per_metre: [1.0, 1.0] });
+    write_evidence("uv-mesh-walls", &mesh);
+    write_evidence("uv-world-walls", &world);
+    let (mesh_edges, world_edges) = (edges(&mesh), edges(&world));
+    println!("stripe edges on the 1 m and 4 m walls: mesh UVs {mesh_edges:?}, world projection {world_edges:?}");
+    assert!(mesh_edges[1] <= 2, "the mesh's UVs stretch one tile over the 4 m wall ({mesh_edges:?})");
+    assert!(world_edges[1] >= 6, "the world projection tiles the 4 m wall once a metre ({world_edges:?})");
+    assert!(world_edges[0] <= 2, "and the 1 m wall once ({world_edges:?})");
+    let scaled_mesh = shot(UvMapping::Mesh { scale: [4.0, 1.0] });
+    let scaled_edges = edges(&scaled_mesh);
+    assert!(scaled_edges[0] >= 6 && scaled_edges[1] >= 6, "a mesh scale repeats the texture on every wall ({scaled_edges:?})");
 }
 
 // ---------------------------------------------------------------------------------------------

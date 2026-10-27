@@ -13,7 +13,8 @@ fn gx_ssr_surface_texel(in: VsOut, front: bool) -> vec4<f32> {
     gx_sun_shadow_context(in.clip.xy, frame.shadow_counts.z, frame.shadow_soft.y);
     let facing = select(-1.0, 1.0, front);
     let tangent = vec4<f32>(in.tangent.xyz * facing, in.tangent.w * facing);
-    var s = gx_surface(in.world_pos, in.normal * facing, in.uv, tangent, in.material);
+    let mapped = gx_surface_uv(material_ext[in.material].uv, in.uv, tangent, in.world_pos, in.normal * facing);
+    var s = gx_surface(in.world_pos, in.normal * facing, mapped.uv, mapped.tangent, in.material);
     if GX_PROBES {
         s = gx_decals(s, world_dx, world_dy);
     }

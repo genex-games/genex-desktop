@@ -182,6 +182,20 @@
   "subsurface": {
     "calls": [".with_subsurface", "Subsurface::new", ".with_transmission"]
   },
+  "materials": {
+    "calls": [".with_metal_rough_texture", ".with_orm_texture", ".with_occlusion_texture", ".with_uv_scale", ".with_world_uv"]
+  },
+  "mesh": {
+    "calls": ["gfx.mesh", "MeshData::new", ".vertex", ".triangle", ".quad", ".cuboid", ".check"],
+    "refusals": [
+      "mesh-empty",
+      "mesh-not-triangles",
+      "mesh-index-out-of-range",
+      "mesh-attribute-mismatch",
+      "mesh-not-finite",
+      "mesh-too-large"
+    ]
+  },
   "clouds": {
     "calls": [".with_clouds", "Clouds::default", ".with_coverage", ".with_layer", ".with_density", ".with_offset"]
   },

@@ -461,6 +461,9 @@ struct GxMaterialExt {
     // x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
     // world units, w: reserved (B.1).
     transmission: vec4<f32>,
+    // The UV mapping (Bodycam B2b, `gx_surface_uv`): xy the scale (0 reads as 1), z 1 for a
+    // world-aligned box projection (xy then tiles per metre), w reserved.
+    uv: vec4<f32>,
 }
 
 // The view distance of a depth-buffer value under projection `proj` (perspective or
