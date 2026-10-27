@@ -6,7 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { PAGE_DISPATCH } from "../../src/main/page-dispatch.ts";
+import { PAGE_DISPATCH, PAGE_STEP_CLOCK } from "../../src/main/page-dispatch.ts";
+import { applyInputAction } from "../../src/main/preview-input-driver.ts";
 import { GAME_DISABLED_BLINK_FEATURES, gameViewPreferences } from "../../src/main/game-view.ts";
 import { FlowPhase, installStudio, makeRng } from "../../src/game-template/src/studio.js";
 import {
@@ -667,6 +668,88 @@ describe("the studio's input dispatch", () => {
         dom: [{ kind: "mouse", type: "mousemove", x: 1, y: 2, movementX: 40, movementY: 0 }],
       });
       assert.deepEqual(p.moved, [{ dx: 40, dy: 0 }]);
+    } finally {
+      p.restore();
+    }
+  });
+});
+
+describe("a stepped key tap on a Rust web page (bodycam dead-input)", () => {
+  const dispatch = new Function(`return (${PAGE_DISPATCH});`)() as (payload: unknown) => boolean;
+  const stepClock = new Function(`return (${PAGE_STEP_CLOCK});`)() as (ms: number) => unknown;
+
+  /**
+   * A paused Rust · wgpu game behind its web shell, as genex-core merges input: injected keys are
+   * held until released, an edge is what a tick sees change, and only the game's own `step` verb
+   * ticks it (the shell's frames run no tick while paused).
+   */
+  function rustPage() {
+    const held = new Set<string>();
+    let seen = new Set<string>();
+    const pressed: string[] = [];
+    const tick = () => {
+      for (const key of held) if (!seen.has(key)) pressed.push(key);
+      seen = new Set(held);
+    };
+    const game = {
+      injectInput: (input: { down?: string[]; up?: string[] }) => {
+        for (const key of input?.down ?? []) held.add(key);
+        for (const key of input?.up ?? []) held.delete(key);
+        return { keys: [...held], look: { x: 0, y: 0 }, wheel: { x: 0, y: 0 } };
+      },
+      step: (ms: number) => {
+        for (let n = 0; n < Math.max(1, Math.round(ms / FRAME_MS)); n++) tick();
+        return { ticks: Math.round(ms / FRAME_MS) };
+      },
+    };
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const before = { window: globals.window, document: globals.document, KeyboardEvent: globals.KeyboardEvent };
+    const window = {
+      __studio: null as unknown,
+      // The page's frames: a paused shell draws, and ticks nothing.
+      __studioClock: { step: () => ({ ok: true }), mouseMove: () => {} },
+      __studioTrustedTypes: {},
+      GenexShell: { status: { state: "running" }, progress: { stage: "ready" } },
+    };
+    // The shim's facade: its own step runs the page's frames, then the game's step verb.
+    installFacade(window, {
+      version: 1,
+      state: () => ({}),
+      ready: () => ({}),
+      step: (ms: number) => {
+        window.__studioClock.step();
+        return game.step(ms);
+      },
+      pause: () => true,
+      start: () => true,
+      seed: (n: number) => n,
+      injectInput: () => ({ keys: [] }),
+    } as never);
+    window.__studio = game;
+    globals.window = window;
+    globals.document = { querySelector: () => null, activeElement: null, dispatchEvent: () => true };
+    globals.KeyboardEvent = class {};
+    return { window, pressed, restore: () => Object.assign(globals, before) };
+  }
+
+  it("presses the key on a tick the game sees between the press and the release", async () => {
+    const p = rustPage();
+    try {
+      await applyInputAction(
+        {
+          width: 960,
+          height: 600,
+          send: () => {},
+          dispatch: async (payload) => void dispatch(payload),
+          stepClock: async (ms) => void (await stepClock(ms)),
+          pointer: () => ({ x: 480, y: 300 }),
+          movePointer: () => {},
+        },
+        { type: "tap", keys: ["Enter"], stepMs: 48 },
+      );
+      // The play script's frame after the tap.
+      (p.window.__studio as { step: (ms: number) => unknown }).step(48);
+      assert.ok(p.pressed.includes("Enter"), `a title that starts on Enter saw: ${JSON.stringify(p.pressed)}`);
     } finally {
       p.restore();
     }
