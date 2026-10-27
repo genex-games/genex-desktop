@@ -786,7 +786,8 @@ evidence globals (`__studioClock`, `__studioDraw`, `__studioCapture`, `__studioG
 are accessors with no-op setters. `hook.ts` reports renderers and reads the scene and camera off
 frames the game draws; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
 reads the canvas at the end of a drawn frame and composites over the page background (WebGPU reads
-depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers. Every shot
+depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers. A picture a
+game took itself (`paint`, a Rust or C++ world-target readback at the world size) keeps its own size. Every shot
 records its provenance. Draw calls
 are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals. `game-template`'s
 `src/studio.js` is the contract every template game installs; never remove a method.
