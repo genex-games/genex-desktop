@@ -213,8 +213,9 @@ pub const FOG_CALLS: [&str; 8] =
 /// character controller (AN-19), ragdolls (AN-20) and the animation surface (AN-15: the graph,
 /// the animator, `frame.character` and its skeleton overlay; the simple animator, AN-26; the
 /// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
-/// a ragdoll view's `.apply`, pinned at gate GI; the planted feet, release R-22).
-pub const ANIMATION_CALLS: [&str; 88] = [
+/// a ragdoll view's `.apply`, pinned at gate GI; the planted feet, release R-22; clip files on one
+/// rig and the armature's frame, B8).
+pub const ANIMATION_CALLS: [&str; 90] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
@@ -226,7 +227,7 @@ pub const ANIMATION_CALLS: [&str; 88] = [
     ".inertialize", ".priority", ".interruptible", ".layer_mask", ".event", ".vec2", ".bool", ".set_vec2", ".set_bool",
     ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
     ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips", ".plant_feet",
-    "animation::height_ground",
+    "animation::height_ground", ".with_clip_files", ".mesh_frame",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the

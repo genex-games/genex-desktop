@@ -1,4 +1,5 @@
 import type { AudioPlaybackEvidence } from "./audio-observation.ts";
+import { CreditKind } from "./play-credits.ts";
 import { type CaptureSource, type StillExposure, StillMimeType } from "./preview-contract.ts";
 
 /** The bundled Genex plugin's id: the host's own Genex surfaces (its page, the promo) look it up by this. */
@@ -298,6 +299,38 @@ export const GenexPluginEvent = {
 } as const;
 export type GenexPluginEvent = (typeof GenexPluginEvent)[keyof typeof GenexPluginEvent];
 
+/** Why a generation failed, as `GenexJob.failure.code` says it to the agent. Wire values: never rename one. */
+export const GenexFailureCode = {
+  /** Genex's provider ran the generation and it failed: the same input usually fails the same way. */
+  GenerationFailed: "generation-failed",
+  /** Genex canceled the generation. */
+  GenerationCanceled: "generation-canceled",
+} as const;
+export type GenexFailureCode = (typeof GenexFailureCode)[keyof typeof GenexFailureCode];
+
+/** What the agent can do after a failed generation, by its kind; a kind not listed gets {@link GENEX_FAILURE_NEXT_DEFAULT}. */
+export const GENEX_FAILURE_NEXT: Readonly<Partial<Record<CreditKind, string>>> = Object.freeze({
+  [CreditKind.Character]:
+    "Do not resubmit the same character. Make the body with operation model, then rig it with character.import (Uthana) and add clips with character.animate: each clip is a GLB of its own, which the game joins to the rig with with_clip_files.",
+  [CreditKind.ModelRig]:
+    "Rig the model with character.import (Uthana) instead; it takes a humanoid GLB from this game.",
+  [CreditKind.ModelAnimation]:
+    "Animate through Uthana instead: character.import the model, then character.animate one clip at a time; the game joins the clip GLBs with with_clip_files.",
+});
+/** What the agent can do after a failed generation of a kind {@link GENEX_FAILURE_NEXT} does not list. */
+export const GENEX_FAILURE_NEXT_DEFAULT =
+  "Change the input (a shorter prompt, another reference image or model) or use another operation; resubmitting the same input usually fails the same way.";
+
+/** A failed generation, typed for the agent: why, of which kind, the provider's own words and what to do next. */
+export interface GenexJobFailure {
+  code: GenexFailureCode;
+  /** The generation's kind as Genex names it (`CreditKind`'s spelling), or null when it gave none. */
+  kind: string | null;
+  /** The provider's own message, for the log and the agent; never matched on. */
+  providerError: string | null;
+  next: string;
+}
+
 export interface GenexJob {
   id: string;
   project: string;
@@ -313,6 +346,8 @@ export interface GenexJob {
   creditsRefunded?: number;
   files: string[];
   error?: string;
+  /** Set when Genex's provider failed or canceled the generation (`generation-failed`, `generation-canceled`). */
+  failure?: GenexJobFailure;
   /** Set when the job went no further than asking the person for something first. */
   blocked?: GenexBlocked;
   creditsQuoted?: number;
