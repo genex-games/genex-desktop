@@ -622,10 +622,10 @@ describe("a C++ · raylib game's briefs", () => {
 describe("the computer tool's words", () => {
   const view = { width: 1280, height: 720 };
   const cameras = " Known cameras: default, eye:here.";
-  it("are dev's own for every Three.js session (sha256 at origin/dev 22b48e13, merged into the stack)", () => {
+  it("are dev's own for every Three.js session (sha256 at origin/dev 22b48e13, merged into the stack; B6 added the editing roles' check sentence)", () => {
     const PRE_NATIVE = {
-      builder: "cf4ed221939c17ef",
-      director: "ccf42b3ea6270766",
+      builder: "01a2de8f8d5d3a61",
+      director: "a9c9a2c8d589c8e1",
       playtester: "6eb910059a9ae856",
       scout: "887ea54c13377943",
     } as const;

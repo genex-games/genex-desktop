@@ -444,3 +444,36 @@ describe("computer session — why a game refused", () => {
     );
   });
 });
+
+describe("computer session — a check without a reload (B6)", () => {
+  it("checks the session's build folder through its source and never loads, reloads or touches the window", async () => {
+    const { target, calls } = fakeTarget();
+    const loads: boolean[] = [];
+    const checked: string[] = [];
+    const source: TargetSource = {
+      ...sourceOf(target),
+      load: async (_root, force) => {
+        loads.push(force);
+        return { target, problem: null, note: null, fresh: true };
+      },
+      check: async (root) => {
+        checked.push(root);
+        return "the game's build failed (exit 101):\nerror[E0308]: mismatched types";
+      },
+    };
+    const s = computerSession(source, "/build", { pacing: "running", frameDir: await tmpDir("computer-check-") });
+    assert.match(text(await s.run("computer", { action: "check" })), /E0308/);
+    s.retarget("/worker");
+    await s.run("computer", { action: "check" });
+    assert.deepEqual(checked, ["/build", "/worker"]);
+    assert.deepEqual(loads, [], "a check loads nothing");
+    assert.deepEqual(calls, [], "nor touches the window");
+  });
+
+  it("says a target with nothing to check has no check, before anything loads", async () => {
+    const { target } = fakeTarget();
+    const frameDir = await tmpDir("computer-check-");
+    const s = computerSession(sourceOf(target), "/build", { pacing: "running", frameDir });
+    assert.match(text(await s.run("computer", { action: "check" })), /not available/);
+  });
+});

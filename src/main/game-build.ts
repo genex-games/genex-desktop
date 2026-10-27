@@ -144,9 +144,15 @@ export function servedAfterBuild(
   return { dir: outcome.lastGood, stale: true };
 }
 
-/** The sentence the game console and the agent loop get; the stage gets the payload instead. */
+/**
+ * The sentence the game console and the agent loop get; the stage gets the payload instead. It
+ * names the exit and what the build printed, never the command: a lane's command carries its
+ * whole environment (the Rust lane's `env -i …` with `GENEX_RENDER_TOML`, kilobytes before the
+ * first error), and the stage's Details and the receipt keep it.
+ */
 export function buildFailureNote(problem: BuildProblem): string {
-  return `the game's build failed (${problem.command}, exit ${problem.code}):\n${problem.lines.join("\n")}`;
+  const exit = problem.code === null ? "stopped" : `exit ${problem.code}`;
+  return `the game's build failed (${exit}):\n${problem.lines.join("\n")}`;
 }
 
 /** Files that are never part of a build, however big the folder is. */
@@ -727,6 +733,12 @@ export interface GameBuildOptions {
   priority?: BuildPriority;
   /** A person's Play timing the build (`play-timings.ts`): the lane marks its wait and its steps; absent: nobody is. */
   timing?: PlayTimingSink;
+  /**
+   * Only what the lane checks before it builds, for an agent's fast check (Rust: the gate's clippy
+   * on the staged game, whatever the purpose): no output is made, admitted or served, and an `ok`
+   * outcome has no `output`. A lane with no cheaper check builds as asked.
+   */
+  check?: boolean;
 }
 
 /** One compiled stack's build lane, as the seam drives it. */

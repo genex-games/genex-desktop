@@ -1,0 +1,55 @@
+{
+  "id": "rust.facade-recessed-windows-seams",
+  "runtime": "rust-wgpu",
+  "title": "Rust walls and facades: windows as recessed openings with sills, seams breaking the slab",
+  "tags": [
+    "facade",
+    "window",
+    "windows",
+    "panel",
+    "seam",
+    "recess",
+    "reveal",
+    "sill",
+    "glazing",
+    "plinth",
+    "variant",
+    "khrushchyovka",
+    "soviet",
+    "building",
+    "grid",
+    "blender"
+  ],
+  "checkClass": "facade",
+  "kind": "craft",
+  "pack": "architecture",
+  "note": "Windows are openings with a reveal ≥ 0.1 m, a sill and set-back glazing; seams and a plinth break every large wall.",
+  "intent": "Flat walls with windows painted on score generic every time, inside and out. Build a window as an opening: the wall stops around it, four returns of the wall's material make a reveal at least 0.1 m deep, a sill sticks out below, and the glazing (or the grille and the blown-out daylight behind it) sits at the back of the reveal. The best answer is a wall kit from Local Blender (walls with openings, frames, sills, radiators, skirting, with world-scale UVs) drawn as models; with the facade's primitives, draw the reveal from cubes as in the sketch and keep it on the same panel grid as the wall. Break every large plane: seam or skirting lines, a darker plinth or dado band, a cornice; no run of four identical bays without an interruption. Light an opening with a spot shining in and an emissive pane (Material::emissive), not a white box.",
+  "sketch": "use genex::prelude::*;\n\n/// A window as an opening, not a picture: jambs, head and sill frame a reveal, the glazing sits back from the face.\nconst REVEAL: f32 = 0.14;\n\nfn draw_window(frame: &mut Frame, centre: Vec3, facing_yaw: f32, w: f32, h: f32, wall: &Material, frame_mat: &Material, glass: &Material) {\n    let turn = Quat::from_rotation_y(facing_yaw);\n    let at = |local: Vec3| centre + turn * local;\n    let piece = |local: Vec3, size: Vec3| Transform::from_translation(at(local)).with_rotation(turn).with_scale(size);\n    frame.tag(\"window\");\n    // Reveal: four returns of the wall's own material, REVEAL deep.\n    frame.cube_with(piece(vec3(-w * 0.5, 0.0, -REVEAL * 0.5), vec3(0.06, h, REVEAL)), wall);\n    frame.cube_with(piece(vec3(w * 0.5, 0.0, -REVEAL * 0.5), vec3(0.06, h, REVEAL)), wall);\n    frame.cube_with(piece(vec3(0.0, h * 0.5, -REVEAL * 0.5), vec3(w, 0.06, REVEAL)), wall);\n    frame.cube_with(piece(vec3(0.0, -h * 0.5 - 0.03, 0.04), vec3(w + 0.12, 0.05, REVEAL + 0.1)), frame_mat); // the sill sticks out\n    // The glazing set back, and a blown-out pane glows: pair it with a spot shining in (docs/api/lighting.md).\n    frame.cube_with(piece(vec3(0.0, 0.0, -REVEAL), vec3(w, h, 0.01)), glass);\n    frame.tag(\"seam\");\n    frame.cube_with(piece(vec3(0.0, h * 0.5 + 0.45, 0.005), vec3(w + 1.6, 0.03, 0.02)), frame_mat);\n}\n",
+  "check": {
+    "id": "facade-recess-seams",
+    "kind": "vision",
+    "camera": "eye:spawn",
+    "ask": "Are the windows set back into the wall with a visible depth (a reveal and a sill), and do lines or bands break up the large wall surfaces?",
+    "weight": "identity",
+    "note": "Windows recessed ≥ 0.1 m with sills, seams and bands breaking the slab; flat walls with painted windows score generic every time."
+  },
+  "port": "The level facet owns walls and openings (or the kit models); a light facet owns the spot behind each window.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/drawing.md",
+      "note": "frame.cube_with and frame.model; models of 512+ triangles get levels at import."
+    },
+    {
+      "source": "library/recipes/facade.recessed-windows-seams.json",
+      "note": "The three.js recipe facade.recessed-windows-seams, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

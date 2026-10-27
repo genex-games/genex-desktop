@@ -74,7 +74,15 @@ the commit's tree, lock, destination, profile, flavour, trust, eject, grant, SDK
 code and web shell), recorded as
 `<bin>.content` only when its stage is that tree file for file; any copy of the same content is
 served that admitted output (or waits for its build under way) instead of building. The person's
-Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Play plays one
+Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Clippy denies
+every warning but its style and complexity groups and `approx_constant`; the store `clippy.toml`'s
+determinism bans stay errors (`CLIPPY_LINT_LEVELS`). A failed step's lines are its first error as
+rustc renders it, empty gutter lines dropped, then how many more errors named a place; the note the
+console and the agents read (`buildFailureNote`) names the exit, never the command and its
+environment, which the stage's Details keep. The computer's `check` (`PreviewService.checkBuild`)
+asks the lane for a check (`GameBuildOptions.check`): identity, lock and clippy on the stage in the
+build's sandbox, whatever the purpose, then nothing is imported, built, admitted or announced; a
+build of the folder never shares a check, and waits for it. Play plays one
 copy per commit (`show/<game>-<commit12>`, `PreviewService.playCopy`), and a healthy integrated Rust
 build is prebuilt there in the background, web and this host's desktop
 ([`play-prebuilds.ts`](../../src/main/core/play-prebuilds.ts)). Every command
@@ -89,7 +97,9 @@ Composer Stop cancels only the chat's own game's builds (`gameBuilds.cancelGame`
 every copy's) and agent runs; another game's go on. It builds the Mac and the web (packaged by
 [`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell; Live opens a
 `game.mouseLook` game's page at `index.html?mouseLook`, and the shell then takes the pointer lock
-on a click, as Native does); the phones'
+on a click, as Native does; under Studio's page shim the shell holds the page's readiness from its
+boot's start, `__studioClock.hold()`, and declares it at the first lit frame, so no quiet settles
+its loading screen as booted); the phones'
 builders and settings ([`rust-build-mobile.ts`](../../src/main/rust-build-mobile.ts)), registered
 by `rustTargetBuilders`, build on a Mac (Android also on Linux);
 Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register once

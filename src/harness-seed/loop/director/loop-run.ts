@@ -252,6 +252,8 @@ export interface LoopRunState {
   workers: Map<string, Worker>;
   plan: AnyRecord | null;
   planReviewUntil: number | null;
+  /** The craft recipes the lead was already handed (director/craft.ts): a plan's answer names only new ones. */
+  craftShown?: string[];
   planSaidFrom: number;
   planGo: boolean;
   facetSpecs: FacetSpec[];

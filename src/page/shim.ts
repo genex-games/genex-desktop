@@ -615,6 +615,11 @@ export function createClock(host: Foreign, rawOptions = {}) {
  * a 40 MB level or an 18 s shader compile used to blind the scout for the whole run instead of
  * costing it one note. A timed-out page keeps booting: a late quiet, or the game's own
  * `__studio.ready()`, still settles it ready.
+ *
+ * A `held` page said it declares its own readiness (`__studioClock.hold()`, the Rust web shell
+ * while it boots): no quiet settles it, only its `ready()` or the spent budget. Its loading screen
+ * draws and its shader compiles go quiet long before the game's first frame (B6: bodycam read as
+ * booted at half the budget, 7.5 s, with the loader still up).
  */
 export function readinessVerdict(
   input: {
@@ -624,10 +629,12 @@ export function readinessVerdict(
     frames?: unknown;
     drawCalls?: unknown;
     complete?: boolean;
+    held?: boolean;
   } = {},
 ) {
   const readyMs = Number.isFinite(Number(input.readyMs)) ? Number(input.readyMs) : DEFAULT_SHIM_OPTIONS.readyMs;
   const elapsed = Number(input.elapsed) || 0;
+  if (input.held === true) return { settle: null, ready: false, timedOut: elapsed > readyMs };
   const quiet = input.quiet === true;
   const frames = Number(input.frames) || 0;
   const drawCalls = input.drawCalls === null || input.drawCalls === undefined ? null : Number(input.drawCalls);
@@ -1310,6 +1317,8 @@ interface Readiness {
   state: { ready: boolean; phase: string; why: Foreign; at: number | null };
   /** The boot budget ran out with the page still booting. A note, never a refusal — see below. */
   timedOut: boolean;
+  /** The page declares its own readiness (`__studioClock.hold()`): only its `ready()` or the budget settles it. */
+  held: boolean;
   gestureSeen: boolean;
   resolve: (value: unknown) => void;
 }
@@ -1357,6 +1366,7 @@ function evaluateReady(r: Readiness, page: ReadyInputs) {
     frames: clock.frames(),
     drawCalls: drawCallsNow(),
     readyMs: options.readyMs,
+    held: r.held,
   });
   if (verdict.settle) return void settleReady(r, natives, clock, verdict.settle, true);
   if (verdict.timedOut) r.timedOut = true;
@@ -1478,6 +1488,9 @@ function backendOf(watch: CanvasWatch) {
   return three ? three.kind : null;
 }
 
+/** Who counted `__render`'s draws: the graphics API's counters, nobody (the shim alone), or the game itself. */
+const RenderSource = { Counters: "counters", Shim: "shim", Game: "game" } as const;
+
 // The LAST COMPLETED FRAME, not the lifetime total: `__render.drawCalls` is the whole
 // frame's honest figure, and a board check reads it against a per-frame budget.
 function renderReport(watch: CanvasWatch, clock: ShimClock) {
@@ -1488,16 +1501,29 @@ function renderReport(watch: CanvasWatch, clock: ShimClock) {
     triangles: drawn ? (drawn.triangles ?? null) : null,
     vertices: drawn ? (drawn.vertices ?? null) : null,
     fps: clock.fps(),
-    source: drawn ? "counters" : "shim",
+    source: drawn ? RenderSource.Counters : RenderSource.Shim,
     trianglesExact: drawn ? drawn.trianglesExact !== false : false,
   };
 }
 
-/** The game's own state with the render report merged in, filling the draw counts it left out. */
-function withRender(game: Foreign, render: ReturnType<typeof renderReport>) {
-  const merged = { ...game, __render: render };
-  if (merged.drawCalls === undefined && render.drawCalls !== null) merged.drawCalls = render.drawCalls;
-  if (merged.triangles === undefined && render.triangles !== null) merged.triangles = render.triangles;
+/** A game's own `__render`, when its state carries one as an object. */
+function ownRender(game: Foreign): Record<string, unknown> | null {
+  const own = game?.__render;
+  return own && typeof own === "object" && !Array.isArray(own) ? own : null;
+}
+
+/**
+ * The game's own state with the render report merged in, filling the draw counts it left out.
+ * A game that keeps its own tally (a Rust · wgpu page: its frame's tagged draws and its refusals)
+ * keeps every figure it gave: a frame its paused shell repeated without drawing closes the
+ * counters' frame at 0, and that 0 is no fact about the game. The report fills the rest (backend).
+ */
+export function withRender(game: Foreign, render: ReturnType<typeof renderReport>) {
+  const own = ownRender(game);
+  const report = own ? { ...render, ...own, source: RenderSource.Game } : render;
+  const merged = { ...game, __render: report };
+  if (merged.drawCalls === undefined && report.drawCalls != null) merged.drawCalls = report.drawCalls;
+  if (merged.triangles === undefined && report.triangles != null) merged.triangles = report.triangles;
   return merged;
 }
 
@@ -1716,6 +1742,13 @@ function installClockGlobal(parts: ClockParts) {
       seed: clock.seed,
       boot: () => bootReport(readiness, natives, clock, lock),
       ready: parts.ready,
+      // The page declares its own readiness from here (`readinessVerdict`'s `held`), or stops declaring it.
+      hold: () => {
+        readiness.held = true;
+      },
+      release: () => {
+        readiness.held = false;
+      },
       rafReal: (cb: Foreign) => realFrame(natives, cb),
       afterFrame: clock.afterFrame,
       pumpFrame: clock.pumpFrame,
@@ -1777,6 +1810,7 @@ export function installStudioShim(rawOptions: Foreign) {
     bootAt: natives.performanceNow(),
     state: { ready: false, phase: "boot", why: null, at: null },
     timedOut: false,
+    held: false,
     gestureSeen: false,
     resolve: () => {},
   };

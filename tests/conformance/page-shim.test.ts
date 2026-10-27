@@ -6,7 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { PAGE_DISPATCH } from "../../src/main/page-dispatch.ts";
+import { PAGE_DISPATCH, PAGE_STEP_CLOCK } from "../../src/main/page-dispatch.ts";
+import { applyInputAction } from "../../src/main/preview-input-driver.ts";
 import { GAME_DISABLED_BLINK_FEATURES, gameViewPreferences } from "../../src/main/game-view.ts";
 import { FlowPhase, installStudio, makeRng } from "../../src/game-template/src/studio.js";
 import {
@@ -27,6 +28,7 @@ import {
   mulberry32,
   normalizeShimOptions,
   readinessVerdict,
+  withRender,
 } from "../../src/page/shim.ts";
 
 const FRAME_MS = 1000 / 60;
@@ -510,6 +512,23 @@ describe("readiness", () => {
     });
     assert.equal(drewNothing.settle, "quiet-no-draw");
   });
+
+  it("never settles a page that holds its own readiness on quiet alone (B6: bodycam's loading screen read as booted at 7.5 s)", () => {
+    // Half the default budget: the Rust shell, still compiling its shaders with its loader up and
+    // nothing fetched or drawn, was settled `quiet-no-draw` here, every reload.
+    const loading = { elapsed: 7_600, quiet: true, complete: true, frames: 455, drawCalls: 0, readyMs: 15_000 };
+    assert.equal(readinessVerdict(loading).settle, "quiet-no-draw", "an unheld page, as before");
+    const held = readinessVerdict({ ...loading, held: true });
+    assert.equal(held.settle, null, "a held page waits for its own ready()");
+    assert.equal(held.timedOut, false);
+    const drew = readinessVerdict({ ...loading, drawCalls: 40, held: true });
+    assert.equal(drew.settle, null, "drawing a loading screen is no boot either");
+    assert.equal(
+      readinessVerdict({ ...loading, elapsed: 15_001, held: true }).timedOut,
+      true,
+      "the budget still ends it",
+    );
+  });
 });
 
 describe("the studio's own globals", () => {
@@ -650,6 +669,119 @@ describe("the studio's input dispatch", () => {
         dom: [{ kind: "mouse", type: "mousemove", x: 1, y: 2, movementX: 40, movementY: 0 }],
       });
       assert.deepEqual(p.moved, [{ dx: 40, dy: 0 }]);
+    } finally {
+      p.restore();
+    }
+  });
+});
+
+describe("state()'s render report on a game that counts its own draws (bodycam drawCalls 0)", () => {
+  /** The shim's report after a frame a paused Rust shell repeated without drawing. */
+  const repeated = {
+    backend: "webgpu",
+    drawCalls: 0,
+    triangles: null,
+    vertices: 0,
+    fps: 60,
+    source: "counters" as const,
+    trianglesExact: false,
+  };
+
+  it("keeps the game's own tally and only fills what it left out", () => {
+    const tags = { level: { drawCalls: 40, triangles: 9_000 }, hands: { drawCalls: 2, triangles: 800 } };
+    const game = { frame: 9, __render: { drawCalls: 42, triangles: 9_800, tags, exact: false } };
+    const merged = withRender(game, repeated) as Record<string, any>;
+    assert.equal(merged.__render.drawCalls, 42, "a repeated frame is not a frame with no draws");
+    assert.deepEqual(merged.__render.tags, tags);
+    assert.equal(merged.__render.triangles, 9_800);
+    assert.equal(merged.__render.backend, "webgpu", "what the game cannot see is the shim's");
+    assert.equal(merged.drawCalls, 42, "the root copy follows the tally kept");
+  });
+
+  it("is the shim's report for a game that keeps no tally", () => {
+    const merged = withRender({ frame: 9 }, { ...repeated, drawCalls: 7 }) as Record<string, any>;
+    assert.equal(merged.__render.drawCalls, 7);
+    assert.equal(merged.__render.source, "counters");
+    assert.equal(merged.drawCalls, 7);
+  });
+});
+
+describe("a stepped key tap on a Rust web page (bodycam dead-input)", () => {
+  const dispatch = new Function(`return (${PAGE_DISPATCH});`)() as (payload: unknown) => boolean;
+  const stepClock = new Function(`return (${PAGE_STEP_CLOCK});`)() as (ms: number) => unknown;
+
+  /**
+   * A paused Rust · wgpu game behind its web shell, as genex-core merges input: injected keys are
+   * held until released, an edge is what a tick sees change, and only the game's own `step` verb
+   * ticks it (the shell's frames run no tick while paused).
+   */
+  function rustPage() {
+    const held = new Set<string>();
+    let seen = new Set<string>();
+    const pressed: string[] = [];
+    const tick = () => {
+      for (const key of held) if (!seen.has(key)) pressed.push(key);
+      seen = new Set(held);
+    };
+    const game = {
+      injectInput: (input: { down?: string[]; up?: string[] }) => {
+        for (const key of input?.down ?? []) held.add(key);
+        for (const key of input?.up ?? []) held.delete(key);
+        return { keys: [...held], look: { x: 0, y: 0 }, wheel: { x: 0, y: 0 } };
+      },
+      step: (ms: number) => {
+        for (let n = 0; n < Math.max(1, Math.round(ms / FRAME_MS)); n++) tick();
+        return { ticks: Math.round(ms / FRAME_MS) };
+      },
+    };
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const before = { window: globals.window, document: globals.document, KeyboardEvent: globals.KeyboardEvent };
+    const window = {
+      __studio: null as unknown,
+      // The page's frames: a paused shell draws, and ticks nothing.
+      __studioClock: { step: () => ({ ok: true }), mouseMove: () => {} },
+      __studioTrustedTypes: {},
+      GenexShell: { status: { state: "running" }, progress: { stage: "ready" } },
+    };
+    // The shim's facade: its own step runs the page's frames, then the game's step verb.
+    installFacade(window, {
+      version: 1,
+      state: () => ({}),
+      ready: () => ({}),
+      step: (ms: number) => {
+        window.__studioClock.step();
+        return game.step(ms);
+      },
+      pause: () => true,
+      start: () => true,
+      seed: (n: number) => n,
+      injectInput: () => ({ keys: [] }),
+    } as never);
+    window.__studio = game;
+    globals.window = window;
+    globals.document = { querySelector: () => null, activeElement: null, dispatchEvent: () => true };
+    globals.KeyboardEvent = class {};
+    return { window, pressed, restore: () => Object.assign(globals, before) };
+  }
+
+  it("presses the key on a tick the game sees between the press and the release", async () => {
+    const p = rustPage();
+    try {
+      await applyInputAction(
+        {
+          width: 960,
+          height: 600,
+          send: () => {},
+          dispatch: async (payload) => void dispatch(payload),
+          stepClock: async (ms) => void (await stepClock(ms)),
+          pointer: () => ({ x: 480, y: 300 }),
+          movePointer: () => {},
+        },
+        { type: "tap", keys: ["Enter"], stepMs: 48 },
+      );
+      // The play script's frame after the tap.
+      (p.window.__studio as { step: (ms: number) => unknown }).step(48);
+      assert.ok(p.pressed.includes("Enter"), `a title that starts on Enter saw: ${JSON.stringify(p.pressed)}`);
     } finally {
       p.restore();
     }

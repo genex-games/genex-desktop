@@ -367,8 +367,8 @@ export async function loadRecipes(workspace: string): Promise<Recipe[]> {
 
 /**
  * Names a Rust sketch may call that are not the facade's to pin: the methods of Rust's own types
- * (`Option`, `Result`, `Vec`, `VecDeque`, maps, iterators, numbers), of glam's vectors, of
- * serde_json's `Value` and of egui's `Ui` and `Response`, which a game reaches through the facade's
+ * (`Option`, `Result`, `Vec`, `VecDeque`, maps, iterators, numbers), of glam's vectors and of its
+ * quaternion's axis turns (`Quat::from_rotation_y`), of serde_json's `Value` and of egui's `Ui` and `Response`, which a game reaches through the facade's
  * re-exports.
  */
 export const RUST_OWN_CALLS: ReadonlySet<string> = new Set([
@@ -407,6 +407,9 @@ export const RUST_OWN_CALLS: ReadonlySet<string> = new Set([
   "floor",
   "fold",
   "from",
+  "from_rotation_x",
+  "from_rotation_y",
+  "from_rotation_z",
   "get",
   "get_mut",
   "insert",
@@ -972,6 +975,8 @@ export interface BriefOptions {
   comparison?: { flips?: string[]; regressions?: string[] } | null;
   attempts?: AnyRecord[];
   recipes?: RecipeHit[];
+  /** The game's craft (loop/game-craft.ts): one line per recipe chosen for its kind and brief, and where they are whole. */
+  craft?: string | null;
   spike?: string | null;
   steering?: string[];
   review?: { violations?: AnyRecord[] } | null;
@@ -1033,6 +1038,7 @@ function renderBriefSections(
     comparison,
     attempts = [],
     recipes = [],
+    craft = null,
     spike = null,
     steering = [],
     review = null,
@@ -1094,6 +1100,7 @@ function renderBriefSections(
     ...(spike ? [`## Spike result`, spike, ``] : []),
     ...attemptsSection(attempts, !cuts.has(BriefCut.DiffStats), carried.length > 0),
     ...recipesSection(recipes, recipeShape),
+    ...craftSection(craft, cuts.has(BriefCut.RecipeBodies)),
     ...briefRules(run, spec, { screen, template, resumed, facet, entryMain }),
     ...(cuts.has(BriefCut.Lessons) ? [] : lessonsSections(gameLessons, lessons)),
   ];
@@ -1406,6 +1413,12 @@ function recipeLines({ recipe, checkIds }: RecipeHit, shape: RecipeShape): strin
     keptHere ? "" : pointer,
     ``,
   ];
+}
+
+/** The game's craft block; past the budget only its heading, which names the file that holds it whole. */
+function craftSection(craft: string | null, cut: boolean): string[] {
+  if (!craft) return [];
+  return [cut ? (craft.split("\n")[0] ?? "") : craft, ``];
 }
 
 /** The facet lines each stack's brief rules read: a compiled stack's own, none for three.js (`threeBriefRules`). */

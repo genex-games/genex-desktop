@@ -754,7 +754,7 @@ fetch, never under `vendor/`, never over 8 MB, never non-HTML), never a file on 
 the classic shim script, the page's own import map with only `three` and `three/webgpu` pointed at
 the studio hook (or the studio's own map), the module hook, then the page. It is idempotent; a
 blocking meta CSP gets one console line, not an edited policy. Bundled games serve as
-`http://localhost:<port>/`, intercepted inside the preview's own session.
+`http://localhost:<port>/`, intercepted in the preview's session.
 
 **Network policy.** The game partition is closed: `onBeforeRequest` allows only `game:`, `data:`,
 `blob:`, `devtools:`, registered loopback ports and https GET/HEAD to the exact public library and
@@ -767,42 +767,42 @@ per-game network opt-in yet.
 **Game view.** Every game view (Live, facet ports, selftest, e2e fixtures) comes from
 `GamePreview.create()`: its own session partition (`game-preview`, `game-preview-facet-N`),
 `sandbox`, `contextIsolation`, no Node, `webSecurity`, no preload or IPC, `window.open` refused.
-The session grants pointer lock (plus fullscreen on screen) and denies every other permission,
-microphone and camera included. The view turns off `GAME_DISABLED_BLINK_FEATURES`
+The session grants pointer lock (plus fullscreen on screen) and denies every other permission
+(microphone, camera). The view turns off `GAME_DISABLED_BLINK_FEATURES`
 (`OnDeviceWebSpeechAvailable`, `InstallOnDeviceSpeechRecognition`): on-device speech recognition
 asks for a Mojo binder only Chrome registers, and Electron kills the renderer for the bad message
 (reason 123). With both off those members exist in no frame; a plain `start()` ends in
-`not-allowed` and speech synthesis is untouched. The guard is engine-level: a page-world stub misses
-about:blank, srcdoc and blob: documents. `page-shim.test.ts` only proves the list is applied; the
-[speech selftest](verification.md#acceptance-evidence) proves it holds. Any other renderer death
+`not-allowed` and speech synthesis is untouched. It is engine-level: a page stub misses
+about:blank, srcdoc and blob: documents. `page-shim.test.ts` proves the list is applied; the
+[speech selftest](verification.md#acceptance-evidence) that it holds. Any other renderer death
 sets `status().crashed` and pushes one `render process gone: <reason>` console line, source `studio:window-gone` (a cross-site
 frame's death reports nothing); nothing reloads the page, a death during `load()` rejects it, and
 un-raced `evaluate()` calls never settle.
 
 **Page world.** [`src/page/`](../../src/page/) is bundled into `vendor/studio/{shim,hook,hook-entry}.js`.
 `shim.ts` owns the clock (`step`, `pause`, `seed`), counts `steppedFrames` and yields a microtask
-per stepped frame; `window.__studio` is a merging facade that keeps whatever the game defines. The
+per stepped frame; `window.__studio` is a merging facade keeping what the game defines. The
 evidence globals (`__studioClock`, `__studioDraw`, `__studioCapture`, `__studioGl`, `__studioHook`)
-are accessors with no-op setters. `hook.ts` reports renderers and reads the scene and camera off
-frames the game draws; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
-reads the canvas at the end of a drawn frame and composites over the page background (WebGPU reads
-depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers. Every shot
-records its provenance. Draw calls
-are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals. `game-template`'s
-`src/studio.js` is the contract every template game installs; never remove a method.
+are accessors with no-op setters. `hook.ts` reports renderers and reads scene and camera off
+drawn frames; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
+reads the canvas after a drawn frame, composited over the page background (WebGPU reads
+depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers.
+Every shot records its provenance. Draw calls are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals.
+A compiled page keeps its own `state().__render`; the shim adds `backend` and `fps`.
+`game-template`'s `src/studio.js` is the contract every template game installs; never remove a method.
 
 **Readiness and validation.** [`src/substrate/preview-ready.ts`](../../src/substrate/preview-ready.ts)
-waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. The order is
-ready → gesture → setup → start, with one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
-`studio.json` `bootMs`). A spent budget is a note (`timedOut`), not a failure; `phase: "failed"` is
-only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `missing`;
+waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. Order:
+ready → gesture → setup → start, one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
+`studio.json` `bootMs`). Rust shells boot until `GenexShell.progress` is `ready`. A spent budget is a note (`timedOut`; capture says `NOT LOADED:`),
+not a failure; `phase: "failed"` is a page's own failure. `validateAt` answers `loaded`, `attached` or `missing`;
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
-`preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
+`preview.pageUi` and `game.attached` are host RPC, not tools.
 
-**Worker windows and computer use.** Every building delegation and every looking read-only session
+**Worker windows and computer use.** Every building delegation and looking read-only session
 gets one pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs (`target: "macos"` runs headless in a native lease); `computer` is the studio's computer use: one tool, a session referee and
+photographs (`target: "macos"` runs headless in a native lease); `computer` is one tool with a session referee and
 swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones
 pause (`paint-while-used.ts`). Once a trusted event of a type is seen, native input is sent and
 synthetic copies withheld, except a mousemove's (real delta; `game-template/src/studio.js`

@@ -271,6 +271,13 @@ const pixelSize = (canvas: Foreign) => ({
   height: Math.max(1, Math.round(Number(canvas?.height) || 0)),
 });
 
+/** A decoded picture's own pixel size, or null when it does not say. */
+function imageSize(image: Foreign): { width: number; height: number } | null {
+  const width = Math.round(Number(image?.naturalWidth ?? image?.width) || 0);
+  const height = Math.round(Number(image?.naturalHeight ?? image?.height) || 0);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 /**
  * Composite a picture a game took itself over the page's own background, and record it.
  *
@@ -302,7 +309,9 @@ async function paint(c: Capturing, dataUrl: Foreign, patch: Record<string, Forei
     return dataUrl;
   }
   const decoded = await decodeImage(c, dataUrl);
-  const { width, height } = pixelSize(picked.canvas);
+  // The picture's own size, not the canvas's: a Rust game reads back its world target at the
+  // world size while an `expand` canvas fills the window, and the rows it did not cover were a band.
+  const { width, height } = imageSize(decoded) ?? pixelSize(picked.canvas);
   const painted = decoded ? composite(c, decoded, colour.colour, width, height) : null;
   keep({ composited: Boolean(painted), background: colour.colour });
   return painted ?? dataUrl;

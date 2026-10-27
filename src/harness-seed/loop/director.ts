@@ -55,6 +55,7 @@ import { loopSkill } from "./loop-skills.ts";
 import { closeRunPool } from "./workers/run-pool.ts";
 import { leadsOpenLoop } from "./director/open/active-work.ts";
 import { briefWriter } from "./director/open/brief.ts";
+import { openingCraft } from "./director/craft.ts";
 import { closeInPlace, refuseResume } from "./director/open/close.ts";
 import { MESSAGE as OPEN_END, openEndWords, timeUpWithoutYes } from "./director/open/finish.ts";
 import { openBetweenTurns } from "./director/open/between.ts";
@@ -449,6 +450,7 @@ function openingBrief(
   resume: string | null,
   start: AnyRecord,
   loop: DirectorLoop,
+  craft = "",
 ): string {
   const { capacity, finalDeadline, gameLessons, integrationWorktree, lead, nestedRepos, ownShape, run, shape } =
     loopRun;
@@ -468,6 +470,7 @@ function openingBrief(
     startingPoint: start.startingPoint,
     startObserved: Boolean(state.startEvidence),
     gameLessons,
+    craft,
     contract: start.contract,
     loop,
     lead: lead ? { gameFolder: lead.folder } : null,
@@ -1039,7 +1042,9 @@ async function briefOf(
   start: StartOfRun,
 ): Promise<() => string> {
   if (leadsOpenLoop(loopRun)) return briefWriter(loopRun, start.notes ?? []);
-  return () => openingBrief(loopRun, parts.skill, parts.resumeNote, start, parts.loop);
+  // The game's craft is chosen once, as the session opens (director/craft.ts).
+  const craft = await openingCraft(loopRun).catch(() => "");
+  return () => openingBrief(loopRun, parts.skill, parts.resumeNote, start, parts.loop, craft);
 }
 
 /**

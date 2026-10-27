@@ -455,6 +455,11 @@ window's pid, title and place passed only as arguments; the picture by `screenca
 manager's window (Keychain Access, Passwords, 1Password, Bitwarden, LastPass, Dashlane), at an app
 computer control never drives (System Settings, the system's password prompts and the rest of
 `NEVER_DRIVEN_BUNDLES`) or at Genex's own windows (`lookRefused`), and leaves them out of the list.
+A game that plays in the browser runs inside Genex, so for a Loop's reviewer the list ends with the
+game itself as the window named `game`: `app_look {window: "game"}` loads the build in the folder
+the reviewer reads on a hidden pooled window of its own (never Live), past its first lit frame and
+in play, and answers that picture (`servedGameLook`, through `viewStill`), with no macOS access
+needed; no window free or a build that fails to load answers why.
 
 macOS asks the person for Screen Recording and Accessibility. Genex asks once, at the first look that
 finds either missing (`<engine homes>/app-look-access.json` remembers it asked); the first tree read
@@ -499,7 +504,8 @@ the chats' coordinator homes, the exports). A Codex or OpenCode reviewer's box r
 so it is only told those, and Genex's secrets and engine homes, are off limits, and its brief names
 the folder it reads, not its home. Its
 seat (`ProjectToolSeat.Reviewer`) is offered `app_look` alone, whose access line goes to the run's
-chat; its brief names `app_look` only on an engine that carries a seat.
+chat, and which shows it a browser game as the window `game` ([Looking at apps](#looking-at-apps));
+its brief names `app_look` only on an engine that carries a seat.
 
 ## Other engines
 

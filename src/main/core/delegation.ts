@@ -67,7 +67,14 @@ import { EngineKind } from "../../shared/engine-descriptor.ts";
 import { writableRoots } from "../../substrate/engines/never-touch.ts";
 import { forwardWorkerTool, heldInPlan, offeredWorkerTools } from "./worker-tools.ts";
 import { callJobTool, type JobCaller, type JobNews, jobNews, jobToolsFor } from "./job-tools.ts";
-import { appLookFor, type LookCaller, type LookSave, runAppLook } from "./app-look-tool.ts";
+import {
+  appLookFor,
+  type LookCaller,
+  type LookGame,
+  type LookSave,
+  runAppLook,
+  servedGameLook,
+} from "./app-look-tool.ts";
 import { type JobOwner, JobRole, JobScopeKind, JobStopper } from "../../shared/jobs.ts";
 import { WORKER_TOOL_ANSWER } from "./worker-tools-prompts.ts";
 import { DispatchActionType, HarnessCapability, type ReferenceFrame } from "../../shared/protocol.ts";
@@ -1378,7 +1385,21 @@ export class DelegationService {
     if (session.hostTools && taken) throw new Error(MESSAGE.toolCollision(taken.name));
     const chatThreadId = await this.#lookChat(p, grants, session);
     tools.look = offered;
-    tools.lookCaller = { project: p.project, chatThreadId: chatThreadId ?? null, save: this.#lookSave(tools) };
+    const game = reviewer ? await this.#reviewedGame(p) : null;
+    tools.lookCaller = { project: p.project, chatThreadId: chatThreadId ?? null, save: this.#lookSave(tools), game };
+  }
+
+  /**
+   * The game a Loop's reviewer may look at through `app_look` (as the window named `game`): the
+   * build in the folder it reads, when the game plays in the browser. It runs inside Genex, whose
+   * windows `app_look` never looks at, and a reviewer has no capture of its own; null for a game
+   * Genex does not serve (an engine's editor window is on screen instead).
+   */
+  async #reviewedGame(p: DelegateParams): Promise<LookGame | null> {
+    const reads = p.reviewer?.reads;
+    const game = await this.#gameOf(p.project);
+    if (!reads || !game || !destinationsOf(game).targets.includes(BuildTarget.Web)) return null;
+    return servedGameLook(this.#x.previews, { project: p.project, directory: reads });
   }
 
   /**

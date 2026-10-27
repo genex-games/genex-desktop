@@ -211,6 +211,9 @@ const MESSAGE = {
   benchBuilt:
     "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
   benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
+  /** A capture whose page spent its boot budget: said first, so no frame below is read as the game. */
+  notLoaded: (ready: ReadyResult) =>
+    `NOT LOADED: the page had not finished loading after ${Math.round(ready.budgetMs / SECOND_MS)}s (${ready.reason ?? "it never reported itself ready"}). The frames below show what it drew so far, most likely its loading screen, not the game: do not judge the game from them. Capture again; if it keeps happening, the game's boot is too slow or it never draws its first frame.`,
   benchAfter:
     "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
   profilingNeedsStage: "profiling requires a stage preview",
@@ -260,6 +263,9 @@ const MESSAGE = {
   snapshotNotBuilt: "the snapshot's web build failed; the game's console says why",
   buildDidNotRun: (reason: string, lines: readonly string[]) =>
     `the game's build did not run (${reason})${lines.length ? `: ${lines.join(", ")}` : ""}`,
+  checkedClean: (workspace: string) =>
+    `${workspace} compiles clean: no compiler or lint error. Nothing was reloaded; reload to see it running.`,
+  nothingToCheck: "this game has no compile step to check: reload to see your edits",
 } as const;
 
 /** A reference file that could not become a still, and why. */
@@ -341,15 +347,19 @@ function captureAnswer({
   lines,
   errors,
   setupNote,
+  notLoaded,
 }: {
   bench: { entry: string } | null;
   root: string;
   lines: readonly string[];
   errors: Parameters<typeof consoleErrorsLine>[0];
   setupNote: string | null;
+  /** The wait of a page that never finished loading; null when it did. */
+  notLoaded: ReadyResult | null;
 }): string {
   const workspace = path.basename(root);
   return [
+    ...(notLoaded ? [MESSAGE.notLoaded(notLoaded)] : []),
     bench ? MESSAGE.benchCaptured(bench.entry, workspace) : `Captured your CURRENT build (workspace ${workspace}):`,
     ...lines,
     consoleErrorsLine(errors),
@@ -1121,6 +1131,30 @@ export class PreviewService {
   }
 
   /**
+   * A compiled game's fast check (the computer's `check`): `root`'s web build through the
+   * build-lane seam with `check`, so its lane runs only its compiler gate (Rust: clippy in the
+   * build's own sandbox) and nothing is built, served, loaded or reported to the stage. The answer
+   * is the agent's: the build problem's note, or that it compiles clean.
+   */
+  async checkBuild(project: string, root: string): Promise<string> {
+    const descriptor = await this.#game(project);
+    const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    if (!isCompiledStack(stackOf(shape))) return MESSAGE.nothingToCheck;
+    const game = {
+      project,
+      dir: root,
+      shape,
+      destinations: destinationsOf(descriptor ?? {}),
+      lock: await this.#gameLock(project, shape),
+      recordLock: false,
+    };
+    const receipt = await this.#x.gameBuilds.ensure(game, BuildTarget.Web, CppBuildPurpose.Judging, { check: true });
+    if (!receipt.outcome) return MESSAGE.laneMissing(receipt.stack);
+    const { problem } = receipt.outcome;
+    return problem ? problemNote(problem) : MESSAGE.checkedClean(path.basename(root));
+  }
+
+  /**
    * A compiled game: its lane's web build through the build-lane seam, its `index.html` served
    * from the lane's `out/` on `game://`, with the shim and without the studio's `three` import
    * map. Web always builds, for the judges too, except into the Live slot of a game that is not
@@ -1553,7 +1587,8 @@ export class PreviewService {
     for (const camera of camerasForShot(sc, shot.bench, shot.cameras, known))
       lines.push(await this.#captureCamera(port, screen, { ...shot, camera, known, source, build: loaded.build }));
     const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
-    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote: loaded.setupNote });
+    const { setupNote, notLoaded } = loaded;
+    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote, notLoaded });
   }
 
   /**
@@ -1656,7 +1691,9 @@ export class PreviewService {
     sc: NonNullable<DelegateRequest["selfCapture"]>,
     session: SessionPort,
     { target, bench }: { target: string; bench: { entry: string } | null },
-  ): Promise<{ problem: string } | { setupNote: string | null; build: BuildIdentity | null }> {
+  ): Promise<
+    { problem: string } | { setupNote: string | null; build: BuildIdentity | null; notLoaded: ReadyResult | null }
+  > {
     const loaded = await this.loadServed(port, sc.project, target, bench?.entry ?? sc.entry);
     if (loaded.problem) {
       session.loaded = null;
@@ -1665,8 +1702,10 @@ export class PreviewService {
     const applied = bench ? null : await this.applySetup(port, sc.setup);
     session.loaded = bench ? null : { root: target, at: Date.now() };
     // A page the studio never heard report itself ready is still photographed — the frames
-    // just come with the sentence that says what they are worth.
-    return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null, build: loaded.build };
+    // come under the sentence that says, first, that they are not the game (not again as a note).
+    const notLoaded = loaded.ready?.timedOut ? loaded.ready : null;
+    const note = notLoaded ? null : loaded.note;
+    return { setupNote: [note, applied].filter(Boolean).join("; ") || null, build: loaded.build, notLoaded };
   }
 
   /**

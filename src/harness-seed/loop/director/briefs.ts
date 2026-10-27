@@ -28,6 +28,7 @@ import { appIdentity } from "../project-prompts.ts";
 import { DIRECTOR_SCOPE_RULE, scopeLines } from "../scope-prompts.ts";
 import { visionBriefLines } from "../vision-prompts.ts";
 import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
+import { layeredBarRule } from "./layer-prompts.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
 // Type-only: erased at runtime, so this module still imports no part of the run.
 import type { Worker } from "./loop-run.ts";
@@ -128,6 +129,8 @@ export interface DirectorBriefFacts {
   startingPoint?: AnyRecord | null;
   startObserved?: boolean;
   gameLessons?: string[];
+  /** The game's craft block (director/craft.ts): the recipes for its kind and brief, and where they are whole. */
+  craft?: string;
   contract?: AnyRecord | null;
   /** How the session is driven: a waking lead is told it ends its turn and has no `worker_wait` (default: the long turn's words). */
   loop?: DirectorLoop;
@@ -310,6 +313,7 @@ export function directorBrief({
   startingPoint = null,
   startObserved = true,
   gameLessons = [],
+  craft = "",
   contract = null,
   loop = DirectorLoop.Turn,
   lead = null,
@@ -331,6 +335,8 @@ export function directorBrief({
     requestedStateLine(run.setup),
     ``,
     `TIME: ${minutes(finalDeadline - Date.now())} minutes in all. Your working time ends at ${new Date(softDeadline).toISOString().slice(11, 16)} UTC (${minutes(softDeadline - Date.now())} minutes from now); then ${minutes(finalDeadline - softDeadline)} more minutes for wrapping up. ${completionWords(run)}`,
+    // A timed run whose bar may outrun its clock builds the look in layers (director/layer-prompts.ts).
+    layeredBarRule(run, minutes(softDeadline - Date.now())),
     whereLine({ gameFolder: lead?.gameFolder ?? null, integrationWorktree, baseCommit }),
     `CAPACITY: ${pool}. ${CAPACITY_RULE}`,
     nestedLine(nestedRepos, leads),
@@ -344,6 +350,9 @@ export function directorBrief({
     // What earlier runs on this exact game already paid for (loop/ledger.ts). The studio keeps
     // its own ledger of outcomes per game; these are the patterns it found in them.
     lastTimeBlock(gameLessons),
+    // What the studio already knows how to make look right for this kind of game: chosen before
+    // anything failed, so the lead can hand it to the parts that need it (director/craft.ts).
+    craft ? `\n${craft}` : "",
     // Three lines, not five (M4.8b). Every tool below arrives with its own description and
     // parameters through the engine's tool channel; a second, hand-maintained prose copy of the
     // same thirteen schemas cost the director 3.6 KB of its window every turn and said half of
@@ -475,6 +484,7 @@ export function singleWorkerBrief({
   setup = null,
   facts = null,
   gameFolder = null,
+  craft = "",
 }: {
   run: Run;
   worker: Worker;
@@ -483,6 +493,8 @@ export function singleWorkerBrief({
   setup?: AnyRecord | null;
   facts?: readonly FactRef[] | null;
   gameFolder?: string | null;
+  /** The craft chosen for this builder's part (director/craft.ts `builderCraft`). */
+  craft?: string;
 }): string {
   return joinLines([
     builderIdentity(run, facts, gameFolder),
@@ -502,6 +514,7 @@ export function singleWorkerBrief({
       ? `THE REQUESTED STATE: your window opens on the state this work is about (${setup.note ?? "the run's setup"}); if a screenshot says the state was not reached, fix the way a player reaches it, not what the game boots into.`
       : "",
     workerEyesLine(run, shape),
+    craft,
     `Do not commit — the studio commits your folder when you stop. Do not touch files outside this folder. Keep ${facetNotes(worker.id)} with what you did and what you verified.`,
     `When you are done, reply with a short report: what you built, what you verified by looking, what you could not do.`,
   ]);
