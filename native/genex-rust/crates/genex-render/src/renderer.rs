@@ -1031,6 +1031,10 @@ pub struct Renderer {
     /// material's alpha below it ([`crate::post::taa::transparent_coverage`]), read before the
     /// uploads take the plan's previous-model table.
     transparent_coverage: crate::post::taa::ReactiveCoverage,
+    /// Whether this frame's shadows may have moved ([`crate::post::taa::shadows_move`]), read by
+    /// the TAA row, and the sun direction the last motion frame drew with.
+    shadows_move: bool,
+    motion_sun: Option<[f32; 3]>,
 }
 
 fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType, dimension: wgpu::TextureViewDimension) -> BindGroupLayoutEntry {
@@ -2884,6 +2888,8 @@ impl Renderer {
             motion_row: None,
             taa_reproject: crate::post::taa::IDENTITY,
             transparent_coverage: crate::post::taa::ReactiveCoverage { cap: crate::post::taa::TRANSPARENT_COVERAGE, by_motion: false },
+            shadows_move: false,
+            motion_sun: None,
             library,
             meshlet_game: Meshlets::DEFAULT,
             meshlet_upload_pending: false,
@@ -4064,6 +4070,8 @@ impl Renderer {
             self.motion_row = None;
             self.taa_reproject = crate::post::taa::IDENTITY;
             self.transparent_coverage = crate::post::taa::ReactiveCoverage { cap: crate::post::taa::TRANSPARENT_COVERAGE, by_motion: false };
+            self.shadows_move = false;
+            self.motion_sun = None;
             return None;
         }
         let bytes = u64::from(plan.skinned_vertices) * VERTEX_STRIDE;
@@ -4081,6 +4089,10 @@ impl Renderer {
             prev_models: &plan.prev_models,
             sources: &plan.transparent_sources,
         });
+        let [x, y, z, _] = plan.frame.sun_dir;
+        let sun_turned = self.motion_sun.is_some_and(|last| last != [x, y, z]);
+        self.shadows_move = crate::post::taa::shadows_move(&plan.prev_models, sun_turned);
+        self.motion_sun = Some([x, y, z]);
         self.motion_row = Some(row);
         self.skinned_prev.written = Some((temporal.set, bytes));
         previous
@@ -4528,8 +4540,9 @@ impl Renderer {
     fn taa_row(&self) -> GpuTaaParams {
         let (config, prev_jitter, ratio) = self.taa_inputs();
         let row = GpuTaaParams::new(&self.quality.taa, &config, prev_jitter, ratio).with_reproject(self.taa_reproject);
+        let moving = if self.shadows_move { TaaFlags::SHADOWS_MOVE } else { TaaFlags::NONE };
         if self.history_set != HistorySet::Capture {
-            return row;
+            return row.with_flags(TaaFlags::CLIP.with(moving));
         }
         // A settled capture's cycle averages its raw re-renders with the box's weights (R-12).
         // Its history is rectified only while auto exposure meters (the first re-renders are drawn
@@ -4538,7 +4551,7 @@ impl Renderer {
         // every pixel a one-sample dither covers (the LOD crossfade's stipple, D22).
         let metering = auto_exposure(&self.look, &self.quality) && self.frame_index < u64::from(crate::settle::GRADED_EXPOSURE_SETTLE_FRAMES);
         let flags = if metering { TaaFlags::CLIP.with(TaaFlags::SETTLE) } else { TaaFlags::SETTLE };
-        row.with_flags(flags)
+        row.with_flags(flags.with(moving))
     }
 
     /// TAA upscaling's row for the frame being drawn (B.8): [`Renderer::taa_row`]'s inputs at the
