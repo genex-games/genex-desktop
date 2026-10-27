@@ -29,7 +29,13 @@ albedo, 0.0, 0.2), dpdx(n), dpdy(n));` `gx_draw.prev_model` is the draw's model 
 (matched by its id) and `gx_draw.params.z` last frame's simulated seconds (`params.x` this
 frame's), so a vertex animation can place itself at both times. The draws of one v2 material
 and one mesh are one instanced call, and `gx_draw` is still the drawing instance's own row (group
-1 holds the frame's read-only `gx_draws` table). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
+1 holds the frame's read-only `gx_draws` table). A v2 post pass is one fragment entry, `@fragment fn fs_post(in: GxPostInV2) -> @location(0)
+vec4<f32>`: `in.uv` runs (0, 0) top-left to (1, 1) bottom-right over the output, and
+`gx_scene_uv(position)` turns a fragment position (`in.position`, or a uv you moved times
+`gx_post.output_size`) into the uv to sample `gx_scene` at, which differs from `in.uv` when the
+scene is drawn at a lower render scale: `textureSampleLevel(gx_scene, gx_sampler,
+gx_scene_uv(in.position), 0.0)` is the frame as it is. `gx_post` holds `output_size`, `time`
+(simulated seconds) and `frame_index` (key grain to it). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
 environment's SH9) on the display-ready frame after the tonemap, and `gx_depth`, `gx_normals` and
 `gx_motion` (the prepass's motion vectors, written whenever a source declares them; the
 formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; grass or water a Level-3 pass draws shadows itself from the v2 tables' `gx_shadow_map`, under Custom GPU passes), and
