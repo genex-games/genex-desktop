@@ -783,15 +783,51 @@ fn write_bodies() {
 #[test]
 fn the_cross_target_snapshot_fixture_is_this_builds_and_restores() {
     let pinned: Value = serde_json::from_str(&std::fs::read_to_string(cross_target_fixture_file()).expect("pinned")).expect("JSON");
-    assert_eq!(pinned, cross_target_fixture(), "rewrite with GENEX_PHYSICS_WRITE_VECTORS=1 ... write_vectors");
+    assert_eq!(
+        without_writer(&pinned),
+        without_writer(&cross_target_fixture()),
+        "rewrite with GENEX_PHYSICS_WRITE_VECTORS=1 ... write_vectors"
+    );
     let vector: Value = serde_json::from_str(&std::fs::read_to_string(vectors_dir().join(CROSS_TARGET_VECTOR)).expect("reads")).expect("JSON");
     let mut w = open_world(&vector).expect("opens");
     w.restore(&from_hex(pinned["snapshot"].as_str().expect("hex"))).expect("restores");
     assert_eq!(json!(w.state_hash_hex()), pinned["stateHash"]);
-    assert_eq!(hex(&w.snapshot().expect("snapshots")), pinned["snapshot"].as_str().expect("hex"), "a restored world writes the same bytes");
+    let rewritten = with_writer(&w.snapshot().expect("snapshots"), WRITER_IGNORED);
+    let expected = with_writer(&from_hex(pinned["snapshot"].as_str().expect("hex")), WRITER_IGNORED);
+    assert_eq!(hex(&rewritten), hex(&expected), "a restored world writes the same state bytes");
     let mut fresh = open_world(&vector).expect("opens");
     fresh.restore(&with_writer(&from_hex(pinned["snapshot"].as_str().expect("hex")), "wasm32")).expect("restores a wasm32 header");
     assert_eq!(json!(fresh.state_hash_hex()), pinned["stateHash"], "wasm32's bytes (same state, its own header) restore here");
+}
+
+/// What the comparisons write as every snapshot's writer target: the fixture pins the state, and
+/// the header names whichever target wrote it (aarch64-macos pinned it; x86_64 Linux writes its own).
+const WRITER_IGNORED: &str = "any";
+
+/// `fixture` with its snapshots' writer target ignored, for comparing pins across targets.
+fn without_writer(fixture: &Value) -> Value {
+    written_on(fixture, WRITER_IGNORED)
+}
+
+/// The fixture as another target's build writes it: the same state, its snapshots' headers naming
+/// that target as their writer (what an x86_64 Linux run of `cross_target_fixture` gives).
+fn written_on(fixture: &Value, target: &str) -> Value {
+    let mut out = fixture.clone();
+    for field in ["snapshot", "snapshotAfter"] {
+        let bytes = from_hex(fixture[field].as_str().expect("hex"));
+        out[field] = json!(hex(&with_writer(&bytes, target)));
+    }
+    out
+}
+
+#[test]
+fn a_fixture_written_on_another_target_is_this_builds() {
+    let ours = cross_target_fixture();
+    let linux = written_on(&ours, "x86_64-linux");
+    assert_ne!(linux, ours, "the headers name their writer");
+    assert_eq!(without_writer(&linux), without_writer(&ours), "the pinned comparison ignores the writer's target");
+    let ignored = without_writer(&ours);
+    assert_ne!(ignored["snapshot"], ignored["snapshotAfter"], "and still tells two states apart");
 }
 
 /// Where a snapshot's buildId length sits: after the magic and the contract version (§9.4 header).
