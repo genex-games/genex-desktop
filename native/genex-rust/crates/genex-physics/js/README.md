@@ -128,7 +128,11 @@ core.close(); // or world.free(): the process exits and its folder is removed
   plus the work, so a room's tick stays synchronous. `runTick` puts a room's tick in one: each batch is
   `apply(batch, "each")`, then `step()`, `exportChanged(exportSince)` and `queryMany(queries)`, each part
   exactly what that call returns. `cpuNs` is the process's own thread CPU time for the tick, for the
-  caller's meter (§11.4); `stats().stepMs` is the process's own wall time around its step.
+  caller's meter (§11.4); `stats().stepMs` is the process's own wall time around its step. A tick crosses
+  in a binary form (frame protocol 2; `crates/genex-physics-binding/src/tick.rs`): commands and queries as
+  the value trees their JSON text parses to, with no number text, and a reply read with no `JSON.parse`,
+  into exactly the objects the separate calls give, refusals included. This package's internal
+  `tickWorld` crosses a WebAssembly world's tick in the same form, in one call.
 - **Deadline:** every round trip has `deadlineMs`. Past it the process ends itself (exit 4), and a
   `worker_thread` watchdog in the caller (one per thread, waiting at no CPU cost) kills it with SIGKILL,
   which ends the blocked read. The call then answers `internal`. `core.setDeadline(ms)` sets this side's

@@ -8,8 +8,9 @@
 //! and writes the results, and is shared with the native shells. Each export keeps its name and
 //! signature and forwards to the one registry of this instance (a thread-local: a WASM instance
 //! runs on one thread). Values cross as JSON text in the TypeScript shapes, except the static
-//! world (flat f64 arrays), `exportChanged`'s and `importStates`' data (a `Float32Array`) and
-//! snapshots (bytes). Every export returns a value for every input; an id that names no world
+//! world (flat f64 arrays), `exportChanged`'s and `importStates`' data (a `Float32Array`),
+//! snapshots (bytes) and a room tick (`world_tick_frame`: the binding's binary tick request and
+//! reply, `tick.rs`). Every export returns a value for every input; an id that names no world
 //! (never made, or freed) gives `internal` where the call has a result, and the empty form where
 //! it has none.
 //!
@@ -31,7 +32,7 @@ use std::alloc::System;
 use std::cell::RefCell;
 
 use genex_physics::accounting::CountingAllocator;
-use genex_physics_binding::Registry;
+use genex_physics_binding::{Registry, TickRequest};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Every allocation is charged to the world whose call is running (§11.1).
@@ -215,6 +216,38 @@ pub fn world_memory_is_measured(id: u32) -> bool {
     registry(|registry| registry.world_memory_is_measured(id))
 }
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    /// The host's monotonic clock in milliseconds (`performance.now()`, in Node 24 and browsers):
+    /// a tick's step is timed on it for `stats().stepMs` (§11.4), as the wrapper times `step()`.
+    #[wasm_bindgen(js_namespace = performance, js_name = now)]
+    fn performance_now() -> f64;
+}
+
+/// Milliseconds on the host's clock.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> f64 {
+    performance_now()
+}
+
+/// Off wasm32 (this crate's native tests) there is no `performance` and the shell reads no clock:
+/// a tick's step is recorded as 0 ms.
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    0.0
+}
+
+/// One room tick in one crossing (genex-physics-binding `tick.rs`): the request's bytes in, the
+/// reply's bytes out, each part exactly what its own export gives. A request that cannot be read
+/// gives an empty reply, which the wrapper cannot read either, so it poisons the instance as a trap
+/// does (§11.3); the wrapper never writes one.
+#[wasm_bindgen]
+pub fn world_tick_frame(id: u32, request: &[u8]) -> Vec<u8> {
+    let Ok(request) = TickRequest::decode(request) else { return Vec::new() };
+    registry(|registry| registry.world_tick_frame(id, request, &mut now_ms))
+}
+
 /// The bytes of one WebAssembly memory page.
 const WASM_PAGE_BYTES: f64 = 65_536.0;
 
@@ -259,5 +292,22 @@ mod tests {
         assert_eq!(build_id(), genex_physics::build_id());
         assert!(world_free(id));
         assert!(world_step(id).contains(r#""code":"internal""#));
+    }
+
+    #[test]
+    fn a_tick_frame_reaches_the_same_registry_and_an_unreadable_request_answers_nothing() {
+        let made: serde_json::Value = serde_json::from_str(&world_create(DESC)).expect("JSON");
+        let id = made["id"].as_u64().expect("an id") as u32;
+        // No batches, a step, no export, no queries.
+        let mut request = 0u32.to_le_bytes().to_vec();
+        request.push(1);
+        request.extend_from_slice(&(-1.0f64).to_le_bytes());
+        request.push(0);
+        let reply = world_tick_frame(id, &request);
+        assert_eq!(&reply[..5], &[0, 0, 0, 0, 2], "no batches, then a step");
+        assert_eq!(world_tick(id), 1.0, "the step ran on this instance's world");
+        assert!(world_tick_frame(id, &request[..3]).is_empty(), "a request cut short answers nothing");
+        assert_eq!(world_tick(id), 1.0, "and runs nothing");
+        assert!(world_free(id));
     }
 }

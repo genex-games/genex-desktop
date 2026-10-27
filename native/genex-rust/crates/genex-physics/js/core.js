@@ -925,33 +925,23 @@ export class World {
   /**
    * One room tick (`tickWorld`): each batch as `apply(batch, "each")`, then `step()`, then
    * `exportChanged(exportSince)`, then `queryMany(queries)`, in one crossing where the wire has one
-   * (`world_tick_frame`) and as those calls otherwise. Each part's result is exactly that call's.
+   * (`world_tick_frame`, the binary tick of crates/genex-physics-binding/src/tick.rs) and as those
+   * calls otherwise. Each part's result is exactly that call's.
    */
   #tick(input) {
     const read = tickInput(input);
     if (read.refused !== undefined) return read.refused;
     const budget = this.#budget();
-    const batches = read.batches.map((commands) => encodeBatch(commands, budget));
-    const queries = read.queries === undefined ? undefined : encodeQueries(read.queries, budget);
-    const exporting = read.exportSince !== undefined && isWholeTick(read.exportSince);
-    const ask = {
-      batches: batches.flatMap((batch) => (batch.text === undefined ? [] : [batch.text])),
-      step: read.step,
-      since: exporting ? read.exportSince : NO_TICK,
-      queries: queries?.text,
-    };
+    const framed = this.#binding.wire.world_tick_frame === undefined ? undefined : encodeTick(read, budget);
     return this.#result((wire, id) => {
-      const raw = wire.world_tick_frame?.(id, ask) ?? composeTick(wire, id, ask);
-      return tickResult(raw, {
-        batches,
-        queries,
-        step: read.step,
-        exporting,
-        exportAsked: read.exportSince !== undefined,
-      });
+      const reply = framed === undefined ? undefined : wire.world_tick_frame(id, framed.bytes);
+      if (reply !== undefined) return readTick(reply, framed.sent, this.#keys, wire.tick_cpu_ns?.() ?? 0);
+      return composedTick(wire, id, read, budget);
     });
   }
 
+  /** The last export's keys, kept to reuse while a tick exports the same ones (`readTick`). */
+  #keys = { bytes: new Uint8Array(0), keys: [] };
   /** The opaque snapshot (§9.4); empty when the world failed. */
   snapshot() {
     return this.#read(
@@ -1074,32 +1064,31 @@ function encodeQueries(queries, budget) {
   return encodeEach(read.items, budget);
 }
 
-/** A tick as the separate calls it stands for, in their order; the raw texts `tickResult` reads. */
-function composeTick(wire, id, ask) {
-  const results = ask.batches.map((text) => wire.world_apply(id, text, false));
-  let step;
-  if (ask.step) {
-    const start = performance.now();
-    step = wire.world_step(id);
-    if (JSON.parse(step).ok) wire.world_record_step_ms(id, performance.now() - start);
-  }
-  const exporting = ask.since !== NO_TICK;
-  const keys = exporting ? wire.world_export_changed(id, ask.since) : undefined;
-  const data = exporting ? wire.take_changed_data() : undefined;
-  const answers = ask.queries === undefined ? undefined : wire.world_query_many(id, ask.queries);
-  const stats = JSON.parse(wire.world_stats(id));
-  return {
-    results,
-    step,
-    keys,
-    data,
-    answers,
-    tick: wire.world_tick(id),
-    memoryBytes: stats?.memoryBytes ?? 0,
-    cpuNs: 0,
+/**
+ * A tick as the separate calls it stands for, each crossing its JSON text: for a wire with no
+ * `world_tick_frame`, or a tick too large for one frame (the native wire then answers `undefined`).
+ * Its inputs are encoded again from `read` here, so a tick reaching this read them twice.
+ */
+function composedTick(wire, id, read, budget) {
+  const batches = read.batches.map((commands) => encodeBatch(commands, budget));
+  const queries = read.queries === undefined ? undefined : encodeQueries(read.queries, budget);
+  const exporting = isExporting(read);
+  const ask = {
+    batches: batches.flatMap((batch) => (batch.text === undefined ? [] : [batch.text])),
+    step: read.step,
+    since: exporting ? read.exportSince : NO_TICK,
+    queries: queries?.text,
   };
+  const raw = composeTick(wire, id, ask);
+  return tickResult(raw, { batches, queries, step: read.step, exporting, exportAsked: read.exportSince !== undefined });
 }
 
+/** Whether a tick exports: its `exportSince` is a whole tick (any other export answers empty). */
+function isExporting(read) {
+  return read.exportSince !== undefined && isWholeTick(read.exportSince);
+}
+
+/** The separate calls of a tick, in their order; the raw texts `tickResult` reads. */
 /** A tick's result from its raw texts: each part exactly what its own call returns. */
 function tickResult(raw, sent) {
   let next = 0;
@@ -1132,8 +1121,614 @@ function tickAnswers(text, sent) {
   return mergeAnswers(sent.encoded, result.results);
 }
 
+// ---------------------------------------------------------------------------------------------
+// A room tick in one crossing: the binary form of crates/genex-physics-binding/src/tick.rs, which
+// both wires take (the WASM glue's `world_tick_frame`, the native process's `Tick` frame). A tick's
+// commands and queries cross as the value trees their JSON text parses to, numbers as the f64 of
+// their f32, with no number text; the reply is read with no `JSON.parse`, into the very objects the
+// separate calls' JSON text gives. Every refusal is the separate calls' own: an input is walked in
+// `write`'s order with its checks (depth, values, a BigInt, anything thrown while read), and one
+// whose JSON text could pass its character budget is judged from that text instead (`encode`), so
+// such an input (about a sixth of the budget or more) is read twice.
+
+/** An item's form, a value's tag, and the reply's forms (tick.rs). */
+const ItemForm = Object.freeze({ Value: 0, Text: 1, NoText: 2 });
+const ValueTag = Object.freeze({ Null: 0, False: 1, True: 2, Number: 3, String: 4, Array: 5, Object: 6 });
+const StepForm = Object.freeze({ None: 0, Failure: 1, Done: 2 });
+const BatchForm = Object.freeze({ Failure: 0, Results: 1 });
+const AnswersForm = Object.freeze({ None: 0, Failure: 1, Done: 2 });
+const AnswerForm = Object.freeze({ Failure: 0, NoHit: 1, Hit: 2, Keys: 3 });
+const EventKind = Object.freeze(["contactBegin", "contactEnd", "triggerEnter", "triggerExit"]);
+const CONTACT_BEGIN = 0;
+/** What NaN and ±Infinity cross as (their text's `1e39`, `NOT_FINITE_TEXT`). */
+const NOT_FINITE_NUMBER = 1e39;
+/** The most characters a number's text and its comma take (`NUMBER_CHARS_MAX`). */
+const NUMBER_TEXT_BOUND = NUMBER_CHARS_MAX;
+/** The most characters one UTF-16 unit's JSON text takes (`\\u00XX`), and a string's quotes. */
+const ESCAPED_CHARS_MAX = 6;
+const QUOTES = 2;
+/** `null`, `true`, `false` with a comma: at most six characters. */
+const WORD_TEXT_BOUND = 6;
+/** The scratch a request is written into, and the most of it kept between ticks. */
+const TICK_SCRATCH_BYTES = 4096;
+const TICK_SCRATCH_KEPT = 1024 * 1024;
+/** Strings this short are decoded by hand when ASCII; longer ones by `TextDecoder`. */
+const SHORT_TEXT = 32;
+const ASCII_END = 0x80;
+const CONTROL_END = 0x20;
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
+/** `\b \t \n \f \r`: escaped in two characters, other control characters in six. */
+const SHORT_ESCAPES = new Set([0x08, 0x09, 0x0a, 0x0c, 0x0d]);
+
+/** Thrown by the walk when an input's text could pass its budget: `encode` judges it instead. */
+const OVER_BOUND = Symbol("over the character bound");
+/** An item that crossed (an entry of `sent`, beside the refusals of those that did not). */
+const CROSSED = Object.freeze({ crossed: true });
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+/** A growable little-endian byte buffer: the request, written in one pass. */
+class ByteWriter {
+  constructor() {
+    this.busy = false;
+    this.reset();
+  }
+
+  /** Empties it, giving back a scratch that a large tick grew past `TICK_SCRATCH_KEPT`. */
+  reset() {
+    if (this.bytes === undefined || this.bytes.length > TICK_SCRATCH_KEPT) {
+      this.bytes = new Uint8Array(TICK_SCRATCH_BYTES);
+      this.view = new DataView(this.bytes.buffer);
+    }
+    this.at = 0;
+  }
+
+  room(count) {
+    const needed = this.at + count;
+    if (needed <= this.bytes.length) return;
+    const grown = new Uint8Array(Math.max(needed, this.bytes.length * 2));
+    grown.set(this.bytes.subarray(0, this.at));
+    this.bytes = grown;
+    this.view = new DataView(grown.buffer);
+  }
+
+  u8(value) {
+    this.room(1);
+    this.bytes[this.at] = value;
+    this.at += 1;
+  }
+
+  u32(value) {
+    this.room(4);
+    this.view.setUint32(this.at, value, true);
+    this.at += 4;
+  }
+
+  f64(value) {
+    this.room(8);
+    this.view.setFloat64(this.at, value, true);
+    this.at += 8;
+  }
+
+  /** A string's UTF-8 with its length first (a lone surrogate as U+FFFD: its item has no text). */
+  str(text) {
+    const length = text.length;
+    this.room(4 + length * 3);
+    const start = this.at + 4;
+    let at = start;
+    for (let index = 0; index < length; index += 1) {
+      const unit = text.charCodeAt(index);
+      if (unit >= ASCII_END) {
+        at = start + textEncoder.encodeInto(text, this.bytes.subarray(start)).written;
+        break;
+      }
+      this.bytes[at] = unit;
+      at += 1;
+    }
+    this.view.setUint32(this.at, at - start, true);
+    this.at = at;
+  }
+
+  /** The request's bytes (a view of the scratch, valid until the next tick). */
+  done() {
+    return this.bytes.subarray(0, this.at);
+  }
+}
+
+/** The request scratch; a tick encoded while another is (a getter calling `tickWorld`) gets its own. */
+let scratch = new ByteWriter();
+
 /**
- * Internal (`@genex-ai/physics-native`): one room tick on `world` in one crossing: `input` is
+ * The characters a string's JSON text counts toward the budget at most: `stringText` counts its
+ * escaped text, three per character when any is not ASCII. Exact for ASCII; for other text, six
+ * per unit (a lone surrogate's `\\udXXX`), times three.
+ */
+function stringBound(text) {
+  const length = text.length;
+  let chars = QUOTES;
+  for (let index = 0; index < length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit >= ASCII_END) return (ESCAPED_CHARS_MAX * length + QUOTES) * NON_ASCII_WEIGHT;
+    chars += escapedWidth(unit);
+  }
+  return chars;
+}
+
+/** One ASCII unit's JSON text length. */
+function escapedWidth(unit) {
+  if (unit === QUOTE || unit === BACKSLASH) return 2;
+  if (unit >= CONTROL_END) return 1;
+  return SHORT_ESCAPES.has(unit) ? 2 : ESCAPED_CHARS_MAX;
+}
+
+/** Whether a string has a JSON text the core can parse (no lone surrogate). */
+function hasText(text) {
+  return text.isWellFormed();
+}
+
+/** Adds `chars` to a walk's bound, stopping it once its text could pass the budget. */
+function bound(walk, chars) {
+  walk.bound += chars;
+  if (walk.bound > walk.budget.chars) throw OVER_BOUND;
+}
+
+/** Writes `value` as a value tree, in `write`'s order with `write`'s checks (see the section). */
+function writeValue(value, walk, depth) {
+  if (depth > MAX_DEPTH) throw new Refusal(PhysicsError.BadCommand, Detail.TooDeep);
+  walk.values += 1;
+  if (walk.values > walk.budget.values) throw new Refusal(PhysicsError.OutOfRange, Detail.TooLarge);
+  if (value === null || omitted(value)) {
+    bound(walk, WORD_TEXT_BOUND);
+    scratch.u8(ValueTag.Null);
+    return;
+  }
+  switch (typeof value) {
+    case "number":
+      writeNumber(value, walk);
+      return;
+    case "string":
+      writeString(value, walk);
+      return;
+    case "boolean":
+      bound(walk, WORD_TEXT_BOUND);
+      scratch.u8(value ? ValueTag.True : ValueTag.False);
+      return;
+    case "bigint":
+      throw new Refusal(PhysicsError.BadCommand, Detail.BigInt);
+    default:
+      break;
+  }
+  if (Array.isArray(value)) {
+    writeArrayValue(value, walk, depth);
+    return;
+  }
+  writeObjectValue(value, walk, depth);
+}
+
+/** A number as the f64 of its f32 (§4.1); NaN and ±Infinity as ±1e39, as their text. */
+function writeNumber(value, walk) {
+  bound(walk, NUMBER_TEXT_BOUND);
+  const rounded = Math.fround(value);
+  scratch.u8(ValueTag.Number);
+  if (Number.isNaN(rounded) || rounded === Number.POSITIVE_INFINITY) scratch.f64(NOT_FINITE_NUMBER);
+  else if (rounded === Number.NEGATIVE_INFINITY) scratch.f64(-NOT_FINITE_NUMBER);
+  else scratch.f64(rounded);
+}
+
+function writeString(value, walk) {
+  bound(walk, stringBound(value) + 1);
+  if (!hasText(value)) walk.noText = true;
+  scratch.u8(ValueTag.String);
+  scratch.str(value);
+}
+
+function writeArrayValue(items, walk, depth) {
+  const length = items.length;
+  bound(walk, QUOTES + 1);
+  scratch.u8(ValueTag.Array);
+  scratch.u32(length);
+  for (let index = 0; index < length; index += 1) writeValue(items[index], walk, depth + 1);
+}
+
+function writeObjectValue(object, walk, depth) {
+  bound(walk, QUOTES + 1);
+  scratch.u8(ValueTag.Object);
+  const countAt = scratch.at;
+  scratch.u32(0);
+  let count = 0;
+  for (const name of Object.keys(object)) {
+    const item = object[name];
+    if (omitted(item)) continue;
+    bound(walk, stringBound(name) + 1);
+    if (!hasText(name)) walk.noText = true;
+    scratch.str(name);
+    writeValue(item, walk, depth + 1);
+    count += 1;
+  }
+  scratch.view.setUint32(countAt, count, true);
+}
+
+/** A new walk of one input against `budget`. */
+function newWalk(budget) {
+  return { values: 0, bound: 0, noText: false, budget };
+}
+
+/** What a walk that threw gives: `OVER_BOUND` for the text to judge, else `encode`'s refusal for it. */
+function walkRefusal(error) {
+  if (error === OVER_BOUND) return OVER_BOUND;
+  if (error instanceof Refusal) return failure(error.code, error.detail);
+  if (error instanceof RangeError) return failure(PhysicsError.OutOfRange, Detail.TooLarge);
+  return failure(PhysicsError.BadCommand, Detail.Unreadable);
+}
+
+/** An item as JSON text, as the separate call would send it, or that call's refusal. */
+function writeTextItem(value, budget) {
+  const encoded = encode(value, budget);
+  if (encoded.text === undefined) return encoded;
+  scratch.u8(ItemForm.Text);
+  scratch.str(encoded.text);
+  return CROSSED;
+}
+
+/** One input as an item (`CROSSED`), or the refusal its separate call gives, writing nothing. */
+function writeItem(value, budget) {
+  const at = scratch.at;
+  scratch.u8(ItemForm.Value);
+  const walk = newWalk(budget);
+  try {
+    writeValue(value, walk, 0);
+  } catch (error) {
+    scratch.at = at;
+    const refused = walkRefusal(error);
+    return refused === OVER_BOUND ? writeTextItem(value, budget) : refused;
+  }
+  if (walk.noText) scratch.bytes[at] = ItemForm.NoText;
+  return CROSSED;
+}
+
+/** A batch as `apply(batch, "each")` sends it: `CROSSED`, or its refusal. */
+function writeBatch(commands, budget) {
+  if (batchTooLong(commands)) return failure(PhysicsError.OutOfRange, Detail.BigBatch);
+  return writeItem(commands, budget);
+}
+
+/**
+ * Queries as `queryMany` sends them (`encodeEach`): each walked alone, keeping its own refusal; the
+ * rest cross as one array that must fit the call's budget together. `{ encoded }` per query
+ * (`CROSSED` or its refusal), or `{ refused }` for the whole call, writing nothing.
+ */
+function writeQueries(queries, budget) {
+  const read = queryList(queries);
+  if (read.refused !== undefined) return read;
+  const at = scratch.at;
+  scratch.u8(ItemForm.Value);
+  scratch.u8(ValueTag.Array);
+  const countAt = scratch.at;
+  scratch.u32(0);
+  const together = { values: 0, bound: QUOTES, noText: false };
+  const encoded = [];
+  for (const item of read.items) {
+    const one = writeQuery(item, budget, together);
+    if (one === OVER_BOUND) {
+      scratch.at = at;
+      return writeQueriesText(read.items, budget);
+    }
+    if (one.refused !== undefined) {
+      scratch.at = at;
+      return one;
+    }
+    encoded.push(one);
+  }
+  const crossed = encoded.filter((one) => one === CROSSED).length;
+  scratch.view.setUint32(countAt, crossed, true);
+  if (together.noText) scratch.bytes[at] = ItemForm.NoText;
+  return { encoded };
+}
+
+/** One query of `writeQueries`: `CROSSED`, its own refusal, `{ refused }` for the call, or `OVER_BOUND`. */
+function writeQuery(item, budget, together) {
+  const itemAt = scratch.at;
+  const walk = newWalk(budget);
+  try {
+    writeValue(item, walk, 0);
+  } catch (error) {
+    scratch.at = itemAt;
+    return walkRefusal(error);
+  }
+  together.bound += walk.bound + 1;
+  together.values += walk.values;
+  if (together.bound > budget.chars) return OVER_BOUND;
+  if (together.values > budget.values) return { refused: failure(PhysicsError.OutOfRange, Detail.TooLarge) };
+  together.noText ||= walk.noText;
+  return CROSSED;
+}
+
+/** The queries as `queryMany`'s JSON text, judged by `encodeEach`. */
+function writeQueriesText(items, budget) {
+  const sent = encodeEach(items, budget);
+  if (sent.refused !== undefined) return sent;
+  scratch.u8(ItemForm.Text);
+  scratch.str(sent.text);
+  return { encoded: sent.encoded };
+}
+
+/**
+ * A tick's request bytes (tick.rs) and what each part sent: `batches` (`CROSSED` or the refusal
+ * each gives without crossing, as `apply` gives it), `queries` (`writeQueries`' form, or
+ * `undefined` when the tick has none), `step`, `exporting` and `exportAsked`.
+ */
+function encodeTick(read, budget) {
+  if (scratch.busy) return withOwnScratch(() => encodeTick(read, budget));
+  scratch.busy = true;
+  try {
+    return encodeTickInto(read, budget);
+  } finally {
+    scratch.busy = false;
+  }
+}
+
+/** Runs `fn` with a scratch of its own, the shared one kept for the tick it interrupted. */
+function withOwnScratch(fn) {
+  const shared = scratch;
+  scratch = new ByteWriter();
+  try {
+    return fn();
+  } finally {
+    scratch = shared;
+  }
+}
+
+function encodeTickInto(read, budget) {
+  scratch.reset();
+  scratch.u32(0);
+  const batches = [];
+  let crossed = 0;
+  for (const commands of read.batches) {
+    const one = writeBatch(commands, budget);
+    batches.push(one);
+    if (one === CROSSED) crossed += 1;
+  }
+  scratch.view.setUint32(0, crossed, true);
+  const exporting = isExporting(read);
+  scratch.u8(read.step ? 1 : 0);
+  scratch.f64(exporting ? read.exportSince : NO_TICK);
+  const flagAt = scratch.at;
+  scratch.u8(1);
+  const queries = read.queries === undefined ? undefined : writeQueries(read.queries, budget);
+  if (queries === undefined || queries.refused !== undefined) {
+    scratch.at = flagAt;
+    scratch.u8(0);
+  }
+  const sent = { batches, queries, step: read.step, exporting, exportAsked: read.exportSince !== undefined };
+  return { bytes: scratch.done(), sent };
+}
+
+/** A cursor over a tick reply; anything it cannot read whole throws (the binding is then poisoned). */
+class ByteReader {
+  constructor(bytes) {
+    this.bytes = bytes;
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.at = 0;
+  }
+
+  need(count) {
+    const at = this.at;
+    if (at + count > this.bytes.length) throw new RangeError("a tick reply ran short");
+    this.at = at + count;
+    return at;
+  }
+
+  u8() {
+    return this.bytes[this.need(1)];
+  }
+
+  flag() {
+    const value = this.u8();
+    if (value > 1) throw new RangeError("a tick reply flag is not 0 or 1");
+    return value === 1;
+  }
+
+  u32() {
+    return this.view.getUint32(this.need(4), true);
+  }
+
+  /** A reply number: the f64 its JSON text names, a non-finite one standing for that text's `null`. */
+  number() {
+    const value = this.view.getFloat64(this.need(8), true);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  vec3() {
+    return [this.number(), this.number(), this.number()];
+  }
+
+  str() {
+    const length = this.u32();
+    const start = this.need(length);
+    return textOf(this.bytes, start, length);
+  }
+
+  strs() {
+    const count = this.u32();
+    const out = new Array(count);
+    for (let index = 0; index < count; index += 1) out[index] = this.str();
+    return out;
+  }
+
+  /** `{ ok: false, code, index?, detail }`, its members in the order the JSON text holds them. */
+  failure() {
+    const code = this.str();
+    const out = { ok: false, code };
+    if (this.flag()) out.index = this.number();
+    out.detail = this.str();
+    return out;
+  }
+
+  done() {
+    if (this.at !== this.bytes.length) throw new RangeError("a tick reply has bytes left over");
+  }
+}
+
+/** UTF-8 bytes as a string: short ASCII by hand, anything else by `TextDecoder`. */
+function textOf(bytes, start, length) {
+  if (length > SHORT_TEXT) return textDecoder.decode(bytes.subarray(start, start + length));
+  let text = "";
+  for (let at = start; at < start + length; at += 1) {
+    const byte = bytes[at];
+    if (byte >= ASCII_END) return textDecoder.decode(bytes.subarray(start, start + length));
+    text += String.fromCharCode(byte);
+  }
+  return text;
+}
+
+/**
+ * A tick's result from its reply (tick.rs): each part exactly what its own call returns, every
+ * object with its JSON text's members in order. `keys` keeps the last export's keys: an export of
+ * the same keys (its bytes equal) reuses their strings in a new array. `cpuNs` is the wire's own
+ * CPU for the tick (a sidecar's; 0 in WASM).
+ */
+function readTick(bytes, sent, keys, cpuNs) {
+  const reply = new ByteReader(bytes);
+  const count = reply.u32();
+  const crossing = sent.batches.filter((batch) => batch === CROSSED).length;
+  if (count !== crossing) throw new RangeError("a tick answered another number of batches");
+  const results = sent.batches.map((batch) => (batch === CROSSED ? readBatch(reply) : batch));
+  const step = readStep(reply);
+  const exported = reply.flag() ? readExport(reply, keys) : undefined;
+  const answers = readAnswers(reply);
+  const tick = reply.number();
+  const memoryBytes = reply.number();
+  reply.done();
+  const out = { ok: true, tick, results };
+  if (sent.step) out.step = step;
+  if (sent.exportAsked) out.exported = sent.exporting && exported !== undefined ? exported : emptyExport();
+  if (sent.queries !== undefined) out.answers = sent.queries.refused ?? mergeTickAnswers(sent.queries.encoded, answers);
+  out.cpuNs = cpuNs;
+  out.memoryBytes = memoryBytes;
+  return out;
+}
+
+/** One batch's `apply(batch, "each")` result: its results, or its failure. */
+function readBatch(reply) {
+  if (reply.u8() === BatchForm.Failure) return reply.failure();
+  const count = reply.u32();
+  const results = new Array(count);
+  for (let index = 0; index < count; index += 1) {
+    results[index] = reply.u8() === 0 ? { ok: true } : { ok: false, code: reply.str() };
+  }
+  return results;
+}
+
+/** `step()`'s result, or `undefined` when the tick did not step. */
+function readStep(reply) {
+  const form = reply.u8();
+  if (form === StepForm.None) return undefined;
+  if (form === StepForm.Failure) return reply.failure();
+  const tick = reply.number();
+  const count = reply.u32();
+  const events = new Array(count);
+  for (let index = 0; index < count; index += 1) events[index] = readEvent(reply);
+  const overflowed = reply.flag();
+  const escaped = reply.strs();
+  return { ok: true, tick, events, overflowed, escaped, memoryExceeded: reply.flag() };
+}
+
+/** One event in its §8.1 form, members in its JSON text's order. */
+function readEvent(reply) {
+  const kindAt = reply.u8();
+  const kind = EventKind[kindAt];
+  if (kind === undefined) throw new RangeError("a tick reply names no event kind");
+  const contact = kindAt <= 1;
+  const names = contact ? ["a", "b", "ca", "cb"] : ["sensor", "sc", "other", "oc"];
+  const tags = contact ? ["ka", "kb"] : ["ks", "ko"];
+  const out = { kind };
+  for (const name of names) out[name] = reply.str();
+  for (const tag of tags) {
+    if (reply.flag()) out[tag] = reply.str();
+  }
+  if (kindAt !== CONTACT_BEGIN) return out;
+  out.impulse = reply.number();
+  out.point = reply.vec3();
+  out.normal = reply.vec3();
+  return out;
+}
+
+/** `exportChanged`'s keys and data; keys equal to the last export's reuse its strings. */
+function readExport(reply, last) {
+  const start = reply.at;
+  const count = reply.u32();
+  const keysAt = reply.at;
+  for (let index = 0; index < count; index += 1) reply.need(reply.u32());
+  const keyBytes = reply.bytes.subarray(start, reply.at);
+  reply.at = keysAt;
+  let keys;
+  if (sameBytes(keyBytes, last.bytes)) {
+    reply.at = start + keyBytes.length;
+    keys = last.keys.slice();
+  } else {
+    keys = new Array(count);
+    for (let index = 0; index < count; index += 1) keys[index] = reply.str();
+    // A copy: the reply may be a view of a buffer the wire reuses (a Node Buffer, whose slice() is a view).
+    last.bytes = new Uint8Array(keyBytes);
+    last.keys = keys.slice();
+  }
+  const length = reply.u32();
+  const at = reply.need(length * Float32Array.BYTES_PER_ELEMENT);
+  const data = new Float32Array(length);
+  new Uint8Array(data.buffer).set(reply.bytes.subarray(at, at + data.byteLength));
+  if (data.length !== keys.length * EXPORT_STRIDE) return emptyExport();
+  return { keys, data };
+}
+
+function sameBytes(one, other) {
+  if (one.length !== other.length) return false;
+  for (let index = 0; index < one.length; index += 1) {
+    if (one[index] !== other[index]) return false;
+  }
+  return true;
+}
+
+/** `queryMany`'s raw result: its failure, or one answer per crossed query; `undefined` for none. */
+function readAnswers(reply) {
+  const form = reply.u8();
+  if (form === AnswersForm.None) return undefined;
+  if (form === AnswersForm.Failure) return reply.failure();
+  const count = reply.u32();
+  const answers = new Array(count);
+  for (let index = 0; index < count; index += 1) answers[index] = readAnswer(reply);
+  return answers;
+}
+
+/** One query's result as `query()` gives it. */
+function readAnswer(reply) {
+  const form = reply.u8();
+  if (form === AnswerForm.Failure) return reply.failure();
+  if (form === AnswerForm.NoHit) return { ok: true, hit: null };
+  if (form === AnswerForm.Keys) return { ok: true, keys: reply.strs() };
+  if (form !== AnswerForm.Hit) throw new RangeError("a tick reply names no answer form");
+  const body = reply.str();
+  const collider = reply.str();
+  return { ok: true, hit: { body, collider, dist: reply.number(), point: reply.vec3(), normal: reply.vec3() } };
+}
+
+/** `queryMany`'s result: a failure of the whole call, or each query's own refusal or its answer. */
+function mergeTickAnswers(encoded, answers) {
+  if (answers === undefined) throw new RangeError("a tick reply has no answers for its queries");
+  if (!Array.isArray(answers)) return answers;
+  let next = 0;
+  const out = encoded.map((one) => {
+    if (one.ok === false) return one;
+    next += 1;
+    return answers[next - 1];
+  });
+  if (next !== answers.length) throw new RangeError("a tick answered another number of queries");
+  return out;
+}
+
+/**
+ * Internal (`@genex-ai/physics-native` and authority servers): one room tick on `world` in one crossing: `input` is
  * `{ batches?, step?, exportSince?, queries? }`, and the result `{ ok: true, tick, results, step?,
  * exported?, answers?, cpuNs, memoryBytes }` holds exactly what `apply(batch, "each")` per batch,
  * `step()`, `exportChanged(exportSince)` and `queryMany(queries)` return, in that order; `cpuNs` is
@@ -1146,7 +1741,9 @@ export function tickWorld(world, input) {
 
 /**
  * Internal (`@genex-ai/physics-native`): worlds over `wire`, an object with the glue's exports
- * (and, optionally, `world_tick_frame(id, ask)`), each this file's `World` with its encoding,
+ * (`world_tick_frame(id, request)` optional: the binary tick's reply bytes, or `undefined` to have
+ * the tick made as separate calls; `tick_cpu_ns()` optional: the wire's own CPU for the last
+ * tick), each this file's `World` with its encoding,
  * budgets and result forms. `detail` names the binding's failures (`{ poisoned, stale }`) and may
  * hold `onPoison()`, called once anything thrown in a call poisons it (a reply that does not
  * parse included). A poisoned wire stays so: its worlds answer `internal`, its reads their empty forms.

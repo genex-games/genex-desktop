@@ -51,7 +51,7 @@ const EXIT_DEADLINE = 4;
 const Kind = { Hello: 1, Create: 2, AddStatic: 3, Tick: 4, Call: 5, Shutdown: 6 } as const;
 const REPLY_BIT = 0x80;
 const METHOD_COMMAND = 4;
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const MAX_FRAME_BYTES = 512 * 1024 * 1024 + 1024 * 1024;
 /** A deadline no row's legal frame comes near. */
 const ROOMY_MS = 20_000;
@@ -192,6 +192,14 @@ interface FrameRow {
 }
 
 const NAN_TICK = frame(Kind.Tick, u32(0), u8(0), f64(Number.NaN), u8(0));
+/** A tick's item forms and value tags (crates/genex-physics-binding/src/tick.rs). */
+const Item = { Value: 0, Text: 1, NoText: 2 } as const;
+const Tag = { Null: 0, Number: 3, String: 4, Array: 5, Object: 6 } as const;
+/** A tick of one batch `item`: a step, no export, no queries. */
+const tickOf = (...item: Buffer[]) => frame(Kind.Tick, u32(1), ...item, u8(1), f64(-1), u8(0));
+/** A value nested `levels` arrays deep around a null. */
+const nested = (levels: number) =>
+  Buffer.concat([...Array.from({ length: levels }, () => Buffer.concat([u8(Tag.Array), u32(1)])), u8(Tag.Null)]);
 const frameRows: FrameRow[] = [
   { name: "half a length", before: [], hostile: Buffer.of(3, 0) },
   { name: "a zero length", before: [], hostile: u32(0) },
@@ -229,7 +237,41 @@ const frameRows: FrameRow[] = [
   {
     name: "a valid spawn whose frame then runs short",
     before: [hello(), create()],
-    hostile: frame(Kind.Tick, u32(1), text('[{"wake":{"key":"a"}}]'), u8(1), f64(0)),
+    hostile: frame(Kind.Tick, u32(1), u8(Item.Text), text('[{"wake":{"key":"a"}}]'), u8(1), f64(0)),
+  },
+  { name: "a tick of 65 batches", before: [hello(), create()], hostile: frame(Kind.Tick, u32(65)) },
+  { name: "a tick item of an unknown form", before: [hello(), create()], hostile: tickOf(u8(3), u8(Tag.Null)) },
+  { name: "a tick value of an unknown tag", before: [hello(), create()], hostile: tickOf(u8(Item.Value), u8(7)) },
+  {
+    name: "a tick value that is NaN",
+    before: [hello(), create()],
+    hostile: tickOf(u8(Item.Value), u8(Tag.Number), f64(Number.NaN)),
+  },
+  {
+    name: "a tick value that is infinite",
+    before: [hello(), create()],
+    hostile: tickOf(u8(Item.NoText), u8(Tag.Number), f64(Number.NEGATIVE_INFINITY)),
+  },
+  {
+    name: "a tick value string that is not UTF-8",
+    before: [hello(), create()],
+    hostile: tickOf(u8(Item.Value), u8(Tag.String), text(Buffer.of(0xc3, 0x28))),
+  },
+  { name: "a tick value nested past 64", before: [hello(), create()], hostile: tickOf(u8(Item.Value), nested(66)) },
+  {
+    name: "a tick object naming a member twice",
+    before: [hello(), create()],
+    hostile: tickOf(u8(Item.Value), u8(Tag.Object), u32(2), text("a"), u8(Tag.Null), text("a"), u8(Tag.Null)),
+  },
+  {
+    name: "a tick array claiming more values than it carries",
+    before: [hello(), create()],
+    hostile: tickOf(u8(Item.Value), u8(Tag.Array), u32(1_000_000), u8(Tag.Null)),
+  },
+  {
+    name: "a tick with a byte after its queries (after a valid tick of an empty batch)",
+    before: [hello(), create(), tickOf(u8(Item.Value), u8(Tag.Array), u32(0))],
+    hostile: frame(Kind.Tick, u32(0), u8(1), f64(-1), u8(0), u8(0)),
   },
   {
     name: "a string length past the payload",
@@ -387,7 +429,10 @@ describe("@genex-ai/physics-native: a failed process fails its own world only", 
     assert.equal(tight.core.setDeadline(TIGHT_MS), true);
     assert.equal(tight.core.deadlineMs(), TIGHT_MS);
     const start = performance.now();
-    assert.equal(code(tight.core.runTick({ batches: [[{ spawn: heightfield("ground") }]] })), "internal");
+    // Three default-limit heightfields: a tick's binary form reads one in about 20 ms, so one alone
+    // can fit the tight deadline; three never do.
+    const heavy = ["ground", "ground2", "ground3"].map((key) => [{ spawn: heightfield(key) }]);
+    assert.equal(code(tight.core.runTick({ batches: heavy })), "internal");
     const took = performance.now() - start;
     assert.ok(took < TIGHT_MS + SLACK_MS + 1_500, `the watchdog ended the frame after ${took} ms`);
     assertGone(tight.core, tight.world);

@@ -43,6 +43,8 @@ pub enum Fault {
     OutOfOrder(&'static str),
     /// A `Call` method this protocol does not name.
     UnknownMethod(u8),
+    /// A `Tick` whose request the binding could not read whole (genex-physics-binding `tick.rs`).
+    Tick(genex_physics_binding::TickFault),
     /// The pipe failed for another reason than its end.
     Io(ErrorKind),
 }
@@ -272,6 +274,12 @@ impl Writer {
         if let Some(text) = value {
             self.str(text);
         }
+        self
+    }
+
+    /// Bytes as they are, with no length (a tick reply the binding wrote whole).
+    pub fn raw(&mut self, value: &[u8]) -> &mut Self {
+        self.out.extend_from_slice(value);
         self
     }
 

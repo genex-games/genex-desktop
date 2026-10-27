@@ -28,10 +28,15 @@
 
 use std::collections::BTreeMap;
 
-use genex_physics::{ApplyMode, BodyFilter, Command, PhysicsError, PhysicsFailure, Query, World, WorldDesc};
+use genex_physics::{
+    BodyFilter, ChangedExport, Command, CommandOutcome, PhysicsError, PhysicsFailure, Query, QueryOutcome, StepResult, World, WorldDesc,
+};
 
 mod input;
 mod output;
+pub mod tick;
+
+pub use tick::{TickFault, TickRequest};
 
 /// This crate's tests measure memory as the WASM shell does: every allocation is charged to the
 /// world whose call is running (§11.1).
@@ -146,22 +151,26 @@ impl Registry {
     /// Applies a JSON array of commands (§7.1): atomic gives `{ ok }` or the first failure, each
     /// gives `{ ok: true, results }`.
     pub fn world_apply(&mut self, id: u32, commands: &str, atomic: bool) -> String {
+        if !atomic {
+            return match self.apply_each(id, input::json(commands)) {
+                Ok(outcomes) => output::outcomes(&outcomes),
+                Err(refused) => output::failure(&refused),
+            };
+        }
         self.call(id, |world| {
-            let value = match input::json(commands) {
-                Ok(value) => value,
-                Err(refused) => return output::failure(&refused),
-            };
-            let mode = if atomic { ApplyMode::Atomic } else { ApplyMode::Each };
-            let applied = match mode {
-                ApplyMode::Atomic => world.apply_json_atomic(&value).map(|()| None),
-                ApplyMode::Each => world.apply_json_each(&value).map(Some),
-            };
+            let applied = input::json(commands).and_then(|value| world.apply_json_atomic(&value));
             match applied {
-                Ok(None) => output::ok(),
-                Ok(Some(outcomes)) => output::outcomes(&outcomes),
+                Ok(()) => output::ok(),
                 Err(refused) => output::failure(&refused),
             }
         })
+    }
+
+    /// An `"each"` apply of commands already read (§7.1): `internal` for no world, else the read's
+    /// own refusal or one outcome per command. `world_apply` and a tick share it.
+    fn apply_each(&mut self, id: u32, commands: Result<serde_json::Value, PhysicsFailure>) -> Result<Vec<CommandOutcome>, PhysicsFailure> {
+        let Some(world) = self.worlds.get_mut(&id) else { return Err(internal(NO_WORLD)) };
+        commands.and_then(|value| world.apply_json_each(&value))
     }
 
     /// Imports §17.7's static world (§6.5) from its flat form: each list's row lengths and values.
@@ -174,10 +183,15 @@ impl Registry {
 
     /// Steps the world once (§8).
     pub fn world_step(&mut self, id: u32) -> String {
-        self.call(id, |world| match world.step() {
+        match self.step(id) {
             Ok(result) => output::step(&result),
             Err(refused) => output::failure(&refused),
-        })
+        }
+    }
+
+    /// One step (§8), or `internal` for no world. `world_step` and a tick share it.
+    fn step(&mut self, id: u32) -> Result<StepResult, PhysicsFailure> {
+        self.with_world(id, Err(internal(NO_WORLD)), World::step)
     }
 
     /// Records the wall time the host measured around the last step (§11.4).
@@ -210,9 +224,14 @@ impl Registry {
     /// The bodies changed after `since` (§9.1): their keys as a JSON array; their 14 numbers each
     /// wait for [`Registry::take_changed_data`]. No world gives `[]` and no data.
     pub fn world_export_changed(&mut self, id: u32, since: f64) -> String {
-        let export = self.with_world(id, None, |world| Some(world.export_changed(since.max(FIRST_TICK) as u64))).unwrap_or_default();
+        let export = self.export_changed(id, since);
         self.changed_data = export.data;
         serde_json::json!(export.keys).to_string()
+    }
+
+    /// The bodies changed after `since` and their data; none for no world. Shared with a tick.
+    fn export_changed(&mut self, id: u32, since: f64) -> ChangedExport {
+        self.with_world(id, None, |world| Some(world.export_changed(since.max(FIRST_TICK) as u64))).unwrap_or_default()
     }
 
     /// The data of the last [`Registry::world_export_changed`], handed over once.
@@ -240,10 +259,46 @@ impl Registry {
     /// Runs a JSON array of queries (§19.2): `{ ok: true, results }`, one result per query as
     /// [`Registry::world_query`] writes it, or one failure for a non-array (or `internal`).
     pub fn world_query_many(&mut self, id: u32, queries: &str) -> String {
-        self.call(id, |world| match input::json(queries).and_then(|value| world.query_many_json(&value)) {
+        match self.query_many(id, input::json(queries)) {
             Ok(outcomes) => output::answers(&outcomes),
             Err(refused) => output::failure(&refused),
-        })
+        }
+    }
+
+    /// A `queryMany` of queries already read (§19.2): `internal` for no world, else the read's own
+    /// refusal or one outcome per query. `world_query_many` and a tick share it.
+    fn query_many(&mut self, id: u32, queries: Result<serde_json::Value, PhysicsFailure>) -> Result<Vec<QueryOutcome>, PhysicsFailure> {
+        let Some(world) = self.worlds.get_mut(&id) else { return Err(internal(NO_WORLD)) };
+        queries.and_then(|value| world.query_many_json(&value))
+    }
+
+    /// One room tick in one crossing (`tick.rs`): each batch as `world_apply(batch, false)`, the step
+    /// as `world_step` (its wall time on `now_ms`'s clock recorded for `stats().stepMs`, §11.4),
+    /// the export as `world_export_changed`, the queries as `world_query_many`, then the tick
+    /// counter and `memoryBytes`; each part exactly what that call gives, in the reply's binary form.
+    pub fn world_tick_frame(&mut self, id: u32, request: TickRequest, now_ms: &mut dyn FnMut() -> f64) -> Vec<u8> {
+        let TickRequest { batches, step, export_since, queries } = request;
+        let mut out = tick::Out::new(batches.len());
+        for batch in batches {
+            out.batch(&self.apply_each(id, batch.read()));
+        }
+        let stepped = step.then(|| {
+            let start = now_ms();
+            let stepped = self.step(id);
+            if stepped.is_ok() {
+                self.world_record_step_ms(id, now_ms() - start);
+            }
+            stepped
+        });
+        out.step(stepped.as_ref());
+        drop(stepped);
+        let export = (export_since >= FIRST_TICK).then(|| self.export_changed(id, export_since));
+        out.export(export.as_ref());
+        drop(export);
+        let answers = queries.map(|queries| self.query_many(id, queries.read()));
+        out.answers(answers.as_ref());
+        drop(answers);
+        out.finish(self.world_tick(id), self.world_memory_bytes(id))
     }
 
     /// Runs one query in its JSON form (§13).
@@ -433,6 +488,95 @@ mod tests {
         let atomic = parse(&registry.world_apply(id, r#"[{"wake":{"key":"crate"}},{"wake":{"key":"nobody"}}]"#, true));
         assert_eq!((atomic["code"].clone(), atomic["index"].clone()), (serde_json::json!("unknown-key"), serde_json::json!(1)));
         registry.world_free(id);
+    }
+
+    /// A cursor over a tick reply, for the rows below.
+    struct Reply<'a>(&'a [u8]);
+
+    impl Reply<'_> {
+        fn take(&mut self, count: usize) -> &[u8] {
+            let (head, tail) = self.0.split_at(count);
+            self.0 = tail;
+            head
+        }
+        fn u8(&mut self) -> u8 {
+            self.take(1)[0]
+        }
+        fn u32(&mut self) -> u32 {
+            u32::from_le_bytes(self.take(4).try_into().expect("4 bytes"))
+        }
+        fn f64(&mut self) -> f64 {
+            f64::from_le_bytes(self.take(8).try_into().expect("8 bytes"))
+        }
+        fn str(&mut self) -> String {
+            let length = self.u32() as usize;
+            String::from_utf8(self.take(length).to_vec()).expect("UTF-8")
+        }
+    }
+
+    #[test]
+    fn a_tick_frame_gives_what_the_separate_calls_give() {
+        let (mut framed, mut called) = (Registry::new(), Registry::new());
+        let (one, two) = (create(&mut framed), create(&mut called));
+        let batch = format!("[{CRATE}]");
+        let wake = r#"[{"wake":{"key":"nobody"}}]"#;
+        let ray = r#"[{"ray":{"origin":[0,9,0],"dir":[0,-1,0],"maxDist":20}}]"#;
+        let request = TickRequest {
+            batches: vec![tick::Item::Value(parse(&batch)), tick::Item::Text(wake.into()), tick::Item::NoText],
+            step: true,
+            export_since: 0.0,
+            queries: Some(tick::Item::Value(parse(ray))),
+        };
+        let mut clock = 0.0;
+        let bytes = framed.world_tick_frame(one, request, &mut || {
+            clock += 2.5;
+            clock
+        });
+        let applied = [called.world_apply(two, &batch, false), called.world_apply(two, wake, false)];
+        assert_eq!(parse(&applied[0])["results"], serde_json::json!([{ "ok": true }]));
+        let stepped = parse(&called.world_step(two));
+        let keys = parse(&called.world_export_changed(two, 0.0));
+        let data = called.take_changed_data();
+        let answers = parse(&called.world_query_many(two, ray));
+
+        let mut reply = Reply(&bytes);
+        assert_eq!(reply.u32(), 3);
+        assert_eq!((reply.u8(), reply.u32(), reply.u8()), (1, 1, 0), "the spawn: one ok");
+        assert_eq!((reply.u8(), reply.u32(), reply.u8(), reply.str()), (1, 1, 1, "unknown-key".into()));
+        assert_eq!((reply.u8(), reply.str()), (0, "bad-command".into()), "a batch with no text is refused whole");
+        assert_eq!((reply.u8(), reply.str()), (0, tick::NOT_JSON.into()), "no index; its detail");
+        assert_eq!((reply.u8(), reply.f64()), (2, stepped["tick"].as_f64().expect("tick")));
+        assert_eq!((reply.u32(), reply.u8(), reply.u32(), reply.u8()), (0, 0, 0, 0), "no events, escapes or overflow");
+        assert_eq!((reply.u8(), reply.u32(), reply.str()), (1, 1, keys[0].as_str().expect("key").to_string()));
+        assert_eq!(reply.u32() as usize, data.len());
+        let framed_data: Vec<u32> = (0..data.len()).map(|_| u32::from_le_bytes(reply.take(4).try_into().expect("f32"))).collect();
+        assert_eq!(framed_data, data.iter().map(|value| value.to_bits()).collect::<Vec<_>>(), "the data bit for bit");
+        let hit = &answers["results"][0]["hit"];
+        assert_eq!((reply.u8(), reply.u32(), reply.u8()), (2, 1, 2));
+        assert_eq!((reply.str(), reply.str(), reply.f64()), ("crate".into(), "c".into(), hit["dist"].as_f64().expect("dist")));
+        for _ in 0..6 {
+            reply.f64();
+        }
+        assert_eq!(reply.f64(), 1.0, "the tick after");
+        assert_eq!(reply.f64(), called.world_memory_bytes(two));
+        assert!(reply.0.is_empty(), "nothing left over");
+        assert_eq!(framed.world_state_hash(one), called.world_state_hash(two));
+        assert_eq!(parse(&framed.world_stats(one))["stepMs"], 2.5, "the step's own time on the clock given");
+    }
+
+    #[test]
+    fn a_tick_frame_on_no_world_answers_internal_in_every_part() {
+        let mut registry = Registry::new();
+        let request = TickRequest { batches: vec![tick::Item::Value(parse("[]"))], step: true, export_since: 0.0, queries: None };
+        let bytes = registry.world_tick_frame(7, request, &mut || 0.0);
+        let mut reply = Reply(&bytes);
+        assert_eq!((reply.u32(), reply.u8(), reply.str()), (1, 0, "internal".into()));
+        assert_eq!((reply.u8(), reply.str()), (0, NO_WORLD.into()));
+        assert_eq!((reply.u8(), reply.str()), (1, "internal".into()));
+        assert_eq!((reply.u8(), reply.str()), (0, NO_WORLD.into()));
+        assert_eq!((reply.u8(), reply.u32(), reply.u32()), (1, 0, 0), "an empty export");
+        assert_eq!((reply.u8(), reply.f64(), reply.f64()), (0, 0.0, 0.0));
+        assert!(reply.0.is_empty());
     }
 
     #[test]

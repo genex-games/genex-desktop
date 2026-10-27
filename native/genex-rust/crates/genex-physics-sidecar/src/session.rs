@@ -9,11 +9,11 @@
 
 use std::time::Instant;
 
-use genex_physics_binding::Registry;
+use genex_physics_binding::{Registry, TickRequest};
 use serde_json::Value;
 
 use crate::frame::{Fault, Writer};
-use crate::protocol::{Call, Method, PROTOCOL_VERSION, REPLY_BIT, Request, TickRequest, kind};
+use crate::protocol::{Call, Method, PROTOCOL_VERSION, REPLY_BIT, Request, kind};
 
 /// Where the session is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl Session {
                 let text = self.registry.world_add_static(id, &box_lengths, &boxes, &ramp_lengths, &ramps);
                 Ok(text_reply(kind::ADD_STATIC, &text))
             }
-            (Request::Tick(tick), State::Ready(id)) => Ok(self.tick(id, &tick)),
+            (Request::Tick(tick), State::Ready(id)) => Ok(self.tick(id, tick)),
             (Request::Call(call), State::Ready(id)) => Ok(self.call(id, call)),
         }
     }
@@ -130,22 +130,13 @@ impl Session {
         text
     }
 
-    fn tick(&mut self, id: u32, request: &TickRequest<'_>) -> Handled {
+    /// A room tick (genex-physics-binding `tick.rs`), its step timed on this process's clock.
+    fn tick(&mut self, id: u32, request: TickRequest) -> Handled {
+        let start = Instant::now();
+        let mut since_start = || start.elapsed().as_secs_f64() * 1000.0;
+        let bytes = self.registry.world_tick_frame(id, request, &mut since_start);
         let mut writer = reply(kind::TICK);
-        writer.u32(u32::try_from(request.batches.len()).unwrap_or(u32::MAX));
-        for batch in &request.batches {
-            writer.str(&self.registry.world_apply(id, batch, false));
-        }
-        let stepped = request.step.then(|| self.step(id));
-        writer.opt_str(stepped.as_deref());
-        writer.bool(request.export_since >= 0.0);
-        if request.export_since >= 0.0 {
-            writer.str(&self.registry.world_export_changed(id, request.export_since));
-            writer.f32s(&self.registry.take_changed_data());
-        }
-        let answers = request.queries.map(|queries| self.registry.world_query_many(id, queries));
-        writer.opt_str(answers.as_deref());
-        writer.f64(self.registry.world_tick(id)).f64(self.registry.world_memory_bytes(id));
+        writer.raw(&bytes);
         Handled { reply: writer, after: After::Continue }
     }
 
@@ -204,6 +195,7 @@ fn text_call(registry: &mut Registry, id: u32, method: Method, text: &str) -> St
 mod tests {
     use super::*;
     use crate::frame::{LENGTH_BYTES, Reader};
+    use genex_physics_binding::tick::Item;
 
     const DESC: &str = r#"{"contract":"1.0","dt":0.016666668,"substeps":1,"gravity":[0,-9.81,0],"upAxis":"y","lengthUnit":1}"#;
     const CRATE: &str = r#"[{"spawn":{"key":"crate","type":"dynamic","pose":{"p":[0,2,0],"q":[0,0,0,1]},"colliders":[{"key":"c","shape":{"kind":"box","half":[0.5,0.5,0.5]}}]}}]"#;
@@ -224,7 +216,7 @@ mod tests {
 
     #[test]
     fn refuses_frames_out_of_order_and_runs_none_of_them() {
-        let tick = || Request::Tick(TickRequest { batches: vec![CRATE], step: true, export_since: 0.0, queries: None });
+        let tick = || Request::Tick(TickRequest { batches: vec![text(CRATE)], step: true, export_since: 0.0, queries: None });
         let mut fresh = Session::new();
         assert_eq!(fresh.handle(Request::Create { desc: DESC }).err(), Some(Fault::OutOfOrder("a frame before Hello")));
         fresh.handle(Request::Hello { version: PROTOCOL_VERSION }).expect("hello");
@@ -240,28 +232,39 @@ mod tests {
         assert_eq!(fresh.handle(Request::Shutdown).expect("bye").after, After::Exit);
     }
 
+    /// An item of JSON text (the binding's form 1).
+    fn text(value: &str) -> Item {
+        Item::Text(value.to_string())
+    }
+
     #[test]
     fn a_tick_applies_steps_exports_and_answers_in_one_reply() {
         let mut session = ready();
         let request = TickRequest {
-            batches: vec![CRATE, r#"[{"wake":{"key":"nobody"}}]"#],
+            batches: vec![text(CRATE), text(r#"[{"wake":{"key":"nobody"}}]"#)],
             step: true,
             export_since: 0.0,
-            queries: Some(r#"[{"ray":{"origin":[0,9,0],"dir":[0,-1,0],"maxDist":20}}]"#),
+            queries: Some(text(r#"[{"ray":{"origin":[0,9,0],"dir":[0,-1,0],"maxDist":20}}]"#)),
         };
         let bytes = body(session.handle(Request::Tick(request)).expect("tick"));
         let mut reader = Reader::new(&bytes);
         assert_eq!(reader.u32(), Ok(2));
-        assert_eq!(reader.str(), Ok(r#"{"ok":true,"results":[{"ok":true}]}"#));
-        assert_eq!(reader.str(), Ok(r#"{"ok":true,"results":[{"ok":false,"code":"unknown-key"}]}"#));
-        assert!(reader.opt_str().expect("step").is_some_and(|step| step.contains(r#""tick":1"#)));
-        assert_eq!(reader.bool(), Ok(true));
-        assert_eq!(reader.str(), Ok(r#"["crate"]"#));
+        assert_eq!((reader.u8(), reader.u32(), reader.u8()), (Ok(1), Ok(1), Ok(0)), "the spawn applied");
+        assert_eq!((reader.u8(), reader.u32(), reader.u8(), reader.str()), (Ok(1), Ok(1), Ok(1), Ok("unknown-key")));
+        assert_eq!((reader.u8(), reader.f64()), (Ok(2), Ok(1.0)), "stepped to tick 1");
+        assert_eq!((reader.u32(), reader.bool(), reader.u32(), reader.bool()), (Ok(0), Ok(false), Ok(0), Ok(false)));
+        assert_eq!((reader.bool(), reader.u32(), reader.str()), (Ok(true), Ok(1), Ok("crate")));
         assert_eq!(reader.f32s().map(|data| data.len()), Ok(genex_physics::EXPORT_STRIDE));
-        assert!(reader.opt_str().expect("answers").is_some_and(|answers| answers.contains(r#""body":"crate""#)));
+        assert_eq!((reader.u8(), reader.u32(), reader.u8(), reader.str()), (Ok(2), Ok(1), Ok(2), Ok("crate")), "the ray hit");
+        assert_eq!(reader.str(), Ok("c"));
+        for _ in 0..7 {
+            reader.f64().expect("dist, point, normal");
+        }
         assert_eq!(reader.f64(), Ok(1.0));
         assert!(reader.f64().is_ok_and(|bytes| bytes > 0.0), "the world's measured memory");
         assert_eq!(reader.finish(), Ok(()));
+        let stats: Value = serde_json::from_str(&session.registry.world_stats(1)).expect("JSON");
+        assert!(stats["stepMs"].as_f64().is_some_and(|ms| ms > 0.0), "the sidecar timed the tick's step");
     }
 
     #[test]
@@ -270,8 +273,8 @@ mod tests {
         let request = TickRequest { batches: vec![], step: false, export_since: -1.0, queries: None };
         let bytes = body(session.handle(Request::Tick(request)).expect("tick"));
         let mut reader = Reader::new(&bytes);
-        let read = (reader.u32(), reader.opt_str(), reader.bool(), reader.opt_str(), reader.f64());
-        assert_eq!(read, (Ok(0), Ok(None), Ok(false), Ok(None), Ok(0.0)));
+        let read = (reader.u32(), reader.u8(), reader.bool(), reader.u8(), reader.f64());
+        assert_eq!(read, (Ok(0), Ok(0), Ok(false), Ok(0), Ok(0.0)));
     }
 
     #[test]

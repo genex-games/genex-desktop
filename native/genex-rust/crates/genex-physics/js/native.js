@@ -37,7 +37,7 @@ import { Worker } from "node:worker_threads";
 import { bindWire, PhysicsError, tickWorld } from "@genex-ai/physics/binding";
 
 /** The frame protocol's version (crates/genex-physics-sidecar/src/protocol.rs). */
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 /** Request kinds; a reply's kind is its request's with `REPLY_BIT` set. */
 const Kind = Object.freeze({ Hello: 1, Create: 2, AddStatic: 3, Tick: 4, Call: 5, Shutdown: 6 });
 const REPLY_BIT = 0x80;
@@ -69,9 +69,14 @@ export const MAX_FRAME_BYTES = 512 * 1024 * 1024 + 1024 * 1024;
 const LENGTH_BYTES = 4;
 /** A reply's head after its length: the kind byte and `u64 cpuNs`. */
 const REPLY_HEAD_BYTES = 9;
+/** A request's head: its length and its kind byte. */
+const FRAME_HEAD_BYTES = LENGTH_BYTES + 1;
 /** The deadline's range in milliseconds, inclusive (lib.rs `DEADLINE_MS`). */
 const DEADLINE_MS_MIN = 1;
 const DEADLINE_MS_MAX = 600_000;
+/** The request buffer a process's ticks are framed in, grown as a tick needs. */
+const FRAME_BUFFER_BYTES = 4096;
+const FRAME_BUFFER_KEPT = 1024 * 1024;
 /** How long starting a process (spawn, FIFOs, opening them, `Hello`) may take by default. */
 const START_MS = 5_000;
 /** How often the start looks for the FIFOs. */
@@ -443,7 +448,8 @@ function textFrame(proc, kind, write) {
 
 /**
  * The wire `core.js` drives: the glue's exports, each one round trip (the world id is implicit:
- * the process holds one world), plus `world_tick_frame` for `runTick`.
+ * the process holds one world). `world_tick_frame` is `runTick`'s: the binary tick in one `Tick`
+ * frame (crates/genex-physics-binding/src/tick.rs), `tick_cpu_ns` its process CPU.
  */
 function wireOf(proc) {
   const text = (method) => () => call(proc, method, undefined, readText);
@@ -493,30 +499,33 @@ function wireOf(proc) {
     world_physics_hash: text(Method.PhysicsHash),
     world_stats: text(Method.Stats),
     world_memory_is_measured: () => call(proc, Method.MemoryIsMeasured, undefined, (r) => r.bool()),
-    world_tick_frame: (_id, ask) => tickFrame(proc, ask),
+    world_tick_frame: (_id, request) => tickFrame(proc, request),
+    tick_cpu_ns: () => proc.lastCpuNs,
   };
 }
 
-/** A tick in one `Tick` frame, or `undefined` (core.js then makes the separate calls) past the frame cap. */
-function tickFrame(proc, ask) {
-  const frame = new FrameWriter(Kind.Tick).u32(ask.batches.length);
-  for (const text of ask.batches) frame.str(text);
-  frame.bool(ask.step).f64(ask.since).optStr(ask.queries);
-  const bytes = frame.finish();
-  if (bytes === undefined) return undefined;
-  const reply = roundTrip(proc, bytes, Kind.Tick);
-  const count = reply.u32();
-  if (count !== ask.batches.length) throw new SidecarGone("a tick answered another number of batches");
-  const results = Array.from({ length: count }, () => reply.str());
-  const step = reply.optStr();
-  const exported = reply.bool();
-  const keys = exported ? reply.str() : undefined;
-  const data = exported ? reply.f32s() : undefined;
-  const answers = reply.optStr();
-  const tick = reply.f64();
-  const memoryBytes = reply.f64();
-  reply.done();
-  return { results, step, keys, data, answers, tick, memoryBytes, cpuNs: proc.lastCpuNs };
+/**
+ * A tick in one `Tick` frame: the request's bytes in (core.js `encodeTick`), the reply's out as a
+ * view of this process's reply buffer, read by core.js before the next round trip. `undefined` past
+ * the frame cap: core.js then makes the separate calls.
+ */
+function tickFrame(proc, request) {
+  const size = 1 + request.length;
+  if (size > MAX_FRAME_BYTES) return undefined;
+  const frame = tickBuffer(proc, LENGTH_BYTES + size);
+  frame.writeUInt32LE(size, 0);
+  frame[LENGTH_BYTES] = Kind.Tick;
+  frame.set(request, FRAME_HEAD_BYTES);
+  const reply = roundTrip(proc, frame.subarray(0, LENGTH_BYTES + size), Kind.Tick);
+  return reply.buffer.subarray(reply.at);
+}
+
+/** A buffer of at least `bytes` for a tick's frame: the process's own, grown up to `FRAME_BUFFER_KEPT`. */
+function tickBuffer(proc, bytes) {
+  if (bytes <= proc.frame.length) return proc.frame;
+  const grown = Buffer.allocUnsafe(Math.max(bytes, proc.frame.length * 2));
+  if (grown.length <= FRAME_BUFFER_KEPT) proc.frame = grown;
+  return grown;
 }
 
 /** Sends `Shutdown` (the process frees its world and exits 0) and removes the folder; idempotent. */
@@ -594,6 +603,7 @@ function startProcess(options) {
     changed: new Float32Array(0),
     head: Buffer.allocUnsafe(LENGTH_BYTES),
     buffer: Buffer.allocUnsafe(64 * 1024),
+    frame: Buffer.allocUnsafe(FRAME_BUFFER_BYTES),
   };
   live.add(proc);
   return proc;

@@ -1,4 +1,4 @@
-//! The room protocol's frames, version 1: what the host sends ([`Request`], decoded whole from a
+//! The room protocol's frames, version 2: what the host sends ([`Request`], decoded whole from a
 //! [`Frame`] before anything runs) and the reply kinds. Field forms are `frame.rs`'s.
 //!
 //! | Kind | Request payload | Reply payload (after `u64 cpuNs`) |
@@ -6,7 +6,7 @@
 //! | `Hello` 1 | `u32 version` | `u32 version, str buildId` |
 //! | `Create` 2 | `str desc` (JSON, §4) | `str result` (`{ ok, id }` or a failure) |
 //! | `AddStatic` 3 | `u32[] boxLengths, f64[] boxes, u32[] rampLengths, f64[] ramps` (§6.5) | `str result` |
-//! | `Tick` 4 | `u32 n, n × str batch, bool step, f64 exportSince, opt<str> queries` | `u32 n, n × str result, opt<str> step, bool exported [, str keys, f32[] data], opt<str> answers, f64 tick, f64 memoryBytes` |
+//! | `Tick` 4 | a tick request (genex-physics-binding `tick.rs`: batches, step, exportSince, queries, binary) | its tick reply (`tick.rs`: results, step, export, answers, tick, memoryBytes, binary) |
 //! | `Call` 5 | `u8 method, its arguments` ([`Method`]) | its result ([`Method`]) |
 //! | `Shutdown` 6 | nothing | nothing; the process then exits 0 |
 //!
@@ -14,11 +14,18 @@
 //! the thread CPU time the sidecar spent on that frame (`CLOCK_THREAD_CPUTIME_ID`, read before the
 //! frame was decoded and after its reply was written into memory). The world id is implicit: the
 //! process holds one world (CONTRACT.md §11.1, one world per room).
+//!
+//! Version 2 (from 1): a `Tick` carries the binding's binary tick form instead of JSON texts, so its
+//! commands cross with no number text and its reply decodes with no `JSON.parse`; the WASM package
+//! crosses a tick in the same form (its `world_tick_frame` export). The host refuses a process that
+//! answers `Hello` with another version.
+
+use genex_physics_binding::TickRequest;
 
 use crate::frame::{Fault, Frame, Reader};
 
 /// This protocol's version, exchanged by `Hello`.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// The bit a reply's kind sets on its request's.
 pub const REPLY_BIT: u8 = 0x80;
 
@@ -160,19 +167,6 @@ pub enum Call<'a> {
     Restore(&'a [u8]),
 }
 
-/// A decoded `Tick`.
-#[derive(Debug, PartialEq)]
-pub struct TickRequest<'a> {
-    /// Command batches, each applied in `"each"` mode, in order (§7.1).
-    pub batches: Vec<&'a str>,
-    /// Whether to step after the batches (§8).
-    pub step: bool,
-    /// Export the bodies changed after this tick (§9.1); any negative number exports nothing.
-    pub export_since: f64,
-    /// A `queryMany` after the export (§19.2).
-    pub queries: Option<&'a str>,
-}
-
 /// A request, decoded whole: a frame that cannot be decoded is a [`Fault`] before anything runs.
 #[derive(Debug, PartialEq)]
 pub enum Request<'a> {
@@ -197,8 +191,8 @@ pub enum Request<'a> {
         /// Every ramp row's values, in order.
         ramps: Vec<f64>,
     },
-    /// `Tick`.
-    Tick(TickRequest<'a>),
+    /// `Tick`: read whole by the binding (`tick.rs`).
+    Tick(TickRequest),
     /// `Call`.
     Call(Call<'a>),
     /// `Shutdown`.
@@ -218,7 +212,7 @@ impl<'a> Request<'a> {
                 ramp_lengths: reader.u32s()?,
                 ramps: reader.f64s()?,
             },
-            kind::TICK => Request::Tick(tick(&mut reader)?),
+            kind::TICK => return TickRequest::decode(&frame.payload).map(Request::Tick).map_err(Fault::Tick),
             kind::CALL => Request::Call(call(&mut reader)?),
             kind::SHUTDOWN => Request::Shutdown,
             other => return Err(Fault::UnknownKind(other)),
@@ -226,15 +220,6 @@ impl<'a> Request<'a> {
         reader.finish()?;
         Ok(request)
     }
-}
-
-fn tick<'a>(reader: &mut Reader<'a>) -> Result<TickRequest<'a>, Fault> {
-    let count = reader.u32()?;
-    let mut batches = Vec::new();
-    for _ in 0..count {
-        batches.push(reader.str()?);
-    }
-    Ok(TickRequest { batches, step: reader.bool()?, export_since: reader.tick()?, queries: reader.opt_str()? })
 }
 
 fn call<'a>(reader: &mut Reader<'a>) -> Result<Call<'a>, Fault> {
@@ -266,6 +251,7 @@ fn call<'a>(reader: &mut Reader<'a>) -> Result<Call<'a>, Fault> {
 mod tests {
     use super::*;
     use crate::frame::{LENGTH_BYTES, Writer};
+    use genex_physics_binding::TickFault;
 
     /// The frame a writer built, as `read_frame` hands it over.
     fn frame(writer: Writer) -> Frame {
@@ -284,11 +270,13 @@ mod tests {
     fn decodes_each_request_kind() {
         let mut hello = Writer::new(kind::HELLO);
         hello.u32(PROTOCOL_VERSION);
-        assert_eq!(Request::decode(&frame(hello)), Ok(Request::Hello { version: 1 }));
+        assert_eq!(Request::decode(&frame(hello)), Ok(Request::Hello { version: PROTOCOL_VERSION }));
         let mut tick_frame = Writer::new(kind::TICK);
-        tick_frame.u32(2).str("[]").str("[{}]").bool(true).f64(-1.0).opt_str(Some("[]"));
+        // Two batches as JSON text items (form 1), a step, no export, the queries as text.
+        tick_frame.u32(2).u8(1).str("[]").u8(1).str("[{}]").bool(true).f64(-1.0).bool(true).u8(1).str("[]");
         let decoded = frame(tick_frame);
-        let expected = TickRequest { batches: vec!["[]", "[{}]"], step: true, export_since: -1.0, queries: Some("[]") };
+        let text = |value: &str| genex_physics_binding::tick::Item::Text(value.to_string());
+        let expected = TickRequest { batches: vec![text("[]"), text("[{}]")], step: true, export_since: -1.0, queries: Some(text("[]")) };
         assert_eq!(Request::decode(&decoded), Ok(Request::Tick(expected)));
         let restore = call_frame(Method::Restore as u8, |w| {
             w.bytes(b"GXPH");
@@ -305,18 +293,21 @@ mod tests {
         let mut nan_tick = Writer::new(kind::TICK);
         nan_tick.u32(0).bool(false).f64(f64::NAN).bool(false);
         let mut lying_batches = Writer::new(kind::TICK);
-        lying_batches.u32(1_000_000).str("[]");
+        lying_batches.u32(64).u8(1).str("[]");
         let mut bad_step = Writer::new(kind::TICK);
         bad_step.u32(0).u8(9).f64(0.0).bool(false);
+        let mut many_batches = Writer::new(kind::TICK);
+        many_batches.u32(1_000_000);
         let mut static_short = Writer::new(kind::ADD_STATIC);
         static_short.u32(1).u32(6).u32(2);
-        let rows: [(&str, Frame, Fault); 10] = [
+        let rows: [(&str, Frame, Fault); 11] = [
             ("an unknown kind", Frame { kind: 0x42, payload: vec![] }, Fault::UnknownKind(0x42)),
             ("a reply kind sent as a request", Frame { kind: kind::HELLO | REPLY_BIT, payload: vec![] }, Fault::UnknownKind(0x81)),
             ("a hello with a byte too many", frame(long_hello), Fault::TrailingBytes(1)),
-            ("a tick exporting since NaN", frame(nan_tick), Fault::BadNumber),
-            ("a tick claiming a million batches", frame(lying_batches), Fault::ShortPayload),
-            ("a step flag of 9", frame(bad_step), Fault::BadFlag(9)),
+            ("a tick exporting since NaN", frame(nan_tick), Fault::Tick(TickFault::BadNumber)),
+            ("a tick claiming more batches than it carries", frame(lying_batches), Fault::Tick(TickFault::Short)),
+            ("a tick claiming a million batches", frame(many_batches), Fault::Tick(TickFault::TooManyBatches(1_000_000))),
+            ("a step flag of 9", frame(bad_step), Fault::Tick(TickFault::BadFlag(9))),
             ("a static world cut short", frame(static_short), Fault::ShortPayload),
             ("an unknown method", call_frame(0, |_| {}), Fault::UnknownMethod(0)),
             ("a method past the last", call_frame(21, |_| {}), Fault::UnknownMethod(21)),

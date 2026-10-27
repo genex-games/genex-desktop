@@ -149,7 +149,9 @@ that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`. `physics-native-real` r
 (`physics-binding-rows.ts`) through `@genex-ai/physics-native`'s test build (`node scripts/physics-native.ts
 --test`: this host's `genex-physics-room`, one process per world), where a killed process fails its own world
 only; `physics-backend-parity` steps both cores in lockstep (every vector, a 128-crate and the worst-case
-scene, snapshots across); `physics-native-hostile` holds the raw frame table, both watchdogs, kill -9,
+scene, snapshots across); `physics-tick-frame` holds a tick in one crossing (the binary tick both cores take)
+to its separate calls on a twin world, on both cores, with a table of hostile and odd inputs;
+`physics-native-hostile` holds the raw frame table, both watchdogs, kill -9,
 EPIPE and bad binaries; `physics-native-package` the tarball, its files and the Linux binary's glibc ≤ 2.28
 and no RPATH. `physics-wasm-package` checks the built package's
 `LICENSE`, `THIRD-PARTY-NOTICES.md` and that its module holds no absolute path of the build machine.
