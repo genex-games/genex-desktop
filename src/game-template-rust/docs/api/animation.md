@@ -81,6 +81,13 @@ sim.world.hero = Some(animator);
 - `hero.with_retargeted_clips(&ual)?` adds another humanoid's clips, retargeted onto this
   skeleton (a UAL walk on a Meshy hero). Each limb points where the source's does, and the hips'
   travel scales by leg length. Call `.with_root_motion(..)` after it.
+- `hero.with_clip_files(gfx.assets(), &[("Idle", "gunman/idle.glb"), ("Fire", "gunman/fire.glb")])?`
+  adds clips kept in files of their own, such as Uthana's one skeleton-only GLB per clip. Each
+  file's first animation joins under the name you give it. Its channels drive the joints their
+  nodes are named after (the exact name, then the part after the last `:` or `|`). Nothing is
+  retargeted, so the files must come from this rig. No merge script is needed. It refuses
+  `animation-asset-invalid` for a file the build does not have or a name already taken, and
+  `animation-clip-missing` for a file with no animation or none that names a joint.
 
 ## Advancing (on_update)
 
@@ -129,6 +136,11 @@ frame.skeleton_debug(hero, at);
 - `frame.character(..)` is one logical draw under the current tag. The presenter skins the GLB in
   the animator's pose (every skinned primitive, each part with its own material). A missing file
   draws the magenta checker; a file the renderer cannot skin draws its model in bind pose.
+- The file's armature counts. Mixamo, Meshy, Tripo and Uthana rigs hang the mesh and the root
+  joint under an "Armature" node turned 90° about X at scale 0.01, with the joints in
+  centimetres. The character still stands upright at its real size, where its bind-pose model and
+  every `socket` put it. Don't bake the turn into the file or add a yaw or scale offset for it.
+  `hero.skeleton().mesh_frame()` is that node's frame.
 - In Live a far character's pose is held between evaluations: every tick near the camera, every
   2nd, 4th or 8th tick as its projected height (LOD's screen-size metric, from the game camera)
   falls past 240, 120 and 60 pixels of a 1080-pixel view. An animator drawn by several characters

@@ -507,6 +507,11 @@ impl CharacterAsset {
         self.rig.skeleton()
     }
 
+    /// The rig as imported: its skeleton and the file's node to joint table.
+    pub(crate) fn rig(&self) -> &Rig {
+        &self.rig
+    }
+
     /// The skeleton and clips its animators share (`animation.rs` builds on it).
     pub(crate) fn set(&self) -> &Arc<AnimSet> {
         &self.set

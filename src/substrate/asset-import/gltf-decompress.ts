@@ -5,9 +5,11 @@
  * re-laid out), and a GLB using `KHR_mesh_quantization` (gltfpack's default) is then written back
  * with float attributes (`dequantize.ts`). Anything else the file requires must be an extension
  * the runtime reads, or the file is refused. A `.gltf` (JSON with external buffers) is checked,
- * never rewritten. Before any of this, the file passes the glTF validation gate (`validate.ts`):
- * nothing decodes a file the validator finds an error in.
+ * never rewritten. Before any of this, a GLB's accessor bounds are written from its data
+ * (`bounds.ts`) and the file passes the glTF validation gate (`validate.ts`): nothing decodes a
+ * file the validator finds an error in.
  */
+import { repairAccessorBounds } from "./bounds.ts";
 import { AssetImportRefusal } from "./import-plan.ts";
 import {
   ARRAY_BUFFER,
@@ -33,7 +35,7 @@ import {
   strings,
   withoutExtensions,
 } from "./gltf-json.ts";
-import { type GltfIssue, validateGltf } from "./validate.ts";
+import { type GltfIssue, GltfIssueCode, GltfIssueSeverity, validateGltf } from "./validate.ts";
 
 const DRACO = "KHR_draco_mesh_compression";
 const MESHOPT = ["EXT_meshopt_compression", "KHR_meshopt_compression"] as const;
@@ -252,16 +254,26 @@ export interface ImportedGltf {
   issues: GltfIssue[];
 }
 
+/** The most bounds repairs one file reports, so the validator's own warnings keep room in the receipt. */
+const BOUNDS_ISSUES_MAX = 8;
+
 /**
- * A glTF file validated (`validate.ts`), then in the form the runtime loads: a GLB with Draco or
+ * A glTF file validated (`validate.ts`), then in the form the runtime loads: a GLB with its
+ * accessor bounds written from its data first (`bounds.ts`, each repair a warning), Draco or
  * meshopt data rewritten plain, then a quantized one with float attributes, any other file
  * unchanged. Throws {@link GltfImportError} when the validator finds an error, when it is damaged,
  * or when it requires an extension the runtime does not read; a compressed `.gltf` is refused
  * (deliver it as GLB).
  */
 export async function importGltf(bytes: Uint8Array, ext: string): Promise<ImportedGltf> {
-  const issues = await validateGltf(bytes, ext);
-  return { bytes: await normalizeValid(bytes, ext), issues };
+  const bounded = ext === "glb" ? repairAccessorBounds(bytes) : { bytes, repaired: [] };
+  const repairs: GltfIssue[] = bounded.repaired.slice(0, BOUNDS_ISSUES_MAX).map((at) => ({
+    code: GltfIssueCode.BoundsRepaired,
+    severity: GltfIssueSeverity.Warning,
+    pointer: `/accessors/${at}`,
+  }));
+  const issues = await validateGltf(bounded.bytes, ext);
+  return { bytes: await normalizeValid(bounded.bytes, ext), issues: [...repairs, ...issues] };
 }
 
 /** {@link importGltf}'s output bytes alone. */
