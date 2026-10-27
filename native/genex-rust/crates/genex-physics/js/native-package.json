@@ -1,0 +1,39 @@
+{
+  "name": "@genex-ai/physics-native",
+  "version": "0.1.0",
+  "description": "Genex Physics (contract 1.0) in a process of its own per world: the native core of @genex-ai/physics for authority servers on Linux x64 and macOS arm64, with the same API and errors as values.",
+  "license": "MIT",
+  "type": "module",
+  "types": "./native.d.ts",
+  "exports": {
+    ".": {
+      "types": "./native.d.ts",
+      "default": "./native.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "native.js",
+    "native.d.ts",
+    "index.d.ts",
+    "binaries.json",
+    "native/darwin-arm64/genex-physics-room",
+    "native/linux-x64-gnu/genex-physics-room",
+    "README.md",
+    "CONTRACT.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "dependencies": {
+    "@genex-ai/physics": "0.1.0"
+  },
+  "os": ["darwin", "linux"],
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/genex-games/genex-desktop",
+    "directory": "native/genex-rust/crates/genex-physics/js"
+  }
+}

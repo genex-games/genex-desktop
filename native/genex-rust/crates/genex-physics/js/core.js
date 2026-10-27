@@ -10,6 +10,10 @@
 // - §11.3: if the instance traps (a WebAssembly.RuntimeError, or anything else thrown from inside
 //   a WASM call) it is poisoned: every later call on every world answers `internal`, and its reads
 //   their empty forms. `init()` then makes a new instance; worlds of the old one stay `internal`.
+// - A `World` runs over a binding: the module's one WASM instance (`World.create`), or another wire
+//   with the glue's exports, handed in through `bindWire` (internal: `@genex-ai/physics-native`'s
+//   sidecar process). Both get exactly this file's encoding, budgets and result forms, and a wire
+//   that throws is poisoned as a trapped instance is.
 import * as glue from "./wasm/genex_physics_wasm.js";
 
 /** The error vocabulary (§14). */
@@ -92,6 +96,8 @@ const Detail = Object.freeze({
   NotReady: "init() has not finished: await init() first (§15)",
   Poisoned: "the WebAssembly instance trapped and is unusable (§11.3): await init() for a new one and make new worlds",
   Stale: "this world belongs to an instance that trapped (§11.3)",
+  NotWorld: "not a World",
+  BadTick: "a tick is { batches?: Command[][], step?: boolean, exportSince?: number, queries?: Query[] }",
   Freed: "this world was freed",
   TooLarge: "the input is over this call's budget (values and characters of JSON; see README)",
   BigBatch: "the batch holds more than 16,384 commands",
@@ -110,28 +116,38 @@ const Detail = Object.freeze({
   StaticCaps: "more than 4096 boxes or 512 ramps",
 });
 
-/** The instance: whether one is loaded, its generation (bumped per instance) and health. */
-const instance = { ready: false, generation: 0, poisoned: false, buildId: "" };
+/**
+ * A binding: the wire its worlds' calls cross (the glue's exports, or a wire of the same names)
+ * and its health. `detail` names its failures. A binding whose wire threw is poisoned for good,
+ * until (WASM only) `init()` makes a new instance and bumps `generation`.
+ */
+function newBinding(wire, detail) {
+  return { wire, ready: false, generation: 0, poisoned: false, buildId: "", detail };
+}
+
+/** The module's own binding: the one WASM instance, its generation bumped per instance. */
+const instance = newBinding(glue, { poisoned: Detail.Poisoned, stale: Detail.Stale });
 
 /** A contract error as a value. */
 function failure(code, detail) {
   return { ok: false, code, detail };
 }
 
-/** Why calls cannot run now, or `undefined` when they can. */
-function unavailable() {
-  if (!instance.ready) return failure(PhysicsError.Internal, Detail.NotReady);
-  if (instance.poisoned) return failure(PhysicsError.Internal, Detail.Poisoned);
+/** Why calls on `binding` cannot run now, or `undefined` when they can. */
+function unavailable(binding) {
+  if (!binding.ready) return failure(PhysicsError.Internal, Detail.NotReady);
+  if (binding.poisoned) return failure(PhysicsError.Internal, binding.detail.poisoned);
   return undefined;
 }
 
-/** Runs `fn` against the instance; anything thrown inside it poisons the instance (§11.3). */
-function guarded(fallback, fn) {
-  if (unavailable() !== undefined) return fallback();
+/** Runs `fn` against `binding`'s wire; anything thrown inside it poisons the binding (§11.3). */
+function guarded(binding, fallback, fn) {
+  if (unavailable(binding) !== undefined) return fallback();
   try {
-    return fn(glue);
+    return fn(binding.wire);
   } catch {
-    instance.poisoned = true;
+    binding.poisoned = true;
+    binding.detail.onPoison?.();
     return fallback();
   }
 }
@@ -553,71 +569,93 @@ const emptyStats = () => ({
 const emptyExport = () => ({ keys: [], data: new Float32Array(0) });
 const ids = new WeakMap();
 
-/** Frees a world its owner dropped without `free()`, when its instance is still the live one. */
-const finalizer = new FinalizationRegistry(({ id, generation }) => {
-  if (generation !== instance.generation) return;
+/** Frees a world its owner dropped without `free()`, when its binding is still the live one. */
+const finalizer = new FinalizationRegistry(({ binding, id, generation }) => {
+  if (generation !== binding.generation) return;
   guarded(
+    binding,
     () => false,
-    (wasm) => wasm.world_free(id),
+    (wire) => wire.world_free(id),
   );
 });
 
+/** Makes a world on `binding` from `desc` (§4); a failure creates nothing. */
+function createWorld(binding, desc) {
+  const refused = unavailable(binding);
+  if (refused !== undefined) return refused;
+  const encoded = encode(desc, inputBudget(undefined));
+  if (encoded.text === undefined) return encoded;
+  return guarded(
+    binding,
+    () => failure(PhysicsError.Internal, binding.detail.poisoned),
+    (wire) => {
+      const made = JSON.parse(wire.world_create(encoded.text));
+      if (!made.ok) return made;
+      const resolved = JSON.parse(wire.world_desc(made.id));
+      return { ok: true, world: new World(constructing, binding, made.id, resolved) };
+    },
+  );
+}
+
+/** `tickWorld`'s body, bound to the class's private members in its static block. */
+let tickOf;
+
 /** One physics world (§15). Make it with `World.create`; release it with `free()`. */
 export class World {
+  #binding;
   #id;
   #generation;
   #freed = false;
   #desc;
 
-  constructor(token, id, desc) {
+  static {
+    tickOf = (world, input) => {
+      if (!(#id in Object(world))) return failure(PhysicsError.BadCommand, Detail.NotWorld);
+      return world.#tick(input);
+    };
+  }
+
+  constructor(token, binding, id, desc) {
     if (token !== constructing) throw new TypeError("use World.create(desc)");
+    this.#binding = binding;
     this.#id = id;
-    this.#generation = instance.generation;
+    this.#generation = binding.generation;
     this.#desc = desc;
     ids.set(this, id);
-    finalizer.register(this, { id, generation: this.#generation }, this);
+    finalizer.register(this, { binding, id, generation: this.#generation }, this);
   }
 
   /** Validates `desc` and makes a world (§4); a failure creates nothing. */
   static create(desc) {
-    const refused = unavailable();
-    if (refused !== undefined) return refused;
-    const encoded = encode(desc, inputBudget(undefined));
-    if (encoded.text === undefined) return encoded;
-    return guarded(
-      () => failure(PhysicsError.Internal, Detail.Poisoned),
-      (wasm) => {
-        const made = JSON.parse(wasm.world_create(encoded.text));
-        if (!made.ok) return made;
-        const resolved = JSON.parse(wasm.world_desc(made.id));
-        return { ok: true, world: new World(constructing, made.id, resolved) };
-      },
-    );
+    return createWorld(instance, desc);
   }
 
   /** Why this world cannot run a call, or `undefined`. */
   #unusable() {
     if (this.#freed) return failure(PhysicsError.Internal, Detail.Freed);
-    const refused = unavailable();
+    const refused = unavailable(this.#binding);
     if (refused !== undefined) return refused;
-    if (this.#generation !== instance.generation) return failure(PhysicsError.Internal, Detail.Stale);
+    if (this.#generation !== this.#binding.generation) {
+      return failure(PhysicsError.Internal, this.#binding.detail.stale);
+    }
     return undefined;
   }
 
-  /** A call with a result: `internal` when unusable or if the instance traps in it. */
+  /** A call with a result: `internal` when unusable or if the wire fails in it. */
   #result(fn) {
     const refused = this.#unusable();
     if (refused !== undefined) return refused;
     return guarded(
-      () => failure(PhysicsError.Internal, Detail.Poisoned),
-      (wasm) => fn(wasm, this.#id),
+      this.#binding,
+      () => failure(PhysicsError.Internal, this.#binding.detail.poisoned),
+      (wire) => fn(wire, this.#id),
     );
   }
 
-  /** A read with no error channel: `empty()` when unusable or if the instance traps in it. */
+  /** A read with no error channel: `empty()` when unusable or if the wire fails in it. */
   #read(empty, fn) {
     if (this.#unusable() !== undefined) return empty();
-    return guarded(empty, (wasm) => fn(wasm, this.#id));
+    return guarded(this.#binding, empty, (wire) => fn(wire, this.#id));
   }
 
   /** A call whose JSON text result is returned parsed. */
@@ -838,6 +876,36 @@ export class World {
     return mergeAnswers(sent.encoded, result.results);
   }
 
+  /**
+   * One room tick (`tickWorld`): each batch as `apply(batch, "each")`, then `step()`, then
+   * `exportChanged(exportSince)`, then `queryMany(queries)`, in one crossing where the wire has one
+   * (`world_tick_frame`) and as those calls otherwise. Each part's result is exactly that call's.
+   */
+  #tick(input) {
+    const read = tickInput(input);
+    if (read.refused !== undefined) return read.refused;
+    const budget = this.#budget();
+    const batches = read.batches.map((commands) => encodeBatch(commands, budget));
+    const queries = read.queries === undefined ? undefined : encodeQueries(read.queries, budget);
+    const exporting = read.exportSince !== undefined && isWholeTick(read.exportSince);
+    const ask = {
+      batches: batches.flatMap((batch) => (batch.text === undefined ? [] : [batch.text])),
+      step: read.step,
+      since: exporting ? read.exportSince : NO_TICK,
+      queries: queries?.text,
+    };
+    return this.#result((wire, id) => {
+      const raw = wire.world_tick_frame?.(id, ask) ?? composeTick(wire, id, ask);
+      return tickResult(raw, {
+        batches,
+        queries,
+        step: read.step,
+        exporting,
+        exportAsked: read.exportSince !== undefined,
+      });
+    });
+  }
+
   /** The opaque snapshot (§9.4); empty when the world failed. */
   snapshot() {
     return this.#read(
@@ -887,10 +955,11 @@ export class World {
     if (this.#freed) return;
     this.#freed = true;
     finalizer.unregister(this);
-    if (this.#generation !== instance.generation) return;
+    if (this.#generation !== this.#binding.generation) return;
     guarded(
+      this.#binding,
       () => false,
-      (wasm) => wasm.world_free(this.#id),
+      (wire) => wire.world_free(this.#id),
     );
   }
 }
@@ -919,6 +988,140 @@ function bodyFilterFields(filter) {
   return { kinds, awakeOnly, since };
 }
 
+/** The fields a tick may name (`tickWorld`). */
+const TICK_FIELDS = ["batches", "step", "exportSince", "queries"];
+/** The most command batches one tick carries: a room's tick applies a handful. */
+const TICK_BATCHES_MAX = 64;
+
+/** A tick's fields, each read once, or `{ refused }` for any other shape (also one that throws while read). */
+function tickInput(input) {
+  try {
+    return tickInputFields(input);
+  } catch {
+    return { refused: failure(PhysicsError.BadCommand, Detail.BadTick) };
+  }
+}
+
+function tickInputFields(input) {
+  const refused = { refused: failure(PhysicsError.BadCommand, Detail.BadTick) };
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return refused;
+  if (!Object.keys(input).every((name) => TICK_FIELDS.includes(name))) return refused;
+  const { batches = [], step = false, exportSince, queries } = input;
+  const exportOk = exportSince === undefined || typeof exportSince === "number";
+  if (!Array.isArray(batches) || typeof step !== "boolean" || !exportOk) return refused;
+  if (batches.length > TICK_BATCHES_MAX) return refused;
+  const items = [];
+  for (let index = 0; index < batches.length; index += 1) items.push(batches[index]);
+  return { batches: items, step, exportSince, queries };
+}
+
+/** One batch as `apply(batch, "each")` sends it: `{ text }`, or the failure it gives without crossing. */
+function encodeBatch(commands, budget) {
+  if (batchTooLong(commands)) return failure(PhysicsError.OutOfRange, Detail.BigBatch);
+  return encode(commands, budget);
+}
+
+/** Queries as `queryMany` sends them: `{ encoded, text }`, or `{ refused }` without crossing. */
+function encodeQueries(queries, budget) {
+  const read = queryList(queries);
+  if (read.refused !== undefined) return read;
+  return encodeEach(read.items, budget);
+}
+
+/** A tick as the separate calls it stands for, in their order; the raw texts `tickResult` reads. */
+function composeTick(wire, id, ask) {
+  const results = ask.batches.map((text) => wire.world_apply(id, text, false));
+  let step;
+  if (ask.step) {
+    const start = performance.now();
+    step = wire.world_step(id);
+    if (JSON.parse(step).ok) wire.world_record_step_ms(id, performance.now() - start);
+  }
+  const exporting = ask.since !== NO_TICK;
+  const keys = exporting ? wire.world_export_changed(id, ask.since) : undefined;
+  const data = exporting ? wire.take_changed_data() : undefined;
+  const answers = ask.queries === undefined ? undefined : wire.world_query_many(id, ask.queries);
+  const stats = JSON.parse(wire.world_stats(id));
+  return {
+    results,
+    step,
+    keys,
+    data,
+    answers,
+    tick: wire.world_tick(id),
+    memoryBytes: stats?.memoryBytes ?? 0,
+    cpuNs: 0,
+  };
+}
+
+/** A tick's result from its raw texts: each part exactly what its own call returns. */
+function tickResult(raw, sent) {
+  let next = 0;
+  const results = sent.batches.map((batch) => {
+    if (batch.text === undefined) return batch;
+    const result = JSON.parse(raw.results[next]);
+    next += 1;
+    return result.ok ? result.results : result;
+  });
+  const out = { ok: true, tick: raw.tick, results };
+  if (sent.step) out.step = JSON.parse(raw.step);
+  if (sent.exportAsked) out.exported = sent.exporting ? changedExport(JSON.parse(raw.keys), raw.data) : emptyExport();
+  if (sent.queries !== undefined) out.answers = tickAnswers(raw.answers, sent.queries);
+  out.cpuNs = raw.cpuNs;
+  out.memoryBytes = raw.memoryBytes;
+  return out;
+}
+
+/** An export's keys and data, or the empty export when they do not match. */
+function changedExport(keys, data) {
+  if (data === undefined || data.length !== keys.length * EXPORT_STRIDE) return emptyExport();
+  return { keys, data };
+}
+
+/** `queryMany`'s result from its sent form and the wire's answer text. */
+function tickAnswers(text, sent) {
+  if (sent.refused !== undefined) return sent.refused;
+  const result = JSON.parse(text);
+  if (!result.ok) return result;
+  return mergeAnswers(sent.encoded, result.results);
+}
+
+/**
+ * Internal (`@genex-ai/physics-native`): one room tick on `world` in one crossing: `input` is
+ * `{ batches?, step?, exportSince?, queries? }`, and the result `{ ok: true, tick, results, step?,
+ * exported?, answers?, cpuNs, memoryBytes }` holds exactly what `apply(batch, "each")` per batch,
+ * `step()`, `exportChanged(exportSince)` and `queryMany(queries)` return, in that order; `cpuNs` is
+ * a sidecar's own CPU time for the tick (0 in WASM). A failure value for a malformed tick or an
+ * unusable world.
+ */
+export function tickWorld(world, input) {
+  return tickOf(world, input);
+}
+
+/**
+ * Internal (`@genex-ai/physics-native`): worlds over `wire`, an object with the glue's exports
+ * (and, optionally, `world_tick_frame(id, ask)`), each this file's `World` with its encoding,
+ * budgets and result forms. `detail` names the binding's failures (`{ poisoned, stale }`) and may
+ * hold `onPoison()`, called once anything thrown in a call poisons it (a reply that does not
+ * parse included). A poisoned wire stays so: its worlds answer `internal`, its reads their empty forms.
+ * `undefined` when `wire.build_id()` throws.
+ */
+export function bindWire(wire, detail) {
+  const binding = newBinding(wire, detail);
+  try {
+    binding.buildId = wire.build_id();
+  } catch {
+    return undefined;
+  }
+  binding.ready = true;
+  binding.generation = 1;
+  return {
+    buildId: () => binding.buildId,
+    createWorld: (desc) => createWorld(binding, desc),
+    poisoned: () => binding.poisoned,
+  };
+}
+
 /** Internal, for this package's own tests: a world's id in the instance. */
 export function worldId(world) {
   return ids.get(world);
@@ -931,5 +1134,5 @@ export function instanceState() {
 
 /** Internal, for this package's own tests: runs `fn` on the glue under the trap guard. */
 export function guardedForTests(fallback, fn) {
-  return guarded(fallback, fn);
+  return guarded(instance, fallback, fn);
 }

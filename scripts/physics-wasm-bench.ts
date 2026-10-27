@@ -4,7 +4,7 @@
  * call, through `@genex-ai/physics` as `node scripts/physics-wasm.ts` built it
  * (`.studio-dev/build/physics-wasm/`, or the folder `--package` names).
  *
- *   node scripts/physics-wasm-bench.ts [--package <folder>] [--seconds <measured>]
+ *   node scripts/physics-wasm-bench.ts [--backend wasm|native] [--package <folder>] [--seconds <measured>]
  *
  * It prints, per variant and schedule, how long building the scene took (the static world, 512
  * spawns, 64 joints), the mean, p99 and worst wall time per `step()`, per tick (commands, 64
@@ -17,14 +17,33 @@
  * queries as one `queryMany`, §19.2), `per-body` (every body's state exported and imported back
  * one call each, as bench.rs) and `bulk` (the same corrections as one `exportChanged` and one
  * `importStates`, §19.1, with `queryMany`). The bulk variants end on the same stateHash as their
- * one-call-each twins. A measurement, never a check: it exits 0 whatever the numbers.
+ * one-call-each twins. `room-tick` runs a room's tick as one `runTick` (§17.10's steps 3-11: the
+ * commands, the step, then the 64 queries), one round trip on the native core; it ends on `plain`'s
+ * stateHash, as queries change no state.
+ *
+ * `--backend native` runs the same through `@genex-ai/physics-native` (`node scripts/physics-native.ts`,
+ * `.studio-dev/build/physics-native/` or `--package`): one `genex-physics-room` process per world,
+ * every call a blocking round trip over its FIFOs, so each time includes the IPC. Its rows add
+ * `sidecarCpuMs`, the process's own CPU time per tick (`cpuNs`, mean).
+ *
+ * A measurement, never a check: it exits 0 whatever the numbers.
  */
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type * as Physics from "../native/genex-rust/crates/genex-physics/js/index.d.ts";
+import type * as Native from "../native/genex-rust/crates/genex-physics/js/native.d.ts";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
-const DEFAULT_PACKAGE = path.join(REPO, ".studio-dev/build/physics-wasm");
+/** The package each backend loads by default. */
+const DEFAULT_PACKAGE = {
+  wasm: path.join(REPO, ".studio-dev/build/physics-wasm"),
+  native: path.join(REPO, ".studio-dev/build/physics-native"),
+} as const;
+/** The native core's per-call deadline: generous, a measurement is not a room. */
+const NATIVE_DEADLINE_MS = 5_000;
+const NS_PER_MS = 1e6;
 const BODIES = 512;
 const JOINTS = 64;
 const CCD = 16;
@@ -45,8 +64,8 @@ const SCHEDULES = [
 /** How a tick corrects every body: not at all, one export and import call per body, or in bulk. */
 const Correction = { None: "none", PerBody: "per-body", Bulk: "bulk" } as const;
 type Correction = (typeof Correction)[keyof typeof Correction];
-/** How a tick runs its 64 queries: one call each, or one `queryMany`. */
-const QueryMode = { Single: "single", Many: "many" } as const;
+/** How a tick runs its 64 queries: one call each, one `queryMany`, or in the tick's one `runTick`. */
+const QueryMode = { Single: "single", Many: "many", Tick: "tick" } as const;
 type QueryMode = (typeof QueryMode)[keyof typeof QueryMode];
 
 interface Variant {
@@ -60,9 +79,26 @@ const VARIANTS: readonly Variant[] = [
   { name: "plain-many", correction: Correction.None, queries: QueryMode.Many },
   { name: "per-body", correction: Correction.PerBody, queries: QueryMode.Single },
   { name: "bulk", correction: Correction.Bulk, queries: QueryMode.Many },
+  { name: "room-tick", correction: Correction.None, queries: QueryMode.Tick },
 ];
 
+/** The two cores. */
+const BackendName = { Wasm: "wasm", Native: "native" } as const;
+type BackendName = (typeof BackendName)[keyof typeof BackendName];
+
+/** One tick in one call, as the package's `tickWorld` / `NativeCore.runTick` take it. */
+type TickFn = (world: Physics.World, input: Native.TickInput) => Native.TickOutput | Physics.Failure;
+
+/** What a run drives: the package (or its shape over native cores) and its one-call tick. */
+export interface BenchBackend {
+  name: BackendName;
+  physics: typeof Physics;
+  tick: TickFn;
+  close(): void;
+}
+
 interface Options {
+  backend: BackendName;
   packageDir: string;
   measuredSeconds: number;
 }
@@ -73,7 +109,50 @@ function options(argv: string[]): Options {
     return index < 0 ? undefined : argv[index + 1];
   };
   const measured = Number(value("--seconds") ?? DEFAULT_MEASURED_SECONDS);
-  return { packageDir: value("--package") ?? DEFAULT_PACKAGE, measuredSeconds: measured };
+  const backend = value("--backend") ?? BackendName.Wasm;
+  if (backend !== BackendName.Wasm && backend !== BackendName.Native) throw new Error(`unknown backend ${backend}`);
+  return { backend, packageDir: value("--package") ?? DEFAULT_PACKAGE[backend], measuredSeconds: measured };
+}
+
+/** The WASM package and its internal `tickWorld` (`core.js`). */
+async function wasmBackend(packageDir: string): Promise<BenchBackend> {
+  const physics: typeof Physics = await import(pathToFileURL(path.join(packageDir, "node.js")).href);
+  const core: { tickWorld: TickFn } = await import(pathToFileURL(path.join(packageDir, "core.js")).href);
+  return { name: BackendName.Wasm, physics, tick: core.tickWorld, close: () => {} };
+}
+
+/** `@genex-ai/physics-native` with its own binary: one process per world, each world's core kept for `runTick`. */
+export async function nativeBackend(packageDir: string, deadlineMs = NATIVE_DEADLINE_MS): Promise<BenchBackend> {
+  const native: typeof Native = await import(pathToFileURL(path.join(packageDir, "native.js")).href);
+  const binary = native.packagedBinary();
+  if (binary === undefined) throw new Error(`no ${native.platformKey()} binary in ${packageDir}`);
+  const dir = mkdtempSync(path.join(os.tmpdir(), "gxph-bench-"));
+  const options = { ...binary, dir, deadlineMs };
+  const cores = new WeakMap<Physics.World, Native.NativeCore>();
+  const probe = native.createNativeCore(options);
+  if (!probe.ok) throw new Error(`native core: ${probe.detail}`);
+  const buildId = probe.core.buildId();
+  probe.core.close();
+  const create = (desc: Physics.WorldDesc): Physics.Result<{ world: Physics.World }> => {
+    const started = native.createNativeCore(options);
+    if (!started.ok) return started;
+    const made = started.core.createWorld(desc);
+    if (made.ok) cores.set(made.world, started.core);
+    else started.core.close();
+    return made;
+  };
+  const tick: TickFn = (world, input) => {
+    const core = cores.get(world);
+    if (core === undefined) throw new Error("a world no native core made");
+    return core.runTick(input);
+  };
+  const physics = { buildId: () => buildId, PhysicsError: native.PhysicsError, World: { create } };
+  return {
+    name: BackendName.Native,
+    physics: physics as unknown as typeof Physics,
+    tick,
+    close: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
 
 const pose = (p: Physics.Vec3): Physics.Pose => ({ p, q: IDENTITY });
@@ -125,7 +204,8 @@ function must(result: Physics.Result<object>, what: string): void {
   if (!result.ok) throw new Error(`${what}: ${result.code} ${result.detail}`);
 }
 
-function scene(physics: typeof Physics, dt: number, substeps: number): Physics.World {
+/** The worst-case scene (bench.rs's): 496 heap bodies, 16 CCD balls, 64 joints on a static floor. */
+export function scene(physics: Pick<typeof Physics, "World">, dt: number, substeps: number): Physics.World {
   const made = physics.World.create({
     contract: "1.0",
     dt,
@@ -171,7 +251,7 @@ function scene(physics: typeof Physics, dt: number, substeps: number): Physics.W
 }
 
 /** The tick's commands (bench.rs `commands`). */
-function commands(tick: number, ticksPerSecond: number): Physics.Command[] {
+export function commands(tick: number, ticksPerSecond: number): Physics.Command[] {
   const out: Physics.Command[] = [];
   if (tick % ticksPerSecond === 0) {
     for (let i = 0; i < CCD; i += 1) {
@@ -187,7 +267,7 @@ function commands(tick: number, ticksPerSecond: number): Physics.Command[] {
 }
 
 /** The tick's 64 queries (bench.rs `queries`), in its order, in their JSON form (§13). */
-function queryList(tick: number): Physics.Query[] {
+export function queryList(tick: number): Physics.Query[] {
   const t = (tick % 64) * 0.1;
   const out: Physics.Query[] = [];
   for (let i = 0; i < RAYS; i += 1) {
@@ -252,44 +332,89 @@ function summary(samples: number[]): { mean: number; p99: number; worst: number 
   return { mean, p99, worst: sorted[sorted.length - 1] };
 }
 
-function run(physics: typeof Physics, dt: number, substeps: number, variant: Variant, measuredSeconds: number) {
+/** One `runTick`: the commands, the step and the queries; the sidecar's CPU time in ms. */
+function roomTick(backend: BenchBackend, w: Physics.World, tick: number, ticksPerSecond: number): number {
+  const out = backend.tick(w, { batches: [commands(tick, ticksPerSecond)], step: true, queries: queryList(tick) });
+  if (!out.ok) throw new Error(`tick: ${out.code} ${out.detail}`);
+  const refused = [out.step, ...out.results.flat(), ...(Array.isArray(out.answers) ? out.answers : [out.answers])];
+  const bad = refused.find((result) => result === undefined || !result.ok);
+  if (bad !== undefined) throw new Error(`tick: ${JSON.stringify(bad)}`);
+  return out.cpuNs / NS_PER_MS;
+}
+
+/** The samples one run takes, each per measured tick. */
+interface Samples {
+  steps: number[];
+  ticks: number[];
+  corrected: number[];
+  queried: number[];
+  sidecar: number[];
+}
+
+/** One tick of a call-per-part variant: the commands, corrections, queries and step, each timed. */
+function partsTick(w: Physics.World, variant: Variant, tick: number, ticksPerSecond: number, samples?: Samples): void {
+  const start = performance.now();
+  const applied = w.apply(commands(tick, ticksPerSecond), "each");
+  const refused = Array.isArray(applied) ? applied.find((outcome) => !outcome.ok) : applied;
+  if (refused) throw new Error(`command: ${JSON.stringify(refused)}`);
+  const beforeCorrections = performance.now();
+  correct(w, variant.correction);
+  const beforeQueries = performance.now();
+  query(w, variant.queries, tick);
+  const beforeStep = performance.now();
+  must(w.step(), "step");
+  const end = performance.now();
+  if (samples === undefined) return;
+  samples.steps.push(end - beforeStep);
+  samples.ticks.push(end - start);
+  samples.corrected.push(beforeQueries - beforeCorrections);
+  samples.queried.push(beforeStep - beforeQueries);
+}
+
+/** One tick of the `room-tick` variant, timed whole, with the sidecar's own CPU time. */
+function wholeTick(
+  backend: BenchBackend,
+  w: Physics.World,
+  tick: number,
+  ticksPerSecond: number,
+  samples?: Samples,
+): void {
+  const start = performance.now();
+  const cpuMs = roomTick(backend, w, tick, ticksPerSecond);
+  if (samples === undefined) return;
+  samples.ticks.push(performance.now() - start);
+  samples.sidecar.push(cpuMs);
+}
+
+const summarized = (samples: number[]) => (samples.length > 0 ? summary(samples) : null);
+
+function run(backend: BenchBackend, dt: number, substeps: number, variant: Variant, measuredSeconds: number) {
   const ticksPerSecond = Math.round(1 / dt);
   const built = performance.now();
-  const w = scene(physics, dt, substeps);
+  const w = scene(backend.physics, dt, substeps);
   const buildMs = performance.now() - built;
   const warmup = Math.round(WARMUP_SECONDS / dt);
   const measured = Math.round(measuredSeconds / dt);
-  const [steps, ticks, corrected, queried]: number[][] = [[], [], [], []];
+  const samples: Samples = { steps: [], ticks: [], corrected: [], queried: [], sidecar: [] };
   for (let tick = 0; tick < warmup + measured; tick += 1) {
-    const start = performance.now();
-    const applied = w.apply(commands(tick, ticksPerSecond), "each");
-    const refused = Array.isArray(applied) ? applied.find((outcome) => !outcome.ok) : applied;
-    if (refused) throw new Error(`command: ${JSON.stringify(refused)}`);
-    const beforeCorrections = performance.now();
-    correct(w, variant.correction);
-    const beforeQueries = performance.now();
-    query(w, variant.queries, tick);
-    const beforeStep = performance.now();
-    must(w.step(), "step");
-    const end = performance.now();
-    if (tick < warmup) continue;
-    steps.push(end - beforeStep);
-    ticks.push(end - start);
-    corrected.push(beforeQueries - beforeCorrections);
-    queried.push(beforeStep - beforeQueries);
+    const kept = tick < warmup ? undefined : samples;
+    if (variant.queries === QueryMode.Tick) wholeTick(backend, w, tick, ticksPerSecond, kept);
+    else partsTick(w, variant, tick, ticksPerSecond, kept);
   }
   const perSixtieth = MS_PER_SIXTIETH_TICK / dt;
-  const tick = summary(ticks);
+  const tick = summary(samples.ticks);
   const stats = w.stats();
   const result = {
+    backend: backend.name,
     variant: variant.name,
     schedule: `dt 1/${ticksPerSecond} x${substeps}`,
     measuredTicks: measured,
     buildMs,
-    step: summary(steps),
+    step: summarized(samples.steps),
     tick,
-    corrections: summary(corrected),
-    queries: summary(queried),
+    corrections: summarized(samples.corrected),
+    queries: summarized(samples.queried),
+    sidecarCpuMs: backend.name === BackendName.Native ? summarized(samples.sidecar) : null,
     meter: { meanMs: tick.mean * perSixtieth, worstTickMs: tick.worst * perSixtieth },
     bodies: stats.bodies,
     memoryBytes: stats.memoryBytes,
@@ -300,14 +425,19 @@ function run(physics: typeof Physics, dt: number, substeps: number, variant: Var
 }
 
 async function main(): Promise<void> {
-  const { packageDir, measuredSeconds } = options(process.argv.slice(2));
-  const physics: typeof Physics = await import(pathToFileURL(path.join(packageDir, "node.js")).href);
-  console.log(JSON.stringify({ buildId: physics.buildId(), node: process.version, arch: process.arch }));
-  for (const variant of VARIANTS) {
-    for (const { dt, substeps } of SCHEDULES) {
-      console.log(JSON.stringify(run(physics, dt, substeps, variant, measuredSeconds)));
+  const { backend: name, packageDir, measuredSeconds } = options(process.argv.slice(2));
+  const backend = name === BackendName.Native ? await nativeBackend(packageDir) : await wasmBackend(packageDir);
+  const buildId = backend.physics.buildId();
+  console.log(JSON.stringify({ backend: name, buildId, node: process.version, arch: process.arch }));
+  try {
+    for (const variant of VARIANTS) {
+      for (const { dt, substeps } of SCHEDULES) {
+        console.log(JSON.stringify(run(backend, dt, substeps, variant, measuredSeconds)));
+      }
     }
+  } finally {
+    backend.close();
   }
 }
 
-await main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await main();
