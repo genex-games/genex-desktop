@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it. libcolyseus (colyseus, colyseus-source; MP-1a) is pinned by the GitHub release digest of each Colyseus native-sdk v0.18.10 asset, checked against the downloaded bytes on 2026-10-20; only an export of a `[net]` game installs it (`RUST_NET_COMPONENTS`). Android's libcolyseus is built from the source (colyseus-source, MP-1b, owner decision G12) with zig 0.15.2 (upstream's build.zig refuses any other zig; ziglang.org's download/index.json digest, checked against the downloaded bytes) and the zig_msgpack archive build.zig.zon names (commit 47c15d2, sha256 taken on download, its zig package hash checked with zig fetch), one entry per host. The browser's relay bridge (genex-mp-bridge, MP-5a) is @genex-ai/multiplayer 0.17.0's npm tarball, its sha256 taken on download on 2026-10-21 after its sha512 matched the registry's published integrity; only a web export of a `[net]` game installs it.",
+  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The cross and phone destinations' standard libraries (Windows `x86_64-pc-windows-gnullvm`, Linux `x86_64-unknown-linux-gnu`, iPhone `aarch64-apple-ios` and its Simulator `aarch64-apple-ios-sim`, Android `aarch64-linux-android`) are the same channel's rust-std tarballs, one entry for every host, merged into a lock's base sysroot; cargo-zigbuild 0.23.4 (the Linux build's front end over the store's zig) is pinned by its GitHub release asset digest, which its published .sha256 sidecar states too. The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it. libcolyseus (colyseus, colyseus-source; MP-1a) is pinned by the GitHub release digest of each Colyseus native-sdk v0.18.10 asset, checked against the downloaded bytes on 2026-10-20; only an export of a `[net]` game installs it (`RUST_NET_COMPONENTS`). Android's libcolyseus is built from the source (colyseus-source, MP-1b, owner decision G12) with zig 0.15.2 (upstream's build.zig refuses any other zig; ziglang.org's download/index.json digest, checked against the downloaded bytes) and the zig_msgpack archive build.zig.zon names (commit 47c15d2, sha256 taken on download, its zig package hash checked with zig fetch), one entry per host. The browser's relay bridge (genex-mp-bridge, MP-5a) is @genex-ai/multiplayer 0.17.0's npm tarball, its sha256 taken on download on 2026-10-21 after its sha512 matched the registry's published integrity; only a web export of a `[net]` game installs it.",
   "rust": {
     "version": "1.99.0",
     "date": "2026-10-01",
@@ -185,6 +185,125 @@
           "bytes": 111200018,
           "sha256": "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489",
           "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "rust-std-windows-gnullvm",
+      "version": "1.99.0",
+      "host": null,
+      "target": "windows",
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-x86_64-pc-windows-gnullvm.tar.xz",
+          "bytes": 29008864,
+          "sha256": "dcf636d91ef0639dd31a67169c7d7e27e1f013632490e1af97753b31728e85c0",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "rust-std-linux-gnu",
+      "version": "1.99.0",
+      "host": null,
+      "target": "linux",
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 31598812,
+          "sha256": "3e58dff2d0b72196b5ea4e90536e174d400de88564a52694686b81e091169933",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "rust-std-ios",
+      "version": "1.99.0",
+      "host": null,
+      "target": "ios",
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-apple-ios.tar.xz",
+          "bytes": 29703920,
+          "sha256": "1d566dbc70edab923310f9579aa1ca2563703e154c3217ff049b7021ff080a94",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "rust-std-ios-sim",
+      "version": "1.99.0",
+      "host": null,
+      "target": "ios",
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-apple-ios-sim.tar.xz",
+          "bytes": 30191228,
+          "sha256": "3f8d01bdbcdccfc708e7c93faa658895a6e79729a8cf0b2f747477fe23c43e91",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "rust-std-android",
+      "version": "1.99.0",
+      "host": null,
+      "target": "android",
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-linux-android.tar.xz",
+          "bytes": 30365504,
+          "sha256": "41201595138e99645ac1db279719958ad3ca9d379f33576497f8cc644d885163",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "cargo-zigbuild",
+      "version": "0.23.4",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT",
+      "archives": [
+        {
+          "url": "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-aarch64-apple-darwin.tar.xz",
+          "bytes": 1035284,
+          "sha256": "ca2369ae1a9995542206a6c18dd372acff94dddeb9d7c07e09bfb7594197cea3",
+          "format": "tar.xz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "cargo-zigbuild",
+      "version": "0.23.4",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT",
+      "archives": [
+        {
+          "url": "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-x86_64-unknown-linux-musl.tar.xz",
+          "bytes": 1227160,
+          "sha256": "9e3cf73485edbd45905c8aadbc0fdf869c7ddc3848f0c898229f2680db52e44b",
+          "format": "tar.xz",
           "strip": 1,
           "into": ""
         }

@@ -4,10 +4,10 @@
  * profile's toolchain store holds for the build's lock (llvm-mingw; zig, cargo-zigbuild and the
  * Linux sysroot), chained after the phones' settings.
  *
- * A cross destination registers only once the Rust recipe pins its components: while
- * `STACK_REQUIRED_COMPONENTS` lists none of `RUST_CROSS_COMPONENTS` for it (today, until the owner
- * publishes the SwiftShader bundle and the Rust recipe gains the cross pins), its build stays
- * refused `target-unbuilt`, so nobody is told to install a toolchain the store cannot fetch.
+ * A cross destination registers only while the Rust recipe pins its components (it pins both,
+ * the SwiftShader split and the Linux headers coming from the app's resources): a
+ * `STACK_REQUIRED_COMPONENTS` row missing any of `RUST_CROSS_COMPONENTS` keeps its build refused
+ * `target-unbuilt`, so nobody is told to install a toolchain the store cannot fetch.
  */
 import { realpath } from "node:fs/promises";
 import path from "node:path";

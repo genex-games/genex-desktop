@@ -18,7 +18,6 @@ import {
 import { TargetRefusal } from "../../src/shared/game-targets.ts";
 import {
   type ToolchainDownload,
-  REQUIRED_COMPONENTS,
   STACK_REQUIRED_COMPONENTS,
   ToolchainHost,
   ToolchainId,
@@ -50,18 +49,22 @@ const { RaylibCpp, RustWgpu, ThreeJs } = GameStack;
  * a phone later). Flipped (M6 review): they were `stack-gated`, which stopped being true when M6.4
  * released Rust creation.
  */
-const MOBILE_UNLISTED = {
-  [BuildTarget.Ios]: TargetRefusal.NotADestination,
-  [BuildTarget.Android]: TargetRefusal.NotADestination,
+/** A Rust game's phone boxes on a Mac: both can be ticked, and Studio never runs either itself. */
+const PHONES_BUILT = { [BuildTarget.Ios]: null, [BuildTarget.Android]: null };
+const PHONES_NOT_RUN = {
+  [BuildTarget.Ios]: TargetRefusal.NotRunnableHere,
+  [BuildTarget.Android]: TargetRefusal.NotRunnableHere,
 };
 const PARENT = "/Users/fixture/Projects";
 /** What the browser build of a C++ game needs, and what a Mac build adds. */
 const WEB = [ToolchainId.Cmake, ToolchainId.Ninja, ToolchainId.Emsdk, ToolchainId.RaylibSource];
 const MAC = [...WEB, ToolchainId.AngleMac];
-const ALL = [...new Set(BUILD_TARGETS.flatMap((target) => REQUIRED_COMPONENTS[target]))];
-/** What a Rust · wgpu game's Browser and Mac builds need, in table order. */
+/**
+ * What a Mac's Rust · wgpu setup prepares, in table order. Flipped (cross lanes pinned): Browser
+ * and Mac only before the recipe pinned the Windows and Linux components.
+ */
 const RUST_SETUP: readonly ToolchainId[] = [
-  ...new Set([Web, Mac].flatMap((target) => STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu][target])),
+  ...new Set([Web, Mac, Windows, Linux].flatMap((target) => STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu][target])),
 ];
 
 const EMSDK_BYTES = 356 * 1024 * 1024;
@@ -221,9 +224,9 @@ describe("create game destinations", () => {
       [Mac]: null,
       [Windows]: TargetRefusal.NotRunnableHere,
       [Linux]: TargetRefusal.NotRunnableHere,
-      ...MOBILE_UNLISTED,
+      ...PHONES_NOT_RUN,
     });
-    assert.deepEqual(choice.disabled, { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...MOBILE_UNLISTED });
+    assert.deepEqual(choice.disabled, { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...PHONES_BUILT });
   });
 
   it("on Linux the Windows box is the cross-build; on Windows, which makes no compiled game, both are refused", () => {
@@ -243,13 +246,13 @@ describe("create game destinations", () => {
       [
         StudioPlatform.Mac,
         RustWgpu,
-        { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...MOBILE_UNLISTED },
+        { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...PHONES_BUILT },
         {
           [Web]: null,
           [Mac]: null,
           [Windows]: TargetRefusal.NotRunnableHere,
           [Linux]: TargetRefusal.NotRunnableHere,
-          ...MOBILE_UNLISTED,
+          ...PHONES_NOT_RUN,
         },
       ],
       [
@@ -260,15 +263,30 @@ describe("create game destinations", () => {
           [Mac]: TargetRefusal.MacBuildsNeedAMac,
           [Windows]: TargetRefusal.StackGated,
           [Linux]: TargetRefusal.StackGated,
-          ...MOBILE_UNLISTED,
+          [BuildTarget.Ios]: TargetRefusal.StackGated,
+          [BuildTarget.Android]: TargetRefusal.StackGated,
         },
-        { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...MOBILE_UNLISTED },
+        { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...PHONES_BUILT },
       ],
       [
         StudioPlatform.Linux,
         RustWgpu,
-        { [Web]: null, [Mac]: TargetRefusal.MacBuildsNeedAMac, [Windows]: null, [Linux]: null, ...MOBILE_UNLISTED },
-        { [Web]: null, [Mac]: null, [Windows]: TargetRefusal.NotRunnableHere, [Linux]: null, ...MOBILE_UNLISTED },
+        {
+          [Web]: null,
+          [Mac]: TargetRefusal.MacBuildsNeedAMac,
+          [Windows]: null,
+          [Linux]: null,
+          [BuildTarget.Ios]: TargetRefusal.MacBuildsNeedAMac,
+          [BuildTarget.Android]: null,
+        },
+        {
+          [Web]: null,
+          [Mac]: null,
+          [Windows]: TargetRefusal.NotRunnableHere,
+          [Linux]: null,
+          [BuildTarget.Ios]: null,
+          [BuildTarget.Android]: TargetRefusal.NotRunnableHere,
+        },
       ],
     ];
     for (const [host, chosen, disabled, notes] of rows) {
@@ -278,6 +296,23 @@ describe("create game destinations", () => {
       const ticked = BUILD_TARGETS.filter((target) => disabled[target] === null);
       assert.deepEqual(choice.targets, ticked, `${host}: every box it builds for is sent`);
     }
+  });
+
+  // Flipped (phones at creation): the phone boxes were never a destination this dialog made; a Rust game names them now.
+  it("a Rust game on a Mac names all six destinations at creation, phones included; a browser game never names a phone", () => {
+    const all = [Web, Mac, Windows, Linux, BuildTarget.Ios, BuildTarget.Android];
+    const rust = destinationChoice([...all].reverse(), RustWgpu, StudioPlatform.Mac);
+    assert.deepEqual(rust.targets, all);
+    assert.deepEqual(createGameArgs("Bodycam", rust), ["Bodycam", { stack: RustWgpu, targets: all }]);
+    for (const phone of [BuildTarget.Ios, BuildTarget.Android]) {
+      const browser = destinationChoice([Web, phone], undefined, StudioPlatform.Mac);
+      assert.equal(browser.disabled[phone], TargetRefusal.StackGated, phone);
+      assert.deepEqual(createGameArgs("Pong", browser), ["Pong"], phone);
+      const unknown = destinationChoice([Web, phone], RustWgpu, null);
+      assert.equal(unknown.notes[phone], TargetRefusal.NotRunnableHere, phone);
+    }
+    const linux = destinationChoice(all, RustWgpu, StudioPlatform.Linux);
+    assert.deepEqual(linux.targets, [Web, Windows, Linux, BuildTarget.Android], "an iPhone build needs a Mac");
   });
 
   it("an unknown host disables nothing it cannot judge for a compiled game, and says no desktop build runs here", () => {
@@ -607,13 +642,13 @@ describe("the stacks Create game offers (Rust · wgpu behind main's creation gat
     const choice = destinationChoice([Web, Mac, Windows], RustWgpu, StudioPlatform.Mac);
     assert.equal(choice.stack, RustWgpu);
     assert.deepEqual(choice.targets, [Web, Mac, Windows]);
-    assert.deepEqual(choice.disabled, { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...MOBILE_UNLISTED });
+    assert.deepEqual(choice.disabled, { [Web]: null, [Mac]: null, [Windows]: null, [Linux]: null, ...PHONES_BUILT });
     assert.deepEqual(choice.notes, {
       [Web]: null,
       [Mac]: null,
       [Windows]: TargetRefusal.NotRunnableHere,
       [Linux]: TargetRefusal.NotRunnableHere,
-      ...MOBILE_UNLISTED,
+      ...PHONES_NOT_RUN,
     });
     assert.deepEqual(createGameArgs("Pond", choice), ["Pond", { stack: RustWgpu, targets: [Web, Mac, Windows] }]);
     assert.deepEqual(createGameArgs("Pond", destinationChoice([Web], RustWgpu, StudioPlatform.Mac)), [
@@ -630,7 +665,17 @@ describe("the stacks Create game offers (Rust · wgpu behind main's creation gat
     const offer = sheetOffer(cppInstalled, rust, NOTHING_OFFERED);
     assert.equal(offer?.stack, RustWgpu);
     assert.deepEqual(offer?.components, RUST_SETUP);
-    const cpp: readonly ToolchainId[] = ALL;
+    // Flipped (cross lanes pinned): zig and the Linux headers serve both stacks' Linux builds now,
+    // so the row names the components only a C++ game builds with.
+    const cpp: readonly ToolchainId[] = [
+      ToolchainId.Cmake,
+      ToolchainId.Ninja,
+      ToolchainId.Emsdk,
+      ToolchainId.RaylibSource,
+      ToolchainId.AngleMac,
+      ToolchainId.AngleWindows,
+      ToolchainId.AngleLinux,
+    ];
     assert.ok(!offer?.components.some((id) => cpp.includes(id)), "no C++ component is offered for a Rust game");
     assert.equal(sheetOffer(cppInstalled, rust, offer ?? NOTHING_OFFERED), null, "offered once per dialog");
   });

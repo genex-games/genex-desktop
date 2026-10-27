@@ -172,9 +172,10 @@ SwiftShader split (the Vulkan loader, SwiftShader and its ICD manifest a Rust Li
 extracted resources and fail on any byte that is not the pinned one. A new ANGLE build re-pins
 both: `angle.yml` prints the split's `swiftshader` pin and uploads it as
 `swiftshader-linux-x64-<commit12>`. The owner publishes the split and the sysroot archive as
-public release assets; until then the Rust recipe pins no Windows or Linux cross component, so a
-Rust game's Windows and Linux builds stay refused `target-unbuilt` and the export run refuses them
-`lane-missing`. Rust Windows and Linux exports say they were never run on a real GPU.
+public release assets; until then the store installs both from the app's resources (a dev store
+from its local artifacts). The Rust recipe pins the Windows and Linux cross components (their
+standard libraries, cargo-zigbuild; llvm-mingw and zig beside raylib's), so a Rust game's Windows
+and Linux builds run on a Mac. Rust Windows and Linux exports say they were never run on a real GPU.
 
 A game exported as a Mac app is signed ad hoc on the person's Mac. Signing exported games with a
 Developer ID, notarizing and stapling them stays with the owner: the argv exists and runs only for

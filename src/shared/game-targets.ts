@@ -46,8 +46,8 @@ const WEB_ONLY_HOST: HostAbility = Object.freeze({
  * is {@link HOST_MATRIX}. Rust · wgpu's lane builds Browser, Mac, Windows and Linux on a Mac and
  * Browser, Windows and Linux on the Linux Studio; it runs the browser everywhere and the Mac's own
  * build on a Mac (no Rust Linux run is prepared or boxed yet). A cross destination's builder
- * registers only once the Rust recipe pins its components: until then the lane refuses it
- * `target-unbuilt` and setup offers it nowhere (`setupTargets`, `rustCrossPinned`). The phones
+ * registers only while the Rust recipe pins its components (it pins both): without them the lane
+ * refuses it `target-unbuilt` and setup offers it nowhere (`setupTargets`, `rustCrossPinned`). The phones
  * are built (and packaged by their exports) on a Mac, Android on the Linux Studio too, and never
  * run by Studio: a Simulator, emulator or phone launch is the person's (containment stage 1). A
  * Windows host stays empty until its sandbox can grant a write to one build (the signed launcher).
