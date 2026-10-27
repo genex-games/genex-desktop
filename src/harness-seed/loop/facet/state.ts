@@ -232,6 +232,8 @@ export interface RoundCounters {
   integrationNote: string | null;
   lastSpike: SpikeOutcome | null;
   recipes: Recipe[];
+  /** The game's craft block for BRIEF.md (loop/game-craft.ts), chosen once per loop; undefined until then. */
+  craft?: string;
   currentMove: AnyRecord | null;
   currentFix: AnyRecord | null;
   fixedForRecord: boolean | null;

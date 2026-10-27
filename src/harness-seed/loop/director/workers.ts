@@ -52,6 +52,7 @@ import {
   workerWindows,
 } from "./budgets.ts";
 import { singleWorkerBrief } from "./briefs.ts";
+import { builderCraft, planCraft } from "./craft.ts";
 import { iterationDigest, loopNote, workerDigest } from "./digests.ts";
 import { conflictMergeOf, markersLeft, mergeFirst } from "./conflict-worker.ts";
 import {
@@ -609,7 +610,10 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   // with its vision beside it as docs/VISION.md.
   const contracted = await contractOnPlan(loopRun);
   const answer = await planAnswer(loopRun, plan, { first, acceptanceKept, args });
-  return contracted ? `${answer} ${contracted}` : answer;
+  // The kind the plan declared brings its own recipes (director/craft.ts): only those not handed yet.
+  const craft = await planCraft(loopRun, plan).catch(() => "");
+  const said = contracted ? `${answer} ${contracted}` : answer;
+  return craft ? `${said}\n\n${craft}` : said;
 }
 
 /** What `plan` answers once the plan is kept: the card on the user's screen, and what to do next. */
@@ -1972,6 +1976,8 @@ async function runSingleWorker(loopRun: LoopRun, worker: Worker): Promise<void> 
   const { gameFacts, noteWorkerLimit, ownShape, projectDir, run, shape } = loopRun;
   // A conflict worker's merge is opened first; one that went through, or failed, needs no session.
   if (await mergeFirst(loopRun, worker)) return;
+  // The craft for this part, written into its worktree before its session reads anything.
+  const craft = await builderCraft(loopRun, worker.worktree, [worker.title, worker.brief]).catch(() => "");
   // Genex's identity opens the brief: the game's folder and what the run found it holds.
   const brief = singleWorkerBrief({
     run,
@@ -1981,6 +1987,7 @@ async function runSingleWorker(loopRun: LoopRun, worker: Worker): Promise<void> 
     setup: worker.setup,
     facts: gameFacts ?? null,
     gameFolder: projectDir || null,
+    craft,
   });
   const delegation = await runSingleSession(loopRun, worker, brief);
   worker.summary = String(delegation.summary ?? "").slice(0, SUMMARY_CHARS);

@@ -1,0 +1,55 @@
+{
+  "id": "rust.materials-weathered-masonry",
+  "runtime": "rust-wgpu",
+  "title": "Rust near walls read as weathered plaster or stone: textured sets plus grime decals",
+  "tags": [
+    "masonry",
+    "wall",
+    "walls",
+    "stone",
+    "plaster",
+    "concrete",
+    "weathered",
+    "grime",
+    "wear",
+    "decay",
+    "abandoned",
+    "texture",
+    "decal",
+    "material",
+    "paint",
+    "primitive"
+  ],
+  "checkClass": "materials",
+  "kind": "craft",
+  "pack": "materials",
+  "note": "Near walls are textured sets with damp bands, streaks and stains laid as frame.decal, so no two square metres look the same.",
+  "intent": "At eye height a wall is judged on its surface: one base texture repeated reads as wallpaper, and noise alone is noise-as-texture. Start from a textured set (rust.materials-buildings-not-flat), then lay the wear the set cannot carry with frame.decal: a damp band along the floor (Decal::on_wall, about 0.7 m tall, along the wall), streaks under every sill and pipe, peeling patches and stains where water or hands would reach, each with its own normal texture and roughness. Vary them from the reset rng and place them where the story puts them, not on a grid. Decals blend with the wall, cost no geometry and never float off it the way thin boxes do. Check from the player's eye at high and low.",
+  "sketch": "use genex::prelude::*;\nuse genex::render::Decal;\n\n/// Wear the wall's own texture cannot carry: a damp band at the floor, streaks under a sill, a stain.\nfn draw_grime(frame: &mut Frame, wall: &WallRun) {\n    frame.tag(\"grime\");\n    let base = wall.mid + vec3(0.0, 0.35 - wall.height * 0.5, 0.0);\n    frame.decal(&Decal::on_wall(base, wall.facing, wall.length, 0.7).with_base_texture(\"decals/damp-band.png\").with_opacity(0.8));\n    for sill in &wall.sills {\n        frame.decal(\n            &Decal::on_wall(*sill - vec3(0.0, 0.6, 0.0), wall.facing, 0.9, 1.2)\n                .with_base_texture(\"decals/streaks.png\")\n                .with_normal_texture(\"decals/streaks-normal.png\", 0.6)\n                .with_roughness(0.85),\n        );\n    }\n}\n",
+  "check": {
+    "id": "masonry-reads-weathered",
+    "kind": "vision",
+    "camera": "eye:spawn",
+    "ask": "Do the nearest walls read as weathered stone or plaster with visible surface texture (courses, grime, stains, wear), rather than flat painted colour?",
+    "weight": "normal",
+    "note": "The material read the taste judge kept naming as [primitive] / [noise-as-texture]."
+  },
+  "port": "The level facet owns the walls and their sets; a dressing facet owns the decals and tags them grime.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/lighting.md",
+      "note": "Decal::on_wall and on_ground with base, normal and ORM textures, roughness, opacity and flatten."
+    },
+    {
+      "source": "library/recipes/materials.weathered-masonry.json",
+      "note": "The three.js recipe materials.weathered-masonry, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

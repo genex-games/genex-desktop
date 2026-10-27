@@ -17765,3 +17765,149 @@ describe("a resumed run whose start waits on its game's build (HX)", () => {
     assert.equal(leadLineOf(RUN_ID), undefined, "the line is shut with the run");
   });
 });
+
+describe("a first-person Rust game's craft, handed before anything fails (bodycam B4)", () => {
+  /** The friend's brief, as start_autopilot took it (goal and direction), cut to what names the subject. */
+  const BODYCAM = {
+    goal: "Make the photorealistic bodycam fps shooter in post-soviet environment in our RUST engine.",
+    direction:
+      "A photorealistic bodycam view through a wide fisheye lens inside an abandoned Soviet building. Tall peeling-paint windows with sunburst grilles, hard sun patches on a dusty tiled floor, crumbling plaster and concrete, a long dim corridor with a warm-lit room at the end, a dark gloved hand and pistol low in frame.",
+  };
+  /** The three.js recipes whose craft a Rust game had no port of. */
+  const PORTED = [
+    "fps.hands-in-frame",
+    "fps.weapon-from-parts",
+    "fps.muzzle-under-the-barrel",
+    "fps.sight-on-centre-in-ads",
+    "fps.crosshair-off-in-ads",
+    "fps.breath-not-a-blob",
+    "materials.buildings-not-flat",
+    "materials.mapped-identity-tags",
+    "materials.roughness-and-bump",
+    "materials.weathered-masonry",
+    "facade.recessed-windows-seams",
+    "arena.no-haze-planes",
+  ];
+  const SEED = path.join(process.cwd(), "src", "harness-seed");
+  /** A three.js recipe's Rust port: `fps.hands-in-frame` is `rust.fps-hands-in-frame` (no id holds another's). */
+  const rustPortOf = (id: string) => `rust.${id.replace(".", "-")}`;
+
+  it("B4a. a first-person Rust game's judges named [no-hands] in every verdict and no Rust recipe answered it: each fps, materials and facade recipe and arena.no-haze-planes has a Rust port, and the defect retrieves the hands one", async () => {
+    const { loadRecipes, recipesForChecks, checksFromDefects, CRAFT_ADOPT_SCORE } = await import(
+      "../../src/harness-seed/loop/library.ts"
+    );
+    const recipes = await loadRecipes(SEED);
+    const rust = new Map(recipes.filter((r) => r.runtime === GameStack.RustWgpu).map((r) => [r.id, r]));
+    for (const id of PORTED) {
+      const port = rust.get(rustPortOf(id));
+      assert.ok(port, `${rustPortOf(id)} is in the seed`);
+      const three = recipes.find((r) => r.id === id);
+      assert.equal(three?.runtime, GameStack.ThreeJs, `${id} stays a three.js recipe for three.js games`);
+      assert.deepEqual(port.kinds, three?.kinds, `${rustPortOf(id)} is for the same kinds of game`);
+      assert.ok(
+        port.check?.kind !== "scene",
+        `${rustPortOf(id)} measures what a Rust game can report (no scene graph)`,
+      );
+      assert.doesNotMatch(
+        `${port.intent} ${port.port}`,
+        /parent(ed)? to the camera|THREE\.|materials\.js|userData/,
+        id,
+      );
+    }
+    const defects = checksFromDefects(["[no-hands] the pistol floats on a tan block; no hands hold it"]);
+    const hits = recipesForChecks(recipes, defects, 3, {
+      kind: "first-person",
+      stack: GameStack.RustWgpu,
+      minScore: CRAFT_ADOPT_SCORE,
+    });
+    assert.ok(
+      hits.some((hit) => hit.recipe.id === "rust.fps-hands-in-frame"),
+      `the defect retrieves the Rust hands recipe: ${hits.map((h) => h.recipe.id)}`,
+    );
+  });
+
+  it("B4b. the director planned a first-person Rust game and was never shown a recipe: the plan's answer names the kind's craft and writes it whole beside the integration", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const integration = await tmpDir("craft-integration-");
+    const loopRun = fakeLoopRun(fakeHost(), {
+      ctx: {
+        threadId: "t1",
+        cancelled: false,
+        workspace: SEED,
+        setStatus: () => {},
+        notify: () => {},
+        call: async () => null,
+      },
+      integrationWorktree: integration,
+      run: {
+        runId: "run_bc",
+        project: "body-cam",
+        goal: BODYCAM.goal,
+        reference: { name: BODYCAM.direction, shots: [] },
+        stack: GameStack.RustWgpu,
+        engine: "claude",
+        budgets: { wallClockMs: HOUR_MS },
+      },
+    });
+    const answer = await loopRun.setPlan({
+      summary: "A playable bodycam shooter in an abandoned school wing.",
+      kind: "first-person",
+      workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
+    });
+    assert.match(answer, /CRAFT FOR A FIRST-PERSON GAME/);
+    for (const id of ["rust.fps-hands-in-frame", "rust.fps-weapon-from-parts"]) assert.match(answer, new RegExp(id));
+    assert.doesNotMatch(answer, /\n- fps\.hands-in-frame/, "never the three.js recipe");
+    const file = await readFile(path.join(integration, ".studio", "CRAFT.md"), "utf8");
+    assert.match(file, /frame\.tag\("hands"\)/, "the whole recipe, its Rust sketch included");
+    // A second plan of the same kind repeats nothing the lead was already handed.
+    const again = await loopRun.setPlan({
+      summary: "A playable bodycam shooter in an abandoned school wing.",
+      kind: "first-person",
+      workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
+    });
+    assert.doesNotMatch(again, /CRAFT FOR/);
+  });
+
+  it("B4c. the director's opening brief and each builder's are handed the game's craft from the brief's words; a three.js game is handed no Rust recipe", async () => {
+    const { openingCraft, builderCraft } = await import("../../src/harness-seed/loop/director/craft.ts");
+    const { craftForGame } = await import("../../src/harness-seed/loop/game-craft.ts");
+    const { loadRecipes } = await import("../../src/harness-seed/loop/library.ts");
+    const integration = await tmpDir("craft-open-");
+    const worktree = await tmpDir("craft-builder-");
+    const run = {
+      runId: "run_bc",
+      project: "body-cam",
+      goal: BODYCAM.goal,
+      reference: { name: BODYCAM.direction },
+      stack: GameStack.RustWgpu,
+    };
+    const loopRun = { ctx: { workspace: SEED }, run, shape: null, state: {}, integrationWorktree: integration };
+    const opening = await openingCraft(loopRun as never);
+    for (const id of [
+      "rust.fps-hands-in-frame",
+      "rust.materials-buildings-not-flat",
+      "rust.facade-recessed-windows-seams",
+    ])
+      assert.match(opening, new RegExp(id), `the lead's brief names ${id}`);
+    assert.match(opening, new RegExp(path.join(integration, ".studio", "CRAFT.md")));
+    const builder = await builderCraft(loopRun as never, worktree, [
+      "Surfaces and light for level.rs: plaster walls, tiled floor, windows",
+    ]);
+    assert.match(builder, /rust\.materials-weathered-masonry/);
+    assert.match(builder, /Whole, with code: \.studio\/CRAFT\.md/);
+    assert.match(await readFile(path.join(worktree, ".studio", "CRAFT.md"), "utf8"), /Decal::on_wall/);
+    const three = craftForGame(await loadRecipes(SEED), {
+      kind: "first-person",
+      stack: GameStack.ThreeJs,
+      texts: [BODYCAM.goal, BODYCAM.direction],
+    });
+    assert.ok(
+      three.some((pick) => pick.recipe.id === "fps.hands-in-frame"),
+      "a three.js game gets its own",
+    );
+    assert.ok(
+      three.every((pick) => pick.recipe.runtime === GameStack.ThreeJs),
+      "and never a Rust one",
+    );
+  });
+});

@@ -1,0 +1,52 @@
+{
+  "id": "rust.fps-hands-in-frame",
+  "runtime": "rust-wgpu",
+  "title": "First-person in Rust: hands hold the weapon, drawn from the camera every frame",
+  "tags": [
+    "hands",
+    "arms",
+    "firstperson",
+    "viewmodel",
+    "weapon",
+    "float",
+    "grip",
+    "fps",
+    "camera",
+    "gloves",
+    "bodycam",
+    "pistol",
+    "rifle"
+  ],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "First-person: draw forearms and hands holding the gun under frame.tag(\"hands\") from the camera in on_draw; a gun without hands floats.",
+  "intent": "A weapon alone in the lower right of the frame is the classic unfinished first-person view, and judges name it first ([no-hands]). The genex facade has no scene graph and no parenting: the viewmodel is drawn in on_draw from the &Camera the hook is given, as a camera-space offset turned into a world Transform (the camera's basis times the offset), every frame. Draw a pair of gloved forearms and hands holding the gun — rear hand on the grip, front hand cupping it or on the fore-end — under frame.tag(\"hands\") and the gun under frame.tag(\"weapon\"), each under its own frame.id so TAA does not smear them. Build the arms as one modelled GLB (Local Blender: two forearms with sleeves and gloved hands posed on a grip, ~2-6k triangles, real scale) or, as a first pass, from several cubes and spheres per hand; never a single slab. Keep the whole viewmodel within about 0.6 m of the camera and low in the frame (grip around 0.17 right, 0.19 down, 0.45 forward) so it does not reach into walls. Lag it behind the turn (ease a sway offset toward -ctx.look in on_update), bob it from the walking speed the world keeps (never the clock), and kick it back and up on a shot from a decaying world value. Light it like the scene: the viewmodel is lit by the same sun, probes and lights, so a dark interior gives dark hands; give the GLB's gloves a lighter albedo than black and check a capture at low and high.",
+  "sketch": "use genex::prelude::*;\n\n/// Where the grip sits in camera space: right, up, forward, in metres.\nconst GRIP: Vec3 = Vec3::new(0.17, -0.19, 0.45);\n\n/// Read-only after reset: the viewmodel's two models. Motion lives in the world (sway, bob, kick).\n#[derive(Default)]\npub struct Viewmodel { arms: Model, gun: Model }\n\npub fn wire(game: &mut Game<super::World>) {\n    game.facet_state::<Viewmodel>();\n    game.on_reset(|sim, _seed, _rng, gfx| {\n        let vm = sim.facets.get_mut::<Viewmodel>();\n        vm.arms = gfx.assets().model(\"viewmodel/arms.glb\"); // gloved forearms and hands, posed on the grip\n        vm.gun = gfx.assets().model(\"viewmodel/pistol.glb\");\n    });\n    game.on_update(|sim, ctx| {\n        let w = &mut sim.world;\n        // Lag: the gun trails the turn and settles back, so it hangs off a body, not the lens.\n        w.sway = w.sway.lerp(ctx.look * -0.0005, 0.25);\n        // Bob from the walking speed, never from the clock: standing still holds it still.\n        w.bob_phase += w.walk_speed * ctx.dt * 1.7;\n        w.kick = (w.kick - ctx.dt * 6.0).max(0.0);\n    });\n    // Drawn from the camera every frame: there is no parenting, the pose is camera space.\n    game.on_draw(|sim, frame, camera| {\n        let w = &sim.world;\n        let vm = sim.facets.get::<Viewmodel>();\n        let bob = vec3(genex::math::sin(w.bob_phase) * 0.008, -genex::math::sin(w.bob_phase * 2.0).abs() * 0.006, 0.0);\n        let local = GRIP + vec3(w.sway.x, w.sway.y, -w.kick * 0.06) + bob;\n        // The player's own yaw and pitch, the ones its camera hook looks along.\n        let pose = viewmodel_pose(camera.position, w.yaw, w.pitch + w.kick * 0.25, local);\n        frame.tag(\"hands\").id(1u64).model(&vm.arms, pose).end_id();\n        frame.tag(\"weapon\").id(2u64).model(&vm.gun, pose).end_id();\n    });\n}\n\n/// A camera-space offset (x right, y up, z forward) as a world transform, turned by the view's yaw and pitch.\nfn viewmodel_pose(eye: Vec3, yaw: f32, pitch: f32, local: Vec3) -> Transform {\n    let turn = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);\n    let at = eye + turn * vec3(local.x, local.y, -local.z); // at yaw 0 the view looks down -Z, +X to its right\n    Transform::from_translation(at).with_rotation(turn)\n}\n",
+  "check": {
+    "id": "hands-present",
+    "kind": "probe",
+    "expr": "__render.tags.hands.drawCalls >= 1 && __render.tags.weapon.drawCalls >= 1",
+    "weight": "identity",
+    "note": "First-person: the last frame drew something under frame.tag(\"hands\") and the gun under frame.tag(\"weapon\") — a gun without hands floats."
+  },
+  "port": "One facet owns the viewmodel (arms and gun) and draws it from the camera in on_draw; the player facet keeps the sway, bob and kick in the world for it to read, and nothing else draws a second gun.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/drawing.md",
+      "note": "frame.tag, frame.id, frame.model and Transform; the draw hook gets the &Camera."
+    },
+    {
+      "source": "library/recipes/fps.hands-in-frame.json",
+      "note": "The three.js recipe fps.hands-in-frame, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}
