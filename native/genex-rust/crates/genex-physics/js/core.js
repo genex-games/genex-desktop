@@ -940,8 +940,8 @@ export class World {
     });
   }
 
-  /** The last export's keys, kept to reuse while a tick exports the same ones (`readTick`). */
-  #keys = { bytes: new Uint8Array(0), keys: [] };
+  /** The last export's keys and their bytes, kept to reuse its strings (`readKeys`). */
+  #keys = { bytes: new Uint8Array(0), starts: new Int32Array(0), lengths: new Int32Array(0), keys: [] };
   /** The opaque snapshot (§9.4); empty when the world failed. */
   snapshot() {
     return this.#read(
@@ -1585,8 +1585,8 @@ function textOf(bytes, start, length) {
 
 /**
  * A tick's result from its reply (tick.rs): each part exactly what its own call returns, every
- * object with its JSON text's members in order. `keys` keeps the last export's keys: an export of
- * the same keys (its bytes equal) reuses their strings in a new array. `cpuNs` is the wire's own
+ * object with its JSON text's members in order. `keys` keeps the last export's keys, whose strings an
+ * export of the same keys reuses (`readKeys`). `cpuNs` is the wire's own
  * CPU for the tick (a sidecar's; 0 in WASM).
  */
 function readTick(bytes, sent, keys, cpuNs) {
@@ -1655,25 +1655,9 @@ function readEvent(reply) {
   return out;
 }
 
-/** `exportChanged`'s keys and data; keys equal to the last export's reuse its strings. */
+/** `exportChanged`'s keys and data; a key the last export also held reuses its string (`readKeys`). */
 function readExport(reply, last) {
-  const start = reply.at;
-  const count = reply.u32();
-  const keysAt = reply.at;
-  for (let index = 0; index < count; index += 1) reply.need(reply.u32());
-  const keyBytes = reply.bytes.subarray(start, reply.at);
-  reply.at = keysAt;
-  let keys;
-  if (sameBytes(keyBytes, last.bytes)) {
-    reply.at = start + keyBytes.length;
-    keys = last.keys.slice();
-  } else {
-    keys = new Array(count);
-    for (let index = 0; index < count; index += 1) keys[index] = reply.str();
-    // A copy: the reply may be a view of a buffer the wire reuses (a Node Buffer, whose slice() is a view).
-    last.bytes = new Uint8Array(keyBytes);
-    last.keys = keys.slice();
-  }
+  const keys = readKeys(reply, last);
   const length = reply.u32();
   const at = reply.need(length * Float32Array.BYTES_PER_ELEMENT);
   const data = new Float32Array(length);
@@ -1682,12 +1666,54 @@ function readExport(reply, last) {
   return { keys, data };
 }
 
-function sameBytes(one, other) {
-  if (one.length !== other.length) return false;
-  for (let index = 0; index < one.length; index += 1) {
-    if (one[index] !== other[index]) return false;
+/**
+ * An export's keys. Both exports are in key order (byte order), so the last export's keys are
+ * walked beside these: a key whose bytes equal the last's at the walk's place reuses that string,
+ * any other is decoded. Reuse is only ever on equal bytes, so the keys are right in any order; the
+ * order only makes the reuse likely. `last` then holds these keys and a copy of their bytes.
+ */
+function readKeys(reply, last) {
+  const count = reply.u32();
+  const regionAt = reply.at;
+  const keys = new Array(count);
+  const starts = new Int32Array(count);
+  const lengths = new Int32Array(count);
+  let next = 0;
+  for (let index = 0; index < count; index += 1) {
+    const length = reply.u32();
+    const at = reply.need(length);
+    starts[index] = at - regionAt;
+    lengths[index] = length;
+    while (next < last.keys.length) {
+      const order = compareBytes(reply.bytes, at, length, last.bytes, last.starts[next], last.lengths[next]);
+      if (order > 0) {
+        next += 1;
+        continue;
+      }
+      if (order === 0) {
+        keys[index] = last.keys[next];
+        next += 1;
+      }
+      break;
+    }
+    keys[index] ??= textOf(reply.bytes, at, length);
   }
-  return true;
+  // A copy: the reply may be a view of a buffer the wire reuses (a Node Buffer, whose slice() is a view).
+  last.bytes = new Uint8Array(reply.bytes.subarray(regionAt, reply.at));
+  last.starts = starts;
+  last.lengths = lengths;
+  last.keys = keys.slice();
+  return keys;
+}
+
+/** Byte order of `one[oneAt, +oneLength)` against `other[otherAt, +otherLength)`: negative, 0 or positive. */
+function compareBytes(one, oneAt, oneLength, other, otherAt, otherLength) {
+  const shared = Math.min(oneLength, otherLength);
+  for (let index = 0; index < shared; index += 1) {
+    const difference = one[oneAt + index] - other[otherAt + index];
+    if (difference !== 0) return difference;
+  }
+  return oneLength - otherLength;
 }
 
 /** `queryMany`'s raw result: its failure, or one answer per crossed query; `undefined` for none. */

@@ -352,14 +352,34 @@ function writeAll(fd, buffer) {
   while (written < buffer.length) written += writeSync(fd, buffer, written, buffer.length - written);
 }
 
-/** Reads exactly `length` bytes into `buffer` from 0; EOF first is the process gone. */
-function readExactly(fd, buffer, length) {
-  let got = 0;
-  while (got < length) {
-    const read = readSync(fd, buffer, got, length - got, null);
+/** Reads into `buffer` from `got` until it holds `length` bytes, taking whatever each read gives up to its end; EOF first is the process gone. */
+function readUntil(fd, buffer, got, length) {
+  let have = got;
+  while (have < length) {
+    const read = readSync(fd, buffer, have, buffer.length - have, null);
     if (read === 0) throw new SidecarGone("the physics process closed its end");
-    got += read;
+    have += read;
   }
+  return have;
+}
+
+/**
+ * Reads one reply into `proc.buffer` (its length prefix at 0) and returns its length. Each read takes
+ * all the FIFO holds, so a reply that has arrived is one read; the process never writes before it is
+ * asked, so a read cannot take a later reply's bytes, and bytes past this reply are a fault.
+ */
+function readReply(proc) {
+  const got = readUntil(proc.output, proc.buffer, 0, LENGTH_BYTES);
+  const length = proc.buffer.readUInt32LE(0);
+  if (length < REPLY_HEAD_BYTES || length > MAX_FRAME_BYTES) throw new SidecarGone("a reply of a bad length");
+  const total = LENGTH_BYTES + length;
+  if (proc.buffer.length < total) {
+    const grown = Buffer.allocUnsafe(total);
+    proc.buffer.copy(grown, 0, 0, got);
+    proc.buffer = grown;
+  }
+  if (readUntil(proc.output, proc.buffer, got, total) !== total) throw new SidecarGone("a reply ran past its length");
+  return length;
 }
 
 /** Ends a core's process and removes its folder; idempotent. */
@@ -405,17 +425,14 @@ function roundTrip(proc, frame, kind, deadlineMs = proc.deadlineMs) {
   arm(proc.pid, deadlineMs, undefined);
   try {
     writeAll(proc.input, frame);
-    readExactly(proc.output, proc.head, LENGTH_BYTES);
-    const length = proc.head.readUInt32LE(0);
-    if (length < REPLY_HEAD_BYTES || length > MAX_FRAME_BYTES) throw new SidecarGone("a reply of a bad length");
-    if (proc.buffer.length < length) proc.buffer = Buffer.allocUnsafe(length);
-    readExactly(proc.output, proc.buffer, length);
-    if (proc.buffer[0] !== (kind | REPLY_BIT)) throw new SidecarGone("a reply of the wrong kind");
-    const cpuNs = Number(proc.buffer.readBigUInt64LE(1));
+    const length = readReply(proc);
+    const reply = proc.buffer.subarray(LENGTH_BYTES, LENGTH_BYTES + length);
+    if (reply[0] !== (kind | REPLY_BIT)) throw new SidecarGone("a reply of the wrong kind");
+    const cpuNs = Number(reply.readBigUInt64LE(1));
     proc.cpuNs += cpuNs;
     proc.lastCpuNs = cpuNs;
     proc.frames += 1;
-    return new ReplyReader(proc.buffer.subarray(0, length), REPLY_HEAD_BYTES);
+    return new ReplyReader(reply, REPLY_HEAD_BYTES);
   } catch (error) {
     end(proc);
     throw error instanceof SidecarGone ? error : new SidecarGone(String(error?.code ?? error));
@@ -601,7 +618,6 @@ function startProcess(options) {
     lastCpuNs: 0,
     frames: 0,
     changed: new Float32Array(0),
-    head: Buffer.allocUnsafe(LENGTH_BYTES),
     buffer: Buffer.allocUnsafe(64 * 1024),
     frame: Buffer.allocUnsafe(FRAME_BUFFER_BYTES),
   };

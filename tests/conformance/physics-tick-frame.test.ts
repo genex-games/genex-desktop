@@ -337,6 +337,51 @@ const inputRows: InputRow[] = [
   { name: "an export since -1 with a step", input: () => ({ step: true, exportSince: -1 }) },
 ];
 
+/** A pair of worlds holding one kinematic sphere per key, in a row along x. */
+function kinematicPair(backend: Backend, keys: readonly string[]): [Physics.World, Physics.World] {
+  const movers = (world: Physics.World) => {
+    const spawns = keys.map((key, i) => ({
+      spawn: {
+        key,
+        type: "kinematic",
+        pose: { p: [i * 2, 0, 1], q: IDENTITY },
+        colliders: [{ key: "c", shape: { kind: "sphere", radius: 0.5 } }],
+      },
+    })) as Physics.Command[];
+    assert.ok((world.apply(spawns, "each") as Physics.CommandResult[]).every((result) => result.ok));
+    return world;
+  };
+  return [movers(backend.create(Z_UP)), movers(backend.create(Z_UP))];
+}
+
+/** One body moved a tick, each key as long as the others: every export holds other keys of one length. */
+function sameLengthExports(backend: Backend): void {
+  const keys = Array.from({ length: 16 }, (_, i) => `k.${String(i).padStart(2, "0")}`);
+  const pair = kinematicPair(backend, keys);
+  for (let tick = 0; tick < 64; tick += 1) {
+    const key = keys[tick % 16] as string;
+    const pose = { p: [(tick % 16) * 2, tick * 0.01, 1], q: IDENTITY } as Physics.Pose;
+    const input = () => ({ batches: [[{ setNextKinematicPose: { key, pose } }]], step: true, exportSince: tick });
+    const out = twinTick(backend, pair, input, `tick ${tick}`);
+    assert.ok(out.ok && out.exported?.keys.includes(key), `tick ${tick}: the body moved is exported`);
+  }
+}
+
+/** Subsets of keys that are prefixes of each other moved a tick: an export reuses no key it does not hold. */
+function prefixExports(backend: Backend): void {
+  const keys = ["k", "k.1", "k.10", "k.100", "k.2", "kk", "l", "k-1", "k_"];
+  const pair = kinematicPair(backend, keys);
+  for (let tick = 0; tick < 2 ** keys.length; tick += 37) {
+    const batch = keys
+      .filter((_, i) => (tick >> i) & 1)
+      .map((key) => ({
+        setNextKinematicPose: { key, pose: { p: [keys.indexOf(key) * 2, tick * 0.001, 1], q: IDENTITY } },
+      })) as Physics.Command[];
+    const since = pair[0].tick;
+    twinTick(backend, pair, () => ({ batches: [batch], step: true, exportSince: since }), `tick ${tick}`);
+  }
+}
+
 const backends: [string, { skip?: string }, () => Promise<Backend>][] = [
   ["@genex-ai/physics (world_tick_frame)", wasmGate, wasmBackend],
   ["@genex-ai/physics-native (one Tick frame)", nativeGate, nativeBackend],
@@ -366,30 +411,12 @@ for (const [title, gate, load] of backends) {
 
     it("exports different bodies each tick, their keys the same length, every export its own", () => {
       assert.ok(backend);
-      const movers = (world: Physics.World) => {
-        const spawns = Array.from({ length: 16 }, (_, i) => ({
-          spawn: {
-            key: `k.${String(i).padStart(2, "0")}`,
-            type: "kinematic",
-            pose: { p: [i * 2, 0, 1], q: IDENTITY },
-            colliders: [{ key: "c", shape: { kind: "sphere", radius: 0.5 } }],
-          },
-        })) as Physics.Command[];
-        assert.ok((world.apply(spawns, "each") as Physics.CommandResult[]).every((result) => result.ok));
-        return world;
-      };
-      const pair: [Physics.World, Physics.World] = [movers(backend.create(Z_UP)), movers(backend.create(Z_UP))];
-      for (let tick = 0; tick < 64; tick += 1) {
-        const key = `k.${String(tick % 16).padStart(2, "0")}`;
-        const pose = { p: [(tick % 16) * 2, tick * 0.01, 1], q: IDENTITY } as Physics.Pose;
-        const out = twinTick(
-          backend,
-          pair,
-          () => ({ batches: [[{ setNextKinematicPose: { key, pose } }]], step: true, exportSince: tick }),
-          `tick ${tick}`,
-        );
-        assert.ok(out.ok && out.exported?.keys.includes(key), `tick ${tick}: the body moved is exported`);
-      }
+      sameLengthExports(backend);
+    });
+
+    it("exports every subset of keys that are prefixes of each other, each its own keys", () => {
+      assert.ok(backend);
+      prefixExports(backend);
     });
 
     for (const row of inputRows) {
