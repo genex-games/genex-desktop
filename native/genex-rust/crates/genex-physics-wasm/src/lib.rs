@@ -167,6 +167,49 @@ pub fn world_import_states(id: u32, keys: &str, data: &[f32]) -> String {
     registry(|registry| registry.world_import_states(id, keys, data))
 }
 
+/// `canonicalize(options)` (contract 1.1 draft, §20.1): options as JSON `{ quantize? }`.
+#[wasm_bindgen]
+pub fn world_canonicalize(id: u32, options: &str) -> String {
+    registry(|registry| registry.world_canonicalize(id, options))
+}
+
+/// `exportChanged(since, { rest: true })` (§20.3): the keys as JSON; 15 numbers per body wait for
+/// `take_changed_data`.
+#[wasm_bindgen]
+pub fn world_export_changed_rest(id: u32, since: f64) -> String {
+    registry(|registry| registry.world_export_changed_rest(id, since))
+}
+
+/// `exportBodyState(key, { rest: true })` (§20.3).
+#[wasm_bindgen]
+pub fn world_export_body_state_rest(id: u32, key: &str) -> String {
+    registry(|registry| registry.world_export_body_state_rest(id, key))
+}
+
+/// `importStates(keys, data, { rest: true })` (§20.3): 15 numbers per key.
+#[wasm_bindgen]
+pub fn world_import_states_rest(id: u32, keys: &str, data: &[f32]) -> String {
+    registry(|registry| registry.world_import_states_rest(id, keys, data))
+}
+
+/// `importWire(keys, rows)` (§20.2): 15 numbers per key.
+#[wasm_bindgen]
+pub fn world_import_wire(id: u32, keys: &str, data: &[f32]) -> String {
+    registry(|registry| registry.world_import_wire(id, keys, data))
+}
+
+/// `bodyDescCanonical(desc)` (§20.5).
+#[wasm_bindgen]
+pub fn world_body_desc_canonical(id: u32, desc: &str) -> String {
+    registry(|registry| registry.world_body_desc_canonical(id, desc))
+}
+
+/// `jointDescCanonical(desc)` (§20.5).
+#[wasm_bindgen]
+pub fn world_joint_desc_canonical(id: u32, desc: &str) -> String {
+    registry(|registry| registry.world_joint_desc_canonical(id, desc))
+}
+
 /// Runs a JSON array of queries (§19.2): `{ ok: true, results }`, one result per query as
 /// [`world_query`] writes it, or one failure for a non-array (or `internal`).
 #[wasm_bindgen]

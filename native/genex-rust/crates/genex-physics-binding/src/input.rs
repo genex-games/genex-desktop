@@ -8,11 +8,11 @@
 //! A malformed input gives `BadCommand` (a value of the wrong JSON type, a wrong array length, a
 //! missing or unknown field), as the command JSON form does.
 
-use genex_physics::{NetBodyState, PhysicsError, PhysicsFailure, StaticWorld};
+use genex_physics::{CanonicalizeOptions, NetBodyState, PhysicsError, PhysicsFailure, StaticWorld};
 use serde_json::{Map, Value};
 
-/// The fields of a network state, all required.
-const NET_FIELDS: [&str; 5] = ["p", "q", "v", "w", "sleeping"];
+/// The fields of a network state: all required but `rest` (contract 1.1 draft, §20.3).
+const NET_FIELDS: [&str; 6] = ["p", "q", "v", "w", "sleeping", "rest"];
 
 fn bad<T>(detail: impl Into<String>) -> Result<T, PhysicsFailure> {
     Err(PhysicsFailure::new(PhysicsError::BadCommand, detail))
@@ -30,7 +30,7 @@ fn numbers<const N: usize>(map: &Map<String, Value>, name: &str) -> Result<[f64;
     <[f64; N]>::try_from(values).or_else(|_| bad(format!("{name} needs {N} numbers")))
 }
 
-/// A network state `{ p, q, v, w, sleeping }` (§9.2).
+/// A network state `{ p, q, v, w, sleeping, rest? }` (§9.2, §20.3).
 pub(crate) fn net_state(text: &str) -> Result<NetBodyState, PhysicsFailure> {
     let value = json(text)?;
     let Some(map) = value.as_object() else { return bad("a network state is an object") };
@@ -38,7 +38,26 @@ pub(crate) fn net_state(text: &str) -> Result<NetBodyState, PhysicsFailure> {
         return bad(format!("unknown field {name}"));
     }
     let Some(sleeping) = map.get("sleeping").and_then(Value::as_bool) else { return bad("sleeping is not a boolean") };
-    Ok(NetBodyState { p: numbers(map, "p")?, q: numbers(map, "q")?, v: numbers(map, "v")?, w: numbers(map, "w")?, sleeping })
+    let rest = match map.get("rest") {
+        None => None,
+        Some(value) => Some(value.as_f64().map_or_else(|| bad("rest is not a number"), Ok)?),
+    };
+    Ok(NetBodyState { p: numbers(map, "p")?, q: numbers(map, "q")?, v: numbers(map, "v")?, w: numbers(map, "w")?, sleeping, rest })
+}
+
+/// `canonicalize`'s options (§20.1): `{ quantize?: boolean }`, nothing else.
+pub(crate) fn canonicalize_options(text: &str) -> Result<CanonicalizeOptions, PhysicsFailure> {
+    let value = json(text)?;
+    let Some(map) = value.as_object() else { return bad("canonicalize takes an object of options") };
+    if let Some(name) = map.keys().find(|name| name.as_str() != "quantize") {
+        return bad(format!("unknown option {name}"));
+    }
+    let quantize = match map.get("quantize") {
+        None => false,
+        Some(Value::Bool(quantize)) => *quantize,
+        Some(_) => return bad("quantize is not a boolean"),
+    };
+    Ok(CanonicalizeOptions { quantize })
 }
 
 /// The keys of an `importStates` (§19.1): a JSON array of strings.
@@ -83,7 +102,9 @@ mod tests {
     fn a_network_state_reads_every_field_and_refuses_any_other_shape() {
         let good = r#"{"p":[1,2,3],"q":[0,0,0,1],"v":[0,0,0],"w":[0,0,0],"sleeping":true}"#;
         let state = net_state(good).expect("reads");
-        assert_eq!((state.p, state.q, state.sleeping), ([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0], true));
+        assert_eq!((state.p, state.q, state.sleeping, state.rest), ([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0], true, None));
+        let timed = net_state(&good.replace("}", r#","rest":0.25}"#)).expect("reads the timer");
+        assert_eq!(timed.rest, Some(0.25));
         let hostile = [
             "[]",
             "null",
@@ -92,6 +113,8 @@ mod tests {
             r#"{"p":[1,2,3],"q":[0,0,0,1],"v":[0,0,0],"w":[0,0,0],"sleeping":1}"#,
             r#"{"p":[1,2,3],"q":[0,0,0,1],"v":[0,0,0],"w":[0,0,0]}"#,
             r#"{"p":[1,2,3],"q":[0,0,0,1],"v":[0,0,0],"w":[0,0,0],"sleeping":true,"x":1}"#,
+            r#"{"p":[1,2,3],"q":[0,0,0,1],"v":[0,0,0],"w":[0,0,0],"sleeping":true,"rest":"0.5"}"#,
+            r#"{"p":[1,2,3],"q":[0,0,0,1],"v":[0,0,0],"w":[0,0,0],"sleeping":true,"rest":null}"#,
             "not json",
         ];
         for text in hostile {

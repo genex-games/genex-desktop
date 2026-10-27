@@ -82,6 +82,21 @@ pub(crate) fn net_state(state: &NetBodyState) -> Value {
     json!({ "p": state.p, "q": state.q, "v": state.v, "w": state.w, "sleeping": state.sleeping })
 }
 
+/// A body's replicated fields with its sleep timer (contract 1.1 draft, §20.3).
+pub(crate) fn net_state_rest(state: &NetBodyState) -> Value {
+    let mut out = net_state(state);
+    out["rest"] = json!(state.rest.unwrap_or(0.0));
+    out
+}
+
+/// `{ ok: true, desc }`: a descriptor's canonical JSON text (§20.5), or a failure.
+pub(crate) fn canonical(result: Result<String, PhysicsFailure>) -> String {
+    match result {
+        Ok(desc) => ok_with([("desc", json!(desc))]),
+        Err(refused) => failure(&refused),
+    }
+}
+
 /// Adds each kind tag that is set, under its name.
 fn put_kinds(out: &mut Map<String, Value>, tags: [(&str, &Option<String>); 2]) {
     for (name, kind) in tags {

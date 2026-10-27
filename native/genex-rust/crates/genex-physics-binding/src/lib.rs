@@ -256,6 +256,46 @@ impl Registry {
         self.call(id, |world| output::unit(input::keys(keys).and_then(|keys| world.import_states(&keys, data))))
     }
 
+    /// Puts the world into its canonical state (contract 1.1 draft, §20.1): `options` is JSON
+    /// `{ quantize?: boolean }`; anything else is `BadCommand`.
+    pub fn world_canonicalize(&mut self, id: u32, options: &str) -> String {
+        self.call(id, |world| output::unit(input::canonicalize_options(options).and_then(|options| world.canonicalize(options))))
+    }
+
+    /// [`Registry::world_export_changed`] with the sleep timer (§20.3): 15 numbers per body, every
+    /// awake body listed besides the changed ones; the data waits for `take_changed_data`.
+    pub fn world_export_changed_rest(&mut self, id: u32, since: f64) -> String {
+        let export = self.with_world(id, None, |world| Some(world.export_changed_rest(since.max(FIRST_TICK) as u64))).unwrap_or_default();
+        self.changed_data = export.data;
+        serde_json::json!(export.keys).to_string()
+    }
+
+    /// A body's replicated fields with its sleep timer as JSON (§20.3), or `null`.
+    pub fn world_export_body_state_rest(&mut self, id: u32, key: &str) -> String {
+        let state = self.with_world(id, None, |world| world.export_body_state(key));
+        state.map_or("null".to_string(), |state| output::net_state_rest(&state).to_string())
+    }
+
+    /// [`Registry::world_import_states`] with the sleep timer: 15 numbers per key (§20.3).
+    pub fn world_import_states_rest(&mut self, id: u32, keys: &str, data: &[f32]) -> String {
+        self.call(id, |world| output::unit(input::keys(keys).and_then(|keys| world.import_states_rest(&keys, data))))
+    }
+
+    /// Imports wire rows (§20.2): 15 numbers per key. All or none; a refusal names its index.
+    pub fn world_import_wire(&mut self, id: u32, keys: &str, data: &[f32]) -> String {
+        self.call(id, |world| output::unit(input::keys(keys).and_then(|keys| world.import_wire(&keys, data))))
+    }
+
+    /// A body descriptor's canonical form (§20.5): `{ ok: true, desc }` or `spawn`'s own refusal.
+    pub fn world_body_desc_canonical(&mut self, id: u32, desc: &str) -> String {
+        self.call(id, |world| output::canonical(input::json(desc).and_then(|value| world.body_desc_canonical_json(&value))))
+    }
+
+    /// A joint descriptor's canonical form (§20.5): `{ ok: true, desc }` or `addJoint`'s own refusal.
+    pub fn world_joint_desc_canonical(&mut self, id: u32, desc: &str) -> String {
+        self.call(id, |world| output::canonical(input::json(desc).and_then(|value| world.joint_desc_canonical_json(&value))))
+    }
+
     /// Runs a JSON array of queries (§19.2): `{ ok: true, results }`, one result per query as
     /// [`Registry::world_query`] writes it, or one failure for a non-array (or `internal`).
     pub fn world_query_many(&mut self, id: u32, queries: &str) -> String {
@@ -462,6 +502,42 @@ mod tests {
         assert_eq!(registry.world_state_hash(id), hash, "a refusal changes nothing");
         registry.world_free(id);
         assert_eq!(parse(&registry.world_import_states(id, "[]", &[]))["code"], "internal");
+    }
+
+    #[test]
+    fn the_1_1_calls_round_trip_through_the_registry() {
+        let mut registry = Registry::new();
+        let id = create(&mut registry);
+        registry.world_command(id, CRATE);
+        for _ in 0..3 {
+            registry.world_step(id);
+        }
+        assert_eq!(parse(&registry.world_canonicalize(id, r#"{"quantize":true}"#))["ok"], true);
+        assert_eq!(parse(&registry.world_canonicalize(id, "{}"))["ok"], true);
+        for hostile in ["[]", r#"{"quantize":1}"#, r#"{"quantize":true,"x":1}"#, "not json"] {
+            assert_eq!(parse(&registry.world_canonicalize(id, hostile))["code"], "bad-command", "{hostile}");
+        }
+        let keys = registry.world_export_changed_rest(id, 0.0);
+        let data = registry.take_changed_data();
+        assert_eq!(data.len(), genex_physics::EXPORT_STRIDE_REST);
+        let hash = registry.world_state_hash(id);
+        assert_eq!(parse(&registry.world_import_states_rest(id, &keys, &data))["ok"], true);
+        assert_eq!(registry.world_state_hash(id), hash, "its own export with the timer imports exactly");
+        let state = parse(&registry.world_export_body_state_rest(id, "crate"));
+        assert!(state["rest"].is_number(), "{state}");
+        assert!(parse(&registry.world_export_body_state(id, "crate")).get("rest").is_none(), "the 1.0 form is unchanged");
+        let row = [0.0f32, 2.0, 0.0, 32767.0, 32767.0, 32767.0, 65534.0, 32767.0, 32767.0, 32767.0, 32767.0, 32767.0, 32767.0, 0.0, 0.0];
+        assert_eq!(parse(&registry.world_import_wire(id, r#"["crate"]"#, &row))["ok"], true);
+        let refused = parse(&registry.world_import_wire(id, r#"["crate"]"#, &row[1..]));
+        assert_eq!(refused["code"], "bad-command");
+        let spawn = r#"{"key":"b","type":"fixed","pose":{"p":[0,0,0],"q":[0,0,0,1]},"colliders":[{"key":"c","shape":{"kind":"sphere","radius":1}}]}"#;
+        let canonical = parse(&registry.world_body_desc_canonical(id, spawn));
+        assert!(canonical["desc"].as_str().is_some_and(|desc| desc.contains(r#""density":1"#)), "{canonical}");
+        assert_eq!(parse(&registry.world_body_desc_canonical(id, "[]"))["code"], "bad-command");
+        let joint = r#"{"key":"j","a":"crate","b":null,"type":"ball","anchorA":[0,0,0],"anchorB":[0,0,0]}"#;
+        assert!(parse(&registry.world_joint_desc_canonical(id, joint))["desc"].is_string());
+        registry.world_free(id);
+        assert_eq!(parse(&registry.world_canonicalize(id, "{}"))["code"], "internal");
     }
 
     #[test]

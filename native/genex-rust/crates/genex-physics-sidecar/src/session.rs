@@ -163,6 +163,12 @@ impl Session {
             }
             Call::ImportBodyState { key, state } => writer.str(&registry.world_import_body_state(id, key, state)),
             Call::ImportStates { keys, data } => writer.str(&registry.world_import_states(id, keys, &data)),
+            Call::ExportChangedRest { since } => {
+                let keys = registry.world_export_changed_rest(id, since);
+                writer.str(&keys).f32s(&registry.take_changed_data())
+            }
+            Call::Rows { method: Method::ImportWire, keys, data } => writer.str(&registry.world_import_wire(id, keys, &data)),
+            Call::Rows { keys, data, .. } => writer.str(&registry.world_import_states_rest(id, keys, &data)),
             Call::Restore(bytes) => writer.str(&registry.world_restore(id, bytes)),
         };
         Handled { reply: writer, after: After::Continue }
@@ -187,6 +193,10 @@ fn text_call(registry: &mut Registry, id: u32, method: Method, text: &str) -> St
         Method::Body => registry.world_body(id, text),
         Method::ExportBodyState => registry.world_export_body_state(id, text),
         Method::QueryMany => registry.world_query_many(id, text),
+        Method::Canonicalize => registry.world_canonicalize(id, text),
+        Method::ExportBodyStateRest => registry.world_export_body_state_rest(id, text),
+        Method::BodyDescCanonical => registry.world_body_desc_canonical(id, text),
+        Method::JointDescCanonical => registry.world_joint_desc_canonical(id, text),
         _ => registry.world_query(id, text),
     }
 }
@@ -293,6 +303,17 @@ mod tests {
         let bytes = reader.bytes().expect("bytes").to_vec();
         let restored = body(session.handle(Request::Call(Call::Restore(&bytes))).expect("restore"));
         assert_eq!(Reader::new(&restored).str(), Ok(r#"{"ok":true}"#));
+        let canonical = body(session.handle(Request::Call(Call::Text(Method::Canonicalize, r#"{"quantize":true}"#))).expect("canonicalize"));
+        assert_eq!(Reader::new(&canonical).str(), Ok(r#"{"ok":true}"#));
+        let exported = body(session.handle(Request::Call(Call::ExportChangedRest { since: 0.0 })).expect("export"));
+        let mut reader = Reader::new(&exported);
+        let keys = reader.str().expect("keys").to_string();
+        let data = reader.f32s().expect("data");
+        assert_eq!(data.len(), genex_physics::EXPORT_STRIDE_REST);
+        let imported = body(session.handle(Request::Call(Call::Rows { method: Method::ImportStatesRest, keys: &keys, data })).expect("import"));
+        assert_eq!(Reader::new(&imported).str(), Ok(r#"{"ok":true}"#));
+        let wire = body(session.handle(Request::Call(Call::Rows { method: Method::ImportWire, keys: &keys, data: vec![0.0; 3] })).expect("wire"));
+        assert!(Reader::new(&wire).str().is_ok_and(|text| text.contains("bad-command")), "rows of the wrong length are refused");
         let measured = body(session.handle(Request::Call(Call::Bare(Method::MemoryIsMeasured))).expect("measured"));
         assert_eq!(Reader::new(&measured).bool(), Ok(true), "this crate's tests install the counting allocator");
     }

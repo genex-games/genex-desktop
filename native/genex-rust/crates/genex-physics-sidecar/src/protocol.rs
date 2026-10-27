@@ -1,4 +1,4 @@
-//! The room protocol's frames, version 2: what the host sends ([`Request`], decoded whole from a
+//! The room protocol's frames, version 3: what the host sends ([`Request`], decoded whole from a
 //! [`Frame`] before anything runs) and the reply kinds. Field forms are `frame.rs`'s.
 //!
 //! | Kind | Request payload | Reply payload (after `u64 cpuNs`) |
@@ -19,13 +19,17 @@
 //! commands cross with no number text and its reply decodes with no `JSON.parse`; the WASM package
 //! crosses a tick in the same form (its `world_tick_frame` export). The host refuses a process that
 //! answers `Hello` with another version.
+//!
+//! Version 3 (from 2): `Call` gains the contract 1.1 draft's methods (CONTRACT.md §20), bytes 21 to
+//! 27: `Canonicalize`, `ExportChangedRest`, `ExportBodyStateRest`, `ImportStatesRest`, `ImportWire`,
+//! `BodyDescCanonical` and `JointDescCanonical`. No other frame changed.
 
 use genex_physics_binding::TickRequest;
 
 use crate::frame::{Fault, Frame, Reader};
 
 /// This protocol's version, exchanged by `Hello`.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 /// The bit a reply's kind sets on its request's.
 pub const REPLY_BIT: u8 = 0x80;
 
@@ -89,11 +93,25 @@ pub enum Method {
     Stats = 19,
     /// `()` → `bool`.
     MemoryIsMeasured = 20,
+    /// `(str options)` → `str` (§20.1: `{ quantize? }`).
+    Canonicalize = 21,
+    /// `(f64 since)` → `str keys, f32[] data`, 15 numbers per body (§20.3).
+    ExportChangedRest = 22,
+    /// `(str key)` → `str` (§20.3).
+    ExportBodyStateRest = 23,
+    /// `(str keys, f32[] data)` → `str`, 15 numbers per key (§20.3).
+    ImportStatesRest = 24,
+    /// `(str keys, f32[] rows)` → `str`, 15 numbers per key (§20.2).
+    ImportWire = 25,
+    /// `(str desc)` → `str` (§20.5).
+    BodyDescCanonical = 26,
+    /// `(str desc)` → `str` (§20.5).
+    JointDescCanonical = 27,
 }
 
 impl Method {
     /// Every method, in byte order.
-    pub const ALL: [Method; 20] = [
+    pub const ALL: [Method; 27] = [
         Method::Check,
         Method::Desc,
         Method::TickCount,
@@ -114,6 +132,13 @@ impl Method {
         Method::PhysicsHash,
         Method::Stats,
         Method::MemoryIsMeasured,
+        Method::Canonicalize,
+        Method::ExportChangedRest,
+        Method::ExportBodyStateRest,
+        Method::ImportStatesRest,
+        Method::ImportWire,
+        Method::BodyDescCanonical,
+        Method::JointDescCanonical,
     ];
 
     fn from_byte(byte: u8) -> Option<Self> {
@@ -161,6 +186,20 @@ pub enum Call<'a> {
         /// The keys, a JSON array of strings.
         keys: &'a str,
         /// 14 numbers per key (§19.1).
+        data: Vec<f32>,
+    },
+    /// `ExportChangedRest`.
+    ExportChangedRest {
+        /// The tick after which a body changed.
+        since: f64,
+    },
+    /// `ImportStatesRest` or `ImportWire`: keys and 15 numbers per key.
+    Rows {
+        /// Which of the two.
+        method: Method,
+        /// The keys, a JSON array of strings.
+        keys: &'a str,
+        /// 15 numbers per key (§20.2, §20.3).
         data: Vec<f32>,
     },
     /// `Restore`.
@@ -235,14 +274,22 @@ fn call<'a>(reader: &mut Reader<'a>) -> Result<Call<'a>, Fault> {
         | Method::PhysicsHash
         | Method::Stats
         | Method::MemoryIsMeasured => Call::Bare(method),
-        Method::Command | Method::Body | Method::ExportBodyState | Method::QueryMany | Method::Query => {
-            Call::Text(method, reader.str()?)
-        }
+        Method::Command
+        | Method::Body
+        | Method::ExportBodyState
+        | Method::QueryMany
+        | Method::Query
+        | Method::Canonicalize
+        | Method::ExportBodyStateRest
+        | Method::BodyDescCanonical
+        | Method::JointDescCanonical => Call::Text(method, reader.str()?),
         Method::Apply => Call::Apply { commands: reader.str()?, atomic: reader.bool()? },
         Method::Bodies => Call::Bodies { kinds: reader.opt_str()?, awake_only: reader.bool()?, changed_since: reader.tick()? },
         Method::ExportChanged => Call::ExportChanged { since: reader.tick()? },
         Method::ImportBodyState => Call::ImportBodyState { key: reader.str()?, state: reader.str()? },
         Method::ImportStates => Call::ImportStates { keys: reader.str()?, data: reader.f32s()? },
+        Method::ExportChangedRest => Call::ExportChangedRest { since: reader.tick()? },
+        Method::ImportStatesRest | Method::ImportWire => Call::Rows { method, keys: reader.str()?, data: reader.f32s()? },
         Method::Restore => Call::Restore(reader.bytes()?),
     })
 }
@@ -310,12 +357,45 @@ mod tests {
             ("a step flag of 9", frame(bad_step), Fault::Tick(TickFault::BadFlag(9))),
             ("a static world cut short", frame(static_short), Fault::ShortPayload),
             ("an unknown method", call_frame(0, |_| {}), Fault::UnknownMethod(0)),
-            ("a method past the last", call_frame(21, |_| {}), Fault::UnknownMethod(21)),
+            ("a method past the last", call_frame(28, |_| {}), Fault::UnknownMethod(28)),
             ("a shutdown with a payload", Frame { kind: kind::SHUTDOWN, payload: vec![0] }, Fault::TrailingBytes(1)),
         ];
         for (name, frame, fault) in rows {
             assert_eq!(Request::decode(&frame), Err(fault), "{name}");
         }
+    }
+
+    #[test]
+    fn refuses_hostile_1_1_calls_before_anything_runs() {
+        let rows: [(&str, Frame, Fault); 7] = [
+            ("canonicalize without its options", call_frame(Method::Canonicalize as u8, |_| {}), Fault::ShortPayload),
+            ("canonicalize with a byte too many", call_frame(Method::Canonicalize as u8, |w| {
+                w.str("{}").u8(0);
+            }), Fault::TrailingBytes(1)),
+            ("a rest export since NaN", call_frame(Method::ExportChangedRest as u8, |w| {
+                w.f64(f64::NAN);
+            }), Fault::BadNumber),
+            ("a wire import without its rows", call_frame(Method::ImportWire as u8, |w| {
+                w.str("[]");
+            }), Fault::ShortPayload),
+            ("a rest import whose rows claim more than they carry", call_frame(Method::ImportStatesRest as u8, |w| {
+                w.str("[]").u32(1000);
+            }), Fault::ShortPayload),
+            ("a body descriptor cut short", call_frame(Method::BodyDescCanonical as u8, |w| {
+                w.u32(10);
+            }), Fault::ShortPayload),
+            ("a joint descriptor with a byte too many", call_frame(Method::JointDescCanonical as u8, |w| {
+                w.str("{}").u8(7);
+            }), Fault::TrailingBytes(1)),
+        ];
+        for (name, frame, fault) in rows {
+            assert_eq!(Request::decode(&frame), Err(fault), "{name}");
+        }
+        let rows = call_frame(Method::ImportWire as u8, |w| {
+            w.str("[\"a\"]").f32s(&[1.0; 15]);
+        });
+        let expected = Call::Rows { method: Method::ImportWire, keys: "[\"a\"]", data: vec![1.0; 15] };
+        assert_eq!(Request::decode(&rows), Ok(Request::Call(expected)));
     }
 
     #[test]
