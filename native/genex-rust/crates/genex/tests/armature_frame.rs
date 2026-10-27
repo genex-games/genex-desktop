@@ -218,3 +218,102 @@ fn a_clip_file_that_is_missing_or_has_no_animation_is_refused_by_code() {
     let runtime = self::runtime(clip_game(&[("mixamo.com", "clips/wave.glb")]));
     assert_eq!(runtime.sim().world.refusals[0], AnimationErrorCode::AssetInvalid, "a name the rig's clips already use");
 }
+
+// ---------------------------------------------------------------------------------------------
+// GPU rows: `#[ignore]`d, every name contains `metal`:
+//
+//   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p genex \
+//     --test armature_frame -- --ignored metal
+
+mod metal {
+    use super::*;
+    use genex::present::Presenter;
+
+    /// The capture size.
+    const WORLD: [u32; 2] = [128, 96];
+    /// Pixels a skinned rest pose may differ from the bind-pose model by (rasterization on edges), of 12,288.
+    const EDGE_PIXELS: usize = 61;
+    /// The Mixamo rig's centimetre mesh drawn 100 times larger: its 1 cm triangle becomes 1 m.
+    const METRES: f32 = 100.0;
+
+    /// What the GPU game draws.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Draws {
+        Character,
+        BindPose,
+        Nothing,
+    }
+
+    #[derive(Default)]
+    struct Shown {
+        hero: Option<Animator>,
+        bind: Model,
+    }
+
+    /// The Mixamo rig at rest, lit, seen from below (its triangle faces down once the armature
+    /// turns it), drawn as `draws` says.
+    fn shown(draws: Draws) -> Runtime<Shown> {
+        let mut game = Game::new(Shown::default()).title("Armature").world_size(WORLD[0], WORLD[1]);
+        game.camera(|_| Camera::look_at(vec3(0.4, -1.6, 1.4), vec3(0.4, 0.0, 0.4)));
+        game.on_reset(|sim, _, _, gfx| {
+            let hero = gfx.character("mixamo.glb").expect("the rig loads");
+            let graph = hero.graph().build_simple().expect("a simple graph");
+            sim.world.hero = Some(hero.animator(&graph).expect("an animator"));
+            sim.world.bind = gfx.assets().model("mixamo.glb");
+        });
+        game.on_draw(move |sim, frame, _| {
+            frame.sun(vec3(0.2, -1.0, 0.4), Color::WHITE, 3.0);
+            let at = Transform::IDENTITY.with_scale(Vec3::splat(METRES));
+            match (draws, &sim.world.hero) {
+                (Draws::Character, Some(hero)) => frame.character(hero, at),
+                (Draws::BindPose, _) => frame.model(&sim.world.bind, at),
+                _ => frame,
+            };
+        });
+        let mut runtime = Runtime::with_assets(game, Box::new(table())).expect("valid game");
+        runtime.seed(1);
+        runtime.start();
+        runtime.step(FIXED_STEP_MS);
+        runtime
+    }
+
+    fn open_presenter() -> Option<Presenter> {
+        let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
+        match Presenter::open_with_root(WORLD, table(), None) {
+            Ok(presenter) => Some(presenter),
+            Err(error) if require => panic!("GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}"),
+            Err(error) => {
+                eprintln!("skipped: no WebGPU-core adapter ({error})");
+                None
+            }
+        }
+    }
+
+    /// The settled capture of the game view as BGRA.
+    fn capture(presenter: &mut Presenter, runtime: &mut Runtime<Shown>) -> Vec<u8> {
+        presenter.set_capturing(true);
+        presenter.draw_view(runtime, View::Game).expect("a view").expect("drawn");
+        assert_eq!(presenter.failure(), None);
+        presenter.resilient.capture().expect("capture").bgra().to_vec()
+    }
+
+    /// Pixels of two BGRA captures differing in any colour channel by more than 2.
+    fn differing(a: &[u8], b: &[u8]) -> usize {
+        a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0).filter(|(p, q)| (0..3).any(|c| p[c].abs_diff(q[c]) > 2)).count()
+    }
+
+    #[test]
+    #[ignore = "needs a GPU: run with --ignored metal"]
+    fn metal_a_mixamo_rig_skinned_at_rest_covers_the_pixels_of_its_bind_pose_model() {
+        let Some(mut presenter) = open_presenter() else { return };
+        let skinned = capture(&mut presenter, &mut shown(Draws::Character));
+        assert_eq!(presenter.character_stats().drawn, 1, "drawn skinned");
+        let bind = capture(&mut presenter, &mut shown(Draws::BindPose));
+        let empty = capture(&mut presenter, &mut shown(Draws::Nothing));
+        let covered = differing(&bind, &empty);
+        assert!(covered > 200, "the bind-pose model is in view: {covered} pixels");
+        let off = differing(&skinned, &bind);
+        eprintln!("bind pose covers {covered} pixels; the skinned rest pose differs from it in {off}");
+        assert!(off <= EDGE_PIXELS, "the skinned rest pose stands where the bind-pose model does: {off} pixels differ");
+    }
+}
