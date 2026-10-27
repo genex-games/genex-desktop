@@ -7,9 +7,10 @@
 //! lamps, then a probe and a volume per room, then decals, then fog, and the grade last. Look at a
 //! capture after each step. Copy the helpers (`Scan`, `wall`, `tiled`) into your own game.
 //!
-//! Boxes are fine for this greybox-plus shell. A finished level builds the shell as a GLB kit in
-//! Local Blender instead (walls with real reveals, frames, sills, radiators, world-scale UVs) and
-//! keeps the light, probes, volumes and decals below unchanged.
+//! Boxes are fine for this greybox-plus shell: world-space UVs keep their scans unstretched. A
+//! finished level builds the shell as a GLB kit in Local Blender, or as built meshes, instead
+//! (walls with real reveals, frames, sills, radiators) and keeps the light, probes, volumes and
+//! decals below unchanged.
 
 use genex::prelude::*;
 use genex::render::{Decal, Environment, Fog, Grading, IrradianceVolume, ReflectionProbe, RenderConfig, SpotLight};
@@ -91,14 +92,28 @@ const DADO_TINTS: [Color; 3] = [Color::rgb(150, 186, 160), Color::rgb(144, 180, 
 const PLAIN_TINTS: [Color; 2] = [Color::WHITE, Color::rgb(236, 234, 230)];
 /// The painted dado's top: the second paint goes below it, where a real one ends at a line.
 const DADO: f32 = 1.3;
-/// The seed of the panel layout (cuts, variants, turns, wear): change it for another arrangement.
+/// The seed of the patch layout (cuts, variants, offsets, wear): change it for another arrangement.
 const LAYOUT_SEED: u64 = 0x7007_5eed;
+/// How large a wall's patches are, in copies of its scan: few and large, since the world-space
+/// projection already keeps the texel size; the patches only carry the tints and offsets.
+const PATCH_TILES: f32 = 3.0;
+/// The wear across a surface: base colour varied by up to this much, in patches about this size.
+const MACRO_STRENGTH: f32 = 0.15;
+const MACRO_METRES: f32 = 3.0;
 
 impl Scan {
     /// The scan as a PBR surface, its colour map times `tint`; `roughness` scales the scan's own.
+    /// It is projected from the world at its real size (`with_world_uv`), so a box of any size
+    /// shows it without stretch; stochastic tiling and a macro variation keep a long wall from
+    /// showing the same patch twice.
     fn material(&self, roughness: f32, tint: Color) -> Material {
         let (folder, id) = (self.folder, self.id);
-        let surface = Material::color(tint).with_untextured_color(self.stand_in).with_roughness(roughness);
+        let surface = Material::color(tint)
+            .with_untextured_color(self.stand_in)
+            .with_roughness(roughness)
+            .with_world_uv(self.tile)
+            .with_stochastic_tiling(true)
+            .with_macro_variation(MACRO_STRENGTH, MACRO_METRES);
         match self.maps {
             Maps::PolyHaven { arm } => {
                 let map = |kind: &str| format!("{folder}/{id}_{kind}_1k.jpg");
@@ -374,8 +389,9 @@ struct Opening {
 
 /// A wall `span` long from floor to ceiling, with `openings` cut through it, as panels: a full
 /// pier between openings, and under and over each opening, each covered in its paint's panels.
-// TODO(runtime mesh): once the facade builds a mesh from vertices, make each wall one mesh with
-// its openings and world-scale UVs here, as `docs/examples/room-kit/room_kit.py` does in Blender.
+// A finished level gives each wall real depth at its openings (reveals, sills, broken edges): a
+// kit from Local Blender (`docs/examples/room-kit/room_kit.py`), or a mesh built in `on_reset` with
+// `MeshData` and `gfx.mesh` (`docs/api/drawing.md`, Built meshes) drawn with the same materials.
 fn wall(frame: &mut Frame, side: Side, span: (f32, f32), openings: &[Opening], paint: Paint<'_>) {
     let bounds = |along: (f32, f32), up: (f32, f32), proud: f32| match side {
         Side::AlongX(z0, z1) => (vec3(along.0, up.0, z0 - proud), vec3(along.1, up.1, z1 + proud)),
@@ -410,13 +426,11 @@ fn wall(frame: &mut Frame, side: Side, span: (f32, f32), openings: &[Opening], p
     panel(frame, (from, span.1), (0.0, CEILING));
 }
 
-/// A box from `min` to `max` covered in `finish`'s panels. Each face of a box shows its scan once,
-/// so the box is cut on its two largest sides into panels about the scan's size: no stretching.
-/// The cuts are uneven, each panel draws a variant picked from the layout seed and turns a half
-/// (or, when square, a quarter) turn about the box's thin axis: no grid of identical copies.
-// TODO(Material UV scale): once `Material::with_world_uv(tile)` lands, draw each wall, floor and
-// ceiling as a few large uneven patches with it (a variant each) instead of cutting tile-sized
-// panels; the variants, turns and wear decals still break the repeat.
+/// A box from `min` to `max` covered in `finish`. Its scans project from the world at their real
+/// size (`Scan::material`), so a box of any size shows them without stretch. The box is cut on its
+/// two largest sides into a few large, uneven patches, each a variant (a close tint) picked from the
+/// layout seed and started at its own texture offset (`with_uv_jitter`), so neighbours never line up
+/// into a repeat; stochastic tiling and the macro variation break it up inside each patch.
 fn tiled(frame: &mut Frame, min: Vec3, max: Vec3, finish: &Finish) {
     let size = max - min;
     if size.min_element() < 0.005 {
@@ -424,11 +438,12 @@ fn tiled(frame: &mut Frame, min: Vec3, max: Vec3, finish: &Finish) {
     }
     let thin = if size.x <= size.y.min(size.z) { 0 } else if size.y <= size.z { 1 } else { 2 };
     let mut rng = Pcg32::seeded(LAYOUT_SEED ^ place_key(min));
-    let cuts = [0, 1, 2].map(|axis| if axis == thin { vec![min[axis], max[axis]] } else { cuts(min[axis], max[axis], finish.tile, &mut rng) });
+    let patch = finish.tile * PATCH_TILES;
+    let cuts = [0, 1, 2].map(|axis| if axis == thin { vec![min[axis], max[axis]] } else { cuts(min[axis], max[axis], patch, &mut rng) });
     for x in cuts[0].windows(2) {
         for y in cuts[1].windows(2) {
             for z in cuts[2].windows(2) {
-                panel(frame, vec3(x[0], y[0], z[0]), vec3(x[1], y[1], z[1]), thin, finish, &mut rng);
+                panel(frame, vec3(x[0], y[0], z[0]), vec3(x[1], y[1], z[1]), finish, &mut rng);
             }
         }
     }
@@ -451,22 +466,11 @@ fn cuts(from: f32, to: f32, tile: f32, rng: &mut Pcg32) -> Vec<f32> {
     out
 }
 
-/// One panel from `lo` to `hi`: a variant of `finish`, turned about the `thin` axis.
-fn panel(frame: &mut Frame, lo: Vec3, hi: Vec3, thin: usize, finish: &Finish, rng: &mut Pcg32) {
-    let size = hi - lo;
+/// One patch from `lo` to `hi`: a variant of `finish` with its own texture offset.
+fn panel(frame: &mut Frame, lo: Vec3, hi: Vec3, finish: &Finish, rng: &mut Pcg32) {
     let variant = &finish.variants[rng.below(finish.variants.len() as u32) as usize];
-    let (a, b) = ((thin + 1) % 3, (thin + 2) % 3);
-    let square = (size[a] - size[b]).abs() < 0.25 * size[a].max(size[b]);
-    let turns = if square { rng.below(4) } else { rng.below(2) * 2 };
-    // A quarter turn swaps the box's two long sides, so it still fills `lo..hi`.
-    let mut scale = size;
-    if turns % 2 == 1 {
-        scale[a] = size[b];
-        scale[b] = size[a];
-    }
-    let axis = [Vec3::X, Vec3::Y, Vec3::Z][thin];
-    let turn = Quat::from_axis_angle(axis, turns as f32 * std::f32::consts::FRAC_PI_2);
-    frame.cube_with(Transform::from_translation((lo + hi) * 0.5).with_rotation(turn).with_scale(scale), variant);
+    let surface = variant.clone().with_uv_jitter(rng.next_u32());
+    frame.cube_with(Transform::from_translation((lo + hi) * 0.5).with_scale(hi - lo), &surface);
 }
 
 /// A key for a place, so each box's panels keep their layout from frame to frame.

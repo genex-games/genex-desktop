@@ -43,12 +43,16 @@ after each step.
 A photo scan gives itself away two ways: stretched over a face bigger than the photo, or the
 same photo tiled in a grid. Fix both, in this order.
 
-- **Real size.** World-scale UVs in the kit (one UV unit per scan size). In code, each box face
-  shows the scan once, so cut a box into panels about the scan's size.
-- **Uneven panels.** Cut at uneven widths (0.75 to 1.25 of each other), so no seams line up into
-  a grid.
-- **Jitter each panel from a seed.** A random UV offset and quarter turn per panel in the kit; in
-  code a half turn (a quarter turn when the panel is square) about the face's normal. Take the
+- **Real size.** World-scale UVs in the kit (one UV unit per scan size). In code, give the scan's
+  material `.with_world_uv(metres)` (the size one copy covers): every box face then shows it at
+  that size, whatever the box's size (`docs/api/lighting.md`).
+- **No tile twice.** `.with_stochastic_tiling(true)` blends each scan from two copies at shifting
+  offsets, and `.with_macro_variation(0.15, 3.0)` fades its colour in large patches, as wear does.
+- **Uneven patches.** Cut a long surface into a few large patches at uneven widths (0.75 to 1.25
+  of each other), so no seams line up into a grid; with world UVs a patch can be several copies wide.
+- **Jitter each patch from a seed.** A random UV offset and quarter turn per panel in the kit; in
+  code `.with_uv_jitter(seed)` per patch (and `.with_uv_rotation(..)` for plaster or concrete,
+  never brick or wood). Take the
   randomness from a fixed seed (the reset `rng`, or `Pcg32::seeded`) so the layout is the same
   every run and every frame.
 - **Close variants.** Mix one scan in two or three tints a shade apart (`Material::color(tint)`
@@ -59,8 +63,8 @@ same photo tiled in a grid. Fix both, in this order.
 - **Decals last.** Scatter streaks, scuffs and stains from the same seed at uneven sizes, strengths
   and turns over walls and floors: they cover whatever repeat still shows.
 
-`docs/examples/interior-room/` is steps 1, 2 and 5 to 8 in one file (its shell boxes cut to the
-scans' size, the stand-in for step 3), and the kit script is step 3 for the same room. Clutter
+`docs/examples/interior-room/` is steps 1, 2 and 5 to 8 in one file (its shell boxes in world-UV
+patches, the stand-in for step 3), and the kit script is step 3 for the same room. Clutter
 (desks, chairs, crates, debris) comes from `cc0__search` models first, then Blender scripts.
 
 A finished room shows its light in a capture at a desktop preset: sun patches on the floor with

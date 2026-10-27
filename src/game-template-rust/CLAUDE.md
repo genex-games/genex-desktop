@@ -17,9 +17,9 @@ Start an indoor scene or a first-person game from them, not from a blank file.
    reviewed list. A crate off that list is asked for with the `request_crate` tool (one exact
    version, and why); only the person approves it, and once approved it is named in `[crates]` at
    `=<version>`. Never add cargo files, build scripts, `unsafe`, or renderer internals, and never
-   edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`. The build runs clippy with warnings
-   as errors, so a style lint (a collapsible `if`, an approximate `TAU`, a manual range check)
-   fails it like a type error: fix what the message names.
+   edit `docs/GENEX_API.md`, `docs/api/` or `web/shell.html`. The build runs clippy: style and
+   complexity lints only warn, but a determinism ban (`std::time`, `HashMap`, threads) fails it
+   like a type error. `computer action=check` runs the same build check without a reload.
 4. **One screen, one input path, phone first.** Draw all UI with egui in `on_ui` (the HUD is egui
    too). Read input only from `ctx` inside the hooks (`ctx.actions` for a game's own actions,
    `ctx.keys`, `ctx.touches`, `ctx.pointer`, `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a
@@ -168,11 +168,13 @@ A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the ord
 with Rapier colliders, fetch a CC0 scan per surface, then build the shell as one GLB kit with
 `blender__model` from a bpy script at `assets/src/<name>.py` (walls with real openings, frames,
 sills, trims, radiators, world-scale UVs; `docs/examples/room-kit/room_kit.py` is one) and draw it
-with `frame.model`. Neither stretch a scan nor tile it in a grid: uneven panels, each jittered
-from a seed, close tints of one scan, a second scan only in a zone of its own, decals over the
-rest. Then light it as World look says: a sun that falls in at the windows, every
-glowing fitting paired with a light, a probe and a volume per room, decals for wear, thin fog.
-Boxes are for the greybox; a box face stretches its scan.
+with `frame.model`. Neither stretch a scan nor tile it in a grid: `.with_world_uv(metres)` at the
+scan's real size, `.with_stochastic_tiling(true)` and a macro variation, uneven patches each
+jittered from a seed, close tints of one scan, a second scan only in a zone of its own, decals over
+the rest. Then light it as World look says: a sun that falls in at the windows, every glowing
+fitting paired with a light, a probe and a volume per room, decals for wear, thin fog. Boxes are
+for the greybox: they have no reveals, sills or broken edges, which the kit or a built mesh
+(`gfx.mesh`, `docs/api/drawing.md`) gives.
 
 ## Game systems
 
