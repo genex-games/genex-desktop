@@ -113,7 +113,7 @@ The package is built offline from `native/genex-rust` by `node scripts/physics-w
 toolchain's own `wasm-opt -Oz`, a check that the module holds no absolute path of the build machine,
 then `npm pack` into `.studio-dev/dist/` with a `.sha256` beside the tarball). `--test` builds the test flavour its
 tests load (`tests/conformance/physics-wasm-real.test.ts`). The Rust exports are
-`crates/genex-physics-wasm`; this wrapper is `core.js`, with the entries `index.js` and `node.js`.
+`crates/genex-physics-wasm`, a thin shell over `crates/genex-physics-binding`; this wrapper is `core.js`, with the entries `index.js` and `node.js`.
 
 ## Licence
 

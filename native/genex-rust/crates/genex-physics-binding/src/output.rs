@@ -1,4 +1,4 @@
-//! What the binding hands back to JavaScript, as JSON text in the TypeScript shapes of
+//! What the binding hands back to its host, as JSON text in the TypeScript shapes of
 //! `genex-physics/js/index.d.ts`: results (`{ ok: true, … }` or a failure), body states, events,
 //! hits, stats and the resolved description. Every number the core returns holds an f32 exactly;
 //! it is written as that f64, so `JSON.parse` gives back the very value the core holds.

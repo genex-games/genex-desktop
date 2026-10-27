@@ -1,4 +1,4 @@
-//! What JavaScript hands the binding, read into the core's types. Commands, queries and the world
+//! What a host hands the binding, read into the core's types. Commands, queries and the world
 //! description arrive in their JSON forms and are read by the core itself (§7.3, §13, §4); this
 //! module reads only the inputs the core has no JSON form for: a network state (§9.2), the keys of
 //! a bulk import (§19.1, whose data arrives as a flat f32 array), a `bodies()` filter (§9.1) and the

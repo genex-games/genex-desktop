@@ -40,7 +40,10 @@ members = [
   # Genex Physics (contract 1.0, crates/genex-physics/CONTRACT.md): the deterministic Layer 1 core
   # shared with genex-demo's authority host, Rapier its first backend behind an internal trait.
   "crates/genex-physics",
-  # Its WebAssembly binding: the wasm-bindgen exports under the @genex-ai/physics npm package.
+  # Its host-neutral binding: the registry of worlds by id and the JSON and flat-array forms every
+  # binding shares (the WASM shell below; the native sidecar and the C ABI next).
+  "crates/genex-physics-binding",
+  # Its WebAssembly binding, a thin shell over that registry: the wasm-bindgen exports under the @genex-ai/physics npm package.
   "crates/genex-physics-wasm",
   "crates/genex-platform-desktop",
   "crates/genex-platform-web",
@@ -98,6 +101,7 @@ genex-ui = { path = "crates/genex-ui", version = "0.1.0" }
 genex-profile = { path = "crates/genex-profile", version = "0.1.0" }
 genex-crash = { path = "crates/genex-crash", version = "0.1.0" }
 genex-physics = { path = "crates/genex-physics", version = "0.1.0" }
+genex-physics-binding = { path = "crates/genex-physics-binding", version = "0.1.0" }
 genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.1.0" }
 # Without its default `physics` too: the phone shells reach the facade through it and must not turn
 # Rapier on for a game that turned it off (a web game's manifest names the crate itself).

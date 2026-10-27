@@ -1,6 +1,6 @@
 [package]
 name = "genex-physics-wasm"
-description = "The WebAssembly binding of Genex Physics (contract 1.0): the wasm-bindgen exports under the @genex-ai/physics npm package, with a counting allocator that charges every allocation to its world (§11.1)."
+description = "The WebAssembly binding of Genex Physics (contract 1.0): the wasm-bindgen exports under the @genex-ai/physics npm package, a thin shell over genex-physics-binding's registry, with a counting allocator that charges every allocation to its world (§11.1)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,8 +22,12 @@ crate-type = ["cdylib", "rlib"]
 test-trap = []
 
 [dependencies]
-# All three already locked and vendored (no new crate): the core, the JSON forms its commands,
-# queries and world description already read, and the bindgen glue the web shell uses too.
+# All three already locked and vendored (no new crate): the core (its counting allocator), the
+# host-neutral binding every export forwards to, and the bindgen glue the web shell uses too.
 genex-physics = { workspace = true }
-serde_json = { workspace = true }
+genex-physics-binding = { workspace = true }
 wasm-bindgen = { workspace = true }
+
+[dev-dependencies]
+# The shell's own test reads an export's JSON result.
+serde_json = { workspace = true }
